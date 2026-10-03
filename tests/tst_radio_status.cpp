@@ -11,6 +11,9 @@
 //                 (KG4VCF), with AI-assisted transformation via
 //                 Anthropic Claude Code.
 //                 SWR test vectors from console.cs:6642 [@501e3f5].
+//   2026-09-29 - The PTT history records a release with the source it
+//                 ended. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -246,6 +249,20 @@ private slots:
         QVERIFY(!events.isEmpty());
         // Most recent event is at index 0.
         QCOMPARE(events.first().source, PttSource::Cat);
+    }
+
+    void pttHistory_releaseKeepsTheSourceItEnded()
+    {
+        RadioStatus rs;
+        rs.setActivePttSource(PttSource::Mox);
+        rs.setActivePttSource(PttSource::None);
+
+        const auto events = rs.recentPttEvents();
+        QCOMPARE(events.size(), 2);
+        QVERIFY(!events.first().isStart);
+        QCOMPARE(events.first().source, PttSource::Mox);
+        QVERIFY(events.last().isStart);
+        QCOMPARE(events.last().source, PttSource::Mox);
     }
 
     // ── Exciter power ─────────────────────────────────────────────────────

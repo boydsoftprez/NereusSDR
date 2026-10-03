@@ -32,7 +32,7 @@ class FilterPresetStore;
 ///   Mode selector combo (top)
 ///   Table: #  |  Name  |  Low (Hz)  |  High (Hz)  |  Width (Hz)  |  ↑↓ buttons
 ///   Buttons: Reset This Row | Reset All Rows for This Mode
-///   Global:  Reset Every Mode to Thetis Defaults
+///   Global:  Reset Every Mode to Defaults (the Thetis defaults)
 class FilterPresetsSetupPage : public SetupPage {
     Q_OBJECT
 public:

@@ -1,0 +1,8 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "pair.confirm",
+    "box": "conformance-core-box"
+  },
+  "decodes": true
+}

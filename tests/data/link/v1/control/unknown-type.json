@@ -1,0 +1,8 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "conformance.unknown",
+    "key": "slice:0"
+  },
+  "decodes": false
+}

@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-09-22 J.J. Boyd / KG4VCF — retire bursts before capture changes
+//              and direct callbacks; AI-assisted via OpenAI Codex.
 //   2026-05-27  J.J. Boyd / KG4VCF  Phase 3F Sub-Epic F Task 2.
 //                                    AI-assisted transformation via
 //                                    Anthropic Claude Code.
@@ -69,7 +71,15 @@ void WidebandFrameAccumulator::pushPacket(int seq, const QByteArray& payload)
 
 void WidebandFrameAccumulator::emitAndReset()
 {
+    // Retire first: a direct observer may disable capture or begin the
+    // next burst. The by-value signal argument keeps this completed row
+    // alive if a reentrant push detaches and fills m_frameBuffer.
+    discardPartialFrame();
     emit frameReady(m_frameBuffer);
+}
+
+void WidebandFrameAccumulator::discardPartialFrame()
+{
     m_inFrame = false;
     m_expectedSeq = 0;
 }

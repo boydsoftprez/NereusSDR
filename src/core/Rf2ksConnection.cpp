@@ -7,6 +7,13 @@
 //                 Claude Code. Patterns mirror src/core/PgxlConnection.{h,cpp}
 //                 (which is itself an AetherSDR port); wire format is REST
 //                 not C/R/S/V text.
+//   2026-09-24  R-R3-47 / R-R3-22 / R-R3-25: identity admission,
+//                 connection failures and retries reported, faults
+//                 emitted. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-24  R-R3-47: an /info reply naming no device is retried, not
+//                 refused. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 #include "Rf2ksConnection.h"
 
@@ -17,6 +24,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QPointer>
 #include <QUrl>
 #include <QtGlobal>
 
@@ -89,6 +97,7 @@ void Rf2ksConnection::handleResponse(const QString& path, const QByteArray& body
 void Rf2ksConnection::parseInfo(const QByteArray& body)
 {
     const QJsonObject o = QJsonDocument::fromJson(body).object();
+    m_reportedDevice = o.value(QStringLiteral("device")).toString();
     m_deviceName = o.value(QStringLiteral("custom_device_name")).toString();
     const QJsonObject sv = o.value(QStringLiteral("software_version")).toObject();
     const int gui = sv.value(QStringLiteral("GUI")).toInt();
@@ -181,9 +190,15 @@ void Rf2ksConnection::parseOperateMode(const QByteArray& body)
 void Rf2ksConnection::parseOperationalInterface(const QByteArray& body)
 {
     const QJsonObject o = QJsonDocument::fromJson(body).object();
+    const QString previousError = m_opIfxErrorField;
     m_opIfx           = o.value(QStringLiteral("operational_interface")).toString();
     m_opIfxErrorField = o.value(QStringLiteral("error")).toString();
     emit operationalInterfaceUpdated(m_opIfx, m_opIfxErrorField);
+    // R-R3-47: a new error on the amp's operating interface is a fault, as
+    // the amp words it. The same error on every poll is one fault.
+    if (!m_opIfxErrorField.isEmpty() && m_opIfxErrorField != previousError) {
+        emit faultObserved(QStringLiteral("interface"), m_opIfxErrorField);
+    }
 }
 
 void Rf2ksConnection::parseData(const QByteArray& body)
@@ -225,6 +240,10 @@ void Rf2ksConnection::connectToAmp(const QString& host, quint16 port)
     }
 
     m_operatorDisconnected = false;
+    m_reportedDevice.clear();
+    // R-R3-48: nothing is known yet about this target's interface.
+    m_opIfx.clear();
+    m_opIfxErrorField.clear();
     m_host = host;
     m_port = port;
     m_consecutiveFailures = 0;
@@ -397,6 +416,17 @@ void Rf2ksConnection::onReplyFinished()
     const QByteArray body = reply->readAll();
     reply->deleteLater();
 
+    // M2 (R-R3-47): with identity admission on, an /info reply that names no
+    // device proves nothing either way: a failed answer, retried like one,
+    // and not parsed (so an admitted amp's identity stays). Only a reply
+    // that names another product is refused (below).
+    if (!isWrite && m_identityRequired && path == QStringLiteral("/info")
+        && QJsonDocument::fromJson(body).object().value(QStringLiteral("device"))
+               .toString().isEmpty()) {
+        markPollFailure();
+        return;
+    }
+
     // Review blocker [P2] on PR #291: only GET replies carry state.  The amp
     // answers a write with Content-Length: 0, and QJsonDocument::fromJson("")
     // yields an empty object -- so parsing a write ack as state published
@@ -406,6 +436,14 @@ void Rf2ksConnection::onReplyFinished()
     // markPollSuccess() and the connected transition below.
     if (!isWrite) {
         handleResponse(path, body);
+    }
+    // R-R3-47: with identity admission on, only an amp whose /info names
+    // an RF2K-S counts as connected (and stays connected: /info is read
+    // again every ten poll cycles).
+    if (!isWrite && m_identityRequired && path == QStringLiteral("/info")
+        && m_reportedDevice != expectedDevice()) {
+        refuseIdentity(m_reportedDevice);
+        return;
     }
     markPollSuccess(rttMs);
 
@@ -456,6 +494,12 @@ void Rf2ksConnection::markPollFailure()
         // the only place that can keep the retry schedule alive.  Without
         // it the amp would be probed exactly once and then never again.
         // Codex review, PR #291.
+        if (!m_autoReconnect) {
+            // R-R3-47: nothing will retry, so say why it stopped here.
+            emit connectionFailed(QStringLiteral(
+                "The RF-Kit amplifier did not answer at this address."));
+            return;
+        }
         scheduleReconnect();
         return;
     }
@@ -468,7 +512,16 @@ void Rf2ksConnection::markPollFailure()
         // retry schedule stretched to 60 s while the poller carried on
         // hammering every few hundred ms.  Codex review, PR #291.
         m_pollTimer.stop();
+        QPointer<Rf2ksConnection> self(this);
         emit disconnected();
+        if (!self) {
+            return;
+        }
+        emit faultObserved(QStringLiteral("link"),
+                           QStringLiteral("The RF-Kit amplifier stopped answering."));
+        if (!self) {
+            return;
+        }
         scheduleReconnect();
     }
 }
@@ -487,6 +540,42 @@ void Rf2ksConnection::scheduleReconnect()
     // test verifies the 1 s / 2 s / 4 s / 8 s ... 60 s sequence.
     m_reconnectBackoffMs = qMin(m_reconnectBackoffMs * 2, 60000);
     m_reconnectTimer.start(m_reconnectBackoffMs);
+    emit reconnectScheduled(m_reconnectAttempts, m_reconnectBackoffMs);
+}
+
+void Rf2ksConnection::refuseIdentity(const QString& device)
+{
+    // Retire this session exactly as disconnect() does: nothing in flight
+    // may revive it, and no retry is scheduled.
+    m_operatorDisconnected = true;
+    ++m_generation;
+    m_pollTimer.stop();
+    m_reconnectTimer.stop();
+    const auto replies = m_inFlight;
+    m_inFlight.clear();
+    for (QNetworkReply* reply : replies) {
+        if (reply) {
+            reply->abort();
+        }
+    }
+    const QString reason = device.isEmpty()
+        ? QStringLiteral("The device at this address did not say it is an RF-Kit RF2K-S amplifier.")
+        : QStringLiteral("The device at this address is not an RF-Kit RF2K-S amplifier. "
+                         "It reports itself as %1.").arg(device);
+    QPointer<Rf2ksConnection> self(this);
+    if (m_connected) {
+        m_connected = false;
+        m_connectedSinceMs = 0;
+        emit disconnected();
+        if (!self) {
+            return;
+        }
+    }
+    emit faultObserved(QStringLiteral("identity"), reason);
+    if (!self) {
+        return;
+    }
+    emit connectionFailed(reason);
 }
 
 void Rf2ksConnection::onReconnectTimeout()

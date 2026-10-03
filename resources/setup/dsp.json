@@ -1,0 +1,3019 @@
+{
+  "version": 19,
+  "category": {
+    "id": "dsp",
+    "title": "DSP",
+    "where": "station"
+  },
+  "coverage": "partial: TNF and Filter Presets need collection contracts; listed page coverage identifies additional omissions",
+  "pages": [
+    {
+      "id": "dsp.agcAlc",
+      "title": "AGC/ALC",
+      "where": "station",
+      "sections": [
+        {
+          "title": "RX1 AGC",
+          "controls": [
+            {
+              "id": "dsp.agcAlc.agcMode",
+              "label": "Mode",
+              "tooltip": "Automatic Gain Control Mode Setting",
+              "kind": "choice",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "agcMode"
+                }
+              },
+              "applies": "live",
+              "choices": [
+                "Off",
+                "Long",
+                "Slow",
+                "Med",
+                "Fast",
+                "Custom"
+              ]
+            },
+            {
+              "id": "dsp.agcAlc.agcAttack",
+              "label": "Attack",
+              "tooltip": "",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "agcAttack"
+                }
+              },
+              "applies": "live",
+              "min": 1,
+              "max": 1000,
+              "step": 1,
+              "unit": " ms"
+            },
+            {
+              "id": "dsp.agcAlc.agcDecay",
+              "label": "Decay",
+              "tooltip": "Time-constant to increase signal amplitude after strong signal",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "agcDecay"
+                }
+              },
+              "applies": "live",
+              "min": 1,
+              "max": 5000,
+              "step": 1,
+              "unit": " ms"
+            },
+            {
+              "id": "dsp.agcAlc.agcHang",
+              "label": "Hang",
+              "tooltip": "Time to hold constant gain after strong signal",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "agcHang"
+                }
+              },
+              "applies": "live",
+              "min": 10,
+              "max": 5000,
+              "step": 1,
+              "unit": " ms"
+            },
+            {
+              "id": "dsp.agcAlc.agcSlope",
+              "label": "Slope",
+              "tooltip": "Gain difference for weak and strong signals",
+              "kind": "slider",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "agcSlope"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 200,
+              "step": 10
+            },
+            {
+              "id": "dsp.agcAlc.agcMaxGain",
+              "label": "Max Gain",
+              "tooltip": "Threshold AGC: no gain over this Max Gain is applied, irrespective of signal weakness",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "agcMaxGain"
+                }
+              },
+              "applies": "live",
+              "min": -20,
+              "max": 120,
+              "step": 1,
+              "unit": " dB"
+            },
+            {
+              "id": "dsp.agcAlc.agcFixedGain",
+              "label": "Fixed Gain",
+              "tooltip": "Gain when AGC is disabled",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "agcFixedGain"
+                }
+              },
+              "applies": "live",
+              "min": -20,
+              "max": 120,
+              "step": 1,
+              "unit": " dB"
+            },
+            {
+              "id": "dsp.agcAlc.agcHangThreshold",
+              "label": "Hang Threshold",
+              "tooltip": "Level at which the 'hang' function is engaged",
+              "kind": "slider",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "agcHangThreshold"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 100,
+              "step": 1
+            }
+          ]
+        },
+        {
+          "title": "Auto AGC",
+          "controls": [
+            {
+              "id": "dsp.agcAlc.autoAgcEnabled",
+              "label": "Auto AGC RX1",
+              "tooltip": "Automatically adjust AGC based on Noise Floor",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "autoAgcEnabled"
+                }
+              },
+              "applies": "live"
+            },
+            {
+              "id": "dsp.agcAlc.autoAgcOffset",
+              "label": "± Offset",
+              "tooltip": "dB shift from noise floor",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "autoAgcOffset"
+                }
+              },
+              "applies": "live",
+              "min": -60,
+              "max": 60,
+              "step": 1,
+              "unit": " dB"
+            }
+          ]
+        },
+        {
+          "title": "TX Leveler",
+          "controls": [
+            {
+              "id": "dsp.agcAlc.txLevelerOn",
+              "label": "Enable",
+              "tooltip": "Adjust gain if transmit audio increases/decreases",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "txLevelerOn"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 4
+              }
+            },
+            {
+              "id": "dsp.agcAlc.txLevelerMaxGain",
+              "label": "Max Gain",
+              "tooltip": "This provides for a 'threshold' ALC. Irrespective of how weak the input is, no gain over this max is applied.",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "txLevelerMaxGain"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 4
+              },
+              "min": 0,
+              "max": 20,
+              "step": 1,
+              "unit": " dB"
+            },
+            {
+              "id": "dsp.agcAlc.txLevelerDecay",
+              "label": "Decay",
+              "tooltip": "Decay time-constant in ms.  Note that this is a time-constant for an exponential curve, not an absolute time.",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "txLevelerDecay"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 4
+              },
+              "min": 1,
+              "max": 5000,
+              "step": 1,
+              "unit": " ms"
+            }
+          ]
+        },
+        {
+          "title": "TX ALC",
+          "controls": [
+            {
+              "id": "dsp.agcAlc.txAlcMaxGain",
+              "label": "Max Gain",
+              "tooltip": "Maximum gain to apply before ALC limiting",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "txAlcMaxGain"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 4
+              },
+              "min": 0,
+              "max": 120,
+              "step": 1,
+              "unit": " dB"
+            },
+            {
+              "id": "dsp.agcAlc.txAlcDecay",
+              "label": "Decay",
+              "tooltip": "Decay time-constant in ms.  Note that this is a time-constant for an exponential curve, not an absolute time.",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "txAlcDecay"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 4
+              },
+              "min": 1,
+              "max": 50,
+              "step": 1,
+              "unit": " ms"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsp.nrAnf",
+      "title": "NR/ANF",
+      "where": "station",
+      "coverage": "partial: NR3 model picker, NNR composite diagnostics, diagnostic Apply, conditional Try Again, and NNR model asset button need declarative bindings",
+      "sections": [
+        {
+          "title": "NR1 (LMS)",
+          "controls": [
+            {
+              "id": "dsp.nrAnf.nr1Taps",
+              "label": "Taps",
+              "tooltip": "Determines the length of the NR computed filter.",
+              "kind": "slider",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr1Taps"
+                }
+              },
+              "applies": "live",
+              "min": 1,
+              "max": 1024,
+              "step": 1
+            },
+            {
+              "id": "dsp.nrAnf.nr1Delay",
+              "label": "Delay",
+              "tooltip": "Determines how far back you look in the signal before you begin to compute a coherent signal enhancement filter.",
+              "kind": "slider",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr1Delay"
+                }
+              },
+              "applies": "live",
+              "min": 1,
+              "max": 1023,
+              "step": 1
+            },
+            {
+              "id": "dsp.nrAnf.nr1Gain",
+              "label": "Gain",
+              "tooltip": "Determines the adaptation rate of the filter.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr1Gain"
+                }
+              },
+              "applies": "live",
+              "min": 1e-06,
+              "max": 0.001,
+              "step": 1e-06
+            },
+            {
+              "id": "dsp.nrAnf.nr1Leakage",
+              "label": "Leak",
+              "tooltip": "Determines the adaptation rate of the filter.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr1Leakage"
+                }
+              },
+              "applies": "live",
+              "min": 0.001,
+              "max": 1,
+              "step": 0.001
+            },
+            {
+              "id": "dsp.nrAnf.nr1Position",
+              "label": "Position",
+              "tooltip": "",
+              "kind": "choice",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr1Position"
+                }
+              },
+              "applies": "live",
+              "choices": [
+                "Pre-AGC",
+                "Post-AGC"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "NR2 Gain Method",
+          "controls": [
+            {
+              "id": "dsp.nrAnf.nr2GainMethod",
+              "label": "Gain Method",
+              "tooltip": "",
+              "kind": "choice",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr2GainMethod"
+                }
+              },
+              "applies": "live",
+              "choices": [
+                "Linear",
+                "Log",
+                "Gamma",
+                "Trained"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "NR2 NPE Method",
+          "controls": [
+            {
+              "id": "dsp.nrAnf.nr2NpeMethod",
+              "label": "NPE Method",
+              "tooltip": "",
+              "kind": "choice",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr2NpeMethod"
+                }
+              },
+              "applies": "live",
+              "choices": [
+                "OSMS",
+                "MMSE",
+                "NSTAT"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "NR2 Training / Filter",
+          "controls": [
+            {
+              "id": "dsp.nrAnf.nr2TrainT1",
+              "label": "T1",
+              "tooltip": "EMNR Zeta threshold (T1). Controls the asymmetry of the noise estimator. Range -5.0 to +5.0.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr2TrainT1"
+                }
+              },
+              "applies": "live",
+              "min": -5,
+              "max": 5,
+              "step": 0.1
+            },
+            {
+              "id": "dsp.nrAnf.nr2TrainT2",
+              "label": "T2",
+              "tooltip": "EMNR T2 training parameter. Range 0.0 to 2.0.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr2TrainT2"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 2,
+              "step": 0.05
+            },
+            {
+              "id": "dsp.nrAnf.nr2AeFilter",
+              "label": "AE Filter",
+              "tooltip": "Enable EMNR Acoustic Echo (AE) filter stage.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr2AeFilter"
+                }
+              },
+              "applies": "live"
+            },
+            {
+              "id": "dsp.nrAnf.nr2Position",
+              "label": "Position",
+              "tooltip": "",
+              "kind": "choice",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr2Position"
+                }
+              },
+              "applies": "live",
+              "choices": [
+                "Pre-AGC",
+                "Post-AGC"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "NR2 Noise Post-Proc",
+          "controls": [
+            {
+              "id": "dsp.nrAnf.nr2Post2Run",
+              "label": "Enable",
+              "tooltip": "Enable EMNR Noise Post-Processing cascade.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr2Post2Run"
+                }
+              },
+              "applies": "live"
+            },
+            {
+              "id": "dsp.nrAnf.nr2Post2Level",
+              "label": "Level",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr2Post2Level"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 100,
+              "step": 1
+            },
+            {
+              "id": "dsp.nrAnf.nr2Post2Factor",
+              "label": "Factor",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr2Post2Factor"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 100,
+              "step": 0.1
+            },
+            {
+              "id": "dsp.nrAnf.nr2Post2Rate",
+              "label": "Rate",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr2Post2Rate"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 100,
+              "step": 0.1
+            },
+            {
+              "id": "dsp.nrAnf.nr2Post2Taper",
+              "label": "Taper",
+              "tooltip": "",
+              "kind": "slider",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr2Post2Taper"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 100,
+              "step": 1
+            }
+          ]
+        },
+        {
+          "title": "NR3 (RNNoise)",
+          "controls": [
+            {
+              "id": "dsp.nrAnf.nr3Position",
+              "label": "Position",
+              "tooltip": "",
+              "kind": "choice",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr3Position"
+                }
+              },
+              "applies": "live",
+              "choices": [
+                "Pre-AGC",
+                "Post-AGC"
+              ]
+            },
+            {
+              "id": "dsp.nrAnf.nr3UseDefaultGain",
+              "label": "Use fixed gain for input samples",
+              "tooltip": "Use a fixed (rather than adaptive) input sample gain.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr3UseDefaultGain"
+                }
+              },
+              "applies": "live"
+            }
+          ]
+        },
+        {
+          "title": "RNNoise Model (Global)",
+          "controls": [
+            {
+              "id": "dsp.nrAnf.nr3Model",
+              "label": "Model",
+              "tooltip": "The NR3 model the Core uses for every receiver.",
+              "kind": "choice",
+              "binding": {
+                "command": {
+                  "verb": "dspAssets.selectNr3Model",
+                  "valueProperty": {
+                    "object": "dspAssets",
+                    "name": "nr3ModelAsset"
+                  },
+                  "arguments": {
+                    "id": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "dspAssetVersion",
+                "min": 2
+              },
+              "options": [
+                {
+                  "value": "bundled:nr3-large",
+                  "label": "Bundled large model"
+                },
+                {
+                  "value": "bundled:nr3-small",
+                  "label": "Bundled small model"
+                }
+              ],
+              "choicesFrom": {
+                "dspAssets": "nr3"
+              }
+            },
+            {
+              "id": "dsp.nrAnf.nr3ModelStatus",
+              "label": "Status",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "dspAssets",
+                  "name": "nr3ModelStatus"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "dspAssetVersion",
+                "min": 2
+              }
+            }
+          ]
+        },
+        {
+          "title": "NR4 (SpecBleach)",
+          "controls": [
+            {
+              "id": "dsp.nrAnf.nr4Reduction",
+              "label": "Reduction",
+              "tooltip": "Spectral reduction amount in dB. Range 0-20, step 1.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr4Reduction"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 20,
+              "step": 1,
+              "unit": " dB"
+            },
+            {
+              "id": "dsp.nrAnf.nr4Smoothing",
+              "label": "Smoothing",
+              "tooltip": "Spectral smoothing factor. Range 0-100.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr4Smoothing"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 100,
+              "step": 1,
+              "unit": "%"
+            },
+            {
+              "id": "dsp.nrAnf.nr4Whitening",
+              "label": "Whitening",
+              "tooltip": "Spectral whitening factor. Range 0-100.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr4Whitening"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 100,
+              "step": 1,
+              "unit": "%"
+            },
+            {
+              "id": "dsp.nrAnf.nr4Rescale",
+              "label": "Rescale",
+              "tooltip": "Output rescale factor. Range 0-12, step 1.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr4Rescale"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 12,
+              "step": 1,
+              "unit": " dB"
+            },
+            {
+              "id": "dsp.nrAnf.nr4PostThresh",
+              "label": "SNRthresh",
+              "tooltip": "Post-processing SNR threshold. Range -10 to +10 dB, step 1.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr4PostThresh"
+                }
+              },
+              "applies": "live",
+              "min": -10,
+              "max": 10,
+              "step": 1,
+              "unit": " dB"
+            },
+            {
+              "id": "dsp.nrAnf.nr4Algo",
+              "label": "Algorithm",
+              "tooltip": "",
+              "kind": "choice",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nr4Algo"
+                }
+              },
+              "applies": "live",
+              "choices": [
+                "Algo 1",
+                "Algo 2",
+                "Algo 3"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "DeepFilter NR",
+          "controls": [
+            {
+              "id": "dsp.nrAnf.dfnrAttenLimit",
+              "label": "Attenuation Limit",
+              "tooltip": "Maximum noise attenuation in dB (0 = bypass, 100 = maximum). Default 100. Higher values suppress more noise but may clip speech peaks.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "dfnrAttenLimit"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 100,
+              "step": 1,
+              "unit": " dB"
+            },
+            {
+              "id": "dsp.nrAnf.dfnrPostFilterBeta",
+              "label": "Post-Filter Beta",
+              "tooltip": "Post-filter aggressiveness (0 = disabled, 0.30 = maximum). Default 0. Higher values reduce residual musical-noise artifacts but may over-attenuate consonants.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "dfnrPostFilterBeta"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 0.3,
+              "step": 0.01
+            }
+          ]
+        },
+        {
+          "title": "macOS NR (MNR)",
+          "controls": [
+            {
+              "id": "dsp.nrAnf.mnrStrength",
+              "label": "Strength",
+              "tooltip": "Dry/wet blend. 0%% = bypass (filter runs but output = input), 100%% = full NR, 200%% = over-drive (phase-flip, destructive). Default 100%%.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "mnrStrength"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 2,
+              "step": 0.01,
+              "unit": "%"
+            },
+            {
+              "id": "dsp.nrAnf.mnrOversub",
+              "label": "Aggressiveness",
+              "tooltip": "MMSE-Wiener oversubtraction factor. Higher = more attenuation on low-SNR bins; 1 = gentle, 4 = default, 20+ = underwater.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "mnrOversub"
+                }
+              },
+              "applies": "live",
+              "min": 1,
+              "max": 1000,
+              "step": 1
+            },
+            {
+              "id": "dsp.nrAnf.mnrFloor",
+              "label": "Floor",
+              "tooltip": "Minimum Wiener gain per bin (x0.001). 0 = silence, 50 = -26 dB (default), 1000 = 0 dB, 2000 = amplify.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "mnrFloor"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 2,
+              "step": 0.001,
+              "unit": "m"
+            },
+            {
+              "id": "dsp.nrAnf.mnrAlpha",
+              "label": "Alpha",
+              "tooltip": "Decision-directed smoothing (x0.01). 0 = no smoothing (chattery), 92 = Ephraim-Malah classic (default), 100 = frozen prior SNR.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "mnrAlpha"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 1,
+              "step": 0.01
+            },
+            {
+              "id": "dsp.nrAnf.mnrBias",
+              "label": "Bias",
+              "tooltip": "Min-statistics noise-floor bias (x0.1). <10 = underestimate noise (less NR), 12 = default, >30 = overestimate (erodes signal). Nudge up if NR is weak, down if it eats speech.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "mnrBias"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 10,
+              "step": 0.1
+            },
+            {
+              "id": "dsp.nrAnf.mnrGsmooth",
+              "label": "Gsmooth",
+              "tooltip": "Temporal gain smoothing (x0.01). 0 = instant (musical noise), 70 = balanced (default), 100 = frozen gain.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "mnrGsmooth"
+                }
+              },
+              "applies": "live",
+              "min": 0,
+              "max": 1,
+              "step": 0.01
+            }
+          ]
+        },
+        {
+          "title": "Neural noise reduction (NNR)",
+          "controls": [
+            {
+              "id": "dsp.nrAnf.nnrModelSlot",
+              "label": "Model",
+              "tooltip": "This preference remains editable while offline.",
+              "kind": "choice",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrModelSlot"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "choices": [
+                "Standard",
+                "Premium"
+              ]
+            },
+            {
+              "id": "dsp.nrAnf.nnrLimit",
+              "label": "Limit",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrLimit"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "format": "nnrLimit"
+            },
+            {
+              "id": "dsp.nrAnf.nnrTryAgain",
+              "label": "Try again",
+              "tooltip": "Run the saved noise reduction choice again.",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "nnr.tryAgain",
+                  "arguments": {
+                    "sliceId": {
+                      "$selectedOwnedSliceId": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "enabledWhen": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrLimit"
+                },
+                "oneOf": [
+                  1,
+                  2
+                ]
+              }
+            },
+            {
+              "id": "dsp.nrAnf.nnrMaskFloorDb",
+              "label": "Suppression",
+              "tooltip": "More-negative values permit stronger suppression. Higher values retain more of the original signal and noise.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrMaskFloorDb"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "min": -50,
+              "max": -10,
+              "step": 0.01,
+              "unit": " dB"
+            },
+            {
+              "id": "dsp.nrAnf.nnrPosition",
+              "label": "Position",
+              "tooltip": "Choose whether NNR runs before or after automatic gain control.",
+              "kind": "choice",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrPosition"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "choices": [
+                "Pre-AGC",
+                "Post-AGC"
+              ]
+            },
+            {
+              "id": "dsp.nrAnf.nnrAlpha",
+              "label": "Alpha",
+              "tooltip": "Shapes deep-filter gains below the alpha knee. A value of 1 leaves those gains unchanged; values above 1 deepen them, while values below 1 lift them.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrAlpha"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "min": 0,
+              "max": 4,
+              "step": 0.01
+            },
+            {
+              "id": "dsp.nrAnf.nnrAlphaKneeDb",
+              "label": "Alpha knee",
+              "tooltip": "Gain threshold below which Alpha reshapes the deep-filter response.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrAlphaKneeDb"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "min": 0,
+              "max": 40,
+              "step": 0.1,
+              "unit": " dB"
+            },
+            {
+              "id": "dsp.nrAnf.nnrTauSeconds",
+              "label": "Noise time",
+              "tooltip": "Time constant for input-power normalization before the neural network.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrTauSeconds"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "min": 0.05,
+              "max": 30,
+              "step": 0.05,
+              "unit": " s"
+            },
+            {
+              "id": "dsp.nrAnf.nnrMaxGainDb",
+              "label": "Maximum gain",
+              "tooltip": "Maximum gain the neural stage may add.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrMaxGainDb"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "min": 0,
+              "max": 24,
+              "step": 0.1,
+              "unit": " dB"
+            },
+            {
+              "id": "dsp.nrAnf.nnrAttackMs",
+              "label": "Attack",
+              "tooltip": "How quickly suppression engages. Zero uses the model response.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrAttackMs"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "min": 0,
+              "max": 500,
+              "step": 0.1,
+              "unit": " ms"
+            },
+            {
+              "id": "dsp.nrAnf.nnrReleaseMs",
+              "label": "Release",
+              "tooltip": "How quickly suppression relaxes. Zero uses the model response.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrReleaseMs"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "min": 0,
+              "max": 500,
+              "step": 0.1,
+              "unit": " ms"
+            }
+          ]
+        },
+        {
+          "title": "Diagnostics",
+          "controls": [
+            {
+              "id": "dsp.nrAnf.nnrAvailable",
+              "label": "Available",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrAvailable"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "dsp.nrAnf.nnrReady",
+              "label": "Ready",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrReady"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "dsp.nrAnf.nnrRunning",
+              "label": "Running",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrRunning"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "dsp.nrAnf.nnrStandardAvailable",
+              "label": "Standard model",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrStandardAvailable"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "dsp.nrAnf.nnrPremiumAvailable",
+              "label": "Premium model",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrPremiumAvailable"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "dsp.nrAnf.nnrActualModelSlot",
+              "label": "Model in use",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrActualModelSlot"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "format": "nnrModelSlot"
+            },
+            {
+              "id": "dsp.nrAnf.nnrDspRateHz",
+              "label": "NNR processing",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrDspRateHz"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "unit": "Hz",
+              "decimals": 0
+            },
+            {
+              "id": "dsp.nrAnf.nnrNetworkRateHz",
+              "label": "Model rate",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrNetworkRateHz"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "unit": "Hz",
+              "decimals": 0
+            },
+            {
+              "id": "dsp.nrAnf.nnrRateSupported",
+              "label": "Rate supported",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrRateSupported"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "dsp.nrAnf.nnrDelaySamples",
+              "label": "Delay",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrDelaySamples"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "unit": "samples",
+              "decimals": 0
+            },
+            {
+              "id": "dsp.nrAnf.nnrLatencyMs",
+              "label": "Latency",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrLatencyMs"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "unit": "ms",
+              "decimals": 2
+            },
+            {
+              "id": "dsp.nrAnf.nnrModelSource",
+              "label": "Source",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrModelSource"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "dsp.nrAnf.nnrProfilingAvailable",
+              "label": "Profiling",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrProfilingAvailable"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "dsp.nrAnf.nnrStatus",
+              "label": "Status",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrStatus"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "format": "nnrStatus"
+            },
+            {
+              "id": "dsp.nrAnf.nnrTestMode",
+              "label": "Test mode",
+              "tooltip": "Temporary NNR processing mode until this app reconnects to the Core.",
+              "kind": "choice",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrTestMode"
+                }
+              },
+              "applies": "staged",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "options": [
+                {
+                  "value": 0,
+                  "label": "Network"
+                },
+                {
+                  "value": 1,
+                  "label": "Identity"
+                },
+                {
+                  "value": 2,
+                  "label": "Low-pass"
+                }
+              ]
+            },
+            {
+              "id": "dsp.nrAnf.nnrOutputMode",
+              "label": "Output mode",
+              "tooltip": "Temporary output mapping until this app reconnects to the Core.",
+              "kind": "choice",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrOutputMode"
+                }
+              },
+              "applies": "staged",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "options": [
+                {
+                  "value": 0,
+                  "label": "Duplicate I/Q"
+                },
+                {
+                  "value": 1,
+                  "label": "Q zero"
+                }
+              ]
+            },
+            {
+              "id": "dsp.nrAnf.nnrApplyDiagnostics",
+              "label": "Apply until reconnect",
+              "tooltip": "",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "nnr.setDiagnostics",
+                  "arguments": {
+                    "sliceId": {
+                      "$selectedOwnedSliceId": true
+                    },
+                    "testMode": {
+                      "$control": "dsp.nrAnf.nnrTestMode"
+                    },
+                    "outputMode": {
+                      "$control": "dsp.nrAnf.nnrOutputMode"
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              },
+              "enabledWhen": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrReady"
+                },
+                "oneOf": [
+                  true
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "NNR actions",
+          "controls": [
+            {
+              "id": "dsp.nrAnf.nnrResetTuning",
+              "label": "Reset tuning",
+              "tooltip": "",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "nnr.resetTuning",
+                  "arguments": {
+                    "sliceId": {
+                      "$property": {
+                        "object": "slice:active",
+                        "name": "sliceIndex"
+                      }
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "nnrVersion",
+                "min": 1
+              }
+            }
+          ]
+        },
+        {
+          "title": "Adaptive Noise Filter",
+          "controls": [
+            {
+              "id": "dsp.nrAnf.anfEnabled",
+              "label": "Enable ANF",
+              "tooltip": "Enable Adaptive Notch Filter.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "anfEnabled"
+                }
+              },
+              "applies": "live"
+            }
+          ]
+        }
+      ],
+      "coverageV15": "partial: adding and saving NR3 and NNR model files is done in the model manager"
+    },
+    {
+      "id": "dsp.nbSnb",
+      "title": "NB/SNB",
+      "where": "station",
+      "sections": [
+        {
+          "title": "NB1",
+          "controls": [
+            {
+              "id": "dsp.nbSnb.nb1Threshold",
+              "label": "Threshold",
+              "tooltip": "Controls the detection threshold for impulse noise.\nLower = more aggressive (blanks weaker impulses too).\nHigher = more conservative (only strong clicks get blanked).",
+              "kind": "slider",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nb1Threshold"
+                }
+              },
+              "applies": "live",
+              "min": 1,
+              "max": 1000,
+              "step": 1
+            },
+            {
+              "id": "dsp.nbSnb.nb1TransitionMs",
+              "label": "Transition",
+              "tooltip": "Time to decrease/increase to/from zero amplitude around an\nimpulse. Controls how gradually the blanker fades in and out:\nvery short = crisp click; longer = gentler but audible.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nb1TransitionMs"
+                }
+              },
+              "applies": "live",
+              "min": 0.01,
+              "max": 2,
+              "step": 0.01,
+              "unit": " ms"
+            },
+            {
+              "id": "dsp.nbSnb.nb1LeadMs",
+              "label": "Lead",
+              "tooltip": "Time at zero amplitude BEFORE the detected impulse. Blanks\nthe leading edge of the click that the detector would\notherwise miss. Raise slightly if clicks still get through.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nb1LeadMs"
+                }
+              },
+              "applies": "live",
+              "min": 0.01,
+              "max": 2,
+              "step": 0.01,
+              "unit": " ms"
+            },
+            {
+              "id": "dsp.nbSnb.nb1LagMs",
+              "label": "Lag",
+              "tooltip": "Time to remain at zero amplitude AFTER the impulse. Blanks\nthe decay tail of the click. Raise this if pops still have\nan audible ringing after the initial transient.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nb1LagMs"
+                }
+              },
+              "applies": "live",
+              "min": 0.01,
+              "max": 2,
+              "step": 0.01,
+              "unit": " ms"
+            },
+            {
+              "id": "dsp.nbSnb.nb2Mode",
+              "label": "NB2 Mode",
+              "tooltip": "Method used to fill in the blanked samples when NB2 triggers.\nZero silences the impulse entirely; the other modes synthesise\na replacement waveform from surrounding samples to reduce\naudible artifacts on voice peaks.",
+              "kind": "choice",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nb2Mode"
+                }
+              },
+              "applies": "live",
+              "choices": [
+                "Zero",
+                "Sample && Hold",
+                "Mean-Hold",
+                "Hold && Sample",
+                "Linear Interpolate"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "SNB",
+          "controls": [
+            {
+              "id": "dsp.nbSnb.snbK1",
+              "label": "Threshold 1",
+              "tooltip": "Multiple of the running noise power at which a sample is\nflagged as a candidate outlier. Lower = more aggressive\nfirst-pass detection; higher = miss weaker noise.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "snbK1"
+                }
+              },
+              "applies": "live",
+              "min": 2,
+              "max": 20,
+              "step": 0.1
+            },
+            {
+              "id": "dsp.nbSnb.snbK2",
+              "label": "Threshold 2",
+              "tooltip": "Multiplier applied to the final detection threshold. It confirms\ncandidates from Threshold 1 as real noise outliers. Lower =\nmore aggressive overall blanking; higher = fewer false triggers\non genuine voice peaks.",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "snbK2"
+                }
+              },
+              "applies": "live",
+              "min": 4,
+              "max": 60,
+              "step": 0.1
+            },
+            {
+              "id": "dsp.nbSnb.snbOutputBandwidthHz",
+              "label": "Output Bandwidth",
+              "tooltip": "Width of the audio band SNB operates on, centered on zero.\nSmaller = focuses the blanker on the active passband;\nlarger = covers wider modes (FM, DRM). Default 6000 Hz\ncovers SSB + AM comfortably.",
+              "kind": "slider",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "snbOutputBandwidthHz"
+                }
+              },
+              "applies": "live",
+              "min": 100,
+              "max": 96000,
+              "step": 1,
+              "unit": " Hz"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsp.cw",
+      "title": "CW",
+      "where": "station",
+      "coverage": "partial: CW keyer and timing are unbuilt; APF center uses a desktop pitch offset and bandwidth/gain are unbuilt",
+      "sections": [
+        {
+          "title": "APF",
+          "controls": [
+            {
+              "id": "dsp.cw.apfEnabled",
+              "label": "Enable",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "apfEnabled"
+                }
+              },
+              "applies": "live"
+            },
+            {
+              "id": "dsp.cw.apfCenter",
+              "label": "Center Freq",
+              "tooltip": "",
+              "kind": "slider",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "apfTuneHz"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "min": 100,
+              "max": 1100,
+              "step": 1,
+              "unit": "Hz",
+              "valueOffset": 600
+            }
+          ]
+        }
+      ],
+      "coverageV15": "partial: the CW keyer and timing and the APF bandwidth and gain are not built"
+    },
+    {
+      "id": "dsp.amSam",
+      "title": "AM/SAM",
+      "where": "station",
+      "coverage": "partial: SAM and squelch tail are unbuilt",
+      "sections": [
+        {
+          "title": "Squelch",
+          "controls": [
+            {
+              "id": "dsp.amSam.amsqThresh",
+              "label": "AM Squelch Threshold",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "amsqThresh"
+                }
+              },
+              "applies": "live",
+              "min": -160,
+              "max": 0,
+              "step": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsp.fm",
+      "title": "FM",
+      "where": "station",
+      "coverage": "partial: RX deviation and de-emphasis and FM transmit are unbuilt",
+      "sections": [
+        {
+          "title": "RX",
+          "controls": [
+            {
+              "id": "dsp.fm.fmsqThresh",
+              "label": "Squelch Threshold",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "fmsqThresh"
+                }
+              },
+              "applies": "live",
+              "min": -160,
+              "max": 0,
+              "step": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsp.cfc",
+      "title": "CFC",
+      "where": "station",
+      "coverage": "partial: Configure CFC bands opens a desktop composite editor without a v1 phone binding",
+      "sections": [
+        {
+          "title": "Phase Rotator",
+          "controls": [
+            {
+              "id": "dsp.cfc.phaseRotatorEnabled",
+              "label": "Enable",
+              "tooltip": "Turn the phase rotator on or off",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "phaseRotatorEnabled"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 4
+              }
+            },
+            {
+              "id": "dsp.cfc.phaseRotatorFreqHz",
+              "label": "FREQ",
+              "tooltip": "Set rotation frequency in Hz. (default 338)",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "phaseRotatorFreqHz"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 4
+              },
+              "min": 10,
+              "max": 2000,
+              "step": 1,
+              "unit": " Hz"
+            },
+            {
+              "id": "dsp.cfc.phaseRotatorStages",
+              "label": "STAGES",
+              "tooltip": "Choose the number of rotation stages. Larger values = smoother (default 8)",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "phaseRotatorStages"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 4
+              },
+              "min": 2,
+              "max": 16,
+              "step": 1
+            },
+            {
+              "id": "dsp.cfc.phaseReverseEnabled",
+              "label": "Reverse Phase",
+              "tooltip": "Reverses the phase",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "phaseReverseEnabled"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 4
+              }
+            }
+          ]
+        },
+        {
+          "title": "CFC",
+          "controls": [
+            {
+              "id": "dsp.cfc.cfcEnabled",
+              "label": "Enable",
+              "tooltip": "Enable the Continuous Frequency Compressor (10-band)",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "cfcEnabled"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 4
+              }
+            },
+            {
+              "id": "dsp.cfc.cfcPostEqEnabled",
+              "label": "Post-EQ Enable",
+              "tooltip": "Enable the Post-EQ stage applied after CFC compression",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "cfcPostEqEnabled"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 4
+              }
+            },
+            {
+              "id": "dsp.cfc.cfcPrecompDb",
+              "label": "Pre-Comp",
+              "tooltip": "Global pre-compression gain (0–16 dB) applied before per-band compression",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "cfcPrecompDb"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 4
+              },
+              "min": 0,
+              "max": 16,
+              "step": 1,
+              "unit": " dB"
+            },
+            {
+              "id": "dsp.cfc.cfcPostEqGainDb",
+              "label": "Post-EQ Gain",
+              "tooltip": "Global Post-EQ make-up gain (-24 .. +24 dB)",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "cfcPostEqGainDb"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 4
+              },
+              "min": -24,
+              "max": 24,
+              "step": 1,
+              "unit": " dB"
+            },
+            {
+              "id": "dsp.cfc.bands",
+              "label": "Configure CFC bands…",
+              "tooltip": "Open the per-band CFC editor: 5, 10 or 18 bands of compression and post-EQ.",
+              "kind": "table",
+              "binding": {
+                "cfcProfile": {
+                  "object": "transmit",
+                  "name": "cfcProfile",
+                  "command": "cfc.setProfile"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 15
+              },
+              "requiresDescriptionVersion": 19,
+              "bandCounts": [
+                5,
+                10,
+                18
+              ],
+              "minSpanHz": 1000,
+              "fields": [
+                {
+                  "id": "minHz",
+                  "label": "Low",
+                  "kind": "decimal",
+                  "min": 0,
+                  "max": 20000,
+                  "step": 1,
+                  "decimals": 0,
+                  "unit": " Hz"
+                },
+                {
+                  "id": "maxHz",
+                  "label": "High",
+                  "kind": "decimal",
+                  "min": 0,
+                  "max": 20000,
+                  "step": 1,
+                  "decimals": 0,
+                  "unit": " Hz"
+                },
+                {
+                  "id": "parametric",
+                  "label": "Use Q Factors",
+                  "kind": "toggle"
+                },
+                {
+                  "id": "precompDb",
+                  "label": "Pre-Comp",
+                  "kind": "decimal",
+                  "min": 0,
+                  "max": 16,
+                  "step": 0.1,
+                  "decimals": 1,
+                  "unit": " dB"
+                },
+                {
+                  "id": "postEqGainDb",
+                  "label": "Post-EQ",
+                  "kind": "decimal",
+                  "min": -24,
+                  "max": 24,
+                  "step": 0.1,
+                  "decimals": 1,
+                  "unit": " dB"
+                }
+              ],
+              "columns": [
+                {
+                  "id": "frequencyHz",
+                  "label": "Freq",
+                  "kind": "decimal",
+                  "min": 0,
+                  "max": 20000,
+                  "step": 1,
+                  "decimals": 0,
+                  "unit": " Hz"
+                },
+                {
+                  "id": "compressionDb",
+                  "label": "Comp",
+                  "kind": "decimal",
+                  "min": 0,
+                  "max": 16,
+                  "step": 0.1,
+                  "decimals": 1,
+                  "unit": " dB"
+                },
+                {
+                  "id": "compressionQ",
+                  "label": "Comp Q",
+                  "kind": "decimal",
+                  "min": 0.2,
+                  "max": 20,
+                  "step": 0.01,
+                  "decimals": 2
+                },
+                {
+                  "id": "postEqGainDb",
+                  "label": "Gain",
+                  "kind": "decimal",
+                  "min": -24,
+                  "max": 24,
+                  "step": 0.1,
+                  "decimals": 1,
+                  "unit": " dB"
+                },
+                {
+                  "id": "postEqQ",
+                  "label": "EQ Q",
+                  "kind": "decimal",
+                  "min": 0.2,
+                  "max": 20,
+                  "step": 0.01,
+                  "decimals": 2
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "CESSB",
+          "controls": [
+            {
+              "id": "dsp.cfc.cessbOn",
+              "label": "Enable",
+              "tooltip": "Enable Controlled-Envelope SSB (acts only when CPDR is enabled)",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "cessbOn"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 4
+              }
+            }
+          ]
+        }
+      ],
+      "coverageV15": "partial: the per-band CFC editor is not described",
+      "coverageV19": ""
+    },
+    {
+      "id": "dsp.tnf",
+      "title": "TNF",
+      "where": "station",
+      "coverage": "partial: notch rows and Add require a list/row action contract; Visual Notch is a phone-local display preference",
+      "sections": [
+        {
+          "title": "Multi Notch Filter",
+          "controls": [
+            {
+              "id": "dsp.tnf.minNotchWidthHz",
+              "label": "Minimum Notch Width",
+              "tooltip": "Narrowest notch the current bandpass filter can realise",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "minNotchWidthHz"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "dspInfoVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "dsp.tnf.autoIncrease",
+              "label": "Auto-Increase width (if needed) to achieve >100dB attenuation",
+              "tooltip": "The notch width will be increased if needed to ensure >100dB of attenuation",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "notches",
+                  "name": "autoIncrease"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "notchControlVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "dsp.tnf.list",
+              "label": "Tunable Notch Filter",
+              "tooltip": "",
+              "kind": "table",
+              "requiresDescriptionVersion": 2,
+              "binding": {
+                "table": {
+                  "valueProperty": {
+                    "object": "notches",
+                    "name": "listJson"
+                  },
+                  "revisionProperty": {
+                    "object": "notches",
+                    "name": "revision"
+                  },
+                  "format": "json-array",
+                  "rowKey": "id",
+                  "maxRows": 1024
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "notchControlVersion",
+                "min": 1
+              },
+              "columns": [
+                {
+                  "id": "dsp.tnf.list.centreHz",
+                  "field": "centreHz",
+                  "label": "Center Frequency (Hz)",
+                  "tooltip": "Center frequency of the notch",
+                  "kind": "decimal",
+                  "min": 100000,
+                  "max": 61440000,
+                  "step": 1
+                },
+                {
+                  "id": "dsp.tnf.list.widthHz",
+                  "field": "widthHz",
+                  "label": "Width (Hz)",
+                  "tooltip": "Bandwdith of the notch",
+                  "kind": "decimal",
+                  "min": 0,
+                  "max": 10000,
+                  "step": 1
+                },
+                {
+                  "id": "dsp.tnf.list.active",
+                  "field": "active",
+                  "label": "Active",
+                  "tooltip": "Checked if the notch is active",
+                  "kind": "toggle"
+                },
+                {
+                  "id": "dsp.tnf.list.delete",
+                  "rowAction": "delete",
+                  "label": "Delete",
+                  "tooltip": "Delete the current notch index",
+                  "kind": "button"
+                }
+              ],
+              "rowActions": [
+                {
+                  "id": "move",
+                  "command": {
+                    "verb": "notch.move",
+                    "arguments": {
+                      "id": {
+                        "$row": "id"
+                      },
+                      "centreHz": {
+                        "$edit": "centreHz"
+                      },
+                      "widthHz": {
+                        "$edit": "widthHz"
+                      }
+                    }
+                  }
+                },
+                {
+                  "id": "active",
+                  "command": {
+                    "verb": "notch.setActive",
+                    "arguments": {
+                      "id": {
+                        "$row": "id"
+                      },
+                      "active": {
+                        "$edit": "active"
+                      }
+                    }
+                  }
+                },
+                {
+                  "id": "delete",
+                  "command": {
+                    "verb": "notch.delete",
+                    "arguments": {
+                      "id": {
+                        "$row": "id"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "id": "dsp.tnf.add",
+              "label": "Add",
+              "tooltip": "Add a notch",
+              "kind": "button",
+              "requiresDescriptionVersion": 2,
+              "binding": {
+                "command": {
+                  "verb": "notch.addAtSlice",
+                  "arguments": {
+                    "sliceId": {
+                      "$selectedOwnedSliceId": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "notchControlVersion",
+                "min": 2
+              }
+            },
+            {
+              "id": "dsp.tnf.visualNotch",
+              "label": "Visual approximation of notch (NOTE: this is not 100% representation of the active notch)",
+              "tooltip": "This is a simple approximation and does not accurately represent the notch",
+              "kind": "toggle",
+              "binding": {
+                "phone": "NotchVisualEnabled"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "default": false
+            }
+          ]
+        }
+      ],
+      "coverageV15": ""
+    },
+    {
+      "id": "dsp.filterPresets",
+      "title": "Filter Presets",
+      "where": "station",
+      "sections": [
+        {
+          "title": "Mode",
+          "controls": [
+            {
+              "id": "dsp.filterPresets.mode",
+              "label": "Mode:",
+              "tooltip": "",
+              "kind": "choice",
+              "binding": {
+                "phone": "filterPresetsMode"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "options": [
+                {
+                  "value": 0,
+                  "label": "LSB"
+                },
+                {
+                  "value": 1,
+                  "label": "USB"
+                },
+                {
+                  "value": 2,
+                  "label": "DSB"
+                },
+                {
+                  "value": 3,
+                  "label": "CWL"
+                },
+                {
+                  "value": 4,
+                  "label": "CWU"
+                },
+                {
+                  "value": 5,
+                  "label": "FM"
+                },
+                {
+                  "value": 6,
+                  "label": "AM"
+                },
+                {
+                  "value": 7,
+                  "label": "DIGU"
+                },
+                {
+                  "value": 8,
+                  "label": "SPEC"
+                },
+                {
+                  "value": 9,
+                  "label": "DIGL"
+                },
+                {
+                  "value": 10,
+                  "label": "SAM"
+                },
+                {
+                  "value": 11,
+                  "label": "DRM"
+                }
+              ],
+              "default": 1
+            }
+          ]
+        },
+        {
+          "title": "Presets",
+          "controls": [
+            {
+              "id": "dsp.filterPresets.presets",
+              "label": "Presets",
+              "tooltip": "",
+              "kind": "table",
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "binding": {
+                "filterPresets": {
+                  "modeFrom": "dsp.filterPresets.mode"
+                }
+              },
+              "columns": [
+                {
+                  "id": "slot",
+                  "label": "#",
+                  "kind": "readout"
+                },
+                {
+                  "id": "name",
+                  "label": "Name",
+                  "kind": "text",
+                  "maxLength": 32
+                },
+                {
+                  "id": "lowHz",
+                  "label": "Low (Hz)",
+                  "kind": "integer",
+                  "min": -10000,
+                  "max": 10000,
+                  "step": 1,
+                  "unit": "Hz"
+                },
+                {
+                  "id": "highHz",
+                  "label": "High (Hz)",
+                  "kind": "integer",
+                  "min": -10000,
+                  "max": 10000,
+                  "step": 1,
+                  "unit": "Hz"
+                },
+                {
+                  "id": "width",
+                  "label": "Width (Hz)",
+                  "kind": "readout"
+                },
+                {
+                  "id": "reorder",
+                  "label": "Reorder",
+                  "kind": "reorder"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Actions",
+          "controls": [
+            {
+              "id": "dsp.filterPresets.resetRow",
+              "label": "Reset Selected Row",
+              "tooltip": "",
+              "kind": "button",
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "binding": {
+                "filterPresets": {
+                  "action": "resetRow"
+                }
+              }
+            },
+            {
+              "id": "dsp.filterPresets.resetMode",
+              "label": "Reset All Rows for This Mode",
+              "tooltip": "",
+              "kind": "button",
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "binding": {
+                "filterPresets": {
+                  "action": "resetMode"
+                }
+              },
+              "confirm": "Reset all presets for %1 to the defaults?"
+            }
+          ]
+        },
+        {
+          "title": "Global",
+          "controls": [
+            {
+              "id": "dsp.filterPresets.resetAll",
+              "label": "Reset Every Mode to Defaults",
+              "tooltip": "",
+              "kind": "button",
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "binding": {
+                "filterPresets": {
+                  "action": "resetAll"
+                }
+              },
+              "confirm": "Reset ALL filter presets for ALL modes to the defaults?\n\nThis cannot be undone."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dsp.options",
+      "title": "Options",
+      "where": "station",
+      "coverage": "partial: high-resolution filter graph control and rebuild timing readout are GUI render/runtime composites",
+      "sections": [
+        {
+          "title": "Buffer Size (IQcomp)",
+          "controls": [
+            {
+              "id": "dsp.options.DspOptionsBufferSizePhoneRx",
+              "label": "RX:",
+              "tooltip": "Sets the internal buffer size. Larger values give sharper filters but add latency.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsBufferSizePhoneRx"
+              },
+              "applies": "live",
+              "choices": [
+                "64",
+                "128",
+                "256",
+                "512",
+                "1024"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsBufferSizePhoneTx",
+              "label": "TX:",
+              "tooltip": "Sets the internal buffer size. Larger values give sharper filters but add latency.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsBufferSizePhoneTx"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 1,
+                "offAir": true
+              },
+              "choices": [
+                "64",
+                "128",
+                "256",
+                "512",
+                "1024"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsBufferSizeFmRx",
+              "label": "RX:",
+              "tooltip": "Sets the internal buffer size. Larger values give sharper filters but add latency.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsBufferSizeFmRx"
+              },
+              "applies": "live",
+              "choices": [
+                "64",
+                "128",
+                "256",
+                "512",
+                "1024"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsBufferSizeFmTx",
+              "label": "TX:",
+              "tooltip": "Sets the internal buffer size. Larger values give sharper filters but add latency.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsBufferSizeFmTx"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 1,
+                "offAir": true
+              },
+              "choices": [
+                "64",
+                "128",
+                "256",
+                "512",
+                "1024"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsBufferSizeCwRx",
+              "label": "RX:",
+              "tooltip": "Sets the internal buffer size. Larger values give sharper filters but add latency.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsBufferSizeCwRx"
+              },
+              "applies": "live",
+              "choices": [
+                "64",
+                "128",
+                "256",
+                "512",
+                "1024"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsBufferSizeDigRx",
+              "label": "RX:",
+              "tooltip": "Sets the internal buffer size. Larger values give sharper filters but add latency.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsBufferSizeDigRx"
+              },
+              "applies": "live",
+              "choices": [
+                "64",
+                "128",
+                "256",
+                "512",
+                "1024"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsBufferSizeDigTx",
+              "label": "TX:",
+              "tooltip": "Sets the internal buffer size. Larger values give sharper filters but add latency.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsBufferSizeDigTx"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 1,
+                "offAir": true
+              },
+              "choices": [
+                "64",
+                "128",
+                "256",
+                "512",
+                "1024"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Filter Size (taps)",
+          "controls": [
+            {
+              "id": "dsp.options.DspOptionsFilterSizePhoneRx",
+              "label": "RX:",
+              "tooltip": "Sets the FIR filter length. Larger values give sharper filter skirts but add CPU and latency.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsFilterSizePhoneRx"
+              },
+              "applies": "live",
+              "choices": [
+                "1024",
+                "2048",
+                "4096",
+                "8192",
+                "16384"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsFilterSizePhoneTx",
+              "label": "TX:",
+              "tooltip": "Sets the FIR filter length. Larger values give sharper filter skirts but add CPU and latency.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsFilterSizePhoneTx"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 1
+              },
+              "choices": [
+                "1024",
+                "2048",
+                "4096",
+                "8192",
+                "16384"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsFilterSizeFmRx",
+              "label": "RX:",
+              "tooltip": "Sets the FIR filter length. Larger values give sharper filter skirts but add CPU and latency.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsFilterSizeFmRx"
+              },
+              "applies": "live",
+              "choices": [
+                "1024",
+                "2048",
+                "4096",
+                "8192",
+                "16384"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsFilterSizeFmTx",
+              "label": "TX:",
+              "tooltip": "Sets the FIR filter length. Larger values give sharper filter skirts but add CPU and latency.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsFilterSizeFmTx"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 1
+              },
+              "choices": [
+                "1024",
+                "2048",
+                "4096",
+                "8192",
+                "16384"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsFilterSizeCwRx",
+              "label": "RX:",
+              "tooltip": "Sets the FIR filter length. Larger values give sharper filter skirts but add CPU and latency.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsFilterSizeCwRx"
+              },
+              "applies": "live",
+              "choices": [
+                "1024",
+                "2048",
+                "4096",
+                "8192",
+                "16384"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsFilterSizeDigRx",
+              "label": "RX:",
+              "tooltip": "Sets the FIR filter length. Larger values give sharper filter skirts but add CPU and latency.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsFilterSizeDigRx"
+              },
+              "applies": "live",
+              "choices": [
+                "1024",
+                "2048",
+                "4096",
+                "8192",
+                "16384"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsFilterSizeDigTx",
+              "label": "TX:",
+              "tooltip": "Sets the FIR filter length. Larger values give sharper filter skirts but add CPU and latency.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsFilterSizeDigTx"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 1
+              },
+              "choices": [
+                "1024",
+                "2048",
+                "4096",
+                "8192",
+                "16384"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Filter Type",
+          "controls": [
+            {
+              "id": "dsp.options.DspOptionsFilterTypePhoneRx",
+              "label": "RX:",
+              "tooltip": "Select 'Low Latency' (minimum phase) or 'Linear Phase' filters. Linear Phase has symmetric delay; Low Latency uses minimum-phase design with less group delay.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsFilterTypePhoneRx"
+              },
+              "applies": "live",
+              "choices": [
+                "Linear Phase",
+                "Low Latency"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsFilterTypePhoneTx",
+              "label": "TX:",
+              "tooltip": "Select 'Low Latency' (minimum phase) or 'Linear Phase' filters. Linear Phase has symmetric delay; Low Latency uses minimum-phase design with less group delay.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsFilterTypePhoneTx"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 1
+              },
+              "choices": [
+                "Linear Phase",
+                "Low Latency"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsFilterTypeFmRx",
+              "label": "RX:",
+              "tooltip": "Select 'Low Latency' (minimum phase) or 'Linear Phase' filters. Linear Phase has symmetric delay; Low Latency uses minimum-phase design with less group delay.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsFilterTypeFmRx"
+              },
+              "applies": "live",
+              "choices": [
+                "Linear Phase",
+                "Low Latency"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsFilterTypeFmTx",
+              "label": "TX:",
+              "tooltip": "Select 'Low Latency' (minimum phase) or 'Linear Phase' filters. Linear Phase has symmetric delay; Low Latency uses minimum-phase design with less group delay.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsFilterTypeFmTx"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 1
+              },
+              "choices": [
+                "Linear Phase",
+                "Low Latency"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsFilterTypeCwRx",
+              "label": "RX:",
+              "tooltip": "Select 'Low Latency' (minimum phase) or 'Linear Phase' filters. Linear Phase has symmetric delay; Low Latency uses minimum-phase design with less group delay.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsFilterTypeCwRx"
+              },
+              "applies": "live",
+              "choices": [
+                "Linear Phase",
+                "Low Latency"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsFilterTypeDigRx",
+              "label": "RX:",
+              "tooltip": "Select 'Low Latency' (minimum phase) or 'Linear Phase' filters. Linear Phase has symmetric delay; Low Latency uses minimum-phase design with less group delay.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsFilterTypeDigRx"
+              },
+              "applies": "live",
+              "choices": [
+                "Linear Phase",
+                "Low Latency"
+              ]
+            },
+            {
+              "id": "dsp.options.DspOptionsFilterTypeDigTx",
+              "label": "TX:",
+              "tooltip": "Select 'Low Latency' (minimum phase) or 'Linear Phase' filters. Linear Phase has symmetric delay; Low Latency uses minimum-phase design with less group delay.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DspOptionsFilterTypeDigTx"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 1
+              },
+              "choices": [
+                "Linear Phase",
+                "Low Latency"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Filter Impulse Cache",
+          "controls": [
+            {
+              "id": "dsp.options.DspOptionsCacheImpulse",
+              "label": "Enable impulse caching",
+              "tooltip": "Cache filter impulse responses in memory for faster channel rebuilds. Trades memory for first-rebuild latency. Takes effect on the next radio connect or channel rebuild.",
+              "kind": "toggle",
+              "binding": {
+                "setting": "DspOptionsCacheImpulse"
+              },
+              "applies": "live",
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              }
+            },
+            {
+              "id": "dsp.options.DspOptionsCacheImpulseSaveRestore",
+              "label": "Keep impulse cache on disk between launches",
+              "tooltip": "Save the impulse cache to disk on shutdown and reload on next launch. Eliminates the first-rebuild cost after restarting NereusSDR. Warning: the cache file can become very large. Takes effect on the next radio connect or channel rebuild.",
+              "kind": "toggle",
+              "binding": {
+                "setting": "DspOptionsCacheImpulseSaveRestore"
+              },
+              "applies": "live",
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              }
+            }
+          ]
+        },
+        {
+          "title": "Filter Graph",
+          "controls": [
+            {
+              "id": "dsp.options.highResFilter",
+              "label": "High-resolution filter characteristics in filter graph",
+              "tooltip": "When enabled, the filter graph displays the actual computed FIR magnitude response. When disabled, a simplified box-shape passband is shown instead.",
+              "kind": "toggle",
+              "binding": {
+                "setting": "DspOptionsHighResFilterCharacteristics"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "dspInfoVersion",
+                "min": 1
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              }
+            },
+            {
+              "id": "dsp.options.timeToLastChange",
+              "label": "Time to last change",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "radio",
+                  "name": "dspOptionsLastApplyMs"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "unit": "ms",
+              "decimals": 0,
+              "format": "positiveOrNone"
+            }
+          ]
+        }
+      ],
+      "coverageV15": ""
+    }
+  ],
+  "coverageV15": "partial: the NR3 and NNR model files and the per-band CFC editor are not described",
+  "coverageV19": "partial: the NR3 and NNR model files are not described"
+}

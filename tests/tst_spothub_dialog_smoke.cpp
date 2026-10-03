@@ -462,7 +462,8 @@ void TestSpotHubDialogSmoke::displayTabHasOverrideColorButton() {
     QVERIFY(dlg->findChild<QPushButton*>("displayOverrideColorsToggle") != nullptr);
     QVERIFY(dlg->findChild<QPushButton*>("displayColorSwatch") != nullptr);
     QVERIFY(dlg->findChild<QPushButton*>("displayOverrideBgToggle") != nullptr);
-    QVERIFY(dlg->findChild<QPushButton*>("displayOverrideBgAutoToggle") != nullptr);
+    // R-R3-49: the automatic background colour option was removed.
+    QVERIFY(dlg->findChild<QPushButton*>("displayOverrideBgAutoToggle") == nullptr);
     QVERIFY(dlg->findChild<QPushButton*>("displayBgColorSwatch") != nullptr);
     delete dlg;
 }

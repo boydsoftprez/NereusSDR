@@ -1,0 +1,122 @@
+{
+  "runs": [
+    "relay",
+    "app"
+  ],
+  "steps": [
+    {
+      "connect": "device",
+      "address": "203.0.113.1"
+    },
+    {
+      "from": "device",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:device:s:a"
+      ]
+    },
+    {
+      "to": "device",
+      "binary": [
+        "81",
+        "01",
+        "00"
+      ]
+    },
+    {
+      "connect": "core",
+      "address": "198.51.100.1"
+    },
+    {
+      "from": "core",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:core:s:a"
+      ]
+    },
+    {
+      "to": "core",
+      "binary": [
+        "81",
+        "01",
+        "01"
+      ]
+    },
+    {
+      "to": "device",
+      "binary": [
+        "82",
+        "01"
+      ]
+    },
+    {
+      "drop": "device"
+    },
+    {
+      "to": "core",
+      "binary": [
+        "82",
+        "00"
+      ]
+    },
+    {
+      "connect": "device",
+      "address": "203.0.113.1"
+    },
+    {
+      "from": "device",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:device:s:a"
+      ]
+    },
+    {
+      "to": "device",
+      "binary": [
+        "81",
+        "01",
+        "01"
+      ]
+    },
+    {
+      "to": "core",
+      "binary": [
+        "82",
+        "01"
+      ]
+    },
+    {
+      "from": "core",
+      "role": "behaviour",
+      "binary": [
+        "02",
+        "$bytes:80:m1"
+      ]
+    },
+    {
+      "to": "device",
+      "binary": [
+        "02",
+        "$ref:m1"
+      ]
+    },
+    {
+      "from": "device",
+      "role": "behaviour",
+      "binary": [
+        "01",
+        "$bytes:80:c1"
+      ]
+    },
+    {
+      "to": "core",
+      "binary": [
+        "01",
+        "$ref:c1"
+      ]
+    }
+  ]
+}

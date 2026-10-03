@@ -1,0 +1,1909 @@
+{
+  "version": 12,
+  "category": {
+    "id": "display",
+    "title": "Display",
+    "where": "mixed",
+    "coverage": "partial"
+  },
+  "pages": [
+    {
+      "id": "display.spectrumDefaults",
+      "title": "Spectrum Defaults",
+      "where": "mixed",
+      "coverage": "partial",
+      "sections": [
+        {
+          "title": "Profile",
+          "controls": [
+            {
+              "id": "display.spectrumDefaults.smoothDefaults",
+              "label": "Reset to Smooth Defaults",
+              "tooltip": "Overwrite this panadapter's spectrum and waterfall look with the NereusSDR smooth-default profile: Clarity Blue palette, log-recursive averaging with a 650 ms averaging time, a white trace without fill, waterfall AGC on and a 30 ms waterfall update period. FFT size, frequency, band stack, and per-band grid ranges are not affected.",
+              "kind": "button",
+              "binding": {
+                "phone": "smoothDefaults"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "confirm": "This will overwrite your current Spectrum and Waterfall display settings with the NereusSDR smooth-default profile.\n\nYour FFT size, frequency, band stack, and per-band grid ranges are NOT affected.\n\nContinue?"
+            },
+            {
+              "id": "display.spectrumDefaults.clarity",
+              "label": "Enable Clarity (adaptive waterfall tuning)",
+              "tooltip": "Clarity keeps the waterfall thresholds centered on the actual noise floor as band conditions and tuning change. Uses a 30th-percentile estimator with 3-second EWMA smoothing and a ±2 dB deadband. When off, thresholds are fixed at their last values.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "ClarityEnabled"
+              },
+              "applies": "subscription",
+              "requiresDescriptionVersion": 12,
+              "default": true,
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 1
+              }
+            }
+          ]
+        },
+        {
+          "title": "Fast Fourier Transform",
+          "controls": [
+            {
+              "id": "display.spectrumDefaults.fftSize",
+              "label": "Size",
+              "tooltip": "FFT size used for spectrum analysis. Range 4096 to 262144 in powers of two. Larger = finer frequency resolution and a smaller bin width, at higher CPU cost.",
+              "kind": "slider",
+              "binding": {
+                "setting": "DisplayFftSize"
+              },
+              "applies": "subscription",
+              "requiresDescriptionVersion": 4,
+              "options": [
+                {
+                  "value": 4096,
+                  "label": "4096"
+                },
+                {
+                  "value": 8192,
+                  "label": "8192"
+                },
+                {
+                  "value": 16384,
+                  "label": "16384"
+                },
+                {
+                  "value": 32768,
+                  "label": "32768"
+                },
+                {
+                  "value": 65536,
+                  "label": "65536"
+                },
+                {
+                  "value": 131072,
+                  "label": "131072"
+                },
+                {
+                  "value": 262144,
+                  "label": "262144"
+                }
+              ],
+              "default": 4096
+            },
+            {
+              "id": "display.spectrumDefaults.window",
+              "label": "Window",
+              "tooltip": "FFT window function. Rectangular has the narrowest main lobe but the worst sidelobes. Blackman-Harris (4T or 7T) gives strong sidelobe rejection. Flat-Top is best for amplitude calibration. Kaiser is parameterized (Kaiser Pi shape parameter).",
+              "kind": "choice",
+              "binding": {
+                "setting": "DisplayFftWindow"
+              },
+              "applies": "subscription",
+              "choices": [
+                "Rectangular",
+                "Blackman-Harris 4T",
+                "Hann",
+                "Flat-Top",
+                "Hamming",
+                "Kaiser",
+                "Blackman-Harris 7T"
+              ],
+              "default": 1
+            },
+            {
+              "id": "display.spectrumDefaults.hzPerBinTarget",
+              "label": "Hz/bin Target",
+              "tooltip": "Auto-zoom override: target a constant Hz/bin regardless of zoom. Set to 0 (\"Off\") to use the default bins-in-window behavior (FFT replans on zoom). When > 0, the FFT size is fixed at sample rate / target so the trace delivers the requested resolution at any zoom level, which is handy for hunting narrow signals (CW, digital). Floor at the FFT slider value still applies (slider sets the minimum FFT size).",
+              "kind": "decimal",
+              "binding": {
+                "setting": "DisplayHzPerBinTarget"
+              },
+              "applies": "subscription",
+              "min": 0,
+              "max": 200,
+              "step": 0.5,
+              "decimals": 2,
+              "unit": "Hz/bin",
+              "default": 0
+            }
+          ]
+        },
+        {
+          "title": "Rendering",
+          "controls": [
+            {
+              "id": "display.spectrumDefaults.fps",
+              "label": "FPS:",
+              "tooltip": "Spectrum/waterfall redraw rate. Higher = smoother animation at cost of CPU.",
+              "kind": "slider",
+              "binding": {
+                "setting": "DisplaySpectrumFps"
+              },
+              "applies": "subscription",
+              "min": 10,
+              "max": 60,
+              "step": 1,
+              "unit": "fps",
+              "default": 30
+            },
+            {
+              "id": "display.spectrumDefaults.detector",
+              "label": "Spectrum Detector:",
+              "tooltip": "Spectrum bin-reduction policy. Peak takes the maximum bin in each display pixel. Rosenfell alternates max/min for a classic spectrum look. Average takes the arithmetic mean. Sample takes the first bin. RMS computes root-mean-square power.",
+              "kind": "choice",
+              "binding": {"phone": "DisplaySpectrumDetector"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 8,
+              "options": [
+                {"value": 0, "label": "Peak"},
+                {"value": 1, "label": "Rosenfell"},
+                {"value": 2, "label": "Average"},
+                {"value": 3, "label": "Sample"},
+                {"value": 4, "label": "RMS"}
+              ],
+              "default": 0,
+              "gate": {"capability": "remoteMediaVersion", "min": 1}
+            },
+            {
+              "id": "display.spectrumDefaults.averaging",
+              "label": "Spectrum Averaging:",
+              "tooltip": "Spectrum frame-averaging mode. None shows raw FFT output per frame. Recursive exponentially smooths in linear power space. Time Window approximates a sliding average. Log Recursive smooths in the dB domain for a more natural look at low levels.",
+              "kind": "choice",
+              "binding": {"phone": "DisplaySpectrumAveraging"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 8,
+              "options": [
+                {"value": 0, "label": "None"},
+                {"value": 1, "label": "Recursive"},
+                {"value": 2, "label": "Time Window"},
+                {"value": 3, "label": "Log Recursive"}
+              ],
+              "default": 3,
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.spectrumDefaults.averageTime",
+              "label": "Spectrum Avg Time:",
+              "tooltip": "Spectrum averaging time constant. Larger = heavier smoothing, slower response. Translates to a frame-by-frame alpha via α = exp(−1 / (fps × τ)).",
+              "kind": "integer",
+              "binding": {"phone": "DisplaySpectrumAverageTimeMs"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 8,
+              "min": 10, "max": 9999, "step": 10, "unit": "ms", "default": 30,
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.spectrumDefaults.decimation",
+              "label": "Decimation:",
+              "tooltip": "Display decimation. Higher the number, the lower the resolution.",
+              "kind": "integer",
+              "binding": {"phone": "decimation"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 8,
+              "min": 1, "max": 16, "step": 1, "default": 1,
+              "gate": {"capability": "spectrumGrantVersion", "min": 2}
+            },
+            {
+              "id": "display.spectrumDefaults.panFill",
+              "label": "Fill under trace",
+              "tooltip": "Check to fill the panadapter display line below the data.",
+              "kind": "toggle",
+              "binding": {"phone": "DisplayPanFill"},
+              "applies": "live",
+              "requiresDescriptionVersion": 9,
+              "default": true
+            },
+            {
+              "id": "display.spectrumDefaults.fillAlpha",
+              "label": "Fill Alpha:",
+              "tooltip": "Opacity of the fill area under the spectrum trace (0 = transparent, 100 = opaque).",
+              "kind": "slider",
+              "binding": {"phone": "DisplayFftFillAlpha"},
+              "applies": "live",
+              "requiresDescriptionVersion": 9,
+              "min": 0, "max": 100, "step": 1, "unit": "%", "default": 70
+            },
+            {
+              "id": "display.spectrumDefaults.gradient",
+              "label": "Trace gradient",
+              "tooltip": "When checked, the spectrum trace line renders with the gradient color applied.",
+              "kind": "toggle",
+              "binding": {"phone": "DisplayGradientEnabled"},
+              "applies": "live",
+              "requiresDescriptionVersion": 9,
+              "default": false
+            },
+            {
+              "id": "display.spectrumDefaults.peakHold",
+              "label": "Peak hold",
+              "tooltip": "When enabled, the highest signal level seen at each frequency bin is held on the display.",
+              "kind": "toggle",
+              "binding": {"phone": "DisplayPeakHoldEnabled"},
+              "applies": "live",
+              "requiresDescriptionVersion": 9,
+              "default": false
+            },
+            {
+              "id": "display.spectrumDefaults.peakDelay",
+              "label": "Peak Delay:",
+              "tooltip": "Time in milliseconds before a held peak begins to decay back toward the live trace.",
+              "kind": "integer",
+              "binding": {"phone": "DisplayPeakHoldResetMs"},
+              "applies": "live",
+              "requiresDescriptionVersion": 9,
+              "min": 100, "max": 10000, "step": 100, "unit": "ms", "default": 2000
+            }
+          ]
+        },
+        {
+          "title": "Spectrum Overlays",
+          "controls": [
+            {
+              "id": "display.spectrumDefaults.showCursorFreq",
+              "label": "Show cursor frequency",
+              "tooltip": "Display the frequency at the cursor position (always in MHz). Same toggle as the on-spectrum overlay-panel Cursor Freq button.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "DisplayShowCursorFreq"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "default": true
+            },
+            {
+              "id": "display.spectrumDefaults.showBinWidth",
+              "label": "Show bin width",
+              "tooltip": "Display the current FFT bin width (sample rate / FFT size) in the spectrum corner.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "DisplayShowBinWidth"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "default": false
+            },
+            {
+              "id": "display.spectrumDefaults.showNoiseFloor",
+              "label": "Show noise floor",
+              "tooltip": "Display the noise floor as a horizontal dashed line + dBm box+text.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "DisplayShowNoiseFloor"
+              },
+              "applies": "subscription",
+              "requiresDescriptionVersion": 12,
+              "default": false,
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.spectrumDefaults.noiseFloorShift",
+              "label": "NF shift:",
+              "tooltip": "Operator-tunable offset added to the rendered NF level, from -12 to +12 dB.",
+              "kind": "decimal",
+              "binding": {
+                "phone": "DisplayNoiseFloorShiftDb"
+              },
+              "applies": "subscription",
+              "requiresDescriptionVersion": 12,
+              "min": -12,
+              "max": 12,
+              "step": 0.5,
+              "decimals": 1,
+              "unit": "dB",
+              "default": 0,
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.spectrumDefaults.noiseFloorLineWidth",
+              "label": "Line width:",
+              "tooltip": "Width of the horizontal NF dashed line.",
+              "kind": "decimal",
+              "binding": {
+                "phone": "DisplayNoiseFloorLineWidth"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "min": 1,
+              "max": 5,
+              "step": 0.5,
+              "decimals": 1,
+              "unit": "px",
+              "default": 1,
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.spectrumDefaults.noiseFloorColor",
+              "label": "Line:",
+              "tooltip": "Color for the NF line + 8x8 box.",
+              "kind": "colour",
+              "binding": {
+                "phone": "DisplayNoiseFloorColor"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "default": "#FF40FFFF",
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.spectrumDefaults.noiseFloorTextColor",
+              "label": "Text:",
+              "tooltip": "Color for the NF dBm label text.",
+              "kind": "colour",
+              "binding": {
+                "phone": "DisplayNoiseFloorTextColor"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "default": "#FFFF00FF",
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.spectrumDefaults.noiseFloorFastColor",
+              "label": "Fast-attack:",
+              "tooltip": "Color shown during fast-attack (band/freq/MOX change).",
+              "kind": "colour",
+              "binding": {
+                "phone": "DisplayNoiseFloorFastColor"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "default": "#C8C8C8FF",
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 4
+              }
+            },
+            {
+              "id": "display.spectrumDefaults.normalize",
+              "label": "Normalize trace",
+              "tooltip": "Normalize the spectrum trace to a 1 Hz reference bandwidth. Only active for Average, Sample, or RMS detector modes.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "DisplayDispNormalize"
+              },
+              "applies": "subscription",
+              "requiresDescriptionVersion": 12,
+              "enabledWhen": {
+                "phone": "DisplaySpectrumDetector",
+                "oneOf": [
+                  2,
+                  3,
+                  4
+                ]
+              },
+              "default": false,
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.spectrumDefaults.showPeakValue",
+              "label": "Show peak value overlay",
+              "tooltip": "Display the peak signal level and frequency as a text overlay in the spectrum corner.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "DisplayShowPeakValueOverlay"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "default": false
+            },
+            {
+              "id": "display.spectrumDefaults.peakValuePosition",
+              "label": "Peak value position:",
+              "tooltip": "Corner position for the peak value readout.",
+              "kind": "choice",
+              "binding": {
+                "phone": "DisplayPeakValuePosition"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "options": [
+                {
+                  "value": 0,
+                  "label": "Top Left"
+                },
+                {
+                  "value": 1,
+                  "label": "Top Right"
+                },
+                {
+                  "value": 2,
+                  "label": "Bottom Left"
+                },
+                {
+                  "value": 3,
+                  "label": "Bottom Right"
+                }
+              ],
+              "default": 1
+            },
+            {
+              "id": "display.spectrumDefaults.peakTextDelay",
+              "label": "Peak value refresh:",
+              "tooltip": "Refresh interval for the peak value overlay in milliseconds.",
+              "kind": "integer",
+              "binding": {
+                "phone": "DisplayPeakTextDelayMs"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "min": 50,
+              "max": 10000,
+              "step": 50,
+              "unit": "ms",
+              "default": 500
+            },
+            {
+              "id": "display.spectrumDefaults.getMonitorHz",
+              "label": "Get Monitor Hz",
+              "tooltip": "Query the primary screen refresh rate and snap the FPS slider to the nearest valid value.",
+              "kind": "button",
+              "binding": {
+                "phone": "getMonitorHz"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "display.spectrumPeaks",
+      "title": "Spectrum Peaks",
+      "where": "phone",
+      "coverage": "partial",
+      "sections": [
+        {
+          "title": "Active Peak Hold",
+          "controls": [
+            {
+              "id": "display.spectrumPeaks.activePeakHold",
+              "label": "Enable per-bin peak trace with decay",
+              "tooltip": "Display a secondary trace of the highest recent level at each frequency bin. Each bin holds its peak for the hold duration after it was last raised, then falls at the drop rate.",
+              "kind": "toggle",
+              "binding": {"phone": "DisplayActivePeakHoldEnabled"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 11,
+              "default": false,
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.spectrumPeaks.activePeakHoldTime",
+              "label": "Hold duration:",
+              "tooltip": "How long (ms) a peak bin is held at its maximum before starting to decay.",
+              "kind": "integer",
+              "binding": {"phone": "DisplayActivePeakHoldDurationMs"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 11,
+              "min": 100, "max": 60000, "step": 100, "unit": "ms", "default": 2000,
+              "gate": {"capability": "displayExtrasVersion", "min": 3}
+            },
+            {
+              "id": "display.spectrumPeaks.activePeakHoldDropRate",
+              "label": "Drop rate:",
+              "tooltip": "Rate at which a held peak falls once its hold duration has passed.",
+              "kind": "integer",
+              "binding": {"phone": "DisplayActivePeakHoldDropDbPerSec"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 11,
+              "min": 1, "max": 60, "step": 1, "unit": "dB/s", "default": 6,
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.spectrumPeaks.activePeakHoldFill",
+              "label": "Fill area between peak trace and current trace",
+              "tooltip": "Shade the region between the live spectrum and the peak-hold trace.",
+              "kind": "toggle",
+              "binding": {"phone": "DisplayActivePeakHoldFill"},
+              "applies": "live",
+              "requiresDescriptionVersion": 11,
+              "default": false,
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.spectrumPeaks.activePeakHoldOnTx",
+              "label": "Update during TX",
+              "tooltip": "Keep the peak trace running while this panadapter transmits. When off, the trace is hidden and paused until transmit ends.",
+              "kind": "toggle",
+              "binding": {"phone": "DisplayActivePeakHoldOnTx"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 11,
+              "default": false,
+              "gate": {"capability": "displayExtrasVersion", "min": 3}
+            },
+            {
+              "id": "display.spectrumPeaks.activePeakHoldColor",
+              "label": "Trace color:",
+              "tooltip": "Color of the dashed Active Peak Hold trace. Set this to a hue different from the live data-line color so the peak trace stays visible (e.g. after Reset to Smooth Defaults paints the live trace white).",
+              "kind": "colour",
+              "binding": {"phone": "DisplayActivePeakHoldColor"},
+              "applies": "live",
+              "requiresDescriptionVersion": 11,
+              "default": "#FFD700FF",
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            }
+          ]
+        },
+        {
+          "title": "Peak Blobs",
+          "controls": [
+            {
+              "id": "display.spectrumPeaks.peakBlobs",
+              "label": "Show top-N peak markers",
+              "tooltip": "Display small circle markers at the top-N highest signal peaks in the spectrum.",
+              "kind": "toggle",
+              "binding": {"phone": "DisplayPeakBlobsEnabled"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 11,
+              "default": false,
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.spectrumPeaks.peakBlobCount",
+              "label": "Number of peaks:",
+              "tooltip": "Number of peak markers to display (1 to 20).",
+              "kind": "integer",
+              "binding": {"phone": "DisplayPeakBlobsCount"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 11,
+              "min": 1, "max": 20, "step": 1, "default": 3,
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.spectrumPeaks.peakBlobInsideFilter",
+              "label": "Only show peaks inside the RX filter passband",
+              "tooltip": "Restrict peak blobs to frequencies within the current RX filter passband.",
+              "kind": "toggle",
+              "binding": {"phone": "DisplayPeakBlobsInsideFilterOnly"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 11,
+              "default": false,
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.spectrumPeaks.peakBlobHold",
+              "label": "Hold peaks before decay",
+              "tooltip": "Keep each blob at its peak position for the hold duration before falling.",
+              "kind": "toggle",
+              "binding": {"phone": "DisplayPeakBlobsHoldEnabled"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 11,
+              "default": false,
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.spectrumPeaks.peakBlobHoldTime",
+              "label": "Hold duration:",
+              "tooltip": "How long (ms) a blob is held at its peak before falling.",
+              "kind": "integer",
+              "binding": {"phone": "DisplayPeakBlobsHoldMs"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 11,
+              "min": 100, "max": 60000, "step": 100, "unit": "ms", "default": 500,
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.spectrumPeaks.peakBlobHoldDrop",
+              "label": "Decay after hold (off = hard cut)",
+              "tooltip": "When on, blobs decay at the fall rate after the hold. When off, blobs disappear instantly after the hold duration.",
+              "kind": "toggle",
+              "binding": {"phone": "DisplayPeakBlobsHoldDrop"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 11,
+              "default": false,
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.spectrumPeaks.peakBlobFallRate",
+              "label": "Fall rate:",
+              "tooltip": "Rate at which blobs fall after the hold duration.",
+              "kind": "integer",
+              "binding": {"phone": "DisplayPeakBlobsFallDbPerSec"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 11,
+              "min": 1, "max": 60, "step": 1, "unit": "dB/s", "default": 6,
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.spectrumPeaks.peakBlobColor",
+              "label": "Blob color:",
+              "tooltip": "Color of the peak blob circles.",
+              "kind": "colour",
+              "binding": {"phone": "DisplayPeakBlobColor"},
+              "applies": "live",
+              "requiresDescriptionVersion": 11,
+              "default": "#FF4500FF",
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.spectrumPeaks.peakBlobTextColor",
+              "label": "Text color:",
+              "tooltip": "Color of the dBm readout text on each peak blob.",
+              "kind": "colour",
+              "binding": {"phone": "DisplayPeakBlobTextColor"},
+              "applies": "live",
+              "requiresDescriptionVersion": 11,
+              "default": "#7FFF00FF",
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "display.waterfallDefaults",
+      "title": "Waterfall Defaults",
+      "where": "phone",
+      "coverage": "partial",
+      "sections": [
+        {
+          "title": "Levels",
+          "controls": [
+            {
+              "id": "display.waterfallDefaults.highThreshold",
+              "label": "High Threshold:",
+              "tooltip": "Waterfall High Signal - Show High Color above this value (gradient in between).",
+              "kind": "slider",
+              "binding": {
+                "phone": "DisplayWfHighLevel"
+              },
+              "applies": "subscription",
+              "requiresDescriptionVersion": 12,
+              "min": -200,
+              "max": 0,
+              "step": 1,
+              "unit": "dBm",
+              "enabledWhen": {
+                "phone": "DisplayWfUseSpectrumMinMax",
+                "oneOf": [
+                  false
+                ]
+              },
+              "default": -62,
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.waterfallDefaults.lowThreshold",
+              "label": "Low Threshold:",
+              "tooltip": "Waterfall Low Signal - Show Low Color below this value (gradient in between).",
+              "kind": "slider",
+              "binding": {
+                "phone": "DisplayWfLowLevel"
+              },
+              "applies": "subscription",
+              "requiresDescriptionVersion": 12,
+              "min": -200,
+              "max": 0,
+              "step": 1,
+              "unit": "dBm",
+              "enabledWhen": {
+                "phone": "DisplayWfUseSpectrumMinMax",
+                "oneOf": [
+                  false
+                ]
+              },
+              "default": -122,
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.waterfallDefaults.agc",
+              "label": "AGC",
+              "tooltip": "Automatically calculates Low Level Threshold for Waterfall.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "DisplayWfAgc"
+              },
+              "applies": "subscription",
+              "requiresDescriptionVersion": 12,
+              "enabledWhen": {
+                "phone": "DisplayWfUseSpectrumMinMax",
+                "oneOf": [
+                  false
+                ]
+              },
+              "default": true,
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.waterfallDefaults.useSpectrumMinMax",
+              "label": "Use spectrum min/max",
+              "tooltip": "Spectrum Grid min/max used for low and high level",
+              "kind": "toggle",
+              "binding": {
+                "phone": "DisplayWfUseSpectrumMinMax"
+              },
+              "applies": "subscription",
+              "requiresDescriptionVersion": 12,
+              "default": false,
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.waterfallDefaults.copySpectrumMinMax",
+              "label": "Copy spectrum min/max → waterfall thresholds",
+              "tooltip": "Copies the current spectrum display dB max and dB min values into the waterfall High Threshold and Low Threshold above.",
+              "kind": "button",
+              "binding": {
+                "phone": "copySpectrumMinMax"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12
+            }
+          ]
+        },
+        {
+          "title": "Waterfall NF-AGC",
+          "controls": [
+            {
+              "id": "display.waterfallDefaults.nfAgc",
+              "label": "Enable NF-AGC",
+              "tooltip": "When enabled, the waterfall low/high thresholds automatically track the estimated noise floor. The offset below sets how far below the noise floor the low threshold is placed.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "WaterfallNFAGCEnabled"
+              },
+              "applies": "subscription",
+              "requiresDescriptionVersion": 12,
+              "enabledWhen": {
+                "phone": "DisplayWfUseSpectrumMinMax",
+                "oneOf": [
+                  false
+                ]
+              },
+              "default": false,
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.waterfallDefaults.nfAgcOffset",
+              "label": "NF offset:",
+              "tooltip": "Offset applied above the estimated noise floor when computing the waterfall low threshold. Negative values place the low threshold below the noise floor (recommended).",
+              "kind": "integer",
+              "binding": {
+                "phone": "WaterfallAGCOffsetDb"
+              },
+              "applies": "subscription",
+              "requiresDescriptionVersion": 12,
+              "min": -60,
+              "max": 60,
+              "step": 1,
+              "unit": "dB",
+              "enabledWhen": {
+                "phone": "DisplayWfUseSpectrumMinMax",
+                "oneOf": [
+                  false
+                ]
+              },
+              "default": 0,
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 1
+              }
+            }
+          ]
+        },
+        {
+          "title": "Display",
+          "controls": [
+            {
+              "id": "display.waterfallDefaults.detector",
+              "label": "WF Detector:",
+              "tooltip": "Waterfall bin-reduction policy. Peak takes the maximum bin per pixel. Rosenfell alternates max/min. Average takes the arithmetic mean. Sample takes the first bin.",
+              "kind": "choice",
+              "binding": {"phone": "DisplayWaterfallDetector"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 8,
+              "options": [
+                {"value": 0, "label": "Peak"},
+                {"value": 1, "label": "Rosenfell"},
+                {"value": 2, "label": "Average"},
+                {"value": 3, "label": "Sample"}
+              ],
+              "default": 0,
+              "gate": {"capability": "remoteMediaVersion", "min": 1}
+            },
+            {
+              "id": "display.waterfallDefaults.averaging",
+              "label": "WF Averaging:",
+              "tooltip": "Waterfall frame-averaging mode. None shows raw FFT output per row. Recursive exponentially smooths in linear power space. Time Window approximates a sliding average. Log Recursive smooths in the dB domain for better low-signal visibility.",
+              "kind": "choice",
+              "binding": {"phone": "DisplayWaterfallAveraging"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 8,
+              "options": [
+                {"value": 0, "label": "None"},
+                {"value": 1, "label": "Recursive"},
+                {"value": 2, "label": "Time Window"},
+                {"value": 3, "label": "Log Recursive"}
+              ],
+              "default": 0,
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.waterfallDefaults.averageTime",
+              "label": "WF Avg Time:",
+              "tooltip": "Waterfall averaging time constant. Independent from the spectrum averaging time. Larger = heavier smoothing. Translates to a frame-by-frame alpha via α = exp(−1 / (fps × τ)).",
+              "kind": "integer",
+              "binding": {"phone": "DisplayWaterfallAverageTimeMs"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 8,
+              "min": 10, "max": 9999, "step": 10, "unit": "ms", "default": 120,
+              "gate": {"capability": "displayExtrasVersion", "min": 1}
+            },
+            {
+              "id": "display.waterfallDefaults.updatePeriod",
+              "label": "Update Period:",
+              "tooltip": "How often to update (scroll another pixel line) on the waterfall display.  Note that this is tamed by the FPS setting.",
+              "kind": "slider",
+              "binding": {"phone": "DisplayWfUpdatePeriodMs"},
+              "applies": "subscription",
+              "requiresDescriptionVersion": 9,
+              "min": 10, "max": 500, "step": 1, "unit": "ms", "default": 30
+            },
+            {
+              "id": "display.waterfallDefaults.stopOnTx",
+              "label": "Stop on TX",
+              "tooltip": "Pause the waterfall while transmitting. Resumes automatically when TX ends.",
+              "kind": "toggle",
+              "binding": {"phone": "WaterfallStopOnTx"},
+              "applies": "live",
+              "requiresDescriptionVersion": 9,
+              "default": false
+            },
+            {
+              "id": "display.waterfallDefaults.opacity",
+              "label": "Opacity:",
+              "tooltip": "Waterfall opacity (0 = fully transparent, 100 = fully opaque). Blends the waterfall over the spectrum background.",
+              "kind": "slider",
+              "binding": {"phone": "DisplayWfOpacity"},
+              "applies": "live",
+              "requiresDescriptionVersion": 9,
+              "min": 0, "max": 100, "step": 1, "unit": "%", "default": 100
+            },
+            {
+              "id": "display.waterfallDefaults.colorScheme",
+              "label": "Color Scheme:",
+              "tooltip": "Waterfall color palette. Each scheme maps signal level to a different color gradient from low (dark) to high (bright).",
+              "kind": "choice",
+              "binding": {
+                "phone": "DisplayWfColorScheme"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "options": [
+                {
+                  "value": 0,
+                  "label": "Default"
+                },
+                {
+                  "value": 1,
+                  "label": "Enhanced"
+                },
+                {
+                  "value": 2,
+                  "label": "Spectran"
+                },
+                {
+                  "value": 3,
+                  "label": "BlackWhite"
+                },
+                {
+                  "value": 4,
+                  "label": "LinLog"
+                },
+                {
+                  "value": 5,
+                  "label": "LinRad"
+                },
+                {
+                  "value": 6,
+                  "label": "Custom"
+                },
+                {
+                  "value": 7,
+                  "label": "Clarity Blue"
+                }
+              ],
+              "default": 0
+            }
+          ]
+        },
+        {
+          "title": "Overlays",
+          "controls": [
+            {
+              "id": "display.waterfallDefaults.showRxFilter",
+              "label": "Show RX filter on waterfall",
+              "tooltip": "Overlay the current RX passband filter boundaries on the waterfall display.",
+              "kind": "toggle",
+              "binding": {"phone": "DisplayShowRxFilterOnWaterfall"},
+              "applies": "live",
+              "requiresDescriptionVersion": 10,
+              "default": false
+            },
+            {
+              "id": "display.waterfallDefaults.showTxFilter",
+              "label": "Show TX filter on RX waterfall",
+              "tooltip": "Overlay the TX passband filter boundaries on the RX waterfall display.",
+              "kind": "toggle",
+              "binding": {"phone": "DisplayShowTxFilterOnRxWaterfall"},
+              "applies": "live",
+              "requiresDescriptionVersion": 10,
+              "default": true
+            },
+            {
+              "id": "display.waterfallDefaults.showRxZeroLine",
+              "label": "Show RX zero line on waterfall",
+              "tooltip": "Draw a line on the waterfall at the RX center frequency (zero-beat reference).",
+              "kind": "toggle",
+              "binding": {"phone": "DisplayShowRxZeroLine"},
+              "applies": "live",
+              "requiresDescriptionVersion": 10,
+              "default": false
+            },
+            {
+              "id": "display.waterfallDefaults.showTxZeroLine",
+              "label": "Show TX zero line on waterfall",
+              "tooltip": "Draw a line on the waterfall at the TX center frequency (zero-beat reference).",
+              "kind": "toggle",
+              "binding": {"phone": "DisplayShowTxZeroLine"},
+              "applies": "live",
+              "requiresDescriptionVersion": 10,
+              "default": false
+            }
+          ]
+        },
+        {
+          "title": "Rewind history",
+          "controls": [
+            {
+              "id": "display.waterfallDefaults.historyDepth",
+              "label": "Depth:",
+              "tooltip": "Maximum amount of waterfall history kept for rewind. Effective rewind is capped at 16384 rows; slow the update period to extend depth at fast refresh rates.",
+              "kind": "choice",
+              "binding": {
+                "phone": "DisplayWaterfallHistoryMs"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "options": [
+                {
+                  "value": 60000,
+                  "label": "60 seconds"
+                },
+                {
+                  "value": 300000,
+                  "label": "5 minutes"
+                },
+                {
+                  "value": 900000,
+                  "label": "15 minutes"
+                },
+                {
+                  "value": 1200000,
+                  "label": "20 minutes"
+                }
+              ],
+              "default": 1200000
+            }
+          ]
+        },
+        {
+          "title": "Time",
+          "controls": [
+            {
+              "id": "display.waterfallDefaults.timestampPosition",
+              "label": "Timestamp Position:",
+              "tooltip": "Position of the time stamp drawn on each waterfall row. None disables timestamps; Left and Right place them at the respective edge.",
+              "kind": "choice",
+              "binding": {
+                "phone": "DisplayWfTimestampPos"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "options": [
+                {
+                  "value": 0,
+                  "label": "None"
+                },
+                {
+                  "value": 1,
+                  "label": "Left"
+                },
+                {
+                  "value": 2,
+                  "label": "Right"
+                }
+              ],
+              "default": 0
+            },
+            {
+              "id": "display.waterfallDefaults.timestampMode",
+              "label": "Timestamp Mode:",
+              "tooltip": "Time zone used for waterfall timestamps. UTC uses Coordinated Universal Time; Local uses the system clock time zone.",
+              "kind": "choice",
+              "binding": {
+                "phone": "DisplayWfTimestampMode"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "options": [
+                {
+                  "value": 0,
+                  "label": "UTC"
+                },
+                {
+                  "value": 1,
+                  "label": "Local"
+                }
+              ],
+              "default": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "display.gridScales",
+      "title": "Grid & Scales",
+      "where": "phone",
+      "sections": [
+        {
+          "title": "Grid",
+          "controls": [
+            {
+              "id": "display.gridScales.showGrid",
+              "label": "Show grid",
+              "tooltip": "Display the Major Grid on the Panadapter including the frequency numbers",
+              "kind": "toggle",
+              "binding": {
+                "phone": "DisplayGridEnabled"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "default": true
+            },
+            {
+              "id": "display.gridScales.dbmScale",
+              "label": "Show dBm scale strip (right edge)",
+              "tooltip": "Show the reference-level scale on the right edge of the spectrum. Disable to give the spectrum trace the full widget width.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "DisplayDbmScaleVisible"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "default": true
+            },
+            {
+              "id": "display.gridScales.dbMax",
+              "label": "dB Max (per band):",
+              "tooltip": "Signal level at the top of the display in dB, for the current band. Each band keeps its own value.",
+              "kind": "integer",
+              "binding": {
+                "phone": "DisplayGridMax"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "min": -200,
+              "max": 0,
+              "step": 1,
+              "unit": "dB",
+              "perBand": {
+                "label": "dB Max (%1):"
+              },
+              "default": -40
+            },
+            {
+              "id": "display.gridScales.dbMin",
+              "label": "dB Min (per band):",
+              "tooltip": "Signal level at the bottom of the display in dB, for the current band. Each band keeps its own value.",
+              "kind": "integer",
+              "binding": {
+                "phone": "DisplayGridMin"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "min": -200,
+              "max": 0,
+              "step": 1,
+              "unit": "dB",
+              "perBand": {
+                "label": "dB Min (%1):"
+              },
+              "default": -140
+            },
+            {
+              "id": "display.gridScales.dbStep",
+              "label": "dB Step (global):",
+              "tooltip": "Horizontal grid step size in dB. Sets the spacing between dB grid lines across all bands (global, not per-band).",
+              "kind": "integer",
+              "binding": {
+                "phone": "DisplayGridStep"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "min": 1,
+              "max": 40,
+              "step": 1,
+              "unit": "dB",
+              "default": 10
+            }
+          ]
+        },
+        {
+          "title": "Labels",
+          "controls": [
+            {
+              "id": "display.gridScales.freqLabelAlign",
+              "label": "Freq Label Align:",
+              "tooltip": "Sets the alignment of the frequency labels on the grid callouts on the display.",
+              "kind": "choice",
+              "binding": {
+                "phone": "DisplayFreqLabelAlign"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "options": [
+                {
+                  "value": 0,
+                  "label": "Left"
+                },
+                {
+                  "value": 1,
+                  "label": "Center"
+                },
+                {
+                  "value": 2,
+                  "label": "Right"
+                },
+                {
+                  "value": 3,
+                  "label": "Auto"
+                },
+                {
+                  "value": 4,
+                  "label": "Off"
+                }
+              ],
+              "default": 1
+            },
+            {
+              "id": "display.gridScales.zeroLine",
+              "label": "Show zero line",
+              "tooltip": "Show a horizontal line at 0 dBm on the panadapter grid.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "DisplayShowZeroLine"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "default": false
+            },
+            {
+              "id": "display.gridScales.showFps",
+              "label": "Show FPS overlay",
+              "tooltip": "Show FPS reading in top left of spectrum area",
+              "kind": "toggle",
+              "binding": {
+                "phone": "DisplayShowFps"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "default": false
+            }
+          ]
+        },
+        {
+          "title": "Noise-Floor Tracking",
+          "controls": [
+            {
+              "id": "display.gridScales.adjustGridMinToNoiseFloor",
+              "label": "Adjust grid min to track noise floor",
+              "tooltip": "When enabled, the lower grid boundary automatically follows the live noise floor estimate. The grid min is set to NF + offset.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "DisplayAdjustGridMinToNoiseFloor"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "default": false,
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 4
+              }
+            },
+            {
+              "id": "display.gridScales.noiseFloorOffset",
+              "label": "NF offset:",
+              "tooltip": "Offset added to the noise floor estimate to compute the grid min. Use a negative value to place the grid min below the noise floor.",
+              "kind": "integer",
+              "binding": {
+                "phone": "DisplayNFOffsetGridFollow"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "min": -60,
+              "max": 60,
+              "step": 1,
+              "unit": "dB",
+              "enabledWhen": {
+                "phone": "DisplayAdjustGridMinToNoiseFloor",
+                "oneOf": [
+                  true
+                ]
+              },
+              "default": 0,
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 4
+              }
+            },
+            {
+              "id": "display.gridScales.maintainGridRange",
+              "label": "Maintain grid range (move max with min)",
+              "tooltip": "When enabled, the grid max is also moved so the dB range stays constant as the grid min tracks the noise floor.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "DisplayMaintainNFAdjustDelta"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "enabledWhen": {
+                "phone": "DisplayAdjustGridMinToNoiseFloor",
+                "oneOf": [
+                  true
+                ]
+              },
+              "default": false,
+              "gate": {
+                "capability": "displayExtrasVersion",
+                "min": 4
+              }
+            }
+          ]
+        },
+        {
+          "title": "Copy",
+          "controls": [
+            {
+              "id": "display.gridScales.copyWaterfallThresholds",
+              "label": "Copy waterfall thresholds → spectrum min/max",
+              "tooltip": "Copies the current waterfall High Threshold and Low Threshold into the spectrum dB max and dB min for the current band.",
+              "kind": "button",
+              "binding": {
+                "phone": "copyWaterfallThresholds"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "display.multimeter",
+      "title": "Multimeter",
+      "where": "mixed",
+      "coverage": "partial",
+      "sections": [
+        {
+          "title": "Multimeter",
+          "controls": [
+            {
+              "id": "display.multimeter.pollingDelay",
+              "label": "Polling delay:",
+              "tooltip": "How often the meter values are updated (10–2000 ms). Lower values give faster response; higher values reduce CPU load.",
+              "kind": "integer",
+              "binding": {
+                "setting": "MultimeterDelayMs"
+              },
+              "applies": "live",
+              "min": 10,
+              "max": 2000,
+              "step": 1,
+              "unit": "ms",
+              "default": 100
+            },
+            {
+              "id": "display.multimeter.showDecimal",
+              "label": "Show decimal point in readouts",
+              "tooltip": "Display a decimal digit in S-meter and dBm text readouts (e.g. S5.3 or -85.6 dBm).",
+              "kind": "toggle",
+              "binding": {
+                "phone": "MultimeterShowDecimal"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "default": true
+            }
+          ]
+        },
+        {
+          "title": "Signal Units",
+          "controls": [
+            {
+              "id": "display.multimeter.unitMode",
+              "label": "Display units:",
+              "tooltip": "Sets the unit used for signal level readouts across all meter items. S = IARU S-scale (S1–S9+dB), dBm = -130 to 0, uV = microvolts at 50Ω.",
+              "kind": "choice",
+              "binding": {
+                "phone": "MultimeterUnitMode"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "options": [
+                {
+                  "value": 0,
+                  "label": "S"
+                },
+                {
+                  "value": 1,
+                  "label": "dBm"
+                },
+                {
+                  "value": 2,
+                  "label": "uV"
+                }
+              ],
+              "default": 1
+            }
+          ]
+        },
+        {
+          "title": "Signal History",
+          "controls": [
+            {
+              "id": "display.multimeter.historyDuration",
+              "label": "History duration:",
+              "tooltip": "Total time span shown in the signal history graph (1–600 000 ms).",
+              "kind": "integer",
+              "binding": {
+                "phone": "MultimeterSignalHistoryDurationMs"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "min": 1000,
+              "max": 600000,
+              "step": 1,
+              "unit": "ms",
+              "default": 60000
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "display.txDisplay",
+      "title": "TX Display",
+      "where": "mixed",
+      "coverage": "partial",
+      "sections": [
+        {
+          "title": "Fast Fourier Transform",
+          "controls": [
+            {
+              "id": "display.txDisplay.fftSize",
+              "label": "Size",
+              "tooltip": "TX FFT size used during MOX. Range 4096 to 262144 in powers of two. Larger gives finer frequency resolution and a smaller bin width at higher CPU cost. RX FFT slider is independent.",
+              "kind": "slider",
+              "binding": {
+                "setting": "DisplayTxFftSize"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 4,
+              "options": [
+                {
+                  "value": 4096,
+                  "label": "4096"
+                },
+                {
+                  "value": 8192,
+                  "label": "8192"
+                },
+                {
+                  "value": 16384,
+                  "label": "16384"
+                },
+                {
+                  "value": 32768,
+                  "label": "32768"
+                },
+                {
+                  "value": 65536,
+                  "label": "65536"
+                },
+                {
+                  "value": 131072,
+                  "label": "131072"
+                },
+                {
+                  "value": 262144,
+                  "label": "262144"
+                }
+              ],
+              "default": 32768,
+              "gate": {
+                "capability": "txDisplayVersion",
+                "min": 2
+              }
+            },
+            {
+              "id": "display.txDisplay.window",
+              "label": "Window",
+              "tooltip": "TX FFT window function. Hamming (default) trades a wide main lobe for moderate sidelobe rejection. Blackman-Harris (4T or 7T) gives strong sidelobe rejection for cleaner waterfall during TX. Flat-Top is best for amplitude calibration. Kaiser is parameterized.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DisplayTxWindowType"
+              },
+              "applies": "live",
+              "choices": [
+                "Rectangular",
+                "Blackman-Harris 4T",
+                "Hann",
+                "Flat-Top",
+                "Hamming",
+                "Kaiser",
+                "Blackman-Harris 7T"
+              ],
+              "default": 4,
+              "gate": {
+                "capability": "txDisplayVersion",
+                "min": 2
+              }
+            }
+          ]
+        },
+        {
+          "title": "Panadapter",
+          "controls": [
+            {
+              "id": "display.txDisplay.panDetector",
+              "label": "Detector:",
+              "tooltip": "TX panadapter trace detector. Peak shows the maximum bin value per pixel (transient-friendly). Average integrates across the bins (smoother). Sample takes one bin per pixel. RMS is true root-mean-square. Normalize is only available for Average / Sample / RMS.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DisplayTxPanDetector"
+              },
+              "applies": "live",
+              "choices": [
+                "Peak",
+                "Rosenfell",
+                "Average",
+                "Sample",
+                "RMS"
+              ],
+              "default": 0,
+              "gate": {
+                "capability": "txDisplayVersion",
+                "min": 2
+              }
+            },
+            {
+              "id": "display.txDisplay.panAveraging",
+              "label": "Averaging:",
+              "tooltip": "TX panadapter trace averaging policy. None = instantaneous. Recursive = exponential smoothing with the time constant set below. Time Window = fixed-window N-frame average. Log Recursive = recursive in the log (dBm) domain.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DisplayTxPanAveraging"
+              },
+              "applies": "live",
+              "choices": [
+                "None",
+                "Recursive",
+                "Time Window",
+                "Log Recursive"
+              ],
+              "default": 0,
+              "gate": {
+                "capability": "txDisplayVersion",
+                "min": 2
+              }
+            },
+            {
+              "id": "display.txDisplay.panAvTime",
+              "label": "Time:",
+              "tooltip": "TX panadapter averaging time constant in milliseconds. Larger values give smoother traces at the cost of slower response to transients.",
+              "kind": "integer",
+              "binding": {
+                "setting": "DisplayTxPanAvTimeMs"
+              },
+              "applies": "live",
+              "min": 1,
+              "max": 9999,
+              "step": 1,
+              "unit": "ms",
+              "default": 30,
+              "gate": {
+                "capability": "txDisplayVersion",
+                "min": 2
+              }
+            },
+            {
+              "id": "display.txDisplay.panNormalize",
+              "label": "1 Hz BW: Av / Sa",
+              "tooltip": "Normalize the TX panadapter trace to a 1 Hz reference bandwidth. Only available for the Average, Sample, and RMS detectors (the Peak and Rosenfell detectors are not power-like).",
+              "kind": "toggle",
+              "binding": {
+                "setting": "DisplayTxPanNormalize"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 4,
+              "default": false,
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "enabledWhen": {
+                "setting": "DisplayTxPanDetector",
+                "oneOf": [
+                  "2",
+                  "3",
+                  "4"
+                ]
+              },
+              "gate": {
+                "capability": "txDisplayVersion",
+                "min": 2
+              }
+            }
+          ]
+        },
+        {
+          "title": "Waterfall",
+          "controls": [
+            {
+              "id": "display.txDisplay.wfDetector",
+              "label": "Detector:",
+              "tooltip": "TX waterfall detector. Applied independently of the pan detector. Peak suits transient visibility; Average gives a smoother waterfall floor.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DisplayTxWfDetector"
+              },
+              "applies": "live",
+              "choices": [
+                "Peak",
+                "Rosenfell",
+                "Average",
+                "Sample"
+              ],
+              "default": 0,
+              "gate": {
+                "capability": "txDisplayVersion",
+                "min": 2
+              }
+            },
+            {
+              "id": "display.txDisplay.wfAveraging",
+              "label": "Averaging:",
+              "tooltip": "TX waterfall averaging policy. Applied independently of the pan averaging.",
+              "kind": "choice",
+              "binding": {
+                "setting": "DisplayTxWfAveraging"
+              },
+              "applies": "live",
+              "choices": [
+                "None",
+                "Recursive",
+                "Time Window",
+                "Log Recursive"
+              ],
+              "default": 0,
+              "gate": {
+                "capability": "txDisplayVersion",
+                "min": 2
+              }
+            },
+            {
+              "id": "display.txDisplay.wfAvTime",
+              "label": "Time:",
+              "tooltip": "TX waterfall averaging time constant in milliseconds. Defaults to 120 ms (longer than the pan default of 30 ms) so the waterfall preserves a longer time history.",
+              "kind": "integer",
+              "binding": {
+                "setting": "DisplayTxWfAvTimeMs"
+              },
+              "applies": "live",
+              "min": 1,
+              "max": 9999,
+              "step": 1,
+              "unit": "ms",
+              "default": 120,
+              "gate": {
+                "capability": "txDisplayVersion",
+                "min": 2
+              }
+            }
+          ]
+        },
+        {
+          "title": "Waterfall Amplitude Scale",
+          "controls": [
+            {
+              "id": "display.txDisplay.wfLowLevel",
+              "label": "Low Level:",
+              "tooltip": "Waterfall Low Signal. Show Low Color below this value, with gradient in between.",
+              "kind": "integer",
+              "binding": {
+                "phone": "DisplayTxWfLowLevel"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "min": -200,
+              "max": 200,
+              "step": 5,
+              "unit": "dBm",
+              "default": -70,
+              "gate": {
+                "capability": "txDisplayVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.txDisplay.wfHighLevel",
+              "label": "High Level:",
+              "tooltip": "Waterfall High Signal. Show High Color above this value, with gradient in between.",
+              "kind": "integer",
+              "binding": {
+                "phone": "DisplayTxWfHighLevel"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "min": -200,
+              "max": 200,
+              "step": 5,
+              "unit": "dBm",
+              "default": 30,
+              "gate": {
+                "capability": "txDisplayVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.txDisplay.wfPalette",
+              "label": "Palette:",
+              "tooltip": "Sets the color scheme for the TX waterfall.",
+              "kind": "choice",
+              "binding": {
+                "phone": "DisplayTxWfPalette"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "options": [
+                {
+                  "value": 1,
+                  "label": "Enhanced"
+                },
+                {
+                  "value": 2,
+                  "label": "Spectran"
+                },
+                {
+                  "value": 3,
+                  "label": "BlackWhite"
+                },
+                {
+                  "value": 4,
+                  "label": "LinLog"
+                },
+                {
+                  "value": 5,
+                  "label": "LinRad"
+                },
+                {
+                  "value": 0,
+                  "label": "LinAuto"
+                },
+                {
+                  "value": 6,
+                  "label": "Custom"
+                }
+              ],
+              "default": 1,
+              "gate": {
+                "capability": "txDisplayVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.txDisplay.wfLowColor",
+              "label": "Low Color:",
+              "tooltip": "Color used when the signal level is at or below the Low Level set above.",
+              "kind": "colour",
+              "binding": {
+                "phone": "DisplayTxWfLowColor"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "default": "#000000FF",
+              "gate": {
+                "capability": "txDisplayVersion",
+                "min": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "display.threeD",
+      "title": "3D View",
+      "where": "phone",
+      "sections": [
+        {
+          "title": "3D VIEW",
+          "controls": [
+            {
+              "id": "display.threeD.reset",
+              "label": "Reset 3D to defaults",
+              "tooltip": "Restore Spectrum render mode, 3D Floor, 3D Gain, 3D Span, 3D Angle, 3D Speed and 3D Slice Shadow to their ship defaults (2D Waterfall / 6 dB / 70% / 100% / 50% / Match / off).",
+              "kind": "button",
+              "binding": {
+                "phone": "reset3d"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "confirm": "This will restore Spectrum render mode, 3D Floor, 3D Gain, 3D Span, 3D Angle, 3D Speed and 3D Slice Shadow to their ship defaults.\n\nContinue?"
+            },
+            {
+              "id": "display.threeD.renderMode",
+              "label": "Spectrum:",
+              "tooltip": "2D: FFT trace + waterfall.\n3D: perspective stacked-trace spectrum stream.",
+              "kind": "choice",
+              "binding": {
+                "phone": "DisplaySpectrumRenderMode"
+              },
+              "applies": "subscription",
+              "requiresDescriptionVersion": 12,
+              "options": [
+                {
+                  "value": 0,
+                  "label": "2D Waterfall"
+                },
+                {
+                  "value": 1,
+                  "label": "3D Stacked Trace"
+                }
+              ],
+              "default": 0,
+              "gate": {
+                "capability": "remoteMediaVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "display.threeD.floor",
+              "label": "3D Floor:",
+              "tooltip": "How far below the noise floor the surface starts. Each band keeps its own value.",
+              "kind": "slider",
+              "binding": {
+                "phone": "Display3DFloorDepth"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "min": 0,
+              "max": 24,
+              "step": 1,
+              "unit": "dB",
+              "perBand": {
+                "label": "3D Floor:"
+              },
+              "default": 6
+            },
+            {
+              "id": "display.threeD.gain",
+              "label": "3D Gain:",
+              "tooltip": "3D surface color gain: how far down the signal range the colormap reaches.\nHigher = color down toward the noise floor; lower = color only on the strongest signals.",
+              "kind": "slider",
+              "binding": {
+                "phone": "Display3DGain"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "min": 0,
+              "max": 100,
+              "step": 1,
+              "unit": "%",
+              "default": 70
+            },
+            {
+              "id": "display.threeD.span",
+              "label": "3D Span:",
+              "tooltip": "3D surface width: how far the nearest traces overhang the plot edges, using spectrum the radio sends from outside the panadapter.\nHigher = the empty wedges beside the surface close from the front; 0 = the classic narrowing trapezoid.",
+              "kind": "slider",
+              "binding": {
+                "phone": "Display3DSpan"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "min": 0,
+              "max": 100,
+              "step": 1,
+              "unit": "%",
+              "default": 100
+            },
+            {
+              "id": "display.threeD.angle",
+              "label": "3D Angle:",
+              "tooltip": "Viewing angle for the 3D surface: low looks along the traces edge-on, high looks down on them.\n50 is the classic fixed angle.",
+              "kind": "slider",
+              "binding": {
+                "phone": "Display3DAngle"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "min": 0,
+              "max": 100,
+              "step": 1,
+              "unit": "%",
+              "default": 50
+            },
+            {
+              "id": "display.threeD.sliceShadow",
+              "label": "3D Slice Shadow",
+              "tooltip": "Darken each slice's passband onto the 3D surface so it leans back\nwith the perspective, instead of drawing flat on top of it.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "Display3DSliceShadow"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "default": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

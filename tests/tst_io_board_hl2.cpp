@@ -3,6 +3,9 @@
 #include <QSignalSpy>
 #include "core/IoBoardHl2.h"
 
+#include <thread>
+#include <vector>
+
 using namespace NereusSDR;
 
 class TestIoBoardHl2 : public QObject {
@@ -149,6 +152,118 @@ private slots:
         QSignalSpy spy(&io, &IoBoardHl2::detectedChanged);
         io.setDetected(true);  // same value
         QCOMPARE(spy.count(), 0);
+    }
+
+    // ── Unanswered reads ──
+
+    // A read the radio never answers must not take the next read's answer
+    // (mi0bot gives it up after its 20 one-millisecond polls, and the next
+    // read takes the answer slot).
+    void unansweredRead_isGivenUpWhenTheNextReadGoesOut() {
+        IoBoardHl2 io;
+        qint64 now = 1000;
+        io.setClockForTest([&now]() { return now; });
+        QVERIFY(io.pushPendingRead({IoBoardHl2::kI2cAddrGeneral, 6}));
+        now += IoBoardHl2::kReadAnswerMs;
+        QVERIFY(io.pushPendingRead({IoBoardHl2::kI2cAddrGeneral, 169}));
+        QSignalSpy answered(&io, &IoBoardHl2::i2cReadAnswered);
+        io.applyI2cReadResponse(0x80 | (0x3d << 1), 0x00, 0x00, 0x00, 0x04);
+        QCOMPARE(answered.count(), 1);
+        QCOMPARE(answered.at(0).at(1).value<quint8>(), quint8(169));
+        QCOMPARE(io.registerValue(IoBoardHl2::Register::REG_OUT_PINS), quint8(0x04));
+        QCOMPARE(io.pendingReadDepth(), 0);
+    }
+
+    // Reads still inside their answer time keep their order.
+    void readsInsideTheirAnswerTime_keepTheirOrder() {
+        IoBoardHl2 io;
+        qint64 now = 1000;
+        io.setClockForTest([&now]() { return now; });
+        QVERIFY(io.pushPendingRead({IoBoardHl2::kI2cAddrGeneral, 9}));
+        now += IoBoardHl2::kReadAnswerMs - 1;
+        QVERIFY(io.pushPendingRead({IoBoardHl2::kI2cAddrGeneral, 10}));
+        QSignalSpy answered(&io, &IoBoardHl2::i2cReadAnswered);
+        io.applyI2cReadResponse(0x80 | (0x3d << 1), 0x00, 0x00, 0x00, 0x01);
+        io.applyI2cReadResponse(0x80 | (0x3d << 1), 0x00, 0x00, 0x00, 0x02);
+        QCOMPARE(answered.count(), 2);
+        QCOMPARE(answered.at(0).at(1).value<quint8>(), quint8(9));
+        QCOMPARE(answered.at(1).at(1).value<quint8>(), quint8(10));
+    }
+
+    // A late answer with no newer read waiting still lands on its read.
+    void lateAnswer_withNoNewerRead_landsOnItsRead() {
+        IoBoardHl2 io;
+        qint64 now = 1000;
+        io.setClockForTest([&now]() { return now; });
+        QVERIFY(io.pushPendingRead({IoBoardHl2::kI2cAddrGeneral, 6}));
+        now += 10 * IoBoardHl2::kReadAnswerMs;
+        QSignalSpy answered(&io, &IoBoardHl2::i2cReadAnswered);
+        io.applyI2cReadResponse(0x80 | (0x3d << 1), 0x00, 0x00, 0x00, 0x08);
+        QCOMPARE(answered.count(), 1);
+        QCOMPARE(answered.at(0).at(1).value<quint8>(), quint8(6));
+    }
+
+    // ── Threads ──
+
+    // The main thread (the I2C tool) and the connection thread (the poll)
+    // both queue transactions while the codec takes them on the connection
+    // thread. Every transaction must come out once, each producer's in the
+    // order it queued them, and the depth must stay in range. No clock: the
+    // consumer runs until it has every transaction, so load only slows it,
+    // and a lost transaction shows as the ctest time limit.
+    void i2cQueue_isSafeAcrossThreads() {
+        IoBoardHl2 io;
+        constexpr int kPerProducer = 4000;
+        const auto produce = [&io](quint8 producer) {
+            for (int i = 0; i < kPerProducer;) {
+                IoBoardHl2::I2cTxn txn;
+                txn.bus = producer;
+                txn.address = quint8(i & 0x7F);
+                txn.control = quint8((i >> 7) & 0xFF);
+                txn.writeData = quint8((i >> 15) & 0xFF);
+                if (io.enqueueI2c(txn)) {
+                    ++i;
+                } else {
+                    std::this_thread::yield();
+                }
+            }
+        };
+        std::vector<int> next(2, 0);
+        int received = 0;
+        int outOfOrder = 0;
+        int badDepth = 0;
+        std::thread consumer([&]() {
+            while (received < 2 * kPerProducer) {
+                const int depth = io.i2cQueueDepth();
+                if (depth < 0 || depth > IoBoardHl2::kMaxI2cQueue) {
+                    ++badDepth;
+                }
+                IoBoardHl2::I2cTxn txn;
+                if (!io.dequeueI2c(txn)) {
+                    std::this_thread::yield();
+                    continue;
+                }
+                const int producer = txn.bus;
+                const int index = txn.address | (txn.control << 7) | (txn.writeData << 15);
+                if (producer < 0 || producer > 1 || index != next[producer]) {
+                    ++outOfOrder;
+                } else {
+                    ++next[producer];
+                }
+                ++received;
+            }
+        });
+        std::thread a(produce, quint8(0));
+        std::thread b(produce, quint8(1));
+        a.join();
+        b.join();
+        consumer.join();
+        QCOMPARE(outOfOrder, 0);
+        QCOMPARE(badDepth, 0);
+        QCOMPARE(received, 2 * kPerProducer);
+        QCOMPARE(next[0], kPerProducer);
+        QCOMPARE(next[1], kPerProducer);
+        QVERIFY(io.i2cQueueIsEmpty());
     }
 };
 

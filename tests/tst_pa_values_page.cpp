@@ -7,9 +7,9 @@
 // the page's response to RadioStatus + RadioConnection signals:
 //
 //   - powerChanged → FWD calibrated, REV, SWR labels
-//   - paTemperatureChanged → temperature label
-//   - paCurrentChanged → current label
-//   - supplyVoltsChanged → supply volts label
+//   - PA temperature, PA current and supply volts labels from
+//     RadioModel::paReadings() (remote-window parity Task 6), unavailable
+//     until the connected radio reports each
 //   - paTelemetryUpdated → FWD/REV ADC raw labels
 //   - adcOverflow → overload label (and clears after 2s)
 //   - null model constructs safely (model-less preview path)
@@ -139,39 +139,56 @@ void TstPaValuesPage::reflected_power_and_swr_update_on_powerChanged()
 }
 
 // ---------------------------------------------------------------------------
-// paCurrentChanged → PA current label.
+// PA current label. R-R3-32 (remote-window parity Task 6): the page reads
+// RadioModel::paReadings(), where the current is present once a telemetry
+// sample from a connected radio with a PA current sensor has reported it;
+// before that it reads "Unavailable", never 0.
 // ---------------------------------------------------------------------------
 void TstPaValuesPage::pa_current_updates_on_signal()
 {
     RadioModel model;
+    model.setBoardForTest(HPSDRHW::Saturn);
+    model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+    auto* conn = new TestNullConnection();
     PaValuesPage page(&model);
+    QCOMPARE(page.paCurrentTextForTest(), QStringLiteral("Unavailable"));
+    model.injectConnectionForTest(conn);
 
-    model.radioStatus().setPaCurrent(2.5);
+    // userAdc1 1181: ((1181 * 5000 / 4095) - 360) / 120 = 9.02 A (Thetis
+    // convertToAmps), then RadioStatus holds it.
+    model.handlePaTelemetryForTest(0, 0, 0, 0, 1181, 0);
+    QCOMPARE(page.paCurrentTextForTest(),
+             QString::number(model.radioStatus().paCurrentAmps(), 'f', 2) + QStringLiteral(" A"));
+    QVERIFY(model.radioStatus().paCurrentAmps() > 8.9);
 
-    QCOMPARE(page.paCurrentTextForTest(), QStringLiteral("2.50 A"));
+    model.injectConnectionForTest(nullptr);
+    QCOMPARE(page.paCurrentTextForTest(), QStringLiteral("Unavailable"));
+    delete conn;
 }
 
 // ---------------------------------------------------------------------------
-// paTemperatureChanged → PA temperature label.
+// PA temperature label: the HL2 reports its PA temperature in the exciter
+// power field (mi0bot console.cs); present once reported.
 // ---------------------------------------------------------------------------
 void TstPaValuesPage::pa_temperature_updates_on_signal()
 {
     RadioModel model;
+    model.setBoardForTest(HPSDRHW::HermesLite);
+    model.setHpsdrModelForTest(HPSDRModel::HERMESLITE);
+    auto* conn = new TestNullConnection();
+    model.injectConnectionForTest(conn);
     PaValuesPage page(&model);
+    QCOMPARE(page.paTempTextForTest(), QStringLiteral("Unavailable"));
 
-    model.radioStatus().setPaTemperature(45.5);
+    model.handlePaTelemetryForTest(0, 0, /*exciterRaw=*/1200, 0, 0, 0);
+    const double celsius = model.radioStatus().paTemperatureCelsius();
+    QVERIFY(celsius > 0.0);
+    QVERIFY2(page.paTempTextForTest().startsWith(QString::number(celsius, 'f', 1)),
+             qPrintable(page.paTempTextForTest()));
+    QVERIFY(page.paTempTextForTest().contains(QString::fromUtf8("\xC2\xB0")));
 
-    // Pre-existing test had the degree sign as a raw UTF-8 byte pair
-    // (`\xC2\xB0`) inside QStringLiteral, which encoded as Â° (two
-    // separate codepoints).  The shipped string has always rendered the
-    // proper U+00B0 degree sign on screen; the test's expected value
-    // was the byte-buggy form.  Now that PaValuesPage formats via
-    // PaTempUnitNotifier (which uses QString::asprintf with the same
-    // UTF-8 source bytes interpreted correctly) the comparison must
-    // assert on the proper character.  QString::fromUtf8 decodes the
-    // \xC2\xB0 byte pair to the single U+00B0 codepoint.
-    QCOMPARE(page.paTempTextForTest(),
-             QString::fromUtf8("45.5 \xC2\xB0""C"));
+    model.injectConnectionForTest(nullptr);
+    delete conn;
 }
 
 // ---------------------------------------------------------------------------
@@ -209,10 +226,16 @@ void TstPaValuesPage::supply_volts_updates_on_signal()
     model.injectConnectionForTest(conn);
 
     PaValuesPage page(&model);
+    QCOMPARE(page.supplyVoltsTextForTest(), QStringLiteral("Unavailable"));
 
-    emit conn->supplyVoltsChanged(13.3f);
-
-    QCOMPARE(page.supplyVoltsTextForTest(), QStringLiteral("13.3 V"));
+    // R-R3-32 (parity Task 6): the connection's cached supply volts, as the
+    // status frame handler leaves them.
+    // (RadioModel re-reads it on the connection's supplyVoltsChanged, which
+    // the connect path wires; Reset re-reads it here.)
+    conn->handleSupplyRaw(2400);
+    page.resetPaValues();
+    QCOMPARE(page.supplyVoltsTextForTest(),
+             QString::number(conn->lastSupplyVolts(), 'f', 1) + QStringLiteral(" V"));
 
     model.injectConnectionForTest(nullptr);
     delete conn;

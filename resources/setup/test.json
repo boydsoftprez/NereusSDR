@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "category": {
+    "id": "test",
+    "title": "Test",
+    "where": "station"
+  },
+  "pages": [
+    {
+      "id": "test.twoToneImd",
+      "title": "Two-Tone IMD",
+      "where": "station",
+      "sections": [
+        {
+          "title": "Tone Frequencies",
+          "controls": [
+            {
+              "id": "test.twoToneImd.freq1",
+              "label": "Freq #1:",
+              "tooltip": "",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "twoToneFreq1"
+                }
+              },
+              "min": -20000,
+              "max": 20000,
+              "step": 1,
+              "unit": "Hz",
+              "applies": "live",
+              "gate": {
+                "transmit": true
+              }
+            },
+            {
+              "id": "test.twoToneImd.freq2",
+              "label": "Freq #2:",
+              "tooltip": "",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "twoToneFreq2"
+                }
+              },
+              "min": -20000,
+              "max": 20000,
+              "step": 1,
+              "unit": "Hz",
+              "applies": "live",
+              "gate": {
+                "transmit": true
+              }
+            },
+            {
+              "id": "test.twoToneImd.defaults",
+              "label": "Defaults",
+              "tooltip": "",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "tx.twoTonePreset",
+                  "arguments": {
+                    "name": "defaults"
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "transmit": true,
+                "capability": "setupDescriptionVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "test.twoToneImd.stealth",
+              "label": "Stealth",
+              "tooltip": "",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "tx.twoTonePreset",
+                  "arguments": {
+                    "name": "stealth"
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "transmit": true,
+                "capability": "setupDescriptionVersion",
+                "min": 1
+              }
+            }
+          ]
+        },
+        {
+          "title": "Output Level",
+          "controls": [
+            {
+              "id": "test.twoToneImd.level",
+              "label": "Level:",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "twoToneLevel"
+                }
+              },
+              "min": -96,
+              "max": 0,
+              "step": 0.001,
+              "unit": "dB",
+              "applies": "live",
+              "gate": {
+                "transmit": true
+              }
+            },
+            {
+              "id": "test.twoToneImd.power",
+              "label": "Drive Power (Fixed mode):",
+              "tooltip": "",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "twoTonePower"
+                }
+              },
+              "min": 0,
+              "max": 100,
+              "step": 1,
+              "unit": "%",
+              "applies": "live",
+              "gate": {
+                "transmit": true
+              }
+            }
+          ]
+        },
+        {
+          "title": "Mode",
+          "controls": [
+            {
+              "id": "test.twoToneImd.pulsed",
+              "label": "Pulsed two-tone",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "twoTonePulsed"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "transmit": true
+              }
+            },
+            {
+              "id": "test.twoToneImd.invert",
+              "label": "Invert for LS Modes",
+              "tooltip": "Swap F1 and F2 for lower side band modes",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "twoToneInvert"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "transmit": true
+              }
+            },
+            {
+              "id": "test.twoToneImd.freq2Delay",
+              "label": "Freq #2 delay:",
+              "tooltip": "Applies a wait delay before Freq#2 is enabled",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "twoToneFreq2Delay"
+                }
+              },
+              "min": 0,
+              "max": 1000,
+              "step": 1,
+              "unit": "ms",
+              "applies": "live",
+              "gate": {
+                "transmit": true
+              }
+            }
+          ]
+        },
+        {
+          "title": "Drive Power Source",
+          "controls": [
+            {
+              "id": "test.twoToneImd.drivePowerSource",
+              "label": "Drive Power Source",
+              "tooltip": "",
+              "kind": "choice",
+              "choices": [
+                "Drive Slider",
+                "Tune Slider",
+                "Fixed"
+              ],
+              "binding": {
+                "property": {
+                  "object": "transmit",
+                  "name": "twoToneDrivePowerSource"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "transmit": true
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

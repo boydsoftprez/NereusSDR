@@ -8,6 +8,18 @@
 // stall-demotion heuristic these tests exist to prevent. The ported
 // logic itself lives in src/core/audio/MasterMixer.{h,cpp}, which carry
 // the verbatim Warren Pratt NR0V header and the PROVENANCE rows.
+//
+// Modification history (NereusSDR):
+//   2026-09-21 -- Added queued-producer frame-conservation coverage for the
+//                 RADE RX DSP -> main -> DSP return path. J.J. Boyd / KG4VCF,
+//                 with AI assistance from OpenAI Codex.
+//   2026-09-23 -- R-R3-45: two mixes from one barrier, speakers or
+//                 headphones per slice. J.J. Boyd / KG4VCF, with AI
+//                 assistance from Anthropic Claude Code.
+//   2026-09-30 -- Radio codec (JJ's ruling): the radio sum takes every
+//                 receiving slice whatever the local mask, and MON only
+//                 while it is local. J.J. Boyd / KG4VCF, with AI
+//                 assistance from Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -32,6 +44,152 @@ using namespace NereusSDR;
 class TstMasterMixer : public QObject {
     Q_OBJECT
 private slots:
+    // ── Radio codec (JJ's ruling 2026-09-30): the radio's speaker sum ──
+    //
+    // Every receiving slice reaches the radio sum, both routes, whatever
+    // the local mask; the local sums stay masked.
+    void radioSumTakesEverySliceWhateverTheLocalMask() {
+        MasterMixer mix;
+        mix.setRampFrames(1);
+        mix.setSlewUpFrames(0);
+        mix.setSliceGain(0, 1.0f, 0.0f);
+        mix.setSliceGain(1, 1.0f, 0.0f);
+        std::array<float, 2> a = {0.3f, 0.3f};
+        std::array<float, 2> b = {0.2f, 0.2f};
+        mix.accumulate(0, a.data(), 1, /*muted*/ false, /*headphones*/ false);
+        mix.accumulate(1, b.data(), 1, /*muted*/ false, /*headphones*/ true);
+
+        std::array<float, 2> spk{};
+        std::array<float, 2> hp{};
+        std::array<float, 2> radio{};
+        QCOMPARE(mix.tryDrain(spk.data(), hp.data(), 1, /*localMask*/ 0u, nullptr, 0,
+                              true, false, 0u, nullptr, radio.data()),
+                 1);
+        QCOMPARE(spk[0], 0.0f);
+        QCOMPARE(spk[1], 0.0f);
+        QCOMPARE(hp[0], 0.0f);
+        QCOMPARE(hp[1], 0.0f);
+        QVERIFY(qAbs(radio[0] - 0.5f) < 1e-6f);
+        QVERIFY(qAbs(radio[1] - 0.5f) < 1e-6f);
+    }
+
+    // The transmit monitor's slot (an id outside 0..31) reaches the radio
+    // sum exactly while it is local: off while a remote device holds
+    // transmit, as off the local sums.
+    void radioSumTakesMonitorOnlyWhileLocal() {
+        for (const bool monitorLocal : {true, false}) {
+            MasterMixer mix;
+            mix.setRampFrames(1);
+            mix.setSlewUpFrames(0);
+            mix.setSliceGain(0, 1.0f, 0.0f);
+            mix.setSliceGain(-2, 1.0f, 0.0f);
+            std::array<float, 2> a = {0.3f, 0.3f};
+            std::array<float, 2> m = {0.1f, 0.1f};
+            mix.accumulate(0, a.data(), 1, false, false);
+            mix.accumulate(-2, m.data(), 1, false, false);
+
+            std::array<float, 2> spk{};
+            std::array<float, 2> hp{};
+            std::array<float, 2> radio{};
+            QCOMPARE(mix.tryDrain(spk.data(), hp.data(), 1, /*localMask*/ 0u, nullptr, 0,
+                                  monitorLocal, false, 0u, nullptr, radio.data()),
+                     1);
+            const float expectRadio = monitorLocal ? 0.4f : 0.3f;
+            const float expectSpk = monitorLocal ? 0.1f : 0.0f;
+            QVERIFY(qAbs(radio[0] - expectRadio) < 1e-6f);
+            QVERIFY(qAbs(spk[0] - expectSpk) < 1e-6f);
+        }
+    }
+
+    // ── R-R3-45: speakers OR headphones per slice (VAX design 6.2) ────
+    //
+    // Slice A on the speakers, slice B on the headphones: each sum carries
+    // only its own slice, at that slice's gain, pan and mute.
+    void twoMixesCarryOnlyTheirOwnSlices() {
+        MasterMixer mix;
+        mix.setRampFrames(1);
+        mix.setSlewUpFrames(0);
+        mix.setSliceGain(0, 0.5f, -1.0f);  // A: half gain, full left
+        mix.setSliceGain(1, 0.25f, 1.0f);  // B: quarter gain, full right
+        std::array<float, 2> a = {0.8f, 0.8f};
+        std::array<float, 2> b = {0.4f, 0.4f};
+        mix.accumulate(0, a.data(), 1, /*muted*/ false, /*headphones*/ false);
+        mix.accumulate(1, b.data(), 1, /*muted*/ false, /*headphones*/ true);
+
+        std::array<float, 2> spk{};
+        std::array<float, 2> hp{};
+        QCOMPARE(mix.tryDrain(spk.data(), hp.data(), 1), 1);
+        QCOMPARE(spk[0], 0.4f);   // A only: 0.8 * 0.5, left
+        QCOMPARE(spk[1], 0.0f);
+        QCOMPARE(hp[0], 0.0f);
+        QCOMPARE(hp[1], 0.1f);    // B only: 0.4 * 0.25, right
+    }
+
+    void muteSilencesASliceOnTheHeadphonesToo() {
+        MasterMixer mix;
+        mix.setRampFrames(1);
+        mix.setSlewUpFrames(0);
+        mix.setSliceGain(0, 1.0f, 0.0f);
+        mix.setSliceGain(1, 1.0f, 0.0f);
+        std::array<float, 2> a = {0.3f, 0.3f};
+        std::array<float, 2> b = {0.6f, 0.6f};
+        mix.accumulate(0, a.data(), 1, false, false);
+        mix.accumulate(1, b.data(), 1, /*muted*/ true, /*headphones*/ true);
+
+        std::array<float, 2> spk{};
+        std::array<float, 2> hp{};
+        QCOMPARE(mix.tryDrain(spk.data(), hp.data(), 1), 1);
+        QCOMPARE(spk[0], 0.3f);
+        QCOMPARE(hp[0], 0.0f);
+        QCOMPARE(hp[1], 0.0f);
+    }
+
+    // The speakers-only drain still drains a headphones slice's ring (so it
+    // keeps time) but adds nothing of it. The anti-VOX reference relies on
+    // this.
+    void speakersOnlyDrainLeavesHeadphonesSlicesOut() {
+        MasterMixer mix;
+        mix.setRampFrames(1);
+        mix.setSlewUpFrames(0);
+        mix.setSliceGain(0, 1.0f, 0.0f);
+        mix.setSliceGain(1, 1.0f, 0.0f);
+        std::array<float, 2> a = {0.3f, 0.3f};
+        std::array<float, 2> b = {0.6f, 0.6f};
+        mix.accumulate(0, a.data(), 1, false, false);
+        mix.accumulate(1, b.data(), 1, false, true);
+        std::array<float, 2> spk{};
+        QCOMPARE(mix.tryDrain(spk.data(), 1), 1);
+        QCOMPARE(spk[0], 0.3f);
+        // Both rings were drained: nothing is left to drain.
+        QCOMPARE(mix.tryDrain(spk.data(), 1), 0);
+    }
+
+    // Moving a slice from one output to the other crossfades over the
+    // anti-click ramp instead of stepping.
+    void routeChangeCrossfadesOverTheRamp() {
+        MasterMixer mix;
+        mix.setRampFrames(4);
+        mix.setSlewUpFrames(0);
+        mix.setSliceGain(0, 1.0f, 0.0f);
+        std::vector<float> in(16, 1.0f);   // 8 frames of 1.0
+        std::vector<float> spk(16, 0.0f);
+        std::vector<float> hp(16, 0.0f);
+
+        // Settle on the speakers.
+        mix.accumulate(0, in.data(), 8, false, false);
+        QCOMPARE(mix.tryDrain(spk.data(), hp.data(), 8), 8);
+        QCOMPARE(spk[14], 1.0f);
+        QCOMPARE(hp[14], 0.0f);
+
+        // Switch to the headphones.
+        mix.accumulate(0, in.data(), 8, false, true);
+        QCOMPARE(mix.tryDrain(spk.data(), hp.data(), 8), 8);
+        QCOMPARE(spk[0], 0.75f);
+        QCOMPARE(hp[0], 0.25f);
+        QCOMPARE(spk[14], 0.0f);
+        QCOMPARE(hp[14], 1.0f);
+    }
+
     void emptyMixDrainsNothing() {
         MasterMixer mix;
         std::array<float, 16> out{};
@@ -149,6 +307,100 @@ private slots:
             mix.accumulate(2, b.data(), 1);
             QCOMPARE(mix.tryDrain(out.data(), 1), 1);
             QCOMPARE(out[0], 0.7f);
+        }
+    }
+
+    void queuedProducerSkewPreservesEveryFrame_data() {
+        QTest::addColumn<QList<int>>("bursts");
+
+        // 32 * 64 = 2,048 frames: the live RADE return can arrive as one
+        // clump after the ordinary receiver has already filled several
+        // same-cadence blocks.
+        QTest::newRow("32-block-clump") << QList<int>{32};
+
+        // Same 2,048 frames with bounded, uneven scheduling skew. This is
+        // closer to two queued producers alternating in event-loop bursts
+        // while retaining exact source-frame conservation.
+        QTest::newRow("jittered-32-blocks")
+            << QList<int>{5, 1, 9, 3, 7, 2, 5};
+    }
+
+    // R-R3-31 live acceptance exposed a gap in the earlier burst test: it
+    // proved three one-frame blocks survived, but production uses 64-frame
+    // blocks and the RADE owner returns through DSP -> main -> DSP queued
+    // delivery. The ordinary receiver can therefore lead by more than four
+    // blocks even though both producers have the same long-term 48 kHz rate.
+    //
+    // Thetis gives both the RX master and anti-VOX aamix instances a 4,096-
+    // sample ring (cmaster.c:159-168, 297-306 [v2.10.3.15]). These rows stay
+    // at or below that source-grounded bound and require every delayed frame,
+    // with its original sequence value, to survive until its mate arrives.
+    void queuedProducerSkewPreservesEveryFrame() {
+        QFETCH(QList<int>, bursts);
+
+        MasterMixer mix;
+        mix.setRampFrames(1);
+        mix.setSlewUpFrames(0);
+        mix.setSliceGain(1, 1.0f, 0.0f);
+        mix.setSliceGain(2, 1.0f, 0.0f);
+
+        constexpr int kFrames = 64;
+        std::vector<float> a(static_cast<size_t>(kFrames) * 2);
+        std::vector<float> b(static_cast<size_t>(kFrames) * 2);
+        std::vector<float> out(static_cast<size_t>(kFrames) * 2);
+
+        // Enrol and empty both members before measuring the queued skew.
+        std::fill(a.begin(), a.end(), 0.1f);
+        std::fill(b.begin(), b.end(), 0.2f);
+        mix.accumulate(1, a.data(), kFrames);
+        mix.accumulate(2, b.data(), kFrames);
+        QCOMPARE(mix.tryDrain(out.data(), kFrames), kFrames);
+        QCOMPARE(mix.producingSliceCount(), 2);
+
+        int nextBlock = 0;
+        int drainedFrames = 0;
+        QList<float> drainedBlockValues;
+        auto collectDrain = [&] {
+            const int drained = mix.tryDrain(out.data(), kFrames);
+            drainedFrames += drained;
+            if (drained <= 0) {
+                return;
+            }
+            QCOMPARE(drained, kFrames);
+            const float value = out.front();
+            for (int frame = 0; frame < drained; ++frame) {
+                QCOMPARE(out[static_cast<size_t>(frame) * 2], value);
+                QCOMPARE(out[static_cast<size_t>(frame) * 2 + 1], value);
+            }
+            drainedBlockValues.append(value);
+        };
+
+        for (const int burstBlocks : bursts) {
+            const int burstFirst = nextBlock;
+            for (int block = 0; block < burstBlocks; ++block) {
+                const float marker = static_cast<float>(nextBlock + 1);
+                std::fill(a.begin(), a.end(), marker);
+                mix.accumulate(1, a.data(), kFrames);
+                collectDrain();
+                ++nextBlock;
+            }
+            for (int block = 0; block < burstBlocks; ++block) {
+                // B's matching block has a distinct value, making an
+                // overflow/re-pair visible even if the final frame count
+                // happens to balance after a later burst.
+                const float marker =
+                    static_cast<float>(1000 + burstFirst + block);
+                std::fill(b.begin(), b.end(), marker);
+                mix.accumulate(2, b.data(), kFrames);
+                collectDrain();
+            }
+        }
+
+        QCOMPARE(drainedFrames, nextBlock * kFrames);
+        QCOMPARE(drainedBlockValues.size(), nextBlock);
+        for (int block = 0; block < nextBlock; ++block) {
+            const float expected = static_cast<float>(1001 + 2 * block);
+            QCOMPARE(drainedBlockValues.at(block), expected);
         }
     }
 

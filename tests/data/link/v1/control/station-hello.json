@@ -1,0 +1,18 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "hello",
+    "major": 1,
+    "minor": 11,
+    "settingsSchema": 0,
+    "peer": "nereusd",
+    "majors": [1, 2],
+    "features": {"deviceAuth": 1, "pairing": 1},
+    "identity": {
+      "publicKey": "conformance-identity-key",
+      "certBinding": "conformance-certificate-binding"
+    },
+    "challenge": "conformance-challenge"
+  },
+  "decodes": true
+}

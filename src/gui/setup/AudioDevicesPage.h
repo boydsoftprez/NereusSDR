@@ -14,9 +14,18 @@
 //
 // Design spec: docs/architecture/2026-04-20-phase3o-subphase12-addendum.md
 // §§2.1 + 4.
+//
+// Modification history (NereusSDR):
+//   2026-09-22: R-R3-36 Task 6 by J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code. Microphone
+//               status and Retry below the TX Input card; the card
+//               follows TX input changes made on the TX Input page.
 // =================================================================
 
 #include "gui/SetupPage.h"
+
+class QLabel;
+class QPushButton;
 
 namespace NereusSDR {
 
@@ -37,6 +46,13 @@ class DeviceCard;
 // <role>ConfigChanged(AudioDeviceConfig) → the page feeds it back into
 // the card's updateNegotiatedPill() with QSignalBlocker to avoid
 // echo loops.
+//
+// R-R3-36: the TX Input card and the TX Input page's PC Mic controls edit
+// the same audio/TxInput config; the card reloads it whenever the engine
+// reports a change. Below the card, a status label (objectName
+// "captureStatus") shows the microphone capture status and a
+// "Retry microphone" button (objectName "retryCapture") is enabled only
+// after a failure.
 // ---------------------------------------------------------------------------
 class AudioDevicesPage : public SetupPage {
     Q_OBJECT
@@ -45,12 +61,16 @@ public:
 
 private:
     void wireEngineConnections();
+    void refreshCaptureStatus();
 
     AudioEngine* m_engine{nullptr};
 
     DeviceCard* m_speakersCard{nullptr};
     DeviceCard* m_headphonesCard{nullptr};
     DeviceCard* m_txInputCard{nullptr};
+
+    QLabel*      m_captureStatusLabel{nullptr};
+    QPushButton* m_retryCaptureBtn{nullptr};
 
     bool m_updatingFromEngine{false};
 };

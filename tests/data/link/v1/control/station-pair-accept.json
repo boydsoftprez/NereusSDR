@@ -1,0 +1,12 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "pair.accept",
+    "identity": {
+      "publicKey": "conformance-identity-key",
+      "certBinding": "conformance-certificate-binding"
+    },
+    "label": "KG4VCF/shack"
+  },
+  "decodes": true
+}

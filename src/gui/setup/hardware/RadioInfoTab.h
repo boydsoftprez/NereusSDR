@@ -12,6 +12,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-25 - Receiver and transmit gaps plan, Task 5: test access to
+//                 the support info. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -85,6 +88,12 @@ public:
     // Restore persisted control values (Phase 3I Task 21).
     void restoreSettings(const QMap<QString, QVariant>& settings);
 
+#ifdef NEREUS_BUILD_TESTS
+    // Plan Task 5: the Copy Support Info text, which carries the top sample
+    // rate for the protocol the radio is running.
+    QString supportInfoForTest() const { return m_currentInfo; }
+#endif
+
 signals:
     void settingChanged(const QString& key, const QVariant& value);
     // Emitted when the ANAN-8000DLE "Show volts/amps" checkbox is toggled.
@@ -109,7 +118,6 @@ private:
     QLabel*      m_macLabel{nullptr};
     QLabel*      m_ipLabel{nullptr};
     QComboBox*   m_sampleRateRx1Combo{nullptr};
-    QComboBox*   m_sampleRateRx2Combo{nullptr};   // disabled in PR #35; activates with Phase 3F multi-panadapter.
     QFrame*      m_reconnectBanner{nullptr};
     QLabel*      m_reconnectBannerLabel{nullptr};
     int          m_activeWireRate{0}; // last rate reported via wireSampleRateChanged

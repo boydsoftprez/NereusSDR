@@ -16,10 +16,13 @@
 #include <QtTest/QtTest>
 #include "core/HardwareProfile.h"
 #include "core/HpsdrModel.h"
+#include "core/BoardCapabilities.h"
 
 using NereusSDR::HPSDRHW;
 using NereusSDR::HPSDRModel;
 using NereusSDR::defaultModelForBoard;
+namespace BoardCapsTable = NereusSDR::BoardCapsTable;
+using NereusSDR::HardwareProfile;
 
 class TestDefaultModelForBoard : public QObject {
     Q_OBJECT
@@ -80,6 +83,65 @@ private slots:
         QCOMPARE(picked, HPSDRModel::ANAN7000D);
         // Pin: must NOT be ORIONMKII.  Regression guard for #202.
         QVERIFY(picked != HPSDRModel::ORIONMKII);
+    }
+
+    // ── Plan Task 15: the HL2 receive-only kit ─────────────────────────────
+    //
+    // mi0bot-Thetis models no separate receive-only HL2: its HPSDRHW enum has
+    // one HL2 value, HermesLite = 6 (enums.cs:396 [v2.10.3.13-beta2]), and
+    // every HL2 path keys on HPSDRModel.HERMESLITE. Receive-only is the
+    // operator's RXOnly toggle (console.cs:15374-15395). So the kit resolves
+    // to HERMESLITE, not HERMES, and keeps its own row, whose isRxOnlySku is
+    // the NereusSDR hard block on transmit.
+    void hermesLiteRxOnly_returns_HERMESLITE() {
+        QCOMPARE(defaultModelForBoard(HPSDRHW::HermesLiteRxOnly),
+                 HPSDRModel::HERMESLITE);
+    }
+
+    void hermesLiteRxOnly_profile_keeps_the_kit_row() {
+        const HardwareProfile p = NereusSDR::profileForRadio(
+            HPSDRHW::HermesLiteRxOnly, defaultModelForBoard(HPSDRHW::HermesLiteRxOnly));
+        QCOMPARE(p.model, HPSDRModel::HERMESLITE);
+        QCOMPARE(p.effectiveBoard, HPSDRHW::HermesLiteRxOnly);
+        QVERIFY(p.caps != nullptr);
+        QCOMPARE(p.caps, &BoardCapsTable::forBoard(HPSDRHW::HermesLiteRxOnly));
+        QVERIFY(p.caps->isRxOnlySku);
+        // The rest of the HL2 model init applies unchanged
+        // (clsHardwareSpecific.cs HERMESLITE branch).
+        const HardwareProfile hl2 = NereusSDR::profileForModel(HPSDRModel::HERMESLITE);
+        QCOMPARE(p.adcCount, hl2.adcCount);
+        QCOMPARE(p.mkiiBpf, hl2.mkiiBpf);
+        QCOMPARE(p.adcSupplyVoltage, hl2.adcSupplyVoltage);
+        QCOMPARE(p.lrAudioSwap, hl2.lrAudioSwap);
+    }
+
+    // A standard HL2 and every other board are unchanged by the kit rule.
+    void profileForRadio_is_profileForModel_off_the_kit() {
+        for (int i = int(HPSDRModel::FIRST) + 1; i < int(HPSDRModel::LAST); ++i) {
+            const auto m = static_cast<HPSDRModel>(i);
+            const HardwareProfile a = NereusSDR::profileForRadio(NereusSDR::boardForModel(m), m);
+            const HardwareProfile b = NereusSDR::profileForModel(m);
+            QCOMPARE(a.model, b.model);
+            QCOMPARE(a.effectiveBoard, b.effectiveBoard);
+            QCOMPARE(a.caps, b.caps);
+        }
+    }
+
+    // A remote window on a Core running the kit gets the same profile.
+    void hermesLiteRxOnly_station_profile_matches_local() {
+        for (HPSDRModel reported : {HPSDRModel::HERMESLITE, HPSDRModel::FIRST}) {
+            const HardwareProfile p =
+                NereusSDR::profileForStation(HPSDRHW::HermesLiteRxOnly, reported);
+            QCOMPARE(p.model, HPSDRModel::HERMESLITE);
+            QCOMPARE(p.effectiveBoard, HPSDRHW::HermesLiteRxOnly);
+            QCOMPARE(p.caps, &BoardCapsTable::forBoard(HPSDRHW::HermesLiteRxOnly));
+        }
+    }
+
+    // The connection panel's model list for the kit offers the HL2.
+    void hermesLiteRxOnly_compatible_models_is_the_HL2() {
+        QCOMPARE(NereusSDR::compatibleModels(HPSDRHW::HermesLiteRxOnly),
+                 QList<HPSDRModel>{HPSDRModel::HERMESLITE});
     }
 };
 

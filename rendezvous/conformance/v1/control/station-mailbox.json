@@ -1,0 +1,8 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "mailbox",
+    "body": "{\"type\":\"pair.spake\",\"step\":1,\"data\":\"ZmFrZS1zdGVwLTEtZm9yLXRlc3Rz\"}"
+  },
+  "decodes": true
+}

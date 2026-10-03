@@ -13,12 +13,18 @@
 //   2026-05-06 — Created by J.J. Boyd (KG4VCF) for Phase 3M-4
 //                 Task 17 chunk C, with AI-assisted source-first
 //                 protocol via Anthropic Claude Code.
+//   2026-09-25 : R-R3-39 (station Task 32) by J.J. Boyd (KG4VCF): with a
+//                 TX channel set, the paired blocks go to
+//                 TxChannel::pumpPscc, which runs pscc() on the transmit
+//                 lane in arrival order instead of on the event loop.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "PsccPump.h"
 
 #include "LogCategories.h"
 #include "MoxController.h"
+#include "TxChannel.h"
 
 #include <QLoggingCategory>
 
@@ -44,6 +50,11 @@ PsccPump::~PsccPump() = default;
 void PsccPump::setTxChannelId(int channelId)
 {
     m_txChannelId = channelId;
+}
+
+void PsccPump::setTxChannel(TxChannel* channel)
+{
+    m_txChannel = channel;
 }
 
 void PsccPump::setMoxController(MoxController* mox)
@@ -74,6 +85,13 @@ void PsccPump::setActive(bool active, int txMonDdc, int psFbDdc)
     qCInfo(lcDsp) << "PsccPump: setActive(" << active
                   << ") txMonDdc=" << txMonDdc
                   << "psFbDdc=" << psFbDdc;
+}
+
+void PsccPump::retireSession()
+{
+    setActive(false, m_txMonDdc, m_psFbDdc);
+    m_txChannelId = -1;
+    m_txChannel = nullptr;
 }
 
 void PsccPump::onDdcConfigChanged(const PsDdcConfig& cfg)
@@ -175,7 +193,7 @@ void PsccPump::onPsPairedIqData(int psFbDdc, const QVector<float>& psFbSamples,
     // from the same packet, so cross-stream sample alignment is
     // guaranteed by construction.  No ring buffers, no drain loop.
 
-    if (!m_active) {
+    if (!m_active || m_txChannelId < 0) {
         return;
     }
 
@@ -225,7 +243,10 @@ void PsccPump::onPsPairedIqData(int psFbDdc, const QVector<float>& psFbSamples,
         m_lastPsccArgs.callCount += 1;
     } else
 #endif
-    {
+    if (m_txChannel != nullptr && m_txChannel->channelId() == m_txChannelId) {
+        // R-R3-39: on the transmit lane, never on the event loop.
+        m_txChannel->pumpPscc(sps, std::move(tx), std::move(rx));
+    } else {
         // pscc internally locks calcc.cs_update (calcc.c:621 [v2.10.3.13]),
         // so this is safe to invoke from any thread that owns no calcc lock.
         pscc(m_txChannelId, sps, tx.data(), rx.data());

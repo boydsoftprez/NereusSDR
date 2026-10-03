@@ -7,14 +7,14 @@
 // Unit tests for the Phase 3M-4 Task 8 PsForm modeless dialog.
 //
 // PsForm ports Thetis PSForm.cs (1,164 LOC) [v2.10.3.13] verbatim — title
-// "PureSignal 2.0", ClientSize 560x300 default with Advanced collapse to
+// "PureSignal 3.0", ClientSize 560x300 default with Advanced collapse to
 // 560x60.  This test file exercises:
 //
 //   1. The dialog constructs with null RadioModel + PureSignal pointers
 //      (test-friendly seam).
 //
-//   2. All 23 designer controls exist by objectName per
-//      PSForm.designer.cs:1-969 [v2.10.3.13].
+//   2. The retained PS3 controls exist by objectName and the removed PS2
+//      controls are absent.
 //
 //   3. The Advanced toggle collapses the body widgets and restores them.
 //
@@ -29,14 +29,11 @@
 //
 //   8. The Always On Top checkbox toggles Qt::WindowStaysOnTopHint.
 //
-//   9. The default values for chkPSPin, chkPSMap, chkPSAutoAttenuate are
-//      Checked per PSForm.designer.cs:210-211, 193-194, 227-228 [v2.10.3.13].
+//   9. The retained Auto Attenuate default is checked.
 //
-//   10. The TINT combo populates "0.5", "1.1", "2.5" per
-//       PSForm.designer.cs:164-167 [v2.10.3.13].
-//
-//   11. The udPSMoxDelay default value is 2.0 per
-//       PSForm.designer.cs:368-372 [v2.10.3.13].
+//   10. The udPSMoxDelay default value is 0.2, range 0.1 to 1.0, per
+//       PSForm.Designer.cs:346-372 [v2.10.3.15] (fix wave RD-I7; the
+//       decimal arrays are tenths).
 //
 // Source: NereusSDR-original.  See PsForm.h for the Thetis cite map.
 //
@@ -48,19 +45,25 @@
 // =================================================================
 
 #include <QtTest/QtTest>
+#include "OperatorWording.h"
+#include "core/AppSettings.h"
 
 #include <QCheckBox>
-#include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QDir>
 #include <QGroupBox>
 #include <QLabel>
 #include <QPushButton>
+#include <QScreen>
 #include <QSignalSpy>
 #include <QSpinBox>
 
 #include "core/PureSignal.h"
+#include "core/session/PureSignalSessionFacade.h"
 #include "core/TxChannel.h"
 #include "gui/PsForm.h"
+#include "models/PureSignalSettings.h"
+#include "models/RadioModel.h"
 
 using namespace NereusSDR;
 
@@ -81,22 +84,13 @@ private slots:
     void constructAndDestruct_withNoPureSignal_doesNotCrash()
     {
         PsForm form(/*radioModel=*/nullptr, /*pureSignal=*/nullptr);
-        QCOMPARE(form.windowTitle(), QStringLiteral("PureSignal 2.0"));
+        QCOMPARE(form.windowTitle(), QStringLiteral("PureSignal 3.0"));
         QCOMPARE(form.isModal(), false);
     }
 
-    // ── Test 2: all 23 designer controls exist by objectName ────────────────
-    //
-    // The 23 controls are enumerated in PSForm.designer.cs [v2.10.3.13]:
-    //   chkPSOnTop, lblPSTint, btnPSRestore, btnPSSave, btnPSAdvanced,
-    //   comboPSTint, chkPSStbl, chkPSMap, chkPSPin, chkPSAutoAttenuate,
-    //   btnPSAmpView, chkPSRelaxPtol, btnPSTwoToneGen, lblPSInfoFB,
-    //   lblPSInfoCO, udPSMoxDelay, udPSPhnum, udPSCalWait, chkQuickAttenuate,
-    //   chkShow2ToneMeasurements, btnPSReset, btnPSCalibrate, pbWarningSetPk
-    // (plus the grpPSInfo group box housing the indicators / btnDefaultPeaks
-    // / checkLoopback).
+    // ── Test 2: retained PS3 controls exist by objectName ───────────────────
 
-    void allTwentyThreeControlsExistByObjectName()
+    void retainedPs3ControlsExistByObjectName()
     {
         PsForm form(nullptr, nullptr);
 
@@ -108,25 +102,24 @@ private slots:
         QVERIFY(form.findChild<QPushButton*>(QStringLiteral("btnPSSave")));
         QVERIFY(form.findChild<QPushButton*>(QStringLiteral("btnPSRestore")));
         QVERIFY(form.findChild<QPushButton*>(QStringLiteral("btnPSReset")));
+        QVERIFY(form.findChild<QPushButton*>(QStringLiteral("btnPSAutomatic")));
+        QVERIFY(form.findChild<QPushButton*>(QStringLiteral("btnPSApplyCurrent")));
 
         // Status row (2 badges)
         QVERIFY(form.findChild<QLabel*>(QStringLiteral("lblPSInfoFB")));
         QVERIFY(form.findChild<QLabel*>(QStringLiteral("lblPSInfoCO")));
 
-        // Calibration option checkboxes (6)
-        QVERIFY(form.findChild<QCheckBox*>(QStringLiteral("chkPSPin")));
-        QVERIFY(form.findChild<QCheckBox*>(QStringLiteral("chkPSMap")));
-        QVERIFY(form.findChild<QCheckBox*>(QStringLiteral("chkPSStbl")));
+        // Calibration option checkboxes
         QVERIFY(form.findChild<QCheckBox*>(QStringLiteral("chkPSAutoAttenuate")));
-        QVERIFY(form.findChild<QCheckBox*>(QStringLiteral("chkPSRelaxPtol")));
         QVERIFY(form.findChild<QCheckBox*>(QStringLiteral("chkQuickAttenuate")));
+        QVERIFY(form.findChild<QCheckBox*>(QStringLiteral("chkPSAutoCalEnabled")));
+        QVERIFY(form.findChild<QCheckBox*>(QStringLiteral("chkPSRunCalibrationProcessing")));
+        QVERIFY(form.findChild<QCheckBox*>(QStringLiteral("chkPSHardwarePeakOverride")));
 
-        // Timing controls (3 + TINT label + TINT combo)
+        // Timing controls
         QVERIFY(form.findChild<QDoubleSpinBox*>(QStringLiteral("udPSMoxDelay")));
         QVERIFY(form.findChild<QSpinBox*>(QStringLiteral("udPSPhnum")));
         QVERIFY(form.findChild<QDoubleSpinBox*>(QStringLiteral("udPSCalWait")));
-        QVERIFY(form.findChild<QLabel*>(QStringLiteral("lblPSTint")));
-        QVERIFY(form.findChild<QComboBox*>(QStringLiteral("comboPSTint")));
 
         // Always-on-top + 2-Tone + warning icon
         QVERIFY(form.findChild<QCheckBox*>(QStringLiteral("chkPSOnTop")));
@@ -137,6 +130,16 @@ private slots:
         QVERIFY(form.findChild<QGroupBox*>(QStringLiteral("grpPSInfo")));
         QVERIFY(form.findChild<QPushButton*>(QStringLiteral("btnDefaultPeaks")));
         QVERIFY(form.findChild<QCheckBox*>(QStringLiteral("checkLoopback")));
+        QVERIFY(form.findChild<QLabel*>(QStringLiteral("lblPSActionStatus")));
+        QVERIFY(form.findChild<QLabel*>(QStringLiteral("lblPSNativeStatus")));
+        QVERIFY(form.findChild<QLabel*>(QStringLiteral("lblPSRoutingStatus")));
+        for (int i = 0; i < 16; ++i) {
+            QVERIFY2(form.findChild<QLabel*>(QStringLiteral("lblPSInfo%1").arg(i)),
+                     qPrintable(QStringLiteral("missing raw PS3 info[%1]").arg(i)));
+        }
+        auto* loopback = form.findChild<QCheckBox*>(QStringLiteral("checkLoopback"));
+        QVERIFY(!loopback->isEnabled());
+        QVERIFY(loopback->toolTip().contains(QStringLiteral("AmpView")));
     }
 
     // ── Test 3: defaults match Thetis designer values ────────────────────────
@@ -145,20 +148,20 @@ private slots:
     {
         PsForm form(nullptr, nullptr);
 
-        // Default Checked per PSForm.designer.cs [v2.10.3.13]:
-        QCOMPARE(form.findChild<QCheckBox*>(QStringLiteral("chkPSPin"))->isChecked(), true);
-        QCOMPARE(form.findChild<QCheckBox*>(QStringLiteral("chkPSMap"))->isChecked(), true);
+        // Retained Auto Attenuate default from PSForm.designer.cs.
         QCOMPARE(form.findChild<QCheckBox*>(QStringLiteral("chkPSAutoAttenuate"))->isChecked(), true);
 
         // Default unchecked
-        QCOMPARE(form.findChild<QCheckBox*>(QStringLiteral("chkPSStbl"))->isChecked(), false);
-        QCOMPARE(form.findChild<QCheckBox*>(QStringLiteral("chkPSRelaxPtol"))->isChecked(), false);
         QCOMPARE(form.findChild<QCheckBox*>(QStringLiteral("chkQuickAttenuate"))->isChecked(), false);
         QCOMPARE(form.findChild<QCheckBox*>(QStringLiteral("chkPSOnTop"))->isChecked(), false);
         QCOMPARE(form.findChild<QCheckBox*>(QStringLiteral("chkShow2ToneMeasurements"))->isChecked(), false);
 
-        // From PSForm.designer.cs:368-372 [v2.10.3.13] — udPSMoxDelay default 2.0
-        QCOMPARE(form.findChild<QDoubleSpinBox*>(QStringLiteral("udPSMoxDelay"))->value(), 2.0);
+        // From PSForm.Designer.cs:346-372 [v2.10.3.15]: udPSMoxDelay Value
+        // 0.2, Minimum 0.1, Maximum 1.0 (fix wave RD-I7).
+        auto* moxDelay = form.findChild<QDoubleSpinBox*>(QStringLiteral("udPSMoxDelay"));
+        QCOMPARE(moxDelay->value(), 0.2);
+        QCOMPARE(moxDelay->minimum(), 0.1);
+        QCOMPARE(moxDelay->maximum(), 1.0);
 
         // From PSForm.designer.cs:801-805 [v2.10.3.13] — udPSCalWait default 0
         QCOMPARE(form.findChild<QDoubleSpinBox*>(QStringLiteral("udPSCalWait"))->value(), 0.0);
@@ -167,22 +170,17 @@ private slots:
         QCOMPARE(form.findChild<QSpinBox*>(QStringLiteral("udPSPhnum"))->value(), 150);
     }
 
-    // ── Test 4: TINT combo populates "0.5"/"1.1"/"2.5" ────────────────────────
-    //
-    // From PSForm.designer.cs:164-172 [v2.10.3.13]:
-    //   this.comboPSTint.Items.AddRange(new object[] { "0.5", "1.1", "2.5" });
-    //   this.comboPSTint.Text = "0.5";
+    // ── Test 4: PS2-only controls are not exposed by the PS3 form ──────────
 
-    void tintComboPopulatesThreeOptionsWithDefaultZeroPointFive()
+    void removedPs2ControlsAreNotExposed()
     {
         PsForm form(nullptr, nullptr);
-        auto* combo = form.findChild<QComboBox*>(QStringLiteral("comboPSTint"));
-        QVERIFY(combo);
-        QCOMPARE(combo->count(), 3);
-        QCOMPARE(combo->itemText(0), QStringLiteral("0.5"));
-        QCOMPARE(combo->itemText(1), QStringLiteral("1.1"));
-        QCOMPARE(combo->itemText(2), QStringLiteral("2.5"));
-        QCOMPARE(combo->currentText(), QStringLiteral("0.5"));
+        QVERIFY(!form.findChild<QObject*>(QStringLiteral("chkPSPin")));
+        QVERIFY(!form.findChild<QObject*>(QStringLiteral("chkPSMap")));
+        QVERIFY(!form.findChild<QObject*>(QStringLiteral("chkPSStbl")));
+        QVERIFY(!form.findChild<QObject*>(QStringLiteral("chkPSRelaxPtol")));
+        QVERIFY(!form.findChild<QObject*>(QStringLiteral("lblPSTint")));
+        QVERIFY(!form.findChild<QObject*>(QStringLiteral("comboPSTint")));
     }
 
     // ── Test 5: Advanced toggle collapses + restores body widgets ────────────
@@ -238,7 +236,7 @@ private slots:
             form.findChild<QPushButton*>(QStringLiteral("btnPSCalibrate"));
         QVERIFY(btn);
         btn->click();
-        QCOMPARE(startSpy.count(), 1);
+        QTRY_COMPARE(startSpy.count(), 1);
     }
 
     // ── Test 7: OFF button invokes PureSignal::reset ─────────────────────────
@@ -258,7 +256,7 @@ private slots:
         QVERIFY(btn);
         btn->click();
         // reset() calls forceAutoCalDisable() → setAutoCalEnabled(false).
-        QCOMPARE(autoSpy.count(), 1);
+        QTRY_COMPARE(autoSpy.count(), 1);
         QCOMPARE(ps.isAutoCalEnabled(), false);
     }
 
@@ -307,24 +305,56 @@ private slots:
                  Qt::WindowFlags{});
     }
 
-    // ── Test 10: PIN toggle forwards to PureSignal::setPinMode ───────────────
-
-    void pinCheckBoxForwardsToPureSignalSetPinMode()
+    void geometryAndAlwaysOnTopRoundTripAcrossReopen()
     {
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
-        PsForm form(nullptr, &ps);
+        AppSettings& settings = AppSettings::instance();
+        const QString geometryKey = QStringLiteral("puresignal/geometry");
+        const QString onTopKey = QStringLiteral("puresignal/alwaysOnTop");
+        const QVariant oldGeometry = settings.value(geometryKey);
+        const QVariant oldOnTop = settings.value(onTopKey);
+        settings.setValue(geometryKey, QString());
+        settings.setValue(onTopKey, false);
 
-        QSignalSpy spy(&ps, &PureSignal::pinModeChanged);
-        auto* chk = form.findChild<QCheckBox*>(QStringLiteral("chkPSPin"));
-        QVERIFY(chk);
-        // Default checked → click un-checks.
-        chk->click();
-        QCOMPARE(spy.count(), 1);
-        QCOMPARE(ps.pinMode(), false);
+        QRect saved;
+        {
+            PsForm form(nullptr, nullptr);
+            form.adjustSize();
+            if (QScreen* screen = QGuiApplication::primaryScreen()) {
+                const QRect available = screen->availableGeometry();
+                // Leave title-bar room even on the 533-point scaled offscreen screen.
+                form.move(available.left(), available.top() + 35);
+            }
+            form.show();
+            QCoreApplication::processEvents();
+            auto* onTop = form.findChild<QCheckBox*>(QStringLiteral("chkPSOnTop"));
+            QVERIFY(onTop);
+            onTop->setChecked(true);
+            QCoreApplication::processEvents();
+            saved = form.geometry();
+            form.close();
+            QVERIFY(!settings.value(geometryKey).toString().isEmpty());
+        }
+        {
+            PsForm reopened(nullptr, nullptr);
+            auto* onTop = reopened.findChild<QCheckBox*>(QStringLiteral("chkPSOnTop"));
+            QVERIFY(onTop);
+            QVERIFY(onTop->isChecked());
+            QCOMPARE(reopened.windowFlags() & Qt::WindowStaysOnTopHint,
+                     Qt::WindowStaysOnTopHint);
+            QCOMPARE(reopened.size(), saved.size());
+            const QRect available = reopened.screen()->availableGeometry();
+            QVERIFY2((reopened.pos() - saved.topLeft()).manhattanLength() <= 8,
+                     qPrintable(QStringLiteral("restored %1,%2 saved %3,%4; available %5x%6; size %7x%8")
+                         .arg(reopened.x()).arg(reopened.y()).arg(saved.x()).arg(saved.y())
+                         .arg(available.width()).arg(available.height())
+                         .arg(reopened.width()).arg(reopened.height())));
+        }
+
+        settings.setValue(geometryKey, oldGeometry);
+        settings.setValue(onTopKey, oldOnTop);
     }
 
-    // ── Test 11: MOX-delay spinbox forwards to PureSignal::setMoxDelay ──────
+    // ── Test 10: MOX-delay spinbox forwards to PureSignal::setMoxDelay ─────
 
     void moxDelaySpinBoxForwardsToPureSignalSetMoxDelay()
     {
@@ -336,9 +366,125 @@ private slots:
         auto* spin =
             form.findChild<QDoubleSpinBox*>(QStringLiteral("udPSMoxDelay"));
         QVERIFY(spin);
-        spin->setValue(5.0);
+        spin->setValue(0.5);
         QCOMPARE(spy.count(), 1);
-        QCOMPARE(ps.moxDelay(), 5.0);
+        QCOMPARE(ps.moxDelay(), 0.5);
+    }
+
+    void acceptedSettingsRoundTripThroughTheSettingsModel()
+    {
+        TxChannel tx(kTxChannelId);
+        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
+        PsForm form(nullptr, &ps);
+        PureSignalSettings* settings = ps.settings();
+        QVERIFY(settings);
+
+        auto* desiredAuto = form.findChild<QCheckBox*>(QStringLiteral("chkPSAutoCalEnabled"));
+        auto* runCal = form.findChild<QCheckBox*>(QStringLiteral("chkPSRunCalibrationProcessing"));
+        auto* autoAttenuate = form.findChild<QCheckBox*>(QStringLiteral("chkPSAutoAttenuate"));
+        auto* peakOverride = form.findChild<QCheckBox*>(QStringLiteral("chkPSHardwarePeakOverride"));
+        QVERIFY(desiredAuto && runCal && autoAttenuate && peakOverride);
+
+        desiredAuto->setChecked(true);
+        runCal->setChecked(false);
+        autoAttenuate->setChecked(false);
+        settings->setHardwarePeakOverride(0.42);
+        peakOverride->setChecked(true);
+        QCOMPARE(settings->autoCalEnabled(), true);
+        QCOMPARE(settings->runCalibrationProcessing(), false);
+        QCOMPARE(settings->autoAttenuate(), false);
+        QCOMPARE(settings->hardwarePeakOverrideEnabled(), true);
+        QCOMPARE(settings->hardwarePeakOverride(), 0.42);
+    }
+
+    void showTwoTonePreferenceEmitsGuiViewIntent()
+    {
+        PsForm form(nullptr, nullptr);
+        auto* check = form.findChild<QCheckBox*>(
+            QStringLiteral("chkShow2ToneMeasurements"));
+        QVERIFY(check);
+        QSignalSpy changed(&form, &PsForm::showTwoToneMeasurementsChanged);
+
+        check->setChecked(!check->isChecked());
+
+        QCOMPARE(changed.count(), 1);
+        QCOMPARE(changed.takeFirst().at(0).toBool(), check->isChecked());
+    }
+
+    void remoteAssetManagerEntryDoesNotRequireTransmitPermission()
+    {
+        RadioModel radio(RadioModel::Role::Remote);
+        PureSignalSessionFacade* facade = radio.pureSignalFacade();
+        QVERIFY(facade);
+        facade->setRemoteCapabilities(true, true);
+        QVERIFY(facade->applyRemoteProperty("available", true));
+        QVERIFY(facade->applyRemoteProperty("canActuate", false));
+
+        PsForm form(&radio, nullptr);
+        auto* restore = form.findChild<QPushButton*>(QStringLiteral("btnPSRestore"));
+        auto* single = form.findChild<QPushButton*>(QStringLiteral("btnPSCalibrate"));
+        QVERIFY(restore);
+        QVERIFY(single);
+        QVERIFY(restore->isEnabled());
+        QVERIFY(!single->isEnabled());
+    }
+
+    void radioBackedFormRoutesActionsThroughTheSharedFacade()
+    {
+        RadioModel radio(RadioModel::Role::Remote);
+        PureSignalSessionFacade* facade = radio.pureSignalFacade();
+        QVERIFY(facade);
+        facade->setRemoteCapabilities(true, true);
+        QVERIFY(facade->applyRemoteProperty("available", true));
+        QVERIFY(facade->applyRemoteProperty("canActuate", true));
+
+        Ps3Action observed = Ps3Action::OffReset;
+        QVariantMap observedArguments;
+        quint32 nextId = 72;
+        facade->setRemoteRequestHandler(
+            [&observed, &observedArguments, &nextId](Ps3Action action, const QVariantMap& arguments) {
+                observed = action;
+                observedArguments = arguments;
+                return ++nextId;
+            });
+
+        TxChannel unusedTx(kTxChannelId);
+        PureSignal unusedCoordinator(nullptr, &unusedTx, nullptr, nullptr, nullptr, nullptr);
+        PsForm form(&radio, &unusedCoordinator);
+        form.findChild<QPushButton*>(QStringLiteral("btnPSCalibrate"))->click();
+        QCOMPARE(observed, Ps3Action::Single);
+        QVERIFY(observedArguments.isEmpty());
+
+        form.findChild<QPushButton*>(QStringLiteral("btnPSTwoToneGen"))->click();
+        QCOMPARE(observed, Ps3Action::SetTwoTone);
+        QCOMPARE(observedArguments.value("enabled").toBool(), true);
+    }
+
+    void actionProgressAndSessionRetirementAreVisible()
+    {
+        RadioModel radio(RadioModel::Role::Remote);
+        PureSignalSessionFacade* facade = radio.pureSignalFacade();
+        facade->setRemoteCapabilities(true, true);
+        QVERIFY(facade->applyRemoteProperty("available", true));
+        QVERIFY(facade->applyRemoteProperty("canActuate", true));
+        facade->setRemoteRequestHandler([](Ps3Action, const QVariantMap&) { return 91u; });
+        PsForm form(&radio, nullptr);
+        auto* status = form.findChild<QLabel*>(QStringLiteral("lblPSActionStatus"));
+        QVERIFY(status);
+
+        form.findChild<QPushButton*>(QStringLiteral("btnPSCalibrate"))->click();
+        facade->receiveRemoteActionResult(91, "ps3.single", Ps3ActionPhase::Pending, {}, {});
+        QVERIFY(status->text().contains(QStringLiteral("pending"), Qt::CaseInsensitive));
+        facade->receiveRemoteActionResult(91, "ps3.single", Ps3ActionPhase::Completed, {}, {});
+        QVERIFY(status->text().contains(QStringLiteral("completed"), Qt::CaseInsensitive));
+
+        form.findChild<QPushButton*>(QStringLiteral("btnPSCalibrate"))->click();
+        facade->receiveRemoteActionResult(91, "ps3.single", Ps3ActionPhase::Pending, {}, {});
+        facade->resetSession();
+        // R-R3-21 wording plan: the retirement is said in user words.
+        QVERIFY2(status->text().contains(QStringLiteral("connection to the Core changed")),
+                 qPrintable(status->text()));
+        QVERIFY(OperatorWording::isPlain(status->text()));
     }
 
     // ── Test 12: Save button gating on correctionsBeingApplied ──────────────
@@ -358,6 +504,23 @@ private slots:
         auto* btn = form.findChild<QPushButton*>(QStringLiteral("btnPSSave"));
         QVERIFY(btn);
         QCOMPARE(btn->isEnabled(), false);
+    }
+
+    void captureExpandedFormWhenRequested()
+    {
+        const QString directory = qEnvironmentVariable("NEREUS_DSP_UI_CAPTURE_DIR");
+        if (directory.isEmpty()) {
+            QSKIP("NEREUS_DSP_UI_CAPTURE_DIR is not set");
+        }
+        QVERIFY(QDir().mkpath(directory));
+        PsForm form(nullptr, nullptr);
+        if (form.isAdvancedCollapsed()) {
+            form.findChild<QPushButton*>(QStringLiteral("btnPSAdvanced"))->click();
+        }
+        form.show();
+        form.adjustSize();
+        QCoreApplication::processEvents();
+        QVERIFY(form.grab().save(directory + QStringLiteral("/psform-expanded.png")));
     }
 };
 

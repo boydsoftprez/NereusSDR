@@ -1,6 +1,8 @@
 // =================================================================
 // tests/tst_tx_frequency_follows_tx_slice.cpp  (NereusSDR)
 // =================================================================
+// 2026-09-27: XIT-shifted carrier band-plan gate regression for positive,
+// negative and disabled XIT. J.J. Boyd (KG4VCF), AI-assisted via Codex.
 // no-port-check: NereusSDR-original test infrastructure. Expected
 // behaviour is cited to Thetis in comments, but nothing here is a port.
 //
@@ -111,6 +113,59 @@ class TestTxFrequencyFollowsTxSlice : public QObject {
 private slots:
     void initTestCase() { AppSettings::instance().clear(); }
     void cleanup()      { AppSettings::instance().clear(); }
+
+    // Thetis console.cs:29440-29450 [v2.10.3.15] folds XIT into the
+    // carrier before CheckValidTXFreq at :29486. A dial inside a band must
+    // not key when XIT moves the actual TX passband outside its edge.
+    void moxGateChecksXitShiftedCarrier_data()
+    {
+        QTest::addColumn<double>("dialHz");
+        QTest::addColumn<int>("xitHz");
+        QTest::addColumn<bool>("xitEnabled");
+        QTest::addColumn<bool>("allowed");
+        QTest::newRow("positive-outside") << 14'347'000.0 << 4'000 << true << false;
+        QTest::newRow("positive-inside") << 14'346'500.0 << 500 << true << true;
+        QTest::newRow("negative-outside") << 14'001'000.0 << -2'000 << true << false;
+        QTest::newRow("negative-inside") << 14'001'000.0 << -500 << true << true;
+        QTest::newRow("xit-disabled") << 14'347'000.0 << 4'000 << false << true;
+        QTest::newRow("carrier-inside-filter-outside") << 14'349'000.0 << 500 << true << false;
+        QTest::newRow("disabled-xit-filter-outside") << 14'349'000.0 << 2'000 << false << false;
+    }
+
+    void moxGateChecksXitShiftedCarrier()
+    {
+        QFETCH(double, dialHz);
+        QFETCH(int, xitHz);
+        QFETCH(bool, xitEnabled);
+        QFETCH(bool, allowed);
+
+        RadioModel model;
+        model.setPcCaptureAllowed(false);
+        model.configureStreamPool(5, 5, 192000);
+        const int id = model.addSlice();
+        SliceModel* slice = model.slices().at(id);
+        slice->setFrequency(dialHz);
+        slice->setDspMode(DSPMode::USB);
+        slice->setXitHz(xitHz);
+        slice->setXitEnabled(xitEnabled);
+        model.transmitModel().setFilterLow(100);
+        model.transmitModel().setFilterHigh(2900);
+        model.installBandPlanMoxCheckForTest();
+
+        QSignalSpy rejected(model.moxController(), &MoxController::moxRejected);
+        model.moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        model.moxController()->setMox(true);
+        QCOMPARE(rejected.isEmpty(), allowed);
+        if (!allowed) {
+            // Addendum G-42 item 4: the refusal names the carrier (with XIT)
+            // and the filter, in the operator's words.
+            QVERIFY(rejected.first().first().toString().endsWith(
+                QStringLiteral(" reaches outside the transmit bands for your region "
+                               "(United States).")));
+            QVERIFY(!model.moxController()->isMox());
+        }
+        model.moxController()->setMox(false);
+    }
 
     // Tuning a slice that is NOT bound to the transmitter must not move the
     // transmit frequency, even when it is the slice the operator is looking

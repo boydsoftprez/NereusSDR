@@ -24,6 +24,12 @@ warren@wpratt.com
 
 */
 
+// NereusSDR modifications (2026-09-25, J.J. Boyd KG4VCF, with Anthropic
+// Claude Code, R-R3-39): create_resampleFV, xresampleFV and
+// destroy_resampleFV report each call to the application's caller check
+// (dsplock.h WdspCallerCheck) before any of their work; with no check
+// installed that is one pointer test. No DSP flow changes.
+
 #include "comm.h"
 
 /************************************************************************************************
@@ -341,6 +347,7 @@ int xresampleF (RESAMPLEF a)
 PORT
 void* create_resampleFV (int in_rate, int out_rate)
 {
+	WdspCallerCheck (-1, WDSP_CALLER_RESAMPLE_FV);	// NereusSDR (R-R3-39)
 	return (void *)create_resampleF (1, 0, 0, 0, in_rate, out_rate);
 }
 
@@ -348,6 +355,7 @@ PORT
 void xresampleFV (float* input, float* output, int numsamps, int* outsamps, void* ptr)
 {
 	RESAMPLEF a = (RESAMPLEF)ptr;
+	WdspCallerCheck (-1, WDSP_CALLER_RESAMPLE_FV);	// NereusSDR (R-R3-39)
 	a->in = input;
 	a->out = output;
 	a->size = numsamps;
@@ -357,5 +365,6 @@ void xresampleFV (float* input, float* output, int numsamps, int* outsamps, void
 PORT
 void destroy_resampleFV (void* ptr)
 {
+	WdspCallerCheck (-1, WDSP_CALLER_RESAMPLE_FV);	// NereusSDR (R-R3-39)
 	destroy_resampleF ( (RESAMPLEF)ptr );
 }

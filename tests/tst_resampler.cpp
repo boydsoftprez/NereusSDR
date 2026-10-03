@@ -85,6 +85,7 @@ private slots:
     void monoToStereoDoubles();
     void stereoToMonoHalves();
     void stereoToStereoRoundTrips();
+    void oversizedInputIsFedInBlocks();
 };
 
 // 2026-05-12 (PR #238 review follow-up): all five tests below pass
@@ -199,6 +200,40 @@ void TestResampler::stereoToStereoRoundTrips()
     QVERIFY2(stereoOutFloats == 2 * monoOutSamples,
              qPrintable(QString("stereoToStereo: got %1 floats, expected 2 * %2 = %3")
                             .arg(stereoOutFloats).arg(monoOutSamples).arg(2 * monoOutSamples)));
+}
+
+// r8brain writes past its buffers when one call carries more than the
+// maxBlockSamples it was built for, so every variant feeds it in blocks, and
+// the result equals feeding the same samples one block at a time.
+void TestResampler::oversizedInputIsFedInBlocks()
+{
+    constexpr int kBlock = 1024;
+    constexpr int kN = kBlock * 3 + 123;
+    std::vector<float> in(kN);
+    for (int i = 0; i < kN; ++i) {
+        in[static_cast<size_t>(i)] = std::sin(0.01f * static_cast<float>(i));
+    }
+    Resampler whole(24000, 48000, kBlock);
+    Resampler pieces(24000, 48000, kBlock);
+    const QByteArray a = whole.process(in.data(), kN);
+    QByteArray b;
+    for (int off = 0; off < kN; off += kBlock) {
+        b.append(pieces.process(in.data() + off, std::min(kBlock, kN - off)));
+    }
+    QVERIFY(whole.largestInputBlock() <= kBlock);
+    QCOMPARE(whole.maxBlockSamples(), kBlock);
+    QCOMPARE(a, b);
+
+    Resampler stereo(8000, 24000, kBlock);
+    const QByteArray st = stereo.processMonoToStereo(in.data(), kN);
+    QVERIFY(stereo.largestInputBlock() <= kBlock);
+    QVERIFY(st.size() > 0);
+
+    Resampler into(24000, 48000, kBlock);
+    std::vector<float> out(static_cast<size_t>(kN * 3));
+    const int n = into.processInto(in.data(), kN, out.data(), static_cast<int>(out.size()));
+    QVERIFY(into.largestInputBlock() <= kBlock);
+    QCOMPARE(QByteArray(reinterpret_cast<const char*>(out.data()), n * static_cast<int>(sizeof(float))), a);
 }
 
 QTEST_GUILESS_MAIN(TestResampler)

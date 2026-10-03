@@ -5,6 +5,7 @@
 // Ported from Thetis sources:
 //   Project Files/Source/Console/enums.cs, original licence from Thetis source is included below
 //   Project Files/Source/ChannelMaster/network.h, original licence from Thetis source is included below
+//   Project Files/Source/Console/clsHardwareSpecific.cs, original licence from Thetis source is included below
 //
 // =================================================================
 // Additional copyright holders whose code is preserved in this file via
@@ -18,6 +19,29 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-27 - rfPowerShownFor, tunePowerShownFor,
+//                 tunePowerStoredFromShown and the shown places and unit,
+//                 moved from TxApplet and PowerPage with their mi0bot cites
+//                 so the Core's catalogue reads what the widgets show
+//                 (R-IOS-06, R-IOS-27). J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-27 - rfPowerShownFor ports the rest of mi0bot's UpdateDriveLabel:
+//                 the HL2 drive snap near the ends and C#'s Math.Round (a
+//                 half to even), so an in-between drive shows as mi0bot
+//                 shows it. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-27 - The HL2 tune readouts as mi0bot shows them:
+//                 tuneSliderShownFor (UpdateTuneLabel's end snap and
+//                 Math.Round) for the TX applet, tunePowerShownFor with C#'s
+//                 integer division for the fixed tune spinbox, and the
+//                 PowerShownRule the catalogue sends. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-29 - rxDisplayCalOffsetDefaultFor ports the per-model RX
+//                 display calibration defaults from clsHardwareSpecific.cs
+//                 RXDisplayCalbrationOffsetDefauls [v2.10.3.15]; that file's
+//                 header is now carried below alongside the existing
+//                 rxMeterCalOffsetDefaultFor cite. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  enums.cs
@@ -83,9 +107,52 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 */
 
+// --- From clsHardwareSpecific.cs ---
+/*  clsHardwareSpecific.cs
+
+This file is part of a program that implements a Software-Defined Radio.
+
+This code/file can be found on GitHub : https://github.com/ramdor/Thetis
+
+Copyright (C) 2020-2026 Richard Samphire MW0LGE
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at
+
+mw0lge@grange-lane.co.uk
+*/
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
 #pragma once
 
 #include <QMetaType>
+
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -249,7 +316,8 @@ constexpr int paMaxWattsFor(HPSDRModel m) noexcept {
 //   _RX1MeterValues[Reading.SIGNAL_MAX_BIN] =
 //       WDSP.GetDetectMaxBin(0) + offset;
 //
-// User may override via the AppSettings key "RX1_MeterCalOffsetDb" (same
+// Level Cal keeps the user's value per model (RxMeterCalOffsetDbByRadio;
+// "RX1_MeterCalOffsetDb" is the one-value form of earlier builds) (same
 // Thetis convention as RX1MeterCalOffset, console.cs:21051).  The default
 // is hidden from the UI in 0.4.x; only Setup -> Multimeter exposes it (no
 // page yet, deferred to follow-up).
@@ -291,8 +359,54 @@ constexpr float rxMeterCalOffsetDefaultFor(HPSDRModel m) noexcept {
     return 0.98f;  // unreachable; matches Thetis default
 }
 
+// Per-radio RX display calibration default (dB), the level calibration's
+// display offset.  From Thetis clsHardwareSpecific.cs:424-440 [v2.10.3.15]
+// (RXDisplayCalbrationOffsetDefauls):
+//   case HPSDRModel.ANAN7000D:
+//   case HPSDRModel.ANAN8000D:
+//   case HPSDRModel.ORIONMKII:
+//   case HPSDRModel.ANVELINAPRO3:
+//   case HPSDRModel.REDPITAYA: //DH1KLM
+//       return 5.259f;
+//   case HPSDRModel.ANAN_G2:
+//   case HPSDRModel.ANAN_G2_1K:
+//       return -4.4005f;
+//   default:
+//       return -2.1f;
+//
+// User value under the AppSettings key "RX1_DisplayCalOffsetDb" (Thetis
+// RX1DisplayCalOffset, console.cs:21113-21122 [v2.10.3.15]).  It reaches
+// TCI calibration_ex only; the panadapter follows the meter offset
+// (console.cs:12305-12311 [v2.10.3.15], UpdateRX1DisplayOffsets).
+constexpr float rxDisplayCalOffsetDefaultFor(HPSDRModel m) noexcept {
+    switch (m) {
+        case HPSDRModel::ANAN7000D:
+        case HPSDRModel::ANAN8000D:
+        case HPSDRModel::ORIONMKII:
+        case HPSDRModel::ANVELINAPRO3:
+        case HPSDRModel::REDPITAYA:    return  5.259f;  //DH1KLM
+        case HPSDRModel::ANAN_G2:
+        case HPSDRModel::ANAN_G2_1K:   return -4.4005f;
+        // The default branch.  As in RXMeterCalbrationOffsetDefaults, the
+        // switch has no ANAN_G2E case, so the G2E takes the default.
+        case HPSDRModel::HPSDR:
+        case HPSDRModel::HERMES:
+        case HPSDRModel::ANAN10:
+        case HPSDRModel::ANAN10E:
+        case HPSDRModel::ANAN100:
+        case HPSDRModel::ANAN100B:
+        case HPSDRModel::ANAN100D:
+        case HPSDRModel::ANAN200D:
+        case HPSDRModel::HERMESLITE:
+        case HPSDRModel::ANAN_G2E:
+        case HPSDRModel::FIRST:
+        case HPSDRModel::LAST:         return -2.1f;
+    }
+    return -2.1f;  // unreachable; matches Thetis default
+}
+
 // Per-preamp-mode RX offset (dB), applied when step-att is DISABLED.
-// Ported byte-for-byte from Thetis console.cs:1991-2001 [v2.10.3.13]:
+// Ported byte-for-byte from Thetis console.cs:1999-2009 [v2.10.3.15]:
 //   rx1_preamp_offset[(int)PreampMode.HPSDR_OFF]      = 20.0f;  // atten inline
 //   rx1_preamp_offset[(int)PreampMode.HPSDR_ON]       =  0.0f;  // no atten
 //   rx1_preamp_offset[(int)PreampMode.HPSDR_MINUS10]  = 10.0f;
@@ -300,6 +414,9 @@ constexpr float rxMeterCalOffsetDefaultFor(HPSDRModel m) noexcept {
 //   rx1_preamp_offset[(int)PreampMode.HPSDR_MINUS30]  = 30.0f;
 //   rx1_preamp_offset[(int)PreampMode.HPSDR_MINUS40]  = 40.0f;
 //   rx1_preamp_offset[(int)PreampMode.HPSDR_MINUS50]  = 50.0f;
+//   rx1_preamp_offset[(int)PreampMode.SA_MINUS10] = 10.0f;
+//   rx1_preamp_offset[(int)PreampMode.SA_MINUS20] = 20.0f; //MW0LGE_21d step atten
+//   rx1_preamp_offset[(int)PreampMode.SA_MINUS30] = 30.0f;
 //
 // Called from RxMeterCalibration::computeOffsetDb in the
 // `!stepAttEnabled` branch of Thetis RXPreampOffset (console.cs:20989).
@@ -312,6 +429,9 @@ constexpr float rxPreampOffsetDbFor(int preampModeIdx) noexcept {
         case 4: return 30.0f;   // PreampMode::Minus30
         case 5: return 40.0f;   // PreampMode::Minus40
         case 6: return 50.0f;   // PreampMode::Minus50
+        case 7: return 10.0f;   // PreampMode::SaMinus10 == SA_MINUS10
+        case 8: return 20.0f;   // PreampMode::SaMinus20 == SA_MINUS20 //MW0LGE_21d step atten
+        case 9: return 30.0f;   // PreampMode::SaMinus30 == SA_MINUS30
         default: return 0.0f;
     }
 }
@@ -386,6 +506,162 @@ constexpr const char* fixedTuneSpinboxSuffixFor(HPSDRModel m) noexcept {
 //   formula: lblPWR.Text = "Drive: " + ((round(drv/6.0)/2) - 7.5) + "dB"
 constexpr float hl2AttenuatorDbPerStep() noexcept { return 0.5f; }
 constexpr int   hl2AttenuatorStepCount() noexcept { return 16; }
+
+// What each transmit power control shows for its value, per SKU. The TX
+// applet's RF Power and Tune labels, Setup > Transmit > Power's fixed tune
+// spinbox and the Core's catalogue (board.transmit) all read these, so an
+// app shows exactly what the desktop does.
+//
+// C#'s Math.Round(double), which mi0bot's labels use: the nearest whole
+// number, a half to the even one (MidpointRounding.ToEven).
+inline double csharpMathRound(double x) noexcept {
+    const double down = std::floor(x);
+    const double diff = x - down;
+    if (diff < 0.5) {
+        return down;
+    }
+    if (diff > 0.5) {
+        return down + 1.0;
+    }
+    return (std::fmod(down, 2.0) == 0.0) ? down : down + 1.0;
+}
+
+// RF Power (the `power` property, slider 0..rfPowerSliderMaxFor): the HL2
+// shows its output attenuator in dB, other SKUs the bare drive value. A
+// drive between the slider's steps snaps as mi0bot's label does first.
+// From mi0bot-Thetis console.cs:29245-29264 [v2.10.3.13-beta2]
+//   if (HardwareSpecific.Model == HPSDRModel.HERMESLITE)       // MI0BOT: HL2 has only 15 output power levels
+//   {
+//       if (4 > drv)
+//       {
+//           drv = 0;
+//       }
+//       else if (3 < drv && 6 > drv)
+//       {
+//           drv = 6;
+//       }
+//       else if (87 < drv)
+//       {
+//           drv = 90;
+//       }
+//       else if (84 < drv && 88 > drv)
+//       {
+//           drv = 84;
+//       }
+//
+//       lblPWR.Text = "Drive:  " + ((Math.Round(drv / 6.0) / 2) - 7.5).ToString() + "dB";
+inline double rfPowerShownFor(HPSDRModel m, int drive) noexcept {
+    if (m == HPSDRModel::HERMESLITE) {       // MI0BOT: HL2 has only 15 output power levels
+        int drv = drive;
+        if (4 > drv) {
+            drv = 0;
+        } else if (3 < drv && 6 > drv) {
+            drv = 6;
+        } else if (87 < drv) {
+            drv = 90;
+        } else if (84 < drv && 88 > drv) {
+            drv = 84;
+        }
+        return (csharpMathRound(drv / 6.0) / 2.0) - 7.5;
+    }
+    return static_cast<double>(drive);
+}
+
+// Tune slider (the `tunePowerForTxBand` property, 0..tuneSliderMaxFor): the
+// HL2 shows -16.5..0 dB, a value near the ends snapped and the rest rounded
+// to its step as mi0bot's label does; other SKUs the bare value.
+// From mi0bot-Thetis console.cs:47470-47481 [v2.10.3.13-beta2]
+//   if (HardwareSpecific.Model == HPSDRModel.HERMESLITE)
+//   {
+//       if (3 > drv)
+//       {
+//           drv = 0;
+//       }
+//       else if (96 < drv)
+//       {
+//           drv = 99;
+//       }
+//
+//       sValue = ((Math.Round(drv / 3.0) / 2) - 16.5).ToString() + "dB";
+inline double tuneSliderShownFor(HPSDRModel m, int value) noexcept {
+    if (m == HPSDRModel::HERMESLITE) {
+        int drv = value;
+        if (3 > drv) {
+            drv = 0;
+        } else if (96 < drv) {
+            drv = 99;
+        }
+        return (csharpMathRound(drv / 3.0) / 2.0) - 16.5;
+    }
+    return static_cast<double>(value);
+}
+
+// Fixed tune power (the `tunePower` property, stored 0..tuneSliderMaxFor),
+// as Setup > Transmit > Power's spinbox shows it: the HL2 -16.5..0 dB,
+// with C#'s integer division (value/3 on an int drops the remainder),
+// other SKUs the stored value in W.
+// From mi0bot-Thetis setup.cs:5305-5307 [v2.10.3.13-beta2]
+//   if (HPSDRModel.HERMESLITE == HardwareSpecific.Model)
+//       udTXTunePower.Value = (decimal)(value/3 - 33)/2;    // MI0BOT: Now only has a -16.5 to 0 range in HL2 for Tune power
+inline double tunePowerShownFor(HPSDRModel m, int stored) noexcept {
+    if (m == HPSDRModel::HERMESLITE) {
+        return static_cast<double>(stored / 3 - 33) / 2.0;
+    }
+    return static_cast<double>(stored);
+}
+
+// How each power control takes a value between its steps before showing
+// it, for the Core's catalogue (board.transmit's `shown`): `endSnap` (a
+// value below `below` shows as the slider's minimum, one above `above` as
+// its maximum), then `rounding`: "halfEven" (the nearest step, a half to
+// the even step: C#'s Math.Round), "down" (the step at or below: C#'s
+// integer division) or "none". These restate rfPowerShownFor,
+// tuneSliderShownFor and tunePowerShownFor above; tst_catalogue_ranges
+// holds them against the widgets at every value.
+struct PowerShownRule {
+    const char* rounding;
+    bool hasEndSnap;
+    int below;
+    int above;
+};
+
+constexpr PowerShownRule rfPowerShownRuleFor(HPSDRModel m) noexcept {
+    return (m == HPSDRModel::HERMESLITE) ? PowerShownRule{"halfEven", true, 4, 87}
+                                         : PowerShownRule{"halfEven", false, 0, 0};
+}
+
+constexpr PowerShownRule tuneSliderShownRuleFor(HPSDRModel m) noexcept {
+    return (m == HPSDRModel::HERMESLITE) ? PowerShownRule{"halfEven", true, 3, 96}
+                                         : PowerShownRule{"none", false, 0, 0};
+}
+
+constexpr PowerShownRule tunePowerShownRuleFor(HPSDRModel m) noexcept {
+    return (m == HPSDRModel::HERMESLITE) ? PowerShownRule{"down", false, 0, 0}
+                                         : PowerShownRule{"none", false, 0, 0};
+}
+
+// The stored tune power a shown value writes (the fixed tune spinbox).
+// From mi0bot-Thetis setup.cs:9396-9397 [v2.10.3.13-beta2]
+//   // MI0BOT: Range is 0 to -16.5 - convert to 99 - 0
+//   console.TunePower = (int) ((33 + (udTXTunePower.Value * 2)) * 3);
+// The C# int cast truncates; std::lround picks the nearest legal sub-step
+// for a value between steps (identical on exact 0.5 dB steps).
+inline int tunePowerStoredFromShown(HPSDRModel m, double shown) noexcept {
+    if (m == HPSDRModel::HERMESLITE) {
+        return static_cast<int>(std::lround((33.0 + shown * 2.0) * 3.0));
+    }
+    return static_cast<int>(std::lround(shown));
+}
+
+// Places and unit for the RF Power and Tune sliders' labels: the HL2's dB
+// to one place, other SKUs a bare whole number.
+constexpr int powerSliderShownDecimalsFor(HPSDRModel m) noexcept {
+    return (m == HPSDRModel::HERMESLITE) ? 1 : 0;
+}
+
+constexpr const char* powerSliderShownUnitFor(HPSDRModel m) noexcept {
+    return (m == HPSDRModel::HERMESLITE) ? "dB" : "";
+}
 
 // boardCodeName — returns the HPSDRHW enum label as a short model-code string.
 // Used in the status-bar board widget to show "Saturn" instead of the full

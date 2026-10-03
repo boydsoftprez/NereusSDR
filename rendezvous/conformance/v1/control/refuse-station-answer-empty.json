@@ -1,0 +1,10 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "answer",
+    "to": "AAECAwQFBgcICQoLDA0ODw",
+    "answer": "",
+    "turn": false
+  },
+  "decodes": false
+}

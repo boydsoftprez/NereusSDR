@@ -11,6 +11,91 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23 - R-R3-21: EP6 sequence error count ported from Thetis
+//                 networkproto1.c MetisReadDirect [v2.10.3.15] for
+//                 Diagnostics > Connection Quality. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: the Network Watchdog wait is Thetis's 3000 ms
+//                 (networkproto1.c:292-294 [v2.10.3.15]) and the RUNSTOP test
+//                 seams no longer carry the setting. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-32 (remote-window parity Task 6): m_ep6SeqPrimed.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - R-R3-49 / R-R3-46: Setup > Transmit > Power's Disable HF PA
+//                applied (Thetis DisablePA and hf_tr_relay,
+//                transmitSettingsVersion 11). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
+//   2026-09-28 - R-R3-46 / R-R3-49: the Alex Filters tabs' receive filter rows
+//                (per-row bypass and edges, Alex-2 master bypass) select the
+//                receive high-pass as Thetis's setAlexHPF /
+//                setBPF1ForOrionIISaturn / setAlex2HPF do (radioHardwareVersion
+//                8). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - HL2 Band Volts and Disable PS Sync: on a Hermes Lite 2,
+//                bank 0 C3 bits 3 and 4 follow the saved HL2 options (off by
+//                default), as mi0bot setup.cs:2843-2848 and 13376-13390
+//                [@c26a8a4] do; other boards keep Thetis's dither and random
+//                on. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - HL2 port part 1: the HL2 TX buffer latency and PTT hang
+//                (bank 17) are the saved HL2 options, as mi0bot
+//                setup.cs:21236-21248 [@c26a8a4] sends them. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - HL2 port part 1: bank 18 carries the saved Reset on
+//                Ethernet disconnect, as mi0bot setup.cs:21257-21262
+//                [@c26a8a4] sends it. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-09-29 - HL2 clock: Enable CL2, CL2 frequency and External 10 MHz
+//                program the HL2 clock chip over I2C at connect and on a
+//                change (setHl2Clock; mi0bot setup.cs:21558-21756,
+//                console.cs:28033-28040 [@c26a8a4]). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - HL2 port part 1: the HL2 I/O board's ongoing poll (mode,
+//                TX frequency, aerial registers, input-pin reads) and mi0bot's
+//                I2C frame spacing with the round-robin kept on an I2C
+//                subframe (console.cs:25781-25945, networkproto1.c:898-906
+//                [@c26a8a4]). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-09-28 - R-R3-49 (found bug): the VFO frequencies sent carry the
+//                 calibration correction factor, as Thetis NetworkIO.VFOfreq
+//                 does on Protocol 1 [v2.10.3.15] (setCalibrationController,
+//                 wireFrequencyHz). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-29 - Level Cal: the Alex receive attenuator (Thetis SetAlexAtten,
+//                netInterface.c:421-432 [v2.10.3.15]) on the wire, and the step
+//                attenuator range above 31 dB on Alex boards (value + 2,
+//                console.cs:11044-11056 [v2.10.3.15]). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - Level Cal fix wave: setRx2Preamp, the second receiver's
+//                preamp bit (Thetis SetRX2Preamp, netInterface.c:758-767
+//                [v2.10.3.15]). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-09-30 - Radio codec: the EP2 L/R bytes carry the receive audio
+//                for the radio's own speaker out, swapped as Thetis
+//                sendProtocol1Samples does (networkproto1.c:726-731
+//                [v2.10.3.15]); on the HL2 only when Swap audio channels is
+//                on, as mi0bot (networkproto1.c:1231-1239 [@c26a8a4]).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - Shared-input filters (ruling (c)): m_countedSlotsAdc0,
+//                the slots the receive low-pass and the HL2 OC receive band
+//                follow. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-09-30 - Shared-input filters, follow-up: countedCandidates.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - bindToRadioFacingAddress, radioFacingAddress and the
+//                receive-socket test seams: the socket binds the address that
+//                reaches the radio (network.c:116-118, 203 [v2.10.3.15]).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - TX safety: a lost link and every reconnect start unkeyed
+//                (dropTransmitForNewLink) and a key after the loss is refused
+//                until released (m_linkLossLatched), as the priming frames of
+//                Thetis networkproto1.c:106-138 [v2.10.3.15] never carry MOX.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - TX safety fix round 1: the latch only for a link lost
+//                keyed, lifted when the reconnect is back unkeyed.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-01 - Diversity lane B4: setDiversity, the writer m_diversity
+//                never had, for the VFO lock bit (bank 0 C4 bit 7,
+//                networkproto1.c:471 [v2.10.3.15]). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -42,10 +127,12 @@
 #include "RadioConnection.h"
 #include "BoardCapabilities.h"
 #include "HpsdrModel.h"
+#include "SharedInputLowPass.h"
 #include "codec/IP1Codec.h"
 #include "codec/CodecContext.h"
 
 namespace NereusSDR { class OcMatrix; }                  // forward decl — full header in .cpp
+namespace NereusSDR { class CalibrationController; }     // R-R3-49: frequency correction
 namespace NereusSDR { class IoBoardHl2; }                // forward decl — full header in .cpp
 namespace NereusSDR { class HermesLiteBandwidthMonitor; }// forward decl — full header in .cpp
 namespace NereusSDR { class TxMicSource; }               // forward decl — full header in audio/TxMicSource.h
@@ -57,6 +144,7 @@ namespace NereusSDR { class TxMicSource; }               // forward decl — ful
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QDateTime>
+#include <utility>
 #include <vector>
 
 namespace NereusSDR {
@@ -66,6 +154,9 @@ class P1RadioConnection : public RadioConnection {
 public:
     explicit P1RadioConnection(QObject* parent = nullptr);
     ~P1RadioConnection() override;
+
+    // Radio codec (2026-09-30): the EP2 L/R bytes carry the receive audio.
+    bool carriesRadioAudio() const noexcept override { return true; }
 
     int getAdcForDdc(int ddc) const override;
 
@@ -147,6 +238,10 @@ public:
     // Phase 3P-D Task 3 — called by RadioModel::connectToRadio().
     void setOcMatrix(const OcMatrix* matrix);
 
+    // R-R3-49: Setup > Calibration's frequency correction factor, applied to
+    // every VFO frequency sent (Thetis NetworkIO.VFOfreq). Null: factor 1.0.
+    void setCalibrationController(const CalibrationController* cal);
+
     // Phase 3P-E Task 2: wire IoBoardHl2 for I2C intercept (HL2 only).
     // On HL2, pushes the pointer into P1CodecHl2 and stores it locally for
     // the ep6 response parser.  On non-HL2 boards this is a noop.
@@ -171,6 +266,15 @@ public:
     // documented offsets, so cadence still flows.  RadioModel forces the
     // PC mic override on HL2 via setMicSourceLocked(true) so the mic16
     // zeros never reach fexchange0.
+    // [Radio codec lane, 2026-09-30] Correction to the note above: a stock
+    // HL2 has no mic codec and sends zero mic bytes, but an HL2 built with
+    // the AK4951 audio add-on board (gateware variants hl2b5up_ak4951v3/v4)
+    // does fill the zone; mi0bot has no HL2 mic lock. The gateware's
+    // discovery reply carries no AK4951 field (Hermes-Lite2
+    // usopenhpsdr1.v:254-314 @7472bd1), so NereusSDR cannot tell the two
+    // apart, so the HL2 keeps Radio Mic open with a note that it needs the
+    // add-on board (BoardCapabilities::radioMicNeedsAddOn) and no PC mic
+    // lock.
     void setTxMicSource(TxMicSource* src);
 
 public slots:
@@ -185,6 +289,25 @@ public slots:
     // announced count; see announceRxCount() for why there are two and how
     // they combine. Restarts the ep6 stream when the announced count moves.
     void setActiveReceiverCount(int count) override;
+
+    // Which frame slots carry a live receiver (bit n = slot n). Phase 3F
+    // section 16.3.2. Two uses.
+    //
+    // The announced count covers the highest live slot, so every slot in use
+    // is inside the frame (see announceRxCount).
+    //
+    // The receive filters: Thetis derives the Alex high-pass, the receive
+    // half of the low-pass and the OC outputs from RX1, and its RX1 always
+    // exists. Routing by frame slot means slice A can be closed while slice
+    // B keeps slot 1 (slot 2 on the Orion class). The live receiver in the
+    // LOWEST slot then stands in for RX1, and keeps that role until a
+    // receiver comes back on a lower slot.
+    //
+    // An empty mask (every stream suspended, as the HermesII class does
+    // while PureSignal transmits) leaves the stand-in where it was, so the
+    // filters do not move for a state that lasts one transmission.
+    void setLiveReceiverSlots(quint32 slotMask) override;
+    void setReceiverVfoFrequencies(const QVector<quint64>& vfoHzBySlot) override;
 
     void setSampleRate(int sampleRate) override;
 
@@ -205,14 +328,38 @@ public slots:
     void restartStreamWithRate(int newSampleRate);
 
     void setAttenuator(int dB) override;
+    void setAttenuatorForAdc(int adc, int dB) override;
     void setPreamp(bool enabled) override;
+    // Level Cal: prn->rx[1].preamp (C1 bit 1 of the bank carrying the
+    // preamp bits), Thetis SetRX2Preamp.
+    void setRx2Preamp(bool enabled) override;
     void setTxDrive(int level) override;
     void setMox(bool enabled) override;
     void setAntennaRouting(AntennaRouting routing) override;
     void setAlexRxBpf(AlexRxBpf bpf) override;
+    // Level Cal: the Alex receive attenuator (Thetis SetAlexAtten).
+    void setAlexAtten(int bits) override;
     void setWatchdogEnabled(bool enabled) override;
     void sendTxIq(const float* iq, int n) override;
+    // G-07: Protocol 1 keeps only the full-ring loss count
+    // (TxSendStats::overflowOnly); the rest of the counters are Protocol 2's.
+    TxSendStats txSendStats() const override;
+    // G-05: the unkey's wait for the send ring (RadioConnection).
+    bool txIqRingDrained() const override;
+    double txIqRingLengthMs() const override;
     void setTrxRelay(bool enabled) override;
+    // "Disable HF PA": bank 10 C3 bit 7 (and the HL2's C2 bit 3), on the
+    // next frame (RadioConnection::setPaDisabled).
+    void setPaDisabled(bool disabled) override;
+    // The Alex tab's receive filter rows: the high-pass is re-selected at
+    // once (RadioConnection::setAlexHpfEdges).
+    void setAlexHpfEdges(const codec::alex::AlexHpfEdges& edges) override;
+    // The Alex-1 low-pass rows: stored for the next selection
+    // (RadioConnection::setAlexLpfEdges).
+    void setAlexLpfEdges(const codec::alex::AlexLpfEdges& edges) override;
+    // 6m/ByPass on RX: re-selects the low-pass at once
+    // (RadioConnection::setAlexLpfBypass).
+    void setAlexLpfBypass(bool on) override;
     void setTxStepAttenuation(int dB) override;
     void setMicBoost(bool on) override;
     void setLineIn(bool on) override;
@@ -223,6 +370,63 @@ public slots:
     void setPuresignalRun(bool run) override;
     void setMicPTTDisabled(bool disabled) override;
     void setMicXlr(bool xlrJack) override;
+
+    // HL2 only: the Band Volts and Disable PS Sync options, which a Hermes
+    // Lite 2 takes in bank 0 C3 bits 3 and 4 (the ADC dither and random bits
+    // on every other board). Stored for the next connect; on an HL2 already
+    // connected they reach the wire on the next frame. Ignored on any other
+    // board. From mi0bot Console/setup.cs:13376-13390 [@c26a8a4].
+    void setHl2BandVolts(bool on);
+    void setHl2PsSync(bool on);
+
+    // HL2 only: the TX buffer latency (ms, 0..70) and PTT hang (ms, 0..30)
+    // bank 17 carries (C4 and C3). Stored; the next round of the banks sends
+    // them, as mi0bot's SetTxLatency / SetPttHang only store the value.
+    // From mi0bot Console/setup.cs:21236-21248 [@c26a8a4]:
+    //   // MI0BOT: Controls the hardware tx buffer in the HL2
+    //   // MI0BOT: Controls the hardware PTT hang in the HL2
+    void setHl2TxLatency(int ms);
+    void setHl2PttHang(int ms);
+
+    // HL2 only: Reset on Ethernet disconnect, bank 18 C4. Stored; the next
+    // round of the banks sends it, as mi0bot's SetResetOnDisconnect only
+    // stores the bit.
+    // From mi0bot Console/setup.cs:21257-21262 [@c26a8a4]:
+    //   // MI0BOT: Controls if the HL2 will reset after an Ethernet disconnect
+    void setHl2ResetOnDisconnect(bool on);
+
+    // HL2 only: Swap audio channels. mi0bot swaps the L/R audio bytes only
+    // while this is on (default off), where Thetis always swaps them.
+    // From mi0bot ChannelMaster/networkproto1.c:1231 [@c26a8a4]:
+    //   if (prn->swap_audio_channels)				// To cater for different firmware at the hardware, allow control of audio channels swapping
+    void setHl2SwapAudioChannels(bool on);
+
+    // HL2 only: the clock options External 10 MHz (CL1 input), Enable CL2
+    // and the CL2 frequency (kHz, clamped to 1000..200000: mi0bot's box
+    // holds 1 to 200 MHz to three decimal places). Each is written to the
+    // HL2's clock chip (I2C bus 0, address 0xd4) as a list of register
+    // writes. At connect (when the first ep6 frame arrives) an option that
+    // is on is sent, and so is one whose list did not finish last time; an
+    // option left off sends nothing otherwise, as mi0bot's connect path
+    // does. On an HL2 already connected, a change is sent at once: External
+    // 10 MHz sends its on or off table and then the CL2 table the new
+    // reference needs, and a CL2 change sends the CL2 table (on) or the CL2
+    // off table (off). Lists that have not started when a change arrives
+    // are dropped and rebuilt from the values now wanted. While not
+    // connected the values are only stored.
+    // From mi0bot Console/setup.cs:21558-21756 and console.cs:28033-28040
+    // [@c26a8a4]:
+    //   // MI0BOT: Support for HL2 10MHz input
+    //   // MI0BOT: Support for HL2 Cl2 clock output
+    void setHl2Clock(bool ext10MHz, bool cl2Enable, int cl2FreqKHz);
+
+    // HL2 I/O board poll inputs. The TX VFO's DSP mode (Thetis DSPMode
+    // value) and frequency in Hz, written to REG_OP_MODE and
+    // REG_TX_FREQ_BYTE4..0; and the aerial mode and ports written to
+    // REG_RF_INPUTS and REG_ANTENNA (console.cs SetIOBoardAerialPorts).
+    // From mi0bot Console/console.cs:25781-25945 UpdateIOBoard [@c26a8a4].
+    void setIoBoardTxState(int dspMode, qint64 frequencyHz);
+    void setIoBoardAerials(quint8 aerialMode, quint8 aerialPorts);
 
     // Set the P1-only per-DDC ADC routing word (Thetis `P1_adc_cntrl`).
     //
@@ -276,6 +480,18 @@ public slots:
     // banks 2-9 over the next 4-9 frames (~10-25 ms at 380.95 fps).
     void applyPsDdcConfig(const NereusSDR::PsDdcConfig& cfg);
 
+    // Diversity lane B4: the en_diversity argument of Thetis
+    // Protocol1DDCConfig, which locks the radio's VFOs while diversity runs
+    // (bank 0 C4 bit 7). RadioModel passes DdcAssignment::p1Diversity on
+    // every DDC assignment, so the bit sets when diversity starts and clears
+    // when it stops or slice A closes. The Thetis lines are quoted at the
+    // definition.
+    //   From Thetis ChannelMaster/networkproto1.c:471 [v2.10.3.15]
+    //     C4 |= (P1_en_diversity) << 7;		// if diversity, locks VFOs
+    // Connection thread only (RadioModel marshals the call).
+    void setDiversity(bool on);
+    bool diversityForTest() const { return m_diversity; }
+
     // Phase 3M-4 Task 17 P1 follow-up — read-only access to the per-board
     // codec for ReceiverManager::setP1Codec injection.  Returns nullptr
     // until selectCodec() runs at applyBoardQuirks() time; subscribers
@@ -327,8 +543,19 @@ private:
     //                   setActiveReceiverCount, which follows the operator
     //                   adding and removing panadapters.
     //
-    // The announced count is the max of the two, so neither axis can starve
-    // the other. Bench-caught 2026-08-01 (J.J. Boyd, KG4VCF) on a live HL2:
+    //   m_slotRxCount   the highest live frame slot + 1, from
+    //                   setLiveReceiverSlots (Phase 3F section 16.3.2). A
+    //                   count of receivers stops being enough once routing
+    //                   is by frame slot: with slice A closed, slices B and
+    //                   C sit on slots 1 and 2, the panadapter axis says 2,
+    //                   and slot 2 falls out of the frame. On the Atlas
+    //                   (HPSDR) nothing else raises the count, because
+    //                   Thetis gives that model no P1_rxcount
+    //                   (console.cs:8533-8534 [v2.10.3.15]); wherever Thetis
+    //                   does give one, m_codecRxCount still carries it.
+    //
+    // The announced count is the max of the three, so no axis can starve
+    // another. Bench-caught 2026-08-01 (J.J. Boyd, KG4VCF) on a live HL2:
     // these were a single field written by three call sites, last writer
     // wins. Removing the second panadapter with PureSignal on dropped the
     // announcement to one receiver, and DDC2 and DDC3 left the ep6 frame
@@ -366,6 +593,24 @@ private:
     // — same stop+prime+start cycle as restartStreamWithRate().
     void restartStreamWithCount(int newActiveRxCount);
 
+    // Binds m_socket to the local address that reaches m_radioInfo.address,
+    // on a port the OS chooses, as Thetis binds its listening socket to the
+    // network card's address (network.c nativeInitMetis). Called by
+    // connectToRadio() and each reconnect attempt. With no route, or if that
+    // address will not bind, warns and binds every address (Any); the socket
+    // is always left bound with the buffer sizes applied.
+    void bindToRadioFacingAddress();
+    // The local address that reaches m_radioInfo.address (a UDP connect),
+    // null if none does within kRouteLookupMs, or the test override.
+    QHostAddress radioFacingAddress() const;
+    // Test stand-in for the route lookup (setRadioFacingAddressForTest).
+    // Unconditional members: the class layout must not depend on
+    // NEREUS_BUILD_TESTS.
+    bool m_radioFacingOverridden{false};
+    QHostAddress m_radioFacingOverride;
+    // The socket buffer sizes init() sets; applied again after a rebind.
+    void applySocketBufferSizes();
+
     // --- Wire format (networkproto1.c) — implemented in Tasks 7 & 8 ---
     void sendMetisStart(bool iqAndMic);
     void sendMetisStop();
@@ -373,6 +618,16 @@ private:
     // round-robin bank sequence (0-17). Each call advances m_ccRoundRobinIdx
     // by 2 (one per subframe). Source: networkproto1.c:597-884 WriteMainLoop.
     void sendCommandFrame();
+    // One subframe's C&C bytes (sendCommandFrame sends two per frame).
+    void composeSubframe(quint8 out[5], int maxBank);
+    // The last round-robin bank for this codec.
+    int ccMaxBank() const;
+    // The I2C frame for this subframe, if one is queued (false otherwise),
+    // and the ordinary bank.
+    bool composeI2cFrame(quint8 out[5]) const;
+    void composeBank(int bankIdx, quint8 out[5]) const;
+    // One 40 ms step of the HL2 I/O board poll (UpdateIOBoard).
+    void ioBoardPollTick();
     // Send `countPerBank` ep2 command frames in two bursts with a 10ms gap.
     // Replaces the old ForceCandCFrame pattern — now simply drives the
     // round-robin forward, ensuring all banks get primed.
@@ -406,6 +661,8 @@ private:
 
     // Snapshot all live state into a CodecContext for the codec call.
     CodecContext buildCodecContext() const;
+    // Plan Task 14 fix wave: report bank 0's band-output byte (bandOutputsComposed).
+    void publishBank0BandOutputs(const quint8 bank0[5]) const;
 
     // HL2-specific helpers (mi0bot Hermes-Lite branch, Task 12).
     // hl2SendIoBoardInit — issues I2C register reads at startup to detect the
@@ -418,7 +675,7 @@ private:
 
     // Step machine for the mi0bot probe sequence.  mi0bot's I2CReadInitiate
     // refuses to enqueue if `in_index != out_index` (queue not empty), so reads
-    // must be sequenced ONE AT A TIME.  Driver: i2cReadResponseReceived signal
+    // must be sequenced ONE AT A TIME.  Driver: i2cReadAnswered signal
     // from IoBoardHl2.  Source: console.cs:25796-25831 [@c26a8a4]
     enum class Hl2ProbeStep {
         Idle,
@@ -431,8 +688,10 @@ private:
     Hl2ProbeStep m_hl2ProbeStep{Hl2ProbeStep::Idle};
     bool         m_hl2ProbeWired{false};   // one-shot signal-connect guard
     // Dispatch next step.  retAddr/retSubAddr identify the I2C read whose
-    // response just arrived (zero+zero from the initial bootstrap call so
-    // the Idle state's transition fires).  Phase 3L Codex P2 fix on PR #157.
+    // response just arrived: the device address and register of the
+    // pending read it answered, not C0's address bits (zero+zero from the
+    // initial bootstrap call so the Idle state's transition fires).  Phase
+    // 3L Codex P2 fix on PR #157; parity Task 14 follow-up.
     void hl2ProbeAdvance(quint8 retAddr, quint8 retSubAddr);
 
     // hl2CheckBandwidthMonitor — drives the HermesLiteBandwidthMonitor tick.
@@ -481,6 +740,10 @@ private:
     // Connect watchdog: fires this many ms after connectToRadio() if no first
     // ep6 frame arrives → emits connectFailed(Timeout, ...). Design §4.1.
     static constexpr int kConnectTimeoutMs     = 2000;
+    // How long bindToRadioFacingAddress() waits for the OS to name the local
+    // address that reaches the radio. A UDP connect sends nothing and is
+    // normally answered at once. NereusSDR-original.
+    static constexpr int kRouteLookupMs        = 100;
     // Mic-frame LOS timeout — after this long without a successful mic16
     // dispatch, inject a zero block into TxMicSource so the worker keeps
     // ticking through silence.  Matches Thetis network.c:656 [v2.10.3.13]:
@@ -508,7 +771,13 @@ private:
     // instance members so tests can compress the reconnect timeline;
     // nothing outside the test suite calls setReconnectTimingForTest(),
     // so production timing is bit-identical to before.
-    static constexpr int kWatchdogSilenceMs    = 2000;          // silence → Error threshold
+    // R-R3-49: the wait for data while the Network Watchdog is on (was 2000,
+    // a NereusSDR value).
+    // From Thetis networkproto1.c:292-294 [v2.10.3.15]:
+    //   //MW0LGE_21g WSAWaitForMultipleEvents(1, &prn->hDataEvent, FALSE, WSA_INFINITE, FALSE);
+    //   //added similar timout code from ReadThreadMainLoop
+    //   DWORD retVal = WSAWaitForMultipleEvents(1, &prn->hDataEvent, FALSE, prn->wdt ? 3000 : WSA_INFINITE, FALSE);
+    static constexpr int kWatchdogSilenceMs    = 3000;          // silence → LinkLost threshold
     static constexpr int kReconnectIntervalMs  = 5000;          // delay between retry attempts
     static constexpr int kMaxReconnectAttempts = 3;             // max retries before staying in Error
 
@@ -517,6 +786,13 @@ private:
 
     quint32 m_epSendSeq{0};
     quint32 m_epRecvSeqExpected{0};
+    // R-R3-21: last EP6 sequence number received, for the sequence-error
+    // count. From Thetis networkproto1.c:28 "int MetisLastRecvSeq = 0;"
+    // [v2.10.3.15].
+    quint32 m_ep6LastRecvSeq{0};
+    // R-R3-32 (parity Task 6): an ep6 frame has arrived since connect, so
+    // the next one has a number to follow (RadioLinkStats packet loss).
+    bool m_ep6SeqPrimed{false};
     int     m_ccRoundRobinIdx{0};
 
     // 3M-1a E.3: force the next sendCommandFrame() to start with bank 0 so
@@ -620,6 +896,44 @@ private:
     int     m_activeRxCount{1};
     int     m_codecRxCount{1};   ///< DDC configuration axis (PureSignal, diversity)
     int     m_panRxCount{1};     ///< panadapter axis
+    int     m_slotRxCount{0};    ///< highest live frame slot + 1 (0 = none / not told yet)
+
+    // The live frame slots and the slot standing in for Thetis's RX1. See
+    // setLiveReceiverSlots. m_rx1Slot starts at 0, so until a mask arrives,
+    // and whenever slot 0 is live, every filter reads exactly what it read
+    // before routing by frame slot.
+    quint32 m_liveSlotMask{0};
+    int     m_rx1Slot{0};
+
+    // The frame slots of the slices counted on the input (AlexRxBpf::
+    // countedSlotsAdc0). The receive low-pass follows the highest, and on
+    // the HL2 the OC receive band follows the highest band among them
+    // (mi0bot Penny.cs UpdateExtCtrl). 0 = none counted, and the RX1
+    // stand-in rule applies.
+    quint32 m_countedSlotsAdc0{0};
+
+    // Recompute the receive-side Alex selections (m_alexHpfBits and
+    // m_alexLpfBitsRx) from the RX1 stand-in. `changedSlot` is the frame slot
+    // whose frequency just moved, or -1 when the stand-in itself moved.
+    void recomputeReceiveFilters(int changedSlot);
+
+    // setAlexLPF (codec::alex::setAlexLpf) on m_alexLpfBitsRx / Tx, the Alex0
+    // and Alex1 masks, then reports the low-pass in use. `freqIsTx` is
+    // Thetis's freqIsTX; the keyed state is m_mox.
+    void applyAlexLpf(double freqMhz, bool freqIsTx);
+    // UpdateAlexTXFilter: the receive-frequency selection, unkeyed only.
+    void applyReceiveAlexLpf(quint64 rx1Hz, quint64 fallbackHz);
+    // Whether setAlexLPF's alexpresent holds: an Alex board, or the HL2,
+    // whose firmware and N2ADR board read the same bits.
+    bool alexLpfPresent() const;
+
+    // The frequency whose band selects the OC outputs: the transmitting
+    // slice's while keyed, the RX1 stand-in's while not (plan Task 14).
+    quint64 ocBandFrequencyHz() const;
+
+    // The receivers counted on the input, in slot order, with their DDC
+    // centres and slice VFOs (shared-input filters, ruling (c)).
+    QList<SharedInputLowPass::Candidate> countedCandidates() const;
 
     // HL2 mic decimation state.  At sample rates above 48 kHz the radio
     // embeds one mic sample per I/Q sample group in EP6 frames (so mic
@@ -633,6 +947,9 @@ private:
     int     m_micDecimationCount{0};
 
     quint64 m_rxFreqHz[7]{};
+    // Each slot's slice VFO frequency (setReceiverVfoFrequencies). 0 = not
+    // told, and the band falls back to the slot's DDC centre above.
+    quint64 m_rxVfoHz[7]{};
     quint64 m_txFreqHz{0};
     // THREAD SAFETY: written only from the connection thread; every compose
     // function and fillTxZone() read it there too.
@@ -647,13 +964,114 @@ private:
     // not once per sample, so the ordering cost is irrelevant next to the
     // surrounding ring arithmetic.
     std::atomic<bool> m_mox{false};
+    // Link-loss latch (TX safety, whole-branch review 2026-09-30, fix
+    // round 1). Set when the watchdog declares a link lost while keyed, and
+    // at a reconnect attempt that found a key made during the outage. While
+    // set, setMox(true) is refused; the reconnect reaching Connected
+    // unkeyed clears it, as do setMox(false) and connectToRadio. Follows
+    // P2RadioConnection::m_linkLossLatched, which refuses a key through a
+    // lost link the same way; Thetis itself never reconnects a lost P1
+    // link (see dropTransmitForNewLink).
+    // Connection thread only.
+    bool    m_linkLossLatched{false};
+    bool    m_linkLossRefusalLogged{false};
     int     m_antennaIdx{0};
     int     m_rxOnlyAnt{0};   // RX-only input mux (0..3). Bank 0 C3 bits 5-6.
     bool    m_rxOut{false};   // _Rx_1_Out relay. Bank 0 C3 bit 7.
+    // Alex attenuator _20_dB_Atten / _10_dB_Atten. Bank 0 C3 bits 1 / 0.
+    bool    m_alex20dB{false};
+    bool    m_alex10dB{false};
 
     // Per-ADC state — initialized from HardwareProfile at connect time
     bool    m_dither[3]{true, true, true};
     bool    m_random[3]{true, true, true};
+    // The HL2 options behind bank 0 C3 bits 3 and 4 on a Hermes Lite 2
+    // (setHl2BandVolts / setHl2PsSync), off until the saved options arrive.
+    bool    m_hl2BandVolts{false};
+    bool    m_hl2PsSync{false};
+    // HL2 bank 17: TX buffer latency and PTT hang, mi0bot's create_rnet
+    // defaults (netInterface.c:1709-1710 [@c26a8a4]) until the saved
+    // values arrive.
+    int     m_hl2TxLatencyMs{20};
+    int     m_hl2PttHangMs{12};
+    // HL2 bank 18: reset on Ethernet disconnect, off as mi0bot's
+    // create_rnet leaves it (netInterface.c:1724 [@c26a8a4]).
+    bool    m_hl2ResetOnDisconnect{false};
+    // HL2 Swap audio channels (setHl2SwapAudioChannels), off as mi0bot's
+    // prn->swap_audio_channels starts. Connection thread.
+    bool    m_hl2SwapAudioChannels{false};
+    // HL2 clock options (setHl2Clock): off, off and 116 MHz as mi0bot's
+    // designer leaves them (setup.designer.cs:11159 udCl2Freq.Value = 116
+    // [@c26a8a4]) until the saved options arrive.
+    bool    m_hl2Ext10MHz{false};
+    bool    m_hl2Cl2Enable{false};
+    int     m_hl2Cl2FreqKHz{116000};
+    // Clock chip writes waiting for room in the I2C queue, one list per
+    // mi0bot WriteVersaClockAsync call, sent in order. `failures` counts
+    // attempts in a row that found the queue full with nothing leaving it
+    // (`dequeuedAtFailure` is the queue's count at the last one).
+    enum class Hl2ClockKind { Ext10, Cl2 };
+    struct Hl2ClockSequence {
+        Hl2ClockKind kind{Hl2ClockKind::Cl2};
+        bool extOn{false};                               // Ext10 lists only
+        std::vector<std::pair<quint8, quint8>> writes;   // (register, data)
+        std::size_t next{0};
+        int failures{0};
+        quint64 dequeuedAtFailure{0};
+    };
+    std::vector<Hl2ClockSequence> m_hl2ClockPending;
+    QTimer* m_hl2ClockRetryTimer{nullptr};
+    // An option whose list was dropped before it finished (timed out, the
+    // link went down, no I/O board): its current value is sent again at
+    // the next connect even when it is off.
+    bool    m_hl2Ext10Incomplete{false};
+    bool    m_hl2Cl2Incomplete{false};
+    // A list whose writes all went into the I2C queue, not yet known to
+    // have reached the radio: `leavesAt` is the queue's enqueued count
+    // after its last write, and `left` is set by the first ep6 frame that
+    // finds that write gone from the queue. The next ep6 frame after that
+    // clears the option's incomplete flag; a disconnect or a lost link
+    // before then sets it (hl2ClockMarkUnconfirmed), so frames that sat
+    // in the queue, or went out while the radio had stopped answering,
+    // are sent again at the next connect. One entry per kind.
+    struct Hl2ClockSent {
+        Hl2ClockKind kind{Hl2ClockKind::Cl2};
+        quint64 leavesAt{0};
+        bool left{false};
+    };
+    std::vector<Hl2ClockSent> m_hl2ClockUnconfirmed;
+    // The I/O board's clear count last seen (hl2ClockCheckCleared).
+    quint64 m_hl2ClockClearSeen{0};
+    // The first ep6 frame promotes Connecting to Connected; the HL2 clock
+    // options that are on go to the radio then.
+    void enterDataFlowing();
+    void hl2ClockOnDataFlowing();
+    void hl2ClockRequest(bool ext10, bool cl2);
+    void hl2ClockDropPending();
+    void hl2ClockListDone(const Hl2ClockSequence& seq);
+    void hl2ClockListDropped(const Hl2ClockSequence& seq);
+    void hl2ClockPump();
+    void hl2ClockConfirmSent();
+    void hl2ClockMarkUnconfirmed();
+    bool hl2ClockCheckCleared();
+
+    // mi0bot prn->i2c.delay: subframes until the next I2C frame may go
+    // (composeSubframe).
+    int     m_i2cDelay{0};
+    // HL2 I/O board poll (ioBoardPollTick): 40 ms steps, the TX state and
+    // aerial values to write, and what was last written.
+    static constexpr int kIoBoardPollMs = 40;
+    QTimer* m_ioBoardPollTimer{nullptr};
+    int     m_ioTxMode{-1};
+    qint64  m_ioTxFrequencyHz{0};
+    quint8  m_ioAerialMode{0};
+    quint8  m_ioAerialPorts{0};
+    int     m_ioWrittenMode{-1};
+    qint64  m_ioWrittenFrequencyHz{0};
+    quint8  m_ioWrittenAerialMode{0};
+    quint8  m_ioWrittenAerialPorts{0};
+    // The radio is run as a Hermes Lite 2 (HPSDRModel::HERMESLITE).
+    bool    isHl2() const;
     bool    m_rxPreamp[3]{};
     int     m_stepAttn[3]{};      // per-ADC step attenuator (0-31)
     int     m_txStepAttn{0};
@@ -705,8 +1123,12 @@ private:
     // setTxFrequency on Connected and queues setReceiverFrequency before
     // connectToRadio, so both masks carry a real selection before the
     // operator can key.
-    quint8  m_alexLpfBitsRx{0};  // from the receive frequency (unkeyed)
-    quint8  m_alexLpfBitsTx{0};  // from the transmit frequency (keyed)
+    // Thetis's two masks (netInterface.c AlexLPFMask / Alex1LPFMask
+    // [v2.10.3.15]), written as SetAlexLPFBits writes them: unkeyed, the
+    // receive selection goes to Alex0 and the transmit selection to Alex1;
+    // keyed, the transmit selection goes to both.
+    quint8  m_alexLpfBitsRx{0};  // Alex0: the receive selection (unkeyed)
+    quint8  m_alexLpfBitsTx{0};  // Alex1: the transmit selection
 
     // Phase 3F: AlexController's decision for the single P1 filter chain.
     // -1 = no decision yet, use the RX0-frequency-derived m_alexHpfBits.
@@ -748,8 +1170,10 @@ private:
     // [@120188f] (old_protocol_iq_samples / TXRING_AUDIO_SAMPLE_BYTES).
     //
     // One EP2 frame carries 2×63 = 126 samples.  kTxIqBufSamples is sized
-    // to match deskhpsdr's TXRING_MAX_BLOCKS×126 (32 blocks) giving ~21 msec
-    // of headroom at 48 kHz before the producer stalls.
+    // to match deskhpsdr's TXRING_MAX_BLOCKS×126 (32 blocks): 4032 samples,
+    // ~84 ms at the 48 kHz wire rate, before the ring is full.  A full ring
+    // drops the rest of the producer's block (nothing unread is
+    // overwritten) and counts it in m_txIqOverflowSamples (G-07).
     // Source: deskhpsdr/src/old_protocol.c:460-461 [@120188f]
     //   TXRING_AUDIO_FRAMES_PER_BLOCK 126
     //   TXRING_MAX_BLOCKS             32
@@ -774,6 +1198,9 @@ private:
     std::atomic<int> m_txIqWritePos{0};  // audio thread writes; relaxed store
     std::atomic<int> m_txIqReadPos{0};   // connection thread writes; relaxed store
     std::atomic<int> m_txIqCount{0};     // both threads: fetch_add (audio, release) / fetch_sub (conn)
+    // G-07: samples a full ring refused since the last key, reported as
+    // TxSendStats::overflowSamples.  Audio thread adds; any thread reads.
+    std::atomic<quint64> m_txIqOverflowSamples{0};
 
     // TX I/Q ring pre-prime flag.  setMox(true) sets it on the connection
     // thread; sendTxIq consumes it on the TX worker thread (single-writer
@@ -788,6 +1215,19 @@ private:
     // Float→int16 + EP2 zone fill helper.
     // Returns true if 63 samples were available and written, false if underrun.
     bool fillTxZone(quint8* zone63) noexcept;
+    // Radio codec (2026-09-30): writes 63 samples of the radio's receive
+    // audio into the L/R bytes (0-3) of each 8-byte slot of an EP2 zone,
+    // after fillTxZone. Leaves them zero while the audio ring has none due.
+    void fillRadioAudioZone(quint8* zone63) noexcept;
+    // G-05 follow-up: setMox(false) drops whatever is still queued (and an
+    // unused key cushion), so none of it leads the next key.
+    void discardTxIqOnUnkey() noexcept;
+    // TX safety (whole-branch review 2026-09-30): every new link starts
+    // unkeyed. Unkeys (as setMox(false) does), drops the PureSignal run
+    // flag, releases the T/R relay, zeroes the drive and puts bank 0 on the
+    // next frame. Called by connectToRadio, by the watchdog when it declares
+    // the link lost, and by every reconnect attempt before its priming burst.
+    void dropTransmitForNewLink();
 
     // Hardware config from profile
     int     m_txDrive{0};
@@ -843,6 +1283,11 @@ private:
     // the legacy m_ocOutput field.  Null in test seams that don't wire
     // RadioModel (falls back to m_ocOutput == 0).  Phase 3P-D Task 3.
     const OcMatrix* m_ocMatrix{nullptr};
+    // R-R3-49: non-owning; RadioModel's CalibrationController.
+    const CalibrationController* m_calController{nullptr};
+    // The frequency the radio is sent for a tuned one: corrected by the
+    // calibration factor as Thetis's VFOfreq does.
+    quint64 wireFrequencyHz(quint64 tunedHz) const;
 
     // Non-owning pointer to RadioModel's IoBoardHl2.  Set via setIoBoard()
     // at connect time; null on non-HL2 boards and in tests that don't wire
@@ -896,12 +1341,30 @@ private:
 
 #ifdef NEREUS_BUILD_TESTS
 public:
+    // Stand in for the route lookup in bindToRadioFacingAddress(): a null
+    // address is "no route", an address this host does not own cannot be
+    // bound. Both must leave the socket bound to every address.
+    void setRadioFacingAddressForTest(const QHostAddress& local) {
+        m_radioFacingOverridden = true;
+        m_radioFacingOverride = local;
+    }
+    QAbstractSocket::SocketState socketStateForTest() const {
+        return m_socket ? m_socket->state() : QAbstractSocket::UnconnectedState;
+    }
+    QHostAddress socketAddressForTest() const {
+        return m_socket ? m_socket->localAddress() : QHostAddress();
+    }
+    int socketReceiveBufferForTest() const {
+        return m_socket ? m_socket->socketOption(
+                   QAbstractSocket::ReceiveBufferSizeSocketOption).toInt() : -1;
+    }
     // Test-only helpers — allow unit tests to inject board caps without a live radio.
     void setBoardForTest(HPSDRHW board) {
         m_caps = &BoardCapsTable::forBoard(board);
         // Map HPSDRHW → canonical HPSDRModel so selectCodec() picks the right subclass.
         switch (board) {
             case HPSDRHW::HermesLite: m_hardwareProfile.model = HPSDRModel::HERMESLITE;   break;
+            case HPSDRHW::HermesLiteRxOnly: m_hardwareProfile.model = HPSDRModel::HERMESLITE; break; // Task 15
             case HPSDRHW::OrionMKII:  m_hardwareProfile.model = HPSDRModel::ORIONMKII;    break;
             case HPSDRHW::Angelia:    m_hardwareProfile.model = HPSDRModel::ANAN100D;      break;
             case HPSDRHW::Orion:      m_hardwareProfile.model = HPSDRModel::ANAN200D;      break;
@@ -912,6 +1375,10 @@ public:
         applyBoardQuirks();
     }
     int currentAttenForTest() const { return m_stepAttn[0]; }
+    int currentAttenForAdcForTest(int adc) const
+    {
+        return adc >= 0 && adc < 3 ? m_stepAttn[adc] : -1;
+    }
     bool hl2ThrottledForTest() const { return m_hl2Throttled; }
     // Compress the silence-watchdog and reconnect-retry timeline so
     // tst_reconnect_on_silence does not sleep for 42 real seconds (which
@@ -923,6 +1390,12 @@ public:
         m_watchdogSilenceMs   = watchdogSilenceMs;
         m_reconnectIntervalMs = reconnectIntervalMs;
     }
+    // R-R3-49: how long the link waits for data before it is declared lost
+    // while the Network Watchdog is on.
+    int watchdogSilenceMsForTest() const { return m_watchdogSilenceMs; }
+    // The keyed state the next ep2 frame's C0 bit 0 carries.
+    bool moxForTest() const { return m_mox; }
+    bool linkLossLatchedForTest() const { return m_linkLossLatched; }
     // Expose private composeCcForBank for regression-freeze capture (Task 1) and
     // byte-table assertion tests (Task 16).
     void composeCcForBankForTest(int bankIdx, quint8 out[5]) const { composeCcForBank(bankIdx, out); }
@@ -950,6 +1423,33 @@ public:
 
     // roundRobinIdxForTest — returns the current m_ccRoundRobinIdx value.
     int roundRobinIdxForTest() const { return m_ccRoundRobinIdx; }
+    // The next subframe as sendCommandFrame composes it (I2C spacing and
+    // the round-robin included), without a socket.
+    void composeNextSubframeForTest(quint8 out[5]) { composeSubframe(out, ccMaxBank()); }
+    void ioBoardPollTickForTest() { ioBoardPollTick(); }
+    // HL2 clock seams: promote to Connected as the first ep6 frame does
+    // (without a socket), run the clock write pump once, and count the
+    // clock writes still waiting for room in the I2C queue.
+    void simulateDataFlowingForTest() { enterDataFlowing(); }
+    void hl2ClockPumpForTest() { hl2ClockPump(); }
+    int hl2ClockPendingForTest() const
+    {
+        int n = 0;
+        for (const Hl2ClockSequence& seq : m_hl2ClockPending) {
+            n += static_cast<int>(seq.writes.size() - seq.next);
+        }
+        return n;
+    }
+    int hl2Cl2FreqKHzForTest() const { return m_hl2Cl2FreqKHz; }
+    bool hl2SwapAudioChannelsForTest() const { return m_hl2SwapAudioChannels; }
+    // What an ep6 frame does for the clock lists (hl2ClockConfirmSent),
+    // and what a lost link does (the watchdog's LinkLost branch).
+    void hl2ClockEp6ForTest() { hl2ClockConfirmSent(); }
+    void hl2ClockLinkLostForTest() { hl2ClockMarkUnconfirmed(); }
+    bool hl2ClockIncompleteForTest(bool ext10) const
+    {
+        return ext10 ? m_hl2Ext10Incomplete : m_hl2Cl2Incomplete;
+    }
 
     // forceBank0NextForTest — returns m_forceBank0Next (the flush flag state).
     bool forceBank0NextForTest() const { return m_forceBank0Next; }
@@ -1010,6 +1510,7 @@ public:
     }
     bool forceBank4NextForTest() const { return m_forceBank4Next; }
     int  psNDdcForTest() const { return m_psNDdc; }
+    int  rx1SlotForTest() const { return m_rx1Slot; }
     int  activeRxCountForTest() const { return m_activeRxCount; }
     quint16 adcCtrlForTest() const { return m_adcCtrl; }
     quint16 p1AdcCntrlForTest() const { return m_p1AdcCntrl; }
@@ -1034,56 +1535,15 @@ public:
         frame[8] = 0x7F; frame[9] = 0x7F; frame[10] = 0x7F;
         // C&C bytes: zeros in test context (no codec wired)
         fillTxZone(frame + 16);
+        fillRadioAudioZone(frame + 16);
         frame[520] = 0x7F; frame[521] = 0x7F; frame[522] = 0x7F;
         fillTxZone(frame + 528);
+        fillRadioAudioZone(frame + 528);
         return QByteArray(reinterpret_cast<const char*>(frame), 1032);
     }
 
     // Access buffer count for buffer-state tests.
     int txIqBufferedSamplesForTest() const { return m_txIqCount.load(std::memory_order_acquire); }
-
-    // ── 3M-1a E.5 RUNSTOP watchdog wire test seams ───────────────────────────
-    // metisStartPacketForTest — compose the 64-byte RUNSTOP start packet that
-    // sendMetisStart() would send (without a live socket), so unit tests can
-    // assert the watchdog bit (pkt[3] bit 7) without needing a real UDP socket.
-    //
-    // IMPORTANT: keep in sync with sendMetisStart() / sendMetisStop() in P1RadioConnection.cpp.
-    //
-    // Wire format: pkt[3] = run_bits | watchdog_disable_bit
-    //   run_bits:     0x01 (IQ only) or 0x02 (IQ + mic)
-    //   watchdog_bit: 0x00 if m_watchdogEnabled == true, 0x80 if false
-    //
-    // Source: Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:200-203, 399-400
-    //   eth_data[0] = run; eth_data[7] = watchdog_disable (1=disabled, 0=enabled)
-    QByteArray metisStartPacketForTest(bool iqAndMic) const {
-        QByteArray pkt(64, '\0');
-        pkt[0] = static_cast<char>(0xEF);
-        pkt[1] = static_cast<char>(0xFE);
-        pkt[2] = static_cast<char>(0x04);
-        const quint8 runBits     = iqAndMic ? quint8(0x02) : quint8(0x01);
-        const quint8 watchdogBit = m_watchdogEnabled ? quint8(0x00) : quint8(0x80);
-        pkt[3] = static_cast<char>(runBits | watchdogBit);
-        return pkt;
-    }
-
-    // metisStopPacketForTest — compose the 64-byte RUNSTOP stop packet (run = 0).
-    //
-    // IMPORTANT: keep in sync with sendMetisStart() / sendMetisStop() in P1RadioConnection.cpp.
-    //
-    // Wire format: pkt[3] = watchdog_disable_bit (run bits = 0)
-    //   0x00 if m_watchdogEnabled == true, 0x80 if false
-    //
-    // Source: Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:399-400
-    //   watchdog_disable <= eth_data[7]; // Bit 7 can be used to disable watchdog
-    QByteArray metisStopPacketForTest() const {
-        QByteArray pkt(64, '\0');
-        pkt[0] = static_cast<char>(0xEF);
-        pkt[1] = static_cast<char>(0xFE);
-        pkt[2] = static_cast<char>(0x04);
-        const quint8 watchdogBit = m_watchdogEnabled ? quint8(0x00) : quint8(0x80);
-        pkt[3] = static_cast<char>(watchdogBit);
-        return pkt;
-    }
 #endif
 };
 

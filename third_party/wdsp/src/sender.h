@@ -63,7 +63,7 @@ extern void setSize_sender (SENDER a, int size);
 
 // RXA Properties
 
-extern void SetRXASpectrum (int channel, int flag, int disp, int ss, int LO);
+extern __declspec (dllexport) void SetRXASpectrum (int channel, int flag, int disp, int ss, int LO);
 
 // TXA Properties
 

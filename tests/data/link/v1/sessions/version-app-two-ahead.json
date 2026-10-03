@@ -1,0 +1,10 @@
+{
+    "runs": ["station"],
+    "stationSetup": {"radio": "static", "slices": 1},
+    "steps": [
+        {"from": "station", "message": {"challenge": "$string", "features": {"deviceAuth": 1, "pairing": 1, "sessionHolder": 1}, "identity": {"certBinding": "$string", "publicKey": "$string"}, "major": 1, "majors": [1], "minor": 11, "peer": "nereusd", "settingsSchema": 0, "type": "hello"}},
+        {"from": "client", "role": "scripted", "message": {"type": "hello", "major": 3, "minor": 0, "settingsSchema": 0, "peer": "NereusSDR iPhone", "majors": [2, 3], "features": {}}},
+        {"from": "station", "message": {"code": "linkVersion", "reason": "This Core runs link version 1 and this app runs version 3. Update the Core.", "retryable": false, "type": "session.end"}},
+        {"expectClosed": {"retryable": false}}
+    ]
+}

@@ -87,19 +87,6 @@ void print_impulse (const char* filename, int N, double* impulse, int rtype, int
 	}
 }
 
-PORT
-void analyze_bandpass_filter (int N, double f_low, double f_high, double samplerate, int wintype, int rtype, double scale)
-{
-	double* linphase_imp;
-	double* minphase_imp = (double *) malloc0 (N * sizeof (complex));
-	linphase_imp = fir_bandpass (N, f_low, f_high, samplerate, wintype, rtype, scale);
-	mp_imp (N, linphase_imp, minphase_imp, 16, 0);
-	print_impulse ("linear_phase_impulse.txt",  N, linphase_imp, 1, 0);
-	print_impulse ("minimum_phase_impulse.txt", N, minphase_imp, 1, 0);
-	_aligned_free (minphase_imp);
-	_aligned_free (linphase_imp);
-}
-
 void print_peak_val (const char* filename, int N, double* buff, double thresh)
 {
 	int i;
@@ -285,52 +272,6 @@ void print_deviation (const char* filename, double dpmax, double rate)
 	{
 		double peak = dpmax * rate / TWOPI;
 		fprintf(file, "Peak Dev = %.4f\n", peak);
-		fflush(file);
-		fclose(file);
-	}
-}
-
-void __cdecl CalccPrintSamples (void *pargs)
-{
-	int i;
-	double env_tx, env_rx;
-	int channel = (int)(uintptr_t)pargs;
-	CALCC a = txa[channel].calcc.p;
-	FILE* file;
-	if (file = fopen("samples.txt", "w"))
-	{
-		fprintf(file, "\n");
-		for (i = 0; i < a->nsamps; i++)
-		{
-			env_tx = sqrt(a->txs[2 * i + 0] * a->txs[2 * i + 0] + a->txs[2 * i + 1] * a->txs[2 * i + 1]);
-			env_rx = sqrt(a->rxs[2 * i + 0] * a->rxs[2 * i + 0] + a->rxs[2 * i + 1] * a->rxs[2 * i + 1]);
-			fprintf(file, "%.12f  %.12f  %.12f      %.12f  %.12f  %.12f\n",
-				a->txs[2 * i + 0], a->txs[2 * i + 1], env_tx,
-				a->rxs[2 * i + 0], a->rxs[2 * i + 1], env_rx);
-		}
-		fflush(file);
-		fclose(file);
-	}
-	_endthread();
-}
-
-void doCalccPrintSamples(int channel)
-{	// no sample buffering - use in single cal mode
-	_beginthread(CalccPrintSamples, 0, (void *)(uintptr_t)channel);
-}
-
-void print_anb_parms (const char* filename, ANB a)
-{
-	FILE* file;
-	if (file = fopen(filename, "a"))
-	{
-		fprintf(file, "Run         = %d\n", a->run);
-		fprintf(file, "Buffer Size = %d\n", a->buffsize);
-		fprintf(file, "Sample Rate = %d\n", (int)a->samplerate);
-		fprintf(file, "Threshold   = %.6f\n", a->threshold);
-		fprintf(file, "BackTau     = %.6f\n", a->backtau);
-		fprintf(file, "BackMult    = %.6f\n", a->backmult);
-		fprintf(file, "Tau         = %.6f\n", a->tau);
 		fflush(file);
 		fclose(file);
 	}
@@ -632,4 +573,52 @@ void test_bfcu()
 	print_bandpass_response("response", 1025, segment);
 	_aligned_free(segment);
 	destroy_bfcu(0);
+}
+
+
+/********************************************************************************************************
+*																										*
+*								           General Debug Utilities								        *
+*																										*
+********************************************************************************************************/
+
+// Prints to the Visual Studio Debug Window; works like printf(...)
+#include <stdarg.h>
+void dprintf(const char* format, ...) 
+{
+	char buffer[512];
+	va_list args;
+	va_start(args, format);
+	// Safely format the string
+	vsnprintf(buffer, sizeof(buffer), format, args);
+	va_end(args);
+	// Send to Visual Studio Output window
+	OutputDebugStringA(buffer);
+}
+// Usage example:
+// dprintf("Error Code: %d at %s\n", 404, "main.cpp");
+
+// Converts a uint32_t to a binary string representation; buf must have space for 
+// at least 43 characters (3 for "0b ", 32 for bits, and 1 for null terminator, 7 for
+// spaces between groups of 4 bits).
+// The string can then be printed to the Visual Studio Debug Window using dprintf, e.g.:
+char* uint32_to_bitstr(uint32_t n, char* buf) 
+{
+	int char_idx = 0;
+	buf[char_idx++] = '0';
+	buf[char_idx++] = 'b';
+	buf[char_idx++] = ' ';
+
+	for (int i = 31; i >= 0; i--) 
+	{
+		buf[char_idx++] = ((n >> i) & 1) ? '1' : '0';
+
+		// Optional: Add spaces every 4 bits for readability
+		if (i > 0 && i % 4 == 0) 
+		{
+			buf[char_idx++] = ' ';
+		}
+	}
+	buf[char_idx] = '\0';
+	return buf;
 }

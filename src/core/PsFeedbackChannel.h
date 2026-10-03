@@ -39,12 +39,17 @@
 //   2026-05-06 — Created by J.J. Boyd (KG4VCF) for Phase 3M-4 PureSignal
 //                 (Task 4), with AI-assisted source-first protocol via
 //                 Anthropic Claude Code.  NereusSDR-original wrapper class.
+//   2026-09-24 - R-R3-39: setSampleRate's WDSP call runs on the receive
+//                 lane when one is set. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QObject>
 #include <atomic>
 
 namespace NereusSDR {
+
+class DspControlThread;
 
 // Wraps the WDSP feedback RX channel that calcc reads autonomously.
 // One per WdspEngine.  Created when the engine initializes, destroyed at
@@ -77,7 +82,11 @@ public:
     // Configure the WDSP-side input sample rate via SetInputSamplerate().
     // The PureSignal coordinator drives this on board-connect (per
     // BoardCapabilities::psSampleRate) and on rx1_rate change for HL2.
+    //
+    // R-R3-39: with a receive lane set the rate is carried at once and the
+    // WDSP call runs on the lane (keyed, so the newest rate wins).
     void setSampleRate(int rate);
+    void setControlLane(DspControlThread* lane) { m_lane.store(lane); }
 
     // Push interleaved I/Q samples into the channel.  size = number of
     // complex pairs (so iqInterleaved must point to 2 * size floats).
@@ -95,6 +104,7 @@ private:
     const int m_channelId;
     std::atomic<int>    m_sampleRate{192000};
     std::atomic<qint64> m_totalSamples{0};
+    std::atomic<DspControlThread*> m_lane{nullptr};
 };
 
 } // namespace NereusSDR

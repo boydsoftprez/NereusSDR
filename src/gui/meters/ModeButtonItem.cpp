@@ -77,6 +77,12 @@ ModeButtonItem::ModeButtonItem(QObject* parent)
             this, &ModeButtonItem::onButtonClicked);
 }
 
+QString ModeButtonItem::modeLabel(int index)
+{
+    if (index < 0 || index >= kModeCount) { return QString(); }
+    return QString::fromLatin1(kModeLabels[index]);
+}
+
 void ModeButtonItem::setActiveMode(int index)
 {
     if (m_activeMode == index) { return; }

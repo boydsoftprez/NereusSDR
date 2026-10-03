@@ -1,0 +1,18 @@
+{
+  "receiver": "station",
+  "message": [
+    {
+      "text": "{\"type\":\"hello\",\"major\":1,\"minor\":0,\"settingsSchema\":6,\"peer\":\"conformance\"}"
+    }
+  ],
+  "frames": [
+    {
+      "chunk": "last",
+      "from": 0,
+      "length": 76
+    }
+  ],
+  "encodes": true,
+  "outcome": "delivered",
+  "replies": []
+}

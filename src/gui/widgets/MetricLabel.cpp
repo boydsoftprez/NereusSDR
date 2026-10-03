@@ -1,5 +1,7 @@
 #include "MetricLabel.h"
 
+#include "gui/StyleConstants.h"
+
 #include <QHBoxLayout>
 #include <QLabel>
 
@@ -36,6 +38,23 @@ void MetricLabel::setValue(const QString& v)
     if (m_value == v) { return; }
     m_value = v;
     m_valuePart->setText(v);
+}
+
+void MetricLabel::setWarning(bool warning)
+{
+    if (m_warning == warning) { return; }
+    m_warning = warning;
+    // Parity ruling C9: the value alone takes the warning colour, set on
+    // the value label itself so it repaints at once.
+    m_valuePart->setStyleSheet(warning
+        ? QStringLiteral("QLabel#MetricLabel_Value { color: %1; }")
+              .arg(QLatin1String(Style::kAmberWarn))
+        : QString());
+}
+
+QString MetricLabel::valueStyleSheet() const
+{
+    return m_valuePart->styleSheet();
 }
 
 void MetricLabel::applyStyle()

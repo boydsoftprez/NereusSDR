@@ -2,6 +2,9 @@
 // src/core/audio/PipeWireStream.h  (NereusSDR)
 //   Copyright (C) 2026 J.J. Boyd (KG4VCF) — GPLv2-or-later.
 //   2026-04-23 — created. AI-assisted via Claude Code.
+//   2026-09-23: R-R3-44: output playback counters (outputCounters) and
+//                 isStreaming() for a remote window's VAX feeder. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -67,6 +70,21 @@ public:
     };
     Telemetry telemetry() const;
 
+    // R-R3-44: OUTPUT streams. Frames the graph has taken (every process
+    // callback takes one buffer, audio or the silence filling it), frames
+    // still queued in the ring, the ring's capacity and the last buffer's
+    // size in frames. Any thread.
+    struct OutputCounters {
+        quint64 consumedFrames = 0;
+        int queuedFrames = 0;
+        int capacityFrames = 0;
+        int callbackFrames = 0;
+    };
+    OutputCounters outputCounters() const;
+    // R-R3-44: true while PipeWire drives the stream. A VAX source node is
+    // paused while no app is linked to it. Any thread.
+    bool isStreaming() const;
+
 signals:
     void streamStateChanged(QString state);
     void telemetryUpdated();
@@ -100,6 +118,9 @@ private:
     AudioRingSpsc<65536> m_ring;
 
     std::atomic<uint64_t> m_xruns{0};
+    // R-R3-44: see outputCounters().
+    std::atomic<quint64>  m_outputConsumedFrames{0};
+    std::atomic<int>      m_outputCallbackFrames{0};
     std::atomic<double>   m_cpuPct{0.0};
     std::atomic<double>   m_latencyMs{0.0};
     std::atomic<double>   m_deviceLatencyMs{0.0};

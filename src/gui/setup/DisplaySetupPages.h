@@ -12,6 +12,15 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23 - R-R3-21 / R-R3-10: Spectrum Defaults, Grid & Scales and
+//                 TX Display disable only their Core controls while a
+//                 remote window does not have the Core's settings.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-09-27 - R-R3-49 / R-R3-21 / A12 (parity Task 30): TX Display's
+//                 nine analyzer controls show and write the Core's keys in a
+//                 remote window, disabled below txDisplayVersion 2. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -73,6 +82,7 @@ namespace NereusSDR {
 
 class PanadapterModel;
 class ColorSwatchButton;
+class SpectrumWidget;
 
 // ---------------------------------------------------------------------------
 // Display > Spectrum Defaults
@@ -83,6 +93,11 @@ class SpectrumDefaultsPage : public SetupPage {
     Q_OBJECT
 public:
     explicit SpectrumDefaultsPage(RadioModel* model, QWidget* parent = nullptr);
+
+    // R-R3-21 / R-R3-10: the FFT size, window, Hz/bin target and frame rate are the
+    // Core's settings (it computes the spectrum a remote window shows), so
+    // they are disabled while the Core's settings are unavailable.
+    void setStationSettingsAvailable(bool available, const QString& reason) override;
 
 signals:
     /// Emitted when the user clicks "Configure peaks →".
@@ -97,6 +112,13 @@ private:
     void buildUI();
     void loadFromRenderer();
     void pushFps(int fps);
+    // Parity Task 17 (R-R3-01, R-R3-08): in a remote window the FFT size,
+    // window, Hz/bin target and FPS open on the Core's stored values (the
+    // station keys this window holds from the Core), and the size and bin
+    // width readouts show what the Core granted the active pan.
+    bool remoteWindow();
+    void loadStationSpectrumSettings();
+    void refreshGrantedReadouts();
 
     // Section: FFT
     // Phase 2: FFT size is a 0..6 slider (Thetis tbDisplayFFTSize per
@@ -252,6 +274,11 @@ class GridScalesPage : public SetupPage {
 public:
     explicit GridScalesPage(RadioModel* model, QWidget* parent = nullptr);
 
+    // R-R3-21 / R-R3-10: the per-band dB max and min (and the copy from the
+    // waterfall thresholds, which writes them) set the Core's panadapter
+    // range, so they are disabled while the Core's settings are unavailable.
+    void setStationSettingsAvailable(bool available, const QString& reason) override;
+
 private:
     void buildUI();
     void loadFromRenderer();
@@ -287,42 +314,168 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Display > RX2 Display
-// ---------------------------------------------------------------------------
-class Rx2DisplayPage : public SetupPage {
-    Q_OBJECT
-public:
-    explicit Rx2DisplayPage(RadioModel* model, QWidget* parent = nullptr);
+// Forward decl for the Custom-palette gradient picker (Phase 3M-5c).
+class GradientPickerWidget;
 
-private:
-    void buildUI();
-
-    // Section: RX2 Spectrum
-    QSpinBox*  m_dbMaxSpin{nullptr};
-    QSpinBox*  m_dbMinSpin{nullptr};
-    QComboBox* m_colorSchemeCombo{nullptr}; // Enhanced/Grayscale/Spectrum
-
-    // Section: RX2 Waterfall
-    QSlider*   m_highThresholdSlider{nullptr};
-    QSlider*   m_lowThresholdSlider{nullptr};
-};
-
-// ---------------------------------------------------------------------------
 // Display > TX Display
+// From Thetis tpDisplayTransmit [setup.designer.cs:36232 v2.10.3.13+501e3f51].
+// 3M-5b: Waterfall Amplitude Scale group is functional.
+// 3M-5c: Custom Gradient Picker (visible when palette = Custom).
+// Remaining groups (FFT, Panadapter, Waterfall FFT, TX Grid Scale) are
+// placeholder labels naming the sub-phase that wires them.
 // ---------------------------------------------------------------------------
 class TxDisplayPage : public SetupPage {
     Q_OBJECT
 public:
     explicit TxDisplayPage(RadioModel* model, QWidget* parent = nullptr);
 
+    // R-R3-21 / R-R3-10: the TX analyzer settings (FFT size, window, panadapter
+    // and waterfall detector, averaging, time and normalize) are the Core's,
+    // so they are disabled while the Core's settings are unavailable.
+    void setStationSettingsAvailable(bool available, const QString& reason) override;
+
+    // R-R3-49 / A12 (parity Task 30): the nine analyzer controls' reason in
+    // a remote window whose Core is below txDisplayVersion 2.
+    static QString coreDoesNotApplyReason();
+
+    // Test access: the nine analyzer controls in Thetis's order (FFT size,
+    // window, pan detector, pan averaging, pan time, normalize, WF
+    // detector, WF averaging, WF time), the two FFT readouts, and the
+    // window's own waterfall Low Level.
+    QList<QWidget*> txAnalyzerControlsForTest() const;
+    QLabel* txFftSizeReadoutForTest() const { return m_txFftSizeReadout; }
+    QLabel* txBinWidthReadoutForTest() const { return m_txBinWidthLabel; }
+    QSpinBox* txWfLowLevelForTest() const { return m_txWfLowLevelSpin; }
+
 private:
     void buildUI();
 
-    // Section: TX Spectrum
-    QLabel*         m_bgColorLabel{nullptr};    // placeholder color swatch
-    QLabel*         m_gridColorLabel{nullptr};  // placeholder color swatch
-    QSlider*        m_lineWidthSlider{nullptr}; // 1–3
-    QDoubleSpinBox* m_calOffsetSpin{nullptr};   // dBm offset
+    // R-R3-49 / R-R3-21 / R-R3-10 (parity Task 30): in a remote window the
+    // nine analyzer controls show the Core's keys (AppSettings, through
+    // the window's settings proxy) and write them there; the Core applies
+    // each to its analyzer. The other groups stay this window's own.
+    bool remoteWindow();
+    void wireCoreTxAnalyzerControls();
+    void showCoreTxAnalyzerSettings();
+    // The local window's analyzer's values on the nine, signals blocked;
+    // again whenever a remote window changes that analyzer on this Core.
+    void showLocalTxAnalyzerSettings();
+    void writeCoreTxAnalyzerSetting(const char* key, const QString& value);
+    void showTxFftReadouts(int fftSize, double binWidthHz);
+    // Enables the nine as the page's state allows: the pan detector's
+    // gate on Normalize, the Core's settings being here, and (remote) the
+    // Core applying them.
+    void refreshTxAnalyzerGate();
+    bool    m_stationAvailable{true};
+    QString m_stationReason;
+
+    // Group 4: Waterfall Amplitude Scale (functional in 3M-5b).
+    // From Thetis grpTXWFAmpScale [setup.designer.cs:36246 v2.10.3.13+501e3f51].
+    QSpinBox*          m_txWfLowLevelSpin{nullptr};   // udTXWFAmpMin: range -200..200, step 5, default -70 dBm
+    QSpinBox*          m_txWfHighLevelSpin{nullptr};  // udTXWFAmpMax: range -200..200, step 5, default +30 dBm
+    QComboBox*         m_txWfPaletteCombo{nullptr};   // comboColorPalette_tx: 7-item Thetis list
+    ColorSwatchButton* m_txWfLowColorBtn{nullptr};    // clrbtnWaterfallLow_tx: default Black
+
+    // Group 4 (cont.): Custom Gradient Picker (functional in 3M-5c).
+    // From Thetis lgLinearGradientTX_waterfall [setup.designer.cs:3283 area
+    // v2.10.3.13+501e3f51]. The picker row is hidden unless palette = Custom.
+    GradientPickerWidget* m_txWfGradientPicker{nullptr};
+    QWidget*              m_txWfGradientRowLabel{nullptr}; // form-row label widget; toggled with picker
+
+    // Groups 1-3 (functional in 3M-5d): FFT, Panadapter, Waterfall.
+    // 9 controls total -- all bound to TxAnalyzer via lambdas.
+    // From Thetis tpDisplayTransmit groups groupBoxTS8 / groupBoxTS7 /
+    // groupBoxTS9 at setup.designer.cs:36511-36768 [v2.10.3.13+501e3f51].
+    QSlider*    m_txFftSizeSlider{nullptr};   // tbTXDisplayFFTSize (Min=0 Max=6)
+    QLabel*     m_txFftSizeReadout{nullptr};  // lblTXFFT_size  (Bisque numeric)
+    QLabel*     m_txBinWidthLabel{nullptr};   // lblTXDispBinWidth (Bisque numeric)
+    QComboBox*  m_txWindowCombo{nullptr};     // comboTXDispWinType (7 windows)
+
+    QComboBox*  m_txPanDetectorCombo{nullptr};   // comboTXDispPanDetector (5 items + RMS)
+    QComboBox*  m_txPanAveragingCombo{nullptr};  // comboTXDispPanAveraging (4 items)
+    QSpinBox*   m_txPanAvTimeSpin{nullptr};      // udTXDisplayAVGTime ms (default 30)
+    QCheckBox*  m_txPanNormalizeCheck{nullptr};  // chkDispTXNormalize (gated on PanDet>=2)
+
+    QComboBox*  m_txWfDetectorCombo{nullptr};    // comboTXDispWFDetector (4 items, no RMS)
+    QComboBox*  m_txWfAveragingCombo{nullptr};   // comboTXDispWFAveraging (4 items)
+    QSpinBox*   m_txWfAvTimeSpin{nullptr};       // udTXDisplayAVTime ms (default 120)
+};
+
+// ---------------------------------------------------------------------------
+// Display > 3D View
+//
+// 3D Stacked-Trace Spectrum Plan Task 15: mirrors the six controls the
+// Task 13 right-click overlay menu (SpectrumOverlayMenu "3D VIEW" section)
+// already exposes -- Spectrum render mode, 3D Floor, 3D Gain, 3D Span,
+// 3D Angle, 3D Slice Shadow -- into Setup -> Display, so an operator who
+// never right-clicks the panadapter still has full reach. Task 24 adds a
+// seventh, 3D Speed, the same way. Labels, ranges and defaults match the
+// overlay menu's already-cited AetherSDR-derived values
+// (docs/attribution/aethersdr-reconciliation.md, "3D Stacked-Trace
+// Spectrum Plan" section, Task 13 rows) verbatim, so both surfaces read the
+// same. The page itself has no AetherSDR Setup-dialog counterpart --
+// AetherSDR's own setup surface is SmartSDR-license-only and its
+// RadioSetupDialog has no 3D View section at all -- so it is NereusSDR-
+// original, per the design doc's divergence table (docs/architecture/
+// 2026-08-08-3d-stacked-trace-spectrum-design.md section 7).
+//
+// Constructed directly against a SpectrumWidget, not RadioModel like every
+// sibling page above: this keeps the page testable headlessly (tests/
+// tst_dss_setup_sync.cpp builds a bare SpectrumWidget with no RadioModel/
+// MainWindow in sight) and matches the Task 13 overlay menu's own
+// SpectrumWidget-first wiring. SetupDialog's production registration
+// passes model->spectrumWidget() through this same constructor.
+//
+// Two-way sync: this page's seven widgets, the Task 13 overlay menu, and any
+// other bound surface all read and write the SAME SpectrumWidget-owned
+// DisplaySettingsModel (3D Stacked-Trace Spectrum Plan Task 18), reached
+// through m_spectrumWidget->displaySettings(). Task 21 re-pointed this page
+// at the model: each control's signal connects straight to the model's
+// setter, and each of the model's seven xxxChanged signals reflects into this
+// page's own widget under a QSignalBlocker so the reflect can never re-emit
+// the control's own signal. What stops a push from echoing back and forth
+// is the model's own equality-guarded setter (see DisplaySettingsModel.h),
+// not a page-local flag -- SetupDialog is still non-modal, so the overlay
+// menu (or any future surface bound to the same model) can change this
+// state while this page is open, and the model settles it in one hop either
+// way.
+// ---------------------------------------------------------------------------
+class Display3DSetupPage : public SetupPage {
+    Q_OBJECT
+public:
+    explicit Display3DSetupPage(SpectrumWidget* spectrumWidget, QWidget* parent = nullptr);
+
+    // Test seam: applies the seven ship defaults without the confirmation
+    // QMessageBox the production "Reset 3D to defaults" click handler
+    // shows first. Mirrors the Phase 3G-9b "Reset to Smooth Defaults"
+    // split between the confirmed click handler and the underlying apply
+    // logic (SpectrumDefaultsPage::buildUI()'s resetBtn lambda).
+    void resetToDefaultsForTest();
+
+private:
+    void buildUI();
+    // Seeds all seven widgets from the live DisplaySettingsModel getters
+    // (m_spectrumWidget->displaySettings()), under a QSignalBlocker per
+    // widget so this initial seed cannot echo back out through the
+    // "push to model" connections buildUI() wires. Called once at
+    // construction (after buildUI()'s widgets exist).
+    void loadFromWidget();
+
+    SpectrumWidget* m_spectrumWidget{nullptr};
+
+    QComboBox* m_modeCombo{nullptr};
+    QSlider*   m_floorSlider{nullptr};
+    QSlider*   m_gainSlider{nullptr};
+    QSlider*   m_spanSlider{nullptr};
+    QSlider*   m_angleSlider{nullptr};
+    // 3D Speed (Task 24, NereusSDR-original): row cadence divider. Not a
+    // makeSliderRow() (QSpinBox) pair like its siblings above -- the value
+    // text is "Match"/"1:N", not a plain number, so it needs the same
+    // slider+QLabel shape SpectrumOverlayMenu::m_dssSpeedSlider/
+    // m_dssSpeedLabel use, not a numeric spinbox readout.
+    QSlider*   m_speedSlider{nullptr};
+    QLabel*    m_speedValueLabel{nullptr};
+    QCheckBox* m_sliceShadowCheck{nullptr};
 };
 
 } // namespace NereusSDR

@@ -16,6 +16,27 @@
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-09-23 - R-R3-46 / R-R3-21: in a remote window the attenuator row
+//                 follows the Core's `stepAtt` object. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49 (parity Task 1): the filter-preset Shift-click TX
+//                 passband match follows setTransmitSettingsPermitted and
+//                 says why when it cannot. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-29 - Slice control plan Task 15: the applet carries the bound
+//                 slice's access. On a slice another device controls, every
+//                 shared tuning and DSP control is disabled with the reason
+//                 naming that device and never writes the slice; the tabs
+//                 say who controls each slice, and the tab and badge menus
+//                 offer Take control, Stop listening and Release. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-09-30 - TX rulings (item 3, JJ): on a listened slice the
+//                 attenuator and preamp controls are held too, with the same
+//                 reason. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-30: Fix wave GUI-M5: m_stepAttConnections. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -125,8 +146,10 @@
 #include "core/SkuUiProfile.h"
 #include "core/WdspTypes.h"
 #include "gui/widgets/TriBtn.h"
+#include "gui/widgets/VfoWidget.h"
 #include "models/Band.h"
 
+#include <QHash>
 #include <QList>
 #include <QPushButton>
 #include <QStringList>
@@ -142,6 +165,7 @@ class QPaintEvent;
 class QGridLayout;
 class QHBoxLayout;
 class QLabel;
+class QMenu;
 class QSlider;
 class QSpinBox;
 class QStackedWidget;
@@ -158,7 +182,7 @@ class SliceModel;
 // RxApplet — per-slice RX controls applet.
 //
 // Controls (17 total):
-//  1.  Slice badge (A/B/C/D)
+//  1.  Slice badge (stable slice-ID letter, A onward)
 //  2.  Lock button (checkable, NYI)
 //  3.  RX antenna button (Tier 1 wired)
 //  4.  TX antenna button (Tier 1 wired)
@@ -187,8 +211,10 @@ public:
 
     // Attach to a different slice (or nullptr to detach).
     void setSlice(SliceModel* slice);
+    // Slice control plan Task 15: the slice the applet shows and edits.
+    SliceModel* slice() const { return m_slice; }
 
-    // Set the slice letter badge (0=A, 1=B, 2=C, 3=D)
+    // Set the slice letter badge (0=A, 1=B, and so on).
     void setSliceIndex(int idx);
 
     // Phase 3F (Bug 3): rebuild the per-slice tab row to match the live slice
@@ -201,10 +227,35 @@ public:
                             int activeSliceIndex);
 
     // --- Auto AGC-T visual update (Task 7 — matches VfoWidget) ---
-    void updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double offset);
+    void updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double offset,
+                              bool noiseFloorValid = true);
 
     // Set the antenna list shown in the RX/TX antenna menus.
     void setAntennaList(const QStringList& ants);
+
+    // Slice control plan Task 15: who controls the bound slice, from this
+    // window's point of view (the flag's SliceAccess). Listening disables
+    // every shared tuning and DSP control with heldReason as its tooltip
+    // and the applet never writes the slice; Controlled and Unshared
+    // restore them. TX rulings (JJ, 2026-09-30, item 3): the attenuator and
+    // preamp controls are held on a listened slice too.
+    void setSliceAccess(const VfoWidget::SliceAccess& access);
+    const VfoWidget::SliceAccess& sliceAccess() const { return m_sliceAccess; }
+    bool isListening() const
+    {
+        return m_sliceAccess.state == VfoWidget::SliceAccess::State::Listening;
+    }
+    // The access of every slice with a tab, keyed by slice id: the tab
+    // tooltips say who controls each slice, and the tab and badge menus
+    // offer the matching access actions.
+    void setSliceTabAccess(const QHash<int, VfoWidget::SliceAccess>& access);
+    // While a Take control, Stop listening or Release request waits on the
+    // Core, the access actions are disabled with this text; empty clears it.
+    void setSliceAccessPending(const QString& pending);
+    // Adds the access actions for slice `sliceId` to `menu`: Take control
+    // and Stop listening on a listened slice, Release on a controlled one,
+    // nothing on an unshared one.
+    void populateSliceMenu(QMenu& menu, int sliceId);
 
 public slots:
     // Phase 3P-I-a T16 — gate ANT buttons on caps.hasAlex + antenna count.
@@ -214,6 +265,12 @@ public slots:
     // Per-SKU UI overlay for antenna popup (B3) — mirrors VfoWidget::setHpsdrSku.
     // Called by MainWindow on currentRadioChanged after setBoardCapabilities.
     void setHpsdrSku(NereusSDR::HPSDRModel sku);
+
+    // R-R3-49 (parity Task 1): the transmit settings gate. The
+    // filter-preset Shift-click TX passband match follows it; while it is
+    // closed the RX preset still applies and transmitSettingRefused says
+    // why. A remote-station model starts denied.
+    void setTransmitSettingsPermitted(bool permitted, const QString& reason = QString());
 
 #ifdef NEREUS_BUILD_TESTS
 public:
@@ -228,6 +285,9 @@ public:
     // Test-only: returns the item count in the preamp combo at construction.
     // Phase 3P-C Step 3: verifies per-board populate from BoardCapabilities.
     int preampComboItemCountForTest() const;
+    // R-R3-46: the preamp items shown, and the S-ATT minimum.
+    QStringList preampComboLabelsForTest() const;
+    int stepAttMinForTest() const;
 
     // Test-only: returns antenna number (1/2/3) shown by each button.
     // Phase 3P-F Task 4: verifies per-band wiring to AlexController.
@@ -238,6 +298,11 @@ public:
     // Issue #174: verifies the mi0bot-Thetis console.cs:21342-21365
     // [v2.10.3.13-beta2] HL2 A-ATT label flip on auto-att toggle.
     QString attLabelTextForTest() const;
+
+    // Slice control plan Task 15: the controls held while listening, and a
+    // slice tab's tooltip.
+    QList<QWidget*> heldControlsForTest() const { return listeningHeldControls(); }
+    QString sliceTabToolTipForTest(int sliceId) const;
 private:
 #endif
 
@@ -248,6 +313,15 @@ signals:
     // RadioModel::setActiveSlice. Mirrors AetherSDR
     // RxApplet::sliceActivationRequested (RxApplet.h:96 [@6a142807]).
     void sliceActivationRequested(int sliceIndex);
+    // R-R3-49 (parity Task 1): a Shift-click could not also set the TX
+    // passband; `reason` is plain words for the operator.
+    void transmitSettingRefused(const QString& reason);
+    // Slice control plan Task 15: the access actions of the tab and badge
+    // menus, carrying the slice id. MainWindow runs them against the Core
+    // the same way as the flag's.
+    void takeControlRequested(int sliceId);
+    void releaseRequested(int sliceId);
+    void stopListeningRequested(int sliceId);
 
 private:
     void buildUi();
@@ -261,8 +335,52 @@ private:
     // Phase 3P-F Task 4: read AlexController per-band assignments and push
     // them into SliceModel so the antenna buttons reflect the active band.
     void populateAntennaButtons(NereusSDR::Band band);
+    // R-R3-46: preamp items and S-ATT range for the Core's board (remote).
+    void rebuildPreampAndAttRangeForBoard(NereusSDR::HPSDRHW board, bool alexFilters,
+                                          int minDb);
+    // R-R3-46 / R-R3-21: a remote window's ATT/S-ATT row, preamp combo and
+    // RX1 preamp toggle follow the Core's `stepAtt` object and write to it.
+    void wireRemoteStepAtt();
+    // Enables the row while the Core takes its edits; otherwise disables it
+    // with the plain reason the object carries.
+    void applyRemoteStepAttAvailability();
+    // Shows the object's values in the row (signals blocked).
+    void showRemoteStepAttValues();
+    // R-R3-46 / R-R3-11: the S-ATT value of this slice's own ADC (the other
+    // ADC's own attenuator for a slice on it), local or remote.
+    void showStepAttValueForSlice();
+    // R-R3-46 / R-R3-11: label, shown control and preamp availability of
+    // the slice's own ADC.
+    void refreshAttForSlice();
+    // Level Cal: the preamp items of slice A's input (RX1's list) or, for a
+    // slice on the other ADC, RX2's own (Thetis comboRX2Preamp's list),
+    // keeping the current choice when the list offers it.
+    void fillPreampCombo(bool rx2);
+    // Level Cal: selects the preamp mode the combo's list belongs to
+    // (RX1's, or RX2's own for a slice on the other ADC), local or remote.
+    void showPreampModeForSlice();
+    // Builds the RX1 preamp toggle (dual-ADC boards) into the OVL row once;
+    // later calls return the existing one. R-R3-46: a remote window learns
+    // its board only when the Core's radio arrives, so it builds it then.
+    void ensureRx1PreampToggle();
 
     static QString formatFilterWidth(int low, int high);
+
+    // Slice control plan Task 15: hold or restore every shared control for
+    // the current access, and the list of those controls.
+    void applySliceAccess();
+    void holdForListening(QWidget* control);
+    QList<QWidget*> listeningHeldControls() const;
+    // TX rulings (item 3): an attenuator or preamp control's own enabled
+    // state and tooltip; while held for listening they are kept for the
+    // restore instead.
+    void setAttControlState(QWidget* control, bool enabled, const QString& tip);
+    void showSliceMenu(int sliceId, QWidget* anchor, const QPoint& pos);
+
+    VfoWidget::SliceAccess             m_sliceAccess;
+    QHash<int, VfoWidget::SliceAccess> m_tabAccess;
+    QString                            m_accessPending;
+    int                                m_badgeSliceId = 0;  // the badge's slice id
 
     // ── Model ──────────────────────────────────────────────────────────────
     SliceModel*      m_slice = nullptr;
@@ -324,6 +442,14 @@ private:
     QLabel*         m_attLabel{nullptr};
     QStackedWidget* m_attStack{nullptr};
     QComboBox*      m_preampCombo{nullptr};   // Page 0: ATT mode
+    // Level Cal: the board the preamp lists come from, and whether the
+    // combo holds RX2's list (a slice on the other ADC).
+    NereusSDR::HPSDRHW m_preampBoard{NereusSDR::HPSDRHW::Hermes};
+    bool            m_preampAlex{false};
+    bool            m_preampShowsRx2{false};
+    // GUI-M5 (fix wave): connectSlice's attenuator connections, dropped
+    // before the next slice's are made.
+    QList<QMetaObject::Connection> m_stepAttConnections;
     QSpinBox*       m_stepAttSpin{nullptr};   // Page 1: S-ATT mode
 
     // Controls 9 + 10: AGC
@@ -345,6 +471,8 @@ private:
     TriBtn*      m_ritPlus     = nullptr;
 
     // Control 16: XIT
+    bool         m_transmitSettingsPermitted = true;  // R-R3-49
+    QString      m_transmitSettingsReason;            // R-R3-49
     QPushButton* m_xitOnBtn    = nullptr;
     QLabel*      m_xitLabel    = nullptr;
     QPushButton* m_xitZero     = nullptr;

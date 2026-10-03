@@ -1,0 +1,43 @@
+{
+  "tls_pin_verified": true,
+  "authentication_accepted": true,
+  "capabilities": {
+    "stationName": "ANAN-G2 (Saturn)",
+    "radioModel": "ANAN-G2 (Saturn)",
+    "firmwareVersion": "27",
+    "macAddress": "2C:CF:67:AB:FC:F4",
+    "board": 10,
+    "radioConnected": true,
+    "effectiveMaxSlices": 5,
+    "boardMaxSlices": 5,
+    "userDdcCount": 5,
+    "pureSignalPresent": true,
+    "txPermitted": false,
+    "settingsSchemaVersion": 6
+  },
+  "settings_count": 2502,
+  "slice_count": 1,
+  "frequency_original_hz": 14225000,
+  "frequency_test_hz": 14226000.0,
+  "frequency_restored": true,
+  "meter_samples": 160,
+  "meter_distinct_values": 128,
+  "meter_min_dbm": -110.16912452869796,
+  "meter_max_dbm": -109.22620201234136,
+  "message_counts": {
+    "hello": 1,
+    "auth.result": 1,
+    "capabilities": 1,
+    "settings.snapshot": 1,
+    "schema": 4,
+    "object.create": 4,
+    "snapshot.complete": 1,
+    "delta": 159,
+    "settings.value": 184
+  },
+  "daemon_commit": "daf05135a9df830bb5aa1bf7b9eb314bdbf4c884",
+  "host": "Radxa ROCK 5C 2 GB, Armbian 26.8.3 Trixie",
+  "date": "2026-09-20",
+  "frequency_verification": "settings.value persisted-frequency notifications; ordinary property-write echoes are deliberately suppressed",
+  "scope": "One receive slice; no transmit, remote audio or remote spectrum test"
+}

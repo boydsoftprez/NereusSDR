@@ -47,7 +47,7 @@ struct PanLayoutGeometry {
 ///
 /// AetherSDR ships twelve, up to eight pans. The three largest are omitted
 /// because no supported board's independent-pan ceiling
-/// (qMin(BoardCapabilities::maxSlices, BoardCapabilities::userDdcCount) --
+/// (qMin(BoardCapabilities::maxSlices, RadioModel::userStreamCount()) --
 /// opening a NEW pan always claims its own DDC) exceeds five, so those
 /// tiles could never light up on any of them. That is a client-side
 /// allocation limit and not a hardware one: the gateware does eight

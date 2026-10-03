@@ -26,6 +26,17 @@
 //                coalesced away).  Bandwidth meter was already live from
 //                Task E3's 250 ms m_bwTimer — reuses HermesLiteBandwidthMonitor
 //                ep6/ep2/throttle accessors.
+//   2026-09-24 - R-R3-46: the N2ADR switch applies only its receive half
+//                without the transmit permission, and its tooltip says so.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-26 - R-R3-46 / R-R3-49 (remote-window parity Task 13): no
+//                 receive-only note when the window's Core applies the whole
+//                 preset (transmitSettingsVersion 8). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-26 - R-R3-32 (remote-window parity Task 14): the bandwidth
+//                 monitor reads RadioModel::hl2LinkFigures(), so a remote
+//                 window shows the Core's HL2 link ("From the Core").
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // === Verbatim mi0bot Console/setup.cs header (lines 1-50) ===
@@ -78,6 +89,8 @@
 #include <QMap>
 #include <QVariant>
 #include <QWidget>
+
+#include <optional>
 #include <array>
 
 #include "core/IoBoardHl2.h"
@@ -134,6 +147,24 @@ public:
     void populate(const RadioInfo& info, const BoardCapabilities& caps);
     void restoreSettings(const QMap<QString, QVariant>& settings);
 
+    // R-R3-46: without the transmit permission (a remote window whose Core
+    // is receive-only) the N2ADR switch applies only its receive half; the
+    // transmit OC pins stay the Core's. Always permitted locally.
+    void setTransmitPermitted(bool permitted, const QString& reason);
+    // R-R3-46 / R-R3-49 (parity Task 13): the window's Core applies the
+    // switch's whole preset itself (transmitSettingsVersion 8), so the
+    // tooltip drops the receive-only note. The window still composes only
+    // the receive half into its own copy; the Core saves the transmit pins.
+    void setCoreAppliesWholeN2adrPreset(bool whole);
+    /// The N2ADR switch's tooltip line while only the receive half applies.
+    static QString receiveOnlyN2adrNote();
+    QString n2adrToolTipForTest() const;
+    // The OC byte the strip shows, or -1 when it shows none.
+    int ocShownByteForTest() const { return m_ocShownByte; }
+    QString ocByteTextForTest() const;
+    QString ocBandTextForTest() const;
+    QString ocKeyedTextForTest() const;
+
     // Phase 3P-H Task 5c test seams.
     // Register-table poll interval, in ms.  Matches spec §13 "register state
     // table polls @ 40 ms".
@@ -148,6 +179,8 @@ public:
     // 250 ms m_bwTimer (HermesLiteBandwidthMonitor::ep6/ep2/throttle).
     int bandwidthPollIntervalMsForTest() const;
     QString ep6RateTextForTest() const;
+    int ep6BarPercentForTest() const;
+    int ep2BarPercentForTest() const;
     QString ep2RateTextForTest() const;
     QString throttleStatusTextForTest() const;
     QString throttleEventTextForTest() const;
@@ -196,11 +229,20 @@ private:
     void highlightStep(int step);
     void appendI2cLogEntry(const QString& text);
     void updateBwDisplay();
+    // The throttle label: throttled, not throttled, or unavailable.
+    void showThrottleState(std::optional<bool> throttled);
+
+    // R-R3-46 / R-R3-49: the N2ADR switch's tooltip from the two flags.
+    void refreshN2adrToolTip();
 
     // Decoded string for a register value (human-readable).
     QString decodeRegister(IoBoardHl2::Register reg, quint8 value) const;
 
     RadioModel*                   m_model{nullptr};
+    // R-R3-46: see setTransmitPermitted.
+    bool                          m_transmitPermitted{true};
+    // R-R3-49 (parity Task 13): see setCoreAppliesWholeN2adrPreset.
+    bool                          m_coreAppliesWholePreset{false};
     IoBoardHl2*                   m_ioBoard{nullptr};
     HermesLiteBandwidthMonitor*   m_bwMonitor{nullptr};
 
@@ -212,14 +254,17 @@ private:
     QLabel*  m_lastProbeLabel{nullptr};
 
     // ── Live OC byte indicator ────────────────────────────────────────────────
-    // Shows current band, ocByte hex, and 7 pin LEDs for the per-band pattern
-    // currently being sent on bank 0 C2.  Updates on band/MOX change via
-    // IoBoardHl2::currentOcByteChanged signal from buildCodecContext().
+    // Shows current band, ocByte hex, and 7 pin LEDs for the pattern
+    // currently being sent on bank 0 C2. Plan Task 14 fix wave (R-R3-49):
+    // it shows the byte the connection composed (RadioModel::bandOutputsByte,
+    // the Core's in a remote window), never one of its own.
     QLabel*  m_ocBandLabel{nullptr};
     QLabel*  m_ocByteLabel{nullptr};
     QLabel*  m_ocMoxLabel{nullptr};
     std::array<QFrame*, 7> m_ocPinLeds{};
+    int      m_ocShownByte{-1};   // -1 = nothing composed yet
     void updateOcIndicator(quint8 ocByte, int bandIdx, bool mox);
+    void refreshOcIndicator();
 
     // ── Configuration (left column) ───────────────────────────────────────────
     // From mi0bot setup.cs:20234-20238 chkHERCULES [@c26a8a4]
@@ -254,6 +299,7 @@ private:
     QLabel*       m_ep2RateLabel{nullptr};
     QLabel*       m_throttleStatusLabel{nullptr};
     QLabel*       m_throttleEventLabel{nullptr};
+    QGroupBox*    m_bwGroup{nullptr};
 
     // 250 ms timer for live bandwidth readout (Task E3/E4).
     QTimer* m_bwTimer{nullptr};

@@ -70,6 +70,10 @@ public:
     int activeFilter() const { return m_activeFilter; }
 
     void setFilterLabel(int index, const QString& label);
+    QString filterLabel(int index) const
+    {
+        return (index >= 0 && index < buttonCount()) ? button(index).text : QString();
+    }
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     QString serialize() const override;

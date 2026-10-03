@@ -6,6 +6,18 @@
 //
 // Phase 3J-1 Task 16.4.  Plan spec: ≥ 1 binary frame with streamType==1
 // and decoded payload matches input within 1e-3 (identity-resample case).
+//
+// R3 receiver audio plan, Task 4 (R-R3-42), 2026-09-23, J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code: two local clients on
+// one receiver each receive all of its audio, and a mono client receives
+// the left channel (Thetis TCIServer.cs PublishRxAudioSamples), not half
+// a block of interleaved stereo.
+//
+// R3 receiver audio fix wave (R-R3-42), 2026-09-23, J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code: stereo at a rate other than
+// 48 kHz keeps left and right apart (one resampler per channel, as Thetis
+// TCIServer.cs resampleRxAudioSamples does), not one resampler run over
+// interleaved L/R.
 
 #ifdef HAVE_WEBSOCKETS
 
@@ -20,6 +32,8 @@
 #include <vector>
 
 #include "core/TciServer.h"
+#include "core/SliceOwnership.h"
+#include "models/RadioModel.h"
 
 using namespace NereusSDR;
 
@@ -27,7 +41,275 @@ class TestTciAudioRoundtrip : public QObject {
     Q_OBJECT
 private slots:
     void synthetic_1khz_tone_arrives_as_binary_frame();
+    void two_clients_on_one_receiver_each_get_all_of_it();
+    void mono_client_gets_the_left_channel();
+    void stereo_at_12k_keeps_left_and_right_apart();
+    void desktop_host_audio_uses_owned_slice();
 };
+
+namespace {
+
+struct DecodedBlock {
+    quint32 receiver = 0;
+    quint32 channels = 0;
+    quint32 length = 0;
+    QVector<float> samples;
+};
+
+quint32 readLe32(const QByteArray& frame, int offset)
+{
+    const auto* p = reinterpret_cast<const quint8*>(frame.constData() + offset);
+    return static_cast<quint32>(p[0]) | (static_cast<quint32>(p[1]) << 8)
+         | (static_cast<quint32>(p[2]) << 16) | (static_cast<quint32>(p[3]) << 24);
+}
+
+// Float32 RX audio frames only (the server's default sample type).
+QList<DecodedBlock> decodeRxAudio(const QSignalSpy& spy)
+{
+    QList<DecodedBlock> blocks;
+    for (const QList<QVariant>& call : spy) {
+        const QByteArray frame = call.at(0).toByteArray();
+        if (frame.size() < 64 || readLe32(frame, 24) != 1u) { continue; }
+        DecodedBlock block;
+        block.receiver = readLe32(frame, 0);
+        block.length = readLe32(frame, 20);
+        block.channels = readLe32(frame, 28);
+        block.samples.resize((frame.size() - 64) / 4);
+        std::memcpy(block.samples.data(), frame.constData() + 64,
+                    static_cast<size_t>(block.samples.size()) * 4);
+        blocks.append(block);
+    }
+    return blocks;
+}
+
+// Left channel k (0-based) of the ramp the two cases inject; the right
+// channel is its negative, so a left/right mix-up cannot pass.
+float rampLeft(int k) { return 1.0e-4f * static_cast<float>(k + 1); }
+
+void injectRamp(TciServer& server, int totalFrames)
+{
+    constexpr int kChunk = 1024;
+    std::vector<float> left(kChunk), right(kChunk);
+    for (int sent = 0; sent < totalFrames; sent += kChunk) {
+        const int n = std::min(kChunk, totalFrames - sent);
+        for (int i = 0; i < n; ++i) {
+            left[static_cast<size_t>(i)] = rampLeft(sent + i);
+            right[static_cast<size_t>(i)] = -rampLeft(sent + i);
+        }
+        server.injectAudioFrameForTest(0, left.data(), right.data(), n, 48000);
+    }
+}
+
+// A tone's amplitude in one channel of interleaved audio at `rateHz`.
+double toneAmplitude(const QVector<float>& samples, int channels, int channel,
+                     double hz, int rateHz, int firstFrame)
+{
+    double cosine = 0.0;
+    double sine = 0.0;
+    int frames = 0;
+    for (int f = firstFrame; f * channels + channel < samples.size(); ++f) {
+        const double phase = 2.0 * M_PI * hz * double(f) / double(rateHz);
+        const double v = samples.at(f * channels + channel);
+        cosine += v * std::cos(phase);
+        sine += v * std::sin(phase);
+        ++frames;
+    }
+    return frames > 0 ? 2.0 * std::hypot(cosine, sine) / frames : 0.0;
+}
+
+bool connectClient(QWebSocket& client, quint16 port)
+{
+    QSignalSpy connected(&client, &QWebSocket::connected);
+    client.open(QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(port)));
+    return connected.wait(2000) && client.state() == QAbstractSocket::ConnectedState;
+}
+
+} // namespace
+
+void TestTciAudioRoundtrip::desktop_host_audio_uses_owned_slice()
+{
+    RadioModel radio;
+    const int foreign = radio.addSlice(QStringLiteral("pan-0"));
+    const int owned = radio.addSlice(QStringLiteral("pan-0"));
+    QCOMPARE(foreign, 0);
+    QCOMPARE(owned, 1);
+    radio.sliceOwnership()->setOwner(foreign, QByteArray("phone"));
+    radio.sliceOwnership()->setOwner(owned, SliceOwnership::stationDevice());
+    TciServer server(&radio);
+    server.setDesktopHostMode(true);
+    QVERIFY(server.start(0));
+    QWebSocket client;
+    QSignalSpy binary(&client, &QWebSocket::binaryMessageReceived);
+    QVERIFY(connectClient(client, server.port()));
+    client.sendTextMessage(QStringLiteral("audio_start:0;"));
+    QTest::qWait(100);
+    std::vector<float> foreignSamples(2048, 0.2f);
+    std::vector<float> ownedSamples(2048, 0.4f);
+    server.injectAudioFrameForTest(foreign, foreignSamples.data(), foreignSamples.data(),
+                                   2048, 48000);
+    QTest::qWait(100);
+    QCOMPARE(decodeRxAudio(binary).size(), 0);
+    server.injectAudioFrameForTest(owned, ownedSamples.data(), ownedSamples.data(),
+                                   2048, 48000);
+    QTRY_COMPARE_WITH_TIMEOUT(decodeRxAudio(binary).size(), 1, 3000);
+    const DecodedBlock block = decodeRxAudio(binary).first();
+    QCOMPARE(block.receiver, 0u);
+    QVERIFY(std::abs(block.samples.at(0) - 0.4f) < 1e-3f);
+    // Leave a partial old-owner block in the ring, then change ownership.
+    // The next full receiver block must contain only the new owner's PCM.
+    server.injectAudioFrameForTest(owned, ownedSamples.data(), ownedSamples.data(),
+                                   1024, 48000);
+    radio.sliceOwnership()->setOwner(owned, QByteArray("phone"));
+    radio.sliceOwnership()->setOwner(foreign, SliceOwnership::stationDevice());
+    binary.clear();
+    server.injectAudioFrameForTest(owned, ownedSamples.data(), ownedSamples.data(),
+                                   2048, 48000);
+    QTest::qWait(100);
+    QCOMPARE(decodeRxAudio(binary).size(), 0);
+    std::vector<float> newOwnedSamples(2048, 0.6f);
+    server.injectAudioFrameForTest(foreign, newOwnedSamples.data(), newOwnedSamples.data(),
+                                   2048, 48000);
+    QTRY_COMPARE_WITH_TIMEOUT(decodeRxAudio(binary).size(), 1, 3000);
+    const DecodedBlock remapped = decodeRxAudio(binary).first();
+    QCOMPARE(remapped.receiver, 0u);
+    for (float sample : remapped.samples) {
+        QVERIFY(std::abs(sample - 0.6f) < 1e-3f);
+    }
+    client.close();
+    server.stop();
+}
+
+// Two apps on receiver 0 used to pop the one shared ring, so each got about
+// half of the blocks. Each must now get every block, in order.
+void TestTciAudioRoundtrip::two_clients_on_one_receiver_each_get_all_of_it()
+{
+    TciServer server(nullptr);
+    QVERIFY(server.start(0));
+    QWebSocket clientA;
+    QWebSocket clientB;
+    QSignalSpy binaryA(&clientA, &QWebSocket::binaryMessageReceived);
+    QSignalSpy binaryB(&clientB, &QWebSocket::binaryMessageReceived);
+    QVERIFY(connectClient(clientA, server.port()));
+    QVERIFY(connectClient(clientB, server.port()));
+    clientA.sendTextMessage(QStringLiteral("audio_start:0;"));
+    clientB.sendTextMessage(QStringLiteral("audio_start:0;"));
+    QTest::qWait(100);
+
+    constexpr int kBlockFrames = 2048;   // default audio_stream_samples
+    constexpr int kBlocks = 3;
+    injectRamp(server, kBlockFrames * kBlocks);
+    QTest::qWait(300);
+
+    for (QSignalSpy* spy : {&binaryA, &binaryB}) {
+        const QList<DecodedBlock> blocks = decodeRxAudio(*spy);
+        QCOMPARE(blocks.size(), kBlocks);
+        int frame = 0;
+        for (const DecodedBlock& block : blocks) {
+            QCOMPARE(block.receiver, 0u);
+            QCOMPARE(block.channels, 2u);
+            QCOMPARE(block.length, quint32(kBlockFrames * 2));
+            for (int i = 0; i < kBlockFrames; ++i, ++frame) {
+                QVERIFY2(std::fabs(block.samples.at(2 * i) - rampLeft(frame)) < 1e-7f
+                             && std::fabs(block.samples.at(2 * i + 1) + rampLeft(frame)) < 1e-7f,
+                         qPrintable(QStringLiteral("frame %1 is %2,%3; expected %4,%5")
+                                        .arg(frame)
+                                        .arg(double(block.samples.at(2 * i)))
+                                        .arg(double(block.samples.at(2 * i + 1)))
+                                        .arg(double(rampLeft(frame)))
+                                        .arg(double(-rampLeft(frame)))));
+            }
+        }
+    }
+    clientA.close();
+    clientB.close();
+    server.stop();
+}
+
+// audio_stream_channels:1 used to take half a block of interleaved L/R
+// floats and send them as mono samples. A mono block is the left channel,
+// one sample per frame, as Thetis PublishRxAudioSamples sends it.
+void TestTciAudioRoundtrip::mono_client_gets_the_left_channel()
+{
+    TciServer server(nullptr);
+    QVERIFY(server.start(0));
+    QWebSocket client;
+    QSignalSpy binary(&client, &QWebSocket::binaryMessageReceived);
+    QVERIFY(connectClient(client, server.port()));
+    client.sendTextMessage(QStringLiteral("audio_stream_channels:1;"));
+    client.sendTextMessage(QStringLiteral("audio_start:0;"));
+    QTest::qWait(100);
+
+    constexpr int kBlockFrames = 2048;
+    injectRamp(server, kBlockFrames * 2);
+    QTest::qWait(300);
+
+    const QList<DecodedBlock> blocks = decodeRxAudio(binary);
+    QCOMPARE(blocks.size(), 2);
+    int frame = 0;
+    for (const DecodedBlock& block : blocks) {
+        QCOMPARE(block.channels, 1u);
+        QCOMPARE(block.length, quint32(kBlockFrames));
+        QCOMPARE(block.samples.size(), kBlockFrames);
+        for (int i = 0; i < kBlockFrames; ++i, ++frame) {
+            QVERIFY2(std::fabs(block.samples.at(i) - rampLeft(frame)) < 1e-7f,
+                     qPrintable(QStringLiteral("mono sample %1 is %2; expected %3")
+                                    .arg(frame)
+                                    .arg(double(block.samples.at(i)))
+                                    .arg(double(rampLeft(frame)))));
+        }
+    }
+    client.close();
+    server.stop();
+}
+
+// Stereo at 12 kHz: one resampler used to run over interleaved L/R, which
+// mixed the channels and read them at the wrong rate. Each channel now has
+// its own, so a 440 Hz left and a 1000 Hz right arrive apart, at 12 kHz.
+void TestTciAudioRoundtrip::stereo_at_12k_keeps_left_and_right_apart()
+{
+    TciServer server(nullptr);
+    QVERIFY(server.start(0));
+    QWebSocket client;
+    QSignalSpy binary(&client, &QWebSocket::binaryMessageReceived);
+    QVERIFY(connectClient(client, server.port()));
+    client.sendTextMessage(QStringLiteral("audio_samplerate:12000;"));
+    client.sendTextMessage(QStringLiteral("audio_stream_channels:2;"));
+    client.sendTextMessage(QStringLiteral("audio_start:0;"));
+    QTest::qWait(100);
+
+    constexpr int kChunk = 1024;
+    constexpr int kTotal = 48000;   // one second at 48 kHz
+    std::vector<float> left(kChunk), right(kChunk);
+    for (int sent = 0; sent < kTotal; sent += kChunk) {
+        for (int i = 0; i < kChunk; ++i) {
+            const double t = double(sent + i) / 48000.0;
+            left[size_t(i)] = float(0.3 * std::sin(2.0 * M_PI * 440.0 * t));
+            right[size_t(i)] = float(0.2 * std::sin(2.0 * M_PI * 1000.0 * t));
+        }
+        server.injectAudioFrameForTest(0, left.data(), right.data(), kChunk, 48000);
+        QTest::qWait(10);
+    }
+    QTest::qWait(300);
+
+    QVector<float> received;
+    for (const DecodedBlock& block : decodeRxAudio(binary)) {
+        QCOMPARE(block.channels, 2u);
+        received += block.samples;
+    }
+    // 2048 frames of 48 kHz audio per block, 512 at 12 kHz.
+    QVERIFY2(received.size() >= 2 * 11000, qPrintable(QString::number(received.size())));
+    constexpr int kSkip = 600;   // past the resampler's start
+    const double leftLow = toneAmplitude(received, 2, 0, 440.0, 12000, kSkip);
+    const double leftHigh = toneAmplitude(received, 2, 0, 1000.0, 12000, kSkip);
+    const double rightLow = toneAmplitude(received, 2, 1, 440.0, 12000, kSkip);
+    const double rightHigh = toneAmplitude(received, 2, 1, 1000.0, 12000, kSkip);
+    QVERIFY2(std::abs(leftLow - 0.3) < 0.01 && leftHigh < 0.005,
+             qPrintable(QStringLiteral("left: 440 Hz %1, 1000 Hz %2").arg(leftLow).arg(leftHigh)));
+    QVERIFY2(std::abs(rightHigh - 0.2) < 0.01 && rightLow < 0.005,
+             qPrintable(QStringLiteral("right: 440 Hz %1, 1000 Hz %2").arg(rightLow).arg(rightHigh)));
+    client.close();
+    server.stop();
+}
 
 // ── synthetic_1khz_tone_arrives_as_binary_frame() ───────────────────────────
 //

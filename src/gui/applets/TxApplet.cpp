@@ -58,6 +58,164 @@
 //                 poller (now TxApplet::pollVoxMeter) and the right-click
 //                 → Setup → Transmit → DEXP/VOX signal handling.  DEXP row
 //                 stays on PhoneCwApplet — only VOX moves.
+//   2026-09-22 — Routed the PS-A toggle through RadioModel's shared
+//                 PureSignalSessionFacade for local and remote sessions.
+//   2026-09-24 : R-R3-45: Speakers / Headphones choice for MON on the MON
+//                 row, with a plain notice when the headphones are chosen
+//                 and not open. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-24 - iPhone app Task 19 (R-IOS-06): the SWR gauge's range and
+//                 the RF power gauge's headroom come from ControlRanges.h,
+//                 which the Core's catalogue reads too. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-24 : R-R3-49 (parity Task 1): setTransmitSettingsPermitted.
+//                 RF Power and the TX filter low and high follow the
+//                 transmit settings gate in a remote window; the keying
+//                 controls keep setTransmitPermitted. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-24 : R-R3-49 (parity Task 2): Tune Power, the VOX level and
+//                 delay, MON, its level and output pair, LEV, EQ and CFC
+//                 follow setTransmitChainSettingsPermitted in a remote
+//                 window. Its Tune Power slider asks the Core
+//                 (setTunePowerForTxBand) and shows the Core's value; the
+//                 MON output pair routes this computer's monitor audio in a
+//                 remote window too. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-25 : R-R3-49 (parity Task 3): the profile combo follows
+//                 setTxProfilePermitted; in a remote window its manager
+//                 mirrors the Core's profiles. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-25 : R-R3-49 (parity Task 4): the EQ and CFC right-clicks open
+//                 their dialogs in a remote window; setTxProcessingPermitted
+//                 greys the CFC dialog with the reason. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-25 : R-R3-49 (group A fix wave, M3): setPowerByBandPermitted.
+//                 An RF Power move writes the band slot and the tune drive
+//                 source only where the Core takes them (version 5).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-24 : Receiver and transmit gaps plan, Task 7: the MOX button
+//                 keys through RadioModel::setMoxFromButton (a manual key,
+//                 Thetis chkMOX_Click). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-25 : R-R3-49 (parity Task 7): PS-A follows
+//                 setPureSignalArmingPermitted and the facade's canArm, no
+//                 longer the keying gate. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-25 : Receiver and transmit gaps plan, Task 16: receive only
+//                 disables MOX (outside SPEC and DRM), TUNE, 2-Tone and VOX
+//                 with its reason (console.RXOnly, console.cs:15312-15334
+//                 [v2.10.3.15]). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-25 : Task 16 fix wave: MOX disabled in every mode (I3), the
+//                 MOX tooltip and lock follow the active slice (M3), and
+//                 the lock names the remote transmit reason too (M6).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-09-25 : Task 16 fix wave 2: a mode or slice change while the
+//                 transmit-permission layer holds MOX changes the tooltip
+//                 it gives back, not the reason shown. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - iPhone app plan, desktop remote transmit (R-IOS-13): in a
+//                 remote window MOX, TUNE and 2-TONE show the Core's state
+//                 and 2-TONE goes through RadioModel::setTwoTone. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-26: Transmit group fix wave: I4 the line saying who holds
+//               transmit. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
+//   2026-09-26: Transmit group fix wave 2 (M8): VOX shows disabled with the
+//               plain reason while this computer has no microphone line to
+//               the Core; the Core's refusal stays the backstop. J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Anthropic
+//               Claude Code.
+//   2026-09-26  J.J. Boyd / KG4VCF  iPhone app plan Task 78 (R-IOS-02,
+//                R-IOS-30): a Take transmit button under the holder line.
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-27  J.J. Boyd / KG4VCF  the RF Power and Tune labels read
+//                rfPowerShownFor / tunePowerShownFor (HpsdrModel.h), which
+//                the Core's catalogue reads too (R-IOS-06, R-IOS-27). The
+//                labels are unchanged. AI-assisted via Anthropic Claude
+//                Code.
+//   2026-09-27  J.J. Boyd / KG4VCF  the HL2 RF Power and Tune labels
+//                snap and round a value between steps as mi0bot's
+//                UpdateDriveLabel and UpdateTuneLabel do (R-IOS-06,
+//                R-IOS-27). AI-assisted via Anthropic Claude Code.
+//   2026-09-27  J.J. Boyd / KG4VCF  Remote-window parity Task 32 (R-IOS-13,
+//                R-R3-49): setMonitorOutputPermitted, the MON output pair
+//                in a remote window on a Core that does not send the
+//                transmit monitor. AI-assisted via Anthropic Claude Code.
+//   2026-09-27  J.J. Boyd / KG4VCF  Remote-window parity Task 33 (R-R3-49,
+//                R-IOS-13): the CFC dialog's bar chart from the Core's
+//                stream (setStationCfcBarChart); in a remote window the RF
+//                Pwr and SWR bars fall at the Core's unkey as a local
+//                window's do at its own. AI-assisted via Anthropic Claude
+//                Code.
+//   2026-09-28  J.J. Boyd / KG4VCF  Addendum G-42 item 4: the tooltip for a
+//                mode that cannot transmit matches the refusal's words.
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - HL2 port part 2: MOX, TUN, 2TONE and VOX are disabled
+//                with the reason while a TX inhibit holds (the HL2 I/O
+//                board's fault code, say), as Thetis's TXInhibit setter
+//                does. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                Code.
+//   2026-09-29 - Setup publication (CFC band editor): in a remote window
+//                the CFC dialog sends its band table as the Core's
+//                cfc.setProfile command when the Core takes it, and hears
+//                that command's answer. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-09-29  J.J. Boyd / KG4VCF  setCurrentBand no longer recalls PWR
+//                and a local window's RF Power slider no longer saves the
+//                band slot: RadioModel does both (applyTransmitBand,
+//                drivePowerScroll). AI-assisted via Anthropic Claude Code.
+//   2026-09-29  J.J. Boyd / KG4VCF  PA on-air gate review: the local Tune
+//                Power slider writes and shows the transmit band's tune
+//                power (Thetis ptbTune_Scroll, console.cs:46618
+//                [v2.10.3.15]), not the pan band's. AI-assisted via
+//                Anthropic Claude Code.
+//   2026-09-29  J.J. Boyd / KG4VCF  Slice control plan Task 11 (Q15, U8):
+//                the TX band, per-band power, MOX mode tooltip and TX filter
+//                status follow the transmit slice (setTransmitSliceResolver,
+//                followTransmitSlice), never a listened slice; the
+//                transmit-slice letter row. AI-assisted via Anthropic Claude
+//                Code.
+//   2026-09-29  J.J. Boyd / KG4VCF  Slice control plan Task 11 fix: ports
+//                Thetis's MOX gate on the TX band: the band (and the power
+//                the slider recalls and writes) holds while transmitting.
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-30  J.J. Boyd / KG4VCF  TX rulings (item 1): a remote window's
+//                MOX and TUNE press toggles against its own key
+//                (RadioModel::moxPressAsksOn, tunePressAsksOn).
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-30  J.J. Boyd / KG4VCF  TX safety: a lost radio link locks
+//                MOX, TUN and 2TONE with its reason until the link is back
+//                (RadioModel::radioLinkDownChanged); VOX stays as Thetis's
+//                power-off leaves it (console.cs:27488-27493 [v2.10.3.15]).
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-30  J.J. Boyd / KG4VCF  Fix wave GUI-I6: a remote window's
+//                Tune Power slider ignores the Core's value while held or
+//                while its change is on its way.
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-30  J.J. Boyd / KG4VCF  TX-parity-linkdown (fix wave): the
+//                lock follows connectionStateChanged too, so a remote
+//                window whose Core has no radio locks MOX, TUN and 2TONE.
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-30  J.J. Boyd / KG4VCF  Fix round 1 (minor 2): the remote
+//                Tune Power slider shows the Core's value when its change
+//                is answered, whatever arrived first. AI-assisted via
+//                Anthropic Claude Code.
+//   2026-09-30  J.J. Boyd / KG4VCF  Fix round 1 (minor 5): PS-A shows,
+//                disabled with its reason, while the board is not known;
+//                only a known board without PureSignal hides it.
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-30  J.J. Boyd / KG4VCF  Fix round 1 (minor 4): the link-down
+//                words follow the window's link to the Core and the Core's
+//                waiting for a radio. AI-assisted via Anthropic Claude Code.
+//   2026-09-30  J.J. Boyd / KG4VCF  Fix wave, hosting 2-TONE parity: a
+//                hosting window's 2-TONE asks to take transmit, as MOX and
+//                TUNE do (setDesktopTwoToneHandler). AI-assisted via
+//                Anthropic Claude Code.
+//   2026-09-30  J.J. Boyd / KG4VCF  Fix wave GUI-I7: PS-A greyed by the
+//                PureSignal facade carries the facade's reason.
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -162,18 +320,25 @@
 #include "TxApplet.h"
 #include "TxEqDialog.h"
 #include "TxCfcDialog.h"
-#include "NyiOverlay.h"
 #include "gui/HGauge.h"
 #include "gui/StyleConstants.h"
 #include "gui/ComboStyle.h"
 #include "gui/widgets/DexpPeakMeter.h"
+#include "gui/widgets/VfoWidget.h"
+#include "core/AudioEngine.h"
+#include "core/ControlRanges.h"
 #include "core/audio/CompositeTxMicRouter.h"
 #include "core/MicProfileManager.h"
 #include "core/MoxController.h"
 #include "core/PureSignal.h"
 #include "core/RadioStatus.h"
+#include "core/session/IStationLink.h"
+#include "core/session/StationCapabilities.h"
+#include "core/session/PureSignalSessionFacade.h"
 #include "core/TwoToneController.h"
 #include "core/TxChannel.h"
+#include "core/TxSliceArbiter.h"
+#include "models/PureSignalSettings.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
@@ -196,11 +361,69 @@
 
 namespace NereusSDR {
 
+namespace {
+
+// R-R3-45: the MON output captions, in one place so a rename is one edit.
+// They match the receiver flag's output buttons (VfoWidget), in capitals
+// like the flag's other buttons.
+QString monitorSpeakersCaption()   { return QStringLiteral("SPEAKERS"); }
+QString monitorHeadphonesCaption() { return QStringLiteral("PHONES"); }
+
+// The tooltip a control had before the transmit-permission layer
+// (setTransmitPermitted) disabled it, given back when permission returns.
+constexpr auto kTransmitSavedTooltip = "TxAppletSavedTransmitTooltip";
+
+// Disable a control with `reason` as its tooltip, remembering what it had,
+// or put back what it had. Shared by the keying gate and the transmit
+// settings gate, which hold disjoint controls. No model state is written.
+// Fix wave GUI-I7: PS-A's own tooltip while the facade's reason shows.
+constexpr auto kPsaFacadeSavedTooltip = "TxAppletPsaFacadeSavedTooltip";
+constexpr auto kPsaFacadeSavedDescription = "TxAppletPsaFacadeSavedDescription";
+
+void gateTransmitControl(QWidget* control, bool permitted, const QString& reason)
+{
+    if (!control) { return; }
+
+    static constexpr auto kSavedTooltip = kTransmitSavedTooltip;
+    static constexpr auto kSavedDescription = "TxAppletSavedTransmitDescription";
+    static constexpr auto kSavedEnabled = "TxAppletSavedTransmitEnabled";
+    if (!permitted) {
+        if (!control->property(kSavedTooltip).isValid()) {
+            control->setProperty(kSavedTooltip, control->toolTip());
+            control->setProperty(kSavedDescription, control->accessibleDescription());
+            control->setProperty(kSavedEnabled, control->isEnabled());
+        }
+        control->setEnabled(false);
+        control->setToolTip(reason);
+        control->setAccessibleDescription(reason);
+        return;
+    }
+
+    if (control->property(kSavedTooltip).isValid()) {
+        control->setEnabled(control->property(kSavedEnabled).toBool());
+        control->setToolTip(control->property(kSavedTooltip).toString());
+        control->setAccessibleDescription(
+            control->property(kSavedDescription).toString());
+        control->setProperty(kSavedTooltip, QVariant());
+        control->setProperty(kSavedDescription, QVariant());
+        control->setProperty(kSavedEnabled, QVariant());
+    }
+}
+
+} // namespace
+
 TxApplet::TxApplet(RadioModel* model, QWidget* parent)
     : AppletWidget(model, parent)
 {
     buildUI();
     wireControls();
+    if (model && model->role() == RadioModel::Role::Remote) {
+        setTransmitPermitted(false);
+        setTransmitSettingsPermitted(false);
+        setTransmitChainSettingsPermitted(false);
+        setTxProfilePermitted(false);
+        setTxProcessingPermitted(false);
+    }
 }
 
 void TxApplet::buildUI()
@@ -264,9 +487,11 @@ void TxApplet::buildUI()
     // ── 2. SWR gauge ── 1.0–3.0, redStart 2.5 ───────────────────────────────
     // Ticks: 1 / 1.5 / 2.5 / 3  (AetherSDR TxApplet.cpp:77)
     auto* swrGauge = new HGauge(this);
-    swrGauge->setRange(1.0, 3.0);
-    swrGauge->setRedStart(2.5);
-    swrGauge->setYellowStart(2.5);
+    // Range and red zone from ControlRanges.h, which the Core's catalogue
+    // reads too (iPhone app Task 19).
+    swrGauge->setRange(ControlRanges::kSwrGaugeMin, ControlRanges::kSwrGaugeMax);
+    swrGauge->setRedStart(ControlRanges::kSwrGaugeRedFrom);
+    swrGauge->setYellowStart(ControlRanges::kSwrGaugeRedFrom);
     swrGauge->setTitle(QStringLiteral("SWR"));
     swrGauge->setTickLabels({QStringLiteral("1"), QStringLiteral("1.5"),
                               QStringLiteral("2.5"), QStringLiteral("3")});
@@ -385,6 +610,38 @@ void TxApplet::buildUI()
         row->addWidget(m_moxBtn, 1);
 
         vbox->addLayout(row);
+
+        // Slice control plan Task 11 (U8): which slice transmits, one letter
+        // per slice this window controls; the checked one is the transmit
+        // slice (refreshTransmitSliceChoices fills it).
+        m_txSliceRow = new QHBoxLayout;
+        m_txSliceRow->setSpacing(2);
+        vbox->addLayout(m_txSliceRow);
+
+        // Fix wave I4: who holds transmit on the Core, in a remote window
+        // (setTransmitHolderText). Empty, and so not shown, otherwise.
+        m_holderLabel = new QLabel(this);
+        m_holderLabel->setObjectName(QStringLiteral("TxHolderLabel"));
+        m_holderLabel->setAccessibleName(QStringLiteral("Who holds transmit"));
+        m_holderLabel->setWordWrap(true);
+        m_holderLabel->setStyleSheet(QStringLiteral(
+            "QLabel { color: %1; font-size: 10px; }").arg(Style::kTextPrimary));
+        m_holderLabel->setVisible(false);
+        vbox->addWidget(m_holderLabel);
+
+        // iPhone app plan Task 78 (R-IOS-02, R-IOS-30): beside the line
+        // that says another device (or the radio) holds transmit, the way
+        // to take it back; the pan's TX pill offers the same.
+        m_takeTransmitBtn = new QPushButton(QStringLiteral("Take transmit"), this);
+        m_takeTransmitBtn->setObjectName(QStringLiteral("TxTakeTransmitButton"));
+        m_takeTransmitBtn->setAccessibleName(QStringLiteral("Take transmit"));
+        m_takeTransmitBtn->setToolTip(
+            QStringLiteral("Ask to take transmit from the device that has it, so MOX and "
+                           "TUNE work here."));
+        m_takeTransmitBtn->setVisible(false);
+        connect(m_takeTransmitBtn, &QPushButton::clicked, this,
+                &TxApplet::takeTransmitRequested);
+        vbox->addWidget(m_takeTransmitBtn);
     }
 
     // ── 4b. VOX row (3M-3a-iii bench polish 2026-05-04) ───────────────────────
@@ -420,7 +677,7 @@ void TxApplet::buildUI()
         m_voxBtn->setAccessibleName(QStringLiteral("VOX voice-operated transmit"));
         m_voxBtn->setObjectName(QStringLiteral("TxVoxButton"));
         m_voxBtn->setToolTip(QStringLiteral(
-            "VOX — voice-operated transmit.  Left-click to toggle.\n"
+            "VOX: voice-operated transmit.  Left-click to toggle.\n"
             "Right-click to open the DEXP/VOX setup page."));
         // CustomContextMenu so right-click hits the openSetupRequested slot
         // instead of the default platform menu.
@@ -504,13 +761,51 @@ void TxApplet::buildUI()
                              " color: #ffffff;"
                              "}"));
         m_monBtn->setAccessibleName(QStringLiteral("Monitor enable"));
+        // R-R3-21: MON plays your own transmitted audio as it sounds on the
+        // air, in the output chosen beside it (R-R3-45).
         m_monBtn->setToolTip(QStringLiteral(
-            "Monitor: mix received audio into headphones during TX.\n"
-            "Does NOT persist across restarts (safety)."));
+            "Monitor: hear your own transmitted audio as it sounds on the air, "
+            "on the output chosen next to MON (SPEAKERS or PHONES).\n"
+            "MON is off each time NereusSDR starts, for safety."));
         monRow->addWidget(m_monBtn, 1);
-        monRow->addStretch();
+
+        // R-R3-45: where MON plays, beside MON. An exclusive pair in the
+        // LEV / EQ / CFC button family; speakers by default. NereusSDR-native:
+        // Thetis mixes MON into its one output.
+        const QString outStyle = Style::buttonBaseStyle()
+            + Style::greenCheckedStyle();
+        m_monSpeakersBtn = new QPushButton(monitorSpeakersCaption(), this);
+        m_monSpeakersBtn->setObjectName(QStringLiteral("TxMonitorSpeakersButton"));
+        m_monSpeakersBtn->setCheckable(true);
+        m_monSpeakersBtn->setChecked(true);
+        m_monSpeakersBtn->setFixedHeight(22);
+        m_monSpeakersBtn->setStyleSheet(outStyle);
+        m_monSpeakersBtn->setAccessibleName(QStringLiteral("Monitor on the speakers"));
+        m_monSpeakersBtn->setToolTip(QStringLiteral(
+            "Play your transmit monitor on the speakers"));
+        monRow->addWidget(m_monSpeakersBtn);
+
+        m_monHeadphonesBtn = new QPushButton(monitorHeadphonesCaption(), this);
+        m_monHeadphonesBtn->setObjectName(QStringLiteral("TxMonitorHeadphonesButton"));
+        m_monHeadphonesBtn->setCheckable(true);
+        m_monHeadphonesBtn->setFixedHeight(22);
+        m_monHeadphonesBtn->setStyleSheet(outStyle);
+        m_monHeadphonesBtn->setAccessibleName(QStringLiteral("Monitor on the headphones"));
+        m_monHeadphonesBtn->setToolTip(QStringLiteral(
+            "Play your transmit monitor on the headphones"));
+        monRow->addWidget(m_monHeadphonesBtn);
 
         vbox->addLayout(monRow);
+
+        // Why MON is silent with the headphones chosen and none open: the
+        // receiver flag's own words.
+        m_monOutputNotice = new QLabel(VfoWidget::headphonesMissingText(), this);
+        m_monOutputNotice->setObjectName(QStringLiteral("TxMonitorOutputNotice"));
+        m_monOutputNotice->setWordWrap(true);
+        m_monOutputNotice->setStyleSheet(
+            QStringLiteral("QLabel { color: %1; font-size: 10px; }").arg(Style::kAmberText));
+        m_monOutputNotice->setVisible(false);
+        vbox->addWidget(m_monOutputNotice);
 
         // Monitor volume slider row
         auto* volRow = new QHBoxLayout;
@@ -528,8 +823,12 @@ void TxApplet::buildUI()
         m_monitorVolumeSlider->setValue(50);
         m_monitorVolumeSlider->setFixedHeight(18);
         m_monitorVolumeSlider->setAccessibleName(QStringLiteral("Monitor volume"));
+        // R-R3-21: sets the TX monitor's gain (TransmitModel::monitorVolume
+        // -> AudioEngine::setTxMonitorVolume), the transmitted audio MON
+        // plays in the output chosen beside it (R-R3-45).
         m_monitorVolumeSlider->setToolTip(QStringLiteral(
-            "Monitor receive audio volume during TX (0–100 %)"));
+            "How loud you hear your own transmitted audio while MON is on, "
+            "on the output chosen next to MON (SPEAKERS or PHONES). 0 to 100."));
         volRow->addWidget(m_monitorVolumeSlider, 1);
 
         m_monitorVolumeValue = new QLabel(QStringLiteral("50"), this);
@@ -575,7 +874,7 @@ void TxApplet::buildUI()
         m_levBtn->setAccessibleName(QStringLiteral("TX Leveler enable"));
         m_levBtn->setObjectName(QStringLiteral("TxLevButton"));
         m_levBtn->setToolTip(QStringLiteral(
-            "TX Leveler — slow speech-leveling AGC. Improves intelligibility on weak speech."));
+            "TX Leveler: slow speech-leveling AGC. Improves intelligibility on weak speech."));
         row->addWidget(m_levBtn, 1);
 
         m_eqBtn = new QPushButton(QStringLiteral("EQ"), this);
@@ -601,7 +900,7 @@ void TxApplet::buildUI()
         m_cfcBtn->setAccessibleName(QStringLiteral("Continuous Frequency Compressor enable"));
         m_cfcBtn->setObjectName(QStringLiteral("TxCfcButton"));
         m_cfcBtn->setToolTip(QStringLiteral(
-            "CFC — 10-band continuous frequency compressor. Left-click to "
+            "CFC: 10-band continuous frequency compressor. Left-click to "
             "toggle. Right-click to open the CFC dialog."));
         // Right-click → modeless TxCfcDialog (mirrors EQ button pattern).
         m_cfcBtn->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -628,7 +927,7 @@ void TxApplet::buildUI()
         applyComboStyle(m_profileCombo);
         m_profileCombo->setAccessibleName(QStringLiteral("TX profile"));
         m_profileCombo->setToolTip(QStringLiteral(
-            "TX Profile — left-click to switch.  Right-click to edit "
+            "TX Profile: left-click to switch.  Right-click to edit "
             "(Setup → Audio → TX Profile)."));
         // Custom context-menu policy so right-click emits
         // customContextMenuRequested instead of the default popup.
@@ -865,6 +1164,17 @@ void TxApplet::wireControls()
             if (m_swrGauge)      { m_swrGauge->setValue(1.0); }
         });
     }
+    // R-R3-49 (parity Task 33): a remote window's MoxController never keys;
+    // the Core's unkey (its mirrored transmit state) clears the two bars
+    // the same way.
+    if (m_model && m_model->role() == RadioModel::Role::Remote) {
+        connect(m_model, &RadioModel::transmittingChanged, this, [this](bool active) {
+            if (active) { return; }
+            m_fwdPowerSmoothedW = 0.0;
+            if (m_fwdPowerGauge) { m_fwdPowerGauge->setValue(0.0); }
+            if (m_swrGauge)      { m_swrGauge->setValue(1.0); }
+        });
+    }
 
     // Per-SKU RF Pwr gauge rescale.  Bench-reported #167 follow-up: the
     // 0-120 W default scale made HL2 (5 W) and ANAN-G2-1K (1000 W) both
@@ -921,23 +1231,22 @@ void TxApplet::wireControls()
         updatePowerSliderLabels();
         if (m_updatingFromModel) { return; }
         tx.setPower(val);
-        // Per-band write: matches Thetis ptbPWR_Scroll at console.cs:28642
-        // [v2.10.3.13] (`power_by_band[(int)_tx_band] = ptbPWR.Value;`).
-        // Without this, the per-band slot only updates indirectly via the
-        // setPowerUsingTargetDbm txMode-0 side-effect (TransmitModel.cpp:825),
-        // which is gated on connected radio + loaded PA profile + !TUNE.
-        // Result: slider moves while disconnected (or before profiles load)
-        // never persist across restart.  setPowerForBand auto-persists to
-        // hardware/<mac>/powerByBand/<band> when m_persistMac is non-empty.
-        //
-        // Source the band from the active slice (the canonical TX band per
-        // RadioModel.cpp:903-905), NOT m_currentBand.  m_currentBand tracks
-        // UI state and is fed by both PanadapterModel::bandChanged AND
-        // SliceModel::frequencyChanged, so it can drift to the panadapter
-        // band on CTUN pans without slice retune — writing through it would
-        // silently corrupt other bands' stored values.  txBand() falls back
-        // to m_currentBand when the active slice is unavailable.
-        tx.setPowerForBand(txBand(), val);
+        // The per-band slot (Thetis ptbPWR_Scroll, console.cs:28682-28693
+        // [v2.10.3.15]: `power_by_band[(int)_tx_band] = ptbPWR.Value;`) has
+        // one writer: RadioModel on the radio's side, which saves PWR into
+        // its transmit band on powerChanged (drivePowerScroll). A local
+        // window leaves it there; a remote window sends the power setting
+        // alone and the Core saves it. Writing the slot here too could pick
+        // a different band (this applet's active slice) from the one that
+        // transmits.
+        if (m_model && m_model->role() == RadioModel::Role::Local) {
+            tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
+            return;
+        }
+        // R-R3-49 (group A fix wave, M3): a Core below
+        // transmitSettingsVersion 5 refuses tuneDrivePowerSource and takes
+        // `power` alone.
+        if (!m_powerByBandPermitted) { return; }
         // Symmetric to the tune-slider auto-switch above: touching the RF
         // Power slider restores the tune source to DriveSlider so the
         // setPowerUsingTargetDbm txMode 1 branch reads tx.power() during
@@ -955,16 +1264,31 @@ void TxApplet::wireControls()
         m_updatingFromModel = false;
     });
 
-    // ── Tune Power slider → TransmitModel::setTunePowerForBand ──────────────
+    // ── Tune Power slider → TransmitModel::setTunePowerForTxBand ────────────
     // Per-band tune power, ported from Thetis console.cs:12094 [v2.10.3.13]:
     //   private int[] tunePower_by_band;
-    // The current band is tracked by m_currentBand (updated by setCurrentBand).
+    // The slider writes and shows the transmit band's slot, as Thetis
+    // ptbTune_Scroll does (PA on-air gate review):
+    // From Thetis console.cs:46618 [v2.10.3.15]
+    //   tunePower_by_band[(int)_tx_band] = ptbTune.Value;
+    // m_currentBand (the pan or slice band) is used only before RadioModel
+    // knows the transmit band.
     //
     // Issue #175 Task 7: label text routed through updatePowerSliderLabels()
     // for the HL2 (slider/3.0 - 33.0)/2.0 dB conversion.
     connect(m_tunePwrSlider, &QSlider::valueChanged, this, [this, &tx](int val) {
         updatePowerSliderLabels();
         if (m_updatingFromModel) { return; }
+        // R-R3-49 (parity Task 2): a remote window asks the Core, which
+        // does what the lines below do for its own transmit band. A drag
+        // asks once, on release.
+        if (remoteTunePower()) {
+            if (!m_tunePwrSlider->isSliderDown()) {
+                requestRemoteTunePower(val);
+            }
+            return;
+        }
+        if (tx.setTunePowerForTxBand(val)) { return; }
         tx.setTunePowerForBand(m_currentBand, val);
         // When the user touches the tune slider, switch the tune drive
         // source so TUNE actually reads from tunePowerForBand instead of
@@ -979,10 +1303,51 @@ void TxApplet::wireControls()
         tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
     });
 
-    // Reverse: TransmitModel::tunePowerByBandChanged → slider (only for current band)
+    connect(m_tunePwrSlider, &QSlider::sliderReleased, this, [this]() {
+        if (m_updatingFromModel || !remoteTunePower()) { return; }
+        requestRemoteTunePower(m_tunePwrSlider->value());
+    });
+
+    // Fix round 1 (minor 2): the change answered, the slider shows the
+    // Core's value, whichever arrived first, its answer or its next value
+    // (or a value it clamped). Not while the operator holds the slider.
+    connect(&tx, &TransmitModel::tunePowerForTxBandWriteInFlightChanged,
+            this, [this, &tx](bool inFlight) {
+        if (inFlight || !remoteTunePower() || m_tunePwrSlider->isSliderDown()) { return; }
+        QSignalBlocker b(m_tunePwrSlider);
+        m_updatingFromModel = true;
+        m_tunePwrSlider->setValue(tx.tunePowerForTxBand());
+        updatePowerSliderLabels();
+        m_updatingFromModel = false;
+    });
+
+    // R-R3-49 (parity Task 2): in a remote window the slider shows the
+    // Core's tune power for its transmit band; a local window shows its own
+    // transmit band's (PA on-air gate review).
+    connect(&tx, &TransmitModel::tunePowerForTxBandChanged,
+            this, [this, &tx](int watts) {
+        if (!remoteTunePower() && !tx.tuneTxBandKnown()) { return; }
+        // Fix wave GUI-I6: the Core's value does not move the slider out
+        // from under the operator's hand, nor back to an older value while
+        // the operator's change is on its way (the Core's next value, after
+        // its answer, shows; a refusal shows the Core's value again).
+        if (remoteTunePower()
+            && (m_tunePwrSlider->isSliderDown() || tx.tunePowerForTxBandWriteInFlight())) {
+            return;
+        }
+        QSignalBlocker b(m_tunePwrSlider);
+        m_updatingFromModel = true;
+        m_tunePwrSlider->setValue(watts);
+        updatePowerSliderLabels();
+        m_updatingFromModel = false;
+    });
+
+    // Reverse: TransmitModel::tunePowerByBandChanged → slider (only for
+    // current band, and only before the transmit band is known; after that
+    // tunePowerForTxBandChanged above repaints it).
     connect(&tx, &TransmitModel::tunePowerByBandChanged,
-            this, [this](Band band, int watts) {
-        if (band != m_currentBand) { return; }
+            this, [this, &tx](Band band, int watts) {
+        if (band != m_currentBand || remoteTunePower() || tx.tuneTxBandKnown()) { return; }
         QSignalBlocker b(m_tunePwrSlider);
         m_updatingFromModel = true;
         m_tunePwrSlider->setValue(watts);
@@ -998,11 +1363,25 @@ void TxApplet::wireControls()
     connect(m_tuneBtn, &QPushButton::toggled, this, [this](bool on) {
         if (m_updatingFromModel) { return; }
         if (!m_model) { return; }
-        m_model->setTune(on);
-        if (on) {
-            m_tuneBtn->setText(QStringLiteral("TUNING..."));
+        // R-R3-21: the button's text and checked state are written only by
+        // the Tune state and refusal handlers below (manualMoxChanged,
+        // tuneRefused). Writing "TUNING..." here, after setTune returned,
+        // painted a refused press as tuning: the refusal had already reset
+        // the button inside this call.
+        if (m_desktopTuneRequest) {
+            const QPointer<TxApplet> self(this);
+            m_desktopTuneRequest(on);
+            if (self) { syncDesktopKeyState(); }
         } else {
-            m_tuneBtn->setText(QStringLiteral("TUNE"));
+            // TX rulings (item 1): a remote window's press keys after a
+            // release even while the Core's TUNE still reads on, and the
+            // button shows what it asked until the Core's state arrives.
+            const bool asked = m_model->tunePressAsksOn(on);
+            if (asked != on) {
+                QSignalBlocker b(m_tuneBtn);
+                m_tuneBtn->setChecked(asked);
+            }
+            m_model->setTune(asked);
         }
     });
 
@@ -1010,6 +1389,7 @@ void TxApplet::wireControls()
     // From Thetis console.cs:30076 [v2.10.3.13]: guard conditions before
     // chkTUN.Checked = true (connection + power-on checks).
     connect(m_model, &RadioModel::tuneRefused, this, [this](const QString& /*reason*/) {
+        if (m_desktopTuneOn) { syncDesktopKeyState(); return; }
         QSignalBlocker b(m_tuneBtn);
         m_updatingFromModel = true;
         m_tuneBtn->setChecked(false);
@@ -1017,16 +1397,35 @@ void TxApplet::wireControls()
         m_updatingFromModel = false;
     });
 
-    // ── MOX button → MoxController::setMox(bool) ────────────────────────────
+    // ── MOX button → RadioModel::setMoxFromButton(bool) ─────────────────────
     // B.5 setter: drives state machine through RX→TX or TX→RX transitions.
     // From Thetis console.cs:29311-29678 [v2.10.3.13] chkMOX_CheckedChanged2.
     // //[2.10.1.0]MW0LGE changed  [original inline comment from console.cs:29355]
     // //MW0LGE [2.9.0.7]  [original inline comment from console.cs:29400, 29561]
     // //[2.10.3.6]MW0LGE att_fixes  [original inline comment from console.cs:29567-29568, 29659]
     if (mox) {
-        connect(m_moxBtn, &QPushButton::toggled, this, [this, mox](bool on) {
+        // Receiver and transmit gaps plan, Task 7: the MOX button is a manual
+        // key (Thetis chkMOX_Click, console.cs:29730-29747 [v2.10.3.15]);
+        // RadioModel::setMoxFromButton also turns TUN and two-tone off on
+        // the way off, as chkMOX_Click does.
+        connect(m_moxBtn, &QPushButton::toggled, this, [this](bool on) {
             if (m_updatingFromModel) { return; }
-            mox->setMox(on);
+            if (m_desktopMoxRequest) {
+                const QPointer<TxApplet> self(this);
+                m_desktopMoxRequest(on);
+                if (self) { syncDesktopKeyState(); }
+            } else {
+                // TX rulings (item 1): a remote window's press keys after a
+                // release even while the Core's confirmation is on its way,
+                // and the button shows what it asked until the Core's state
+                // arrives.
+                const bool asked = m_model->moxPressAsksOn(on);
+                if (asked != on) {
+                    QSignalBlocker b(m_moxBtn);
+                    m_moxBtn->setChecked(asked);
+                }
+                m_model->setMoxFromButton(asked);
+            }
         });
 
         // Reverse: MoxController::moxStateChanged → button checked state.
@@ -1035,9 +1434,37 @@ void TxApplet::wireControls()
         // the confirmed state, not the in-progress request.
         connect(mox, &MoxController::moxStateChanged,
                 this, [this](bool on) {
+            if (m_desktopMoxOn) { syncDesktopKeyState(); return; }
             QSignalBlocker b(m_moxBtn);
             m_updatingFromModel = true;
             m_moxBtn->setChecked(on);
+            m_updatingFromModel = false;
+        });
+
+        // Reverse, the rejection half: MoxController::moxRejected → button
+        // follows the state that actually holds.
+        //
+        // setMox(true) returns on rejection without advancing anything, so
+        // moxStateChanged never fires -- and the connect immediately above
+        // was the ONLY thing that unchecked this button. The user's own
+        // press left it checked and red, reading "transmitting", with the
+        // radio in RX.
+        //
+        // Pre-existing locally, where rejections are occasional (band-plan
+        // and TX-interlock refusals). Remote-daemon R2 is what made it
+        // worth fixing: on a Role::Remote model EVERY press is refused, so
+        // the button was not occasionally wrong, it was permanently wrong.
+        //
+        // isMox() rather than a literal false: setMox() only ever rejects
+        // a TX-on request, but reading the controller keeps the button
+        // following the authority instead of an assumption about which
+        // requests can be refused.
+        connect(mox, &MoxController::moxRejected,
+                this, [this, mox](const QString& /*reason*/) {
+            if (m_desktopMoxOn) { syncDesktopKeyState(); return; }
+            QSignalBlocker b(m_moxBtn);
+            m_updatingFromModel = true;
+            m_moxBtn->setChecked(mox->isMox());
             m_updatingFromModel = false;
         });
 
@@ -1045,6 +1472,7 @@ void TxApplet::wireControls()
         // manualMoxChanged fires when setTune() sets/clears m_manualMox.
         connect(mox, &MoxController::manualMoxChanged,
                 this, [this](bool isManual) {
+            if (m_desktopTuneOn) { syncDesktopKeyState(); return; }
             QSignalBlocker b(m_tuneBtn);
             m_updatingFromModel = true;
             m_tuneBtn->setChecked(isManual);
@@ -1062,13 +1490,64 @@ void TxApplet::wireControls()
     // Wired here (wireControls) rather than syncFromModel because the active
     // slice can change after construction.
     if (m_model) {
-        if (SliceModel* slice = m_model->activeSlice()) {
-            // Wire the active slice's dspModeChanged to onMoxModeChanged.
-            connect(slice, &SliceModel::dspModeChanged,
-                    this, &TxApplet::onMoxModeChanged);
-            // Set initial tooltip from current mode.
-            onMoxModeChanged(slice->dspMode());
+        // Task 16 fix wave (M3): the MOX tooltip, and the receive-only lock
+        // over it, follow the active slice when it changes, not only the
+        // slice that was active here.
+        // Slice control plan Task 11 (Q15): the transmit slice, not the
+        // active one; re-followed whenever either may have moved.
+        followTransmitSlice();
+        refreshTransmitSliceChoices();
+        connect(m_model, &RadioModel::activeSliceChanged,
+                this, [this](int) { followTransmitSlice(); });
+        if (TxSliceArbiter* arbiter = m_model->txSliceArbiter()) {
+            connect(arbiter, &TxSliceArbiter::txBoundSliceChanged, this, [this](int, int) {
+                followTransmitSlice();
+                refreshTransmitSliceChoices();
+            });
         }
+        // A remote window's flag arrives mirrored from the Core onto the
+        // slice, so each slice's own flag change re-follows too.
+        watchTransmitFlags();
+        connect(m_model, &RadioModel::sliceAdded, this, [this](int) {
+            watchTransmitFlags();
+            followTransmitSlice();
+            refreshTransmitSliceChoices();
+        });
+        connect(m_model, &RadioModel::sliceRemoved, this, [this](int) {
+            followTransmitSlice();
+            refreshTransmitSliceChoices();
+        });
+        // Task 16: receive only turning on or off, or its reason changing
+        // (a radio with no transmitter).
+        connect(m_model, &RadioModel::rxOnlyChanged, this, [this](bool) {
+            removeReceiveOnlyLock();
+            applyReceiveOnlyLock();
+        });
+        // HL2 port part 2: a TX inhibit locks the same buttons, with its
+        // reason (the HL2 I/O board's fault code, say), as Thetis's
+        // TXInhibit setter disables them (console.cs:15341-15363
+        // [v2.10.3.15]):
+        //   chkTUN.Enabled = !_tx_inhibit;
+        //   chk2TONE.Enabled = !_tx_inhibit; //MW0LGE_21a
+        //   chkVOX.Enabled = !_tx_inhibit;
+        const auto relock = [this]() {
+            removeReceiveOnlyLock();
+            applyReceiveOnlyLock();
+        };
+        connect(m_model, &RadioModel::txInhibitedChanged, this, relock);
+        connect(m_model, &RadioModel::txInhibitReasonChanged, this, relock);
+        // TX safety (2026-09-30): and a lost radio link locks MOX, TUN and
+        // 2TONE until it is back, as Thetis's power-off on loss of sync
+        // disables them (console.cs:27488-27493 [v2.10.3.15]).
+        connect(m_model, &RadioModel::radioLinkDownChanged, this, relock);
+        // TX-parity-linkdown (fix wave): a remote window's Core losing or
+        // regaining its radio (RadioModel::transmitLinkDown) the same way.
+        connect(m_model, &RadioModel::connectionStateChanged, this, relock);
+        // Fix round 1 (minor 4): its words follow the window's link to the
+        // Core and the Core's waiting for a radio.
+        connect(m_model, &RadioModel::stationLinkStateChanged, this, relock);
+        connect(m_model, &RadioModel::stationRadioWaitingChanged, this, relock);
+        applyReceiveOnlyLock();
     }
 
     // ── 4b. VOX row wiring (3M-3a-iii bench polish 2026-05-04) ────────────────
@@ -1208,6 +1687,43 @@ void TxApplet::wireControls()
         m_updatingFromModel = false;
     });
 
+    // ── R-R3-45: MON output ↔ AudioEngine::txMonitorOutput ──────────────────
+    // This computer's choice: the audio engine that plays this window's
+    // sound. R-R3-49 (parity Task 2): a remote window too, where it is this
+    // computer's own routing (a window-scope setting), as in a local window;
+    // it follows setTransmitChainSettingsPermitted there.
+    {
+        if (AudioEngine* engine = m_model->localAudioDevices()) {
+            connect(m_monSpeakersBtn, &QPushButton::clicked, this,
+                    [this, engine](bool) {
+                showMonitorOutput(false);
+                engine->setTxMonitorOutput(TxMonitorOutput::Speakers);
+            });
+            connect(m_monHeadphonesBtn, &QPushButton::clicked, this,
+                    [this, engine](bool) {
+                showMonitorOutput(true);
+                engine->setTxMonitorOutput(TxMonitorOutput::Headphones);
+            });
+            connect(engine, &AudioEngine::txMonitorOutputChanged, this,
+                    [this](TxMonitorOutput output) {
+                showMonitorOutput(output == TxMonitorOutput::Headphones);
+            });
+            connect(engine, &AudioEngine::headphonesAvailableChanged, this,
+                    [this](bool available) {
+                m_headphonesAvailable = available;
+                updateMonitorOutputNotice();
+            });
+            connect(engine, &AudioEngine::headphonesEnabledChanged, this,
+                    [this](bool enabled) {
+                m_headphonesEnabled = enabled;
+                updateMonitorOutputNotice();
+            });
+            m_headphonesAvailable = engine->headphonesAvailable();
+            m_headphonesEnabled = engine->headphonesEnabled();
+            showMonitorOutput(engine->txMonitorOutput() == TxMonitorOutput::Headphones);
+        }
+    }
+
     // ── Monitor volume slider ↔ TransmitModel::monitorVolume ─────────────────
     // Phase 3M-1b J.3.
     // UI → Model: slider valueChanged(int) → setMonitorVolume(value / 100.0f).
@@ -1267,6 +1783,9 @@ void TxApplet::wireControls()
         // hidden-but-alive instance is brought forward.
         connect(m_eqBtn, &QPushButton::customContextMenuRequested,
                 this, [this](const QPoint& /*pos*/) {
+            // R-R3-49 (parity Task 4): opens in a remote window too; the
+            // dialog greys itself with the reason while the Core cannot
+            // take a change (TxEqDialog::setSettingsPermitted).
             if (!m_model) { return; }
             TxEqDialog* dlg = TxEqDialog::instance(m_model, this);
             dlg->show();
@@ -1340,13 +1859,7 @@ void TxApplet::wireControls()
     // Model → UI: TransmitModel::filterChanged(int,int) → QSignalBlocker on
     //             both spinboxes, then setValue + refresh status label.
     // Status label refresh helper (shared by filterChanged and dspModeChanged).
-    auto refreshFilterStatus = [this]() {
-        if (!m_txFilterStatusLabel || !m_model) { return; }
-        SliceModel* slice = m_model->activeSlice();
-        const DSPMode mode = slice ? slice->dspMode() : DSPMode::USB;
-        m_txFilterStatusLabel->setText(
-            m_model->transmitModel().filterDisplayText(mode));
-    };
+    auto refreshFilterStatus = [this]() { refreshTxFilterStatus(); };
 
     if (m_txFilterLowSpin) {
         connect(m_txFilterLowSpin, QOverload<int>::of(&QSpinBox::valueChanged),
@@ -1379,26 +1892,69 @@ void TxApplet::wireControls()
         refreshFilterStatus();
     });
 
-    // Status label refresh on DSP mode change (symmetric ↔ asymmetric format).
-    // Piggybacks on the same active-slice connect block used by K.2 above.
-    if (SliceModel* slice = m_model->activeSlice()) {
-        connect(slice, &SliceModel::dspModeChanged,
-                this, [refreshFilterStatus](DSPMode) {
-            refreshFilterStatus();
-        });
-        // Set initial status label text.
-        refreshFilterStatus();
-    }
+    // Status label refresh on DSP mode change (symmetric ↔ asymmetric format)
+    // rides followTransmitSlice's connection (slice control plan Task 11).
+    refreshFilterStatus();
 
     // ── Phase 3M-1c J.2 ─ 2-TONE button wiring ───────────────────────────────
     // toggled → TwoToneController::setActive.  Echo-guarded.
     connect(m_twoToneBtn, &QPushButton::toggled, this, [this](bool on) {
         if (m_updatingFromModel) { return; }
+        // Desktop remote transmit: a remote window asks the Core.
+        if (m_model && m_model->remoteTransmitRouted()) {
+            m_model->setTwoTone(on);
+            return;
+        }
+        // Fix wave (hosting 2-TONE parity): a hosting window asks to take
+        // transmit first. The button shows the test's own state after.
+        if (m_desktopTwoToneRequest) {
+            const QPointer<TxApplet> self(this);
+            m_desktopTwoToneRequest(on);
+            if (self && m_twoToneBtn) {
+                const QSignalBlocker blocker(m_twoToneBtn);
+                m_twoToneBtn->setChecked(m_twoToneCtrl && m_twoToneCtrl->isActive());
+            }
+            return;
+        }
         if (!m_twoToneCtrl) { return; }
         m_twoToneCtrl->setActive(on);
     });
 
-    // ── Phase 3M-4 Task 13: PS-A button wiring ───────────────────────────────
+    // ── iPhone app plan, desktop remote transmit (R-IOS-13) ─────────────────
+    // A remote window's own MoxController never keys: MOX, TUNE and 2-TONE
+    // light from the Core's state (its `transmitting`, the transmit object's
+    // `tune`, PureSignal's two-tone), and a refused press puts them back.
+    if (m_model && m_model->role() == RadioModel::Role::Remote) {
+        const auto syncFromCore = [this]() {
+            if (!m_model) { return; }
+            m_updatingFromModel = true;
+            if (m_moxBtn) {
+                QSignalBlocker b(m_moxBtn);
+                m_moxBtn->setChecked(m_model->isTransmitting());
+            }
+            if (m_tuneBtn) {
+                const bool tuning = m_model->transmitModel().isTune();
+                QSignalBlocker b(m_tuneBtn);
+                m_tuneBtn->setChecked(tuning);
+                m_tuneBtn->setText(tuning ? QStringLiteral("TUNING...")
+                                          : QStringLiteral("TUNE"));
+            }
+            if (m_twoToneBtn) {
+                const PureSignalSessionFacade* ps = m_model->pureSignalFacade();
+                QSignalBlocker b(m_twoToneBtn);
+                m_twoToneBtn->setChecked(ps && ps->twoToneOn());
+            }
+            m_updatingFromModel = false;
+        };
+        connect(m_model, &RadioModel::transmittingChanged, this, syncFromCore);
+        connect(&m_model->transmitModel(), &TransmitModel::tuneChanged, this, syncFromCore);
+        connect(m_model, &RadioModel::remoteTransmitRefused, this, syncFromCore);
+        if (PureSignalSessionFacade* ps = m_model->pureSignalFacade()) {
+            connect(ps, &PureSignalSessionFacade::statusChanged, this, syncFromCore);
+        }
+    }
+
+    // ── Phase 3M-4 / WDSP 2.10: PS-A button wiring ──────────────────────────
     // Source-first port of Thetis chkFWCATUBypass:
     //   - Left-click toggle drives PureSignal::setAutoCalEnabled (mirrors
     //     chkFWCATUBypass_Click, console.cs:36762 [v2.10.3.13]).
@@ -1408,10 +1964,8 @@ void TxApplet::wireControls()
     //                                                              EventArgs.Empty);
     //     ).
     //
-    // Coordinator is late-bound — wired via setPureSignal() when
-    // RadioModel::pureSignalCoordinatorReady fires post-WDSP-init.  The
-    // toggled lambda below null-guards on m_ps so pre-coordinator clicks
-    // are safely no-op'd.
+    // Production always uses RadioModel's one session facade. The local
+    // coordinator remains late-bound behind that facade.
     if (m_psaBtn) {
         // Right-click → emit openPureSignalDialogRequested.  Wired
         // unconditionally so the seam exists even when no PureSignal
@@ -1422,24 +1976,36 @@ void TxApplet::wireControls()
             emit openPureSignalDialogRequested();
         });
 
-        // Left-click toggle → PureSignal::setAutoCalEnabled (when bound).
-        // Guarded on m_updatingFromModel to prevent echo loops when the
-        // coordinator's autoCalEnabledChanged signal flips us back.
+        // The checked state expresses automatic-calibration intent. Turning
+        // it off uses the acknowledged Off/reset action.
         connect(m_psaBtn, &QPushButton::toggled, this, [this](bool on) {
-            if (m_updatingFromModel) { return; }
-            if (m_ps) { m_ps->setAutoCalEnabled(on); }
+            if (m_updatingFromModel || !m_psFacade) {
+                return;
+            }
+            const Ps3Action action = on
+                ? Ps3Action::StartAutomatic : Ps3Action::OffReset;
+            if (m_psFacade->requestAction(action) == 0) {
+                syncPsaFromFacade();
+            }
         });
 
-        // If a coordinator is already live (e.g. test injects via
-        // RadioModel::pureSignal() returning non-null at construction),
-        // wire it now.  Otherwise wait for the late-bind signal.
         if (m_model) {
+            m_psFacade = m_model->pureSignalFacade();
+            if (m_psFacade) {
+                connect(m_psFacade, &PureSignalSessionFacade::statusChanged,
+                        this, &TxApplet::syncPsaFromFacade);
+                if (PureSignalSettings* settings = m_psFacade->settings()) {
+                    connect(settings, &PureSignalSettings::autoCalEnabledChanged,
+                            this, &TxApplet::syncPsaFromFacade);
+                }
+            }
             if (PureSignal* ps = m_model->pureSignal()) {
                 setPureSignal(ps);
             }
             connect(m_model, &RadioModel::pureSignalCoordinatorReady, this,
                     &TxApplet::setPureSignal);
         }
+        syncPsaFromFacade();
     }
 
     // ── Initial sync from model ──────────────────────────────────────────────
@@ -1464,7 +2030,7 @@ void TxApplet::syncFromModel()
     // Tune Power for current band
     {
         QSignalBlocker b(m_tunePwrSlider);
-        const int tunePwr = tx.tunePowerForBand(m_currentBand);
+        const int tunePwr = shownTunePower(m_currentBand);
         m_tunePwrSlider->setValue(tunePwr);
     }
 
@@ -1544,11 +2110,7 @@ void TxApplet::syncFromModel()
         QSignalBlocker bHi(m_txFilterHighSpin);
         m_txFilterHighSpin->setValue(tx.filterHigh());
     }
-    if (m_txFilterStatusLabel) {
-        SliceModel* slice = m_model->activeSlice();
-        const DSPMode mode = slice ? slice->dspMode() : DSPMode::USB;
-        m_txFilterStatusLabel->setText(tx.filterDisplayText(mode));
-    }
+    refreshTxFilterStatus();
 
     // Mic-source badge (J.3 Phase 3M-1b; extended to 3-way in Phase 3M-VAX-toggle)
     if (m_micSourceBadge) {
@@ -1565,15 +2127,108 @@ void TxApplet::syncFromModel()
     // MOX / TUNE button state
     if (mox) {
         QSignalBlocker bm(m_moxBtn);
-        m_moxBtn->setChecked(mox->isMox());
+        m_moxBtn->setChecked(m_desktopMoxOn ? m_desktopMoxOn() : mox->isMox());
 
         QSignalBlocker bt(m_tuneBtn);
-        const bool isManual = mox->isManualMox();
+        const bool isManual = m_desktopTuneOn ? m_desktopTuneOn() : mox->isManualMox();
         m_tuneBtn->setChecked(isManual);
         m_tuneBtn->setText(isManual ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
     }
 
     m_updatingFromModel = false;
+}
+
+void TxApplet::setDesktopKeyHandlers(std::function<void(bool)> mox,
+                                     std::function<void(bool)> tune,
+                                     std::function<bool()> moxOn,
+                                     std::function<bool()> tuneOn)
+{
+    m_desktopMoxRequest = std::move(mox);
+    m_desktopTuneRequest = std::move(tune);
+    m_desktopMoxOn = std::move(moxOn);
+    m_desktopTuneOn = std::move(tuneOn);
+    syncFromModel();
+}
+
+void TxApplet::setDesktopTwoToneHandler(std::function<void(bool)> request)
+{
+    m_desktopTwoToneRequest = std::move(request);
+}
+
+void TxApplet::setTransmitSliceResolver(std::function<SliceModel*()> resolver)
+{
+    m_transmitSliceResolver = std::move(resolver);
+    followTransmitSlice();
+    refreshTransmitSliceChoices();
+}
+
+void TxApplet::setTransmitSliceChoices(std::function<bool(int)> controlled,
+                                       std::function<void(int)> choose,
+                                       std::function<QString()> unavailableReason)
+{
+    m_txSliceControlled = std::move(controlled);
+    m_txSliceChoose = std::move(choose);
+    m_txSliceUnavailable = std::move(unavailableReason);
+    refreshTransmitSliceChoices();
+}
+
+void TxApplet::refreshTransmitSliceChoices()
+{
+    if (!m_txSliceRow) { return; }
+    for (QPushButton* button : std::as_const(m_txSliceButtons)) {
+        m_txSliceRow->removeWidget(button);
+        button->deleteLater();
+    }
+    m_txSliceButtons.clear();
+    if (!m_model) { return; }
+    const SliceModel* current = transmitSlice();
+    const QString reason = m_txSliceUnavailable ? m_txSliceUnavailable() : QString();
+    const QString btnStyle = Style::buttonBaseStyle()
+        + QStringLiteral("QPushButton { padding: 2px; }") + Style::greenCheckedStyle();
+    for (SliceModel* slice : m_model->slices()) {
+        if (!slice) { continue; }
+        const int id = slice->sliceIndex();
+        // U8: only the slices this window controls, never one it listens to.
+        if (m_txSliceControlled && !m_txSliceControlled(id)) { continue; }
+        auto* button = new QPushButton(slice->sliceLetter(), this);
+        button->setObjectName(QStringLiteral("TxSliceButton%1").arg(slice->sliceLetter()));
+        button->setCheckable(true);
+        button->setChecked(slice == current);
+        button->setFixedHeight(20);
+        button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        button->setStyleSheet(btnStyle);
+        button->setProperty("sliceId", id);
+        button->setAccessibleName(QStringLiteral("Transmit on slice %1").arg(slice->sliceLetter()));
+        // Disabled, never hidden: the reason is the tooltip.
+        button->setEnabled(reason.isEmpty());
+        button->setToolTip(reason.isEmpty()
+            ? QStringLiteral("Transmit on slice %1").arg(slice->sliceLetter()) : reason);
+        connect(button, &QPushButton::clicked, this, [this, button, id](bool) {
+            // The model's answer checks the row; the press alone does not.
+            if (button) { button->setChecked(transmitSlice()
+                                             && transmitSlice()->sliceIndex() == id); }
+            if (m_txSliceChoose) {
+                m_txSliceChoose(id);
+            } else if (m_model) {
+                // Ruling 8.10: the arbiter drops MOX before it moves the flag.
+                m_model->requestTxHandoffToSlice(id);
+            }
+        });
+        m_txSliceRow->addWidget(button, 1);
+        m_txSliceButtons.append(button);
+    }
+}
+
+void TxApplet::syncDesktopKeyState()
+{
+    if (!m_model || !m_model->moxController()) { return; }
+    const QSignalBlocker moxBlock(m_moxBtn);
+    const QSignalBlocker tuneBlock(m_tuneBtn);
+    m_moxBtn->setChecked(m_desktopMoxOn ? m_desktopMoxOn()
+                                       : m_model->moxController()->isMox());
+    const bool tuning = m_desktopTuneOn ? m_desktopTuneOn() : m_model->isTune();
+    m_tuneBtn->setChecked(tuning);
+    m_tuneBtn->setText(tuning ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
 }
 
 // (Phase 3M-1b J.2 showVoxSettingsPopup removed in 3M-3a-iii Task 16 —
@@ -1589,7 +2244,9 @@ void TxApplet::rescaleFwdGaugeForModel(HPSDRModel model)
     // ANAN-G2-1K (1000 W max) both show meaningless bar widths.
     const int maxW   = paMaxWattsFor(model);
     const double red = static_cast<double>(maxW);
-    const double top = red * 1.2;   // 20% headroom past the red zone
+    // 20% headroom past the red zone (ControlRanges.h, which the Core's
+    // catalogue reads too).
+    const double top = red * ControlRanges::kRfPowerGaugeHeadroom;
 
     m_fwdPowerGauge->setRange(0.0, top);
     m_fwdPowerGauge->setRedStart(red);
@@ -1699,15 +2356,12 @@ void TxApplet::updatePowerSliderLabels()
     const int        rfVal  = m_rfPowerSlider->value();
     const int        tunVal = m_tunePwrSlider->value();
 
-    if (model == HPSDRModel::HERMESLITE) {
-        const float rfDb  = (std::round(rfVal  / 6.0f) / 2.0f) - 7.5f;
-        const float tunDb = (tunVal / 3.0f - 33.0f) / 2.0f;
-        m_rfPowerValue->setText(QString::number(rfDb,  'f', 1));
-        m_tunePwrValue->setText(QString::number(tunDb, 'f', 1));
-    } else {
-        m_rfPowerValue->setText(QString::number(rfVal));
-        m_tunePwrValue->setText(QString::number(tunVal));
-    }
+    // The shown values come from HpsdrModel.h (rfPowerShownFor,
+    // tuneSliderShownFor: mi0bot's UpdateDriveLabel and UpdateTuneLabel),
+    // which the Core's catalogue reads too.
+    const int decimals = powerSliderShownDecimalsFor(model);
+    m_rfPowerValue->setText(QString::number(rfPowerShownFor(model, rfVal), 'f', decimals));
+    m_tunePwrValue->setText(QString::number(tuneSliderShownFor(model, tunVal), 'f', decimals));
 }
 
 // Canonical TX band — derived from the active slice's frequency (which
@@ -1722,9 +2376,26 @@ void TxApplet::updatePowerSliderLabels()
 Band TxApplet::txBand() const
 {
     if (!m_model) { return m_currentBand; }
-    SliceModel* slice = m_model->activeSlice();
+    SliceModel* slice = transmitSlice();
     if (!slice) { return m_currentBand; }
+    // Slice control plan Task 11 fix: the band followTransmitSlice holds
+    // (Thetis's _tx_band), which a retune under MOX does not change.
+    if (m_txBandKnown && slice == m_followedTxSlice.data()) { return m_txBand; }
     return bandFromFrequency(slice->frequency());
+}
+
+SliceModel* TxApplet::transmitSlice() const
+{
+    if (m_transmitSliceResolver) { return m_transmitSliceResolver(); }
+    if (!m_model) { return nullptr; }
+    if (TxSliceArbiter* arbiter = m_model->txSliceArbiter()) {
+        if (SliceModel* bound = arbiter->txBoundSlice()) { return bound; }
+    }
+    // A remote window's flag is mirrored from the Core onto the slice.
+    for (SliceModel* slice : m_model->slices()) {
+        if (slice && slice->isTxSlice()) { return slice; }
+    }
+    return m_model->activeSlice();
 }
 
 void TxApplet::setCurrentBand(Band band)
@@ -1742,11 +2413,9 @@ void TxApplet::setCurrentBand(Band band)
 
     if (!m_model) { return; }
 
-    auto& tx = m_model->transmitModel();
-
     // Update the Tune Power slider to reflect the per-band stored value.
     {
-        const int tunePwr = tx.tunePowerForBand(band);
+        const int tunePwr = shownTunePower(band);
         QSignalBlocker b(m_tunePwrSlider);
         m_updatingFromModel = true;
         m_tunePwrSlider->setValue(tunePwr);
@@ -1758,27 +2427,12 @@ void TxApplet::setCurrentBand(Band band)
         m_updatingFromModel = false;
     }
 
-    // Update the RF Power slider to reflect the per-band stored value —
-    // ONLY when the band passed in is the canonical TX band (i.e. the
-    // active slice's band).  Matches Thetis TXBand setter at
-    // console.cs:17513 [v2.10.3.13] (`PWR = power_by_band[(int)value];`),
-    // where `_tx_band` is single-source-of-truth for TX state.
-    //
-    // Why the gate: setCurrentBand is wired in MainWindow to BOTH
-    // PanadapterModel::bandChanged and SliceModel::frequencyChanged, so it
-    // can fire from a CTUN pan that does NOT change the slice.  Recalling
-    // the panadapter band's RF power into the live slider would (a) jump
-    // the displayed value off the actual TX band, and (b) leak that
-    // wrong value back into the active slice's band slot via the
-    // setPowerUsingTargetDbm txMode-0 side-effect on the next powerChanged
-    // emission — silently corrupting per-band storage.
-    //
-    // Routed through setPower so the existing reverse-binding lambda
-    // (TxApplet.cpp:905) paints the slider; setPower's same-value
-    // early-return makes the no-band-change call free.
-    if (band == txBand()) {
-        tx.setPower(tx.powerForBand(band));
-    }
+    // The RF Power slider is not recalled here. RadioModel loads the
+    // transmit band's stored power into PWR on a transmit band change and
+    // at connect (applyTransmitBand, the Thetis TXBand setter port at
+    // console.cs:17511-17545 [v2.10.3.15]), and powerChanged paints the
+    // slider. A second recall here would load the band twice, and on a
+    // panadapter-only band change (CTUN) would load the wrong band.
 }
 
 // ── Phase 3M-1b K.2: tooltipForMode ──────────────────────────────────────────
@@ -1791,7 +2445,7 @@ void TxApplet::setCurrentBand(Band band)
 // Mode categories:
 //   Allowed (LSB/USB/DIGL/DIGU): normal "Manual transmit (MOX)" tooltip.
 //   CW (CWL/CWU):                CW TX deferred to Phase 3M-2.
-//   Audio (AM/SAM/DSB/FM/DRM):   AM/FM TX deferred to Phase 3M-3 (audio modes).
+//   FM, DRM:                     not yet transmit modes (FM waits on 3M-3b).
 //   SPEC:                        Never a TX mode.
 //
 // This helper is static so TxApplet tests can call it directly without
@@ -1805,22 +2459,27 @@ QString TxApplet::tooltipForMode(DSPMode mode)
     case DSPMode::USB:
     case DSPMode::DIGL:
     case DSPMode::DIGU:
-        return QStringLiteral("Manual transmit (MOX)");
-
-    case DSPMode::CWL:
-    case DSPMode::CWU:
-        return QStringLiteral("CW TX coming in Phase 3M-2");
-
     case DSPMode::AM:
     case DSPMode::SAM:
     case DSPMode::DSB:
+        return QStringLiteral("Manual transmit (MOX)");
+
+    // R-R3-17 / R-R3-21: the same user words BandPlanGuard refuses with.
+    // CW transmit is Phase 3M-2; FM transmit waits on pre-emphasis (Phase
+    // 3M-3b). DRM names DRM.
+    case DSPMode::CWL:
+    case DSPMode::CWU:
+        return QStringLiteral("CW transmit is not available on this Core");
+
     case DSPMode::FM:
+        return QStringLiteral("FM transmit is not available on this Core");
+
     case DSPMode::DRM:
-        return QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)");
+        return QStringLiteral("DRM transmit is not available on this Core");
 
     case DSPMode::SPEC:
     default:
-        return QStringLiteral("Mode not supported for TX");
+        return QStringLiteral("This mode cannot transmit.");
     }
 }
 
@@ -1832,10 +2491,183 @@ QString TxApplet::tooltipForMode(DSPMode mode)
 // tooltip text and installs it on m_moxBtn. If the mode is an allowed SSB
 // mode the tooltip reverts to the normal "Manual transmit (MOX)".
 // ---------------------------------------------------------------------------
+// Wires the active slice's dspModeChanged to onMoxModeChanged, dropping the
+// previous slice's connection, and sets the tooltip from its mode.
+// Slice control plan Task 11 (Q15): the TX band follows the transmit slice's
+// frequency, as Thetis sets TXBand from the transmit VFO:
+// From Thetis console.cs:35753 [v2.10.3.15]
+//     TXBand = BandByFreq(VFOBFreq, tx_xvtr_index, current_region);
+// and its setter recalls the band's power and tune power:
+// From Thetis console.cs:17542 [v2.10.3.15]
+//     // initialisting, becase it is irrelevent, old_band will = value at this point MW0LGE
+//     ptbTune.LimitValue = limitTunePower_by_band[(int)value]; //MW0LGE_22b
+//     PWR = power_by_band[(int)value];
+//     TunePWR = tunePower_by_band[(int)value]; //MW0LGE_22b
+// setCurrentBand is that recall (tune power by m_currentBand, RF power by
+// txBand()). Slice control plan Task 11 fix: the setter's MOX gate is
+// ported to the retune path. While this window's model says the radio
+// transmits (MOX, TUNE or two-tone; a remote window's is the Core's), a
+// retune of the transmit slice leaves m_txBand and the recall alone:
+// From Thetis console.cs:17517-17518 [v2.10.3.15]
+//     //[2.10.3.6]MW0LGE no band change on TX fix
+//     if (MOX) return;
+// From Thetis console.cs:6512-6513 [v2.10.3.15]
+//     //[2.10.3.6]MW0LGE no band change on TX fix
+//     if (MOX) return;
+// Nothing re-evaluates on the unkey; the next retune carries the band, as
+// in Thetis. A move of the binding is not gated: a keyed move unkeys
+// first (ruling 8.10).
+void TxApplet::followTransmitSlice()
+{
+    SliceModel* slice = transmitSlice();
+    const bool moved = slice != m_followedTxSlice.data();
+    disconnect(m_moxModeConnection);
+    m_moxModeConnection = {};
+    disconnect(m_txFreqConnection);
+    m_txFreqConnection = {};
+    m_followedTxSlice = slice;
+    refreshTxFilterStatus();
+    if (!slice) {
+        m_txBandKnown = false;
+        return;
+    }
+    if (moved || !m_txBandKnown) {
+        m_txBand = bandFromFrequency(slice->frequency());
+        m_txBandKnown = true;
+    }
+    m_moxModeConnection = connect(slice, &SliceModel::dspModeChanged,
+                                  this, [this](DSPMode mode) {
+        onMoxModeChanged(mode);
+        refreshTxFilterStatus();
+    });
+    m_txFreqConnection = connect(slice, &SliceModel::frequencyChanged,
+                                 this, [this](double hz) {
+        if (m_model && m_model->isTransmitting()) { return; }
+        const Band band = bandFromFrequency(hz);
+        m_txBand = band;
+        m_txBandKnown = true;
+        if (band != m_currentBand) { setCurrentBand(band); }
+    });
+    onMoxModeChanged(slice->dspMode());
+    if (moved) {
+        setCurrentBand(bandFromFrequency(slice->frequency()));
+    }
+}
+
+void TxApplet::watchTransmitFlags()
+{
+    if (!m_model) { return; }
+    for (SliceModel* slice : m_model->slices()) {
+        if (slice) {
+            connect(slice, &SliceModel::txSliceChanged, this,
+                    &TxApplet::onSliceTransmitFlagChanged, Qt::UniqueConnection);
+        }
+    }
+}
+
+void TxApplet::onSliceTransmitFlagChanged(bool)
+{
+    followTransmitSlice();
+    refreshTransmitSliceChoices();
+}
+
+void TxApplet::refreshTxFilterStatus()
+{
+    if (!m_txFilterStatusLabel || !m_model) { return; }
+    SliceModel* slice = transmitSlice();
+    const DSPMode mode = slice ? slice->dspMode() : DSPMode::USB;
+    m_txFilterStatusLabel->setText(m_model->transmitModel().filterDisplayText(mode));
+}
+
 void TxApplet::onMoxModeChanged(DSPMode mode)
 {
+    // Task 16: the receive-only lock sits on top of the tooltip; take it
+    // off, change the tooltip under it, and put it back.
+    removeReceiveOnlyLock();
     if (m_moxBtn) {
-        m_moxBtn->setToolTip(tooltipForMode(mode));
+        // Task 16 fix wave 2 (Minor 2): while the transmit-permission layer
+        // holds the button, its reason stays visible and the mode's tooltip
+        // goes into the tooltip that layer gives back.
+        if (m_moxBtn->property(kTransmitSavedTooltip).isValid()) {
+            m_moxBtn->setProperty(kTransmitSavedTooltip, tooltipForMode(mode));
+        } else {
+            m_moxBtn->setToolTip(tooltipForMode(mode));
+        }
+    }
+    applyReceiveOnlyLock();
+}
+
+// ---------------------------------------------------------------------------
+// Task 16: receive only.
+//
+// From Thetis console.cs:15318-15324 [v2.10.3.15] (RXOnly setter):
+//   if (_rx1_dsp_mode != DSPMode.SPEC &&
+//       _rx1_dsp_mode != DSPMode.DRM &&
+//       chkPower.Checked)
+//       chkMOX.Enabled = !_rx_only;
+//   chkTUN.Enabled = !_rx_only;
+//   chk2TONE.Enabled = !_rx_only; // MW0LGE_21a
+//   chkVOX.Enabled = !_rx_only;
+// Disabled, with the reason as the tooltip (the operator, 2026-09-25: a
+// control that cannot run is shown disabled with its reason). The keying
+// gate refuses every key whatever the buttons show (MoxController::setRxOnly).
+// MOX is disabled in every mode, SPEC and DRM included, where Thetis leaves
+// it alone (RadioModel::receiveOnlyDisablesMoxButton says why; fix wave I3).
+// Under a remote window's transmit gate both reasons show (M6).
+// ---------------------------------------------------------------------------
+namespace {
+constexpr auto kRxOnlySavedTooltip = "TxAppletRxOnlySavedTooltip";
+constexpr auto kRxOnlySavedDescription = "TxAppletRxOnlySavedDescription";
+constexpr auto kRxOnlySavedEnabled = "TxAppletRxOnlySavedEnabled";
+}
+
+void TxApplet::removeReceiveOnlyLock()
+{
+    for (QWidget* control : {static_cast<QWidget*>(m_moxBtn),
+                             static_cast<QWidget*>(m_tuneBtn),
+                             static_cast<QWidget*>(m_twoToneBtn),
+                             static_cast<QWidget*>(m_voxBtn)}) {
+        if (!control || !control->property(kRxOnlySavedTooltip).isValid()) {
+            continue;
+        }
+        control->setEnabled(control->property(kRxOnlySavedEnabled).toBool());
+        control->setToolTip(control->property(kRxOnlySavedTooltip).toString());
+        control->setAccessibleDescription(
+            control->property(kRxOnlySavedDescription).toString());
+        control->setProperty(kRxOnlySavedTooltip, QVariant());
+        control->setProperty(kRxOnlySavedDescription, QVariant());
+        control->setProperty(kRxOnlySavedEnabled, QVariant());
+    }
+}
+
+void TxApplet::applyReceiveOnlyLock()
+{
+    // HL2 port part 2: receive only or a TX inhibit (transmitButtonsLocked).
+    if (!m_model || !m_model->transmitButtonsLocked()) {
+        return;
+    }
+    const QString reason = m_model->transmitLockReasonAlongside(
+        m_transmitPermitted ? QString() : m_transmitPermissionReason);
+    const auto lock = [&reason](QWidget* control) {
+        if (!control || control->property(kRxOnlySavedTooltip).isValid()) {
+            return;
+        }
+        control->setProperty(kRxOnlySavedTooltip, control->toolTip());
+        control->setProperty(kRxOnlySavedDescription, control->accessibleDescription());
+        control->setProperty(kRxOnlySavedEnabled, control->isEnabled());
+        control->setEnabled(false);
+        control->setToolTip(reason);
+        control->setAccessibleDescription(reason);
+    };
+    if (m_model->transmitLockCoversMox()) {
+        lock(m_moxBtn);
+    }
+    lock(m_tuneBtn);
+    lock(m_twoToneBtn);   // MW0LGE_21a
+    // TX safety (2026-09-30): a lost radio link leaves VOX alone, as
+    // Thetis's power-off does (console.cs:27488-27493 [v2.10.3.15]).
+    if (m_model->transmitLockCoversVox()) {
+        lock(m_voxBtn);
     }
 }
 
@@ -1967,6 +2799,8 @@ void TxApplet::setTwoToneController(TwoToneController* controller)
 // ---------------------------------------------------------------------------
 void TxApplet::requestOpenCfcDialog()
 {
+    // R-R3-49 (parity Task 4): opens in a remote window too, greyed with
+    // the reason while the Core cannot take a change.
     if (!m_model) { return; }
 
     if (!m_cfcDialog) {
@@ -1975,14 +2809,322 @@ void TxApplet::requestOpenCfcDialog()
             &m_model->transmitModel(),
             m_model->txChannel(),
             host ? host : static_cast<QWidget*>(this));
+        // Setup publication (CFC band editor): a remote window sends the
+        // whole table to a Core that takes it, and hears the answer. The
+        // link is looked up on every call, so a dialog built before the
+        // window reached a Core sends whole once it has.
+        {
+            QPointer<RadioModel> model(m_model);
+            m_cfcDialog->setStationProfileSender(
+                [model] {
+                    IStationLink* link = model ? model->stationLink() : nullptr;
+                    return link && link->transmitSettingsAvailable(
+                                       kTransmitSettingsCfcProfileVersion);
+                },
+                [model](const QString& profileJson, const QString& expectedRevision) {
+                    TxCfcDialog::StationProfileSend result;
+                    IStationLink* link = model ? model->stationLink() : nullptr;
+                    if (!link) {
+                        result.reason = IStationLink::transmitSettingsUnavailableReason();
+                        return result;
+                    }
+                    const IStationLink::CommandOutcome outcome =
+                        link->requestCfcProfile(profileJson, expectedRevision);
+                    result.sent = outcome.sent;
+                    result.reason = outcome.reason;
+                    result.commandId = outcome.commandId;
+                    return result;
+                });
+            connect(m_model, &RadioModel::stationCommandFinished,
+                    m_cfcDialog, &TxCfcDialog::onStationCommandFinished);
+            QPointer<TxCfcDialog> dialog(m_cfcDialog);
+            connect(m_model, &RadioModel::stationLinkStateChanged, m_cfcDialog,
+                    [model, dialog] {
+                        if (!dialog) { return; }
+                        const IStationLink* link = model ? model->stationLink() : nullptr;
+                        dialog->onStationLinkChanged(link && link->stationLinkReady());
+                    });
+        }
     } else {
         // Connection may have come up since the dialog was created.
         // Refresh the TxChannel pointer so the bar chart timer can poll WDSP.
         m_cfcDialog->setTxChannel(m_model->txChannel());
     }
+    m_cfcDialog->setSettingsPermitted(m_txProcessingPermitted, m_txProcessingReason);
+    // Parity Task 33: a remote window's chart reads the Core's stream.
+    if (m_stationCfcBarChart) {
+        m_cfcDialog->setStationBarChart(m_stationCfcBarChart);
+        m_cfcDialog->setBarChartUnavailable(m_stationCfcBarChartReason);
+    }
     m_cfcDialog->show();
     m_cfcDialog->raise();
     m_cfcDialog->activateWindow();
+}
+
+void TxApplet::setStationCfcBarChart(std::function<void(bool)> setWanted)
+{
+    m_stationCfcBarChart = std::move(setWanted);
+    if (m_cfcDialog && m_stationCfcBarChart) {
+        m_cfcDialog->setStationBarChart(m_stationCfcBarChart);
+    }
+}
+
+void TxApplet::applyStationCfcCompression(const QList<double>& binsDb)
+{
+    if (m_cfcDialog) {
+        m_cfcDialog->applyStationCompression(binsDb);
+    }
+}
+
+void TxApplet::setStationCfcBarChartUnavailable(const QString& reason)
+{
+    m_stationCfcBarChartReason = reason;
+    if (m_cfcDialog) {
+        m_cfcDialog->setBarChartUnavailable(reason);
+    }
+}
+
+void TxApplet::setTxProcessingPermitted(bool permitted, const QString& unavailableReason)
+{
+    m_txProcessingPermitted = permitted;
+    m_txProcessingReason = permitted
+        ? QString()
+        : (unavailableReason.isEmpty() ? IStationLink::transmitSettingsUnavailableReason()
+                                       : unavailableReason);
+    if (m_cfcDialog) {
+        m_cfcDialog->setSettingsPermitted(m_txProcessingPermitted, m_txProcessingReason);
+    }
+}
+
+// R-R3-45: the MON output pair shows the choice; clicking the checked one
+// keeps it, as on the receiver flag.
+void TxApplet::showMonitorOutput(bool headphones)
+{
+    if (m_monSpeakersBtn) {
+        QSignalBlocker b(m_monSpeakersBtn);
+        m_monSpeakersBtn->setChecked(!headphones);
+    }
+    if (m_monHeadphonesBtn) {
+        QSignalBlocker b(m_monHeadphonesBtn);
+        m_monHeadphonesBtn->setChecked(headphones);
+    }
+    updateMonitorOutputNotice();
+}
+
+// R-R3-45: with the headphones chosen and none open, say why MON is silent
+// in the flag's words: turned on but not opened, or not set up at all.
+void TxApplet::updateMonitorOutputNotice()
+{
+    if (!m_monOutputNotice) {
+        return;
+    }
+    const bool headphones = m_monHeadphonesBtn && m_monHeadphonesBtn->isChecked();
+    m_monOutputNotice->setText(m_headphonesEnabled ? VfoWidget::headphonesNotOpenedText()
+                                                   : VfoWidget::headphonesMissingText());
+    m_monOutputNotice->setVisible(headphones && !m_headphonesAvailable);
+}
+
+// ---------------------------------------------------------------------------
+// Remote-station transmit-permission presentation
+//
+// The Core remains the authority for transmit refusal and unwind. This gate
+// exists so a remote operator never receives a live-looking TX control before
+// the completed handshake explicitly grants that capability. Do not clear or
+// write any model state here: model-to-view updates must remain authoritative.
+// ---------------------------------------------------------------------------
+void TxApplet::setTransmitPermitted(bool permitted, const QString& unavailableReason)
+{
+    // Task 16: the receive-only lock goes back on top afterwards.
+    removeReceiveOnlyLock();
+    m_transmitPermitted = permitted;
+    const QString reason = unavailableReason.isEmpty()
+        ? tr("Transmit controls are unavailable until the Core confirms "
+             "transmit permission.")
+        : unavailableReason;
+    m_transmitPermissionReason = reason;   // Task 16 fix wave (M6)
+
+    const auto apply = [permitted, &reason](QWidget* control) {
+        gateTransmitControl(control, permitted, reason);
+    };
+
+    // R-R3-49 (parity Task 1): RF Power and the TX filter low and high
+    // follow setTransmitSettingsPermitted; parity Task 2: Tune Power, the
+    // VOX level and delay, MON, LEV, EQ and CFC follow
+    // setTransmitChainSettingsPermitted; parity Task 3: the profile combo
+    // follows setTxProfilePermitted; parity Task 7: PS-A follows
+    // setPureSignalArmingPermitted. This gate keeps the rest.
+    apply(m_tuneBtn);
+    apply(m_moxBtn);
+    // Fix wave 2 (M8): VOX also needs this computer's microphone line.
+    gateTransmitControl(m_voxBtn, permitted && m_voxPermitted,
+                        permitted ? m_voxReason : reason);
+    apply(m_twoToneBtn);
+    // Task 16: the receive-only lock back on top (checkpoint join).
+    applyReceiveOnlyLock();
+}
+
+void TxApplet::setVoxPermitted(bool permitted, const QString& reason)
+{
+    removeReceiveOnlyLock();
+    m_voxPermitted = permitted;
+    m_voxReason = reason;
+    gateTransmitControl(m_voxBtn, m_transmitPermitted && permitted,
+                        m_transmitPermitted ? reason : m_transmitPermissionReason);
+    applyReceiveOnlyLock();
+}
+
+void TxApplet::setPureSignalArmingPermitted(bool permitted, const QString& unavailableReason)
+{
+    m_psArmingPermitted = permitted;
+    const QString reason = unavailableReason.isEmpty()
+        ? tr("Remote transmit controls are not available from this Core.")
+        : unavailableReason;
+    // Fix wave GUI-I7: the facade's reason off first, so this gate keeps
+    // the button's own tooltip to put back.
+    removePsaFacadeReason();
+    gateTransmitControl(m_psaBtn, permitted, reason);
+    syncPsaFromFacade();
+    applyReceiveOnlyLock();
+}
+
+// R-R3-49 (parity Task 1): the transmit settings that key nothing. In a
+// remote window they are live while the Core takes them and its radio is
+// off the air; the Core refuses a change that races a key anyway.
+void TxApplet::setTransmitSettingsPermitted(bool permitted, const QString& unavailableReason)
+{
+    m_transmitSettingsPermitted = permitted;
+    const QString reason = unavailableReason.isEmpty()
+        ? IStationLink::transmitSettingsUnavailableReason()
+        : unavailableReason;
+    for (QWidget* control : {static_cast<QWidget*>(m_rfPowerSlider),
+                             static_cast<QWidget*>(m_txFilterLowSpin),
+                             static_cast<QWidget*>(m_txFilterHighSpin)}) {
+        gateTransmitControl(control, permitted, reason);
+    }
+}
+
+// R-R3-49 (parity Task 2): the rest of this applet's transmit settings. The
+// Core takes them off the air (transmitSettingsVersion 2) and shows its
+// values back; the MON output pair is this computer's own routing.
+void TxApplet::setTransmitChainSettingsPermitted(bool permitted,
+                                                 const QString& unavailableReason)
+{
+    m_transmitChainSettingsPermitted = permitted;
+    const QString reason = unavailableReason.isEmpty()
+        ? IStationLink::transmitSettingsUnavailableReason()
+        : unavailableReason;
+    m_transmitChainSettingsReason = reason;
+    for (QWidget* control : {static_cast<QWidget*>(m_tunePwrSlider),
+                             static_cast<QWidget*>(m_voxSlider),
+                             static_cast<QWidget*>(m_voxDlySlider),
+                             static_cast<QWidget*>(m_monBtn),
+                             static_cast<QWidget*>(m_monitorVolumeSlider),
+                             static_cast<QWidget*>(m_levBtn),
+                             static_cast<QWidget*>(m_eqBtn),
+                             static_cast<QWidget*>(m_cfcBtn)}) {
+        gateTransmitControl(control, permitted, reason);
+    }
+    // Parity Task 32: the MON output pair also needs a Core that sends MON.
+    applyMonitorOutputGate();
+}
+
+// Remote-window parity Task 32 (R-IOS-13, R-R3-49): where MON plays is this
+// computer's choice, sent to the Core, which carries MON in this window's
+// own audio while it holds transmit. A Core that does not send MON has
+// nothing to route, so the pair is shown disabled with the reason; MON
+// itself still turns the Core's monitor on.
+void TxApplet::setMonitorOutputPermitted(bool permitted, const QString& unavailableReason)
+{
+    m_monitorOutputPermitted = permitted;
+    m_monitorOutputReason = unavailableReason.isEmpty() ? monitorOutputUnavailableReason()
+                                                        : unavailableReason;
+    applyMonitorOutputGate();
+}
+
+QString TxApplet::monitorOutputUnavailableReason()
+{
+    return QStringLiteral(
+        "This Core does not send the transmit monitor. Updating the Core may help.");
+}
+
+void TxApplet::applyMonitorOutputGate()
+{
+    const bool permitted = m_transmitChainSettingsPermitted && m_monitorOutputPermitted;
+    const QString reason = !m_transmitChainSettingsPermitted
+        ? (m_transmitChainSettingsReason.isEmpty()
+               ? IStationLink::transmitSettingsUnavailableReason()
+               : m_transmitChainSettingsReason)
+        : m_monitorOutputReason;
+    for (QWidget* control : {static_cast<QWidget*>(m_monSpeakersBtn),
+                             static_cast<QWidget*>(m_monHeadphonesBtn)}) {
+        gateTransmitControl(control, permitted, reason);
+    }
+}
+
+// R-R3-49 (parity Task 3): the profile combo. The Core applies a pick and
+// reports its active profile back; a refused pick shows the Core's again.
+void TxApplet::setTxProfilePermitted(bool permitted, const QString& unavailableReason)
+{
+    m_txProfilePermitted = permitted;
+    gateTransmitControl(m_profileCombo, permitted,
+                        unavailableReason.isEmpty()
+                            ? IStationLink::transmitSettingsUnavailableReason()
+                            : unavailableReason);
+}
+
+void TxApplet::setTakeTransmitOffered(bool offered, bool holderOnAir)
+{
+    if (!m_takeTransmitBtn) { return; }
+    m_takeTransmitBtn->setVisible(offered);
+    m_takeTransmitBtn->setProperty("holderOnAir", offered && holderOnAir);
+    m_takeTransmitBtn->setStyleSheet(offered && holderOnAir
+        ? QStringLiteral("QPushButton { color: #ff8080; border: 1px solid #ff4444;"
+                         " border-radius: 3px; padding: 2px 8px; }")
+        : QString());
+}
+
+bool TxApplet::takeTransmitOffered() const
+{
+    return m_takeTransmitBtn && !m_takeTransmitBtn->isHidden();
+}
+
+void TxApplet::setTransmitHolderText(const QString& text)
+{
+    if (!m_holderLabel) { return; }
+    m_holderLabel->setText(text);
+    m_holderLabel->setVisible(!text.isEmpty());
+}
+
+QString TxApplet::transmitHolderText() const
+{
+    return m_holderLabel ? m_holderLabel->text() : QString();
+}
+
+bool TxApplet::remoteTunePower() const
+{
+    return m_model && m_model->role() == RadioModel::Role::Remote;
+}
+
+int TxApplet::shownTunePower(Band band) const
+{
+    if (!m_model) { return 0; }
+    const TransmitModel& tx = m_model->transmitModel();
+    // The transmit band's tune power once it is known (PA on-air gate
+    // review; Thetis shows TunePWR, the transmit band's).
+    return (remoteTunePower() || tx.tuneTxBandKnown()) ? tx.tunePowerForTxBand()
+                                                       : tx.tunePowerForBand(band);
+}
+
+void TxApplet::requestRemoteTunePower(int watts)
+{
+    if (!m_model) { return; }
+    TransmitModel& tx = m_model->transmitModel();
+    IStationLink* link = m_model->stationLink();
+    if (!m_transmitChainSettingsPermitted || !link
+        || !link->requestTunePowerForTxBand(watts).sent) {
+        // Not asked: the slider shows the Core's value again.
+        tx.reportTunePowerForTxBandRefused();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1996,54 +3138,70 @@ void TxApplet::requestOpenCfcDialog()
 void TxApplet::setBoardCapabilities(const NereusSDR::BoardCapabilities& caps)
 {
     if (!m_psaBtn) { return; }
-    m_psaBtn->setVisible(caps.hasPureSignal);
+    // Fix round 1 (minor 5): with no radio the caps fall back to Unknown.
+    // PS-A shows, disabled with its reason, until the board is known; only
+    // a known board without PureSignal hides it.
+    const bool boardUnknown = caps.board == HPSDRHW::Unknown;
+    m_psBoardUnknown = boardUnknown && !caps.hasPureSignal;
+    m_psaBtn->setVisible(caps.hasPureSignal || boardUnknown);
+    syncPsaFromFacade();
 }
 
 // ---------------------------------------------------------------------------
 // Phase 3M-4 Task 13 — setPureSignal (late-bound coordinator)
 //
-// Re-arm the [PS-A] toggle's bidirectional binding when the PureSignal
-// coordinator becomes available (post-WDSP-init).  Disconnects the prior
-// coordinator's autoCalEnabledChanged echo before rewiring; the toggled
-// lambda in wireControls() reads m_ps live so it picks up the new pointer
-// without rewiring.
-//
-// Pass nullptr to clear bindings on teardown (RadioModel emits this at
-// disconnect via pureSignalCoordinatorReady(nullptr)).
+// Retain the established test/late-bind slot while keeping one facade per
+// RadioModel. The facade owns coordinator signal wiring and session state.
 // ---------------------------------------------------------------------------
 void TxApplet::setPureSignal(NereusSDR::PureSignal* coordinator)
 {
-    if (m_ps == coordinator) { return; }
-
-    if (m_ps) {
-        // Drop the prior coordinator's signal subscriptions targeting us.
-        disconnect(m_ps, nullptr, this, nullptr);
+    if (m_psFacade) {
+        m_psFacade->setCoordinator(coordinator);
     }
-    m_ps = coordinator;
+    syncPsaFromFacade();
+}
 
-    if (!m_psaBtn) { return; }
-
-    if (m_ps) {
-        connect(m_ps, &NereusSDR::PureSignal::autoCalEnabledChanged, this,
-                [this](bool on) {
-            if (!m_psaBtn) { return; }
-            QSignalBlocker blk(m_psaBtn);
-            m_updatingFromModel = true;
-            m_psaBtn->setChecked(on);
-            m_updatingFromModel = false;
-        });
-        // Initial sync from coordinator state.
-        QSignalBlocker blk(m_psaBtn);
-        m_updatingFromModel = true;
-        m_psaBtn->setChecked(m_ps->isAutoCalEnabled());
-        m_updatingFromModel = false;
-    } else {
-        // Coordinator gone — reset toggle state (safe default).
-        QSignalBlocker blk(m_psaBtn);
-        m_updatingFromModel = true;
-        m_psaBtn->setChecked(false);
-        m_updatingFromModel = false;
+void TxApplet::syncPsaFromFacade()
+{
+    if (!m_psaBtn) {
+        return;
     }
+    const bool automaticIntent = m_psFacade && m_psFacade->settings()
+        ? m_psFacade->settings()->autoCalEnabled() : false;
+    const QSignalBlocker blocker(m_psaBtn);
+    m_updatingFromModel = true;
+    m_psaBtn->setChecked(automaticIntent);
+    // R-R3-49 (parity Task 7): arming keys nothing, so canArm.
+    const bool canArm = !m_psBoardUnknown && m_psFacade && m_psFacade->available()
+        && m_psFacade->canArm();
+    // Fix wave GUI-I7: greyed by the facade, with the facade's reason. The
+    // arming gate's reason, when it is on, stays (its tooltip is set).
+    removePsaFacadeReason();
+    if (m_psArmingPermitted && !canArm) {
+        // Fix round 1 (minor 5): a board not known says it needs one.
+        const QString refusal = m_psBoardUnknown || !m_psFacade ? QString()
+                                                               : m_psFacade->armingRefusal();
+        const QString reason = refusal.isEmpty()
+            ? PureSignalSessionFacade::needsRadioReason() : refusal;
+        m_psaBtn->setProperty(kPsaFacadeSavedTooltip, m_psaBtn->toolTip());
+        m_psaBtn->setProperty(kPsaFacadeSavedDescription, m_psaBtn->accessibleDescription());
+        m_psaBtn->setToolTip(reason);
+        m_psaBtn->setAccessibleDescription(reason);
+    }
+    m_psaBtn->setEnabled(m_psArmingPermitted && canArm);
+    m_updatingFromModel = false;
+}
+
+void TxApplet::removePsaFacadeReason()
+{
+    if (!m_psaBtn || !m_psaBtn->property(kPsaFacadeSavedTooltip).isValid()) {
+        return;
+    }
+    m_psaBtn->setToolTip(m_psaBtn->property(kPsaFacadeSavedTooltip).toString());
+    m_psaBtn->setAccessibleDescription(
+        m_psaBtn->property(kPsaFacadeSavedDescription).toString());
+    m_psaBtn->setProperty(kPsaFacadeSavedTooltip, QVariant());
+    m_psaBtn->setProperty(kPsaFacadeSavedDescription, QVariant());
 }
 
 // ---------------------------------------------------------------------------

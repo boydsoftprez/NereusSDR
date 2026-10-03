@@ -12,6 +12,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23: R-R3-13: %VALUE% shows "--" with no reading
+//                 (isNoMeterReading); resolvedText1() / resolvedText2()
+//                 read-only accessors. J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -125,6 +129,11 @@ public:
     void setVariable(const QString& name, const QString& value) {
         m_variables[name.toUpper()] = value;
     }
+
+    // The two lines paint() draws, after token substitution (R-R3-13:
+    // %VALUE% is "--" with no reading).
+    QString resolvedText1() const { return resolveText(m_text1); }
+    QString resolvedText2() const { return resolveText(m_text2); }
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;

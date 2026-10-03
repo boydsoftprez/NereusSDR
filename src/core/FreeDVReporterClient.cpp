@@ -92,6 +92,10 @@
 //                                    AetherSDR's GenericConfigLocation
 //                                    + "AetherSDR/freedv.log". AI
 //                                    tooling: Anthropic Claude Code.
+//   2026-09-27  J.J. Boyd / KG4VCF  iPhone plan Task 22 / parity Task 20:
+//                                    connectionLost() on a drop that
+//                                    retries (NereusSDR addition).
+//                                    AI-assisted via Anthropic Claude Code.
 
 #include "FreeDVReporterClient.h"
 #include "LogCategories.h"
@@ -415,6 +419,9 @@ void FreeDVReporterClient::onWsDisconnected()
     qCDebug(lcSpots) << "FreeDVReporterClient: disconnected, reconnecting in" << delay << "ms";
     emit rawLineReceived(QString("--- Disconnected, reconnecting in %1s ---").arg(delay / 1000));
     m_reconnectTimer->start(delay);
+    // iPhone plan Task 22 (NereusSDR addition): the Core's spot source host
+    // shows the drop and the retry.
+    emit connectionLost(delay);
 }
 
 void FreeDVReporterClient::onWsError(QAbstractSocket::SocketError err)

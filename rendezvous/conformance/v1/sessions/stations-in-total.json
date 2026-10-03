@@ -1,0 +1,180 @@
+{
+  "runs": [
+    "service"
+  ],
+  "serverSetup": {
+    "maxStations": 1
+  },
+  "steps": [
+    {
+      "connect": "station",
+      "address": "192.0.2.1"
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:stationNonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "register",
+        "id": "$key:a:id",
+        "publicKey": "$key:a:publicKey"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge"
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "prove",
+        "signature": "$register:a:challenge:signed"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "registered",
+        "id": "$key:a:id"
+      }
+    },
+    {
+      "connect": "station2",
+      "address": "198.51.100.2"
+    },
+    {
+      "from": "server",
+      "to": "station2",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:station2Nonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "from": "station2",
+      "role": "behaviour",
+      "message": {
+        "type": "register",
+        "id": "$key:b:id",
+        "publicKey": "$key:b:publicKey"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station2",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge2"
+      }
+    },
+    {
+      "from": "station2",
+      "role": "behaviour",
+      "message": {
+        "type": "prove",
+        "signature": "$register:b:challenge2:signed"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station2",
+      "message": {
+        "type": "error",
+        "code": "overloaded",
+        "reason": "The remote access service is busy. Try again shortly.",
+        "retryAfterMs": 5000
+      }
+    },
+    {
+      "expectClosed": "station2",
+      "code": 1000
+    },
+    {
+      "connect": "station3",
+      "address": "203.0.113.3"
+    },
+    {
+      "from": "server",
+      "to": "station3",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:station3Nonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "from": "station3",
+      "role": "behaviour",
+      "message": {
+        "type": "register",
+        "id": "$key:a:id",
+        "publicKey": "$key:a:publicKey"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station3",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge3"
+      }
+    },
+    {
+      "from": "station3",
+      "role": "behaviour",
+      "message": {
+        "type": "prove",
+        "signature": "$register:a:challenge3:signed"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station3",
+      "message": {
+        "type": "registered",
+        "id": "$key:a:id"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "error",
+        "code": "replaced",
+        "reason": "The Core registered again on another connection, so this one was closed.",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "expectClosed": "station",
+      "code": 1000
+    }
+  ]
+}

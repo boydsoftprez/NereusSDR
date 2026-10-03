@@ -22,6 +22,17 @@
 //                 silence-fill + TX poll timers deferred to Phase 3M.
 //                 Shm paths: /aethersdr-dax-* → /nereussdr-vax-*.
 //                 Sample rate: 24 kHz → 48 kHz (spec §8.1).
+//   2026-09-23: R-R3-44: a VAX output reports its playback timing from
+//                 the shm ring's read and write positions (outputPacing)
+//                 and whether an app is reading it (outputHasReader, the
+//                 HAL's "device is running somewhere" for the plugin's
+//                 NereusSDR VAX N device). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-23: R-R3-44 fix wave: outputHasReader() reads a flag kept by
+//                 CoreAudio property listeners instead of walking every
+//                 device with IPC round trips on each call (the GUI thread
+//                 asked every 500 ms). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -31,6 +42,8 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <optional>
 
 namespace NereusSDR {
 
@@ -128,6 +141,23 @@ public:
     // Consumer side (Role::TxInput only). Returns -1 for Vax1..4.
     qint64 pull(char* data, qint64 maxBytes) override;
 
+    // R-R3-44 (Role::Vax1..4 only): playback timing from the ring. The
+    // plugin's reader advances readPos as the app's IO reads it, so the
+    // consumed count is the app's clock; the queue is writePos - readPos.
+    // callbackFrames is 0: the reading app picks its own IO size, which the
+    // ring does not record. Called by one worker thread at a time (it keeps
+    // the 32-bit readPos extended across its wrap).
+    std::optional<OutputPacing> outputPacing() const override;
+
+    // R-R3-44 (Role::Vax1..4 only): whether an app has this channel's
+    // NereusSDR VAX device running, from CoreAudio's
+    // kAudioDevicePropertyDeviceIsRunningSomewhere. nullopt when the
+    // plugin's device is not installed, CoreAudio does not answer, or the
+    // bus is closed. Any thread; reads a flag CoreAudio listeners keep
+    // (on a queue of their own) while the bus is open, so a call makes no
+    // IPC round trip.
+    std::optional<bool> outputHasReader() const override;
+
     float rxLevel() const override { return m_rxLevel.load(std::memory_order_acquire); }
     float txLevel() const override { return m_txLevel.load(std::memory_order_acquire); }
 
@@ -164,6 +194,15 @@ private:
     // the whole block on every call.
     int m_meterCounter{0};
     static constexpr int kMeterStride = 10;
+
+    // R-R3-44: outputPacing()'s readPos extension. Reset by open().
+    mutable std::atomic<uint32_t> m_pacingLastReadPos{0};
+    mutable std::atomic<quint64>  m_pacingConsumedSamples{0};
+
+    // R-R3-44 fix wave: watches the plugin's device for this channel while
+    // the bus is open (producers only). Defined in the .cpp.
+    struct ReaderWatch;
+    std::unique_ptr<ReaderWatch> m_readerWatch;
 };
 
 } // namespace NereusSDR

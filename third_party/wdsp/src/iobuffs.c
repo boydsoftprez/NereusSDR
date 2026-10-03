@@ -24,6 +24,17 @@ warren@wpratt.com
 
 */
 
+// NereusSDR modifications (2026-10-01, J.J. Boyd KG4VCF, with Anthropic
+// Claude Code): dexchange copies its input chunk out of r1 before it releases
+// Sem_OutReady, not after. With the upstream order (which Thetis ships), a
+// worker preempted between the release and the copy let fexchange0's caller
+// run a chunk ahead and overwrite the head of the unread chunk: a phase jump
+// and a spike that the TX Leveler and ALC then duck. dexchange serves every
+// channel, RX and TX. Every original line is retained; only the order
+// changed. dexchange also calls dsplock.c's test-only exchange hook after the
+// release (WdspTestExchangeHook; off by default, one pointer test). Source
+// DSP flow and all upstream attribution are retained.
+
 #include "comm.h"
 
 /********************************************************************************************************
@@ -592,13 +603,22 @@ void dexchange (int channel, double* in, double* out)
 	memcpy (a->r2_baseptr + 2 * a->r2_inidx, in, a->r2_insize * sizeof (complex));
 	if ((a->r2_inidx += a->r2_insize) == a->r2_active_buffsize)
 		a->r2_inidx = 0;
+	// NereusSDR modification (2026-10-01): the input chunk is copied out of r1
+	// before Sem_OutReady is released (upstream, and Thetis, release first).
+	// Once released, fexchange0's caller may run ahead and write its next
+	// input over the head of the chunk this worker has not copied yet.
+	// tst_wdsp_dexchange_order guards this through the test hook below, which
+	// must sit between the Sem_OutReady release and the input copy whenever
+	// they are in the upstream order: a sync that restores that order must
+	// keep the hook in that position, or the test will not catch the race.
+	memcpy (out, a->r1_baseptr + 2 * a->r1_outidx, a->r1_outsize * sizeof (complex));
+	if ((a->r1_outidx += a->r1_outsize) == a->r1_active_buffsize)
+		a->r1_outidx = 0;
 	if (a->bfo && (a->r2_unqueuedsamps += a->r2_insize) >= a->out_size)
 	{
 		n = a->r2_unqueuedsamps / a->out_size;
 		ReleaseSemaphore(a->Sem_OutReady, n, 0);	
 		a->r2_unqueuedsamps -= n * a->out_size;
 	}
-	memcpy (out, a->r1_baseptr + 2 * a->r1_outidx, a->r1_outsize * sizeof (complex));
-	if ((a->r1_outidx += a->r1_outsize) == a->r1_active_buffsize)
-		a->r1_outidx = 0;
+	WdspTestExchangeHook (channel);	// NereusSDR test-only seam (dsplock.h); off by default
 }

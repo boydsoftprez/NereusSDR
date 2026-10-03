@@ -45,6 +45,23 @@ This means:
 - Spectrum/waterfall quality is limited by client FFT size and GPU rendering performance
 - PureSignal feedback loop runs entirely on the client
 
+## Core/GUI split and the headless daemon (remote-daemon R1)
+
+Moved from CLAUDE.md.
+
+The rule these exist to enforce: **nothing under `src/core/` or `src/models/` may
+include a GUI header.** `tst_core_has_no_gui_includes` fails the build if that
+breaks. Before adding a GUI type to a core class, extract an interface instead,
+the way `ISpectrumSink` did.
+
+* `ISpectrumSink` (`src/core/spectrum/ISpectrumSink.h`): abstract sink `RadioModel` pushes spectrum-adjacent state through, so it no longer includes `gui/SpectrumWidget.h`. `SpectrumWidget` implements it. Also houses the `WfColorScheme` and `AverageMode` display enums.
+* `SpectrumDetector` / `SpectrumAvenger` (`src/core/spectrum/`): relocated verbatim from `src/gui/spectrum/`. WDSP `detector()` / `avenger()` ports; bin-to-pixel reduction and frame averaging.
+* `SpectrumReducer` (`src/core/spectrum/SpectrumReducer.h`): crop-and-reduce stage, detector then avenger, configured by an injected `ReducerConfig` with no AppSettings dependency. `reduce()` writes into a **caller-owned out-parameter**; do not change it back to returning a reference, that aliases the caller's buffer and costs a detach every frame on the render hot path.
+* `FftEnginePool` (`src/core/spectrum/FftEnginePool.h`): per-stream `FFTEngine` lifecycle plus worker-thread parking, previously inline in `MainWindow`. Note `setConfigForNewStreams()` is the live path; `setConfig()` overwrites existing engines and has no production caller.
+* `FftTopology` (`src/core/spectrum/FftTopology.h`): which streams each consumer subscribes to, as data rather than as state living inside `PanadapterStack`. `applyTo(FFTRouter&)` is a full rebuild. Many streams per consumer.
+* `CoreInit` (`src/core/CoreInit.h`): the process setup both binaries share (settings load, schema migrations, logging). `initialize(profile)` / `shutdown()`, idempotent.
+* `DaemonConfig` / `DaemonApp` (`src/core/daemon/`): `/etc/nereusd.conf` parsing and the daemon's own lifecycle. A key that reaches `DaemonConfig` must reach behaviour too, or it does not belong in `packaging/nereusd.conf.sample`; a test pins the two key sets against each other.
+
 ## Thread Architecture
 
 | Thread | Components |

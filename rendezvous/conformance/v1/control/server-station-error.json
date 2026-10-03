@@ -1,0 +1,11 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "error",
+    "code": "replaced",
+    "reason": "The Core registered again on another connection, so this one was closed.",
+    "retryAfterMs": 0
+  },
+  "decodes": true
+}

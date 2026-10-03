@@ -1,12 +1,47 @@
 # Fast Test Loop
 
-The suite has **513 registered tests** (517 `tst_*.cpp` files; four are
-Linux/PipeWire-only and register only on Linux).
+The suite has **598 registered tests** (four are Linux/PipeWire-only and
+register only on Linux).
 
-Every test executable statically links the entire application, so each one
-costs about **38 CPU-seconds to link** and lands at roughly 35 MB. Building
-all of them costs about **32 minutes**, and running them cold adds about
-5 more. Almost nothing you do day to day needs that.
+The application is built as a single shared library (`NereusSDRLib`) that
+every test links dynamically, so a test executable is about **90 KB**, not a
+private 40 MB copy of the whole app. Re-measured 2026-08-02 on an Apple
+Silicon dev machine (6 performance + 12 efficiency cores), `RelWithDebInfo`,
+ninja, ccache warm, `ctest -j10`:
+
+| | Value | Before the shared library |
+| --- | --- | --- |
+| Touch one `src/core` file, rebuild `all_tests` | **24 s** | 5 min 10 s |
+| ninja steps for that rebuild | **602** | 2,914 |
+| `build/tests` on disk | **2.0 GB** | 24 GB |
+| `tst_smoke` | **88,760 B** | 41,778,776 B |
+| Full suite, cold | **109 s** | not re-measured |
+
+Load average was 3.75 entering the shared run and 14.75 entering the OBJECT
+run, so the 13x is not exact. It is far outside what that gap explains.
+
+"Cold" means the binaries were just relinked, which is the normal case after
+any edit. It is slower than warm because macOS malware-scans every freshly
+linked Mach-O the first time it runs.
+
+### Why the incremental case improved so much
+
+Not link time, and not the malware scan. As an OBJECT library, the
+application's object files were **direct sources of every test target**, so
+touching one `src/core` file invalidated all 598 targets' AUTOMOC and forced
+a moc re-run plus a test-TU recompile before any linking started:
+
+```
+597  timestamp               AUTOMOC, per test target
+598  mocs_compilation.cpp.o  moc recompile, per test target
+609  .cpp.o                  test TU recompile
+598  links
+```
+
+As a shared library it is a link-time dependency only. AUTOMOC never fires,
+no test TU recompiles, and the rebuild is one dylib plus 598 stub relinks.
+
+Almost nothing you do day to day needs the full suite anyway.
 
 ## Everyday commands
 
@@ -47,20 +82,118 @@ header at all; the five current members are all legitimately in that
 category (a smoke test, a WDSP `extern "C"` test, a build-hygiene grep
 test, and two that deliberately avoid instantiating GUI classes).
 
-Every test also carries `TIMEOUT 120`, so a hung test fails instead of
-blocking forever.
+Every test carries `TIMEOUT 120` by default, so a hung test fails instead
+of blocking forever. A few still override it in `tests/CMakeLists.txt`, each
+with its reason beside it: `tst_remote_audio_clock` (700 s, two simulated
+hours through WDSP's resampler), `tst_rendezvous_client`,
+`tst_remote_vax_feeder`, `tst_remote_media_controller`, `tst_media_tunnel`,
+the media-wait set (`tst_remote_audio_session`, `tst_media_replace`,
+`tst_remote_telemetry`, `tst_remote_connection_controls`) and the link
+conformance session and its data-channel entry (92 to 104 s in failing
+runs on the Linux CI runner) at 300 s, `tst_path_racer` at 400 s, and the
+traversal harness (1800 s, dispatch-only). These are open review items:
+the fix is a test seam that shortens the product deadline or backoff the
+test waits out, not a larger limit. Do not add a new override; make the
+test faster.
 
 ### Labels narrow the run, not the dependency
 
 Labels are derived from each test's **direct** includes, so they are a
-triage aid, not a blast-radius calculation. **85 of the 513 tests carry no
-`core` label but still statically link all of `NereusSDRObjs`**, so a
-`src/core` edit genuinely affects them even though `ctest -L core` will not
-run them.
+triage aid, not a blast-radius calculation. **85 of the 514 tests carry no
+`core` label but still link all of `NereusSDRLib`**, so a `src/core` edit
+genuinely affects them even though `ctest -L core` will not run them.
 
-Until the Phase 1 library split lands, every test depends on every source
-file. Use `-L` to get fast feedback while iterating; use the full suite
-before you call something done.
+Every test depends on every source file, and the shared library does not
+change that: it makes each dependency cheap, not narrower. Use `-L` to get
+fast feedback while iterating; use the full suite before you call something
+done.
+
+## Real-time tests
+
+A few tests measure real-time behaviour against the wall clock: how much
+processor time a DSP worker gets, whether a paced audio stream keeps up,
+how long a thread waits for another. They carry the `realtime` label on top
+of their derived labels, and `ctest -N -L realtime` lists them:
+
+```bash
+ctest --test-dir build -N -L realtime
+```
+
+**A `realtime` test is valid only on a machine without other heavy work.**
+Another build, a second worktree's suite or an indexer taking the
+processors can make it fail although the code is right. `RUN_SERIAL` does
+not prevent that: it keeps other tests of the same ctest run away, not
+other programs.
+
+On a shared or busy machine, run the suite without them first, then run
+them alone:
+
+```bash
+cmake --build build --target all_tests
+ctest --test-dir build -LE realtime --output-on-failure   # everything else
+ctest --test-dir build -L realtime --output-on-failure    # then these, alone
+```
+
+`tests_realtime` builds just these tests, like any other label's target:
+
+```bash
+cmake --build build --target tests_realtime && ctest --test-dir build -L realtime
+```
+
+A `realtime` test that fails prints the machine's load average in its log,
+just after the failure, for example
+`realtime test playsOnEverySpeakerFormat(192 kHz stereo) failed at load average 18.20 9.75 6.10 (1, 5, 15 min)`
+(the helper is `tests/RealtimeTestLoad.h`; Windows says it has no load
+average). A `realtime` failure under load is a rerun-alone item: rerun that
+test by itself on a quiet machine before you call anything done. Never
+treat it as background noise: if it also fails alone, it is a real failure.
+
+CI keeps running the `realtime` tests in its normal suite, with no label
+filter, because each CI job has its runner to itself.
+
+To add a test to the group, register it with
+`nereus_add_test(<name> REALTIME ...)` and call
+`NereusSDR::RealtimeTestLoad::printLoadAverageIfFailed()` from its
+`cleanup()` slot. Use it for a test whose pass or fail depends on keeping
+up with the wall clock, not for one that merely waits with a generous
+timeout.
+
+## Test windows
+
+Tests run without windows by default. Every test registered through
+`nereus_add_test()` runs on Qt's `offscreen` platform, so a full run no
+longer flashes hundreds of windows across your desktop. The setting lives
+in the test's own ctest environment and overrides any `QT_QPA_PLATFORM`
+you export in your shell.
+
+To watch windows for one run, start the test executable directly instead
+of through ctest; ctest's environment does not apply then:
+
+```bash
+QT_QPA_PLATFORM=cocoa ./build/tests/tst_panadapter_stack_layouts   # macOS
+QT_QPA_PLATFORM=xcb   ./build/tests/tst_panadapter_stack_layouts   # Linux
+```
+
+To get windows back for a whole build, turn the option off and
+reconfigure (turn it back on the same way):
+
+```bash
+cmake -S . -B build -DNEREUS_TESTS_OFFSCREEN=OFF
+```
+
+A test that really needs the native platform (the native menu bar, a Retina
+pixel ratio, a Cocoa view, GPU rendering) is registered with
+`nereus_add_test(<name> NATIVE_WINDOW ...)`. It keeps real windows even with
+the default on and carries the `native-window` label:
+
+```bash
+ctest --test-dir build -L native-window    # only the tests that need windows
+ctest --test-dir build -LE native-window   # everything else
+```
+
+Reserve `NATIVE_WINDOW` for tests that need a capability the offscreen
+platform lacks. If a test fails off-screen because the product itself
+misbehaves without a native window, fix the product instead.
 
 ## Building tests is opt-in
 
@@ -76,7 +209,7 @@ Everything that runs tests must therefore name a target first:
 ```bash
 cmake --build build --target tst_slice_auto_agc   # one test
 cmake --build build --target tests_core           # one subsystem
-cmake --build build --target all_tests            # the lot (~32 min cold)
+cmake --build build --target all_tests            # the lot (~271 s warm tree)
 ```
 
 Then run `ctest`. **Skipping the build step is the one real footgun here**:
@@ -142,6 +275,20 @@ If a timing constant makes a test slow, add a narrow test-only seam rather
 than sleeping. Keep production defaults untouched, and make it obvious the
 setter has no production callers.
 
+**A test that starts WDSP shares one FFTW wisdom file.** A test that
+opens WDSP channels in its own process without WDSP's wisdom step
+(`WdspEngine::setSynchronousInitForTest`, `DaemonApp`'s
+`m_synchronousWdspForTest`, the `ConnectableRadioModel` harness, or the
+friend seam that primes `m_initialized`) used to plan every FFTW plan from
+nothing: 45 to 85 seconds each, enough to pass ctest's 120 second limit on
+a loaded machine. `nereus_add_test()` finds those names in a test's
+sources and links `tests/TestFftwWisdomCache.cpp`, which loads
+`build/tests/test-fftw-wisdom` before `main()` and merges what the test
+planned back into it at exit. The first such test in a fresh build
+directory pays the planning; the rest take a few seconds. Delete the file
+to measure a cold run. A new test that starts WDSP another way should use
+one of those names, or add its own to the rule.
+
 ## Where the settings file lives
 
 Tests redirect Qt's writable locations into a sandbox via
@@ -160,13 +307,40 @@ on macOS it resolves elsewhere (see `src/core/AppSettings.cpp:112-118`):
 If you are verifying that a test did not touch it, check the right one. A
 check against the wrong path silently "passes" while proving nothing.
 
-## Why the suite is slow, structurally
+## Why the suite costs what it does
 
-Linking dominates: about 32 minutes of the 37 is the linker, not the tests.
-The cause is that `NereusSDRObjs` is one all-or-nothing OBJECT library
-spanning `core`, `models`, and `gui`, so every source file is a transitive
-input to every test binary and the build graph cannot tell that a
-`SpectrumWidget` edit is irrelevant to a protocol test.
+Two structural facts, in order of how much they cost:
+
+**Every source file is a transitive input to every test binary.**
+`NereusSDRLib` is one all-or-nothing library spanning `core`, `models`, and
+`gui`, so the build graph cannot tell that a `SpectrumWidget` edit is
+irrelevant to a protocol test. Touching any library source relinks all 514
+tests. Building it shared made each of those relinks cheap; it did not make
+the graph narrower. A subsystem split would, but 83% of tests include a
+`core/` header, so even a perfect split leaves a `src/core` edit relinking
+most of the suite. That is why the split was rejected.
+
+**macOS rescans every freshly linked binary.** XProtect malware-scans each
+new Mach-O on first execution, which is the entire gap between the cold
+(109 s) and warm (43 s) figures above. Measured directly: XProtect burns
+62 CPU-seconds during a cold run today, and burned 189 before the app
+became a shared library, when the scan had 13 GB of test binaries to chew
+through instead of 1.2 GB.
+
+The Developer Tools exemption under System Settings -> Privacy & Security
+is supposed to remove this. On the machine these figures came from it did
+not: XProtect kept scanning after the exemption was enabled and the parent
+app restarted. If you get it working, cold runs should approach warm ones.
+
+### Measuring anything here
+
+Record the load average next to every timing. An earlier version of this
+page carried a warm-suite regression that turned out not to exist: the
+machine had a `clangd` indexing run at 500% CPU and a second worktree
+running its own suite, and nothing in the measurement recorded that. A
+timing without its machine state is not evidence.
 
 Measurements and the phased fix are in
-[docs/architecture/2026-07-25-test-execution-speed-design.md](../architecture/2026-07-25-test-execution-speed-design.md).
+[docs/architecture/2026-07-25-test-execution-speed-design.md](../architecture/2026-07-25-test-execution-speed-design.md)
+and
+[docs/architecture/2026-07-25-test-execution-speed-phase1-design.md](../architecture/2026-07-25-test-execution-speed-phase1-design.md).

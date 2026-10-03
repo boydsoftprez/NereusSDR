@@ -1,9 +1,8 @@
-// no-port-check: vendored upstream TAPR WDSP v1.29 — not a NereusSDR port of Thetis
 /*  RXA.h
 
 This file is part of a program that implements a Software-Defined Radio.
 
-Copyright (C) 2013, 2014, 2015, 2016, 2025 Warren Pratt, NR0V
+Copyright (C) 2013, 2014, 2015, 2016, 2025, 2026 Warren Pratt, NR0V
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -25,6 +24,11 @@ warren@wpratt.com
 
 */
 
+// NereusSDR modifications (2026-09-30 notice, J.J. Boyd KG4VCF, with Anthropic
+// Claude Code; changes made between 2026-09-22 and 2026-09-30 against the
+// pinned TAPR WDSP 2.10 tree at b02d5bac): adds the rnnr (NR3) and sbnr (NR4) stage
+// pointers to the RXA struct and changes RXAbp1Check to take only the channel.
+
 #ifndef _rxa_h
 #define _rxa_h
 #include "comm.h"
@@ -42,7 +46,8 @@ enum rxaMode
 	RXA_SPEC,
 	RXA_DIGL,
 	RXA_SAM,
-	RXA_DRM
+	RXA_DRM,
+	RXA_WBFM = 12
 };
 
 enum rxaMeterType
@@ -75,8 +80,12 @@ struct _rxa
 	} shift;
 	struct
 	{
+		HBResampler p;
+	} rsmpin;
+	struct
+	{
 		RESAMPLE p;
-	} rsmpin, rsmpout;
+	} rsmpout;
 	struct
 	{
 		GEN p;
@@ -115,6 +124,10 @@ struct _rxa
 	} amd;
 	struct
 	{
+		WBFM p;
+	} wbfm;
+	struct
+	{
 		FMD p;
 	} fmd;
 	struct
@@ -139,6 +152,18 @@ struct _rxa
 	} emnr;
 	struct
 	{
+		NNR p;
+	} nnr;
+	struct
+	{
+		RNNR p;
+	} rnnr;
+	struct
+	{
+		SBNR p;
+	} sbnr;
+	struct
+	{
 		WCPAGC p;
 	} agc;
 	struct
@@ -157,14 +182,6 @@ struct _rxa
 	{
 		GAUSSIAN p;
 	} gaussian;
-	struct
-    {
-        RNNR p; // NR3 + NR4 support (nr3)
-    } rnnr;
-    struct
-    {
-        SBNR p; // NR3 + NR4 support (nr4)
-    } sbnr;
 	struct
 	{
 		SPEAK p;
@@ -211,11 +228,11 @@ extern void setDSPBuffsize_rxa (int channel);
 
 // RXA Properties
 
-extern void SetRXAMode (int channel, int mode);
+extern __declspec (dllexport) void SetRXAMode (int channel, int mode);
 
 extern void RXAResCheck (int channel);
 
-extern void RXAbp1Check (int channel, int amd_run, int snba_run, int emnr_run, int anf_run, int anr_run, int rnnr_run, int sbnr_run); // NR3 + NR4 support
+extern void RXAbp1Check (int channel);
 
 extern void RXAbp1Set (int channel);
 

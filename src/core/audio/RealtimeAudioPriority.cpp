@@ -3,15 +3,49 @@
 // =================================================================
 // 2026-05-25  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 // See RealtimeAudioPriority.h for design rationale.
+//
+// Modification history (NereusSDR):
+//   2026-09-23  J.J. Boyd (KG4VCF): claimThreadPriorityRefusedWarning(),
+//               so nereusd's thread placement startup line can be the one
+//               priority refusal notice and the generic warning is not
+//               added on top of it (R-R3-41). AI-assisted implementation
+//               via Anthropic Claude Code.
 // =================================================================
 #include "RealtimeAudioPriority.h"
 
 #include <QtGlobal>
 #include <QLoggingCategory>
 
+#include <atomic>
+
 Q_LOGGING_CATEGORY(lcRtAudio, "nereussdr.rt_audio")
 
 namespace NereusSDR {
+
+namespace {
+std::atomic<bool> g_threadPriorityRefusedWarned{false};
+} // namespace
+
+bool claimThreadPriorityRefusedWarning()
+{
+    return !g_threadPriorityRefusedWarned.exchange(true);
+}
+
+bool noteThreadPriorityRefused()
+{
+    if (!claimThreadPriorityRefusedWarning()) {
+        return false;
+    }
+    qCWarning(lcRtAudio).noquote()
+        << "Raised thread priority was refused; audio and signal"
+           " processing threads run at normal priority.";
+    return true;
+}
+
+void resetThreadPriorityRefusedForTest()
+{
+    g_threadPriorityRefusedWarned.store(false);
+}
 
 // Token struct holds whatever platform-specific state is needed to
 // undo the elevation in leave().  Per-platform members are gated so
@@ -175,11 +209,13 @@ void elevateComputeThreadPriority()
     }
 }
 
-void elevateLatencyCriticalThreadPriority()
+void elevateLatencyCriticalThreadPriority([[maybe_unused]] bool logSuccess)
 {
     const int err = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
     if (err == 0) {
-        qCInfo(lcRtAudio) << "Latency-critical thread elevated to USER_INTERACTIVE QoS";
+        if (logSuccess) {
+            qCInfo(lcRtAudio) << "Latency-critical thread elevated to USER_INTERACTIVE QoS";
+        }
     } else {
         qCWarning(lcRtAudio) << "Failed to elevate latency-critical thread (errno"
                              << err << "); continuing at default QoS.";
@@ -229,6 +265,7 @@ AudioPriorityToken* elevateAudioThreadPriority()
         qCInfo(lcRtAudio) << "pthread_setschedparam(SCHED_FIFO) failed"
                           << "(errno" << err << strerror(err) << ")."
                           << "Operator may need CAP_SYS_NICE or rtprio rlimit.";
+        noteThreadPriorityRefused();
     }
     return token;
 }
@@ -251,31 +288,46 @@ void elevateGuiMainThreadPriority()
     // effective than SCHED_FIFO but available without privilege.
     // Caller can set rtprio rlimit / CAP_SYS_NICE to get a stronger
     // effect.
+    // nice() may legitimately return -1, so failure is judged from errno;
+    // clear it first so a stale value cannot report a false refusal.
+    errno = 0;
     if (nice(-5) == -1 && errno != 0) {
+        const int err = errno;
         qCInfo(lcRtAudio) << "nice(-5) for GUI main thread failed (errno"
-                          << errno << strerror(errno) << "); continuing"
+                          << err << strerror(err) << "); continuing"
                           << "at default.";
+        noteThreadPriorityRefused();
     }
 }
 
 void elevateComputeThreadPriority()
 {
+    // nice() may legitimately return -1, so failure is judged from errno;
+    // clear it first so a stale value cannot report a false refusal.
+    errno = 0;
     if (nice(-3) == -1 && errno != 0) {
+        const int err = errno;
         qCInfo(lcRtAudio) << "nice(-3) for compute thread failed (errno"
-                          << errno << strerror(errno) << "); continuing"
+                          << err << strerror(err) << "); continuing"
                           << "at default.";
+        noteThreadPriorityRefused();
     }
 }
 
-void elevateLatencyCriticalThreadPriority()
+void elevateLatencyCriticalThreadPriority([[maybe_unused]] bool logSuccess)
 {
     // Same -5 nice as the GUI main thread on Linux -- USER_INTERACTIVE
     // tier equivalent.  Requires CAP_SYS_NICE or rtprio rlimit for
     // strongest effect; soft-fails to current nice otherwise.
+    // nice() may legitimately return -1, so failure is judged from errno;
+    // clear it first so a stale value cannot report a false refusal.
+    errno = 0;
     if (nice(-5) == -1 && errno != 0) {
+        const int err = errno;
         qCInfo(lcRtAudio) << "nice(-5) for latency-critical thread failed (errno"
-                          << errno << strerror(errno) << "); continuing"
+                          << err << strerror(err) << "); continuing"
                           << "at default.";
+        noteThreadPriorityRefused();
     }
 }
 
@@ -333,7 +385,7 @@ void elevateComputeThreadPriority()
     }
 }
 
-void elevateLatencyCriticalThreadPriority()
+void elevateLatencyCriticalThreadPriority([[maybe_unused]] bool logSuccess)
 {
     // HIGHEST sits one step above ABOVE_NORMAL -- same tier as the
     // GUI main thread; below TIME_CRITICAL which is reserved for
@@ -358,7 +410,7 @@ AudioPriorityToken* elevateAudioThreadPriority() { return nullptr; }
 void leaveAudioThreadPriority(AudioPriorityToken*) {}
 void elevateGuiMainThreadPriority() {}
 void elevateComputeThreadPriority() {}
-void elevateLatencyCriticalThreadPriority() {}
+void elevateLatencyCriticalThreadPriority(bool) {}
 
 } // namespace NereusSDR
 

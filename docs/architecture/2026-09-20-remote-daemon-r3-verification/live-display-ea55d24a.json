@@ -1,0 +1,55 @@
+{
+  "checkpoint": "ea55d24a088b6b611e1acc5d4cbc5341cdd0f459",
+  "hardware": "Radxa ROCK 5C, Armbian Trixie, ANAN-G2 Saturn",
+  "scope": "Receive-only LAN display; no Opus media stream in this run",
+  "probe": {
+    "actualReceivedEncodedBytes": 721062,
+    "codecDispositions": {
+      "accepted": 298,
+      "needKeyframe": 0,
+      "rejected": 0
+    },
+    "codecReasons": {
+      "none": 298
+    },
+    "context": {
+      "centreHz": 14225023.4375,
+      "contextGeneration": 1,
+      "sampleRateHz": 192000,
+      "sourceCentreHz": 14225000,
+      "spanHz": 48046.875,
+      "traceSamples": 1024,
+      "waterfallSamples": 1024,
+      "wideSamples": 768
+    },
+    "distinctFrames": 298,
+    "durationSeconds": 20,
+    "failure": "",
+    "receivedFrames": 298,
+    "status": "ok",
+    "waterfallAdvances": 298,
+    "wideFrames": 298
+  },
+  "network": {
+    "interface": "end1 (Ethernet)",
+    "maximumMediaIpPacketBytes": 969,
+    "coreToClientIpKbitPerSecond": 324.86,
+    "clientToCoreIpKbitPerSecond": 23.31,
+    "measurement": "DTLS flow includes handshake and SCTP acknowledgments; 20-second run; excludes WSS control, radio I/Q and audio."
+  },
+  "service": {
+    "installed": true,
+    "enabled": true,
+    "active": true,
+    "restarts": 0,
+    "memoryBytesDuringProbe": 106950656,
+    "cpuTemperatureCelsiusDuringProbe": 48.076
+  },
+  "gui": {
+    "profile": "radxa_5c_r3",
+    "spectrum": "observed changing",
+    "waterfall2D": "observed signal history at 3.650 MHz",
+    "bandChanges": "observed 14.225 MHz USB to 3.650 and 3.830 MHz LSB",
+    "waterfall3D": "operator confirmation pending"
+  }
+}

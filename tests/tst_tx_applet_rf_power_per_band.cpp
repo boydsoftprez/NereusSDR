@@ -23,6 +23,12 @@
 // existing reverse-binding paints the slider (mirrors Thetis TXBand
 // setter at console.cs:17513).
 //
+// 2026-09-29: RadioModel now loads power_by_band on a transmit band change
+// and saves PWR into the transmit band (the TXBand setter and ptbPWR_Scroll,
+// console.cs:17511-17545 and 28682-28693 [v2.10.3.15]), so a Core with no
+// window gets both. The applet paints PWR from powerChanged and a local
+// window no longer recalls or saves the band slot itself.
+//
 // Source references (cite comments only — no Thetis logic in tests):
 //   console.cs:28642 [v2.10.3.13] — power_by_band[(int)_tx_band] = ptbPWR.Value
 //   console.cs:17513 [v2.10.3.13] — PWR = power_by_band[(int)value]
@@ -52,6 +58,7 @@
 #include "gui/applets/TxApplet.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
 #include "models/TransmitModel.h"
 
 using namespace NereusSDR;
@@ -113,61 +120,89 @@ private slots:
         QCOMPARE(rm.transmitModel().power(), 75);
     }
 
-    // ── 2. setCurrentBand recalls per-band into the RF slider ───────────────
+    // ── 2. A band change on the transmit slice paints the model's recall ────
     //
-    // Mirrors Thetis TXBand setter at console.cs:17513 [v2.10.3.13]:
+    // Thetis TXBand setter at console.cs:17511-17545 [v2.10.3.15]:
     //   PWR = power_by_band[(int)value];
-    void setCurrentBand_recallsPerBandIntoSlider()
+    // RadioModel owns the recall; the applet paints PWR from powerChanged.
+    void bandChange_paintsModelRecallIntoSlider()
     {
         RadioModel rm;
+        rm.addSlice();
+        SliceModel* slice = rm.activeSlice();
+        QVERIFY(slice != nullptr);
+        slice->setFrequency(14'200'000.0);
         TxApplet applet(&rm);
+        auto* slider = applet.findChild<QSlider*>(
+            QStringLiteral("TxRfPowerSlider"));
+        QVERIFY(slider != nullptr);
 
-        // Pre-seed three bands with distinct values.
-        rm.transmitModel().setPowerForBand(Band::Band20m, 20);
+        rm.transmitModel().setPower(20);
         rm.transmitModel().setPowerForBand(Band::Band40m, 80);
         rm.transmitModel().setPowerForBand(Band::Band10m, 5);
 
-        auto* slider = applet.findChild<QSlider*>(
-            QStringLiteral("TxRfPowerSlider"));
-        QVERIFY(slider != nullptr);
-
-        applet.setCurrentBand(Band::Band40m);
+        slice->setFrequency(7'150'000.0);
         QCOMPARE(slider->value(), 80);
-
-        applet.setCurrentBand(Band::Band10m);
+        slice->setFrequency(28'400'000.0);
         QCOMPARE(slider->value(), 5);
-
-        applet.setCurrentBand(Band::Band20m);
+        slice->setFrequency(14'200'000.0);
         QCOMPARE(slider->value(), 20);
     }
 
-    // ── 3. Bootstrap call with default-band still recalls ───────────────────
+    // ── 3. setCurrentBand leaves PWR to the model ───────────────────────────
     //
-    // Regression test for Gap 3: TxApplet::m_currentBand defaults to
-    // Band20m.  When MainWindow.cpp:1578 calls
-    //   txApplet->setCurrentBand(pan0->band())
-    // and pan0->band() == Band20m, the previous early-return guard caused
-    // the call to no-op, so the loaded m_powerByBand[Band20m] never made
-    // it into the slider — slider stayed at construct-time default 100 W.
-    void setCurrentBand_sameAsDefault_stillRecallsSlider()
+    // The applet used to recall power_by_band itself in setCurrentBand. The
+    // model now does it on every transmit band change (and at connect), so
+    // a second recall here would load the band twice; setCurrentBand only
+    // repaints the tune slider.
+    void setCurrentBand_leavesPowerToModel()
     {
         RadioModel rm;
-        // Pre-seed Band20m to a non-default value BEFORE the applet exists.
-        rm.transmitModel().setPowerForBand(Band::Band20m, 35);
-
+        rm.transmitModel().setPowerForBand(Band::Band40m, 80);
         TxApplet applet(&rm);
         auto* slider = applet.findChild<QSlider*>(
             QStringLiteral("TxRfPowerSlider"));
         QVERIFY(slider != nullptr);
-        // Construct-time default is 100 (TxApplet.cpp:281).
-        QCOMPARE(slider->value(), 100);
+        const int before = rm.transmitModel().power();
+        QVERIFY(before != 80);
 
-        // Bootstrap call — same as MainWindow.cpp:1578 with pan0 on Band20m.
-        applet.setCurrentBand(Band::Band20m);
+        QSignalSpy spy(&rm.transmitModel(), &TransmitModel::powerChanged);
+        applet.setCurrentBand(Band::Band40m);
+        QCOMPARE(spy.count(), 0);
+        QCOMPARE(rm.transmitModel().power(), before);
+        QCOMPARE(slider->value(), before);
+    }
 
-        // Slider must have pulled the per-band stored value, not stayed at
-        // the construct-time default.
-        QCOMPARE(slider->value(), 35);
+    // ── 3b. The MainWindow band wiring loads the band once ──────────────────
+    //
+    // MainWindow feeds each slice's frequencyChanged into setCurrentBand.
+    // With the model recalling too, a band crossing must still move PWR
+    // once, to the stored value.
+    void bandCrossingWithApplet_loadsOnce()
+    {
+        RadioModel rm;
+        rm.addSlice();
+        SliceModel* slice = rm.activeSlice();
+        QVERIFY(slice != nullptr);
+        slice->setFrequency(7'150'000.0);
+        TxApplet applet(&rm);
+        connect(slice, &SliceModel::frequencyChanged, &applet,
+                [&applet](double hz) { applet.setCurrentBand(bandFromFrequency(hz)); });
+        auto* slider = applet.findChild<QSlider*>(
+            QStringLiteral("TxRfPowerSlider"));
+        QVERIFY(slider != nullptr);
+        TransmitModel& tx = rm.transmitModel();
+        tx.setPower(65);
+        tx.setPowerForBand(Band::Band20m, 5);
+
+        QSignalSpy spy(&tx, &TransmitModel::powerChanged);
+        slice->setFrequency(14'250'000.0);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 5);
+        QCOMPARE(tx.power(), 5);
+        QCOMPARE(slider->value(), 5);
+        QCOMPARE(tx.powerForBand(Band::Band40m), 65);
+        QCOMPARE(tx.powerForBand(Band::Band20m), 5);
     }
 
     // ── 4. Per-band isolation across slider moves ───────────────────────────
@@ -176,21 +211,24 @@ private slots:
     void slider_movesOnDifferentBands_isolatedPerBand()
     {
         RadioModel rm;
+        rm.addSlice();
+        SliceModel* slice = rm.activeSlice();
+        QVERIFY(slice != nullptr);
         TxApplet applet(&rm);
 
         auto* slider = applet.findChild<QSlider*>(
             QStringLiteral("TxRfPowerSlider"));
         QVERIFY(slider != nullptr);
 
-        applet.setCurrentBand(Band::Band20m);
+        slice->setFrequency(14'200'000.0);
         slider->setValue(40);
         QCOMPARE(rm.transmitModel().powerForBand(Band::Band20m), 40);
 
-        applet.setCurrentBand(Band::Band40m);
+        slice->setFrequency(7'150'000.0);
         slider->setValue(90);
         QCOMPARE(rm.transmitModel().powerForBand(Band::Band40m), 90);
 
-        applet.setCurrentBand(Band::Band10m);
+        slice->setFrequency(28'400'000.0);
         slider->setValue(15);
         QCOMPARE(rm.transmitModel().powerForBand(Band::Band10m), 15);
 
@@ -198,11 +236,11 @@ private slots:
         QCOMPARE(rm.transmitModel().powerForBand(Band::Band20m), 40);
         QCOMPARE(rm.transmitModel().powerForBand(Band::Band40m), 90);
 
-        // Slider visually reflects the active-band value when re-selected.
-        applet.setCurrentBand(Band::Band20m);
+        // Slider visually reflects the band's value when the slice returns.
+        slice->setFrequency(14'200'000.0);
         QCOMPARE(slider->value(), 40);
 
-        applet.setCurrentBand(Band::Band40m);
+        slice->setFrequency(7'150'000.0);
         QCOMPARE(slider->value(), 90);
     }
 
@@ -213,9 +251,13 @@ private slots:
     // loadFromSettings(mac).
     void slider_writes_roundtripAcrossReload()
     {
-        // Phase A — write through the applet → model → AppSettings chain.
+        // Phase A: write through the applet → model → AppSettings chain.
         {
             RadioModel rm;
+            rm.addSlice();
+            SliceModel* slice = rm.activeSlice();
+            QVERIFY(slice != nullptr);
+            slice->setFrequency(14'200'000.0);
             // Activate per-MAC auto-persist.  After this call,
             // setPowerForBand writes to AppSettings on every change.
             rm.transmitModel().loadFromSettings(QString::fromLatin1(kTestMac));
@@ -225,17 +267,16 @@ private slots:
                 QStringLiteral("TxRfPowerSlider"));
             QVERIFY(slider != nullptr);
 
-            applet.setCurrentBand(Band::Band20m);
             slider->setValue(72);
 
-            applet.setCurrentBand(Band::Band40m);
+            slice->setFrequency(7'150'000.0);
             slider->setValue(33);
 
-            applet.setCurrentBand(Band::Band6m);
+            slice->setFrequency(50'125'000.0);
             slider->setValue(8);
         }
 
-        // Phase B — fresh TransmitModel reads the saved per-band values.
+        // Phase B: fresh TransmitModel reads the saved per-band values.
         TransmitModel reloaded;
         reloaded.loadFromSettings(QString::fromLatin1(kTestMac));
 
@@ -250,14 +291,17 @@ private slots:
 
     // ── 6. powerByBandChanged signal fires on slider events ─────────────────
     //
-    // Confirms the slider lambda routes through setPowerForBand (which
+    // Confirms the slider save routes through setPowerForBand (which
     // emits powerByBandChanged), not through some side-channel that would
     // break listeners (e.g. PA-cal UI watching the per-band store).
     void slider_emitsPowerByBandChanged()
     {
         RadioModel rm;
+        rm.addSlice();
+        SliceModel* slice = rm.activeSlice();
+        QVERIFY(slice != nullptr);
+        slice->setFrequency(7'150'000.0);
         TxApplet applet(&rm);
-        applet.setCurrentBand(Band::Band40m);
 
         QSignalSpy spy(&rm.transmitModel(),
                        &TransmitModel::powerByBandChanged);
@@ -273,24 +317,20 @@ private slots:
         QCOMPARE(spy.at(0).at(1).toInt(), 60);
     }
 
-    // ── 7. CTUN pan: slider write goes to active-slice band, not pan band ──
+    // ── 7. CTUN pan: slider write goes to the transmit band, not pan band ──
     //
     // Codex P1 review on PR #192 thread r3190869829: when the user pans
     // the panadapter (CTUN mode) without retuning the slice, MainWindow's
     // PanadapterModel::bandChanged callback fires setCurrentBand(panBand),
-    // which moves m_currentBand off the slice band.  Pre-fix, a slider
-    // event in this state wrote to powerByBand[panBand] instead of the
-    // canonical TX band slot (active-slice band), silently corrupting the
-    // wrong band's stored value.
-    //
-    // Fix: TxApplet::txBand() pulls from the active slice's frequency.
-    // setPowerForBand uses txBand(), not m_currentBand.
+    // which moves m_currentBand off the slice band.  A slider event in
+    // this state must still save to the transmit band's slot.
     void slider_write_usesActiveSliceBand_notPanBand()
     {
         RadioModel rm;
         rm.addSlice();
         SliceModel* slice = rm.activeSlice();
         QVERIFY(slice != nullptr);
+        rm.transmitModel().setPower(50);
         // Active slice on 40m (7.150 MHz).
         slice->setFrequency(7'150'000.0);
         QCOMPARE(bandFromFrequency(slice->frequency()), Band::Band40m);
@@ -305,13 +345,10 @@ private slots:
             QStringLiteral("TxRfPowerSlider"));
         QVERIFY(slider != nullptr);
 
-        // Pre-condition: stored values for both bands at default 50 W.
+        // Pre-condition: stored values for both bands at 50 W.
         QCOMPARE(rm.transmitModel().powerForBand(Band::Band40m), 50);
         QCOMPARE(rm.transmitModel().powerForBand(Band::Band20m), 50);
 
-        // User moves the slider while panadapter shows 20m.  The TX
-        // band per RadioModel.cpp:903-905 is still 40m (the slice
-        // didn't move), so the write must land on 40m.
         slider->setValue(85);
 
         QCOMPARE(rm.transmitModel().powerForBand(Band::Band40m), 85);
@@ -319,38 +356,28 @@ private slots:
         QCOMPARE(rm.transmitModel().powerForBand(Band::Band20m), 50);
     }
 
-    // ── 8. CTUN pan: setCurrentBand recall ignores non-TX-band updates ─────
+    // ── 8. CTUN pan: a panadapter band change leaves PWR alone ──────────────
     //
-    // Codex P1 review on PR #192 thread r3190869831: setCurrentBand
-    // unconditionally called tx.setPower(tx.powerForBand(band)) on every
-    // invocation.  When fired from PanadapterModel::bandChanged with a
-    // non-slice band, this paints the slider with the wrong band's value
-    // AND the resulting powerChanged emission can write that wrong value
-    // back into the active slice band's slot via setPowerUsingTargetDbm
-    // txMode-0 side-effect (TransmitModel.cpp:825) — corruption.
-    //
-    // Fix: setCurrentBand only recalls the RF Power slider when
-    // band == txBand() (the active slice's band).  Panadapter pans
-    // without slice retune leave the slider locked on the TX band.
+    // Codex P1 review on PR #192 thread r3190869831: a recall on a
+    // panadapter band change that does not move the slice would jump live
+    // RF drive to a non-transmit band's preset and leak it into the
+    // transmit band's slot.  Only a transmit slice band change loads PWR.
     void setCurrentBand_recall_skippedForNonTxBand()
     {
         RadioModel rm;
         rm.addSlice();
         SliceModel* slice = rm.activeSlice();
         QVERIFY(slice != nullptr);
-        // Slice on 40m, with a pre-stored per-band value of 65 W.
         slice->setFrequency(7'150'000.0);
-        rm.transmitModel().setPowerForBand(Band::Band40m, 65);
-        rm.transmitModel().setPowerForBand(Band::Band20m, 5);
 
         TxApplet applet(&rm);
-
         auto* slider = applet.findChild<QSlider*>(
             QStringLiteral("TxRfPowerSlider"));
         QVERIFY(slider != nullptr);
 
-        // Establish the slider on the slice band first (TX band recall
-        // path — must work).
+        // Slice on 40m at 65 W; 20m stored at 5 W.
+        rm.transmitModel().setPower(65);
+        rm.transmitModel().setPowerForBand(Band::Band20m, 5);
         applet.setCurrentBand(Band::Band40m);
         QCOMPARE(slider->value(), 65);
 
@@ -358,22 +385,87 @@ private slots:
         // because the slice didn't move.
         applet.setCurrentBand(Band::Band20m);
         QCOMPARE(slider->value(), 65);
-
-        // m_power must also stay at 65 W — preventing the corruption
-        // pipeline Codex flagged (powerChanged → setPowerUsingTargetDbm
-        // → setPowerForBand(activeSliceBand, m_power) writing 5 W
-        // into 40m's slot).
         QCOMPARE(rm.transmitModel().power(), 65);
+        QCOMPARE(rm.transmitModel().powerForBand(Band::Band40m), 65);
 
-        // Move the slice to 20m: now the slider SHOULD update because
-        // the TX band actually changed.  Drive it via the same wire
-        // MainWindow uses (slice frequencyChanged → setCurrentBand
-        // with bandFromFrequency(slice->frequency())).
+        // Move the slice to 20m: now PWR follows the transmit band, with
+        // MainWindow's wire (slice frequencyChanged → setCurrentBand).
         slice->setFrequency(14'250'000.0);
         QCOMPARE(bandFromFrequency(slice->frequency()), Band::Band20m);
         applet.setCurrentBand(Band::Band20m);
         QCOMPARE(slider->value(), 5);
         QCOMPARE(rm.transmitModel().power(), 5);
+    }
+
+    // ── Group A fix wave, M3: an older Core takes `power` alone ─────────────
+    //
+    // A remote window on a Core below transmitSettingsVersion 5 must not
+    // write tuneDrivePowerSource, which that Core refuses; on version 5 or
+    // later it writes that too. It never writes powerByBandJson: the Core
+    // is the table's only writer (it saves PWR into the transmit band's
+    // slot itself), so the window sends the power setting alone.
+    void slider_withoutPowerByBand_writesPowerOnly()
+    {
+        RadioModel rm(RadioModel::Role::Remote);
+        TxApplet applet(&rm);
+        auto* slider = applet.findChild<QSlider*>(
+            QStringLiteral("TxRfPowerSlider"));
+        QVERIFY(slider != nullptr);
+        TransmitModel& tx = rm.transmitModel();
+        tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
+        const int band20Before = tx.powerForBand(Band::Band20m);
+
+        applet.setPowerByBandPermitted(false);
+        slider->setValue(band20Before == 60 ? 61 : 60);
+        QCOMPARE(tx.power(), slider->value());
+        QCOMPARE(tx.powerForBand(Band::Band20m), band20Before);
+        QCOMPARE(tx.tuneDrivePowerSource(), DrivePowerSource::TuneSlider);
+
+        applet.setPowerByBandPermitted(true);
+        slider->setValue(33);
+        QCOMPARE(tx.power(), 33);
+        QCOMPARE(tx.powerForBand(Band::Band20m), band20Before);
+        QCOMPARE(tx.tuneDrivePowerSource(), DrivePowerSource::DriveSlider);
+    }
+
+    // ── PA on-air gate review: the Tune Power slider is the transmit band's ─
+    //
+    // Thetis ptbTune_Scroll writes tunePower_by_band[(int)_tx_band] and the
+    // slider shows TunePWR, which the TXBand setter loads from that band
+    // (console.cs:46618 [v2.10.3.15]). A pan or receive slice on another
+    // band neither shows nor takes the tune power; TUNE uses the transmit
+    // band's.
+    void tuneSlider_usesTransmitBand_notAppletBand()
+    {
+        RadioModel rm;
+        rm.addSlice();
+        SliceModel* slice = rm.activeSlice();
+        QVERIFY(slice != nullptr);
+        slice->setFrequency(14'200'000.0);
+        TransmitModel& tx = rm.transmitModel();
+        tx.setTunePowerForBand(Band::Band20m, 100);
+        tx.setTunePowerForBand(Band::Band40m, 5);
+        QCOMPARE(tx.tunePowerForTxBand(), 100);
+
+        TxApplet applet(&rm);
+        applet.setCurrentBand(Band::Band40m);
+        QSlider* slider = applet.tunePowerSlider();
+        QVERIFY(slider != nullptr);
+        // Shown: the transmit band's tune power, not the applet band's.
+        QCOMPARE(slider->value(), 100);
+
+        slider->setValue(30);
+        QCOMPARE(tx.tunePowerForBand(Band::Band20m), 30);
+        QCOMPARE(tx.tunePowerForBand(Band::Band40m), 5);
+        QCOMPARE(tx.tunePowerForTxBand(), 30);
+        QCOMPARE(slider->value(), tx.tunePowerForTxBand());
+        QCOMPARE(tx.tuneDrivePowerSource(), DrivePowerSource::TuneSlider);
+
+        // Repaints on the transmit band's change only.
+        tx.setTunePowerForBand(Band::Band20m, 42);
+        QCOMPARE(slider->value(), 42);
+        tx.setTunePowerForBand(Band::Band40m, 7);
+        QCOMPARE(slider->value(), 42);
     }
 };
 

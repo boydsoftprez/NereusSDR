@@ -270,8 +270,6 @@ Total tracked files: **724**
 - `src/gui/containers/meter_property_editors/DataOutItemEditor.h`
 - `src/gui/containers/meter_property_editors/DialItemEditor.cpp`
 - `src/gui/containers/meter_property_editors/DialItemEditor.h`
-- `src/gui/containers/meter_property_editors/DiscordButtonItemEditor.cpp`
-- `src/gui/containers/meter_property_editors/DiscordButtonItemEditor.h`
 - `src/gui/containers/meter_property_editors/FadeCoverItemEditor.cpp`
 - `src/gui/containers/meter_property_editors/FadeCoverItemEditor.h`
 - `src/gui/containers/meter_property_editors/FilterButtonItemEditor.cpp`
@@ -534,8 +532,6 @@ Total tracked files: **724**
 - `src/gui/meters/DataOutItem.h`
 - `src/gui/meters/DialItem.cpp`
 - `src/gui/meters/DialItem.h`
-- `src/gui/meters/DiscordButtonItem.cpp`
-- `src/gui/meters/DiscordButtonItem.h`
 - `src/gui/meters/FadeCoverItem.cpp`
 - `src/gui/meters/FadeCoverItem.h`
 - `src/gui/meters/FilterButtonItem.cpp`
@@ -594,8 +590,6 @@ Total tracked files: **724**
 - `src/gui/setup/hardware/AntennaAlexAlex1Tab.h`
 - `src/gui/setup/hardware/BandwidthMonitorTab.cpp`
 - `src/gui/setup/hardware/BandwidthMonitorTab.h`
-- `src/gui/setup/hardware/DiversityTab.cpp`
-- `src/gui/setup/hardware/DiversityTab.h`
 - `src/gui/setup/hardware/Hl2IoBoardTab.cpp`
 - `src/gui/setup/hardware/Hl2IoBoardTab.h`
 - `src/gui/setup/hardware/OcOutputsTab.cpp`

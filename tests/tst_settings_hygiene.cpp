@@ -18,6 +18,7 @@
 #include "core/SettingsHygiene.h"
 #include "core/BoardCapabilities.h"
 #include "core/AppSettings.h"
+#include "core/session/SettingsHygieneWire.h"
 
 using namespace NereusSDR;
 
@@ -116,6 +117,45 @@ class TestSettingsHygiene : public QObject {
     Q_OBJECT
 
 private slots:
+
+    void boundedWireReplyRejectsMalformedAndOversizedIssues()
+    {
+        SettingsHygieneReply reply;
+        reply.mac = kTestMac;
+        reply.issues.append({SettingsHygiene::Severity::Warning,
+                             QStringLiteral("hardware/00:11:22:33:44:55/sAtt"),
+                             QStringLiteral("S-ATT outside range"),
+                             QStringLiteral("The stored value exceeds this board's limit."),
+                             QStringLiteral("resetSettings")});
+        const auto encoded = SettingsHygieneWire::encode(reply);
+        QVERIFY(encoded);
+        const auto decoded = SettingsHygieneWire::decode(*encoded);
+        QVERIFY(decoded);
+        QCOMPARE(decoded->mac, kTestMac);
+        QCOMPARE(decoded->issues.size(), 1);
+        QCOMPARE(decoded->issues.first().detail, reply.issues.first().detail);
+
+        auto malformed = *encoded;
+        malformed[1].value = QStringLiteral("[{\"severity\":9}]");
+        QVERIFY(!SettingsHygieneWire::decode(malformed));
+        malformed = *encoded;
+        malformed.append({0, "unexpected", MirrorWireKind::Utf8, QStringLiteral("x")});
+        QVERIFY(!SettingsHygieneWire::decode(malformed));
+        malformed = *encoded;
+        malformed[0].value = QStringLiteral("not-a-mac");
+        QVERIFY(!SettingsHygieneWire::decode(malformed));
+        malformed = *encoded;
+        malformed[0].ordinal = 1;
+        QVERIFY(!SettingsHygieneWire::decode(malformed));
+        malformed = *encoded;
+        malformed[1].value = QString(65537, QLatin1Char('x'));
+        QVERIFY(!SettingsHygieneWire::decode(malformed));
+        malformed = *encoded;
+        malformed[1].value = QStringLiteral("[{}]");
+        QVERIFY(!SettingsHygieneWire::decode(malformed));
+        reply.issues[0].detail = QString(1025, QLatin1Char('x'));
+        QVERIFY(!SettingsHygieneWire::encode(reply));
+    }
 
     void init()
     {

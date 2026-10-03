@@ -1,0 +1,18 @@
+{
+    "codec": "nrsc1",
+    "expect": {
+        "claimed": true,
+        "controlPort": 50055,
+        "coreName": "Shack Core",
+        "devicesConnected": 2,
+        "fingerprint": "A0:A1:A2:A3:A4:A5:A6:A7:A8:A9:AA:AB:AC:AD:AE:AF:B0:B1:B2:B3:B4:B5:B6:B7:B8:B9:BA:BB:BC:BD:BE:BF",
+        "identity": "EBceJSwzOkFIT1ZdZGtyeYCHjpWco6qxuL_GzdTb4uk",
+        "label": "KG4VCF/shack",
+        "pairing": "code",
+        "radio": "connected",
+        "radioConnected": true,
+        "radioMac": "AA:BB:CC:DD:EE:01",
+        "radioName": "Bench HL2",
+        "schema": 2
+    }
+}

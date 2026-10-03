@@ -121,6 +121,11 @@ public slots:
     // (useful for replay/playback features).
     void feedBins(const QVector<float>& bins, qint64 nowMs = -1);
 
+    // Remote Core has the full FFT bins. Feed its unsmoothed percentile
+    // estimate through the same cadence, smoothing and operator gates as
+    // local feedBins(); reduced display pixels are not estimator input.
+    void feedNoiseFloor(float rawFloorDbm, qint64 nowMs = -1);
+
 signals:
     // Thresholds should change. Deadband-gated so consumers (SpectrumWidget)
     // receive a stable stream, not per-frame jitter.
@@ -139,6 +144,7 @@ signals:
     void pausedChanged(bool paused);
 
 private:
+    bool acceptsInput(qint64 nowMs) const;
     NoiseFloorEstimator m_estimator;
 
     bool   m_enabled       = false;

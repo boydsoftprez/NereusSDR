@@ -1,6 +1,8 @@
 # Test Execution Speed, Phase 1: Shared Application Library
 
-**Status:** Design, pending approval
+**Status:** Implemented 2026-07-31. **The §2 link-time evidence below did
+not reproduce at implementation time and is superseded by §2.0.** The
+decision still stands, but on different grounds than originally argued.
 **Date:** 2026-07-25
 **Supersedes:** the subsystem-split approach in §5 Phase 1 of
 [2026-07-25-test-execution-speed-design.md](2026-07-25-test-execution-speed-design.md)
@@ -20,7 +22,171 @@ is both more expensive and less effective than going shared.
 
 ---
 
-## 2. Evidence
+## 2.0 Corrected evidence, measured at implementation (2026-07-31)
+
+> **The OBJECT column below is wrong. Corrected 2026-08-02 at rebase; see
+> §2.0.1.** The row reporting a 30 s OBJECT incremental re-measures at
+> **5 min 10 s** on a fully warm tree. Every other row in this table
+> reproduced. This is the third measurement error in this document's
+> history, which is itself the finding: see §2.0.1 for what actually
+> drives the incremental case, which no version of this design identified.
+
+Same machine, same settings, both sides measured back to back on
+`build/shared-app-library`: Apple Silicon, macOS 26.5.2, Qt 6.11.0,
+`RelWithDebInfo`, ninja, ccache warm, `cmake --build -j8`, `ctest -j4`.
+The OBJECT column was measured on the commit immediately before the flip,
+not extrapolated.
+
+| Metric | OBJECT | SHARED | Change |
+| --- | --- | --- | --- |
+| Touch one `src/core` file, rebuild all tests | 30 s | **22 s** | 1.4x |
+| Relink 20 deleted binaries | 1 s | 1 s | none |
+| Build `all_tests` from scratch | 479 s | **271 s** | 1.8x |
+| `build/tests` on disk | 13 GB | **1.2 GB** | 10x |
+| `tst_smoke` | 22,804,600 B | **88,728 B** | 257x |
+| Full suite, cold | 362 s | **109 s** | **3.3x** |
+| Full suite, warm | 42 to 44 s | 43 to 44 s | **none** |
+| XProtect CPU burned during cold run | 189 s | **62 s** | 3x less |
+| App RSS | 512 to 562 MB | 473 to 564 MB | within noise |
+| Tests passing | 514/514 | **514/514** | none |
+
+**Measurement hygiene, learned the hard way.** Earlier passes at this table
+reported a 60% warm-suite regression that does not exist. The machine had
+a `clangd` indexing run at 500% CPU and a second worktree running its own
+suite, and neither was noticed because nothing recorded machine state
+alongside the timings. The numbers above come from a scripted run that
+samples load average and XProtect's cumulative CPU before and after every
+single timing, so a contaminated sample is visible in the output instead
+of silently becoming a data point. **Do not trust a timing on this
+codebase that does not carry its load average.**
+
+Two conclusions changed once measured properly:
+
+- **There is no warm regression.** 42/43/44 s for OBJECT against
+  43/43/44 s for SHARED. The dyld symbol-binding cost is real in principle
+  but is lost in the noise at this scale.
+- **The cold gap is larger than first reported**, 3.3x rather than 2.3x.
+
+RSS behaved the opposite way: single samples suggested a 15% regression,
+which would have failed §8's "within 10%" criterion. Three samples per
+side gave 512.5 / 561.6 / 547.0 MB for OBJECT against 473.1 / 563.7 /
+533.3 MB for SHARED. The spread is about 50 MB, the distributions overlap
+completely, and SHARED's mean is marginally lower. The criterion is met,
+and **any single-sample RSS comparison of this application is
+meaningless.**
+
+**The Developer Tools exemption did not remove the scan.** Phase 0 item 0b
+predicts that exempting the build's parent app under System Settings ->
+Privacy & Security -> Developer Tools removes the first-run scan. It was
+enabled on the measuring machine and the parent app restarted, and
+XProtect still burned 189 CPU-s during the OBJECT cold run and 62 s during
+the SHARED one. Either the exemption was not applied to the right app, or
+Gatekeeper assessment exemption does not cover XProtect's malware scan of
+locally built Mach-Os. Worth resolving, because if 0b ever does work it
+recovers most of the same cold-run time for free. It does not change this
+decision either way: the shared library shrinks what there is to scan from
+13 GB to 1.2 GB, which helps whether or not the exemption lands, and helps
+every contributor without requiring per-machine configuration.
+
+**The link-time case in §2 does not hold.** §2 reports 20 binaries
+relinking in 73.5 s wall / 762 CPU-s, and extrapolates 31.4 min for the
+full suite. Re-running that exact experiment (delete 20, rebuild) measures
+**1 s**, and a touch-one-core-file rebuild of the whole suite measures
+**34 s**, not 31 minutes. 38 CPU-s for a single 22 MB link is not a
+plausible figure; the original sample most likely captured compile work or
+a differently configured tree. Every size figure in §2 reproduced exactly,
+so the discrepancy is specific to the link-time measurement.
+
+**What the change actually buys.** Not link time. The win is macOS
+XProtect: it malware-scans every freshly linked Mach-O on first execution,
+and it was scanning 13 GB of test binaries on every cold run. The
+instrumented figures put a number on it directly: 189 CPU-s of XProtect
+during the OBJECT cold run against 62 s for SHARED. Collapsing each test
+from 22 MB to 90 KB is what takes the cold suite from 362 s to 109 s.
+Since any library edit relinks all 514 tests, the next run is always cold,
+so the realistic edit-and-verify loop (rebuild, then run) goes from about
+392 s to about 131 s, a 3x improvement. Disk drops 10x.
+
+**No regression was found.** An earlier pass reported a 60% warm-suite
+regression from dyld symbol binding. It was a measurement artifact; see
+the hygiene note above. Properly instrumented, warm runs are 42-44 s on
+both sides. The per-process binding cost is real in principle, so if warm
+re-runs ever became the dominant workflow `-fvisibility=hidden` would be
+the lever, but note that is not the cheap knob it sounds like here: the
+514 test binaries link against this library's symbols, so hiding them by
+default would require an export macro across the whole public surface.
+§7 lists it as a non-goal and it should stay there.
+
+**Windows verification is not available.** §5 mitigates the
+`WINDOWS_EXPORT_ALL_SYMBOLS` risk with "verify the Windows CI row links all
+tests before merge". That is not achievable: only the Linux CI job sets
+`NEREUS_BUILD_TESTS=ON`, so the Windows job links the app and never the
+test executables. The data-symbol limitation of
+`WINDOWS_EXPORT_ALL_SYMBOLS` therefore remains unverified against the test
+suite.
+
+**`NEREUSSDR_ENABLE_LTO` does not exist on `main`.** §5 asks to verify a
+`-DNEREUSSDR_ENABLE_LTO=ON` release build. `6ed89682` never landed on
+`main`: PRs #304 and #305 brought the Phase 0 half (`EXCLUDE_FROM_ALL`,
+`all_tests`, labels, timeouts) but not the LTO option. The generic
+`-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON` release path was verified
+instead.
+
+> Stale as of 2026-08-02. `NEREUSSDR_ENABLE_LTO` and the parallel
+> `NereusSDRObjs_LTO` object library are now on `main`, and
+> `-DNEREUSSDR_ENABLE_LTO=ON` was verified to configure against the
+> rebased branch. See §2.0.1 for the interaction this leaves open.
+
+### 2.0.1 Re-measured at rebase (2026-08-02)
+
+The branch was rebased onto `main` after 405 intervening commits and the
+suite had grown from 514 to 598 tests. Both sides re-measured on the same
+machine on the same day, `RelWithDebInfo`, ninja, ccache warm, `ctest -j10`:
+
+| Metric | OBJECT | SHARED | Change |
+| --- | --- | --- | --- |
+| Touch one `src/core` file, rebuild `all_tests` | **5 min 10 s** | **24.3 s** | **12.8x** |
+| ninja steps for that rebuild | 2,914 | 602 | 4.8x fewer |
+| `build/tests` on disk | 24 GB | 2.0 GB | 12x |
+| `tst_smoke` | 41,778,776 B | 88,760 B | 470x |
+| `tst_adif_parser` | 41,799,232 B | 144,464 B | 289x |
+| Full suite | not re-measured | 598/598 in 109.2 s | matches §2.0 |
+
+Load average entering each run was 14.75 (OBJECT) against 3.75 (SHARED),
+so 12.8x is not exact. It is far outside what that gap accounts for.
+
+**The mechanism is not the one this document argues.** §2.0 attributes the
+win to binary size and the macOS first-run scan. Those are real, and they
+dominate the *cold suite run*. They do not explain the *incremental
+rebuild*, which is the case that actually governs the edit-verify loop.
+
+As an OBJECT library, `NereusSDRLib`'s objects are direct sources of every
+test target. Touching one `src/core` file therefore invalidates all 598
+targets' AUTOMOC before a single link is reached:
+
+```
+597  timestamp               AUTOMOC, per test target
+598  mocs_compilation.cpp.o  moc recompile, per test target
+609  .cpp.o                  test TU recompile
+598  links
+```
+
+As a shared library it is a link-time dependency only. AUTOMOC does not
+fire, no test TU recompiles, and the rebuild is one dylib plus 598 stub
+relinks. That severed dependency, not link size, is what produces the 12.8x.
+
+**Open item: LTO now interacts with this.** With `NereusSDRLib` SHARED and
+`NEREUSSDR_LTO_AVAILABLE` set, the app links `NereusSDRObjs_LTO` statically
+and does not link the dylib, yet the dylib is still built (tests need it)
+and still staged into `Contents/Frameworks`. An LTO release therefore ships
+a ~24 MB dylib nothing loads. Not a defect at the current default (LTO is
+off), and the parent design predicted the collision ("Phase 1 subsumes it").
+Resolving it means either gating the staging on the LTO branch or dropping
+the dual-object-library scheme in favour of IPO on the shared target.
+
+---
+
+## 2. Evidence (as originally written; see §2.0)
 
 Measured on this machine (Apple Silicon, macOS 26.5.2, Qt 6.11.0,
 `RelWithDebInfo`, ninja, ccache warm) by building the full tree both ways.

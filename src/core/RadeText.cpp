@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// no-port-check: NereusSDR-native file. See RadeText.h for the full
-// rationale for using third_party/rade's native EOO callsign API
-// instead of porting freedv-gui's rade_text.c.
+// no-port-check: NereusSDR-native Qt6 wrapper. See RadeText.h; the ported
+// format lives in RadeTextCodec / RadeLdpc / RadeHra5656.
 //
 // =================================================================
 // src/core/RadeText.cpp  (NereusSDR)
 // =================================================================
 //
-// See RadeText.h for the upstream-license posture and the rationale
-// for using third_party/rade's native EOO callsign API instead of
-// porting freedv-gui's rade_text.c verbatim.
+// See RadeText.h.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -22,12 +19,20 @@
 //                 [@b289102]; implemented in
 //                 third_party/rade/src/rade_api_nopy.c:159-201
 //                 [@b289102]). AI tooling: Anthropic Claude Code.
+//   2026-09-28  J.J. Boyd / KG4VCF  RADE end-of-over callsigns: FreeDV's
+//                 format through RadeTextCodec. AI tooling: Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "core/RadeText.h"
 
 #include <QByteArray>
 #include <QLoggingCategory>
+
+#include <string>
+#include <vector>
+
+#include "core/RadeTextCodec.h"
 
 extern "C" {
 #include "rade_api.h"
@@ -56,52 +61,39 @@ QString RadeText::ourCallsign() const
 
 void RadeText::pushTxCallsign(struct rade* rade)
 {
-    // No-op guards: a null rade pointer (RadeChannel's m_rade is null
-    // between stop() and the next start()) and an empty callsign
-    // stash. The empty-callsign guard is load-bearing: without it we
-    // would feed an empty C string into rade_tx_set_eoo_callsign,
-    // which (per rade_api_nopy.c:164-172 [@b289102]) pads with spaces
-    // and writes 0x20 = 0100000 across all RADE_EOO_CALLSIGN_MAX*7
-    // bits. That would silently clobber any callsign the caller had
-    // previously set into the EOO buffer.
-    if (!rade || m_ourCallsign.isEmpty()) {
+    if (rade == nullptr) {
         return;
     }
-
-    // The wire convention is upper-case ASCII; the underlying API at
-    // rade_api_nopy.c:159-173 [@b289102] does not transform the input,
-    // so we upper-case here. Truncate to RADE_EOO_CALLSIGN_MAX
-    // characters (the API at :162 asserts the EOO bit budget is at
-    // least RADE_EOO_CALLSIGN_MAX*7 bits but only writes those bits;
-    // bytes beyond the limit are discarded by strlen-bounded :164-165).
-    const QByteArray ascii = m_ourCallsign.left(RADE_EOO_CALLSIGN_MAX)
-                                 .toUpper()
-                                 .toLatin1();
-    rade_tx_set_eoo_callsign(rade, ascii.constData());
+    const int nBits = rade_n_eoo_bits(rade);
+    if (nBits <= 0) {
+        return;
+    }
+    std::vector<float> syms(static_cast<size_t>(nBits), 0.0f);
+    if (!m_ourCallsign.isEmpty()) {
+        // FreeDV passes its reporting callsign, cut to 8 characters, to
+        // rade_text_generate_tx_string with rade_n_eoo_bits floats
+        // (freedv-gui src/main.cpp:2648-2653 and
+        // src/freedv_interface.cpp:703-708 [@a4ae053]).
+        const QByteArray ascii = m_ourCallsign.toLatin1();
+        radetext::generateTxString(ascii.constData(), static_cast<int>(ascii.size()),
+                                   syms.data(), nBits);
+    }
+    rade_tx_set_eoo_bits(rade, syms.data());
 }
 
 void RadeText::processRxEooBits(const float* eooBits, int nBits)
 {
-    // Same no-op guards. A null bit buffer or a too-short buffer
-    // (less than RADE_EOO_CALLSIGN_MAX*7 = 56 bits) cannot encode a
-    // callsign; the underlying API at rade_api_nopy.c:180-183
-    // [@b289102] returns 0 and writes an empty string in that case,
-    // but we short-circuit here to skip the function call entirely.
-    if (!eooBits || nBits < RADE_EOO_CALLSIGN_MAX * 7) {
+    if (eooBits == nullptr || nBits < radetext::kLdpcTotalSizeBits) {
         return;
     }
-
-    char buf[RADE_EOO_CALLSIGN_MAX + 1] = {};
-    const int decodedLen = rade_rx_get_eoo_callsign(eooBits, nBits, buf);
-    if (decodedLen <= 0) {
+    // freedv-backend RADEReceiveStep passes rade_n_eoo_bits / 2 symbols
+    // (src/pipeline/RADEReceiveStep.cpp:239 [@f02e7e9]).
+    std::string text;
+    if (!radetext::decodeRx(eooBits, nBits / 2, &text) || text.empty()) {
         return;
     }
-
-    const QString callsign = QString::fromLatin1(buf, decodedLen);
-    if (callsign.isEmpty()) {
-        return;
-    }
-
+    const QString callsign = QString::fromLatin1(text.data(), static_cast<int>(text.size()));
+    qCInfo(lcRadeText) << "RADE end-of-over callsign decoded:" << callsign;
     emit textDecoded(callsign);
 }
 

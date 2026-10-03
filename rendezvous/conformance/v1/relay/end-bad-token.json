@@ -1,0 +1,29 @@
+{
+  "runs": [
+    "relay"
+  ],
+  "steps": [
+    {
+      "connect": "core"
+    },
+    {
+      "from": "core",
+      "role": "scripted",
+      "binary": [
+        "80",
+        "$token:core:s:a:forged"
+      ]
+    },
+    {
+      "to": "core",
+      "binary": [
+        "83",
+        "626164546f6b656e"
+      ]
+    },
+    {
+      "expectClosed": "core",
+      "code": 1000
+    }
+  ]
+}

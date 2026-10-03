@@ -95,6 +95,27 @@ void elevateComputeThreadPriority();
 // USER_INTERACTIVE puts them in the same scheduling class as the GUI
 // and DSP threads -- compile workers (DEFAULT QoS) consistently lose
 // the time slice race.
-void elevateLatencyCriticalThreadPriority();
+//
+// logSuccess false keeps a success out of the log (R-R3-21: the remote
+// audio receiver elevates a thread per audio context and says so once
+// per process). Failures are logged either way.
+void elevateLatencyCriticalThreadPriority(bool logSuccess = true);
+
+// Record that the OS refused a priority elevation for the calling thread.
+// The first refusal in the process logs one plain-English warning; every
+// later refusal logs nothing here (per-thread detail stays at info level
+// at the call site).  Returns true only for the call that logged it.
+// Thread-safe.  Exposed so the once-only rule is testable on every
+// platform; production callers are the Linux elevation paths.
+bool noteThreadPriorityRefused();
+
+// Mark the once-only warning as given without logging it, for a caller that
+// has just told the operator the same thing in its own words (nereusd's
+// thread placement startup line). Returns true only if no warning had been
+// logged or claimed yet. Thread-safe.
+bool claimThreadPriorityRefusedWarning();
+
+// Test seam: forget that the warning was logged.
+void resetThreadPriorityRefusedForTest();
 
 } // namespace NereusSDR

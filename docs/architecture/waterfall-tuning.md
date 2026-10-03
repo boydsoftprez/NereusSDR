@@ -82,13 +82,13 @@ The AetherSDR "look" is **not** a narrow-band blue-only palette. It's a **full-s
 
 **Source:** **Thetis** — `console.specRX.GetSpecRX(0).AverageMode`, Log Recursive mode. C# P/Invoke declaration in `dsp.cs`, smoothing path in `display.cs`.
 
-### 3. Averaging time constant: `0.05f` alpha
+### 3. Averaging time: 650 ms
 
-**Value:** `sw->setAverageAlpha(0.05f)`
+**Value:** `sw->setSpectrumAverageTimeMs(650)` (saved as `DisplaySpectrumAverageTimeMs`)
 
-**Why:** The alpha value is the weight given to each new FFT frame in the exponential smoothing `smoothed = alpha * new + (1-alpha) * previous`. At `0.05` each new frame contributes only 5% — the smoothing window is approximately `1/alpha = 20 frames`. At the default 30 FPS that's about 667 ms of settling time, which reads as "~500 ms smooth" to the eye once you factor in frame-to-frame correlation. Heavier values (0.01) feel laggy on tuning; lighter (0.20) still show grass.
+**Why:** The March recipe gave each new FFT frame a 5% weight in the exponential smoothing `smoothed = 0.05 * new + 0.95 * previous`, a window of about 20 frames (about 667 ms at 30 FPS). Heavier values feel laggy on tuning; lighter ones still show grass.
 
-**UI note:** the Setup → Display → Spectrum Defaults "Averaging Time" spinbox converts ms → alpha via `qBound(0.05f, 1.0f - ms/5000.0f, 0.95f)`. That formula is for the manual knob; the smooth-defaults profile bypasses it and sets 0.05 directly.
+The averager keeps the back-multiplier `exp(-1 / (fps * tau))` (`averageAlphaForTimeMs`, from Thetis `specHPSDR.cs` AvTau). At 30 FPS, 650 ms gives 0.950, the same 5% new-frame weight. Until 2026-09-28 the recipe set a bare `setAverageAlpha(0.05f)`, which the averager read as a 0.05 back-multiplier (almost no smoothing) and which the next frame-rate or averaging-time change replaced; it was never saved. Setting the time keeps the March look and survives a restart. `tst_clarity_smooth_defaults` checks the number.
 
 **Source:** **NereusSDR empirical** — chosen to produce a smooth trace against the 30 FPS output. Visual target: reference screenshots.
 

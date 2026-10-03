@@ -10,6 +10,13 @@
 // Design reference: docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-design.md §4.8
 //
 // AI tooling: Anthropic Claude Code.
+//
+// Modification history (NereusSDR):
+//   2026-09-24  J.J. Boyd / KG4VCF  R-R3-47 / R-R3-22: the stored memories
+//                                    as JSON for the Core's mirrored
+//                                    `accessoryData` object, and a remote
+//                                    window reading the Core's list.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #pragma once
 
@@ -59,10 +66,28 @@ public:
     /// Return all stored memories, sorted by band then antenna.
     QVector<TuneMemory> listAll() const;
 
+    // R-R3-47 / R-R3-22: readable remotely.
+
+    /// The memories as a compact JSON array, sorted by band then antenna:
+    /// {"antenna":N,"band":"<Band key name>","c1":..,"l":..,"c2":..,"savedAtMs":..}.
+    static QString toJson(const QVector<TuneMemory>& memories);
+    static QVector<TuneMemory> fromJson(const QString& json);
+
+    /// A remote window: the Core's list arriving. recall() and listAll()
+    /// answer from it from now on; emits changed().
+    void applyMirroredJson(const QString& json);
+
+    /// The Core: a window changed a memory through the settings; tell the
+    /// views.
+    void notifyChanged() { emit changed(); }
+
 signals:
     void changed();
 
 private:
+    bool m_mirrored{false};
+    QVector<TuneMemory> m_mirroredList;
+
     /// Key for a single (antenna, band) slot:
     ///   "TGXL_TuneMemory_Ant<N>_Band<M>"
     /// where M is Band::bandKeyName(band).

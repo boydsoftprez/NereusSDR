@@ -1,0 +1,8 @@
+{
+    "runs": ["station", "app"],
+    "stationSetup": {"radio": "static", "slices": 1, "otherConnections": 24},
+    "steps": [
+        {"from": "station", "message": {"reason": "The Core already has as many connections as it allows. Try again shortly.", "retryable": true, "type": "session.end"}},
+        {"expectClosed": {"retryable": true}}
+    ]
+}

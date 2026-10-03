@@ -65,7 +65,7 @@ private:
         badge->setText(u"PA FAULT"_s);
         badge->setStyleSheet(u"QLabel { color: #ff6060; font-weight: bold;"
                              " font-size: 11px; padding: 2px 6px; }"_s);
-        badge->setToolTip(u"PA Status — FAULT (PA tripped, MOX dropped)"_s);
+        badge->setToolTip(u"PA status: FAULT (the PA tripped and MOX dropped)"_s);
     }
 
     static void applyPaOk(QLabel* badge)
@@ -73,7 +73,7 @@ private:
         badge->setText(u"PA OK"_s);
         badge->setStyleSheet(u"QLabel { color: #60ff60; font-weight: bold;"
                              " font-size: 11px; padding: 2px 6px; }"_s);
-        badge->setToolTip(u"PA Status — OK"_s);
+        badge->setToolTip(u"PA status: OK"_s);
     }
 
 private slots:
@@ -128,7 +128,7 @@ private slots:
         badge.setObjectName(u"paStatusBadge"_s);
         badge.setStyleSheet(
             u"QLabel { color: #60ff60; font-weight: bold; font-size: 11px; padding: 2px 6px; }"_s);
-        badge.setToolTip(u"PA Status — OK"_s);
+        badge.setToolTip(u"PA status: OK"_s);
 
         QCOMPARE(badge.text(), u"PA OK"_s);
         QVERIFY(badge.toolTip().contains(u"OK"_s));
@@ -139,7 +139,7 @@ private slots:
     // Mirrors MainWindow::setPaTripped(true):
     //   m_paStatusBadge->setText("PA FAULT");
     //   m_paStatusBadge->setStyleSheet("... color: #ff6060 ...");
-    //   m_paStatusBadge->setToolTip("PA Status — FAULT ...");
+    //   m_paStatusBadge->setToolTip("PA status: FAULT ...");
 
     void setPaTripped_true_changesBadgeText()
     {
@@ -147,7 +147,7 @@ private slots:
         badge.setObjectName(u"paStatusBadge"_s);
         badge.setStyleSheet(
             u"QLabel { color: #60ff60; font-weight: bold; font-size: 11px; padding: 2px 6px; }"_s);
-        badge.setToolTip(u"PA Status — OK"_s);
+        badge.setToolTip(u"PA status: OK"_s);
 
         // simulate setPaTripped(true)
         applyPaFault(&badge);
@@ -161,7 +161,7 @@ private slots:
     // Mirrors MainWindow::setPaTripped(false):
     //   m_paStatusBadge->setText("PA OK");
     //   m_paStatusBadge->setStyleSheet("... color: #60ff60 ...");
-    //   m_paStatusBadge->setToolTip("PA Status — OK");
+    //   m_paStatusBadge->setToolTip("PA status: OK");
 
     void setPaTripped_false_changesBadgeText()
     {
@@ -169,7 +169,7 @@ private slots:
         badge.setObjectName(u"paStatusBadge"_s);
         badge.setStyleSheet(
             u"QLabel { color: #ff6060; font-weight: bold; font-size: 11px; padding: 2px 6px; }"_s);
-        badge.setToolTip(u"PA Status — FAULT (PA tripped, MOX dropped)"_s);
+        badge.setToolTip(u"PA status: FAULT (the PA tripped and MOX dropped)"_s);
 
         // simulate setPaTripped(false)
         applyPaOk(&badge);

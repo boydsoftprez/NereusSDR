@@ -38,9 +38,15 @@
 //                Sub-Epic G Task 21: MOX-active PS-HOLD overlay.
 //                Still NereusSDR-original in structure (Qt6 dialog
 //                vs C# WinForms).
+//   2026-10-01 - Diversity lane: the dialog edits RadioModel's diversity
+//                owner (slice A by id, diversityTargetSlice), follows it
+//                as slices open and close, and disables its controls with
+//                a reason while slice A is closed. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QDialog>
+#include <QPointer>
 
 #include <array>
 
@@ -95,7 +101,14 @@ private slots:
     void refreshPauseState();
 
 private:
-    SliceModel* sliceA() const;  // m_radioModel->slices().value(0), nullptr-safe
+    // RadioModel's diversity owner (diversityTargetSlice: slice A by id,
+    // never by list position), nullptr while it is closed.
+    SliceModel* sliceA() const;
+    // Follows the owner as slices open and close: moves the slice
+    // connections to it and enables the controls, or disables them with a
+    // reason when there is none.
+    void bindSlice();
+    void applyOwnerPresence();
 
     // Phase 3F Sub-Epic G Task 3: 8 per-band memory slots.
     // Left-click recalls slot N into Slice A; right-click stores
@@ -113,6 +126,8 @@ private:
     void loadMemoryFromSettings();
 
     RadioModel* m_radioModel{nullptr};
+    // The slice the connections in bindSlice are made to.
+    QPointer<SliceModel> m_boundSlice;
 
     QCheckBox*            m_enableBox{nullptr};
     QSlider*              m_phaseSlider{nullptr};

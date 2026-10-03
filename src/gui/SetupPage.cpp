@@ -19,12 +19,35 @@
 //                 via Anthropic Claude Code.
 //                 Shared setup-page style constants mirror AetherSDR
 //                 `src/gui/RadioSetupDialog.{h,cpp}`.
+//   2026-09-23 - R-R3-21: setTransmitPermitted hook and
+//                 gateTransmitControls helper for transmit sections on
+//                 receive pages. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-23 - R-R3-21 / R-R3-10: setStationSettingsAvailable hook and
+//                 gateStationControls helper, so a page that mixes this
+//                 computer's settings with the Core's disables only the
+//                 Core's while the remote window is disconnected.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-09-24 - R-R3-49 (parity Task 1): setTransmitSettingsPermitted
+//                 hook. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 3): setTransmitSettingsPermittedAt,
+//                 the gate for settings a later transmitSettingsVersion
+//                 brought. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-26: Transmit group fix wave 2 (M8): VOX shows disabled with the
+//               plain reason while this computer has no microphone line to
+//               the Core; the Core's refusal stays the backstop. J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "SetupPage.h"
 #include "StyleConstants.h"
 
 #include <QScrollArea>
+#include <QVariant>
 #include <QFrame>
 
 namespace NereusSDR {
@@ -100,16 +123,82 @@ void SetupPage::syncFromModel()
     // Base implementation is a no-op; subclasses override to pull from RadioModel.
 }
 
-// ── Static NYI marker ─────────────────────────────────────────────────────────
+// ── Section helper ────────────────────────────────────────────────────────────
 
-void SetupPage::markNyi(QWidget* widget, const QString& phase)
+void SetupPage::setTransmitPermitted(bool /*permitted*/, const QString& /*reason*/)
 {
-    if (widget == nullptr) { return; }
-    widget->setEnabled(false);
-    widget->setToolTip(QStringLiteral("NYI — %1").arg(phase));
 }
 
-// ── Section helper ────────────────────────────────────────────────────────────
+void SetupPage::setVoxPermitted(bool /*permitted*/, const QString& /*reason*/)
+{
+}
+
+void SetupPage::setTransmitSettingsPermitted(bool /*permitted*/, const QString& /*reason*/)
+{
+}
+
+void SetupPage::setTransmitSettingsPermittedAt(int /*version*/, bool /*permitted*/,
+                                               const QString& /*reason*/)
+{
+}
+
+void SetupPage::setStationSettingsAvailable(bool /*available*/, const QString& /*reason*/)
+{
+}
+
+namespace {
+
+// One save/restore routine, two property sets: a control follows one gate.
+// A page whose control is held for both transmit and the Core combines the
+// two itself and calls one helper (AudioTxInputPage does).
+void gateControlsWith(const QList<QWidget*>& controls, bool allowed, const QString& reason,
+                      const char* savedTooltip, const char* savedDescription,
+                      const char* savedEnabled)
+{
+    for (QWidget* control : controls) {
+        if (!control) { continue; }
+        if (!allowed) {
+            if (!control->property(savedTooltip).isValid()) {
+                control->setProperty(savedTooltip, control->toolTip());
+                control->setProperty(savedDescription, control->accessibleDescription());
+                control->setProperty(savedEnabled, control->isEnabled());
+            }
+            control->setEnabled(false);
+            control->setToolTip(reason);
+            control->setAccessibleDescription(reason);
+        } else if (control->property(savedTooltip).isValid()) {
+            control->setEnabled(control->property(savedEnabled).toBool());
+            control->setToolTip(control->property(savedTooltip).toString());
+            control->setAccessibleDescription(control->property(savedDescription).toString());
+            control->setProperty(savedTooltip, QVariant());
+            control->setProperty(savedDescription, QVariant());
+            control->setProperty(savedEnabled, QVariant());
+        }
+    }
+}
+
+} // namespace
+
+void SetupPage::gateTransmitControls(const QList<QWidget*>& controls, bool permitted,
+                                     const QString& reason)
+{
+    gateControlsWith(controls, permitted, reason, "SetupPageSavedTransmitTooltip",
+                     "SetupPageSavedTransmitDescription", "SetupPageSavedTransmitEnabled");
+}
+
+void SetupPage::gateStationControls(const QList<QWidget*>& controls, bool available,
+                                    const QString& reason)
+{
+    gateControlsWith(controls, available, reason, "SetupPageSavedStationTooltip",
+                     "SetupPageSavedStationDescription", "SetupPageSavedStationEnabled");
+}
+
+void SetupPage::gateOnAirControls(const QList<QWidget*>& controls, bool offAir,
+                                  const QString& reason)
+{
+    gateControlsWith(controls, offAir, reason, "SetupPageSavedOnAirTooltip",
+                     "SetupPageSavedOnAirDescription", "SetupPageSavedOnAirEnabled");
+}
 
 QGroupBox* SetupPage::addSection(const QString& title)
 {

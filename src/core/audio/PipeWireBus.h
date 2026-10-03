@@ -15,6 +15,9 @@
 //
 // Modification history (NereusSDR):
 //   2026-04-24  J.J. Boyd (KG4VCF) — created for Phase 3O Task 12.
+//   2026-09-23  J.J. Boyd (KG4VCF): R-R3-44: outputPacing() and
+//               outputHasReader() for VAX outputs a remote window feeds.
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -87,6 +90,12 @@ public:
     // Producer (RX push) / consumer (TX pull). Audio-thread safe.
     qint64 push(const char* data, qint64 bytes) override;
     qint64 pull(char* data, qint64 maxBytes) override;
+
+    // R-R3-44: playback timing of an output stream (the graph's cycles),
+    // and whether an app is reading it (the stream is streaming, which a
+    // VAX source node is only while an app is linked).
+    std::optional<OutputPacing> outputPacing() const override;
+    std::optional<bool> outputHasReader() const override;
 
     // Metering. rxLevel defers to PipeWireStream which computes RMS on
     // every push() call. txLevel still returns the unwritten m_txLevel

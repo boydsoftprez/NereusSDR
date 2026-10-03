@@ -17,6 +17,14 @@
 // AI tooling: Anthropic Claude Code.
 // =================================================================
 
+// Modification history (NereusSDR):
+//   2026-09-24  J.J. Boyd / KG4VCF  R-R3-47 / R-R3-22: the counters as one
+//                                    value (Counters) the Core carries in
+//                                    its mirrored `accessoryData` object,
+//                                    and a remote window's copy fed from
+//                                    it. AI-assisted via Anthropic Claude
+//                                    Code.
+
 #pragma once
 
 #include <QObject>
@@ -43,7 +51,32 @@ class ConnectionDiagnostics : public QObject {
     Q_PROPERTY(int     faultsSession   READ faultsSession   NOTIFY changed)
 
 public:
+    /// R-R3-47: every counter at once, as the Core mirrors them. The
+    /// connection start is a time (ms since 1970 UTC, 0 while disconnected)
+    /// rather than an uptime, so a window works the uptime out itself.
+    struct Counters {
+        qint64 connectedSinceMs{0};
+        qint64 lastRttMs{0};
+        int    keepaliveMissed{0};
+        int    reconnectCount{0};
+        qint64 framesIn{0};
+        qint64 framesOut{0};
+        qint64 bytesIn{0};
+        qint64 bytesOut{0};
+        qint64 lastFrameMs{0};
+        int    faultsSession{0};
+        bool operator==(const Counters&) const = default;
+    };
+
     explicit ConnectionDiagnostics(QObject* parent = nullptr);
+
+    /// R-R3-47: the current counters.
+    Counters counters() const;
+
+    /// R-R3-47: a remote window. Takes the Core's counters as they are and
+    /// emits changed() at once. Unbinds any connection first: a window's
+    /// counters are the Core's, never its own.
+    void applyMirroredCounters(const Counters& counters);
 
     // Bind to a PGXL connection. Disconnects any prior binding first.
     // All prior accumulated counters (keepaliveMissed, reconnectCount,

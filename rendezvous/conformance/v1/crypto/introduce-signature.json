@@ -1,0 +1,72 @@
+{
+  "description": "A device introduces itself by signing \"NereusSDR introduce v1\\n\" || station id (26 ASCII bytes) || nonce, where nonce is the 32 raw bytes the introducing connection's hello nonce decodes to. The rendezvous forwards the signature untouched; the station verifies it with the key of the paired device whose id is device (the base64url SHA-256 of its SPKI DER, link section 3.5).",
+  "device": {
+    "fixed": "A fixed public key for these vectors. The key was generated only to produce them and is used by nothing else (no Core, device or server); a runner only verifies with it.",
+    "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE_WtfdDw6w8-gD6JwPzj8eZiLZ5Ou1vLPBx5t7tqo3n6IusVGiMZJJHaEuOODaV8FdxtdqD0PWB9LkjgrET82Mw",
+    "id": "Vql0Tj7p5WRKQuJyMEUd4Pdrs9ZxVyXEPI5anvUOYnI"
+  },
+  "stationId": "lwhu2kyjnrfdwvpxvdckao3lb7",
+  "nonce": "_Bop5VvgG7xUD7jGmvpA63z0zc4DeWmTPBs-5H65aQ0",
+  "transcriptHex": "4e657265757353445220696e74726f647563652076310a6c776875326b796a6e726664777670787664636b616f336c6237fc1a29e55be01bbc540fb8c69afa40eb7cf4cdce037969933c1b3ee47eb9690d",
+  "cases": [
+    {
+      "name": "signed",
+      "signature": "KQ0RuGlhoBWV1kXWKxkK5vhQMVsKC_lKsadj4HApIh42dq9fhPDURBEXN5Z2TAvYdRlFEUTXPcnV9g-y9uGbPw",
+      "valid": true
+    },
+    {
+      "name": "otherNonce",
+      "signature": "mWo_rs05QgoLtc-uN8K3ky8c9mZmMvF-JMzNWTqZhzyEqyPD5_bmaCsrIFbPgVXUsbNofpxvrkPtOGmXsVu7Ug",
+      "valid": false,
+      "why": "signed over another connection's nonce"
+    },
+    {
+      "name": "otherStation",
+      "signature": "ioHnlcuwUoDHzG4gJZuqYxYvQVVTms2XsZaZeQb8zMGm3x7e6K-n-zHMvqMYgCGNfDPXuSPTSfI_u44-S8F9Qw",
+      "valid": false,
+      "why": "signed for another station id"
+    },
+    {
+      "name": "nonceAsText",
+      "signature": "nYCqgjBuFLl-ibujrr0DsR6k0ROY6N-M4YFqxw2AcbvjIyyvxg8Yq365JeslslYZDjzPnXG-mFzohkPrhZ7ohA",
+      "valid": false,
+      "why": "signed over the nonce's base64url text instead of its 32 bytes"
+    },
+    {
+      "name": "flippedBit",
+      "signature": "qQ0RuGlhoBWV1kXWKxkK5vhQMVsKC_lKsadj4HApIh42dq9fhPDURBEXN5Z2TAvYdRlFEUTXPcnV9g-y9uGbPw",
+      "valid": false,
+      "why": "the first bit of r flipped"
+    },
+    {
+      "name": "otherDevice",
+      "signature": "kZKmw3orvEzVrY-ddeGVLrTD9gUCUPUfebOgP3lOAzhzD_zzDXf3pWJVXNA4GdcT4WS1Bycl0QppJxg5ZcMCjA",
+      "valid": false,
+      "why": "signed by another device's key"
+    },
+    {
+      "name": "highS",
+      "signature": "KQ0RuGlhoBWV1kXWKxkK5vhQMVsKC_lKsadj4HApIh7JiVCfew8rvO7oyGmJs_QnR821nGJAYLsdw7sQBYGKEg",
+      "valid": true,
+      "why": "s replaced by n - s (a high-s signature): valid, since r and s are both from 1 to n - 1 and verifiers such as OpenSSL and CryptoKit accept it"
+    },
+    {
+      "name": "rZero",
+      "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2dq9fhPDURBEXN5Z2TAvYdRlFEUTXPcnV9g-y9uGbPw",
+      "valid": false,
+      "why": "r is 0"
+    },
+    {
+      "name": "sIsN",
+      "signature": "KQ0RuGlhoBWV1kXWKxkK5vhQMVsKC_lKsadj4HApIh7_____AAAAAP__________vOb6racXnoTzucrC_GMlUQ",
+      "valid": false,
+      "why": "s equals the group order n"
+    },
+    {
+      "name": "rIsN",
+      "signature": "_____wAAAAD__________7zm-q2nF56E87nKwvxjJVE2dq9fhPDURBEXN5Z2TAvYdRlFEUTXPcnV9g-y9uGbPw",
+      "valid": false,
+      "why": "r equals the group order n"
+    }
+  ]
+}

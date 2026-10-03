@@ -1,0 +1,52 @@
+{
+  "runs": [
+    "relay",
+    "core"
+  ],
+  "relaySetup": {
+    "sessionsPerStation": 1
+  },
+  "steps": [
+    {
+      "connect": "core2"
+    },
+    {
+      "from": "core2",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:core:s0:a"
+      ]
+    },
+    {
+      "to": "core2",
+      "binary": [
+        "81",
+        "01",
+        "00"
+      ]
+    },
+    {
+      "connect": "core"
+    },
+    {
+      "from": "core",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:core:s:a"
+      ]
+    },
+    {
+      "to": "core",
+      "binary": [
+        "83",
+        "746f6f4d616e7953657373696f6e73"
+      ]
+    },
+    {
+      "expectClosed": "core",
+      "code": 1000
+    }
+  ]
+}

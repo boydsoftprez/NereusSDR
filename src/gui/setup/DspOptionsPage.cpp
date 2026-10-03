@@ -37,6 +37,31 @@
 //                 Anthropic Claude Code.
 //                 Task 4.1: DspOptionsPage skeleton + 18 controls.
 //                 Mirrors Thetis DSP Options tab (design Section 4A).
+//   2026-09-23 - R-R3-21: the nine TX buffer/filter combos follow the
+//                 remote transmit permission; each combo is named after
+//                 its settings key. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-23 - R3 Setup fix wave (R-R3-21, R-R3-10): building the page
+//                 applies the saved high-resolution filter setting without
+//                 writing it back. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-23 - R-R3-21: applyHighResFilter() / applyPersistedHighResFilter()
+//                 let MainWindow apply the saved high-resolution filter
+//                 setting at startup and when the receive channel appears,
+//                 not only when this page opens. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49 (parity Task 1): the nine TX combos follow the
+//                 transmit settings gate instead of the transmit
+//                 permission; the Core applies them to its TX channel.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-26 - R-R3-49 (parity Task 16): the high-resolution filter
+//                 graph works in a remote window, drawing the Core's curve
+//                 (dsp.filterResponse); "Time to last change" shows the
+//                 Core's apply time. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-29 - R-R3-49 / R-IOS-18: Setup description version 15 ids on
+//                the high-resolution box and the time readout. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -89,6 +114,7 @@
 #include "core/AppSettings.h"
 #include "core/RxChannel.h"
 #include "core/WdspEngine.h"
+#include "core/session/IStationLink.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "gui/StyleConstants.h"
@@ -104,6 +130,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QVBoxLayout>
+
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -178,12 +206,166 @@ void wireCheckPersist(QCheckBox* check, const QString& key)
 
 }  // namespace
 
+// R-R3-21: the high-resolution filter setting used to reach the filter
+// displays only when this page was built, so a restart lost it until the
+// operator opened Setup. The fan-out lives here so the page and MainWindow
+// (startup, and each time the receive channel is created or destroyed)
+// apply it the same way.
+//
+// bindRxChannel(rxCh) is called unconditionally: when high-res is ON the
+// channel supplies the FIR curve; when OFF the pointer is held but unused
+// (paintHighResolutionFilterCurve is gated on m_highResolution).  A nullptr
+// channel causes paintHighResolutionFilterCurve to return early gracefully.
+//
+// R3 Setup fix wave (R-R3-21): the fan-out does not save. Only the
+// operator's toggle does; building the page (in a remote window, from the
+// Core's settings, possibly offline) must not write the value it has just
+// read back to the Core.
+// The receive channel the filter graphs draw the high-resolution curve
+// from: channel 0 (see applyHighResFilter below).
+static RxChannel* filterGraphChannel(RadioModel* rm)
+{
+    return rm->rxChannelForSlice(0);
+}
+
+void DspOptionsPage::applyHighResFilter(RadioModel* rm, bool highRes)
+{
+    // R-R3-49 (parity Task 16): a remote window has no channel; while the
+    // curve is wanted it fetches the Core's (RadioModel::
+    // setCoreFilterResponseWanted) and the items draw that.
+    if (rm) {
+        rm->setCoreFilterResponseWanted(highRes);
+    }
+    ContainerManager* cm = rm ? rm->containerManager() : nullptr;
+    if (!cm) {
+        return;
+    }
+
+    // Phase 3F Sub-Epic J Task 11: RadioModel::rxChannelForSlice()
+    // replaces the direct wdspEngine()->rxChannel() reach -- src/gui/
+    // no longer touches WdspEngine directly. Still channel 0: containers
+    // and their MeterItems are not slice-scoped today (forEachMeterItem
+    // fans out to every container regardless of which slice, if any, it
+    // is showing), so there is no "this item's slice" to resolve yet.
+    // Whether this fan-out should instead follow the active slice
+    // (Task 4 gave the container S-meter that treatment) is a separate,
+    // larger question left for a follow-up, not a mechanical routing fix.
+    RxChannel* rxCh = filterGraphChannel(rm);
+
+    cm->forEachMeterItem([highRes, rxCh](MeterItem* item) {
+        if (auto* fdi = qobject_cast<FilterDisplayItem*>(item)) {
+            fdi->bindRxChannel(rxCh);
+            fdi->setHighResolution(highRes);
+        }
+    });
+    applyCoreFilterResponse(rm);
+}
+
+void DspOptionsPage::applyCoreFilterResponse(RadioModel* rm)
+{
+    ContainerManager* cm = rm ? rm->containerManager() : nullptr;
+    if (!cm || rm->role() != RadioModel::Role::Remote) {
+        return;
+    }
+    // The Core sends dB, 0 at the peak; the graph resamples magnitudes
+    // (RxChannel::resampleFilterResponse), as it does its own channel's.
+    const RadioModel::FilterResponse& response = rm->coreFilterResponse();
+    QVector<double> bins;
+    bins.reserve(response.magnitudesDb.size());
+    for (double db : response.magnitudesDb) {
+        bins.append(std::pow(10.0, db / 20.0));
+    }
+    cm->forEachMeterItem([&bins](MeterItem* item) {
+        if (auto* fdi = qobject_cast<FilterDisplayItem*>(item)) {
+            fdi->setFilterResponseBins(bins);
+        }
+    });
+}
+
+void DspOptionsPage::applyPersistedHighResFilterTo(RadioModel* rm, MeterItem* item)
+{
+    auto* fdi = qobject_cast<FilterDisplayItem*>(item);
+    if (!rm || !fdi) {
+        return;
+    }
+    fdi->bindRxChannel(filterGraphChannel(rm));
+    fdi->setHighResolution(
+        AppSettings::instance().value(
+            QStringLiteral("DspOptionsHighResFilterCharacteristics"),
+            QStringLiteral("False")).toString() == QLatin1String("True"));
+    // R-R3-49 (parity Task 16): and the Core's curve, in a remote window.
+    if (rm->role() == RadioModel::Role::Remote) {
+        QVector<double> bins;
+        for (double db : rm->coreFilterResponse().magnitudesDb) {
+            bins.append(std::pow(10.0, db / 20.0));
+        }
+        fdi->setFilterResponseBins(bins);
+    }
+}
+
+void DspOptionsPage::applyPersistedHighResFilter(RadioModel* rm)
+{
+    const bool persistedHighRes =
+        AppSettings::instance().value(
+            QStringLiteral("DspOptionsHighResFilterCharacteristics"),
+            QStringLiteral("False")).toString() == QLatin1String("True");
+    applyHighResFilter(rm, persistedHighRes);
+}
+
 // ── Construction ──────────────────────────────────────────────────────────────
 
 DspOptionsPage::DspOptionsPage(RadioModel* model, QWidget* parent)
     : SetupPage("Options", model, parent)
 {
     buildUI();
+
+    // R-R3-21: on a remote-station model the TX combos write the station's
+    // transmit settings (the DspOptions keys are station-scoped,
+    // SettingsScope.cpp), so they start unavailable. R-R3-49 (parity Task
+    // 1): they follow the transmit settings gate SetupDialog pushes; the
+    // Core takes them while its radio is off the air, applies them to its
+    // TX channel, and refuses them while it is on the air
+    // (StationServer::handleSettingsWrite).
+    if (model && !model->ownsLocalDsp()) {
+        m_transmitSettingsPermitted = false;
+    }
+
+    // The Buffer Size (IQcomp) group locks while the radio is on the air,
+    // with its reason, as Thetis's MOX setter greys it:
+    // From Thetis setup.cs:5159 [v2.10.3.15] grpDSPBufferSize.Enabled = !mox;
+    // On a remote window isCoreOnAir is the Core's own air state.
+    if (model) {
+        m_onAir = model->isCoreOnAir();
+        connect(model, &RadioModel::coreOnAirChanged, this, [this](bool onAir) {
+            m_onAir = onAir;
+            refreshBufferAndTransmitGates();
+        });
+    }
+    refreshBufferAndTransmitGates();
+}
+
+void DspOptionsPage::setTransmitSettingsPermitted(bool permitted, const QString& reason)
+{
+    m_transmitSettingsPermitted = permitted;
+    m_transmitSettingsReason = reason;
+    refreshBufferAndTransmitGates();
+}
+
+void DspOptionsPage::refreshBufferAndTransmitGates()
+{
+    const QString onAirReason = RadioModel::dspBufferOnAirLockedReason();
+    const QString transmitReason = m_transmitSettingsReason.isEmpty()
+        ? IStationLink::transmitSettingsUnavailableReason()
+        : m_transmitSettingsReason;
+    gateOnAirControls({m_bufPhoneRx, m_bufFmRx, m_bufCwRx, m_bufDigRx}, !m_onAir, onAirReason);
+    gateTransmitControls({m_filtSizePhoneTx, m_filtSizeFmTx, m_filtSizeDigTx,
+                          m_filtTypePhoneTx, m_filtTypeFmTx, m_filtTypeDigTx},
+                         m_transmitSettingsPermitted, transmitReason);
+    // The TX buffer sizes are in the same group: held for transmit and
+    // locked on the air, with whichever reason applies.
+    gateTransmitControls({m_bufPhoneTx, m_bufFmTx, m_bufDigTx},
+                         m_transmitSettingsPermitted && !m_onAir,
+                         m_transmitSettingsPermitted ? onAirReason : transmitReason);
 }
 
 // ── Per-mode live-apply wiring (Task 4.2) ─────────────────────────────────────
@@ -208,32 +390,11 @@ namespace {
 
 // Returns true if actualMode belongs to the same DSP-Options mode group as
 // comboMode. Only the group membership matters for the live-apply gate.
+// Uses dspOptionsModeGroup (core/RxChannel.h), the mapping RxChannel reads
+// its per-mode keys by, so the gate cannot disagree with the keys applied.
 bool modeGroupMatches(DSPMode actualMode, DSPMode comboMode)
 {
-    // Map each to its key-part suffix, then compare.
-    auto keyPart = [](DSPMode m) -> int {
-        switch (m) {
-            case DSPMode::USB:
-            case DSPMode::LSB:
-            case DSPMode::AM:
-            case DSPMode::SAM:
-            case DSPMode::DSB:
-                return 0;  // Phone
-            case DSPMode::CWU:
-            case DSPMode::CWL:
-                return 1;  // Cw
-            case DSPMode::DIGU:
-            case DSPMode::DIGL:
-            case DSPMode::SPEC:
-            case DSPMode::DRM:
-                return 2;  // Dig
-            case DSPMode::FM:
-                return 3;  // Fm
-            default:
-                return 0;  // Phone
-        }
-    };
-    return keyPart(actualMode) == keyPart(comboMode);
+    return dspOptionsModeGroup(actualMode) == dspOptionsModeGroup(comboMode);
 }
 
 }  // namespace (anon, Task 4.2 helpers)
@@ -312,6 +473,8 @@ void DspOptionsPage::buildUI()
         form->setContentsMargins(8, 4, 8, 6);
 
         outRx = makeCombo(g, items);
+        outRx->setObjectName(keyPrefix + modeKey + QStringLiteral("Rx"));
+        outRx->setProperty("nereusSetupId", QStringLiteral("dsp.options.") + outRx->objectName());
         outRx->setToolTip(comboTooltip);
         loadCombo(outRx, keyPrefix + modeKey + QStringLiteral("Rx"), rxDef);
         wireComboWithLiveApply(outRx, comboMode,
@@ -320,6 +483,8 @@ void DspOptionsPage::buildUI()
 
         if (!txDef.isEmpty()) {
             outTx = makeCombo(g, items);
+            outTx->setObjectName(keyPrefix + modeKey + QStringLiteral("Tx"));
+            outTx->setProperty("nereusSetupId", QStringLiteral("dsp.options.") + outTx->objectName());
             outTx->setToolTip(comboTooltip);
             loadCombo(outTx, keyPrefix + modeKey + QStringLiteral("Tx"), txDef);
             wireComboWithLiveApply(outTx, comboMode,
@@ -367,7 +532,7 @@ void DspOptionsPage::buildUI()
     //   dsp_buf_cw_rx    = 64    (no CW TX)
     //   dsp_buf_dig_rx   = 64    dsp_buf_dig_tx   = 64
     const QString kBufTooltip = tr(
-        "Sets the DSP internal buffer size — larger values yield sharper "
+        "Sets the internal buffer size. Larger values give sharper "
         "filters but add latency.");
 
     QComboBox* unusedTxStub = nullptr;
@@ -396,7 +561,7 @@ void DspOptionsPage::buildUI()
     // Defaults from Thetis console.cs:39141-39216 [v2.10.3.13] — all 4096
     // for every mode/direction.
     const QString kFiltTooltip = tr(
-        "Sets the FIR filter length — larger values yield sharper "
+        "Sets the FIR filter length. Larger values give sharper "
         "filter skirts but add CPU and latency.");
 
     auto* fszPhone = buildModeSubgroup(tr("SSB/AM"), kFilterSizes,
@@ -467,14 +632,17 @@ void DspOptionsPage::buildUI()
     auto* cacheGroup  = new QGroupBox(tr("Filter Impulse Cache"), this);
     auto* cacheLayout = new QVBoxLayout(cacheGroup);
 
-    m_cacheImpulse = new QCheckBox(tr("Enable WDSP impulse caching"), cacheGroup);
+    // The cache is WDSP's filter impulse cache (Thetis chkWDSP_cache_impulse).
+    m_cacheImpulse = new QCheckBox(tr("Enable impulse caching"), cacheGroup);
+    m_cacheImpulse->setProperty("nereusSetupId", "dsp.options.DspOptionsCacheImpulse");
     m_cacheImpulse->setToolTip(
         tr("Cache filter impulse responses in memory for faster channel rebuilds. "
            "Trades memory for first-rebuild latency. "
            "Takes effect on the next radio connect or channel rebuild."));
 
     m_cacheImpulseSaveRestore = new QCheckBox(
-        tr("Persist impulse cache to disk between sessions"), cacheGroup);
+        tr("Keep impulse cache on disk between launches"), cacheGroup);
+    m_cacheImpulseSaveRestore->setProperty("nereusSetupId", "dsp.options.DspOptionsCacheImpulseSaveRestore");
     m_cacheImpulseSaveRestore->setToolTip(
         tr("Save the impulse cache to disk on shutdown and reload on next launch. "
            "Eliminates the first-rebuild cost after restarting NereusSDR. "
@@ -501,62 +669,45 @@ void DspOptionsPage::buildUI()
         tr("When enabled, the filter graph displays the actual computed FIR "
            "magnitude response. When disabled, a simplified box-shape passband "
            "is shown instead."));
+    m_highResFilterChars->setProperty("nereusSetupId", "dsp.options.highResFilter");
+
+    // R-R3-49 (parity Task 16): a remote window draws its Core's curve
+    // (dsp.filterResponse, dspInfoVersion 1). On a Core that does not send
+    // it the box is disabled with the reason.
+    if (RadioModel* rm = model(); rm && rm->role() == RadioModel::Role::Remote) {
+        const QString ownTip = m_highResFilterChars->toolTip();
+        const auto follow = [this, rm, ownTip]() {
+            const QString reason = rm->coreFilterResponseUnavailableReason();
+            m_highResFilterChars->setEnabled(reason.isEmpty());
+            m_highResFilterChars->setToolTip(reason.isEmpty() ? ownTip : reason);
+        };
+        follow();
+        connect(rm, &RadioModel::stationDspInfoVersionChanged, this, follow);
+    }
 
     loadCheck(m_highResFilterChars, "DspOptionsHighResFilterCharacteristics", false);
 
-    // Task 4.4: helper that fans out high-res mode + RxChannel binding to all
-    // live FilterDisplayItem instances.  Extracted so it can be called both on
-    // initial construction (to apply the persisted value) and on toggle.
-    //
-    // bindRxChannel(rxCh) is called unconditionally: when high-res is ON the
-    // channel supplies the FIR curve; when OFF the pointer is held but unused
-    // (paintHighResolutionFilterCurve is gated on m_highResolution).  A nullptr
-    // channel causes paintHighResolutionFilterCurve to return early gracefully.
+    // Task 4.4: fans out high-res mode + RxChannel binding to all live
+    // FilterDisplayItem instances, on initial construction (to apply the
+    // persisted value) and on toggle. See applyHighResFilter() above.
     auto applyHighResFanOut = [this](bool v) {
-        AppSettings::instance().setValue(
-            QStringLiteral("DspOptionsHighResFilterCharacteristics"),
-            v ? QStringLiteral("True") : QStringLiteral("False"));
-
-        RadioModel* rm = model();
-        ContainerManager* cm = rm ? rm->containerManager() : nullptr;
-        if (!cm) {
-            return;
-        }
-
-        // Phase 3F Sub-Epic J Task 11: RadioModel::rxChannelForSlice()
-        // replaces the direct wdspEngine()->rxChannel() reach -- src/gui/
-        // no longer touches WdspEngine directly. Still channel 0: containers
-        // and their MeterItems are not slice-scoped today (forEachMeterItem
-        // fans out to every container regardless of which slice, if any, it
-        // is showing), so there is no "this item's slice" to resolve yet.
-        // Whether this fan-out should instead follow the active slice
-        // (Task 4 gave the container S-meter that treatment) is a separate,
-        // larger question left for a follow-up, not a mechanical routing fix.
-        RxChannel* rxCh = rm ? rm->rxChannelForSlice(0) : nullptr;
-
-        cm->forEachMeterItem([v, rxCh](MeterItem* item) {
-            if (auto* fdi = qobject_cast<FilterDisplayItem*>(item)) {
-                fdi->bindRxChannel(rxCh);
-                fdi->setHighResolution(v);
-            }
-        });
+        applyHighResFilter(model(), v);
     };
 
     // Wire toggle → persist + fan-out.
-    connect(m_highResFilterChars, &QCheckBox::toggled, this, applyHighResFanOut);
+    connect(m_highResFilterChars, &QCheckBox::toggled, this, [applyHighResFanOut](bool v) {
+        AppSettings::instance().setValue(
+            QStringLiteral("DspOptionsHighResFilterCharacteristics"),
+            v ? QStringLiteral("True") : QStringLiteral("False"));
+        applyHighResFanOut(v);
+    });
 
     // Initial bind: apply the persisted value immediately so any FilterDisplayItem
     // instances that already exist pick up both the mode and the channel binding
     // before the first paint.
     // NOTE: ContainerManager::forEachMeterItem() is safe to call during buildUI()
     // because SetupDialog is constructed after all containers are initialised.
-    {
-        const bool persistedHighRes =
-            AppSettings::instance().value(
-                QStringLiteral("DspOptionsHighResFilterCharacteristics"),
-                QStringLiteral("False")).toString() == QLatin1String("True");
-        applyHighResFanOut(persistedHighRes);
-    }
+    applyPersistedHighResFilter(model());
 
     layout->addWidget(m_highResFilterChars);
 
@@ -565,20 +716,25 @@ void DspOptionsPage::buildUI()
     // Task 4.6 subscribes to RadioModel::dspChangeMeasured(qint64).
     // Placeholder text shown until the first rebuild occurs.
     // =========================================================================
-    m_timeToLastChangeLabel = new QLabel(tr("Time to last change: — (no change yet)"), this);
+    m_timeToLastChangeLabel = new QLabel(tr("Time to last change: none"), this);
+    m_timeToLastChangeLabel->setProperty("nereusSetupId", "dsp.options.timeToLastChange");
     m_timeToLastChangeLabel->setStyleSheet(QStringLiteral("color: #888;"));
 
-    // Wire to RadioModel::dspChangeMeasured if model is available.
-    // The signal is emitted by RadioModel::rebuildDsp() (Task 1.8) with the
-    // elapsed milliseconds of the last WDSP channel rebuild.
+    // Follows RadioModel::dspOptionsLastApplyMs: the elapsed milliseconds
+    // of the last WDSP channel rebuild (dspChangeMeasured, Task 1.8), the
+    // Core's in a remote window (parity Task 16), 0 before any.
     if (model()) {
-        connect(model(), &RadioModel::dspChangeMeasured, this,
-            [this](qint64 ms) {
-                m_timeToLastChangeLabel->setText(
-                    tr("Time to last change: %1 ms").arg(ms));
-                m_timeToLastChangeLabel->setStyleSheet(
-                    QStringLiteral("color: #c8d8e8;"));
-            });
+        const auto show = [this](qint64 ms) {
+            if (ms <= 0) {
+                return;
+            }
+            m_timeToLastChangeLabel->setText(
+                tr("Time to last change: %1 ms").arg(ms));
+            m_timeToLastChangeLabel->setStyleSheet(
+                QStringLiteral("color: #c8d8e8;"));
+        };
+        connect(model(), &RadioModel::dspOptionsLastApplyMsChanged, this, show);
+        show(model()->dspOptionsLastApplyMs());
     }
 
     layout->addWidget(m_timeToLastChangeLabel);
@@ -682,8 +838,8 @@ void DspOptionsPage::recomputeWarnings()
         m_bufPhoneTx, m_bufFmTx, m_bufDigTx);
     m_warnBufferSize->setVisible(bufferSizeDifferentRX || bufferSizeDifferentTX);
     m_warnBufferSize->setToolTip(
-        tr("Buffer sizes differ across modes — WDSP will use the mode-specific "
-           "value and no implicit conversion happens. Set all modes to the same "
+        tr("Buffer sizes differ across modes. Each mode uses its own "
+           "value and nothing is converted. Set all modes to the same "
            "buffer size if you want a consistent configuration."));
 
     const bool filterSizeDifferentRX = comboValuesDiffer4(
@@ -692,7 +848,7 @@ void DspOptionsPage::recomputeWarnings()
         m_filtSizePhoneTx, m_filtSizeFmTx, m_filtSizeDigTx);
     m_warnFilterSize->setVisible(filterSizeDifferentRX || filterSizeDifferentTX);
     m_warnFilterSize->setToolTip(
-        tr("Filter sizes differ across modes — WDSP will use the mode-specific "
+        tr("Filter sizes differ across modes. Each mode uses its own "
            "value. Set all modes to the same filter size for a consistent "
            "configuration."));
 
@@ -702,8 +858,8 @@ void DspOptionsPage::recomputeWarnings()
         m_filtTypePhoneTx, m_filtTypeFmTx, m_filtTypeDigTx);
     m_warnBufferType->setVisible(filterTypeDifferentRX || filterTypeDifferentTX);
     m_warnBufferType->setToolTip(
-        tr("Filter types differ across modes — some modes use Linear Phase and "
-           "others use Low Latency. WDSP will use the mode-specific type."));
+        tr("Filter types differ across modes: some modes use Linear Phase and "
+           "others use Low Latency. Each mode uses its own type."));
 }
 
 }  // namespace NereusSDR

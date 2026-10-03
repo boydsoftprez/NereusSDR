@@ -1,0 +1,108 @@
+{
+  "runs": [
+    "service",
+    "core"
+  ],
+  "serverSetup": {
+    "relay": true
+  },
+  "pairedDevices": [
+    "d"
+  ],
+  "steps": [
+    {
+      "connect": "station"
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:stationNonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "register",
+        "id": "$key:a:id",
+        "publicKey": "$key:a:publicKey"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge"
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "prove",
+        "signature": "$register:a:challenge:signed"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "registered",
+        "id": "$key:a:id"
+      }
+    },
+    {
+      "connect": "client"
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:clientNonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "from": "client",
+      "role": "behaviour",
+      "message": {
+        "type": "introduce",
+        "id": "$key:a:id",
+        "device": "$device:e:id",
+        "deviceSignature": "$introduce:e:a:clientNonce:signed",
+        "offer": "$sdp:offer:offer"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "introduction",
+        "from": "$b64:16:intro",
+        "device": "$device:e:id",
+        "deviceSignature": "$introduce:e:a:clientNonce:signed",
+        "offer": "$ref:offer",
+        "nonce": "$ref:clientNonce"
+      }
+    },
+    {
+      "expectSilent": "station"
+    },
+    {
+      "expectSilent": "client"
+    }
+  ]
+}

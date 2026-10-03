@@ -99,10 +99,20 @@ public:
     static constexpr int kTxLatencyMinMs     = 0;
     static constexpr int kTxLatencyMaxMs     = 70;
 
-    // From mi0bot setup.designer.cs:11159 — udCl2Freq.Value = 116 (range 1..200, MHz)
-    static constexpr int kDefaultCl2FreqMHz  = 116;
-    static constexpr int kCl2FreqMinMHz      = 1;
-    static constexpr int kCl2FreqMaxMHz      = 200;
+    // From mi0bot setup.designer.cs:11133-11163 [@c26a8a4] udCl2Freq:
+    //   DecimalPlaces = 3; Increment = 0.1; Maximum = 200; Minimum = 1;
+    //   Value = 116 (MHz).
+    // Held in kHz (the third decimal place) so the value is exact; saved
+    // as decimal MHz text ("116", "24.576").
+    static constexpr int kDefaultCl2FreqKHz  = 116000;
+    static constexpr int kCl2FreqMinKHz      = 1000;
+    static constexpr int kCl2FreqMaxKHz      = 200000;
+
+    // The CL2 frequency in decimal MHz text, as the setting holds it:
+    // parse gives kHz (rounded to the third decimal place) and false for
+    // text that is not a finite number; the range is not checked.
+    static bool parseCl2FreqMHz(const QString& text, int* kHz);
+    static QString cl2FreqMHzText(int kHz);
 
     // ── Per-MAC AppSettings rooted at hardware/<mac>/hl2/<key> ───────────────
     void setMacAddress(const QString& mac);
@@ -115,7 +125,7 @@ public:
     //     checkboxes plus chkCl2Enable; udCl2Freq + chkCl2Enable are paired) ──
     bool swapAudioChannels()   const { return m_swapAudioChannels; }
     bool cl2Enabled()          const { return m_cl2Enabled; }
-    int  cl2FreqMHz()          const { return m_cl2FreqMHz; }
+    int  cl2FreqKHz()          const { return m_cl2FreqKHz; }
     bool ext10MHz()            const { return m_ext10MHz; }
     bool disconnectReset()     const { return m_disconnectReset; }
     int  pttHangMs()           const { return m_pttHangMs; }
@@ -126,7 +136,7 @@ public:
 public slots:
     void setSwapAudioChannels(bool on);
     void setCl2Enabled(bool on);
-    void setCl2FreqMHz(int mhz);
+    void setCl2FreqKHz(int kHz);
     void setExt10MHz(bool on);
     void setDisconnectReset(bool on);
     void setPttHangMs(int ms);
@@ -137,7 +147,7 @@ public slots:
 signals:
     void swapAudioChannelsChanged(bool on);
     void cl2EnabledChanged(bool on);
-    void cl2FreqMHzChanged(int mhz);
+    void cl2FreqKHzChanged(int kHz);
     void ext10MHzChanged(bool on);
     void disconnectResetChanged(bool on);
     void pttHangMsChanged(int ms);
@@ -155,7 +165,7 @@ private:
     // for all 8 checkboxes; spinbox defaults from setup.designer.cs above).
     bool m_swapAudioChannels{false};
     bool m_cl2Enabled{false};
-    int  m_cl2FreqMHz{kDefaultCl2FreqMHz};
+    int  m_cl2FreqKHz{kDefaultCl2FreqKHz};
     bool m_ext10MHz{false};
     bool m_disconnectReset{false};
     int  m_pttHangMs{kDefaultPttHangMs};

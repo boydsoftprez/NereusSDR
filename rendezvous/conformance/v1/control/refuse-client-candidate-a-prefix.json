@@ -1,0 +1,8 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "candidate",
+    "candidate": "a=candidate:1 1 UDP 2122317823 2001:db8::7 50123 typ host"
+  },
+  "decodes": false
+}

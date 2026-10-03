@@ -26,11 +26,17 @@
 //                match RxChannel::processIq.
 //                Authored by J.J. Boyd (KG4VCF) with AI-assisted
 //                review via Anthropic Claude Code.
+//   2026-09-27 - The DEF_* values are checked against ControlRanges.h,
+//                where a new slice and MNR's Reset read them (R-IOS-06,
+//                R-IOS-27). J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #ifdef __APPLE__
+
+#include "ControlRanges.h"
 
 #include <atomic>
 #include <vector>
@@ -132,6 +138,13 @@ private:
     // Default values for runtime-tunable knobs.
     static constexpr float DEF_OVER   = 4.0f;
     static constexpr float DEF_FLOOR  = 0.05f;
+    // A new slice and MNR's Reset use these values from ControlRanges.h.
+    static_assert(DEF_OVER == float(ControlRanges::kMnrOversubDefault)
+                      && DEF_FLOOR == float(ControlRanges::kMnrFloorDefault)
+                      && DEF_ALPHA == float(ControlRanges::kMnrAlphaDefault)
+                      && DEF_BIAS == float(ControlRanges::kMnrBiasDefault)
+                      && DEF_GSMOOTH == float(ControlRanges::kMnrGsmoothDefault),
+                  "ControlRanges' MNR defaults are MacNRFilter's DEF_* values");
 
     // ── vDSP state ─────────────────────────────────────────────────────
     FFTSetup           m_fftSetup{nullptr};

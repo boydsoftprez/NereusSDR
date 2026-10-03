@@ -104,8 +104,9 @@ private slots:
         conn.composeCmdTxForTest(buf);
         // Bit 0 (line_in) must be 1.
         QCOMPARE(int(buf[50] & 0x01), 0x01);
-        // Bit 1 (mic_boost) must be 0 — not set by setLineIn.
-        QCOMPARE(int(buf[50] & 0x02), 0);
+        // Bit 1 (mic_boost) must keep its default — not changed by setLineIn.
+        // mic_boost stays at its default, on (Thetis console.cs:13259 mic_boost = true).
+        QCOMPARE(int(buf[50] & 0x02), 0x02);
     }
 
     // ── 6. Bit 5 (G.6) set by default; bit 2 (G.5, post issue #182) clear; ──

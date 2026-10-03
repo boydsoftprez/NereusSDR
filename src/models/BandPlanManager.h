@@ -16,6 +16,13 @@
 //                                              parity. AI assistance:
 //                                              Anthropic Claude
 //                                              (claude-sonnet-4-6).
+//   2026-09-24  J.J. Boyd / KG4VCF  iPhone app Task 19 (R-IOS-06):
+//                                    PlanData is public with the plan's
+//                                    file id, plans() lists every loaded
+//                                    plan, and kDefaultPlanName names the
+//                                    first-launch plan, for the Core's
+//                                    catalogue. AI-assisted via Anthropic
+//                                    Claude Code.
 
 #pragma once
 
@@ -38,6 +45,19 @@ class BandPlanManager : public QObject {
     Q_OBJECT
 
 public:
+    // iPhone app Task 19: one loaded plan. `id` is its file's name without
+    // ".json" (e.g. "arrl-us"), a stable name the Core's catalogue sends.
+    struct PlanData {
+        QString             id;
+        QString             name;
+        QVector<BandSegment> segments;
+        QVector<BandSpot>    spots;
+    };
+
+    // The plan a first launch activates (loadPlans()), and the one the
+    // Core's catalogue marks as the default.
+    static constexpr const char* kDefaultPlanName = "ARRL (US)";
+
     explicit BandPlanManager(QObject* parent = nullptr);
 
     // Load all bundled plans from Qt resources. Idempotent: re-reads the
@@ -53,16 +73,13 @@ public:
     // All loaded plan display names (for Setup → Display dropdown).
     QStringList availablePlans() const;
 
+    // iPhone app Task 19: every loaded plan, in load order.
+    const QVector<PlanData>& plans() const { return m_plans; }
+
 signals:
     void planChanged();
 
 private:
-    struct PlanData {
-        QString             name;
-        QVector<BandSegment> segments;
-        QVector<BandSpot>    spots;
-    };
-
     bool loadPlanFromJson(const QString& path, PlanData& out);
 
     QVector<PlanData>    m_plans;

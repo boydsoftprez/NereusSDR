@@ -19,6 +19,64 @@ class TestClarityController : public QObject {
     Q_OBJECT
 private slots:
 
+    void remoteFloorMatchesLocalEstimatorAndOperatorGates()
+    {
+        ClarityController local;
+        ClarityController remote;
+        QSignalSpy localThresholds(&local, &ClarityController::waterfallThresholdsChanged);
+        QSignalSpy remoteThresholds(&remote, &ClarityController::waterfallThresholdsChanged);
+        QSignalSpy localFloors(&local, &ClarityController::noiseFloorChanged);
+        QSignalSpy remoteFloors(&remote, &ClarityController::noiseFloorChanged);
+        const auto feed = [&](float floor, qint64 time) {
+            // Strong signals occupy less than the percentile cutoff. Core
+            // supplies the same full-band estimate, not the visible peak.
+            QVector<float> bins(1024, floor);
+            for (int i = 800; i < bins.size(); ++i) { bins[i] = -20.0f; }
+            local.feedBins(bins, time);
+            remote.feedNoiseFloor(floor, time);
+            QCOMPARE(remoteThresholds.size(), localThresholds.size());
+            QCOMPARE(remoteFloors.size(), localFloors.size());
+            for (int i = 0; i < localThresholds.size(); ++i) {
+                QCOMPARE(remoteThresholds.at(i), localThresholds.at(i));
+            }
+            for (int i = 0; i < localFloors.size(); ++i) {
+                QCOMPARE(remoteFloors.at(i), localFloors.at(i));
+            }
+        };
+        feed(-130.0f, 0);
+        QCOMPARE(remoteThresholds.size(), 0);
+        local.setEnabled(true);
+        remote.setEnabled(true);
+        feed(-130.0f, 0);
+        feed(-100.0f, 100); // Same cadence suppression as the local path.
+        QCOMPARE(remoteFloors.size(), 1);
+        feed(-130.0f, 500); // Stable floor still passes the deadband gate.
+        QCOMPARE(remoteThresholds.size(), 1);
+        feed(-100.0f, 1000); // Same EWMA response to a changed noise floor.
+        local.notifyManualOverride();
+        remote.notifyManualOverride();
+        const int beforeOverride = remoteFloors.size();
+        feed(-80.0f, 2000);
+        QCOMPARE(remoteFloors.size(), beforeOverride);
+        local.retuneNow();
+        remote.retuneNow();
+        feed(-110.0f, 2500);
+        QCOMPARE(remote.smoothedFloor(), -110.0f);
+        local.setTransmitting(true);
+        remote.setTransmitting(true);
+        const int beforeTx = remoteFloors.size();
+        feed(-50.0f, 3500);
+        QCOMPARE(remoteFloors.size(), beforeTx);
+        local.setTransmitting(false);
+        remote.setTransmitting(false);
+        feed(-110.0f, 4000);
+        remote.feedNoiseFloor(qQNaN(), 5000);
+        remote.feedNoiseFloor(qInf(), 5000);
+        remote.feedNoiseFloor(-qInf(), 5000);
+        QCOMPARE(remoteFloors.size(), localFloors.size());
+        QCOMPARE(remote.smoothedFloor(), local.smoothedFloor());
+    }
+
     void enabled_emitsThresholdsOnFirstFrame()
     {
         // Smoke path: enabled controller, fed a flat noise frame,

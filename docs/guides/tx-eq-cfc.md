@@ -1,6 +1,6 @@
 # Transmitter EQ and CFC
 
-Use EQ to shape your transmitted audio. Use CFC to adjust compression and the EQ applied after compression. The curve settings belong to the active TX profile; save that profile through the existing profile controls when you want to keep your changes. The Graphic/Parametric mode choice is saved as an application preference.
+Use EQ to shape your transmitted audio. Use CFC to adjust compression and the EQ applied after compression. The curve settings belong to the active TX profile; save that profile through the existing profile controls when you want to keep your changes. The Graphic/Parametric mode choice is saved with the TX profile and follows the model in local and remote windows.
 
 Right-click **EQ** or **CFC** in the TX panel to open its editor. Left-click either button to enable or bypass that processor.
 
@@ -40,4 +40,4 @@ With **Live Update** on, dragging updates audio as you move. With it off, a drag
 
 Expand **Advanced** for the existing algorithm controls, range and display options. **Curve range** changes the curve's frequencies, including its endpoints; it is more than a view zoom. Its minimum spread is 1000 Hz.
 
-The TX EQ graph shows the configured curve, rather than a measured filter response. With the current TX audio engine, ten-band Width (Q) changes the graph and saved settings but does not change audio. Five- and eighteen-band curves, including width, are approximated by sampling ten points for the existing WDSP EQ profile. CFC sends all configured bands and both enabled Q vectors directly to its existing WDSP profile path.
+The TX EQ graph shows the configured curve, rather than a measured filter response. The TX audio engine receives all configured 5, 10 or 18 band frequencies and gains, plus Q factors when enabled. CFC sends all configured bands and both enabled Q vectors directly to its existing WDSP profile path.

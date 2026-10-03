@@ -369,8 +369,10 @@ private slots:
         QCOMPARE(moxSpy.count(), 1);
         QCOMPARE(moxSpy.at(0).at(0).toBool(), false);
         QVERIFY(!ctrl.isMox());
-        // PttMode retained (not cleared by dispatch slot — F.1 contract).
-        QCOMPARE(ctrl.pttMode(), PttMode::Mic);
+        // The unkey clears the PTT mode, as chkMOX_CheckedChanged2 does
+        // (console.cs:29547 [v2.10.3.15]; receiver and transmit gaps plan,
+        // Task 7).
+        QCOMPARE(ctrl.pttMode(), PttMode::None);
     }
 
     // §C.3 — P1 repeated press is idempotent: no double-emit
@@ -474,7 +476,8 @@ private slots:
         QCOMPARE(moxSpy.count(), 1);
         QCOMPARE(moxSpy.at(0).at(0).toBool(), false);
         QVERIFY(!ctrl.isMox());
-        QCOMPARE(ctrl.pttMode(), PttMode::Mic);
+        // The unkey clears the PTT mode (Task 7).
+        QCOMPARE(ctrl.pttMode(), PttMode::None);
     }
 
     // §D.3 — P2 repeated press is idempotent: no double-emit

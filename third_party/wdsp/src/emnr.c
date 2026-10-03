@@ -1,9 +1,8 @@
-// no-port-check: vendored upstream TAPR WDSP v1.29 — not a NereusSDR port of Thetis
 /*  emnr.c
 
 This file is part of a program that implements a Software-Defined Radio.
 
-Copyright (C) 2015, 2025 Warren Pratt, NR0V
+Copyright (C) 2015, 2025, 2026 Warren Pratt, NR0V
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -24,11 +23,16 @@ The author can be reached by email at
 warren@wpratt.com
 
 */
+
+// NereusSDR modifications (2026-09-30 notice, J.J. Boyd KG4VCF, with Anthropic
+// Claude Code; changes made between 2026-09-22 and 2026-09-30 against the
+// pinned TAPR WDSP 2.10 tree at b02d5bac): RXAbp1Check takes the channel and reads the
+// stage run states itself, so each set-run call clears its own run flag before
+// the check instead of passing the pending state in. The file also ends with a newline.
 #define _CRT_SECURE_NO_WARNINGS
 #include "comm.h"
 #include "calculus.h"
 #include "zetaHat.h"
-#include "FDnoiseIQ.h"
 
 /********************************************************************************************************
 *																										*
@@ -297,6 +301,7 @@ void CwriteZetaHat(const char* cfile, int zetaHat_rows, int zetaHat_cols,
 	}
 }
 void post2_calc_w(EMNR a);
+void post2_init_table(void);
 
 void calc_emnr(EMNR a)
 {
@@ -567,9 +572,9 @@ void calc_emnr(EMNR a)
 	a->post2.rate_decay = exp(-a->fsize / (a->post2.tc_decay * a->rate * a->ovrlp));
 	a->post2.taper = 0.12;
 	a->post2.w = (double*)malloc0(a->msize * sizeof(double));
-	a->post2.noise_frames = FDnoise_frames;
-	a->post2.noise_frame_index = 0;
-	a->post2.noise_frame = (double*)malloc0(2 * a->msize * sizeof(double));
+	post2_init_table ();
+	a->post2.rngstate = 2463534242u + 2654435761u * (unsigned int)(size_t)a;
+	if (a->post2.rngstate == 0) a->post2.rngstate = 2463534242u;
 	a->post2.olddmag = 0.0;
 	post2_calc_w(a);
 }
@@ -578,7 +583,6 @@ void decalc_emnr(EMNR a)
 {
 	int i;
 	// post2
-	_aligned_free(a->post2.noise_frame);
 	_aligned_free(a->post2.w);
 	// ae
 	_aligned_free(a->ae.nmask);
@@ -896,11 +900,41 @@ void aepf(EMNR a)
 			a->mask[k] *= 0.05;
 }
 
+#define POST2_NTAB			1024
+#define POST2_NOISE_MAG		113.98
+
+static double post2_cs[POST2_NTAB];
+static double post2_sn[POST2_NTAB];
+static int post2_tab_ready = 0;
+
+void post2_init_table (void)
+{
+	int i;
+	if (post2_tab_ready) return;
+	for (i = 0; i < POST2_NTAB; i++)
+	{
+		double th = 2.0 * PI * (double)i / (double)POST2_NTAB;
+		post2_cs[i] = POST2_NOISE_MAG * cos (th);
+		post2_sn[i] = POST2_NOISE_MAG * sin (th);
+	}
+	post2_tab_ready = 1;
+}
+
+static unsigned int post2_rand (EMNR a)
+{
+	unsigned int x = a->post2.rngstate;
+	x ^= x << 13;
+	x ^= x >> 17;
+	x ^= x << 5;
+	a->post2.rngstate = x;
+	return x;
+}
+
 void post2_calc_w(EMNR a)
 {
 	int i;
 	int ilim = (int)(a->post2.taper * a->msize);
-	memset(a->post2.w, a->msize, sizeof(double));
+	memset(a->post2.w, 0, a->msize * sizeof(double));
 	for (i = 0; i < ilim; i++)
 	{
 		a->post2.w[i] = 0.75 - 0.25 * cos(PI * (ilim - 1 - i) / (ilim - 1));
@@ -929,15 +963,13 @@ void post2(EMNR a)
 		else a->post2.olddmag *= rate_decay;
 		dmag = fmax(dmag, a->post2.olddmag);
 		dmult = dmag * 4.0 * a->gain;
-		memcpy(a->post2.noise_frame, FDnoise + 2 * a->msize * a->post2.noise_frame_index, 
-			2 * ilim * sizeof(double));
-		a->post2.noise_frame_index = (a->post2.noise_frame_index + 1) % a->post2.noise_frames;
 		for (i = 1; i < ilim; i++)
 		{
+			unsigned int ph = post2_rand (a) & (POST2_NTAB - 1);
 			Irem = a->gain * a->forfftout[2 * i + 0] - a->revfftin[2 * i + 0];
 			Qrem = a->gain * a->forfftout[2 * i + 1] - a->revfftin[2 * i + 1];
-			Iwhite = dmult * a->post2.noise_frame[2 * i + 0];
-			Qwhite = dmult * a->post2.noise_frame[2 * i + 1];
+			Iwhite = dmult * post2_cs[ph];
+			Qwhite = dmult * post2_sn[ph];
 			Inoise = (1.0 - factor) * Irem + factor * Iwhite;
 			Qnoise = (1.0 - factor) * Qrem + factor * Qwhite;
 			a->revfftin[2 * i + 0] = w[i] * (a->revfftin[2 * i + 0] + nlevel * Inoise);
@@ -1286,11 +1318,9 @@ void SetRXAEMNRRun (int channel, int run)
 	EMNR a = rxa[channel].emnr.p;
 	if (a->run != run)
 	{
-        RXAbp1Check (channel, rxa[channel].amd.p->run, rxa[channel].snba.p->run,
-                        run, rxa[channel].anf.p->run, rxa[channel].anr.p->run,
-                        rxa[channel].rnnr.p->run, rxa[channel].sbnr.p->run); // NR3 + NR4 support
 		EnterCriticalSection (&ch[channel].csDSP);
 		a->run = run;
+		RXAbp1Check (channel);
 		RXAbp1Set (channel);
 		LeaveCriticalSection (&ch[channel].csDSP);
 	}

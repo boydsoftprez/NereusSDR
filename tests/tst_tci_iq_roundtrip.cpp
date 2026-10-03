@@ -5,6 +5,11 @@
 // encode → QWebSocket sendBinaryMessage → client decodes streamType=0.
 //
 // Phase 3J-1 Task 18.1.
+//
+// R3 receiver audio plan, Task 4 (R-R3-42), 2026-09-23, J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code: a remote window refuses
+// iq_start with no subscription and no echo, and tells the operator why,
+// never the app.
 
 #ifdef HAVE_WEBSOCKETS
 
@@ -18,6 +23,9 @@
 
 #include "core/TciServer.h"
 #include "core/AppSettings.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
+#include "core/HpsdrModel.h"
 
 using namespace NereusSDR;
 
@@ -28,6 +36,10 @@ private slots:
     void iq_stop_early_out_no_frames();
     void iq_swap_flag_swaps_i_q_pairs();
     void always_stream_iq_overrides_subscription();
+    void remote_window_refuses_iq_start();
+    void receiver_and_rate_are_reported();
+    void tagged_local_stream_maps_receiver_and_accepted_rate();
+    void remote_first_last_and_always_demand();
 };
 
 // ── iq_start_subscribes_then_frames_arrive() ─────────────────────────────────
@@ -272,6 +284,193 @@ void TestTciIqRoundtrip::always_stream_iq_overrides_subscription()
     // Restore defaults for cleanliness.
     AppSettings::instance().setValue(QStringLiteral("TciAlwaysStreamIq"), QStringLiteral("False"));
     client.close();
+    server.stop();
+}
+
+void TestTciIqRoundtrip::remote_window_refuses_iq_start()
+{
+    AppSettings::instance().setValue(QStringLiteral("TciAlwaysStreamIq"), QStringLiteral("False"));
+    RadioModel remote(RadioModel::Role::Remote);
+    TciServer server(&remote);
+    QSignalSpy notices(&server, &TciServer::operatorNotice);
+    QVERIFY(server.start(0));
+
+    QWebSocket client;
+    QSignalSpy connected(&client, &QWebSocket::connected);
+    QSignalSpy text(&client, &QWebSocket::textMessageReceived);
+    QSignalSpy binary(&client, &QWebSocket::binaryMessageReceived);
+    client.open(QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(server.port())));
+    QVERIFY(connected.wait(2000));
+    const auto lines = [&text] {
+        QStringList out;
+        for (const auto& call : text) { out << call.at(0).toString(); }
+        return out;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(lines().contains(QStringLiteral("ready;")), 3000);
+    const int linesBefore = int(text.count());
+
+    client.sendTextMessage(QStringLiteral("iq_start:0;"));
+    QTRY_COMPARE_WITH_TIMEOUT(notices.count(), 1, 3000);
+    QTest::qWait(100);
+    QCOMPARE(server.activeIqSubscriberCount(0), 0);
+    QVERIFY(!lines().mid(linesBefore).contains(QStringLiteral("iq_start:0;")));
+    const QString reason = notices.constFirst().at(1).toString();
+    QCOMPARE(reason, QString::fromLatin1(TciServer::kRemoteIqRefusedReason));
+    for (const QString& line : lines()) {
+        QVERIFY2(!line.contains(reason), qPrintable(line));
+    }
+    // Even pushed at the server, I/Q reaches no app of a remote window.
+    server.injectRawIqForTest(QVector<float>(2048, 0.25f));
+    QTest::qWait(100);
+    QCOMPARE(binary.count(), 0);
+
+    client.close();
+    server.stop();
+}
+
+void TestTciIqRoundtrip::receiver_and_rate_are_reported()
+{
+    AppSettings::instance().setValue(QStringLiteral("TciAlwaysStreamIq"), QStringLiteral("False"));
+    TciServer server(nullptr);
+    QVERIFY(server.start(0));
+    QWebSocket client;
+    QSignalSpy connected(&client, &QWebSocket::connected);
+    QSignalSpy binary(&client, &QWebSocket::binaryMessageReceived);
+    client.open(QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(server.port())));
+    QVERIFY(connected.wait(2000));
+    client.sendTextMessage(QStringLiteral("iq_start:1;"));
+    QTRY_COMPARE_WITH_TIMEOUT(server.activeIqSubscriberCount(1), 1, 3000);
+    const QVector<float> samples(32, 0.25f);
+    server.injectRawIqForTest(0, 96000, samples);
+    QTest::qWait(50);
+    QCOMPARE(binary.size(), 0);
+    server.injectRawIqForTest(1, 384000, samples);
+    QTRY_COMPARE_WITH_TIMEOUT(binary.size(), 1, 3000);
+    const QByteArray frame = binary.at(0).at(0).toByteArray();
+    const auto word = [&frame](int offset) {
+        return quint32(quint8(frame.at(offset)))
+            | (quint32(quint8(frame.at(offset + 1))) << 8)
+            | (quint32(quint8(frame.at(offset + 2))) << 16)
+            | (quint32(quint8(frame.at(offset + 3))) << 24);
+    };
+    QCOMPARE(word(0), 1u);
+    QCOMPARE(word(4), 384000u);
+    server.injectRawIqForTest(1, 768000, samples);
+    QTest::qWait(50);
+    QCOMPARE(binary.size(), 1);
+    server.injectRawIqForTest(1, 96000, samples);
+    QTRY_COMPARE_WITH_TIMEOUT(binary.size(), 2, 3000);
+    QCOMPARE(word(4), 384000u);
+    const QByteArray changed = binary.at(1).at(0).toByteArray();
+    const auto* bytes = reinterpret_cast<const quint8*>(changed.constData() + 4);
+    QCOMPARE(quint32(bytes[0]) | (quint32(bytes[1]) << 8)
+                 | (quint32(bytes[2]) << 16) | (quint32(bytes[3]) << 24), 96000u);
+    client.close();
+    server.stop();
+}
+
+void TestTciIqRoundtrip::tagged_local_stream_maps_receiver_and_accepted_rate()
+{
+    AppSettings::instance().setValue(QStringLiteral("TciIqSwap"), QStringLiteral("False"));
+    AppSettings::instance().setValue(QStringLiteral("TciAlwaysStreamIq"), QStringLiteral("False"));
+    RadioModel radio;
+    radio.setBoardForTest(HPSDRHW::Saturn);
+    radio.configureStreamPool(5, 5, 192000);
+    RadioInfo info;
+    info.protocol = ProtocolVersion::Protocol2;
+    radio.setLastRadioInfoForTest(info);
+    const int first = radio.addSlice();
+    const int second = radio.addSlice();
+    QCOMPARE(first, 0);
+    QCOMPARE(second, 1);
+    SliceModel* const slice = radio.sliceById(second);
+    QVERIFY(slice);
+    slice->setFrequency(18'123'456.0);
+    const int stream = slice->streamIndex();
+    QVERIFY(stream > 0);
+    QVERIFY(radio.setStreamSampleRate(stream, 96000));
+    QCOMPARE(radio.streamSampleRateHz(stream), 96000);
+
+    TciServer server(&radio);
+    QVERIFY(server.start(0));
+    QWebSocket client;
+    QSignalSpy connected(&client, &QWebSocket::connected);
+    QSignalSpy binary(&client, &QWebSocket::binaryMessageReceived);
+    QSignalSpy text(&client, &QWebSocket::textMessageReceived);
+    client.open(QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(server.port())));
+    QVERIFY(connected.wait(2000));
+    client.sendTextMessage(QStringLiteral("iq_start:1;"));
+    QTRY_COMPARE(server.activeIqSubscriberCount(1), 1);
+    radio.rawIqDataForStream(stream, QVector<float>(2048, 0.25f));
+    QTRY_COMPARE(binary.size(), 1);
+    const auto word = [](const QByteArray& frame, int offset) {
+        const auto* p = reinterpret_cast<const quint8*>(frame.constData() + offset);
+        return quint32(p[0]) | (quint32(p[1]) << 8)
+            | (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
+    };
+    QCOMPARE(word(binary.at(0).at(0).toByteArray(), 0), 1u);
+    QCOMPARE(word(binary.at(0).at(0).toByteArray(), 4), 96000u);
+
+    QVERIFY(radio.setStreamSampleRate(stream, 384000));
+    QCOMPARE(radio.streamSampleRateHz(stream), 384000);
+    radio.rawIqDataForStream(stream, QVector<float>(2048, 0.25f));
+    QTRY_COMPARE(binary.size(), 2);
+    QCOMPARE(word(binary.at(1).at(0).toByteArray(), 0), 1u);
+    QCOMPARE(word(binary.at(1).at(0).toByteArray(), 4), 384000u);
+    client.sendTextMessage(QStringLiteral("iq_samplerate;"));
+    QTRY_VERIFY(([&] {
+        for (const auto& call : text) {
+            if (call.at(0).toString() == QLatin1String("iq_samplerate:384000;")) { return true; }
+        }
+        return false;
+    })());
+    client.close();
+    server.stop();
+}
+
+void TestTciIqRoundtrip::remote_first_last_and_always_demand()
+{
+    AppSettings::instance().setValue(QStringLiteral("TciAlwaysStreamIq"), QStringLiteral("False"));
+    RadioModel remote(RadioModel::Role::Remote);
+    TciServer server(&remote);
+    QVector<int> requests, releases;
+    server.setRemoteIqSource({[] { return true; },
+        [&](int slice) { requests.append(slice); },
+        [&](int slice) { releases.append(slice); }});
+    QVERIFY(server.start(0));
+    QWebSocket first, second;
+    QSignalSpy firstConnected(&first, &QWebSocket::connected);
+    QSignalSpy secondConnected(&second, &QWebSocket::connected);
+    QSignalSpy firstBinary(&first, &QWebSocket::binaryMessageReceived);
+    const QUrl url(QStringLiteral("ws://127.0.0.1:%1").arg(server.port()));
+    first.open(url);
+    second.open(url);
+    QVERIFY(firstConnected.wait(2000));
+    if (secondConnected.isEmpty()) { QVERIFY(secondConnected.wait(2000)); }
+    first.sendTextMessage(QStringLiteral("iq_start:1;"));
+    QTRY_COMPARE(requests.size(), 1);
+    QCOMPARE(requests.at(0), 1);
+    second.sendTextMessage(QStringLiteral("iq_start:1;"));
+    QTRY_COMPARE(server.activeIqSubscriberCount(1), 2);
+    QCOMPARE(requests.size(), 1);
+    server.receiveRemoteIq(1, 96000, QVector<float>(2048, 0.25f));
+    QTRY_COMPARE(firstBinary.size(), 1);
+    first.sendTextMessage(QStringLiteral("iq_stop:1;"));
+    QTRY_COMPARE(server.activeIqSubscriberCount(1), 1);
+    QCOMPARE(releases.size(), 0);
+    second.close();
+    QTRY_COMPARE(releases.size(), 1);
+    QCOMPARE(releases.at(0), 1);
+
+    AppSettings::instance().setValue(QStringLiteral("TciAlwaysStreamIq"), QStringLiteral("True"));
+    server.refreshRemoteIqDemand();
+    QCOMPARE(requests.size(), 3);
+    QCOMPARE(requests.at(1), 0);
+    QCOMPARE(requests.at(2), 1);
+    AppSettings::instance().setValue(QStringLiteral("TciAlwaysStreamIq"), QStringLiteral("False"));
+    server.refreshRemoteIqDemand();
+    QCOMPARE(releases.size(), 3);
+    first.close();
     server.stop();
 }
 

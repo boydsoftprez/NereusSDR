@@ -1,0 +1,47 @@
+{
+  "runs": [
+    "service"
+  ],
+  "serverSetup": {},
+  "steps": [
+    {
+      "connect": "client"
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:clientNonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "advanceMs": 9999
+    },
+    {
+      "expectSilent": "client"
+    },
+    {
+      "advanceMs": 1
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "error",
+        "code": "timeout",
+        "reason": "The connection did not finish starting in time.",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "expectClosed": "client",
+      "code": 1000
+    }
+  ]
+}

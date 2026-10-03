@@ -1,0 +1,10 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "introduce",
+    "id": "lwhu2kyjnrfdwvpxvdckao3lb7",
+    "device": "Vql0Tj7p5WRKQuJyMEUd4Pdrs9ZxVyXEPI5anvUOYnI",
+    "deviceSignature": "KQ0RuGlhoBWV1kXWKxkK5vhQMVsKC_lKsadj4HApIh42dq9fhPDURBEXN5Z2TAvYdRlFEUTXPcnV9g-y9uGbPw"
+  },
+  "decodes": false
+}

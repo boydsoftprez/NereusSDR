@@ -1,0 +1,149 @@
+{
+  "runs": [
+    "service"
+  ],
+  "serverSetup": {
+    "introductionsPerStationPerMinute": 1,
+    "idleTimeoutMs": 120000
+  },
+  "steps": [
+    {
+      "connect": "client",
+      "address": "198.51.100.1"
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:clientNonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "connect": "client2",
+      "address": "198.51.100.1"
+    },
+    {
+      "from": "server",
+      "to": "client2",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:client2Nonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "connect": "client3",
+      "address": "203.0.113.9"
+    },
+    {
+      "from": "server",
+      "to": "client3",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:client3Nonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "from": "client",
+      "role": "behaviour",
+      "message": {
+        "type": "introduce",
+        "id": "$key:a:id",
+        "device": "$device:d:id",
+        "deviceSignature": "$introduce:d:a:clientNonce:signed",
+        "offer": "$sdp:offer:offer"
+      }
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "error",
+        "code": "offline",
+        "reason": "The Core is not reachable right now. Check that it is running and connected to the internet.",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "from": "client2",
+      "role": "behaviour",
+      "message": {
+        "type": "introduce",
+        "id": "$key:a:id",
+        "device": "$device:e:id",
+        "deviceSignature": "$introduce:e:a:client2Nonce:signed",
+        "offer": "$sdp:offer:offer"
+      }
+    },
+    {
+      "from": "server",
+      "to": "client2",
+      "message": {
+        "type": "error",
+        "code": "rateLimited",
+        "reason": "Too many attempts. Try again in a minute.",
+        "retryAfterMs": 60000
+      }
+    },
+    {
+      "from": "client3",
+      "role": "behaviour",
+      "message": {
+        "type": "introduce",
+        "id": "$key:a:id",
+        "device": "$device:f:id",
+        "deviceSignature": "$introduce:f:a:client3Nonce:signed",
+        "offer": "$sdp:offer:offer"
+      }
+    },
+    {
+      "from": "server",
+      "to": "client3",
+      "message": {
+        "type": "error",
+        "code": "offline",
+        "reason": "The Core is not reachable right now. Check that it is running and connected to the internet.",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "advanceMs": 60000
+    },
+    {
+      "from": "client2",
+      "role": "scripted",
+      "message": {
+        "type": "introduce",
+        "id": "$key:b:id",
+        "device": "$device:e:id",
+        "deviceSignature": "$introduce:e:b:client2Nonce:signed",
+        "offer": "$sdp:offer:offer"
+      }
+    },
+    {
+      "from": "server",
+      "to": "client2",
+      "message": {
+        "type": "error",
+        "code": "offline",
+        "reason": "The Core is not reachable right now. Check that it is running and connected to the internet.",
+        "retryAfterMs": 0
+      }
+    }
+  ]
+}

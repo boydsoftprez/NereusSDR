@@ -1,0 +1,52 @@
+{
+  "runs": [
+    "relay",
+    "app"
+  ],
+  "relaySetup": {
+    "slots": 1
+  },
+  "steps": [
+    {
+      "connect": "core2"
+    },
+    {
+      "from": "core2",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:core:s0:b"
+      ]
+    },
+    {
+      "to": "core2",
+      "binary": [
+        "81",
+        "01",
+        "00"
+      ]
+    },
+    {
+      "connect": "device"
+    },
+    {
+      "from": "device",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:device:s:a"
+      ]
+    },
+    {
+      "to": "device",
+      "binary": [
+        "83",
+        "66756c6c"
+      ]
+    },
+    {
+      "expectClosed": "device",
+      "code": 1000
+    }
+  ]
+}

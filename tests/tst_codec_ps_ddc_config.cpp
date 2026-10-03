@@ -694,6 +694,63 @@ private slots:
         QCOMPARE(int(cfg.ddcEnable), int(DDC2 + DDC3));   // PS-off uses DDC2
         QCOMPARE(int(cfg.rate[3]), 192000);
     }
+
+    // ====================================================================
+    // One PureSignal pair per codec, whichever method is asked.
+    //
+    // Each Protocol 1 codec answers the pair question twice: through
+    // applyPureSignalDdcConfig (psFbDdc / txMonDdc, which the Protocol 1 read
+    // loop pairs on) and through applyDdcAssignment (psFwdDdc / psRevDdc).
+    // The HL2 used to answer 2/3 in the first and 0/1 in the second.
+    //
+    // Hermes-class, from Thetis console.cs:8704-8733 [v2.10.3.15] GetDDC():
+    //   case HPSDRHW.HermesC10: // ANAN-G2E //N1GP G2E added (HermesC10)
+    //   case 5: // on off on    rx1 = 0; rx2 = 1; psrx = 2; pstx = 3;
+    // HL2, from mi0bot console.cs:8733-8762 [@c26a8a4] GetDDC():
+    //   case HPSDRHW.HermesLite: // MI0BOT: Hermes Lite 2
+    //   case 5: // on off on    rx1 = 0; rx2 = 1; psrx = 2; pstx = 3;
+    // ====================================================================
+
+    void p1_hermes_class_pair_agrees_across_both_methods() {
+        P1CodecStandard codec;
+        for (const HPSDRModel model : {HPSDRModel::HERMES, HPSDRModel::ANAN_G2E,
+                                       HPSDRModel::ANAN10, HPSDRModel::ANAN100}) {
+            const PsDdcConfig cfg = codec.applyPureSignalDdcConfig(
+                model, true, false, true, 192000, 0, false, 0, 0);
+
+            CodecContext ctx{};
+            ctx.mox = true;
+            ctx.puresignalRun = true;
+            std::array<SliceConfig, 5> slices{};
+            slices[0].live = true;
+            slices[0].sampleRateHz = 192000;
+            const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+            QCOMPARE(int(cfg.psFbDdc), 2);
+            QCOMPARE(int(cfg.txMonDdc), 3);
+            QCOMPARE(a.psFwdDdc, int(cfg.psFbDdc));
+            QCOMPARE(a.psRevDdc, int(cfg.txMonDdc));
+        }
+    }
+
+    void p1_hl2_pair_agrees_across_both_methods() {
+        P1CodecHl2 codec;
+        const PsDdcConfig cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::HERMESLITE, true, false, true, 192000, 0, false, 0, 0);
+
+        CodecContext ctx{};
+        ctx.mox = true;
+        ctx.puresignalRun = true;
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].sampleRateHz = 192000;
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(int(cfg.psFbDdc), 2);
+        QCOMPARE(int(cfg.txMonDdc), 3);
+        QCOMPARE(a.psFwdDdc, int(cfg.psFbDdc));
+        QCOMPARE(a.psRevDdc, int(cfg.txMonDdc));
+    }
 };
 
 QTEST_APPLESS_MAIN(TestCodecPsDdcConfig)

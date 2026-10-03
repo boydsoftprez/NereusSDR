@@ -13,6 +13,10 @@
 //   2026-04-20 — Written by J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Anthropic Claude Code.
 //                Phase 3O Sub-Phase 10 Task 10b.
+//   2026-09-23 - R-R3-23: save the picked output device before
+//                announcing it (selectOutputDevice). J.J. Boyd
+//                (KG4VCF), with AI-assisted implementation via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include "MasterOutputWidget.h"
@@ -243,14 +247,7 @@ void MasterOutputWidget::onSpeakerContextMenu(const QPoint& pos)
             group->addAction(act);
             const QString devName = dev.name;
             connect(act, &QAction::triggered, this, [this, devName]() {
-                if (devName == m_currentDeviceName) {
-                    return;
-                }
-                m_currentDeviceName = devName;
-                emit outputDeviceChanged(devName);
-                auto& ss = AppSettings::instance();
-                ss.setValue(QStringLiteral("audio/Speakers/DeviceName"), devName);
-                ss.save();
+                selectOutputDevice(devName);
             });
             anyDevice = true;
         }
@@ -262,6 +259,19 @@ void MasterOutputWidget::onSpeakerContextMenu(const QPoint& pos)
     }
 
     menu.exec(m_speakerBtn->mapToGlobal(pos));
+}
+
+void MasterOutputWidget::selectOutputDevice(const QString& deviceName)
+{
+    if (deviceName == m_currentDeviceName) {
+        return;
+    }
+    m_currentDeviceName = deviceName;
+    // R-R3-23: saved before the announcement; see the header.
+    auto& ss = AppSettings::instance();
+    ss.setValue(QStringLiteral("audio/Speakers/DeviceName"), deviceName);
+    ss.save();
+    emit outputDeviceChanged(deviceName);
 }
 
 void MasterOutputWidget::onAudioEngineVolumeChanged(float v)

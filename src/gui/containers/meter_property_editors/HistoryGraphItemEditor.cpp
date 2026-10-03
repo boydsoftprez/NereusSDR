@@ -138,7 +138,7 @@ void HistoryGraphItemEditor::buildTypeSpecific()
     });
 
     // Second axis binding
-    addHeader(QStringLiteral("Axis 1 Binding"));
+    addHeader(QStringLiteral("Axis 1 Reading"));
 
     m_comboBinding1 = new QComboBox(this);
     struct B { int id; const char* label; };
@@ -163,7 +163,7 @@ void HistoryGraphItemEditor::buildTypeSpecific()
     for (const auto& b : kBindings) {
         m_comboBinding1->addItem(QString::fromLatin1(b.label), b.id);
     }
-    addRow(QStringLiteral("Binding axis 1"), m_comboBinding1);
+    addRow(QStringLiteral("Axis 1 shows"), m_comboBinding1);
     connect(m_comboBinding1, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
         if (isProgrammaticUpdate()) { return; }
         HistoryGraphItem* x = qobject_cast<HistoryGraphItem*>(m_item);

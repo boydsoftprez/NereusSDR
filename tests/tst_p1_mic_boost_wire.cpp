@@ -32,17 +32,17 @@ class TestP1MicBoostWire : public QObject {
     Q_OBJECT
 private slots:
 
-    // ── 1. Default state: mic_boost bit is clear ──────────────────────────
-    // A freshly constructed P1RadioConnection has m_micBoost = false,
-    // so bank-10 C2 byte bit 0 must be 0.
-    // Source: Thetis networkproto1.c:581 [v2.10.3.13]
-    //   C2 = ((prn->mic.mic_boost & 1) | ...) → bit is 0 when mic_boost = 0.
-    void defaultState_micBoostBitIsClear() {
+    // ── 1. Default state: mic_boost bit is set ────────────────────────────
+    // Radio codec lane: a freshly constructed P1RadioConnection has
+    // m_micBoost = true, Thetis's default, so bank-10 C2 bit 0 is 1.
+    // Source: Thetis console.cs:13259 [v2.10.3.15] — private bool mic_boost = true;
+    //   networkproto1.c:581 [v2.10.3.13] — C2 = ((prn->mic.mic_boost & 1) | ...)
+    void defaultState_micBoostBitIsSet() {
         P1RadioConnection conn;
         const QByteArray bank10 = conn.captureBank10ForTest();
         QCOMPARE(bank10.size(), 5);
-        // C2 = bank10[2], bit 0 (0x01) must be 0.
-        QCOMPARE(int(quint8(bank10[2]) & 0x01), 0);
+        // C2 = bank10[2], bit 0 (0x01) must be 1.
+        QCOMPARE(int(quint8(bank10[2]) & 0x01), 1);
     }
 
     // ── 2. setMicBoost(true) → C2 bit 0 set ──────────────────────────────

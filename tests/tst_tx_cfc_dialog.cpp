@@ -66,6 +66,7 @@ void CloseChannel(int);
 }
 #endif
 #include "core/CfcProfile.h"
+#include "core/CfcEditProfile.h"
 #include "core/TxChannel.h"
 
 #include "core/AppSettings.h"
@@ -76,9 +77,9 @@ void CloseChannel(int);
 
 using namespace NereusSDR;
 
-static CfcProfile pairedProfile(int count = 18)
+static CfcEditProfile pairedProfile(int count = 18)
 {
-    CfcProfile p;
+    CfcEditProfile p;
     p.compression.frequencyMaxHz = p.postEq.frequencyMaxHz = 10000;
     p.compression.globalGainDb = 3.25;
     p.postEq.globalGainDb = -2.75;
@@ -160,7 +161,7 @@ private slots:
     {
         QFETCH(QString, field);
         RadioModel rm;
-        const CfcProfile original = pairedProfile(10);
+        const CfcEditProfile original = pairedProfile(10);
         QVERIFY(rm.transmitModel().setCfcProfile(original));
         TxCfcDialog dlg(&rm.transmitModel(), nullptr);
         dlg.compWidget()->setSelectedIndex(3);
@@ -175,7 +176,7 @@ private slots:
         if (field == "low" || field == "high") { dlg.findChild<QPushButton*>("TxCfcAdvanced")->click(); }
         dlg.show(); dlg.activateWindow(); spin->setFocus(); QApplication::processEvents();
         QVERIFY(spin->hasFocus());
-        QSignalSpy publications(&rm.transmitModel(), &TransmitModel::cfcProfileChanged);
+        QSignalSpy publications(&rm.transmitModel(), &TransmitModel::cfcEditProfileChanged);
         const auto wheel = [&] {
             const QPointF pos = spin->rect().center();
             QWheelEvent event(pos, spin->mapToGlobal(pos.toPoint()), {}, QPoint(0, field == "high" ? -120 : 120),
@@ -184,10 +185,10 @@ private slots:
             QApplication::processEvents();
         };
         wheel();
-        const CfcProfile first = rm.transmitModel().effectiveCfcProfile();
+        const CfcEditProfile first = rm.transmitModel().effectiveCfcProfile();
         QVERIFY(first != original); QVERIFY(spin->hasFocus());
         wheel();
-        const CfcProfile second = rm.transmitModel().effectiveCfcProfile();
+        const CfcEditProfile second = rm.transmitModel().effectiveCfcProfile();
         QVERIFY(second != first); QVERIFY(spin->hasFocus());
         QCOMPARE(publications.count(), 2);
         if (field != "low" && field != "high") {
@@ -225,7 +226,7 @@ private slots:
         auto authoritative = pairedProfile(5);
         authoritative.compression.globalGainDb = 9.25;
         QVERIFY(rm.transmitModel().setCfcProfile(authoritative));
-        QSignalSpy publications(&rm.transmitModel(), &TransmitModel::cfcProfileChanged);
+        QSignalSpy publications(&rm.transmitModel(), &TransmitModel::cfcEditProfileChanged);
         QApplication::processEvents();
         QCOMPARE(rm.transmitModel().effectiveCfcProfile(), authoritative);
         QCOMPARE(publications.count(), 0);
@@ -244,7 +245,7 @@ private slots:
         rm.transmitModel().setCfcParaEqData(opaque);
         dlg.findChild<QPushButton*>("TxCfcAdvanced")->click();
         dlg.show(); dlg.activateWindow(); spin->setFocus(); QApplication::processEvents();
-        QSignalSpy publications(&rm.transmitModel(), &TransmitModel::cfcProfileChanged);
+        QSignalSpy publications(&rm.transmitModel(), &TransmitModel::cfcEditProfileChanged);
         const QPointF pos = spin->rect().center();
         QWheelEvent event(pos, spin->mapToGlobal(pos.toPoint()), {}, QPoint(0,120),
                           Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
@@ -269,7 +270,7 @@ private slots:
                               Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
             QApplication::sendEvent(spin, &event); // Destroy before the queued finish.
         }
-        QSignalSpy publications(&rm.transmitModel(), &TransmitModel::cfcProfileChanged);
+        QSignalSpy publications(&rm.transmitModel(), &TransmitModel::cfcEditProfileChanged);
         QApplication::processEvents();
         QCOMPARE(publications.count(), 0);
     }
@@ -300,7 +301,7 @@ private slots:
     void sharedSelectionSurvivesCrossing18Bands()
     {
         RadioModel rm;
-        const CfcProfile original = pairedProfile();
+        const CfcEditProfile original = pairedProfile();
         QVERIFY(rm.transmitModel().setCfcProfile(original));
         TxCfcDialog dlg(&rm.transmitModel(), nullptr);
         QCOMPARE(dlg.compWidget()->bandCount(), 18);
@@ -462,7 +463,7 @@ private slots:
         const auto original = pairedProfile(10);
         QVERIFY(rm.transmitModel().setCfcProfile(original));
         TxCfcDialog dlg(&rm.transmitModel(), nullptr);
-        QSignalSpy spy(&rm.transmitModel(), &TransmitModel::cfcProfileChanged);
+        QSignalSpy spy(&rm.transmitModel(), &TransmitModel::cfcEditProfileChanged);
         dlg.highSpin()->setValue(8000);
         QCOMPARE(spy.count(), 1);
         QCOMPARE(rm.transmitModel().effectiveCfcProfile().postEq.frequenciesHz,
@@ -555,7 +556,7 @@ private slots:
                            qRound(plot.top() + (16 - original.compression.globalGainDb) / 16 * (plot.height() - 1)));
             delta = QPoint(0, -15);
         }
-        QSignalSpy spy(&rm.transmitModel(), &TransmitModel::cfcProfileChanged);
+        QSignalSpy spy(&rm.transmitModel(), &TransmitModel::cfcEditProfileChanged);
         QTest::mousePress(w, Qt::LeftButton, Qt::NoModifier, start);
         QTest::mouseMove(w, start + delta);
         if (live) { QVERIFY(spy.count() >= 1); }
@@ -591,7 +592,7 @@ private slots:
             option.sliderValue = slider->value();
             const QPoint start = slider->style()->subControlRect(QStyle::CC_Slider, &option,
                                                                  QStyle::SC_SliderHandle, slider).center();
-            QSignalSpy spy(&rm.transmitModel(), &TransmitModel::cfcProfileChanged);
+            QSignalSpy spy(&rm.transmitModel(), &TransmitModel::cfcEditProfileChanged);
             QTest::mousePress(slider, Qt::LeftButton, Qt::NoModifier, start);
             QTest::mouseMove(slider, start + QPoint(35, 0));
             if (!live) { QCOMPARE(spy.count(), 0); }
@@ -729,7 +730,7 @@ private slots:
     {
         RadioModel rm;
         rm.transmitModel().setCfcParaEqData("future-version-profile");
-        QSignalSpy spy(&rm.transmitModel(), &TransmitModel::cfcProfileChanged);
+        QSignalSpy spy(&rm.transmitModel(), &TransmitModel::cfcEditProfileChanged);
         TxCfcDialog dlg(&rm.transmitModel(), nullptr);
         dlg.show(); QVERIFY(QTest::qWaitForWindowExposed(&dlg));
         dlg.compWidget()->setSelectedIndex(3);
@@ -772,7 +773,7 @@ private slots:
         rm.transmitModel().setCfcCompression(0, 9);
         rm.transmitModel().setCfcPostEqBandGain(0, -8);
         rm.transmitModel().setCfcParaEqData("unknown-opaque");
-        QSignalSpy spy(&rm.transmitModel(), &TransmitModel::cfcProfileChanged);
+        QSignalSpy spy(&rm.transmitModel(), &TransmitModel::cfcEditProfileChanged);
         TxCfcDialog dlg(&rm.transmitModel(), nullptr);
         QCOMPARE(dlg.compWidget()->frequencyMinHz(), 100.0);
         QCOMPARE(dlg.compWidget()->points()[0].frequencyHz, 100.0);
@@ -788,7 +789,7 @@ private slots:
         auto& tm = rm.transmitModel();
         for (int i = 0; i < 10; ++i) { tm.setCfcEqFreq(i, 200); }
         tm.setCfcParaEqData("collapsed-opaque");
-        QSignalSpy spy(&tm, &TransmitModel::cfcProfileChanged);
+        QSignalSpy spy(&tm, &TransmitModel::cfcEditProfileChanged);
         TxCfcDialog dlg(&tm, nullptr);
         dlg.show(); QApplication::processEvents();
         QVERIFY(dlg.findChild<QLabel*>("TxCfcInvalidCurve")->isVisible());
@@ -800,7 +801,7 @@ private slots:
         dlg.findChild<QPushButton*>("TxCfcApplyBands")->click();
         QVERIFY(dlg.compWidget()->isVisible());
         QVERIFY(dlg.precompSpin()->isEnabled());
-        QVERIFY(isValidCfcProfile(tm.effectiveCfcProfile()));
+        QVERIFY(isValidCfcEditProfile(tm.effectiveCfcProfile()));
         QCOMPARE(tm.effectiveCfcProfile().compression.frequenciesHz.size(), 5);
         QCOMPARE(spy.count(), 1);
         dlg.findChild<QPushButton*>("TxCfcUndo")->click();
@@ -811,7 +812,7 @@ private slots:
         QCOMPARE(spy.count(), 2);
         dlg.findChild<QPushButton*>("TxCfcRedo")->click();
         QVERIFY(dlg.compWidget()->isVisible());
-        QVERIFY(isValidCfcProfile(tm.effectiveCfcProfile()));
+        QVERIFY(isValidCfcEditProfile(tm.effectiveCfcProfile()));
         QCOMPARE(tm.effectiveCfcProfile().compression.frequenciesHz.size(), 5);
         QCOMPARE(spy.count(), 3);
     }
@@ -820,7 +821,7 @@ private slots:
     {
         RadioModel rm;
         auto& tm = rm.transmitModel();
-        CfcProfile original = pairedProfile(18);
+        CfcEditProfile original = pairedProfile(18);
         original.compression.frequencyMaxHz = original.postEq.frequencyMaxHz = 12000;
         for (int i = 0; i < 18; ++i) {
             original.compression.frequenciesHz[i] = original.postEq.frequenciesHz[i] = i * 12000.0 / 17;
@@ -831,7 +832,7 @@ private slots:
         dlg.bands5Radio()->setChecked(true);
         auto* apply = dlg.findChild<QPushButton*>("TxCfcApplyBands");
         QVERIFY(apply->isVisible());
-        QSignalSpy spy(&tm, &TransmitModel::cfcProfileChanged);
+        QSignalSpy spy(&tm, &TransmitModel::cfcEditProfileChanged);
         tm.beginCfcProfileUpdate();
         for (int i = 0; i < 10; ++i) {
             tm.setCfcEqFreq(i, 200);
@@ -871,8 +872,8 @@ private slots:
         dlg.bands18Radio()->setChecked(true);
         QVERIFY(apply->isVisible());
         apply->click();
-        const CfcProfile repaired = tm.effectiveCfcProfile();
-        QVERIFY(isValidCfcProfile(repaired));
+        const CfcEditProfile repaired = tm.effectiveCfcProfile();
+        QVERIFY(isValidCfcEditProfile(repaired));
         QCOMPARE(repaired.compression.frequenciesHz.size(), 18);
         QCOMPARE(repaired.compression.frequencyMinHz, 0.0);
         QCOMPARE(repaired.compression.frequencyMaxHz, 4000.0);
@@ -928,6 +929,30 @@ private slots:
         QVERIFY(dlg.compWidget()->width() <= dlg.width());
         QVERIFY(dlg.postEqWidget()->width() <= dlg.width());
         QCOMPARE(dlg.size(), QSize(853, 500));
+    }
+
+    void pairedCurveRefreshesAndEditsFiveAndEighteen()
+    {
+        RadioModel rm;
+        TransmitModel& tx = rm.transmitModel();
+        TxCfcDialog dlg(&tx, nullptr);
+        dlg.bands18Radio()->setChecked(true);
+        dlg.findChild<QPushButton*>(QStringLiteral("TxCfcApplyBands"))->click();
+        CfcProfile::Profile p;
+        QVERIFY(CfcProfile::decode(tx.cfcParaEqData(), p));
+        QCOMPARE(p.f.size(), std::size_t(18));
+        dlg.compWidget()->setSelectedIndex(3);
+        dlg.compQSpin()->setValue(7.25);
+        QVERIFY(CfcProfile::decode(tx.cfcParaEqData(), p));
+        QCOMPARE(p.qg.at(3), 7.25);
+        QCOMPARE(p.qe.at(3), 4.0);
+
+        dlg.bands5Radio()->setChecked(true);
+        dlg.findChild<QPushButton*>(QStringLiteral("TxCfcApplyBands"))->click();
+        QVERIFY(CfcProfile::decode(tx.cfcParaEqData(), p));
+        QCOMPARE(p.f.size(), std::size_t(5));
+        tx.setCfcParaEqData(CfcProfile::encode(p));
+        QCOMPARE(dlg.currentBandCount(), 5);
     }
 
     // ── 1. Dialog constructs with documented control surface ───────────
@@ -1361,9 +1386,19 @@ private slots:
         tx.setCfcPrecompDb(8);
         tx.setCfcCompression(3, 12);
         QApplication::processEvents();
+        const CfcEditProfile beforeReset = tx.effectiveCfcProfile();
+        const QString untouchedEq = dlg.postEqWidget()->saveToJson();
 
         dlg.resetCompBtn()->click();
         QApplication::processEvents();
+        QCOMPARE(dlg.postEqWidget()->saveToJson(), untouchedEq);
+        CfcProfile::Profile paired;
+        QVERIFY(CfcProfile::decode(tx.cfcParaEqData(), paired));
+        QCOMPARE(paired.f, std::vector<double>(beforeReset.compression.frequenciesHz.begin(),
+                                              beforeReset.compression.frequenciesHz.end()));
+        QCOMPARE(paired.postF, std::vector<double>(beforeReset.postEq.frequenciesHz.begin(),
+                                                  beforeReset.postEq.frequenciesHz.end()));
+        QCOMPARE(paired.f, paired.postF);
 
         // Comp widget global gain reset to 0.
         QCOMPARE(dlg.compWidget()->globalGainDb(), 0.0);
@@ -1387,9 +1422,19 @@ private slots:
         tx.setCfcPostEqGainDb(-6);
         tx.setCfcPostEqBandGain(4, 9);
         QApplication::processEvents();
+        const CfcEditProfile beforeReset = tx.effectiveCfcProfile();
+        const QString untouchedComp = dlg.compWidget()->saveToJson();
 
         dlg.resetEqBtn()->click();
         QApplication::processEvents();
+        QCOMPARE(dlg.compWidget()->saveToJson(), untouchedComp);
+        CfcProfile::Profile paired;
+        QVERIFY(CfcProfile::decode(tx.cfcParaEqData(), paired));
+        QCOMPARE(paired.f, std::vector<double>(beforeReset.compression.frequenciesHz.begin(),
+                                              beforeReset.compression.frequenciesHz.end()));
+        QCOMPARE(paired.postF, std::vector<double>(beforeReset.postEq.frequenciesHz.begin(),
+                                                  beforeReset.postEq.frequenciesHz.end()));
+        QCOMPARE(paired.f, paired.postF);
 
         QCOMPARE(dlg.postEqWidget()->globalGainDb(), 0.0);
         QVector<double> ef, eg, eq;

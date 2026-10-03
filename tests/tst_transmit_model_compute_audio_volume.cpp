@@ -68,6 +68,10 @@ int specMaxWattsFor(HPSDRModel m) noexcept {
             return 200;
         case HPSDRModel::ANAN_G2:
             return 100;
+        case HPSDRModel::ANAN_G2E:
+            // A 100 W radio on the G2's gain row (HpsdrModel.h
+            // paMaxWattsFor), so it takes its place in the ceiling matrix.
+            return 100;
         case HPSDRModel::ANAN_G2_1K:
             return 1000;
         case HPSDRModel::REDPITAYA:
@@ -96,6 +100,7 @@ const char* hpsdrModelName(HPSDRModel m) noexcept {
         case HPSDRModel::ANAN8000D:    return "ANAN8000D";
         case HPSDRModel::ANAN_G2:      return "ANAN_G2";
         case HPSDRModel::ANAN_G2_1K:   return "ANAN_G2_1K";
+        case HPSDRModel::ANAN_G2E:     return "ANAN_G2E";
         case HPSDRModel::ANVELINAPRO3: return "ANVELINAPRO3";
         case HPSDRModel::HERMESLITE:   return "HERMESLITE";
         case HPSDRModel::REDPITAYA:    return "REDPITAYA";
@@ -322,10 +327,10 @@ private slots:
     // a tiny dBm value, well under 1.0.
     void safety_ceiling_matrix_no_band_exceeds_rail() {
         TransmitModel t;
-        // Iterate the 16 production HPSDRModel values (FIRST/LAST are
-        // sentinels — skipped via specMaxWattsFor returning 0).
+        // Iterate the 17 production HPSDRModel values, ANAN-G2E included
+        // (FIRST/LAST are sentinels, skipped via specMaxWattsFor returning 0).
         for (int mi = static_cast<int>(HPSDRModel::HPSDR);
-             mi <= static_cast<int>(HPSDRModel::REDPITAYA); ++mi) {
+             mi < static_cast<int>(HPSDRModel::LAST); ++mi) {
             const auto model = static_cast<HPSDRModel>(mi);
             const int maxW = specMaxWattsFor(model);
             if (maxW <= 0) {

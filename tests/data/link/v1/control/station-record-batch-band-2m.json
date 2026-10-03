@@ -1,0 +1,28 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "record.batch",
+    "stream": "spots",
+    "generation": 1,
+    "reset": false,
+    "upserts": [
+      {
+        "id": "13",
+        "fields": {
+          "timeUtc": "2026-09-28T12:00:00Z",
+          "frequencyHz": 144174000,
+          "call": "W1AW",
+          "mode": "FT8",
+          "source": "PSK",
+          "spotter": "K1ABC",
+          "comment": "FT8 -12 dB",
+          "band": 27,
+          "dxccColour": "",
+          "dxccPriority": 0
+        }
+      }
+    ],
+    "removes": []
+  },
+  "decodes": true
+}

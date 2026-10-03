@@ -20,6 +20,9 @@
 //                 src/gui/HGauge.h (inner class) into standalone
 //                 NereusSDR widget by J.J. Boyd (KG4VCF), with
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-25  R-R3-49 (parity Task 8): value() and isScrollEnabled()
+//                 for the remote relay tests. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -43,6 +46,10 @@ public:
 
     // Enable/disable mousewheel scrolling for relay adjustment.
     void setScrollEnabled(bool on);
+
+    // The position shown (0-255), and whether the wheel moves the relay.
+    int value() const { return m_value; }
+    bool isScrollEnabled() const { return m_scrollEnabled; }
 
 signals:
     // Emitted on mousewheel scroll: +1 (up), -1 (down).

@@ -335,6 +335,7 @@ Expected: 5 new tests FAIL (`widebandAdcs` defaults to 0 already, so HL2 + Herme
 Per design §2:
 - All 1-ADC SKUs (HL2, Metis, Hermes, HermesII, AnvelinaPro3 P1, RedPitaya P1): `widebandAdcs = 0`
 - All 2-ADC P2 SKUs (Angelia, Orion, OrionMkII, ANAN7000D, ANAN8000D, ANAN_G2, ANAN_G2E, Andromeda, Saturn, SaturnMkII, RedPitaya P2): `widebandAdcs = 2`
+- Corrected 2026-09-25 (receiver and transmit gaps plan, Task 5): Angelia and Orion carry `widebandAdcs = 1` (ADC0 on Protocol 2, as Thetis `console.cs:43552-43558 [v2.10.3.15]` enables it) and none on Protocol 1 through `BoardCapsTable::widebandAdcsFor`; ANAN_G2E is 1 (one ADC). See design section 2.
 
 Add the field to each initializer. Example for ANAN_G2:
 ```cpp

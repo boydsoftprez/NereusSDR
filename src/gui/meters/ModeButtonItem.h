@@ -67,6 +67,9 @@ public:
     explicit ModeButtonItem(QObject* parent = nullptr);
 
     void setActiveMode(int index);
+    /// R-R3-21: the mode name on button `index` ("LSB" .. "DIGU"), empty
+    /// outside 0..kModeCount-1. MainWindow maps it to the slice's mode.
+    static QString modeLabel(int index);
     int activeMode() const { return m_activeMode; }
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }

@@ -413,6 +413,8 @@ In `docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md` §2, c
 | HermesLite2 RX-only | 1 | 4 | DDC0-1 | **5** | 48, 96, 192, 384 | false | 0 |
 ```
 
+Corrected 2026-09-25 (receiver and transmit gaps plan, Task 15): the sample-rate column above is Protocol 1 only. On Protocol 2 both HL2 rows now offer 48 to 1536 kHz (Thetis and mi0bot `setup.cs` p2_rates); see the Phase 3F design, section 2.
+
 Immediately after the "Source cites" list in that section, add:
 
 ```markdown

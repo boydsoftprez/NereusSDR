@@ -51,12 +51,12 @@ static QByteArray findRequest(const QList<QByteArray>& reqs, const QByteArray& p
 void Rf2ksConnectionControlTest::putAntennasActive() {
     RecordingAmpServer server;
     Rf2ksConnection conn;
-    // High poll interval - keeps polling noise out of the 200 ms window.
+    // Keep polling separate from the command under test.
     conn.setPollIntervalMs(5000);
     conn.connectToAmp("127.0.0.1", server.port());
     conn.setActiveAntenna(RfKitAntenna::Type::Internal, 2);
-    QTest::qWait(200);
-    QVERIFY(!server.requests().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !findRequest(server.requests(), "PUT /antennas/active ").isEmpty(), 3000);
     const QByteArray req = findRequest(server.requests(), "PUT /antennas/active ");
     QVERIFY2(!req.isEmpty(), "No PUT /antennas/active request captured");
     // QJsonObject sorts keys alphabetically: "number" < "type"
@@ -70,8 +70,8 @@ void Rf2ksConnectionControlTest::putOperateMode() {
     conn.setPollIntervalMs(5000);
     conn.connectToAmp("127.0.0.1", server.port());
     conn.setOperateMode("OPERATE");
-    QTest::qWait(200);
-    QVERIFY(!server.requests().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !findRequest(server.requests(), "PUT /operate-mode ").isEmpty(), 3000);
     const QByteArray req = findRequest(server.requests(), "PUT /operate-mode ");
     QVERIFY2(!req.isEmpty(), "No PUT /operate-mode request captured");
     QVERIFY(req.contains(R"("operate_mode":"OPERATE")"));
@@ -83,8 +83,8 @@ void Rf2ksConnectionControlTest::putOperationalInterface() {
     conn.setPollIntervalMs(5000);
     conn.connectToAmp("127.0.0.1", server.port());
     conn.setOperationalInterface("TCI");
-    QTest::qWait(200);
-    QVERIFY(!server.requests().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !findRequest(server.requests(), "PUT /operational-interface ").isEmpty(), 3000);
     const QByteArray req = findRequest(server.requests(), "PUT /operational-interface ");
     QVERIFY2(!req.isEmpty(), "No PUT /operational-interface request captured");
     QVERIFY(req.contains(R"("operational_interface":"TCI")"));
@@ -96,8 +96,8 @@ void Rf2ksConnectionControlTest::postErrorReset() {
     conn.setPollIntervalMs(5000);
     conn.connectToAmp("127.0.0.1", server.port());
     conn.resetError();
-    QTest::qWait(200);
-    QVERIFY(!server.requests().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !findRequest(server.requests(), "POST /error/reset ").isEmpty(), 3000);
     const QByteArray req = findRequest(server.requests(), "POST /error/reset ");
     QVERIFY2(!req.isEmpty(), "No POST /error/reset request captured");
 }

@@ -36,11 +36,33 @@ void HGauge::setPeakValue(double val) {
     update();
 }
 void HGauge::setTickLabels(const QStringList& labels) { m_tickLabels = labels; update(); }
+void HGauge::setUnavailable(bool unavailable)
+{
+    if (m_unavailable == unavailable) { return; }
+    m_unavailable = unavailable;
+    update();
+}
+
+double HGauge::filledFraction() const noexcept
+{
+    if (m_max <= m_min) { return 0.0; }
+    const double normalized = qBound(0.0, (m_value - m_min) / (m_max - m_min), 1.0);
+    // R-R3-21: a reversed gauge is empty at its maximum and full at its
+    // minimum, filled from the right; the same mapping as the AetherSDR
+    // gauge this widget's look follows (HGauge.h paintEvent [@1e0718ad]).
+    // It read fill = normalized, so a reversed gauge at its maximum (the
+    // "none" end) drew a full bar.
+    return m_reversed ? 1.0 - normalized : normalized;
+}
 
 void HGauge::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
+    // iPhone app plan Task 39: an unavailable gauge is drawn dimmed.
+    if (m_unavailable) {
+        p.setOpacity(0.4);
+    }
 
     const int w = width();
     const int h = height();
@@ -57,15 +79,16 @@ void HGauge::paintEvent(QPaintEvent*)
     if (m_max <= m_min) { return; }
 
     const double range = m_max - m_min;
-    const double normalized = qBound(0.0, (m_value - m_min) / range, 1.0);
 
     if (m_reversed) {
-        const int fillW = static_cast<int>(normalized * barW);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(Style::kGaugeDanger));
-        p.drawRoundedRect(barX + barW - fillW, barY + 1, fillW, barH - 2, 1, 1);
+        const int fillW = static_cast<int>(filledFraction() * barW);
+        if (fillW > 0) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(Style::kGaugeDanger));
+            p.drawRoundedRect(barX + barW - fillW, barY + 1, fillW, barH - 2, 1, 1);
+        }
     } else {
-        const int fillW = static_cast<int>(normalized * barW);
+        const int fillW = static_cast<int>(filledFraction() * barW);
         if (fillW > 0) {
             const double yellowNorm = (m_yellowStart - m_min) / range;
             const double redNorm = (m_redStart - m_min) / range;

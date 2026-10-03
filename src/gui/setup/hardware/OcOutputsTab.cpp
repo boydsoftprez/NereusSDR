@@ -21,6 +21,19 @@
 //                checkboxes wired to TransmitModel::userDigOut, gated on
 //                BoardCapabilities::hasPennyLane. J.J. Boyd (KG4VCF), with
 //                AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-23 - R-R3-46: User Dig Out and the HF / SWL transmit
+//                 fields follow the transmit permission. J.J. Boyd (KG4VCF), AI-
+//                 assisted via Anthropic Claude Code.
+//   2026-09-23 - R-R3-21: populate() routes the MAC into
+//                 PennyLaneController so Penny Ext Control saves per radio.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: the VHF sub-tab is hidden until transverters are
+//                 built (UnbuiltFeatures).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-46 / R-R3-49 (remote-window parity Task 13): User
+//                 Dig Out follows the transmit settings gate; the TX pins,
+//                 pin actions and resets follow their own gates.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -62,11 +75,14 @@
 //============================================================================================//
 
 #include "OcOutputsTab.h"
+#include "HardwareTransmitGate.h"
 #include "OcOutputsHfTab.h"
 #include "OcOutputsSwlTab.h"
+#include "gui/UnbuiltFeatures.h"
 
 #include "core/BoardCapabilities.h"
 #include "core/OcMatrix.h"
+#include "core/accessories/PennyLaneController.h"
 #include "core/RadioDiscovery.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
@@ -126,7 +142,7 @@ OcOutputsTab::OcOutputsTab(RadioModel* model, QWidget* parent)
     {
         auto* vhfLayout = new QVBoxLayout(m_vhfTab);
         auto* placeholder = new QLabel(
-            tr("VHF band plan — pending XVTR mapping (Phase 3F+)"), m_vhfTab);
+            tr("Open collector outputs for transverter bands are not available in this version."), m_vhfTab);
         placeholder->setAlignment(Qt::AlignCenter);
         placeholder->setStyleSheet(QStringLiteral(
             "color: rgba(255,255,255,0.5); font-style: italic;"));
@@ -134,7 +150,9 @@ OcOutputsTab::OcOutputsTab(RadioModel* model, QWidget* parent)
         vhfLayout->addWidget(placeholder);
         vhfLayout->addStretch();
     }
-    m_subTabs->addTab(m_vhfTab, tr("VHF"));
+    const int vhfIndex = m_subTabs->addTab(m_vhfTab, tr("VHF"));
+    // R-R3-49: hidden until transverters are built.
+    m_subTabs->setTabVisible(vhfIndex, UnbuiltFeatures::isBuilt(UnbuiltFeature::Transverters));
 
     // ── SWL sub-sub-tab (Phase 3L HL2 Filter visibility) ──────────────────
     // Source: Thetis tpOCSWLControl (setup.designer.cs) [@501e3f5]
@@ -154,6 +172,16 @@ void OcOutputsTab::populate(const RadioInfo& info, const BoardCapabilities& caps
     if (m_ocMatrix) {
         m_ocMatrix->setMacAddress(info.macAddress);
         m_ocMatrix->load();  // fires OcMatrix::changed() → HF tab re-syncs
+    }
+
+    // R-R3-21: Penny Ext Control saves per radio. Route the MAC here too so
+    // a window that did not connect the radio itself (a remote window, whose
+    // model never runs the local connect path) still reads and saves the
+    // radio's own key; the HF tab's checkbox follows extCtrlEnabledChanged.
+    if (m_model != nullptr) {
+        PennyLaneController& penny = m_model->pennyLaneControllerMutable();
+        penny.setMacAddress(info.macAddress);
+        penny.load();
     }
 
     // P1 full-parity §4.3: User Dig Out group visibility gates on hasPennyLane.
@@ -185,6 +213,39 @@ void OcOutputsTab::restoreSettings(const QMap<QString, QVariant>& /*settings*/)
     // This stub satisfies the HardwarePage API contract.
 }
 
+// ── Transmit permission (R-R3-46) ────────────────────────────────────────────
+
+void OcOutputsTab::setTransmitPermitted(bool permitted, const QString& reason)
+{
+    // R-R3-46 / R-R3-49 (parity Task 13): only the HF tab's hidden extras
+    // (hot switching, external PA) still wait for remote transmit.
+    if (m_hfTab) {
+        m_hfTab->setTransmitPermitted(permitted, reason);
+    }
+}
+
+void OcOutputsTab::setUserDigOutPermitted(bool permitted, const QString& reason)
+{
+    HardwareTransmitGate::apply(m_userDigOutGroup, permitted, reason);
+}
+
+void OcOutputsTab::setTransmitPinsPermitted(bool permitted, const QString& reason)
+{
+    if (m_hfTab) {
+        m_hfTab->setTransmitPinsPermitted(permitted, reason);
+    }
+    if (m_swlTab) {
+        m_swlTab->setTransmitPinsPermitted(permitted, reason);
+    }
+}
+
+void OcOutputsTab::setPinActionsPermitted(bool permitted, const QString& reason)
+{
+    if (m_hfTab) {
+        m_hfTab->setPinActionsPermitted(permitted, reason);
+    }
+}
+
 // ── User Dig Out group (P1 full-parity §4.3) ────────────────────────────────
 
 void OcOutputsTab::buildUserDigOutGroup()
@@ -205,7 +266,7 @@ void OcOutputsTab::buildUserDigOutGroup()
     // so bit 0 is the lowest pin index.
     for (int bit = 0; bit < kUserDigOutBits; ++bit) {
         auto* cb = new QCheckBox(tr("Pin %1").arg(bit + 1), m_userDigOutGroup);
-        cb->setToolTip(tr("Toggle bit %1 of user_dig_out (Pin %2 on the "
+        cb->setToolTip(tr("Toggle bit %1 of User Dig Out (Pin %2 on the "
                            "Penny / Penny-Lane companion board).")
                            .arg(bit).arg(bit + 1));
         m_userDigOutChecks[static_cast<std::size_t>(bit)] = cb;

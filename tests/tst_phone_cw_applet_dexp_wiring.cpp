@@ -211,7 +211,7 @@ private slots:
                      qPrintable(QStringLiteral("Wired control not found: %1").arg(objName)));
             QVERIFY2(w->isEnabled(),
                      qPrintable(QStringLiteral("Wired control disabled: %1").arg(objName)));
-            QVERIFY2(!w->toolTip().contains(QStringLiteral("Not Yet Implemented")),
+            QVERIFY2(!w->toolTip().contains(QStringLiteral("This control is not built")),
                      qPrintable(QStringLiteral("Wired control still carries NYI tooltip: %1").arg(objName)));
         }
     }

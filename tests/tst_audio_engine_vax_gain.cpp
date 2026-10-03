@@ -20,10 +20,14 @@
 
 #include "core/AudioEngine.h"
 #include "core/IAudioBus.h"
+#include "core/RxChannel.h"
+#include "core/WdspEngine.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
 #include "fakes/FakeAudioBus.h"
+
+#include <QTemporaryDir>
 
 #include <array>
 #include <cstring>
@@ -329,6 +333,65 @@ private slots:
         h.engine->setVaxMuted(0, true);
         h.engine->setVaxMuted(5, true);
         QCOMPARE(h.engine->vaxMuted(1), false);
+    }
+    // ── 13. The tee carries the slice without its AF level ──────────────
+    //
+    // Slice control plan Task 6 (JJ's ruling): the receive channel's
+    // PanelGain1 stays at unity and AudioEngine's mixer applies each slice's
+    // AF level, so the block reaching the tee has no AF gain in it and the
+    // tee no longer divides one out. A digital-mode app hears the same level
+    // at any AF setting, AF 0 included. (The old tee multiplied by 1 / AF,
+    // here 2 and 4.)
+    void vaxTeeIgnoresTheSlicesAfGain() {
+        Harness h = makeHarness();
+        QTemporaryDir config;
+        QVERIFY(config.isValid());
+        WdspEngine* const wdsp = h.radio->wdspEngine();
+        QVERIFY(wdsp != nullptr);
+        wdsp->setSynchronousInitForTest(true);
+        QVERIFY(wdsp->initialize(config.path()));
+
+        FakeAudioBus* vax1 = injectFakeVax(h.engine, 1);
+        FakeAudioBus* vax2 = injectFakeVax(h.engine, 2);
+        const int sliceA = h.addSlice(/*vaxChannel=*/2);
+        const int sliceB = h.addSlice(/*vaxChannel=*/1);
+        QCOMPARE(sliceA, 0);  // receiver 1: the channel the old code read
+        QVERIFY(sliceB != sliceA);
+        const auto channelFor = [wdsp](int sliceId) {
+            RxChannel* rx = wdsp->rxChannel(sliceId);
+            return rx != nullptr ? rx : wdsp->createRxChannel(sliceId, 64, 4096);
+        };
+        RxChannel* const rxA = channelFor(sliceA);
+        RxChannel* const rxB = channelFor(sliceB);
+        QVERIFY(rxA != nullptr && rxB != nullptr);
+        rxA->setAfGain(0.5);
+        rxB->setAfGain(0.25);
+
+        h.engine->rxBlockReady(sliceB, kTestSamples.data(), kTestFrames);
+        QCOMPARE(vax1->pushCount(), 1);
+        const auto gotB = bufferAsFloats(vax1);
+        for (int i = 0; i < kTestStereoFloats; ++i) {
+            QCOMPARE(gotB[i], kTestSamples[i]);
+        }
+
+        h.engine->rxBlockReady(sliceA, kTestSamples.data(), kTestFrames);
+        QCOMPARE(vax2->pushCount(), 1);
+        const auto gotA = bufferAsFloats(vax2);
+        for (int i = 0; i < kTestStereoFloats; ++i) {
+            QCOMPARE(gotA[i], kTestSamples[i]);
+        }
+
+        // AF 0 on the receiver and on the slice: VAX still hears the block.
+        rxB->setAfGain(0.0);
+        h.radio->sliceById(sliceB)->setAfGain(0);
+        h.engine->rxBlockReady(sliceB, kTestSamples.data(), kTestFrames);
+        QCOMPARE(vax1->pushCount(), 2);
+        const auto gotB0 = bufferAsFloats(vax1);
+        const int tail = static_cast<int>(gotB0.size()) - kTestStereoFloats;
+        QVERIFY(tail >= 0);
+        for (int i = 0; i < kTestStereoFloats; ++i) {
+            QCOMPARE(gotB0[static_cast<size_t>(tail + i)], kTestSamples[i]);
+        }
     }
 };
 

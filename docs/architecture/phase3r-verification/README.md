@@ -65,13 +65,26 @@ or another known-good RADE station on `qso.freedv.org`).
    continuously.
 6. Verify decoded speech is intelligible through the speakers (or
    the routed audio output device).
-7. If the transmitting station includes a callsign in the embedded
-   rade_text channel, that callsign should appear in the
-   RxDecodeModel ring buffer (visible via the FreeDV Reporter
-   dialog's Local Decodes panel, if exposed, or via debug log).
+7. When the transmitting station ends its over, its callsign (sent
+   in the RADE end-of-over frame, in FreeDV's format) should appear
+   on the VFO flag beside the SNR, in the RxDecodeModel ring buffer
+   (the FreeDV Reporter dialog's Local Decodes panel, if exposed, or
+   the `nereus.rade.text` log line "RADE end-of-over callsign
+   decoded"), and on a remote window's and the phone's flag through
+   the slice's `lastRadeRxCallsign`. Check it with a freedv-gui
+   station and with another NereusSDR station.
 
 **Expected:** Green sync indicator within 2 seconds; SNR populates;
-decoded audio is intelligible; embedded callsign visible.
+decoded audio is intelligible; the sender's callsign shows at the end
+of each over.
+
+**Callsign correction (2026-09-28):** before this date NereusSDR
+decoded no end-of-over callsign at all: the EOO frame was dropped on
+receive, and the old wrapper used librade's raw ASCII helpers, which
+FreeDV never used. Step 7 was therefore never observed, whatever an
+earlier sign-off says. The receive side is now built and tested
+against FreeDV's own encoder (tst_rade_text_codec, tst_rade_text,
+tst_rade_channel); **step 7 is pending bench**.
 
 **Status:** [ ] Untested  [ ] Passed YYYY-MM-DD by NAME  [ ] Failed YYYY-MM-DD by NAME (issue: #N)
 
@@ -87,22 +100,39 @@ RADE receiver (a second NereusSDR install, freedv-gui, or a known-
 good RADE-decoding station) on the same band.
 
 **Reproducer:**
-1. Set the operator callsign in the appropriate identity field
-   (whichever field the design doc routes into the rade_text
-   embedded channel).
+1. Set the callsign FreeDV Reporter uses at the Core: the Spot Hub's
+   FreeDV Reporter callsign, else the callsign in Setup > General
+   (User/Callsign), else the StationCallsign setting
+   (SpotSourceHost::freedvCallsign), and start FreeDV Reporter at the
+   Core. As in freedv-gui, the end-of-over frame carries that callsign
+   only while FreeDV reporting is on (started and not stopped; a
+   connection error or a lost connection leaves it on); with it stopped
+   the frame goes out with no callsign.
 2. Switch the active slice to RADE mode.
 3. Open the RadeApplet; verify the MicProfileManager combo
    auto-selected RADE.
 4. Key MOX. Transmit a 30-second over speaking normal voice into
    the mic.
-5. The peer RADE receiver should decode the callsign and produce
-   intelligible audio.
+5. The peer RADE receiver should produce intelligible audio and, when
+   MOX is released, show the callsign from the end-of-over frame.
+   Release MOX from the MOX button, the radio's PTT, a remote window
+   and the phone: each time the radio stays keyed for well under a
+   second after the release (the end-of-over frame and 200 ms of
+   silence), then unkeys. A stop (Stop All TX, the time-out, a lost
+   remote link) unkeys at once with no end-of-over frame.
 6. Capture a measurement: PA forward power, reflected power, audio
    quality rating from the peer.
 
-**Expected:** Peer station decodes the embedded callsign; audio
-quality is rated equivalent to a freedv-gui transmission on the
-same hardware.
+**Expected:** Peer station decodes the callsign at the end of each
+over; audio quality is rated equivalent to a freedv-gui transmission
+on the same hardware; the unkey tail never exceeds 1 s.
+
+**Callsign correction (2026-09-28):** before this date NereusSDR sent
+no end-of-over frame (rade_tx_eoo was never called), so no peer could
+have decoded a NereusSDR callsign, whatever an earlier sign-off says.
+The end-of-over tail is now built and tested (tst_rade_end_of_over_tail,
+tst_rade_channel, tst_rade_tx_pump); **the callsign and the unkey
+tail in steps 1 and 5 are pending bench**.
 
 **Status:** [ ] Untested  [ ] Passed YYYY-MM-DD by NAME  [ ] Failed YYYY-MM-DD by NAME (issue: #N)
 

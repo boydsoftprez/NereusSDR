@@ -18,6 +18,16 @@
 //                Ports PollPAPWR (console.cs:25933-26120 [v2.10.3.13])
 //                and UIMOXChangedFalse reset (console.cs:29191-29195
 //                [v2.10.3.13]).
+//   2026-09-25 - R-R3-49 (parity Task 5): read-back accessors for the
+//                five settings (limit, windBackEnabled,
+//                tunePowerSwrIgnore, disableOnTune beside isEnabled) so
+//                the Core's live values can be checked. NereusSDR-original;
+//                no new Thetis logic. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-09-28 - R-R3-49 / R-R3-46: Setup > Transmit > Power's Disable HF PA
+//                applied (Thetis DisablePA and hf_tr_relay,
+//                transmitSettingsVersion 11). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 
 // --- From console.cs ---
@@ -128,6 +138,12 @@ public:
     /// Cite: console.cs:26020-26057 [v2.10.3.13] (disable_swr_on_tune).
     void setDisableOnTune(bool on) noexcept;
 
+    /// "Disable HF PA" (hf_tr_relay): with the HF PA off, a high SWR does not
+    /// trip the protection. The open-antenna check still runs.
+    /// Cite: console.cs:26109-26110 [v2.10.3.15]
+    ///   if (tx_xvtr_index >= 0 || hf_tr_relay) swr_pass = true;
+    void setHfPaDisabled(bool on) noexcept;
+
     /// Minimum forward power (watts) that can trigger a trip.
     /// Suppresses false trips during TX ramp-up. Default 5.0W.
     /// For ANAN-8000D set to 2.0 × ptbPWR.Value before each ingest call.
@@ -170,6 +186,13 @@ public:
     /// Most recently computed SWR value (after floor clamp). 1.0 when clean.
     float measuredSwr() const noexcept;
 
+    /// R-R3-49 (parity Task 5): the settings as last set.
+    float limit() const noexcept { return m_limit; }
+    bool  windBackEnabled() const noexcept { return m_windBackEnabled; }
+    float tunePowerSwrIgnore() const noexcept { return m_tunePowerSwrIgnore; }
+    bool  disableOnTune() const noexcept { return m_disableOnTune; }
+    bool  hfPaDisabled() const noexcept { return m_hfPaDisabled; }
+
 signals:
     void protectFactorChanged(float factor);
     void highSwrChanged(bool isHigh);
@@ -204,6 +227,7 @@ private:
     bool  m_windBackEnabled     = false; // _swr_wind_back_power
     float m_tunePowerSwrIgnore  = 0.0f;  // _tunePowerSwrIgnore
     bool  m_disableOnTune       = false; // disable_swr_on_tune
+    bool  m_hfPaDisabled        = false; // hf_tr_relay (console.cs:10891 [v2.10.3.15])
     // console.cs:26067 [v2.10.3.13]: alex_fwd_limit (default 5W; 2×slider for ANAN-8000D)
     float m_alexFwdLimit        = 5.0f;
     // console.cs:26020-26057 [v2.10.3.13]: tunePowerSliderValue (bypass only when ≤ 70)

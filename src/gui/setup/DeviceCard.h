@@ -109,6 +109,7 @@ protected:
 private:
     void buildLayout();
     void populateDeviceCombo();
+    void selectDeviceName(const QString& name);
     void updateBufferMsLabel();  // recompute derived ms readout from current combos
 
     QString       m_prefix;

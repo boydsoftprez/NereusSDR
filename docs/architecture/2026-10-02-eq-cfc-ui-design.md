@@ -55,3 +55,7 @@ Retain enable/bypass switches, log/linear choice, range inputs, guide, and all e
 - Preserve upstream license headers and inline tags; new ports include provenance entries and cites pinned to v2.10.3.15. Follow `docs/attribution/HOW-TO-PORT.md`.
 - Verify native layout on a 1280×800 display at normal and 125%/150% scaling: editors and band labels readable, no clipped controls, both CFC plot bounds aligned. Scroll the control area if needed without stealing graph dragging/wheel gestures.
 - Meaningful tests cover actual UI → model → DSP/profile behavior, profile changes while open, all supported counts, range/reset/undo interactions, and measured-bar lifecycle. Build matching test targets before running them, and run the full suite before claiming completion.
+
+## Latest main integration (2026-10-02)
+
+The integration into `origin/main` at `dd53da5af` supersedes the original TX ten-point compatibility limitation above. Current main owns `txEqUseLegacy` in the TX profile and sends all parametric 5/10/18 frequencies, gains and enabled Q factors through WDSP 2.1.0. The native editor retains that model-owned local/remote path and its 100 ms parametric coalescing. The standalone exact `CfcEditProfile` state and typed signal coexist with current main's `CfcProfile::Profile`, published QString editor/revision, and remote whole-profile commands. Legacy ten-band writes are rejected while a saved variable-band CFC profile is active, matching current main's remote compatibility behavior.

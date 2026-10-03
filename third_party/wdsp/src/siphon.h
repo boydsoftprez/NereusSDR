@@ -69,30 +69,30 @@ extern void setSamplerate_siphon (SIPHON a, int rate);
 
 extern void setSize_siphon (SIPHON a, int size);
 
-extern void TXASetSipAllocDisps (int channel, int n_alloc_disps, int* alloc_run, int* alloc_disp);
+extern __declspec (dllexport) void TXASetSipAllocDisps (int channel, int n_alloc_disps, int* alloc_run, int* alloc_disp);
 
 // RXA Properties
 
-extern void RXAGetaSipF  (int channel, float* out, int size);
+extern __declspec (dllexport) void RXAGetaSipF  (int channel, float* out, int size);
 
-extern void RXAGetaSipF1 (int channel, float* out, int size);
+extern __declspec (dllexport) void RXAGetaSipF1 (int channel, float* out, int size);
 
 // TXA Properties
 
-extern void TXAGetaSipF  (int channel, float* out, int size);
+extern __declspec (dllexport) void TXAGetaSipF  (int channel, float* out, int size);
 
-extern void TXAGetaSipF1 (int channel, float* out, int size);
+extern __declspec (dllexport) void TXAGetaSipF1 (int channel, float* out, int size);
 
-extern void TXAGetSpecF1 (int channel, float* out);
+extern __declspec (dllexport) void TXAGetSpecF1 (int channel, float* out);
 
 // Calls for External Use
 
-extern void create_siphonEXT (int id, int run, int insize, int sipsize, int fftsize, int specmode);
+extern __declspec (dllexport) void create_siphonEXT (int id, int run, int insize, int sipsize, int fftsize, int specmode);
 
-extern void destroy_siphonEXT (int id);
+extern __declspec (dllexport) void destroy_siphonEXT (int id);
 
-extern void xsiphonEXT (int id, double* buff);
+extern __declspec (dllexport) void xsiphonEXT (int id, double* buff);
 
-extern void SetSiphonInsize (int id, int size);
+extern __declspec (dllexport) void SetSiphonInsize (int id, int size);
 
 #endif

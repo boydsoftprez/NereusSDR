@@ -5,18 +5,35 @@
 // only as pointers to where ported logic lives in the concrete subclasses
 // (P1RadioConnection.cpp, P2RadioConnection.cpp); no upstream code is
 // reproduced in this header.
+//
+// Modification history (NereusSDR):
+//   2026-10-01: TX diagnostics lane: TxSendStats places a key's padded
+//               silence (start, mid-key, tail), its first radio ran dry and
+//               its catch-up bursts in time. Measurement only. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-01: TX diagnostics lane, review round: the unkey tail's start
+//               and the longest gap between the TX pump's wakes, with the
+//               radio's microphone frame sequence step across it. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "ConnectionState.h"
 #include "RadioDiscovery.h"
 #include "HardwareProfile.h"
+#include "RadioLinkStats.h"
+#include "codec/AlexFilterMap.h"
+#include "audio/AudioRingSpsc.h"
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QList>
 #include <QObject>
 #include <QVector>
 
+#include <algorithm>
 #include <atomic>
+#include <array>
 #include <memory>
+#include <optional>
 
 namespace NereusSDR {
 
@@ -86,9 +103,34 @@ struct AntennaRouting {
 //
 // Values are the Thetis HPF bit encoding (AlexFilterMap::computeHpf):
 // 0x10/0x08/0x04/0x01/0x02 band filters, 0x40 6 m preamp, 0x20 bypass.
+//
+// countedSlotsAdc0 (shared-input filters, ruling (c) 2026-09-30): the
+// hardware receiver slots (P2 DDC index, P1 frame slot) of the slices this
+// decision counted on ADC0's input, the same set the band-pass above was
+// chosen over (away slices and unbound slices left out). The receive
+// low-pass follows the highest of them, so both filters on the input serve
+// exactly the same slices. 0 means none counted, and the connection keeps
+// its RX1 stand-in rule for the low-pass.
 struct AlexRxBpf {
     int hpfBitsAdc0 {-1};
     int hpfBitsAdc1 {-1};
+    quint32 countedSlotsAdc0 {0};
+};
+
+// A bounded copy made on the radio connection's parser thread for the
+// existing queued telemetry reply. Ages refer to that connection's current
+// Connected epoch. `known=false` means no valid status for this ADC.
+struct RadioAdcOverloadObservation {
+    bool known{false};
+    bool active{false};
+    qint64 eventsSinceConnection{0};
+    qint64 statusAgeMs{0};
+    std::optional<qint64> lastOverloadAgeMs;
+};
+
+struct RadioDiagnosticsObservation {
+    std::optional<quint16> radioUdpBasePort;
+    std::array<RadioAdcOverloadObservation, 3> adcOverloads{};
 };
 
 // Abstract base class for radio connections.
@@ -150,6 +192,23 @@ public:
     void notePingSent();
     void notePingReceived();
 
+    // R-R3-32 / R-R3-49 (parity Task 6): the link's datagram counters (UDP
+    // packets seen, packet loss, jitter, packet gap), one source for Network
+    // Diagnostics in a local window and the Core's station telemetry. Safe
+    // from any thread (RadioLinkStats: atomics written only by this
+    // connection's receive path).
+    RadioLinkStats::Snapshot linkStats() const
+    { return m_linkStats.snapshot(RadioLinkStats::nowUs()); }
+    const RadioLinkStats& linkStatsCounters() const { return m_linkStats; }
+
+public slots:
+    // Owner-thread observation used by the daemon telemetry collector. The
+    // rolling-rate lists above are connection-thread state and must never be
+    // traversed directly from the daemon control thread. This request adds no
+    // radio packet and does not alter ping matching or connection liveness.
+    void collectTelemetryObservation(quint64 requestId);
+
+public:
     // Voltage signal handlers — called by P1/P2 after extracting raw ADC counts.
     // Apply per-board scaling and emit supplyVoltsChanged / userAdc0Changed
     // when the value changes by more than 50 mV (identical-raw suppression).
@@ -212,9 +271,48 @@ public slots:
     virtual void setActiveReceiverCount(int count) = 0;
     virtual void setSampleRate(int sampleRate) = 0;
 
+    // Which hardware receivers are live: bit n set means a receiver is
+    // routed to hardware index n (ReceiverManager::hardwareSlotsChanged).
+    // Protocol 1 uses it to pick the receiver that stands in for Thetis's
+    // RX1 when slice A is closed, and to announce every slot in use.
+    // Non-pure so existing test mocks compile unchanged; P1 overrides.
+    virtual void setLiveReceiverSlots(quint32 /*slotMask*/) {}
+
+    // The VFO frequency of the slice each hardware receiver slot serves,
+    // indexed by slot (0 = no slice, or not told). The OC outputs take their
+    // band from a VFO, not from a DDC centre, which differs under CTUN
+    // (Thetis: BandByFreq(VFOAFreq), plan Task 14). Non-pure so existing
+    // test mocks compile unchanged; P1 and P2 override.
+    virtual void setReceiverVfoFrequencies(const QVector<quint64>& /*vfoHzBySlot*/) {}
+
     // --- Hardware Control ---
     virtual void setAttenuator(int dB) = 0;
+    // R-R3-46 / R-R3-11: the receive step attenuator of one ADC (0, 1 or 2),
+    // Thetis NetworkIO.SetADC1/2/3StepAttenData (netInterface.c:849-879
+    // [v2.10.3.15], prn->adc[n].rx_step_attn, which both protocols send).
+    // Non-pure so existing test mocks compile unchanged: the default hands
+    // ADC 0 to setAttenuator and drops the others. P1 and P2 override.
+    virtual void setAttenuatorForAdc(int adc, int dB)
+    {
+        if (adc == 0) {
+            setAttenuator(dB);
+        }
+    }
     virtual void setPreamp(bool enabled) = 0;
+    // Level Cal: the second receiver's preamp bit (prn->rx[1].preamp), which
+    // Thetis's RX2PreampMode sends on the HPSDR alone.
+    // From Thetis ChannelMaster/netInterface.c:758-767 [v2.10.3.15]:
+    //   void SetRX2Preamp(int bits)
+    //   {
+    //   	if (prn->rx[1].preamp != bits)
+    //   	{
+    //   		prn->rx[1].preamp = bits;
+    //   		if (listenSock != INVALID_SOCKET && prn->sendHighPriority != 0)
+    //   			CmdHighPriority();
+    //   	}
+    //   }
+    // Non-pure so existing test mocks compile unchanged; P1 and P2 override.
+    virtual void setRx2Preamp(bool /*enabled*/) {}
     virtual void setTxDrive(int level) = 0;
     virtual void setMox(bool enabled) = 0;
     virtual void setAntennaRouting(AntennaRouting routing) = 0;
@@ -231,6 +329,20 @@ public slots:
     //
     // Non-pure so existing test mocks compile unchanged; P1 and P2 override.
     virtual void setAlexRxBpf(AlexRxBpf /*bpf*/) {}
+
+    // Level Cal: the Alex receive attenuator, 0 (none), 1 (10 dB), 2 (20 dB)
+    // or 3 (30 dB). The preamp settings and the step attenuator above 31 dB
+    // drive it (StepAttenuatorController).
+    // From Thetis ChannelMaster/netInterface.c:421-432 [v2.10.3.15]:
+    //   void SetAlexAtten(int bits)
+    //   {
+    //   	if (mkiibpf) return;
+    //   	if ((prbpfilter->_20_dB_Atten | prbpfilter->_10_dB_Atten) != bits)
+    //   	{
+    //   		prbpfilter->_20_dB_Atten = (bits & 0x2) == 0x2;
+    //   		prbpfilter->_10_dB_Atten = bits & 0x1;
+    // Non-pure so existing test mocks compile unchanged; P1 and P2 override.
+    virtual void setAlexAtten(int /*bits*/) {}
 
     // Push TX-side step attenuator value to hardware.
     //
@@ -399,21 +511,119 @@ public slots:
     /// Task 2.5 of the P1 full-parity epic, not here.
     /// Default false = PureSignal feedback DDC NOT routing.
     virtual void setPuresignalRun(bool run) = 0;
+    /// TX safety fix round 1 (2026-09-30) test seam: the run flag as the
+    /// connection holds it. Read it on the connection's thread.
+    bool puresignalRunForTest() const { return m_puresignalRun; }
 
     /// HPF Bypass on PureSignal feedback flag (G2E / OrionMKII / Saturn).
-    /// When set + MOX active + PureSignal active, the host emits Alex0 bit 12
-    /// (_Bypass) so the radio bypasses the HPF chain and feeds the post-PA
-    /// coupler tap directly to the ADC.  Default true — matches Thetis
-    /// chkDisableHPFonPSb.Checked=true [v2.10.3.13].  Storage-only on the
-    /// base class; the override actually surfaces the flag in buildCodec-
-    /// Context's alexHpfBits OR-in.  P1 path also stores for symmetric API
-    /// (P1 boards may not need it but the flag persists across protocol
-    /// switches).
+    /// When set + MOX active + PureSignal active, the host sends the Alex0
+    /// high-pass word as 0x20 (bit 12, _Bypass) so the radio bypasses the
+    /// HPF chain and feeds the post-PA coupler tap directly to the ADC.
+    /// Default true, as Thetis chkDisableHPFonPSb.Checked=true
+    /// [v2.10.3.13]. Applied on the band-pass boards only, on either
+    /// protocol (codec::alex::applyAlex1HpfSwitches); RadioModel hands it
+    /// the Alex tab's saved value (plan Task 14 fix wave).
     /// ANAN-G2E bench-fix 2026-05-23 (JJ Boyd).
     virtual void setHpfBypassOnPs(bool on) {
         m_hpfBypassOnPs = on;
     }
     bool hpfBypassOnPs() const noexcept { return m_hpfBypassOnPs; }
+
+    /// "HPF Bypass on TX" (Setup > Hardware > Alex, plan Task 14). While
+    /// keyed, an Alex board's high-pass word is 0x20, the bypass:
+    ///   From Thetis console.cs:6843-6848 [v2.10.3.15] (setAlexHPF)
+    ///     if (_mox && disable_hpf_on_tx)
+    ///     { NetworkIO.SetAlexHPFBits(0x20); ... return; }
+    /// Default false, as Thetis (console.cs:18753 disable_hpf_on_tx = false).
+    /// P1 and P2 read it when they compose the high-pass word.
+    virtual void setHpfBypassOnTx(bool on) { m_hpfBypassOnTx = on; }
+    bool hpfBypassOnTx() const noexcept { return m_hpfBypassOnTx; }
+
+    /// The Alex tab's high-pass switches as the high-pass word applies them
+    /// (codec::alex::applyAlex1HpfSwitches). Plan Task 14 fix wave.
+    codec::alex::Alex1HpfSwitches alexHpfSwitches() const noexcept {
+        codec::alex::Alex1HpfSwitches sw;
+        sw.hpfBypassOnTx = m_hpfBypassOnTx;
+        sw.hpfBypassOnPs = m_hpfBypassOnPs;
+        sw.hpfBypass     = m_alexHpfBypass;
+        sw.disable6mLnaOnRx = m_disable6mLnaOnRx;
+        sw.disable6mLnaOnTx = m_disable6mLnaOnTx;
+        return sw;
+    }
+
+    /// "Disable 6m LNA on RX" / "on TX" (the Alex tab). On 6 m the high-pass
+    /// word's 6 m BPF/LNA selection (0x40) becomes the bypass (0x20) while
+    /// receiving (RX switch) or keyed (TX switch):
+    ///   From Thetis console.cs:6931-6936 [v2.10.3.15] (setAlexHPF)
+    ///     if (alex6bphpf_bypass || disable_6m_lna_on_rx || (_mox && disable_6m_lna_on_tx))
+    ///     { NetworkIO.SetAlexHPFBits(0x20); // Bypass HPF
+    /// Defaults as Thetis: RX false (console.cs:18719), TX true (18741).
+    virtual void setDisable6mLna(bool onRx, bool onTx) {
+        m_disable6mLnaOnRx = onRx;
+        m_disable6mLnaOnTx = onTx;
+    }
+
+    /// A band-output (OC) pin was edited in the matrix this connection
+    /// composes from (plan Task 14 fix wave, M2). Protocol 2 sends a
+    /// high-priority packet when the byte changes, as Thetis pushes a pin
+    /// edit at once; Protocol 1 carries bank 0 in its frame rotation, so the
+    /// base does nothing.
+    virtual void onBandOutputPinsChanged() {}
+
+    /// "HPF Bypass" (the Alex tab's master switch, Thetis chkAlexHPFBypass
+    /// "ByPass/55 MHz HPF"). An Alex board's high-pass word is 0x20, keyed
+    /// or not:
+    ///   From Thetis console.cs:6850-6855 [v2.10.3.15] (setAlexHPF)
+    ///     if (alex_hpf_bypass)
+    ///     { NetworkIO.SetAlexHPFBits(0x20); // Bypass HPF ... return; }
+    /// Default false, as Thetis (console.cs:18793 alex_hpf_bypass = false).
+    virtual void setAlexHpfBypass(bool on) { m_alexHpfBypass = on; }
+    bool alexHpfBypass() const noexcept { return m_alexHpfBypass; }
+
+    /// "Disable HF PA" (Setup > Transmit > Power, Thetis chkHFTRRelay):
+    /// Thetis's NetworkIO.DisablePA, the radio's PA switched off.
+    ///   From Thetis ChannelMaster/netInterface.c:623-631 [v2.10.3.15]
+    ///     void DisablePA(int bit)
+    ///     { if (prn->tx[0].pa != bit) { prn->tx[0].pa = bit; ... CmdGeneral(); } }
+    /// P1: bank 10 C3 bit 7 (networkproto1.c:586), and on the HL2 bank 10
+    /// C2 bit 3 cleared (mi0bot netInterface.c:628-629). P2: CmdGeneral byte
+    /// 58 clear (network.c:904), and the Alex T/R relay left open while
+    /// keyed (netInterface.c:378 SetTRXrelay). RadioModel hands it the
+    /// saved setting (applyDisableHfPaSetting). Default false, as Thetis
+    /// (netInterface.c:1522 prn->tx[i].pa = 0).
+    virtual void setPaDisabled(bool disabled) { m_paDisabled = disabled; }
+    bool paDisabled() const noexcept { return m_paDisabled; }
+
+    /// The Alex tab's receive filter rows (Setup > Hardware > Alex-1 and
+    /// Alex-2 Filters): each row's edges and per-row bypass for the
+    /// high-pass ladder, the band-pass bank and the Alex-2 bank, and the
+    /// Alex-2 master bypass (codec::alex::AlexHpfEdges). Thetis selects the
+    /// receive high-pass from these (console.cs:6839-7175 [v2.10.3.15]
+    /// setAlexHPF / setBPF1ForOrionIISaturn / setAlex2HPF). RadioModel
+    /// hands it the saved rows; each protocol re-selects at once, as
+    /// Thetis's per-row bypass setters do (console.cs:18823-18833
+    /// Alex1_5BPHPFBypass { ... setAlex1HPF(freq); }).
+    virtual void setAlexHpfEdges(const codec::alex::AlexHpfEdges& edges) { m_alexHpfEdges = edges; }
+    const codec::alex::AlexHpfEdges& alexHpfEdges() const noexcept { return m_alexHpfEdges; }
+
+    /// The Alex-1 Filters tab's low-pass rows (codec::alex::AlexLpfEdges).
+    /// Thetis's setAlexLPF reads them at its next selection
+    /// (console.cs:7177-7243 [v2.10.3.15]); the udAlex*LPF spinner handlers
+    /// do not re-select (setup.cs:15888-15994 [v2.10.3.15]), so a change is
+    /// stored here and read by the next retune, key or unkey.
+    virtual void setAlexLpfEdges(const codec::alex::AlexLpfEdges& edges) { m_alexLpfEdges = edges; }
+    const codec::alex::AlexLpfEdges& alexLpfEdges() const noexcept { return m_alexLpfEdges; }
+
+    /// "6m/ByPass on RX" (Thetis chkLPFBypass -> console.cs LPFBypass,
+    /// console.cs:18775-18790 [v2.10.3.15]): the 6 m low-pass while
+    /// receiving. The protocols re-select at once, as the setter does.
+    virtual void setAlexLpfBypass(bool on) { m_alexLpfBypass = on; }
+    bool alexLpfBypass() const noexcept { return m_alexLpfBypass; }
+
+    /// The low-pass the radio is using now (the mask the Alex0 word carries,
+    /// the one Thetis lights a rad*LPFled for), or -1 before the first
+    /// selection. Written on the connection thread.
+    int alexLpfBitsInUse() const noexcept { return m_publishedLpfBits; }
 
     /// Hardware mic-jack PTT disable flag (Orion/ANAN front-panel PTT).
     ///
@@ -493,15 +703,169 @@ public slots:
     // From Thetis netInterface.c:1513 [v2.10.3.13] — P2 tx always 192 kHz.
     virtual int txSampleRate() const { return 48000; }
 
+public:
+    // R-IOS-13, R-R3-42: the transmit I/Q send path's counters since the
+    // last key. Any thread may read them (each is one atomic load); a
+    // protocol that does not keep them reports valid=false.
+    struct TxSendStats {
+        bool valid{false};
+        quint64 framesSent{0};          ///< TX I/Q frames on the wire
+        quint64 zeroPaddedSamples{0};   ///< silence sent while keyed, ring empty
+        quint64 lateWakes{0};           ///< the sender woke later than 5 ms
+        quint64 catchUpBursts{0};       ///< refills of more than 5 ms at once
+        quint64 radioRanDry{0};         ///< times the radio's buffer ran out (estimated)
+        quint64 overflowSamples{0};     ///< samples the full ring refused (lost)
+        quint64 sendErrors{0};          ///< sends the socket refused (retried)
+        int maxRingMs{0};               ///< deepest the ring got, in ms
+        /// G-07: only overflowSamples is kept (Protocol 1); the other
+        /// counters are not measured and read zero.
+        bool overflowOnly{false};
+
+        // TX diagnostics lane (2026-10-01): where the key's dropouts fell,
+        // in ms since the send thread's first keyed pass (the key). Only
+        // Protocol 2 measures these (placed true); measurement only.
+        bool placed{false};
+        /// The key's first keyed pass on the steady clock, in ns (-1: none),
+        /// so other steady-clock times can be set against it.
+        qint64 keySteadyNs{-1};
+        /// The first frame that carried the TX channel's I/Q, ms after the
+        /// key (-1: none came).
+        double firstBlockAtMs{-1.0};
+        /// zeroPaddedSamples split: before the first such frame (start),
+        /// in runs that ended with the I/Q resuming (mid-key), and the run
+        /// still open when read (the unkey tail).
+        quint64 padStartSamples{0};
+        quint64 padMidSamples{0};
+        quint64 padTailSamples{0};
+        /// When the unkey tail began, ms after the key (-1: no tail).
+        double padTailAtMs{-1.0};
+        /// The longest mid-key run of padding, and when it began.
+        quint64 longestMidPadSamples{0};
+        double longestMidPadAtMs{-1.0};
+        /// The first time the radio ran dry, and the send thread's gap
+        /// before that pass (-1: it never ran dry).
+        double firstDryAtMs{-1.0};
+        double firstDryGapMs{-1.0};
+        /// The first kMaxBurstEvents catch-up bursts: when, the send
+        /// thread's gap before that pass, and the frames it sent.
+        struct Burst {
+            double atMs{-1.0};
+            double gapMs{-1.0};
+            int frames{0};
+        };
+        static constexpr int kMaxBurstEvents = 4;
+        int burstEvents{0};
+        std::array<Burst, kMaxBurstEvents> bursts{};
+        /// The longest gap between the TX pump's wakes during the key, when
+        /// it began (ms after the key; negative when it began before the
+        /// send thread's first keyed pass), and how far the radio's
+        /// microphone frame sequence number moved across it (-1: none seen).
+        double longestWakeGapMs{-1.0};
+        double longestWakeGapAtMs{0.0};
+        qint64 wakeGapSequenceStep{-1};
+    };
+    virtual TxSendStats txSendStats() const { return {}; }
+    /// R-IOS-13 (2026-09-27): what the transmit I/Q send ring holds now,
+    /// in ms of the radio's time; negative when this connection does not
+    /// know. Any thread; lock-free.
+    virtual double txIqQueuedMs() const { return -1.0; }
+    /// G-05 (2026-09-29): true when the transmit I/Q send ring holds nothing
+    /// more the sender will put on the wire, so an unkey can release the
+    /// hardware without cutting off queued audio. A connection without a
+    /// send ring has nothing queued. Any thread; lock-free.
+    virtual bool txIqRingDrained() const { return true; }
+    /// G-05: the send ring's own length, in ms of the radio's time: the most
+    /// audio it can hold, and so the longest an unkey waits for it to
+    /// drain. Zero or negative when this connection has no send ring.
+    virtual double txIqRingLengthMs() const { return -1.0; }
+
+    // Radio codec (2026-09-30): the receive audio for the radio's own
+    // speaker / headphone out (the P1 EP2 L/R bytes, the P2 audio stream
+    // to port 1028). The audio engine hands each block of the station's
+    // program to pushRadioAudio on the DSP thread, as interleaved stereo
+    // float at kRadioAudioRateHz; the protocol's own sender takes it with
+    // takeRadioAudio. Single producer, single consumer, lock-free: a block
+    // that does not fit is dropped and counted, never waited for.
+    static constexpr int kRadioAudioRateHz = 48000;
+    /// True for a connection that sends the radio's audio out.
+    virtual bool carriesRadioAudio() const noexcept { return false; }
+    /// DSP thread only. `stereo` holds `frames` L/R pairs.
+    void pushRadioAudio(const float* stereo, int frames) noexcept
+    {
+        if (stereo == nullptr || frames <= 0) {
+            return;
+        }
+        // The largest block is held over two windows of about a second of
+        // pushed audio, so one oversized block raises the cushion for a
+        // second or two, not for the rest of the connection.
+        m_radioAudioWindowMax = std::max(m_radioAudioWindowMax, frames);
+        m_radioAudioWindowFrames += frames;
+        const int largest = std::max(m_radioAudioPrevWindowMax, m_radioAudioWindowMax);
+        if (m_radioAudioWindowFrames >= kRadioAudioLargestWindowFrames) {
+            m_radioAudioPrevWindowMax = m_radioAudioWindowMax;
+            m_radioAudioWindowMax = 0;
+            m_radioAudioWindowFrames = 0;
+        }
+        m_radioAudioLargestBlock.store(largest, std::memory_order_relaxed);
+        const qint64 bytes = qint64(frames) * kRadioAudioFrameBytes;
+        if (m_radioAudioRing.tryPushCopy(reinterpret_cast<const uint8_t*>(stereo), bytes)
+            != bytes) {
+            m_radioAudioDroppedFrames.fetch_add(quint64(frames), std::memory_order_relaxed);
+        }
+    }
+    /// Frames the full ring refused, since the connection was made. Any thread.
+    quint64 radioAudioDroppedFrames() const noexcept
+    {
+        return m_radioAudioDroppedFrames.load(std::memory_order_relaxed);
+    }
+    /// The radio output's counters, for the diagnostics log. Any thread.
+    struct RadioAudioStats {
+        bool valid{false};             // the connection sends radio audio
+        quint64 droppedFrames{0};      // refused by the full ring
+        quint64 underruns{0};          // the ring ran dry and primed again
+        quint64 trimmedFrames{0};      // cut back to the cushion (drift)
+        int cushionFrames{0};          // the cushion now
+        bool hasPackets{false};        // P2: the port 1028 stream's counters
+        quint64 packetsSent{0};
+        quint64 sendErrors{0};
+    };
+    virtual RadioAudioStats radioAudioStats() const
+    {
+        RadioAudioStats st;
+        st.valid = carriesRadioAudio();
+        st.droppedFrames = radioAudioDroppedFrames();
+        st.underruns = m_radioAudioUnderruns.load(std::memory_order_relaxed);
+        st.trimmedFrames = m_radioAudioTrimmedFrames.load(std::memory_order_relaxed);
+        st.cushionFrames = radioAudioCushionFrames();
+        return st;
+    }
+    /// One log fragment ("radioOut dropped=... underruns=..."). Log only.
+    static QString radioAudioStatsText(const RadioAudioStats& st)
+    {
+        if (!st.valid) {
+            return QStringLiteral("radioOut=none");
+        }
+        QString text = QStringLiteral("radioOut dropped=%1 underruns=%2 trimmed=%3 cushion=%4")
+                           .arg(st.droppedFrames).arg(st.underruns)
+                           .arg(st.trimmedFrames).arg(st.cushionFrames);
+        if (st.hasPackets) {
+            text += QStringLiteral(" sent=%1 sendErrors=%2").arg(st.packetsSent).arg(st.sendErrors);
+        }
+        return text;
+    }
+
+public slots:
+
     // --- Watchdog ---
-    // Enable / disable the radio-side network watchdog. When enabled,
-    // the radio firmware drops TX if it stops seeing C&C traffic.
-    // Mirrors SetWatchdogTimer(int bits) in NetworkIOImports.cs:197-198
-    // [v2.10.3.13]. Boolean only — no host-side timeout parameter.
-    //
-    // Wire bit emission: P1 implemented in P1RadioConnection::sendMetisStart
-    // (RUNSTOP pkt[3] bit 7 per dsopenhpsdr1.v:399-400 [@7472bd1]).
-    // P2 wire bit deferred to E.8 — see tracking comment in P2RadioConnection.cpp.
+    // R-R3-49: the Network Watchdog setting (Setup > General > Options),
+    // applied where the radio is. On both protocols it sets only how long
+    // an established link waits for data before the radio is declared lost:
+    // three seconds on, no limit off. Nothing on the wire follows it: the
+    // Protocol 2 radio's own safety timer (general packet byte 38) stays on
+    // and its 500 ms keepalive always runs (operator decision 2026-09-24; a
+    // deliberate divergence from Thetis, which lets both follow it). See
+    // P2RadioConnection::setWatchdogEnabled and
+    // P1RadioConnection::setWatchdogEnabled for the Thetis lines.
     virtual void setWatchdogEnabled(bool enabled) = 0;
 
     bool isWatchdogEnabled() const noexcept { return m_watchdogEnabled; }
@@ -512,6 +876,15 @@ signals:
     // in milliseconds between notePingSent() and notePingReceived().
     // Drives the ConnectionSegment "X ms" latency readout (sub-PR-2).
     void pingRttMeasured(int rttMs);
+
+    // Reply to collectTelemetryObservation(), emitted on this object's owning
+    // connection thread. hasRtt=false means no valid C&C RTT has completed on
+    // this connection. rttAgeMs is the age of the actual measurement and is
+    // never renewed merely because another observation was requested.
+    void telemetryObservationReady(quint64 requestId, double rxMbps,
+                                   double txMbps, bool hasRtt,
+                                   qint64 rttMs, qint64 rttAgeMs,
+                                   NereusSDR::RadioDiagnosticsObservation diagnostics);
 
     // PSU supply voltage (V) from supply_volts (P1 AIN6 / P2 bytes 45-46).
     // Converted via Hermes DC-volts formula (console.cs computeHermesDCVoltage()
@@ -547,6 +920,15 @@ signals:
     // hwReceiverIndex: 0-based hardware receiver number.
     // samples: interleaved float I/Q pairs, normalized to [-1.0, 1.0].
     void iqDataReceived(int hwReceiverIndex, const QVector<float>& samples);
+
+    // Bracket one socket drain on the connection thread (Protocol 2's
+    // onReadyRead). Every iqDataReceived between them belongs to that
+    // drain. RadioModel connects them DirectConnection to ReceiverManager's
+    // beginIqBatch / endIqBatch, which posts the drain's I/Q to the DSP
+    // worker once per stream. A connection that never emits them keeps one
+    // post per packet.
+    void iqBatchStarted();
+    void iqBatchFinished();
 
     // Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): per-packet paired
     // PureSignal I/Q streams.
@@ -599,6 +981,13 @@ signals:
     /// (typically 48 kHz on HPSDR family).
     ///
     /// Plan: 3M-1b F.4. Pre-code review §6.4.
+    ///
+    /// Radio codec lane (2026-09-30): no connection emits this signal (only
+    /// test doubles do), so RadioMicSource and CompositeTxMicRouter's radio
+    /// branch receive nothing in a running app. The radio mic reaches the
+    /// TX channel another way: P1/P2 decode the mic bytes into
+    /// TxMicSource::inbound() (setTxMicSource), which also paces the TX
+    /// pump. The branch is left in place, unused, rather than removed.
     void micFrameDecoded(const float* samples, int frames);
 
     // --- Meters ---
@@ -653,10 +1042,65 @@ signals:
     //   (ReadBufp points to raw[4] in NereusSDR — after 4-byte seq prefix.)
     void micPttFromRadio(bool pressed);
 
+    // The radio's user digital inputs (Thetis prn->user_dig_in), emitted
+    // when the value changes and on the first status that carries it.
+    // Task 13: TxInhibitMonitor reads the TX inhibit input from these bits
+    // the way Thetis PollTXInhibit does (console.cs:25849-25887
+    // [v2.10.3.15]); the per-model bit choice lives there, not here.
+    //
+    // P1 source: C1 bits 1..4 of a case-0x00 status subframe.
+    //   From Thetis networkproto1.c:332-336 [v2.10.3.15]:
+    //     switch (ControlBytesIn[0] & 0xf8)
+    //     case 0x00: // C0 0000 0000
+    //       prn->user_dig_in = ((ControlBytesIn[1] >> 1) & 0xf);
+    //   (networkproto1.c:335, the ADC overload line in the same case, carries
+    //   //[2.10.3.13]MW0LGE)
+    //
+    // P2 source: High-Priority status ReadBufp[55], which is datagram byte
+    //   59 after the 4-byte sequence number (network.c:531 copies readbuf+4).
+    //   From Thetis network.c:750-756 [v2.10.3.15]:
+    //     //Byte 55 - Bit [0] - User I/O (IO4) 1 = active, 0 = inactive
+    //     //          Bit [1] - User I/O (IO5) 1 = active, 0 = inactive
+    //     prn->user_dig_in = prn->ReadBufp[55];
+    void userDigitalInputsChanged(quint8 userDigIn);
+
     // Radio firmware info received during handshake.
     void firmwareInfoReceived(int version, const QString& details);
 
+    // Plan Task 14 fix wave (R-R3-49): the band-output (OC) byte this
+    // connection composed into the packet that carries it, with the band it
+    // was chosen for and whether the transmitter was keyed. Emitted when any
+    // of the three changes, on the connection thread. Thetis shows exactly
+    // these bits (UpdateOCLedStrip(_mox, bits), console.cs:29106-29107
+    // [v2.10.3.15]); RadioModel publishes them to every window.
+    void bandOutputsComposed(quint8 ocByte, int band, bool keyed);
+
+    // The low-pass in use (alexLpfBitsInUse) changed. Thetis lights one of
+    // the rad*LPFled lamps for each selection (console.cs:7177-7243
+    // [v2.10.3.15]); RadioModel publishes it to every window.
+    void alexLpfBitsComposed(quint8 bits);
+
 private:
+    // Radio codec (2026-09-30): pushRadioAudio's ring, 16384 stereo frames
+    // (341 ms at 48 kHz), and its counters. m_radioAudioFlowing belongs to
+    // the consumer thread alone.
+    static constexpr int kRadioAudioFrameBytes = 2 * int(sizeof(float));
+    static constexpr size_t kRadioAudioRingBytes = 131072;
+    static constexpr int kRadioAudioRingFrames = int(kRadioAudioRingBytes) / kRadioAudioFrameBytes;
+    static constexpr int kRadioAudioMarginFrames = 960;  // 20 ms at 48 kHz
+    static constexpr int kRadioAudioLargestWindowFrames = 48000;  // 1 s at 48 kHz
+    AudioRingSpsc<kRadioAudioRingBytes> m_radioAudioRing;
+    std::atomic<int> m_radioAudioLargestBlock{0};
+    // pushRadioAudio's (the producer's) own: the largest block in this
+    // window and the one before, and the frames pushed in this window.
+    int m_radioAudioWindowMax{0};
+    int m_radioAudioPrevWindowMax{0};
+    int m_radioAudioWindowFrames{0};
+    std::atomic<quint64> m_radioAudioDroppedFrames{0};
+    std::atomic<quint64> m_radioAudioUnderruns{0};
+    std::atomic<quint64> m_radioAudioTrimmedFrames{0};
+    bool m_radioAudioFlowing{false};
+
     struct ByteSample { qint64 ms; qint64 bytes; };
     mutable QList<ByteSample> m_txSamples;
     mutable QList<ByteSample> m_rxSamples;
@@ -664,8 +1108,17 @@ private:
     static double rateFromSamples(const QList<ByteSample>& samples, int windowMs);
     static void   pruneSamples(QList<ByteSample>& samples, qint64 nowMs, int windowMs);
 
+    // publishBandOutputs: what was last reported. -1 = nothing yet.
+    mutable int m_publishedOcByte{-1};
+    mutable int m_publishedOcBand{-1};
+    mutable int m_publishedOcKeyed{-1};
+    // publishAlexLpfBits: what was last reported. -1 = nothing yet.
+    mutable int m_publishedLpfBits{-1};
+
     // Ping RTT state. Zero means no outstanding ping.
     qint64 m_pingSentMs{0};
+    int m_lastPingRttMs{-1};
+    QElapsedTimer m_lastPingRttAge;
 
     // Voltage conversion helpers.
     // convertSupplyVolts: 3.3V ADC ref + (4.7+0.82)/0.82 divider — Thetis-faithful
@@ -684,25 +1137,132 @@ private:
     std::atomic<float> m_lastUserAdc0Volts{-1.0f};
 
 protected:
+    // Radio codec (2026-09-30): the consumer side of pushRadioAudio, on one
+    // thread (the protocol's sender). Fills `stereo` with `frames` L/R
+    // pairs and returns true, or returns false with nothing taken while the
+    // ring builds its cushion: at the start, and again after it runs dry.
+    // The cushion is the largest block the producer has pushed plus 20 ms,
+    // so a whole producer block is always in hand. The sender's clock and
+    // the radio's (which paces the producer) drift apart, so a ring deeper
+    // than the cushion plus another block and 20 ms is cut back to the
+    // cushion, dropping the oldest audio.
+    bool takeRadioAudio(float* stereo, int frames) noexcept
+    {
+        const int cushion = radioAudioCushionFrames();
+        int queued = int(m_radioAudioRing.usedBytes() / kRadioAudioFrameBytes);
+        const int highWater = cushion + m_radioAudioLargestBlock.load(std::memory_order_relaxed)
+            + kRadioAudioMarginFrames;
+        if (queued > highWater) {
+            m_radioAudioRing.dropOldest(size_t(queued - cushion) * kRadioAudioFrameBytes);
+            m_radioAudioTrimmedFrames.fetch_add(quint64(queued - cushion),
+                                                std::memory_order_relaxed);
+            queued = cushion;
+        }
+        if (!m_radioAudioFlowing) {
+            if (queued < cushion) {
+                return false;
+            }
+            m_radioAudioFlowing = true;
+        }
+        if (queued < frames) {
+            m_radioAudioFlowing = false;
+            m_radioAudioUnderruns.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        m_radioAudioRing.popInto(reinterpret_cast<uint8_t*>(stereo),
+                                 qint64(frames) * kRadioAudioFrameBytes);
+        return true;
+    }
+    int radioAudioCushionFrames() const noexcept
+    {
+        const int cushion = m_radioAudioLargestBlock.load(std::memory_order_relaxed)
+            + kRadioAudioMarginFrames;
+        return std::min(cushion, kRadioAudioRingFrames / 2);
+    }
+    quint64 radioAudioUnderruns() const noexcept
+    {
+        return m_radioAudioUnderruns.load(std::memory_order_relaxed);
+    }
+    quint64 radioAudioTrimmedFrames() const noexcept
+    {
+        return m_radioAudioTrimmedFrames.load(std::memory_order_relaxed);
+    }
+
+    // The band-output byte last reported by publishBandOutputs, or -1.
+    int publishedOcByte() const noexcept { return m_publishedOcByte; }
+
+    // Reports the band-output byte composed into the packet that carries it
+    // (bandOutputsComposed), once per change. Called from the compose path,
+    // which is const; the emit does not change the connection's state.
+    void publishBandOutputs(quint8 ocByte, int band, bool keyed) const
+    {
+        const int keyedInt = keyed ? 1 : 0;
+        if (m_publishedOcByte == int(ocByte) && m_publishedOcBand == band
+            && m_publishedOcKeyed == keyedInt) {
+            return;
+        }
+        m_publishedOcByte  = int(ocByte);
+        m_publishedOcBand  = band;
+        m_publishedOcKeyed = keyedInt;
+        emit const_cast<RadioConnection*>(this)->bandOutputsComposed(ocByte, band, keyed);
+    }
+
+    // Reports the low-pass in use (alexLpfBitsComposed), once per change.
+    void publishAlexLpfBits(quint8 bits) const
+    {
+        if (m_publishedLpfBits == int(bits)) {
+            return;
+        }
+        m_publishedLpfBits = int(bits);
+        emit const_cast<RadioConnection*>(this)->alexLpfBitsComposed(bits);
+    }
+
     void setState(ConnectionState newState);
+
+    // Call only on this connection's parser thread after a status frame has
+    // validated. mask says which ADC bits this particular status contains;
+    // a zero bit in mask is no observation and must never clear old state.
+    void observeAdcOverloads(quint8 mask, quint8 bits);
+
+    // The live outbound UDP base/control destination, read only in the
+    // owning-thread collectTelemetryObservation slot. P2 overrides it.
+    virtual int telemetryUdpBasePort() const { return m_radioInfo.port; }
+
+    // R-R3-32 (parity Task 6): written only from the receive path on this
+    // connection's thread; see linkStats().
+    RadioLinkStats m_linkStats;
+
+    // Task 13: called by the P1/P2 status parsers with the user digital
+    // input bits; emits userDigitalInputsChanged on a change. Connection
+    // thread only.
+    void reportUserDigitalInputs(quint8 userDigIn)
+    {
+        if (m_lastUserDigIn == static_cast<int>(userDigIn)) {
+            return;
+        }
+        m_lastUserDigIn = static_cast<int>(userDigIn);
+        emit userDigitalInputsChanged(userDigIn);
+    }
+    // -1 until the first status that carries the inputs.
+    int m_lastUserDigIn{-1};
 
     std::atomic<ConnectionState> m_state{ConnectionState::Disconnected};
     RadioInfo m_radioInfo;
     HardwareProfile m_hardwareProfile;
 
+    struct AccumulatedAdcStatus {
+        bool known{false};
+        bool active{false};
+        qint64 eventsSinceConnection{0};
+        qint64 lastStatusAtMs{0};
+        qint64 lastPositiveAtMs{-1};
+    };
+    QElapsedTimer m_diagnosticsEpoch;
+    std::array<AccumulatedAdcStatus, 3> m_adcOverloads{};
+
     // Shared boolean state for setWatchdogEnabled / isWatchdogEnabled.
-    // Both P1 and P2 overrides read/write this field.
-    //
-    // Default TRUE: HL2 firmware (dsopenhpsdr1.v:399-400) interprets RUNSTOP
-    // byte bit 7 as watchdog_disable (1 = disabled, 0 = enabled). When this
-    // field is true, sendMetisStart/sendMetisStop write bit 7 = 0 (watchdog
-    // enabled), matching deskhpsdr's implicit behavior (buffer[3] = command
-    // with no bit-7 OR → bit 7 = 0 → watchdog active by default).
-    //
-    // 3M-0 used false here (bug): first sendMetisStart would have written
-    // bit 7 = 1 → watchdog disabled on connect. Fixed in 3M-1a Task E.5.
-    // From deskhpsdr/src/old_protocol.c:3811 [@120188f]:
-    //   buffer[3] = command;  // 0x01 start / 0x00 stop — bit 7 never set
+    // Both P1 and P2 overrides read/write this field. Default true, as
+    // Thetis's checkbox is checked by default and applied at startup.
     bool m_watchdogEnabled{true};
 
     // Shared state for setTrxRelay / isTrxRelayEngaged (3M-1a Task E.1).
@@ -714,7 +1274,11 @@ protected:
     // P1: emitted to case 10 (C0=0x12) C2 bit 0 (0x01).
     // P2: emitted to transmit_specific_buffer[50] bit 1 (0x02).
     // From Thetis networkproto1.c:581 [v2.10.3.13]; deskhpsdr new_protocol.c:1484-1486 [@120188f].
-    bool m_micBoost{false};
+    // Default on, as Thetis: From Thetis console.cs:13259 [v2.10.3.15] —
+    //   private bool mic_boost = true;
+    // (TransmitModel::m_micBoost carries the same default; RadioModel pushes
+    // the model value on connect, so this only covers the frames before it.)
+    bool m_micBoost{true};
 
     // Shared state for setLineIn (3M-1b G.2).
     // P1: emitted to case 10 (C0=0x12) C2 bit 1 (0x02).
@@ -782,6 +1346,33 @@ protected:
     // setup.designer.cs:23676 [v2.10.3.13].
     bool m_hpfBypassOnPs{true};
 
+    // "HPF Bypass on TX" (setHpfBypassOnTx). Written and read on the
+    // connection thread.
+    bool m_hpfBypassOnTx{false};
+
+    // "HPF Bypass" (setAlexHpfBypass). Written and read on the connection
+    // thread.
+    bool m_alexHpfBypass{false};
+
+    // "Disable HF PA" (setPaDisabled), Thetis prn->tx[0].pa. Written and read
+    // on the connection thread.
+    bool m_paDisabled{false};
+
+    // The Alex tab's receive filter rows (setAlexHpfEdges), Thetis's
+    // shipped values until RadioModel hands the saved ones. Written and read
+    // on the connection thread.
+    codec::alex::AlexHpfEdges m_alexHpfEdges{codec::alex::AlexHpfEdges::thetisDefaults()};
+
+    // The Alex-1 low-pass rows (setAlexLpfEdges) and 6m/ByPass on RX
+    // (setAlexLpfBypass). Written and read on the connection thread.
+    codec::alex::AlexLpfEdges m_alexLpfEdges{codec::alex::AlexLpfEdges::thetisDefaults()};
+    bool m_alexLpfBypass{false};
+
+    // "Disable 6m LNA on RX / TX" (setDisable6mLna). Written and read on the
+    // connection thread.
+    bool m_disable6mLnaOnRx{false};
+    bool m_disable6mLnaOnTx{true};
+
     // Shared state for setMicPTTDisabled (3M-1b G.5; renamed for issue #182
     // to match Thetis MicPTTDisabled / mic_ptt_disabled storage name exactly).
     // Direct polarity: m_micPTTDisabled=true means PTT is disabled at the
@@ -811,3 +1402,4 @@ protected:
 
 Q_DECLARE_METATYPE(NereusSDR::RadioConnectionError)
 Q_DECLARE_METATYPE(NereusSDR::ConnectFailure)
+Q_DECLARE_METATYPE(NereusSDR::RadioDiagnosticsObservation)

@@ -5,16 +5,68 @@
 //
 // Phase 3F Sub-Epic C: TxSliceArbiter single-TX invariant.
 // See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §6.
+// Modification history (NereusSDR):
+//   2026-09-28  J.J. Boyd / KG4VCF  Slice control plan Task 2: the
+//                                    arbiter's owner lookup is a transmit
+//                                    access check (setTransmitAccess).
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-09-29  J.J. Boyd / KG4VCF  Slice control fix wave: releasing
+//                                    the binding while keyed unkeys
+//                                    through the unkey gate first.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 #include <QVector>
+#include <QScopeGuard>
 #include "core/AppSettings.h"
 #include "core/TxSliceArbiter.h"
 #include "core/MoxController.h"
+#include "core/RadioConnection.h"
+#include "core/safety/UnkeyGate.h"
+#include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
 using namespace NereusSDR;
+
+// iPhone app plan Task 34: every MOX and TX-frequency write, in order.
+class HandoffLogConnection : public RadioConnection {
+    Q_OBJECT
+public:
+    QStringList log;
+
+    explicit HandoffLogConnection(QObject* parent = nullptr)
+        : RadioConnection(parent)
+    {
+        setState(ConnectionState::Connected);
+    }
+
+    void init() override {}
+    void connectToRadio(const NereusSDR::RadioInfo&) override {}
+    void disconnect() override {}
+    void setReceiverFrequency(int, quint64) override {}
+    void setTxFrequency(quint64 hz) override { log.append(QStringLiteral("tx %1").arg(hz)); }
+    void setActiveReceiverCount(int) override {}
+    void setSampleRate(int) override {}
+    void setAttenuator(int) override {}
+    void setPreamp(bool) override {}
+    void setTxDrive(int) override {}
+    void setMox(bool on) override { log.append(on ? QStringLiteral("MOX on") : QStringLiteral("MOX off")); }
+    void setAntennaRouting(AntennaRouting) override {}
+    void setAlexRxBpf(AlexRxBpf) override {}
+    void setWatchdogEnabled(bool enabled) override { m_watchdogEnabled = enabled; }
+    void sendTxIq(const float*, int) override {}
+    void setTrxRelay(bool) override {}
+    void setMicBoost(bool) override {}
+    void setLineIn(bool) override {}
+    void setMicTipRing(bool) override {}
+    void setMicBias(bool) override {}
+    void setLineInGain(int) override {}
+    void setUserDigOut(quint8) override {}
+    void setPuresignalRun(bool) override {}
+    void setMicPTTDisabled(bool) override {}
+    void setMicXlr(bool) override {}
+};
 
 class TestTxSliceArbiter : public QObject {
     Q_OBJECT
@@ -92,18 +144,20 @@ private slots:
 
         QCOMPARE(mox.isMox(), true);
 
-        // hardwareFlipped(false) fires synchronously inside setMox(false), before
-        // the TX-to-RX timer chain (mox_delay + ptt_out_delay). moxChanged is the
-        // async Post signal at the end of the chain; we only need synchronous
-        // evidence that MOX was dropped before the flip.
+        // txAboutToEnd fires synchronously inside setMox(false): the TX-to-RX
+        // walk began before the flip. Task 33 (Thetis's unkey order): the
+        // hardware is released after the TX drain and mox_delay, so
+        // hardwareFlipped(false) follows on the walk's timer.
+        QSignalSpy endSpy(&mox, &MoxController::txAboutToEnd);
         QSignalSpy hwSpy(&mox, &MoxController::hardwareFlipped);
         const bool ok = arb.requestHandoff(1);
 
         QCOMPARE(ok, true);
-        QVERIFY(hwSpy.count() >= 1);
-        QCOMPARE(hwSpy.last().at(0).toBool(), false);  // last hardwareFlipped was RX direction
+        QCOMPARE(endSpy.count(), 1);
         QCOMPARE(mox.isMox(), false);  // MOX dropped synchronously (m_mox = on commit)
         QCOMPARE(slices[1]->isTxSlice(), true);  // handoff completed
+        QTRY_VERIFY_WITH_TIMEOUT(hwSpy.count() >= 1, 2000);
+        QCOMPARE(hwSpy.last().at(0).toBool(), false);  // last hardwareFlipped was RX direction
     }
 
     void tx_bound_id_persists_per_mac()
@@ -384,6 +438,423 @@ private slots:
 
         QCOMPARE(arb.txBoundSlice(), slices[1]);
         QCOMPARE(arb.txBoundSlice()->isTxSlice(), true);
+    }
+
+    // ── iPhone app plan Task 34 (R-IOS-03): the handoff waits for the unkey ──
+
+    void a_keyed_handoff_moves_the_flag_only_after_the_unkey_is_confirmed()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 2);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        mox.setMox(true);
+        QTRY_COMPARE(mox.state(), MoxState::Tx);
+        QList<QPair<int, std::function<void()>>> timers;
+        UnkeyGate gate(&mox, [&mox]() { mox.setMox(false); }, [](const QString&) {});
+        gate.setScheduler([&timers](int ms, QObject*, std::function<void()> fire) {
+            timers.append({ms, std::move(fire)});
+        });
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.setMoxController(&mox);
+        arb.setUnkeyGate(&gate);
+        QSignalSpy moved(&arb, &TxSliceArbiter::txBoundSliceChanged);
+
+        QVERIFY(arb.requestHandoff(1));
+        QVERIFY(!mox.isMox());                 // the unkey began at once
+        QVERIFY(arb.isHandoffPending());
+        QVERIFY(slices[0]->isTxSlice());      // the flag waits
+        QCOMPARE(moved.count(), 0);
+        QTRY_COMPARE(moved.count(), 1);        // Confirmed: MOX reached receive
+        QCOMPARE(mox.state(), MoxState::Rx);
+        QVERIFY(slices[1]->isTxSlice());
+        QVERIFY(!slices[0]->isTxSlice());
+        QVERIFY(!arb.isHandoffPending());
+    }
+
+    void a_keyed_handoff_that_times_out_moves_after_the_stop()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 2);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        mox.setMox(true);
+        QTRY_COMPARE(mox.state(), MoxState::Tx);
+        QStringList order;
+        QList<QPair<int, std::function<void()>>> timers;
+        UnkeyGate gate(&mox, []() { /* the radio never reaches receive */ },
+                       [&order](const QString&) { order.append(QStringLiteral("stop")); });
+        gate.setScheduler([&timers](int ms, QObject*, std::function<void()> fire) {
+            timers.append({ms, std::move(fire)});
+        });
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.setMoxController(&mox);
+        arb.setUnkeyGate(&gate);
+        connect(&arb, &TxSliceArbiter::txBoundSliceChanged, this,
+                [&order](int, int) { order.append(QStringLiteral("moved")); });
+        QVERIFY(arb.requestHandoff(1));
+        QCOMPARE(timers.size(), 1);
+        QCOMPARE(timers.first().first, 2000);
+        QVERIFY(order.isEmpty());
+        timers.first().second();
+        QCOMPARE(order, QStringList({QStringLiteral("stop"), QStringLiteral("moved")}));
+    }
+
+    void a_second_request_while_waiting_takes_the_latest_target()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 3);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        mox.setMox(true);
+        QTRY_COMPARE(mox.state(), MoxState::Tx);
+        UnkeyGate gate(&mox, [&mox]() { mox.setMox(false); }, [](const QString&) {});
+        gate.setScheduler([](int, QObject*, std::function<void()>) {});
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.setMoxController(&mox);
+        arb.setUnkeyGate(&gate);
+        QVERIFY(arb.requestHandoff(1));
+        QVERIFY(arb.requestHandoff(2));
+        QTRY_VERIFY(slices[2]->isTxSlice());
+        QVERIFY(!slices[1]->isTxSlice());
+        QCOMPARE(arb.txBoundSliceId(), 2);
+    }
+
+    // Slice control fix wave (Critical 1): a move that waits for the unkey
+    // is checked again when the gate answers. A slice another device took
+    // meanwhile never receives the flag.
+    void a_waiting_move_to_a_slice_that_changed_hands_does_not_land()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 2);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        mox.setMox(true);
+        QTRY_COMPARE(mox.state(), MoxState::Tx);
+        QList<std::function<void()>> bounds;
+        UnkeyGate gate(&mox, []() { /* the radio never reaches receive */ },
+                       [](const QString&) {});
+        gate.setScheduler([&bounds](int, QObject*, std::function<void()> fire) {
+            bounds.append(std::move(fire));
+        });
+        QHash<int, QByteArray> controller{{0, QByteArrayLiteral("A")},
+                                          {1, QByteArrayLiteral("A")}};
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.setMoxController(&mox);
+        arb.setUnkeyGate(&gate);
+        arb.setTransmitAccess(
+            [&controller](const QByteArray& device, int sliceId) {
+                return controller.value(sliceId) == device;
+            },
+            [](const QByteArray&) { return 0; });
+        arb.setHolderLookup([]() { return QByteArrayLiteral("A"); });
+        QSignalSpy moved(&arb, &TxSliceArbiter::txBoundSliceChanged);
+        QSignalSpy blocked(&arb, &TxSliceArbiter::handoffBlocked);
+        QSignalSpy pending(&arb, &TxSliceArbiter::pendingHandoffChanged);
+
+        QVERIFY(arb.requestHandoff(1, QByteArrayLiteral("A")));
+        QCOMPARE(arb.pendingHandoffSliceId(), 1);
+        QCOMPARE(pending.count(), 1);
+        QCOMPARE(pending.last().at(0).toInt(), 1);
+        controller.insert(1, QByteArrayLiteral("B"));   // taken while the key ended
+        QCOMPARE(bounds.size(), 1);
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("unkey was not confirmed")));
+        bounds.first()();                                // the gate answers
+
+        QCOMPARE(moved.count(), 0);
+        QVERIFY(slices[0]->isTxSlice());
+        QVERIFY(!slices[1]->isTxSlice());
+        QCOMPARE(arb.pendingHandoffSliceId(), -1);
+        QCOMPARE(blocked.count(), 1);
+        QCOMPARE(blocked.first().at(0).toInt(), 1);
+        QCOMPARE(blocked.first().at(1).toString(),
+                 QStringLiteral("Another device controls that slice now, so the transmit slice "
+                                "did not move."));
+        QCOMPARE(pending.count(), 2);
+        QCOMPARE(pending.last().at(0).toInt(), -1);
+    }
+
+    // Slice control fix wave, round 2: transmit, not the slice, changed
+    // hands while the move waited. The move is dropped and the reason says
+    // what changed.
+    void a_waiting_move_dropped_because_transmit_passed_says_so()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 2);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        mox.setMox(true);
+        QTRY_COMPARE(mox.state(), MoxState::Tx);
+        QList<std::function<void()>> bounds;
+        UnkeyGate gate(&mox, []() {}, [](const QString&) {});
+        gate.setScheduler([&bounds](int, QObject*, std::function<void()> fire) {
+            bounds.append(std::move(fire));
+        });
+        const QHash<int, QByteArray> controller{{0, QByteArrayLiteral("A")},
+                                                {1, QByteArrayLiteral("A")}};
+        QByteArray holder = QByteArrayLiteral("A");
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.setMoxController(&mox);
+        arb.setUnkeyGate(&gate);
+        arb.setTransmitAccess(
+            [&controller](const QByteArray& device, int sliceId) {
+                return controller.value(sliceId) == device;
+            },
+            [](const QByteArray&) { return 0; });
+        arb.setHolderLookup([&holder]() { return holder; });
+        QSignalSpy blocked(&arb, &TxSliceArbiter::handoffBlocked);
+
+        QVERIFY(arb.requestHandoff(1, QByteArrayLiteral("A")));
+        holder = QByteArrayLiteral("B");                 // transmit passed while the key ended
+        QCOMPARE(bounds.size(), 1);
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("unkey was not confirmed")));
+        bounds.first()();
+
+        QVERIFY(slices[0]->isTxSlice());
+        QVERIFY(!slices[1]->isTxSlice());
+        QCOMPARE(blocked.count(), 1);
+        QCOMPARE(blocked.first().at(1).toString(),
+                 QStringLiteral("Transmit passed to another device, so the transmit slice did "
+                                "not move."));
+    }
+
+    // The holder at the answer counts too: the local window's move (no
+    // requester) lands only on a slice the holder may transmit on.
+    void a_waiting_move_lands_only_on_a_slice_the_holder_may_transmit_on()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 2);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        mox.setMox(true);
+        QTRY_COMPARE(mox.state(), MoxState::Tx);
+        QList<std::function<void()>> bounds;
+        UnkeyGate gate(&mox, []() {}, [](const QString&) {});
+        gate.setScheduler([&bounds](int, QObject*, std::function<void()> fire) {
+            bounds.append(std::move(fire));
+        });
+        QHash<int, QByteArray> controller{{0, QByteArrayLiteral("S")},
+                                          {1, QByteArrayLiteral("S")}};
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.setMoxController(&mox);
+        arb.setUnkeyGate(&gate);
+        arb.setTransmitAccess(
+            [&controller](const QByteArray& device, int sliceId) {
+                return controller.value(sliceId) == device;
+            },
+            [](const QByteArray&) { return 0; });
+        arb.setHolderLookup([]() { return QByteArrayLiteral("S"); });
+
+        QVERIFY(arb.requestHandoff(1));
+        controller.insert(1, QByteArrayLiteral("B"));
+        QCOMPARE(bounds.size(), 1);
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("unkey was not confirmed")));
+        bounds.first()();
+        QVERIFY(slices[0]->isTxSlice());
+        QVERIFY(!slices[1]->isTxSlice());
+
+        // Still its own: the move lands as before.
+        controller.insert(1, QByteArrayLiteral("S"));
+        QVERIFY(arb.requestHandoff(1));
+        QCOMPARE(bounds.size(), 2);
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("unkey was not confirmed")));
+        bounds.last()();
+        QVERIFY(slices[1]->isTxSlice());
+        QVERIFY(!slices[0]->isTxSlice());
+    }
+
+    // Carried from Task 33: a local handoff while keyed put the new slice's
+    // frequency on the wire before MOX off. The new slice's frequency now
+    // reaches the connection only after MOX off.
+    void a_keyed_handoff_sends_no_new_frequency_before_mox_off()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+        auto* conn = new HandoffLogConnection();
+        model.injectConnectionForTest(conn);
+        auto detach = qScopeGuard([&model, conn]() {
+            model.injectConnectionForTest(nullptr);
+            delete conn;
+        });
+        model.moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(28400000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(3700000.0);
+        model.wireSliceSignalsForTest();
+        QCOMPARE(model.txSliceArbiter()->txBoundSliceId(), a);
+
+        model.moxController()->setMox(true);
+        QTRY_COMPARE(model.moxController()->state(), MoxState::Tx);
+        QTRY_VERIFY(conn->log.contains(QStringLiteral("MOX on")));
+        conn->log.clear();
+
+        QVERIFY(model.txSliceArbiter()->requestHandoff(b));
+        QTRY_VERIFY(conn->log.contains(QStringLiteral("tx 3700000")));
+        const int moxOff = conn->log.indexOf(QStringLiteral("MOX off"));
+        const int newFreq = conn->log.indexOf(QStringLiteral("tx 3700000"));
+        QVERIFY2(moxOff >= 0 && moxOff < newFreq, qPrintable(conn->log.join(QStringLiteral(", "))));
+        QCOMPARE(model.txSliceArbiter()->txBoundSliceId(), b);
+    }
+
+    // ---- iPhone app plan Task 77 (rulings 8.10 to 8.13) ------------------
+
+    // Refusals first: tx.setTxSlice names only the requester's own slices,
+    // and the flag never moves while the station device is keyed.
+    void handoff_for_a_requester_refuses_another_owners_slice()
+    {
+        QVector<SliceModel*> slices;
+        buildSlicesWithIds(slices, {0, 1, 2});
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.syncToSliceList();
+        const QHash<int, QByteArray> owners{{0, "phone"}, {1, "pad"}, {2, "pad"}};
+        arb.setTransmitAccess(
+            [owners](const QByteArray& device, int id) { return owners.value(id) == device; },
+            [](const QByteArray&) { return -1; });
+        QSignalSpy blocked(&arb, &TxSliceArbiter::handoffBlocked);
+        QVERIFY(!arb.requestHandoff(1, QByteArrayLiteral("phone")));
+        QCOMPARE(blocked.count(), 1);
+        QCOMPARE(arb.txBoundSliceId(), 0);
+        QVERIFY(arb.requestHandoff(2, QByteArrayLiteral("pad")));
+        QCOMPARE(arb.txBoundSliceId(), 2);
+    }
+
+    void the_flag_never_moves_while_frozen()
+    {
+        QVector<SliceModel*> slices;
+        buildSlicesWithIds(slices, {0, 1});
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.syncToSliceList();
+        bool frozen = true;
+        arb.setFrozen([&frozen]() { return frozen; });
+        QVERIFY(!arb.requestHandoff(1));
+        QVERIFY(!arb.bindForHolder(QByteArrayLiteral("pad"), 1));
+        QCOMPARE(arb.txBoundSliceId(), 0);
+        QVERIFY(slices[0]->isTxSlice());
+        frozen = false;   // the press ended
+        QVERIFY(arb.requestHandoff(1));
+        QCOMPARE(arb.txBoundSliceId(), 1);
+    }
+
+    void bind_for_holder_takes_its_chosen_slice_else_its_active_one()
+    {
+        QVector<SliceModel*> slices;
+        buildSlicesWithIds(slices, {0, 1, 2, 3});
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.syncToSliceList();
+        const QHash<int, QByteArray> owners{{0, "phone"}, {1, "pad"}, {2, "pad"}, {3, "pad"}};
+        arb.setTransmitAccess(
+            [owners](const QByteArray& device, int id) { return owners.value(id) == device; },
+            [](const QByteArray& owner) { return owner == "pad" ? 3 : 0; });
+        // Its chosen transmit slice, still its own.
+        QVERIFY(arb.bindForHolder(QByteArrayLiteral("pad"), 2));
+        QCOMPARE(arb.txBoundSliceId(), 2);
+        // A choice that is not its own any more: its active slice.
+        QVERIFY(arb.bindForHolder(QByteArrayLiteral("pad"), 0));
+        QCOMPARE(arb.txBoundSliceId(), 3);
+        // A holder that owns no slice: nothing moves.
+        QVERIFY(!arb.bindForHolder(QByteArrayLiteral("mac"), -1));
+        QCOMPARE(arb.txBoundSliceId(), 3);
+    }
+
+    void the_first_bind_picks_among_the_holders_slices()
+    {
+        QVector<SliceModel*> slices;
+        buildSlicesWithIds(slices, {0, 1, 2}, /*flagFirst=*/false);
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        const QHash<int, QByteArray> owners{{0, "phone"}, {1, "pad"}, {2, "pad"}};
+        arb.setTransmitAccess(
+            [owners](const QByteArray& device, int id) { return owners.value(id) == device; },
+            [](const QByteArray& owner) { return owner == "pad" ? 2 : 0; });
+        arb.setHolderLookup([]() { return QByteArrayLiteral("pad"); });
+        arb.syncToSliceList();
+        QCOMPARE(arb.txBoundSliceId(), 2);
+        QVERIFY(slices[2]->isTxSlice());
+        QVERIFY(!slices[0]->isTxSlice());
+    }
+
+    void a_remote_windows_arbiter_still_does_nothing()
+    {
+        QVector<SliceModel*> slices;
+        buildSlicesWithIds(slices, {0, 1});
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.setRemote(true);
+        arb.setTransmitAccess([](const QByteArray& device, int) { return device == "pad"; },
+                              [](const QByteArray&) { return 1; });
+        QVERIFY(!arb.bindForHolder(QByteArrayLiteral("pad"), 1));
+        QVERIFY(!arb.requestHandoff(1, QByteArrayLiteral("pad")));
+        QVERIFY(slices[0]->isTxSlice());
+    }
+
+    // Slice control fix wave (whole-branch review, Critical 1): the last
+    // slice closes while the radio is keyed. The binding ends only after
+    // the unkey gate saw receive, never with the radio still keyed.
+    void releasing_the_binding_while_keyed_waits_for_the_unkey()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 1);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.setMoxController(&mox);
+        QVERIFY(arb.requestHandoff(0));
+        QCOMPARE(arb.txBoundSliceId(), 0);
+        mox.setMox(true);
+        QTRY_COMPARE(mox.state(), MoxState::Tx);
+        QList<std::function<void()>> bounds;
+        UnkeyGate gate(&mox, [&mox]() { mox.setMox(false); }, [](const QString&) {});
+        gate.setScheduler([&bounds](int, QObject*, std::function<void()> fire) {
+            bounds.append(std::move(fire));
+        });
+        arb.setUnkeyGate(&gate);
+        QList<MoxState> stateAtRelease;
+        connect(&arb, &TxSliceArbiter::txBoundSliceChanged, this,
+                [&stateAtRelease, &mox](int, int now) {
+                    if (now == -1) { stateAtRelease.append(mox.state()); }
+                });
+
+        slices.clear();                       // the last slice closed
+        arb.releaseBinding();
+        QVERIFY(!mox.isMox());                // the unkey began at once
+        QTRY_COMPARE(stateAtRelease.size(), 1);
+        QCOMPARE(stateAtRelease.first(), MoxState::Rx);
+        QCOMPARE(arb.txBoundSliceId(), -1);
+    }
+
+    void releasing_the_binding_while_keyed_without_a_gate_unkeys_first()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 1);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.setMoxController(&mox);
+        QVERIFY(arb.requestHandoff(0));
+        mox.setMox(true);
+        QTRY_COMPARE(mox.state(), MoxState::Tx);
+        QList<bool> moxAtRelease;
+        connect(&arb, &TxSliceArbiter::txBoundSliceChanged, this,
+                [&moxAtRelease, &mox](int, int now) {
+                    if (now == -1) { moxAtRelease.append(mox.isMox()); }
+                });
+
+        slices.clear();
+        arb.releaseBinding();
+        QCOMPARE(moxAtRelease, QList<bool>({false}));
+        QCOMPARE(arb.txBoundSliceId(), -1);
     }
 
 private:

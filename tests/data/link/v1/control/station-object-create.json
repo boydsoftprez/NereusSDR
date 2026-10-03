@@ -1,0 +1,29 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "object.create",
+    "key": "slice:0",
+    "class": "SliceModel",
+    "properties": [
+      {
+        "ordinal": 1,
+        "name": "frequency",
+        "kind": "f64",
+        "value": 14074000.0
+      },
+      {
+        "ordinal": 2,
+        "name": "mode",
+        "kind": "enum",
+        "value": 1
+      },
+      {
+        "ordinal": 3,
+        "name": "locked",
+        "kind": "bool",
+        "value": false
+      }
+    ]
+  },
+  "decodes": true
+}

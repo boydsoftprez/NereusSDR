@@ -35,6 +35,23 @@
 //                 audio/SendIqToVax stored-but-not-active). J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-24 - R-R3-49: the RF Gain slider and WNB button (ANT flyout)
+//                 and the IQ Ch combo (VAX flyout) are removed. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-09-24 - R-R3-49, R-R3-21: the ANT button is not shown on a board
+//                 with no antenna choices, where its flyout would be empty.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-09-26 - Parity Task 18: the Display flyout's Grid Lines toggle
+//                 reports gridVisibleChanged (it changed only its own label)
+//                 and takes the pan's state through setGridVisible. J.J.
+//                 Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-09-30 - TX rulings (item 3, JJ): setAttHeldReason, the ATT flyout
+//                 held on a pan whose slice this window only listens to.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -47,6 +64,8 @@ class QPushButton;
 class QComboBox;
 class QSlider;
 class QLabel;
+class QCheckBox;
+class QSpinBox;
 class QEvent;
 class QMouseEvent;
 
@@ -62,6 +81,13 @@ class SpectrumOverlayPanel : public QWidget {
 public:
     explicit SpectrumOverlayPanel(QWidget* parent = nullptr);
 
+    /// TX rulings (JJ, 2026-09-30, item 3): this pan's slice is one this
+    /// window only listens to (another device controls it), so the ATT
+    /// flyout's controls are disabled with `reason` and write nothing;
+    /// empty lets them be. MainWindow sets it with the RX applet's access.
+    void setAttHeldReason(const QString& reason);
+    QString attHeldReason() const { return m_attHeldReason; }
+
     /// The panadapter this strip is drawn on. A control rendered on a pan acts
     /// on THAT pan -- the id travels with the signals rather than the consumer
     /// resolving an implicit "active" pan, so what a visible button does never
@@ -74,8 +100,6 @@ public:
     // Bind this overlay panel to a RadioModel. Enables the VAX Ch combo
     // and wires it bidirectionally to the resolved pan slice. Safe to
     // call multiple times — each rebind drops prior SliceModel connections.
-    // The IQ Ch combo remains disabled (feature-flagged per design spec
-    // §6.7/§11.3 — audio/SendIqToVax is stored-but-not-active).
     void setRadioModel(RadioModel* model);
 
     using SliceResolver = std::function<SliceModel*()>;
@@ -101,6 +125,7 @@ signals:
     void wfBlackLevelChanged(int level);
     void colorSchemeChanged(int scheme);
     void cursorFreqVisibleChanged(bool on);  // B8 Task 21
+    void gridVisibleChanged(bool on);        // Parity Task 18
     void fillColorChanged(const QColor& color); // B8 Task 22
     void fillAlphaChanged(float alpha);  // 0.0..1.0  B8 fix-up
     void openSetupRequested(const QString& page); // B8 Task 24
@@ -144,6 +169,10 @@ public:
     // active=true → green "C", paused=true → amber "C", both false → hidden.
     void setClarityStatus(bool active, bool paused);
 
+    // Parity Task 18: show the pan's grid state on the Grid Lines toggle
+    // without reporting it back.
+    void setGridVisible(bool on);
+
 private:
     /// Which panadapter this strip is drawn on; see setPanId.
     QString m_panId;
@@ -158,12 +187,17 @@ private:
     void buildAntFlyout();
     void buildDisplayFlyout();
     void buildVaxFlyout();
+    void buildAttFlyout();
+    // R-R3-21: show the step attenuator (RadioModel::stepAttFacade(), the
+    // same object the RX applet's ATT row and Setup use, local or remote).
+    void showAttValues();
 
     // Flyout toggles
     void toggleBandFlyout();
     void toggleAntFlyout();
     void toggleDisplayFlyout();
     void toggleVaxFlyout();
+    void toggleAttFlyout();
 
     // Auto-close helper
     void hideFlyout();
@@ -171,6 +205,9 @@ private:
     // ── Main button strip ────────────────────────────────────────────────
     QPushButton*         m_collapseBtn{nullptr};
     QVector<QPushButton*> m_menuBtns;   // indices 0-6 (buttons 2-8)
+    // False on a board with no antenna choices: the ANT flyout would be
+    // empty, so its button is not shown (R-R3-49).
+    bool                 m_antAvailable{true};
     bool                 m_expanded{true};
 
     // ── Active flyout tracking (one visible at a time) ───────────────────
@@ -192,9 +229,6 @@ private:
     // can replicate the per-pan rebind pattern used for VAX.
     QMetaObject::Connection m_rxAntConn;
     QMetaObject::Connection m_txAntConn;
-    QSlider*     m_rfGainSlider{nullptr};
-    QLabel*      m_rfGainLabel{nullptr};
-    QPushButton* m_wnbBtn{nullptr};
 
     // ── Display flyout ───────────────────────────────────────────────────
     QWidget*     m_displayFlyout{nullptr};
@@ -218,7 +252,6 @@ private:
     // ── VAX flyout ───────────────────────────────────────────────────────
     QWidget*   m_vaxFlyout{nullptr};
     QComboBox* m_vaxCmb{nullptr};
-    QComboBox* m_vaxIqCmb{nullptr};
 
     // ── VAX model binding (Phase 3O Sub-Phase 9 Task 9.2c) ───────────────
     // m_vaxChannelConn stores the SliceModel::vaxChannelChanged → combo
@@ -231,6 +264,13 @@ private:
     bool                     m_updatingFromModel{false};
 
     SliceModel* resolvedSlice() const;
+
+    // ── ATT flyout (R-R3-21) ─────────────────────────────────────────────
+    QWidget*   m_attFlyout{nullptr};
+    QCheckBox* m_attEnableChk{nullptr};
+    QSpinBox*  m_attSpin{nullptr};
+    QLabel*    m_attReason{nullptr};
+    QString    m_attHeldReason;   // TX rulings (item 3)
 
     // ── Waterfall zoom buttons (bottom-left of spectrum widget) ──────────
     QWidget*     m_zoomStrip{nullptr};   // container for the 4 zoom buttons

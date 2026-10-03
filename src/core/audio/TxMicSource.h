@@ -42,6 +42,11 @@ warren@wpratt.com
 //                 Code.  Reimplements the Thetis Inbound() / cm_main
 //                 ring + semaphore primitives in C++/Qt as the
 //                 cadence-source for the TX worker thread.
+//   2026-10-01: TX diagnostics lane: wakeWatch(), the longest gap
+//                 between the pump's wakes during a key and the radio's
+//                 microphone frame sequence step across it. Measurement
+//                 only. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #pragma once
@@ -49,6 +54,8 @@ warren@wpratt.com
 #include <QObject>
 #include <QMutex>
 #include <QSemaphore>
+
+#include "core/audio/TxMicWakeWatch.h"
 
 #include <atomic>
 #include <vector>
@@ -144,6 +151,12 @@ public:
     /// invoked.  Read by the worker loop's run-condition.
     bool isRunning() const noexcept;
 
+    /// TX diagnostics lane: the wakes of waitForBlock() during a key.
+    /// The connection notes each microphone frame's sequence number and
+    /// begins and ends the key; see TxMicWakeWatch for the threads.
+    TxMicWakeWatch& wakeWatch() noexcept { return m_wakeWatch; }
+    const TxMicWakeWatch& wakeWatch() const noexcept { return m_wakeWatch; }
+
 private:
     void resetRingLocked();   // m_csIn AND m_csOut must be held
     int  ringFrameCapacity() const noexcept;
@@ -174,6 +187,8 @@ private:
     // the simple read/write pattern.
     std::atomic<bool> m_accept{false};
     std::atomic<bool> m_running{false};
+
+    TxMicWakeWatch m_wakeWatch;
 };
 
 } // namespace NereusSDR

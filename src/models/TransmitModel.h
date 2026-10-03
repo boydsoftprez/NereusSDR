@@ -1,3 +1,5 @@
+// 2026-10-02 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+// merge native EQ/CFC transactions with latest Core/remote profile ownership.
 // =================================================================
 // src/models/TransmitModel.h  (NereusSDR)
 // =================================================================
@@ -119,6 +121,20 @@
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 // Modification history (NereusSDR):
+//   2026-09-30 - Fix wave GUI-I6: tunePowerForTxBandWriteInFlight, a
+//                window's Tune Power change on its way to the Core.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - Fix round 1 (minor 2): the flag's change is signalled
+//                (tunePowerForTxBandWriteInFlightChanged). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - CFC echo: updatePairedCfc / updatePairedCfcArray return
+//                 false for a value the paired curve already holds, so the
+//                 setter's own mirror path decides. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - Radio codec: lineInGainIndexForBoost and the line-in
+//                 index default follow Thetis SetMicGain's lineinboost
+//                 table. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-04-26 — tunePowerByBand[14] + per-MAC persistence (G.3, Phase 3M-1a)
 //                 ported by J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -234,19 +250,91 @@
 //                 valid anti-VOX cancellation reference; there is no user
 //                 choice to expose.  J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-09-23 - R-R3-46 fix wave: setHpsdrModel moved out of line; the
+//                 tune power is clamped at the settings load (2026-09-24).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49 (parity Task 2): the TX and Phone/CW applets'
+//                 settings as mirrored Q_PROPERTYs (transmitSettingsVersion
+//                 2), the Core's tune power for its transmit band
+//                 (tunePowerForTxBand, setTunePowerForTxBand) and the tune
+//                 drive source on the link, and settingRangeRefusal().
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 3): the radio microphone settings as
+//                 mirrored Q_PROPERTYs (transmitSettingsVersion 3) and the
+//                 Core's TX profiles (activeTxProfile, txProfilesJson).
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 4): TX EQ, CFC, phase rotator,
+//                 CESSB, leveler and ALC settings as mirrored Q_PROPERTYs
+//                 (transmitSettingsVersion 4), the band arrays as JSON on
+//                 the link, and txEqUseLegacy (Thetis EQUseLegacy, the TX
+//                 EQ dialog's Legacy EQ box, eqform.cs:988 and setup.cs:
+//                 3615, 9318 [v2.10.3.15]). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 5): Setup > Transmit > Power,
+//                 DEXP/VOX and Test > Two-Tone IMD settings as mirrored
+//                 Q_PROPERTYs (transmitSettingsVersion 5): the per-band
+//                 power and tune power as JSON objects keyed by band,
+//                 the DEXP timing, look-ahead and side-channel filter, the
+//                 anti-VOX gain and the two-tone settings; the tune drive
+//                 source becomes writable. NereusSDR-original. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - iPhone app plan, desktop remote transmit (R-IOS-13):
+//                 voxEnabled is a Q_PROPERTY, mirrored both ways. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - iPhone app plan Task 40: micMuted, the mic mute as a
+//                 Q_PROPERTY (true = muted), mirrored both ways; muting
+//                 zeroes the mic preamp as Thetis setAudioMicGain does.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - R-IOS-13 / R-R3-49: txEqCurve, the read-only curve the
+//                 Core derives from txEqParaEqData (ParaEqCurve::
+//                 txEqCurveJson), declared last. Sent only to a peer that
+//                 declared txEqCurve (txEqCurveVersion 1). NereusSDR-
+//                 original. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - R-R3-49 (transmitSettingsVersion 15): cfcProfile, the
+//                 read-only CFC band editor the Core derives from
+//                 cfcParaEqData or the ten-band values (CfcProfile::
+//                 publishedJson), declared last. Sent only to a peer that
+//                 declared cfcProfile. NereusSDR-original. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - R-R3-49: the per-band PWR and tune slider limits and
+//                 FM TX offsets from Thetis console.cs:1824-1841, 17539-17550
+//                 [v2.10.3.15]; setPowerUsingTargetDbm constrains the drive
+//                 to the slider limit (ConstrainAValue). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - PA on-air gate review: tuneTxBandKnown() for the TX
+//                 applet's Tune Power slider. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - PA on-air gate re-review: the first transmit band
+//                 repaints the tune power (tunePowerForTxBandChanged) even
+//                 when unchanged; clearTuneTxBand() forgets it at a
+//                 disconnect. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-29 - Two-tone PA wiring: powerSliderLimitEnabled (Thetis
+//                 PWRSliderLimitEnabled, console.cs:30237 [v2.10.3.15]),
+//                 honoured by setPowerUsingTargetDbm's constrain on the PWR
+//                 slider. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 #pragma once
 
 #include "Band.h"
-#include "core/CfcProfile.h"
 #include "core/HpsdrModel.h"
 #include "core/WdspTypes.h"
 #include "core/audio/CompositeTxMicRouter.h"
 
+#include <QByteArray>
+#include <QMetaType>
 #include <QObject>
 #include <QScopeGuard>
-#include <QList>
+#include "core/CfcEditProfile.h"
 #include <QString>
+#include <QStringList>
+#include <QVariant>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -404,7 +492,11 @@ public:
     /// Set the connected radio model.  Call before setTunePowerForBand or
     /// setPowerUsingTargetDbm to engage SKU-specific behaviour.
     /// No signal needed for Task 6 — wired from RadioModel in Task 10.
-    void setHpsdrModel(HPSDRModel m) noexcept { m_hpsdrModel = m; }
+    /// R-R3-46: sets the model only. The tune power (fixed and per band)
+    /// is clamped to it, and saved for that radio, when the radio's
+    /// settings load (loadFromSettings, load), which a connect runs after
+    /// this. A remote window's copy (the Core's values) is left alone.
+    void setHpsdrModel(HPSDRModel m);
 
     /// Set the per-MAC AppSettings scope.  Must be called before load() / save().
     /// Mirrors the AlexController::setMacAddress() pattern.
@@ -421,13 +513,12 @@ public:
     // From Thetis console.cs:1813-1814 [v2.10.3.13]:
     //     power_by_band = new int[(int)Band.LAST];
     //     for (int i = 0; i < (int)Band.LAST; i++) power_by_band[i] = 50;
-    // (Thetis safety-first default — users dial up from 50 per band.
-    // limitPower_by_band[14] (console.cs:1816-1817 [v2.10.3.13]) is a
-    // separate band-max ceiling array we do NOT port here.  Phase 3C's
-    // setPowerUsingTargetDbm txMode 0 branch writes back into
-    // m_powerByBand[band] via setPower side-effect.)
+    // (Thetis safety-first default: users dial up from 50 per band.
+    // limitPower_by_band is the separate band-max ceiling array; see
+    // limitPowerForBand below.  Phase 3C's setPowerUsingTargetDbm txMode 0
+    // branch writes back into m_powerByBand[band] via setPower side-effect.)
     //
-    // HF amateur + GEN/WWV/XVTR only (Band::SwlFirst == 14).  Phase 3L
+    // HF amateur + GEN/WWV/XVTR and 2 m (the per-band state slots).  Phase 3L
     // SWL bands inherit ham-band values — no separate per-SWL TX power.
 
     /// Return the normal-mode power value (watts) for the given band.
@@ -442,6 +533,57 @@ public:
     ///   hardware/<mac>/powerByBand/<bandKeyName>
     /// (mirrors the per-MAC tx/ namespace pattern).
     void setPowerForBand(Band band, int watts);
+
+    // ── Per-band slider limits and FM TX offset (R-R3-49) ─────────────────
+    //
+    // The rest of the Thetis TXBand setter's power half
+    // (console.cs:17511-17580 [v2.10.3.15]):
+    //   ptbPWR.LimitValue = limitPower_by_band[(int)value];
+    //   ptbTune.LimitValue = limitTunePower_by_band[(int)value]; //MW0LGE_22b
+    //   ...
+    //   FMTXOffsetMHz = fm_tx_offset_by_band_mhz[(int)value]; //MW0LGE_21k9
+    // Defaults (console.cs:1824-1841 [v2.10.3.15]): limits 100 on every
+    // band; FM offset 1 MHz on 6 m, 0.1 MHz elsewhere.  Persisted per radio
+    // under hardware/<mac>/limitPowerByBand/, limitTunePowerByBand/ and
+    // fmTxOffsetByBandMhz/ (Thetis saves pipe-delimited strings,
+    // console.cs:3101-3115 save, 4921-4944 load).
+
+    /// PWR slider limit (watts, 0..100) stored for a band.  100 for an
+    /// out-of-range band.
+    int  limitPowerForBand(Band band) const;
+    /// Store a band's PWR slider limit, clamped to 0..100 (PrettyTrackBar's
+    /// LimitValue setter clamps to the slider's Min/Max).
+    void setLimitPowerForBand(Band band, int watts);
+    /// Tune slider limit (watts, 0..100) stored for a band.
+    int  limitTunePowerForBand(Band band) const;
+    /// Store a band's tune slider limit, clamped to 0..100.
+    void setLimitTunePowerForBand(Band band, int watts);
+
+    /// The PWR slider's current limit (ptbPWR.LimitValue).  The band change
+    /// assigns it from limitPowerForBand; setPowerUsingTargetDbm constrains
+    /// the drive to it.
+    int  powerLimit() const noexcept { return m_powerLimit; }
+    void setPowerLimit(int watts);
+    /// Whether the PWR slider limit applies (Thetis PWRSliderLimitEnabled,
+    /// ptbPWR.LimitEnabled; on by default).  The two-tone test turns it off
+    /// around its FIXED drive source and back on at the stop.
+    bool powerSliderLimitEnabled() const noexcept { return m_powerSliderLimitEnabled; }
+    void setPowerSliderLimitEnabled(bool enabled) noexcept { m_powerSliderLimitEnabled = enabled; }
+    /// The tune slider's current limit (ptbTune.LimitValue).
+    int  tunePowerLimit() const noexcept { return m_tunePowerLimit; }
+    void setTunePowerLimit(int watts);
+
+    /// The FM TX offset in MHz for the transmit band (Thetis
+    /// fm_tx_offset_mhz, initially 0).
+    double fmTxOffsetMhz() const noexcept { return m_fmTxOffsetMhz; }
+    /// Set the FM TX offset.  A value outside udFMOffset's 0..50 MHz range
+    /// is ignored, as in Thetis's FMTXOffsetMHz setter.
+    void   setFmTxOffsetMhz(double mhz);
+    /// FM TX offset (MHz) stored for a band.
+    double fmTxOffsetForBandMhz(Band band) const;
+    /// Store a band's FM TX offset (MHz). A value outside 0..50 MHz keeps
+    /// the band's previous value.
+    void   setFmTxOffsetForBandMhz(Band band, double mhz);
 
     // ── ATT-on-TX-on-power-change safety properties (#167 Phase 3A) ──────
     //
@@ -590,6 +732,72 @@ public:
     }
     void setTuneDrivePowerSource(DrivePowerSource source);
 
+    // ── R-R3-49 (parity Task 2): tune power for the transmit band ─────────
+    //
+    // The band the Core transmits on (its transmit slice's band, as the
+    // TUNE path reads it), set by RadioModel. tunePowerForTxBand() is that
+    // band's tunePowerForBand(); in a remote window it is the Core's value,
+    // applied by applyStationValue(). NereusSDR-original.
+    int  tunePowerForTxBand() const noexcept { return m_tunePowerForTxBand; }
+    /// True once RadioModel has set the transmit band (setTuneTxBand).
+    bool tuneTxBandKnown() const noexcept { return m_tuneTxBandKnown; }
+    void setTuneTxBand(Band band);
+    /// Forget the transmit band (a disconnect); tuneTxBandKnown() is false
+    /// until the next setTuneTxBand.
+    void clearTuneTxBand();
+    /// What the TX applet's Tune Power slider does locally: the transmit
+    /// band's tune power, and the tune drive source to TuneSlider. False,
+    /// changing nothing, before the transmit band is known.
+    bool setTunePowerForTxBand(int watts);
+    /// The Tune Power range for this radio: 0 to 99 on a Hermes Lite 2,
+    /// else 0 to 100 (setTunePower / setTunePowerForBand).
+    int  tunePowerMax() const noexcept;
+    /// A window: the Core's tunePowerForTxBand or tuneDrivePowerSource as
+    /// it reported them. A plain state apply; nothing is saved or sent.
+    bool applyStationValue(const QByteArray& propertyName, const QVariant& value);
+    /// A window: the Core refused a Tune Power change; the slider shows the
+    /// Core's value again.
+    void reportTunePowerForTxBandRefused();
+    /// Fix wave GUI-I6: a window's Tune Power change is on its way to the
+    /// Core (sent, not yet answered). StationClient sets it; the TX applet
+    /// does not show the Core's older value over the operator's meanwhile.
+    void setTunePowerForTxBandWriteInFlight(bool inFlight)
+    {
+        if (m_tunePowerWriteInFlight == inFlight) { return; }
+        m_tunePowerWriteInFlight = inFlight;
+        emit tunePowerForTxBandWriteInFlightChanged(inFlight);
+    }
+    bool tunePowerForTxBandWriteInFlight() const { return m_tunePowerWriteInFlight; }
+    /// The plain words a Core gives for a value outside a mirrored
+    /// setting's range, or empty when `value` is in range (or the property
+    /// has no range here). `propertyName` is the property's name on the
+    /// link; the range is the setter's own.
+    QString settingRangeRefusal(const QByteArray& propertyName, const QVariant& value) const;
+    bool cfcProfileRestoreInProgress() const noexcept { return m_cfcProfileRestoreDepth != 0 || m_cfcProfileUpdateDepth != 0; }
+    bool cfcProfileMutationInProgress() const noexcept {
+        return cfcProfileRestoreInProgress() || m_projectingPairedCfc;
+    }
+    void beginCfcProfileRestore() noexcept;
+    void endCfcProfileRestore() noexcept;
+    CfcEditProfile effectiveCfcProfile() const;
+    bool setCfcProfile(const CfcEditProfile& profile);
+    void beginCfcProfileUpdate();
+    void endCfcProfileUpdate();
+    [[nodiscard]] auto scopedTxEqProfileUpdate() { beginTxEqProfileUpdate(); return qScopeGuard([this] { endTxEqProfileUpdate(); }); }
+
+    // ── R-R3-49 (parity Task 3): the Core's TX profiles on the link ───────
+    //
+    // The active profile's name and the profile list as a JSON array of
+    // names. The Core sets both from its MicProfileManager; a window has
+    // them from the Core (applyStationValue). NereusSDR-original.
+    QString activeTxProfile() const { return m_activeTxProfile; }
+    QString txProfilesJson() const { return m_txProfilesJson; }
+    /// The Core: its MicProfileManager's active profile and list.
+    void setStationTxProfiles(const QString& active, const QStringList& names);
+    /// The names in txProfilesJson(), in order (empty when it is not a
+    /// JSON array of strings).
+    static QStringList txProfileNamesFromJson(const QString& json);
+
     // ── Fixed tune power (#167 Phase 3C) ──────────────────────────────────
     //
     // Mirrors Thetis tune_power at console.cs:17229-17242 [v2.10.3.13]:
@@ -670,6 +878,10 @@ public:
     ///      //[2.10.3.5]MW0LGE).
     ///   3. Emits audioVolumeChanged(audio_volume) signal so RadioModel
     ///      call sites can pump it to TxChannel + RadioConnection.
+    ///
+    /// The drive is constrained to the active slider's limit (powerLimit,
+    /// or tunePowerLimit on the tune-slider source) unless the source is
+    /// FIXED.
     ///
     /// XVTR translation NOT ported (NereusSDR has only one XVTR slot;
     /// sentinel fallback in computeAudioVolume catches that case).
@@ -808,6 +1020,8 @@ public:
     /// Default TRUE: from console.designer.cs:2029-2030 [v2.10.3.13]:
     ///   "Checked = true; CheckState = Checked"
     bool micMute() const noexcept { return m_micMute; }
+    /// iPhone app plan Task 40: true while the mic is muted (!micMute()).
+    bool micMuted() const noexcept { return !m_micMute; }
 
     /// 20 dB hardware microphone preamp enable.
     /// From Thetis console.cs:13237 [v2.10.3.13]: private bool mic_boost = true;
@@ -889,6 +1103,17 @@ public:
     //   udLineInBoost.Maximum decoded from decimal{12,0,0,0} = 12.0
     static constexpr double kLineInBoostMin = -34.5;
     static constexpr double kLineInBoostMax =  12.0;
+    // From Thetis setup.designer.cs:47007-47011 [v2.10.3.15]:
+    //   udLineInBoost.Increment = decimal{15,0,0,65536} = 1.5
+    static constexpr double kLineInBoostStep = 1.5;
+    // The last index of Thetis's lineinboost[32] table (MakeLineInList,
+    // console.cs:40900-40912 [v2.10.3.15]); the wire field is 5 bits.
+    static constexpr int kLineInGainIndexMax = 31;
+
+    /// The line-in gain index Thetis SetMicGain sends for a Line In Gain
+    /// value in dB: its position in the -34.5..+12 dB table in 1.5 dB steps
+    /// (0.0 dB is 23). A value between steps takes the nearest entry.
+    static int lineInGainIndexForBoost(double dB) noexcept;
 
     // ── Anti-VOX properties (3M-1b C.4) ──────────────────────────────────────
     //
@@ -1011,6 +1236,227 @@ public:
 
     Q_PROPERTY(bool paSettingsBypass READ paSettingsBypass WRITE setPaSettingsBypass
                                      NOTIFY paSettingsBypassChanged)
+
+    // ── R-R3-49 (parity Task 2): the TX and Phone/CW applets' settings ────
+    //
+    // Mirrored on the `transmit` object (transmitSettingsVersion 2), each
+    // under its setter's name and type and NOTIFY on its existing signal.
+    // Declared after paSettingsBypass so the earlier ordinals stay put. A
+    // window writes them while the Core's radio is off the air; the Core
+    // refuses a value outside the setter's range (settingRangeRefusal) and
+    // any write while it is on the air. None keys the radio.
+    Q_PROPERTY(int   tunePower      READ tunePower      WRITE setTunePower
+                                    NOTIFY tunePowerChanged)
+    Q_PROPERTY(int   voxThresholdDb READ voxThresholdDb WRITE setVoxThresholdDb
+                                    NOTIFY voxThresholdDbChanged)
+    Q_PROPERTY(int   voxHangTimeMs  READ voxHangTimeMs  WRITE setVoxHangTimeMs
+                                    NOTIFY voxHangTimeMsChanged)
+    Q_PROPERTY(bool  monEnabled     READ monEnabled     WRITE setMonEnabled
+                                    NOTIFY monEnabledChanged)
+    Q_PROPERTY(float monitorVolume  READ monitorVolume  WRITE setMonitorVolume
+                                    NOTIFY monitorVolumeChanged)
+    Q_PROPERTY(bool  txLevelerOn    READ txLevelerOn    WRITE setTxLevelerOn
+                                    NOTIFY txLevelerOnChanged)
+    Q_PROPERTY(bool  txEqEnabled    READ txEqEnabled    WRITE setTxEqEnabled
+                                    NOTIFY txEqEnabledChanged)
+    Q_PROPERTY(bool  cfcEnabled     READ cfcEnabled     WRITE setCfcEnabled
+                                    NOTIFY cfcEnabledChanged)
+    Q_PROPERTY(bool  cpdrOn         READ cpdrOn         WRITE setCpdrOn
+                                    NOTIFY cpdrOnChanged)
+    Q_PROPERTY(int   cpdrLevelDb    READ cpdrLevelDb    WRITE setCpdrLevelDb
+                                    NOTIFY cpdrLevelDbChanged)
+    Q_PROPERTY(int   amCarrierLevel READ amCarrierLevel WRITE setAmCarrierLevel
+                                    NOTIFY amCarrierLevelChanged)
+    Q_PROPERTY(bool  dexpEnabled    READ dexpEnabled    WRITE setDexpEnabled
+                                    NOTIFY dexpEnabledChanged)
+    Q_PROPERTY(int   micGainDb      READ micGainDb      WRITE setMicGainDb
+                                    NOTIFY micGainDbChanged)
+    // The Core's tune power for its transmit band (the band of the slice
+    // that transmits), which the TX applet's Tune Power slider shows, and
+    // the tune drive source. No WRITE: both change only through the
+    // setTunePowerForTxBand command, which sets them together as the local
+    // slider does.
+    Q_PROPERTY(int tunePowerForTxBand READ tunePowerForTxBand
+                                      NOTIFY tunePowerForTxBandChanged)
+    // R-R3-49 (parity Task 5, transmitSettingsVersion 5): the drive source
+    // is also Setup > Transmit > Power's Tune group, so it is writable.
+    Q_PROPERTY(NereusSDR::DrivePowerSource tuneDrivePowerSource
+               READ tuneDrivePowerSource WRITE setTuneDrivePowerSource
+               NOTIFY tuneDrivePowerSourceChanged)
+
+    // ── R-R3-49 (parity Task 3): the radio's microphone input, TX profiles ─
+    //
+    // Mirrored on `transmit` (transmitSettingsVersion 3), after
+    // tuneDrivePowerSource so the earlier ordinals stay put. The seven
+    // microphone settings are Setup > Audio > TX Input's radio microphone
+    // groups, under their setters' names and types (lineInBoost is the
+    // setter's double, in dB). None keys the radio.
+    Q_PROPERTY(bool   micBoost       READ micBoost       WRITE setMicBoost
+                                     NOTIFY micBoostChanged)
+    Q_PROPERTY(bool   micXlr         READ micXlr         WRITE setMicXlr
+                                     NOTIFY micXlrChanged)
+    Q_PROPERTY(bool   micTipRing     READ micTipRing     WRITE setMicTipRing
+                                     NOTIFY micTipRingChanged)
+    Q_PROPERTY(bool   micBias        READ micBias        WRITE setMicBias
+                                     NOTIFY micBiasChanged)
+    Q_PROPERTY(bool   micPttDisabled READ micPttDisabled WRITE setMicPttDisabled
+                                     NOTIFY micPttDisabledChanged)
+    Q_PROPERTY(bool   lineIn         READ lineIn         WRITE setLineIn
+                                     NOTIFY lineInChanged)
+    Q_PROPERTY(double lineInBoost    READ lineInBoost    WRITE setLineInBoost
+                                     NOTIFY lineInBoostChanged)
+    // The Core's active TX profile and its profile list (a JSON array of
+    // names, in the Core's order). No WRITE: they change through the
+    // txProfile.select / save / delete commands. On the Core, RadioModel
+    // keeps them from its MicProfileManager (setStationTxProfiles); in a
+    // window they are the Core's report (applyStationValue).
+    Q_PROPERTY(QString activeTxProfile READ activeTxProfile
+                                       NOTIFY activeTxProfileChanged)
+    Q_PROPERTY(QString txProfilesJson  READ txProfilesJson
+                                       NOTIFY txProfilesJsonChanged)
+
+    // ── R-R3-49 (parity Task 4): TX EQ, CFC, phase rotator, CESSB, leveler
+    // and ALC ────────────────────────────────────────────────────────────
+    //
+    // Mirrored on `transmit` (transmitSettingsVersion 4), after
+    // txProfilesJson so the earlier ordinals stay put, each under its
+    // setter's name and type. The ten-value bands go on the link as a
+    // compact JSON array of whole numbers (txEqBandsJson and the rest),
+    // refused whole when it is the wrong length or a value is out of range
+    // (settingRangeRefusal). txEqUseLegacy is the TX EQ dialog's Legacy EQ
+    // box, which Thetis keeps with the TX profile (EQUseLegacy). None keys
+    // the radio.
+    Q_PROPERTY(bool    txEqUseLegacy         READ txEqUseLegacy         WRITE setTxEqUseLegacy
+                                             NOTIFY txEqUseLegacyChanged)
+    Q_PROPERTY(int     txEqPreamp            READ txEqPreamp            WRITE setTxEqPreamp
+                                             NOTIFY txEqPreampChanged)
+    Q_PROPERTY(QString txEqBandsJson         READ txEqBandsJson         WRITE setTxEqBandsJson
+                                             NOTIFY txEqBandsJsonChanged)
+    Q_PROPERTY(QString txEqFreqsJson         READ txEqFreqsJson         WRITE setTxEqFreqsJson
+                                             NOTIFY txEqFreqsJsonChanged)
+    Q_PROPERTY(int     txEqNc                READ txEqNc                WRITE setTxEqNc
+                                             NOTIFY txEqNcChanged)
+    Q_PROPERTY(bool    txEqMp                READ txEqMp                WRITE setTxEqMp
+                                             NOTIFY txEqMpChanged)
+    Q_PROPERTY(int     txEqCtfmode           READ txEqCtfmode           WRITE setTxEqCtfmode
+                                             NOTIFY txEqCtfmodeChanged)
+    Q_PROPERTY(int     txEqWintype           READ txEqWintype           WRITE setTxEqWintype
+                                             NOTIFY txEqWintypeChanged)
+    Q_PROPERTY(QString txEqParaEqData        READ txEqParaEqData        WRITE setTxEqParaEqData
+                                             NOTIFY txEqParaEqDataChanged)
+    Q_PROPERTY(QString cfcCompressionJson    READ cfcCompressionJson    WRITE setCfcCompressionJson
+                                             NOTIFY cfcCompressionJsonChanged)
+    Q_PROPERTY(QString cfcEqFreqJson         READ cfcEqFreqJson         WRITE setCfcEqFreqJson
+                                             NOTIFY cfcEqFreqJsonChanged)
+    Q_PROPERTY(QString cfcPostEqBandGainJson READ cfcPostEqBandGainJson WRITE setCfcPostEqBandGainJson
+                                             NOTIFY cfcPostEqBandGainJsonChanged)
+    Q_PROPERTY(bool    cfcPostEqEnabled      READ cfcPostEqEnabled      WRITE setCfcPostEqEnabled
+                                             NOTIFY cfcPostEqEnabledChanged)
+    Q_PROPERTY(int     cfcPostEqGainDb       READ cfcPostEqGainDb       WRITE setCfcPostEqGainDb
+                                             NOTIFY cfcPostEqGainDbChanged)
+    Q_PROPERTY(int     cfcPrecompDb          READ cfcPrecompDb          WRITE setCfcPrecompDb
+                                             NOTIFY cfcPrecompDbChanged)
+    Q_PROPERTY(QString cfcParaEqData         READ cfcParaEqData         WRITE setCfcParaEqData
+                                             NOTIFY cfcParaEqDataChanged)
+    Q_PROPERTY(bool    phaseRotatorEnabled   READ phaseRotatorEnabled   WRITE setPhaseRotatorEnabled
+                                             NOTIFY phaseRotatorEnabledChanged)
+    Q_PROPERTY(int     phaseRotatorFreqHz    READ phaseRotatorFreqHz    WRITE setPhaseRotatorFreqHz
+                                             NOTIFY phaseRotatorFreqHzChanged)
+    Q_PROPERTY(int     phaseRotatorStages    READ phaseRotatorStages    WRITE setPhaseRotatorStages
+                                             NOTIFY phaseRotatorStagesChanged)
+    Q_PROPERTY(bool    phaseReverseEnabled   READ phaseReverseEnabled   WRITE setPhaseReverseEnabled
+                                             NOTIFY phaseReverseEnabledChanged)
+    Q_PROPERTY(bool    cessbOn               READ cessbOn               WRITE setCessbOn
+                                             NOTIFY cessbOnChanged)
+    Q_PROPERTY(int     txLevelerMaxGain      READ txLevelerMaxGain      WRITE setTxLevelerMaxGain
+                                             NOTIFY txLevelerMaxGainChanged)
+    Q_PROPERTY(int     txLevelerDecay        READ txLevelerDecay        WRITE setTxLevelerDecay
+                                             NOTIFY txLevelerDecayChanged)
+    Q_PROPERTY(int     txAlcMaxGain          READ txAlcMaxGain          WRITE setTxAlcMaxGain
+                                             NOTIFY txAlcMaxGainChanged)
+    Q_PROPERTY(int     txAlcDecay            READ txAlcDecay            WRITE setTxAlcDecay
+                                             NOTIFY txAlcDecayChanged)
+
+    // ── R-R3-49 (parity Task 5): Power, DEXP/VOX and two-tone settings ────
+    //
+    // Mirrored on `transmit` (transmitSettingsVersion 5), after txAlcDecay
+    // so the earlier ordinals stay put, each under its setter's name and
+    // its getter's type. The per-band power and tune power go on the link
+    // as a compact JSON object of whole watts keyed by band (bandKeyName:
+    // "160m" .. "6m", "GEN", "WWV", "XVTR", "2m"), all 15 bands in every
+    // write, or the 14 without "2m" from a peer built before 2 m (which
+    // keeps 2 m's value); refused whole otherwise. None keys the radio: the two-tone
+    // settings are read when a two-tone test starts, which stays with
+    // remote transmit (twoToneActive is in the keying set).
+    Q_PROPERTY(QString powerByBandJson       READ powerByBandJson       WRITE setPowerByBandJson
+                                             NOTIFY powerByBandJsonChanged)
+    Q_PROPERTY(QString tunePowerByBandJson   READ tunePowerByBandJson   WRITE setTunePowerByBandJson
+                                             NOTIFY tunePowerByBandJsonChanged)
+    Q_PROPERTY(double  dexpAttackTimeMs      READ dexpAttackTimeMs      WRITE setDexpAttackTimeMs
+                                             NOTIFY dexpAttackTimeMsChanged)
+    Q_PROPERTY(double  dexpDetectorTauMs     READ dexpDetectorTauMs     WRITE setDexpDetectorTauMs
+                                             NOTIFY dexpDetectorTauMsChanged)
+    Q_PROPERTY(double  dexpExpansionRatioDb  READ dexpExpansionRatioDb  WRITE setDexpExpansionRatioDb
+                                             NOTIFY dexpExpansionRatioDbChanged)
+    Q_PROPERTY(double  dexpHighCutHz         READ dexpHighCutHz         WRITE setDexpHighCutHz
+                                             NOTIFY dexpHighCutHzChanged)
+    Q_PROPERTY(double  dexpHysteresisRatioDb READ dexpHysteresisRatioDb WRITE setDexpHysteresisRatioDb
+                                             NOTIFY dexpHysteresisRatioDbChanged)
+    Q_PROPERTY(bool    dexpLookAheadEnabled  READ dexpLookAheadEnabled  WRITE setDexpLookAheadEnabled
+                                             NOTIFY dexpLookAheadEnabledChanged)
+    Q_PROPERTY(double  dexpLookAheadMs       READ dexpLookAheadMs       WRITE setDexpLookAheadMs
+                                             NOTIFY dexpLookAheadMsChanged)
+    Q_PROPERTY(double  dexpLowCutHz          READ dexpLowCutHz          WRITE setDexpLowCutHz
+                                             NOTIFY dexpLowCutHzChanged)
+    Q_PROPERTY(double  dexpReleaseTimeMs     READ dexpReleaseTimeMs     WRITE setDexpReleaseTimeMs
+                                             NOTIFY dexpReleaseTimeMsChanged)
+    Q_PROPERTY(bool    dexpSideChannelFilterEnabled READ dexpSideChannelFilterEnabled
+                                             WRITE setDexpSideChannelFilterEnabled
+                                             NOTIFY dexpSideChannelFilterEnabledChanged)
+    Q_PROPERTY(int     antiVoxGainDb         READ antiVoxGainDb         WRITE setAntiVoxGainDb
+                                             NOTIFY antiVoxGainDbChanged)
+    Q_PROPERTY(int     twoToneFreq1          READ twoToneFreq1          WRITE setTwoToneFreq1
+                                             NOTIFY twoToneFreq1Changed)
+    Q_PROPERTY(int     twoToneFreq2          READ twoToneFreq2          WRITE setTwoToneFreq2
+                                             NOTIFY twoToneFreq2Changed)
+    Q_PROPERTY(double  twoToneLevel          READ twoToneLevel          WRITE setTwoToneLevel
+                                             NOTIFY twoToneLevelChanged)
+    Q_PROPERTY(int     twoTonePower          READ twoTonePower          WRITE setTwoTonePower
+                                             NOTIFY twoTonePowerChanged)
+    Q_PROPERTY(bool    twoTonePulsed         READ twoTonePulsed         WRITE setTwoTonePulsed
+                                             NOTIFY twoTonePulsedChanged)
+    Q_PROPERTY(bool    twoToneInvert         READ twoToneInvert         WRITE setTwoToneInvert
+                                             NOTIFY twoToneInvertChanged)
+    Q_PROPERTY(int     twoToneFreq2Delay     READ twoToneFreq2Delay     WRITE setTwoToneFreq2Delay
+                                             NOTIFY twoToneFreq2DelayChanged)
+    Q_PROPERTY(NereusSDR::DrivePowerSource twoToneDrivePowerSource
+               READ twoToneDrivePowerSource WRITE setTwoToneDrivePowerSource
+               NOTIFY twoToneDrivePowerSourceChanged)
+    // iPhone app plan (desktop remote transmit, Task 40's name): VOX on the
+    // link as `transmit.voxEnabled`, so a remote window arms the Core's VOX
+    // as a local window arms its own. Declared last so every earlier
+    // property keeps its wire ordinal. Still never persisted: VOX always
+    // starts off.
+    Q_PROPERTY(bool voxEnabled READ voxEnabled WRITE setVoxEnabled NOTIFY voxEnabledChanged)
+    // iPhone app plan Task 40: the mic mute on the link as
+    // `transmit.micMuted`, true while the mic is muted (the inverse of
+    // micMute(), whose Thetis name reads true = mic in use), so a phone or
+    // a remote window mutes the Core's mic as a local window would.
+    // Declared after voxEnabled so every earlier ordinal stays. Never
+    // persisted: the mic always starts in use.
+    Q_PROPERTY(bool micMuted READ micMuted WRITE setMicMuted NOTIFY micMuteChanged)
+    // R-IOS-13 / R-R3-49: the TX EQ parametric curve as a documented,
+    // read-only value (the station link document, "The TX EQ curve"),
+    // derived from txEqParaEqData, which stays as Thetis saves it. No
+    // WRITE: nothing sets it but the blob. Declared last so every earlier
+    // property keeps its wire ordinal.
+    Q_PROPERTY(QString txEqCurve READ txEqCurve NOTIFY txEqCurveChanged)
+    // R-R3-49 (transmitSettingsVersion 15): the CFC band editor as a
+    // documented, read-only value (the station link document, "The CFC
+    // band editor"), derived from cfcParaEqData or, where that holds no
+    // curve the Core reads, the ten-band values. cfc.setProfile changes it.
+    // Declared last so every earlier property keeps its wire ordinal.
+    Q_PROPERTY(QString cfcProfile READ cfcProfile NOTIFY cfcProfileChanged)
 
     /// Bypass PA settings flag. false (default) = use board-specific table.
     bool paSettingsBypass() const noexcept { return m_paSettingsBypass; }
@@ -1336,12 +1782,16 @@ public:
 
     // ── PC Mic session state (3M-1b I.2) ─────────────────────────────────────
     //
-    // NereusSDR-native transient session state for the PC Mic configuration
-    // group (Setup → Audio → TX Input → PC Mic group box).
+    // NereusSDR-native PC Mic device selection.
     //
-    // These three properties survive Setup dialog close/reopen within the
-    // same session but are NOT persisted across app restarts — AppSettings
-    // persistence is deferred to Phase L.2.
+    // R-R3-36 (2026-09-22): these three properties are projections of the
+    // single AudioEngine TX input config (AudioDeviceConfig persisted under
+    // audio/TxInput, edited by Setup → Audio → Devices and TX Input).
+    // RadioModel mirrors that config into them on every
+    // AudioEngine::txInputConfigChanged, and a setter call here is
+    // forwarded by RadioModel to AudioEngine::setTxInputConfig (persisted
+    // under audio/TxInput). A TransmitModel with no RadioModel keeps the
+    // defaults below and forwards nothing.
     //
     // pcMicHostApiIndex: PortAudio host API index (-1 = PA default; on
     //   macOS this will be the CoreAudio index, on Linux PipeWire/Pulse,
@@ -1358,17 +1808,17 @@ public:
     //   power-of-2 list (64/128/256/512/1024/2048/4096/8192).
 
     /// PortAudio host API index for PC Mic capture.  -1 = OS default.
-    /// Session-transient; AppSettings persistence deferred to Phase L.2.
+    /// Projection of the audio/TxInput config (R-R3-36).
     int pcMicHostApiIndex() const noexcept { return m_pcMicHostApiIndex; }
 
     /// Device name for PC Mic capture within the selected host API.
     /// Empty = use the PA default device for that host API.
-    /// Session-transient; AppSettings persistence deferred to Phase L.2.
+    /// Projection of the audio/TxInput config (R-R3-36).
     QString pcMicDeviceName() const noexcept { return m_pcMicDeviceName; }
 
     /// Capture buffer size in samples per channel for PC Mic.
-    /// Default 512 samples (~10.7 ms @ 48 kHz reference rate).
-    /// Session-transient; AppSettings persistence deferred to Phase L.2.
+    /// Default 512 samples (~10.7 ms @ 48 kHz reference rate) until
+    /// RadioModel mirrors the config.  Projection of audio/TxInput (R-R3-36).
     int pcMicBufferSamples() const noexcept { return m_pcMicBufferSamples; }
 
     // ── Two-tone test properties (3M-1c B.2) ─────────────────────────────────
@@ -1521,16 +1971,17 @@ public:
     /// Opaque parametric-EQ blob.  No setter validation — pass-through for
     /// forward-compat round-trip with imported Thetis profiles (Batch 4).
     const QString& cfcParaEqData() const noexcept { return m_cfcParaEqData; }
-    // Model-thread API. Batches invalidate live precision for authoritative saved reloads.
-    CfcProfile effectiveCfcProfile() const;
-    bool setCfcProfile(const CfcProfile& profile);
-    void beginCfcProfileUpdate();
-    void endCfcProfileUpdate();
 
     // ── CPDR getters ──────────────────────────────────────────────────────
     /// CPDR global on/off (NOT in TXProfile).  See header comment.
     bool cpdrOn() const noexcept       { return m_cpdrOn; }
     int  cpdrLevelDb() const noexcept  { return m_cpdrLevelDb; }
+
+    // ── AM carrier level getter (AM / SAM / DSB TX) ───────────────────────
+    /// Carrier level in percent (0..100).  Thetis TXProfile "AM_Carrier_Level"
+    /// (database.cs AddTXProfileTable, default 100); setup.cs:9965 maps it to
+    /// WDSP as sqrt(0.01 * pct) * 0.5 via SetTXAAMCarrierLevel.
+    int  amCarrierLevel() const noexcept { return m_amCarrierLevel; }
 
     // ── CESSB getters ─────────────────────────────────────────────────────
     bool cessbOn() const noexcept      { return m_cessbOn; }
@@ -1580,6 +2031,11 @@ public:
     static constexpr int kCpdrLevelDbMin = 0;
     static constexpr int kCpdrLevelDbMax = 20;
 
+    // AM carrier level range per Thetis setup.Designer.cs udTXAMCarrierLevel
+    // (Minimum 0, Maximum 100, percent).
+    static constexpr int kAmCarrierLevelMin = 0;
+    static constexpr int kAmCarrierLevelMax = 100;
+
     // ── TX EQ + Leveler + ALC properties (3M-3a-i Task C) ───────────────
     //
     // 28 new properties (23 TXProfile + 5 stand-alone + 4 globals):
@@ -1618,15 +2074,6 @@ public:
     // ── Number of EQ bands.  Read-only constant per Thetis 10-band UI. ──
     int  txEqNumBands() const noexcept { return 10; }
 
-    // NereusSDR-original publication transaction. Property signals/persistence
-    // remain immediate; the outermost scope publishes only the final F/G shape.
-    [[nodiscard]] auto scopedTxEqProfileUpdate()
-    {
-        beginTxEqProfileUpdate();
-        return qScopeGuard([this] { endTxEqProfileUpdate(); });
-    }
-
-
     // ── TX EQ enable + preamp ──
     bool txEqEnabled() const noexcept { return m_txEqEnabled; }
     int  txEqPreamp() const noexcept  { return m_txEqPreamp; }
@@ -1660,6 +2107,37 @@ public:
     /// Phase 3M-3a-ii follow-up Batch 6 — mirrors cfcParaEqData()
     /// (3M-3a-ii Batch 2) for the TX EQ slot in TXProfile.
     const QString& txEqParaEqData() const noexcept { return m_txEqParaEqData; }
+    /// The curve txEqParaEqData holds, as ParaEqCurve::txEqCurveJson gives
+    /// it: compact JSON with "state" "saved", "default" (an empty value)
+    /// or "unavailable" (a value the Core cannot read). Follows every
+    /// change of txEqParaEqData.
+    const QString& txEqCurve() const noexcept { return m_txEqCurve; }
+    /// The CFC band editor, as CfcProfile::publishedJson gives it: "state"
+    /// "saved" (cfcParaEqData) or "legacy" (the ten-band values), with a
+    /// "revision" cfc.setProfile checks. Follows every CFC change once a
+    /// profile restore has finished.
+    const QString& cfcProfile() const noexcept { return m_cfcProfile; }
+
+    // ── R-R3-49 (parity Task 4): the Legacy EQ box and the band arrays ────
+    //
+    /// The TX EQ dialog's Legacy EQ box: true, the ten-band EQ reaches the
+    /// TX channel; false, the parametric curve in txEqParaEqData does.
+    /// Default true, as Thetis chkLegacyEQ.Checked = true at eqform.cs:988
+    /// [v2.10.3.15]; saved with the TX profile (EQUseLegacy).
+    bool txEqUseLegacy() const noexcept { return m_txEqUseLegacy; }
+    /// The ten TX EQ band gains / centres, and the ten CFC compression
+    /// levels / centres / post-EQ gains, as a compact JSON array of whole
+    /// numbers (the link's form). NereusSDR-original.
+    QString txEqBandsJson() const;
+    QString txEqFreqsJson() const;
+    QString cfcCompressionJson() const;
+    QString cfcEqFreqJson() const;
+    QString cfcPostEqBandGainJson() const;
+    /// R-R3-49 (parity Task 5): the per-band power and tune power as the
+    /// link's compact JSON object of whole watts keyed by bandKeyName, for
+    /// the 14 bands 160m .. XVTR. NereusSDR-original.
+    QString powerByBandJson() const;
+    QString tunePowerByBandJson() const;
 
     // ── Range constants (Thetis Designer setup.Designer.cs [v2.10.3.13]) ──
     //
@@ -1689,6 +2167,14 @@ public:
     // FFT-bin boundary math; Thetis itself sets defaults from 32 Hz.
     static constexpr int kTxEqFreqHzMin          =   10;
     static constexpr int kTxEqFreqHzMax          = 22000;
+    // R-R3-49 (parity Task 4): the ranges a window may send for the EQ
+    // settings whose setters do not clamp, from the TX EQ dialog's own
+    // controls (Nc spin box 32 to 8192; the Cutoff and Window combos'
+    // two items). Thetis does not show these on TX.
+    static constexpr int kTxEqNcMin              =   32;
+    static constexpr int kTxEqNcMax              = 8192;
+    static constexpr int kTxEqCtfmodeMax         =    1;
+    static constexpr int kTxEqWintypeMax         =    1;
 
 public slots:
     void setTxEqEnabled(bool on);
@@ -1709,6 +2195,23 @@ public slots:
     /// Opaque parametric-EQ blob for the TX EQ (3M-3a-ii follow-up Batch 6).
     /// No validation — pass-through for round-trip.  Mirrors setCfcParaEqData.
     void setTxEqParaEqData(const QString& data);
+    /// R-R3-49 (parity Task 4): the Legacy EQ box (see txEqUseLegacy()).
+    void setTxEqUseLegacy(bool on);
+    /// R-R3-49 (parity Task 4): all ten values from the link's JSON array,
+    /// each through its per-band setter. A value that is not a JSON array of
+    /// ten whole numbers changes nothing (the Core refuses it first with
+    /// settingRangeRefusal).
+    void setTxEqBandsJson(const QString& json);
+    void setTxEqFreqsJson(const QString& json);
+    void setCfcCompressionJson(const QString& json);
+    void setCfcEqFreqJson(const QString& json);
+    void setCfcPostEqBandGainJson(const QString& json);
+    /// R-R3-49 (parity Task 5): every band from the link's JSON object,
+    /// through setPowerForBand / setTunePowerForBand. A value that is not a
+    /// JSON object of the 14 band keys, each a whole number, changes
+    /// nothing (the Core refuses it first with settingRangeRefusal).
+    void setPowerByBandJson(const QString& json);
+    void setTunePowerByBandJson(const QString& json);
 
     // ── Phase Rotator setters (3M-3a-ii Batch 2) ─────────────────────────
     void setPhaseRotatorEnabled(bool on);
@@ -1733,6 +2236,9 @@ public slots:
     // ── CPDR setters (3M-3a-ii Batch 2) ───────────────────────────────────
     void setCpdrOn(bool on);
     void setCpdrLevelDb(int dB);
+
+    // ── AM carrier level setter ───────────────────────────────────────────
+    void setAmCarrierLevel(int percent);
 
     // ── CESSB setters (3M-3a-ii Batch 2) ──────────────────────────────────
     void setCessbOn(bool on);
@@ -1767,13 +2273,16 @@ public slots:
     QString filterDisplayText(DSPMode mode) const;
 
 signals:
+    void cfcEditProfileChanged(const CfcEditProfile& profile);
+    void txEqProfileChanged(const QList<int>& frequenciesHz, const QList<int>& gainsDb);
+    void cfcProfileRestored();
+    void cfcSettingsReloaded();
     // ── TX filter bandwidth (Plan 4 D1) ────────────────────────────────────
     /// Emitted when filterLow or filterHigh changes.  Carries both values
     /// so subscribers don't need a second getter call.
     void filterChanged(int low, int high);
 
     void txEqEnabledChanged(bool on);
-    void txEqProfileChanged(const QList<int>& frequenciesHz, const QList<int>& gainsDb);
     void txEqPreampChanged(int dB);
     /// Emitted when any individual band gain changes; carries index + new value.
     void txEqBandChanged(int index, int dB);
@@ -1790,6 +2299,20 @@ signals:
     void txEqWintypeChanged(int wintype);
     /// 3M-3a-ii follow-up Batch 6 — TX EQ parametric blob round-trip.
     void txEqParaEqDataChanged(const QString& data);
+    void txEqCurveChanged(const QString& curve);
+    void cfcProfileChanged(const QString& profile);
+    // R-R3-49 (parity Task 4): the Legacy EQ box and the link's arrays
+    // (emitted beside the per-band signals).
+    void txEqUseLegacyChanged(bool on);
+    void txEqBandsJsonChanged(const QString& json);
+    void txEqFreqsJsonChanged(const QString& json);
+    void cfcCompressionJsonChanged(const QString& json);
+    void cfcEqFreqJsonChanged(const QString& json);
+    void cfcPostEqBandGainJsonChanged(const QString& json);
+    // R-R3-49 (parity Task 5): emitted beside powerByBandChanged /
+    // tunePowerByBandChanged, and after a load() restores the arrays.
+    void powerByBandJsonChanged(const QString& json);
+    void tunePowerByBandJsonChanged(const QString& json);
 
     // ── Phase Rotator signals (3M-3a-ii Batch 2) ─────────────────────────
     void phaseRotatorEnabledChanged(bool on);
@@ -1809,11 +2332,13 @@ signals:
     /// Emitted when a per-band CFC post-EQ gain changes; carries index + new value.
     void cfcPostEqBandGainChanged(int index, int dB);
     void cfcParaEqDataChanged(const QString& data);
-    void cfcProfileChanged(const CfcProfile& profile);
 
     // ── CPDR signals (3M-3a-ii Batch 2) ───────────────────────────────────
     void cpdrOnChanged(bool on);
     void cpdrLevelDbChanged(int dB);
+
+    // ── AM carrier level signal ───────────────────────────────────────────
+    void amCarrierLevelChanged(int percent);
 
     // ── CESSB signals (3M-3a-ii Batch 2) ──────────────────────────────────
     void cessbOnChanged(bool on);
@@ -1871,21 +2396,23 @@ public slots:
     // ── PC Mic session-state setters (3M-1b I.2) ─────────────────────────────
     /// Set the PortAudio host API index for PC Mic capture.  Idempotent.
     /// -1 = let AudioEngine resolve the OS default.
-    /// AppSettings persistence deferred to Phase L.2.
+    /// RadioModel forwards the change to AudioEngine::setTxInputConfig.
     void setPcMicHostApiIndex(int index);
 
     /// Set the device name for PC Mic capture within the selected host API.
     /// Empty string = use the PA default device for that host API.
-    /// Idempotent; AppSettings persistence deferred to Phase L.2.
+    /// Idempotent; RadioModel forwards the change to the TX input config.
     void setPcMicDeviceName(const QString& name);
 
     /// Set the capture buffer size in samples per channel for PC Mic.
     /// No clamping — caller is responsible for valid power-of-2 values.
-    /// Idempotent; AppSettings persistence deferred to Phase L.2.
+    /// Idempotent; RadioModel forwards the change to the TX input config.
     void setPcMicBufferSamples(int samples);
 
     // ── Mic-jack flag setters (3M-1b C.2) ─────────────────────────────────
     void setMicMute(bool on);
+    /// iPhone app plan Task 40: setMicMute(!muted).
+    void setMicMuted(bool muted);
     void setMicBoost(bool on);
     void setMicXlr(bool on);
     void setLineIn(bool on);
@@ -1955,6 +2482,7 @@ public slots:
     // ── Two-tone setters (3M-1c B.2) ───────────────────────────────────────
     void setTwoToneFreq1(int hz);
     void setTwoToneFreq2(int hz);
+    void setTwoToneFrequencies(int freq1Hz, int freq2Hz);
     void setTwoToneLevel(double db);
     void setTwoTonePower(int pct);
     void setTwoToneFreq2Delay(int ms);
@@ -1995,7 +2523,16 @@ signals:
     void twoToneActiveChanged(bool active);
     /// Emitted when tuneDrivePowerSource() changes.  Mirrors Thetis
     /// TuneDrivePowerOrigin setter at console.cs:46554-46575 [v2.10.3.13].
-    void tuneDrivePowerSourceChanged(DrivePowerSource source);
+    void tuneDrivePowerSourceChanged(NereusSDR::DrivePowerSource source);
+    /// R-R3-49 (parity Task 2): tunePowerForTxBand() changed (a new
+    /// transmit band, that band's tune power, or the Core's report).
+    void tunePowerForTxBandChanged(int watts);
+    /// Fix round 1 (minor 2): tunePowerForTxBandWriteInFlight() changed.
+    void tunePowerForTxBandWriteInFlightChanged(bool inFlight);
+    /// R-R3-49 (parity Task 3): the Core's active TX profile or its profile
+    /// list changed.
+    void activeTxProfileChanged(const QString& name);
+    void txProfilesJsonChanged(const QString& json);
     /// Emitted when tunePower() (fixed) changes.  Mirrors Thetis
     /// tune_power setter at console.cs:17229-17242 [v2.10.3.13].
     void tunePowerChanged(int watts);
@@ -2092,6 +2629,7 @@ signals:
     // ── Two-tone signals (3M-1c B.2) ───────────────────────────────────────
     void twoToneFreq1Changed(int hz);
     void twoToneFreq2Changed(int hz);
+    void twoToneFrequenciesChanged(int freq1Hz, int freq2Hz);
     void twoToneLevelChanged(double db);
     void twoTonePowerChanged(int pct);
     void twoToneFreq2DelayChanged(int ms);
@@ -2099,9 +2637,16 @@ signals:
     void twoTonePulsedChanged(bool on);
 
     // ── Two-tone drive-power source signal (3M-1c B.3) ─────────────────────
-    void twoToneDrivePowerSourceChanged(DrivePowerSource source);
+    void twoToneDrivePowerSourceChanged(NereusSDR::DrivePowerSource source);
 
 private:
+    enum class CfcField { Frequency, Compression, PostEqBandGain, Precomp, PostEqGlobal };
+    // Returns true when a valid paired curve owns CFC, including when the
+    // requested legacy edit is invalid and must leave it unchanged. False
+    // when there is no paired curve, or when the curve already holds the
+    // value (rounded): the setter's own mirror path then decides.
+    bool updatePairedCfc(CfcField field, int index, double value);
+    bool updatePairedCfcArray(CfcField field, const std::array<int, 10>& values);
     bool m_mox{false};
     bool m_tune{false};
     int m_power{100};
@@ -2133,16 +2678,44 @@ private:
     // (#175 Task 6); Thetis has no equivalent polymorphic clamp.
     // Initialised to 50W per band in the constructor
     // (Thetis console.cs:1819-1820 [v2.10.3.13]).
-    // HF amateur + GEN/WWV/XVTR only (Band::SwlFirst == 14).  Phase 3L
+    // HF amateur + GEN/WWV/XVTR and 2 m (the per-band state slots).  Phase 3L
     // SWL bands inherit ham-band values — no separate per-SWL TX power.
-    std::array<int, static_cast<std::size_t>(Band::SwlFirst)> m_tunePowerByBand{};
+    std::array<int, static_cast<std::size_t>(kPerBandStateCount)> m_tunePowerByBand{};  // per-band state slots (2 m at 14)
+    // R-R3-49 (parity Task 2): the transmit band and its tune power.
+    // m_tuneTxBandKnown is false until RadioModel sets the band (always, on
+    // a window), so a window's own per-band copy never overwrites the
+    // Core's value.
+    Band m_tuneTxBand{Band::Band20m};
+    bool m_tuneTxBandKnown{false};
+    int  m_tunePowerForTxBand{50};
+    bool m_tunePowerWriteInFlight{false};  // fix wave GUI-I6
+    // R-R3-49 (parity Task 3): the Core's TX profiles (see activeTxProfile).
+    QString m_activeTxProfile;
+    QString m_txProfilesJson{QStringLiteral("[]")};
+    void refreshTunePowerForTxBand();
 
     // Per-band normal-mode power storage.
     // From Thetis console.cs:1813-1814 [v2.10.3.13] — power_by_band default
     // 50 W per band (Thetis safety-first).  Used as the slider source for
     // the dBm compensator (Phase 3A scaffolding for #167 Phase 3C math
     // kernel).  Initialised in the constructor.
-    std::array<int, static_cast<std::size_t>(Band::SwlFirst)> m_powerByBand{};
+    std::array<int, static_cast<std::size_t>(kPerBandStateCount)> m_powerByBand{};  // per-band state slots (2 m at 14)
+
+    // R-R3-49: per-band slider limits and FM TX offsets, and the current
+    // slider limits and offset (see limitPowerForBand).  Filled in the
+    // constructor from console.cs:1824-1841 [v2.10.3.15].
+    std::array<int, static_cast<std::size_t>(kPerBandStateCount)> m_limitPowerByBand{};
+    std::array<int, static_cast<std::size_t>(kPerBandStateCount)> m_limitTunePowerByBand{};
+    std::array<double, static_cast<std::size_t>(kPerBandStateCount)> m_fmTxOffsetByBandMhz{};
+    // Thetis's Designer gives both sliders LimitValue = 50
+    // (console.Designer.cs:3688, 3944 [v2.10.3.15]), but the initializing
+    // TXBand pass assigns limitPower_by_band (100 by default) before any
+    // drive is computed, so the effective start value is 100.
+    int    m_powerLimit{100};
+    // ptbPWR.LimitEnabled (console.Designer.cs:3686 [v2.10.3.15]): true.
+    bool   m_powerSliderLimitEnabled{true};
+    int    m_tunePowerLimit{100};
+    double m_fmTxOffsetMhz{0.0};
 
     // ── ATT-on-TX-on-power-change safety state (#167 Phase 3A) ────────────
     // From Thetis console.cs:29285-29310 [v2.10.3.13].  Defaults match
@@ -2243,7 +2816,10 @@ private:
 
     // ── line_in_gain + user_dig_out (Task 2.4) ───────────────────────────
     // Source: Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13].
-    int    m_lineInGain     = 0;      // bank 11 C2 low 5 bits, range [0, 31]
+    // bank 11 C2 low 5 bits, range [0, 31]. Follows m_lineInBoost; its
+    // default is the index Thetis SetMicGain sends for line_in_boost = 0.0
+    // (console.cs:13247, 40928-40932 [v2.10.3.15]): 0.0 is entry 23.
+    int    m_lineInGain     = 23;
     int    m_userDigOut     = 0;      // bank 11 C3 low 4 bits, range [0, 15]
 
     // ── Anti-VOX properties (3M-1b C.4) ──────────────────────────────────
@@ -2378,13 +2954,6 @@ private:
 
     // EQ enable + preamp.  database.cs:4553-4554 [v2.10.3.13].
     bool m_txEqEnabled  = false;   // dr["TXEQEnabled"] = false;
-    void beginTxEqProfileUpdate();
-    void endTxEqProfileUpdate();
-    void publishTxEqProfile();
-    int m_txEqProfileUpdateDepth = 0;
-    int m_txEqProfileStartPreamp = 0;
-    std::array<int, 10> m_txEqProfileStartBands{};
-    std::array<int, 10> m_txEqProfileStartFreqs{};
     int  m_txEqPreamp   = 0;       // dr["TXEQPreamp"]  = 0;
 
     // Per-band gains and frequencies.  Defaults from WDSP TXA.c:112-113
@@ -2414,6 +2983,10 @@ private:
     // Empty by default (no Thetis database.cs default — TXProfile column
     // ships empty until the ucParametricEq dialog populates it).
     QString m_txEqParaEqData;
+    QString m_txEqCurve;   // derived from m_txEqParaEqData
+    QString m_cfcProfile;  // derived from the CFC values (refreshCfcProfile)
+    void refreshCfcProfile();
+    bool    m_txEqUseLegacy = true;  // R-R3-49 (parity Task 4); eqform.cs:988
 
     // ── CFC / CPDR / CESSB / Phase Rotator (3M-3a-ii Batch 2) ────────────
     //
@@ -2447,12 +3020,20 @@ private:
     // Opaque parametric-EQ blob.  database.cs:4768 [v2.10.3.13]:
     //   dr["CFCParaEQData"] = "";
     QString m_cfcParaEqData;
-    std::optional<CfcProfile> m_activeCfcProfile;
+    std::optional<CfcEditProfile> m_activeCfcProfile;
     int m_cfcProfileUpdateDepth = 0;
     bool m_cfcProfileDirty = false;
     void notifyCfcProfileChange();
-    enum class CfcLegacyField { Precomp, PostEqGlobal, Frequency, Compression, PostEqBand };
-    void updateCfcLegacyValue(CfcLegacyField field, int index, int value, bool changed);
+    void beginTxEqProfileUpdate();
+    void endTxEqProfileUpdate();
+    void publishTxEqProfile();
+    int m_txEqProfileUpdateDepth = 0;
+    int m_txEqProfileStartPreamp = 0;
+    std::array<int, 10> m_txEqProfileStartBands{};
+    std::array<int, 10> m_txEqProfileStartFreqs{};
+    int m_cfcProfileRestoreDepth = 0;
+    bool m_projectingPairedCfc = false;
+    quint64 m_cfcProfileGeneration = 0;
 
     // CPDR.  cpdrOn is global console state (NOT in TXProfile) — Thetis
     // wires it via SetGeneralSetting(0, OtherButtonId.COMP, ...) at
@@ -2462,6 +3043,10 @@ private:
     // CPDR level: database.cs:4339 + 4580 [v2.10.3.13]:
     //   dr["CompanderLevel"] = 2;
     int  m_cpdrLevelDb = 2;
+
+    // AM carrier level (percent).  Thetis database.cs AddTXProfileTable:
+    //   dr["AM_Carrier_Level"] = 100;
+    int  m_amCarrierLevel = 100;
 
     // CESSB.  database.cs:4689 [v2.10.3.13]:
     //   dr["CESSB_On"] = false;

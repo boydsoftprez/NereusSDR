@@ -58,14 +58,10 @@ HardwareDdcRoutingPage::HardwareDdcRoutingPage(RadioModel* model, QWidget* paren
     auto* groupLayout = qobject_cast<QVBoxLayout*>(group->layout());
 
     auto* intro = new QLabel(
-        QStringLiteral("By default, the active codec auto-assigns DDCs to slices "
-                       "based on band + sample rate (see Phase 3F Sub-Epic B). "
-                       "Override here if you need a specific DDC pinned to a "
-                       "specific slice or ADC. Both columns default to (auto); "
-                       "explicit picks persist per-MAC.\n\n"
-                       "Note: codec-side consumption of these overrides is wired "
-                       "as a follow-up; today the picks round-trip to settings "
-                       "but do not yet steer the codec assignment."),
+        QStringLiteral("NereusSDR picks the radio receiver (DDC) for each slice "
+                       "from its band and sample rate. The choices below are "
+                       "saved for each radio, but they do not change which "
+                       "receiver or ADC serves a slice."),
         group);
     intro->setWordWrap(true);
     if (groupLayout) {

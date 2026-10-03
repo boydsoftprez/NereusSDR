@@ -70,10 +70,10 @@ extern void setGain_doublepole (DOUBLEPOLE a, double gain);
 
 extern void CalcDoublepoleFilter (DOUBLEPOLE a, double f_center, double bandwidth, double gain);
 
-extern void SetRXADoublepoleRun (int channel, int run);
+extern __declspec (dllexport) void SetRXADoublepoleRun (int channel, int run);
 
-extern void SetRXADoublepoleFreqs (int channel, double f_center, double bandwidth);
+extern __declspec (dllexport) void SetRXADoublepoleFreqs (int channel, double f_center, double bandwidth);
 
-extern void SetRXADoublepoleGain (int channel, double gain);
+extern __declspec (dllexport) void SetRXADoublepoleGain (int channel, double gain);
 
 #endif

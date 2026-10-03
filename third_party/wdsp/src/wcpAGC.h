@@ -32,7 +32,7 @@ warren@wpratt.com
 #define MAX_TAU_ATTACK		(0.01)
 #define RB_SIZE				(int)(MAX_SAMPLE_RATE * MAX_N_TAU * MAX_TAU_ATTACK + 1)
 
-#define AGCPORT				
+#define AGCPORT				__declspec(dllexport)
 
 typedef struct _wcpagc
 {

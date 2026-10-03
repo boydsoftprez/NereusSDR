@@ -14,6 +14,73 @@
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-09-23 - R-R3-21: the ATT/S-ATT row and the RX1 preamp toggle are
+//                 disabled with a plain reason on a remote-station model,
+//                 where no local step attenuator is wired; the XIT row and
+//                 the filter-preset Shift-click TX match follow the
+//                 negotiated transmit permission. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-09-23 - R-R3-46: in a remote window the preamp items and S-ATT
+//                 range follow the Core's board. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-23 - R-R3-46 / R-R3-21: in a remote window the ATT/S-ATT row,
+//                 the preamp combo and the RX1 preamp toggle show and write
+//                 the Core's `stepAtt` object, enabled while the Core takes
+//                 the window's edits and otherwise disabled with its plain
+//                 reason. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-23 - R-R3-46: in a remote window the RX1 preamp toggle is
+//                 built when the Core's dual-ADC board arrives, and hidden
+//                 on a single-ADC board. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-24 - iPhone app Task 19 (R-IOS-06): the AGC items and the
+//                 AGC-T range come from ControlRanges.h, which the Core's
+//                 catalogue reads too. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-24 - iPhone app follow-up (R-IOS-06): the SQL slider's range
+//                 comes from ControlRanges.h too. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49 (parity Task 1): the filter-preset Shift-click TX
+//                 passband match follows setTransmitSettingsPermitted and
+//                 says why when it cannot. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49, R-R3-21 (parity Task 11): the XIT row writes the
+//                 slice in a remote window as the VFO flag's XIT does; it
+//                 no longer follows the transmit permission, and
+//                 setTransmitPermitted, which gated only it, is gone.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - R-R3-46 / R-R3-11: S-ATT shows and sets the attenuator of
+//                 the slice's own ADC (the other ADC's own value for a slice
+//                 on it), in a local and a remote window.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - R-R3-46 / R-R3-11: the ATT / S-ATT / A-ATT label and the
+//                 control shown follow the slice's own ADC's enable and
+//                 auto-attenuate; the preamp choice (slice A's input's) is
+//                 disabled with the reason for a slice on the other ADC.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - Level Cal fix wave: a slice on the other ADC shows and
+//                 sets RX2's own preamp mode from RX2's list (Thetis
+//                 comboRX2Preamp, RX2PreampMode, console.cs:19413-19520,
+//                 40883-40889 [v2.10.3.15]), local and remote; a remote
+//                 window of an older Core shows it disabled with the reason.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - Level Cal 2 review: a slice on the other ADC's S-ATT box
+//                 stops at 31 dB (rx2MaxAttenuation). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - TX rulings (item 3, JJ): on a listened slice the
+//                 attenuator and preamp controls (ATT row, S-ATT, the preamp
+//                 choice, RX1 preamp) are disabled with the reason naming the
+//                 controlling device, and their write sites return early.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - core-slice take-over: the tab menu's Take control is
+//                 disabled with the Core's words when it refuses the take.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30: Fix wave GUI-M5: the step attenuator connections are
+//               kept and dropped on each slice change. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-01: Added approved compact STEP units during PR review by
+//                 J.J. Boyd (KG4VCF), with AI assistance via OpenAI Codex.
 // =================================================================
 
 //=================================================================
@@ -117,17 +184,21 @@
 //============================================================================================//
 
 #include "RxApplet.h"
+#include "gui/TuneStepLabel.h"
 
 #include <QGuiApplication>
 
 #include "core/BoardCapabilities.h"
+#include "core/ControlRanges.h"
 #include "core/HpsdrModel.h"
 #include "core/SkuUiProfile.h"
 #include "core/P2RadioConnection.h"
 #include "gui/AntennaPopupBuilder.h"
 #include "core/RadioConnection.h"
 #include "core/StepAttenuatorController.h"
+#include "core/StepAttenuatorFacade.h"
 #include "core/accessories/AlexController.h"
+#include "core/session/IStationLink.h"
 #include "gui/ComboStyle.h"
 #include "gui/StyleConstants.h"
 #include "gui/styles/PopupMenuStyle.h"
@@ -201,6 +272,309 @@ RxApplet::RxApplet(SliceModel* slice, RadioModel* model, QWidget* parent)
     }
 
     syncFromModel();
+
+    // R-R3-49 (parity Task 1): a remote-station model starts with the
+    // transmit settings denied until the handshake grants them. XIT is a
+    // slice setting and writes in a remote window (parity Task 11).
+    if (m_model && !m_model->ownsLocalDsp()) {
+        setTransmitSettingsPermitted(false);
+    }
+
+    // R-R3-46 / R-R3-21: a remote window has no attenuator of its own. The
+    // row shows and writes the Core's (the mirrored `stepAtt` object), and
+    // is usable only while the Core takes its edits; until then it is
+    // disabled with the object's plain reason.
+    if (m_model && !m_model->ownsLocalDsp()) {
+        wireRemoteStepAtt();
+    }
+}
+
+namespace {
+
+// The ATT/S-ATT/A-ATT label for a remote window: the same labels
+// connectSlice() gives a local one (mi0bot-Thetis console.cs:21342-21365
+// [v2.10.3.13-beta2] AutoAttRX1 setter, widened to every board there).
+QString remoteAttLabelText(bool stepOn, bool autoOn)
+{
+    if (!stepOn) {
+        return QStringLiteral("ATT");
+    }
+    return autoOn ? QStringLiteral("A-ATT") : QStringLiteral("S-ATT");
+}
+
+} // namespace
+
+void RxApplet::wireRemoteStepAtt()
+{
+    StepAttenuatorFacade* stepAtt = m_model ? m_model->stepAttFacade() : nullptr;
+    if (!stepAtt) {
+        return;
+    }
+    // The window's edits: each is a property write the Core applies through
+    // its own controller; the value it settles on comes back below.
+    // R-R3-46 / R-R3-11: the attenuator of this slice's own ADC.
+    connect(m_stepAttSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, [this, stepAtt](int dB) {
+        if (isListening()) { return; }  // TX rulings (item 3)
+        stepAtt->setAttenuationDbForSlice(m_slice ? m_slice->sliceIndex() : 0, dB);
+    });
+    connect(m_preampCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this, stepAtt](int idx) {
+        if (idx < 0) { return; }  // guard during clear/repopulate
+        if (isListening()) { return; }  // TX rulings (item 3)
+        const int mode = m_preampCombo->itemData(idx).toInt();
+        if (m_preampShowsRx2) {
+            stepAtt->setRx2PreampMode(mode);
+        } else {
+            stepAtt->setPreampMode(mode);
+        }
+    });
+
+    // The Core's values.
+    for (auto signal : {&StepAttenuatorFacade::enabledChanged,
+                        &StepAttenuatorFacade::autoAttEnabledChanged,
+                        &StepAttenuatorFacade::rx1PreampChanged,
+                        &StepAttenuatorFacade::rx2StepAttEnabledChanged,
+                        &StepAttenuatorFacade::rx2AutoAttEnabledChanged}) {
+        connect(stepAtt, signal, this, [this](bool) { showRemoteStepAttValues(); });
+    }
+    for (auto signal : {&StepAttenuatorFacade::attenuationDbChanged,
+                        &StepAttenuatorFacade::preampModeChanged,
+                        &StepAttenuatorFacade::minDbChanged,
+                        &StepAttenuatorFacade::maxDbChanged,
+                        &StepAttenuatorFacade::rx2AttenuationDbChanged,
+                        &StepAttenuatorFacade::rx2SliceMaskChanged,
+                        &StepAttenuatorFacade::rx2PreampModeChanged}) {
+        connect(stepAtt, signal, this, [this](int) { showRemoteStepAttValues(); });
+    }
+    connect(stepAtt, &StepAttenuatorFacade::windowAvailabilityChanged,
+            this, [this](bool) { applyRemoteStepAttAvailability(); });
+
+    showRemoteStepAttValues();
+    applyRemoteStepAttAvailability();
+}
+
+void RxApplet::showRemoteStepAttValues()
+{
+    StepAttenuatorFacade* stepAtt = m_model ? m_model->stepAttFacade() : nullptr;
+    if (!stepAtt) {
+        return;
+    }
+    // The Core's range is its own radio's; it is shown once the Core offers
+    // the attenuator (before that the board table from setBoardCapabilities
+    // stands).
+    if (stepAtt->windowAvailable() && m_stepAttSpin) {
+        QSignalBlocker blk(m_stepAttSpin);
+        m_stepAttSpin->setRange(stepAtt->minDb(), stepAtt->maxDb());
+    }
+    showStepAttValueForSlice();
+    showPreampModeForSlice();
+    if (m_rx1PreampToggle) {
+        QSignalBlocker blk(m_rx1PreampToggle);
+        m_rx1PreampToggle->setChecked(stepAtt->rx1Preamp());
+    }
+    refreshAttForSlice();
+}
+
+// R-R3-46 / R-R3-11: the ATT / S-ATT / A-ATT label and the control shown
+// follow the step attenuator of the slice's own ADC: slice A's (RX1's)
+// enable and auto-attenuate, or for a slice on the other ADC RX2's own
+// (Thetis _rx2_step_att_enabled, _auto_att_rx2), local and remote. The
+// preamp choice is slice A's input's (RX1's preamp mode); on the other ADC
+// it is RX2's own (Thetis comboRX2Preamp and RX2PreampMode), disabled with
+// the reason in a remote window whose Core does not carry it.
+void RxApplet::refreshAttForSlice()
+{
+    if (!m_model || !m_attLabel || !m_attStack) {
+        return;
+    }
+    const int sliceId = m_slice ? m_slice->sliceIndex() : 0;
+    bool rx2 = false;
+    bool stepOn = false;
+    bool autoOn = false;
+    if (m_model->ownsLocalDsp()) {
+        const StepAttenuatorController* c = m_model->stepAttController();
+        if (!c) {
+            return;
+        }
+        rx2 = sliceId >= 0 && sliceId < 32 && (c->rx2SliceMask() & (1u << sliceId)) != 0;
+        stepOn = rx2 ? c->rx2StepAttEnabled() : c->stepAttEnabled();
+        autoOn = rx2 ? c->rx2AutoAttEnabled() : c->autoAttEnabled();
+    } else {
+        const StepAttenuatorFacade* stepAtt = m_model->stepAttFacade();
+        if (!stepAtt) {
+            return;
+        }
+        rx2 = stepAtt->sliceUsesRx2(sliceId);
+        stepOn = rx2 ? stepAtt->rx2StepAttEnabled() : stepAtt->enabled();
+        autoOn = rx2 ? stepAtt->rx2AutoAttEnabled() : stepAtt->autoAttEnabled();
+    }
+    m_attLabel->setText(remoteAttLabelText(stepOn, autoOn));
+    m_attStack->setCurrentIndex(stepOn ? 1 : 0);
+    if (m_preampCombo) {
+        if (rx2 != m_preampShowsRx2) {
+            fillPreampCombo(rx2);
+        }
+        showPreampModeForSlice();
+        const bool remoteBlocked = !m_model->ownsLocalDsp() && m_model->stepAttFacade()
+            && !m_model->stepAttFacade()->windowAvailable();
+        if (!remoteBlocked) {
+            const bool rx2Unavailable = rx2 && !m_model->rx2PreampModeAvailable();
+            setAttControlState(m_preampCombo, !rx2Unavailable,
+                               rx2Unavailable ? IStationLink::rx2PreampModeUnavailableReason()
+                                              : QString());
+        }
+    }
+}
+
+// Level Cal: RX1's list (Thetis SetComboPreampForHPSDR) or RX2's own.
+// From Thetis console.cs:40883-40889 [v2.10.3.15] (comboRX2Preamp's list
+// by model; BoardCapsTable::rx2PreampItemsForBoard).
+//   ... || HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+//       comboRX2Preamp.Items.AddRange(anan100d_preamp_settings);
+// [original inline comment from console.cs:40878, RX1's list]
+//   // case HPSDRModel.REDPITAYA: // DH1KLM: removed for compatibility reasons
+void RxApplet::fillPreampCombo(bool rx2)
+{
+    if (!m_preampCombo) {
+        return;
+    }
+    // A board rebuild keeps the choice; a switch between the two lists
+    // starts from the first item, and the caller shows that list's mode.
+    const QVariant current = rx2 == m_preampShowsRx2 ? m_preampCombo->currentData() : QVariant();
+    QSignalBlocker blk(m_preampCombo);
+    m_preampCombo->clear();
+    const auto items = rx2 ? BoardCapsTable::rx2PreampItemsForBoard(m_preampBoard)
+                           : BoardCapsTable::preampItemsForBoard(m_preampBoard, m_preampAlex);
+    for (const auto& item : items) {
+        m_preampCombo->addItem(QString::fromLatin1(item.label), item.modeInt);
+    }
+    m_preampShowsRx2 = rx2;
+    const int keep = current.isValid() ? m_preampCombo->findData(current) : -1;
+    m_preampCombo->setCurrentIndex(keep >= 0 ? keep : 0);
+}
+
+void RxApplet::showPreampModeForSlice()
+{
+    if (!m_preampCombo || !m_model) {
+        return;
+    }
+    int mode = 0;
+    if (m_model->ownsLocalDsp()) {
+        const StepAttenuatorController* c = m_model->stepAttController();
+        if (!c) {
+            return;
+        }
+        mode = static_cast<int>(m_preampShowsRx2 ? c->rx2PreampMode() : c->preampMode());
+    } else {
+        const StepAttenuatorFacade* stepAtt = m_model->stepAttFacade();
+        if (!stepAtt) {
+            return;
+        }
+        mode = m_preampShowsRx2 ? stepAtt->rx2PreampMode() : stepAtt->preampMode();
+    }
+    const int at = m_preampCombo->findData(mode);
+    if (at >= 0) {
+        QSignalBlocker blk(m_preampCombo);
+        m_preampCombo->setCurrentIndex(at);
+    }
+}
+
+void RxApplet::showStepAttValueForSlice()
+{
+    if (!m_stepAttSpin || !m_model) {
+        return;
+    }
+    // R-R3-46 / R-R3-11: a slice on the other ADC shows that ADC's own
+    // attenuator (Thetis RX2's), every other slice slice A's.
+    const int sliceId = m_slice ? m_slice->sliceIndex() : 0;
+    int dB = 0;
+    // Level Cal 2 review: a slice on the other ADC stops at RX2's own top,
+    // the second ADC's 0-31 dB field (StepAttenuatorController::
+    // rx2MaxAttenuation); every other slice at RX1's.
+    int maxDb = m_stepAttSpin->maximum();
+    if (m_model->ownsLocalDsp()) {
+        const StepAttenuatorController* c = m_model->stepAttController();
+        if (!c) {
+            return;
+        }
+        const bool rx2 = sliceId >= 0 && sliceId < 32
+            && (c->rx2SliceMask() & (1u << sliceId)) != 0;
+        dB = rx2 ? c->rx2AttenuatorDb() : c->attenuatorDb();
+        maxDb = rx2 ? c->rx2MaxAttenuation() : c->maxAttenuation();
+    } else {
+        const StepAttenuatorFacade* stepAtt = m_model->stepAttFacade();
+        if (!stepAtt) {
+            return;
+        }
+        dB = stepAtt->attenuationDbForSlice(sliceId);
+        if (stepAtt->windowAvailable()) {
+            maxDb = stepAtt->sliceUsesRx2(sliceId)
+                ? std::min(stepAtt->maxDb(), StepAttenuatorController::kRx2StepAttMaxDb)
+                : stepAtt->maxDb();
+        }
+    }
+    QSignalBlocker blk(m_stepAttSpin);
+    m_stepAttSpin->setMaximum(maxDb);
+    m_stepAttSpin->setValue(dB);
+}
+
+void RxApplet::applyRemoteStepAttAvailability()
+{
+    StepAttenuatorFacade* stepAtt = m_model ? m_model->stepAttFacade() : nullptr;
+    if (!stepAtt) {
+        return;
+    }
+    const bool available = stepAtt->windowAvailable();
+    const QString tip = available ? QString() : stepAtt->windowUnavailableReason();
+    for (QWidget* w : {static_cast<QWidget*>(m_attStack),
+                       static_cast<QWidget*>(m_attLabel),
+                       static_cast<QWidget*>(m_rx1PreampToggle)}) {
+        if (w) {
+            setAttControlState(w, available, tip);
+        }
+    }
+    showRemoteStepAttValues();
+}
+
+// Phase 3P-B Task 10: the RX1 preamp toggle for dual-ADC boards, in the OVL
+// row. R-R3-46: built once, from buildUi() for a board known then, or from
+// setBoardCapabilities() when a remote window learns the Core's board.
+void RxApplet::ensureRx1PreampToggle()
+{
+    if (m_rx1PreampToggle || !m_ovlRow) {
+        return;
+    }
+    m_rx1PreampToggle = new QCheckBox(QStringLiteral("RX1 preamp"), this);
+    m_rx1PreampToggle->setObjectName(QStringLiteral("RxRx1PreampToggle"));
+    m_rx1PreampToggle->setStyleSheet(QStringLiteral(
+        "QCheckBox { color: %1; font-size: 10px; }"
+        "QCheckBox::indicator { width: 12px; height: 12px; }").arg(Style::kTitleText));
+    // Phase 3P-B Task 10: RX1 preamp wires to P2RadioConnection::setRx1Preamp
+    // which routes to CodecContext.p2Rx1Preamp → byte 1403 bit 1.
+    connect(m_rx1PreampToggle, &QCheckBox::toggled, this, [this](bool on) {
+        if (!m_model) { return; }
+        if (isListening()) { return; }  // TX rulings (item 3)
+        // R-R3-46: a remote window has no connection of its own;
+        // the toggle writes the Core's `stepAtt` object instead.
+        if (!m_model->ownsLocalDsp()) {
+            if (StepAttenuatorFacade* stepAtt = m_model->stepAttFacade()) {
+                stepAtt->setRx1Preamp(on);
+            }
+            return;
+        }
+        auto* conn = qobject_cast<class P2RadioConnection*>(m_model->connection());
+        if (!conn) { return; }
+        // P2RadioConnection lives on m_connThread.  Dispatch onto its
+        // event loop so the m_rx[1].preamp mutation and the resulting
+        // sendCmdHighPriority() run on the connection thread, not the
+        // GUI thread.  (Codex PR #94 review.)
+        QMetaObject::invokeMethod(conn, [conn, on] { conn->setRx1Preamp(on); },
+                                  Qt::QueuedConnection);
+    });
+    m_ovlRow->addWidget(m_rx1PreampToggle);
+    // TX rulings (item 3): built while listening, it is held at once.
+    holdForListening(m_rx1PreampToggle);
 }
 
 void RxApplet::buildUi()
@@ -249,16 +623,24 @@ void RxApplet::buildUi()
         auto* row = new QHBoxLayout;
         row->setSpacing(3);
 
-        // Control 1: Slice letter badge (A/B/C/D)
-        // 20×20, bg #0070c0, white text, 3px radius
+        // Control 1: Slice letter badge (stable slice-ID letter)
+        // 20×20, slice-identity background, white text, 3px radius
         m_sliceBadge = new QLabel(QStringLiteral("A"), this);
         m_sliceBadge->setFixedSize(20, 20);
         m_sliceBadge->setAlignment(Qt::AlignCenter);
         m_sliceBadge->setStyleSheet(QStringLiteral(
             "QLabel { background: %1; color: %2;"
             " border-radius: 3px; font-weight: bold; font-size: 11px; }"
-        ).arg(Style::kBlueBg, Style::kBlueText));
+        ).arg(VfoWidget::sliceColor(0).name(), Style::kBlueText));
         row->addWidget(m_sliceBadge);
+        // Slice control plan Task 15: the badge's menu offers the bound
+        // slice's access actions, so Take control is reachable with a
+        // single slice (when the tab row is hidden) too.
+        m_sliceBadge->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(m_sliceBadge, &QWidget::customContextMenuRequested, this,
+                [this](const QPoint& pos) {
+            showSliceMenu(m_badgeSliceId, m_sliceBadge, pos);
+        });
 
         // Control 2: Lock button (checkable, 20×20, emoji 🔓/🔒)
         // Live in S2.9 — wired to SliceModel::setLocked (client-side guard).
@@ -277,7 +659,7 @@ void RxApplet::buildUi()
             m_lockBtn->setText(locked
                 ? QString::fromUtf8("\xF0\x9F\x94\x92")   // 🔒
                 : QString::fromUtf8("\xF0\x9F\x94\x93")); // 🔓
-            if (!m_updatingFromModel && m_slice) {
+            if (!m_updatingFromModel && m_slice && !isListening()) {
                 m_slice->setLocked(locked);
             }
         });
@@ -299,6 +681,7 @@ void RxApplet::buildUi()
             "QPushButton:hover { color: #66aaff; }"  // §A2 one-off hover derived from #4488ff
         ));
         connect(m_rxAntBtn, &QPushButton::clicked, this, [this] {
+            if (isListening()) { return; }  // Task 15: another device controls it
             // B3: AntennaPopupBuilder — capability-gated popup (Phase 3P-I-a T22).
             QMenu menu(this);
             // Dark popup palette — without this, Ubuntu's default theme renders
@@ -346,6 +729,7 @@ void RxApplet::buildUi()
             "QPushButton:hover { color: #ff6666; }"  // §A2 one-off hover derived from #ff4444
         ));
         connect(m_txAntBtn, &QPushButton::clicked, this, [this] {
+            if (isListening()) { return; }  // Task 15: another device controls it
             // B3: AntennaPopupBuilder TX mode — only main ANT1-3 (Phase 3P-I-a T22).
             QMenu menu(this);
             // Dark popup palette — see RX button above. Issue #98.
@@ -418,7 +802,7 @@ void RxApplet::buildUi()
         // Tier 1 wiring: mode combo → SliceModel::setDspMode()
         connect(m_modeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [this](int) {
-            if (m_updatingFromModel || !m_slice) { return; }
+            if (m_updatingFromModel || !m_slice || isListening()) { return; }
             const QString name = m_modeCombo->currentText();
             m_slice->setDspMode(SliceModel::modeFromName(name));
         });
@@ -436,8 +820,7 @@ void RxApplet::buildUi()
     leftCol->setSpacing(2);
 
     // Control 17: Step size row — STEP: [<] [value] [>]
-    // Cycles SliceModel::stepHz through kStageOneStepLadder
-    // {1, 10, 100, 500, 1k, 10k}.
+    // Cycles SliceModel::stepHz through kTuneStepList.
     {
         auto* row = new QHBoxLayout;
         row->setSpacing(0);
@@ -462,29 +845,17 @@ void RxApplet::buildUi()
 
         leftCol->addLayout(row);
 
-        // Step arrows cycle through kStageOneStepLadder
-        // {1, 10, 100, 500, 1k, 10k}. Down = previous, Up = next.
-        // Wraps at both ends. Issue #69.
+        // From Thetis console.cs:30635-30643 [v2.10.3.15]:
+        // btnChangeTuneStepSmaller_Click calls ChangeTuneStepDown and
+        // btnChangeTuneStepLarger_Click calls ChangeTuneStepUp. Down = previous,
+        // Up = next, wrapping at both ends of the list. Issue #69.
         connect(m_stepDown, &QPushButton::clicked, this, [this]() {
-            if (!m_slice) { return; }
-            const int current = m_slice->stepHz();
-            int idx = 0;
-            for (int i = 0; i < kStageOneStepLadderSize; ++i) {
-                if (kStageOneStepLadder[i] == current) { idx = i; break; }
-            }
-            const int prev = (idx - 1 + kStageOneStepLadderSize)
-                             % kStageOneStepLadderSize;
-            m_slice->setStepHz(kStageOneStepLadder[prev]);
+            if (!m_slice || isListening()) { return; }
+            m_slice->changeTuneStepDown();
         });
         connect(m_stepUp, &QPushButton::clicked, this, [this]() {
-            if (!m_slice) { return; }
-            const int current = m_slice->stepHz();
-            int idx = 0;
-            for (int i = 0; i < kStageOneStepLadderSize; ++i) {
-                if (kStageOneStepLadder[i] == current) { idx = i; break; }
-            }
-            const int next = (idx + 1) % kStageOneStepLadderSize;
-            m_slice->setStepHz(kStageOneStepLadder[next]);
+            if (!m_slice || isListening()) { return; }
+            m_slice->changeTuneStepUp();
         });
     }
 
@@ -536,7 +907,7 @@ void RxApplet::buildUi()
         m_filterPassband->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         connect(m_filterPassband, &FilterPassbandWidget::filterChanged,
                 this, [this](int lo, int hi) {
-            if (m_slice) { m_slice->setFilter(lo, hi); }
+            if (m_slice && !isListening()) { m_slice->setFilter(lo, hi); }
         });
         leftCol->addWidget(m_filterPassband);
     }
@@ -572,7 +943,7 @@ void RxApplet::buildUi()
         m_panSlider->setFixedHeight(18);
         m_panSlider->setStyleSheet(Style::sliderHStyle());
         connect(m_panSlider, &QSlider::valueChanged, this, [this](int val) {
-            if (m_updatingFromModel || !m_slice) { return; }
+            if (m_updatingFromModel || !m_slice || isListening()) { return; }
             m_slice->setAudioPan((val - 50) / 50.0);
         });
         row->addWidget(m_panSlider, 1);
@@ -596,18 +967,19 @@ void RxApplet::buildUi()
 
         m_sqlBtn = greenToggle(QStringLiteral("SQL"), 52, 20);
         connect(m_sqlBtn, &QPushButton::toggled, this, [this](bool on) {
-            if (m_updatingFromModel || !m_slice) { return; }
+            if (m_updatingFromModel || !m_slice || isListening()) { return; }
             m_slice->setSsqlEnabled(on);
         });
         row->addWidget(m_sqlBtn);
 
         m_sqlSlider = new QSlider(Qt::Horizontal, this);
-        m_sqlSlider->setRange(0, 100);
+        m_sqlSlider->setRange(ControlRanges::kSsqlThreshMin, ControlRanges::kSsqlThreshMax);
+        m_sqlSlider->setSingleStep(ControlRanges::kSsqlThreshStep);
         m_sqlSlider->setValue(20);
         m_sqlSlider->setFixedHeight(18);
         m_sqlSlider->setStyleSheet(Style::sliderHStyle());
         connect(m_sqlSlider, &QSlider::valueChanged, this, [this](int val) {
-            if (m_updatingFromModel || !m_slice) { return; }
+            if (m_updatingFromModel || !m_slice || isListening()) { return; }
             m_slice->setSsqlThresh(static_cast<double>(val));
         });
         row->addWidget(m_sqlSlider, 1);
@@ -631,12 +1003,14 @@ void RxApplet::buildUi()
         row->setContentsMargins(0, 0, 0, 0);
 
         m_attLabel = new QLabel(QStringLiteral("ATT"), this);
+        m_attLabel->setObjectName(QStringLiteral("RxAttLabel"));
         m_attLabel->setFixedWidth(34);
         m_attLabel->setStyleSheet(QStringLiteral(
             "QLabel { color: %1; font-size: 11px; }").arg(Style::kTitleText));
         row->addWidget(m_attLabel);
 
         m_attStack = new QStackedWidget(this);
+        m_attStack->setObjectName(QStringLiteral("RxAttenuatorStack"));
         m_attStack->setFixedHeight(20);
 
         // Page 0: Preamp combo (ATT mode — step att disabled).
@@ -644,6 +1018,7 @@ void RxApplet::buildUi()
         // at construction, not hardcoded. Matches Thetis SetComboPreampForHPSDR
         // console.cs:40755-40825 [@501e3f5] — per board at init time.
         m_preampCombo = new QComboBox(this);
+        m_preampCombo->setObjectName(QStringLiteral("RxPreampCombo"));
         {
             const HPSDRHW initBoard = m_model
                 ? m_model->hardwareProfile().effectiveBoard
@@ -651,6 +1026,8 @@ void RxApplet::buildUi()
             const bool initAlex = m_model
                 ? m_model->boardCapabilities().hasAlexFilters
                 : false;
+            m_preampBoard = initBoard;
+            m_preampAlex = initAlex;
             const auto initItems = BoardCapsTable::preampItemsForBoard(initBoard, initAlex);
             for (const auto& item : initItems) {
                 m_preampCombo->addItem(QString::fromLatin1(item.label), item.modeInt);
@@ -708,11 +1085,11 @@ void RxApplet::buildUi()
         // Control 9: AGC combo (fixedWidth 52), items: Off/Long/Slow/Med/Fast
         // Tier 1 wired → SliceModel::setAgcMode()
         m_agcCombo = new QComboBox(m_agcTContainer);
-        m_agcCombo->addItem(QStringLiteral("Off"),  static_cast<int>(AGCMode::Off));
-        m_agcCombo->addItem(QStringLiteral("Long"), static_cast<int>(AGCMode::Long));
-        m_agcCombo->addItem(QStringLiteral("Slow"), static_cast<int>(AGCMode::Slow));
-        m_agcCombo->addItem(QStringLiteral("Med"),  static_cast<int>(AGCMode::Med));
-        m_agcCombo->addItem(QStringLiteral("Fast"), static_cast<int>(AGCMode::Fast));
+        // The items come from ControlRanges.h, which the Core's catalogue
+        // reads too (iPhone app Task 19).
+        for (const ControlRanges::AgcModeItem& item : ControlRanges::kAgcModes) {
+            m_agcCombo->addItem(QString::fromLatin1(item.label), item.id);
+        }
         m_agcCombo->setFixedWidth(52);
         m_agcCombo->setFixedHeight(20);
         applyComboStyle(m_agcCombo);
@@ -720,7 +1097,7 @@ void RxApplet::buildUi()
         // Tier 1 wiring
         connect(m_agcCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [this](int idx) {
-            if (m_updatingFromModel || !m_slice) { return; }
+            if (m_updatingFromModel || !m_slice || isListening()) { return; }
             const auto mode = static_cast<AGCMode>(
                 m_agcCombo->itemData(idx).toInt());
             m_slice->setAgcMode(mode);
@@ -757,6 +1134,7 @@ void RxApplet::buildUi()
         // From Thetis v2.10.3.13 setup.designer.cs:38679 — chkAutoAGCRX1.ToolTip
         m_agcAutoLabel->setToolTip(QStringLiteral("Automatically adjust AGC based on Noise Floor"));
         connect(m_agcAutoLabel, &QPushButton::clicked, this, [this]() {
+            if (isListening()) { return; }  // Task 15: another device controls it
             emit autoAgcToggled(!m_autoAgcActive);
         });
         headerRow->addWidget(m_agcAutoLabel);
@@ -764,9 +1142,12 @@ void RxApplet::buildUi()
         containerLayout->addLayout(headerRow);
 
         // Slider row: full container width — no sibling widgets.
-        // From Thetis Project Files/Source/Console/console.cs:45977 — agc_thresh_point
+        // From Thetis Project Files/Source/Console/console.cs:46048-46049 [v2.10.3.15] — agc_thresh_point, -160..+2
+        // (MW0LGE_21k9d: values are already offset as part of Display)
         m_agcTSlider = new QSlider(Qt::Horizontal, m_agcTContainer);
-        m_agcTSlider->setRange(-160, 0);
+        m_agcTSlider->setRange(ControlRanges::kAgcThresholdMinDb,
+                               ControlRanges::kAgcThresholdMaxDb);
+        m_agcTSlider->setSingleStep(ControlRanges::kAgcThresholdStepDb);
         m_agcTSlider->setValue(-20);
         m_agcTSlider->setFixedHeight(18);
         m_agcTSlider->setStyleSheet(
@@ -787,7 +1168,7 @@ void RxApplet::buildUi()
 
         connect(m_agcTSlider, &QSlider::valueChanged, this, [this](int v) {
             m_agcTLabel->setText(QString::number(v));
-            if (m_updatingFromModel || !m_slice) { return; }
+            if (m_updatingFromModel || !m_slice || isListening()) { return; }
             m_slice->setAgcThreshold(v);
         });
 
@@ -838,23 +1219,23 @@ void RxApplet::buildUi()
         // Wire RIT controls to SliceModel (live in S2.8).
         // Toggle → enable/disable RIT on the slice.
         connect(m_ritOnBtn, &QPushButton::toggled, this, [this](bool on) {
-            if (m_updatingFromModel || !m_slice) { return; }
+            if (m_updatingFromModel || !m_slice || isListening()) { return; }
             m_slice->setRitEnabled(on);
         });
         // Minus/Plus → decrement/increment by current step, clamped to ±10000 Hz.
         connect(m_ritMinus, &QPushButton::clicked, this, [this]() {
-            if (!m_slice) { return; }
+            if (!m_slice || isListening()) { return; }
             int step = m_slice->stepHz();
             m_slice->setRitHz(std::clamp(m_slice->ritHz() - step, -10000, 10000));
         });
         connect(m_ritPlus, &QPushButton::clicked, this, [this]() {
-            if (!m_slice) { return; }
+            if (!m_slice || isListening()) { return; }
             int step = m_slice->stepHz();
             m_slice->setRitHz(std::clamp(m_slice->ritHz() + step, -10000, 10000));
         });
         // Zero → reset RIT offset to 0.
         connect(m_ritZero, &QPushButton::clicked, this, [this]() {
-            if (!m_slice) { return; }
+            if (!m_slice || isListening()) { return; }
             m_slice->setRitHz(0);
         });
 
@@ -899,23 +1280,23 @@ void RxApplet::buildUi()
         // Wire XIT controls to SliceModel (B6).
         // Toggle → enable/disable XIT on the slice.
         connect(m_xitOnBtn, &QPushButton::toggled, this, [this](bool on) {
-            if (m_updatingFromModel || !m_slice) { return; }
+            if (m_updatingFromModel || !m_slice || isListening()) { return; }
             m_slice->setXitEnabled(on);
         });
         // Minus/Plus → decrement/increment by current step, clamped to ±10000 Hz.
         connect(m_xitMinus, &QPushButton::clicked, this, [this]() {
-            if (!m_slice) { return; }
+            if (!m_slice || isListening()) { return; }
             int step = m_slice->stepHz();
             m_slice->setXitHz(std::clamp(m_slice->xitHz() - step, -10000, 10000));
         });
         connect(m_xitPlus, &QPushButton::clicked, this, [this]() {
-            if (!m_slice) { return; }
+            if (!m_slice || isListening()) { return; }
             int step = m_slice->stepHz();
             m_slice->setXitHz(std::clamp(m_slice->xitHz() + step, -10000, 10000));
         });
         // Zero → reset XIT offset to 0.
         connect(m_xitZero, &QPushButton::clicked, this, [this]() {
-            if (!m_slice) { return; }
+            if (!m_slice || isListening()) { return; }
             m_slice->setXitHz(0);
         });
     }
@@ -967,24 +1348,7 @@ void RxApplet::buildUi()
 
         // RX1 preamp toggle (dual-ADC boards only) ────────────────────────
         if (dualAdc) {
-            m_rx1PreampToggle = new QCheckBox(QStringLiteral("RX1 preamp"), this);
-            m_rx1PreampToggle->setStyleSheet(QStringLiteral(
-                "QCheckBox { color: %1; font-size: 10px; }"
-                "QCheckBox::indicator { width: 12px; height: 12px; }").arg(Style::kTitleText));
-            // Phase 3P-B Task 10: RX1 preamp wires to P2RadioConnection::setRx1Preamp
-            // which routes to CodecContext.p2Rx1Preamp → byte 1403 bit 1.
-            connect(m_rx1PreampToggle, &QCheckBox::toggled, this, [this](bool on) {
-                if (!m_model) { return; }
-                auto* conn = qobject_cast<class P2RadioConnection*>(m_model->connection());
-                if (!conn) { return; }
-                // P2RadioConnection lives on m_connThread.  Dispatch onto its
-                // event loop so the m_rx[1].preamp mutation and the resulting
-                // sendCmdHighPriority() run on the connection thread, not the
-                // GUI thread.  (Codex PR #94 review.)
-                QMetaObject::invokeMethod(conn, [conn, on] { conn->setRx1Preamp(on); },
-                                          Qt::QueuedConnection);
-            });
-            m_ovlRow->addWidget(m_rx1PreampToggle);
+            ensureRx1PreampToggle();
         }
 
         root->addLayout(m_ovlRow);
@@ -1078,13 +1442,22 @@ void RxApplet::rebuildFilterButtons(DSPMode mode)
         const int low  = fp.low;
         const int high = fp.high;
         connect(btn, &QPushButton::clicked, this, [this, low, high, mode] {
+            // Task 15: another device controls this slice; neither the RX
+            // preset nor the Shift-click TX match applies.
+            if (isListening()) { return; }
             applyFilterPreset(low, high);
             // Shift+click — also snap the TX passband to match the RX preset
             // (Thetis-style alignment shortcut).  Convert IQ-space preset
             // values to TX audio Hz: LSB family flips magnitude order, USB
             // family is identity, symmetric uses (0, |high|).
             if (QGuiApplication::keyboardModifiers() & Qt::ShiftModifier) {
+                // R-R3-49 (parity Task 1): the TX passband match is a
+                // transmit setting; when it cannot be made, say why.
                 if (!m_model) { return; }
+                if (!m_transmitSettingsPermitted) {
+                    emit transmitSettingRefused(m_transmitSettingsReason);
+                    return;
+                }
                 const bool isSymmetric =
                     mode == DSPMode::AM || mode == DSPMode::SAM
                  || mode == DSPMode::DSB || mode == DSPMode::FM
@@ -1127,6 +1500,9 @@ void RxApplet::rebuildFilterButtons(DSPMode mode)
 
         m_filterBtns.append(btn);
         m_filterGrid->addWidget(btn, i / kCols, i % kCols);
+        // Task 15: a rebuild while listening (the controlling device changed
+        // the mode) holds the new buttons like the rest.
+        holdForListening(btn);
     }
 
     // 2026-05-12 bench fix (PR #238): force the grid to re-resolve
@@ -1143,7 +1519,7 @@ void RxApplet::rebuildFilterButtons(DSPMode mode)
 
 void RxApplet::applyFilterPreset(int low, int high)
 {
-    if (!m_slice) { return; }
+    if (!m_slice || isListening()) { return; }
     // low/high come directly from SliceModel::presetsForMode() — no mode-switching needed.
     m_slice->setFilter(low, high);
 }
@@ -1197,14 +1573,166 @@ void RxApplet::setSlice(SliceModel* slice)
     m_slice = slice;
     connectSlice(m_slice);
     syncFromModel();
+    // R-R3-46 / R-R3-11: this slice's own ADC's attenuator, enable and
+    // auto-attenuate.
+    showStepAttValueForSlice();
+    refreshAttForSlice();
 }
 
 void RxApplet::setSliceIndex(int idx)
 {
-    static const char* kLetters[] = {"A", "B", "C", "D"};
-    if (idx >= 0 && idx < 4) {
-        m_sliceBadge->setText(QString::fromLatin1(kLetters[idx]));
+    if (idx >= 0) {
+        m_badgeSliceId = idx;
+        m_sliceBadge->setText(QString(QChar(QLatin1Char(static_cast<char>('A' + idx)))));
+        m_sliceBadge->setStyleSheet(QStringLiteral(
+            "QLabel { background: %1; color: %2;"
+            " border-radius: 3px; font-weight: bold; font-size: 11px; }"
+        ).arg(VfoWidget::sliceColor(idx).name(), Style::kBlueText));
     }
+}
+
+// ── Slice control plan Task 15: listening on a slice another device controls ──
+//
+// Mirrors VfoWidget's slice access (Task 14a): on a listened slice every
+// shared tuning and DSP control is disabled with the reason naming the
+// controlling device, and each write site also returns early, so no path
+// through the applet writes the slice. TX rulings (JJ, 2026-09-30, item 3):
+// the attenuator and preamp controls are held the same way, with the same
+// reason, though they are the radio's input rather than the slice's.
+namespace {
+constexpr const char* kSavedTip     = "RxSavedAccessTooltip";
+constexpr const char* kSavedDesc    = "RxSavedAccessDescription";
+constexpr const char* kSavedEnabled = "RxSavedAccessEnabled";
+} // namespace
+
+void RxApplet::setSliceAccess(const VfoWidget::SliceAccess& access)
+{
+    if (access == m_sliceAccess) { return; }
+    m_sliceAccess = access;
+    applySliceAccess();
+}
+
+void RxApplet::setSliceTabAccess(const QHash<int, VfoWidget::SliceAccess>& access)
+{
+    m_tabAccess = access;
+}
+
+void RxApplet::setSliceAccessPending(const QString& pending)
+{
+    m_accessPending = pending;
+}
+
+QList<QWidget*> RxApplet::listeningHeldControls() const
+{
+    QList<QWidget*> held{
+        m_lockBtn, m_rxAntBtn, m_txAntBtn, m_modeCombo, m_stepDown, m_stepUp,
+        m_filterPassband, m_panSlider, m_sqlBtn, m_sqlSlider,
+        m_agcCombo, m_agcTSlider, m_agcAutoLabel,
+        m_ritOnBtn, m_ritZero, m_ritMinus, m_ritPlus,
+        m_xitOnBtn, m_xitZero, m_xitMinus, m_xitPlus,
+        // TX rulings (item 3).
+        m_attLabel, m_attStack, m_preampCombo, m_stepAttSpin, m_rx1PreampToggle,
+    };
+    for (QPushButton* btn : m_filterBtns) {
+        held.append(btn);
+    }
+    held.removeAll(nullptr);
+    return held;
+}
+
+void RxApplet::holdForListening(QWidget* control)
+{
+    if (!control) { return; }
+    if (isListening()) {
+        if (!control->property(kSavedEnabled).isValid()) {
+            control->setProperty(kSavedTip, control->toolTip());
+            control->setProperty(kSavedDesc, control->accessibleDescription());
+            // The control's own flag, not isEnabled(): a control inside a
+            // disabled parent (the attenuator stack while the Core offers
+            // none) must come back enabled when its parent does.
+            control->setProperty(kSavedEnabled,
+                                 !control->testAttribute(Qt::WA_ForceDisabled));
+        }
+        control->setEnabled(false);
+        control->setToolTip(m_sliceAccess.heldReason);
+        control->setAccessibleDescription(m_sliceAccess.heldReason);
+        return;
+    }
+    if (!control->property(kSavedEnabled).isValid()) { return; }
+    control->setToolTip(control->property(kSavedTip).toString());
+    control->setAccessibleDescription(control->property(kSavedDesc).toString());
+    control->setEnabled(control->property(kSavedEnabled).toBool());
+    control->setProperty(kSavedTip, QVariant());
+    control->setProperty(kSavedDesc, QVariant());
+    control->setProperty(kSavedEnabled, QVariant());
+}
+
+void RxApplet::setAttControlState(QWidget* control, bool enabled, const QString& tip)
+{
+    if (!control) { return; }
+    // TX rulings (item 3): held for listening, the state is what the
+    // restore brings back; the control stays held.
+    if (control->property(kSavedEnabled).isValid()) {
+        control->setProperty(kSavedEnabled, enabled);
+        control->setProperty(kSavedTip, tip);
+        return;
+    }
+    control->setEnabled(enabled);
+    control->setToolTip(tip);
+}
+
+void RxApplet::applySliceAccess()
+{
+    for (QWidget* control : listeningHeldControls()) {
+        holdForListening(control);
+    }
+}
+
+void RxApplet::populateSliceMenu(QMenu& menu, int sliceId)
+{
+    VfoWidget::SliceAccess access = m_tabAccess.value(sliceId);
+    if (!m_tabAccess.contains(sliceId) && m_slice && m_slice->sliceIndex() == sliceId) {
+        access = m_sliceAccess;
+    }
+    const auto addAccessAction = [this, &menu, sliceId](const QString& text,
+                                                       void (RxApplet::*signal)(int)) {
+        QAction* act = menu.addAction(text);
+        if (!m_accessPending.isEmpty()) {
+            act->setEnabled(false);
+            act->setToolTip(m_accessPending);
+        }
+        connect(act, &QAction::triggered, this, [this, signal, sliceId]() {
+            if (!m_accessPending.isEmpty()) { return; }
+            emit (this->*signal)(sliceId);
+        });
+    };
+    switch (access.state) {
+    case VfoWidget::SliceAccess::State::Listening:
+        addAccessAction(tr("Take control"), &RxApplet::takeControlRequested);
+        // Core-slice take-over: off with the Core's words when it refuses.
+        if (!access.takeHeldReason.isEmpty() && m_accessPending.isEmpty()) {
+            QAction* take = menu.actions().constLast();
+            take->setEnabled(false);
+            take->setToolTip(access.takeHeldReason);
+        }
+        addAccessAction(tr("Stop listening"), &RxApplet::stopListeningRequested);
+        break;
+    case VfoWidget::SliceAccess::State::Controlled:
+        addAccessAction(tr("Release"), &RxApplet::releaseRequested);
+        break;
+    case VfoWidget::SliceAccess::State::Unshared:
+        break;
+    }
+}
+
+void RxApplet::showSliceMenu(int sliceId, QWidget* anchor, const QPoint& pos)
+{
+    if (sliceId < 0 || !anchor) { return; }
+    QMenu menu(this);
+    menu.setStyleSheet(QString::fromLatin1(kPopupMenu));
+    populateSliceMenu(menu, sliceId);
+    if (menu.actions().isEmpty()) { return; }
+    menu.exec(anchor->mapToGlobal(pos));
 }
 
 // Phase 3F (Bug 3): rebuild the per-slice tab row to mirror the live slice
@@ -1244,6 +1772,12 @@ void RxApplet::updateSliceButtons(const QVector<SliceModel*>& slices,
             auto* btn = new QToolButton(m_sliceTabRow);
             btn->setCheckable(true);
             btn->setFixedSize(22, 20);
+            // Task 15: a tab's menu offers that slice's access actions.
+            btn->setContextMenuPolicy(Qt::CustomContextMenu);
+            connect(btn, &QWidget::customContextMenuRequested, this,
+                    [this, btn](const QPoint& pos) {
+                showSliceMenu(m_sliceGroup->id(btn), btn, pos);
+            });
             m_sliceBtns.append(btn);
             const int insertAt = m_sliceTabLayout->count() - 1;
             m_sliceTabLayout->insertWidget(insertAt < 0 ? 0 : insertAt, btn);
@@ -1275,7 +1809,16 @@ void RxApplet::updateSliceButtons(const QVector<SliceModel*>& slices,
             " border-radius: 3px; font-weight: bold; font-size: 10px; padding: 0; }"
             "QToolButton:checked { background: %1; color: #000000; }")
             .arg(c.name()));
-        btn->setToolTip(QStringLiteral("Slice %1").arg(s->sliceLetter()));
+        // Task 15: a shared slice's tab says who controls it.
+        const auto access = m_tabAccess.constFind(sliceIdx);
+        if (access != m_tabAccess.constEnd()
+            && access->state != VfoWidget::SliceAccess::State::Unshared
+            && !access->line.isEmpty()) {
+            btn->setToolTip(QStringLiteral("Slice %1: %2")
+                                .arg(s->sliceLetter()).arg(access->line));
+        } else {
+            btn->setToolTip(QStringLiteral("Slice %1").arg(s->sliceLetter()));
+        }
         btn->setChecked(sliceIdx == activeSliceIndex);
     }
 
@@ -1292,7 +1835,18 @@ void RxApplet::setAntennaList(const QStringList& ants)
     }
 }
 
-// Phase 3P-I-a T16 — hide antenna buttons on boards without Alex.
+// R-R3-49 (parity Task 1): the transmit settings gate. Only the
+// Shift-click TX passband match reads it; no control is disabled, because
+// the preset buttons are receive controls.
+void RxApplet::setTransmitSettingsPermitted(bool permitted, const QString& reason)
+{
+    m_transmitSettingsPermitted = permitted;
+    m_transmitSettingsReason = reason.isEmpty()
+        ? IStationLink::transmitSettingsUnavailableReason()
+        : reason;
+}
+
+// Phase 3P-I-a T16: hide antenna buttons on boards without Alex.
 // HL2 / Atlas / bare-ADC SKUs have no antenna relay; the buttons
 // would be zombie controls (visible but no-op) and would mislead users.
 // Matches VfoWidget::setBoardCapabilities (T15) one-for-one so the whole
@@ -1318,6 +1872,42 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
 
     // B3: store caps for AntennaPopupBuilder (popup lambdas read this).
     m_popupCaps = caps;
+
+    // R-R3-46: a remote window has no radio connection of its own, so
+    // connectSlice()'s per-board rebuild below never runs there; the Core's
+    // radio arrives through here instead. Same tables as that rebuild
+    // (Thetis console.cs:40755 SetComboPreampForHPSDR, setup.cs:15765
+    // [v2.10.3.13]), keyed by the Core's board. Local mode is unchanged:
+    // its rebuild stays with the connection.
+    if (m_model && !m_model->ownsLocalDsp()) {
+        rebuildPreampAndAttRangeForBoard(caps.board, caps.hasAlexFilters,
+                                         caps.attenuator.minDb);
+        // R-R3-46: the RX1 preamp toggle belongs to dual-ADC boards; the
+        // applet was usually built before the Core's board was known.
+        if (caps.p2PreampPerAdc) {
+            ensureRx1PreampToggle();
+        }
+        if (m_rx1PreampToggle) {
+            m_rx1PreampToggle->setVisible(caps.p2PreampPerAdc);
+        }
+        // R-R3-46 / R-R3-21: then the Core's own range and values, once it
+        // offers its attenuator (the rebuild may have reset the combo), and
+        // whether the row (the toggle too) takes edits now.
+        applyRemoteStepAttAvailability();
+    }
+}
+
+// R-R3-46: the preamp items and the S-ATT range for one board, keeping the
+// current preamp choice when the new board offers it.
+void RxApplet::rebuildPreampAndAttRangeForBoard(HPSDRHW board, bool alexFilters, int minDb)
+{
+    m_preampBoard = board;
+    m_preampAlex = alexFilters;
+    fillPreampCombo(m_preampShowsRx2);
+    if (m_stepAttSpin) {
+        QSignalBlocker blk(m_stepAttSpin);
+        m_stepAttSpin->setRange(minDb, BoardCapsTable::stepAttMaxDb(board, alexFilters));
+    }
 }
 
 // B3: per-SKU UI overlay for antenna popup — mirrors VfoWidget::setHpsdrSku.
@@ -1419,7 +2009,7 @@ void RxApplet::syncFromModel()
     }
 
     // Step size label (Issue #69)
-    m_stepLabel->setText(QStringLiteral("%1 Hz").arg(m_slice->stepHz()));
+    m_stepLabel->setText(formatTuneStepLabel(m_slice->stepHz()));
 
     // NB button + NB1 tuning sliders removed from RxApplet per strict Thetis
     // parity. NB state lives on VFO flag, Setup → DSP → NB/SNB, and menu bar.
@@ -1542,29 +2132,35 @@ void RxApplet::connectSlice(SliceModel* s)
 
     // Step size model → label sync (Issue #69)
     connect(s, &SliceModel::stepHzChanged, this, [this](int hz) {
-        m_stepLabel->setText(QStringLiteral("%1 Hz").arg(hz));
+        m_stepLabel->setText(formatTuneStepLabel(hz));
     });
 
     // NB controls (button + tuning sliders) removed from RxApplet per strict
     // Thetis parity (2026-04-22). NB state is managed via VFO flag chkNB,
     // Setup → DSP → NB/SNB, and the DSP menu bar — not here.
 
-    // ATT/S-ATT — wire to StepAttenuatorController if available
-    auto* attCtrl = m_model ? m_model->stepAttController() : nullptr;
+    // ATT/S-ATT: wire to StepAttenuatorController if available.
+    // R-R3-46: a remote window's row follows the Core's `stepAtt` object
+    // instead (wireRemoteStepAtt); its own controller has no radio.
+    // GUI-M5 (fix wave): this block runs on every slice change; the
+    // previous slice's attenuator connections go first so they never
+    // pile up (each would otherwise set the attenuator again per edit).
+    for (const QMetaObject::Connection& c : std::as_const(m_stepAttConnections)) {
+        disconnect(c);
+    }
+    m_stepAttConnections.clear();
+    auto* attCtrl = m_model && m_model->ownsLocalDsp() ? m_model->stepAttController() : nullptr;
     if (attCtrl) {
         // Populate preamp combo from board capabilities when radio is connected.
         // From Thetis console.cs:40755 SetComboPreampForHPSDR().
         if (m_model->connection() && m_model->connection()->isConnected()) {
             const auto& info = m_model->connection()->radioInfo();
             const auto& caps = BoardCapsTable::forBoard(info.boardType);
-            const auto preampItems = BoardCapsTable::preampItemsForBoard(
-                info.boardType, caps.hasAlexFilters);
-
-            QSignalBlocker blk(m_preampCombo);
-            m_preampCombo->clear();
-            for (const auto& item : preampItems) {
-                m_preampCombo->addItem(QString::fromLatin1(item.label), item.modeInt);
-            }
+            // Level Cal: RX1's list, or RX2's own for a slice on the
+            // other ADC (fillPreampCombo).
+            m_preampBoard = info.boardType;
+            m_preampAlex = caps.hasAlexFilters;
+            fillPreampCombo(m_preampShowsRx2);
 
             // Set step att spinbox range from board capabilities.
             // From Thetis setup.cs:15765 udHermesStepAttenuatorData max.
@@ -1578,35 +2174,44 @@ void RxApplet::connectSlice(SliceModel* s)
             attCtrl->setMaxAttenuation(maxDb);
         }
 
-        connect(m_stepAttSpin, QOverload<int>::of(&QSpinBox::valueChanged),
-                this, [attCtrl](int val) {
-            attCtrl->setAttenuation(val);
-        });
-
-        connect(m_preampCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this, [this, attCtrl](int idx) {
-            if (idx < 0) { return; }  // guard during clear/repopulate
-            int modeInt = m_preampCombo->itemData(idx).toInt();
-            attCtrl->setPreampMode(static_cast<PreampMode>(modeInt));
-        });
-
-        connect(attCtrl, &StepAttenuatorController::attenuationChanged,
-                this, [this](int dB) {
-            QSignalBlocker blk(m_stepAttSpin);
-            m_stepAttSpin->setValue(dB);
-        });
-
-        connect(attCtrl, &StepAttenuatorController::preampModeChanged,
-                this, [this](PreampMode mode) {
-            QSignalBlocker blk(m_preampCombo);
-            int modeInt = static_cast<int>(mode);
-            for (int i = 0; i < m_preampCombo->count(); ++i) {
-                if (m_preampCombo->itemData(i).toInt() == modeInt) {
-                    m_preampCombo->setCurrentIndex(i);
-                    return;
-                }
+        // R-R3-46 / R-R3-11: the attenuator of this slice's own ADC.
+        m_stepAttConnections << connect(m_stepAttSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, [this, attCtrl](int val) {
+            if (isListening()) { return; }  // TX rulings (item 3)
+            const int sliceId = m_slice ? m_slice->sliceIndex() : 0;
+            if (sliceId >= 0 && sliceId < 32
+                && (attCtrl->rx2SliceMask() & (1u << sliceId)) != 0) {
+                attCtrl->setRx2Attenuation(val);
+            } else {
+                attCtrl->setAttenuation(val);
             }
         });
+
+        m_stepAttConnections << connect(m_preampCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this, attCtrl](int idx) {
+            if (idx < 0) { return; }  // guard during clear/repopulate
+            if (isListening()) { return; }  // TX rulings (item 3)
+            int modeInt = m_preampCombo->itemData(idx).toInt();
+            // Level Cal: a slice on the other ADC sets RX2's own mode
+            // (Thetis comboRX2Preamp_SelectedIndexChanged, RX2PreampMode).
+            if (m_preampShowsRx2) {
+                attCtrl->setRx2PreampMode(static_cast<PreampMode>(modeInt));
+            } else {
+                attCtrl->setPreampMode(static_cast<PreampMode>(modeInt));
+            }
+        });
+
+        m_stepAttConnections << connect(attCtrl, &StepAttenuatorController::attenuationChanged,
+                this, [this](int) { showStepAttValueForSlice(); });
+        m_stepAttConnections << connect(attCtrl, &StepAttenuatorController::rx2AttenuationChanged,
+                this, [this](int) { showStepAttValueForSlice(); });
+        m_stepAttConnections << connect(attCtrl, &StepAttenuatorController::adcRoutingChanged,
+                this, [this]() { showStepAttValueForSlice(); });
+
+        m_stepAttConnections << connect(attCtrl, &StepAttenuatorController::preampModeChanged,
+                this, [this](PreampMode) { showPreampModeForSlice(); });
+        m_stepAttConnections << connect(attCtrl, &StepAttenuatorController::rx2PreampModeChanged,
+                this, [this](PreampMode) { showPreampModeForSlice(); });
 
         // Helper: pick label text for the current (stepOn, autoOn) tuple.
         //
@@ -1630,43 +2235,35 @@ void RxApplet::connectSlice(SliceModel* s)
                           : QStringLiteral("S-ATT");
         };
 
-        auto refreshAttLabel = [this, attCtrl, attLabelText]() {
-            const bool stepOn = attCtrl->stepAttEnabled();
-            const bool autoOn = attCtrl->autoAttEnabled();
-            m_attLabel->setText(attLabelText(stepOn, autoOn));
-            m_attStack->setCurrentIndex(stepOn ? 1 : 0);
-        };
+        // R-R3-46 / R-R3-11: the enable and auto-attenuate of the slice's
+        // own ADC (refreshAttForSlice).
+        Q_UNUSED(attLabelText);
+        auto refreshAttLabel = [this]() { refreshAttForSlice(); };
+        for (auto signal : {&StepAttenuatorController::rx2StepAttEnabledChanged,
+                            &StepAttenuatorController::rx2AutoAttEnabledChanged}) {
+            m_stepAttConnections << connect(attCtrl, signal, this, [refreshAttLabel](bool) { refreshAttLabel(); });
+        }
+        m_stepAttConnections << connect(attCtrl, &StepAttenuatorController::adcRoutingChanged,
+                this, [refreshAttLabel]() { refreshAttLabel(); });
 
         // React to step-att-enabled changes (ATT ↔ S-ATT/A-ATT mode switch)
-        connect(attCtrl, &StepAttenuatorController::stepAttEnabledChanged,
+        m_stepAttConnections << connect(attCtrl, &StepAttenuatorController::stepAttEnabledChanged,
                 this, [refreshAttLabel](bool) { refreshAttLabel(); });
 
         // React to auto-att enable toggles — drives S-ATT ↔ A-ATT on HL2.
         // From mi0bot-Thetis console.cs:21342-21365 [v2.10.3.13-beta2].
-        connect(attCtrl, &StepAttenuatorController::autoAttEnabledChanged,
+        m_stepAttConnections << connect(attCtrl, &StepAttenuatorController::autoAttEnabledChanged,
                 this, [refreshAttLabel](bool) { refreshAttLabel(); });
 
         // Sync initial state from controller
         refreshAttLabel();
-        {
-            QSignalBlocker blk(m_stepAttSpin);
-            m_stepAttSpin->setValue(attCtrl->attenuatorDb());
-        }
-        {
-            QSignalBlocker blk(m_preampCombo);
-            int modeInt = static_cast<int>(attCtrl->preampMode());
-            for (int i = 0; i < m_preampCombo->count(); ++i) {
-                if (m_preampCombo->itemData(i).toInt() == modeInt) {
-                    m_preampCombo->setCurrentIndex(i);
-                    break;
-                }
-            }
-        }
+        showStepAttValueForSlice();
+        showPreampModeForSlice();
 
         // Phase 3P-B Task 10: wire per-ADC OVL badges to overloadStatusChanged.
         // The signal is already per-ADC (index 0..2); we drive each badge
         // independently so dual-ADC boards show two discrete indicators.
-        connect(attCtrl, &StepAttenuatorController::overloadStatusChanged,
+        m_stepAttConnections << connect(attCtrl, &StepAttenuatorController::overloadStatusChanged,
                 this, [this](int adcIndex, OverloadLevel level) {
             if (adcIndex < 0 || adcIndex >= 3) { return; }
             QLabel* badge = m_ovlBadges[adcIndex];
@@ -1708,7 +2305,8 @@ void RxApplet::disconnectSlice(SliceModel* s)
 }
 
 // --- Auto AGC-T visual update (Task 7 — exact match of VfoWidget) ---
-void RxApplet::updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double offset)
+void RxApplet::updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double offset,
+                                   bool noiseFloorValid)
 {
     m_autoAgcActive = autoOn;
     m_noiseFloorDbm = noiseFloorDbm;
@@ -1731,9 +2329,11 @@ void RxApplet::updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double off
         // Show info sub-line
         if (m_agcInfoLabel) {
             m_agcInfoLabel->setText(
-                QStringLiteral("NF %1 dB \u00b7 offset +%2")
-                    .arg(static_cast<int>(noiseFloorDbm))
-                    .arg(static_cast<int>(offset)));
+                noiseFloorValid
+                    ? QStringLiteral("NF %1 dB \u00b7 offset +%2")
+                          .arg(static_cast<int>(noiseFloorDbm))
+                          .arg(static_cast<int>(offset))
+                    : QStringLiteral("NF awaiting measurement"));
             m_agcInfoLabel->show();
         }
     } else {
@@ -1779,6 +2379,14 @@ void RxApplet::populateAntennaButtons(Band band)
 
     // Update button text directly — bypasses the connectSlice() signal chain
     // so the change is immediate regardless of whether the slice is "connected".
+    // Task 15: on a slice another device controls, the band's antenna is
+    // that device's to apply; show the slice's own antenna and never write.
+    if (isListening()) {
+        m_rxAntBtn->setText(m_slice->rxAntenna());
+        m_txAntBtn->setText(txLabel);
+        return;
+    }
+
     m_rxAntBtn->setText(rxLabel);
     m_txAntBtn->setText(txLabel);
 
@@ -1790,6 +2398,16 @@ void RxApplet::populateAntennaButtons(Band band)
 }
 
 #ifdef NEREUS_BUILD_TESTS
+QString RxApplet::sliceTabToolTipForTest(int sliceId) const
+{
+    for (QToolButton* btn : m_sliceBtns) {
+        if (btn && m_sliceGroup && m_sliceGroup->id(btn) == sliceId) {
+            return btn->toolTip();
+        }
+    }
+    return QString();
+}
+
 int RxApplet::stepAttMaxForTest() const
 {
     return m_stepAttSpin ? m_stepAttSpin->maximum() : -1;
@@ -1807,6 +2425,20 @@ int RxApplet::visibleOvlBadgeCountForTest() const
 int RxApplet::preampComboItemCountForTest() const
 {
     return m_preampCombo ? m_preampCombo->count() : -1;
+}
+
+QStringList RxApplet::preampComboLabelsForTest() const
+{
+    QStringList labels;
+    for (int i = 0; m_preampCombo && i < m_preampCombo->count(); ++i) {
+        labels.append(m_preampCombo->itemText(i));
+    }
+    return labels;
+}
+
+int RxApplet::stepAttMinForTest() const
+{
+    return m_stepAttSpin ? m_stepAttSpin->minimum() : -1;
 }
 
 // Phase 3P-F Task 4: parse ANT<n> label from the button text and return n.

@@ -1,38 +1,32 @@
 # NereusSDR
 
-Cross-platform C++20 / Qt6 port of **Thetis** (OpenHPSDR / Apache Labs SDR
-console, C#), structured on **AetherSDR** patterns. Targets every OpenHPSDR
-Protocol 1 and 2 radio (ANAN line, Hermes Lite 2). The client does ALL signal
+Cross-platform C++20 / Qt6 SDR console for every OpenHPSDR Protocol 1 and 2
+radio (ANAN line, Hermes Lite 2): multiple slices and panadapters, and a
+remote Core with desktop and phone clients. The client does ALL signal
 processing; the radio is an ADC/DAC with network transport.
 
-## SOURCE-FIRST PORTING PROTOCOL
+## Building on OpenHPSDR
 
-NereusSDR is a port, not a reimagination. Thetis is authoritative for radio
-logic, DSP behavior, protocol handling, constants, state machines and feature
-behavior. **Do not guess. Read the source, then translate it.**
-
-| Question | Source |
+| Need | Reference |
 | --- | --- |
-| **What** the code does | Thetis (`../Thetis/Project Files/Source/Console/*.cs`, `wdsp/*.c`) |
-| **How** it is structured in Qt6 | AetherSDR (`../AetherSDR/`) |
+| Radio behavior, DSP, protocol handling | Thetis, mi0bot-Thetis (HL2), WDSP |
+| Another client's approach (C/GTK, Linux, macOS, Pi) | piHPSDR, deskHPSDR |
+| Hardware facts (DDCs, ADCs, clocks) | docs/protocols/, TAPR and Anvelina gateware (facts only) |
+| Qt6 structure, UI patterns | AetherSDR |
+| Digital voice, PSK Reporter | freedv-gui |
 
-**READ → SHOW → TRANSLATE.** Read the Thetis source first. Quote or
-summarize it ("Porting from file:lines, original C# logic:") before writing.
-Translate faithfully. If you can't find the source, **stop and ask** which file
-to look in; never fabricate.
+**Study, then choose.** Read how the references do it and summarize it in the
+plan or PR. Then **port** when it fits as written (faithfully, under the rules
+below), or **design** for NereusSDR's slices, panadapters, remote Core and
+clients, using the reference as the basis and saying in the PR what changed.
 
-Never: write a function body before reading its Thetis equivalent; assume WDSP
-signatures, protocol byte layouts, enum values, constants or defaults; infer
-behavior from a feature's name; stub with TODOs what Thetis implements;
-"improve" Thetis logic unasked; use general DSP knowledge in place of the WDSP
-calls Thetis makes.
+Never guess facts: protocol layouts, enum values, hardware limits and WDSP
+signatures come from a source, with a cite. Can't find it? Stop and ask. A
+bug an upstream shares is fixed in our copy, with a note on why ours differs.
 
-**Before any port, read [docs/attribution/HOW-TO-PORT.md](docs/attribution/HOW-TO-PORT.md)**
-(header template, pre-port provenance checklist, cite grammar, enforcement
-scripts, Thetis tree layout). Same protocol for mi0bot-Thetis, AetherSDR,
-freedv-gui and WDSP ports.
+**Before any port, read [docs/attribution/HOW-TO-PORT.md](docs/attribution/HOW-TO-PORT.md).**
 
-### License-preservation rule (non-negotiable)
+### License rules for ported code (non-negotiable)
 
 In the same commit that introduces a port, the NereusSDR file header gets the
 upstream file's header **byte-for-byte**: every `Copyright (C)` line, the GPL
@@ -55,17 +49,19 @@ comment on the nearest equivalent line with
 
 ### Cites, constants, WDSP
 
-* Every ported block and constant carries `// From Thetis file:line [v2.10.3.15]`
+* In ported code, every block and constant carries `// From Thetis file:line [v2.10.3.15]`
   (current pin: v2.10.3.15 / `3759d09`; `[@shortsha]` between releases; get it once per session with
   `git -C ../Thetis describe --tags`).
 * Keep constants and magic numbers exactly (`0.98f` stays `0.98f`) as named
   `constexpr` with the cite.
-* WDSP calls must match name, parameter order and types in Thetis `wdsp/` and
-  the P/Invoke in `Console/dsp.cs`; ranges, defaults and scaling come from the
-  Thetis callsite.
-* Hardware facts (DDC count, board byte, clocks) may cite the FPGA gateware at
-  `../n1gp-Anvelina_PROIII/` (pinned `8e86a61`, never pull). Cite facts only;
-  ask before porting Verilog logic. Details in HOW-TO-PORT.md.
+* WDSP calls must match the name, parameter order and types in
+  `third_party/wdsp/`; when porting a Thetis feature, ranges, defaults and
+  scaling come from its callsite.
+* Hardware facts (DDC count, board byte, clocks) may cite the gateware at
+  `../TAPR-OpenHPSDR-Firmware/` (`e7c6584`) or `../n1gp-Anvelina_PROIII/`
+  (`8e86a61`), both pinned; never pull. Cite facts only; ask before porting
+  Verilog logic. Details in HOW-TO-PORT.md.
+* piHPSDR (`../pihpsdr/`, pinned `4aa95c5`) and deskHPSDR (`../deskhpsdr/`, pinned `f3d857c`) are references like Thetis: facts cite them, and code ported from them keeps their GPL headers and attribution (HOW-TO-PORT.md).
 
 ## Agent boundaries
 
@@ -74,7 +70,7 @@ compliance, build/CI breakage.
 
 Must NOT change without the maintainer: visual design, UX behavior, architecture
 (threads, signal routing, dependencies), feature scope, user-facing defaults,
-DSP parameters (unless ported from Thetis). When in doubt, implement and flag
+DSP parameters. When in doubt, implement and flag
 the design decision in the PR.
 
 Also: never propose Wine/CrossOver; flag anything touching the core RX path
@@ -103,8 +99,10 @@ Full conventions in [CONTRIBUTING.md](CONTRIBUTING.md). Non-negotiables:
 `~/.config/NereusSDR/NereusSDR.settings`). PascalCase keys; booleans are the
 strings `"True"` / `"False"`.
 
-* Radio-authoritative, never persisted: ADC attenuation, preamp, TX power,
-  antenna selection.
+* Radio-authoritative, never persisted: antenna selection.
+* Saved and sent to the radio on connect, as Thetis does: ADC attenuation and
+  preamp (console.cs:2174-2179), per-band TX power (console.cs:3089-3093,
+  4903-4910, 17528-17542). Connecting never keys.
 * Per-MAC under `hardware/<mac>/...`: sample rate, active RX count.
 * Client-authoritative, persisted: VFO, mode, filter, DSP settings, layout, UI
   and display preferences.
@@ -120,6 +118,10 @@ main (GUI + all models), connection (UDP), audio (WDSP + output), spectrum
 (FFT). Cross-thread traffic is auto-queued signals only. Details and data flow:
 [docs/architecture/overview.md](docs/architecture/overview.md).
 
+**Rule R1: nothing under `src/core/` or `src/models/` includes a GUI header.**
+`tst_core_has_no_gui_includes` enforces it; extract an interface instead (as
+`ISpectrumSink` did).
+
 ## Build and test
 
 ```
@@ -128,6 +130,8 @@ cmake --build build -j$(nproc)
 ./build/NereusSDR
 ```
 
+The build also produces the headless `nereusd`, installed only with
+`--component nereusd`; install notes in [README.md](README.md).
 Dependencies: [README.md](README.md) "Building from Source". **Read
 [docs/development/fast-test-loop.md](docs/development/fast-test-loop.md)
 before running tests**; build single tests, never the whole suite by default.
@@ -139,8 +143,11 @@ First launch generates FFTW wisdom (~15 min), cached in `~/.config/NereusSDR/`.
   `../Thetis/` (github.com/ramdor/Thetis), `../mi0bot-Thetis/` (authoritative
   for HL2), `../AetherSDR/` (github.com/ten9876/AetherSDR), `../freedv-gui/`
   (github.com/drowe67/freedv-gui; RADE steps, FreeDV + PSK Reporter),
-  `../n1gp-Anvelina_PROIII/` (github.com/n1gp/Anvelina_PROIII, pinned).
-* Vendored: `third_party/wdsp/` (TAPR v1.29), `third_party/rade/` (radae_nopy
+  `../pihpsdr/` (github.com/dl1ycf/pihpsdr), `../deskhpsdr/`
+  (github.com/dl1bz/deskhpsdr), `../n1gp-Anvelina_PROIII/`
+  (github.com/n1gp/Anvelina_PROIII, pinned), `../TAPR-OpenHPSDR-Firmware/`
+  (github.com/TAPR/OpenHPSDR-Firmware, pinned).
+* Vendored: `third_party/wdsp/` (WDSP 2.10, TAPR b02d5bac), `third_party/rade/` (radae_nopy
   b289102, BSD-2), `third_party/r8brain/` (MIT resampler), `third_party/fftw3/`
   (Windows DLL).
 * Version: `CMakeLists.txt`. Phase status, release history, plan index:

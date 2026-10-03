@@ -1,0 +1,8 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "candidate",
+    "candidate": "candidate:3 1 UDP 8331263 198.51.100.20 49170 typ relay raddr 0.0.0.0 rport 0"
+  },
+  "decodes": true
+}

@@ -1,0 +1,130 @@
+name: Station card image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rpi-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check source and set version
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          git diff --exit-code
+          source_sha=$(git rev-parse HEAD)
+          release_version=$(sed -nE 's/^project\(NereusSDR VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt)
+          test -n "$release_version"
+          version="${release_version}+git${source_sha:0:12}"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build a Debian trixie arm64 package for the Pi image
+        shell: bash
+        env:
+          NEREUS_VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker pull --platform linux/arm64 rust:1.94.1-trixie
+          docker image inspect --format '{{index .RepoDigests 0}}' rust:1.94.1-trixie > station-builder-image.txt
+          docker run --rm --platform linux/arm64 \
+            -e NEREUS_VERSION \
+            -v "$PWD:/workspace" -w /workspace \
+            rust:1.94.1-trixie /bin/bash packaging/station-image/build-trixie-deb.sh
+          package="station-output/nereusd_${NEREUS_VERSION}_arm64_trixie.deb"
+          bash packaging/station-image/verify-package.sh "$package" "$NEREUS_VERSION"
+          echo "package=$PWD/$package" >> "$GITHUB_ENV"
+      - name: Install pi-gen prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y coreutils quilt parted qemu-user-binfmt \
+            debootstrap zerofree zip dosfstools e2fsprogs libarchive-tools \
+            libcap2-bin grep rsync xz-utils file git curl bc gpg pigz \
+            xxd arch-test bmap-tools kmod
+      - name: Build Raspberry Pi OS Lite image
+        shell: bash
+        env:
+          NEREUS_VERSION: ${{ steps.source.outputs.version }}
+          NEREUS_DEB: ${{ github.workspace }}/station-output/nereusd_${{ steps.source.outputs.version }}_arm64_trixie.deb
+        run: |
+          set -euo pipefail
+          git clone --branch arm64 https://github.com/RPi-Distro/pi-gen.git pi-gen
+          git -C pi-gen checkout --detach 74d08a337bd29da289b9aedbe5b48c79fb2e5a03
+          test "$(git -C pi-gen rev-parse HEAD)" = 74d08a337bd29da289b9aedbe5b48c79fb2e5a03
+          cp -a packaging/station-image/pi-gen/stage-nereus pi-gen/stage-nereus
+          touch pi-gen/stage2/SKIP_IMAGES pi-gen/stage2/04-cloud-init/SKIP
+          cat > pi-gen/nereus-config <<EOF
+          IMG_NAME=nereus-station-$NEREUS_VERSION
+          IMG_FILENAME=nereus-station-$NEREUS_VERSION
+          ARCHIVE_FILENAME=nereus-station-$NEREUS_VERSION
+          RELEASE=trixie
+          TARGET_HOSTNAME=nereus-station
+          ENABLE_CLOUD_INIT=0
+          ENABLE_SSH=0
+          PASSWORDLESS_SUDO=0
+          DEPLOY_COMPRESSION=xz
+          STAGE_LIST="\$BASE_DIR/stage0 \$BASE_DIR/stage1 \$BASE_DIR/stage2 \$BASE_DIR/stage-nereus"
+          export NEREUS_STATION_SOURCE_DIR=$PWD/packaging/station-image
+          export NEREUS_DEB=$NEREUS_DEB
+          EOF
+          cd pi-gen
+          sudo ./build.sh -c nereus-config
+          test -s "deploy/nereus-station-${NEREUS_VERSION}-rpi-arm64.img.xz"
+      - name: Record artifact provenance
+        shell: bash
+        env:
+          NEREUS_VERSION: ${{ steps.source.outputs.version }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          image="pi-gen/deploy/nereus-station-${NEREUS_VERSION}-rpi-arm64.img.xz"
+          package="station-output/nereusd_${NEREUS_VERSION}_arm64_trixie.deb"
+          test -s "$image" && test -s "$package"
+          test "$(dpkg-deb --field "$package" Architecture)" = arm64
+          image_hash=$(sha256sum "$image" | cut -d' ' -f1)
+          package_hash=$(sha256sum "$package" | cut -d' ' -f1)
+          builder=$(cat station-builder-image.txt)
+          export IMAGE_HASH="$image_hash" PACKAGE_HASH="$package_hash" BUILDER="$builder"
+          mkdir -p station-provenance
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          dfnr = json.loads(Path("station-output/dfnr-provenance.json").read_text())
+          manifest = {
+              "source_sha": os.environ["SOURCE_SHA"],
+              "version": os.environ["NEREUS_VERSION"],
+              "pi_gen_sha": "74d08a337bd29da289b9aedbe5b48c79fb2e5a03",
+              "os": "Raspberry Pi OS Lite, Debian trixie, arm64",
+              "builder_image": os.environ["BUILDER"],
+              "cpu_baseline": "ARMv8-A (Raspberry Pi 4 Cortex-A72)",
+              "package_sha256": os.environ["PACKAGE_HASH"],
+              "image_sha256": os.environ["IMAGE_HASH"],
+              "dfnr": dfnr,
+          }
+          # pi-gen/deploy belongs to root after `sudo ./build.sh`, and the
+          # builder container made station-output as root too. The manifest
+          # goes in station-provenance, which this step makes as the runner.
+          target = Path("station-provenance/nereus-station-{}-rpi-arm64.provenance.json".format(
+              os.environ["NEREUS_VERSION"]))
+          target.write_text(json.dumps(manifest, indent=2) + "\n")
+          PY
+      - name: Upload image, matching package and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: nereus-station-${{ steps.source.outputs.version }}-rpi-arm64
+          path: |
+            pi-gen/deploy/nereus-station-${{ steps.source.outputs.version }}-rpi-arm64.img.xz
+            station-provenance/nereus-station-${{ steps.source.outputs.version }}-rpi-arm64.provenance.json
+            station-output/nereusd_${{ steps.source.outputs.version }}_arm64_trixie.deb
+          if-no-files-found: error
+          retention-days: 14

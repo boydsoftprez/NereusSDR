@@ -12,6 +12,8 @@
 // (see https://github.com/ten9876/AetherSDR/blob/main/LICENSE).
 //
 // Modification history (NereusSDR):
+//   2026-09-26  J.J. Boyd / KG4VCF  Parity Task 19 (R-IOS-25): mintIndex().
+//                                    AI tooling: Anthropic Claude Code.
 //   2026-05-11  J.J. Boyd / KG4VCF  Phase 3J-2 Task D1. Initial port.
 //                                    AetherSDR's "AetherSDR" namespace
 //                                    becomes "NereusSDR". SpotData
@@ -119,6 +121,12 @@ public:
     // SpotModel itself remains TCI-keyed: TCI clients drive their own
     // index allocation and don't go through dedup.
     int dedupIndexFor(const QString& callsign, double freqMhz);
+
+    // Parity Task 19 (R-IOS-25), NereusSDR-original: a fresh index for a
+    // spot another computer already de-duplicated (a remote window showing
+    // the Core's spots). Never enters the dedup cache, so the window's own
+    // WSJT-X and SpotCollector spots never merge into the Core's.
+    int mintIndex();
 
     // Clock-injectable test seam for dedup.  Production calls
     // dedupIndexFor() which delegates to this with the wall clock.

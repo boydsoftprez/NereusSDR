@@ -7,6 +7,28 @@
 //
 // Sub-Phase 12 Task 12.4 (2026-04-20): Written by J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
+//
+// 2026-09-23: R-R3-10 / R-R3-23 by J.J. Boyd (KG4VCF), with AI-assisted
+// implementation via Anthropic Claude Code. In a remote window, Reset
+// removes only this computer's audio/* keys (never a key the Core holds,
+// such as audio/DspRate and audio/DspBlockSize) and recreates no VAX
+// outputs; local Reset is unchanged.
+//
+// 2026-09-23: R-R3-44 by J.J. Boyd (KG4VCF), with AI-assisted
+// implementation via Anthropic Claude Code. Usable in a remote window: the
+// engine comes from RadioModel::localAudioDevices() (the VAX groups are
+// this computer's), the DSP group follows the Core's settings
+// availability, and Send IQ to VAX is refused there with a plain reason.
+//
+// 2026-09-24: R-R3-49 by J.J. Boyd (KG4VCF), with AI-assisted
+// implementation via Anthropic Claude Code. The DSP group, Send IQ to VAX,
+// TX Monitor to VAX and Mute VAX during TX on other slice are hidden
+// (UnbuiltFeatures) until they are applied; their saved values stay.
+//
+// 2026-09-24: R-R3-49 by J.J. Boyd (KG4VCF), with AI-assisted
+// implementation via Anthropic Claude Code. The VAC feedback-loop tuning
+// group is removed, with its editor and reader; saved
+// audio/VacFeedback/<ch>/* values stay in the settings file.
 // =================================================================
 
 #include "AudioAdvancedPage.h"
@@ -14,13 +36,14 @@
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
 #include "core/LogCategories.h"
+#include "core/settings/SettingsScope.h"
 #include "core/audio/VirtualCableDetector.h"
+#include "gui/UnbuiltFeatures.h"
 #include "gui/VaxFirstRunDialog.h"
 #include "models/RadioModel.h"
 
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDoubleSpinBox>
 #include <QEvent>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -29,7 +52,6 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
-#include <QSpinBox>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -86,10 +108,10 @@ static const char* kComboStyle =
 
 AudioAdvancedPage::AudioAdvancedPage(RadioModel* model, QWidget* parent)
     : SetupPage(QStringLiteral("Advanced"), model, parent)
-    , m_engine(model ? model->audioEngine() : nullptr)
+    // R-R3-44: this computer's engine, live in a remote window too.
+    , m_engine(model ? model->localAudioDevices() : nullptr)
 {
     buildDspSection();
-    buildVacFeedbackSection();
     buildFeatureFlagsSection();
     buildCablesSection();
     buildResetSection();
@@ -103,6 +125,10 @@ void AudioAdvancedPage::buildDspSection()
 {
     auto* box = new QGroupBox(QStringLiteral("DSP"), this);
     box->setStyleSheet(QLatin1String(kGroupStyle));
+    box->setObjectName(QStringLiteral("audioAdvancedDspGroup"));
+    // R-R3-49: nothing applies the DSP rate or block size yet; the group is
+    // hidden until something does.
+    UnbuiltFeatures::hideUnlessBuilt(box, UnbuiltFeature::DspRate);
     auto* form = new QFormLayout(box);
     form->setSpacing(6);
     form->setContentsMargins(8, 16, 8, 8);
@@ -176,142 +202,25 @@ void AudioAdvancedPage::loadDspSettings()
     if (blockIdx >= 0) { m_dspBlockCombo->setCurrentIndex(blockIdx); }
 }
 
-// ---------------------------------------------------------------------------
-// Section 2 — VAC feedback-loop tuning
-// ---------------------------------------------------------------------------
-
-void AudioAdvancedPage::buildVacFeedbackSection()
+QString AudioAdvancedPage::remoteSendIqReason()
 {
-    auto* box = new QGroupBox(QStringLiteral("VAC Feedback-Loop Tuning"), this);
-    box->setStyleSheet(QLatin1String(kGroupStyle));
-    auto* outerLayout = new QVBoxLayout(box);
-    outerLayout->setContentsMargins(8, 16, 8, 8);
-    outerLayout->setSpacing(6);
-
-    // Target-channel selector row.
-    auto* targetRow = new QHBoxLayout;
-    auto* targetLabel = new QLabel(QStringLiteral("Target VAX Channel"), box);
-    targetLabel->setMinimumWidth(140);
-    m_vacTargetCombo = new QComboBox(box);
-    m_vacTargetCombo->setStyleSheet(QLatin1String(kComboStyle));
-    for (int ch = 1; ch <= 4; ++ch) {
-        m_vacTargetCombo->addItem(QStringLiteral("VAX %1").arg(ch), ch);
-    }
-    installWheelFilter(m_vacTargetCombo);
-    targetRow->addWidget(targetLabel);
-    targetRow->addWidget(m_vacTargetCombo);
-    targetRow->addStretch();
-    outerLayout->addLayout(targetRow);
-
-    // Parameter spinboxes.
-    auto* form = new QFormLayout;
-    form->setSpacing(6);
-
-    m_vacGainSpin = new QDoubleSpinBox(box);
-    m_vacGainSpin->setRange(0.0, 4.0);
-    m_vacGainSpin->setSingleStep(0.05);
-    m_vacGainSpin->setDecimals(3);
-    m_vacGainSpin->setValue(1.0);
-    form->addRow(QStringLiteral("Gain"), m_vacGainSpin);
-
-    m_vacSlewSpin = new QSpinBox(box);
-    m_vacSlewSpin->setRange(1, 100);
-    m_vacSlewSpin->setSuffix(QStringLiteral(" ms"));
-    m_vacSlewSpin->setValue(5);
-    form->addRow(QStringLiteral("Slew Time"), m_vacSlewSpin);
-
-    m_vacPropRingSpin = new QSpinBox(box);
-    m_vacPropRingSpin->setRange(1, 16);
-    m_vacPropRingSpin->setValue(2);
-    form->addRow(QStringLiteral("Prop Ring"), m_vacPropRingSpin);
-
-    m_vacFfRingSpin = new QSpinBox(box);
-    m_vacFfRingSpin->setRange(1, 16);
-    m_vacFfRingSpin->setValue(2);
-    form->addRow(QStringLiteral("FF Ring"), m_vacFfRingSpin);
-
-    auto* deferNote = new QLabel(
-        QStringLiteral("Live-apply deferred to Phase 3M IVAC port."), box);
-    deferNote->setStyleSheet(QLatin1String(kNoteStyle));
-    form->addRow(QString(), deferNote);
-
-    outerLayout->addLayout(form);
-
-    // Load initial values for channel 1.
-    loadVacFeedbackSettings(1);
-
-    // Channel-change: load settings for the selected channel.
-    connect(m_vacTargetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int idx) {
-                if (idx < 0) { return; }
-                m_currentVacChannel = m_vacTargetCombo->itemData(idx).toInt();
-                loadVacFeedbackSettings(m_currentVacChannel);
-            });
-
-    // Spinbox edits: immediately persist + call engine.
-    auto persist = [this]() {
-        if (m_vacLoading) { return; }
-        AudioEngine::VacFeedbackParams p;
-        p.gain       = static_cast<float>(m_vacGainSpin->value());
-        p.slewTimeMs = m_vacSlewSpin->value();
-        p.propRing   = m_vacPropRingSpin->value();
-        p.ffRing     = m_vacFfRingSpin->value();
-        if (m_engine) {
-            m_engine->setVacFeedbackParams(m_currentVacChannel, p);
-        } else {
-            // Engine not wired yet — persist directly.
-            const QString prefix =
-                QStringLiteral("audio/VacFeedback/%1").arg(m_currentVacChannel);
-            auto& s = AppSettings::instance();
-            s.setValue(prefix + QStringLiteral("/Gain"),
-                       QString::number(static_cast<double>(p.gain), 'f', 4));
-            s.setValue(prefix + QStringLiteral("/SlewTimeMs"),
-                       QString::number(p.slewTimeMs));
-            s.setValue(prefix + QStringLiteral("/PropRing"),
-                       QString::number(p.propRing));
-            s.setValue(prefix + QStringLiteral("/FfRing"),
-                       QString::number(p.ffRing));
-        }
-    };
-
-    connect(m_vacGainSpin,     QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            this, [persist](double) { persist(); });
-    connect(m_vacSlewSpin,     QOverload<int>::of(&QSpinBox::valueChanged),
-            this, [persist](int)    { persist(); });
-    connect(m_vacPropRingSpin, QOverload<int>::of(&QSpinBox::valueChanged),
-            this, [persist](int)    { persist(); });
-    connect(m_vacFfRingSpin,   QOverload<int>::of(&QSpinBox::valueChanged),
-            this, [persist](int)    { persist(); });
-
-    contentLayout()->addWidget(box);
+    return tr("Sending the receiver's I/Q to VAX is not available while connected to a Core.");
 }
 
-void AudioAdvancedPage::loadVacFeedbackSettings(int channel)
+void AudioAdvancedPage::setStationSettingsAvailable(bool available, const QString& reason)
 {
-    m_vacLoading = true;
-    const QString prefix =
-        QStringLiteral("audio/VacFeedback/%1").arg(channel);
-    auto& s = AppSettings::instance();
-
-    m_vacGainSpin->setValue(
-        s.value(prefix + QStringLiteral("/Gain"), 1.0).toDouble());
-    m_vacSlewSpin->setValue(
-        s.value(prefix + QStringLiteral("/SlewTimeMs"), 5).toInt());
-    m_vacPropRingSpin->setValue(
-        s.value(prefix + QStringLiteral("/PropRing"), 2).toInt());
-    m_vacFfRingSpin->setValue(
-        s.value(prefix + QStringLiteral("/FfRing"), 2).toInt());
-    m_vacLoading = false;
+    gateStationControls({m_dspRateCombo, m_dspBlockCombo}, available, reason);
 }
 
 // ---------------------------------------------------------------------------
-// Section 3 — Feature flags
+// Section 2: Feature flags
 // ---------------------------------------------------------------------------
 
 void AudioAdvancedPage::buildFeatureFlagsSection()
 {
     auto* box = new QGroupBox(QStringLiteral("Feature Flags"), this);
     box->setStyleSheet(QLatin1String(kGroupStyle));
+    box->setObjectName(QStringLiteral("audioAdvancedFeatureFlagsGroup"));
     auto* layout = new QVBoxLayout(box);
     layout->setContentsMargins(8, 16, 8, 8);
     layout->setSpacing(8);
@@ -327,7 +236,7 @@ void AudioAdvancedPage::buildFeatureFlagsSection()
                     QStringLiteral("False")).toString() == QStringLiteral("True");
         m_sendIqToVaxCheck->setChecked(on);
         auto* note = new QLabel(
-            QStringLiteral("(reserved for Phase 3M — no routing yet)"), box);
+            QStringLiteral("(not available)"), box);
         note->setStyleSheet(QLatin1String(kNoteStyle));
         row->addWidget(m_sendIqToVaxCheck);
         row->addWidget(note);
@@ -355,7 +264,7 @@ void AudioAdvancedPage::buildFeatureFlagsSection()
                     QStringLiteral("False")).toString() == QStringLiteral("True");
         m_txMonitorToVaxCheck->setChecked(on);
         auto* note = new QLabel(
-            QStringLiteral("(reserved for Phase 3M — no routing yet)"), box);
+            QStringLiteral("(not available)"), box);
         note->setStyleSheet(QLatin1String(kNoteStyle));
         row->addWidget(m_txMonitorToVaxCheck);
         row->addWidget(note);
@@ -399,10 +308,21 @@ void AudioAdvancedPage::buildFeatureFlagsSection()
     }
 
     contentLayout()->addWidget(box);
+
+    // R-R3-49: none of the three is applied yet; each is hidden until it is,
+    // and the group goes with them while all three are.
+    UnbuiltFeatures::hideRowUnlessBuilt(m_sendIqToVaxCheck, UnbuiltFeature::IqToVax);
+    UnbuiltFeatures::hideRowUnlessBuilt(m_txMonitorToVaxCheck, UnbuiltFeature::IqToVax);
+    UnbuiltFeatures::hideRowUnlessBuilt(m_muteVaxDuringTxOtherCheck,
+                                        UnbuiltFeature::MuteVaxDuringTx);
+    if (!UnbuiltFeatures::isBuilt(UnbuiltFeature::IqToVax)
+        && !UnbuiltFeatures::isBuilt(UnbuiltFeature::MuteVaxDuringTx)) {
+        box->setVisible(false);
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Section 4 — Detected cables + Rescan
+// Section 3: Detected cables + Rescan
 // ---------------------------------------------------------------------------
 
 void AudioAdvancedPage::buildCablesSection()
@@ -476,7 +396,7 @@ void AudioAdvancedPage::onRescan()
 }
 
 // ---------------------------------------------------------------------------
-// Section 5 — Reset all audio to defaults
+// Section 4: Reset all audio to defaults
 // ---------------------------------------------------------------------------
 
 void AudioAdvancedPage::buildResetSection()
@@ -502,15 +422,16 @@ void AudioAdvancedPage::buildResetSection()
 void AudioAdvancedPage::onResetClicked()
 {
     // Addendum §2.5 — verbatim confirm modal copy.
+    // R-R3-21 (2026-09-24): "device bindings" reads "device choices".
+    // R-R3-21 (2026-09-24): "DSP sample rate" reads "Audio processing rate".
     QMessageBox dlg(this);
     dlg.setWindowTitle(QStringLiteral("Reset all audio to defaults?"));
     dlg.setText(QStringLiteral("Reset all audio to defaults?"));
     dlg.setInformativeText(
         QStringLiteral(
             "This will clear:\n"
-            "\u2022 All device bindings (Speakers / Headphones / TX Input / VAX 1\u20134)\n"
-            "\u2022 DSP sample rate and block size\n"
-            "\u2022 VAC feedback-loop tuning\n"
+            "\u2022 All device choices (Speakers / Headphones / TX Input / VAX 1\u20134)\n"
+            "\u2022 Audio processing rate and block size\n"
             "\u2022 Feature flags\n"
             "\n"
             "Your per-slice VAX channel assignments will be kept. "
@@ -530,7 +451,13 @@ void AudioAdvancedPage::onResetClicked()
         return;
     }
 
-    if (m_engine) {
+    if (model() && !model()->ownsLocalDsp()) {
+        // The engine belongs to this computer even in a remote window.
+        // Rebuild all of its outputs, but leave the Core's DSP settings alone.
+        if (m_engine) {
+            m_engine->resetAudioSettings(true);
+        }
+    } else if (m_engine) {
         m_engine->resetAudioSettings();
     } else {
         // Engine not wired — do a direct settings clear (test or early-init path).
@@ -554,7 +481,6 @@ void AudioAdvancedPage::onResetClicked()
         QSignalBlocker bb(m_dspBlockCombo);
         loadDspSettings();
     }
-    loadVacFeedbackSettings(m_currentVacChannel);
 
     auto& s = AppSettings::instance();
     {

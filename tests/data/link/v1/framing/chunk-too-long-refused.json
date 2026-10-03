@@ -1,0 +1,25 @@
+{
+  "receiver": "client",
+  "message": [
+    {
+      "text": "{\"x\":\""
+    },
+    {
+      "repeat": "f",
+      "times": 61449
+    },
+    {
+      "text": "\"}"
+    }
+  ],
+  "frames": [
+    {
+      "chunk": "last",
+      "from": 0,
+      "length": 61440
+    }
+  ],
+  "encodes": false,
+  "outcome": "refused",
+  "replies": []
+}

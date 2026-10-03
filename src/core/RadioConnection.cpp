@@ -9,6 +9,8 @@
 #include "P2RadioConnection.h"
 #include "LogCategories.h"
 
+#include <algorithm>
+
 namespace NereusSDR {
 
 RadioConnection::RadioConnection(QObject* parent)
@@ -36,6 +38,29 @@ void RadioConnection::setState(ConnectionState newState)
 {
     ConnectionState expected = m_state.load();
     if (expected != newState) {
+        // Both a replacement and a same-QObject reconnect get a fresh
+        // parser-owned diagnostics epoch. A stale status never means clear.
+        m_adcOverloads = {};
+        if (newState == ConnectionState::Connected) {
+            m_diagnosticsEpoch.start();
+        } else {
+            m_diagnosticsEpoch.invalidate();
+        }
+        if (newState != ConnectionState::Connected) {
+            // An RTT belongs to one live radio transport. Reusing the same
+            // QObject for a reconnect must not make the old measurement look
+            // like evidence from the replacement transport.
+            m_lastPingRttMs = -1;
+            m_lastPingRttAge.invalidate();
+            // Nothing is on the wire now, and RadioModel has cleared its
+            // copy of the band outputs. Forget what was last reported, so
+            // the first byte composed after a reconnect on this same object
+            // (Protocol 1's automatic retry) is reported again even when it
+            // is the same byte (plan Task 14 re-review N1, R-R3-49).
+            m_publishedOcByte  = -1;
+            m_publishedOcBand  = -1;
+            m_publishedOcKeyed = -1;
+        }
         m_state.store(newState);
         emit connectionStateChanged(newState);
     }
@@ -76,6 +101,61 @@ double RadioConnection::rxByteRate(int windowMs) const
     return rateFromSamples(m_rxSamples, windowMs);
 }
 
+void RadioConnection::collectTelemetryObservation(quint64 requestId)
+{
+    const bool hasRtt = m_lastPingRttMs >= 0 && m_lastPingRttAge.isValid();
+    RadioDiagnosticsObservation diagnostics;
+    if (m_state.load() == ConnectionState::Connected && m_diagnosticsEpoch.isValid()) {
+        const int port = telemetryUdpBasePort();
+        if (port > 0 && port <= 65535) {
+            diagnostics.radioUdpBasePort = static_cast<quint16>(port);
+        }
+        const qint64 nowMs = m_diagnosticsEpoch.elapsed();
+        for (int adc = 0; adc < 3; ++adc) {
+            const AccumulatedAdcStatus& source = m_adcOverloads[adc];
+            if (!source.known) { continue; }
+            RadioAdcOverloadObservation& dest = diagnostics.adcOverloads[adc];
+            dest.known = true;
+            dest.active = source.active;
+            dest.eventsSinceConnection = source.eventsSinceConnection;
+            dest.statusAgeMs = std::max<qint64>(0, nowMs - source.lastStatusAtMs);
+            if (source.lastPositiveAtMs >= 0) {
+                dest.lastOverloadAgeMs = std::max<qint64>(
+                    0, nowMs - source.lastPositiveAtMs);
+            }
+        }
+    }
+    emit telemetryObservationReady(requestId, rxByteRate(1000), txByteRate(1000),
+                                   hasRtt, hasRtt ? m_lastPingRttMs : 0,
+                                   hasRtt ? m_lastPingRttAge.elapsed() : 0,
+                                   diagnostics);
+}
+
+void RadioConnection::observeAdcOverloads(quint8 mask, quint8 bits)
+{
+    if (m_state.load() != ConnectionState::Connected || !m_diagnosticsEpoch.isValid()) {
+        return;
+    }
+    const qint64 nowMs = m_diagnosticsEpoch.elapsed();
+    constexpr qint64 kMaxExactJsonInteger = 9007199254740991LL;
+    for (int adc = 0; adc < 3; ++adc) {
+        const quint8 bit = static_cast<quint8>(1U << adc);
+        if ((mask & bit) == 0) { continue; }
+        AccumulatedAdcStatus& status = m_adcOverloads[adc];
+        const bool overloaded = (bits & bit) != 0;
+        if (overloaded) {
+            if ((!status.known || !status.active)
+                && status.eventsSinceConnection < kMaxExactJsonInteger) {
+                ++status.eventsSinceConnection;
+            }
+            status.lastPositiveAtMs = nowMs;
+        }
+        status.known = true;
+        status.active = overloaded;
+        status.lastStatusAtMs = nowMs;
+    }
+}
+
 double RadioConnection::rateFromSamples(const QList<ByteSample>& samples, int windowMs)
 {
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
@@ -105,6 +185,8 @@ void RadioConnection::notePingReceived()
     const qint64 elapsed = nowMs - m_pingSentMs;
     m_pingSentMs = 0;
     if (elapsed >= 0 && elapsed <= 5000) {
+        m_lastPingRttMs = static_cast<int>(elapsed);
+        m_lastPingRttAge.start();
         emit pingRttMeasured(static_cast<int>(elapsed));
     }
 }

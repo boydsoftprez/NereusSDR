@@ -1,0 +1,17 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "settings.reject",
+    "key": "StationCallsign",
+    "reason": "This setting cannot be changed from here.",
+    "properties": [
+      {
+        "ordinal": 0,
+        "name": "StationCallsign",
+        "kind": "utf8",
+        "value": "KG4VCF"
+      }
+    ]
+  },
+  "decodes": true
+}

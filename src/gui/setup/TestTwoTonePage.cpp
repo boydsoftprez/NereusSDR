@@ -10,12 +10,18 @@
 // is Phase I and does NOT live on this page.
 //
 // Written by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//
+// 2026-09-25 - R-R3-49 (parity Task 5): in a remote window the page
+// changes the Core's two-tone settings while its radio is off the air,
+// behind the transmit settings gate at version 5. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; no Thetis logic ported here.
 
 #include "TestTwoTonePage.h"
 
+#include "core/session/IStationLink.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 
@@ -38,6 +44,25 @@ TestTwoTonePage::TestTwoTonePage(RadioModel* model, QWidget* parent)
     buildUi();
     seedFromModel();
     wireModelSignals();
+    // R-R3-49 (parity Task 5): closed in a remote window until SetupDialog
+    // pushes the version 5 gate.
+    if (model && !model->ownsLocalDsp()) {
+        setTransmitSettingsPermittedAt(5, false, QString());
+    }
+}
+
+void TestTwoTonePage::setTransmitSettingsPermittedAt(int version, bool permitted,
+                                                     const QString& reason)
+{
+    if (version != 5) {
+        return;
+    }
+    gateTransmitControls({m_freq1Spin, m_freq2Spin, m_defaultsBtn, m_stealthBtn, m_levelSpin,
+                          m_powerSpin, m_pulsedCheck, m_invertCheck, m_freq2DelaySpin,
+                          m_driveSliderRadio, m_tuneSliderRadio, m_fixedDriveRadio},
+                         permitted,
+                         reason.isEmpty() ? IStationLink::transmitSettingsUnavailableReason()
+                                          : reason);
 }
 
 // ---------------------------------------------------------------------------
@@ -53,6 +78,7 @@ void TestTwoTonePage::buildUi()
     freqForm->setContentsMargins(0, 0, 0, 0);
 
     m_freq1Spin = new QSpinBox(freqGroup);
+    m_freq1Spin->setProperty("nereusSetupId", "test.twoToneImd.freq1");
     m_freq1Spin->setRange(TransmitModel::kTwoToneFreq1HzMin,
                           TransmitModel::kTwoToneFreq1HzMax);
     m_freq1Spin->setSingleStep(1);
@@ -60,6 +86,7 @@ void TestTwoTonePage::buildUi()
     freqForm->addRow(QStringLiteral("Freq #1:"), m_freq1Spin);
 
     m_freq2Spin = new QSpinBox(freqGroup);
+    m_freq2Spin->setProperty("nereusSetupId", "test.twoToneImd.freq2");
     m_freq2Spin->setRange(TransmitModel::kTwoToneFreq2HzMin,
                           TransmitModel::kTwoToneFreq2HzMax);
     m_freq2Spin->setSingleStep(1);
@@ -69,7 +96,9 @@ void TestTwoTonePage::buildUi()
     // Preset buttons row.
     auto* presetsRow = new QHBoxLayout();
     m_defaultsBtn = new QPushButton(QStringLiteral("Defaults"), freqGroup);
+    m_defaultsBtn->setProperty("nereusSetupId", "test.twoToneImd.defaults");
     m_stealthBtn  = new QPushButton(QStringLiteral("Stealth"),  freqGroup);
+    m_stealthBtn->setProperty("nereusSetupId", "test.twoToneImd.stealth");
     presetsRow->addWidget(m_defaultsBtn);
     presetsRow->addWidget(m_stealthBtn);
     presetsRow->addStretch(1);
@@ -98,6 +127,7 @@ void TestTwoTonePage::buildUi()
     levelForm->setContentsMargins(0, 0, 0, 0);
 
     m_levelSpin = new QDoubleSpinBox(levelGroup);
+    m_levelSpin->setProperty("nereusSetupId", "test.twoToneImd.level");
     m_levelSpin->setRange(TransmitModel::kTwoToneLevelDbMin,
                           TransmitModel::kTwoToneLevelDbMax);
     m_levelSpin->setDecimals(3);
@@ -106,6 +136,7 @@ void TestTwoTonePage::buildUi()
     levelForm->addRow(QStringLiteral("Level:"), m_levelSpin);
 
     m_powerSpin = new QSpinBox(levelGroup);
+    m_powerSpin->setProperty("nereusSetupId", "test.twoToneImd.power");
     m_powerSpin->setRange(TransmitModel::kTwoTonePowerMin,
                           TransmitModel::kTwoTonePowerMax);
     m_powerSpin->setSingleStep(1);
@@ -130,15 +161,18 @@ void TestTwoTonePage::buildUi()
     modeForm->setContentsMargins(0, 0, 0, 0);
 
     m_pulsedCheck = new QCheckBox(QStringLiteral("Pulsed two-tone"), modeGroup);
+    m_pulsedCheck->setProperty("nereusSetupId", "test.twoToneImd.pulsed");
     modeForm->addRow(QString(), m_pulsedCheck);
 
     m_invertCheck = new QCheckBox(QStringLiteral("Invert for LS Modes"), modeGroup);
+    m_invertCheck->setProperty("nereusSetupId", "test.twoToneImd.invert");
     // Verbatim Thetis tooltip — setup.Designer.cs:61971 [v2.10.3.13].
     m_invertCheck->setToolTip(
         QStringLiteral("Swap F1 and F2 for lower side band modes"));
     modeForm->addRow(QString(), m_invertCheck);
 
     m_freq2DelaySpin = new QSpinBox(modeGroup);
+    m_freq2DelaySpin->setProperty("nereusSetupId", "test.twoToneImd.freq2Delay");
     m_freq2DelaySpin->setRange(TransmitModel::kTwoToneFreq2DelayMsMin,
                                TransmitModel::kTwoToneFreq2DelayMsMax);
     m_freq2DelaySpin->setSingleStep(1);
@@ -171,6 +205,7 @@ void TestTwoTonePage::buildUi()
     m_fixedDriveRadio  = new QRadioButton(QStringLiteral("Fixed"),        driveGroup);
 
     m_driveButtonGroup = new QButtonGroup(this);
+    m_driveButtonGroup->setProperty("nereusSetupId", "test.twoToneImd.drivePowerSource");
     m_driveButtonGroup->addButton(m_driveSliderRadio,
                                   static_cast<int>(DrivePowerSource::DriveSlider));
     m_driveButtonGroup->addButton(m_tuneSliderRadio,

@@ -1,0 +1,8 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "candidate",
+    "candidate": null
+  },
+  "decodes": false
+}

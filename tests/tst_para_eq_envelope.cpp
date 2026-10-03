@@ -22,6 +22,9 @@
 //   §6  Invalid base64                         — nullopt
 //   §7  Valid base64, non-gzip bytes           — nullopt
 //   §8  Truncated gzip stream                  — nullopt
+//   §9  gzip header OS byte                    — 0 on every platform,
+//                                                as .NET's GZipStream
+//                                                writes it (2026-09-30)
 //
 // =================================================================
 
@@ -153,6 +156,35 @@ private slots:
     //       f.write(b'{"band_count":5,"parametric_eq":true}')
     //   print(base64.urlsafe_b64encode(buf.getvalue()).rstrip(b'=').decode())
     // =========================================================================
+
+    // =========================================================================
+    // §9  The gzip header is the same on every platform
+    //
+    // zlib writes its build's OS code into the gzip header (byte 9): 0x13
+    // on macOS, 0x03 on Linux, 0x0a for a Windows build. The Core's
+    // envelope therefore differed by platform, and the link conformance
+    // fixtures (tests/data/link/v1/sessions/tx-eq-set-curve.json,
+    // cfc-set-profile.json) recorded on macOS failed on Linux CI. Thetis's
+    // .NET GZipStream writes OS 0 on every machine (its stored blob at
+    // database.cs:11211 [v2.10.3.15] begins 1f 8b 08 00 00 00 00 00 04 00),
+    // so the envelope now writes 0 as well, and mtime 0 as before.
+    // =========================================================================
+
+    void gzipHeaderIsTheSameOnEveryPlatform()
+    {
+        const QString blob = ParaEqEnvelope::encode(
+            QStringLiteral("{\"band_count\":5,\"parametric_eq\":true}"));
+        const QByteArray gz = QByteArray::fromBase64(
+            blob.toLatin1(),
+            QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
+        QVERIFY(gz.size() > 10);
+        QCOMPARE(static_cast<quint8>(gz.at(0)), quint8(0x1f));
+        QCOMPARE(static_cast<quint8>(gz.at(1)), quint8(0x8b));
+        QCOMPARE(static_cast<quint8>(gz.at(2)), quint8(0x08));  // deflate
+        QCOMPARE(static_cast<quint8>(gz.at(3)), quint8(0x00));  // no FLG bits
+        QCOMPARE(gz.mid(4, 4), QByteArray(4, '\0'));           // mtime 0
+        QCOMPARE(static_cast<quint8>(gz.at(9)), quint8(0x00));  // OS
+    }
 
     void thetisFixtureBlobDecodesToKnownJson()
     {

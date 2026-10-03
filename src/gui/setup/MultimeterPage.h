@@ -32,6 +32,13 @@
 //   2026-05-01 — Skeleton created in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23 - R-R3-21 / R-R3-10: the S-meter sample interval is the Core's
+//                 setting, disabled while a remote window does not have
+//                 the Core's settings.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-09-23 - R-R3-21: applyPersistedSettings() for startup.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -107,6 +114,23 @@ class MultimeterPage : public SetupPage {
     Q_OBJECT
 public:
     explicit MultimeterPage(RadioModel* model, QWidget* parent = nullptr);
+
+    // R-R3-21 / R-R3-10: the meter sample interval is the Core's (it samples the
+    // meter), so it is disabled while the Core's settings are unavailable;
+    // the rest of the page is this computer's display.
+    void setStationSettingsAvailable(bool available, const QString& reason) override;
+
+    // R-R3-21: applies the saved averaging window, signal unit,
+    // show-decimal and signal-history duration to the live meter
+    // poller and meter items, as opening this page does. MainWindow calls
+    // it at startup so the values survive a restart without opening Setup.
+    static void applyPersistedSettings(RadioModel* model);
+    // The same for one meter item (unit, decimal, history duration), for an
+    // item added while the window runs.
+    static void applyPersistedSettingsTo(MeterItem* item);
+    // The saved meter update interval to the meter poller (the Core's value
+    // in a remote window, applied again when its settings arrive).
+    static void applyPersistedMeterInterval(RadioModel* model);
 
 signals:
     /// Emitted when the user clicks the "← Spectrum defaults" cross-link.

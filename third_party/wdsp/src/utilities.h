@@ -24,11 +24,9 @@ warren@wpratt.com
 
 */
 
-void *malloc0 (int size);
+__declspec (dllexport) void *malloc0 (int size);
 
 extern void print_impulse (const char* filename, int N, double* impulse, int rtype, int pr_mode);
-
-extern void analyze_bandpass_filter (int N, double f_low, double f_high, double samplerate, int wintype, int rtype, double scale);
 
 void print_peak_val(const char* filename, int N, double* buff, double thresh);
 
@@ -46,11 +44,7 @@ extern void print_window_gain (const char* filename, int wintype, double inv_coh
 
 extern void print_deviation (const char* filename, double dpmax, double rate);
 
-extern void doCalccPrintSamples(int channel);
-
-void print_buffer_parameters (const char* filename, int channel);
-
-extern void print_anb_parms (const char* filename, ANB a);
+__declspec (dllexport) void print_buffer_parameters (const char* filename, int channel);
 
 extern void WriteAudioWDSP(double seconds, int rate, int size, double* indata, int mode, double gain);
 
@@ -77,14 +71,18 @@ typedef struct _bfcu
 	int i_upper_corner;
 }bfcu, * BFCU;
 
-extern int create_bfcu(int id, int min_size, int max_size, double rate, double corner, int points);
+extern __declspec (dllexport) int create_bfcu(int id, int min_size, int max_size, double rate, double corner, int points);
 
-extern void destroy_bfcu(int id);
+extern __declspec (dllexport) void destroy_bfcu(int id);
 
-extern void getFilterCorners(int id, int* lower_index, int* upper_index);
+extern __declspec (dllexport) void getFilterCorners(int id, int* lower_index, int* upper_index);
 
-extern void getFilterCurve(int id, int size, int w_type, int index_low, int index_high, double* segment);
+extern __declspec (dllexport) void getFilterCurve(int id, int size, int w_type, int index_low, int index_high, double* segment);
 
 extern void test_bfcu();
+
+extern void dprintf(const char* format, ...);
+
+extern char* uint32_to_bitstr(uint32_t n, char* buf);
 
 #endif

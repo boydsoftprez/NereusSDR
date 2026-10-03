@@ -1,13 +1,14 @@
-#include "gui/MainWindow.h"
+#include "gui/GuiConnectionController.h"
 #include "gui/styles/AppTheme.h"
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/BuildIdentity.h"
+#include "core/CoreInit.h"
 #include "core/MacMicPermission.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/RadioConnection.h"
 #include "core/mmio/ExternalVariableEngine.h"
-#include "core/LogCategories.h"
+#include "core/station/StationHandover.h"
 
 // Generated into the build tree by cmake/NereusBuildTag.cmake, once per
 // build, so NEREUSSDR_BUILD_TAG names the commit actually being compiled
@@ -16,7 +17,7 @@
 // This is the only translation unit that includes it, and that is on
 // purpose: it is compiled into the application target alone, so a new commit
 // rebuilds this file and relinks this binary, and leaves the test suite (which
-// links the NereusSDRObjs object library) untouched. See CMakeLists.txt
+// links the NereusCore object library) untouched. See CMakeLists.txt
 // section "Build tag" and src/core/BuildIdentity.h.
 #include "NereusBuildTag.h"
 
@@ -26,63 +27,12 @@
 #include <csignal>
 #include <QCommandLineParser>
 #include <QIcon>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QStyleFactory>
-#include <QDir>
 #include <QFile>
-#include <QDateTime>
-#include <QTextStream>
 #include <QStandardPaths>
-#include <QRegularExpression>
 #include <QStringList>
-
-static QFile* s_logFile = nullptr;
-
-// Redact PII from log messages before writing to file.
-// Patterns: IP addresses, MAC addresses.
-//
-// The regex objects are allocated on the heap and leaked intentionally
-// so they survive __cxa_finalize. Qt emits shutdown warnings from
-// QThreadStoragePrivate::finish *after* function-local static
-// destructors have run — if we stored them as `static const
-// QRegularExpression`, that call chain would re-enter this handler,
-// touch a destroyed regex, and crash with EXC_BAD_ACCESS at exit.
-// Leaked statics are the simplest fix for the destruction-order
-// fiasco. A belt-and-braces `qInstallMessageHandler(nullptr)` near
-// the end of main() still runs first, but this handler path has to
-// be safe even if Qt logs something between `return rc` and its own
-// thread-storage teardown.
-static QString redactPii(const QString& msg)
-{
-    static const QRegularExpression* ipRe = new QRegularExpression(
-        R"((\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3}))");
-    static const QRegularExpression* macRe = new QRegularExpression(
-        R"(([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2}))");
-
-    QString out = msg;
-    // IPv4 addresses: 192.168.50.121 -> *.*.*. 121 (keep last octet)
-    out.replace(*ipRe, QStringLiteral("*.*.*. \\4"));
-    // MAC addresses: 00:1C:2D:05:37:2A -> **:**:**:**:**:2A
-    out.replace(*macRe, QStringLiteral("**:**:**:**:**:\\2"));
-    return out;
-}
-
-static void messageHandler(QtMsgType type, const QMessageLogContext& ctx, const QString& msg)
-{
-    Q_UNUSED(ctx);
-    static const char* labels[] = {"DBG", "WRN", "CRT", "FTL", "INF"};
-    const char* label = (type <= QtInfoMsg) ? labels[type] : "???";
-
-    const QString safeMsg = redactPii(msg);
-    const QString line = QString("[%1] %2: %3\n")
-        .arg(QDateTime::currentDateTime().toString("HH:mm:ss.zzz"), label, safeMsg);
-
-    if (s_logFile && s_logFile->isOpen()) {
-        QTextStream ts(s_logFile);
-        ts << line;
-        ts.flush();
-    }
-    fprintf(stderr, "%s", line.toLocal8Bit().constData());
-}
 
 // Parse --profile <name> out of argv *before* constructing QApplication so
 // AppSettings can pin the right path on first access. QCommandLineParser
@@ -182,6 +132,13 @@ int main(int argc, char* argv[])
     // QApplication::quit, which fires aboutToQuit and runs the graceful
     // disconnect path.  SIGKILL (kill -9, Activity Monitor "Force Quit") is
     // uncatchable — power-cycle is still the only recovery there.
+    //
+    // R1 Task 9: resolved by giving src/server_main.cpp its own SIGTERM/
+    // SIGINT pair rather than sharing this one -- same QMetaObject::
+    // invokeMethod + Qt::QueuedConnection pattern, adapted to that file's
+    // simpler global-pointer structure. See task-9-report.md for why a
+    // shared call was not worth it (a daemon's signal set may still grow a
+    // SIGHUP handler for config reload that this GUI pair never will).
     std::signal(SIGTERM, [](int) {
         // Async-signal-safe: only QCoreApplication::quit() is approximately
         // safe to call.  Internally it just sets an atomic flag the event
@@ -207,6 +164,12 @@ int main(int argc, char* argv[])
     // Re-parse properly so --help / --version / unknown options surface
     // via Qt's standard machinery. The earlyProfile pass above already
     // pinned AppSettings; this second pass is purely for user-facing UX.
+    //
+    // Remote-daemon R2 Task 20: --station and --token are read here rather
+    // than in the early argv scan, because nothing they affect happens
+    // before this point. The profile scan has to be early (AppSettings
+    // resolves its path on first access); the station does not.
+    NereusSDR::StationStartupRequest request;
     {
         QCommandLineParser parser;
         parser.setApplicationDescription(
@@ -221,38 +184,59 @@ int main(int argc, char* argv[])
                 "each other. Name must match [A-Za-z0-9_-]+."),
             QStringLiteral("name"));
         parser.addOption(profileOpt);
+
+        QCommandLineOption stationOpt(
+            QStringLiteral("station"),
+            QStringLiteral(
+                "Drive a radio owned by a NereusSDR Core instead of one "
+                "attached to this machine. Takes a wss:// (or ws://) URL. "
+                "Without this, use the saved connection selection. "
+                "Use --local to select this computer's Core."),
+            QStringLiteral("wss://host:port"));
+        parser.addOption(stationOpt);
+
+        QCommandLineOption tokenOpt(
+            QStringLiteral("token"),
+            QStringLiteral(
+                "Shared token for --station, as printed by nereusd on its "
+                "first run. Overrides the selected Core's saved token."),
+            QStringLiteral("token"));
+        parser.addOption(tokenOpt);
+
+        QCommandLineOption fingerprintOpt(
+            QStringLiteral("station-fingerprint"),
+            QStringLiteral(
+                "SHA-256 fingerprint of the Core's certificate to pin."),
+            QStringLiteral("sha256"));
+        parser.addOption(fingerprintOpt);
+
+        QCommandLineOption allowUnpinnedOpt(
+            QStringLiteral("station-allow-unpinned"),
+            QStringLiteral(
+                "Accept the Core's self-signed certificate without a "
+                "pinned fingerprint. Bench use only."));
+        parser.addOption(allowUnpinnedOpt);
+
+        QCommandLineOption localOpt(
+            QStringLiteral("local"),
+            QStringLiteral("Use this computer's built-in Core for local radios."));
+        parser.addOption(localOpt);
+
         parser.process(app);
-    }
 
-    // Set up file logging in ~/.config/NereusSDR/ (or the profile's
-    // isolated config dir when --profile is set).
-    const QString logDir = NereusSDR::AppSettings::resolveConfigDir(activeProfile);
-    QDir().mkpath(logDir);
-
-    const QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
-    const QString logPath = logDir + "/nereussdr-" + timestamp + ".log";
-
-    // Prune old log files (keep newest 4 + the one we're about to create = 5)
-    {
-        QDir dir(logDir);
-        QStringList logs = dir.entryList({"nereussdr-*.log"}, QDir::Files, QDir::Name);
-        while (logs.size() >= 5) {
-            dir.remove(logs.takeFirst());
-        }
-    }
-
-    s_logFile = new QFile(logPath);
-    if (s_logFile->open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        s_logFile->setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-        qInstallMessageHandler(messageHandler);
-
-        const QString symlink = logDir + "/nereussdr.log";
-        QFile::remove(symlink);
-        QFile::link(logPath, symlink);
-    } else {
-        fprintf(stderr, "Warning: could not open log file %s\n", logPath.toLocal8Bit().constData());
-        delete s_logFile;
-        s_logFile = nullptr;
+        // Command-line values only. The saved-Setup fallback cannot be read
+        // yet: AppSettings is not loaded until CoreInit::initialize() below,
+        // and a value() call before that returns the ship default rather
+        // than what the operator saved. Resolved after CoreInit instead.
+        request.connection.url = parser.value(stationOpt);
+        request.connection.token = parser.value(tokenOpt);
+        request.connection.fingerprint = parser.value(fingerprintOpt);
+        request.connection.allowUnpinned = parser.isSet(allowUnpinnedOpt);
+        request.stationSpecified = parser.isSet(stationOpt);
+        request.tokenSpecified = parser.isSet(tokenOpt);
+        request.fingerprintSpecified = parser.isSet(fingerprintOpt);
+        request.allowUnpinnedSpecified = parser.isSet(allowUnpinnedOpt);
+        request.local = parser.isSet(localOpt);
     }
 
     // Fusion style as a clean cross-platform base, then layer the
@@ -266,42 +250,40 @@ int main(int argc, char* argv[])
     NereusSDR::applyAppBaselineQss(app);
 
     // Register custom metatypes for cross-thread signal/slot connections.
+    // R1 Task 9: src/server_main.cpp registers this same pair itself
+    // (duplicated, not moved here or folded into CoreInit -- see
+    // task-9-report.md); this is now the first of two call sites.
     qRegisterMetaType<NereusSDR::RadioConnectionError>();
     qRegisterMetaType<NereusSDR::AudioDeviceConfig>();
 
-    // Load XML settings
-    NereusSDR::AppSettings::instance().load();
+    // The raw pre-QApplication scale read above is read-only. All CoreInit,
+    // settings migrations, logs, identity and later GUI writers run only
+    // while this process owns the selected profile.
+    NereusSDR::StationHandover ownership(activeProfile);
+    QString handoverError;
+    while (!ownership.reclaimFromBackground(15000, &handoverError)) {
+        QMessageBox handover(QMessageBox::Warning, QStringLiteral("NereusSDR"),
+            QStringLiteral("NereusSDR could not take ownership of this Core profile."));
+        handover.setInformativeText(handoverError);
+        QPushButton* const retry = handover.addButton(QStringLiteral("Retry"),
+                                                       QMessageBox::AcceptRole);
+        handover.addButton(QStringLiteral("Quit"), QMessageBox::RejectRole);
+        handover.exec();
+        if (handover.clickedButton() != retry) { return 1; }
+    }
 
-    // Phase 3O schema migration — must run before any AppSettings reads.
-    NereusSDR::AppSettings::migrateVaxSchemaV1ToV2();
-
-    // hermes-filter-debug Bug 2: legacy global "hl2IoBoard/n2adrFilter" key
-    // → per-MAC scope under hardware/<mac>/hl2IoBoard/n2adrFilter for every
-    // saved HL2.  Idempotent.
-    NereusSDR::AppSettings::migrateLegacyN2adrFilter(
-        NereusSDR::AppSettings::instance());
-
-    // Issue #174: drop the orphan "hardware/oc/n2adrFilter" key written by
-    // the now-removed OcOutputsHfTab checkbox.  Idempotent.
-    NereusSDR::AppSettings::removeOrphanOcN2adrFilter(
-        NereusSDR::AppSettings::instance());
-
-    // v0.3.0 / v0.3.x settings schema migrations — must run after load(),
-    // after other one-shot migrations above. v3 retires legacy display
-    // keys; v4 retires DisplayAverageAlpha after the averaging-math fix
-    // moved to per-side millisecond time constants; v5 splits the shared
-    // DspOptionsBufferSize<Mode> / DspOptionsFilterSize<Mode> keys into
-    // <Mode>Rx + <Mode>Tx variants so the UI can expose Thetis-faithful
-    // per-channel combos; v6 (Phase 3F) is additive only — new per-slice
-    // per-band keys populate lazily on first write.
-    // See AppSettings::ensureSettingsAtVersion for the upstream Thetis cites.
-    NereusSDR::AppSettings::instance().ensureSettingsAtVersion(6);
-
-    // Restore logging category toggles from settings
-    NereusSDR::LogManager::instance().loadSettings();
+    // Shared startup sequence (R1 Task 8): loads AppSettings, applies every
+    // one-shot settings-schema migration, restores LogManager's category
+    // toggles, and installs file-backed logging. `activeProfile` is the
+    // same already-resolved name pinned into AppSettings::setProfileOverride()
+    // above; CoreInit::initialize() only uses it to resolve the log
+    // directory, it does not re-pin the override itself. See
+    // src/core/CoreInit.h for the full contract and its idempotency guard.
+    NereusSDR::CoreInit::initialize(activeProfile);
 
     qDebug() << "Starting NereusSDR" << app.applicationVersion();
     if (!activeProfile.isEmpty()) {
+        const QString logDir = NereusSDR::AppSettings::resolveConfigDir(activeProfile);
         qDebug() << "Profile:" << activeProfile
                  << "config dir:" << logDir;
     }
@@ -311,28 +293,56 @@ int main(int argc, char* argv[])
     // their transport workers before the main window is shown.
     NereusSDR::ExternalVariableEngine::instance().init();
 
-    NereusSDR::MainWindow window;
-    window.show();
-
-    const int rc = app.exec();
+    // R-R3-38: one application owner replaces complete local/remote sessions.
+    // It resolves credentials as a single target tuple, installs a fresh proxy
+    // before each remote model, and retires the window before its backend.
+    int rc = 0;
+    std::optional<NereusSDR::StationServiceOptions> background;
+    {
+        NereusSDR::GuiConnectionController connections;
+        connections.sessions()->configureDesktopStation(activeProfile, ownership.ownsProfile());
+        connections.start(request);
+        rc = app.exec();
+        background = connections.sessions()->backgroundServiceOptions();
+        connections.shutdown();
+    }
 
     // Graceful shutdown so worker threads drain before the engine
     // singleton is destroyed.
     NereusSDR::ExternalVariableEngine::instance().shutdown();
 
-    // Restore the default message handler before statics start
-    // tearing down. Qt's QThreadStoragePrivate::finish() emits
-    // warnings from __cxa_finalize, and if we leave our custom
-    // handler installed those warnings land in messageHandler ->
-    // redactPii() after its function-local statics (or anything
-    // else in this TU) could already be destroyed. Belt-and-braces
-    // for the leaked-regex fix in redactPii().
-    qInstallMessageHandler(nullptr);
-    if (s_logFile) {
-        s_logFile->close();
-        // Intentionally leaked — Qt may still try to log between
-        // here and __cxa_finalize; the default handler routes to
-        // stderr which is safe.
+    // Model, window and MMIO destructors can all write settings. Keep the
+    // profile lock until their final values have reached disk, not merely
+    // until the hosted listener or radio connection has stopped.
+    QString finalSaveError;
+    while (!NereusSDR::AppSettings::instance().save(&finalSaveError)) {
+        const auto answer = QMessageBox::warning(nullptr, QStringLiteral("NereusSDR"),
+            QStringLiteral("The Core could not save its final settings. The background Core "
+                           "has not been started.\n\n%1").arg(finalSaveError),
+            QMessageBox::Retry | QMessageBox::Close, QMessageBox::Retry);
+        if (answer != QMessageBox::Retry) {
+            NereusSDR::CoreInit::shutdown();
+            return 1;
+        }
+    }
+
+    // Uninstalls the custom message handler and closes the log file that
+    // CoreInit::initialize() installed above. See src/core/CoreInit.cpp
+    // for why the handler teardown has to be safe even if Qt logs
+    // something between here and its own thread-storage teardown.
+    NereusSDR::CoreInit::shutdown();
+    ownership.release();
+    if (background) {
+        // Options were copied while the local runtime existed. The launcher
+        // uses that explicit profile without touching shutdown AppSettings.
+        NereusSDR::StationServiceManager service(*background);
+        while (!service.startBackground()) {
+            const auto answer = QMessageBox::warning(nullptr, QStringLiteral("NereusSDR"),
+                QStringLiteral("The background Core could not start.\n\n%1")
+                    .arg(service.lastError()),
+                QMessageBox::Retry | QMessageBox::Close, QMessageBox::Retry);
+            if (answer != QMessageBox::Retry) { return 1; }
+        }
     }
     return rc;
 }

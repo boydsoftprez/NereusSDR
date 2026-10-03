@@ -391,10 +391,54 @@ private slots:
         QCOMPARE(a.streamDdc[1], -1);
         QCOMPARE(a.syncEnable, 2);             // DDC1 is the sync partner
 
-        // Deliberately NOT asserting psFwdDdc / psRevDdc here. See the
-        // note below this task: the two are inconsistent with
-        // applyPureSignalDdcConfig today and pinning either value in a test
-        // would freeze a question that belongs to the maintainer.
+    }
+
+    // The PureSignal pair on the HL2 is DDC2 (feedback) + DDC3 (TX
+    // monitor), not DDC0 + DDC1: DDC0 is still slice A's receiver.
+    // From mi0bot console.cs:8733-8762 [@c26a8a4] GetDDC(), P1 branch:
+    //   case HPSDRHW.HermesLite: // MI0BOT: Hermes Lite 2
+    //   ...
+    //   case 5: // on off on    rx1 = 0; rx2 = 1; psrx = 2; pstx = 3;
+    // and the read loop pairs the same two slots for nddc == 4,
+    // mi0bot ChannelMaster/networkproto1.c:549-553 [@c26a8a4]:
+    //   twist(spr, 2, 3, 1);
+    // applyPureSignalDdcConfig already emits psFbDdc = 2 / txMonDdc = 3;
+    // the assignment has to say the same thing.
+    void ddc_assignment_ps_mox_pair_is_ddc2_and_ddc3() {
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        ctx.mox = true;
+        ctx.puresignalRun = true;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.psFwdDdc, 2);
+        QCOMPARE(a.psRevDdc, 3);
+        QCOMPARE(a.streamDdc[0], 0);   // rx1 = 0 in the same case
+    }
+
+    // Outside PureSignal-with-MOX the assignment carries no pair.
+    void ddc_assignment_carries_no_pair_outside_ps_mox() {
+        P1CodecHl2 codec;
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].sampleRateHz = 192000;
+
+        for (const bool mox : {false, true}) {
+            for (const bool ps : {false, true}) {
+                if (mox && ps) { continue; }
+                CodecContext ctx{};
+                ctx.mox = mox;
+                ctx.puresignalRun = ps;
+                const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+                QCOMPARE(a.psFwdDdc, -1);
+                QCOMPARE(a.psRevDdc, -1);
+            }
+        }
     }
 
     // No arm of the mi0bot HERMESLITE case enables anything above DDC1.

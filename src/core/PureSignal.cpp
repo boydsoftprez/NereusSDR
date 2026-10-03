@@ -15,12 +15,19 @@
 //   2026-05-06 — Created by J.J. Boyd (KG4VCF) for Phase 3M-4 Task 7
 //                 PureSignal coordinator, with AI-assisted source-first
 //                 protocol via Anthropic Claude Code.
+//   2026-09-25 : R-R3-39 (station Task 32) by J.J. Boyd (KG4VCF): with a
+//                 transmit lane the TX delay is applied there and reported
+//                 back (psTxDelayApplied), the correction stop is chosen
+//                 there from the RF gate, and the poll reads the status the
+//                 lane caches. AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "PureSignal.h"
 
 #include "LogCategories.h"
 #include "MoxController.h"
+#include "models/PureSignalSettings.h"
 #include "PsFeedbackChannel.h"
 #include "StepAttenuatorController.h"
 #include "TwoToneController.h"
@@ -28,8 +35,12 @@
 #include "WdspEngine.h"
 
 #include <QLoggingCategory>
+#include <QDateTime>
 
 #include <cmath>
+#include <algorithm>
+#include <iterator>
+#include <utility>
 
 namespace NereusSDR {
 
@@ -59,6 +70,13 @@ PureSignal::PureSignal(WdspEngine* engine,
     , m_stepAtt(stepAtt)
     , m_twoTone(twoTone)
 {
+    m_fallbackSettings = new PureSignalSettings(this);
+    m_settings = m_fallbackSettings;
+    bindSettingsSignals();
+    // Legacy direct-construction tests use the owned defaults immediately.
+    // RadioModel replaces this object before initialization, which resets the
+    // operational gate until applyAcceptedSettingsToEngine() succeeds.
+    m_operationalSettingsApplied = true;
     // Wire QTimer cadence and connect ticks.  Timers are started by
     // setEnabled(true); we don't start them in the ctor so a freshly-
     // constructed PureSignal sitting idle (e.g. before any user enables
@@ -98,26 +116,70 @@ PureSignal::PureSignal(WdspEngine* engine,
     m_enabled = true;
     m_pollTimer.start();
     m_autoAttTimer.start();
+
+    connectTxChannelSignals();
 }
 
 PureSignal::~PureSignal()
 {
     m_pollTimer.stop();
     m_autoAttTimer.stop();
+    retirePendingFileOperation();
     // Best-effort: leave the WDSP engine in a clean state on destruction.
     // From Thetis PSForm.cs:140-145 [v2.10.3.13] (StopPSThread sets
     // _ps_closing then joins; we rely on QTimer::stop being synchronous
     // on the main thread).
     if (m_tx) {
-        m_tx->setPSControl(/*reset=*/1, /*mancal=*/0,
-                           /*automode=*/0, /*turnon=*/0);
         m_tx->setPSMox(false);
+        requestNativeCorrectionStop();
     }
 }
 
 void PureSignal::setTxChannel(TxChannel* tx)
 {
+    if (tx != m_tx) {
+        retireSessionOperations();
+        m_operationalSettingsApplied = false;
+        if (m_tx) {
+            disconnect(m_tx, &TxChannel::psTxDelayApplied, this, nullptr);
+        }
+    }
     m_tx = tx;
+    connectTxChannelSignals();
+}
+
+void PureSignal::connectTxChannelSignals()
+{
+    if (!m_tx) {
+        return;
+    }
+    // R-R3-39: with a transmit lane the applied TX delay arrives from there.
+    // One connection per channel: any earlier one is dropped first.
+    disconnect(m_tx, &TxChannel::psTxDelayApplied, this, nullptr);
+    connect(m_tx, &TxChannel::psTxDelayApplied, this,
+            [this](double actualSeconds) { noteAppliedTxDelayNs(actualSeconds * 1.0e9); });
+}
+
+void PureSignal::applyTxDelaySeconds(double seconds)
+{
+    if (!m_tx) {
+        return;
+    }
+    if (m_tx->controlLane() != nullptr) {
+        // R-R3-39: SetPSTXDelay runs on the transmit lane, which reports the
+        // delay it applied through psTxDelayApplied.
+        m_tx->requestPSTXDelay(seconds);
+        return;
+    }
+    noteAppliedTxDelayNs(m_tx->setPSTXDelay(seconds) * 1.0e9);
+}
+
+void PureSignal::noteAppliedTxDelayNs(double actual)
+{
+    if (actual != m_appliedTxDelayNs) {
+        m_appliedTxDelayNs = actual;
+        emit appliedTxDelayNsChanged(actual);
+    }
 }
 
 void PureSignal::setPsFeedbackChannel(PsFeedbackChannel* fb)
@@ -125,10 +187,295 @@ void PureSignal::setPsFeedbackChannel(PsFeedbackChannel* fb)
     m_fb = fb;
 }
 
+void PureSignal::setSettings(PureSignalSettings* settings)
+{
+    PureSignalSettings* replacement = settings ? settings : m_fallbackSettings;
+    if (replacement == m_settings) return;
+    if (m_settings) disconnect(m_settings, nullptr, this, nullptr);
+    m_settings = replacement;
+    m_operationalSettingsApplied = false;
+    bindSettingsSignals();
+}
+
+PureSignalSettings* PureSignal::settings() const noexcept
+{
+    return m_settings.data();
+}
+
+void PureSignal::setOperationalPermissionPredicate(OperationalPredicate predicate)
+{
+    m_permissionPredicate = std::move(predicate);
+}
+
+void PureSignal::setOperationalReadinessPredicate(OperationalPredicate predicate)
+{
+    m_readinessPredicate = std::move(predicate);
+}
+
+bool PureSignal::canActuate() const
+{
+    return (!m_permissionPredicate || m_permissionPredicate())
+        && (!m_readinessPredicate || m_readinessPredicate());
+}
+
+bool PureSignal::isAutoCalEnabled() const noexcept
+{
+    return m_settings && m_settings->autoCalEnabled();
+}
+
+bool PureSignal::autoAttenuate() const noexcept
+{
+    return m_settings && m_settings->autoAttenuate();
+}
+
+bool PureSignal::quickAttenuate() const noexcept
+{
+    return m_settings && m_settings->quickAttenuate();
+}
+
+double PureSignal::moxDelay() const noexcept
+{
+    // Fix wave RD-I7: with no settings, Thetis udPSMoxDelay's Value 0.2.
+    // From Thetis PSForm.Designer.cs:368-372 [v2.10.3.15].
+    return m_settings ? m_settings->moxDelaySeconds() : PureSignalSettingsValues{}.moxDelaySeconds;
+}
+
+double PureSignal::calDelay() const noexcept
+{
+    return m_settings ? m_settings->loopDelaySeconds() : 0.0;
+}
+
+int PureSignal::ampDelay() const noexcept
+{
+    return m_settings ? static_cast<int>(std::lround(m_settings->requestedTxDelayNs())) : 150;
+}
+
+bool PureSignal::runCalibrationProcessing() const noexcept
+{
+    return m_settings && m_settings->runCalibrationProcessing();
+}
+
+double PureSignal::hwPeak() const noexcept
+{
+    if (m_settings && m_settings->hardwarePeakOverrideEnabled()) {
+        return m_settings->hardwarePeakOverride();
+    }
+    return m_caps.psDefaultPeak;
+}
+
+void PureSignal::bindSettingsSignals()
+{
+    if (!m_settings) return;
+    connect(m_settings, &PureSignalSettings::autoCalEnabledChanged, this,
+            [this](bool enabled) {
+        emit autoCalEnabledChanged(enabled);
+        if (!m_operationalSettingsApplied || m_settingsHydrationDepth > 0) return;
+        if (enabled) startAutomaticCalibration();
+        else requestOperationalStop();
+    });
+    connect(m_settings, &PureSignalSettings::runCalibrationProcessingChanged,
+            this, [this](bool run) {
+        if (!m_operationalSettingsApplied || !m_tx
+            || m_settingsHydrationDepth > 0) return;
+        if (!run || canActuate()) m_tx->setPSRunCal(run ? 1 : 0);
+    });
+    connect(m_settings, &PureSignalSettings::autoAttenuateChanged,
+            this, &PureSignal::autoAttenuateChanged);
+    connect(m_settings, &PureSignalSettings::quickAttenuateChanged,
+            this, &PureSignal::quickAttenuateChanged);
+    connect(m_settings, &PureSignalSettings::moxDelaySecondsChanged,
+            this, [this](double value) {
+        if (m_operationalSettingsApplied && m_tx
+            && m_settingsHydrationDepth == 0) m_tx->setPSMoxDelay(value);
+        emit moxDelayChanged(value);
+    });
+    connect(m_settings, &PureSignalSettings::loopDelaySecondsChanged,
+            this, [this](double value) {
+        if (m_operationalSettingsApplied && m_tx
+            && m_settingsHydrationDepth == 0) m_tx->setPSLoopDelay(value);
+        emit calDelayChanged(value);
+    });
+    connect(m_settings, &PureSignalSettings::requestedTxDelayNsChanged,
+            this, [this](double value) {
+        if (m_operationalSettingsApplied && m_tx
+            && m_settingsHydrationDepth == 0) {
+            applyTxDelaySeconds(value * 1.0e-9);
+        }
+        emit ampDelayChanged(static_cast<int>(std::lround(value)));
+    });
+    const auto applyPeak = [this] {
+        if (m_operationalSettingsApplied && m_tx
+            && m_settingsHydrationDepth == 0) m_tx->setPSHWPeak(hwPeak());
+        emit hwPeakChanged(hwPeak());
+    };
+    connect(m_settings, &PureSignalSettings::hardwarePeakOverrideEnabledChanged,
+            this, [applyPeak](bool) { applyPeak(); });
+    connect(m_settings, &PureSignalSettings::hardwarePeakOverrideChanged,
+            this, [applyPeak](double) { applyPeak(); });
+}
+
+void PureSignal::initializeAutoCalPreference(bool enabled)
+{
+    if (!m_settings) return;
+    beginSettingsHydration();
+    m_settings->initializeAutoCalPreference(enabled);
+    endSettingsHydration();
+}
+
+void PureSignal::beginSettingsHydration()
+{
+    ++m_settingsHydrationDepth;
+}
+
+void PureSignal::endSettingsHydration()
+{
+    if (m_settingsHydrationDepth > 0) {
+        --m_settingsHydrationDepth;
+    }
+}
+
+bool PureSignal::resumeAutomaticCalibrationPreference()
+{
+    if (!isAutoCalEnabled() || !runCalibrationProcessing()
+        || !m_operationalSettingsApplied || !canActuate()) {
+        return false;
+    }
+    startAutomaticCalibration();
+    return true;
+}
+
+void PureSignal::startAutomaticCalibration()
+{
+    if (!canActuate() || !runCalibrationProcessing()) {
+        return;
+    }
+    retirePendingRestoreOperation();
+    m_autoON = true;
+    m_OFF = false;
+    m_aaLastSeenAttemptCount = m_calAttempts.load();
+    if (m_tx) {
+        m_tx->setPSControl(/*reset=*/0, /*mancal=*/0,
+                           /*automode=*/1, /*turnon=*/0);
+    }
+}
+
+void PureSignal::requestOperationalStop()
+{
+    m_autoON = false;
+    m_OFF = true;
+    if (m_tx) {
+        requestNativeCorrectionStop();
+    }
+}
+
+void PureSignal::requestNativeCorrectionStop()
+{
+    if (!m_tx) {
+        return;
+    }
+    if (m_tx->controlLane() != nullptr) {
+        // R-R3-39: the transmit lane makes the same choice below, from the
+        // RF gate as the keying calls queued before this one leave it.
+        m_tx->stopPsCorrection();
+        return;
+    }
+    if (!m_tx->isRunning()) {
+        // With TXA quiescent no audio or PSCC block can finish the normal
+        // END/reset transitions. The native helper fences stale workers and
+        // publishes a durable CALCC/IQC acknowledgement synchronously.
+        m_tx->stopPsCorrectionQuiescent();
+        return;
+    }
+    // Request the active-stream IQC END directly; this does not depend on a
+    // later paired-feedback pscc block. TXA audio drains the ramp and the
+    // run/busy readback remains authoritative for completion.
+    m_tx->requestPsCorrectionStop();
+}
+
+void PureSignal::clearTransientOperationsForOff()
+{
+    m_autoON = false;
+    m_singleCalON = false;
+    m_restoreON = false;
+    m_performingSingleCal = false;
+    m_performingSingleCalRetries = 0;
+    m_saveAutoOn = 0;
+    m_saveSingleCalOn = 0;
+    m_deltaDb = 0;
+    m_aaState = AutoAttenuateState::Monitor;
+    m_OFF = true;
+    m_cmdState = m_tx ? CommandState::TurnOff : CommandState::Off;
+}
+
+bool PureSignal::applyAcceptedSettingsToEngine()
+{
+    if (!m_settings || !m_tx || !canActuate()) {
+        return false;
+    }
+    constexpr int kThetisPsRate = 192000;
+    const int feedbackRate = m_caps.psSampleRate > 0
+        ? m_caps.psSampleRate : kThetisPsRate;
+    m_tx->setPSFeedbackRate(feedbackRate);
+    if (m_fb && m_caps.psSampleRate > 0) {
+        m_fb->setSampleRate(m_caps.psSampleRate);
+    }
+    m_tx->setPSMoxDelay(m_settings->moxDelaySeconds());
+    m_tx->setPSLoopDelay(m_settings->loopDelaySeconds());
+    applyTxDelaySeconds(m_settings->requestedTxDelayNs() * 1.0e-9);
+    m_tx->setPSHWPeak(hwPeak());
+    m_tx->setPSRunCal(m_settings->runCalibrationProcessing() ? 1 : 0);
+    m_operationalSettingsApplied = true;
+    return true;
+}
+
+bool PureSignal::applyCurrentCorrection()
+{
+    if (!m_tx || !canActuate()) {
+        return false;
+    }
+    retirePendingRestoreOperation();
+    const auto available = m_tx->psCorrectionAvailable();
+    if (!available || !*available || !m_tx->applyPsCorrection()) {
+        return false;
+    }
+    beginSettingsHydration();
+    forceAutoCalDisable();
+    endSettingsHydration();
+    m_autoON = false;
+    m_OFF = false;
+    m_restoreON = false;
+    m_performingSingleCal = false;
+    m_singleCalON = false;
+    m_cmdState = CommandState::StayOn;
+    // Applying retained IQC curves does not require feedback collection.
+    setPsEnabledWithFanOut(false);
+    return true;
+}
+
+void PureSignal::retireSessionOperations()
+{
+    retirePendingFileOperation();
+    clearTransientOperationsForOff();
+    if (m_tx) {
+        // Preserve the desired settings object while forcing the retiring
+        // native session through its durable CALCC/IQC Off acknowledgement.
+        requestNativeCorrectionStop();
+        m_tx->setPSMox(false);
+    } else {
+        setPsEnabledWithFanOut(false);
+    }
+    m_cachedDisplaySnapshot.reset();
+    m_ampViewSubscribed = false;
+}
+
 // ── Cal lifecycle ──────────────────────────────────────────────────────────
 
 void PureSignal::singleCalibrate()
 {
+    if (!canActuate() || !runCalibrationProcessing()) {
+        return;
+    }
+    retirePendingRestoreOperation();
     // From Thetis PSForm.cs:466-478 btnPSCalibrate_Click [v2.10.3.13]:
     //   if (_singlecalON) { _singlecalON = false; return; }
     //   console.ForcePureSignalAutoCalDisable();
@@ -144,7 +491,11 @@ void PureSignal::singleCalibrate()
         m_singleCalON = false;
         return;
     }
+    beginSettingsHydration();
     forceAutoCalDisable();
+    endSettingsHydration();
+    m_autoON = false;
+    m_OFF = false;
     m_singleCalON = true;
     // The cmd-state machine picks up _singlecalON on the next tick.
     // ForcePS sends the SetPSControl(1, 0, 0, 0) immediately so the engine
@@ -184,6 +535,23 @@ void PureSignal::setPsEnabledWithFanOut(bool on)
 
 void PureSignal::setEnabled(bool enabled)
 {
+    if (enabled && !canActuate()) {
+        return;
+    }
+    if (!enabled) {
+        retirePendingFileOperation();
+        beginSettingsHydration();
+        forceAutoCalDisable();
+        endSettingsHydration();
+        clearTransientOperationsForOff();
+        m_autoAttTimer.stop();
+        if (!m_pollTimer.isActive()) {
+            m_pollTimer.start();
+        }
+        if (m_tx) {
+            requestNativeCorrectionStop();
+        }
+    }
     if (enabled == m_enabled) {
         return;
     }
@@ -193,19 +561,8 @@ void PureSignal::setEnabled(bool enabled)
         m_pollTimer.start();
         m_autoAttTimer.start();
     } else {
-        // Mirror PSForm.cs btnPSReset_Click [v2.10.3.13]:
-        //   console.ForcePureSignalAutoCalDisable();
-        //   if (!_OFF) _OFF = true;
-        //   console.PSState = false;
-        forceAutoCalDisable();
-        m_OFF = true;
-        m_pollTimer.stop();
-        m_autoAttTimer.stop();
-        if (m_tx) {
-            m_tx->setPSControl(/*reset=*/0, /*mancal=*/0,
-                               /*automode=*/0, /*turnon=*/0);
-            m_tx->setPSMox(false);
-        }
+        // The stop request and transient-state retirement were issued above,
+        // including when this setter is called repeatedly with false.
     }
     emit enabledChanged(m_enabled);
 }
@@ -230,61 +587,18 @@ void PureSignal::setAutoCalEnabled(bool on)
     //   _autocal_enabled = value;
     //   if (_autocal_enabled) { _autoON = true;  console.PSState = true;  }
     //   else                  { _OFF    = true;  console.PSState = false; }
-    if (on == m_autoCalEnabled) {
-        return;
-    }
-    m_autoCalEnabled = on;
-    if (m_autoCalEnabled) {
-        m_autoON = true;
-        // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): sync m_aaLastSeenCalCount
-        // to the live m_calCount so the FIRST autoAttentionTick after PS
-        // engagement does NOT fire on stale info[4].  In Thetis the
-        // equivalent gate uses CalibrationAttemptsChanged (_info[5] !=
-        // _oldInfo[5]), and _oldInfo is updated every timer1 tick so
-        // _info[5] and _oldInfo[5] match between sessions.  Our auto-att
-        // path uses a separate scratch variable (m_aaLastSeenCalCount)
-        // that starts at 0 and is only updated inside autoAttentionTick.
-        // If calcc has been ticking (e.g. info[5]=99 from a prior MOX
-        // session), the first post-engage tick sees 99 != 0 and fires on
-        // whatever info[4] happens to be left in calcc's buffer from
-        // before — which on the G2E bench was fbLevel=337 (out-of-range
-        // > 256) triggering the 31.1 dB AutoAtt fallback, slamming ATT to
-        // 31, and starting a cascade of bad corrections.  Bench-confirmed
-        // on G2E PS run at 11:58:03.570 (log line ~17):
-        //   AutoAtt fbLevel=337 currentAttOnTx=0 → SetNewValues
-        //   AutoAtt setAttOnTx 0 → 31 dB (deltaDb=31)
-        // The fix: when PS engages, treat the current m_calCount as
-        // "already seen" so AutoAtt only fires on a NEW calcc cycle
-        // (m_calCount increments past the synced value).
-        m_aaLastSeenCalCount = m_calCount.load();
-    } else {
-        m_OFF = true;
-    }
-    // ForcePS pushes SetPSControl based on the new _autoON value.  Mirror
-    // the PSForm.cs:924-932 [v2.10.3.13] body:
-    //   if (!_autoON) puresignal.SetPSControl(_txachannel, 1, 0, 0, 0);
-    //   else          puresignal.SetPSControl(_txachannel, 0, 0, 1, 0);
-    if (m_tx) {
-        if (!m_autoON) {
-            m_tx->setPSControl(/*reset=*/1, /*mancal=*/0,
-                               /*automode=*/0, /*turnon=*/0);
-        } else {
-            m_tx->setPSControl(/*reset=*/0, /*mancal=*/0,
-                               /*automode=*/1, /*turnon=*/0);
-        }
-    }
-    emit autoCalEnabledChanged(m_autoCalEnabled);
+    if (m_settings) m_settings->setAutoCalEnabled(on);
 }
 
 void PureSignal::forcePS()
 {
     // From Thetis PSForm.cs:924-954 [v2.10.3.13] — ForcePS body.  The
     // SetPSControl fan-out is implemented here; the persisted-state pushes
-    // (LoopDelay / TXDelay / MoxDelay / RelaxPtol / AutoAttenuate / Pin /
-    // Map / Stbl / Tint / OnTop / QuickAttenuate / Show2ToneMeasurements)
+    // (LoopDelay / TXDelay / MoxDelay / AutoAttenuate / OnTop /
+    // QuickAttenuate / Show2ToneMeasurements)
     // are issued by the UI surfaces (PsForm) at task 11+ — they bind their
     // controls' value-changed signals to TxChannel setter methods directly.
-    if (!m_tx) {
+    if (!m_tx || !canActuate()) {
         return;
     }
     if (!m_autoON) {
@@ -302,13 +616,16 @@ void PureSignal::reset()
     //   console.ForcePureSignalAutoCalDisable();
     //   if (!_OFF) _OFF = true;
     //   console.PSState = false;
+    // Invalidate an asynchronous restore before requesting Off. The vendor
+    // cancel barrier guarantees that no stale IQC mutation can occur after
+    // this call returns; worker completion remains observable as Cancelled.
+    retirePendingFileOperation();
+    beginSettingsHydration();
     forceAutoCalDisable();
-    if (!m_OFF) {
-        m_OFF = true;
-    }
+    endSettingsHydration();
+    clearTransientOperationsForOff();
     if (m_tx) {
-        m_tx->setPSControl(/*reset=*/0, /*mancal=*/0,
-                           /*automode=*/0, /*turnon=*/0);
+        requestNativeCorrectionStop();
     }
 }
 
@@ -337,7 +654,8 @@ void PureSignal::setDefaultPeaks()
     // txtPSpeak field — which subscribes to hwPeakChanged — would
     // continue to display the old per-bench value after a Default click,
     // even though WDSP itself is using the new psDefaultPeak.
-    setHwPeak(m_caps.psDefaultPeak);
+    if (m_settings) m_settings->setHardwarePeakOverrideEnabled(false);
+    if (m_tx && m_operationalSettingsApplied) m_tx->setPSHWPeak(m_caps.psDefaultPeak);
 }
 
 // ── Save / restore ─────────────────────────────────────────────────────────
@@ -354,11 +672,7 @@ bool PureSignal::saveCorrections(const QString& filename)
     // PsForm); this method just forwards the user-chosen filename to
     // calcc.  Returns false when the TX channel isn't wired yet (e.g.
     // before WdspEngine init lambda runs) or filename is empty.
-    if (!m_tx || filename.isEmpty()) {
-        return false;
-    }
-    m_tx->psSaveCorr(filename);
-    return true;
+    return beginSaveCorrections(filename).has_value();
 }
 
 bool PureSignal::restoreCorrections(const QString& filename)
@@ -371,14 +685,105 @@ bool PureSignal::restoreCorrections(const QString& filename)
     //       puresignal.PSRestoreCorr(_txachannel, openfile1.FileName);
     //       _restoreON = true;
     //   }
-    if (!m_tx || filename.isEmpty()) {
-        return false;
+    return beginRestoreCorrections(filename).has_value();
+}
+
+std::optional<Ps3FileOperationToken> PureSignal::beginSaveCorrections(
+    const QString& filename)
+{
+    if (!m_tx || m_pendingFileOperation) {
+        return std::nullopt;
     }
-    forceAutoCalDisable();
-    m_OFF = false;
-    m_tx->psRestoreCorr(filename);
-    m_restoreON = true;
-    return true;
+    const auto completion = m_tx->psSaveCorr(filename);
+    if (!completion) {
+        return std::nullopt;
+    }
+    Ps3FileOperationToken token{Ps3FileOperationKind::Save,
+                                m_sessionGeneration, *completion};
+    m_pendingFileOperation = token;
+    emit fileOperationAccepted(static_cast<int>(token.kind),
+                               token.sessionGeneration,
+                               token.nativeCompletionGeneration);
+    return token;
+}
+
+std::optional<Ps3FileOperationToken> PureSignal::beginRestoreCorrections(
+    const QString& filename)
+{
+    if (!m_tx || m_pendingFileOperation || !canActuate()) {
+        return std::nullopt;
+    }
+    const auto completion = m_tx->psRestoreCorr(filename);
+    if (!completion) {
+        return std::nullopt;
+    }
+    Ps3FileOperationToken token{Ps3FileOperationKind::Restore,
+                                m_sessionGeneration, *completion};
+    m_pendingFileOperation = token;
+    emit fileOperationAccepted(static_cast<int>(token.kind),
+                               token.sessionGeneration,
+                               token.nativeCompletionGeneration);
+    return token;
+}
+
+void PureSignal::retirePendingFileOperation()
+{
+    if (!m_pendingFileOperation) {
+        return;
+    }
+    const auto token = *m_pendingFileOperation;
+    if (m_tx) {
+        m_tx->cancelPsFileOperation(token.kind);
+    }
+    m_pendingFileOperation.reset();
+    emit fileOperationRetired(static_cast<int>(token.kind),
+                              token.sessionGeneration,
+                              token.nativeCompletionGeneration);
+}
+
+void PureSignal::retirePendingRestoreOperation()
+{
+    if (m_pendingFileOperation
+        && m_pendingFileOperation->kind == Ps3FileOperationKind::Restore) {
+        retirePendingFileOperation();
+    }
+}
+
+void PureSignal::pollFileOperation()
+{
+    if (!m_pendingFileOperation || !m_tx) {
+        return;
+    }
+    const auto token = *m_pendingFileOperation;
+    if (token.sessionGeneration != m_sessionGeneration) {
+        retirePendingFileOperation();
+        return;
+    }
+    const auto status = m_tx->psFileOperationStatus(token.kind);
+    if (!status || status->pending) {
+        return;
+    }
+    if (status->generation != token.nativeCompletionGeneration) {
+        // A later native generation cannot satisfy an older host request.
+        retirePendingFileOperation();
+        return;
+    }
+    m_pendingFileOperation.reset();
+    emit fileOperationCompleted(static_cast<int>(token.kind),
+                                static_cast<int>(status->result),
+                                token.sessionGeneration,
+                                token.nativeCompletionGeneration);
+    if (token.kind == Ps3FileOperationKind::Restore
+        && status->result == Ps3FileOperationResult::Success
+        && canActuate()) {
+        // Restore owns the next correction state. Clear the desired auto
+        // preference without dispatching an intervening operational Off.
+        beginSettingsHydration();
+        forceAutoCalDisable();
+        endSettingsHydration();
+        m_OFF = false;
+        m_restoreON = true;
+    }
 }
 
 // ── Two-tone integration ──────────────────────────────────────────────────
@@ -390,6 +795,7 @@ void PureSignal::setTwoToneOn(bool on)
     //   else                   { ...; _ttgenON = false; console.SetupForm.TTgenrun = false; }
     // In NereusSDR the TwoToneController owns the activation orchestrator
     // (chunk I); here we forward setActive(on) when wired.
+    if (on && !canActuate()) return;
     if (m_twoTone) {
         m_twoTone->setActive(on);
     }
@@ -470,211 +876,34 @@ void PureSignal::setHideFeedback(bool on)
 // handlers byte-for-byte [v2.10.3.13] — see the inline cite in each
 // declaration block in PureSignal.h.
 
-void PureSignal::setPinMode(bool on)
-{
-    if (on == m_pinMode) { return; }
-    m_pinMode = on;
-    if (m_tx) {
-        m_tx->setPSPinMode(on);
-    }
-    emit pinModeChanged(on);
-}
-
-void PureSignal::setMapMode(bool on)
-{
-    if (on == m_mapMode) { return; }
-    m_mapMode = on;
-    if (m_tx) {
-        m_tx->setPSMapMode(on);
-    }
-    emit mapModeChanged(on);
-}
-
-void PureSignal::setStabilize(bool on)
-{
-    if (on == m_stabilize) { return; }
-    m_stabilize = on;
-    if (m_tx) {
-        m_tx->setPSStabilize(on);
-    }
-    emit stabilizeChanged(on);
-}
-
 void PureSignal::setAutoAttenuate(bool on)
 {
-    if (on == m_autoAttenuate) { return; }
-    m_autoAttenuate = on;
-    // No direct WDSP setter — gates the auto-attention timer behaviour.
-    // The autoAttentionTick body honours this flag.
-    emit autoAttenuateChanged(on);
-}
-
-void PureSignal::setRelaxTolerance(bool on)
-{
-    if (on == m_relaxTolerance) { return; }
-    m_relaxTolerance = on;
-    if (m_tx) {
-        // From Thetis PSForm.cs:805-810 chkPSRelaxPtol_CheckedChanged
-        // [v2.10.3.13]:
-        //   if (chkPSRelaxPtol.Checked)
-        //       puresignal.SetPSPtol(_txachannel, 0.400);
-        //   else
-        //       puresignal.SetPSPtol(_txachannel, 0.800);
-        //
-        // Adjacent upstream author tags preserved per CLAUDE.md GPL
-        // inline-tag rule (chkPSRelaxPtol_CheckedChanged sits between
-        // two MW0LGE-tagged neighbours in PSForm.cs):
-        //   //[2.10.3.7]MW0LGE attribution from adjacent UpdateWarningSetPk
-        //     line at PSForm.cs:802 (`pbWarningSetPk.Visible = _PShwpeak !=
-        //     HardwareSpecific.PSDefaultPeak; //[2.10.3.7]MW0LGE`).
-        //   //MW0LGE attribution from adjacent chkPSAutoAttenuate_CheckedChanged
-        //     line at PSForm.cs:815 (`AutoAttenuate = chkPSAutoAttenuate.Checked;
-        //     //MW0LGE use property`).
-        //
-        // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): the earlier port
-        // cite was misread as `Checked ? 0.8 : 0.4` (inverted) which
-        // landed `on ? 0.8 : 0.4`.  Re-reading the Thetis source line
-        // by line confirms the branches are the OTHER way: Checked
-        // -> 0.4 (stricter), Unchecked -> 0.8 (more permissive).
-        // Default state in Thetis is chkPSRelaxPtol unchecked at
-        // startup, so the construction-time ptol=0.8 (TXA.c:414) stays
-        // in effect until the user toggles the box.  Our prior
-        // inversion meant toggling the box flipped the engine from 0.8
-        // -> 0.4 -> 0.8 in the wrong direction relative to the
-        // checkbox label.
-        m_tx->setPSPtol(on ? 0.4 : 0.8);
-    }
-    emit relaxToleranceChanged(on);
+    if (m_settings) m_settings->setAutoAttenuate(on);
 }
 
 void PureSignal::setQuickAttenuate(bool on)
 {
-    if (on == m_quickAttenuate) { return; }
-    m_quickAttenuate = on;
-    // No direct WDSP setter — drives the autoAttentionTick cadence.
-    emit quickAttenuateChanged(on);
+    if (m_settings) m_settings->setQuickAttenuate(on);
 }
 
 void PureSignal::setMoxDelay(double seconds)
 {
-    if (seconds == m_moxDelay) { return; }
-    m_moxDelay = seconds;
-    if (m_tx) {
-        m_tx->setPSMoxDelay(seconds);
-    }
-    emit moxDelayChanged(seconds);
+    if (m_settings) m_settings->setMoxDelaySeconds(seconds);
 }
 
 void PureSignal::setCalDelay(double seconds)
 {
-    if (seconds == m_calDelay) { return; }
-    m_calDelay = seconds;
-    if (m_tx) {
-        m_tx->setPSLoopDelay(seconds);
-    }
-    emit calDelayChanged(seconds);
+    if (m_settings) m_settings->setLoopDelaySeconds(seconds);
 }
 
 void PureSignal::setAmpDelay(int ns)
 {
-    if (ns == m_ampDelay) { return; }
-    m_ampDelay = ns;
-    if (m_tx) {
-        // From Thetis PSForm.cs:503-506 udPSPhnum_ValueChanged [v2.10.3.13]:
-        //   double actual_delay = puresignal.SetPSTXDelay(_txachannel,
-        //       (double)udPSPhnum.Value * 1.0e-09);
-        m_tx->setPSTXDelay(static_cast<double>(ns) * 1.0e-9);
-    }
-    emit ampDelayChanged(ns);
+    if (m_settings) m_settings->setRequestedTxDelayNs(ns);
 }
 
-void PureSignal::setTint(double db)
+void PureSignal::setRunCalibrationProcessing(bool run)
 {
-    // Codex Fix F: legacy public API kept for backward compat with PsForm
-    // wiring + tests.  Maps the dB label to the matching combo index and
-    // routes through setTintIndex (where the real (ints, spi) push lives).
-    //
-    // From Thetis PSForm.designer.cs:164-167 [v2.10.3.13] combo entries:
-    //   "0.5" → idx 0 → (16, 256)
-    //   "1.1" → idx 1 → (8, 512)
-    //   "2.5" → idx 2 → (4, 1024)
-    // Out-of-range double falls back to idx 0, which routes to the
-    // default branch behaviour at PSForm.cs:879-884 [v2.10.3.13] (mirrors
-    // case 0 — 16/256, save+restore enabled).
-    int idx = 0;
-    if (db >= 2.5 - 0.05) {
-        idx = 2;
-    } else if (db >= 1.1 - 0.05) {
-        idx = 1;
-    } else {
-        idx = 0;
-    }
-    setTintIndex(idx);
-    // Update the m_tint cache + emit the legacy tintChanged signal even when
-    // the index didn't move (so existing PsForm sync paths see the explicit
-    // double round-trip).
-    if (db != m_tint) {
-        m_tint = db;
-        emit tintChanged(db);
-    }
-}
-
-void PureSignal::setTintIndex(int idx)
-{
-    // From Thetis PSForm.cs:857-885 [v2.10.3.13]
-    // comboPSTint_SelectedIndexChanged — verbatim port:
-    //   case 0:  SetPSIntsAndSpi(16, 256);  Save+Restore enabled = true
-    //   case 1:  SetPSIntsAndSpi(8, 512);   Save+Restore enabled = false
-    //   case 2:  SetPSIntsAndSpi(4, 1024);  Save+Restore enabled = false
-    //   default: SetPSIntsAndSpi(16, 256);  Save+Restore enabled = true
-    //
-    // Save/Restore gating per PSForm.cs:865/871/877/883 [v2.10.3.13]:
-    // only index 0 keeps the persisted-corrections file format compatible.
-    int ints = 16;
-    int spi  = 256;
-    bool srEnabled = true;
-    int storedIdx = 0;
-    switch (idx) {
-    case 0:
-        ints = 16;  spi = 256;  srEnabled = true;  storedIdx = 0;
-        break;
-    case 1:
-        ints = 8;   spi = 512;  srEnabled = false; storedIdx = 1;
-        break;
-    case 2:
-        ints = 4;   spi = 1024; srEnabled = false; storedIdx = 2;
-        break;
-    default:
-        // PSForm.cs:879-884 [v2.10.3.13] default case mirrors case 0 verbatim.
-        ints = 16;  spi = 256;  srEnabled = true;  storedIdx = 0;
-        break;
-    }
-
-    // Forward to TxChannel (calcc engine).  Mirrors PSForm.cs:862/868/874/
-    // 880 [v2.10.3.13]:
-    //   puresignal.SetPSIntsAndSpi(_txachannel, ints, spi);
-    if (m_tx) {
-        m_tx->setPSIntsAndSpi(ints, spi);
-    }
-
-    // Cache the (ints, spi) pair for AmpView buffer sizing readback per
-    // PSForm.cs:863-864 / 869-870 / 875-876 [v2.10.3.13]:
-    //   _ints = ints;  _spi = spi;
-    m_psInts = ints;
-    m_psSpi  = spi;
-
-    // Emit tintIndexChanged on transitions (PsForm syncs its combo).
-    if (storedIdx != m_tintIndex) {
-        m_tintIndex = storedIdx;
-        emit tintIndexChanged(storedIdx);
-    }
-
-    // Emit saveRestoreEnabledChanged on transitions (PsForm gates Save+Restore
-    // buttons per PSForm.cs:865/871/877/883 [v2.10.3.13]).
-    if (srEnabled != m_saveRestoreEnabled) {
-        m_saveRestoreEnabled = srEnabled;
-        emit saveRestoreEnabledChanged(srEnabled);
-    }
+    if (m_settings) m_settings->setRunCalibrationProcessing(run);
 }
 
 void PureSignal::setLoopback(bool on)
@@ -697,12 +926,11 @@ void PureSignal::setShow2ToneMeasurements(bool on)
 
 void PureSignal::setHwPeak(double peak)
 {
-    if (peak == m_hwPeak) { return; }
-    m_hwPeak = peak;
-    if (m_tx) {
-        m_tx->setPSHWPeak(peak);
-    }
-    emit hwPeakChanged(peak);
+    if (!m_settings) return;
+    auto values = m_settings->values();
+    values.hardwarePeakOverride = peak;
+    values.hardwarePeakOverrideEnabled = true;
+    m_settings->apply(values);
 }
 
 // ── Per-board defaults ────────────────────────────────────────────────────
@@ -713,9 +941,8 @@ void PureSignal::applyBoardCapabilities(const BoardCapabilities& caps)
     // Push the per-board default peak through the calcc engine.  The
     // Thetis equivalent is psdefpeak (PSForm.cs:371-381 [v2.10.3.13])
     // chained from setDefaultPeaks; here we apply it directly.
-    m_hwPeak = m_caps.psDefaultPeak;
-    if (m_tx) {
-        m_tx->setPSHWPeak(m_caps.psDefaultPeak);
+    if (m_tx && m_operationalSettingsApplied) {
+        m_tx->setPSHWPeak(hwPeak());
     }
     // Push the per-board feedback rate to the feedback channel.
     //
@@ -739,7 +966,7 @@ void PureSignal::applyBoardCapabilities(const BoardCapabilities& caps)
     const int psFeedbackRateHz = (m_caps.psSampleRate > 0)
                                   ? m_caps.psSampleRate
                                   : kThetisPsRate;
-    if (m_tx) {
+    if (m_tx && m_operationalSettingsApplied) {
         m_tx->setPSFeedbackRate(psFeedbackRateHz);
     }
     if (m_fb && m_caps.psSampleRate > 0) {
@@ -768,42 +995,50 @@ void PureSignal::applyBoardCapabilities(const BoardCapabilities& caps)
         // From Thetis PSForm.cs:505 udPSPhnum_ValueChanged [v2.10.3.13]:
         //   double actual_delay = puresignal.SetPSTXDelay(_txachannel,
         //       (double)udPSPhnum.Value * 1.0e-09);
-        m_tx->setPSTXDelay(static_cast<double>(m_ampDelay) * 1.0e-9);
+        applyTxDelaySeconds(static_cast<double>(ampDelay()) * 1.0e-9);
         // From Thetis PSForm.cs:495 udPSMoxDelay_ValueChanged [v2.10.3.13]:
         //   puresignal.SetPSMoxDelay(_txachannel, (double)udPSMoxDelay.Value);
-        m_tx->setPSMoxDelay(m_moxDelay);
+        m_tx->setPSMoxDelay(moxDelay());
         // From Thetis PSForm.cs:500 udPSCalWait_ValueChanged [v2.10.3.13]:
         //   puresignal.SetPSLoopDelay(_txachannel, (double)udPSCalWait.Value);
-        m_tx->setPSLoopDelay(m_calDelay);
+        m_tx->setPSLoopDelay(calDelay());
     }
 }
 
-// ── AmpView buffer feed (Task 9) ───────────────────────────────────────────
-//
-// From Thetis AmpView.cs:371-392 [v2.10.3.13] — the unsafe { fixed } block
-// inside timer1_Tick that pins seven managed double[] arrays and forwards
-// their addresses into puresignal.GetPSDisp.  NereusSDR doesn't need GC
-// pinning so the wrapper is a simple pass-through to TxChannel::getPSDisp
-// (which holds the WDSP boundary).
-//
-// Inline tag preservation (per CLAUDE.md §"Inline comment preservation"):
-// upstream AmpView.cs:397 carries
-//   //disp_data(); // MW0LGE [2.9.0.8] changed to an add once, update points method.
-// — explanatory tag for a refactor; NereusSDR follows the post-refactor
-// init-once / update-points path by structure (no pre-refactor disp_data
-// path ever existed in this port).
-
-bool PureSignal::fillAmpViewBuffers(double* x,  double* ym, double* yc, double* ys,
-                                    double* cm, double* cc, double* cs)
+std::optional<Ps3Snapshot> PureSignal::ps3DisplaySnapshot(
+    std::uint64_t sessionGeneration,
+    std::uint64_t sequence,
+    std::int64_t capturedAtUnixMilliseconds)
 {
-    if (!m_tx) {
-        return false;
+    if (!m_tx || !m_ampViewSubscribed) {
+        return std::nullopt;
     }
-    if (!x || !ym || !yc || !ys || !cm || !cc || !cs) {
-        return false;
+    if (sessionGeneration != m_sessionGeneration) return std::nullopt;
+    if (m_cachedDisplaySnapshot
+        && capturedAtUnixMilliseconds - m_cachedDisplaySnapshot->capturedAtUnixMilliseconds
+               < kPollIntervalMs) {
+        return m_cachedDisplaySnapshot;
     }
-    m_tx->getPSDisp(x, ym, yc, ys, cm, cc, cs);
-    return true;
+    m_cachedDisplaySnapshot = m_tx->getPs3DisplaySnapshot(
+        sessionGeneration, sequence, capturedAtUnixMilliseconds);
+    return m_cachedDisplaySnapshot;
+}
+
+void PureSignal::setAmpViewSubscribed(bool subscribed)
+{
+    if (m_ampViewSubscribed == subscribed) return;
+    m_ampViewSubscribed = subscribed;
+    if (!subscribed) m_cachedDisplaySnapshot.reset();
+}
+
+void PureSignal::setSessionGeneration(std::uint64_t generation)
+{
+    if (generation == m_sessionGeneration) return;
+    retireSessionOperations();
+    m_sessionGeneration = generation;
+    m_statusSequence = 0;
+    m_cachedDisplaySnapshot.reset();
+    m_ampViewSubscribed = false;
 }
 
 void PureSignal::setTimersEnabled(bool on)
@@ -821,6 +1056,7 @@ void PureSignal::setTimersEnabled(bool on)
 
 void PureSignal::onMoxChanged(bool mox)
 {
+    m_lastMox = mox;
     // From Thetis design — calcc enters its TX-aware state on MOX up and
     // transitions to LSTAYON / LWAIT on MOX down.  SetPSMox is the only
     // MOX-event signal needed.  PSEnabled fan-out (cmaster routing-bit
@@ -828,7 +1064,7 @@ void PureSignal::onMoxChanged(bool mox)
     // [v2.10.3.13]) is handled by the per-board codec layer (Task 5)
     // and the ReceiverManager DDC routing (Task 6) — this coordinator
     // doesn't duplicate that work.
-    if (m_tx) {
+    if (m_tx && (!mox || canActuate())) {
         m_tx->setPSMox(mox);
     }
 
@@ -845,8 +1081,8 @@ void PureSignal::onMoxChanged(bool mox)
     // CalibrationAttemptsChanged gate uses _info[5] vs _oldInfo[5]
     // which is auto-synced every timer1 tick — see setAutoCalEnabled
     // header for the full story).
-    if (mox && m_autoCalEnabled) {
-        m_aaLastSeenCalCount = m_calCount.load();
+    if (mox && isAutoCalEnabled()) {
+        m_aaLastSeenAttemptCount = m_calAttempts.load();
     }
 }
 
@@ -873,10 +1109,13 @@ void PureSignal::pollTimerTick()
     // processNewInfo() which holds change detection, signal emission,
     // and the cmd-state machine.  Tests bypass the WDSP read by calling
     // processNewInfo() directly with a synthetic info[] buffer.
-    if (!m_enabled) {
+    if (!m_tx) {
         return;
     }
-    if (!m_tx) {
+    pollFileOperation();
+    if (!m_enabled && m_cmdState == CommandState::Off && !m_OFF) {
+        updateStatusSnapshot(++m_statusSequence,
+                             QDateTime::currentMSecsSinceEpoch());
         return;
     }
     // Step 1: snapshot old info, read new info.  From Thetis PSForm.cs:
@@ -889,6 +1128,67 @@ void PureSignal::pollTimerTick()
     int newInfo[16] = {};
     m_tx->getPSInfo(newInfo);
     processNewInfo(newInfo);
+    updateStatusSnapshot(++m_statusSequence,
+                         QDateTime::currentMSecsSinceEpoch());
+}
+
+Ps3StatusSnapshot PureSignal::ps3StatusSnapshot() const
+{
+    return m_statusSnapshot;
+}
+
+void PureSignal::updateStatusSnapshot(std::uint64_t sequence,
+                                      std::int64_t capturedAtUnixMilliseconds)
+{
+    Ps3StatusSnapshot next;
+    next.channelId = m_tx ? m_tx->channelId() : -1;
+    next.sessionGeneration = m_sessionGeneration;
+    next.sequence = sequence;
+    next.capturedAtUnixMilliseconds = capturedAtUnixMilliseconds;
+    std::copy(std::begin(m_info), std::end(m_info), next.raw.begin());
+    next.feedbackLevel = m_info[4];
+    next.successfulCalibrations = m_info[5];
+    next.solutionStatusBits = m_info[6];
+    next.attemptedCalibrations = m_info[7];
+    next.fileStatusBits = m_info[12];
+    next.dogCount = m_info[13];
+    next.correctionsApplied = m_info[14] == 1;
+    next.engineState = m_info[15];
+    next.solutionComparisonFailed = (m_info[6] & 0x01) != 0;
+    next.overdriveOrBucketFillFailure = (m_info[6] & 0x02) != 0;
+    next.saveFailed = (m_info[12] & 0x01) != 0;
+    next.restoreFailed = (m_info[12] & 0x02) != 0;
+    next.requestedTxDelayNs = m_settings
+        ? m_settings->requestedTxDelayNs() : 0.0;
+    next.appliedTxDelayNs = m_appliedTxDelayNs;
+    next.hardwarePeak = m_tx ? m_tx->getPSHWPeak() : 0.0;
+    next.maxTx = m_tx ? m_tx->getPSMaxTX() : 0.0;
+    next.feedbackRateHz = m_caps.psSampleRate > 0 ? m_caps.psSampleRate : 192000;
+    next.psEnabled = isPsEnabled();
+    next.mox = m_mox ? m_mox->isMox() : m_lastMox;
+    if (m_tx) {
+        const auto runCal = m_tx->psRunCal();
+        next.runCalibrationProcessing = runCal.value_or(false);
+        const auto correction = m_tx->psCorrectionState();
+        if (correction) {
+            next.correctionRun = correction->run;
+            next.correctionBusy = correction->busy;
+        }
+        const auto save = m_tx->psFileOperationStatus(Ps3FileOperationKind::Save);
+        if (save) {
+            next.saveGeneration = save->generation;
+            next.savePending = save->pending;
+            next.saveResult = static_cast<int>(save->result);
+        }
+        const auto restore = m_tx->psFileOperationStatus(Ps3FileOperationKind::Restore);
+        if (restore) {
+            next.restoreGeneration = restore->generation;
+            next.restorePending = restore->pending;
+            next.restoreResult = static_cast<int>(restore->result);
+        }
+    }
+    m_statusSnapshot = next;
+    emit ps3StatusChanged();
 }
 
 void PureSignal::processNewInfo(const int newInfo[16])
@@ -911,10 +1211,16 @@ void PureSignal::processNewInfo(const int newInfo[16])
     // previous in m_oldInfo, so the comparison is the same.
     const bool changed = hasInfoChanged(newInfo);
 
-    // BENCH DIAGNOSTIC (Phase 3M-4 Task 17): log info[] every ~10 ticks
-    // (~1 sec) so the bench can see whether calcc is progressing.
-    static int diagCounter = 0;
-    if (++diagCounter % 10 == 0) {
+    // BENCH DIAGNOSTIC (Phase 3M-4 Task 17): sample info[] every ~10 ticks
+    // (~1 sec) so the bench can see whether calcc is progressing. The line
+    // is written only when a value it reports differs from the last line
+    // written, so an idle radio no longer puts the same line in the Core's
+    // journal once a second. Logged on change only, the same shape as the
+    // txLpf lines in P1RadioConnection::setTxFrequency and
+    // P2RadioConnection::setTxFrequency: it marks the event rather than the
+    // poll cadence. A calibration in progress still changes these values
+    // every sample, so the bench sees it tick as before.
+    if (++m_diagTick % 10 == 0) {
         // hwPeak + maxTX added 2026-08-01 (J.J. Boyd, KG4VCF). PureSignal
         // parks in LCOLLECT on a live HL2 with both PS streams measurably
         // hot, so the question is no longer whether samples arrive but
@@ -934,17 +1240,23 @@ void PureSignal::processNewInfo(const int newInfo[16])
         // as the number we believe we pushed.
         const double hwPeak = m_tx ? m_tx->getPSHWPeak() : -1.0;
         const double maxTx  = m_tx ? m_tx->getPSMaxTX()  : -1.0;
-        qCInfo(lcDsp).nospace()
-            << "PureSignal info[]: state=" << newInfo[15]
-            << " corrApplied=" << newInfo[14]
-            << " calCount=" << newInfo[5]
-            << " feedbackLevel=" << newInfo[4]
-            << " dogCount=" << newInfo[13]
-            << " hwPeak=" << hwPeak
-            << " maxTX=" << maxTx
-            << " binReach=" << (hwPeak > 0.0 ? maxTx / hwPeak : -1.0)
-            << " (mox=" << (m_mox && m_mox->isMox())
-            << " autoCal=" << m_autoCalEnabled << ")";
+        const DiagLine line{newInfo[15], newInfo[14], newInfo[5], newInfo[4],
+                            newInfo[13], hwPeak, maxTx,
+                            m_mox && m_mox->isMox(), isAutoCalEnabled()};
+        if (m_lastDiagLine != line) {
+            m_lastDiagLine = line;
+            qCInfo(lcDsp).nospace()
+                << "PureSignal info[]: state=" << newInfo[15]
+                << " corrApplied=" << newInfo[14]
+                << " calCount=" << newInfo[5]
+                << " feedbackLevel=" << newInfo[4]
+                << " dogCount=" << newInfo[13]
+                << " hwPeak=" << hwPeak
+                << " maxTX=" << maxTx
+                << " binReach=" << (hwPeak > 0.0 ? maxTx / hwPeak : -1.0)
+                << " (mox=" << line.mox
+                << " autoCal=" << line.autoCal << ")";
+        }
     }
 
     // From Thetis PSForm.cs:1097-1098 CalibrationAttemptsChanged
@@ -953,7 +1265,7 @@ void PureSignal::processNewInfo(const int newInfo[16])
     //     { get { return _info[5] != _oldInfo[5]; } }
     // Compute BEFORE the trailing memcpy at the end of this function
     // overwrites m_oldInfo with newInfo for the next tick.
-    const bool calAttemptsChanged = (newInfo[5] != m_oldInfo[5]);
+    const bool calAttemptsChanged = (newInfo[7] != m_oldInfo[7]);
 
     if (changed) {
         // Mirror the field assignments from PSForm.cs:561-573 [v2.10.3.13]:
@@ -985,6 +1297,10 @@ void PureSignal::processNewInfo(const int newInfo[16])
         }
         if (newCal != m_calCount.exchange(newCal)) {
             emit calibrationCountChanged(newCal);
+        }
+        const int newAttempts = newInfo[7];
+        if (newAttempts != m_calAttempts.exchange(newAttempts)) {
+            emit calibrationAttemptsChanged(newAttempts);
         }
     }
 
@@ -1025,7 +1341,7 @@ void PureSignal::processNewInfo(const int newInfo[16])
     // PSForm.cs:1113-1115 [v2.10.3.13]:
     //   public static bool IsFeedbackLevelOK
     //     { get { return FeedbackLevel <= 256; } }
-    if (m_autoCalEnabled && changed) {
+    if (isAutoCalEnabled() && changed) {
         const int level = newInfo[4];
         const bool feedbackLevelOk = (level <= 256);
         emit psInfoChanged(level, feedbackLevelOk, newCorrApplied,
@@ -1080,6 +1396,22 @@ void PureSignal::processNewInfo(const int newInfo[16])
         return;
     }
 
+    if (!canActuate()
+        && m_cmdState != CommandState::Off
+        && m_cmdState != CommandState::TurnOff) {
+        m_autoON = false;
+        m_singleCalON = false;
+        m_restoreON = false;
+        m_OFF = true;
+        requestNativeCorrectionStop();
+        m_cmdState = CommandState::TurnOff;
+    }
+    if (m_OFF
+        && m_cmdState != CommandState::Off
+        && m_cmdState != CommandState::TurnOff) {
+        m_cmdState = CommandState::TurnOff;
+    }
+
     switch (m_cmdState) {
     case CommandState::Off:
         // From Thetis PSForm.cs:634-650 [v2.10.3.13] case eCMDState.OFF:
@@ -1096,7 +1428,12 @@ void PureSignal::processNewInfo(const int newInfo[16])
         // → calcc.c:891-898 SetPSRunCal sets runcal=0, gating pscc().
         m_tx->setPSControl(/*reset=*/1, /*mancal=*/0,
                            /*automode=*/0, /*turnon=*/0);
-        m_tx->setPSRunCal(0);
+        if (m_OFF) {
+            m_tx->setPSRunCal(1);
+            m_cmdState = CommandState::TurnOff;
+            break;
+        }
+        m_tx->setPSRunCal(runCalibrationProcessing() && canActuate() ? 1 : 0);
         // Codex Fix C — PSForm.cs:634 [v2.10.3.13]:
         //   if (PSEnabled) PSEnabled = false;
         // Fans out the radio/DDC OFF state to subscribers of psEnabledChanged.
@@ -1120,6 +1457,12 @@ void PureSignal::processNewInfo(const int newInfo[16])
         //   console.radio.GetDSPTX(0).PSRunCal = true;
         // which sets calcc.runcal=1 — without it, pscc() returns
         // immediately and info[16] never updates (cor.cnt etc. stay 0).
+        if (!runCalibrationProcessing()) {
+            m_autoON = false;
+            setPsEnabledWithFanOut(false);
+            m_cmdState = CommandState::StayOn;
+            break;
+        }
         m_tx->setPSControl(/*reset=*/1, /*mancal=*/0,
                            /*automode=*/1, /*turnon=*/0);
         m_tx->setPSRunCal(1);
@@ -1153,6 +1496,13 @@ void PureSignal::processNewInfo(const int newInfo[16])
         //   if (!PSEnabled) PSEnabled = true;
         //   _cmdstate = eCMDState.SingleCalibrate;
         // PSEnabled=true → calcc.runcal=1 (see Off-case comment above).
+        if (!runCalibrationProcessing()) {
+            m_singleCalON = false;
+            m_performingSingleCal = false;
+            setPsEnabledWithFanOut(false);
+            m_cmdState = CommandState::StayOn;
+            break;
+        }
         m_autoON = false;
         // Codex Fix E — PSForm.cs:660 [v2.10.3.13]:
         //   _performing_single_cal = true;
@@ -1274,20 +1624,13 @@ void PureSignal::processNewInfo(const int newInfo[16])
         //   else if (!puresignal.CorrectionsBeingApplied
         //            && puresignal.State == puresignal.EngineState.LRESET)
         //       _cmdstate = eCMDState.OFF;
-        if (!m_autoCalEnabled) {
+        if (!isAutoCalEnabled()) {
             m_autoON = false;  // MW0LGE_21k9rc4 — only want to turn this off if autocal is off  [original inline comment from PSForm.cs:703]
         }
-        m_tx->setPSControl(/*reset=*/1, /*mancal=*/0,
-                           /*automode=*/0, /*turnon=*/0);
-        m_tx->setPSRunCal(1);   // PSForm.cs:710 [v2.10.3.13] PSEnabled=true
-        // Codex Fix C — PSForm.cs:705 [v2.10.3.13]:
-        //   if (!PSEnabled) PSEnabled = true;
-        // TurnOFF re-enables PSEnabled — counterintuitive at first glance,
-        // but this is the engine's reset-to-LRESET sequence: PSEnabled goes
-        // true here so calcc.runcal=1 stays live while the engine drains.
-        // The next visit to Off (when state==LRESET && !corrApplied) issues
-        // PSEnabled=false to fully tear down.
-        setPsEnabledWithFanOut(true);
+        // The stop was requested exactly once by the public Off/retirement
+        // path (or the permission-loss guard) before entering this state.
+        // Reissuing active END on every poll could restart its ramp.
+        setPsEnabledWithFanOut(false);
         m_OFF = false;
         if (m_restoreON) {
             m_cmdState = CommandState::InitiateRestoredCorrection;
@@ -1295,9 +1638,25 @@ void PureSignal::processNewInfo(const int newInfo[16])
             m_cmdState = CommandState::TurnOnAutoCalibrate;
         } else if (m_singleCalON) {
             m_cmdState = CommandState::TurnOnSingleCalibrate;
-        } else if (!newCorrApplied
-                   && engineStateRaw == static_cast<int>(EngineState::LRESET)) {
-            m_cmdState = CommandState::Off;
+        } else {
+            const auto correction = m_tx->psCorrectionState();
+#ifdef NEREUS_BUILD_TESTS
+            const auto acknowledgedCorrection = m_correctionStateForTest
+                ? m_correctionStateForTest : correction;
+#else
+            const auto& acknowledgedCorrection = correction;
+#endif
+            const bool correctionStopped = acknowledgedCorrection
+                && !acknowledgedCorrection->run && !acknowledgedCorrection->busy;
+            if (!newCorrApplied
+                && engineStateRaw == static_cast<int>(EngineState::LRESET)
+                && correctionStopped) {
+                m_tx->setPSRunCal(
+                    runCalibrationProcessing() && canActuate() ? 1 : 0);
+                setPsEnabledWithFanOut(false);
+                m_cmdState = CommandState::Off;
+                if (!m_enabled) m_pollTimer.stop();
+            }
         }
         break;
 
@@ -1312,14 +1671,13 @@ void PureSignal::processNewInfo(const int newInfo[16])
         m_autoON = false;
         m_tx->setPSControl(/*reset=*/0, /*mancal=*/0,
                            /*automode=*/0, /*turnon=*/1);
-        m_tx->setPSRunCal(1);
+        m_tx->setPSRunCal(runCalibrationProcessing() ? 1 : 0);
         // Codex Fix C — PSForm.cs:720 [v2.10.3.13]:
         //   if (!PSEnabled) PSEnabled = true;
-        // Restored-correction path also needs the radio/DDC fan-out — pre-fix
-        // this branch only set calcc flags via setPSRunCal but never fired
-        // UpdateDDCs / setPuresignalRun on the radio side because the wiring
-        // was bound only to autoCalEnabledChanged.
-        setPsEnabledWithFanOut(true);
+        // Native restore has already installed and started IQC. Retained
+        // correction application does not need feedback collection, so the
+        // persisted RunCal pause remains authoritative.
+        setPsEnabledWithFanOut(false);
         m_restoreON = false;
         if (engineStateRaw == static_cast<int>(EngineState::LSTAYON)) {
             m_cmdState = CommandState::StayOn;
@@ -1387,7 +1745,7 @@ void PureSignal::autoAttentionTick()
         // Thetis PSForm.cs:735 [v2.10.3.13] (`if (_autoattenuate && ...)`).
         // The earlier port omitted this check — auto-att fired even when
         // the user unchecked the AutoAttenuate box in PsForm Advanced.
-        if (!m_autoAttenuate) {
+        if (!autoAttenuate()) {
             return;
         }
         // Phase 3M-4 Task 17 fix: gate on CalibrationAttemptsChanged per
@@ -1400,11 +1758,11 @@ void PureSignal::autoAttentionTick()
         // evidence: ATT toggled 0↔31 every ~0.3-1 s at calCount=180
         // with fbLevel stuck at 20 — exactly the over-correction
         // pattern this guard prevents.
-        const int curCalCount = m_calCount.load();
-        if (curCalCount == m_aaLastSeenCalCount) {
+        const int curAttemptCount = m_calAttempts.load();
+        if (curAttemptCount == m_aaLastSeenAttemptCount) {
             return;
         }
-        m_aaLastSeenCalCount = curCalCount;
+        m_aaLastSeenAttemptCount = curAttemptCount;
 
         const int currentAttOnTx = m_stepAtt->attOnTxValue();
         const int fbLevel = m_feedbackLevel.load();

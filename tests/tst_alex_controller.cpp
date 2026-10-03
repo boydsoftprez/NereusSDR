@@ -2,6 +2,7 @@
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 #include "core/accessories/AlexController.h"
+#include "core/accessories/AlexAntennaFacade.h"
 #include "models/Band.h"
 #include "core/AppSettings.h"
 
@@ -122,13 +123,13 @@ private slots:
         a.setRxAnt(Band::Band40m, 2);
         QSignalSpy spy(&a, &AlexController::antennaChanged);
         a.setAntennasTo1(true);
-        // setAntennasTo1 unconditionally emits for each band in the
-        // 14-band ham range (Band160m..XVTR) regardless of prior value,
+        // setAntennasTo1 unconditionally emits for each band with antennas
+        // of its own (Band160m..XVTR and 2 m) regardless of prior value,
         // matching the "applies to all in-memory values" documented
         // behavior in AlexController.cpp.  SWL bands (Band::SwlFirst..
         // SwlLast, Phase 3L Band enum extension) inherit ham antenna
         // routing — they are NOT iterated by setAntennasTo1.
-        QCOMPARE(spy.count(), 14);
+        QCOMPARE(spy.count(), 15);
     }
 
     // Phase 3P-I-a bench fix — Block-TX toggle retroactively clamps
@@ -296,6 +297,188 @@ private slots:
         QCOMPARE(a2.txAnt(Band::Band20m), 3);
         QCOMPARE(a2.rxOnlyAnt(Band::Band40m), 3);
         QVERIFY(a2.blockTxAnt2());
+    }
+    // ── R-R3-46: the mirrored `alexAntennas` object ─────────────────────────
+
+    // Bound (the Core, a local window): receive edits go through the
+    // controller, per band, and the object shows what the controller keeps.
+    void facade_bound_applies_receive_edits_through_the_controller() {
+        AlexController a;
+        AlexAntennaFacade f;
+        f.bindController(&a);
+        QVERIFY(f.isBound());
+        // 15 entries: 160m .. XVTR, then 2 m.
+        QCOMPARE(f.rxAntennas(), QStringLiteral("1,1,1,1,1,1,1,1,1,1,1,1,1,1,1"));
+        QCOMPARE(f.rxOnlyAntennas(), QStringLiteral("0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"));
+
+        QSignalSpy changed(&a, &AlexController::antennaChanged);
+        f.setRxAnt(Band::Band40m, 2);
+        QCOMPARE(a.rxAnt(Band::Band40m), 2);
+        QCOMPARE(a.rxAnt(Band::Band20m), 1);
+        QCOMPARE(changed.count(), 1);  // only the band that changed
+        QCOMPARE(f.rxAnt(Band::Band40m), 2);
+        QVERIFY(f.settleReason("rxAntennas").isEmpty());
+
+        f.setRxOnlyAnt(Band::Band20m, 3);
+        QCOMPARE(a.rxOnlyAnt(Band::Band20m), 3);
+        QCOMPARE(f.rxOnlyAnt(Band::Band20m), 3);
+
+        f.setUseTxAntennaForRx(true);
+        QVERIFY(a.useTxAntForRx());
+        QVERIFY(f.useTxAntennaForRx());
+    }
+
+    // A value the controller cannot take settles with a plain reason.
+    void facade_bound_settles_out_of_range_with_a_reason() {
+        AlexController a;
+        AlexAntennaFacade f;
+        f.bindController(&a);
+        f.setRxAntennas(QStringLiteral("5,1,1,1,1,1,1,1,1,1,1,1,1,1"));
+        QCOMPARE(a.rxAnt(Band::Band160m), 3);
+        QCOMPARE(f.settleReason("rxAntennas"), QStringLiteral("Antennas are numbered 1 to 3."));
+
+        f.setRxAntennas(QStringLiteral("2,2"));
+        QCOMPARE(a.rxAnt(Band::Band160m), 3);  // a short list changes nothing
+        QCOMPARE(f.settleReason("rxAntennas"),
+                 QStringLiteral("The Core keeps one antenna for each of its bands."));
+
+        f.setRxOnlyAntennas(QStringLiteral("-1,0,0,0,0,0,0,0,0,0,0,0,0,0"));
+        QCOMPARE(a.rxOnlyAnt(Band::Band160m), 0);
+        QCOMPARE(f.settleReason("rxOnlyAntennas"),
+                 QStringLiteral("The receive-only input is none or 1 to 3."));
+    }
+
+    // The transmit settings are reported as the controller holds them.
+    void facade_bound_reports_the_transmit_settings() {
+        AlexController a;
+        AlexAntennaFacade f;
+        f.bindController(&a);
+        QSignalSpy tx(&f, &AlexAntennaFacade::txAntennasChanged);
+        a.setTxAnt(Band::Band20m, 3);
+        QCOMPARE(tx.count(), 1);
+        QCOMPARE(f.txAnt(Band::Band20m), 3);
+        a.setBlockTxAnt2(true);
+        QVERIFY(f.blockTxAnt2());
+        a.setExt1OutOnTx(true);
+        QVERIFY(f.ext1OutOnTx());
+        a.setRxOutOverride(true);
+        QVERIFY(f.rxOutOverride());
+    }
+
+    // Unbound (a remote window): the gate may refuse an edit, with its
+    // reason, and nothing changes; the Core's transmit values arrive as
+    // reported properties, and only those.
+    void facade_unbound_follows_the_gate_and_the_cores_values() {
+        AlexAntennaFacade f;
+        QVERIFY(!f.isBound());
+        bool allow = false;
+        f.setEditGate([&allow](QString* reason) {
+            if (!allow && reason) {
+                *reason = QStringLiteral("Connect to the Core to change the radio's hardware settings.");
+            }
+            return allow;
+        });
+        QSignalSpy refused(&f, &AlexAntennaFacade::editRejected);
+        QSignalSpy rx(&f, &AlexAntennaFacade::rxAntennasChanged);
+        f.setRxAnt(Band::Band40m, 2);
+        QCOMPARE(refused.count(), 1);
+        QCOMPARE(rx.count(), 0);
+        QCOMPARE(f.rxAnt(Band::Band40m), 1);
+
+        allow = true;
+        f.setRxAnt(Band::Band40m, 2);
+        QCOMPARE(rx.count(), 1);
+        QCOMPARE(f.rxAnt(Band::Band40m), 2);
+
+        QVERIFY(f.applyRemoteProperty("txAntennas",
+                                      QStringLiteral("2,2,2,2,2,2,2,2,2,2,2,2,2,3")));
+        QCOMPARE(f.txAnt(Band::XVTR), 3);
+        // A Core that knows 2 m sends 15 entries, 2 m's last; a 14-entry
+        // list (above, a Core built before 2 m) keeps 2 m's value.
+        QCOMPARE(f.txAnt(Band::Band2m), 1);
+        QVERIFY(f.applyRemoteProperty("txAntennas",
+                                      QStringLiteral("2,2,2,2,2,2,2,2,2,2,2,2,2,3,3")));
+        QCOMPARE(f.txAnt(Band::Band2m), 3);
+        QVERIFY(f.applyRemoteProperty("txAntennas",
+                                      QStringLiteral("1,1,1,1,1,1,1,1,1,1,1,1,1,1")));
+        QCOMPARE(f.txAnt(Band::Band2m), 3);
+        QVERIFY(f.applyRemoteProperty("blockTxAnt3", true));
+        QVERIFY(f.blockTxAnt3());
+        QVERIFY(!f.applyRemoteProperty("rxAntennas", QStringLiteral("3,3")));
+
+        AlexController a;
+        f.bindController(&a);
+        QVERIFY(!f.applyRemoteProperty("txAntennas", QStringLiteral("1,1")));
+    }
+
+    // R-R3-46 / R-R3-21 (radioHardwareVersion 4): the Core applies a remote
+    // window's filter policy through the controller's setBpfMode, the call
+    // the local filter policy dialog makes. A slice on 40 m sits on ADC0, so
+    // the forced filter is that band's.
+    void facade_bound_applies_the_filter_policy_as_the_local_dialog_does() {
+        AlexController core;
+        core.notifySlicesOnAdc(0, {Band::Band40m, Band::Count, Band::Count, Band::Count,
+                                   Band::Count});
+        QCOMPARE(core.adcState(0).effective, AlexController::BpfEffective::Filtered);
+        QCOMPARE(core.adcState(0).reasonText, QStringLiteral("40m"));
+        AlexAntennaFacade f;
+        f.bindController(&core);
+        QSignalSpy applied(&core, &AlexController::bpfModeChanged);
+
+        QCOMPARE(f.setBpfModeForChain(0, int(AlexController::BpfMode::ForceBand)), QString());
+        QCOMPARE(core.bpfMode(0), AlexController::BpfMode::ForceBand);
+        QCOMPARE(core.adcState(0).effective, AlexController::BpfEffective::Filtered);
+        QCOMPARE(core.adcState(0).currentBpfBand, Band::Band40m);
+        QCOMPARE(core.adcState(0).reasonText, QStringLiteral("40m (forced)"));
+
+        QCOMPARE(f.setBpfModeForChain(0, int(AlexController::BpfMode::ForceBypass)), QString());
+        QCOMPARE(core.bpfMode(0), AlexController::BpfMode::ForceBypass);
+        QCOMPARE(core.adcState(0).effective, AlexController::BpfEffective::Bypass);
+        QCOMPARE(core.adcState(0).reasonText, QStringLiteral("BYPASS (operator override)"));
+
+        QCOMPARE(f.setBpfModeForChain(0, int(AlexController::BpfMode::Auto)), QString());
+        QCOMPARE(core.bpfMode(0), AlexController::BpfMode::Auto);
+        QCOMPARE(core.adcState(0).effective, AlexController::BpfEffective::Filtered);
+        QCOMPARE(core.adcState(0).reasonText, QStringLiteral("40m"));
+        QCOMPARE(applied.count(), 3);
+        QCOMPARE(applied.last().at(0).toInt(), 0);
+
+        // The policy it already has: taken, nothing to save.
+        QCOMPARE(f.setBpfModeForChain(0, int(AlexController::BpfMode::Auto)), QString());
+        QCOMPARE(applied.count(), 3);
+
+        // The second chain on its own.
+        QCOMPARE(f.setBpfModeForChain(1, int(AlexController::BpfMode::ForceBypass)), QString());
+        QCOMPARE(core.bpfMode(1), AlexController::BpfMode::ForceBypass);
+        QCOMPARE(core.bpfMode(0), AlexController::BpfMode::Auto);
+        QCOMPARE(applied.last().at(0).toInt(), 1);
+
+        // A wideband chain stays bypassed, but its policy still changes and
+        // is still announced (so the Core saves it).
+        core.setWidebandActive(1, true);
+        const int before = applied.count();
+        QCOMPARE(f.setBpfModeForChain(1, int(AlexController::BpfMode::ForceBand)), QString());
+        QCOMPARE(core.bpfMode(1), AlexController::BpfMode::ForceBand);
+        QCOMPARE(core.adcState(1).effective, AlexController::BpfEffective::WidebandLocked);
+        QCOMPARE(applied.count(), before + 1);
+    }
+
+    void facade_filter_policy_refuses_what_the_controller_cannot_take() {
+        AlexAntennaFacade unbound;
+        QVERIFY(!unbound.setBpfModeForChain(0, 1).isEmpty());
+
+        AlexController core;
+        AlexAntennaFacade f;
+        f.bindController(&core);
+        QSignalSpy applied(&core, &AlexController::bpfModeChanged);
+        for (const auto& [chain, mode] : {std::pair{2, 1}, std::pair{-1, 1},
+                                           std::pair{0, 3}, std::pair{0, -1}}) {
+            const QString reason = f.setBpfModeForChain(chain, mode);
+            QVERIFY2(!reason.isEmpty(), qPrintable(QStringLiteral("%1/%2").arg(chain).arg(mode)));
+        }
+        QCOMPARE(core.bpfMode(0), AlexController::BpfMode::Auto);
+        QCOMPARE(core.bpfMode(1), AlexController::BpfMode::Auto);
+        QCOMPARE(applied.count(), 0);
     }
 };
 

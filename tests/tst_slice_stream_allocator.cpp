@@ -6,6 +6,12 @@
 // behaviour is a documented divergence (design doc §3).
 //
 // Phase 3F Sub-Epic I Task 2.
+//
+// Modification history (NereusSDR):
+//   2026-09-25: iPhone app plan Task 74 (R-IOS-30): a copy of the policy
+//               plans a pan move without touching the live one. J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Anthropic
+//               Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
 #include "core/SliceStreamAllocator.h"
@@ -86,7 +92,10 @@ private slots:
         const auto r = alloc.placeSlice(14200000.0, /*preferOwnStream=*/true);
 
         QCOMPARE(r.outcome, SliceStreamAllocator::Outcome::Rejected);
-        QVERIFY(!r.reason.isEmpty());
+        QCOMPARE(r.reason,
+                 QStringLiteral("All 2 of the radio's receivers are in use, so a new "
+                                "panadapter cannot have its own. Close a panadapter, or "
+                                "add this receiver to an existing panadapter instead."));
     }
 
     void slice_outside_every_window_claims_a_free_stream()
@@ -139,7 +148,31 @@ private slots:
         const auto r = alloc.placeSlice(7150000.0);
 
         QCOMPARE(r.outcome, SliceStreamAllocator::Outcome::Rejected);
-        QVERIFY(!r.reason.isEmpty());
+        // Plain English (R-R3-34); U+00A0 keeps "7.1500" and "MHz" together.
+        QCOMPARE(r.reason,
+                 QStringLiteral("The radio's only receiver is in use and it does not "
+                                "cover 7.1500\u00A0MHz. Retune or close another "
+                                "receiver, or choose a higher sample rate so each one "
+                                "covers more."));
+        QVERIFY(!r.reason.contains(QStringLiteral("DDC")));
+    }
+
+    // R-R3-34: joining a panadapter's receiver that does not cover the
+    // frequency is refused in plain words; U+00A0 keeps "7.1500" and "MHz"
+    // together.
+    void joining_a_receiver_that_does_not_cover_the_frequency_is_refused_plainly()
+    {
+        SliceStreamAllocator alloc;
+        alloc.configure(5, 5);
+        alloc.activateStream(0, 14200000.0, 192000);
+
+        const auto r = alloc.joinStream(0, 7150000.0);
+
+        QCOMPARE(r.outcome, SliceStreamAllocator::Outcome::Rejected);
+        QCOMPARE(r.reason,
+                 QStringLiteral("The radio receiver this panadapter uses does not "
+                                "cover 7.1500\u00A0MHz. Retune into its range, or give "
+                                "this receiver a panadapter of its own."));
     }
 
     void retune_inside_the_window_only_moves_the_shift()
@@ -251,6 +284,34 @@ private slots:
 
         QCOMPARE(r.outcome, SliceStreamAllocator::Outcome::NewStream);
         QCOMPARE(r.streamIndex, 1);
+    }
+
+    // iPhone app Task 74 (the several-devices design, rulings 6.4 and 6.5):
+    // the Core asks before a pan move by planning it on a copy of the
+    // policy (ReceiverPlanner::planWindowMove), so what the operator is
+    // shown is exactly what the move then does. The copy must never touch
+    // the live policy, and its answers are the move's: a slice the moved
+    // window leaves goes to a free receiver (moves) or, with none, is
+    // refused (closes).
+    void a_copy_plans_a_window_move_without_touching_the_live_policy()
+    {
+        SliceStreamAllocator live;
+        live.configure(2, 5);
+        live.activateStream(0, 7074000.0, 192000);
+
+        SliceStreamAllocator copy = live;
+        copy.activateStream(0, 7000000.0, 192000);
+        const auto moved = copy.placeSlice(7150000.0);
+        QCOMPARE(moved.outcome, SliceStreamAllocator::Outcome::NewStream);
+        QCOMPARE(moved.streamIndex, 1);
+        copy.activateStream(moved.streamIndex, moved.newStreamCentreHz, 192000);
+        // A second slice the move leaves finds no receiver: it would close.
+        QCOMPARE(copy.placeSlice(7400000.0).outcome, SliceStreamAllocator::Outcome::Rejected);
+
+        QCOMPARE(live.streamCentreHz(0), 7074000.0);
+        QVERIFY(!live.isStreamActive(1));
+        QCOMPARE(live.placeSlice(7150000.0).outcome,
+                 SliceStreamAllocator::Outcome::JoinedExisting);
     }
 };
 

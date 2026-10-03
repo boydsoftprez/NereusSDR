@@ -1,0 +1,7 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "mailbox.close"
+  },
+  "decodes": true
+}

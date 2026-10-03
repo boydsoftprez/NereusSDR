@@ -89,6 +89,15 @@
 //                                    without an actual WebSocket round-
 //                                    trip. AI tooling: Anthropic Claude
 //                                    Code.
+//   2026-09-27  J.J. Boyd / KG4VCF  iPhone plan Task 22 / parity Task 20
+//                                    (R-IOS-26): isHiddenFromView() and
+//                                    connectionLost(), so the Core's spot
+//                                    source host can say the connection
+//                                    dropped and is being retried, and
+//                                    RadioModel sends hide_self / show_self
+//                                    only on a change. NereusSDR additions;
+//                                    no upstream behaviour changes.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #pragma once
 
@@ -172,6 +181,8 @@ public:
     // after a reconnect, matching freedv-gui FreeDVReporter.cpp:424-433
     // [@77e793a].
     void setHiddenFromView(bool hidden);
+    /// The hidden flag as last set (kept across reconnects).
+    bool isHiddenFromView() const { return m_hiddenFromView; }
 
     // From freedv-gui src/reporting/FreeDVReporter.cpp:addReceiveRecord
     // [@77e793a]: emit a Socket.IO "rx_report" event so other operators
@@ -211,6 +222,9 @@ signals:
     void connected();
     void disconnected();
     void connectionError(const QString& error);
+    /// iPhone plan Task 22: the connection dropped without a stop; the
+    /// client tries again in `retryInMs`.
+    void connectionLost(int retryInMs);
 
     // Station model signals (drive FreeDVStationModel)
     void stationAdded(const QString& sid, const NereusSDR::FreeDVStation& info);

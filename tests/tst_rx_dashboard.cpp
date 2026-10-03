@@ -6,6 +6,7 @@
 
 #include <QtTest/QtTest>
 #include <QSignalSpy>
+#include <QLabel>
 
 #include "gui/widgets/RxDashboard.h"
 #include "gui/widgets/StatusBadge.h"
@@ -110,6 +111,59 @@ private slots:
         // The old slice must no longer drive the badges.
         a.setDspMode(NereusSDR::DSPMode::CWU);
         QVERIFY(!d.modeText().contains(QStringLiteral("CW")));
+    }
+
+    void losingSliceClearsReadingsAndClickTargets() {
+        RxDashboard d;
+        SliceModel b(1);
+        b.setDspMode(DSPMode::CWU);
+        d.bindSlice(&b);
+        d.setSliceLetter(b.sliceLetter());
+        QCOMPARE(d.sliceLetter(), QLatin1Char('B'));
+        QCOMPARE(d.modeText(), QStringLiteral("CWU"));
+        QSignalSpy availability(&d, &RxDashboard::badgeAvailabilityChanged);
+        QSignalSpy clicks(&d, &RxDashboard::badgeClicked);
+
+        d.bindSlice(nullptr);
+        QCOMPARE(d.slice(), nullptr);
+        QVERIFY(d.sliceLetter().isNull());
+        QCOMPARE(d.modeText(), QStringLiteral("–"));
+        QVERIFY(d.findChild<QLabel*>(QStringLiteral("rxSliceTag"))->isHidden());
+        for (int rung = 5; rung <= 9; ++rung) {
+            QVERIFY(!d.badgeForRung(rung)->isClickable());
+            bool unavailable = false;
+            for (const QList<QVariant>& call : availability) {
+                if (call.at(0).toInt() == rung && !call.at(1).toBool()) {
+                    unavailable = true;
+                }
+            }
+            QVERIFY(unavailable);
+        }
+        QVERIFY(!d.badgeForRung(9)->isEnabled());
+        emit d.badgeForRung(9)->clicked();
+        QCOMPARE(clicks.size(), 0);
+
+        SliceModel c(2);
+        c.setDspMode(DSPMode::AM);
+        d.bindSlice(&c);
+        d.setSliceLetter(c.sliceLetter());
+        QCOMPARE(d.slice(), &c);
+        QCOMPARE(d.sliceLetter(), QLatin1Char('C'));
+        QCOMPARE(d.modeText(), QStringLiteral("AM"));
+        QVERIFY(!d.findChild<QLabel*>(QStringLiteral("rxSliceTag"))->isHidden());
+        QVERIFY(d.badgeForRung(9)->isClickable());
+    }
+
+    void destroyingBoundSliceClearsPointerAndReadings() {
+        RxDashboard d;
+        auto* b = new SliceModel(1);
+        b->setDspMode(DSPMode::CWU);
+        d.bindSlice(b);
+        d.setSliceLetter(b->sliceLetter());
+        delete b;
+        QCOMPARE(d.slice(), nullptr);
+        QCOMPARE(d.modeText(), QStringLiteral("–"));
+        QVERIFY(d.sliceLetter().isNull());
     }
 };
 

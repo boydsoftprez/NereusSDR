@@ -55,6 +55,7 @@ mw0lge@grange-lane.co.uk
 #include "AntennaButtonItem.h"
 
 #include "core/SkuUiProfile.h"
+#include "gui/UnbuiltFeatures.h"
 #include "core/HpsdrModel.h"
 
 namespace NereusSDR {
@@ -86,6 +87,11 @@ AntennaButtonItem::AntennaButtonItem(QObject* parent)
     for (int i = 6; i < 9; ++i) { button(i).onColour = QColor(0xff, 0x44, 0x44); }
     // Toggle: Yellow
     button(9).onColour = QColor(0xff, 0xff, 0x00);
+    // R-R3-49: the XVTR input goes with the transverters, and Rx/Tx has no
+    // NereusSDR setting behind it; neither is drawn until built (the saved
+    // visibility is untouched).
+    setButtonHiddenUntilBuilt(5, !UnbuiltFeatures::isBuilt(UnbuiltFeature::Transverters));
+    setButtonHiddenUntilBuilt(9, !UnbuiltFeatures::isBuilt(UnbuiltFeature::AntennaRxTxSplit));
 
     connect(this, &ButtonBoxItem::buttonClicked, this, &AntennaButtonItem::onButtonClicked);
 }

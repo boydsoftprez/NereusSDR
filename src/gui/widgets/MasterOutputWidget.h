@@ -27,6 +27,11 @@
 //                Persists audio/Master/Volume and audio/Master/Muted
 //                per design spec
 //                docs/architecture/2026-04-19-vax-design.md §5.4.
+//   2026-09-23 - R-R3-23: a picked output device is saved to
+//                audio/Speakers/DeviceName before outputDeviceChanged
+//                is emitted (selectOutputDevice). J.J. Boyd (KG4VCF),
+//                with AI-assisted implementation via Anthropic Claude
+//                Code.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
@@ -89,6 +94,14 @@ private slots:
     // (widget-local coordinates, as delivered by
     // QWidget::customContextMenuRequested).
     void onSpeakerContextMenu(const QPoint& pos);
+
+    // R-R3-23: the picker's action for one device. Saves the choice to
+    // audio/Speakers/DeviceName FIRST, then emits outputDeviceChanged. The
+    // order matters in a remote window: remote playback re-reads
+    // audio/Speakers when the engine reports the new speakers, which the
+    // emit leads to synchronously, so announcing before saving made the
+    // remote audio status name the previous device.
+    void selectOutputDevice(const QString& deviceName);
 
     // AudioEngine → widget echo handlers. Both use the
     // m_updatingFromModel / QSignalBlocker guard so a setValue /

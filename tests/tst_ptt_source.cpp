@@ -8,6 +8,8 @@
 // Modification history (NereusSDR):
 //   2026-04-20 — Original test for NereusSDR by J.J. Boyd (KG4VCF),
 //                 with AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-29 - A TCI key reads TCI, not CAT. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original test file.
@@ -80,6 +82,17 @@ private slots:
             QVERIFY2(!seen.contains(v), "enum values must be distinct");
             seen.insert(v);
         }
+    }
+
+    void tciKey_readsTci_catKey_readsCat()
+    {
+        const auto label = [](const char* trigger) {
+            return pttSourceLabel(pttSourceForKey(/*keyed=*/true, /*deviceKey=*/false,
+                                                  /*tuning=*/false, /*twoTone=*/false,
+                                                  QString::fromLatin1(trigger)));
+        };
+        QCOMPARE(label("tci"), QStringLiteral("TCI"));
+        QCOMPARE(label("cat"), QStringLiteral("CAT"));
     }
 
     void unknownValue_returnsFallback()

@@ -1,0 +1,18 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "record.batch",
+    "stream": "spots",
+    "generation": 1,
+    "reset": false,
+    "upserts": [
+      {
+        "fields": {
+          "call": "JA1ABC"
+        }
+      }
+    ],
+    "removes": []
+  },
+  "decodes": false
+}

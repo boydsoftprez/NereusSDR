@@ -14,6 +14,10 @@
 //                 with AI-assisted development via Anthropic Claude Code.
 //   2026-04-23 — Added rnnoiseDefaultSmallBin() and dfnrModelTarball()
 //                 helpers for Sub-epic C-1 packaging.
+//   2026-09-25 - setDfnrModelTarballForTest() (NEREUS_BUILD_TESTS only), so
+//                 a test can make the DFNR model missing (R-R3-39), by
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QString>
@@ -50,5 +54,12 @@ QString rnnoiseDefaultSmallBin();
 // Returns empty QString if not found. The caller should warn and
 // disable DFNR in that case.
 QString dfnrModelTarball();
+
+#ifdef NEREUS_BUILD_TESTS
+// Tests only: dfnrModelTarball() returns `path` (an empty string means the
+// model is missing) until clearDfnrModelTarballForTest().
+void setDfnrModelTarballForTest(const QString& path);
+void clearDfnrModelTarballForTest();
+#endif
 
 } // namespace NereusSDR::ModelPaths

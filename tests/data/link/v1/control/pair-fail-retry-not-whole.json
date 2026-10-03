@@ -1,0 +1,9 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "pair.fail",
+    "reason": "The pairing code was not right. A new code will appear on the Core.",
+    "retryAfterMs": 2.5
+  },
+  "decodes": false
+}

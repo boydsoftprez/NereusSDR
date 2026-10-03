@@ -15,6 +15,26 @@
 //                Persistence via OcMatrix model (Phase 3P-D Task 1).
 //                NereusSDR spin: 14 bands (incl. GEN/WWV/XVTR) vs
 //                Thetis's 12; GEN/WWV rows greyed by default.
+//   2026-09-23 - R-R3-46: TX pins, pin actions, external PA and reset
+//                 follow the transmit permission. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-23 - R-R3-21: Penny Ext Control reads and saves the radio's
+//                 own key through PennyLaneController. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-46: "Allow hot switching" follows the transmit
+//                permission. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-09-24 - R-R3-49: hot switching, USB BCD output and External PA
+//                 control are hidden until they are applied
+//                 (UnbuiltFeatures).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-46 / R-R3-49 (remote-window parity Task 13): the TX
+//                 pins and the reset follow the transmit settings gate and
+//                 the radio being on the air; the pin actions follow the
+//                 gate alone. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -56,14 +76,15 @@
 //============================================================================================//
 
 #include "OcOutputsHfTab.h"
+#include "HardwareTransmitGate.h"
+#include "gui/UnbuiltFeatures.h"
 
 #include "core/AppSettings.h"
 #include "core/OcMatrix.h"
+#include "core/accessories/PennyLaneController.h"
 #include "gui/ComboStyle.h"
 #include "models/Band.h"
-#include "models/PanadapterModel.h"
 #include "models/RadioModel.h"
-#include "models/TransmitModel.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -93,11 +114,20 @@ static const char* kActionLabels[7] = {
 };
 
 // Returns true if the band should be greyed out (GEN/WWV have no OC sense)
-static bool bandIsGrey(int bandIdx)
+static bool bandIsGrey(Band b)
 {
-    auto b = static_cast<Band>(bandIdx);
     return b == Band::GEN || b == Band::WWV;
 }
+
+// The rows, top to bottom: 160m .. 6m, 2m, GEN, WWV, XVTR. 2 m has OC
+// outputs of its own, as in Thetis (setup.cs:13087-13105 [v2.10.3.15],
+// setBandABitMask(Band.B2M, ...)), and sits after 6 m as Thetis orders its
+// bands (R-IOS-26). The matrices are indexed by the per-band state slot.
+static constexpr std::array<Band, kPerBandStateCount> kRowOrder{
+    Band::Band160m, Band::Band80m, Band::Band60m, Band::Band40m, Band::Band30m,
+    Band::Band20m,  Band::Band17m, Band::Band15m, Band::Band12m, Band::Band10m,
+    Band::Band6m,   Band::Band2m,  Band::GEN,     Band::WWV,     Band::XVTR,
+};
 
 // ── Constructor ──────────────────────────────────────────────────────────────
 
@@ -140,7 +170,12 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
 
         m_allowHotSwitching = new QCheckBox(tr("Allow hot switching"), this);
         m_allowHotSwitching->setToolTip(tr("Allow OC output lines to switch while transmitting"));
+        m_allowHotSwitching->setObjectName(QStringLiteral("ocAllowHotSwitching"));
         row->addWidget(m_allowHotSwitching);
+        // R-R3-49: saved but not applied; hidden until it is.
+        UnbuiltFeatures::hideUnlessBuilt(m_allowHotSwitching, UnbuiltFeature::OcExtras);
+        // R-R3-46: OC lines switching while transmitting is a transmit setting.
+        m_transmitWidgets.append(m_allowHotSwitching);
 
         row->addStretch();
 
@@ -148,6 +183,9 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
         resetBtn->setToolTip(tr("Reset all OC matrix pin assignments and pin actions to Thetis defaults"));
         row->addWidget(resetBtn);
         connect(resetBtn, &QPushButton::clicked, this, &OcOutputsHfTab::onResetClicked);
+        // R-R3-46 / R-R3-49 (parity Task 13): the reset clears the TX pins
+        // too, so it follows setTransmitPinsPermitted.
+        m_resetButton = resetBtn;
 
         outerLayout->addLayout(row);
     }
@@ -170,6 +208,7 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
         ));
         buildMatrixGrid(txGroup, /*tx=*/true);
         matrixRow->addWidget(txGroup, 1);
+        m_txGroup = txGroup;
 
         outerLayout->addLayout(matrixRow);
     }
@@ -234,12 +273,16 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
             }
 
             bottomRow->addWidget(actionGroup, 3);
+            m_actionGroup = actionGroup;
         }
 
         // ── USB BCD output ───────────────────────────────────────────────────
         // Source: Thetis setup.designer.cs grpUSBBCD [@501e3f5]
         {
             auto* bcdGroup = new QGroupBox(tr("USB BCD output"), this);
+            bcdGroup->setObjectName(QStringLiteral("ocUsbBcdGroup"));
+            // R-R3-49: saved but not applied; hidden until it is.
+            UnbuiltFeatures::hideUnlessBuilt(bcdGroup, UnbuiltFeature::OcExtras);
             auto* bcdLayout = new QVBoxLayout(bcdGroup);
 
             m_usbBcdEnabled = new QCheckBox(tr("Enable BCD"), bcdGroup);
@@ -286,6 +329,9 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
         // Source: Thetis setup.designer.cs grpExtPAControlHF [@501e3f5]
         {
             auto* paGroup = new QGroupBox(tr("External PA control"), this);
+            paGroup->setObjectName(QStringLiteral("ocExternalPaGroup"));
+            // R-R3-49: saved but not applied; hidden until it is.
+            UnbuiltFeatures::hideUnlessBuilt(paGroup, UnbuiltFeature::OcExtras);
             auto* paLayout = new QVBoxLayout(paGroup);
 
             auto* modelRow = new QHBoxLayout();
@@ -325,6 +371,7 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
                     });
 
             bottomRow->addWidget(paGroup, 1);
+            m_transmitWidgets.append(paGroup);
         }
 
         // ── Live OC pin state ────────────────────────────────────────────────
@@ -344,7 +391,7 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
                     "background: rgba(255,255,255,0.1);"
                     "border: 1px solid rgba(255,255,255,0.2);"
                     "border-radius: 6px;"));
-                led->setToolTip(tr("OC pin %1 — reflects last C&C OC byte sent to radio").arg(pin + 1));
+                led->setToolTip(tr("OC pin %1: shows the last OC byte sent to the radio").arg(pin + 1));
                 m_leds[pin] = led;
                 pinCol->addWidget(led, 0, Qt::AlignHCenter);
                 pinCol->addWidget(new QLabel(tr("%1").arg(pin + 1), ledGroup), 0, Qt::AlignHCenter);
@@ -367,11 +414,28 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
 
     // ── Wire master toggles → AppSettings ────────────────────────────────────
     // Issue #174: removed n2adrFilter writer — see Row 1 cleanup notes.
-    connect(m_pennyExtCtrl, &QCheckBox::toggled, this, [this](bool v) {
-        if (m_syncing) { return; }
-        AppSettings::instance().setValue(
-            QStringLiteral("hardware/oc/pennyExtCtrl"), v);
-    });
+    // R-R3-21: the checkbox mirrors PennyLaneController, which saves under
+    // the radio's own hardware/<mac>/penny/extCtrlEnabled. It used to write
+    // a global hardware/oc/pennyExtCtrl that nothing read (the controller
+    // adopts that old value once; see PennyLaneController::load).
+    if (m_model) {
+        PennyLaneController& penny = m_model->pennyLaneControllerMutable();
+        {
+            QSignalBlocker block(m_pennyExtCtrl);
+            m_pennyExtCtrl->setChecked(penny.extCtrlEnabled());
+        }
+        connect(&penny, &PennyLaneController::extCtrlEnabledChanged,
+                m_pennyExtCtrl, [this](bool on) {
+            QSignalBlocker block(m_pennyExtCtrl);
+            m_pennyExtCtrl->setChecked(on);
+        });
+        connect(m_pennyExtCtrl, &QCheckBox::toggled, this, [this](bool v) {
+            if (m_syncing || !m_model) { return; }
+            PennyLaneController& p = m_model->pennyLaneControllerMutable();
+            p.setExtCtrlEnabled(v);
+            p.save();
+        });
+    }
     connect(m_allowHotSwitching, &QCheckBox::toggled, this, [this](bool v) {
         if (m_syncing) { return; }
         AppSettings::instance().setValue(
@@ -386,18 +450,18 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
     }
 
     // ── Phase 3P-H Task 5b: live OC pin state wiring ────────────────────────
-    // Recompute the 7-bit OC byte = OcMatrix::maskFor(currentBand, isTx)
-    // whenever: the matrix mutates, the panadapter crosses a band
-    // boundary, or MOX toggles. Thetis sends this byte via
-    // console.cs UpdateOCBits (grep reveals it is called from each of
-    // the above state transitions at [@501e3f5]).
+    // Plan Task 14 fix wave (R-R3-49): the row shows the byte the connection
+    // composed (RadioModel::bandOutputsByte), not one computed here. It was
+    // OcMatrix::maskFor(pan 1's band, MOX), which in a cross-band split is
+    // the other slice's pins, and ignores the HL2's receive bypass. Thetis
+    // shows the bits UpdateExtCtrl returned:
+    //   UpdateOCLedStrip(_mox, bits) (console.cs:29106-29107 [v2.10.3.15]).
+    // In a remote window the model carries the Core's byte, so the row
+    // shows what the radio gets there too.
     if (m_model) {
-        const auto pans = m_model->panadapters();
-        if (!pans.isEmpty()) {
-            connect(pans.first(), &PanadapterModel::bandChanged,
-                    this, &OcOutputsHfTab::onLiveStateChanged);
-        }
-        connect(&m_model->transmitModel(), &TransmitModel::moxChanged,
+        connect(m_model, &RadioModel::bandOutputsChanged,
+                this, &OcOutputsHfTab::onLiveStateChanged);
+        connect(m_model, &RadioModel::connectionStateChanged,
                 this, &OcOutputsHfTab::onLiveStateChanged);
     }
     // Initial paint.
@@ -435,9 +499,9 @@ void OcOutputsHfTab::buildMatrixGrid(QGroupBox* group, bool tx)
     // One row per band
     auto& dest = tx ? m_txPins : m_rxPins;
 
-    for (int bi = 0; bi < kBandCount; ++bi) {
-        auto band = static_cast<Band>(bi);
-        bool grey = bandIsGrey(bi);
+    for (const Band band : kRowOrder) {
+        const int bi = perBandStateSlot(band);
+        bool grey = bandIsGrey(band);
 
         auto* bandRow = new QHBoxLayout();
         bandRow->setSpacing(0);
@@ -461,10 +525,10 @@ void OcOutputsHfTab::buildMatrixGrid(QGroupBox* group, bool tx)
 
             // Capture band/pin/tx for the lambda (by value)
             connect(cb, &QCheckBox::toggled, this,
-                    [this, bi, pin, tx](bool checked) {
+                    [this, band, pin, tx](bool checked) {
                         if (m_syncing) { return; }
                         if (m_ocMatrix) {
-                            m_ocMatrix->setPin(static_cast<Band>(bi), pin, tx, checked);
+                            m_ocMatrix->setPin(band, pin, tx, checked);
                         }
                     });
 
@@ -492,7 +556,7 @@ void OcOutputsHfTab::syncFromMatrix()
 
     // Sync RX / TX matrices
     for (int bi = 0; bi < kBandCount; ++bi) {
-        auto band = static_cast<Band>(bi);
+        auto band = bandFromPerBandStateSlot(bi);
         for (int pin = 0; pin < kPinCount; ++pin) {
             if (m_rxPins[bi][pin]) {
                 m_rxPins[bi][pin]->setChecked(m_ocMatrix->pinEnabled(band, pin, false));
@@ -521,29 +585,20 @@ void OcOutputsHfTab::syncFromMatrix()
 void OcOutputsHfTab::onMatrixChanged()
 {
     syncFromMatrix();
-    // Phase 3P-H Task 5b: the mask for the current band may have changed.
-    onLiveStateChanged();
+    // The live row follows the connection: a pin edit reaches the byte it
+    // composes (and, on Protocol 2, is sent at once), which then arrives
+    // here through bandOutputsChanged.
 }
 
 // ── onLiveStateChanged (Phase 3P-H Task 5b) ──────────────────────────────────
 
-// Recomputes the OC byte from OcMatrix::maskFor(currentBand, isTx) for
-// the active panadapter band and the current MOX state. Mirrors the
-// dispatch in Thetis console.cs UpdateOCBits: band change, MOX change,
-// and OcMatrix mutation all feed into the same 7-bit output [@501e3f5].
+// Shows the OC byte the connection composed. Plan Task 14 fix wave: this
+// no longer computes a byte from the matrix, a band and MOX; nothing is lit
+// until a byte is known.
 void OcOutputsHfTab::onLiveStateChanged()
 {
-    if (!m_ocMatrix || !m_model) { setCurrentOcByte(0); return; }
-
-    // Current band: first panadapter is the RX1 source of truth (see
-    // PanadapterModel::setCenterFrequency → bandFromFrequency()).
-    Band band = Band::Band20m;  // harmless default if no panadapter yet
-    const auto pans = m_model->panadapters();
-    if (!pans.isEmpty()) {
-        band = pans.first()->band();
-    }
-    const bool isTx = m_model->transmitModel().isMox();
-    setCurrentOcByte(m_ocMatrix->maskFor(band, isTx));
+    if (!m_model || !m_model->bandOutputsKnown()) { setCurrentOcByte(0); return; }
+    setCurrentOcByte(static_cast<quint8>(m_model->bandOutputsByte()));
 }
 
 // ── setCurrentOcByte / repaintLiveLeds (Phase 3P-H Task 5b) ──────────────────
@@ -612,6 +667,24 @@ bool OcOutputsHfTab::txPinCheckedForTest(int bandIdx, int pin) const
     if (pin < 0 || pin >= kPinCount) { return false; }
     auto* cb = m_txPins[bandIdx][pin];
     return cb ? cb->isChecked() : false;
+}
+
+void OcOutputsHfTab::setTransmitPermitted(bool permitted, const QString& reason)
+{
+    for (QWidget* w : std::as_const(m_transmitWidgets)) {
+        HardwareTransmitGate::apply(w, permitted, reason);
+    }
+}
+
+void OcOutputsHfTab::setTransmitPinsPermitted(bool permitted, const QString& reason)
+{
+    HardwareTransmitGate::apply(m_txGroup, permitted, reason);
+    HardwareTransmitGate::apply(m_resetButton, permitted, reason);
+}
+
+void OcOutputsHfTab::setPinActionsPermitted(bool permitted, const QString& reason)
+{
+    HardwareTransmitGate::apply(m_actionGroup, permitted, reason);
 }
 
 } // namespace NereusSDR

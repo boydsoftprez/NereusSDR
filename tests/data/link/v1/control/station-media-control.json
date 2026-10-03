@@ -1,0 +1,13 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "media.control",
+    "payload": {
+      "op": "candidate",
+      "connectionId": 1,
+      "candidate": "candidate:1 1 UDP 2122252543 192.0.2.20 50001 typ host",
+      "mid": "0"
+    }
+  },
+  "decodes": true
+}

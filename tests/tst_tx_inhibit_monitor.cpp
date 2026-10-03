@@ -15,11 +15,10 @@ private slots:
     void init();
     void cleanup();
 
-    // ── 8 required test slots ──────────────────────────────────────────────
+    // ── 7 required test slots (Task 16 removed the receive-only one) ──────────────────────────────────────────────
     void noInhibit_atStartup_signalsFalse();
     void userIo01_assertedActiveLow_emitsWithSourceUserIo01();
     void userIo01_reverseLogic_invertsActiveLow();
-    void rxOnly_assertedTrue_emitsWithSourceRx2OnlyRadio();
     void outOfBand_assertedTrue_emitsWithSourceOutOfBand();
     void blockTxAntenna_assertedTrue_emitsWithSourceBlockTxAntenna();
     void multipleSourcesActive_inhibitedRemainsTrueUntilAllClear();
@@ -90,16 +89,8 @@ void TestTxInhibitMonitor::userIo01_reverseLogic_invertsActiveLow()
     QCOMPARE(m_mon->lastSource(), TxInhibitMonitor::Source::UserIo01);
 }
 
-// notifyRxOnly(true) immediately causes inhibit with source Rx2OnlyRadio.
-// From Thetis console.cs:15283-15307 [v2.10.3.13] (RXOnly property setter)
-void TestTxInhibitMonitor::rxOnly_assertedTrue_emitsWithSourceRx2OnlyRadio()
-{
-    QSignalSpy spy(m_mon, &TxInhibitMonitor::txInhibitedChanged);
-    m_mon->notifyRxOnly(true);
-    QVERIFY(!spy.isEmpty());
-    QVERIFY(m_mon->inhibited());
-    QCOMPARE(m_mon->lastSource(), TxInhibitMonitor::Source::Rx2OnlyRadio);
-}
+// Task 16: receive only is not an inhibit source (notifyRxOnly and
+// Rx2OnlyRadio were removed); tst_receive_only covers it at the keying gate.
 
 // notifyOutOfBand(true) immediately causes inhibit with source OutOfBand.
 // From Thetis console.cs:6770-6806 [v2.10.3.13] (CheckValidTXFreq)
@@ -131,19 +122,19 @@ void TestTxInhibitMonitor::blockTxAntenna_assertedTrue_emitsWithSourceBlockTxAnt
 // Tag preserved: //DH1KLM (console.cs:25814 — per-board model check for P1)
 void TestTxInhibitMonitor::multipleSourcesActive_inhibitedRemainsTrueUntilAllClear()
 {
-    m_mon->notifyRxOnly(true);
     m_mon->notifyOutOfBand(true);
+    m_mon->notifyBlockTxAntenna(true);
     QVERIFY(m_mon->inhibited());
-    // Highest-priority source of the two is Rx2OnlyRadio (priority order: UserIo01 > Rx2OnlyRadio > OutOfBand > BlockTxAntenna)
-    QCOMPARE(m_mon->lastSource(), TxInhibitMonitor::Source::Rx2OnlyRadio);
-
-    // Clear one — still inhibited because OutOfBand is still active
-    m_mon->notifyRxOnly(false);
-    QVERIFY(m_mon->inhibited());
+    // Highest-priority source of the two is OutOfBand (priority order: UserIo01 > OutOfBand > BlockTxAntenna)
     QCOMPARE(m_mon->lastSource(), TxInhibitMonitor::Source::OutOfBand);
 
-    // Clear the other — now clear
+    // Clear one: still inhibited because BlockTxAntenna is still active
     m_mon->notifyOutOfBand(false);
+    QVERIFY(m_mon->inhibited());
+    QCOMPARE(m_mon->lastSource(), TxInhibitMonitor::Source::BlockTxAntenna);
+
+    // Clear the other — now clear
+    m_mon->notifyBlockTxAntenna(false);
     QVERIFY(!m_mon->inhibited());
     QCOMPARE(m_mon->lastSource(), TxInhibitMonitor::Source::None);
 }

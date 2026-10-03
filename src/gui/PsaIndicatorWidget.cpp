@@ -108,6 +108,9 @@ mw0lge@grange-lane.co.uk
 
 #include "core/MoxController.h"
 #include "core/PureSignal.h"
+#include "core/AppSettings.h"
+#include "core/session/PureSignalSessionFacade.h"
+#include "models/PureSignalSettings.h"
 #include "models/RadioModel.h"
 
 #include <QHBoxLayout>
@@ -172,7 +175,7 @@ PsaIndicatorWidget::PsaIndicatorWidget(RadioModel* model, QWidget* parent)
     m_lblPs->setObjectName(QStringLiteral("lblPS"));
     m_lblPs->setAlignment(Qt::AlignCenter);
     m_lblPs->setMinimumWidth(86);
-    m_lblPs->setText(tr("Pure Signal2"));
+    m_lblPs->setText(tr("PureSignal 3"));
     hbox->addWidget(m_lblPs);
 
     setLayout(hbox);
@@ -235,6 +238,26 @@ PsaIndicatorWidget::~PsaIndicatorWidget() = default;
 void PsaIndicatorWidget::wireToModel()
 {
     if (!m_radioModel) {
+        return;
+    }
+    if (m_radioModel->role() == RadioModel::Role::Remote) {
+        PureSignalSessionFacade* facade = m_radioModel->pureSignalFacade();
+        const auto refresh = [this, facade]() {
+            const Ps3StatusSnapshot status = facade->statusSnapshot();
+            setPsEnabled(facade->available()
+                && m_radioModel->pureSignalSettings()->autoCalEnabled());
+            setMox(status.mox);
+            setInvertRedBlue(AppSettings::instance().value("InvertRedBluePsa", "False") == "True");
+            setHideFeedback(AppSettings::instance().value("HideFeedbackLevel", "False") == "True");
+            const bool changed = status.attemptedCalibrations != m_lastRemoteAttempts;
+            m_lastRemoteAttempts = status.attemptedCalibrations;
+            psInfo(status.feedbackLevel, status.feedbackLevel > 128 && status.feedbackLevel <= 181,
+                   status.correctionsApplied, changed, computeFeedbackColour());
+        };
+        connect(facade, &PureSignalSessionFacade::statusChanged, this, refresh);
+        connect(m_radioModel->pureSignalSettings(), &PureSignalSettings::autoCalEnabledChanged,
+                this, refresh);
+        refresh();
         return;
     }
     m_pureSignal = m_radioModel->pureSignal();
@@ -563,7 +586,7 @@ void PsaIndicatorWidget::updateDisplay()
         applyBackground(m_lblFb, kDimGray());
         applyBackground(m_lblPs, kDimGray());
         m_lblFb->setText(m_useSmallFonts ? tr("FB") : tr("Feedback"));
-        m_lblPs->setText(tr("Pure Signal2"));
+        m_lblPs->setText(tr("PureSignal 3"));
         return;
     }
 
@@ -589,7 +612,7 @@ void PsaIndicatorWidget::updateDisplay()
                                              : tr("Correcting"));
             applyBackground(m_lblPs, kLime());
         } else {
-            m_lblPs->setText(tr("Pure Signal2"));
+            m_lblPs->setText(tr("PureSignal 3"));
             applyBackground(m_lblPs, kSeaGreen());
         }
 
@@ -604,7 +627,7 @@ void PsaIndicatorWidget::updateDisplay()
         applyBackground(m_lblFb, kSeaGreen());
         applyBackground(m_lblPs, kSeaGreen());
         m_lblFb->setText(m_useSmallFonts ? tr("FB") : tr("Feedback"));
-        m_lblPs->setText(tr("Pure Signal2"));
+        m_lblPs->setText(tr("PureSignal 3"));
     }
 }
 

@@ -15,11 +15,61 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-09-30 - VFO flag crash lane: lockButtonForTest, sliceForTest.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-09-30 - RADE reason: setRadeReason, the RADE row's "off" state and
+//                 tooltip. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-09-23 : R-R3-40 NNR step-back indicator on the NNR button, by
+//                 J.J. Boyd (KG4VCF), with Anthropic Claude Code
+//                 assistance.
+//   2026-09-23 : R-R3-45 Speakers and Headphones buttons in the audio
+//                 block (VAX design 6.2), with a plain notice when the
+//                 headphones are chosen but none are set up. By J.J. Boyd
+//                 (KG4VCF), with Anthropic Claude Code assistance.
+//   2026-09-25 : R-R3-49, Sub-epic C-1 DFNR hidden while it cannot run
+//                 (dfnrOffered, updateDfnrAvailability), by J.J. Boyd
+//                 (KG4VCF), with Anthropic Claude Code assistance.
+//   2026-09-25 : R-R3-49, Sub-epic C-1 (tx-followup-3) DFNR, MNR and BNR
+//                 shown disabled with the plain reason, never hidden
+//                 (nrCannotRunReason, updateNrAvailability), by J.J. Boyd
+//                 (KG4VCF), with Anthropic Claude Code assistance.
+//   2026-09-25 : R-R3-49, Sub-epic C-1 (tx-followup-4) the BNR button and
+//                 its quick controls removed (not offered for now), by J.J.
+//                 Boyd (KG4VCF), with Anthropic Claude Code assistance.
+//   2026-09-26 : R-R3-49 / R-R3-21 (remote-window parity Task 16) DFNR and
+//                 MNR offered by the station's noise reduction (the Core's
+//                 in a remote window), disabled with the plain reason and
+//                 never hidden (updateNrAvailability), by J.J. Boyd
+//                 (KG4VCF), with Anthropic Claude Code assistance.
+//   2026-09-26 : iPhone app plan Task 78 (R-IOS-02, R-IOS-30): a slice the
+//                 radio's own PTT transmits on shows as in use by the
+//                 radio. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-29 : Slice control plan Task 14b (ruling U5): on a listened
+//                 flag the AF slider and Mute are this device's own
+//                 volume, labeled "Your volume". J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-30 : core-slice take-over: SliceAccess::takeHeldReason.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 : TX badge take (JJ's ruling): TxBadgeOffer and
+//                 txTakeRequested, a TX badge click that starts the take of
+//                 transmit or of the slice. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-01: Completed attribution for bright and dim slice palette, A through H
+//                 by J.J. Boyd (KG4VCF), with AI assistance via
+//                 OpenAI Codex. Port introduced 2026-09-23.
+//                 Source: AetherSDR src/gui/SliceColors.h [@0cd4559].
+//                 Upstream has no per-file copyright header.
+//                 Copyright (C) 2024-2026 Jeremy (KK7GWY) and
+//                 AetherSDR contributors. GPLv3; project source:
+//                 https://github.com/ten9876/AetherSDR
 // =================================================================
 
 //=================================================================
@@ -308,7 +358,9 @@ warren@wpratt.com
 #include <QStackedWidget>
 #include <QLineEdit>
 #include <QPointer>
+#include <QMenu>
 
+#include <array>
 #include <limits>
 #include <optional>
 
@@ -361,6 +413,34 @@ public:
     void setStepHz(int hz);
     void setSliceIndex(int index);
     void setTxSlice(bool isTx);
+    // SpectrumWidget respects this before its per-frame show() pass.
+    void setStationPresentationAllowed(bool allowed);
+    bool stationPresentationAllowed() const { return m_stationPresentationAllowed; }
+    /// iPhone app plan Task 78 (the several-devices design, ruling 8.11):
+    /// the radio's own PTT is transmitting on this slice (the Core's
+    /// txState keyed, holderSource radioPtt, txSliceId this slice). The TX
+    /// badge shows it in amber, says so, and asks nothing on a click.
+    void setInUseByRadio(bool inUse);
+    bool inUseByRadio() const { return m_inUseByRadio; }
+    static QString inUseByRadioText();
+    bool txSliceShown() const;
+
+    /// Whether this flag's slice is the one the operator has selected:
+    /// RadioModel's active slice, the single selection every pan shares. Not
+    /// the pan's own front slice (SpectrumWidget::setFrontSliceIndex); with
+    /// two pans open each pan has a front flag, but only one slice is
+    /// selected.
+    ///
+    /// Read back by SpectrumWidget::sliceMarkerGeometry(), which draws the
+    /// selected slice's marker in its full slice colour and every other
+    /// slice's marker darker. MainWindow seeds it in createSliceFlag and fans
+    /// every change out from RadioModel::activeSliceChanged, the same way it
+    /// keeps the TX badge current. Defaults to true, so a flag nobody has
+    /// told otherwise draws exactly as every marker did before the
+    /// distinction existed.
+    void setActiveSlice(bool active);
+    bool isActiveSlice() const { return m_activeSlice; }
+
     void setAntennaList(const QStringList& ants);
     void setSmeter(double dbm);
 
@@ -417,10 +497,37 @@ public:
     void setAgcThreshold(int dBu);
     void setBinauralEnabled(bool v);
 
+    // --- R-R3-45: speakers or headphones (VAX design 6.2) ---
+    // Model -> widget, guarded against re-emit. The buttons write the bound
+    // slice's route directly (wired in setSlice, like the VAX selector).
+    void setOutputRoute(NereusSDR::SliceModel::OutputRoute route);
+    // Whether a headphones output is open on this computer. With the
+    // headphones chosen and none open, the flag says why it is silent.
+    void setHeadphonesAvailable(bool available);
+    // The words the flag shows in that case.
+    static QString headphonesMissingText();
+    // R-R3-45: in a remote window, why a receiver on the headphones is
+    // silent although this computer has headphones (plain words from
+    // RemoteMediaController::headphonesProblem()); empty when nothing is.
+    // Shown in the same notice while the headphones are chosen.
+    void setHeadphonesProblem(const QString& problem);
+    // R-R3-45 fix wave: whether the headphones are turned on in Setup,
+    // Audio, Devices. Turned on but not open, the flag says they could not
+    // be opened rather than asking to turn them on.
+    void setHeadphonesEnabled(bool enabled);
+    static QString headphonesNotOpenedText();
+
     // --- Auto AGC-T visual update (Task 6) ---
-    void updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double offset);
+    void updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double offset,
+                              bool noiseFloorValid = true);
 
     // --- Small filter display mode (Task 3.4 — Appearance > Meter Styles) ---
+    // R-R3-21: open one of the flag's tabs (the status bar's badges do).
+    // Opening the tab already open leaves it open.
+    enum class Tab { Audio = 0, Dsp = 1, Mode = 2, XRit = 3, Vax = 4 };
+    void showTab(Tab tab);
+    int activeTab() const { return m_activeTab; }
+
     void setSmallFilterMode(bool small);
     bool smallFilterMode() const { return m_smallFilterMode; }
 
@@ -482,6 +589,19 @@ public:
     // flag's close button" without this. Exposed read-only, same pattern as
     // the SNR-row seams below.
     QPushButton* closeButtonForTest() const { return m_closeBtn; }
+    // VFO flag crash lane: the floating lock button, and the slice this
+    // flag is bound to, for the remote window's close-and-reopen case.
+    QPushButton* lockButtonForTest() const { return m_lockBtn; }
+    SliceModel* sliceForTest() const { return m_slice.data(); }
+    // R-R3-49: the floating record and play buttons, for the unbuilt
+    // feature sweep.
+    QPushButton* recordButtonForTest() const { return m_recBtn; }
+    QPushButton* playButtonForTest() const { return m_playBtn; }
+    // Fix wave I3: the last refused noise-reducer choice this flag showed.
+    QString nrRefusalForTest() const { return m_nrRefusal; }
+    // R-R3-49: the DSP grid's DFNR button (hidden while DFNR cannot run).
+    QPushButton* dfnrButtonForTest() const { return m_dfnrBtn; }
+    QPushButton* mnrButtonForTest() const { return m_mnrBtn; }
 
     int sliceIndex() const { return m_sliceIndex; }
 
@@ -495,6 +615,72 @@ public:
     // pointer is the same one contextMenuEvent passes to AntennaPickerMenu.
     NereusSDR::SliceModel* contextMenuSliceForTest() const;
 
+    // Slice control and shared listening plan Task 14a: who controls the
+    // slice this flag shows. Unshared is a slice nobody else reaches (no
+    // line, no access actions). Controlled is this window's own control
+    // ("You control", Release in the menu). Listening is a slice another
+    // device controls: the flag keeps its letter and color, names the
+    // controller, disables the shared tuning controls with heldReason,
+    // never writes the slice, and offers Take control and Stop listening.
+    struct SliceAccess {
+        enum class State { Unshared, Controlled, Listening };
+        State state{State::Unshared};
+        QString line;
+        QString heldReason;
+        /// Core-slice take-over (JJ, 2026-09-30): why Take control is off
+        /// on a listened slice (the Core's own words), or empty when it is
+        /// offered. The action stays in the menu, disabled with it.
+        QString takeHeldReason;
+        bool operator==(const SliceAccess&) const = default;
+    };
+    void setSliceAccess(const SliceAccess& access);
+    const SliceAccess& sliceAccess() const { return m_sliceAccess; }
+
+    // TX badge take (JJ, 2026-09-30): what a click on the TX badge does
+    // when it cannot make this slice the TX slice at once (another device
+    // holds transmit, or this flag only listens). Offered: the badge is
+    // enabled, says what a click will do, and a click emits
+    // txTakeRequested. Not offered: the badge is held as before, with
+    // heldReason when it is set (the slice is on the air) or today's reason.
+    struct TxBadgeOffer {
+        bool offered{false};
+        QString toolTip;
+        QString heldReason;
+        bool operator==(const TxBadgeOffer&) const = default;
+    };
+    void setTxBadgeOffer(const TxBadgeOffer& offer);
+    const TxBadgeOffer& txBadgeOffer() const { return m_txBadgeOffer; }
+    bool isListening() const
+    {
+        return m_sliceAccess.state == SliceAccess::State::Listening;
+    }
+    // A request this flag sent is waiting for the Core. The text replaces
+    // the access line and the access actions are disabled; empty clears it.
+    void setSliceAccessPending(const QString& text);
+    bool sliceAccessPending() const { return !m_accessPending.isEmpty(); }
+    // The line shown under the header (pending text when a request waits).
+    QString accessLineText() const;
+    // Builds the right-click menu; contextMenuEvent shows what this adds.
+    void populateContextMenu(QMenu& menu);
+
+    // Slice control plan Task 14b (ruling U5): on a listened flag the AF
+    // slider and Mute are this device's own volume and mute for the slice,
+    // labeled "Your volume". They emit listenVolumeRequested and never
+    // write the slice; the slice's AF and mute (setAfGain, setMuted) are
+    // kept and shown again when the flag stops listening. level is 0..100.
+    void setListenVolume(int level, bool muted);
+    int listenVolume() const { return m_listenVolume; }
+    bool listenMuted() const { return m_listenMuted; }
+
+    // Test seams for Task 14a.
+    QList<QWidget*> heldControlsForTest() const;
+    // Test seams for Task 14b.
+    QSlider* afSliderForTest() const { return m_afGainSlider; }
+    QPushButton* muteButtonForTest() const { return m_muteBtn; }
+    QString afNameForTest() const;
+    QRect frequencyAreaForTest() const;
+    bool frequencyEditOpen() const;
+
 public slots:
     // Phase 3P-I-a T15 — hide Blue/Red ANT buttons when the connected
     // board has no Alex filter (HL2 / Atlas). Called by MainWindow on
@@ -504,9 +690,25 @@ public slots:
     // Phase 3P-I-b T9 — BYPS button visibility gates on both caps.hasRxBypassRelay
     // AND SkuUiProfile.hasRxBypassUi (ANAN10/ANAN8000D/G2/G2_1K etc. suppress).
     void setHpsdrSku(NereusSDR::HPSDRModel sku);
+    // R-R3-46 test seam: the RX-only antenna labels the antenna menu uses
+    // (empty until setHpsdrSku has run).
+    QStringList rxOnlyAntennaLabelsForTest() const {
+        return m_popupSku ? QStringList(m_popupSku->rxOnlyLabels.cbegin(),
+                                        m_popupSku->rxOnlyLabels.cend())
+                          : QStringList();
+    }
 
     // Phase 3P-I-b T9 — reflect AlexController::rxOutOnTx state into the BYPS button.
     void setRxBypassActive(bool on);
+
+    // Remote-station presentation gate.  TX-slice handoff remains displayed
+    // but cannot issue client or station work. XIT is a slice setting and
+    // does not follow it (R-R3-49, parity Task 11); nor does BYPS, which
+    // follows setRxBypassPermitted (group B fix wave).
+    void setTransmitPermitted(bool permitted, const QString& reason = QString());
+    // Group B fix wave: whether BYPS (RX bypass on TX) may change the
+    // radio's relay setting; disabled with `reason` when not.
+    void setRxBypassPermitted(bool permitted, const QString& reason = QString());
 
     // Phase 3F closeout — non-owning RadioModel pointer used by contextMenuEvent
     // to construct an AntennaPickerMenu with the live slice, AlexController, and
@@ -574,6 +776,8 @@ signals:
 
     // --- NR setup dialog request (right-click on any NR bank button → Task 18) ---
     void openNrSetupRequested(NereusSDR::NrSlot slot);
+    void openNrSetupForSliceRequested(NereusSDR::NrSlot slot, int sliceId);
+    void openNnrModelsRequested(int sliceId);
 
     // --- Setup dialog request (e.g. AGC-T right-click → open settings) ---
     void openSetupRequested();
@@ -583,6 +787,15 @@ signals:
     // RadioModel::txSliceArbiter()->requestHandoff(sliceIndex), which drops
     // MOX (RF-safe) before flipping the TX-bound slice.
     void txHandoffRequested(int sliceIndex);
+    // TX badge take (JJ, 2026-09-30): the badge was clicked while it offers
+    // a take (TxBadgeOffer). MainWindow takes the slice, then transmit, as
+    // needed, and makes the slice the TX slice. Nothing keys.
+    void txTakeRequested(int sliceIndex);
+
+    // Emitted by setActiveSlice() when the state actually changes. The
+    // hosting SpectrumWidget listens (addVfoWidget) so its cached marker
+    // overlay is redrawn in the new colours.
+    void activeSliceChanged(bool active);
 
     // Phase 3F Sub-Epic E Task 4: right-click context menu intent signals.
     // MainWindow listens and routes to SliceModel / FilterPolicyDialog /
@@ -592,6 +805,18 @@ signals:
     void filterPolicyRequested(int chainIndex);
     void removeSliceRequested(int sliceIndex);
     void antennaChangeRequested(int sliceIndex, const QString& antennaName);
+    // R-R3-21: the right-click Diversity entry. MainWindow opens the
+    // Diversity dialog, the same one Tools > Diversity opens.
+    void diversityRequested();
+
+    // Task 14a: the flag's access actions. MainWindow sends each as the
+    // matching slice request and shows the Core's answer on the flag.
+    void takeControlRequested(int sliceIndex);
+    void releaseRequested(int sliceIndex);
+    void stopListeningRequested(int sliceIndex);
+    // Task 14b: "Your volume" or Mute moved on a listened flag. level is
+    // 0..100; MainWindow sends it as this device's listening level.
+    void listenVolumeRequested(int sliceIndex, int level, bool muted);
 
 private slots:
     // Phase 3F Sub-Epic C Task 9: TX badge click slot. Emits
@@ -626,12 +851,23 @@ private:
 
     // --- NR bank helpers (Sub-epic C-1, Tasks 14-15) ---
     void onActiveNrChanged(NereusSDR::NrSlot slot);
+    void onNrSelectionRefused(const QString& reason);
     void showNr1Popup(const QPoint& globalPos);
     void showNr2Popup(const QPoint& globalPos);
     void showNr3Popup(const QPoint& globalPos);
     void showNr4Popup(const QPoint& globalPos);
+    void showNnrPopup(const QPoint& globalPos);
+    // R-R3-40: the small indicator on the NNR button while the Core holds
+    // the receiver below the saved NNR choice.
+    void onNnrLimitChanged(int limit);
+    void requestNrSetup(NereusSDR::NrSlot slot);
     void showDfnrPopup(const QPoint& globalPos);
-    void showBnrPopup(const QPoint& globalPos);
+    // R-R3-49, Sub-epic C-1: why a noise filter cannot run (the model's
+    // word, the Core's in a remote window, or this build's with no model),
+    // empty when it can; and applying that to the DSP grid's DFNR and MNR
+    // buttons: shown always, disabled with the reason while it cannot.
+    QString nrCannotRunReason(NereusSDR::NrSlot slot) const;
+    void updateNrAvailability();
     void showMnrPopup(const QPoint& globalPos);
 
     // Guard to prevent signal re-emission during model updates
@@ -646,6 +882,8 @@ private:
     // setRadioModel(); the contextMenuEvent falls back to a stub antenna submenu
     // when null. See setRadioModel() above for the wiring contract.
     NereusSDR::RadioModel* m_radioModel{nullptr};
+    // R-R3-49: the model's DFNR and MNR availability signals.
+    std::array<QMetaObject::Connection, 3> m_nrAvailabilityConns;
 
     // Internal helper — update m_locked + drive Close-strip lock button + emit lockChanged.
     // Called by the floating m_lockBtn toggled lambda.  X/RIT-tab Lock removed (B7).
@@ -654,6 +892,7 @@ private:
 
     // Slice identity
     int m_sliceIndex{0};
+    bool m_activeSlice{true};  // see setActiveSlice()
     int m_stepHz{100};
     double m_frequency{14225000.0};
     // Signed Hz offsets from m_frequency. Seeded with the same LSB defaults
@@ -673,6 +912,11 @@ private:
     bool m_hasRxBypassRelay{false};    // Phase 3P-I-b T9 — BYPS button gate (caps)
     bool m_hasRxOutOnTxUi{false};      // Phase 3P-I-b T9 — BYPS button gate (SKU)
     bool m_smallFilterMode{false};     // Task 3.4 — small filter display
+    bool m_transmitPermitted{true};
+    // Group B fix wave: BYPS follows whether the Core takes RX bypass on TX.
+    bool m_rxBypassPermitted{true};
+    QString m_transmitPermissionReason;
+    void updateTransmitControlAvailability();
 
     // B3: stored caps + SKU profile for AntennaPopupBuilder in popup lambdas.
     std::optional<BoardCapabilities> m_popupCaps;
@@ -684,6 +928,11 @@ private:
     QPushButton* m_txAntBtn{nullptr};
     QLabel*      m_filterWidthLbl{nullptr};
     QPushButton* m_txBadge{nullptr};
+    bool m_inUseByRadio{false};
+    // TX badge take: the TX mark setTxSlice last showed, and the offer.
+    bool m_txMarked{false};
+    TxBadgeOffer m_txBadgeOffer;
+    bool txBadgeTakeOffered() const;
     QLabel*      m_splitBadge{nullptr};
     QLabel*      m_sliceBadge{nullptr};
     QStringList  m_antennaList{QStringLiteral("ANT1"), QStringLiteral("ANT2"), QStringLiteral("ANT3")};
@@ -714,6 +963,14 @@ private:
     QString m_lastRadeCallsign;
     float   m_lastRadeSnrDb{std::numeric_limits<float>::quiet_NaN()};
     bool    m_lastRadeSynced{false};
+    // The decoder's last frequency offset, re-appended to each fresh SNR
+    // text. A local decoder sends it on every tick right after the SNR; a
+    // remote window's Core sends it only when it moves, so without this an
+    // SNR change alone would drop it from the flag. NaN = none yet.
+    float   m_lastRadeFreqOffsetHz{std::numeric_limits<float>::quiet_NaN()};
+    // RADE reason: why the slice's RADE decoder is not working (empty when
+    // it is), from SliceModel::radeReasonChanged.
+    QString m_radeReason;
 
     // Slot wired to SliceModel::snrDbChanged. Updates m_snrValue text
     // + stylesheet color (grey/yellow/green) based on NaN-state and the
@@ -740,10 +997,27 @@ public:
     // callsign survives subsequent SNR pushes.
     void setRadeCallsign(const QString& callsign);
 
-    // Slice color table: A=cyan, B=magenta, C=green, D=yellow.
+    // RADE reason (2026-09-30): why the slice is in RADE with no working
+    // decoder (SliceModel::radeReason, the Core's on a remote window). While
+    // it is set the row reads "<prefix> ○ off" and its tooltip is the
+    // reason; empty puts the row back to its sync and SNR text.
+    void setRadeReason(const QString& reason);
+    QString radeRowTextForTest() const;
+    QString radeRowToolTipForTest() const;
+
+    // Slice color table: A=cyan, B=magenta, C=green, D=yellow, E=orange,
+    // F=teal, G=coral, H=lavender, indexed by slice index % 8.
     // From AetherSDR SliceColors.h. Public static so the RX applet's
     // per-slice tab row (Phase 3F Bug 3) shares the exact flag palette.
     static QColor sliceColor(int index);
+
+    // From AetherSDR src/gui/SliceColors.h:26 [@0cd4559]: the palette holds
+    // eight colours, one per slice A to H.
+    static constexpr int kSliceColorCount = 8;
+
+    // The darker partner of each sliceColor() entry, used for the panadapter
+    // markers of slices the operator has not selected (see setActiveSlice).
+    static QColor sliceDimColor(int index);
 
 private:
 
@@ -751,19 +1025,38 @@ private:
     QList<QPushButton*> m_tabButtons;
     QStackedWidget*     m_tabStack{nullptr};
     int                 m_activeTab{0};
+    bool                m_stationPresentationAllowed{true};
 
     // --- Mode tab ---
     QComboBox*          m_modeCmb{nullptr};
     QWidget*            m_filterBtnContainer{nullptr};
 
     // --- Audio tab ---
+    QWidget*            m_audioPage{nullptr};
+    QLabel*             m_afNameLabel{nullptr};
     QSlider*            m_afGainSlider{nullptr};
     QLabel*             m_afGainLabel{nullptr};
+    // Task 14b: the slice's AF and mute (from the model) and this device's
+    // own listening volume and mute; the slider and Mute show one pair.
+    int                 m_modelAfGain{50};
+    bool                m_modelMuted{false};
+    int                 m_listenVolume{50};
+    bool                m_listenMuted{false};
+    QString             m_afToolTip;
+    QString             m_muteToolTip;
     QPushButton*        m_agcBtns[5]{};          // Off/Long/Slow/Med/Fast — replaces m_agcCmb
     QSlider*            m_panSlider{nullptr};
     QLabel*             m_panLabel{nullptr};
     QPushButton*        m_muteBtn{nullptr};
     QPushButton*        m_binBtn{nullptr};
+    // R-R3-45: exclusive Speakers / Headphones pair + the silent notice.
+    QPushButton*        m_speakersBtn{nullptr};
+    QPushButton*        m_headphonesBtn{nullptr};
+    QLabel*             m_outputNotice{nullptr};
+    bool                m_headphonesAvailable{false};
+    QString             m_headphonesProblem;  // R-R3-45
+    bool                m_headphonesEnabled{false};  // R-R3-45 fix wave
+    void updateOutputNotice();
     QPushButton*        m_sqlBtn{nullptr};
     QSlider*            m_sqlSlider{nullptr};
     QSlider*            m_agcTSlider{nullptr};
@@ -783,8 +1076,12 @@ private:
     QPushButton* m_nr3Btn  = nullptr;
     QPushButton* m_nr4Btn  = nullptr;
     QPushButton* m_dfnrBtn = nullptr;
-    QPushButton* m_bnrBtn  = nullptr;
     QPushButton* m_mnrBtn  = nullptr;
+    QPushButton* m_nnrBtn  = nullptr;
+    QLabel*      m_nnrLimitIndicator = nullptr;   // R-R3-40
+    QString      m_nnrToolTip;
+    QString      m_dfnrToolTip;   // R-R3-49: each filter's own tooltip
+    QString      m_mnrToolTip;
     QPushButton*        m_anfToggle{nullptr};
     QPushButton*        m_snbToggle{nullptr};
     QPushButton*        m_apfToggle{nullptr};
@@ -800,6 +1097,13 @@ private:
 
     // --- Slice coupling (for mode container binding only) ---
     QPointer<SliceModel> m_slice;
+    // Fix wave I3: the NR button last clicked, where a refusal is shown.
+    QPointer<QPushButton> m_lastNrButton;
+    QString m_nrRefusal;
+    // Follow-up item 3: set only while this flag's own NR click is being
+    // applied, so a refusal of a choice made elsewhere (the DSP menu) is
+    // not shown here as well.
+    bool m_nrClickInFlight{false};
 
     // --- X/RIT tab ---
     QPushButton*   m_ritBtn{nullptr};
@@ -818,6 +1122,15 @@ private:
     QPushButton* m_playBtn{nullptr};
     bool m_locked{false};
     bool m_onLeft{false};  // track flag side for button placement
+
+    // --- Task 14a: slice access ---
+    QLabel*     m_accessLine{nullptr};
+    SliceAccess m_sliceAccess;
+    QString     m_accessPending;
+    void applySliceAccess();
+    void applyAudioBinding();
+    QList<QWidget*> listeningHeldControls() const;
+    void holdForListening(QWidget* control) const;
     void buildFloatingButtons();
     void positionFloatingButtons();
 };

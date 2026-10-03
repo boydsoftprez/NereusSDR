@@ -22,6 +22,17 @@
 //                 silence-fill + TX poll timers deferred to Phase 3M.
 //                 Shm paths: /aethersdr-dax-* → /nereussdr-vax-*.
 //                 Sample rate: 24 kHz → 48 kHz (spec §8.1).
+//   2026-09-23: R-R3-44: outputPacing() from the ring's read and write
+//                 positions and outputHasReader() from CoreAudio, so a
+//                 remote window's VAX feeder can pace itself by the reading
+//                 app's clock. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-23: R-R3-44 fix wave: outputHasReader() reads a cached flag
+//                 that CoreAudio property listeners keep up to date (the
+//                 device list, and the plugin device's "running somewhere")
+//                 on a dispatch queue of their own, instead of walking every
+//                 device on each call. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "CoreAudioHalBus.h"
@@ -32,15 +43,22 @@
 #include <QLoggingCategory>
 
 #ifdef Q_OS_MAC
+#include <Block.h>
+#include <CoreAudio/CoreAudio.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <dispatch/dispatch.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
 
+#include <QByteArray>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <vector>
 
 namespace NereusSDR {
 
@@ -72,6 +90,180 @@ constexpr uint32_t kTargetBacklogSamples = 256 * 2;  // 256 frames ≈ 5.3 ms @ 
 constexpr uint32_t kMaxBacklogSamples    = 768 * 2;  // 768 frames ≈ 16 ms @ 48 kHz stereo
 
 } // namespace
+
+// ── R-R3-44 fix wave: the reader watch ──────────────────────────────────────
+//
+// outputHasReader() used to walk every CoreAudio device, reading each one's
+// UID with an IPC round trip to coreaudiod, on every call; the remote VAX
+// router asks every 500 ms and the VAX setup page every second, both on the
+// GUI thread. The watch finds the plugin's device once, listens for the
+// device list changing (the plugin loading or going) and for the device's
+// kAudioDevicePropertyDeviceIsRunningSomewhere, and keeps the answer in an
+// atomic. The listeners run on a serial dispatch queue of the watch's own.
+#ifdef Q_OS_MAC
+namespace {
+
+constexpr AudioObjectPropertyAddress kDevicesAddress = {
+    kAudioHardwarePropertyDevices,
+    kAudioObjectPropertyScopeGlobal,
+    kAudioObjectPropertyElementMain,
+};
+constexpr AudioObjectPropertyAddress kRunningAddress = {
+    kAudioDevicePropertyDeviceIsRunningSomewhere,
+    kAudioObjectPropertyScopeGlobal,
+    kAudioObjectPropertyElementMain,
+};
+
+// The device whose UID is `wanted`, or kAudioObjectUnknown.
+AudioObjectID findDeviceByUid(const QByteArray& wanted)
+{
+    UInt32 size = 0;
+    if (AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &kDevicesAddress,
+                                       0, nullptr, &size) != noErr
+        || size == 0) {
+        return kAudioObjectUnknown;
+    }
+    std::vector<AudioDeviceID> devices(size / sizeof(AudioDeviceID));
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &kDevicesAddress,
+                                   0, nullptr, &size, devices.data()) != noErr) {
+        return kAudioObjectUnknown;
+    }
+    devices.resize(size / sizeof(AudioDeviceID));
+    for (const AudioDeviceID device : devices) {
+        AudioObjectPropertyAddress uidAddr = {
+            kAudioDevicePropertyDeviceUID,
+            kAudioObjectPropertyScopeGlobal,
+            kAudioObjectPropertyElementMain,
+        };
+        CFStringRef uid = nullptr;
+        UInt32 uidSize = sizeof(CFStringRef);
+        if (AudioObjectGetPropertyData(device, &uidAddr, 0, nullptr, &uidSize, &uid) != noErr
+            || uid == nullptr) {
+            continue;
+        }
+        char buffer[128] = {};
+        const bool named = CFStringGetCString(uid, buffer, sizeof(buffer), kCFStringEncodingUTF8);
+        CFRelease(uid);
+        if (named && wanted == QByteArray(buffer)) {
+            return device;
+        }
+    }
+    return kAudioObjectUnknown;
+}
+
+} // namespace
+
+struct CoreAudioHalBus::ReaderWatch {
+    explicit ReaderWatch(QByteArray deviceUid) : uid(std::move(deviceUid)) {}
+    ~ReaderWatch() { stop(); }
+
+    ReaderWatch(const ReaderWatch&) = delete;
+    ReaderWatch& operator=(const ReaderWatch&) = delete;
+
+    // -1 unknown (no device, or no answer), 0 nothing reading, 1 reading.
+    std::atomic<int> state{-1};
+
+    void start()
+    {
+        queue = dispatch_queue_create("com.nereussdr.vax.reader", DISPATCH_QUEUE_SERIAL);
+        ReaderWatch* self = this;
+        devicesListener = Block_copy(^(UInt32, const AudioObjectPropertyAddress*) {
+            self->resolve();
+        });
+        runningListener = Block_copy(^(UInt32, const AudioObjectPropertyAddress*) {
+            self->readRunning();
+        });
+        AudioObjectAddPropertyListenerBlock(kAudioObjectSystemObject, &kDevicesAddress,
+                                            queue, devicesListener);
+        // The first answer before open() returns, so a caller asking right
+        // after opening does not see "unknown".
+        dispatch_sync(queue, ^{ self->resolve(); });
+    }
+
+    void stop()
+    {
+        if (queue == nullptr) {
+            return;
+        }
+        stopped.store(true, std::memory_order_release);
+        AudioObjectRemovePropertyListenerBlock(kAudioObjectSystemObject, &kDevicesAddress,
+                                               queue, devicesListener);
+        // Take the device off the queue (where resolve() changes it); after
+        // this no listener call adds another.
+        __block AudioObjectID watched = kAudioObjectUnknown;
+        ReaderWatch* self = this;
+        dispatch_sync(queue, ^{
+            watched = self->device;
+            self->device = kAudioObjectUnknown;
+        });
+        if (watched != kAudioObjectUnknown) {
+            AudioObjectRemovePropertyListenerBlock(watched, &kRunningAddress, queue,
+                                                   runningListener);
+        }
+        // Anything queued before the removals has run.
+        dispatch_sync(queue, ^{});
+        dispatch_release(queue);
+        queue = nullptr;
+        Block_release(devicesListener);
+        Block_release(runningListener);
+        devicesListener = nullptr;
+        runningListener = nullptr;
+        state.store(-1, std::memory_order_release);
+    }
+
+private:
+    // On the queue: find the plugin's device (again, after the device list
+    // changed) and listen to it.
+    void resolve()
+    {
+        if (stopped.load(std::memory_order_acquire)) {
+            return;
+        }
+        const AudioObjectID found = findDeviceByUid(uid);
+        if (found != device) {
+            if (device != kAudioObjectUnknown) {
+                AudioObjectRemovePropertyListenerBlock(device, &kRunningAddress, queue,
+                                                       runningListener);
+            }
+            device = found;
+            if (device != kAudioObjectUnknown) {
+                AudioObjectAddPropertyListenerBlock(device, &kRunningAddress, queue,
+                                                    runningListener);
+            }
+        }
+        readRunning();
+    }
+
+    // On the queue: the device's "running somewhere" now.
+    void readRunning()
+    {
+        if (stopped.load(std::memory_order_acquire)) {
+            return;
+        }
+        if (device == kAudioObjectUnknown) {
+            state.store(-1, std::memory_order_release);
+            return;
+        }
+        UInt32 running = 0;
+        UInt32 runningSize = sizeof(running);
+        if (AudioObjectGetPropertyData(device, &kRunningAddress, 0, nullptr,
+                                       &runningSize, &running) != noErr) {
+            state.store(-1, std::memory_order_release);
+            return;
+        }
+        state.store(running != 0 ? 1 : 0, std::memory_order_release);
+    }
+
+    QByteArray uid;
+    dispatch_queue_t queue = nullptr;
+    AudioObjectPropertyListenerBlock devicesListener = nullptr;
+    AudioObjectPropertyListenerBlock runningListener = nullptr;
+    std::atomic<bool> stopped{false};
+    AudioObjectID device = kAudioObjectUnknown;  // on the queue only
+};
+#else
+struct CoreAudioHalBus::ReaderWatch {};
+#endif
 
 CoreAudioHalBus::CoreAudioHalBus(Role role)
     : m_role(role)
@@ -164,6 +356,8 @@ bool CoreAudioHalBus::open(const AudioFormat& format) {
     m_block->channels   = 2;
     std::memset(&m_block->reserved[0], 0, sizeof(m_block->reserved));
     m_block->active.store(1, std::memory_order_release);
+    m_pacingLastReadPos.store(0, std::memory_order_relaxed);
+    m_pacingConsumedSamples.store(0, std::memory_order_relaxed);
 
     m_negFormat = format;
     m_open = true;
@@ -172,12 +366,25 @@ bool CoreAudioHalBus::open(const AudioFormat& format) {
     qCInfo(lcAudio) << "CoreAudioHalBus: opened" << m_shmName
                     << (created ? "(created)" : "(attached)")
                     << "role=" << static_cast<int>(m_role);
+
+    // R-R3-44 fix wave: from here on whether an app reads this channel is
+    // kept up to date by CoreAudio listeners (outputHasReader()). The
+    // plugin's device UID for this channel, as hal-plugin/NereusSDRVAX.cpp
+    // registers it ("com.nereussdr.vax.rx.%d").
+    if (isProducer()) {
+        m_readerWatch = std::make_unique<ReaderWatch>(
+            QByteArrayLiteral("com.nereussdr.vax.rx.")
+            + QByteArray::number(static_cast<int>(m_role)));
+        m_readerWatch->start();
+    }
     return true;
 #endif
 }
 
 void CoreAudioHalBus::close() {
 #ifdef Q_OS_MAC
+    // Stops the listeners and waits for any in flight before it returns.
+    m_readerWatch.reset();
     if (m_block) {
         // Tell the plugin we're gone so it stops draining stale data.
         m_block->active.store(0, std::memory_order_release);
@@ -331,6 +538,52 @@ qint64 CoreAudioHalBus::pull(char* data, qint64 maxBytes) {
     (void)data;
     (void)maxBytes;
     return 0;
+#endif
+}
+
+std::optional<IAudioBus::OutputPacing> CoreAudioHalBus::outputPacing() const {
+    if (!isProducer() || !m_open || m_block == nullptr) {
+        return std::nullopt;
+    }
+#ifdef Q_OS_MAC
+    const uint32_t rp = m_block->readPos.load(std::memory_order_acquire);
+    const uint32_t wp = m_block->writePos.load(std::memory_order_acquire);
+    // readPos is 32-bit and wraps after about 12 hours; the unsigned
+    // difference from the last read is the progress since then.
+    const uint32_t last = m_pacingLastReadPos.exchange(rp, std::memory_order_acq_rel);
+    const quint64 consumed =
+        m_pacingConsumedSamples.fetch_add(uint32_t(rp - last), std::memory_order_acq_rel)
+        + uint32_t(rp - last);
+    // More than a ring ahead means the writer lapped a reader that is not
+    // reading; the plugin then jumps to recent data, so the whole ring is
+    // what is queued.
+    const uint32_t queued = std::min<uint32_t>(wp - rp, VaxShmBlock::RING_SIZE);
+    OutputPacing pacing;
+    pacing.consumedFrames = consumed / 2;
+    pacing.queuedFrames = static_cast<int>(queued / 2);
+    pacing.capacityFrames = static_cast<int>(VaxShmBlock::RING_SIZE / 2);
+    pacing.callbackFrames = 0;
+    return pacing;
+#else
+    return std::nullopt;
+#endif
+}
+
+std::optional<bool> CoreAudioHalBus::outputHasReader() const {
+    if (!isProducer()) {
+        return std::nullopt;
+    }
+#ifdef Q_OS_MAC
+    if (!m_readerWatch) {
+        return std::nullopt;
+    }
+    const int state = m_readerWatch->state.load(std::memory_order_acquire);
+    if (state < 0) {
+        return std::nullopt;
+    }
+    return state != 0;
+#else
+    return std::nullopt;
 #endif
 }
 

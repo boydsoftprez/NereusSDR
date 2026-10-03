@@ -63,7 +63,7 @@
 // Tests run WDSP-free (no QApplication needed for pure data logic).
 
 #include <QtTest/QtTest>
-#include "gui/spectrum/ActivePeakHoldTrace.h"
+#include "core/spectrum/ActivePeakHoldTrace.h"
 
 #include <cmath>
 
@@ -142,21 +142,21 @@ private slots:
     {
         ActivePeakHoldTrace trace(256);
         trace.setEnabled(true);
+        trace.setDurationMs(0);
         trace.setDropDbPerSec(6.0);
 
         QVector<float> bins(256, -100.0f);
         bins[100] = -40.0f;
         trace.update(bins);
+        trace.tickFrame(30);   // raised this frame: elapsed 0, no fall
         QCOMPARE(trace.peak(100), -40.0f);
 
-        // Next frame: live value drops to -50. Decay 6 dB/s / 30 fps = 0.2 dB/frame.
+        // Next frame: live value drops to -50. 6 dB/s / 30 fps = 0.2 dB/frame.
         bins[100] = -50.0f;
-        trace.tickFrame(30);   // peak → -40.2
-        trace.update(bins);    // -50 < -40.2 so peak unchanged
+        trace.update(bins);    // -50 < -40 so peak unchanged
+        trace.tickFrame(30);   // 33 ms old > 0 ms hold: peak -> -40.2
 
-        // Peak should still be ~-40.2 (decay only), not -50
-        QVERIFY(trace.peak(100) > -40.5f);
-        QVERIFY(trace.peak(100) <= -40.0f);
+        QVERIFY(qAbs(trace.peak(100) - (-40.2f)) < 0.001f);
     }
 
     void peak_raises_on_stronger_signal()
@@ -193,50 +193,108 @@ private slots:
     {
         ActivePeakHoldTrace trace(256);
         trace.setEnabled(true);
+        trace.setDurationMs(0);
         trace.setDropDbPerSec(6.0);
 
         QVector<float> bins(256, -40.0f);
         trace.update(bins);
+        trace.tickFrame(30);   // the frame it was raised in: no fall
+        QCOMPARE(trace.peak(0), -40.0f);
 
-        // 1 tick at 30 fps → 0.2 dB drop
+        // One frame later at 30 fps: a 0.2 dB drop.
         trace.tickFrame(30);
         QVERIFY(qAbs(trace.peak(0) - (-40.2f)) < 0.001f);
     }
 
-    void zero_fps_tickFrame_is_noop()
+    // Thetis display.cs:5359-5363 [v2.10.3.15]: a bin falls only once
+    // local_frame_start - peak.Time > the hold delay.
+    void peak_holds_for_the_hold_duration_then_falls()
     {
-        ActivePeakHoldTrace trace(256);
+        ActivePeakHoldTrace trace(8);
         trace.setEnabled(true);
-        QVector<float> bins(256, -40.0f);
-        trace.update(bins);
+        trace.setDurationMs(100);
+        trace.setDropDbPerSec(25.0);   // 1 dB a frame at 25 fps (40 ms frames)
 
-        trace.tickFrame(0);  // must not divide by zero / crash
-        QCOMPARE(trace.peak(0), -40.0f);
+        trace.update(QVector<float>(8, -40.0f));
+        // Frames at 0, 40 and 80 ms are not more than 100 ms old.
+        for (int frame = 0; frame < 3; ++frame) {
+            trace.tickFrame(25);
+            QCOMPARE(trace.peak(0), -40.0f);
+        }
+        // 120 ms > 100 ms: it falls, one frame's worth at a time.
+        trace.tickFrame(25);
+        QVERIFY(qAbs(trace.peak(0) - (-41.0f)) < 0.001f);
+        trace.tickFrame(25);
+        QVERIFY(qAbs(trace.peak(0) - (-42.0f)) < 0.001f);
     }
 
-    void infinite_peaks_not_decayed()
+    void a_raised_bin_starts_its_hold_again()
     {
-        // Bins start at -inf; tickFrame must not attempt arithmetic on them.
-        ActivePeakHoldTrace trace(256);
+        ActivePeakHoldTrace trace(2);
         trace.setEnabled(true);
-        trace.tickFrame(30);  // must not produce NaN
-        QVERIFY(!std::isfinite(trace.peak(0)));
+        trace.setDurationMs(100);
+        trace.setDropDbPerSec(25.0);
+        trace.update(QVector<float>(2, -40.0f));
+        for (int frame = 0; frame < 6; ++frame) { trace.tickFrame(25); }
+        QVERIFY(trace.peak(0) < -40.5f);
+        // A new maximum at bin 0 only: it holds again from this frame.
+        trace.update(QVector<float>{-35.0f, -90.0f});
+        for (int frame = 0; frame < 3; ++frame) { trace.tickFrame(25); }
+        QCOMPARE(trace.peak(0), -35.0f);
+        QVERIFY(trace.peak(1) < -41.5f);   // bin 1 kept falling
     }
 
-    // ---- TX state gating ----
-
-    void on_tx_false_disables_update_during_tx()
+    // Thetis display.cs:5011 [v2.10.3.15]: without "Also in TX" the trace is
+    // off while this receiver transmits: no update, no fall, not drawn.
+    void on_tx_false_freezes_and_hides_while_transmitting()
     {
-        ActivePeakHoldTrace trace(256);
+        ActivePeakHoldTrace trace(4);
         trace.setEnabled(true);
-        trace.setOnTx(false);   // don't update during TX
+        trace.setDurationMs(0);
+        trace.setDropDbPerSec(30.0);
+        trace.update(QVector<float>(4, -40.0f));
+        trace.tickFrame(30);
+        QVERIFY(trace.active());
+
         trace.setTxActive(true);
+        QVERIFY(!trace.active());
+        trace.update(QVector<float>(4, -10.0f));
+        trace.tickFrame(30);
+        trace.tickFrame(30);
+        QCOMPARE(trace.peak(0), -40.0f);   // neither raised nor fallen
 
-        QVector<float> bins(256, -40.0f);
-        trace.update(bins);
+        trace.setOnTx(true);
+        QVERIFY(trace.active());
+        trace.update(QVector<float>(4, -10.0f));
+        QCOMPARE(trace.peak(0), -10.0f);
+    }
 
-        // Peaks should stay at -inf — no update during TX
-        QVERIFY(!std::isfinite(trace.peak(0)));
+    // Thetis display.cs:4527-4530, 859-877, 4219-4221, 5011 [v2.10.3.15]:
+    // ResetSpectrumPeaks holds the trace back for 500 ms; it neither rises,
+    // falls nor draws until a frame starting more than 500 ms after the
+    // reset has ended.
+    void clear_holds_the_trace_back_for_500_ms()
+    {
+        ActivePeakHoldTrace trace(4);
+        trace.setEnabled(true);
+        trace.setDurationMs(0);
+        trace.setDropDbPerSec(25.0);
+        trace.update(QVector<float>(4, -40.0f));
+        trace.tickFrame(25);                   // frame 0 ms; clock now 40
+        QCOMPARE(trace.peak(0), -40.0f);
+
+        trace.clear();                         // reset at 40 ms: delay to 540 ms
+        // Frames starting at 40 .. 520 ms: nothing raised.
+        for (int frame = 0; frame < 13; ++frame) {
+            trace.update(QVector<float>(4, -30.0f));
+            QVERIFY(!std::isfinite(trace.peak(0)));
+            trace.tickFrame(25);
+        }
+        // The frame starting at 560 ms (> 540) ends the delay; the next draws.
+        trace.update(QVector<float>(4, -30.0f));
+        trace.tickFrame(25);
+        trace.update(QVector<float>(4, -30.0f));
+        QCOMPARE(trace.peak(0), -30.0f);
     }
 
     void on_tx_true_allows_update_during_tx()

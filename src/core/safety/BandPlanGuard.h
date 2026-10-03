@@ -1,3 +1,5 @@
+// 2026-09-27: shared TX filter geometry and validated band-edge admission.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 // src/core/safety/BandPlanGuard.h  (NereusSDR)
 // =================================================================
@@ -16,6 +18,16 @@
 //   2026-04-25 — Ported to C++20/Qt6 for NereusSDR by J.J. Boyd
 //                (KG4VCF), with AI-assisted transformation via
 //                Anthropic Claude Code.
+//   2026-09-24: Receiver and transmit gaps plan, Task 7 follow-up, by
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                Code: MoxCheckResult::notQueued (R-R3-36).
+//                NereusSDR-original.
+//   2026-09-25: iPhone app plan Task 34 (R-IOS-13), by J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code:
+//                MoxCheckResult::refusalCode. NereusSDR-original.
+//   2026-09-27: Updated the TX gate range documentation and region
+//                selection for Thetis v2.10.3.15 @3759d096 with AI
+//                assistance via OpenAI Codex.
 // =================================================================
 
 // --- From console.cs ---
@@ -116,6 +128,7 @@ mw0lge@grange-lane.co.uk
 #pragma once
 
 #include <cstdint>
+#include <QByteArray>
 #include <QString>
 #include "models/Band.h"
 #include "core/WdspTypes.h"
@@ -159,8 +172,7 @@ enum class Region : std::uint8_t {
 ///   console.cs:29401-29432 (_preventTXonDifferentBandToRXband + US 60m mode restriction)
 /// All from Thetis [v2.10.3.13].
 ///
-/// Pure data + pure functions. No Qt parent, no signals. Inert until
-/// 3M-1a wires the first MOX byte — at which point RadioModel calls
+/// Pure data + pure functions. No Qt parent or signals. RadioModel calls
 /// these predicates before setting TX.
 class BandPlanGuard
 {
@@ -172,9 +184,18 @@ public:
     bool isValidTxFreq(Region region, std::int64_t freqHz,
                        DSPMode mode, bool extended) const noexcept;
 
+    /// Thetis CheckValidTXFreq: signed filter offsets must both be in range;
+    /// TUNE ignores the filter and CW checks the carrier alone.
+    bool isValidTxPassband(Region region, std::int64_t freqHz, DSPMode mode,
+                           int filterLowHz, int filterHighHz, bool extended,
+                           bool ignoreFilter = false) const noexcept;
+
     /// Returns true iff TX-band == RX-band, OR \p preventDifferentBand
-    /// is false. Mirrors _preventTXonDifferentBandToRXband check at
-    /// console.cs:29401-29414 [2.9.0.7]MW0LGE.
+    /// is false. Mirrors the _preventTXonDifferentBandToRXband check at
+    /// Thetis console.cs:29451-29465 [v2.10.3.15] //MW0LGE [2.9.0.7].
+    /// Thetis compares the split TX band with the RX band; NereusSDR passes
+    /// the band of the device's active slice as \p rxBand when the
+    /// transmitting slice is not it, else the TX band.
     bool isValidTxBand(Band rxBand, Band txBand,
                        bool preventDifferentBand) const noexcept;
 
@@ -183,24 +204,38 @@ public:
     // -----------------------------------------------------------------------
 
     /// Returns true if \p mode is allowed to TX in the current 3M-1b scope.
-    /// Allowed:  LSB, USB, DIGL, DIGU (SSB voice family).
-    /// Rejected: CWL, CWU (→ Phase 3M-2), AM/SAM/DSB/FM/DRM (→ Phase 3M-3),
+    /// Allowed:  LSB, USB, DIGL, DIGU (SSB voice family), RADE_U/RADE_L,
+    ///           AM, SAM, DSB (WDSP ammod stage).
+    /// Rejected: CWL, CWU (→ Phase 3M-2), FM/DRM (→ Phase 3M-3b pre-emphasis),
     ///           SPEC (never a TX mode).
     bool isModeAllowedForTx(DSPMode mode) const noexcept;
 
     /// Composite MOX-allowed check: mode check (above) + existing
     /// isValidTxFreq + isValidTxBand checks.
     /// Returns a {ok, reason} struct suitable for tooltip / status-bar display.
-    /// Mode check runs first (cheaper and more user-facing).
+    /// Mode check runs first (cheaper and more user-facing), then the
+    /// different-band check, then the US 60 m mode check and the band edges,
+    /// in Thetis's order.
     struct MoxCheckResult {
         bool    ok;
         QString reason; ///< empty when ok==true
+        /// R-R3-36: a refusal that is never queued. A source still held
+        /// after it is not tried again until its level drops and it is
+        /// pressed again. Set only by the microphone-ready refusal; the
+        /// band-plan and interlock refusals keep Thetis's retry on every
+        /// PollPTT pass. NereusSDR-native.
+        bool    notQueued{false};
+        /// iPhone app plan Task 34 (R-IOS-13): the TxRefusal code this
+        /// refusal carries (TxRefusal.h). Empty means a band-plan refusal;
+        /// RadioModel's check names micNotReady and stationReceiveOnly.
+        QByteArray refusalCode{};
     };
 
     MoxCheckResult checkMoxAllowed(Region region, std::int64_t freqHz,
                                    DSPMode mode, Band rxBand, Band txBand,
                                    bool preventDifferentBand,
-                                   bool extended) const noexcept;
+                                   bool extended, int filterLowHz = 0,
+                                   int filterHighHz = 0, bool ignoreFilter = false) const noexcept;
 };
 
 } // namespace NereusSDR::safety

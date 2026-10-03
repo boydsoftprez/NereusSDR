@@ -1,0 +1,11 @@
+{
+  "from": "server",
+  "to": "client",
+  "wire": {
+    "type": "error",
+    "code": "somethingNewer",
+    "reason": "A newer server's error.",
+    "retryAfterMs": 0
+  },
+  "decodes": true
+}

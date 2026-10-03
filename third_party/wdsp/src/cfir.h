@@ -2,7 +2,7 @@
 
 This file is part of a program that implements a Software-Defined Radio.
 
-Copyright (C) 2014, 2016 Warren Pratt, NR0V
+Copyright (C) 2014, 2016, 2026 Warren Pratt, NR0V
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -20,33 +20,18 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 The author can be reached by email at  
 
-warren@wpratt.com
+warren@pratt.one
 
 */
 
+// NereusSDR modifications (2026-09-30 notice, J.J. Boyd KG4VCF, with Anthropic
+// Claude Code; changes made between 2026-09-22 and 2026-09-30 against the
+// pinned TAPR WDSP 2.10 tree at b02d5bac): declares getRun_cfir.
+
 #ifndef _cfir_h
 #define _cfir_h
-#include "firmin.h"
-typedef struct _cfir
-{
-	int run;
-	int size;
-	int nc;
-	int mp;
-	double* in;
-	double* out;
-	int runrate;
-	int cicrate; 
-	int DD; 
-	int R; 
-	int Pairs; 
-	double cutoff;
-	double scale;
-	int xtype;
-	double xbw;
-	int wintype;
-	FIRCORE p;
-} cfir, *CFIR;
+
+typedef struct _cfir *CFIR;
 
 extern CFIR create_cfir (int run, int size, int nc, int mp, double* in, double* out, int runrate, int cicrate, 
 	int DD, int R, int Pairs, double cutoff, int xtype, double xbw, int wintype);
@@ -57,6 +42,8 @@ extern void flush_cfir (CFIR a);
 
 extern void xcfir (CFIR a);
 
+extern int getRun_cfir (CFIR a);
+
 extern void setBuffers_cfir (CFIR a, double* in, double* out);
 
 extern void setSamplerate_cfir (CFIR a, int rate);
@@ -65,11 +52,11 @@ extern void setSize_cfir (CFIR a, int size);
 
 extern void setOutRate_cfir (CFIR a, int rate);
 
-extern double* cfir_impulse (int N, int DD, int R, int Pairs, double runrate, double cicrate, 
-	double cutoff, int xtype, double xbw, int rtype, double scale, int wintype);
+extern __declspec (dllexport) void SetTXACFIRRun(int channel, int run);
 
-extern void SetTXACFIRRun(int channel, int run);
+extern __declspec (dllexport) void SetTXACFIRNC(int channel, int nc);
 
-extern void SetTXACFIRNC(int channel, int nc);
+extern __declspec (dllexport) void SetTXACFIRCurve(int channel, int DD, int R, int Pairs,
+	int runrate, int cicrate, double cutoff, int xtype, double xbw);
 
 #endif

@@ -15,6 +15,9 @@
 //   2026-05-02 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted authoring via Anthropic
 //                 Claude Code (Stage C2 filter preset editor).
+//   2026-09-24 - iPhone app Task 19 (R-IOS-06, D40): followStationSetting()
+//                 so a remote window's presets follow the Core's. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -93,6 +96,16 @@ public:
     /// Clears all filter override AppSettings keys.
     /// Emits presetsChanged for every mode.
     void resetAll();
+
+    // ── Following the Core (iPhone app Task 19, D40) ──────────────────────
+
+    /// The "filters/" keys are the Core's (Station scope), so in a remote
+    /// window this store reads and writes the Core's presets through the
+    /// settings proxy. RadioModel calls this with each Core setting that
+    /// changes there (RadioModel::stationSettingChanged, remote windows
+    /// only): a preset key emits presetsChanged for its mode, and an empty
+    /// key (a whole snapshot) for all 14. Any other key is ignored.
+    void followStationSetting(const QString& key);
 
 signals:
     /// Emitted on any mutation for the affected mode.

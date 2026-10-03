@@ -13,7 +13,7 @@
 //                 with AI-assisted transformation via Anthropic Claude
 //                 Code.  Source-first 1:1 port of the Thetis modeless
 //                 PureSignal dialog (PSForm.cs + PSForm.designer.cs)
-//                 [v2.10.3.13].  Title bar reads "PureSignal 2.0"
+//                 [v2.10.3.13].  PS3 migration title reads "PureSignal 3.0"
 //                 verbatim.  ClientSize 560x300 default; Advanced
 //                 toggle collapses to 560x60 top-strip mode per
 //                 PSForm.cs:889-905 setAdvancedView.  All 23 designer
@@ -22,6 +22,8 @@
 //                 approximating Thetis x/y absolute positions (Thetis-
 //                 userland-parity-with-our-spin per
 //                 docs/architecture/feedback_thetis_userland_parity.md).
+//   2026-09-21 — Removed PS2-only PIN/MAP/STBL/PTOL/TINT controls while
+//                 retaining the supported PS3 timing and calibration surface.
 // =================================================================
 
 /*  PSForm.cs
@@ -68,11 +70,15 @@ mw0lge@grange-lane.co.uk
 #pragma once
 
 #include <QDialog>
+#include <QPointer>
+#include <QSet>
+#include <QVariantMap>
 #include <QVector>
+
+#include <array>
 
 class QCheckBox;
 class QCloseEvent;
-class QComboBox;
 class QLineEdit;
 class QDoubleSpinBox;
 class QGroupBox;
@@ -85,8 +91,13 @@ class QWidget;
 namespace NereusSDR {
 
 class AmpViewWindow;
+class DspAssetDialog;
 class RadioModel;
 class PureSignal;
+class PureSignalSessionFacade;
+class PureSignalSettings;
+enum class Ps3Action;
+enum class Ps3ActionPhase;
 
 // PsForm modeless dialog — opens from `Tools > PureSignal...`.  Source-
 // first port of Thetis PSForm.cs (1,164 LOC) [v2.10.3.13].
@@ -99,11 +110,9 @@ class PureSignal;
 //   ├────────────────────────────────────────────────────────────────┤
 //   │ ▣ FB Feedback Level   ▣ CO Correcting    ☐ Show 2Tone meas.    │
 //   ├────────────────────────────────────────────────────────────────┤
-//   │ MOX Wait (s) [_2.0_]      ☑ Auto-Attenuate                     │
-//   │ CAL Wait (s) [_0.0_]      ☐ Relax Tolerance      ☑ PIN         │
-//   │ AMP Delay (ns) [_150_]    ☐ Quick Attenuate Resp ☑ MAP         │
-//   │                                                  ☐ STBL         │
-//   │                                                  TINT [_0.5_]   │
+//   │ MOX Wait (s) [_0.2_]      ☑ Auto-Attenuate                     │
+//   │ CAL Wait (s) [_0.0_]      ☐ Quick Attenuate Resp               │
+//   │ AMP Delay (ns) [_150_]                                         │
 //   ├────────────────────────────────────────────────────────────────┤
 //   │ ☐ Display PS-RX and PS-TX spectra              ☐ Always On Top │
 //   ├────────────────────────────────────────────────────────────────┤
@@ -135,7 +144,7 @@ class PsForm : public QDialog {
 public:
     // The radioModel is currently used only by Save/Restore (default
     // folder lookup) and AmpView lifecycle (Task 9).  PureSignal is the
-    // coordinator (Task 7); all 23 controls bind to its setters/signals.
+    // coordinator (Task 7); retained controls bind to its setters/signals.
     explicit PsForm(RadioModel* radioModel,
                     PureSignal* pureSignal,
                     QWidget* parent = nullptr);
@@ -146,6 +155,11 @@ public:
     // Mirrors Thetis _advancedON flag (PSForm.cs:888 [v2.10.3.13]).
     bool isAdvancedCollapsed() const noexcept { return m_advancedCollapsed; }
 
+signals:
+    // GUI-local display preference. MainWindow owns the SpectrumWidget and
+    // connects this intent to its two-tone measurement overlay.
+    void showTwoToneMeasurementsChanged(bool on);
+
 protected:
     // Hide-on-close per the TxEqDialog pattern.  PSForm.cs:418-422
     // PSForm_Closing [v2.10.3.13] also intercepts FormClosing and calls
@@ -155,6 +169,8 @@ protected:
 private slots:
     // Action buttons (top row + Calibration Information group)
     void onSingleCalibrate();
+    void onAutomaticCalibrate();
+    void onApplyCurrentCorrection();
     void onAdvancedClicked();
     void onSavePressed();
     void onRestorePressed();
@@ -168,12 +184,11 @@ private slots:
 
     // Toggles
     void onAlwaysOnTopToggled(bool on);
-    void onPinToggled(bool on);
-    void onMapToggled(bool on);
-    void onStblToggled(bool on);
     void onAutoAttenuateToggled(bool on);
-    void onRelaxPtolToggled(bool on);
     void onQuickAttenuateToggled(bool on);
+    void onAutoCalEnabledToggled(bool on);
+    void onRunCalibrationProcessingToggled(bool on);
+    void onHardwarePeakOverrideToggled(bool on);
     void onLoopbackToggled(bool on);
     void onShow2ToneMeasurementsToggled(bool on);
 
@@ -181,7 +196,6 @@ private slots:
     void onMoxDelayChanged(double v);
     void onCalDelayChanged(double v);
     void onAmpDelayChanged(int v);
-    void onTintIndexChanged(int idx);
 
     // PureSignal -> UI sync
     void onFeedbackLevelChanged(int level);
@@ -193,11 +207,13 @@ private slots:
     void refreshCoBadge();
     void onCalibrationCountChanged(int count);
     void onFeedbackColourChanged(const QColor& colour);
-    // Codex Fix F: Save+Restore buttons gated by BOTH correctionsBeingApplied
-    // (Thetis PSForm.cs:574-590 [v2.10.3.13]) AND saveRestoreEnabled (Thetis
-    // PSForm.cs:865/871/877/883 [v2.10.3.13] — TINT combo index gating).
-    // Slot reads both predicates from the coordinator and AND-combines them.
+    // Save follows the live corrections-applied state.  PS3 restore no longer
+    // depends on the removed PS2 TINT geometry control.
     void refreshSaveRestoreButtons();
+    void refreshFacadeStatus();
+    void onActionResult(quint32 operationId, NereusSDR::Ps3ActionPhase phase,
+                        const QString& reason, const QVariantMap& values);
+    void onSessionInvalidated();
 
 private:
     void buildUi();
@@ -207,9 +223,13 @@ private:
     void setAdvancedMode(bool collapsed);
     void persistAdvancedMode() const;
     void restoreAdvancedMode();
+    quint32 requestAction(Ps3Action action, const QVariantMap& arguments = {});
+    void syncAcceptedSettings();
 
     RadioModel* m_radioModel{nullptr}; // non-owning; may be null in tests
     PureSignal* m_pureSignal{nullptr}; // non-owning; may be null in tests
+    QPointer<PureSignalSessionFacade> m_facade;
+    QPointer<PureSignalSettings> m_settings;
 
     // Echo guard so syncFromPureSignal() doesn't bounce back through the
     // setters and create a feedback loop.  Mirrors AetherSDR/SliceModel
@@ -225,27 +245,29 @@ private:
     QPushButton* m_btnSave{nullptr};          // PSForm.designer.cs:133-145 btnPSSave
     QPushButton* m_btnRestore{nullptr};       // PSForm.designer.cs:119-131 btnPSRestore
     QPushButton* m_btnReset{nullptr};         // PSForm.designer.cs:738-749 btnPSReset
+    QPushButton* m_btnAutomatic{nullptr};
+    QPushButton* m_btnApplyCurrent{nullptr};
 
     // Status row
     QLabel*    m_lblFb{nullptr};                   // PSForm.designer.cs:297-307 lblPSInfoFB (badge)
     QLabel*    m_lblCo{nullptr};                   // PSForm.designer.cs:309-319 lblPSInfoCO (badge)
     QCheckBox* m_chkShow2ToneMeasurements{nullptr};// PSForm.designer.cs:846-857 chkShow2ToneMeasurements
     QLabel*    m_lblWarningSetPk{nullptr};         // PSForm.designer.cs:835-844 pbWarningSetPk
+    QLabel*    m_lblActionStatus{nullptr};
+    QLabel*    m_lblNativeStatus{nullptr};
+    QLabel*    m_lblRoutingStatus{nullptr};
 
     // Calibration option checkboxes
-    QCheckBox* m_chkPin{nullptr};            // PSForm.designer.cs:207-222 chkPSPin
-    QCheckBox* m_chkMap{nullptr};            // PSForm.designer.cs:190-205 chkPSMap
-    QCheckBox* m_chkStbl{nullptr};           // PSForm.designer.cs:176-188 chkPSStbl
     QCheckBox* m_chkAutoAttenuate{nullptr};  // PSForm.designer.cs:224-239 chkPSAutoAttenuate
-    QCheckBox* m_chkRelaxPtol{nullptr};      // PSForm.designer.cs:255-268 chkPSRelaxPtol
     QCheckBox* m_chkQuickAttenuate{nullptr}; // PSForm.designer.cs:808-820 chkQuickAttenuate
+    QCheckBox* m_chkAutoCalEnabled{nullptr};
+    QCheckBox* m_chkRunCalibrationProcessing{nullptr};
+    QCheckBox* m_chkHardwarePeakOverride{nullptr};
 
-    // Timing / TINT
+    // Timing
     QDoubleSpinBox* m_spinMoxDelay{nullptr}; // PSForm.designer.cs:344-373 udPSMoxDelay
     QDoubleSpinBox* m_spinCalDelay{nullptr}; // PSForm.designer.cs:776-806 udPSCalWait
     QSpinBox*       m_spinAmpDelay{nullptr}; // PSForm.designer.cs:386-414 udPSPhnum
-    QLabel*         m_lblTint{nullptr};      // PSForm.designer.cs:108-117 lblPSTint
-    QComboBox*      m_comboTint{nullptr};    // PSForm.designer.cs:160-174 comboPSTint
 
     // Bottom row
     QCheckBox* m_chkLoopback{nullptr};   // PSForm.designer.cs:466-479 checkLoopback
@@ -271,6 +293,7 @@ private:
     // default); without a user-tunable input the AutoAtt loop can't converge
     // on hardware where the feedback path differs from spec.
     QLineEdit* m_txtPSpeak{nullptr};             // PSForm.designer.cs:573-582 txtPSpeak (SetPk editable)
+    std::array<QLabel*, 16> m_rawInfoLabels{};
 
     // Advanced collapse: vector of every widget that disappears in
     // collapsed mode (everything except the top action row).  Built in
@@ -284,6 +307,8 @@ private:
     // cycles.  Mirrors Thetis PSForm.cs:454-464 btnPSAmpView_Click +
     // PSForm.cs FixAmpViewOnTop pattern [v2.10.3.13].
     AmpViewWindow* m_ampView{nullptr};
+    QPointer<DspAssetDialog> m_assetDialog;
+    QSet<quint32> m_pendingActions;
 };
 
 } // namespace NereusSDR

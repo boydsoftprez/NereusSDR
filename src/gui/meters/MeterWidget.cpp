@@ -7,9 +7,29 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-09-30 - the geometry buffer is written only in a frame that binds
+//                 it (drawsGeometryLayer); with no geometry pipeline (a
+//                 shader failed to load) every frame's write stayed pending
+//                 in Qt's Metal backend. GUI memory leak follow-up. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-27 - Task 25: keep unbound filter/click-box and producerless
+//                 PB SNR items saved but not rendered. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-24 - R-R3-49: an item whose feature is not built yet
+//                 (the Voice Rec/Play control) is kept and saved but not
+//                 drawn and takes no clicks. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: the Discord control was removed; a saved one is
+//                 dropped on load with one log line and the rest of the
+//                 container loads. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-25 - iPhone app plan Task 39 (D14, R-IOS-13): an unavailable
+//                 binding's items are drawn dimmed with the reason as their
+//                 tooltip (setBindingUnavailable). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -55,6 +75,8 @@ mw0lge@grange-lane.co.uk
 #include "MeterWidget.h"
 #include "MeterItem.h"
 #include "core/LogCategories.h"
+#include "gui/UnbuiltFeatures.h"
+#include "MeterPoller.h"
 
 // All item types for deserializeItems() registry
 #include "SpacerItem.h"
@@ -76,14 +98,15 @@ mw0lge@grange-lane.co.uk
 #include "TuneStepButtonItem.h"
 #include "OtherButtonItem.h"
 #include "VoiceRecordPlayItem.h"
-#include "DiscordButtonItem.h"
 #include "VfoDisplayItem.h"
 #include "ClockItem.h"
 #include "ClickBoxItem.h"
 #include "DataOutItem.h"
 
+#include <QHelpEvent>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QToolTip>
 #include <QResizeEvent>
 #include <QMouseEvent>
 #include <QStringList>
@@ -150,6 +173,7 @@ void MeterWidget::addItem(MeterItem* item)
     m_bgDirty = true;
 #endif
     update();
+    emit itemAdded(item);
 }
 
 void MeterWidget::removeItem(MeterItem* item)
@@ -160,6 +184,7 @@ void MeterWidget::removeItem(MeterItem* item)
         m_bgDirty = true;
 #endif
         update();
+        emit itemRemoved(item);
     }
 }
 
@@ -171,6 +196,7 @@ void MeterWidget::clearItems()
         }
     }
     m_items.clear();
+    emit displayVisibilityChanged();
 #ifdef NEREUS_GPU_SPECTRUM
     markOverlayDirty();
     m_bgDirty = true;
@@ -322,7 +348,11 @@ bool MeterWidget::deserializeItems(const QString& data)
         } else if (type == QStringLiteral("VOICERECPLAY")) {
             item = new VoiceRecordPlayItem();
         } else if (type == QStringLiteral("DISCORDBTNS")) {
-            item = new DiscordButtonItem();
+            // R-R3-49: the Discord control was removed. A saved one is
+            // dropped here; the rest of the container loads normally.
+            qCInfo(lcMeter) << "Dropped a saved Discord control from a container:"
+                               " that control has been removed";
+            continue;
         } else if (type == QStringLiteral("VFO")) {
             item = new VfoDisplayItem();
         } else if (type == QStringLiteral("CLOCK")) {
@@ -500,7 +530,7 @@ void MeterWidget::mousePressEvent(QMouseEvent* event)
 
     for (int i = m_items.size() - 1; i >= 0; --i) {
         MeterItem* item = m_items[i];
-        if (item->hitTest(pos, w, h)) {
+        if (itemFeatureBuilt(item) && item->hitTest(pos, w, h)) {
             if (item->handleMousePress(event, w, h)) {
                 update();
                 return;
@@ -518,7 +548,7 @@ void MeterWidget::mouseReleaseEvent(QMouseEvent* event)
 
     for (int i = m_items.size() - 1; i >= 0; --i) {
         MeterItem* item = m_items[i];
-        if (item->hitTest(pos, w, h)) {
+        if (itemFeatureBuilt(item) && item->hitTest(pos, w, h)) {
             if (item->handleMouseRelease(event, w, h)) {
                 update();
                 return;
@@ -536,7 +566,7 @@ void MeterWidget::mouseMoveEvent(QMouseEvent* event)
 
     for (int i = m_items.size() - 1; i >= 0; --i) {
         MeterItem* item = m_items[i];
-        if (item->hitTest(pos, w, h)) {
+        if (itemFeatureBuilt(item) && item->hitTest(pos, w, h)) {
             if (item->handleMouseMove(event, w, h)) {
                 update();
                 return;
@@ -554,7 +584,7 @@ void MeterWidget::wheelEvent(QWheelEvent* event)
 
     for (int i = m_items.size() - 1; i >= 0; --i) {
         MeterItem* item = m_items[i];
-        if (item->hitTest(pos, w, h)) {
+        if (itemFeatureBuilt(item) && item->hitTest(pos, w, h)) {
             if (item->handleWheel(event, w, h)) {
                 update();
                 return;
@@ -572,6 +602,96 @@ void MeterWidget::drawItems(QPainter& p)
         if (!shouldRender(item)) { continue; }
         item->paint(p, w, h);
     }
+    drawUnavailableVeils(p);
+}
+
+// iPhone app plan Task 39: an unavailable binding's items, dimmed by the
+// widget's own background colour over them.
+void MeterWidget::drawUnavailableVeils(QPainter& p) const
+{
+    if (m_unavailableBindings.isEmpty()) {
+        return;
+    }
+    const int w = width();
+    const int h = height();
+    for (const MeterItem* item : m_items) {
+        if (!shouldRender(item) || !m_unavailableBindings.contains(item->bindingId())) {
+            continue;
+        }
+        // The item's own rectangle (MeterItem::pixelRect's arithmetic).
+        const QRect rect(static_cast<int>(item->x() * w), static_cast<int>(item->y() * h),
+                         static_cast<int>(item->itemWidth() * w),
+                         static_cast<int>(item->itemHeight() * h));
+        p.fillRect(rect, QColor(0x0f, 0x0f, 0x1a, 170));
+    }
+}
+
+void MeterWidget::setBindingUnavailable(int bindingId, const QString& reason)
+{
+    const auto it = m_unavailableBindings.constFind(bindingId);
+    const bool unavailable = it != m_unavailableBindings.constEnd();
+    if ((!unavailable && reason.isEmpty()) || (unavailable && it.value() == reason)) {
+        return;
+    }
+    if (reason.isEmpty()) {
+        m_unavailableBindings.remove(bindingId);
+    } else {
+        m_unavailableBindings.insert(bindingId, reason);
+    }
+#ifdef NEREUS_GPU_SPECTRUM
+    markOverlayDirty();
+#else
+    update();
+#endif
+}
+
+QString MeterWidget::unavailableReasonAt(const QPointF& pos) const
+{
+    const int w = width();
+    const int h = height();
+    for (int i = m_items.size() - 1; i >= 0; --i) {
+        const MeterItem* item = m_items.at(i);
+        if (!shouldRender(item) || !item->hitTest(pos, w, h)) {
+            continue;
+        }
+        const auto it = m_unavailableBindings.constFind(item->bindingId());
+        if (it != m_unavailableBindings.constEnd()) {
+            return it.value();
+        }
+    }
+    return {};
+}
+
+bool MeterWidget::event(QEvent* event)
+{
+    if (event->type() == QEvent::ToolTip) {
+        auto* help = static_cast<QHelpEvent*>(event);
+        const QString reason = unavailableReasonAt(help->pos());
+        if (!reason.isEmpty()) {
+            QToolTip::showText(help->globalPos(), reason, this);
+            return true;
+        }
+    }
+    return MeterBaseClass::event(event);
+}
+
+// R-R3-49: false for an item that fronts a feature not built yet (the
+// Voice Rec/Play control while the voice recorder is not built).
+bool MeterWidget::itemFeatureBuilt(const MeterItem* item)
+{
+    if (qobject_cast<const VoiceRecordPlayItem*>(item) != nullptr) {
+        return UnbuiltFeatures::isBuilt(UnbuiltFeature::Voice);
+    }
+    if (qobject_cast<const FilterDisplayItem*>(item) != nullptr) {
+        return UnbuiltFeatures::isBuilt(UnbuiltFeature::ContainerFilterDisplay);
+    }
+    if (qobject_cast<const ClickBoxItem*>(item) != nullptr) {
+        return UnbuiltFeatures::isBuilt(UnbuiltFeature::ContainerClickBox);
+    }
+    if (item->bindingId() == MeterBinding::PbSnr) {
+        return UnbuiltFeatures::isBuilt(UnbuiltFeature::PbSnr);
+    }
+    return true;
 }
 
 // From Thetis MeterManager.cs:31366-31368 — the per-item render gate
@@ -579,6 +699,9 @@ void MeterWidget::drawItems(QPainter& p)
 bool MeterWidget::shouldRender(const MeterItem* item) const
 {
     if (!item) { return false; }
+    // NereusSDR R-R3-49 (not in Thetis): an item whose feature is not built
+    // yet stays in the container, and is saved with it, but is not drawn.
+    if (!itemFeatureBuilt(item)) { return false; }
     const bool baseOk =
         ((m_mox && item->onlyWhenTx()) || (!m_mox && item->onlyWhenRx()))
         || (!item->onlyWhenTx() && !item->onlyWhenRx());
@@ -596,6 +719,7 @@ void MeterWidget::setMox(bool mox)
     m_bgDirty = true;
 #endif
     update();
+    emit displayVisibilityChanged();
 }
 
 void MeterWidget::setDisplayGroup(int group)
@@ -607,6 +731,7 @@ void MeterWidget::setDisplayGroup(int group)
     m_bgDirty = true;
 #endif
     update();
+    emit displayVisibilityChanged();
 }
 
 // ============================================================================
@@ -873,7 +998,7 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             }
         }
         m_geomVertCount = qMin(verts.size() / kGeomVertStride, kMaxGeomVerts);
-        if (m_geomVertCount > 0) {
+        if (drawsGeometryLayer(m_geomPipeline != nullptr, m_geomVertCount)) {
             batch->updateDynamicBuffer(m_geomVbo, 0,
                 m_geomVertCount * kGeomVertStride * sizeof(float), verts.constData());
         }
@@ -926,6 +1051,9 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                     item->paintForLayer(p, w, h, MeterItem::Layer::OverlayDynamic);
                 }
             }
+            // Task 39: over everything drawn so far (the overlay is the top
+            // layer), so an unavailable item's bar is dimmed too.
+            drawUnavailableVeils(p);
             m_overlayDynamicDirty = false;
             m_overlayNeedsUpload = true;
         }
@@ -958,7 +1086,7 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     }
 
     // Draw geometry
-    if (m_geomPipeline && m_geomVertCount > 0) {
+    if (drawsGeometryLayer(m_geomPipeline != nullptr, m_geomVertCount)) {
         cb->setGraphicsPipeline(m_geomPipeline);
         cb->setShaderResources(m_geomSrb);
         cb->setViewport({0, 0,

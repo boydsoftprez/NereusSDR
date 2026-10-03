@@ -1,0 +1,9 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "pair.spake",
+    "step": 1,
+    "data": "conformance-device-share"
+  },
+  "decodes": true
+}

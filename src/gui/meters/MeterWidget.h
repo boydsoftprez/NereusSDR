@@ -12,6 +12,14 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-25 - iPhone app plan Task 39 (D14, R-IOS-13): a binding can be
+//                 marked unavailable with a plain reason; its items are
+//                 drawn dimmed and the reason is their tooltip (a meter a
+//                 remote window cannot show yet is disabled, never hidden).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - drawsGeometryLayer(): the geometry buffer is written only
+//                 in a frame that binds it (GUI memory leak follow-up).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -87,6 +95,19 @@ public:
 
     void updateMeterValue(int bindingId, double value);
 
+    // iPhone app plan Task 39 (NereusSDR-native): the items bound to
+    // `bindingId` cannot show a reading here (a remote window's Core does
+    // not send it). They stay where they are, drawn dimmed, and hovering
+    // one shows `reason`. An empty reason makes the binding available
+    // again.
+    void setBindingUnavailable(int bindingId, const QString& reason);
+    QString bindingUnavailableReason(int bindingId) const
+    {
+        return m_unavailableBindings.value(bindingId);
+    }
+    // The reason for the unavailable item under `pos`, or empty.
+    QString unavailableReasonAt(const QPointF& pos) const;
+
     // Rescale the Power BarItem + ScaleItem pair (objectName "PowerBar" /
     // "PowerScale") for the connected SKU's PA ceiling.  20% headroom
     // past the red zone, sub-watt tick resolution for QRP radios.
@@ -108,6 +129,22 @@ public:
     // Mirrors Thetis MeterManager.cs:31366-31368 verbatim.
     bool shouldRender(const MeterItem* item) const;
 
+    // R-R3-49: false for an item that fronts a feature not built yet
+    // (UnbuiltFeatures). Such an item loads and is saved with its
+    // container, but is not drawn, takes no clicks and is not offered.
+    static bool itemFeatureBuilt(const MeterItem* item);
+
+    // Whether a GPU frame writes and binds the geometry vertex buffer: only
+    // with a geometry pipeline to draw it and vertices to draw. The write
+    // and the draw both take it, because Qt's Metal backend keeps a partial
+    // dynamic-buffer write pending until the buffer is bound, so a buffer
+    // written every frame and never bound (the pipeline failed to build,
+    // for example a missing shader) keeps every frame's copy.
+    static bool drawsGeometryLayer(bool hasPipeline, int vertCount)
+    {
+        return hasPipeline && vertCount > 0;
+    }
+
     QString serializeItems() const;
     bool deserializeItems(const QString& data);
 
@@ -126,6 +163,14 @@ public:
     void reflowStackedItems();
     void inferStackFromGeometry();
 
+signals:
+    // R-R3-21: an item was added (restore, a preset, Container settings
+    // Apply), so MainWindow can give it the saved meter settings and the
+    // active slice's state.
+    void itemAdded(NereusSDR::MeterItem* item);
+    void itemRemoved(NereusSDR::MeterItem* item);
+    void displayVisibilityChanged();
+
 protected:
 #ifdef NEREUS_GPU_SPECTRUM
     void initialize(QRhiCommandBuffer* cb) override;
@@ -138,9 +183,13 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    bool event(QEvent* event) override;
 
 private:
     void drawItems(QPainter& p);
+    // Task 39: dims each drawn item whose binding is unavailable.
+    void drawUnavailableVeils(QPainter& p) const;
+    QHash<int, QString> m_unavailableBindings;
     QVector<MeterItem*> m_items;
 
     // Visibility filter state — see setMox/setDisplayGroup doc.

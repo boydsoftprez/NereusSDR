@@ -16,6 +16,44 @@
 // Modification history (NereusSDR):
 //   2026-05-10 — Phase 3J-1 Task 3.1 by J.J. Boyd (KG4VCF);
 //                AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-23 - R3 receiver audio plan, Task 4 (R-R3-42, R-R3-25) by
+//                J.J. Boyd (KG4VCF): remote-window mode (receive-only init
+//                burst, transmit refused, vfo/modulation answer with the
+//                value the slice holds). AI-assisted transformation via
+//                Anthropic Claude Code.
+//   2026-09-24 - R-R3-48 / R-R3-25: setStationReceiveOnly() and
+//                transmitRefused(). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 3): buildTxProfilesExLine and
+//                buildTxProfileExLine public for TciServer's remote-window
+//                profile broadcast. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-09-25 - Receiver and transmit gaps plan, Task 12 (R-R3-49) by
+//                J.J. Boyd (KG4VCF): if goes out with each VFO and centre
+//                change, dds carries the centre, one if builder for the
+//                init burst and the live path, and each drained line
+//                carries the update gate of the event that queued it.
+//                AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-25 - iPhone app Task 73 (R-IOS-02, ruling 5.13): a slice write
+//                gate; a per-receiver set command naming a slice the gate
+//                refuses changes nothing and is answered as its query.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-09-25 - iPhone app plan Task 35 (R-IOS-13, ruling 8.14): a remote
+//                window that forwards transmit to its Core
+//                (setRemoteTransmitForwarded): its init burst no longer says
+//                receive-only, and TciServer answers a trx set command with
+//                the Core's verdict. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - Desktop-host receiver-to-owned-slice mapping.
+//                NereusSDR-original, AI-assisted via OpenAI Codex.
+//   2026-09-29 - The three second-receiver VFO options (copy VFO B to
+//                VFO A, forget VFO B, use RX1 VFO A for RX2 VFO A) act as
+//                Thetis's do; their defaults are named once here.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - Level Cal: calibration_ex carries the meter and display
+//                calibration and goes to apps when either changes. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #pragma once
 
@@ -23,7 +61,15 @@
 #include <QString>
 #include <QStringList>
 
+#include "TciUpdateGap.h"
+#include <functional>
+
 #include "TciVfoCoalescer.h"
+
+#include <QHash>
+#include <QList>
+
+#include <optional>
 
 namespace NereusSDR {
 
@@ -36,7 +82,7 @@ namespace NereusSDR {
 // | TciServerEnabled                     | bool   | False   | Server on/off
 // | TciServerPort                        | int    | 50001   | Bind port (addr always 127.0.0.1)
 // | TciSendInitialFrequencyStateOnConnect| bool   | True    | VFO/IF/DDS in init burst
-// | TciRateLimitMsgsPerSec               | int    | 60      | Per-client message rate cap
+// | TciRateLimitMs                       | int    | 100     | Update gap per app [0..1000] (TciUpdateGap)
 // | TciAudioStreamSamples                | int    | 2048    | Audio block size [100..2048]
 // | TciTxChannel                         | string | "Both"  | TX audio channel: Left/Right/Both
 // | TciRxSensorIntervalMs                | int    | 200     | RX sensor push [30..1000]
@@ -47,9 +93,9 @@ namespace NereusSDR {
 // | TciCwBecomesCwuAbove10mhz            | bool   | False   | Compat flag (W2PA #559)
 // | TciIqSwap                            | bool   | True    | Compat flag
 // | TciAlwaysStreamIq                    | bool   | False   | Compat flag
-// | TciForgetRx2VfoBOnDisconnect         | bool   | False   | VFO quirk
-// | TciUseRx1VfoaForRx2Vfoa              | bool   | False   | VFO quirk
-// | TciCopyRx2VfobToVfoa                 | bool   | False   | VFO quirk
+// | TciForgetRx2VfoBOnDisconnect         | bool   | False   | RX2 VFO option (kTciForgetRx2VfobDefault)
+// | TciUseRx1VfoaForRx2Vfoa              | bool   | False   | RX2 VFO option (kTciUseRx1VfoaForRx2VfoaDefault)
+// | TciCopyRx2VfobToVfoa                 | bool   | True    | RX2 VFO option (kTciCopyRx2VfobToVfoaDefault)
 //
 // Additional keys introduced by AudioTciPage (Phase 3J-1 Task 2.7):
 // | TciSliceA_OutputSampleRate           | int    | 48000   | Slice A default audio rate (applied at connect-time)
@@ -66,6 +112,29 @@ namespace NereusSDR {
 // Setup → Network → TCI Server. See design doc Section 10.
 // ─────────────────────────────────────────────────────────────────────────
 
+// The second-receiver VFO options' defaults. Every reader (TciProtocol, the
+// Setup pages, StationTciModel) takes its fallback from these, so each
+// default is changed in exactly one place.
+//
+// From Thetis setup.cs:381-382 [v2.10.3.15]:
+//   // some default tci server states MW0LGE_21k9d
+//   chkCopyRX2VFObToVFOa.Checked = true;
+//   chkUseRX1vfoaForRX2vfoa.Checked = true;
+// chkForgetRX2VfoBVFOinfo is unchecked in the designer and only enabled
+// while chkCopyRX2VFObToVFOa is checked (setup.cs:22568-22572 [v2.10.3.15]).
+//
+// Copy follows Thetis (on) and Forget follows Thetis (off); JJ's ruling of
+// 2026-09-29 settles all three.
+inline constexpr bool kTciCopyRx2VfobToVfoaDefault    = true;
+inline constexpr bool kTciForgetRx2VfobDefault        = false;
+// DIVERGENCE (JJ's ruling, 2026-09-29): Thetis defaults Use RX1 VFO A for
+// RX2 VFO A ON, from Thetis setup.cs:381-382 [v2.10.3.15]:
+//   // some default tci server states MW0LGE_21k9d
+//   chkUseRX1vfoaForRX2vfoa.Checked = true;
+// NereusSDR defaults it OFF so existing TCI client output is unchanged.
+inline constexpr bool kTciUseRx1VfoaForRx2VfoaDefault = false;
+
+class SliceModel;
 class TciProtocol : public QObject {
     Q_OBJECT
 public:
@@ -77,6 +146,12 @@ public:
     // — unknown commands produce zero outbound traffic per design doc §4.1).
     QString handleCommand(const QString& command);
 
+    // Level Cal: the calibration_ex line for receiver `rx` (0 or 1) with
+    // the radio's calibration now, Thetis CalibrationChanged
+    // (TCIServer.cs:1160-1176 [v2.10.3.15]). TciServer broadcasts it when
+    // the calibration changes; the client query sends it too.
+    QString calibrationExLineFor(int rx) const;
+
     // Notification queue — drained by TciServer after each handleCommand.
     bool hasPendingNotification() const;
     QString takePendingNotification();
@@ -86,6 +161,20 @@ public:
     // collapse to ≤ 1 frame per (rx, chan) per drain tick.
     // From Thetis TCIServer.cs:1722-1727 [v2.10.3.13] — outbound-coalesced map.
     void drainCoalescedNotifications();
+
+    // One queued line and the update gate of the event that queued it
+    // (Task 12, R-R3-49). gate is empty for a line queued without one:
+    // one-shot events, and the vfo answer to an app's own vfo set command,
+    // which TciUpdateGap sorts by command.
+    struct PendingLine {
+        QString frame;
+        std::optional<TciUpdateGap::Gate> gate;
+    };
+
+    // As takePendingNotification, with the line's gate. TciServer uses this
+    // so an if line reaches the gate its event named, never one inferred
+    // from where it sits in the tick (rereview of the fix wave, N2).
+    PendingLine takePendingLine();
 
     // ── Phase 3J-1 closeout (2026-05-22): local state-change broadcast ──────
     //
@@ -120,8 +209,34 @@ public:
     // while the transmitter sat on B, and tuning B advertised nothing.
     // TciProtocol has no RadioModel handle by design, so the caller answers
     // it, exactly as that comment anticipated.
+    //
+    // Task 12 (R-R3-49): a VFO change sends if then vfo for each channel, as
+    // Thetis's VFOdata thread does for a VFO event (TCIServer.cs:1396-1398
+    // [v2.10.3.15]); it no longer sends dds, which belongs to the centre
+    // event below. The if offset is read when the queue drains, so it names
+    // the offset the slice settled on, not the one it passed through.
     void enqueueLocalBroadcast(const QString& frame);
+    // R-R3-49 (parity Task 3): the tx_profiles_ex / tx_profile_ex lines,
+    // public so TciServer's remote-window profile broadcast writes the same
+    // frames. From Thetis TCIServer.cs:4721-4731 / 4715-4720 [v2.10.3.13]
+    // (sendTXProfiles, sendTXProfile).
+    static QString buildTxProfilesExLine(const QStringList& names);
+    static QString buildTxProfileExLine(const QString& active);
     void enqueueLocalBroadcastVfo(int rxIndex, qint64 hz, bool isTxBound);
+
+    /// A centre change for receiver rxIndex: dds then if:rx,0, both on the
+    /// centre gate, as Thetis's VFOdata thread sends a centre event
+    /// (TCIServer.cs:1378-1382 [v2.10.3.15]). Both values are read when the
+    /// queue drains, and the pair is dropped then if the centre is the one
+    /// last sent, so a retune that leaves the pan where it was sends no dds.
+    ///
+    /// Thetis sends the if only with CTUN on (OnCentreFrequencyChanged,
+    /// TCIServer.cs:7364-7376 [v2.10.3.15]):
+    ///   //only want to send IF with this if CTUN is enabled
+    /// [original inline comment from TCIServer.cs:7366]. NereusSDR has no model-level
+    /// CTUN for a local window, and with the pan following the VFO the
+    /// offset is 0, so the if goes every time and is always true.
+    void enqueueLocalBroadcastCentre(int rxIndex);
 
     /// Emit the untagged tx_frequency pair on its own.
     ///
@@ -150,10 +265,79 @@ public:
     /// would have to be widened with it.
     static constexpr int kExposedReceiverCount = 2;
 
+    // The second-receiver VFO options, read from AppSettings when used,
+    // each falling back to its kTci...Default above.
+    static bool copyRx2VfobToVfoaSetting();
+    static bool forgetRx2VfobSetting();
+    static bool useRx1VfoaForRx2VfoaSetting();
+
+    // RX2 is on (Thetis console.RX2Enabled): receiver 1 has a slice. With a
+    // receiver map that is the map's receiver 1; without one (the Core's
+    // station server, a plain desktop) it is slice 1, since trx:N is slice N.
+    // A test radio that is not a RadioModel answers through rx2Enabled().
+    bool rx2EnabledNow() const;
+    // The receiver whose slice vfo:rx,chan reads and writes, and the slice
+    // VFO (chan) it uses: with RX2 on, channel 1 of either receiver is RX2's
+    // VFO B, receiver 1's slice frequency; with Use RX1 VFO A for RX2 VFO A,
+    // receiver 1 channel 0 is receiver 0's VFO A.
+    struct VfoTarget { int rx; int chan; };
+    VfoTarget vfoTarget(int rx, int chan) const;
+
     // Build the post-connect init burst. Stub returns empty list in Phase 3;
     // Phase 4 Task 4.1 replaces with the 8-line wrapper from
     // Thetis TCIServer.cs:2512-2552 [v2.10.3.13].
     QStringList buildInitBurst() const;
+
+    // R-R3-42 / R-R3-25: this protocol serves a remote window, whose
+    // receivers belong to a Core that does not transmit for it. The init
+    // burst then says receive_only:true and tx_enable false on both
+    // receivers, trx set commands never touch MOX and answer trx:N,false,
+    // and vfo / modulation set commands answer with the value the slice
+    // holds after the write (the Core's accepted value arrives later
+    // through the slice's own change broadcast). Off by default: local
+    // operation is unchanged.
+    void setRemoteWindow(bool remote) { m_remoteWindow = remote; }
+    bool remoteWindow() const { return m_remoteWindow; }
+
+    // R-R3-48 / R-R3-25: the Core's station server transmits for no app
+    // until remote transmit: receive_only:true, tx_enable false, and trx
+    // set commands answer trx:N,false without touching MOX. Unlike a
+    // remote window, vfo and modulation act on the Core's own slices.
+    void setStationReceiveOnly(bool receiveOnly) { m_stationReceiveOnly = receiveOnly; }
+    bool stationReceiveOnly() const { return m_stationReceiveOnly; }
+    // iPhone app plan Task 35 (ruling 8.14): a remote window whose
+    // TciServer forwards an app's transmit to the Core
+    // (TciServer::setRemoteTransmit). A trx set command is then answered by
+    // the server with the Core's verdict, never here, and the window is not
+    // receive-only (the Core decides each key). Off by default.
+    void setRemoteTransmitForwarded(bool forwarded) { m_remoteTransmitForwarded = forwarded; }
+    bool remoteTransmitForwarded() const { return m_remoteWindow && m_remoteTransmitForwarded; }
+    // Transmit is refused (a remote window that does not forward it, or the
+    // station server).
+    bool transmitRefused() const
+    {
+        return (m_remoteWindow && !m_remoteTransmitForwarded) || m_stationReceiveOnly;
+    }
+
+    // iPhone app Task 73 (the several-devices design, ruling 5.13): the
+    // Core's own server reads every slice (trx:N is slice N) and changes
+    // only the station device's own. With a gate set, a per-receiver set
+    // command (vfo, modulation, rx_filter_band, the DSP switches, ...)
+    // naming a slice the gate refuses changes nothing and is answered with
+    // the value the slice holds, as its query would be. No gate (a desktop
+    // on its own): every slice, as before.
+    using SliceWriteGate = std::function<bool(int sliceId)>;
+    void setSliceWriteGate(SliceWriteGate gate) { m_sliceWriteGate = std::move(gate); }
+    // Desktop hosting: map TCI receiver N to the station device's Nth
+    // owned slice. Empty restores the ordinary identity mapping.
+    void setReceiverSliceMap(std::function<int(int)> map) { m_receiverSliceMap = std::move(map); }
+    int receiverSlice(int receiver) const;
+    int sliceReceiver(int sliceId) const;
+    // M1 (R-R3-48 / R-R3-25): `command` (one TCI command, with or without
+    // its ';') changes transmit configuration an app may not change on the
+    // receive-only station server: tx_profile_ex, xit_enable and xit_offset
+    // set commands. Queries are not changes.
+    static bool isTransmitSettingChange(const QString& command);
 
     // Slice ↔ trx mapping (NereusSDR architectural divergence per design doc §1.2):
     //   Slice A | trx:0,    Slice B | trx:1,    Slice C | trx:2,    Slice D | trx:3
@@ -177,6 +361,7 @@ public:
     static QString tciAgcModeForWire(const QString& enumName);
 
 private:
+    SliceModel* mappedSlice(int receiver) const;
     // From Thetis TCIServer.cs:4924-5128 [v2.10.3.13] — 60-case set-command switch.
     // Phase 5+ adds individual cases via the matrix runner.
     QString handleSetCommand(const QString& name, const QStringList& args);
@@ -188,7 +373,9 @@ private:
     // ── VFO family handlers (Phase 6) ─────────────────────────────────────────
     // From Thetis TCIServer.cs:3724-3833 [v2.10.3.13] — handleVFOMessage.
     // Dispatches set (3 args) or query (2 args) by args.size().
-    // UseRX1VFOaForRX2VFOa quirk deferred to Phase 6+ refinement.
+    // With RX2 on and Use RX1 VFO A for RX2 VFO A set, receiver 1 channel 0
+    // is receiver 0's VFO for set and query (TCIServer.cs:3858-3967
+    // [v2.10.3.15]).
     QString handleVfoCommand(const QStringList& args);
 
     // From Thetis TCIServer.cs:3284-3302 [v2.10.3.13] — handleVFOLock.
@@ -326,13 +513,21 @@ private:
 
     // ── Phase 13: Bespoke _ex command handlers ───────────────────────────────
     // From Thetis TCIServer.cs:5010 [v2.10.3.13] — rx_enable case in set switch.
-    // handleRXEnable at TCIServer.cs:4413-4450 [v2.10.3.13]:
-    //   1-arg = query (rx → emit rx_enable:rx,bool;)
-    //   2-arg = set (rx, bool).
-    // rx==0 is always enabled in Thetis; rx==1 sets RX2Enabled.
-    // NereusSDR: MOX-gating of query result deferred to Phase 17; stored directly.
+    // handleRXEnable at TCIServer.cs:4595-4629 [v2.10.3.15]:
+    //   1-arg = query: rx 0 -> !MOX, rx 1 -> RX2Enabled && !MOX.
+    //   2-arg = set (rx, bool): rx==1 sets RX2Enabled; nothing is sent.
+    // NereusSDR: RX2 is receiver 1's slice, which TCI does not open or
+    // close, so a set changes nothing.
     // sendRXEnable at TCIServer.cs:2279-2283 [v2.10.3.13]: "rx_enable:rx,bool;"
     QString handleRxEnableCommand(const QStringList& args);
+
+    // From Thetis TCIServer.cs:5456-5458 [v2.10.3.15] — rx_channel_enable case;
+    // handleRxChannelEnable at TCIServer.cs:6252-6291 [v2.10.3.15]:
+    //   2-arg = query (rx, chan), 3-arg = set (rx, chan, bool).
+    // The reply goes to the asking app only (sendTextFrame on its listener).
+    QString handleRxChannelEnableCommand(const QStringList& args);
+    // The value a rx_channel_enable query answers for rx, chan.
+    bool rxChannelEnabledNow(int rx, int chan) const;
 
     // From Thetis TCIServer.cs:5118 [v2.10.3.13] — rx_ctun_ex case in set switch.
     // handleCTUN at TCIServer.cs:4696-4710 [v2.10.3.13]:
@@ -500,6 +695,44 @@ private:
     // From Thetis TCIServer.cs:2096-2120 [v2.10.3.13] — sendIF format string.
     // offset += -GetDSPcwPitchShiftToZero(rx+1); //MW0LGE [2.9.0.7] note we invert with -
     static QString buildIfLine(int rx, int chan, qint64 offsetHz);
+
+    // The offset an if line carries: vfo - centre + RIT. Task 12 (R-R3-49).
+    //
+    // From Thetis TCIServer.cs:7268 and :7293 [v2.10.3.15], the live path:
+    // offsetHz = (int)-offset, where offset is RXOsc; and console.cs:31409
+    // and :31457-31458 [v2.10.3.15]:
+    //   double rx1_osc = Math.Round(-(freq - CentreFrequency) * 1.0e6);
+    //   if (chkRIT.Checked && bRitOk)
+    //       rx1_osc -= (int)udRIT.Value;
+    // so -RXOsc = (vfo - centre) + RIT.
+    //
+    // Divergence: Thetis's init burst calls sendIF with no offset, which
+    // reads +RXOsc (TCIServer.cs:2136-2152 [v2.10.3.15]), the opposite sign
+    // of its live path. One builder serves both here, with the live sign,
+    // the one that keeps vfo = dds + if.
+    //
+    // No DIG click-tune offset: Thetis's RXOsc never carries it, while
+    // NereusSDR's composed WDSP shift does.
+    //
+    // No CW pitch term. Thetis's sendIF ends with
+    //   offset += -consoleThreadSafe.GetDSPcwPitchShiftToZero(rx + 1); //MW0LGE [2.9.0.7] note we invert with -
+    // [original inline comment from TCIServer.cs:2154]
+    // because in CW it tunes the DDC off the VFO by the pitch
+    // (console.cs:31826-31838 [v2.10.3.15]). NereusSDR does not, so the
+    // term would break vfo = dds + if here. Revisit with CW transmit (3M-2).
+    static qint64 ifOffsetHz(qint64 vfoHz, qint64 centreHz, int ritHz);
+
+    // The one if builder, for the init burst and the live path alike: reads
+    // receiver rx's vfo, centre and RIT and formats the line.
+    QString buildIfLineForRx(int rx, int chan) const;
+    // As buildIfLineForRx, labelled rx but read from receiver sourceRx: the
+    // if:1,0 that Use RX1 VFO A for RX2 VFO A sends for receiver 0's VFO.
+    QString buildIfLineFrom(int labelRx, int chan, int sourceRx) const;
+
+    // Receiver rx's dds line, its centre read from the radio. The init burst
+    // uses it; the drain reads the same readDdsHz so it can record what it
+    // sent (m_lastBroadcastDdsHz).
+    QString buildDdsLineForRx(int rx) const;
     // From Thetis TCIServer.cs:2061-2095 [v2.10.3.13] — sendVFO format string.
     static QString buildVfoLine(int rx, int chan, qint64 hz);
     // From Thetis TCIServer.cs:2246-2259 [v2.10.3.13] — sendTXFrequencyChanged.
@@ -549,9 +782,9 @@ private:
     // From Thetis TCIServer.cs:4690-4694 [v2.10.3.13] — sendCTUN (rx_ctun_ex suffix).
     static QString buildRxCtunExLine(int rx, bool en);
     // From Thetis TCIServer.cs:4721-4731 [v2.10.3.13] — sendTXProfiles.
-    static QString buildTxProfilesExLine(const QStringList& names);
     // From Thetis TCIServer.cs:4715-4720 [v2.10.3.13] — sendTXProfile.
-    static QString buildTxProfileExLine(const QString& active);
+    // buildTxProfilesExLine / buildTxProfileExLine: public (R-R3-49 parity
+    // Task 3, TciServer's remote-window profile broadcast).
     // From Thetis TCIServer.cs:4766-4775 [v2.10.3.13] — sendCalibration (F6 C-locale).
     static QString buildCalibrationExLine(int rx, double meter, double display,
                                           double xvtr, double sixMeter,
@@ -667,12 +900,33 @@ private:
     // at the declaration site and does not silently break when new signals are
     // wired from worker threads in Phase 24+.
     QStringList m_pendingNotifications;
+    // Lines drained from the coalescer, each with its event's gate (Task
+    // 12). Taken after m_pendingNotifications, the order the one list had.
+    QList<PendingLine> m_pendingDrained;
+    // The centre the drain last sent as dds per receiver, so a centre event
+    // that moved nothing sends nothing. Written by the drain only: the drain
+    // reaches every app, while an init burst reaches one new app, and
+    // letting the burst write here hid a pending move from every app already
+    // connected (whole-branch review M3, R-R3-49). Thetis keeps the same
+    // state per socket, so one app's connect cannot touch another's.
+    QHash<int, qint64> m_lastBroadcastDdsHz;
+    qint64 readDdsHz(int rx) const;
+    qint64 readVfoHzForRx(int rx, int chan) const;
     // Phase 15: coalescer for rapid VFO updates (Layer 3 of Thetis 3-layer
-    // throttle at TCIServer.cs:1722-1727 [v2.10.3.13]). Layers 1+2 subsumed
-    // by Qt event loop + 5ms TciServer drain timer.
+    // throttle at TCIServer.cs:1722-1727 [v2.10.3.13]). Layer 1, the per-app
+    // update gap, runs after it in TciServer (TciUpdateGap, Task 10);
+    // Layer 2 is subsumed by it. See TciVfoCoalescer.h.
     TciVfoCoalescer m_vfoCoalescer;
+    // The receiver an if key queued by the VFO path is read from, when it
+    // is not the receiver the key names (Use RX1 VFO A for RX2 VFO A).
+    QHash<QString, int> m_ifSourceReceiver;
     int m_setDispatchCount{0};
     int m_queryDispatchCount{0};
+    bool m_remoteWindow{false};
+    bool m_remoteTransmitForwarded{false};   // Task 35
+    bool m_stationReceiveOnly{false};
+    SliceWriteGate m_sliceWriteGate;
+    std::function<int(int)> m_receiverSliceMap;
 };
 
 } // namespace NereusSDR

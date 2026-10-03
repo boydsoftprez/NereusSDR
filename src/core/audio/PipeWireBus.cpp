@@ -15,6 +15,8 @@
 //
 // Modification history (NereusSDR):
 //   2026-04-24  J.J. Boyd (KG4VCF) — created for Phase 3O Task 12.
+//   2026-09-23  J.J. Boyd (KG4VCF): R-R3-44: outputPacing() and
+//               outputHasReader(). AI-assisted via Anthropic Claude Code.
 // =================================================================
 #ifdef NEREUS_HAVE_PIPEWIRE
 
@@ -205,6 +207,24 @@ qint64 PipeWireBus::pull(char* data, qint64 maxBytes)
 {
     if (!m_open) { return -1; }
     return m_stream->pull(data, maxBytes);
+}
+
+std::optional<IAudioBus::OutputPacing> PipeWireBus::outputPacing() const
+{
+    if (!m_open || !m_stream || m_role == Role::TxInput) { return std::nullopt; }
+    const PipeWireStream::OutputCounters counters = m_stream->outputCounters();
+    OutputPacing pacing;
+    pacing.consumedFrames = counters.consumedFrames;
+    pacing.queuedFrames = counters.queuedFrames;
+    pacing.capacityFrames = counters.capacityFrames;
+    pacing.callbackFrames = counters.callbackFrames;
+    return pacing;
+}
+
+std::optional<bool> PipeWireBus::outputHasReader() const
+{
+    if (!m_open || !m_stream || m_role == Role::TxInput) { return std::nullopt; }
+    return m_stream->isStreaming();
 }
 
 }  // namespace NereusSDR

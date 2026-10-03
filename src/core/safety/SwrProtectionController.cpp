@@ -18,6 +18,10 @@
 //                Ports PollPAPWR (console.cs:25933-26120 [v2.10.3.13])
 //                and UIMOXChangedFalse reset (console.cs:29191-29195
 //                [v2.10.3.13]).
+//   2026-09-28 - R-R3-49 / R-R3-46: Setup > Transmit > Power's Disable HF PA
+//                applied (Thetis DisablePA and hf_tr_relay,
+//                transmitSettingsVersion 11). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 
 // --- From console.cs ---
@@ -108,6 +112,11 @@ void SwrProtectionController::setTunePowerSwrIgnore(float watts) noexcept
 void SwrProtectionController::setDisableOnTune(bool on) noexcept
 {
     m_disableOnTune = on;
+}
+
+void SwrProtectionController::setHfPaDisabled(bool on) noexcept
+{
+    m_hfPaDisabled = on;
 }
 
 void SwrProtectionController::setAlexFwdLimit(float watts) noexcept
@@ -229,6 +238,15 @@ void SwrProtectionController::ingest(float fwdW, float revW, bool tuneActive) no
         if (fwdW >= 1.0f && fwdW <= m_tunePowerSwrIgnore && m_tunePowerSliderValue <= 70) {
             swrPass = true;
         }
+    }
+
+    // "Disable HF PA": no trip with the HF PA off. NereusSDR has no
+    // transverter bands, so the tx_xvtr_index arm never applies.
+    // console.cs:26109-26110 [v2.10.3.15]
+    //   if (tx_xvtr_index >= 0 || hf_tr_relay)
+    //       swr_pass = true;
+    if (m_hfPaDisabled) {
+        swrPass = true;
     }
 
     // ── Trip detection + foldback / windback ──────────────────────────────

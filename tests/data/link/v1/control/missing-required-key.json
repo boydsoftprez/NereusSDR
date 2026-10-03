@@ -1,0 +1,16 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "command.invoke",
+    "verb": "notch.delete",
+    "args": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "kind": "i64",
+        "value": 1
+      }
+    ]
+  },
+  "decodes": false
+}

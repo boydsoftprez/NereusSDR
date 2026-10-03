@@ -222,7 +222,7 @@ private slots:
         e.setDecimation(4);
         e.setDecimation(0);   // below min
         QCOMPARE(e.decimation(), 4);   // unchanged
-        e.setDecimation(33);  // above max
+        e.setDecimation(17);  // above max
         QCOMPARE(e.decimation(), 4);   // unchanged
     }
 
@@ -231,8 +231,8 @@ private slots:
         FFTEngine e(0);
         e.setDecimation(1);
         QCOMPARE(e.decimation(), 1);
-        e.setDecimation(32);
-        QCOMPARE(e.decimation(), 32);
+        e.setDecimation(16);
+        QCOMPARE(e.decimation(), 16);
     }
 };
 

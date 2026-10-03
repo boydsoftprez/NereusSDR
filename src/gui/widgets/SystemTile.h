@@ -8,6 +8,8 @@
 #include <QString>
 #include <QWidget>
 
+#include "gui/widgets/CpuRowCycler.h"
+
 namespace NereusSDR {
 
 class MetricLabel;
@@ -32,12 +34,23 @@ public:
 
     /// "PA" on most boards, "PSU" on the ANAN-G2E supply_volts path.
     void setPaLabel(const QString& label);
+    // R-R3-32 (remote-window parity Task 6): where the PA readings come
+    // from, shown in the PA row's tooltip ("From the Core" in a remote
+    // window; empty for this computer's own radio).
+    void setPaSourceNote(const QString& note);
     QString paLabel() const;
 
     /// Row-one value text, empty when the row is hidden.
     QString paRowText() const;
     /// Row-two value text.
     QString cpuRowText() const;
+    /// Parity ruling C9: row two as a remote window's cycler says it:
+    /// its label ("CPU" or "Core"), value, warning colour and tooltip.
+    void setCpuRow(const CpuRowCycler::Row& row);
+    QString cpuRowLabel() const;
+    bool cpuRowWarning() const noexcept { return m_cpuWarning; }
+    QString cpuRowToolTip() const;
+    QString cpuRowStyleSheet() const;
     /// False when the board publishes neither volts nor temperature.
     bool hasPaRow() const noexcept { return m_hasVolts || m_hasTemp; }
 
@@ -59,6 +72,8 @@ private:
     bool   m_hasTemp{false};
     double m_volts{0.0};
     double m_celsius{0.0};
+    QString m_paSourceNote;
+    bool m_cpuWarning{false};
 };
 
 } // namespace NereusSDR

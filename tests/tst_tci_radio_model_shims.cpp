@@ -450,8 +450,10 @@ private slots:
     void stub_dsp_toggles_roundtrip() {
         RadioModel m;
         setupOneSlice(m);
-        // setRxEnable / setRxCtun are what is left on the per-slice stub
-        // backing storage (m_tciStubRx*).  Four shims have since moved off it
+        // setRxCtun is what is left on the per-slice stub backing storage
+        // (m_tciStubRx*).  setRxEnable was removed: rx_enable now answers
+        // from RX2 (receiver 1's slice) and MOX, as Thetis handleRXEnable
+        // does.  Four shims have since moved off it
         // to real model state: setRxAnf in Phase 3F Sub-Epic J Task 10, then
         // setRxApf and setRxBin in chip task_c1e6fbad, then setRxNf onto
         // NotchModel::globalEnabled in TNF section 6.4.  Their coverage is
@@ -462,13 +464,13 @@ private slots:
         // alone is exactly what never caught that the stubbed ones reached no
         // DSP, so assert the destination too, not just the echo.
         for (const QByteArray name :
-             {"setRxNf", "setRxEnable", "setRxCtun"})
+             {"setRxNf", "setRxCtun"})
         {
             QMetaObject::invokeMethod(&m, name.constData(),
                                       Q_ARG(int, 0), Q_ARG(bool, true));
         }
         const QByteArray getters[] = {
-            "rxNf", "rxEnable", "rxCtun"
+            "rxNf", "rxCtun"
         };
         for (const QByteArray& g : getters) {
             bool out = false;
@@ -618,20 +620,26 @@ private slots:
             "BIN on one receiver must not follow onto another");
     }
 
-    void calibration_getters_return_zero() {
+    void calibration_getters_report_level_calibration() {
         RadioModel m;
         setupOneSlice(m);
-        // No CalibrationModel exists yet; all five getters return 0.0.
-        for (const QByteArray name :
-             {"calibrationMeter", "calibrationDisplay",
-              "calibrationXvtr", "calibrationSixMeter",
-              "calibrationTxDisplay"})
-        {
-            double out = 1.0;  // poison value to verify it gets overwritten
+        // The meter and display offsets are the level calibration's
+        // (TCIServer.cs:1160-1176 [v2.10.3.15]); tst_level_calibration pins
+        // their defaults and stored values.
+        const QList<QPair<QByteArray, double>> expected = {
+            {"calibrationMeter",     m.rxMeterCalOffsetDb()},
+            {"calibrationDisplay",   m.rxDisplayCalOffsetDb()},
+            // The XVTR, 6 m and TX display terms are not reported (0.0).
+            {"calibrationXvtr",      0.0},
+            {"calibrationSixMeter",  0.0},
+            {"calibrationTxDisplay", 0.0},
+        };
+        for (const auto& [name, want] : expected) {
+            double out = 12345.0;  // poison value to verify it gets overwritten
             QMetaObject::invokeMethod(&m, name.constData(),
                                       Q_RETURN_ARG(double, out),
                                       Q_ARG(int, 0));
-            QCOMPARE(out, 0.0);
+            QCOMPARE(out, want);
         }
     }
 

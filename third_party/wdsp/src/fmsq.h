@@ -2,7 +2,7 @@
 
 This file is part of a program that implements a Software-Defined Radio.
 
-Copyright (C) 2013, 2016 Warren Pratt, NR0V
+Copyright (C) 2013, 2016, 2026 Warren Pratt, NR0V
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -20,12 +20,14 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 The author can be reached by email at  
 
-warren@wpratt.com
+warren@pratt.one
 
 */
 
 #ifndef _fmsq_h
 #define _fmsq_h
+#include "eq.h"
+#include "fir.h"
 #include "firmin.h"
 typedef struct _fmsq
 {
@@ -67,6 +69,8 @@ typedef struct _fmsq
 	int nc;
 	int mp;
 	FIRCORE p;
+	EQIMP peqimp;
+	double* impulse;
 } fmsq, *FMSQ;
 
 extern FMSQ create_fmsq (int run, int size, double* insig, double* outsig, double* trigger, int rate, double fc, 
@@ -87,10 +91,10 @@ extern void setSize_fmsq (FMSQ a, int size);
 
 // RXA Properties
 
-extern void SetRXAFMSQThreshold (int channel, double threshold);
+extern __declspec (dllexport) void SetRXAFMSQThreshold (int channel, double threshold);
 
-extern void SetRXAFMSQNC (int channel, int nc);
+extern __declspec (dllexport) void SetRXAFMSQNC (int channel, int nc);
 
-extern void SetRXAFMSQMP (int channel, int mp);
+extern __declspec (dllexport) void SetRXAFMSQMP (int channel, int mp);
 
 #endif

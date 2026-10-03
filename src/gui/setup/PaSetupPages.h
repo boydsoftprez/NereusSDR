@@ -109,6 +109,26 @@
 //                 column-width polish. Per STYLEGUIDE.md. Pure visual,
 //                 behaviour unchanged. AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-09-25 - R-R3-46 / R-R3-49 / R-R3-32 (remote-window parity
+//                 Task 6): PA Gain's editor and the Watt Meter's PA table
+//                 follow transmitSettingsVersion 6 in a remote window (the
+//                 auto-calibrate sweep keeps the transmit permission); PA
+//                 Values' PA current, temperature and supply volts come from
+//                 RadioModel::paReadings() (the Core's in a remote window),
+//                 unavailable when absent. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-28 - R-R3-49 / R-IOS-18: PA Values' temperature, ADC overload
+//                 and Reset Peak/Min, and the Watt Meter's Show PA Values
+//                 page and Reset PA Values carry their Setup description
+//                 ids; Show PA Values page now shows or hides the PA Values
+//                 page, as Thetis's chkPAValues does (found bug: nothing read
+//                 it). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-09-29 - R-R3-49 / R-IOS-18: PA Gain's profiles for a remote client
+//                 (paProfileActionForStation; the page's ids, plain tooltips,
+//                 the adjust tooltip's stray %, and the Default profile found
+//                 by its real name after a delete). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -283,6 +303,15 @@ public:
     // From Thetis comboRadioModel_SelectedIndexChanged setup.cs:19812-20310
     // [v2.10.3.13].
     void applyCapabilityVisibility(const BoardCapabilities& caps);
+
+    // R-R3-46 / R-R3-49 (remote-window parity Task 6): in a remote window
+    // the profiles, per-band gains, adjust matrix, max power and the PA
+    // bypass follow transmitSettingsVersion 6 (taken by the Core while its
+    // radio is off the air); the auto-calibrate sweep, which keys the
+    // radio, follows the transmit permission.
+    void setTransmitPermitted(bool permitted, const QString& reason) override;
+    void setTransmitSettingsPermittedAt(int version, bool permitted,
+                                        const QString& reason) override;
 
 #ifdef NEREUS_BUILD_TESTS
     QComboBox*       profileComboForTest()       const { return m_profileCombo; }
@@ -544,6 +573,39 @@ private:
     QPushButton*  m_autoCalCancelButton{nullptr};
     QDoubleSpinBox* m_autoCalTargetSpin{nullptr};
 
+    // R-R3-46 / R-R3-49 (parity Task 6): the two gates and their controls.
+    QList<QWidget*> paSettingsControls() const;
+    QList<QWidget*> paKeyingControls() const;
+    void applyPaGates();
+    // R-R3-49: the version 6 gate with Thetis's on-the-air lock laid over
+    // it (applyOnAirState): one call, so each control follows one helper.
+    void applyPaSettingsGate();
+    // R-R3-49: the Core went on or off the air (RadioModel::coreOnAirChanged).
+    void applyOnAirState(bool onAir);
+    // The PA row transmitting now while on the air (-1 off the air or for
+    // a band with no PA values), read afresh from the model each time.
+    int currentOnAirBandIndex();
+    // A slice changed band or transmit slice: re-gate when the
+    // transmitting row moved.
+    void refreshOnAirBand();
+    QList<QWidget*> paBandControls(int bandIndex) const;
+    QList<QWidget*> onAirLockedControls() const;
+    // JJ's ruling (holder only, both ways): whether this window's device
+    // holds transmit; the transmitting band opens on the air only then.
+    bool holdsTransmitHere();
+    // After a gain or adjust edit to `band`: on the air, when `band` is
+    // the transmitting band, the Core's own window moves the drive as
+    // Thetis does (RadioModel::applyPaEditOnAir).
+    void applyEditOnAir(Band band, bool adjust, int step);
+    bool    m_onAir{false};
+    // Thetis _adjustingBand: the band transmitting now while on the air
+    // (followed through band changes), or no band (-1).
+    int     m_onAirBandIndex{-1};
+    bool    m_paSettingsPermitted{true};
+    QString m_paSettingsReason;
+    bool    m_paKeyingPermitted{true};
+    QString m_paKeyingReason;
+
 #ifdef NEREUS_BUILD_TESTS
     /// Test injectors (see setNextProfileNameForTest / setDeleteConfirmedForTest /
     /// setResetConfirmedForTest above).
@@ -596,6 +658,11 @@ public:
     // [v2.10.3.13].
     void applyCapabilityVisibility(const BoardCapabilities& caps);
 
+    // R-R3-46 / R-R3-49 (parity Task 6): the PA forward-power table follows
+    // transmitSettingsVersion 6 in a remote window.
+    void setTransmitSettingsPermittedAt(int version, bool permitted,
+                                        const QString& reason) override;
+
 #ifdef NEREUS_BUILD_TESTS
     bool showPaValuesCheckedForTest() const;
     void clickResetPaValuesForTest();
@@ -607,6 +674,10 @@ signals:
     /// From Thetis btnResetPAValues_Click handler at setup.cs:16346-16357
     /// [v2.10.3.13].
     void resetPaValuesRequested();
+
+    /// R-R3-49: "Show PA Values page" changed; SetupDialog shows or hides
+    /// the PA Values page (Thetis chkPAValues_CheckedChanged).
+    void showPaValuesPageChanged(bool shown);
 
 private:
     PaCalibrationGroup* m_paCalGroup{nullptr};
@@ -751,6 +822,27 @@ private:
     double m_paCurrentCurrent{0.0};
     double m_paTempCurrent{0.0};
     double m_supplyCurrent{0.0};
+    // R-R3-32 (parity Task 6): whether RadioModel::paReadings() has each.
+    bool m_paCurrentPresent{false};
+    bool m_paTempPresent{false};
+    bool m_supplyPresent{false};
+    void refreshPaReadings();
+
+    // R-R3-49 / R-R3-32 (parity Task 33): the power, raw ADC and RF voltage
+    // readings, shared by the local page (RadioStatus, the connection's PA
+    // samples) and a remote window's (the Core's `txState`, scaled here with
+    // the Core's radio model exactly as the local page scales its own).
+    void applyPowerReadings(double fwdW, double revW, double swr);
+    void applyRawAdc(HPSDRModel hpsdrModel, quint16 fwdRaw, quint16 revRaw);
+    // A remote window: whether its Core sends these readings
+    // (txReadingsVersion 1), and the page's copy of them.
+    bool coreSendsTransmitReadings();
+    void refreshCoreTransmitReadings();
+    void refreshCoreAdcOverload();
+    // Whether the Core's readings have been shown once (the first showing
+    // starts no peak or minimum tracking, as the local page's opening
+    // values do not).
+    bool m_coreReadingsShown{false};
 
     // Helper: format a label with peak/min annotation.  Output shape:
     //   "12.34 W  (P 50.00 / M 5.00)"

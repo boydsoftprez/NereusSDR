@@ -8,6 +8,7 @@
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 #include "core/P2RadioConnection.h"
+#include "core/ReceiverManager.h"
 #include "core/WdspEngine.h"
 #include "models/RadioModel.h"
 #include "models/RxDspWorker.h"
@@ -475,7 +476,14 @@ private slots:
         QCOMPARE(sliceSpy.at(0).at(0).toInt(), 7);
     }
 
-    void ordinary_cohosted_slices_continue_while_target_skips_normal_fanout()
+    // A slice sharing the diversity target's stream is a sub-receiver of the
+    // same receiver, and in Thetis every sub-receiver of stream 0 reads the
+    // mixed buffer: InboundBlock case 0 hands Inbound(0) the xdivEXT output
+    // (ChannelMaster/sync.c:49-51 [v2.10.3.15]) and xcmaster runs fexchange0
+    // for each sub-receiver on that one input (cmaster.c:365-366). So the
+    // co-hosted slice takes no raw primary-leg chunk, and is fed from the
+    // mix right after the target. A slice on another stream is untouched.
+    void cohosted_slices_take_the_mix_not_the_raw_primary_leg()
     {
         DiversityRecorder record;
         s_diversity = &record;
@@ -493,13 +501,23 @@ private slots:
         const QVector<float> chunk{
             1, 2, 3, 4, 5, 6, 7, 8,
         };
+        // The ordinary (raw primary-leg) fan-out: only the slice on the
+        // other stream is processed from it.
         worker.processIqBatch(10, chunk);
         worker.processIqBatch(11, chunk);
-
-        QCOMPARE(sliceSpy.count(), 2);
-        QCOMPARE(sliceSpy.at(0).at(0).toInt(), 8);
-        QCOMPARE(sliceSpy.at(1).at(0).toInt(), 9);
+        QCOMPARE(sliceSpy.count(), 1);
+        QCOMPARE(sliceSpy.at(0).at(0).toInt(), 9);
         QCOMPARE(record.processCalls, 0);
+
+        // The mixed chunk: the target, then the slice beside it.
+        sliceSpy.clear();
+        worker.processExternalDiversityIqBatch(10, chunk);
+        worker.processExternalDiversityIqBatch(11, chunk);
+        QCOMPARE(record.processCalls, 1);
+        QCOMPARE(sliceSpy.count(), 2);
+        QCOMPARE(sliceSpy.at(0).at(0).toInt(), 7);
+        QCOMPARE(sliceSpy.at(1).at(0).toInt(), 8);
+        QCOMPARE(sliceSpy.at(1).at(1).toInt(), 4);
     }
 
     void differently_chunked_sources_wait_for_equal_target_chunks()
@@ -564,6 +582,88 @@ private slots:
         QCOMPARE(record.destroys, 1);
     }
 
+    // R-R3-40: the diversity legs are stamped and bounded like any
+    // receiver's input. An episode clears both legs and skips both legs'
+    // batches; skipped input is counted once (primary leg); on resume the
+    // leg that lost less input drops the difference so the pair stays
+    // sample-aligned. Each sample's I value is its input position, the same
+    // on both legs, so an aligned pair has equal I values.
+    void stamped_diversity_input_is_bounded_and_stays_aligned()
+    {
+        DiversityRecorder record;
+        s_diversity = &record;
+        WdspEngine engine;
+        armDiversity(engine, 4);
+
+        RxDspWorker worker;
+        worker.setEngines(&engine, nullptr);
+        worker.setBufferSizes(4, 64);
+        worker.setExternalDiversityOutputHookForTest(&captureDiversityTarget);
+        worker.setExternalDiversityRoute(0, 7, 10, 11);
+
+        auto batch = [](int first, int count, float q) {
+            QVector<float> iq;
+            for (int position = first; position < first + count; ++position) {
+                iq.append(static_cast<float>(position));
+                iq.append(q);
+            }
+            return iq;
+        };
+        auto agedMs = [](qint64 ms) {
+            return ReceiverManager::enqueueClockNs() - ms * 1'000'000;
+        };
+        auto pairedPositions = [&record]() {
+            QVector<double> primaryI, secondaryI;
+            for (int k = 0; k < record.primary.size(); k += 2) {
+                primaryI.append(record.primary[k]);
+                secondaryI.append(record.secondary[k]);
+            }
+            return std::pair{primaryI, secondaryI};
+        };
+
+        // Fresh input pairs as before.
+        worker.processStampedExternalDiversityIqBatch(10, batch(0, 4, 0.0f), agedMs(0));
+        worker.processStampedExternalDiversityIqBatch(11, batch(0, 4, 1.0f), agedMs(0));
+        QCOMPARE(record.processCalls, 1);
+        QCOMPARE(pairedPositions().first, QVector<double>({0, 1, 2, 3}));
+        QCOMPARE(pairedPositions().second, QVector<double>({0, 1, 2, 3}));
+
+        // Two primary samples wait for their partner.
+        worker.processStampedExternalDiversityIqBatch(10, batch(4, 2, 0.0f), agedMs(0));
+        // A secondary batch 600 ms late starts an episode: both legs' queued
+        // input goes, and this batch is skipped.
+        worker.processStampedExternalDiversityIqBatch(11, batch(4, 4, 1.0f), agedMs(600));
+        // Still over the resume level: skipped.
+        worker.processStampedExternalDiversityIqBatch(10, batch(6, 4, 0.0f), agedMs(300));
+        QCOMPARE(record.processCalls, 1);
+        QVERIFY(worker.externalDiversityInputDelayStats().inputDelayMs >= 300);
+
+        // Under the resume level: the episode ends with one line. The primary
+        // leg lost positions 4..9 (6 samples: 2 ms at this drain size), the
+        // secondary 4..7, so the secondary drops positions 8 and 9.
+        QTest::ignoreMessage(QtWarningMsg,
+                             "Receive processing fell behind; skipped 2 ms of input "
+                             "to catch up.");
+        worker.processStampedExternalDiversityIqBatch(11, batch(8, 4, 1.0f), agedMs(100));
+        worker.processStampedExternalDiversityIqBatch(10, batch(10, 4, 0.0f), agedMs(0));
+        worker.processStampedExternalDiversityIqBatch(11, batch(12, 4, 1.0f), agedMs(0));
+        QCOMPARE(record.processCalls, 2);
+        QCOMPARE(pairedPositions().first, QVector<double>({10, 11, 12, 13}));
+        QCOMPARE(pairedPositions().second, QVector<double>({10, 11, 12, 13}));
+
+        const RxDspWorker::InputDelayStats stats =
+            worker.externalDiversityInputDelayStats();
+        QCOMPARE(stats.droppedInputMs, 2LL);
+        QCOMPARE(stats.inputDelayMs, 0LL);
+
+        // The route's target reports the diversity input; other slices, and
+        // the target once the route is gone, report their stream's.
+        QCOMPARE(worker.inputDelayStatsForSlice(7, 0).droppedInputMs, 2LL);
+        QCOMPARE(worker.inputDelayStatsForSlice(8, 0).droppedInputMs, 0LL);
+        worker.clearExternalDiversityRoute();
+        QCOMPARE(worker.inputDelayStatsForSlice(7, 0).droppedInputMs, 0LL);
+    }
+
     // Mutation caught: removing clearExternalDiversityRoute() from
     // RadioModel's disable sequence leaves the worker route live after the
     // WDSP slot is destroyed. Recreating slot 0 later then lets packets from
@@ -591,8 +691,12 @@ private slots:
 
         model.wdspEngine()->setExternalDiversityApiForTest(diversityApi());
         target->setDiversityEnabled(true);
+        // R-R3-39: the route starts and stops on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         target->setDiversityEnabled(false);
+        // R-R3-39: the route starts and stops on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(record.runStops, 1);
         QCOMPARE(record.destroys, 1);
 
@@ -643,6 +747,8 @@ private slots:
 
         record.lifecycle.clear();
         target->setDiversityEnabled(true);
+        // R-R3-39: the route starts and stops on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         QCOMPARE(record.lifecycle, QStringList({
             QStringLiteral("create"),
@@ -690,9 +796,14 @@ private slots:
         worker.setExternalDiversityRouteHookForTest(&captureDiversityRoute);
         model.wdspEngine()->setExternalDiversityApiForTest(diversityApi());
         target->setDiversityEnabled(true);
+        // R-R3-39: the route starts and stops on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         record.lifecycle.clear();
         model.removeSlice(targetId);
+        // Load findings 3: the stop runs on the receive lane too; compare
+        // once the lane has run it.
+        QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(record.lifecycle, QStringList({
             QStringLiteral("clear"),
             QStringLiteral("run0"),
@@ -703,6 +814,8 @@ private slots:
 
         record.lifecycle.clear();
         remaining->setDiversityEnabled(true);
+        // Wait for the lane, so "nothing ran" is not read before it could.
+        QVERIFY(model.waitForReceiveLaneForTest());
         QVERIFY(record.lifecycle.isEmpty());
         QCOMPARE(record.runStops, 1);
         QCOMPARE(record.destroys, 1);

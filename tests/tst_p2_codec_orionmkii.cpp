@@ -239,6 +239,32 @@ private slots:
         QVERIFY(txB < txA);
     }
 
+    // R-R3-49: the corrected phase word is Thetis's to the count. Thetis
+    // truncates the corrected frequency to whole Hz, then converts with
+    // integer arithmetic:
+    //   From Thetis HPSDR/NetworkIO.cs:219-223 [v2.10.3.15] VFOfreq
+    //     f_freq = (int)((f * 1e6) * _freq_correction_factor);
+    //     else SetVFOfreq(id, Freq2PhaseWord(f_freq), tx);
+    //   From Thetis HPSDR/NetworkIO.cs:249-253 [v2.10.3.15] Freq2PhaseWord
+    //     long pw = (long)Math.Pow(2, 32) * freq / 122880000;
+    // 14.2 MHz at 0.9999995 is 14199992 Hz, phase word 496325693 (the
+    // unrounded frequency would give 496325725).
+    void cmdHighPriority_phaseWord_is_thetis_integer_conversion() {
+        P2CodecOrionMkII codec;
+        CodecContext ctx;
+        ctx.rxFreqHz[0] = 14'200'000ULL;
+        ctx.txFreqHz    = 14'200'000ULL;
+        ctx.freqCorrectionFactor = 0.9999995;
+        quint8 buf[1444] = {};
+        codec.composeCmdHighPriority(ctx, buf);
+        const quint32 rx = (quint32(buf[9]) << 24) | (quint32(buf[10]) << 16) |
+                           (quint32(buf[11]) << 8) |  quint32(buf[12]);
+        const quint32 tx = (quint32(buf[329]) << 24) | (quint32(buf[330]) << 16) |
+                           (quint32(buf[331]) << 8) |  quint32(buf[332]);
+        QCOMPARE(rx, 496325693u);
+        QCOMPARE(tx, 496325693u);
+    }
+
     // CmdHighPriority — sequence bytes 0-3 NOT stamped by codec
     // Source: caller responsibility note [@501e3f5]
     void cmdHighPriority_seqno_zero() {

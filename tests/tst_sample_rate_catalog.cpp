@@ -166,6 +166,67 @@ private slots:
                  192000);
     }
 
+    // ── Plan Task 15: saved rates survive the wider lists ────────────────────
+    //
+    // Every rate a radio offered before is still offered, so a saved rate is
+    // kept; the newly offered rates (Protocol 2 above 192/384 kHz on the
+    // Atlas, Hermes, HermesII and HL2 rows, Thetis setup.cs:850
+    // [v2.10.3.15]; 384 kHz on the receive-only kit's Protocol 1, mi0bot
+    // setup.cs:849-851 [v2.10.3.13-beta2]) are kept once saved too. Resolving
+    // never writes the saved value.
+    void resolve_keeps_saved_rates_the_wider_lists_offer_data()
+    {
+        QTest::addColumn<int>("board");
+        QTest::addColumn<int>("model");
+        QTest::addColumn<int>("protocol");
+        QTest::addColumn<int>("saved");
+        const int p1 = int(ProtocolVersion::Protocol1);
+        const int p2 = int(ProtocolVersion::Protocol2);
+        QTest::newRow("HL2 P1 384k")  << int(HPSDRHW::HermesLite) << int(HPSDRModel::HERMESLITE) << p1 << 384000;
+        QTest::newRow("HL2 P2 384k")  << int(HPSDRHW::HermesLite) << int(HPSDRModel::HERMESLITE) << p2 << 384000;
+        QTest::newRow("HL2 P2 768k")  << int(HPSDRHW::HermesLite) << int(HPSDRModel::HERMESLITE) << p2 << 768000;
+        QTest::newRow("Hermes P1 192k") << int(HPSDRHW::Hermes) << int(HPSDRModel::HERMES) << p1 << 192000;
+        QTest::newRow("Hermes P2 1536k") << int(HPSDRHW::Hermes) << int(HPSDRModel::HERMES) << p2 << 1536000;
+        QTest::newRow("HermesII P2 768k") << int(HPSDRHW::HermesII) << int(HPSDRModel::ANAN10E) << p2 << 768000;
+        QTest::newRow("Atlas P2 384k") << int(HPSDRHW::Atlas) << int(HPSDRModel::HPSDR) << p2 << 384000;
+        QTest::newRow("Kit P1 192k")  << int(HPSDRHW::HermesLiteRxOnly) << int(HPSDRModel::HERMESLITE) << p1 << 192000;
+        QTest::newRow("Kit P1 384k")  << int(HPSDRHW::HermesLiteRxOnly) << int(HPSDRModel::HERMESLITE) << p1 << 384000;
+        QTest::newRow("Kit P2 1536k") << int(HPSDRHW::HermesLiteRxOnly) << int(HPSDRModel::HERMESLITE) << p2 << 1536000;
+    }
+
+    void resolve_keeps_saved_rates_the_wider_lists_offer()
+    {
+        QFETCH(int, board);
+        QFETCH(int, model);
+        QFETCH(int, protocol);
+        QFETCH(int, saved);
+        AppSettings s(m_dir.filePath(QStringLiteral("t15-%1.xml")
+                                         .arg(QString::fromLatin1(QTest::currentDataTag())
+                                                  .replace(QLatin1Char(' '), QLatin1Char('_')))));
+        const QString mac = QStringLiteral("aa:bb:cc:15:15:15");
+        s.setHardwareValue(mac, QStringLiteral("radioInfo/sampleRate"), saved);
+        const auto& caps = BoardCapsTable::forBoard(static_cast<HPSDRHW>(board));
+        QCOMPARE(resolveSampleRate(s, mac, static_cast<ProtocolVersion>(protocol), caps,
+                                   static_cast<HPSDRModel>(model)),
+                 saved);
+        QCOMPARE(s.hardwareValue(mac, QStringLiteral("radioInfo/sampleRate")).toInt(), saved);
+    }
+
+    // A saved rate the protocol does not offer falls back for this connect
+    // only; the saved value is left as it was.
+    void resolve_never_rewrites_the_saved_rate()
+    {
+        AppSettings s(m_dir.filePath(QStringLiteral("t15-rewrite.xml")));
+        const QString mac = QStringLiteral("aa:bb:cc:15:15:16");
+        s.setHardwareValue(mac, QStringLiteral("radioInfo/sampleRate"), 768000);
+        const auto& caps = BoardCapsTable::forBoard(HPSDRHW::HermesLite);
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral("Persisted sample rate 768000 not valid")));
+        QCOMPARE(resolveSampleRate(s, mac, ProtocolVersion::Protocol1, caps, HPSDRModel::HERMESLITE),
+                 192000);
+        QCOMPARE(s.hardwareValue(mac, QStringLiteral("radioInfo/sampleRate")).toInt(), 768000);
+    }
+
     // ── resolveActiveRxCount ──────────────────────────────────────────────────
 
     void resolve_rx_count_returns_persisted_when_in_range()

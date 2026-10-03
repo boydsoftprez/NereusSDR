@@ -1,0 +1,2604 @@
+{
+  "version": 21,
+  "category": {
+    "id": "catNetwork",
+    "title": "CAT & Network",
+    "where": "mixed",
+    "coverage": "partial"
+  },
+  "pages": [
+    {
+      "id": "catNetwork.tciServer",
+      "title": "TCI Server",
+      "where": "mixed",
+      "sections": [
+        {
+          "title": "The Core's TCI server",
+          "controls": [
+            {
+              "id": "catNetwork.tciServer.coreExpert",
+              "label": "Emulate ExpertSDR3 protocol",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciOptions",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "emulateExpertSdr3"
+                  },
+                  "arguments": {
+                    "emulateExpertSdr3": {
+                      "$controlValue": true
+                    },
+                    "emulateSunSdr2Pro": {
+                      "$property": {
+                        "object": "stationTci",
+                        "name": "emulateSunSdr2Pro"
+                      }
+                    },
+                    "cwluBecomesCw": {
+                      "$property": {
+                        "object": "stationTci",
+                        "name": "cwluBecomesCw"
+                      }
+                    },
+                    "sendInitialState": {
+                      "$property": {
+                        "object": "stationTci",
+                        "name": "sendInitialState"
+                      }
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciVersion",
+                "min": 2
+              }
+            },
+            {
+              "id": "catNetwork.tciServer.coreSunSdr",
+              "label": "Emulate SunSDR2 PRO device",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciOptions",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "emulateSunSdr2Pro"
+                  },
+                  "arguments": {
+                    "emulateExpertSdr3": {
+                      "$property": {
+                        "object": "stationTci",
+                        "name": "emulateExpertSdr3"
+                      }
+                    },
+                    "emulateSunSdr2Pro": {
+                      "$controlValue": true
+                    },
+                    "cwluBecomesCw": {
+                      "$property": {
+                        "object": "stationTci",
+                        "name": "cwluBecomesCw"
+                      }
+                    },
+                    "sendInitialState": {
+                      "$property": {
+                        "object": "stationTci",
+                        "name": "sendInitialState"
+                      }
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciVersion",
+                "min": 2
+              }
+            },
+            {
+              "id": "catNetwork.tciServer.coreCwlu",
+              "label": "CWL/CWU becomes CW",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciOptions",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "cwluBecomesCw"
+                  },
+                  "arguments": {
+                    "emulateExpertSdr3": {
+                      "$property": {
+                        "object": "stationTci",
+                        "name": "emulateExpertSdr3"
+                      }
+                    },
+                    "emulateSunSdr2Pro": {
+                      "$property": {
+                        "object": "stationTci",
+                        "name": "emulateSunSdr2Pro"
+                      }
+                    },
+                    "cwluBecomesCw": {
+                      "$controlValue": true
+                    },
+                    "sendInitialState": {
+                      "$property": {
+                        "object": "stationTci",
+                        "name": "sendInitialState"
+                      }
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciVersion",
+                "min": 2
+              }
+            },
+            {
+              "id": "catNetwork.tciServer.coreInitial",
+              "label": "Send initial state on connect",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciOptions",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "sendInitialState"
+                  },
+                  "arguments": {
+                    "emulateExpertSdr3": {
+                      "$property": {
+                        "object": "stationTci",
+                        "name": "emulateExpertSdr3"
+                      }
+                    },
+                    "emulateSunSdr2Pro": {
+                      "$property": {
+                        "object": "stationTci",
+                        "name": "emulateSunSdr2Pro"
+                      }
+                    },
+                    "cwluBecomesCw": {
+                      "$property": {
+                        "object": "stationTci",
+                        "name": "cwluBecomesCw"
+                      }
+                    },
+                    "sendInitialState": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciVersion",
+                "min": 2
+              }
+            }
+          ]
+        },
+        {
+          "title": "The Core's TCI server settings",
+          "controls": [
+            {
+              "id": "catNetwork.tciServer.core.rateLimitMs",
+              "label": "Rate limit:",
+              "tooltip": "How long to wait between frequency updates sent to each TCI app. Changes made faster than this reach the app as the latest frequency once the time has passed. Off sends every change.",
+              "kind": "integer",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciSettings",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "rateLimitMs"
+                  },
+                  "arguments": {
+                    "rateLimitMs": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciSettingsVersion",
+                "min": 1
+              },
+              "min": 0,
+              "max": 1000,
+              "step": 1,
+              "unit": "ms"
+            },
+            {
+              "id": "catNetwork.tciServer.core.cwBecomesCwuAbove10mhz",
+              "label": "CW becomes CWU above 10 MHz",
+              "tooltip": "On bands above 10 MHz, report mode as \"CWU\" instead of \"CW\" or \"CWL\". Required by certain logging apps that follow the ARRL sideband convention.",
+              "kind": "toggle",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciSettings",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "cwBecomesCwuAbove10mhz"
+                  },
+                  "arguments": {
+                    "cwBecomesCwuAbove10mhz": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciSettingsVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "catNetwork.tciServer.core.iqSwap",
+              "label": "Swap I/Q channels",
+              "tooltip": "Swap the I and Q samples in the TCI IQ data stream. Enabled by default for compatibility with most TCI IQ consumers.",
+              "kind": "toggle",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciSettings",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "iqSwap"
+                  },
+                  "arguments": {
+                    "iqSwap": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciSettingsVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "catNetwork.tciServer.core.alwaysStreamIq",
+              "label": "Always stream IQ",
+              "tooltip": "Stream IQ data to all connected TCI clients continuously, even if no client has explicitly subscribed to the IQ stream. Increases CPU and network load.",
+              "kind": "toggle",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciSettings",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "alwaysStreamIq"
+                  },
+                  "arguments": {
+                    "alwaysStreamIq": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciSettingsVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "catNetwork.tciServer.core.audioBlockSamples",
+              "label": "Block size:",
+              "tooltip": "Number of audio samples per TCI audio stream block (100 to 2048). Larger blocks reduce overhead but increase latency.",
+              "kind": "integer",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciSettings",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "audioBlockSamples"
+                  },
+                  "arguments": {
+                    "audioBlockSamples": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciSettingsVersion",
+                "min": 1
+              },
+              "min": 100,
+              "max": 2048,
+              "step": 1,
+              "unit": "samples"
+            },
+            {
+              "id": "catNetwork.tciServer.core.txChannel",
+              "label": "TX channel:",
+              "tooltip": "Which audio channel carries the TX audio in the TCI audio stream. \"Both\" sends the same mono signal to both left and right channels.",
+              "kind": "choice",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciSettings",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "txChannel"
+                  },
+                  "arguments": {
+                    "txChannel": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciSettingsVersion",
+                "min": 1
+              },
+              "choices": [
+                "Left",
+                "Right",
+                "Both"
+              ]
+            },
+            {
+              "id": "catNetwork.tciServer.core.rxSensorIntervalMs",
+              "label": "RX interval:",
+              "tooltip": "How often RX sensor data (signal level, AGC gain, etc.) is pushed to TCI clients that subscribe to sensors (30 to 1000 ms).",
+              "kind": "integer",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciSettings",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "rxSensorIntervalMs"
+                  },
+                  "arguments": {
+                    "rxSensorIntervalMs": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciSettingsVersion",
+                "min": 1
+              },
+              "min": 30,
+              "max": 1000,
+              "step": 1,
+              "unit": "ms"
+            },
+            {
+              "id": "catNetwork.tciServer.core.txSensorIntervalMs",
+              "label": "TX interval:",
+              "tooltip": "How often TX sensor data (forward power, SWR, ALC, etc.) is pushed to TCI clients that subscribe to sensors (30 to 1000 ms).",
+              "kind": "integer",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciSettings",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "txSensorIntervalMs"
+                  },
+                  "arguments": {
+                    "txSensorIntervalMs": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciSettingsVersion",
+                "min": 1
+              },
+              "min": 30,
+              "max": 1000,
+              "step": 1,
+              "unit": "ms"
+            },
+            {
+              "id": "catNetwork.tciServer.core.forgetRx2VfoBOnDisconnect",
+              "label": "Forget RX2 VFO B",
+              "tooltip": "While Duplicate RX2 VFO B to RX2 VFO A is on, send RX2's frequency to TCI apps only as RX2 VFO A, without its VFO B messages.",
+              "kind": "toggle",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciSettings",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "forgetRx2VfoBOnDisconnect"
+                  },
+                  "arguments": {
+                    "forgetRx2VfoBOnDisconnect": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciSettingsVersion",
+                "min": 1
+              },
+              "enabledWhen": {
+                "property": {
+                  "object": "stationTci",
+                  "name": "copyRx2VfobToVfoa"
+                },
+                "oneOf": [true]
+              }
+            },
+            {
+              "id": "catNetwork.tciServer.core.useRx1VfoaForRx2Vfoa",
+              "label": "Use RX1 VFO A for RX2 VFO A",
+              "tooltip": "While RX2 is on, TCI apps see RX1's frequency as RX2 VFO A, and an app that sets RX2 VFO A tunes RX1.",
+              "kind": "toggle",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciSettings",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "useRx1VfoaForRx2Vfoa"
+                  },
+                  "arguments": {
+                    "useRx1VfoaForRx2Vfoa": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciSettingsVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "catNetwork.tciServer.core.copyRx2VfobToVfoa",
+              "label": "Duplicate RX2 VFO B to RX2 VFO A",
+              "tooltip": "RX2 has one frequency, which TCI apps get as RX2 VFO B. This also sends it as RX2 VFO A, for apps that follow VFO A.",
+              "kind": "toggle",
+              "binding": {
+                "command": {
+                  "verb": "setStationTciSettings",
+                  "valueProperty": {
+                    "object": "stationTci",
+                    "name": "copyRx2VfobToVfoa"
+                  },
+                  "arguments": {
+                    "copyRx2VfobToVfoa": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "stationTciSettingsVersion",
+                "min": 1
+              }
+            }
+          ]
+        }
+      ],
+      "coverage": "coreTciOnly"
+    },
+    {
+      "id": "catNetwork.fourO3A",
+      "title": "4O3A",
+      "where": "station",
+      "coverage": "partial: Scan LAN, the fault and tune memory tables, and the Core-side Power Genius tab are not described",
+      "sections": [
+        {
+          "title": "Master Switch",
+          "controls": [
+            {
+              "id": "catNetwork.fourO3A.enabled",
+              "label": "Enable 4O3A integration",
+              "tooltip": "Gates the FlexAPI listener on TCP 4992 and the PGXL / TGXL auto-connect paths.  Off by default; turn on only when you want NereusSDR to expose itself to 4O3A amps and tuners on your local network.",
+              "kind": "toggle",
+              "binding": {
+                "command": {
+                  "verb": "setFourO3AEnabled",
+                  "valueProperty": {
+                    "object": "radio",
+                    "name": "fourO3AEnabled"
+                  },
+                  "arguments": {
+                    "enabled": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteFourO3AControlVersion",
+                "min": 1
+              }
+            }
+          ]
+        },
+        {
+          "title": "FlexAPI Listener",
+          "controls": [
+            {
+              "id": "catNetwork.fourO3A.listener",
+              "label": "Status",
+              "tooltip": "The Core listens on TCP 4992. This window only shows the Core's status.",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "radio",
+                  "name": "fourO3AListening"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "format": "fourO3AListener"
+            }
+          ]
+        },
+        {
+          "title": "Tuner Genius XL",
+          "controls": [
+            {
+              "id": "catNetwork.fourO3A.tgxlHost",
+              "label": "Host IP",
+              "tooltip": "IP address or hostname of the Tuner Genius XL on your LAN. Leave blank to disable auto-connect.",
+              "kind": "text",
+              "binding": {
+                "command": {
+                  "verb": "setTgxlAddress",
+                  "valueProperty": {
+                    "object": "tuner",
+                    "name": "configuredHost"
+                  },
+                  "arguments": {
+                    "host": {
+                      "$controlValue": true
+                    },
+                    "port": {
+                      "$property": {
+                        "object": "tuner",
+                        "name": "configuredPort"
+                      }
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteTgxlControlVersion",
+                "min": 4
+              },
+              "enabledWhen": {
+                "property": {
+                  "object": "tuner",
+                  "name": "connectionPhase"
+                },
+                "oneOf": [
+                  0,
+                  1,
+                  7
+                ]
+              }
+            },
+            {
+              "id": "catNetwork.fourO3A.tgxlPort",
+              "label": "Port",
+              "tooltip": "TCP port the Tuner Genius XL listens on (default 9010).",
+              "kind": "integer",
+              "binding": {
+                "command": {
+                  "verb": "setTgxlAddress",
+                  "valueProperty": {
+                    "object": "tuner",
+                    "name": "configuredPort"
+                  },
+                  "arguments": {
+                    "host": {
+                      "$property": {
+                        "object": "tuner",
+                        "name": "configuredHost"
+                      }
+                    },
+                    "port": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteTgxlControlVersion",
+                "min": 4
+              },
+              "min": 1,
+              "max": 65535,
+              "step": 1,
+              "enabledWhen": {
+                "property": {
+                  "object": "tuner",
+                  "name": "connectionPhase"
+                },
+                "oneOf": [
+                  0,
+                  1,
+                  7
+                ]
+              }
+            },
+            {
+              "id": "catNetwork.fourO3A.tgxlConnect",
+              "label": "Connect",
+              "tooltip": "Connect to or disconnect from the Tuner Genius XL.",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "configureTgxl",
+                  "arguments": {
+                    "host": {
+                      "$property": {
+                        "object": "tuner",
+                        "name": "configuredHost"
+                      }
+                    },
+                    "port": {
+                      "$property": {
+                        "object": "tuner",
+                        "name": "configuredPort"
+                      }
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteTgxlConfigVersion",
+                "min": 1
+              },
+              "enabledWhen": {
+                "property": {
+                  "object": "tuner",
+                  "name": "connectionPhase"
+                },
+                "oneOf": [
+                  0,
+                  1,
+                  7
+                ]
+              }
+            },
+            {
+              "id": "catNetwork.fourO3A.tgxlDisconnect",
+              "label": "Disconnect",
+              "tooltip": "Connect to or disconnect from the Tuner Genius XL.",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "disconnectTgxl",
+                  "arguments": {}
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteTgxlConfigVersion",
+                "min": 1
+              },
+              "enabledWhen": {
+                "property": {
+                  "object": "tuner",
+                  "name": "connectionPhase"
+                },
+                "oneOf": [
+                  2,
+                  3,
+                  4,
+                  5,
+                  6
+                ]
+              }
+            },
+            {
+              "id": "catNetwork.fourO3A.tgxlStatus",
+              "label": "Status",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "tuner",
+                  "name": "connectionPhase"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "format": "connectionPhase"
+            }
+          ]
+        },
+        {
+          "title": "Power Genius XL",
+          "controls": [
+            {
+              "id": "catNetwork.fourO3A.pgxlHost",
+              "label": "Host IP",
+              "tooltip": "IP address or hostname of the Power Genius XL on your LAN. Leave blank to disable auto-connect.",
+              "kind": "text",
+              "binding": {
+                "command": {
+                  "verb": "setPgxlAddress",
+                  "valueProperty": {
+                    "object": "amplifier",
+                    "name": "configuredHost"
+                  },
+                  "arguments": {
+                    "host": {
+                      "$controlValue": true
+                    },
+                    "port": {
+                      "$property": {
+                        "object": "amplifier",
+                        "name": "configuredPort"
+                      }
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remotePgxlControlVersion",
+                "min": 4
+              },
+              "enabledWhen": {
+                "property": {
+                  "object": "amplifier",
+                  "name": "connectionPhase"
+                },
+                "oneOf": [
+                  0,
+                  1,
+                  7
+                ]
+              }
+            },
+            {
+              "id": "catNetwork.fourO3A.pgxlPort",
+              "label": "Port",
+              "tooltip": "TCP port the Power Genius XL listens on (default 9008).",
+              "kind": "integer",
+              "binding": {
+                "command": {
+                  "verb": "setPgxlAddress",
+                  "valueProperty": {
+                    "object": "amplifier",
+                    "name": "configuredPort"
+                  },
+                  "arguments": {
+                    "host": {
+                      "$property": {
+                        "object": "amplifier",
+                        "name": "configuredHost"
+                      }
+                    },
+                    "port": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remotePgxlControlVersion",
+                "min": 4
+              },
+              "min": 1,
+              "max": 65535,
+              "step": 1,
+              "enabledWhen": {
+                "property": {
+                  "object": "amplifier",
+                  "name": "connectionPhase"
+                },
+                "oneOf": [
+                  0,
+                  1,
+                  7
+                ]
+              }
+            },
+            {
+              "id": "catNetwork.fourO3A.pgxlConnect",
+              "label": "Connect",
+              "tooltip": "Connect to or disconnect from the Power Genius XL.",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "configurePgxl",
+                  "arguments": {
+                    "host": {
+                      "$property": {
+                        "object": "amplifier",
+                        "name": "configuredHost"
+                      }
+                    },
+                    "port": {
+                      "$property": {
+                        "object": "amplifier",
+                        "name": "configuredPort"
+                      }
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remotePgxlControlVersion",
+                "min": 2
+              },
+              "enabledWhen": {
+                "property": {
+                  "object": "amplifier",
+                  "name": "connectionPhase"
+                },
+                "oneOf": [
+                  0,
+                  1,
+                  7
+                ]
+              }
+            },
+            {
+              "id": "catNetwork.fourO3A.pgxlDisconnect",
+              "label": "Disconnect",
+              "tooltip": "Connect to or disconnect from the Power Genius XL.",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "disconnectPgxl",
+                  "arguments": {}
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remotePgxlControlVersion",
+                "min": 2
+              },
+              "enabledWhen": {
+                "property": {
+                  "object": "amplifier",
+                  "name": "connectionPhase"
+                },
+                "oneOf": [
+                  2,
+                  3,
+                  4,
+                  5,
+                  6
+                ]
+              }
+            },
+            {
+              "id": "catNetwork.fourO3A.pgxlStatus",
+              "label": "Status",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "amplifier",
+                  "name": "connectionPhase"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "format": "connectionPhase"
+            }
+          ]
+        },
+        {
+          "title": "Band Follow",
+          "controls": [
+            {
+              "id": "catNetwork.fourO3A.pgxlBandFollow",
+              "label": "Band follow",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "amplifier",
+                  "name": "bandFollow"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "format": "bandFollow"
+            }
+          ]
+        },
+        {
+          "title": "TX Interlock Mode",
+          "controls": [
+            {
+              "id": "catNetwork.fourO3A.interlockMode",
+              "label": "Interlock Mode:",
+              "tooltip": "Disabled: interlock never interferes with TX.\nWarn: TX proceeds but a warning toast is shown when the amplifier\n  is present but not in OPERATE (or SWR gate trips).\nBlock: TX is prevented when the amplifier is present but not in\n  OPERATE (or SWR gate trips).\nDefault: Disabled.",
+              "kind": "choice",
+              "binding": {
+                "command": {
+                  "verb": "setTxInterlockPolicy",
+                  "valueProperty": {
+                    "object": "accessoryData",
+                    "name": "interlockMode"
+                  },
+                  "arguments": {
+                    "mode": {
+                      "$controlValue": true
+                    },
+                    "graceMs": {
+                      "$property": {
+                        "object": "accessoryData",
+                        "name": "interlockGraceMs"
+                      }
+                    },
+                    "swrGateEnabled": {
+                      "$property": {
+                        "object": "accessoryData",
+                        "name": "interlockSwrGateEnabled"
+                      }
+                    },
+                    "swrGateMax": {
+                      "$property": {
+                        "object": "accessoryData",
+                        "name": "interlockSwrGateMax"
+                      }
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "choices": [
+                "Disabled",
+                "Warn",
+                "Block"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Grace Period",
+          "controls": [
+            {
+              "id": "catNetwork.fourO3A.interlockGrace",
+              "label": "Grace Period:",
+              "tooltip": "Grace period (ms) after the amplifier transitions to OPERATE before\nthe SWR gate is enforced. Ignores SWR spikes during PA warm-up so\nthe gate does not nuisance-trip on PSU current ramps. Timed from\nthe moment the amplifier enters OPERATE.\nRange: 0..30000 ms.  Default: 3000 ms.",
+              "kind": "integer",
+              "binding": {
+                "command": {
+                  "verb": "setTxInterlockPolicy",
+                  "valueProperty": {
+                    "object": "accessoryData",
+                    "name": "interlockGraceMs"
+                  },
+                  "arguments": {
+                    "mode": {
+                      "$property": {
+                        "object": "accessoryData",
+                        "name": "interlockMode"
+                      }
+                    },
+                    "graceMs": {
+                      "$controlValue": true
+                    },
+                    "swrGateEnabled": {
+                      "$property": {
+                        "object": "accessoryData",
+                        "name": "interlockSwrGateEnabled"
+                      }
+                    },
+                    "swrGateMax": {
+                      "$property": {
+                        "object": "accessoryData",
+                        "name": "interlockSwrGateMax"
+                      }
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "min": 0,
+              "max": 30000,
+              "step": 100,
+              "unit": "ms"
+            }
+          ]
+        },
+        {
+          "title": "SWR Gate",
+          "controls": [
+            {
+              "id": "catNetwork.fourO3A.swrGate",
+              "label": "Enable SWR Gate",
+              "tooltip": "When enabled, a second interlock check fires if the current SWR\nexceeds the Max SWR limit below. The Warn/Block action follows the\nsame Interlock Mode setting as the amplifier-state check.",
+              "kind": "toggle",
+              "binding": {
+                "command": {
+                  "verb": "setTxInterlockPolicy",
+                  "valueProperty": {
+                    "object": "accessoryData",
+                    "name": "interlockSwrGateEnabled"
+                  },
+                  "arguments": {
+                    "mode": {
+                      "$property": {
+                        "object": "accessoryData",
+                        "name": "interlockMode"
+                      }
+                    },
+                    "graceMs": {
+                      "$property": {
+                        "object": "accessoryData",
+                        "name": "interlockGraceMs"
+                      }
+                    },
+                    "swrGateEnabled": {
+                      "$controlValue": true
+                    },
+                    "swrGateMax": {
+                      "$property": {
+                        "object": "accessoryData",
+                        "name": "interlockSwrGateMax"
+                      }
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "catNetwork.fourO3A.swrGateMax",
+              "label": "Max SWR:",
+              "tooltip": "SWR ratio above which the gate triggers.\nOnly active when SWR Gate is enabled.\nRange: 1.0..10.0.  Default: 3.0.",
+              "kind": "decimal",
+              "binding": {
+                "command": {
+                  "verb": "setTxInterlockPolicy",
+                  "valueProperty": {
+                    "object": "accessoryData",
+                    "name": "interlockSwrGateMax"
+                  },
+                  "arguments": {
+                    "mode": {
+                      "$property": {
+                        "object": "accessoryData",
+                        "name": "interlockMode"
+                      }
+                    },
+                    "graceMs": {
+                      "$property": {
+                        "object": "accessoryData",
+                        "name": "interlockGraceMs"
+                      }
+                    },
+                    "swrGateEnabled": {
+                      "$property": {
+                        "object": "accessoryData",
+                        "name": "interlockSwrGateEnabled"
+                      }
+                    },
+                    "swrGateMax": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "min": 1.0,
+              "max": 10.0,
+              "step": 0.1,
+              "decimals": 1,
+              "enabledWhen": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "interlockSwrGateEnabled"
+                },
+                "oneOf": [
+                  true
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "catNetwork.powerGenius",
+      "title": "PowerGenius XL",
+      "where": "station",
+      "coverage": "partial: Bias Mode, TX Antenna, Follows slice and the fault history table are not described",
+      "sections": [
+        {
+          "title": "Identity & Status",
+          "controls": [
+            {
+              "id": "catNetwork.powerGenius.nickname",
+              "label": "Nickname:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "command": {
+                  "verb": "setPgxlName",
+                  "valueProperty": {
+                    "object": "accessorySettings",
+                    "name": "pgxlNickname"
+                  },
+                  "arguments": {
+                    "name": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remotePgxlControlVersion",
+                "min": 3
+              }
+            }
+          ]
+        },
+        {
+          "title": "Hardware",
+          "controls": [
+            {
+              "id": "catNetwork.powerGenius.fanMode",
+              "label": "Fan Mode:",
+              "tooltip": "",
+              "kind": "choice",
+              "binding": {
+                "command": {
+                  "verb": "setPgxlHardware",
+                  "valueProperty": {
+                    "object": "accessorySettings",
+                    "name": "pgxlFanMode"
+                  },
+                  "arguments": {
+                    "fanMode": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remotePgxlControlVersion",
+                "min": 3
+              },
+              "options": [
+                {
+                  "value": "Auto",
+                  "label": "Auto"
+                },
+                {
+                  "value": "Quiet",
+                  "label": "Quiet"
+                },
+                {
+                  "value": "Continuous",
+                  "label": "Continuous"
+                }
+              ]
+            },
+            {
+              "id": "catNetwork.powerGenius.ledIntensity",
+              "label": "LED Intensity:",
+              "tooltip": "",
+              "kind": "slider",
+              "binding": {
+                "command": {
+                  "verb": "setPgxlHardware",
+                  "valueProperty": {
+                    "object": "accessorySettings",
+                    "name": "pgxlLedIntensity"
+                  },
+                  "arguments": {
+                    "ledIntensity": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remotePgxlControlVersion",
+                "min": 3
+              },
+              "min": 0,
+              "max": 100,
+              "step": 1
+            },
+            {
+              "id": "catNetwork.powerGenius.powerCap",
+              "label": "Enable soft cap:",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "command": {
+                  "verb": "setPgxlPowerCap",
+                  "valueProperty": {
+                    "object": "accessoryData",
+                    "name": "powerCapEnabled"
+                  },
+                  "arguments": {
+                    "enabled": {
+                      "$controlValue": true
+                    },
+                    "watts": {
+                      "$property": {
+                        "object": "accessoryData",
+                        "name": "powerCapW"
+                      }
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "catNetwork.powerGenius.powerCapW",
+              "label": "TX Power Cap:",
+              "tooltip": "The Core shows an alert in every window when the Power Genius output goes above this.",
+              "kind": "integer",
+              "binding": {
+                "command": {
+                  "verb": "setPgxlPowerCap",
+                  "valueProperty": {
+                    "object": "accessoryData",
+                    "name": "powerCapW"
+                  },
+                  "arguments": {
+                    "enabled": {
+                      "$property": {
+                        "object": "accessoryData",
+                        "name": "powerCapEnabled"
+                      }
+                    },
+                    "watts": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "min": 100,
+              "max": 2000,
+              "step": 1,
+              "unit": "W"
+            }
+          ]
+        },
+        {
+          "title": "Network",
+          "controls": [
+            {
+              "id": "catNetwork.powerGenius.dhcp",
+              "label": "Use DHCP",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "accessorySettings",
+                  "name": "pgxlDhcp"
+                }
+              },
+              "applies": "staged",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remotePgxlControlVersion",
+                "min": 3
+              }
+            },
+            {
+              "id": "catNetwork.powerGenius.address",
+              "label": "IP Address:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "property": {
+                  "object": "accessorySettings",
+                  "name": "pgxlAddress"
+                }
+              },
+              "applies": "staged",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remotePgxlControlVersion",
+                "min": 3
+              }
+            },
+            {
+              "id": "catNetwork.powerGenius.netmask",
+              "label": "Netmask:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "property": {
+                  "object": "accessorySettings",
+                  "name": "pgxlNetmask"
+                }
+              },
+              "applies": "staged",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remotePgxlControlVersion",
+                "min": 3
+              }
+            },
+            {
+              "id": "catNetwork.powerGenius.gateway",
+              "label": "Gateway:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "property": {
+                  "object": "accessorySettings",
+                  "name": "pgxlGateway"
+                }
+              },
+              "applies": "staged",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remotePgxlControlVersion",
+                "min": 3
+              }
+            },
+            {
+              "id": "catNetwork.powerGenius.applyNetwork",
+              "label": "Apply Network Settings",
+              "tooltip": "",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "setPgxlNetwork",
+                  "arguments": {
+                    "dhcp": {
+                      "$control": "catNetwork.powerGenius.dhcp"
+                    },
+                    "address": {
+                      "$control": "catNetwork.powerGenius.address"
+                    },
+                    "netmask": {
+                      "$control": "catNetwork.powerGenius.netmask"
+                    },
+                    "gateway": {
+                      "$control": "catNetwork.powerGenius.gateway"
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remotePgxlControlVersion",
+                "min": 3
+              },
+              "confirm": "The Power Genius will switch to these network settings. If NereusSDR cannot reach it afterwards, enter its new address for the Power Genius on the Peripherals page and connect again.",
+              "enabledWhen": {
+                "property": {
+                  "object": "accessorySettings",
+                  "name": "pgxlNetworkKnown"
+                },
+                "oneOf": [
+                  true
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "Pairing & Band Source",
+          "controls": [
+            {
+              "id": "catNetwork.powerGenius.pairAttempt",
+              "label": "Auto-pair on connect",
+              "tooltip": "When enabled, NereusSDR pairs the Power Genius with the radio each time it connects. Turn this off only if the pairing is done some other way.",
+              "kind": "toggle",
+              "binding": {
+                "setting": "PGXL_PairAttempt"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              }
+            }
+          ]
+        },
+        {
+          "title": "Diagnostics",
+          "controls": [
+            {
+              "id": "catNetwork.powerGenius.connectedSinceMs",
+              "label": "Uptime:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "pgxlConnectedSinceMs"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "format": "sinceMs"
+            },
+            {
+              "id": "catNetwork.powerGenius.lastRttMs",
+              "label": "Last RTT:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "pgxlLastRttMs"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "unit": "ms",
+              "decimals": 0
+            },
+            {
+              "id": "catNetwork.powerGenius.keepaliveMissed",
+              "label": "Keepalive Missed:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "pgxlKeepaliveMissed"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "decimals": 0
+            },
+            {
+              "id": "catNetwork.powerGenius.reconnectCount",
+              "label": "Reconnects (this run):",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "pgxlReconnectCount"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "decimals": 0
+            },
+            {
+              "id": "catNetwork.powerGenius.framesIn",
+              "label": "Frames In:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "pgxlFramesIn"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "decimals": 0
+            },
+            {
+              "id": "catNetwork.powerGenius.framesOut",
+              "label": "Frames Out:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "pgxlFramesOut"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "decimals": 0
+            },
+            {
+              "id": "catNetwork.powerGenius.bytesIn",
+              "label": "Bytes In:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "pgxlBytesIn"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "format": "bytes"
+            },
+            {
+              "id": "catNetwork.powerGenius.bytesOut",
+              "label": "Bytes Out:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "pgxlBytesOut"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "format": "bytes"
+            }
+          ]
+        },
+        {
+          "title": "Fault History",
+          "controls": [
+            {
+              "id": "catNetwork.powerGenius.clearFaults",
+              "label": "Clear All",
+              "tooltip": "",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "clearAccessoryFaults",
+                  "arguments": {
+                    "device": "pgxl"
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              }
+            }
+          ]
+        },
+        {
+          "title": "Settings",
+          "controls": [
+            {
+              "id": "catNetwork.powerGenius.revert",
+              "label": "Revert",
+              "tooltip": "",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "readPgxlSettings",
+                  "arguments": {}
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remotePgxlControlVersion",
+                "min": 3
+              }
+            },
+            {
+              "id": "catNetwork.powerGenius.saveReboot",
+              "label": "Save & Reboot Amp",
+              "tooltip": "",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "savePgxlSettings",
+                  "arguments": {}
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remotePgxlControlVersion",
+                "min": 3
+              },
+              "confirm": "Sending `save` will persist your configuration to flash and reboot the PGXL. The amplifier will be offline for approximately 20 seconds. NereusSDR will auto-reconnect when it returns. Do not transmit during reboot."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "catNetwork.tunerGenius",
+      "title": "Tuner Genius XL",
+      "where": "station",
+      "coverage": "partial: the tune memory table and the fault history are not described",
+      "sections": [
+        {
+          "title": "Identity & Status",
+          "controls": [
+            {
+              "id": "catNetwork.tunerGenius.nickname",
+              "label": "Nickname:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "command": {
+                  "verb": "setTgxlName",
+                  "valueProperty": {
+                    "object": "accessorySettings",
+                    "name": "tgxlNickname"
+                  },
+                  "arguments": {
+                    "name": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteTgxlControlVersion",
+                "min": 1
+              }
+            }
+          ]
+        },
+        {
+          "title": "Antenna Labels",
+          "controls": [
+            {
+              "id": "catNetwork.tunerGenius.ant1Label",
+              "label": "ANT 1:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "setting": "TGXL_Ant1_Label"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15
+            },
+            {
+              "id": "catNetwork.tunerGenius.ant2Label",
+              "label": "ANT 2:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "setting": "TGXL_Ant2_Label"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15
+            },
+            {
+              "id": "catNetwork.tunerGenius.ant3Label",
+              "label": "ANT 3:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "setting": "TGXL_Ant3_Label"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15
+            }
+          ]
+        },
+        {
+          "title": "Network",
+          "controls": [
+            {
+              "id": "catNetwork.tunerGenius.dhcp",
+              "label": "Use DHCP",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "accessorySettings",
+                  "name": "tgxlDhcp"
+                }
+              },
+              "applies": "staged",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteTgxlControlVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "catNetwork.tunerGenius.address",
+              "label": "IP Address:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "property": {
+                  "object": "accessorySettings",
+                  "name": "tgxlAddress"
+                }
+              },
+              "applies": "staged",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteTgxlControlVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "catNetwork.tunerGenius.netmask",
+              "label": "Netmask:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "property": {
+                  "object": "accessorySettings",
+                  "name": "tgxlNetmask"
+                }
+              },
+              "applies": "staged",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteTgxlControlVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "catNetwork.tunerGenius.gateway",
+              "label": "Gateway:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "property": {
+                  "object": "accessorySettings",
+                  "name": "tgxlGateway"
+                }
+              },
+              "applies": "staged",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteTgxlControlVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "catNetwork.tunerGenius.applyNetwork",
+              "label": "Apply Network Settings",
+              "tooltip": "",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "setTgxlNetwork",
+                  "arguments": {
+                    "dhcp": {
+                      "$control": "catNetwork.tunerGenius.dhcp"
+                    },
+                    "address": {
+                      "$control": "catNetwork.tunerGenius.address"
+                    },
+                    "netmask": {
+                      "$control": "catNetwork.tunerGenius.netmask"
+                    },
+                    "gateway": {
+                      "$control": "catNetwork.tunerGenius.gateway"
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteTgxlControlVersion",
+                "min": 1
+              },
+              "confirm": "The Tuner Genius will switch to these network settings. If NereusSDR cannot reach it afterwards, enter its new address for the Tuner Genius on the Peripherals page and connect again.",
+              "enabledWhen": {
+                "property": {
+                  "object": "accessorySettings",
+                  "name": "tgxlNetworkKnown"
+                },
+                "oneOf": [
+                  true
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "Tune Memory Management",
+          "controls": [
+            {
+              "id": "catNetwork.tunerGenius.autoRecall",
+              "label": "Auto-recall tune memory on band/antenna change",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "setting": "TGXL_AutoTuneMemoryRecall"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              }
+            }
+          ]
+        },
+        {
+          "title": "Diagnostics",
+          "controls": [
+            {
+              "id": "catNetwork.tunerGenius.connectedSinceMs",
+              "label": "Uptime:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "tgxlConnectedSinceMs"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "format": "sinceMs"
+            },
+            {
+              "id": "catNetwork.tunerGenius.lastRttMs",
+              "label": "Last RTT:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "tgxlLastRttMs"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "unit": "ms",
+              "decimals": 0
+            },
+            {
+              "id": "catNetwork.tunerGenius.keepaliveMissed",
+              "label": "Keepalive Missed:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "tgxlKeepaliveMissed"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "decimals": 0
+            },
+            {
+              "id": "catNetwork.tunerGenius.reconnectCount",
+              "label": "Reconnects (this run):",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "tgxlReconnectCount"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "decimals": 0
+            },
+            {
+              "id": "catNetwork.tunerGenius.framesIn",
+              "label": "Frames In:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "tgxlFramesIn"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "decimals": 0
+            },
+            {
+              "id": "catNetwork.tunerGenius.framesOut",
+              "label": "Frames Out:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "tgxlFramesOut"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "decimals": 0
+            },
+            {
+              "id": "catNetwork.tunerGenius.bytesIn",
+              "label": "Bytes In:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "tgxlBytesIn"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "format": "bytes"
+            },
+            {
+              "id": "catNetwork.tunerGenius.bytesOut",
+              "label": "Bytes Out:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "tgxlBytesOut"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 1
+              },
+              "format": "bytes"
+            }
+          ]
+        },
+        {
+          "title": "Settings",
+          "controls": [
+            {
+              "id": "catNetwork.tunerGenius.revert",
+              "label": "Revert",
+              "tooltip": "",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "readTgxlSettings",
+                  "arguments": {}
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteTgxlControlVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "catNetwork.tunerGenius.saveReboot",
+              "label": "Save & Reboot Tuner",
+              "tooltip": "",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "saveTgxlSettings",
+                  "arguments": {}
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteTgxlControlVersion",
+                "min": 1
+              },
+              "confirm": "Sending `save` will persist your configuration to flash and reboot the PGXL. The amplifier will be offline for approximately 20 seconds. NereusSDR will auto-reconnect when it returns. Do not transmit during reboot."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "catNetwork.rfKit",
+      "title": "RF-Kit",
+      "where": "station",
+      "sections": [
+        {
+          "title": "General",
+          "controls": [
+            {
+              "id": "catNetwork.rfKit.enabled",
+              "label": "Enable RF-Kit Amplifier integration",
+              "tooltip": "Gates the RF-Kit applet in the right-column panel and the RF2K-S configuration tab below.  Off by default; turn on only when an RF-Kit RF2K-S amplifier is connected.  Setting is scoped to the currently connected radio.",
+              "kind": "toggle",
+              "binding": {
+                "command": {
+                  "verb": "setRfKitEnabled",
+                  "valueProperty": {
+                    "object": "radio",
+                    "name": "rfKitEnabled"
+                  },
+                  "arguments": {
+                    "enabled": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteRfKitControlVersion",
+                "min": 2
+              }
+            },
+            {
+              "id": "catNetwork.rfKit.status",
+              "label": "RF2K-S",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "rfkit",
+                  "name": "connectionPhase"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "format": "connectionPhase"
+            },
+            {
+              "id": "catNetwork.rfKit.bandFollow",
+              "label": "Band follow",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "rfkit",
+                  "name": "bandFollow"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "format": "rfkitBandFollow"
+            }
+          ]
+        },
+        {
+          "title": "Connection",
+          "controls": [
+            {
+              "id": "catNetwork.rfKit.host",
+              "label": "Host:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "command": {
+                  "verb": "setRfKitAddress",
+                  "valueProperty": {
+                    "object": "rfkit",
+                    "name": "configuredHost"
+                  },
+                  "arguments": {
+                    "host": {
+                      "$controlValue": true
+                    },
+                    "port": {
+                      "$property": {
+                        "object": "rfkit",
+                        "name": "configuredPort"
+                      }
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteRfKitControlVersion",
+                "min": 4
+              }
+            },
+            {
+              "id": "catNetwork.rfKit.port",
+              "label": "Port:",
+              "tooltip": "",
+              "kind": "integer",
+              "binding": {
+                "command": {
+                  "verb": "setRfKitAddress",
+                  "valueProperty": {
+                    "object": "rfkit",
+                    "name": "configuredPort"
+                  },
+                  "arguments": {
+                    "host": {
+                      "$property": {
+                        "object": "rfkit",
+                        "name": "configuredHost"
+                      }
+                    },
+                    "port": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteRfKitControlVersion",
+                "min": 4
+              },
+              "min": 1,
+              "max": 65535,
+              "step": 1
+            },
+            {
+              "id": "catNetwork.rfKit.autoReconnect",
+              "label": "Auto-reconnect on disconnect",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "setting": "RfKit_AutoReconnect"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteRfKitControlVersion",
+                "min": 3
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              }
+            },
+            {
+              "id": "catNetwork.rfKit.pollInterval",
+              "label": "Poll interval:",
+              "tooltip": "",
+              "kind": "integer",
+              "binding": {
+                "setting": "RfKit_PollIntervalMs"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteRfKitControlVersion",
+                "min": 3
+              },
+              "min": 250,
+              "max": 5000,
+              "step": 1,
+              "unit": "ms"
+            },
+            {
+              "id": "catNetwork.rfKit.connect",
+              "label": "Connect",
+              "tooltip": "Ask the Core to connect to the amplifier at this address and save it.",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "configureRfKit",
+                  "arguments": {
+                    "host": {
+                      "$property": {
+                        "object": "rfkit",
+                        "name": "configuredHost"
+                      }
+                    },
+                    "port": {
+                      "$property": {
+                        "object": "rfkit",
+                        "name": "configuredPort"
+                      }
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteRfKitControlVersion",
+                "min": 2
+              },
+              "enabledWhen": {
+                "property": {
+                  "object": "rfkit",
+                  "name": "connectionPhase"
+                },
+                "oneOf": [
+                  0,
+                  1,
+                  7
+                ]
+              }
+            },
+            {
+              "id": "catNetwork.rfKit.disconnect",
+              "label": "Disconnect",
+              "tooltip": "",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "disconnectRfKit",
+                  "arguments": {}
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteRfKitControlVersion",
+                "min": 2
+              },
+              "enabledWhen": {
+                "property": {
+                  "object": "rfkit",
+                  "name": "connectionPhase"
+                },
+                "oneOf": [
+                  2,
+                  3,
+                  4,
+                  5,
+                  6
+                ]
+              }
+            },
+            {
+              "id": "catNetwork.rfKit.tciMode",
+              "label": "Set amp to TCI mode",
+              "tooltip": "Ask the Core to put the amplifier in TCI mode.",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "setRfKitTciMode",
+                  "arguments": {}
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteRfKitControlVersion",
+                "min": 4,
+                "offAir": true
+              },
+              "enabledWhen": {
+                "property": {
+                  "object": "rfkit",
+                  "name": "connectionPhase"
+                },
+                "oneOf": [
+                  6
+                ]
+              }
+            },
+            {
+              "id": "catNetwork.rfKit.resetError",
+              "label": "Reset amp error state",
+              "tooltip": "Ask the Core to clear the amplifier's error.",
+              "kind": "button",
+              "binding": {
+                "command": {
+                  "verb": "resetRfKitError",
+                  "arguments": {}
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteRfKitControlVersion",
+                "min": 3
+              }
+            }
+          ]
+        },
+        {
+          "title": "Antenna labels",
+          "controls": [
+            {
+              "id": "catNetwork.rfKit.ant1Label",
+              "label": "ANT 1:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "setting": "RfKit_Ant1_Label"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteRfKitControlVersion",
+                "min": 3
+              },
+              "maxLength": 12
+            },
+            {
+              "id": "catNetwork.rfKit.ant2Label",
+              "label": "ANT 2:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "setting": "RfKit_Ant2_Label"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteRfKitControlVersion",
+                "min": 3
+              },
+              "maxLength": 12
+            },
+            {
+              "id": "catNetwork.rfKit.ant3Label",
+              "label": "ANT 3:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "setting": "RfKit_Ant3_Label"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteRfKitControlVersion",
+                "min": 3
+              },
+              "maxLength": 12
+            },
+            {
+              "id": "catNetwork.rfKit.ant4Label",
+              "label": "ANT 4:",
+              "tooltip": "",
+              "kind": "text",
+              "binding": {
+                "setting": "RfKit_Ant4_Label"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "remoteRfKitControlVersion",
+                "min": 3
+              },
+              "maxLength": 12
+            }
+          ]
+        },
+        {
+          "title": "Live diagnostics",
+          "controls": [
+            {
+              "id": "catNetwork.rfKit.pollsOk",
+              "label": "Polls OK",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "rfkitPollsOk"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 2
+              },
+              "decimals": 0
+            },
+            {
+              "id": "catNetwork.rfKit.pollsFailed",
+              "label": "Polls failed",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "rfkitPollsFailed"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 2
+              },
+              "decimals": 0
+            },
+            {
+              "id": "catNetwork.rfKit.rtt",
+              "label": "RTT",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "rfkitRttAvgMs"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 3
+              },
+              "format": "rttAverage"
+            },
+            {
+              "id": "catNetwork.rfKit.reconnects",
+              "label": "Reconnects",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "rfkitReconnectCount"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 2
+              },
+              "decimals": 0
+            },
+            {
+              "id": "catNetwork.rfKit.connectedSince",
+              "label": "Connected since",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "rfkitConnectedSinceMs"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 2
+              },
+              "format": "clockTime"
+            },
+            {
+              "id": "catNetwork.rfKit.lastPoll",
+              "label": "Last poll",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "accessoryData",
+                  "name": "rfkitLastPollMs"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "accessoryDataVersion",
+                "min": 2
+              },
+              "format": "clockTime"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

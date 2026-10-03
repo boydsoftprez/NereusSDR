@@ -16,6 +16,13 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-28: defaultVoltCalibrationFor() ported from
+//                 GetDefaultVoltCalibration (clsHardwareSpecific.cs:265-292
+//                 [v2.10.3.15]) for the PA current calibration. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-23: profileForStation() added for remote windows (R-R3-46),
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  clsHardwareSpecific.cs
@@ -241,6 +248,17 @@ HPSDRModel defaultModelForBoard(HPSDRHW board)
         }
     }
 
+    // Plan Task 15: the HL2 receive-only kit is an HL2. mi0bot-Thetis, which
+    // is authoritative for the HL2, has one HL2 model, HERMESLITE, and no
+    // separate receive-only board or model (enums.cs:388-400
+    // [v2.10.3.13-beta2]); receive-only is its RXOnly toggle. Until Task 15
+    // this walk found no model for the kit and fell to HERMES below, which
+    // dropped the kit's row (and with it the transmit block) and the HL2's
+    // 384 kHz, codec and controls.
+    if (board == HPSDRHW::HermesLiteRxOnly) {
+        return HPSDRModel::HERMESLITE;
+    }
+
     // SaturnMKII (0x0B) has no dedicated HPSDRModel enum entry yet.
     // Map it to ANAN_G2 so it gets Saturn-family capabilities (2 ADC, P2).
     if (board == HPSDRHW::SaturnMKII) {
@@ -248,6 +266,39 @@ HPSDRModel defaultModelForBoard(HPSDRHW board)
     }
 
     return HPSDRModel::HERMES;
+}
+
+// Plan Task 15: NereusSDR-original. See the header comment.
+HardwareProfile profileForRadio(HPSDRHW board, HPSDRModel model)
+{
+    HardwareProfile p = profileForModel(model);
+    if (board == HPSDRHW::HermesLiteRxOnly && p.effectiveBoard == HPSDRHW::HermesLite) {
+        p.effectiveBoard = HPSDRHW::HermesLiteRxOnly;
+        p.caps           = &BoardCapsTable::forBoard(HPSDRHW::HermesLiteRxOnly);
+    }
+    return p;
+}
+
+// R-R3-46: NereusSDR-original (no Thetis equivalent: Thetis always has the
+// radio in hand). See the header comment.
+HardwareProfile profileForStation(HPSDRHW board, HPSDRModel reportedModel)
+{
+    if (board == HPSDRHW::Unknown) {
+        HardwareProfile p;
+        p.model          = HPSDRModel::FIRST;
+        p.effectiveBoard = HPSDRHW::Unknown;
+        p.caps           = &BoardCapsTable::forBoard(HPSDRHW::Unknown);
+        return p;
+    }
+    if (reportedModel != HPSDRModel::FIRST && reportedModel != HPSDRModel::LAST) {
+        // Plan Task 15: profileForRadio, as a local connect builds it, so a
+        // Core running the HL2 receive-only kit gives the kit's row here too.
+        HardwareProfile reported = profileForRadio(board, reportedModel);
+        if (reported.caps != nullptr && reported.caps->board == board) {
+            return reported;
+        }
+    }
+    return profileForRadio(board, defaultModelForBoard(board));
 }
 
 // From Thetis NetworkIO.cs:164-171
@@ -299,12 +350,56 @@ QList<HPSDRModel> compatibleModels(HPSDRHW board)
                     result.append(m);
                 }
                 break;
+            case HPSDRModel::HERMESLITE:
+                // Plan Task 15 (NereusSDR-original): the HL2 receive-only
+                // kit is an HL2; mi0bot's one HL2 model is HERMESLITE.
+                if (board == HPSDRHW::HermesLiteRxOnly) {
+                    result.append(m);
+                }
+                break;
             default:
                 break;
         }
     }
 
     return result;
+}
+
+VoltCalibration defaultVoltCalibrationFor(HPSDRModel model)
+{
+    // From Thetis clsHardwareSpecific.cs:265-292 [v2.10.3.15]:
+    // Adjacent upstream tag (HasAmps, clsHardwareSpecific.cs:260): //N1GP G2E added
+    //   switch (_model) {
+    //       case HPSDRModel.ANAN7000D:
+    //       case HPSDRModel.ANVELINAPRO3:
+    //       case HPSDRModel.REDPITAYA:
+    //           voff = 340.0f; sens = 88.0f; break;
+    //       case HPSDRModel.ANAN_G2: ...
+    //       case HPSDRModel.ANAN_G2_1K: ...
+    //       default: voff = 360.0f; sens = 120.0f; break;
+    //   }
+    VoltCalibration c;
+    switch (model) {
+        case HPSDRModel::ANAN7000D:
+        case HPSDRModel::ANVELINAPRO3:
+        case HPSDRModel::REDPITAYA:
+            c.voff = 340.0f;
+            c.sens = 88.0f;
+            break;
+        case HPSDRModel::ANAN_G2:
+            c.voff = 0.001f;                                // current sensor voltage offset
+            c.sens = 66.23f;                                // current reading sensitivity //0.001 to prevent /0 in the calcs
+            break;
+        case HPSDRModel::ANAN_G2_1K:                       // will need adjustment probably
+            c.voff = 0.001f;                                // current sensor voltage offset
+            c.sens = 66.23f;                                // current reading sensitivity //0.001 to prevent /0 in the calcs
+            break;
+        default:
+            c.voff = 360.0f;
+            c.sens = 120.0f;
+            break;
+    }
+    return c;
 }
 
 } // namespace NereusSDR

@@ -1,0 +1,30 @@
+{
+  "runs": [
+    "relay",
+    "core"
+  ],
+  "steps": [
+    {
+      "connect": "core"
+    },
+    {
+      "from": "core",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:core:s:a:expired"
+      ]
+    },
+    {
+      "to": "core",
+      "binary": [
+        "83",
+        "65787069726564"
+      ]
+    },
+    {
+      "expectClosed": "core",
+      "code": 1000
+    }
+  ]
+}

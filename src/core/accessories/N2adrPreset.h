@@ -26,6 +26,10 @@
 //                tab was a placeholder until this commit).
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                Anthropic Claude Code.
+//   2026-09-24 - R-R3-46: applyN2adrPresetReceiveOnly, the preset's
+//                receive half for a station that may not change transmit
+//                settings. NereusSDR-original. J.J. Boyd (KG4VCF), AI-
+//                assisted via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -88,5 +92,12 @@ class OcMatrix;
 // Caller is responsible for OcMatrix::save() afterwards if persistence
 // is required (Hl2IoBoardTab does; the codec layer does not).
 void applyN2adrPreset(OcMatrix& oc, bool enabled);
+
+// R-R3-46 (NereusSDR-original): the preset's receive half only. The receive
+// pins are cleared and filled as applyN2adrPreset does; every transmit pin
+// keeps its current value. For a receive-only station (a Core, or a remote
+// window, without the transmit permission), whose transmit OC pins the
+// operator may not change from there.
+void applyN2adrPresetReceiveOnly(OcMatrix& oc, bool enabled);
 
 } // namespace NereusSDR

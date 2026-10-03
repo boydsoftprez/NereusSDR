@@ -1,0 +1,8 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "mailbox.open",
+    "nameplate": true
+  },
+  "decodes": false
+}

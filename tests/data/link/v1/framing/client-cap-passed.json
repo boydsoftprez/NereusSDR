@@ -1,0 +1,705 @@
+{
+  "receiver": "client",
+  "message": [
+    {
+      "text": "{\"x\":\""
+    },
+    {
+      "repeat": "e",
+      "times": 8388601
+    },
+    {
+      "text": "\"}"
+    }
+  ],
+  "frames": [
+    {
+      "chunk": "more",
+      "from": 0,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 61439,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 122878,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 184317,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 245756,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 307195,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 368634,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 430073,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 491512,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 552951,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 614390,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 675829,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 737268,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 798707,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 860146,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 921585,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 983024,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1044463,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1105902,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1167341,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1228780,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1290219,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1351658,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1413097,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1474536,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1535975,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1597414,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1658853,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1720292,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1781731,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1843170,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1904609,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 1966048,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2027487,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2088926,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2150365,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2211804,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2273243,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2334682,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2396121,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2457560,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2518999,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2580438,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2641877,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2703316,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2764755,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2826194,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2887633,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 2949072,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3010511,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3071950,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3133389,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3194828,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3256267,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3317706,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3379145,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3440584,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3502023,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3563462,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3624901,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3686340,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3747779,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3809218,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3870657,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3932096,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 3993535,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4054974,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4116413,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4177852,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4239291,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4300730,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4362169,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4423608,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4485047,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4546486,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4607925,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4669364,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4730803,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4792242,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4853681,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4915120,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 4976559,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5037998,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5099437,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5160876,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5222315,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5283754,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5345193,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5406632,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5468071,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5529510,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5590949,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5652388,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5713827,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5775266,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5836705,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5898144,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 5959583,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6021022,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6082461,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6143900,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6205339,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6266778,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6328217,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6389656,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6451095,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6512534,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6573973,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6635412,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6696851,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6758290,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6819729,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6881168,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 6942607,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7004046,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7065485,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7126924,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7188363,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7249802,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7311241,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7372680,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7434119,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7495558,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7556997,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7618436,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7679875,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7741314,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7802753,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7864192,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7925631,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 7987070,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 8048509,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 8109948,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 8171387,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 8232826,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 8294265,
+      "length": 61439
+    },
+    {
+      "chunk": "last",
+      "from": 8355704,
+      "length": 32905
+    }
+  ],
+  "encodes": true,
+  "outcome": "refused",
+  "replies": []
+}

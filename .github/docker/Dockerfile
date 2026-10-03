@@ -11,5 +11,6 @@ RUN apt-get update && apt-get install -y \
     qt6-base-dev qt6-base-private-dev qt6-multimedia-dev \
     qt6-shadertools-dev \
     libgl1-mesa-dev libfftw3-dev \
+    libssl-dev \
     git \
     && rm -rf /var/lib/apt/lists/*

@@ -7,6 +7,11 @@
 //                 Claude Code. Patterns mirror src/core/PgxlConnection.{h,cpp}
 //                 (which is itself an AetherSDR port); wire format is REST
 //                 not C/R/S/V text.
+//   2026-09-24  R-R3-47 / R-R3-22 / R-R3-25: opt-in identity admission
+//                 (the amp counts as connected only once its /info says
+//                 it is an RF2K-S), connection failures and retries
+//                 reported, faults emitted. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -72,6 +77,23 @@ public:
     int     rttAvgLast10Ms()      const noexcept { return m_rttAvgMs; }
     int     reconnectAttempts()   const noexcept { return m_reconnectAttempts; }
     bool    autoReconnect()       const noexcept { return m_autoReconnect; }
+    int     pollIntervalMs()      const noexcept { return m_pollIntervalMs; }
+    /// A retry of the amp's address is scheduled.
+    bool    reconnectPending()    const { return m_reconnectTimer.isActive(); }
+
+    // R-R3-47: identity admission (the Core turns it on; a local window
+    // keeps today's behaviour). The amp counts as connected only once its
+    // /info reply names the product expectedDevice(); anything else is
+    // refused with connectionFailed() and never retried, since a different
+    // device at the address will not become an RF2K-S.
+    void setIdentityAdmissionRequired(bool required) { m_identityRequired = required; }
+    bool identityAdmissionRequired() const { return m_identityRequired; }
+    /// The `device` field an RF2K-S reports in /info (design doc
+    /// 2026-05-24-rfkit-rf2ks-applet-design.md: swagger and live probe,
+    /// firmware G200C267; tests/tst_rf2ks_connection_parse.cpp).
+    static QString expectedDevice() { return QStringLiteral("RF2K-S"); }
+    /// The amp's `device` field from its last /info reply.
+    QString reportedDevice() const { return m_reportedDevice; }
 
     RfKitPowerSnapshot  lastPower()             const { return m_lastPower; }
     RfKitTunerSnapshot  lastTuner()             const { return m_lastTuner; }
@@ -109,6 +131,9 @@ public:
     // test can walk the down transition and the reconnect-probe-failed path
     // that keeps the retry schedule alive.
     void testMarkPollFailure() { markPollFailure(); }
+    // Group B fix wave (M7): a poll answered in `rttMs`, for the response
+    // time average.
+    void testMarkPollSuccess(int rttMs) { markPollSuccess(rttMs); }
 
 public slots:
     void connectToAmp(const QString& host, quint16 port = 8080);
@@ -127,7 +152,12 @@ public slots:
 signals:
     void connected();
     void disconnected();
+    // Emitted when the amp cannot be admitted: its /info named another
+    // device (identity admission), or it did not answer and automatic
+    // retry is off. Nothing is retried after it.
     void connectionFailed(const QString& errorString);
+    // R-R3-47: a retry of the amp's address was scheduled.
+    void reconnectScheduled(int attemptNumber, int delayMs);
 
     void powerUpdated(const RfKitPowerSnapshot& snap);
     void tunerUpdated(const RfKitTunerSnapshot& snap);
@@ -139,6 +169,10 @@ signals:
                      const QString& nicknameFromAmp);
     void dataUpdated(int bandM, int frequencyKHz, const QString& status);
 
+    // R-R3-47: something went wrong with the amp. `kind` is "link" (it
+    // stopped answering), "identity" (the device at the address is not an
+    // RF2K-S) or "interface" (the amp reported an error on its operating
+    // interface); `detail` says what, in plain words or as the amp sent it.
     void faultObserved(const QString& kind, const QString& detail);
 
 private slots:
@@ -165,6 +199,8 @@ private:
     void   parseOperateMode(const QByteArray& body);
     void   parseOperationalInterface(const QByteArray& body);
     void   parseData(const QByteArray& body);
+    // R-R3-47: refuse the amp at this address (identity admission).
+    void   refuseIdentity(const QString& device);
 
     // Declared before m_nam so it outlives replies destroyed by the network
     // manager during member teardown; their destroyed handlers remove from it.
@@ -191,6 +227,8 @@ private:
     QString m_opIfx;
     QString m_opIfxErrorField;
     QString m_lastError;
+    QString m_reportedDevice;
+    bool    m_identityRequired   = false;
 
     RfKitPowerSnapshot  m_lastPower;
     RfKitTunerSnapshot  m_lastTuner;

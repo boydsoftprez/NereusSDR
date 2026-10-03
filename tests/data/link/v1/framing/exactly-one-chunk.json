@@ -1,0 +1,25 @@
+{
+  "receiver": "client",
+  "message": [
+    {
+      "text": "{\"type\":\"notice\",\"text\":\""
+    },
+    {
+      "repeat": "a",
+      "times": 61412
+    },
+    {
+      "text": "\"}"
+    }
+  ],
+  "frames": [
+    {
+      "chunk": "last",
+      "from": 0,
+      "length": 61439
+    }
+  ],
+  "encodes": true,
+  "outcome": "delivered",
+  "replies": []
+}

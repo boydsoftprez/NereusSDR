@@ -38,6 +38,22 @@
 //                 dialog background and made the controls effectively
 //                 invisible during bench test.  J.J. Boyd (KG4VCF), with
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 4): setSettingsPermitted greys the
+//                 controls with a reason in a remote window while the Core
+//                 cannot take a CFC change. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-27 - R-R3-49 (parity Task 33): the bar chart's bin mapping in
+//                 drawCompressionBins, shared by the local timer and a remote
+//                 window's copy of the Core's CFC display. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - Setup publication (CFC band editor): in a remote window
+//                 pushCfcProfileToModel sends the whole band table as the
+//                 Core's cfc.setProfile command with the revision last seen,
+//                 one at a time with the newest edit held, and holds the
+//                 model sync until the Core answers; a refusal shows in
+//                 TxCfcProfileReason. An older Core keeps the property
+//                 write. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -84,6 +100,9 @@
 #include "TxCfcDialog.h"
 
 #include "core/TxChannel.h"
+#include "core/CfcProfile.h"
+#include "core/CfcEditProfile.h"
+#include "core/ParaEqEnvelope.h"
 #include "gui/StyleConstants.h"
 #include "gui/widgets/ParametricEqWidget.h"
 #include "gui/widgets/EqEditHistory.h"
@@ -100,6 +119,8 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHideEvent>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QPushButton>
 #include <QRadioButton>
@@ -222,6 +243,28 @@ void TxCfcDialog::setTxChannel(TxChannel* tx)
     m_tx = tx;
 }
 
+void TxCfcDialog::setSettingsPermitted(bool permitted, const QString& reason)
+{
+    // R-R3-49 (parity Task 4). Every control is a direct child of the
+    // dialog (the layouts own none of them).
+    for (QWidget* child : findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly)) {
+        if (child == m_settingsReasonLabel || child == m_barChartReasonLabel
+            || child == m_profileReasonLabel) {
+            continue;
+        }
+        child->setEnabled(permitted);
+    }
+    if (!permitted) {
+        // A Core that cannot take a change will not answer an edit waiting
+        // on it either; the next edit starts fresh.
+        clearStationProfileInFlight();
+    }
+    if (m_settingsReasonLabel) {
+        m_settingsReasonLabel->setText(permitted ? QString() : reason);
+        m_settingsReasonLabel->setVisible(!permitted && !reason.isEmpty());
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Native approved editor: matched plots, shared band selector and controls,
 // independent width/amount inputs, separate globals and collapsible Advanced.
@@ -233,6 +276,21 @@ void TxCfcDialog::buildUi()
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(10, 10, 10, 10);
     outer->setSpacing(6);
+    m_settingsReasonLabel = new QLabel(this);
+    m_settingsReasonLabel->setObjectName(QStringLiteral("TxCfcSettingsReason"));
+    m_settingsReasonLabel->setWordWrap(true);
+    m_settingsReasonLabel->hide();
+    outer->addWidget(m_settingsReasonLabel);
+    m_profileReasonLabel = new QLabel(this);
+    m_profileReasonLabel->setObjectName(QStringLiteral("TxCfcProfileReason"));
+    m_profileReasonLabel->setWordWrap(true);
+    m_profileReasonLabel->hide();
+    outer->addWidget(m_profileReasonLabel);
+    m_barChartReasonLabel = new QLabel(this);
+    m_barChartReasonLabel->setObjectName(QStringLiteral("TxCfcBarChartReason"));
+    m_barChartReasonLabel->setWordWrap(true);
+    m_barChartReasonLabel->hide();
+    outer->addWidget(m_barChartReasonLabel);
     auto button = [this](const QString& title, const char* name) {
         auto* result = new QPushButton(title, this);
         result->setObjectName(QString::fromLatin1(name));
@@ -544,13 +602,28 @@ void TxCfcDialog::wireSignals()
         });
     }
     if (m_tm) {
-        connect(m_tm, &TransmitModel::cfcProfileChanged, this, [this](const CfcProfile&) { syncFromModel(); });
+        connect(m_tm, &TransmitModel::cfcEditProfileChanged, this, [this](const CfcEditProfile&) { syncFromModel(); });
+        connect(m_tm.data(), &TransmitModel::cfcPrecompDbChanged,
+                this, &TxCfcDialog::syncFromModel);
+        connect(m_tm.data(), &TransmitModel::cfcPostEqGainDbChanged,
+                this, &TxCfcDialog::syncFromModel);
+        connect(m_tm.data(), &TransmitModel::cfcEqFreqChanged,
+                this, &TxCfcDialog::syncFromModel);
+        connect(m_tm.data(), &TransmitModel::cfcCompressionChanged,
+                this, &TxCfcDialog::syncFromModel);
+        connect(m_tm.data(), &TransmitModel::cfcPostEqBandGainChanged,
+                this, &TxCfcDialog::syncFromModel);
+        connect(m_tm.data(), &TransmitModel::cfcParaEqDataChanged,
+                this, &TxCfcDialog::syncFromModel);
+        connect(m_tm.data(), &TransmitModel::cfcSettingsReloaded, this, &TxCfcDialog::syncFromModel);
+        connect(m_tm.data(), &TransmitModel::cfcProfileRestored,
+                this, &TxCfcDialog::syncFromModel);
     }
 }
 
-CfcProfile TxCfcDialog::captureProfile() const
+CfcEditProfile TxCfcDialog::captureProfile() const
 {
-    CfcProfile profile;
+    CfcEditProfile profile;
     auto capture = [](const ParametricEqWidget* widget, CfcCurveState& curve) {
         widget->getPointsData(curve.frequenciesHz, curve.gainsDb, curve.q);
         curve.globalGainDb = widget->globalGainDb();
@@ -564,10 +637,10 @@ CfcProfile TxCfcDialog::captureProfile() const
     return profile;
 }
 
-void TxCfcDialog::restoreProfile(const CfcProfile& profile)
+void TxCfcDialog::restoreProfile(const CfcEditProfile& profile)
 {
-    CfcProfile display = profile;
-    if (!isValidCfcProfile(display)) {
+    CfcEditProfile display = profile;
+    if (!isValidCfcEditProfile(display)) {
         // Legacy profiles can store centers out of order. Sort both amounts
         // together for display without writing or moving any configured center.
         QVector<int> order(display.compression.frequenciesHz.size());
@@ -586,7 +659,7 @@ void TxCfcDialog::restoreProfile(const CfcProfile& profile)
             curve.frequencyMaxHz = curve.frequenciesHz.last();
         };
         sorted(display.compression); sorted(display.postEq);
-        if (!isValidCfcProfile(display)) {
+        if (!isValidCfcEditProfile(display)) {
             m_curveAvailable = false;
             m_invalidLegacyProfile = profile;
             m_invalidLegacyBlob = m_tm ? m_tm->cfcParaEqData() : QString();
@@ -668,7 +741,7 @@ void TxCfcDialog::restoreEditState(const QByteArray& state)
     stream.setVersion(QDataStream::Qt_6_0);
     QByteArray comp, eq;
     bool compQ = false, eqQ = false, available = true;
-    CfcProfile legacy;
+    CfcEditProfile legacy;
     QString legacyBlob;
     stream >> available >> comp >> eq >> compQ >> eqQ;
     if (!available) {
@@ -780,7 +853,8 @@ void TxCfcDialog::seedWidgetsFromTransmitModel()
 
 void TxCfcDialog::syncFromModel()
 {
-    if (!m_tm || m_updatingFromModel) { return; }
+    if (!m_tm || m_updatingFromModel || m_tm->cfcProfileMutationInProgress()) { return; }
+    if (m_profileCommandId != 0 || m_profilePending) { return; }
     const QScopedValueRollback<bool> guard(m_updatingFromModel, true);
     m_compWidget->cancelEditGesture();
     m_postEqWidget->cancelEditGesture();
@@ -796,11 +870,99 @@ void TxCfcDialog::syncFromModel()
     rebaseEditHistory();
 }
 
+
+void TxCfcDialog::setStationProfileSender(StationProfileAvailable available,
+                                          StationProfileSender send)
+{
+    m_stationProfileAvailable = std::move(available);
+    m_stationProfileSend = std::move(send);
+    clearStationProfileInFlight();
+}
+
+void TxCfcDialog::onStationLinkChanged(bool ready)
+{
+    if (ready || (m_profileCommandId == 0 && !m_profilePending)) { return; }
+    // The Core may or may not have applied the change; its answer cannot
+    // arrive on a new link. The Core's next push shows what it holds.
+    clearStationProfileInFlight();
+    syncFromModel();
+}
+
+void TxCfcDialog::clearStationProfileInFlight()
+{
+    m_profileCommandId = 0;
+    m_profilePending = false;
+    m_pendingProfileJson.clear();
+}
+
+void TxCfcDialog::showProfileReason(const QString& reason)
+{
+    if (!m_profileReasonLabel) { return; }
+    m_profileReasonLabel->setText(reason);
+    m_profileReasonLabel->setVisible(!reason.isEmpty());
+}
+
+void TxCfcDialog::sendPendingStationProfile()
+{
+    if (!m_profilePending || m_profileCommandId != 0 || !m_stationProfileSend || !m_tm) {
+        return;
+    }
+    // The revision of the table this window last saw; the Core refuses the
+    // change when its own table has moved on since.
+    const QJsonObject seen = QJsonDocument::fromJson(m_tm->cfcProfile().toUtf8()).object();
+    const QString expectedRevision = seen.value(QStringLiteral("revision")).toString();
+    const QString json = m_pendingProfileJson;
+    m_profilePending = false;
+    m_pendingProfileJson.clear();
+    const StationProfileSend outcome = m_stationProfileSend(json, expectedRevision);
+    if (!outcome.sent) {
+        showProfileReason(outcome.reason);
+        syncFromModel();
+        return;
+    }
+    // A link that does not number its commands cannot tell its answer
+    // apart; nothing is held for it.
+    m_profileCommandId = outcome.commandId;
+}
+
+void TxCfcDialog::onStationCommandFinished(quint32 commandId, bool accepted,
+                                           const QString& reason)
+{
+    if (commandId == 0 || commandId != m_profileCommandId) { return; }
+    m_profileCommandId = 0;
+    if (!accepted) {
+        // The edits held behind it were made on the same table; show the
+        // Core's values and why, and let the operator try again.
+        m_profilePending = false;
+        m_pendingProfileJson.clear();
+        showProfileReason(reason);
+        syncFromModel();
+        return;
+    }
+    showProfileReason(QString());
+    if (m_profilePending) {
+        sendPendingStationProfile();
+        return;
+    }
+    syncFromModel();
+}
+
 void TxCfcDialog::pushCfcProfileToModel()
 {
     if (!m_tm || m_updatingFromModel || m_ignoreUpdates || !m_curveAvailable) { return; }
+    const CfcEditProfile profile = captureProfile();
+    const QString encoded = encodeCfcEditProfile(profile);
+    CfcProfile::Profile candidate;
+    if (!CfcProfile::decode(encoded, candidate)) { return; }
+    if (m_stationProfileSend && m_stationProfileAvailable && m_stationProfileAvailable()) {
+        m_pendingProfileJson = CfcProfile::publishedJson(candidate, QStringLiteral("saved"));
+        m_profilePending = true;
+        sendPendingStationProfile();
+        return;
+    }
+    clearStationProfileInFlight();
     const QScopedValueRollback<bool> guard(m_updatingFromModel, true);
-    m_tm->setCfcProfile(captureProfile());
+    m_tm->setCfcProfile(profile);
 }
 
 void TxCfcDialog::syncPairedFrequencies(ParametricEqWidget* source, ParametricEqWidget* target)
@@ -1213,34 +1375,72 @@ void TxCfcDialog::onBarChartTick()
         bins, TxChannel::kCfcDisplayBinCount);
 
     if (ready) {
-        const double startHz = m_compWidget->frequencyMinHz();
-        const double stopHz  = m_compWidget->frequencyMaxHz();
-        const double binsPerHz = static_cast<double>(TxChannel::kCfcDisplayBinCount) /
-                                 TxChannel::kCfcDisplaySampleRateHz;
-        int startIdx = static_cast<int>(startHz * binsPerHz);
-        int endIdx   = static_cast<int>(stopHz  * binsPerHz);
-
-        // Clamp to valid range.
-        if (startIdx < 0) startIdx = 0;
-        if (endIdx   < 0) endIdx   = 0;
-        if (startIdx >= TxChannel::kCfcDisplayBinCount) {
-            startIdx = TxChannel::kCfcDisplayBinCount - 1;
-        }
-        if (endIdx   >= TxChannel::kCfcDisplayBinCount) {
-            endIdx   = TxChannel::kCfcDisplayBinCount - 1;
-        }
-
-        const int len = endIdx - startIdx + 1;
-        if (len > 0) {
-            QVector<double> slice(len);
-            for (int i = 0; i < len; ++i) {
-                slice[i] = bins[startIdx + i];
-            }
-            m_compWidget->drawBarChartData(slice);
-        }
+        drawCompressionBins(bins, TxChannel::kCfcDisplayBinCount);
     }
 
     m_barChartBusy = false;
+}
+
+void TxCfcDialog::drawCompressionBins(const double* bins, int count)
+{
+    if (!m_compWidget || count < TxChannel::kCfcDisplayBinCount) {
+        return;
+    }
+    const double startHz = m_compWidget->frequencyMinHz();
+    const double stopHz  = m_compWidget->frequencyMaxHz();
+    const double binsPerHz = static_cast<double>(TxChannel::kCfcDisplayBinCount) /
+                             TxChannel::kCfcDisplaySampleRateHz;
+    int startIdx = static_cast<int>(startHz * binsPerHz);
+    int endIdx   = static_cast<int>(stopHz  * binsPerHz);
+
+    // Clamp to valid range.
+    if (startIdx < 0) startIdx = 0;
+    if (endIdx   < 0) endIdx   = 0;
+    if (startIdx >= TxChannel::kCfcDisplayBinCount) {
+        startIdx = TxChannel::kCfcDisplayBinCount - 1;
+    }
+    if (endIdx   >= TxChannel::kCfcDisplayBinCount) {
+        endIdx   = TxChannel::kCfcDisplayBinCount - 1;
+    }
+
+    const int len = endIdx - startIdx + 1;
+    if (len > 0) {
+        QVector<double> slice(len);
+        for (int i = 0; i < len; ++i) {
+            slice[i] = bins[startIdx + i];
+        }
+        m_compWidget->drawBarChartData(slice);
+    }
+}
+
+void TxCfcDialog::setStationBarChart(std::function<void(bool)> setWanted)
+{
+    m_stationBarChart = std::move(setWanted);
+    if (m_stationBarChart && m_barChartTimer) {
+        // The Core reads its own TxChannel; this window reads none.
+        m_barChartTimer->stop();
+    }
+    if (m_stationBarChart && isVisible()) {
+        m_stationBarChart(true);
+    }
+}
+
+void TxCfcDialog::applyStationCompression(const QList<double>& binsDb)
+{
+    if (!m_stationBarChart || !isVisible()
+        || binsDb.size() < TxChannel::kCfcDisplayBinCount) {
+        return;
+    }
+    drawCompressionBins(binsDb.constData(), static_cast<int>(binsDb.size()));
+}
+
+void TxCfcDialog::setBarChartUnavailable(const QString& reason)
+{
+    if (!m_barChartReasonLabel) {
+        return;
+    }
+    m_barChartReasonLabel->setText(reason);
+    m_barChartReasonLabel->setVisible(!reason.isEmpty());
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1250,6 +1450,11 @@ void TxCfcDialog::onBarChartTick()
 void TxCfcDialog::showEvent(QShowEvent* event)
 {
     QDialog::showEvent(event);
+    // Parity Task 33: a remote window asks the Core for its CFC display.
+    if (m_stationBarChart) {
+        m_stationBarChart(true);
+        return;
+    }
     if (m_barChartTimer && !m_barChartTimer->isActive()) {
         m_barChartTimer->start();
     }
@@ -1260,6 +1465,10 @@ void TxCfcDialog::hideEvent(QHideEvent* event)
     QDialog::hideEvent(event);
     if (m_barChartTimer) {
         m_barChartTimer->stop();
+    }
+    // Parity Task 33: closed, the window lets the Core stop reading.
+    if (m_stationBarChart) {
+        m_stationBarChart(false);
     }
     // Clear the bar chart so the next show isn't littered with stale data
     // (mirrors Thetis frmCFCConfig.cs:1052-1057 [v2.10.3.13] empty-array

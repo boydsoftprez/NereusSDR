@@ -191,10 +191,30 @@
 //                                    objectName() keys pinned for
 //                                    the smoke-test harness. AI
 //                                    tooling: Anthropic Claude Code.
+//   2026-09-26  J.J. Boyd / KG4VCF  Parity Task 19 (R-IOS-25, R-R3-49).
+//                                    setSourceHost: in a remote window the
+//                                    Cluster, RBN, POTA and PSK Reporter
+//                                    tabs show and drive the Core's
+//                                    sources (state, console lines,
+//                                    typed commands, refusals).
+//                                    setStationSettingsAvailable /
+//                                    setStationSourcesAvailable disable the
+//                                    Core's settings and buttons with a
+//                                    plain reason while there is no Core
+//                                    session. AI tooling: Anthropic Claude
+//                                    Code.
+//   2026-09-27  J.J. Boyd / KG4VCF  iPhone plan Task 22 / parity Task 20
+//                                    (R-IOS-26): the FreeDV tab shows and
+//                                    drives the Core's FreeDV Reporter in
+//                                    a remote window (state, console,
+//                                    Start / Stop, "Hide my station",
+//                                    refusals); setStationFreedvAvailable.
+//                                    AI tooling: Anthropic Claude Code.
 
 #pragma once
 
 #include <QDialog>
+#include <QPointer>
 
 class QTabWidget;
 class QLineEdit;
@@ -217,6 +237,7 @@ class SpotModel;
 class SpotTableModel;
 class BandFilterProxy;
 class DxccColorProvider;
+class SpotSourceHost;
 
 // From AetherSDR src/gui/DxClusterDialog.h:79-215 [@0cd4559]
 //
@@ -257,6 +278,39 @@ public:
     // SpotModel::SpotData::index (by callsign + freq + source) and
     // selects it.  -1 clears.  Companion signal
     // spotListHoverChanged(spotIdx) lives in the signals block below.
+    // R-R3-21: the operator identity the Settings tab saves, shared with
+    // Setup > General > Startup & Preferences so both edit one callsign
+    // and grid. identityError() is the Settings tab's check (empty when
+    // valid); saveIdentity() writes User/Callsign and User/GridSquare,
+    // the per-source copies and the message, and saves;
+    // applyIdentityToClients() hands it to running FreeDV / PSK Reporter
+    // clients (either may be null).
+    static QString identityError(const QString& call, const QString& grid);
+    static void saveIdentity(const QString& call, const QString& grid,
+                             const QString& message);
+    static void applyIdentityToClients(FreeDVReporterClient* freedv,
+                                       PskReporterClient* psk,
+                                       const QString& call, const QString& grid,
+                                       const QString& message);
+
+    /// Parity Task 19 (R-IOS-25): the spot source host. In a remote window
+    /// (it forwards the station's sources) the Cluster, RBN, POTA and PSK
+    /// Reporter tabs show the Core's state and console lines and their
+    /// buttons and command lines ask the Core. A window running its own
+    /// radio is unchanged.
+    void setSourceHost(SpotSourceHost* host);
+    /// Parity Task 19 (B7.2): the Core's settings on these tabs (every one
+    /// but WSJT-X and SpotCollector, which are this computer's) are
+    /// disabled with `reason` while false.
+    void setStationSettingsAvailable(bool available, const QString& reason);
+    /// Parity Task 19: the station sources' Connect, Start and command
+    /// lines are disabled with `reason` while the Core cannot run them.
+    void setStationSourcesAvailable(bool available, const QString& reason);
+    /// iPhone plan Task 22 / parity Task 20: FreeDV Reporter's Start and
+    /// "Hide my station" are disabled with `reason` while the Core does not
+    /// run FreeDV Reporter for this app.
+    void setStationFreedvAvailable(bool available, const QString& reason);
+
 public slots:
     void setHoveredPanadapterSpot(int spotIdx);
 
@@ -311,6 +365,25 @@ signals:
                        const QString& message);
 
 private:
+    // Parity Task 19: whether the station's sources are the Core's here.
+    bool stationRemote() const;
+    // Whether a source runs: the Core's state in a remote window, else
+    // `localRunning` (the client's own state, as before).
+    bool sourceRunning(const QString& source, bool localRunning) const;
+    void refreshStationSource(const QString& source);
+    void applyStationAvailability();
+    QPlainTextEdit* consoleFor(const QString& source) const;
+    /// "Hide my station" as the spot source host holds it.
+    void syncFreedvHidden();
+
+    QPointer<SpotSourceHost> m_sourceHost;
+    bool m_stationSettingsAvailable{true};
+    QString m_stationSettingsReason;
+    bool m_stationSourcesAvailable{true};
+    QString m_stationSourcesReason;
+    bool m_stationFreedvAvailable{true};
+    QString m_stationFreedvReason;
+
     // NereusSDR-native Settings tab (first position) for central
     // operator identity. Post-3J-2 UX fix.
     void buildSettingsTab(QTabWidget* tabs);

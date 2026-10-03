@@ -1,0 +1,9 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "pair.spake",
+    "step": 0,
+    "data": "conformance-hash-parameters"
+  },
+  "decodes": true
+}

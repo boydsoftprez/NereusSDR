@@ -1,0 +1,116 @@
+{
+  "description": "A station proves its key by signing \"NereusSDR rendezvous register v1\\n\" || nonce, where nonce is the 32 raw bytes the challenge's base64url decodes to. ECDSA P-256 over SHA-256, raw r || s, base64url. valid is true only when the key is a canonical P-256 key and the signature verifies over this transcript.",
+  "key": {
+    "fixed": "A fixed public key for these vectors. The key was generated only to produce them and is used by nothing else (no Core, device or server); a runner only verifies with it.",
+    "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw",
+    "id": "lwhu2kyjnrfdwvpxvdckao3lb7"
+  },
+  "nonce": "IbDG1L9Qg81JTTMz2DHdow8ODOzkVCWcGsqirynSV5I",
+  "transcriptHex": "4e65726575735344522072656e64657a766f75732072656769737465722076310a21b0c6d4bf5083cd494d3333d831dda30f0e0cece454259c1acaa2af29d25792",
+  "cases": [
+    {
+      "name": "signed",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw",
+      "signature": "VprRjHqlrM-_fpzu1zxVgKU6yZFidw7uI8MyZrNk8EAAC2YoGzQIQRjTk-H1LSFRnfkMw33bbPiWjBw8W4kYiA",
+      "valid": true
+    },
+    {
+      "name": "otherNonce",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw",
+      "signature": "rTHxfwhcAQFNp1qKFdKfQdqbjmyE7_-ELWou57T0eUH9ZLT7hxvT3EXc-eXI_FmbE7SsR76YhM2L2Faxaj-TJg",
+      "valid": false,
+      "why": "signed over another nonce"
+    },
+    {
+      "name": "flippedBit",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw",
+      "signature": "VprRjHqlrM-_fpzu1zxVgKU6yZFidw7uI8MyZrNk8EAAC2YoGzQIQRjTk-H1LSFRnfkMw33bbPiWjBw8W4kYiQ",
+      "valid": false,
+      "why": "the last bit of s flipped"
+    },
+    {
+      "name": "otherKey",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw",
+      "signature": "jXArzpue6JnhfljuxJgNnCKjlE30BMCbNMbSoTdKcZnLuP2kkNWgzGYFDhhLKA7qAE7k8qCO7ldOmqwQAH4mYw",
+      "valid": false,
+      "why": "signed by another key"
+    },
+    {
+      "name": "derSignature",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw",
+      "signature": "MEMCIFaa0Yx6pazPv36c7tc8VYClOsmRYncO7iPDMmazZPBAAh8LZigbNAhBGNOT4fUtIVGd-QzDfdts-JaMHDxbiRiI",
+      "valid": false,
+      "why": "a DER signature, not raw r || s"
+    },
+    {
+      "name": "signatureWithPadding",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw",
+      "signature": "VprRjHqlrM-_fpzu1zxVgKU6yZFidw7uI8MyZrNk8EAAC2YoGzQIQRjTk-H1LSFRnfkMw33bbPiWjBw8W4kYiA==",
+      "valid": false,
+      "why": "not strict base64url"
+    },
+    {
+      "name": "signatureShort",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw",
+      "signature": "VprRjHqlrM-_fpzu1zxVgKU6yZFidw7uI8MyZrNk8EAAC2YoGzQIQRjTk-H1LSFRnfkMw33bbPiWjBw8W4kY",
+      "valid": false,
+      "why": "63 bytes"
+    },
+    {
+      "name": "keyCompressed",
+      "publicKey": "MDkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDIgADg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7g",
+      "signature": "VprRjHqlrM-_fpzu1zxVgKU6yZFidw7uI8MyZrNk8EAAC2YoGzQIQRjTk-H1LSFRnfkMw33bbPiWjBw8W4kYiA",
+      "valid": false,
+      "why": "not a canonical 91-byte P-256 key"
+    },
+    {
+      "name": "keyOtherCurve",
+      "publicKey": "MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE9HDXeQqHb9kNpwahwWD-Yk7VDifrAorgRQZGwW0L5Z20d10qD1L1zg8lDf4yISTAhwZMoisPt4rfE7ZS9dKcLg",
+      "signature": "VprRjHqlrM-_fpzu1zxVgKU6yZFidw7uI8MyZrNk8EAAC2YoGzQIQRjTk-H1LSFRnfkMw33bbPiWjBw8W4kYiA",
+      "valid": false,
+      "why": "another curve"
+    },
+    {
+      "name": "keyNotOnCurve",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejg",
+      "signature": "VprRjHqlrM-_fpzu1zxVgKU6yZFidw7uI8MyZrNk8EAAC2YoGzQIQRjTk-H1LSFRnfkMw33bbPiWjBw8W4kYiA",
+      "valid": false,
+      "why": "91 bytes, point not on the curve"
+    },
+    {
+      "name": "keyBadBase64url",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw=",
+      "valid": false,
+      "signature": "VprRjHqlrM-_fpzu1zxVgKU6yZFidw7uI8MyZrNk8EAAC2YoGzQIQRjTk-H1LSFRnfkMw33bbPiWjBw8W4kYiA",
+      "why": "not strict base64url"
+    },
+    {
+      "name": "highS",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw",
+      "signature": "VprRjHqlrM-_fpzu1zxVgKU6yZFidw7uI8MyZrNk8ED_9JnW5Mv3v-csbB4K0t6uHu3t6ik8MYxdLa6GoNoMyQ",
+      "valid": true,
+      "why": "s replaced by n - s (a high-s signature): valid, since r and s are both from 1 to n - 1 and verifiers such as OpenSSL and CryptoKit accept it"
+    },
+    {
+      "name": "rZero",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw",
+      "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC2YoGzQIQRjTk-H1LSFRnfkMw33bbPiWjBw8W4kYiA",
+      "valid": false,
+      "why": "r is 0"
+    },
+    {
+      "name": "sIsN",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw",
+      "signature": "VprRjHqlrM-_fpzu1zxVgKU6yZFidw7uI8MyZrNk8ED_____AAAAAP__________vOb6racXnoTzucrC_GMlUQ",
+      "valid": false,
+      "why": "s equals the group order n"
+    },
+    {
+      "name": "rIsN",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw",
+      "signature": "_____wAAAAD__________7zm-q2nF56E87nKwvxjJVEAC2YoGzQIQRjTk-H1LSFRnfkMw33bbPiWjBw8W4kYiA",
+      "valid": false,
+      "why": "r equals the group order n"
+    }
+  ]
+}

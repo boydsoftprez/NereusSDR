@@ -71,6 +71,7 @@ private slots:
     void bandFilterComboHasThirteenEntries();
     void bandFilterAllShowsAllRows();
     void bandFilterTwentyMetersHidesOtherBandRows();
+    void bandFilterTwoMetersShowsOnlyTwoMetreRows();
     void qsyButtonDisabledWhenNoSelection();
     void qsyButtonEnabledWhenRowSelected();
     void qsyButtonEmitsRequestWithParsedFreq();
@@ -399,6 +400,40 @@ void TestFreeDVReporterDialog::bandFilterTwentyMetersHidesOtherBandRows() {
     QCOMPARE(table->model()->rowCount(), 1);
     QCOMPARE(table->model()->index(0, 0).data().toString(), QStringLiteral("K1B"));
 
+    delete dlg;
+    delete model;
+}
+
+void TestFreeDVReporterDialog::bandFilterTwoMetersShowsOnlyTwoMetreRows() {
+    // 2 m is its own band (JJ's ruling 2026-09-28): the "2m" choice lists
+    // stations on 144 to 148 MHz and nothing else, where it used to list
+    // every general-coverage station (2 m fell into GEN).
+    auto* model = new FreeDVStationModel;
+    auto* dlg = new FreeDVReporterDialog(model, nullptr, nullptr);
+    auto* combo = dlg->findChild<QComboBox*>(QStringLiteral("bandFilterCombo"));
+    auto* table = dlg->findChild<QTableView*>();
+    QVERIFY(combo != nullptr);
+    QVERIFY(table != nullptr);
+
+    model->onStationAdded("sid-2",
+        makeStationOnFreq("sid-2", "K2A", 144250000));
+    model->onStationAdded("sid-gen",
+        makeStationOnFreq("sid-gen", "K2B", 11000000));
+    model->onStationAdded("sid-uhf",
+        makeStationOnFreq("sid-uhf", "K2C", 432100000));
+    model->onStationAdded("sid-20",
+        makeStationOnFreq("sid-20", "K2D", 14236000));
+
+    const int idx = combo->findText(QStringLiteral("2m"));
+    QVERIFY(idx > 0);
+    combo->setCurrentIndex(idx);
+
+    QCOMPARE(table->model()->rowCount(), 1);
+    QCOMPARE(table->model()->index(0, 0).data().toString(), QStringLiteral("K2A"));
+
+    // Back to "All": the choice is saved, and the tests after this one
+    // build their dialogs from it.
+    combo->setCurrentIndex(0);
     delete dlg;
     delete model;
 }

@@ -1,0 +1,83 @@
+# NereusSDR rendezvous service configuration (INI).
+# Every key is optional; the values shown are the defaults.
+# The wire is docs/architecture/2026-09-23-rendezvous-v1.md; section 9
+# explains each limit.
+
+[rendezvous]
+# Loopback only: the web server in front (Caddy) terminates TLS and forwards
+# the WebSocket here. IPv6 addresses go in brackets.
+listen = 127.0.0.1:8710 [::1]:8710
+
+# Peers whose X-Forwarded-For is believed (the last address in it is the
+# client's). Anything else counts as the client itself.
+trusted_proxies = 127.0.0.1 ::1
+
+# Sent to every connection in hello. One IPv4-only and one IPv6-only name,
+# IPv4 first: the pinned libjuice uses only the first STUN server, and an
+# IPv4-only peer behind NAT needs its server-reflexive candidate (section 8).
+stun_urls = stun:rv4.nereussdr.com:3478 stun:rv6.nereussdr.com:3478
+
+# Handed out with relay credentials, each name on UDP 3478 and UDP 443, in
+# the same order as stun_urls (IPv4 first). Printable ASCII only, at most
+# 768 bytes as a JSON list together.
+turn_urls = turn:rv4.nereussdr.com:3478?transport=udp turn:rv4.nereussdr.com:443?transport=udp turn:rv6.nereussdr.com:3478?transport=udp turn:rv6.nereussdr.com:443?transport=udp
+
+# The file holding coturn's static-auth-secret, and nothing else. Empty: no
+# relay (answers carry turn null). Under systemd, LoadCredential= hands it
+# over. Never put the secret itself in this file.
+turn_secret_file =
+
+# Relay credentials are valid this long.
+turn_ttl_seconds = 86400
+
+# The WebSocket relay (section 12): the URL every relay grant names, the
+# file holding the secret shared with nereus-relay (and nothing else; it
+# must differ from the TURN secret), and how long a grant admits a first
+# join. Empty relay_secret_file: no grants are minted. Under systemd,
+# LoadCredential= hands the secret over.
+relay_url = wss://rv.nereussdr.com/v1/relay
+relay_secret_file =
+relay_ttl_seconds = 120
+# Enable only with a relay upgraded for purpose-separated watch legs. Both
+# endpoints must also explicitly declare support; old peers keep v1 grants.
+relay_watch_version = 0
+
+# debug, info, warning or error. Logs go to standard error only.
+log_level = info
+
+[limits]
+# Every per-address count is kept per address group: an IPv4 address, or an
+# IPv6 /56. Every value must be at least 1, except that 0 turns the pings off.
+introductions_per_address_per_minute = 30
+introductions_per_station_per_minute = 60
+mailbox_opens_per_address_per_minute = 10
+candidates_per_side = 64
+mailbox_messages_per_side = 32
+# Connections that are not registered stations (clients, and connections
+# still starting), per address group and in total.
+connections_per_address = 16
+max_connections = 256
+# Registered stations, per address group and in total: a pool of their own.
+stations_per_address = 4
+max_stations = 2000
+handshake_timeout_ms = 10000
+idle_timeout_ms = 30000
+introduction_lifetime_ms = 120000
+mailbox_lifetime_ms = 300000
+ping_interval_seconds = 20
+ping_timeout_seconds = 20
+# A connection whose unsent messages pass either cap is closed (code 1008).
+# When a message would take every queue together past the budget, the
+# connection holding the most queued bytes is closed (1008), then the next
+# largest, until the message fits.
+send_queue_messages = 256
+send_queue_bytes = 1048576
+send_budget_bytes = 33554432
+# A connection whose writer spends longer than this on one message is closed
+# (code 1008) too.
+send_stall_ms = 30000
+# The kernel's receive and send buffer for each connection (SO_RCVBUF and
+# SO_SNDBUF), in bytes; Linux doubles the value. Set on the service's own
+# sockets, so the kernel memory a connection can hold is bounded without
+# changing any host setting (section 9.1). 0 leaves the kernel's sizing.
+socket_buffer_bytes = 16384

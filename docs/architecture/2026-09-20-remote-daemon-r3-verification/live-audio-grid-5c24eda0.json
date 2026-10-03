@@ -1,0 +1,19 @@
+{
+  "packets": 4242,
+  "duration_seconds": 179.2129499912262,
+  "median_spacing_ms": 40.07601737976074,
+  "max_spacing_ms": 215.14010429382324,
+  "timestamp_steps": {
+    "1920": 4220,
+    "3840": 21
+  },
+  "sequence_steps": {
+    "1": 4241
+  },
+  "off_grid": [],
+  "checkpoint": "5c24eda0",
+  "capture_side": "Core wired Ethernet",
+  "capture_duration_seconds": 180,
+  "kernel_capture_drops": 0,
+  "meaning": "Source RTP timing only; not proof of uninterrupted client playback"
+}

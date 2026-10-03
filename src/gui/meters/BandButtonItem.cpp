@@ -10,6 +10,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-28 - 2 m button at index 14 (R-IOS-26, R-R3-49). J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -53,16 +56,19 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "BandButtonItem.h"
+#include "gui/UnbuiltFeatures.h"
 
 namespace NereusSDR {
 
 // From Thetis clsBandButtonBox (MeterManager.cs:11482+).
 // Order matches NereusSDR::Band enum (src/models/Band.h) — keep in sync
 // when adding/reordering bands. WWV and XVTR added in Phase 3G-8 commit 2.
+// One label per per-band state slot (Band.h): 2 m (R-IOS-26, R-R3-49)
+// follows XVTR, so the indices 0-13 in a saved layout keep their buttons.
 static const char* const kBandLabels[] = {
     "160m", "80m", "60m", "40m", "30m", "20m",
     "17m",  "15m", "12m", "10m", "6m",  "GEN",
-    "WWV",  "XVTR"
+    "WWV",  "XVTR", "2m"
 };
 
 BandButtonItem::BandButtonItem(QObject* parent)
@@ -76,6 +82,9 @@ BandButtonItem::BandButtonItem(QObject* parent)
         setupButton(i, QString::fromLatin1(kBandLabels[i]));
         button(i).onColour = QColor(0x00, 0x70, 0xc0);
     }
+    // R-R3-49: XVTR goes with the transverters; not drawn until they are
+    // built (the saved visibility is untouched).
+    setButtonHiddenUntilBuilt(13, !UnbuiltFeatures::isBuilt(UnbuiltFeature::Transverters));
 
     connect(this, &ButtonBoxItem::buttonClicked,
             this, &BandButtonItem::onButtonClicked);

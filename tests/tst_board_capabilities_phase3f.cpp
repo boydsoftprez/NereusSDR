@@ -11,6 +11,7 @@
 #include <QtTest/QtTest>
 #include "core/BoardCapabilities.h"
 #include "core/DdcAssignment.h"
+#include "core/HardwareProfile.h"
 #include "core/HpsdrModel.h"
 #include "core/codec/CodecContext.h"
 #include "core/codec/P1CodecAnvelinaPro3.h"
@@ -21,6 +22,9 @@
 #include "core/codec/P2CodecOrionMkII.h"
 #include "core/codec/P2CodecSaturn.h"
 
+#include <QSet>
+
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -39,9 +43,10 @@ namespace {
 // ever goes. The PS/diversity branches on the 1-ADC families collapse harder
 // still (Thetis console.cs:8448-8457 [v2.10.3.15]).
 template <typename Codec>
-int assignableStreams(const Codec& codec)
+int assignableStreams(const Codec& codec, HPSDRModel model = HPSDRModel::FIRST)
 {
     CodecContext ctx{};
+    ctx.model = model;
     std::array<SliceConfig, 5> streams{};
     for (int i = 0; i < 5; ++i) {
         streams[i].live         = true;
@@ -156,7 +161,8 @@ private slots:
     }
 
     // Phase 3F Task 3: per-SKU widebandAdcs population tests.
-    // P1 boards: widebandAdcs = 0 (P1 mechanism deferred to 3F-W).
+    // P1-only boards: widebandAdcs = 0 (and plan Task 5's widebandAdcsFor
+    // gives 0 on Protocol 1 for every row).
     // P2 boards: widebandAdcs = adcCount, since an ADC that is not on the board
     // cannot carry a wideband stream. 2 for the dual-ADC SKUs, 1 for the
     // single-ADC ANAN-G2E (clsHardwareSpecific.cs:130 [v2.10.3.15] SetRxADC(1)).
@@ -345,38 +351,211 @@ private slots:
                    assignableStreams(P1CodecStandard{}));
     }
 
-    // Angelia (ANAN-100D) and Orion (ANAN-200D) are P1-native 2-ADC boards
-    // that Thetis drives through its ORION-class branch: nddc = 5,
-    // P1_rxcount = 5, RX1 on DDC2 and RX2 on DDC3
-    // (console.cs:8220-8304 [v2.10.3.15]). userDdcCount = 5 is right for the
-    // hardware.
-    //
-    // P1CodecStandard, however, implements ONLY Thetis's HERMES-class branch
-    // (console.cs:8387-8459 [v2.10.3.15]): it hard-codes p1RxCount = 4,
-    // nDdc = 4 and streams 0-3 onto DDC0-3. The ORION-class P1 branch has
-    // never been ported, so on P1 these two boards are served by a codec
-    // that describes different hardware.
-    //
-    // Deliberately NOT closed by trimming userDdcCount to 4: that would
-    // record a codec scope gap in the hardware capability table, which is
-    // the wrong place for it, and would be wrong the moment the ORION-class
-    // P1 branch lands. Expected-fail instead, so the day it is ported this
-    // XPASSes and forces the row to be revisited.
-    void orion_class_p1_capacity_gap_is_known()
+    // Plan Task 11: the Protocol 1 stream count is one function of the row
+    // and the protocol (BoardCapsTable::userDdcCountFor), and it matches what
+    // each Protocol 1 codec assigns for its model: HermesII 2 (slots 0, 1),
+    // Hermes class 4 (slots 0-3), Orion class 4 (slots 0, 2, 3, 4; slot 1 is
+    // tied to RX1's frequency), HL2 2. This closes the gap the old
+    // orion_class_p1_capacity_gap_is_known recorded as an expected failure:
+    // the Orion-class rows keep their Protocol 2 count of five, and Protocol
+    // 1 reads four. The Atlas stays a documented under-exposure (3 against
+    // the Hermes layout's 4).
+    void protocol1_stream_count_matches_the_codec_for_the_model_data()
     {
-        const int p1 = assignableStreams(P1CodecStandard{});
+        QTest::addColumn<int>("model");
+        QTest::addColumn<int>("expected");
+        QTest::newRow("ANAN10E")      << int(HPSDRModel::ANAN10E)      << 2;
+        QTest::newRow("ANAN100B")     << int(HPSDRModel::ANAN100B)     << 2;
+        QTest::newRow("HERMES")       << int(HPSDRModel::HERMES)       << 4;
+        QTest::newRow("ANAN10")       << int(HPSDRModel::ANAN10)       << 4;
+        QTest::newRow("ANAN100")      << int(HPSDRModel::ANAN100)      << 4;
+        QTest::newRow("ANAN_G2E")     << int(HPSDRModel::ANAN_G2E)     << 4;
+        QTest::newRow("ANAN100D")     << int(HPSDRModel::ANAN100D)     << 4;
+        QTest::newRow("ANAN200D")     << int(HPSDRModel::ANAN200D)     << 4;
+        QTest::newRow("ORIONMKII")    << int(HPSDRModel::ORIONMKII)    << 4;
+        QTest::newRow("ANAN7000D")    << int(HPSDRModel::ANAN7000D)    << 4;
+        QTest::newRow("ANAN8000D")    << int(HPSDRModel::ANAN8000D)    << 4;
+        QTest::newRow("ANAN_G2")      << int(HPSDRModel::ANAN_G2)      << 4;
+        QTest::newRow("ANAN_G2_1K")   << int(HPSDRModel::ANAN_G2_1K)   << 4;
+        QTest::newRow("ANVELINAPRO3") << int(HPSDRModel::ANVELINAPRO3) << 4;
+        QTest::newRow("REDPITAYA")    << int(HPSDRModel::REDPITAYA)    << 4;
+        QTest::newRow("HERMESLITE")   << int(HPSDRModel::HERMESLITE)   << 2;
+    }
 
-        QEXPECT_FAIL("", "P1CodecStandard implements only Thetis's HERMES-class "
-                         "branch (nddc=4); the ORION-class P1 branch "
-                         "(console.cs:8220-8304, nddc=5) is not ported",
-                     Continue);
-        QVERIFY(BoardCapsTable::forBoard(HPSDRHW::Angelia).userDdcCount <= p1);
+    void protocol1_stream_count_matches_the_codec_for_the_model()
+    {
+        QFETCH(int, model);
+        QFETCH(int, expected);
+        const HPSDRModel m = static_cast<HPSDRModel>(model);
+        const BoardCapabilities& caps = BoardCapsTable::forModel(m);
 
-        QEXPECT_FAIL("", "P1CodecStandard implements only Thetis's HERMES-class "
-                         "branch (nddc=4); the ORION-class P1 branch "
-                         "(console.cs:8220-8304, nddc=5) is not ported",
-                     Continue);
-        QVERIFY(BoardCapsTable::forBoard(HPSDRHW::Orion).userDdcCount <= p1);
+        QCOMPARE(BoardCapsTable::userDdcCountFor(caps, ProtocolVersion::Protocol1), expected);
+
+        int assigned = 0;
+        switch (m) {
+            case HPSDRModel::HERMESLITE:   assigned = assignableStreams(P1CodecHl2{}, m); break;
+            case HPSDRModel::ANVELINAPRO3: assigned = assignableStreams(P1CodecAnvelinaPro3{}, m); break;
+            case HPSDRModel::REDPITAYA:    assigned = assignableStreams(P1CodecRedPitaya{}, m); break;
+            default:                       assigned = assignableStreams(P1CodecStandard{}, m); break;
+        }
+        QCOMPARE(assigned, expected);
+    }
+
+    // Protocol 2 reads the row unchanged, on every row.
+    void protocol2_stream_count_is_the_row()
+    {
+        for (const auto& caps : BoardCapsTable::all()) {
+            QCOMPARE(BoardCapsTable::userDdcCountFor(caps, ProtocolVersion::Protocol2),
+                     caps.userDdcCount);
+            QVERIFY(BoardCapsTable::userDdcCountFor(caps, ProtocolVersion::Protocol1)
+                    <= caps.userDdcCount);
+        }
+    }
+
+    // ── Plan Tasks 5 and 15: offered sample rates per board and protocol ─
+    //
+    // Every model, and every row no model reaches, on both protocols. The
+    // expected lists are Thetis's (setup.cs:847-850 [v2.10.3.15]): Protocol 1
+    // 48/96/192 kHz, plus 384 kHz for the RedPitaya
+    //   bool include_extra_p1_rate = HardwareSpecific.Model == HPSDRModel.REDPITAYA; //DH1KLM
+    // and for the HL2 (mi0bot-Thetis setup.cs:849-851 [v2.10.3.13-beta2],
+    // "The HL supports 384K"); Protocol 2 48 to 1536 kHz for every model,
+    // the HL2 included (mi0bot's p2_rates, setup.cs:854 [v2.10.3.13-beta2],
+    // has no HL2 case). No row is excepted (Task 15, the operator's ruling
+    // of 2026-09-25: the Atlas, Hermes, HermesII and HL2 rows follow Thetis
+    // on Protocol 2 too).
+    void offered_sample_rates_per_board_and_protocol_data()
+    {
+        const QList<int> p1 {48000, 96000, 192000};
+        const QList<int> p1Extra {48000, 96000, 192000, 384000};
+        const QList<int> p2 {48000, 96000, 192000, 384000, 768000, 1536000};
+
+        QTest::addColumn<int>("board");
+        QTest::addColumn<int>("model");
+        QTest::addColumn<QList<int>>("protocol1");
+        QTest::addColumn<QList<int>>("protocol2");
+
+        auto row = [](const char* name, HPSDRModel m, const QList<int>& a,
+                      const QList<int>& b) {
+            QTest::newRow(name) << int(boardForModel(m)) << int(m) << a << b;
+        };
+        row("HPSDR",        HPSDRModel::HPSDR,        p1, p2);
+        row("HERMES",       HPSDRModel::HERMES,       p1, p2);
+        row("ANAN10",       HPSDRModel::ANAN10,       p1, p2);
+        row("ANAN100",      HPSDRModel::ANAN100,      p1, p2);
+        row("ANAN10E",      HPSDRModel::ANAN10E,      p1, p2);
+        row("ANAN100B",     HPSDRModel::ANAN100B,     p1, p2);
+        row("ANAN100D",     HPSDRModel::ANAN100D,     p1, p2);
+        row("ANAN200D",     HPSDRModel::ANAN200D,     p1, p2);
+        row("ORIONMKII",    HPSDRModel::ORIONMKII,    p1, p2);
+        row("ANAN7000D",    HPSDRModel::ANAN7000D,    p1, p2);
+        row("ANAN8000D",    HPSDRModel::ANAN8000D,    p1, p2);
+        row("ANAN_G2",      HPSDRModel::ANAN_G2,      p1, p2);
+        row("ANAN_G2_1K",   HPSDRModel::ANAN_G2_1K,   p1, p2);
+        row("ANVELINAPRO3", HPSDRModel::ANVELINAPRO3, p1, p2);
+        row("REDPITAYA",    HPSDRModel::REDPITAYA,    p1Extra, p2);
+        row("ANAN_G2E",     HPSDRModel::ANAN_G2E,     p1, p2);
+        row("HERMESLITE",   HPSDRModel::HERMESLITE,   p1Extra, p2);
+
+        // Rows no model resolves to, with the model defaultModelForBoard
+        // gives them on connect. The HL2 receive-only kit is an HL2
+        // (mi0bot has one HL2 model, HERMESLITE), so it gets the HL2's
+        // 384 kHz on Protocol 1.
+        QTest::newRow("HermesLiteRxOnly")
+            << int(HPSDRHW::HermesLiteRxOnly) << int(HPSDRModel::HERMESLITE) << p1Extra << p2;
+        QTest::newRow("SaturnMKII")
+            << int(HPSDRHW::SaturnMKII) << int(HPSDRModel::ANAN_G2) << p1 << p2;
+        QTest::newRow("Andromeda")
+            << int(HPSDRHW::Andromeda) << int(HPSDRModel::HERMES) << p1 << p2;
+    }
+
+    // Every row, with the model a connect resolves it to, offers Thetis's
+    // list for each protocol (mi0bot's for the HL2): no row excepted.
+    void every_row_offers_the_protocol_list()
+    {
+        const std::vector<int> p1 {48000, 96000, 192000};
+        const std::vector<int> p1Extra {48000, 96000, 192000, 384000};
+        const std::vector<int> p2 {48000, 96000, 192000, 384000, 768000, 1536000};
+        for (const auto& caps : BoardCapsTable::all()) {
+            if (caps.board == HPSDRHW::Unknown) { continue; }
+            const HPSDRModel m = defaultModelForBoard(caps.board);
+            const bool extra = (m == HPSDRModel::HERMESLITE || m == HPSDRModel::REDPITAYA);
+            QVERIFY2(BoardCapsTable::sampleRatesFor(caps, ProtocolVersion::Protocol1, m)
+                         == (extra ? p1Extra : p1),
+                     caps.displayName);
+            QVERIFY2(BoardCapsTable::sampleRatesFor(caps, ProtocolVersion::Protocol2, m) == p2,
+                     caps.displayName);
+        }
+    }
+
+    void offered_sample_rates_per_board_and_protocol()
+    {
+        QFETCH(int, board);
+        QFETCH(int, model);
+        QFETCH(QList<int>, protocol1);
+        QFETCH(QList<int>, protocol2);
+        const BoardCapabilities& caps = BoardCapsTable::forBoard(static_cast<HPSDRHW>(board));
+        const HPSDRModel m = static_cast<HPSDRModel>(model);
+
+        auto asList = [](const std::vector<int>& v) { return QList<int>(v.begin(), v.end()); };
+        QCOMPARE(asList(BoardCapsTable::sampleRatesFor(caps, ProtocolVersion::Protocol1, m)),
+                 protocol1);
+        QCOMPARE(asList(BoardCapsTable::sampleRatesFor(caps, ProtocolVersion::Protocol2, m)),
+                 protocol2);
+        QCOMPARE(BoardCapsTable::maxSampleRateFor(caps, ProtocolVersion::Protocol1, m),
+                 protocol1.last());
+        QCOMPARE(BoardCapsTable::maxSampleRateFor(caps, ProtocolVersion::Protocol2, m),
+                 protocol2.last());
+        // The row's own top spans every protocol it serves.
+        QCOMPARE(caps.maxSampleRate, std::max(protocol1.last(), protocol2.last()));
+    }
+
+    // Every row in the table appears above, so a row added later has to be
+    // given its rates here.
+    void offered_sample_rates_cover_every_row()
+    {
+        QSet<HPSDRHW> covered;
+        for (int i = int(HPSDRModel::FIRST) + 1; i < int(HPSDRModel::LAST); ++i) {
+            covered.insert(boardForModel(static_cast<HPSDRModel>(i)));
+        }
+        covered.insert(HPSDRHW::HermesLiteRxOnly);
+        covered.insert(HPSDRHW::SaturnMKII);
+        covered.insert(HPSDRHW::Andromeda);
+        for (const auto& caps : BoardCapsTable::all()) {
+            if (caps.board == HPSDRHW::Unknown) { continue; }
+            QVERIFY2(covered.contains(caps.board),
+                     qPrintable(QStringLiteral("%1 has no expected rates")
+                                    .arg(QString::fromLatin1(caps.displayName))));
+        }
+    }
+
+    // ── Plan Task 5: wideband per board and protocol ────────────────────
+    //
+    // The ANAN-100D and ANAN-200D run either protocol. Protocol 1: none
+    // (Thetis networkproto1.c:181-201 [v2.10.3.15] takes EP6 only).
+    // Protocol 2: ADC0, as Thetis's wideband menu enables for every model
+    // (console.cs:43552-43558 [v2.10.3.15] NetworkIO.SetWBEnable(0, 1)).
+    void angelia_and_orion_wideband_follows_the_protocol()
+    {
+        for (HPSDRModel m : {HPSDRModel::ANAN100D, HPSDRModel::ANAN200D}) {
+            const BoardCapabilities& caps = BoardCapsTable::forModel(m);
+            QCOMPARE(BoardCapsTable::widebandAdcsFor(caps, ProtocolVersion::Protocol1), 0);
+            QCOMPARE(BoardCapsTable::widebandAdcsFor(caps, ProtocolVersion::Protocol2), 1);
+        }
+    }
+
+    // Protocol 2 reads the row unchanged; no other row's wideband moved.
+    void protocol2_wideband_is_the_row()
+    {
+        for (const auto& caps : BoardCapsTable::all()) {
+            QCOMPARE(BoardCapsTable::widebandAdcsFor(caps, ProtocolVersion::Protocol2),
+                     caps.widebandAdcs);
+        }
+        QCOMPARE(BoardCapsTable::forBoard(HPSDRHW::OrionMKII).widebandAdcs, 2);
+        QCOMPARE(BoardCapsTable::forBoard(HPSDRHW::Saturn).widebandAdcs, 2);
+        QCOMPARE(BoardCapsTable::forBoard(HPSDRHW::SaturnMKII).widebandAdcs, 2);
+        QCOMPARE(BoardCapsTable::forBoard(HPSDRHW::Andromeda).widebandAdcs, 2);
+        QCOMPARE(BoardCapsTable::forBoard(HPSDRHW::HermesC10).widebandAdcs, 1);
     }
 
     void user_ddc_count_never_exceeds_max_slices()

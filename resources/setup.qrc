@@ -1,0 +1,15 @@
+<RCC>
+    <qresource prefix="/setup">
+        <file alias="general.json">setup/general.json</file>
+        <file alias="hardware.json">setup/hardware.json</file>
+        <file alias="pa.json">setup/pa.json</file>
+        <file alias="test.json">setup/test.json</file>
+        <file alias="diagnostics.json">setup/diagnostics.json</file>
+        <file alias="catNetwork.json">setup/catNetwork.json</file>
+        <file alias="dsp.json">setup/dsp.json</file>
+        <file alias="display.json">setup/display.json</file>
+        <file alias="transmit.json">setup/transmit.json</file>
+        <file alias="audio.json">setup/audio.json</file>
+        <file alias="appearance.json">setup/appearance.json</file>
+    </qresource>
+</RCC>

@@ -26,6 +26,22 @@
 // Modification history (NereusSDR):
 //   2026-05-10 — Phase 3J-1 Task 2.1 by J.J. Boyd (KG4VCF);
 //                AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-23 - R3 receiver audio plan, Task 4 (R-R3-42) by J.J. Boyd
+//                (KG4VCF): each client's own read position per receiver,
+//                so two apps on one receiver each get all of its audio.
+//                AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-23 - R3 receiver audio fix wave (R-R3-42) by J.J. Boyd
+//                (KG4VCF): a left and a right resampler per receiver.
+//                AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-24 - Receiver and transmit gaps plan, Task 10 (R-R3-49) by
+//                J.J. Boyd (KG4VCF): each client's own update gap for vfo,
+//                dds and tx_frequency lines (TciUpdateGap).
+//                AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-25 - R-R3-39 by J.J. Boyd (KG4VCF): a receiver's resampler
+//                pair is a shared TciRxAudioResampler that the receive lane
+//                makes, runs and destroys; rxAudioBlocksOnLane keeps a
+//                client's blocks in order across the lane.
+//                AI-assisted transformation via Anthropic Claude Code.
 
 #pragma once
 #ifdef HAVE_WEBSOCKETS
@@ -36,10 +52,17 @@
 #include <QtCore/QString>
 
 #include "TciSendQueue.h"
+#include "TciUpdateGap.h"
+
+#include <memory>
 
 class QWebSocket;
 
 namespace NereusSDR {
+
+// R-R3-39: one receiver's left and right WDSP resamplers for one client
+// (defined in TciServer.cpp, the only code that touches its members).
+struct TciRxAudioResampler;
 
 // ── Architectural divergence: Thetis 49 fields → NereusSDR 14 fields ────────
 //
@@ -57,8 +80,12 @@ namespace NereusSDR {
 //   - Phase 14 TciSendQueue — a lock-free per-client output queue whose
 //     drain runs on the TCI event loop, replacing the sender thread +
 //     AutoResetEvent + three outbound queues
-//   - Phase 15 VFO coalescer — a QTimer-based coalescer on the TCI thread,
-//     replacing the m_swVFO Stopwatch + m_tmVFOtimer Timer pair
+//   - Phase 15 VFO coalescer (TciVfoCoalescer): Layer 3 dedup of the
+//     outgoing vfo / dds / tx_frequency lines, shared by every client
+//   - Task 10 (R-R3-49) updateGap below: the per-client m_swVFO /
+//     m_tmVFOtimer, m_swCentre / m_tmCentretimer and m_swTXFrequency /
+//     m_tmTXFrequency Stopwatch + Timer pairs (Thetis TCIServer.cs:753-758
+//     [v2.10.3.15]), ported in TciUpdateGap
 //   - Phase 16 per-client Resampler* QHash — a QHash<int, Resampler*> added
 //     to this struct at that phase, replacing m_rxAudioResamplers
 //
@@ -87,6 +114,12 @@ struct TciClientSession {
 
     // From Thetis TCIServer.cs:767 [v2.10.3.13] — m_audioStreamEnabled HashSet<int>
     QSet<int> audioStreamEnabled;
+    // Remote-window audio identity. A new token is assigned after the last
+    // subscription ends; each format change advances the revision.
+    quint64 remoteAudioToken{0};
+    QHash<int, quint64> remoteAudioRevision;
+    QHash<int, quint64> remoteAudioLastSequence;
+    QHash<int, quint64> remoteAudioLastGeneration;
 
     // Phase 16 Task 16.3 (sub-commit b): per-slice WDSP RESAMPLEF instance.
     // Created lazily on audio_start, destroyed on audio_stop + disconnect.
@@ -97,7 +130,30 @@ struct TciClientSession {
     // From Thetis TCIServer.cs:789 [v2.10.3.13] — m_rxAudioResamplers
     // Dictionary<int, Resampler> replaced by QHash<int, void*> (opaque ptr
     // to RESAMPLEF struct allocated via create_resampleF / create_resampleFV).
-    QHash<int, void*> audioResamplers;
+    //
+    // R-R3-42 fix wave: one resampler per channel, created and destroyed
+    // together. A single one run over interleaved L/R mixed the channels at
+    // every rate other than 48 kHz.
+    // From Thetis TCIServer.cs:702-708 [v2.10.3.15]: TCIRxAudioResamplerState
+    // holds a LeftResampler and a RightResampler per receiver.
+    //
+    // R-R3-39: local TCI keeps the pair on the receive lane. A remote
+    // window instead keeps it in RemoteTciAudioStage::Run on the receiver
+    // worker; this map is empty there.
+    QHash<int, std::shared_ptr<TciRxAudioResampler>> audioResamplers;
+
+    // R-R3-39: receive audio blocks of this client still on the receive lane
+    // (posted, not yet sent). While any is, every block goes through the
+    // lane, so a block that needs no resampling never overtakes one that
+    // did. Main thread only.
+    int rxAudioBlocksOnLane{0};
+
+    // R-R3-42: this client's read position in each subscribed receiver's
+    // audio, counted in stereo frames since TciServer started collecting
+    // that receiver. Set to "now" on audio_start. Every client reads the
+    // same receiver history at its own pace, so two apps on one receiver
+    // each receive all of the audio instead of taking turns at one ring.
+    QHash<int, quint64> audioReadFrame;
 
     // ── Audio stream configuration ───────────────────────────────────────────
     // From Thetis TCIServer.cs:779 [v2.10.3.13] — m_audioSampleRate = 48000
@@ -129,6 +185,12 @@ struct TciClientSession {
     // Coalesced-key map (Thetis m_outboundCoalescedFrames) is Phase 15.
     TciSendQueue sendQueue{1024};   // 1024 frames per priority bucket
 
+    // Task 10 (R-R3-49): this client's shortest gap between outgoing vfo /
+    // if, dds and tx_frequency updates, from Thetis TCIServer.cs:750-758
+    // [v2.10.3.15] (m_nRateLimit plus the three Stopwatch + Timer pairs).
+    // TciServer sets the gap at connect and when the operator changes it.
+    TciUpdateGap updateGap;
+
     // ── ClientChainApplet display state (NereusSDR-original) ────────────────
     // No Thetis equivalent — drives the per-client row in the future
     // ClientChainApplet (Phase 13).
@@ -146,6 +208,9 @@ struct TciClientSession {
     // Separate from framesDropped (outbound) to keep semantics clean.
     // Phase 22 ClientChainApplet reads both: "outbound: N" + "TX: M dropped".
     int     txFramesDropped{0};
+    // Fix wave minor: a TX_AUDIO_STREAM header with a sample rate the
+    // TX resampler cannot take was logged once for this app.
+    bool    txRateRejectionLogged{false};
 
     // ── Phase 19: per-client sensor subscriptions ────────────────────────────
     // From Thetis TCIServer.cs:684-790 [v2.10.3.13] — per-listener

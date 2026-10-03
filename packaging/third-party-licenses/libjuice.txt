@@ -1,0 +1,32 @@
+libjuice commit 3c40a3545b6b1b62c7adee7f8f2bd58aa290afd6
+Copyright (c) Paul-Louis Ageneau and contributors
+
+NereusSDR uses libjuice through libdatachannel as the R3 direct ICE backend.
+The pinned source is fetched from:
+
+  https://github.com/paullouisageneau/libjuice/tree/3c40a3545b6b1b62c7adee7f8f2bd58aa290afd6
+
+libjuice is licensed under the Mozilla Public License 2.0. The complete
+license is supplied in MPLv2.txt. This backend does not supply the R5 TURN
+TCP/TLS fallback; that deployment acceptance remains separate.
+
+Modifications (MPL-2.0 section 3.1): NereusSDR applies two numbered patches
+to build-owned copies of the pinned source in cmake/NereusRemoteMedia.cmake:
+
+  cmake/patches/libjuice-0001-give-turn-allocations-back.patch
+  cmake/patches/libjuice-0002-bounded-turn-release-lifecycle.patch
+
+The first changes src/agent.c to give TURN allocations back with an
+authenticated Refresh of LIFETIME 0 when an agent is destroyed. The second
+changes include/juice/juice.h, src/agent.c, src/agent.h and src/juice.c. It
+provides a nonblocking begin/status close API, retains the original socket
+and credentials for bounded authenticated release retries, and keeps the
+agent alive until release and resolver completion. Normal ICE traffic and
+callbacks stop during closing. The old direct-destroy best-effort behavior
+remains for legacy callers; a resolver test hook is excluded from release
+builds.
+
+These changes are licensed under the Mozilla Public License 2.0, like
+the covered files they modify, which retain their upstream notices. The
+exact patches are supplied with NereusSDR's source and its written source
+offer (SOURCE-OFFER.txt).

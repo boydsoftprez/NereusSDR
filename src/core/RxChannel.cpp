@@ -16,6 +16,49 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23 - dspLoad() reader for the WDSP worker's per-block load
+//                 counters (R-R3-40) by J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//                 NereusSDR-original; no Thetis counterpart. Later the same
+//                 day: the block in progress and the per-interval longest
+//                 block (takeDspIntervalMaxBlockUs).
+//                 Later the same day: setActiveNr(NNR) no longer re-applies
+//                 a stale cached NNR tuning; requestNnrLimit and nnrLimit
+//                 (runtime NNR limit, carried across a rebuild).
+//                 Later the same day: the read time (readNs), so a load
+//                 reads busy time over wall time (R-R3-40, R-R3-37).
+//                 Later the same day: DspLoadCounters::consistent, false for
+//                 a read whose busy pair may be torn (R-R3-40).
+//   2026-09-24 - A stopping channel is fed until WDSP finishes its stop
+//                 (Task 8 of the receiver and transmit gaps plan, Phase 3F
+//                 section 3), after Thetis ChannelMaster cmaster.c:365-366
+//                 [v2.10.3.15], by J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-25 - R-R3-39, Sub-epic C-1: the DeepFilterNet3 instance is built
+//                 at a channel's first DFNR selection, on the receive lane,
+//                 not in the constructor; availability comes from HAVE_DFNR
+//                 and ModelPaths without a load. NereusSDR-original, by
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-09-25 - R-R3-49, Sub-epic C-1: dfnrUnavailable reports a first
+//                 DFNR selection whose model is missing or failed to load.
+//                 NereusSDR-original, by J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-26 - Remote-window parity Task 16 (R-R3-49): the filter
+//                 response split into filterResponseBins and
+//                 resampleFilterResponse, so a Core can send its bins.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. NereusSDR-original.
+//   2026-09-27 — R-IOS-13: the filter type sends Thetis's MP (Low Latency
+//                 = minimum phase, enums.cs:404-408, radio.cs:571
+//                 [v2.10.3.15]; it was inverted); the type cache starts at
+//                 Linear Phase, where WDSP opens the channel. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - Slice control plan Task 6 (JJ's ruling): the WDSP panel
+//                 gain is held at unity and AudioEngine's mixer applies the
+//                 AF level, a departure from Thetis radio.cs, which sets AF
+//                 as SetRXAPanelGain1. By J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -247,16 +290,20 @@ warren@wpratt.com
 
 #include "RxChannel.h"
 #include "AppSettings.h"
+#include "DspControlThread.h"
 #include "LogCategories.h"
 #include "NbFamily.h"
 #include "SampleRateCatalog.h"  // bufferSizeForRate() — for setSampleRate()
 #include "WdspEngine.h"
 #include "wdsp_api.h"
+#include "platform/ThreadPlacement.h"
+#include "dsp/NnrAdapter.h"
 
 #include <QElapsedTimer>
 
 #ifdef HAVE_DFNR
 #include "DeepFilterFilter.h"
+#include "ModelPaths.h"
 #endif
 
 #ifdef HAVE_MNR
@@ -273,35 +320,76 @@ extern "C" {
 #endif
 
 #include <cmath>
+#include <cstring>
+#include <string_view>
 
 namespace NereusSDR {
 
+namespace {
+// R-R3-39: the receive-lane key of one WDSP parameter, from the name of the
+// setter that writes it (FNV-1a). runKeyed mixes in the channel.
+constexpr quint64 laneParameter(std::string_view name)
+{
+    quint64 hash = 1469598103934665603ull;
+    for (const char c : name) {
+        hash ^= static_cast<unsigned char>(c);
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+} // namespace
+
+#ifdef HAVE_WDSP
+namespace {
+// Task 8: a quiet-NaN bit pattern processIq leaves in the first output
+// sample of a stopping channel's exchange. fexchange2 overwrites it whenever
+// the channel still exchanges; WDSP never produces this exact pattern. It is
+// compared as bits, so no floating-point mode can change the test.
+constexpr quint32 kStopSentinelBits = 0x7fc0beefu;
+} // namespace
+#endif
+
 RxChannel::RxChannel(int channelId, int bufferSize, int sampleRate,
                      QObject* parent)
+    : RxChannel(channelId, bufferSize, sampleRate, nullptr, parent)
+{
+}
+
+RxChannel::RxChannel(int channelId, int bufferSize, int sampleRate,
+                     DspControlThread* lane, QObject* parent)
     : QObject(parent)
     , m_channelId(channelId)
     , m_bufferSize(bufferSize)
     , m_sampleRate(sampleRate)
 {
+    m_lane = lane;
+    for (auto& slot : m_meterCache) {
+        slot.store(-140.0, std::memory_order_relaxed);
+    }
 #ifdef HAVE_WDSP
     // From design doc §sub-epic B — one NbFamily per WDSP channel.
+    // R-R3-39: with a lane its WDSP objects are made on the lane, after
+    // OpenChannel (createWdspObjectsOnLane), and it posts its calls there.
     m_nb = std::make_unique<NereusSDR::NbFamily>(
         m_channelId,
-        /*sampleRate=*/ m_sampleRate,
-        /*bufferSize=*/ m_bufferSize);
-#endif
-
-#ifdef HAVE_DFNR
-    // Sub-epic C-1 Task 9 — DeepFilterNet3 post-WDSP noise reduction.
-    // Instantiate unconditionally; the filter self-disables if the model
-    // tarball is not found (isValid() returns false).
-    m_dfnr = std::make_unique<NereusSDR::DeepFilterFilter>();
-    if (!m_dfnr->isValid()) {
-        qCWarning(lcDsp) << "DFNR not available on channel" << m_channelId
-                         << "(model not found or df_create failed)";
-        m_dfnr.reset();
+        /*sampleRate=*/ m_sampleRate.load(),
+        /*bufferSize=*/ m_bufferSize.load(),
+        /*createWdspObjects=*/ m_lane == nullptr);
+    if (m_lane != nullptr) {
+        m_nb->setDispatcher([this](quint64 parameter, std::function<void()> job) {
+            if (parameter == 0) {
+                runOrdered(std::move(job));
+            } else {
+                runKeyed(parameter, 0, std::move(job));
+            }
+        });
     }
 #endif
+
+    // Sub-epic C-1 Task 9 — DeepFilterNet3 post-WDSP noise reduction.
+    // R-R3-39: no instance here. The model load is about 250 ms and a
+    // connect opens five channels; the instance is built at this channel's
+    // first DFNR selection, on the receive lane (ensureDfnrOnLane).
 
 #ifdef HAVE_MNR
     // Sub-epic C-1 Task 11 — Apple Accelerate MMSE-Wiener post-WDSP NR.
@@ -318,6 +406,92 @@ RxChannel::RxChannel(int channelId, int bufferSize, int sampleRate,
 }
 
 RxChannel::~RxChannel() = default;
+
+// ---------------------------------------------------------------------------
+// R-R3-39: the receive lane
+//
+// NereusSDR-original. Every WDSP call below goes through runKeyed or
+// runOrdered: at once with no lane, or on the lane itself; otherwise queued
+// on the lane, where it runs after every call already queued (a keyed call
+// replaces an older queued call with the same key, taking the newest
+// position). Each queued job holds m_alive, so a job still queued when
+// WdspEngine retires the wrapper does nothing.
+// ---------------------------------------------------------------------------
+
+void RxChannel::setControlLane(DspControlThread* lane)
+{
+    m_lane = lane;
+#ifdef HAVE_WDSP
+    if (m_nb) {
+        if (lane == nullptr) {
+            m_nb->setDispatcher({});
+        } else {
+            m_nb->setDispatcher([this](quint64 parameter, std::function<void()> job) {
+                if (parameter == 0) {
+                    runOrdered(std::move(job));
+                } else {
+                    runKeyed(parameter, 0, std::move(job));
+                }
+            });
+        }
+    }
+#endif
+}
+
+void RxChannel::runKeyed(quint64 parameter, int sub, std::function<void()> job) const
+{
+    if (m_lane == nullptr || m_lane->isCurrentThread()) {
+        job();
+        return;
+    }
+    const quint64 key = parameter
+        ^ (static_cast<quint64>(static_cast<quint32>(m_channelId) + 1u) * 0x9E3779B97F4A7C15ull)
+        ^ (static_cast<quint64>(static_cast<quint32>(sub)) << 17);
+    m_lane->postKeyed(key, [alive = m_alive, job = std::move(job)]() {
+        if (alive->load(std::memory_order_acquire)) {
+            job();
+        }
+    });
+}
+
+void RxChannel::runOrdered(std::function<void()> job) const
+{
+    if (m_lane == nullptr || m_lane->isCurrentThread()) {
+        job();
+        return;
+    }
+    m_lane->post([alive = m_alive, job = std::move(job)]() {
+        if (alive->load(std::memory_order_acquire)) {
+            job();
+        }
+    });
+}
+
+void RxChannel::markRetired()
+{
+    m_alive->store(false, std::memory_order_release);
+    m_wdspReady.store(false, std::memory_order_release);
+}
+
+void RxChannel::createWdspObjectsOnLane()
+{
+#ifdef HAVE_WDSP
+    if (m_nb) {
+        m_nb->createWdspObjects();
+    }
+#endif
+    refreshMinNotchWidthOnLane();
+    refreshNnrDiagnosticsOnLane();
+}
+
+void RxChannel::destroyWdspObjectsOnLane()
+{
+#ifdef HAVE_WDSP
+    if (m_nb) {
+        m_nb->destroyWdspObjects();
+    }
+#endif
+}
 
 // ---------------------------------------------------------------------------
 // Live sample-rate change (Thetis-faithful, carry-only)
@@ -348,8 +522,30 @@ void RxChannel::setSampleRate(int newRateHz)
         return;
     }
 
-    m_sampleRate = newRateHz;
-    m_bufferSize = bufferSizeForRate(newRateHz);
+    setSampleRateCarry(newRateHz);
+    const int rate = m_sampleRate;
+    const int size = m_bufferSize;
+    runOrdered([this, rate, size]() { applySampleRateOnLane(rate, size); });
+}
+
+void RxChannel::setSampleRateCarry(int newRateHz)
+{
+    m_sampleRate.store(newRateHz, std::memory_order_release);
+    m_bufferSize.store(bufferSizeForRate(newRateHz), std::memory_order_release);
+    if (m_nb) {
+        m_nb->setSampleRateCarry(m_sampleRate.load(), m_bufferSize.load());
+    }
+}
+
+void RxChannel::applySampleRateOnLane(int rateHz, int bufferSize)
+{
+    // Task 8: the caller rebuilds the WDSP channel next (WdspEngine::
+    // setRxChannelRate, SetInputSamplerate), which clears exchange and the
+    // flush and slew flags (pre_main_destroy channel.c:119, pre_main_build
+    // channel.c:69, the slews rebuilt at iobuffs.c:78-79) and leaves a
+    // stopped channel's exchange clear (post_main_build channel.c:73-78). A
+    // no-drain stop still pending is finished by that.
+    m_pendingStop.store(0, std::memory_order_release);
 
     // Propagate to NB1/NB2 so initBlanker()/init_nob() recompute time
     // constants for the new rate. Mirrors cmaster.c:464-470 [v2.10.3.13]
@@ -358,8 +554,11 @@ void RxChannel::setSampleRate(int newRateHz)
     // Without this, NB stays configured for the original rate and the
     // blanker's slewtime/hangtime/advtime envelope is wrong after a
     // setSampleRateLive — manifests as metallic ringing at higher rates.
+    //
+    // R-R3-39: the carry (setSampleRateCarry) is already in place; this is
+    // the WDSP half, run on the lane (or at once without one).
     if (m_nb) {
-        m_nb->setSampleRate(m_sampleRate, m_bufferSize);
+        m_nb->applySampleRateWdsp(rateHz, bufferSize);
     }
 
     // min_notch_width scales with the channel rate as well as with nc
@@ -367,7 +566,7 @@ void RxChannel::setSampleRate(int newRateHz)
     // same sample-rate path (console.cs:39052-39053 ->
     // UpdateMinimumNotchWidthRX [v2.10.3.15]), so the readout follows a rate
     // change here rather than going stale until the next filter-size change.
-    emit minNotchWidthChanged(minNotchWidthHz());
+    refreshMinNotchWidthOnLane();
 }
 
 // ---------------------------------------------------------------------------
@@ -384,19 +583,21 @@ void RxChannel::setMode(DSPMode mode)
     m_mode.store(val);
 
 #ifdef HAVE_WDSP
-    // Phase 3R K-bench: RADE_U / RADE_L are NereusSDR-native modes
-    // (WdspTypes.h:159-186) that WDSP has no knowledge of. The RX
-    // pipeline keeps WDSP alive as the demod front-end in RADE
-    // modes (RxDspWorker.cpp:160-191 — "WDSP always runs ... RADE
-    // post-SSB-demod fork"), so map RADE_U -> USB and RADE_L -> LSB
-    // here before passing to SetRXAMode. The slice-facing mode()
-    // accessor and the modeChanged signal both still report the
-    // user-requested DSPMode; only the WDSP API call is mapped.
-    // Without this mapping, raw enum 12/13 lands in WDSP's mode
-    // enum and triggers undefined behavior (review finding
-    // 2026-05-12, PR #238).
-    // From Thetis wdsp-integration.md section 4.2
-    SetRXAMode(m_channelId, static_cast<int>(wdspModeFor(mode)));
+    runKeyed(laneParameter("setMode"), 0, [=, this]() {
+        // Phase 3R K-bench: RADE_U / RADE_L are NereusSDR-native modes
+        // (WdspTypes.h:159-186) that WDSP has no knowledge of. The RX
+        // pipeline keeps WDSP alive as the demod front-end in RADE
+        // modes (RxDspWorker.cpp:160-191 — "WDSP always runs ... RADE
+        // post-SSB-demod fork"), so map RADE_U -> USB and RADE_L -> LSB
+        // here before passing to SetRXAMode. The slice-facing mode()
+        // accessor and the modeChanged signal both still report the
+        // user-requested DSPMode; only the WDSP API call is mapped.
+        // Without this mapping, raw enum 12/13 lands in WDSP's mode
+        // enum and triggers undefined behavior (review finding
+        // 2026-05-12, PR #238).
+        // From Thetis wdsp-integration.md section 4.2
+        SetRXAMode(m_channelId, static_cast<int>(wdspModeFor(mode)));
+    });
 #endif
 
     emit modeChanged(mode);
@@ -432,15 +633,17 @@ void RxChannel::setFilterFreqs(double lowHz, double highHz)
     m_filterHighInt = static_cast<int>(std::round(highHz));
 
 #ifdef HAVE_WDSP
-    // From Thetis rxa.cs:110-111, radio.cs:603-604 — both bp1 and nbp0
-    // filters must be updated together. SetRXABandpassFreqs only touches
-    // bp1, which runs only when AMD/SNBA/EMNR/ANF/ANR is enabled.
-    // RXANBPSetFreqs touches nbp0, the filter that runs unconditionally
-    // in the SSB/CW/AM audio path. Calling only one leaves the SSB
-    // bandpass stuck at nbp0's create-time default of -4150..-150
-    // (LSB-shaped), which silently breaks USB, AM, and FM demod.
-    SetRXABandpassFreqs(m_channelId, lowHz, highHz);
-    RXANBPSetFreqs(m_channelId, lowHz, highHz);
+    runKeyed(laneParameter("setFilterFreqs"), 0, [=, this]() {
+        // From Thetis rxa.cs:110-111, radio.cs:603-604 — both bp1 and nbp0
+        // filters must be updated together. SetRXABandpassFreqs only touches
+        // bp1, which runs only when AMD/SNBA/EMNR/ANF/ANR is enabled.
+        // RXANBPSetFreqs touches nbp0, the filter that runs unconditionally
+        // in the SSB/CW/AM audio path. Calling only one leaves the SSB
+        // bandpass stuck at nbp0's create-time default of -4150..-150
+        // (LSB-shaped), which silently breaks USB, AM, and FM demod.
+        SetRXABandpassFreqs(m_channelId, lowHz, highHz);
+        RXANBPSetFreqs(m_channelId, lowHz, highHz);
+    });
 #endif
 
     emit filterChanged(lowHz, highHz);
@@ -460,7 +663,9 @@ void RxChannel::setAgcMode(AGCMode mode)
     m_agcMode.store(val);
 
 #ifdef HAVE_WDSP
-    SetRXAAGCMode(m_channelId, val);
+    runKeyed(laneParameter("setAgcMode"), 0, [=, this]() {
+        SetRXAAGCMode(m_channelId, val);
+    });
 #endif
 
     emit agcModeChanged(mode);
@@ -469,7 +674,9 @@ void RxChannel::setAgcMode(AGCMode mode)
 void RxChannel::setAgcTop(double topdB)
 {
 #ifdef HAVE_WDSP
-    SetRXAAGCTop(m_channelId, topdB);
+    runKeyed(laneParameter("setAgcTop"), 0, [=, this]() {
+        SetRXAAGCTop(m_channelId, topdB);
+    });
 #else
     Q_UNUSED(topdB);
 #endif
@@ -491,19 +698,59 @@ double RxChannel::readBackAgcTop() const
 
 double RxChannel::readBackAgcThresh() const
 {
+    return readBackAgcThreshAt(m_sampleRate);
+}
+
+double RxChannel::readBackAgcThreshAt(int sampleRate) const
+{
 #ifdef HAVE_WDSP
     // Read resulting threshold after SetRXAAGCTop modified it.
     // From Thetis console.cs:50350 pattern — GetRXAAGCThresh after SetRXAAGCTop
-    // Upstream inline attribution preserved verbatim (console.cs:50345):
+    // Range clamp as Thetis applies it:
+    // From Thetis console.cs:50423-50424 [v2.10.3.15]
+    //   if (agc_thresh_point > 2) agc_thresh_point = 2;
     //   if (agc_thresh_point < -160.0) agc_thresh_point = -160.0; //[2.10.3.6]MW0LGE changed from -143
+    //   (MW0LGE_21k7 on the FFT-size line that follows)
     // kDspSize must match the size passed to SetRXAAGCThresh (4096).
     static constexpr double kDspSize = 4096.0;
     double thresh = 0.0;
-    GetRXAAGCThresh(m_channelId, &thresh, kDspSize, static_cast<double>(m_sampleRate));
-    return std::clamp(thresh, -160.0, 0.0);
+    GetRXAAGCThresh(m_channelId, &thresh, kDspSize, static_cast<double>(sampleRate));
+    return std::clamp(thresh, -160.0, 2.0);
 #else
+    Q_UNUSED(sampleRate);
     return -20.0;
 #endif
+}
+
+// R-R3-39: both AGC readbacks as one lane request. Posted after the setter
+// it follows, so it reads what that setter left (Thetis reads straight after
+// the set, console.cs:45978 and :50350).
+void RxChannel::requestAgcReadBack(QObject* context,
+                                   std::function<void(double top, double thresh)> done)
+{
+    const int sampleRate = m_sampleRate;
+    if (m_lane == nullptr || m_lane->isCurrentThread()) {
+        const double top = readBackAgcTop();
+        const double thresh = readBackAgcThreshAt(sampleRate);
+        if (done) {
+            done(top, thresh);
+        }
+        return;
+    }
+    using Reading = std::optional<std::pair<double, double>>;
+    m_lane->request<Reading>(
+        [this, alive = m_alive, sampleRate]() -> Reading {
+            if (!alive->load(std::memory_order_acquire)) {
+                return std::nullopt;
+            }
+            return std::make_pair(readBackAgcTop(), readBackAgcThreshAt(sampleRate));
+        },
+        context,
+        [done = std::move(done)](Reading reading) {
+            if (reading && done) {
+                done(reading->first, reading->second);
+            }
+        });
 }
 
 void RxChannel::setAgcThreshold(int dBu)
@@ -515,16 +762,20 @@ void RxChannel::setAgcThreshold(int dBu)
     m_agcThreshold.store(dBu);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/console.cs:45976-45977
-    //   size = (double)specRX.GetSpecRX(0).FFTSize;  // 4096
-    //   WDSP.SetRXAAGCThresh(WDSP.id(0, 0), agc_thresh_point, size, sample_rate_rx1);
-    // WDSP third_party/wdsp/src/wcpAGC.c:504
-    // NB: 'size' is the DSP analysis buffer size (4096, matching OpenChannel dsp_size),
-    //     NOT the fexchange2 input chunk size (m_bufferSize).
-    static constexpr double kDspSize = 4096.0;
-    SetRXAAGCThresh(m_channelId, static_cast<double>(dBu),
-                    kDspSize,
-                    static_cast<double>(m_sampleRate));
+    // The rate is read here, on the owner's thread, where it changes.
+    const int sampleRate = m_sampleRate;
+    runKeyed(laneParameter("setAgcThreshold"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/console.cs:45976-45977
+        //   size = (double)specRX.GetSpecRX(0).FFTSize;  // 4096
+        //   WDSP.SetRXAAGCThresh(WDSP.id(0, 0), agc_thresh_point, size, sample_rate_rx1);
+        // WDSP third_party/wdsp/src/wcpAGC.c:504
+        // NB: 'size' is the DSP analysis buffer size (4096, matching OpenChannel dsp_size),
+        //     NOT the fexchange2 input chunk size (m_bufferSize).
+        static constexpr double kDspSize = 4096.0;
+        SetRXAAGCThresh(m_channelId, static_cast<double>(dBu),
+                        kDspSize,
+                        static_cast<double>(sampleRate));
+    });
 #else
     Q_UNUSED(dBu);
 #endif
@@ -539,10 +790,12 @@ void RxChannel::setAgcHang(int ms)
     m_agcHang.store(ms);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1056-1073
-    //   WDSP.SetRXAAGCHang(WDSP.id(thread, subrx), value)
-    // WDSP third_party/wdsp/src/wcpAGC.c:436
-    SetRXAAGCHang(m_channelId, ms);
+    runKeyed(laneParameter("setAgcHang"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1056-1073
+        //   WDSP.SetRXAAGCHang(WDSP.id(thread, subrx), value)
+        // WDSP third_party/wdsp/src/wcpAGC.c:436
+        SetRXAAGCHang(m_channelId, ms);
+    });
 #else
     Q_UNUSED(ms);
 #endif
@@ -557,10 +810,12 @@ void RxChannel::setAgcSlope(int slope)
     m_agcSlope.store(slope);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1107-1124
-    //   WDSP.SetRXAAGCSlope(WDSP.id(thread, subrx), value)
-    // WDSP third_party/wdsp/src/wcpAGC.c:537
-    SetRXAAGCSlope(m_channelId, slope);
+    runKeyed(laneParameter("setAgcSlope"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1107-1124
+        //   WDSP.SetRXAAGCSlope(WDSP.id(thread, subrx), value)
+        // WDSP third_party/wdsp/src/wcpAGC.c:537
+        SetRXAAGCSlope(m_channelId, slope);
+    });
 #else
     Q_UNUSED(slope);
 #endif
@@ -575,10 +830,12 @@ void RxChannel::setAgcAttack(int ms)
     m_agcAttack.store(ms);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/dsp.cs:116-117
-    //   SetRXAAGCAttack declared; no explicit radio.cs call site (disabled in UI)
-    // WDSP third_party/wdsp/src/wcpAGC.c:418
-    SetRXAAGCAttack(m_channelId, ms);
+    runKeyed(laneParameter("setAgcAttack"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/dsp.cs:116-117
+        //   SetRXAAGCAttack declared; no explicit radio.cs call site (disabled in UI)
+        // WDSP third_party/wdsp/src/wcpAGC.c:418
+        SetRXAAGCAttack(m_channelId, ms);
+    });
 #else
     Q_UNUSED(ms);
 #endif
@@ -593,10 +850,12 @@ void RxChannel::setAgcDecay(int ms)
     m_agcDecay.store(ms);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1037-1054
-    //   WDSP.SetRXAAGCDecay(WDSP.id(thread, subrx), value)
-    // WDSP third_party/wdsp/src/wcpAGC.c:427
-    SetRXAAGCDecay(m_channelId, ms);
+    runKeyed(laneParameter("setAgcDecay"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1037-1054
+        //   WDSP.SetRXAAGCDecay(WDSP.id(thread, subrx), value)
+        // WDSP third_party/wdsp/src/wcpAGC.c:427
+        SetRXAAGCDecay(m_channelId, ms);
+    });
 #else
     Q_UNUSED(ms);
 #endif
@@ -611,10 +870,12 @@ void RxChannel::setAgcHangThreshold(int val)
     m_agcHangThreshold.store(val);
 
 #ifdef HAVE_WDSP
-    // From Thetis v2.10.3.13 setup.cs:9081
-    //   WDSP.SetRXAAGCHangThreshold(WDSP.id(0, 0), value)
-    // WDSP third_party/wdsp/src/wcpAGC.c
-    SetRXAAGCHangThreshold(m_channelId, val);
+    runKeyed(laneParameter("setAgcHangThreshold"), 0, [=, this]() {
+        // From Thetis v2.10.3.13 setup.cs:9081
+        //   WDSP.SetRXAAGCHangThreshold(WDSP.id(0, 0), value)
+        // WDSP third_party/wdsp/src/wcpAGC.c
+        SetRXAAGCHangThreshold(m_channelId, val);
+    });
 #else
     Q_UNUSED(val);
 #endif
@@ -629,10 +890,12 @@ void RxChannel::setAgcFixedGain(int dB)
     m_agcFixedGain.store(dB);
 
 #ifdef HAVE_WDSP
-    // From Thetis v2.10.3.13 setup.cs:9001
-    //   WDSP.SetRXAAGCFixed(WDSP.id(0, 0), value)
-    // WDSP third_party/wdsp/src/wcpAGC.c
-    SetRXAAGCFixed(m_channelId, static_cast<double>(dB));
+    runKeyed(laneParameter("setAgcFixedGain"), 0, [=, this]() {
+        // From Thetis v2.10.3.13 setup.cs:9001
+        //   WDSP.SetRXAAGCFixed(WDSP.id(0, 0), value)
+        // WDSP third_party/wdsp/src/wcpAGC.c
+        SetRXAAGCFixed(m_channelId, static_cast<double>(dB));
+    });
 #else
     Q_UNUSED(dB);
 #endif
@@ -647,10 +910,12 @@ void RxChannel::setAgcMaxGain(int dB)
     m_agcMaxGain.store(dB);
 
 #ifdef HAVE_WDSP
-    // From Thetis v2.10.3.13 setup.cs:9011
-    //   WDSP.SetRXAAGCTop(WDSP.id(0, 0), (double)value)
-    // WDSP third_party/wdsp/src/wcpAGC.c
-    SetRXAAGCTop(m_channelId, static_cast<double>(dB));
+    runKeyed(laneParameter("setAgcMaxGain"), 0, [=, this]() {
+        // From Thetis v2.10.3.13 setup.cs:9011
+        //   WDSP.SetRXAAGCTop(WDSP.id(0, 0), (double)value)
+        // WDSP third_party/wdsp/src/wcpAGC.c
+        SetRXAAGCTop(m_channelId, static_cast<double>(dB));
+    });
 #else
     Q_UNUSED(dB);
 #endif
@@ -696,7 +961,9 @@ void RxChannel::setNrEnabled(bool enabled)
     m_nrEnabled.store(enabled);
 
 #ifdef HAVE_WDSP
-    SetRXAANRRun(m_channelId, enabled ? 1 : 0);
+    runKeyed(laneParameter("setNrEnabled"), 0, [=, this]() {
+        SetRXAANRRun(m_channelId, enabled ? 1 : 0);
+    });
 #endif
 }
 
@@ -709,7 +976,9 @@ void RxChannel::setAnfEnabled(bool enabled)
     m_anfEnabled.store(enabled);
 
 #ifdef HAVE_WDSP
-    SetRXAANFRun(m_channelId, enabled ? 1 : 0);
+    runKeyed(laneParameter("setAnfEnabled"), 0, [=, this]() {
+        SetRXAANFRun(m_channelId, enabled ? 1 : 0);
+    });
 #endif
 }
 
@@ -726,10 +995,12 @@ void RxChannel::setEmnrEnabled(bool enabled)
     m_emnrEnabled.store(enabled);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:2216-2232
-    //   WDSP.SetRXAEMNRRun(WDSP.id(thread, subrx), value)
-    // WDSP third_party/wdsp/src/emnr.c:1283
-    SetRXAEMNRRun(m_channelId, enabled ? 1 : 0);
+    runKeyed(laneParameter("setEmnrEnabled"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:2216-2232
+        //   WDSP.SetRXAEMNRRun(WDSP.id(thread, subrx), value)
+        // WDSP third_party/wdsp/src/emnr.c:1283
+        SetRXAEMNRRun(m_channelId, enabled ? 1 : 0);
+    });
 #else
     Q_UNUSED(enabled);
 #endif
@@ -738,10 +1009,12 @@ void RxChannel::setEmnrEnabled(bool enabled)
 void RxChannel::setEmnrGainMethod(int method)
 {
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:2062-2078
-    //   WDSP.SetRXAEMNRgainMethod(WDSP.id(thread, subrx), value)
-    // WDSP third_party/wdsp/src/emnr.c:1298
-    SetRXAEMNRgainMethod(m_channelId, method);
+    runKeyed(laneParameter("setEmnrGainMethod"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:2062-2078
+        //   WDSP.SetRXAEMNRgainMethod(WDSP.id(thread, subrx), value)
+        // WDSP third_party/wdsp/src/emnr.c:1298
+        SetRXAEMNRgainMethod(m_channelId, method);
+    });
 #else
     Q_UNUSED(method);
 #endif
@@ -750,10 +1023,12 @@ void RxChannel::setEmnrGainMethod(int method)
 void RxChannel::setEmnrNpeMethod(int method)
 {
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:2081-2097
-    //   WDSP.SetRXAEMNRnpeMethod(WDSP.id(thread, subrx), value)
-    // WDSP third_party/wdsp/src/emnr.c:1306
-    SetRXAEMNRnpeMethod(m_channelId, method);
+    runKeyed(laneParameter("setEmnrNpeMethod"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:2081-2097
+        //   WDSP.SetRXAEMNRnpeMethod(WDSP.id(thread, subrx), value)
+        // WDSP third_party/wdsp/src/emnr.c:1306
+        SetRXAEMNRnpeMethod(m_channelId, method);
+    });
 #else
     Q_UNUSED(method);
 #endif
@@ -762,10 +1037,12 @@ void RxChannel::setEmnrNpeMethod(int method)
 void RxChannel::setEmnrAeRun(bool run)
 {
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:2101-2117
-    //   WDSP.SetRXAEMNRaeRun(WDSP.id(thread, subrx), value)
-    // WDSP third_party/wdsp/src/emnr.c:1314
-    SetRXAEMNRaeRun(m_channelId, run ? 1 : 0);
+    runKeyed(laneParameter("setEmnrAeRun"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:2101-2117
+        //   WDSP.SetRXAEMNRaeRun(WDSP.id(thread, subrx), value)
+        // WDSP third_party/wdsp/src/emnr.c:1314
+        SetRXAEMNRaeRun(m_channelId, run ? 1 : 0);
+    });
 #else
     Q_UNUSED(run);
 #endif
@@ -774,11 +1051,13 @@ void RxChannel::setEmnrAeRun(bool run)
 void RxChannel::setEmnrPosition(int position)
 {
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:2235-2251
-    //   WDSP.SetRXAEMNRPosition(WDSP.id(thread, subrx), value)
-    // WDSP third_party/wdsp/src/emnr.c:1322
-    // position=1 → post-AGC placement (Thetis default rx_nr2_position=1)
-    SetRXAEMNRPosition(m_channelId, position);
+    runKeyed(laneParameter("setEmnrPosition"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:2235-2251
+        //   WDSP.SetRXAEMNRPosition(WDSP.id(thread, subrx), value)
+        // WDSP third_party/wdsp/src/emnr.c:1322
+        // position=1 → post-AGC placement (Thetis default rx_nr2_position=1)
+        SetRXAEMNRPosition(m_channelId, position);
+    });
 #else
     Q_UNUSED(position);
 #endif
@@ -805,10 +1084,12 @@ void RxChannel::setAnrTuning(const Nr1Tuning& t)
 {
     m_nr1Tuning = t;
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:681-698 [v2.10.3.13] — SetNRVals() calls
-    // WDSP.SetRXAANRVals(id, taps, delay, gain, leak) with already-scaled values.
-    SetRXAANRVals(m_channelId, t.taps, t.delay, t.gain, t.leakage);
-    SetRXAANRPosition(m_channelId, static_cast<int>(t.position));
+    runKeyed(laneParameter("setAnrTuning"), 0, [=, this]() {
+        // From Thetis radio.cs:681-698 [v2.10.3.13] — SetNRVals() calls
+        // WDSP.SetRXAANRVals(id, taps, delay, gain, leak) with already-scaled values.
+        SetRXAANRVals(m_channelId, t.taps, t.delay, t.gain, t.leakage);
+        SetRXAANRPosition(m_channelId, static_cast<int>(t.position));
+    });
 #endif
 }
 
@@ -816,8 +1097,10 @@ void RxChannel::setAnrTaps(int taps)
 {
     m_nr1Tuning.taps = taps;
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:681-698 [v2.10.3.13]
-    SetRXAANRTaps(m_channelId, taps);
+    runKeyed(laneParameter("setAnrTaps"), 0, [=, this]() {
+        // From Thetis radio.cs:681-698 [v2.10.3.13]
+        SetRXAANRTaps(m_channelId, taps);
+    });
 #endif
 }
 
@@ -825,8 +1108,10 @@ void RxChannel::setAnrDelay(int delay)
 {
     m_nr1Tuning.delay = delay;
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:681-698 [v2.10.3.13]
-    SetRXAANRDelay(m_channelId, delay);
+    runKeyed(laneParameter("setAnrDelay"), 0, [=, this]() {
+        // From Thetis radio.cs:681-698 [v2.10.3.13]
+        SetRXAANRDelay(m_channelId, delay);
+    });
 #endif
 }
 
@@ -834,9 +1119,11 @@ void RxChannel::setAnrGain(double gain)
 {
     m_nr1Tuning.gain = gain;
 #ifdef HAVE_WDSP
-    // From Thetis setup.cs:8545 [v2.10.3.13] — caller has already applied ×1e-6.
-    // Passes raw WDSP-domain value directly to SetRXAANRGain.
-    SetRXAANRGain(m_channelId, gain);
+    runKeyed(laneParameter("setAnrGain"), 0, [=, this]() {
+        // From Thetis setup.cs:8545 [v2.10.3.13] — caller has already applied ×1e-6.
+        // Passes raw WDSP-domain value directly to SetRXAANRGain.
+        SetRXAANRGain(m_channelId, gain);
+    });
 #endif
 }
 
@@ -844,9 +1131,11 @@ void RxChannel::setAnrLeakage(double leakage)
 {
     m_nr1Tuning.leakage = leakage;
 #ifdef HAVE_WDSP
-    // From Thetis setup.cs:8550 [v2.10.3.13] — caller has already applied ×1e-3.
-    // Passes raw WDSP-domain value directly to SetRXAANRLeakage.
-    SetRXAANRLeakage(m_channelId, leakage);
+    runKeyed(laneParameter("setAnrLeakage"), 0, [=, this]() {
+        // From Thetis setup.cs:8550 [v2.10.3.13] — caller has already applied ×1e-3.
+        // Passes raw WDSP-domain value directly to SetRXAANRLeakage.
+        SetRXAANRLeakage(m_channelId, leakage);
+    });
 #endif
 }
 
@@ -854,8 +1143,10 @@ void RxChannel::setAnrPosition(NrPosition p)
 {
     m_nr1Tuning.position = p;
 #ifdef HAVE_WDSP
-    // From Thetis setup.cs:8723 [v2.10.3.13]
-    SetRXAANRPosition(m_channelId, static_cast<int>(p));
+    runKeyed(laneParameter("setAnrPosition"), 0, [=, this]() {
+        // From Thetis setup.cs:8723 [v2.10.3.13]
+        SetRXAANRPosition(m_channelId, static_cast<int>(p));
+    });
 #endif
 }
 
@@ -870,25 +1161,29 @@ void RxChannel::setEmnrTuning(const Nr2Tuning& t)
 {
     m_nr2Tuning = t;
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:2062-2213 [v2.10.3.13]
-    SetRXAEMNRgainMethod(m_channelId, static_cast<int>(t.gainMethod));
-    SetRXAEMNRnpeMethod (m_channelId, static_cast<int>(t.npeMethod));
-    SetRXAEMNRaeRun     (m_channelId, t.aeFilter ? 1 : 0);
-    SetRXAEMNRPosition  (m_channelId, static_cast<int>(t.position));
-    SetRXAEMNRpost2Run  (m_channelId, t.post2Run ? 1 : 0);
-    SetRXAEMNRpost2Nlevel(m_channelId, t.post2Level);
-    SetRXAEMNRpost2Factor(m_channelId, t.post2Factor);
-    SetRXAEMNRpost2Rate  (m_channelId, t.post2Rate);
-    SetRXAEMNRpost2Taper (m_channelId, t.post2Taper);
+    runKeyed(laneParameter("setEmnrTuning"), 0, [=, this]() {
+        // From Thetis radio.cs:2062-2213 [v2.10.3.13]
+        SetRXAEMNRgainMethod(m_channelId, static_cast<int>(t.gainMethod));
+        SetRXAEMNRnpeMethod (m_channelId, static_cast<int>(t.npeMethod));
+        SetRXAEMNRaeRun     (m_channelId, t.aeFilter ? 1 : 0);
+        SetRXAEMNRPosition  (m_channelId, static_cast<int>(t.position));
+        SetRXAEMNRpost2Run  (m_channelId, t.post2Run ? 1 : 0);
+        SetRXAEMNRpost2Nlevel(m_channelId, t.post2Level);
+        SetRXAEMNRpost2Factor(m_channelId, t.post2Factor);
+        SetRXAEMNRpost2Rate  (m_channelId, t.post2Rate);
+        SetRXAEMNRpost2Taper (m_channelId, t.post2Taper);
+    });
 #endif
 }
 
 void RxChannel::setEmnrTrainT1(double t1)
 {
 #ifdef HAVE_WDSP
-    // From Thetis dsp.cs:315 [v2.10.3.13] — SetRXAEMNRtrainZetaThresh
-    // "T1" in the UI maps to zetathresh in emnr.c:1352
-    SetRXAEMNRtrainZetaThresh(m_channelId, t1);
+    runKeyed(laneParameter("setEmnrTrainT1"), 0, [=, this]() {
+        // From Thetis dsp.cs:315 [v2.10.3.13] — SetRXAEMNRtrainZetaThresh
+        // "T1" in the UI maps to zetathresh in emnr.c:1352
+        SetRXAEMNRtrainZetaThresh(m_channelId, t1);
+    });
 #else
     Q_UNUSED(t1);
 #endif
@@ -897,8 +1192,10 @@ void RxChannel::setEmnrTrainT1(double t1)
 void RxChannel::setEmnrTrainT2(double t2)
 {
 #ifdef HAVE_WDSP
-    // From Thetis dsp.cs:318 [v2.10.3.13] — SetRXAEMNRtrainT2
-    SetRXAEMNRtrainT2(m_channelId, t2);
+    runKeyed(laneParameter("setEmnrTrainT2"), 0, [=, this]() {
+        // From Thetis dsp.cs:318 [v2.10.3.13] — SetRXAEMNRtrainT2
+        SetRXAEMNRtrainT2(m_channelId, t2);
+    });
 #else
     Q_UNUSED(t2);
 #endif
@@ -907,8 +1204,10 @@ void RxChannel::setEmnrTrainT2(double t2)
 void RxChannel::setEmnrAeZetaThresh(double v)
 {
 #ifdef HAVE_WDSP
-    // From Thetis dsp.cs:287 [v2.10.3.13] — SetRXAEMNRaeZetaThresh
-    SetRXAEMNRaeZetaThresh(m_channelId, v);
+    runKeyed(laneParameter("setEmnrAeZetaThresh"), 0, [=, this]() {
+        // From Thetis dsp.cs:287 [v2.10.3.13] — SetRXAEMNRaeZetaThresh
+        SetRXAEMNRaeZetaThresh(m_channelId, v);
+    });
 #else
     Q_UNUSED(v);
 #endif
@@ -917,8 +1216,10 @@ void RxChannel::setEmnrAeZetaThresh(double v)
 void RxChannel::setEmnrAePsi(double v)
 {
 #ifdef HAVE_WDSP
-    // From Thetis dsp.cs:289 [v2.10.3.13] — SetRXAEMNRaePsi
-    SetRXAEMNRaePsi(m_channelId, v);
+    runKeyed(laneParameter("setEmnrAePsi"), 0, [=, this]() {
+        // From Thetis dsp.cs:289 [v2.10.3.13] — SetRXAEMNRaePsi
+        SetRXAEMNRaePsi(m_channelId, v);
+    });
 #else
     Q_UNUSED(v);
 #endif
@@ -928,8 +1229,10 @@ void RxChannel::setEmnrPost2Run(bool on)
 {
     m_nr2Tuning.post2Run = on;
 #ifdef HAVE_WDSP
-    // From Thetis setup.cs:34719-34720, radio.cs:2122 [v2.10.3.13]
-    SetRXAEMNRpost2Run(m_channelId, on ? 1 : 0);
+    runKeyed(laneParameter("setEmnrPost2Run"), 0, [=, this]() {
+        // From Thetis setup.cs:34719-34720, radio.cs:2122 [v2.10.3.13]
+        SetRXAEMNRpost2Run(m_channelId, on ? 1 : 0);
+    });
 #endif
 }
 
@@ -937,9 +1240,11 @@ void RxChannel::setEmnrPost2Level(double level)
 {
     m_nr2Tuning.post2Level = level;
 #ifdef HAVE_WDSP
-    // From Thetis setup.cs:34711, radio.cs:2141-2155 [v2.10.3.13]
-    // Q-c verified: radio.cs passes the raw double value; no ÷100 applied.
-    SetRXAEMNRpost2Nlevel(m_channelId, level);
+    runKeyed(laneParameter("setEmnrPost2Level"), 0, [=, this]() {
+        // From Thetis setup.cs:34711, radio.cs:2141-2155 [v2.10.3.13]
+        // Q-c verified: radio.cs passes the raw double value; no ÷100 applied.
+        SetRXAEMNRpost2Nlevel(m_channelId, level);
+    });
 #endif
 }
 
@@ -947,9 +1252,11 @@ void RxChannel::setEmnrPost2Factor(double factor)
 {
     m_nr2Tuning.post2Factor = factor;
 #ifdef HAVE_WDSP
-    // From Thetis setup.cs:34712, radio.cs:2160-2174 [v2.10.3.13]
-    // Q-c verified: radio.cs passes the raw double value; no ÷100 applied.
-    SetRXAEMNRpost2Factor(m_channelId, factor);
+    runKeyed(laneParameter("setEmnrPost2Factor"), 0, [=, this]() {
+        // From Thetis setup.cs:34712, radio.cs:2160-2174 [v2.10.3.13]
+        // Q-c verified: radio.cs passes the raw double value; no ÷100 applied.
+        SetRXAEMNRpost2Factor(m_channelId, factor);
+    });
 #endif
 }
 
@@ -957,9 +1264,11 @@ void RxChannel::setEmnrPost2Rate(double rate)
 {
     m_nr2Tuning.post2Rate = rate;
 #ifdef HAVE_WDSP
-    // From Thetis setup.cs:34713, radio.cs:2179-2193 [v2.10.3.13]
-    // Q-c verified: radio.cs passes the raw double value; no scaling.
-    SetRXAEMNRpost2Rate(m_channelId, rate);
+    runKeyed(laneParameter("setEmnrPost2Rate"), 0, [=, this]() {
+        // From Thetis setup.cs:34713, radio.cs:2179-2193 [v2.10.3.13]
+        // Q-c verified: radio.cs passes the raw double value; no scaling.
+        SetRXAEMNRpost2Rate(m_channelId, rate);
+    });
 #endif
 }
 
@@ -967,9 +1276,11 @@ void RxChannel::setEmnrPost2Taper(int taper)
 {
     m_nr2Tuning.post2Taper = taper;
 #ifdef HAVE_WDSP
-    // From Thetis setup.cs:34714, radio.cs:2198-2212 [v2.10.3.13]
-    // Q-c verified: radio.cs passes the raw int value; no scaling.
-    SetRXAEMNRpost2Taper(m_channelId, taper);
+    runKeyed(laneParameter("setEmnrPost2Taper"), 0, [=, this]() {
+        // From Thetis setup.cs:34714, radio.cs:2198-2212 [v2.10.3.13]
+        // Q-c verified: radio.cs passes the raw int value; no scaling.
+        SetRXAEMNRpost2Taper(m_channelId, taper);
+    });
 #endif
 }
 
@@ -982,9 +1293,11 @@ void RxChannel::setRnnrTuning(const Nr3Tuning& t)
 {
     m_nr3Tuning = t;
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:2275-2295 [v2.10.3.13]
-    SetRXARNNRPosition       (m_channelId, static_cast<int>(t.position));
-    SetRXARNNRUseDefaultGain (m_channelId, t.useDefaultGain ? 1 : 0);
+    runKeyed(laneParameter("setRnnrTuning"), 0, [=, this]() {
+        // From Thetis radio.cs:2275-2295 [v2.10.3.13]
+        SetRXARNNRPosition       (m_channelId, static_cast<int>(t.position));
+        SetRXARNNRUseDefaultGain (m_channelId, t.useDefaultGain ? 1 : 0);
+    });
 #endif
 }
 
@@ -992,8 +1305,10 @@ void RxChannel::setRnnrPosition(NrPosition p)
 {
     m_nr3Tuning.position = p;
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:2275 [v2.10.3.13]
-    SetRXARNNRPosition(m_channelId, static_cast<int>(p));
+    runKeyed(laneParameter("setRnnrPosition"), 0, [=, this]() {
+        // From Thetis radio.cs:2275 [v2.10.3.13]
+        SetRXARNNRPosition(m_channelId, static_cast<int>(p));
+    });
 #endif
 }
 
@@ -1001,9 +1316,11 @@ void RxChannel::setRnnrUseDefaultGain(bool on)
 {
     m_nr3Tuning.useDefaultGain = on;
 #ifdef HAVE_WDSP
-    // From Thetis setup.cs:35460-35462, radio.cs:2293-2311 [v2.10.3.13]
-    // "Use fixed gain for input samples" checkbox maps to SetRXARNNRUseDefaultGain.
-    SetRXARNNRUseDefaultGain(m_channelId, on ? 1 : 0);
+    runKeyed(laneParameter("setRnnrUseDefaultGain"), 0, [=, this]() {
+        // From Thetis setup.cs:35460-35462, radio.cs:2293-2311 [v2.10.3.13]
+        // "Use fixed gain for input samples" checkbox maps to SetRXARNNRUseDefaultGain.
+        SetRXARNNRUseDefaultGain(m_channelId, on ? 1 : 0);
+    });
 #endif
 }
 
@@ -1017,13 +1334,15 @@ void RxChannel::setSbnrTuning(const Nr4Tuning& t)
 {
     m_nr4Tuning = t;
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:2312-2355 [v2.10.3.13]
-    SetRXASBNRreductionAmount    (m_channelId, static_cast<float>(t.reductionAmount));
-    SetRXASBNRsmoothingFactor    (m_channelId, static_cast<float>(t.smoothingFactor));
-    SetRXASBNRwhiteningFactor    (m_channelId, static_cast<float>(t.whiteningFactor));
-    SetRXASBNRnoiseRescale       (m_channelId, static_cast<float>(t.noiseRescale));
-    SetRXASBNRpostFilterThreshold(m_channelId, static_cast<float>(t.postFilterThreshold));
-    SetRXASBNRnoiseScalingType   (m_channelId, static_cast<int>(t.algo));
+    runKeyed(laneParameter("setSbnrTuning"), 0, [=, this]() {
+        // From Thetis radio.cs:2312-2355 [v2.10.3.13]
+        SetRXASBNRreductionAmount    (m_channelId, static_cast<float>(t.reductionAmount));
+        SetRXASBNRsmoothingFactor    (m_channelId, static_cast<float>(t.smoothingFactor));
+        SetRXASBNRwhiteningFactor    (m_channelId, static_cast<float>(t.whiteningFactor));
+        SetRXASBNRnoiseRescale       (m_channelId, static_cast<float>(t.noiseRescale));
+        SetRXASBNRpostFilterThreshold(m_channelId, static_cast<float>(t.postFilterThreshold));
+        SetRXASBNRnoiseScalingType   (m_channelId, static_cast<int>(t.algo));
+    });
 #endif
 }
 
@@ -1031,8 +1350,10 @@ void RxChannel::setSbnrReductionAmount(double dB)
 {
     m_nr4Tuning.reductionAmount = dB;
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:2331 [v2.10.3.13]
-    SetRXASBNRreductionAmount(m_channelId, static_cast<float>(dB));
+    runKeyed(laneParameter("setSbnrReductionAmount"), 0, [=, this]() {
+        // From Thetis radio.cs:2331 [v2.10.3.13]
+        SetRXASBNRreductionAmount(m_channelId, static_cast<float>(dB));
+    });
 #endif
 }
 
@@ -1040,8 +1361,10 @@ void RxChannel::setSbnrSmoothingFactor(double pct)
 {
     m_nr4Tuning.smoothingFactor = pct;
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:2338 [v2.10.3.13]
-    SetRXASBNRsmoothingFactor(m_channelId, static_cast<float>(pct));
+    runKeyed(laneParameter("setSbnrSmoothingFactor"), 0, [=, this]() {
+        // From Thetis radio.cs:2338 [v2.10.3.13]
+        SetRXASBNRsmoothingFactor(m_channelId, static_cast<float>(pct));
+    });
 #endif
 }
 
@@ -1049,8 +1372,10 @@ void RxChannel::setSbnrWhiteningFactor(double pct)
 {
     m_nr4Tuning.whiteningFactor = pct;
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:2345 [v2.10.3.13]
-    SetRXASBNRwhiteningFactor(m_channelId, static_cast<float>(pct));
+    runKeyed(laneParameter("setSbnrWhiteningFactor"), 0, [=, this]() {
+        // From Thetis radio.cs:2345 [v2.10.3.13]
+        SetRXASBNRwhiteningFactor(m_channelId, static_cast<float>(pct));
+    });
 #endif
 }
 
@@ -1058,8 +1383,10 @@ void RxChannel::setSbnrNoiseRescale(double dB)
 {
     m_nr4Tuning.noiseRescale = dB;
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:2349 [v2.10.3.13]
-    SetRXASBNRnoiseRescale(m_channelId, static_cast<float>(dB));
+    runKeyed(laneParameter("setSbnrNoiseRescale"), 0, [=, this]() {
+        // From Thetis radio.cs:2349 [v2.10.3.13]
+        SetRXASBNRnoiseRescale(m_channelId, static_cast<float>(dB));
+    });
 #endif
 }
 
@@ -1067,8 +1394,10 @@ void RxChannel::setSbnrPostFilterThreshold(double dB)
 {
     m_nr4Tuning.postFilterThreshold = dB;
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:2353 [v2.10.3.13]
-    SetRXASBNRpostFilterThreshold(m_channelId, static_cast<float>(dB));
+    runKeyed(laneParameter("setSbnrPostFilterThreshold"), 0, [=, this]() {
+        // From Thetis radio.cs:2353 [v2.10.3.13]
+        SetRXASBNRpostFilterThreshold(m_channelId, static_cast<float>(dB));
+    });
 #endif
 }
 
@@ -1076,9 +1405,11 @@ void RxChannel::setSbnrAlgo(SbnrAlgo a)
 {
     m_nr4Tuning.algo = a;
 #ifdef HAVE_WDSP
-    // From Thetis setup.cs:34511-34527 [v2.10.3.13] — Algo 1/2/3 maps to
-    // noiseScalingType 0/1/2 (SbnrAlgo enum values are 0/1/2 accordingly).
-    SetRXASBNRnoiseScalingType(m_channelId, static_cast<int>(a));
+    runKeyed(laneParameter("setSbnrAlgo"), 0, [=, this]() {
+        // From Thetis setup.cs:34511-34527 [v2.10.3.13] — Algo 1/2/3 maps to
+        // noiseScalingType 0/1/2 (SbnrAlgo enum values are 0/1/2 accordingly).
+        SetRXASBNRnoiseScalingType(m_channelId, static_cast<int>(a));
+    });
 #endif
 }
 
@@ -1094,23 +1425,187 @@ void RxChannel::setSbnrAlgo(SbnrAlgo a)
 // All four Run flags are written on every call so exactly 0 or 1 is active.
 // ---------------------------------------------------------------------------
 
-void RxChannel::setActiveNr(NrSlot slot)
+bool RxChannel::setNnrTuning(const NnrSettings& settings, QString* reason)
+{
+    if (m_lane == nullptr || m_lane->isCurrentThread()) {
+        if (const auto accepted = NnrAdapter::apply(m_channelId, settings, reason)) {
+            std::lock_guard<std::mutex> lock(m_nnrMutex);
+            m_nnrTuning = *accepted;
+            return true;
+        }
+        return false;
+    }
+
+    // R-R3-39: decide at once from what the lane last read, with the reasons
+    // NnrAdapter::apply gives for the same refusals (ConfigureRXANNR refuses
+    // an invalid configuration, a channel that is not a running receiver,
+    // and a model slot whose network is not loaded; nnr.c).
+    if (reason) {
+        reason->clear();
+    }
+    if (!settings.isValid()) {
+        if (reason) {
+            *reason = QStringLiteral("NNR values must be finite and within their supported ranges.");
+        }
+        return false;
+    }
+    if (const auto known = knownNnrDiagnostics();
+        known && (!known->available || settings.modelSlot < 0 || settings.modelSlot > 1
+                  || !known->modelAvailable[static_cast<std::size_t>(settings.modelSlot)])) {
+        if (reason) {
+            *reason = QStringLiteral("The requested NNR model is not ready; no tuning was changed.");
+        }
+        return false;
+    }
+    NnrSettings previous;
+    {
+        std::lock_guard<std::mutex> lock(m_nnrMutex);
+        previous = m_nnrTuning;
+        m_nnrTuning = settings;
+    }
+    runOrdered([this, settings, previous]() {
+        QString refusal;
+        const auto accepted = NnrAdapter::apply(m_channelId, settings, &refusal);
+        {
+            std::lock_guard<std::mutex> lock(m_nnrMutex);
+            if (accepted) {
+                m_nnrTuning = *accepted;
+            } else if (m_nnrTuning == settings) {
+                m_nnrTuning = previous;
+            }
+        }
+        refreshNnrDiagnosticsOnLane();
+        if (!accepted) {
+            emit nnrRequestRefused(refusal, -1);
+        }
+    });
+    return true;
+}
+
+NnrSettings RxChannel::nnrTuning() const
+{
+    if (m_lane != nullptr && !m_lane->isCurrentThread()) {
+        // R-R3-39: what WDSP last accepted, as the lane wrote it.
+        std::lock_guard<std::mutex> lock(m_nnrMutex);
+        return m_nnrTuning;
+    }
+    NnrSettings carried;
+    {
+        std::lock_guard<std::mutex> lock(m_nnrMutex);
+        carried = m_nnrTuning;
+    }
+    return NnrAdapter::readSettings(m_channelId).value_or(carried);
+}
+
+NnrDiagnostics RxChannel::nnrDiagnostics() const
+{
+    if (m_lane != nullptr && !m_lane->isCurrentThread()) {
+        // R-R3-39: as the lane last read them.
+        std::lock_guard<std::mutex> lock(m_nnrMutex);
+        return m_nnrDiagnosticsCache;
+    }
+    return NnrAdapter::diagnostics(m_channelId);
+}
+
+std::optional<NnrDiagnostics> RxChannel::knownNnrDiagnostics() const
+{
+    std::lock_guard<std::mutex> lock(m_nnrMutex);
+    if (!m_nnrDiagnosticsKnown) {
+        return std::nullopt;
+    }
+    return m_nnrDiagnosticsCache;
+}
+
+void RxChannel::refreshNnrDiagnostics()
+{
+    runOrdered([this]() { refreshNnrDiagnosticsOnLane(); });
+}
+
+void RxChannel::refreshNnrDiagnosticsOnLane(const QString* explanationOverride)
+{
+    NnrDiagnostics diagnostics = NnrAdapter::diagnostics(m_channelId);
+    if (explanationOverride != nullptr) {
+        diagnostics.explanation = *explanationOverride;
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_nnrMutex);
+        m_nnrDiagnosticsCache = diagnostics;
+        m_nnrDiagnosticsKnown = true;
+    }
+    emit nnrDiagnosticsRefreshed();
+}
+
+bool RxChannel::setNnrDiagnostics(int testMode, int outputMode, QString* reason)
+{
+    if (m_lane == nullptr || m_lane->isCurrentThread()) {
+        return NnrAdapter::setDiagnostics(m_channelId, testMode, outputMode, reason);
+    }
+    // R-R3-39: NnrAdapter::setDiagnostics's refusals, decided at once from
+    // what the lane last read (SetRXANNRDiagnostics refuses a mode out of
+    // range and a receiver whose network is not loaded; nnr.c).
+    if (reason) {
+        reason->clear();
+    }
+    if (testMode < 0 || testMode > 2 || outputMode < 0 || outputMode > 1) {
+        if (reason) {
+            *reason = QStringLiteral("Unsupported NNR diagnostic mode.");
+        }
+        return false;
+    }
+    if (const auto known = knownNnrDiagnostics(); known && (!known->available || !known->ready)) {
+        if (reason) {
+            *reason = QStringLiteral("The NNR receiver is not ready.");
+        }
+        return false;
+    }
+    runOrdered([this, testMode, outputMode]() {
+        QString refusal;
+        const bool accepted =
+            NnrAdapter::setDiagnostics(m_channelId, testMode, outputMode, &refusal);
+        refreshNnrDiagnosticsOnLane();
+        if (!accepted) {
+            emit nnrRequestRefused(refusal, -1);
+        }
+    });
+    return true;
+}
+
+bool RxChannel::requestNnrLimit(int limit)
+{
+    if (m_lane == nullptr || m_lane->isCurrentThread()) {
+        if (!NnrAdapter::requestLimit(m_channelId, limit)) {
+            return false;
+        }
+        m_nnrLimit.store(limit, std::memory_order_release);
+        return true;
+    }
+    if (!isValidNnrLimit(limit)) {
+        return false;
+    }
+    m_nnrLimit.store(limit, std::memory_order_release);
+    // In order with the other NNR calls: RadioModel clears a limit before
+    // NNR goes on and after it goes off (R-R3-40).
+    runOrdered([this, limit]() { NnrAdapter::requestLimit(m_channelId, limit); });
+    return true;
+}
+
+void RxChannel::storeActiveNrFlags(NrSlot slot)
 {
     m_activeNr.store(slot, std::memory_order_release);
-
-#ifdef HAVE_WDSP
-    // From Thetis console.cs:43297-43450 SelectNR() [v2.10.3.13] —
-    // flip all four WDSP NR Run flags so exactly zero or one is active.
-    SetRXAANRRun (m_channelId, (slot == NrSlot::NR1) ? 1 : 0);
-    SetRXAEMNRRun(m_channelId, (slot == NrSlot::NR2) ? 1 : 0);
-    SetRXARNNRRun(m_channelId, (slot == NrSlot::NR3) ? 1 : 0);
-    SetRXASBNRRun(m_channelId, (slot == NrSlot::NR4) ? 1 : 0);
-#endif
 
     // Post-WDSP filter flags.  Filter instances added in Tasks 9-11; for now
     // these atomics just record intent so flag-flipping can be tested before
     // the filter objects exist.
+#ifdef HAVE_DFNR
+    // R-R3-39: DFNR runs only once its instance is published (release,
+    // before this store), so the audio thread never sees the flag set with
+    // a half-built instance. ensureDfnrOnLane sets it after publishing.
+    m_dfnrActive.store(slot == NrSlot::DFNR
+                           && m_dfnrInstance.load(std::memory_order_acquire) != nullptr,
+                       std::memory_order_release);
+#else
     m_dfnrActive.store(slot == NrSlot::DFNR, std::memory_order_release);
+#endif
     m_bnrActive .store(slot == NrSlot::BNR,  std::memory_order_release);
     m_mnrActive .store(slot == NrSlot::MNR,  std::memory_order_release);
 
@@ -1118,8 +1613,284 @@ void RxChannel::setActiveNr(NrSlot slot)
     // until Task 12 retires setEmnrEnabled / setNrEnabled.  Not strictly
     // required for correctness, but avoids surprising readers of the old API.
     m_nrEnabled  .store(slot == NrSlot::NR1 || slot == NrSlot::NR2 ||
-                        slot == NrSlot::NR3 || slot == NrSlot::NR4);
+                        slot == NrSlot::NR3 || slot == NrSlot::NR4 || slot == NrSlot::NNR);
     m_emnrEnabled.store(slot == NrSlot::NR2);
+}
+
+bool RxChannel::dfnrAvailable()
+{
+#ifdef HAVE_DFNR
+    return !NereusSDR::ModelPaths::dfnrModelTarball().isEmpty();
+#else
+    return false;
+#endif
+}
+
+bool RxChannel::dfnrLoaded() const
+{
+#ifdef HAVE_DFNR
+    return m_dfnrInstance.load(std::memory_order_acquire) != nullptr;
+#else
+    return false;
+#endif
+}
+
+void RxChannel::ensureDfnrOnLane(NrSlot slot)
+{
+#ifdef HAVE_DFNR
+    if (slot == NrSlot::DFNR && m_dfnr == nullptr
+        && !m_dfnrUnavailable.load(std::memory_order_acquire)) {
+        if (!dfnrAvailable()) {
+            qCWarning(lcDsp) << "DFNR not available on channel" << m_channelId
+                             << "(model not found)";
+            m_dfnrUnavailable.store(true, std::memory_order_release);
+            emit dfnrUnavailable(true);
+        } else {
+            auto instance = std::make_unique<NereusSDR::DeepFilterFilter>();
+            if (!instance->isValid()) {
+                qCWarning(lcDsp) << "DFNR not available on channel" << m_channelId
+                                 << "(model failed to load)";
+                m_dfnrUnavailable.store(true, std::memory_order_release);
+                emit dfnrUnavailable(false);
+            } else {
+                m_dfnr = std::move(instance);
+                // Publish before any flag can be set (release pairs with the
+                // audio thread's acquire load after it reads the flag).
+                m_dfnrInstance.store(m_dfnr.get(), std::memory_order_seq_cst);
+                // After publishing, so a tuning setter that missed the
+                // instance has already stored the value read here.
+                m_dfnr->setAttenLimit(m_dfnrAttenLimit.load(std::memory_order_seq_cst));
+                m_dfnr->setPostFilterBeta(m_dfnrPostFilterBeta.load(std::memory_order_seq_cst));
+            }
+        }
+    }
+    // The selection may have changed while the model loaded; the flag
+    // follows the current one. Every later selection posts its own lane
+    // job, which sets the flag again from the selection it made.
+    m_dfnrActive.store(m_activeNr.load(std::memory_order_acquire) == NrSlot::DFNR
+                           && m_dfnrInstance.load(std::memory_order_acquire) != nullptr,
+                       std::memory_order_release);
+#else
+    Q_UNUSED(slot);
+#endif
+}
+
+bool RxChannel::applyActiveNrOnLane(NrSlot slot)
+{
+    // R-R3-39: DFNR's instance is built at its first selection, here, on
+    // the receive lane; any other selection re-reads the DFNR flag so a
+    // build that raced a newer selection cannot leave DFNR running.
+    ensureDfnrOnLane(slot);
+
+    // Disable NNR before changing any retained NR run flag. Readiness and
+    // full tuning are accepted before enabling it below.
+    NnrAdapter::setRunning(m_channelId, false);
+
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:43297-43450 SelectNR() [v2.10.3.13] —
+    // flip all four WDSP NR Run flags so exactly zero or one is active.
+    if (NnrAdapter::diagnostics(m_channelId).available) {
+        SetRXAANRRun (m_channelId, (slot == NrSlot::NR1) ? 1 : 0);
+        SetRXAEMNRRun(m_channelId, (slot == NrSlot::NR2) ? 1 : 0);
+        SetRXARNNRRun(m_channelId, (slot == NrSlot::NR3) ? 1 : 0);
+        SetRXASBNRRun(m_channelId, (slot == NrSlot::NR4) ? 1 : 0);
+    }
+#endif
+
+    // Channel lifetime is serialized by WdspEngine. If that boundary was
+    // nevertheless lost, report bypass instead of a running NNR claim.
+    return slot != NrSlot::NNR || NnrAdapter::setRunning(m_channelId, true);
+}
+
+bool RxChannel::setActiveNr(NrSlot slot)
+{
+    if (static_cast<int>(slot) < 0 || static_cast<int>(slot) > static_cast<int>(NrSlot::NNR))
+        return false;
+
+    if (m_lane == nullptr || m_lane->isCurrentThread()) {
+        if (slot == NrSlot::NNR) {
+            // R-R3-40: enable the configuration WDSP last accepted. Never re-apply
+            // m_nnrTuning here: it starts as the default (Standard) and changes
+            // only when an apply succeeds, so after a refused apply it is stale,
+            // and re-applying it ran Standard while the slice showed Premium.
+            // The owner (RadioModel) applies the saved choice before this call.
+            const auto state = NnrAdapter::diagnostics(m_channelId);
+            if (!state.ready || !state.rateSupported) {
+                return false;
+            }
+        }
+        if (!applyActiveNrOnLane(slot)) {
+            storeActiveNrFlags(NrSlot::Off);
+            return false;
+        }
+        storeActiveNrFlags(slot);
+        return true;
+    }
+
+    // R-R3-39: the same readiness test, from what the lane last read; the
+    // lane has the last word.
+    if (slot == NrSlot::NNR) {
+        if (const auto known = knownNnrDiagnostics();
+            known && (!known->ready || !known->rateSupported)) {
+            return false;
+        }
+    }
+    storeActiveNrFlags(slot);
+    runOrdered([this, slot]() {
+        if (!applyActiveNrOnLane(slot)) {
+            NrSlot expected = slot;
+            if (m_activeNr.compare_exchange_strong(expected, NrSlot::Off,
+                                                   std::memory_order_acq_rel)) {
+                storeActiveNrFlags(NrSlot::Off);
+            }
+            refreshNnrDiagnosticsOnLane();
+            emit nnrRequestRefused(QString(), -1);
+            return;
+        }
+        refreshNnrDiagnosticsOnLane();
+    });
+    return true;
+}
+
+bool RxChannel::selectNr(NrSlot slot, const NnrSettings* tuningFirst, NrSlot previous,
+                         QString* reason)
+{
+    if (reason) {
+        reason->clear();
+    }
+    if (m_lane == nullptr || m_lane->isCurrentThread()) {
+        if (tuningFirst != nullptr && !setNnrTuning(*tuningFirst, reason)) {
+            return false;
+        }
+        return setActiveNr(slot);
+    }
+    if (static_cast<int>(slot) < 0 || static_cast<int>(slot) > static_cast<int>(NrSlot::NNR)) {
+        return false;
+    }
+
+    // R-R3-39: the refusals of setNnrTuning and setActiveNr, decided at once
+    // from what the lane last read. After the tuning is applied the running
+    // network is the one for its model slot, so that slot's model decides
+    // readiness.
+    const std::optional<NnrDiagnostics> known = knownNnrDiagnostics();
+    if (tuningFirst != nullptr) {
+        if (!tuningFirst->isValid()) {
+            if (reason) {
+                *reason = QStringLiteral("NNR values must be finite and within their supported ranges.");
+            }
+            return false;
+        }
+        if (known && (!known->available || tuningFirst->modelSlot < 0 || tuningFirst->modelSlot > 1
+                      || !known->modelAvailable[static_cast<std::size_t>(tuningFirst->modelSlot)])) {
+            if (reason) {
+                *reason = QStringLiteral("The requested NNR model is not ready; no tuning was changed.");
+            }
+            return false;
+        }
+    }
+    if (slot == NrSlot::NNR && known) {
+        const bool ready = tuningFirst != nullptr
+            ? known->modelAvailable[static_cast<std::size_t>(tuningFirst->modelSlot)]
+            : known->ready;
+        if (!ready || !known->rateSupported) {
+            return false;
+        }
+    }
+
+    std::optional<NnrSettings> tuning;
+    NnrSettings previousTuning;
+    if (tuningFirst != nullptr) {
+        tuning = *tuningFirst;
+        std::lock_guard<std::mutex> lock(m_nnrMutex);
+        previousTuning = m_nnrTuning;
+        m_nnrTuning = *tuningFirst;
+    }
+    storeActiveNrFlags(slot);
+    runOrdered([this, slot, tuning, previousTuning, previous]() {
+        auto refuse = [this, slot, previous](const QString& why) {
+            NrSlot expected = slot;
+            if (m_activeNr.compare_exchange_strong(expected, NrSlot::Off,
+                                                   std::memory_order_acq_rel)) {
+                storeActiveNrFlags(NrSlot::Off);
+            }
+            refreshNnrDiagnosticsOnLane();
+            emit nnrRequestRefused(why, static_cast<int>(previous));
+        };
+        if (tuning) {
+            QString refusal;
+            const auto accepted = NnrAdapter::apply(m_channelId, *tuning, &refusal);
+            {
+                std::lock_guard<std::mutex> lock(m_nnrMutex);
+                if (accepted) {
+                    m_nnrTuning = *accepted;
+                } else if (m_nnrTuning == *tuning) {
+                    m_nnrTuning = previousTuning;
+                }
+            }
+            if (!accepted) {
+                // The selection is refused with the tuning, as at once: NR
+                // stays as it was in WDSP (nothing below ran).
+                NrSlot expected = slot;
+                if (m_activeNr.compare_exchange_strong(expected, previous,
+                                                       std::memory_order_acq_rel)) {
+                    storeActiveNrFlags(previous);
+                }
+                refreshNnrDiagnosticsOnLane();
+                emit nnrRequestRefused(refusal, static_cast<int>(previous));
+                return;
+            }
+        }
+        if (!applyActiveNrOnLane(slot)) {
+            refuse(QString());
+            return;
+        }
+        refreshNnrDiagnosticsOnLane();
+    });
+    return true;
+}
+
+void RxChannel::applyNnrState(int limit, const NnrSettings& settings, NrSlot slot,
+                              bool nr3Blocked)
+{
+    // The selection before this call, kept when NNR turns out not to be
+    // ready: setActiveNr(NNR) then returns without touching the channel.
+    const NrSlot before = activeNr();
+    const NrSlot optimistic = nr3Blocked ? NrSlot::Off : slot;
+    if (isValidNnrLimit(limit)) {
+        m_nnrLimit.store(limit, std::memory_order_release);
+    }
+    storeActiveNrFlags(optimistic);
+    runOrdered([this, limit, settings, slot, nr3Blocked, before, optimistic]() {
+        QString reason;
+        // R-R3-40: a new or reopened channel starts with the slice's runtime
+        // limit, applied by the tuning call below.
+        NnrAdapter::requestLimit(m_channelId, limit);
+        const auto accepted = NnrAdapter::apply(m_channelId, settings, &reason);
+        if (accepted) {
+            std::lock_guard<std::mutex> lock(m_nnrMutex);
+            m_nnrTuning = *accepted;
+        }
+        // A missing saved model must not enable a different model silently.
+        // Retain the saved preference so the operator can repair the asset.
+        const NrSlot run = (!nr3Blocked && (accepted || slot != NrSlot::NNR)) ? slot : NrSlot::Off;
+        NrSlot result = run;
+        if (run == NrSlot::NNR) {
+            const auto state = NnrAdapter::diagnostics(m_channelId);
+            if (!state.ready || !state.rateSupported) {
+                result = before;   // setActiveNr(NNR) refused before any change
+            } else if (!applyActiveNrOnLane(run)) {
+                result = NrSlot::Off;
+            }
+        } else if (!applyActiveNrOnLane(run)) {
+            result = NrSlot::Off;
+        }
+        NrSlot expected = optimistic;
+        if (result == optimistic
+            || m_activeNr.compare_exchange_strong(expected, result, std::memory_order_acq_rel)) {
+            storeActiveNrFlags(result);
+        }
+        refreshNnrDiagnosticsOnLane(accepted ? nullptr : &reason);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1191,10 +1962,12 @@ void RxChannel::setApfEnabled(bool enabled)
     m_apfEnabled.store(enabled);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1910-1927
-    //   WDSP.SetRXASPCWRun(WDSP.id(thread, subrx), value)
-    // WDSP third_party/wdsp/src/apfshadow.c:93
-    SetRXASPCWRun(m_channelId, enabled ? 1 : 0);
+    runKeyed(laneParameter("setApfEnabled"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1910-1927
+        //   WDSP.SetRXASPCWRun(WDSP.id(thread, subrx), value)
+        // WDSP third_party/wdsp/src/apfshadow.c:93
+        SetRXASPCWRun(m_channelId, enabled ? 1 : 0);
+    });
 #else
     Q_UNUSED(enabled);
 #endif
@@ -1203,11 +1976,13 @@ void RxChannel::setApfEnabled(bool enabled)
 void RxChannel::setApfFreq(double hz)
 {
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1929-1946
-    //   WDSP.SetRXASPCWFreq(WDSP.id(thread, subrx), value)
-    //   Freq = CWPitch + tuneOffset (setup.cs:17071)
-    // WDSP third_party/wdsp/src/apfshadow.c:117
-    SetRXASPCWFreq(m_channelId, hz);
+    runKeyed(laneParameter("setApfFreq"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1929-1946
+        //   WDSP.SetRXASPCWFreq(WDSP.id(thread, subrx), value)
+        //   Freq = CWPitch + tuneOffset (setup.cs:17071)
+        // WDSP third_party/wdsp/src/apfshadow.c:117
+        SetRXASPCWFreq(m_channelId, hz);
+    });
 #else
     Q_UNUSED(hz);
 #endif
@@ -1216,11 +1991,13 @@ void RxChannel::setApfFreq(double hz)
 void RxChannel::setApfBandwidth(double hz)
 {
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1948-1965
-    //   WDSP.SetRXASPCWBandwidth(WDSP.id(thread, subrx), value)
-    //   Default rx_apf_bw = 600.0 Hz
-    // WDSP third_party/wdsp/src/apfshadow.c:141
-    SetRXASPCWBandwidth(m_channelId, hz);
+    runKeyed(laneParameter("setApfBandwidth"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1948-1965
+        //   WDSP.SetRXASPCWBandwidth(WDSP.id(thread, subrx), value)
+        //   Default rx_apf_bw = 600.0 Hz
+        // WDSP third_party/wdsp/src/apfshadow.c:141
+        SetRXASPCWBandwidth(m_channelId, hz);
+    });
 #else
     Q_UNUSED(hz);
 #endif
@@ -1229,11 +2006,13 @@ void RxChannel::setApfBandwidth(double hz)
 void RxChannel::setApfGain(double gain)
 {
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1967-1984
-    //   WDSP.SetRXASPCWGain(WDSP.id(thread, subrx), value)
-    //   Default rx_apf_gain = 1.0 (linear)
-    // WDSP third_party/wdsp/src/apfshadow.c:165
-    SetRXASPCWGain(m_channelId, gain);
+    runKeyed(laneParameter("setApfGain"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1967-1984
+        //   WDSP.SetRXASPCWGain(WDSP.id(thread, subrx), value)
+        //   Default rx_apf_gain = 1.0 (linear)
+        // WDSP third_party/wdsp/src/apfshadow.c:165
+        SetRXASPCWGain(m_channelId, gain);
+    });
 #else
     Q_UNUSED(gain);
 #endif
@@ -1242,12 +2021,14 @@ void RxChannel::setApfGain(double gain)
 void RxChannel::setApfSelection(int selection)
 {
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1986-2008
-    //   WDSP.SetRXASPCWSelection(WDSP.id(thread, subrx), value)
-    //   Default _rx_apf_type = 3 (bi-quad)
-    //   0=double-pole, 1=matched, 2=gaussian, 3=bi-quad
-    // WDSP third_party/wdsp/src/apfshadow.c:45
-    SetRXASPCWSelection(m_channelId, selection);
+    runKeyed(laneParameter("setApfSelection"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1986-2008
+        //   WDSP.SetRXASPCWSelection(WDSP.id(thread, subrx), value)
+        //   Default _rx_apf_type = 3 (bi-quad)
+        //   0=double-pole, 1=matched, 2=gaussian, 3=bi-quad
+        // WDSP third_party/wdsp/src/apfshadow.c:45
+        SetRXASPCWSelection(m_channelId, selection);
+    });
 #else
     Q_UNUSED(selection);
 #endif
@@ -1266,10 +2047,12 @@ void RxChannel::setSsqlEnabled(bool enabled)
     m_ssqlEnabled.store(enabled);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1185-1207
-    //   WDSP.SetRXASSQLRun(WDSP.id(thread, subrx), value)
-    // WDSP third_party/wdsp/src/ssql.c:331
-    SetRXASSQLRun(m_channelId, enabled ? 1 : 0);
+    runKeyed(laneParameter("setSsqlEnabled"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1185-1207
+        //   WDSP.SetRXASSQLRun(WDSP.id(thread, subrx), value)
+        // WDSP third_party/wdsp/src/ssql.c:331
+        SetRXASSQLRun(m_channelId, enabled ? 1 : 0);
+    });
 #else
     Q_UNUSED(enabled);
 #endif
@@ -1278,12 +2061,14 @@ void RxChannel::setSsqlEnabled(bool enabled)
 void RxChannel::setSsqlThresh(double threshold)
 {
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1209-1228
-    //   WDSP.SetRXASSQLThreshold(WDSP.id(thread, subrx), _fSSqlThreshold)
-    //   threshold range clamped 0.0..1.0 as per ssql.c
-    //   Thetis default _fSSqlThreshold = 0.16f
-    // WDSP third_party/wdsp/src/ssql.c:339
-    SetRXASSQLThreshold(m_channelId, threshold);
+    runKeyed(laneParameter("setSsqlThresh"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1209-1228
+        //   WDSP.SetRXASSQLThreshold(WDSP.id(thread, subrx), _fSSqlThreshold)
+        //   threshold range clamped 0.0..1.0 as per ssql.c
+        //   Thetis default _fSSqlThreshold = 0.16f
+        // WDSP third_party/wdsp/src/ssql.c:339
+        SetRXASSQLThreshold(m_channelId, threshold);
+    });
 #else
     Q_UNUSED(threshold);
 #endif
@@ -1302,10 +2087,12 @@ void RxChannel::setAmsqEnabled(bool enabled)
     m_amsqEnabled.store(enabled);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1293-1310
-    //   WDSP.SetRXAAMSQRun(WDSP.id(thread, subrx), value)
-    // WDSP third_party/wdsp/src/amsq.c (SetRXAAMSQRun)
-    SetRXAAMSQRun(m_channelId, enabled ? 1 : 0);
+    runKeyed(laneParameter("setAmsqEnabled"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1293-1310
+        //   WDSP.SetRXAAMSQRun(WDSP.id(thread, subrx), value)
+        // WDSP third_party/wdsp/src/amsq.c (SetRXAAMSQRun)
+        SetRXAAMSQRun(m_channelId, enabled ? 1 : 0);
+    });
 #else
     Q_UNUSED(enabled);
 #endif
@@ -1314,12 +2101,14 @@ void RxChannel::setAmsqEnabled(bool enabled)
 void RxChannel::setAmsqThresh(double dB)
 {
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1164-1178
-    //   WDSP.SetRXAAMSQThreshold(WDSP.id(thread, subrx), value)
-    //   value is in dB; WDSP amsq.c applies pow(10.0, threshold/20.0) internally
-    //   Thetis default rx_squelch_threshold = -150.0f dB
-    // WDSP third_party/wdsp/src/amsq.c (SetRXAAMSQThreshold)
-    SetRXAAMSQThreshold(m_channelId, dB);
+    runKeyed(laneParameter("setAmsqThresh"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1164-1178
+        //   WDSP.SetRXAAMSQThreshold(WDSP.id(thread, subrx), value)
+        //   value is in dB; WDSP amsq.c applies pow(10.0, threshold/20.0) internally
+        //   Thetis default rx_squelch_threshold = -150.0f dB
+        // WDSP third_party/wdsp/src/amsq.c (SetRXAAMSQThreshold)
+        SetRXAAMSQThreshold(m_channelId, dB);
+    });
 #else
     Q_UNUSED(dB);
 #endif
@@ -1338,10 +2127,12 @@ void RxChannel::setFmsqEnabled(bool enabled)
     m_fmsqEnabled.store(enabled);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1312-1329
-    //   WDSP.SetRXAFMSQRun(WDSP.id(thread, subrx), value)
-    // WDSP third_party/wdsp/src/fmsq.c:236
-    SetRXAFMSQRun(m_channelId, enabled ? 1 : 0);
+    runKeyed(laneParameter("setFmsqEnabled"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1312-1329
+        //   WDSP.SetRXAFMSQRun(WDSP.id(thread, subrx), value)
+        // WDSP third_party/wdsp/src/fmsq.c:236
+        SetRXAFMSQRun(m_channelId, enabled ? 1 : 0);
+    });
 #else
     Q_UNUSED(enabled);
 #endif
@@ -1350,15 +2141,17 @@ void RxChannel::setFmsqEnabled(bool enabled)
 void RxChannel::setFmsqThresh(double dB)
 {
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1274-1291
-    //   WDSP.SetRXAFMSQThreshold(WDSP.id(thread, subrx), value)
-    //   Thetis fm_squelch_threshold = 1.0f is LINEAR (0..1 scale).
-    //   SliceModel stores in dB domain (m_fmsqThresh = -150.0 default).
-    //   Convert dB → linear before passing to WDSP.
-    //   -150.0 dB → ~3.16e-8 (effectively muted = squelch open on FM)
-    // WDSP third_party/wdsp/src/fmsq.c:244 — assigns threshold directly to tail_thresh (linear)
-    const double linear = std::pow(10.0, dB / 20.0);
-    SetRXAFMSQThreshold(m_channelId, linear);
+    runKeyed(laneParameter("setFmsqThresh"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1274-1291
+        //   WDSP.SetRXAFMSQThreshold(WDSP.id(thread, subrx), value)
+        //   Thetis fm_squelch_threshold = 1.0f is LINEAR (0..1 scale).
+        //   SliceModel stores in dB domain (m_fmsqThresh = -150.0 default).
+        //   Convert dB → linear before passing to WDSP.
+        //   -150.0 dB → ~3.16e-8 (effectively muted = squelch open on FM)
+        // WDSP third_party/wdsp/src/fmsq.c:244 — assigns threshold directly to tail_thresh (linear)
+        const double linear = std::pow(10.0, dB / 20.0);
+        SetRXAFMSQThreshold(m_channelId, linear);
+    });
 #else
     Q_UNUSED(dB);
 #endif
@@ -1377,10 +2170,12 @@ void RxChannel::setMuted(bool muted)
     m_muted.store(muted);
 
 #ifdef HAVE_WDSP
-    // Mute → run=0 (panel disabled), unmute → run=1 (panel enabled).
-    // From Thetis Project Files/Source/Console/dsp.cs:393-394 — P/Invoke decl
-    // WDSP: third_party/wdsp/src/patchpanel.c:126
-    SetRXAPanelRun(m_channelId, muted ? 0 : 1);
+    runKeyed(laneParameter("setMuted"), 0, [=, this]() {
+        // Mute → run=0 (panel disabled), unmute → run=1 (panel enabled).
+        // From Thetis Project Files/Source/Console/dsp.cs:393-394 — P/Invoke decl
+        // WDSP: third_party/wdsp/src/patchpanel.c:126
+        SetRXAPanelRun(m_channelId, muted ? 0 : 1);
+    });
 #else
     Q_UNUSED(muted);
 #endif
@@ -1400,29 +2195,40 @@ void RxChannel::setAfGain(double gain)
     m_afGain.store(gain);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:1077-1107 [v2.10.3.14]
-    //   rx_output_gain_dsp = 1.0 + WDSP.SetRXAPanelGain1(WDSP.id(thread, subrx), value)
-    //   //[2.10.3.5]MW0LGE wave recorder volume normalise  — wave recorder
-    //     branch deliberately not ported here; NereusSDR has no wave_file_writer
-    //     yet, and recorder gain hooks belong in the recorder module when it lands.
-    // WDSP: third_party/wdsp/src/patchpanel.c:142 — assigns directly to
-    //   rxa[channel].panel.p->gain1 under csDSP critical section.
-    SetRXAPanelGain1(m_channelId, gain);
+    runKeyed(laneParameter("setAfGain"), 0, [=, this]() {
+        // From Thetis Project Files/Source/Console/radio.cs:1077-1107 [v2.10.3.14]
+        //   rx_output_gain_dsp = 1.0 + WDSP.SetRXAPanelGain1(WDSP.id(thread, subrx), value)
+        //   //[2.10.3.5]MW0LGE wave recorder volume normalise  — wave recorder
+        //     branch deliberately not ported here; NereusSDR has no wave_file_writer
+        //     yet, and recorder gain hooks belong in the recorder module when it lands.
+        // WDSP: third_party/wdsp/src/patchpanel.c:142 — assigns directly to
+        //   rxa[channel].panel.p->gain1 under csDSP critical section.
+        //
+        // Slice control plan Task 6 (JJ's ruling), a departure from the
+        // radio.cs wiring above: the AF level is applied in AudioEngine's
+        // mixer, to the controller's audio only, so each listener can hear
+        // the slice at its own level and VAX stays audible at AF 0. The
+        // panel gain stays at unity; m_afGain is kept as the slice's value.
+        Q_UNUSED(gain);
+        SetRXAPanelGain1(m_channelId, kPanelGain1Unity);
+    });
 #endif
 }
 
 void RxChannel::setAudioPan(double pan)
 {
 #ifdef HAVE_WDSP
-    // Convert NereusSDR -1.0..+1.0 to WDSP 0.0..1.0:
-    //   wdsp_pan = (nereus_pan + 1.0) / 2.0
-    //   -1.0 → 0.0 (full left), 0.0 → 0.5 (center), +1.0 → 1.0 (full right)
-    // WDSP applies sin-law: gain2I = sin(pan*PI), gain2Q = 1 when pan>0.5
-    // From Thetis Project Files/Source/Console/radio.cs:1386-1403
-    //   default pan = 0.5f (center in WDSP 0..1 scale → NereusSDR 0.0)
-    // WDSP: third_party/wdsp/src/patchpanel.c:159
-    const double wdspPan = (pan + 1.0) / 2.0;
-    SetRXAPanelPan(m_channelId, wdspPan);
+    runKeyed(laneParameter("setAudioPan"), 0, [=, this]() {
+        // Convert NereusSDR -1.0..+1.0 to WDSP 0.0..1.0:
+        //   wdsp_pan = (nereus_pan + 1.0) / 2.0
+        //   -1.0 → 0.0 (full left), 0.0 → 0.5 (center), +1.0 → 1.0 (full right)
+        // WDSP applies sin-law: gain2I = sin(pan*PI), gain2Q = 1 when pan>0.5
+        // From Thetis Project Files/Source/Console/radio.cs:1386-1403
+        //   default pan = 0.5f (center in WDSP 0..1 scale → NereusSDR 0.0)
+        // WDSP: third_party/wdsp/src/patchpanel.c:159
+        const double wdspPan = (pan + 1.0) / 2.0;
+        SetRXAPanelPan(m_channelId, wdspPan);
+    });
 #else
     Q_UNUSED(pan);
 #endif
@@ -1437,12 +2243,14 @@ void RxChannel::setBinauralEnabled(bool enabled)
     m_binauralEnabled.store(enabled);
 
 #ifdef HAVE_WDSP
-    // bin=1 → copy=0 → binaural (I/Q separate headphone stereo image)
-    // bin=0 → copy=1 → dual-mono (Q := I, same audio on both channels)
-    // From Thetis Project Files/Source/Console/radio.cs:1145-1162
-    //   default bin_on = false → dual-mono
-    // WDSP: third_party/wdsp/src/patchpanel.c:187
-    SetRXAPanelBinaural(m_channelId, enabled ? 1 : 0);
+    runKeyed(laneParameter("setBinauralEnabled"), 0, [=, this]() {
+        // bin=1 → copy=0 → binaural (I/Q separate headphone stereo image)
+        // bin=0 → copy=1 → dual-mono (Q := I, same audio on both channels)
+        // From Thetis Project Files/Source/Console/radio.cs:1145-1162
+        //   default bin_on = false → dual-mono
+        // WDSP: third_party/wdsp/src/patchpanel.c:187
+        SetRXAPanelBinaural(m_channelId, enabled ? 1 : 0);
+    });
 #else
     Q_UNUSED(enabled);
 #endif
@@ -1481,17 +2289,19 @@ void RxChannel::setShiftFrequency(double offsetHz)
     // rx2_osc = RXOsc - diff), so Thetis's -rx_osc equals the offsetHz handed
     // in here, which equals frequencyHz - centreHz at
     // SliceStreamAllocator.cpp:70.
-    SetRXAShiftFreq(m_channelId, offsetHz);
-    RXANBPSetShiftFrequency(m_channelId, offsetHz);
-    // Written here, next to the call it mirrors, and not up beside
-    // m_shiftOffsetHz: notchShiftHz() exists to say whether the push above
-    // really happened.
-    m_notchShiftHz = offsetHz;
-    // No offset: disable shift for efficiency. The run flag is the only
-    // thing the magnitude gate still controls.
-    SetRXAShiftRun(m_channelId, std::abs(offsetHz) < 0.5 ? 0 : 1);
+    runKeyed(laneParameter("setShiftFrequency"), 0, [this, offsetHz]() {
+        SetRXAShiftFreq(m_channelId, offsetHz);
+        RXANBPSetShiftFrequency(m_channelId, offsetHz);
+        // Written here, next to the call it mirrors, and not up beside
+        // m_shiftOffsetHz: notchShiftHz() exists to say whether the push above
+        // really happened.
+        m_notchShiftHz.store(offsetHz, std::memory_order_release);
+        // No offset: disable shift for efficiency. The run flag is the only
+        // thing the magnitude gate still controls.
+        SetRXAShiftRun(m_channelId, std::abs(offsetHz) < 0.5 ? 0 : 1);
+    });
 #else
-    m_notchShiftHz = offsetHz;
+    m_notchShiftHz.store(offsetHz, std::memory_order_release);
 #endif
 }
 
@@ -1507,12 +2317,14 @@ void RxChannel::setNotchTuneFrequency(double absoluteHz)
     m_notchTuneFrequencyHz = absoluteHz;
 
 #ifdef HAVE_WDSP
-    // From Thetis console.cs:31940-31941 [v2.10.3.15]: pushed on every
-    // retune, unconditionally, and the SAME value goes to every subrx
-    // sharing the stream. RXANBPSetTuneFrequency is internally idempotent
-    // (nbp.c:479, if (tunefreq != a->tunefreq)), so an unconditional push
-    // costs nothing.
-    RXANBPSetTuneFrequency(m_channelId, absoluteHz);
+    runKeyed(laneParameter("setNotchTuneFrequency"), 0, [=, this]() {
+        // From Thetis console.cs:31940-31941 [v2.10.3.15]: pushed on every
+        // retune, unconditionally, and the SAME value goes to every subrx
+        // sharing the stream. RXANBPSetTuneFrequency is internally idempotent
+        // (nbp.c:479, if (tunefreq != a->tunefreq)), so an unconditional push
+        // costs nothing.
+        RXANBPSetTuneFrequency(m_channelId, absoluteHz);
+    });
 #endif
 }
 
@@ -1599,6 +2411,11 @@ bool RxChannel::deleteNotch(int index)
 
 void RxChannel::syncNotches(const QList<Notch>& notches)
 {
+    runOrdered([this, notches]() { syncNotchesNow(notches); });
+}
+
+void RxChannel::syncNotchesNow(const QList<Notch>& notches)
+{
 #ifdef HAVE_WDSP
     // Drop whatever the channel is currently carrying. Always erase index 0:
     // RXANBPDeleteNotch shifts the array down (nbp.c:426-434), so repeatedly
@@ -1652,12 +2469,14 @@ void RxChannel::setNotchesRun(bool run)
     m_notchesRun = run;
 
 #ifdef HAVE_WDSP
-    // From Thetis console.cs:40000-40002 [v2.10.3.15], the TNFActive setter
-    // fans the same flag to all three fixed channel ids.
-    // WDSP: third_party/wdsp/src/nbp.c:499, the only writer of
-    // notchdb.master_run; it also drives nbp0.fnfrun and re-runs
-    // RXAbpsnbaCheck / RXAbpsnbaSet, so it is not a cheap toggle.
-    RXANBPSetNotchesRun(m_channelId, run ? 1 : 0);
+    runOrdered([=, this]() {
+        // From Thetis console.cs:40000-40002 [v2.10.3.15], the TNFActive setter
+        // fans the same flag to all three fixed channel ids.
+        // WDSP: third_party/wdsp/src/nbp.c:499, the only writer of
+        // notchdb.master_run; it also drives nbp0.fnfrun and re-runs
+        // RXAbpsnbaCheck / RXAbpsnbaSet, so it is not a cheap toggle.
+        RXANBPSetNotchesRun(m_channelId, run ? 1 : 0);
+    });
 #endif
 }
 
@@ -1666,14 +2485,25 @@ void RxChannel::setNotchAutoIncrease(bool on)
     m_notchAutoIncrease = on;
 
 #ifdef HAVE_WDSP
-    // From Thetis setup.cs:17928-17930 [v2.10.3.15],
-    // chkMNFAutoIncrease_CheckedChanged.
-    // WDSP: third_party/wdsp/src/nbp.c:604, touches both nbp0 and bpsnba.
-    RXANBPSetAutoIncrease(m_channelId, on ? 1 : 0);
+    runOrdered([=, this]() {
+        // From Thetis setup.cs:17928-17930 [v2.10.3.15],
+        // chkMNFAutoIncrease_CheckedChanged.
+        // WDSP: third_party/wdsp/src/nbp.c:604, touches both nbp0 and bpsnba.
+        RXANBPSetAutoIncrease(m_channelId, on ? 1 : 0);
+    });
 #endif
 }
 
 double RxChannel::minNotchWidthHz() const
+{
+    if (m_lane != nullptr && !m_lane->isCurrentThread()) {
+        // R-R3-39: as the lane last read it.
+        return m_minNotchWidthCache.load(std::memory_order_acquire);
+    }
+    return readMinNotchWidthNow();
+}
+
+double RxChannel::readMinNotchWidthNow() const
 {
 #ifdef HAVE_WDSP
     // From Thetis console.cs:48804 [v2.10.3.15], the per-RX minimum notch
@@ -1718,36 +2548,332 @@ bool RxChannel::notchAt(int index, Notch& out) const
 }
 
 // ---------------------------------------------------------------------------
+// R-R3-39: the notch database on the receive lane
+//
+// NereusSDR-original. RadioModel's fan-out used to call addNotch /
+// editNotch / deleteNotch, resync on a refusal, then compare notchCount()
+// with the model (design section 6.2). Every one of those takes the
+// channel's DSP lock, so the whole sequence now runs as one ordered lane job.
+// ---------------------------------------------------------------------------
+
+void RxChannel::addNotchReconciled(int index, const Notch& n, const QList<Notch>& expected)
+{
+    runOrdered([this, index, n, expected]() {
+        // RXANBPAddNotch is an INSERT guarded by
+        // "notch <= b->nn && b->nn < b->maxnotches", returning -1 with no
+        // mutation at all (third_party/wdsp/src/nbp.c:362-390). Design
+        // section 6.2: surface it, and recover with a full resync rather
+        // than an assert, which a release build compiles out.
+        if (!addNotch(index, n)) {
+            syncNotchesNow(expected);
+        }
+        reconcileNotchCountNow(expected);
+    });
+}
+
+void RxChannel::editNotchReconciled(int index, const Notch& n, const QList<Notch>& expected)
+{
+    runOrdered([this, index, n, expected]() {
+        if (!editNotch(index, n)) {
+            syncNotchesNow(expected);
+        }
+        reconcileNotchCountNow(expected);
+    });
+}
+
+void RxChannel::deleteNotchReconciled(int index, const QList<Notch>& expected)
+{
+    runOrdered([this, index, expected]() {
+        // The former index, not the entry's current one: the entry is gone
+        // from the model by now. WDSP shifts its own array down internally
+        // (nbp.c:418-441) and the model's list does the same, so positions
+        // stay aligned (design section 5.2).
+        if (!deleteNotch(index)) {
+            syncNotchesNow(expected);
+        }
+        reconcileNotchCountNow(expected);
+    });
+}
+
+void RxChannel::reconcileNotchCount(const QList<Notch>& expected)
+{
+    runOrdered([this, expected]() { reconcileNotchCountNow(expected); });
+}
+
+void RxChannel::reconcileNotchCountNow(const QList<Notch>& expected)
+{
+    // RXANBPGetNumNotches takes the channel's DSP critical section
+    // (third_party/wdsp/src/nbp.c:465-472). Negligible next to
+    // UpdateNBPFilters, which every mutation already pays and which designs
+    // two filters, nbp0 plus recalc_bpsnba_filter (nbp.c:345-359 ->
+    // snb.c:814-828).
+    const int actual = notchCount();
+    if (actual == expected.size()) {
+        return;
+    }
+    qCWarning(lcDsp) << "Notch index divergence on RX channel"
+                     << m_channelId << "- WDSP holds" << actual
+                     << "notches, the model holds" << expected.size()
+                     << "- resyncing";
+    syncNotchesNow(expected);
+}
+
+void RxChannel::refreshMinNotchWidthOnLane()
+{
+    const double minWidth = readMinNotchWidthNow();
+    m_minNotchWidthCache.store(minWidth, std::memory_order_release);
+    emit minNotchWidthChanged(minWidth);
+}
+
+void RxChannel::requestNotchCount(QObject* context, std::function<void(int)> done)
+{
+    if (m_lane == nullptr || m_lane->isCurrentThread()) {
+        if (done) {
+            done(notchCount());
+        }
+        return;
+    }
+    m_lane->request<std::optional<int>>(
+        [this, alive = m_alive]() -> std::optional<int> {
+            if (!alive->load(std::memory_order_acquire)) {
+                return std::nullopt;
+            }
+            return notchCount();
+        },
+        context,
+        [done = std::move(done)](std::optional<int> count) {
+            if (count && done) {
+                done(*count);
+            }
+        });
+}
+
+void RxChannel::requestNotchAt(int index, QObject* context,
+                               std::function<void(bool ok, Notch notch)> done)
+{
+    if (m_lane == nullptr || m_lane->isCurrentThread()) {
+        Notch notch;
+        const bool ok = notchAt(index, notch);
+        if (done) {
+            done(ok, notch);
+        }
+        return;
+    }
+    using Reading = std::optional<std::pair<bool, Notch>>;
+    m_lane->request<Reading>(
+        [this, alive = m_alive, index]() -> Reading {
+            if (!alive->load(std::memory_order_acquire)) {
+                return std::nullopt;
+            }
+            Notch notch;
+            const bool ok = notchAt(index, notch);
+            return std::make_pair(ok, notch);
+        },
+        context,
+        [done = std::move(done)](Reading reading) {
+            if (reading && done) {
+                done(reading->first, reading->second);
+            }
+        });
+}
+
+void RxChannel::requestMinNotchWidth(QObject* context, std::function<void(double)> done)
+{
+    if (m_lane == nullptr || m_lane->isCurrentThread()) {
+        if (done) {
+            done(readMinNotchWidthNow());
+        }
+        return;
+    }
+    m_lane->request<std::optional<double>>(
+        [this, alive = m_alive]() -> std::optional<double> {
+            if (!alive->load(std::memory_order_acquire)) {
+                return std::nullopt;
+            }
+            return readMinNotchWidthNow();
+        },
+        context,
+        [done = std::move(done)](std::optional<double> width) {
+            if (width && done) {
+                done(*width);
+            }
+        });
+}
+
+// ---------------------------------------------------------------------------
 // Channel state
 // ---------------------------------------------------------------------------
 
 void RxChannel::setActive(bool active)
 {
+    applyActive(active, /*drainOnStop=*/true);
+}
+
+void RxChannel::deactivateWithoutDrain()
+{
+    applyActive(false, /*drainOnStop=*/false);
+}
+
+void RxChannel::applyActive(bool active, bool drainOnStop)
+{
     if (active == m_active.load()) {
         return;
     }
 
-    m_active.store(active);
-
+    if (m_lane == nullptr || m_lane->isCurrentThread()) {
+        applyActiveOnLane(active, drainOnStop, /*alsoRequested=*/true);
+        // R-R3-41: nereusd gives an active receive worker a fast core of its own
+        // and returns it when the channel stops (no-op in the GUI).
+        ThreadPlacement::instance().setChannelActive(ThreadRole::RxWorker,
+                                                     m_channelId, active);
 #ifdef HAVE_WDSP
-    // state=1 on, state=0 off; dmode=0 for no drain, dmode=1 for drain
-    SetChannelState(m_channelId, active ? 1 : 0, active ? 0 : 1);
-
-    // wdsp/rxa.c:538 [v2.10.3.14] seeds the audio panel with gain1 = 4.0
-    // (+12 dB).  Push our cached m_afGain once the channel is alive so the
-    // default never reaches the audio sink.  Thetis equivalent: radio.cs
-    // initializer at radio.cs:318 + rebroadcast on Update() at radio.cs:422.
-    // The model layer will follow up with the persisted slice gain; this
-    // is a defence-in-depth seed for the gap between createRxChannel and
-    // the first slice sync.
-    if (active) {
-        SetRXAPanelGain1(m_channelId, m_afGain.load());
-    }
+        // wdsp/rxa.c:538 [v2.10.3.14] seeds the audio panel with gain1 = 4.0
+        // (+12 dB).  Push our cached m_afGain once the channel is alive so the
+        // default never reaches the audio sink.  Thetis equivalent: radio.cs
+        // initializer at radio.cs:318 + rebroadcast on Update() at radio.cs:422.
+        // The model layer will follow up with the persisted slice gain; this
+        // is a defence-in-depth seed for the gap between createRxChannel and
+        // the first slice sync.
+        //
+        // Slice control plan Task 6: unity, not m_afGain; the mixer applies
+        // the AF level (see setAfGain).
+        if (active) {
+            SetRXAPanelGain1(m_channelId, kPanelGain1Unity);
+        }
 #endif
+        qCDebug(lcDsp) << "RxChannel" << m_channelId
+                        << (active ? "activated" : "deactivated");
+        emit activeChanged(active);
+        return;
+    }
 
+    // R-R3-39: the requested state changes at once; the lane runs the WDSP
+    // side in the order applyActiveOnLane keeps (a draining stop waits
+    // there, not here), then the AF gain seed. The meter cache holds the
+    // old state's reading until a refresh posted after this one runs.
+    m_active.store(active);
+    m_meterGeneration.fetch_add(1, std::memory_order_acq_rel);
+    m_meterCacheReady.store(false, std::memory_order_release);
+    ThreadPlacement::instance().setChannelActive(ThreadRole::RxWorker,
+                                                 m_channelId, active);
+    runOrdered([this, active, drainOnStop]() {
+        applyActiveOnLane(active, drainOnStop, /*alsoRequested=*/false);
+#ifdef HAVE_WDSP
+        if (active) {
+            // Slice control plan Task 6: unity; the mixer applies AF.
+            SetRXAPanelGain1(m_channelId, kPanelGain1Unity);
+        }
+#endif
+    });
     qCDebug(lcDsp) << "RxChannel" << m_channelId
                     << (active ? "activated" : "deactivated");
     emit activeChanged(active);
+}
+
+void RxChannel::applyActiveOnLane(bool active, bool drainOnStop, bool alsoRequested)
+{
+    // Called at once (no lane, or on the lane itself), m_active and
+    // m_dspActive move together, exactly as m_active alone did. From a
+    // queued lane job m_active already holds the request (R-R3-39).
+    auto setRunning = [this, alsoRequested](bool running) {
+        m_dspActive.store(running);
+        if (alsoRequested) {
+            m_active.store(running);
+        }
+    };
+
+#ifdef HAVE_WDSP
+    // Task 8 (receiver and transmit gaps plan): a stopping channel is fed
+    // until WDSP has finished the stop.
+    //
+    // SetChannelState(ch, 0, dmode) only asks for the stop. It sets
+    // slew.downflag and flushflag (third_party/wdsp/src/channel.c:288-290).
+    // The channel's following fexchange2 calls slew the output down, then
+    // clear exchange and release the flush thread, which flushes the buffers
+    // and clears flushflag (iobuffs.c:553-560, channel.c:146-166). With
+    // dmode 1 SetChannelState waits for flushflag, and after 100 Sleep(1)
+    // calls gives up and clears exchange, flushflag and downflag itself
+    // (channel.c:291-304). So the stop completes only if I/Q keeps reaching
+    // the channel through it, as it does upstream, where the receive loop
+    // calls fexchange0 on every sub-receiver channel on every pass whatever
+    // its state:
+    //   From Thetis ChannelMaster/cmaster.c:365-366 [v2.10.3.15]
+    //     for (j = 0; j < pcm->cmSubRCVR; j++)
+    //         fexchange0 (chid (stream, j), pcm->in[stream], pcm->rcvr[rx].audio[j], &error);		// dsp
+    // and the rate change stops its channels for that reason:
+    //   From Thetis Console/setup.cs:7042 [v2.10.3.15]
+    //     // turn OFF the DSP channels so they get flushed out (must do while data is flowing to get slew-down and flush)
+    //
+    // This channel used to mark itself inactive before the call, and
+    // processIq stopped exchanging on an inactive channel, so a draining
+    // stop always waited out the timeout and a no-drain stop left the flags
+    // for a restart to trip over.
+    if (active) {
+        finishPendingStop();
+        setRunning(true);
+        // state=1 on, dmode=0
+        SetChannelState(m_channelId, 1, 0);
+    } else if (drainOnStop) {
+        // Still active while WDSP drains it: processIq keeps exchanging, so
+        // the slew-down and flush finish in a few blocks of input. When the
+        // call returns exchange is clear, whether the flush finished or the
+        // wait timed out.
+        SetChannelState(m_channelId, 0, 1);
+        setRunning(false);
+    } else {
+        // Returns at once. processIq keeps exchanging on the stopping channel
+        // until WDSP reports the stop done (see processIq), and a restart
+        // before then finishes the stop first (finishPendingStop).
+        quint32 token = ++m_stopSerial;
+        if (token == 0) {
+            token = ++m_stopSerial;
+        }
+        m_pendingStop.store(token, std::memory_order_release);
+        SetChannelState(m_channelId, 0, 0);
+        setRunning(false);
+    }
+
+#else
+    Q_UNUSED(drainOnStop);
+    setRunning(active);
+#endif
+}
+
+void RxChannel::finishPendingStop()
+{
+#ifdef HAVE_WDSP
+    if (m_pendingStop.load(std::memory_order_acquire) == 0) {
+        return;
+    }
+    // A no-drain stop WDSP has not reported done: no I/Q reached the channel
+    // after it (a stream that stopped delivering, or a feed disconnected
+    // straight after the stop). Its slew.downflag may still be set, and a
+    // restart over it would slew the first block down and clear exchange,
+    // leaving the channel silent while isActive() reports true (fix wave 1,
+    // C1). WDSP clears that flag only in a stop it finishes or times out
+    // (channel.c:291-304), and SetChannelState acts only on a change of
+    // state, so switch the channel on and stop it again, draining. With I/Q
+    // flowing processIq feeds that drain; without it, the wait times out
+    // and WDSP clears the flags itself.
+    //
+    // A window this does not close (review M3). processIq counts a no-drain
+    // stop done once fexchange2 stops writing, which is when the slew-down
+    // clears exchange and releases the flush thread
+    // (third_party/wdsp/src/iobuffs.c:558-562 [v2.10.3.15], unchanged from
+    // Thetis). The flush thread runs after that: it sets exec_bypass and
+    // then clears flushflag (third_party/wdsp/src/channel.c:152-162, Thetis
+    // wdsp/channel.c:134-144 [v2.10.3.15]). A restart that lands between
+    // the two has the exec_bypass reset of SetChannelState(ch, 1, ...)
+    // (third_party/wdsp/src/channel.c:309, Thetis wdsp/channel.c:291
+    // [v2.10.3.15]) undone by the flush, and the channel stays silent while
+    // it reports active. It is left alone: the window is the flush thread's
+    // wake-up, the only path that stops without a drain and restarts is
+    // setSampleRateLive, which puts at least 40 ms of fixed waits between
+    // the stop and the restart, and WDSP has the same race upstream.
+    SetChannelState(m_channelId, 1, 0);
+    SetChannelState(m_channelId, 0, 1);
+    m_pendingStop.store(0, std::memory_order_release);
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -1764,10 +2890,42 @@ void RxChannel::processIq(float* inI, float* inQ,
     // tails and produce garbage. Default -1 preserves old contract.
     [[maybe_unused]] const int postCount = (outSampleCount > 0) ? outSampleCount : sampleCount;
 
-    if (!m_active.load()) {
+    if (!m_wdspReady.load(std::memory_order_acquire)) {
+        // R-R3-39: the lane has not opened this channel's WDSP side yet (or
+        // has retired it). Silence, and no WDSP call.
+        std::memset(outI, 0, sampleCount * sizeof(float));
+        std::memset(outQ, 0, sampleCount * sizeof(float));
+        return;
+    }
+
+    // m_dspActive: what the lane has applied (m_active with no lane).
+    if (!m_dspActive.load()) {
         // Channel inactive — output silence
         std::memset(outI, 0, sampleCount * sizeof(float));
         std::memset(outQ, 0, sampleCount * sizeof(float));
+#ifdef HAVE_WDSP
+        // Task 8: a channel stopped without a drain is still fed until WDSP
+        // reports the stop done, so its slew-down runs and the flush thread
+        // clears its flags (see applyActive). fexchange2 writes both output
+        // legs whenever exchange is set, and returns without touching them
+        // once the slew-down has cleared it (iobuffs.c:525; channel.h:35,
+        // "when 0, it just returns"). A sentinel left in place is that
+        // report. The blanker and the post-DSP stages stay off: the channel
+        // is no longer running.
+        quint32 token = m_pendingStop.load(std::memory_order_acquire);
+        if (token != 0) {
+            std::memcpy(outI, &kStopSentinelBits, sizeof(float));
+            int error = 0;
+            fexchange2(m_channelId, inI, inQ, outI, outQ, &error);
+            quint32 first = 0;
+            std::memcpy(&first, outI, sizeof(float));
+            if (first == kStopSentinelBits) {
+                outI[0] = 0.0f;
+                m_pendingStop.compare_exchange_strong(token, 0,
+                                                      std::memory_order_acq_rel);
+            }
+        }
+#endif
         return;
     }
 
@@ -1804,8 +2962,14 @@ void RxChannel::processIq(float* inI, float* inQ,
     // Sub-epic C-1 Task 9 — post-fexchange2 DeepFilterNet3 noise reduction.
     // Runs only when m_dfnrActive is set via setActiveNr(NrSlot::DFNR).
     // outI/outQ are 48 kHz stereo float at this point — DFNR's native rate.
-    if (m_dfnr && m_dfnrActive.load(std::memory_order_acquire)) {
-        m_dfnr->process(outI, outQ, postCount);
+    // R-R3-39: the flag first (acquire), then the instance (acquire); the
+    // instance is published before the flag is ever set, so a set flag
+    // means a fully built instance. No lock on this thread.
+    if (m_dfnrActive.load(std::memory_order_acquire)) {
+        if (NereusSDR::DeepFilterFilter* dfnr =
+                m_dfnrInstance.load(std::memory_order_acquire)) {
+            dfnr->process(outI, outQ, postCount);
+        }
     }
 #endif
 
@@ -1851,6 +3015,16 @@ void RxChannel::processIq(float* inI, float* inQ,
 
 double RxChannel::getMeter(RxMeterType type) const
 {
+    if (m_lane != nullptr && !m_lane->isCurrentThread()) {
+        // R-R3-39: never a WDSP call here. One keyed refresh however many
+        // readers ask, so the cache follows the fastest one.
+        requestMeterRefresh();
+        const int index = static_cast<int>(type);
+        if (index < 0 || index >= kRxMeterTypes) {
+            return -140.0;
+        }
+        return m_meterCache[static_cast<std::size_t>(index)].load(std::memory_order_acquire);
+    }
 #ifdef HAVE_WDSP
     // GetRXAMeter reads WDSP channel state that is only valid once
     // SetChannelState(channel, 1, 0) has been called. Reading before the
@@ -1858,13 +3032,89 @@ double RxChannel::getMeter(RxMeterType type) const
     // because the P1 path had not yet called setActive(true) on the
     // downstream RxChannel the MeterPoller was bound to). Guard here:
     // the contract is "no meter data until active".
-    if (!m_active.load()) {
+    if (!m_dspActive.load() || !m_wdspReady.load(std::memory_order_acquire)) {
         return -140.0;
     }
     return GetRXAMeter(m_channelId, static_cast<int>(type));
 #else
     Q_UNUSED(type);
     return -140.0;
+#endif
+}
+
+void RxChannel::requestMeterRefresh() const
+{
+    const quint64 generation = m_meterGeneration.load(std::memory_order_acquire);
+    runKeyed(laneParameter("meterRefresh"), 0,
+             [this, generation]() { refreshMeterCacheOnLane(generation); });
+}
+
+bool RxChannel::meterReadingReady() const
+{
+    if (m_lane == nullptr || m_lane->isCurrentThread()) {
+        return true;
+    }
+    return m_meterCacheReady.load(std::memory_order_acquire);
+}
+
+void RxChannel::refreshMeterCacheOnLane(quint64 generation) const
+{
+    for (int index = 0; index < kRxMeterTypes; ++index) {
+        double value = -140.0;
+#ifdef HAVE_WDSP
+        // Same guard as getMeter: no meter read of a channel that is not
+        // running (the segfault note above).
+        if (m_dspActive.load() && m_wdspReady.load(std::memory_order_acquire)) {
+            value = GetRXAMeter(m_channelId, index);
+        }
+#endif
+        m_meterCache[static_cast<std::size_t>(index)].store(value, std::memory_order_release);
+    }
+    // Posted after the owner's last change of state, so it read that state.
+    if (generation == m_meterGeneration.load(std::memory_order_acquire)) {
+        m_meterCacheReady.store(true, std::memory_order_release);
+    }
+}
+
+// NereusSDR-original (R-R3-40): reads the WDSP worker's load counters from
+// dsplock.c. GetChannelDspLoad takes no lock, so this never waits for the
+// worker.
+bool RxChannel::dspLoad(DspLoadCounters& out) const
+{
+    out = DspLoadCounters{};
+#ifdef HAVE_WDSP
+    if (!wdspChannelInRange()) {
+        return false;
+    }
+    WdspChannelLoad load{};
+    // 1: the counters were read, but the busy pair may be torn (dsplock.c).
+    const int result = GetChannelDspLoad(m_channelId, &load);
+    if (result != 0 && result != 1) {
+        return false;
+    }
+    out.consistent = result == 0;
+    out.blocks        = load.blocks;
+    out.busyNs        = load.busyNs;
+    out.lateBlocks    = load.lateBlocks;
+    out.maxBlockUs    = load.maxBlockUs;
+    out.blockPeriodUs = load.blockPeriodUs;
+    out.currentBlockNs = load.currentBlockNs;
+    out.readNs        = load.readNs;
+    return true;
+#else
+    return false;
+#endif
+}
+
+qint64 RxChannel::takeDspIntervalMaxBlockUs() const
+{
+#ifdef HAVE_WDSP
+    if (!wdspChannelInRange()) {
+        return 0;
+    }
+    return std::max<qint64>(0, TakeChannelDspIntervalMaxBlockUs(m_channelId));
+#else
+    return 0;
 #endif
 }
 
@@ -1875,15 +3125,19 @@ double RxChannel::getMeter(RxMeterType type) const
 #ifdef HAVE_DFNR
 void RxChannel::setDfnrAttenLimit(float dB)
 {
-    if (m_dfnr) {
-        m_dfnr->setAttenLimit(dB);
+    // R-R3-39: kept for an instance built later; DeepFilterFilter's setters
+    // are atomic, so any thread may forward to a published instance.
+    m_dfnrAttenLimit.store(dB, std::memory_order_seq_cst);
+    if (NereusSDR::DeepFilterFilter* dfnr = m_dfnrInstance.load(std::memory_order_seq_cst)) {
+        dfnr->setAttenLimit(dB);
     }
 }
 
 void RxChannel::setDfnrPostFilterBeta(float beta)
 {
-    if (m_dfnr) {
-        m_dfnr->setPostFilterBeta(beta);
+    m_dfnrPostFilterBeta.store(beta, std::memory_order_seq_cst);
+    if (NereusSDR::DeepFilterFilter* dfnr = m_dfnrInstance.load(std::memory_order_seq_cst)) {
+        dfnr->setPostFilterBeta(beta);
     }
 }
 #endif
@@ -2064,6 +3318,9 @@ RxChannelState RxChannel::captureState() const
     // Noise reduction
     s.nrEnabled           = m_nrEnabled.load();
     s.nrMode              = m_nrMode;
+    s.activeNr            = activeNr();
+    s.nnrTuning           = nnrTuning();
+    s.nnrLimit            = nnrLimit();
     s.anfEnabled          = m_anfEnabled.load();
 
     // EQ
@@ -2115,6 +3372,9 @@ void RxChannel::applyState(const RxChannelState& s)
     // Noise reduction
     setNrEnabled(s.nrEnabled);
     setNrMode(s.nrMode);
+    requestNnrLimit(s.nnrLimit);   // before the tuning, which applies it
+    setNnrTuning(s.nnrTuning);
+    setActiveNr(s.activeNr);
     setAnfEnabled(s.anfEnabled);
 
     // EQ
@@ -2139,7 +3399,7 @@ void RxChannel::applyState(const RxChannelState& s)
 // ---------------------------------------------------------------------------
 //
 // These two setters wrap the WDSP entry points that Thetis calls from its
-// DSPRX property setters at radio.cs:540-574 [v2.10.3.13]:
+// DSPRX property setters at radio.cs:542-574 [v2.10.3.15]:
 //
 //   public int FilterSize {
 //       set {
@@ -2164,7 +3424,7 @@ void RxChannel::applyState(const RxChannelState& s)
 //       }
 //   }
 //
-// RXASetNC and RXASetMP at third_party/wdsp/src/RXA.c:1040-1056 [v2.10.3.13]
+// RXASetNC and RXASetMP at Thetis wdsp/RXA.c:1043-1066 [v2.10.3.15]
 // internally quiesce the channel via SetChannelState(channel, 0, 1) — the
 // cm_main flushflag handshake at channel.c:259-297 [v2.10.3.13] — reconfigure
 // every dependent subsystem, then restore the prior run state.  Safe to call
@@ -2198,7 +3458,8 @@ void RxChannel::setDspBufferSizeSamples(int size)
     // SetChannelState's flushflag handshake, then runs a full DSP destroy
     // + rebuild with the new dsp_size.  Heavier than RXASetNC but still
     // safe to call from main thread while audio worker is alive.
-    SetDSPBuffsize(m_channelId, size);
+    // R-R3-39: on the receive lane, in order with the filter size.
+    runOrdered([this, size]() { SetDSPBuffsize(m_channelId, size); });
 #endif
 }
 
@@ -2213,24 +3474,32 @@ void RxChannel::setFilterSizeSamples(int nc)
     // firmin.c:135 [v2.10.3.13]) is satisfied when RXASetNC runs.  Order
     // mirrors Thetis UpdateDSP: BufferSize setter (radio.cs:521) is
     // called before FilterSize setter (radio.cs:540) at console.cs:38918+.
-    if (nc < m_dspBlockSize) {
+    const bool shrinkBuffer = nc < m_dspBlockSize;
+    if (shrinkBuffer) {
         m_dspBlockSize = nc;
-#ifdef HAVE_WDSP
-        // From Thetis radio.cs:521 [v2.10.3.13] DSPRX.BufferSize setter.
-        SetDSPBuffsize(m_channelId, nc);
-#endif
     }
     m_filterSize = nc;
+    // R-R3-39: the carries above change at once; the WDSP calls run on the
+    // receive lane, in this order.
+    runOrdered([this, nc, shrinkBuffer]() {
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:540 [v2.10.3.13] DSPRX.FilterSize setter.
-    RXASetNC(m_channelId, nc);
+        if (shrinkBuffer) {
+            // From Thetis radio.cs:521 [v2.10.3.13] DSPRX.BufferSize setter.
+            SetDSPBuffsize(m_channelId, nc);
+        }
+        // From Thetis radio.cs:540 [v2.10.3.13] DSPRX.FilterSize setter.
+        RXASetNC(m_channelId, nc);
+#else
+        Q_UNUSED(nc);
+        Q_UNUSED(shrinkBuffer);
 #endif
-    // RXASetNC reaches nbp0 through RXANBPSetNC (third_party/wdsp/src/RXA.c:1043),
-    // and min_notch_width divides by nc (nbp.c:82-96), so the narrowest
-    // realisable notch just moved. Thetis re-reads it at exactly this point
-    // in its own DSP-options apply path (console.cs:39052-39053 ->
-    // UpdateMinimumNotchWidthRX, :48787-48818 [v2.10.3.15]).
-    emit minNotchWidthChanged(minNotchWidthHz());
+        // RXASetNC reaches nbp0 through RXANBPSetNC (third_party/wdsp/src/RXA.c:1043),
+        // and min_notch_width divides by nc (nbp.c:82-96), so the narrowest
+        // realisable notch just moved. Thetis re-reads it at exactly this point
+        // in its own DSP-options apply path (console.cs:39052-39053 ->
+        // UpdateMinimumNotchWidthRX, :48787-48818 [v2.10.3.15]).
+        refreshMinNotchWidthOnLane();
+    });
 }
 
 void RxChannel::setFilterTypeLinearPhase(bool linearPhase)
@@ -2241,11 +3510,16 @@ void RxChannel::setFilterTypeLinearPhase(bool linearPhase)
     }
     m_filterType = newType;
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:559 [v2.10.3.13] DSPRX.FilterType setter:
+    // From Thetis radio.cs:571 [v2.10.3.15] DSPRX.FilterType setter:
     //   WDSP.RXASetMP(WDSP.id(thread, subrx), Convert.ToBoolean(value));
-    // C# Convert.ToBoolean((int)DSPFilterType) maps Low_Latency=0 → false,
-    // Linear_Phase=1 → true.  We pass the already-translated 0/1.
-    RXASetMP(m_channelId, newType);
+    // with enums.cs:404-408 [v2.10.3.15]
+    //   public enum DSPFilterType { Linear_Phase = 0, Low_Latency = 1, }
+    // so Low_Latency sends minimum phase (MP 1) and Linear_Phase MP 0.
+    // m_filterType counts the other way (0 = Low Latency), so the MP flag
+    // is its inverse (R-IOS-13, 2026-09-27: it used to be sent as is).
+    // R-R3-39: on the receive lane, in order with the sizes.
+    const int minimumPhase = linearPhase ? 0 : 1;
+    runOrdered([this, minimumPhase]() { RXASetMP(m_channelId, minimumPhase); });
 #endif
 }
 
@@ -2279,14 +3553,13 @@ qint64 RxChannel::rebuild(WdspEngine& engine, const ChannelConfig& cfg)
 // NereusSDR-original — no Thetis source ported; the per-mode key naming
 // mirrors the DspOptionsPage AppSettings keys (design Section 4B).
 
-namespace {
-
 // Maps DSPMode to the DspOptions key suffix used in AppSettings.
-// From design Section 4B — Phone covers SSB/AM/SAM/DSB, CW covers
-// CWU/CWL, Dig covers DIGU/DIGL/DSB/SPEC/DRM, FM covers FM.
+// From design Section 4B: Phone covers SSB/AM/SAM/DSB, CW covers
+// CWU/CWL, Dig covers DIGU/DIGL/SPEC/DRM, FM covers FM.
 //
-// NereusSDR-original helper — no Thetis source ported.
-QString rxModeKeyPart(DSPMode mode)
+// NereusSDR-original helper, no Thetis source ported. Declared in
+// RxChannel.h so RadioModel and DspOptionsPage share this one mapping.
+QString dspOptionsModeGroup(DSPMode mode)
 {
     switch (mode) {
         case DSPMode::USB:
@@ -2310,8 +3583,6 @@ QString rxModeKeyPart(DSPMode mode)
     }
 }
 
-}  // namespace
-
 qint64 RxChannel::onModeChanged(DSPMode newMode)
 {
     // Engine guard: no engine attached → return 0 (no rebuild possible).
@@ -2322,7 +3593,7 @@ qint64 RxChannel::onModeChanged(DSPMode newMode)
     }
 
     auto& s = AppSettings::instance();
-    const QString modeKey = rxModeKeyPart(newMode);
+    const QString modeKey = dspOptionsModeGroup(newMode);
 
     // Read per-mode RX-side DSP settings — Thetis-faithful split keys
     // post schema-v5 (radio.cs:519-574 [v2.10.3.13] DSPRX persists
@@ -2375,6 +3646,19 @@ qint64 RxChannel::onModeChanged(DSPMode newMode)
     // produces a valid WDSP state.  Each WDSP entry point quiesces via
     // SetChannelState's flushflag handshake — safe to call from the main
     // thread while audio worker is alive.
+    if (m_lane != nullptr && !m_lane->isCurrentThread()) {
+        // R-R3-39: the setters below carry the new sizes at once and queue
+        // their WDSP calls; the lane times them from the first to the last
+        // and reports it through dspOptionsApplied.
+        auto timer = std::make_shared<QElapsedTimer>();
+        runOrdered([timer]() { timer->start(); });
+        setFilterSizeSamples(newFiltSize);
+        setDspBufferSizeSamples(newBufSize);
+        setFilterTypeLinearPhase(newFiltType == 1);
+        runOrdered([this, timer]() { emit dspOptionsApplied(timer->elapsed()); });
+        return 0;
+    }
+
     QElapsedTimer t;
     t.start();
     // setFilterSizeSamples cascades a buffer shrink internally when filter
@@ -2409,7 +3693,16 @@ QVector<float> RxChannel::filterResponseMagnitudes(int nPoints) const
     if (nPoints <= 0) {
         return {};
     }
+    // Parity Task 16: the bins, then the graph's resampling, so a remote
+    // window drawing a Core's bins draws what this channel would.
+    return resampleFilterResponse(filterResponseBins(), nPoints);
+}
 
+QVector<double> RxChannel::filterResponseBins(double* stepHz) const
+{
+    if (stepHz) {
+        *stepHz = 0.0;
+    }
 #if defined(HAVE_WDSP) && defined(HAVE_FFTW3)
     // Number of FIR taps.  The default WDSP BANDPASS uses nc = 1025 taps
     // (a power-of-two-plus-one) with wintype=1 (7-term Blackman-Harris) and
@@ -2421,7 +3714,7 @@ QVector<float> RxChannel::filterResponseMagnitudes(int nPoints) const
     // f_low and f_high in Hz (signed; can be negative for LSB).
     const double fLow  = m_filterLow;
     const double fHigh = m_filterHigh;
-    const double sr    = static_cast<double>(m_sampleRate);
+    const double sr    = static_cast<double>(m_sampleRate.load());
 
     // Synthesise filter taps using the exact WDSP function.
     // rtype=0 → real coefficients (N doubles), not complex pairs.
@@ -2439,7 +3732,7 @@ QVector<float> RxChannel::filterResponseMagnitudes(int nPoints) const
     // FFT size must be >= kTapCount; use next power-of-two >= 4096 to ensure
     // sufficient frequency resolution for the display (≥ 4 Hz/bin at 48 kHz).
     // A 4096-point FFT gives 48000 / 4096 ≈ 11.7 Hz/bin.
-    constexpr int kFftSize = 4096;
+    constexpr int kFftSize = kFilterResponseFftSize;
     static_assert(kFftSize >= kTapCount, "FFT size must exceed tap count");
 
     // Allocate aligned FFTW3 buffers.
@@ -2471,9 +3764,38 @@ QVector<float> RxChannel::filterResponseMagnitudes(int nPoints) const
     fftw_execute(plan);
     fftw_destroy_plan(plan);
 
-    // Compute magnitude in dB for the positive half-spectrum [0, sampleRate/2].
+    // Magnitude for the positive half-spectrum [0, sampleRate/2].
     // out[0..kFftSize/2] covers DC to Nyquist — kFftSize/2 + 1 unique bins.
     const int halfSize = kFftSize / 2 + 1;  // DC + positive frequencies
+    QVector<double> bins(halfSize);
+    for (int j = 0; j < halfSize; ++j) {
+        const double re = out[j][0];
+        const double im = out[j][1];
+        bins[j] = std::sqrt(re * re + im * im);
+    }
+
+    fftw_free(in);
+    fftw_free(out);
+
+    if (stepHz) {
+        *stepHz = sr / static_cast<double>(kFftSize);
+    }
+    return bins;
+
+#else
+    // WDSP or FFTW3 not available: return an empty vector so callers can
+    // gracefully skip high-resolution rendering.
+    return {};
+#endif
+}
+
+QVector<float> RxChannel::resampleFilterResponse(const QVector<double>& binMagnitudes,
+                                                 int nPoints)
+{
+    const int halfSize = static_cast<int>(binMagnitudes.size());
+    if (nPoints <= 0 || halfSize <= 0) {
+        return {};
+    }
 
     // Decimate to nPoints output samples by linear interpolation over the
     // positive half-spectrum.  Index j in [0, halfSize-1] maps to frequency
@@ -2487,11 +3809,8 @@ QVector<float> RxChannel::filterResponseMagnitudes(int nPoints) const
     // Find peak magnitude for normalisation (reference = peak = 0 dB).
     double peakMag = 0.0;
     for (int j = 0; j < halfSize; ++j) {
-        const double re  = out[j][0];
-        const double im  = out[j][1];
-        const double mag = std::sqrt(re * re + im * im);
-        if (mag > peakMag) {
-            peakMag = mag;
+        if (binMagnitudes[j] > peakMag) {
+            peakMag = binMagnitudes[j];
         }
     }
     if (peakMag < 1e-30) {
@@ -2506,13 +3825,7 @@ QVector<float> RxChannel::filterResponseMagnitudes(int nPoints) const
         const double frac    = fracIdx - static_cast<double>(idx0);
 
         // Linear-interpolate magnitude (not dB) for smooth curve.
-        auto binMag = [&](int j) -> double {
-            const double re = out[j][0];
-            const double im = out[j][1];
-            return std::sqrt(re * re + im * im);
-        };
-
-        const double mag = binMag(idx0) * (1.0 - frac) + binMag(idx1) * frac;
+        const double mag = binMagnitudes[idx0] * (1.0 - frac) + binMagnitudes[idx1] * frac;
 
         // Convert to dB, normalised to peak (0 dB = passband).
         // Clamp at -120 dB to avoid -inf in dead stopband.
@@ -2520,17 +3833,17 @@ QVector<float> RxChannel::filterResponseMagnitudes(int nPoints) const
         result[i] = static_cast<float>(std::max(magDb, -120.0));
     }
 
-    fftw_free(in);
-    fftw_free(out);
-
     return result;
-
-#else
-    // WDSP or FFTW3 not available — return empty vector so callers can
-    // gracefully skip high-resolution rendering.
-    Q_UNUSED(nPoints);
-    return {};
-#endif
 }
+
+#ifdef NEREUS_BUILD_TESTS
+// R-IOS-13: rxa[] is read in TxChannel.cpp, the one file that includes
+// WDSP's internal headers (their min/max macros break this file).
+int wdspRxBandpassMinimumPhaseForTest(int channelId);
+int RxChannel::bandpassMinimumPhaseForTest() const
+{
+    return wdspRxBandpassMinimumPhaseForTest(m_channelId);
+}
+#endif
 
 } // namespace NereusSDR

@@ -18,6 +18,9 @@
 //                 parity epic; pure model with no UI / no persistence /
 //                 no controller wiring (those land in Tasks 3.2 / 3.3 /
 //                 3.4 / 3.5 of the same plan).
+//   2026-09-28 - paCalPointSpec: each calibration point's spin box range
+//                 from Thetis setup.designer.cs [v2.10.3.15] (R-R3-49).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From console.cs ---
@@ -257,5 +260,18 @@ struct PaCalProfile {
     ///   - `None`       → 0.0f
     float interval() const noexcept;
 };
+
+/// The Watt Meter spin box for one calibration point (1..10): its range,
+/// step and decimals as Thetis's own ud{10|100|200}PA{N}W boxes have them.
+/// Each point has its own maximum; the minimum is 0, the step 0.1 W and
+/// one decimal place for every point. `maximum` is 0 for `None` or an index
+/// outside 1..10.
+struct PaCalPointSpec {
+    double maximum = 0.0;
+    double step = 0.0;
+    int decimals = 0;
+};
+
+PaCalPointSpec paCalPointSpec(PaCalBoardClass cls, int index) noexcept;
 
 }  // namespace NereusSDR

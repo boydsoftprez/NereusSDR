@@ -68,50 +68,17 @@
 #include <QVariant>
 
 #include <algorithm>
-#include <array>
-#include <span>
 
 namespace NereusSDR {
-
-namespace {
-
-std::span<const int> masterListFor(ProtocolVersion proto, HPSDRModel model) noexcept
-{
-    if (proto == ProtocolVersion::Protocol1) {
-        // Two boards qualify for the extra 384k rate on P1.  See the
-        // header constant kP1RatesWithExtra384k for the per-board cites
-        // (Thetis setup.cs:847 for RedPitaya / mi0bot setup.cs:849-851
-        // [v2.10.3.13] for HermesLite).
-        if (model == HPSDRModel::REDPITAYA ||
-            model == HPSDRModel::HERMESLITE) {
-            return {kP1RatesWithExtra384k, std::size(kP1RatesWithExtra384k)};
-        }
-        return {kP1RatesBase, std::size(kP1RatesBase)};
-    }
-    // Protocol 2 — every ETH board gets the full list.
-    return {kP2Rates, std::size(kP2Rates)};
-}
-
-} // namespace
 
 std::vector<int> allowedSampleRates(ProtocolVersion proto,
                                      const BoardCapabilities& caps,
                                      HPSDRModel model)
 {
-    const auto master = masterListFor(proto, model);
-    std::vector<int> out;
-    out.reserve(master.size());
-    for (int rate : master) {
-        // Skip zero-sentinel slots in caps.sampleRates, include only rates
-        // the board actually supports.
-        const bool supported = std::any_of(caps.sampleRates.begin(),
-                                            caps.sampleRates.end(),
-                                            [rate](int r) { return r == rate; });
-        if (supported) {
-            out.push_back(rate);
-        }
-    }
-    return out;
+    // Plan Task 5: the per-protocol rate ladder lives beside the board row
+    // (BoardCapsTable::sampleRatesFor), with the Thetis setup.cs:847-851
+    // and mi0bot HL2 cites. This name stays for its existing callers.
+    return BoardCapsTable::sampleRatesFor(caps, proto, model);
 }
 
 int defaultSampleRate(ProtocolVersion proto,

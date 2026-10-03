@@ -34,6 +34,42 @@
 //                 audio/SendIqToVax stored-but-not-active). J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23 - R-R3-21: the VAX channel combo stays disabled, with a
+//                 plain reason, on a remote-station model. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-09-23 - R-R3-44: the VAX channel combo is live in a remote window
+//                 again (this computer's VAX, fed from the Core's receiver
+//                 streams). J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-24 - R-R3-21: the ATT button opens the step attenuator; the
+//                 VAX button's tooltip says what it does. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-09-24 - R-R3-49: the RF Gain slider and WNB button (ANT flyout)
+//                 and the IQ Ch combo (VAX flyout) are removed. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-09-24 - R-R3-49, R-R3-21: the ANT button is not shown on a board
+//                 with no antenna choices, where its flyout would be empty.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-09-24 - R-R3-49 / R-R3-21 fix wave: the VAX combo's tooltip before
+//                 a radio is set reads "waiting for the radio". J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-IOS-27, R-IOS-06: the band table moved to
+//                 models/BandGrid.h, shared with the Core's catalogue; the
+//                 grid draws as before. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-26 - Parity Task 18: the Display flyout's Grid Lines toggle
+//                 reports gridVisibleChanged (it changed only its own label)
+//                 and takes the pan's state through setGridVisible. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - TX rulings (item 3, JJ): the ATT flyout is held, with the
+//                reason, on a pan whose slice this window only listens to.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SpectrumOverlayPanel.h"
@@ -42,7 +78,9 @@
 #include "core/AntennaLabels.h"
 #include "core/BoardCapabilities.h"
 #include "core/SkuUiProfile.h"
+#include "core/StepAttenuatorFacade.h"
 #include "gui/AntennaPopupBuilder.h"
+#include "models/BandGrid.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -50,6 +88,8 @@
 #include <QComboBox>
 #include <QSlider>
 #include <QLabel>
+#include <QCheckBox>
+#include <QSpinBox>
 #include <QGridLayout>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -107,30 +147,10 @@ namespace OverlayColors {
         "QPushButton { background: rgba(0, 112, 192, 180); "
         "border: 1px solid #0090e0; border-radius: 2px; "
         "color: #ffffff; font-size: 11px; font-weight: bold; }";
-
-    constexpr auto kMenuBtnDisabled =
-        "QPushButton { background: rgba(20, 30, 45, 180); "
-        "border: 1px solid rgba(255, 255, 255, 15); border-radius: 2px; "
-        "color: #556070; font-size: 11px; font-weight: bold; }";
 } // namespace OverlayColors
 
 // File-local helpers for opaque styles that diverge from the canonical
 // Style:: helpers (per §A2 exception pattern — verified byte-by-byte):
-
-// overlaySliderStyle — diverges from Style::sliderHStyle() on two counts:
-//   - groove bg: #1a2a3a (Style::kButtonBg) vs Style::sliderHStyle() kGroove (#203040)
-//   - handle bg: #c8d8e8 (Style::kTextPrimary, grey-white) vs kAccent (#00b4d8, cyan)
-//   - handle margin: -4px 0 vs sliderHStyle()'s -3px 0
-// These are deliberate — the overlay slider uses a low-contrast white handle
-// that is legible against the translucent panel rather than the main spectrum
-// accent colour.
-static inline QString overlaySliderStyle()
-{
-    return QStringLiteral(
-        "QSlider::groove:horizontal { background: %1; height: 4px; border-radius: 2px; }"
-        "QSlider::handle:horizontal { background: %2; width: 10px; margin: -4px 0; border-radius: 5px; }"
-    ).arg(Style::kButtonBg, Style::kTextPrimary);
-}
 
 // overlayDisplayToggleStyle — diverges from Style::buttonBaseStyle() + Style::greenCheckedStyle():
 //   - padding: 2px 6px vs buttonBaseStyle()'s 2px 4px (wider pill shape for display toggles)
@@ -151,41 +171,10 @@ static QPushButton* makeMenuBtn(const QString& text, QWidget* parent)
     return btn;
 }
 
-// Helper: create a disabled NYI menu button
-static QPushButton* makeDisabledBtn(const QString& text, QWidget* parent)
-{
-    auto* btn = new QPushButton(text, parent);
-    btn->setFixedSize(kBtnW, kBtnH);
-    btn->setStyleSheet(OverlayColors::kMenuBtnDisabled);
-    btn->setEnabled(false);
-    btn->setToolTip("Not yet implemented");
-    return btn;
-}
-
-// ── Band table (from AetherSDR SpectrumOverlayMenu.cpp, reduced to HF + WWV) ─
-struct BandEntry {
-    const char* label;
-    const char* name;
-    double      freqHz;
-    const char* mode;
-};
-
-// Frequencies in Hz (task spec: 1.8e6, 3.5e6, etc.)
-static constexpr BandEntry kBands[] = {
-    {"160", "160m",  1.8e6,    "LSB"},
-    {"80",  "80m",   3.5e6,    "LSB"},
-    {"60",  "60m",   5.3e6,    "USB"},
-    {"40",  "40m",   7.0e6,    "LSB"},
-    {"30",  "30m",  10.1e6,    "DIGU"},
-    {"20",  "20m",  14.0e6,    "USB"},
-    {"17",  "17m",  18.068e6,  "USB"},
-    {"15",  "15m",  21.0e6,    "USB"},
-    {"12",  "12m",  24.89e6,   "USB"},
-    {"10",  "10m",  28.0e6,    "USB"},
-    {"6",   "6m",   50.0e6,    "USB"},
-    {"WWV", "WWV",  10.0e6,    "AM"},
-};
-static constexpr int kBandCount = static_cast<int>(sizeof(kBands) / sizeof(kBands[0]));
+// ── Band table ────────────────────────────────────────────────────────────────
+// From AetherSDR SpectrumOverlayMenu.cpp, reduced to HF + WWV. It lives in
+// models/BandGrid.h (kBandGrid) so the Core's catalogue lists the same bands
+// in the same order (R-IOS-27).
 
 // ── Constructor ───────────────────────────────────────────────────────────────
 
@@ -248,7 +237,7 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
     // Button 5: ANT — flyout
     {
         auto* btn = makeMenuBtn("ANT", this);
-        btn->setToolTip("Open antenna and RF gain controls");
+        btn->setToolTip("Open antenna controls");
         connect(btn, &QPushButton::clicked, this, &SpectrumOverlayPanel::toggleAntFlyout);
         m_menuBtns.append(btn);  // index 3
     }
@@ -264,18 +253,20 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
         m_menuBtns.append(btn);  // index 4
     }
 
-    // Button 7: VAX — flyout (NYI Phase 3-VAX)
+    // Button 7: VAX flyout
     {
         auto* btn = makeMenuBtn("VAX", this);
-        btn->setToolTip("Open VAX audio routing (NYI Phase 3-VAX)");
+        btn->setToolTip("Choose the VAX channel this panadapter's slice sends its audio to");
         connect(btn, &QPushButton::clicked, this, &SpectrumOverlayPanel::toggleVaxFlyout);
         m_menuBtns.append(btn);  // index 5
     }
 
-    // Button 8: ATT (NYI)
+    // Button 8: ATT flyout (R-R3-21): the radio's step attenuator.
     {
-        auto* btn = makeDisabledBtn("ATT", this);
-        btn->setToolTip("Attenuator control (NYI)");
+        auto* btn = makeMenuBtn("ATT", this);
+        btn->setObjectName(QStringLiteral("attMenuButton"));
+        btn->setToolTip("Open the step attenuator");
+        connect(btn, &QPushButton::clicked, this, &SpectrumOverlayPanel::toggleAttFlyout);
         m_menuBtns.append(btn);  // index 6
     }
 
@@ -287,6 +278,7 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
     buildAntFlyout();
     buildDisplayFlyout();
     buildVaxFlyout();
+    buildAttFlyout();
     buildZoomButtons();
 
     // Install event filter for auto-close on outside click and parent resize tracking
@@ -358,17 +350,24 @@ void SpectrumOverlayPanel::updateLayout()
                                       : QStringLiteral("\u25b6")); // ▶
     m_collapseBtn->move(kPad, kPad);
 
+    // R-R3-49: a button whose flyout would be empty is not shown (the ANT
+    // button on a board with no antenna choices), as an empty Setup page
+    // is not offered.
     int y = kPad + kBtnH + kGap;
-    for (auto* btn : m_menuBtns) {
-        btn->setVisible(m_expanded);
-        if (m_expanded) {
+    int shownCount = 0;
+    for (int i = 0; i < m_menuBtns.size(); ++i) {
+        QPushButton* btn = m_menuBtns[i];
+        const bool offered = i != 3 || m_antAvailable;  // index 3 is ANT
+        btn->setVisible(m_expanded && offered);
+        if (m_expanded && offered) {
             btn->move(kPad, y);
             y += kBtnH + kGap;
+            ++shownCount;
         }
     }
 
     int totalH = m_expanded
-        ? (kPad + kBtnH + kGap + static_cast<int>(m_menuBtns.size()) * (kBtnH + kGap))
+        ? (kPad + kBtnH + kGap + shownCount * (kBtnH + kGap))
         : (kPad + kBtnH + kPad);
     setFixedSize(kPad + kBtnW + kPad, totalH);
 }
@@ -407,19 +406,20 @@ void SpectrumOverlayPanel::buildBandFlyout()
     // 4-column grid layout:
     // Row 0: 160, 80, 60, 40
     // Row 1: 30, 20, 17, 15
-    // Row 2: 12, 10, 6, WWV
+    // Row 2: 12, 10, 6, 2
+    // Row 3: WWV
     static constexpr int kCols = 4;
-    for (int i = 0; i < kBandCount; ++i) {
+    for (int i = 0; i < kBandGridCount; ++i) {
         int row = i / kCols;
         int col = i % kCols;
 
-        auto* btn = new QPushButton(QString::fromLatin1(kBands[i].label), m_bandFlyout);
+        auto* btn = new QPushButton(QString::fromLatin1(kBandGrid[i].label), m_bandFlyout);
         btn->setFixedSize(kBandBtnW, kBandBtnH);
         btn->setStyleSheet(bandBtnStyle);
 
-        QString bandName = QString::fromLatin1(kBands[i].name);
-        double  freqHz   = kBands[i].freqHz;
-        QString mode     = QString::fromLatin1(kBands[i].mode);
+        QString bandName = QString::fromLatin1(kBandGrid[i].name);
+        double  freqHz   = kBandGrid[i].freqHz;
+        QString mode     = QString::fromLatin1(kBandGrid[i].mode);
 
         connect(btn, &QPushButton::clicked, this, [this, bandName, freqHz, mode]() {
             hideFlyout();
@@ -530,64 +530,6 @@ void SpectrumOverlayPanel::buildAntFlyout()
                 s->setTxAntenna(ant);
             }
         });
-    }
-
-    // RF Gain slider (-8 to +32 dB) — from AetherSDR buildAntPanel
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(4);
-        auto* lbl = new QLabel("RF Gain:");
-        lbl->setStyleSheet(OverlayColors::kLabelStyle);
-        lbl->setFixedWidth(kLabelW);
-        row->addWidget(lbl);
-
-        m_rfGainSlider = new QSlider(Qt::Horizontal);
-        m_rfGainSlider->setRange(-8, 32);
-        m_rfGainSlider->setValue(0);
-        m_rfGainSlider->setSingleStep(8);
-        m_rfGainSlider->setPageStep(8);
-        m_rfGainSlider->setTickInterval(8);
-        m_rfGainSlider->setTickPosition(QSlider::TicksBelow);
-        m_rfGainSlider->setStyleSheet(overlaySliderStyle());
-        m_rfGainSlider->setToolTip("RF Gain: −8 to +32 dB (8 dB steps)");
-        row->addWidget(m_rfGainSlider, 1);
-
-        m_rfGainLabel = new QLabel("0 dB");
-        m_rfGainLabel->setStyleSheet(OverlayColors::kLabelStyle);
-        m_rfGainLabel->setFixedWidth(36);
-        m_rfGainLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        row->addWidget(m_rfGainLabel);
-        vbox->addLayout(row);
-
-        connect(m_rfGainSlider, &QSlider::valueChanged, this, [this](int v) {
-            // Snap to nearest 8 dB step (from AetherSDR buildAntPanel)
-            constexpr int kStep = 8;
-            int snapped = qRound(static_cast<double>(v) / kStep) * kStep;
-            if (snapped != v) {
-                QSignalBlocker sb(m_rfGainSlider);
-                m_rfGainSlider->setValue(snapped);
-            }
-            m_rfGainLabel->setText(QString("%1 dB").arg(snapped));
-        });
-    }
-
-    // WNB toggle
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(4);
-        m_wnbBtn = new QPushButton("WNB");
-        m_wnbBtn->setCheckable(true);
-        m_wnbBtn->setFixedSize(48, 22);
-        m_wnbBtn->setStyleSheet(
-            "QPushButton { background: #1a2a3a; border: 1px solid #304050; "
-            "border-radius: 2px; color: #c8d8e8; font-size: 11px; font-weight: bold; }"
-            "QPushButton:checked { background: #0070c0; color: #ffffff; "
-            "border: 1px solid #0090e0; }"
-            "QPushButton:hover { border: 1px solid #0090e0; }");
-        m_wnbBtn->setToolTip("Wideband noise blanker — suppresses impulse noise across panadapter bandwidth");
-        row->addWidget(m_wnbBtn);
-        row->addStretch();
-        vbox->addLayout(row);
     }
 
     m_antFlyout->setFixedWidth(180);
@@ -783,6 +725,9 @@ void SpectrumOverlayPanel::buildDisplayFlyout()
         grid->addWidget(m_showGridBtn, row, 2, 1, 2);
         connect(m_showGridBtn, &QPushButton::toggled, this, [this](bool on) {
             m_showGridBtn->setText(on ? "On" : "Off");
+            // Parity Task 18: the pan's grid follows (it changed only this
+            // label).
+            emit gridVisibleChanged(on);
         });
         ++row;
     }
@@ -916,7 +861,7 @@ void SpectrumOverlayPanel::buildVaxFlyout()
         // Disabled until setRadioModel() resolves a slice; retains the
         // pre-3O tooltip in that transient state.
         m_vaxCmb->setEnabled(false);
-        m_vaxCmb->setToolTip("VAX channel (not yet bound to a radio model)");
+        m_vaxCmb->setToolTip("VAX channel (waiting for the radio)");
         row->addWidget(m_vaxCmb, 1);
         vb->addLayout(row);
 
@@ -933,24 +878,6 @@ void SpectrumOverlayPanel::buildVaxFlyout()
                 s->setVaxChannel(idx);
             }
         });
-    }
-
-    // IQ Ch combo — reserved for a future phase (design spec §11.3).
-    // audio/SendIqToVax is stored-but-not-active per spec §6.7; the combo
-    // stays disabled until a consumer of the I/Q-to-VAX path exists.
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(4);
-        auto* lbl = new QLabel("IQ Ch");
-        lbl->setStyleSheet(OverlayColors::kLabelStyle);
-        row->addWidget(lbl);
-        m_vaxIqCmb = new QComboBox;
-        m_vaxIqCmb->setObjectName(QStringLiteral("vaxIqCombo"));
-        m_vaxIqCmb->addItems({"None", "1", "2", "3", "4"});
-        m_vaxIqCmb->setEnabled(false);
-        m_vaxIqCmb->setToolTip("IQ-stream to VAX \u2014 reserved for future phase (design spec \u00a711.3)");
-        row->addWidget(m_vaxIqCmb, 1);
-        vb->addLayout(row);
     }
 
     m_vaxFlyout->setFixedWidth(140);
@@ -1000,11 +927,33 @@ void SpectrumOverlayPanel::setRadioModel(RadioModel* model)
     if (!m_radioModel) {
         // Unbound — revert to the pre-3O disabled state.
         m_vaxCmb->setEnabled(false);
-        m_vaxCmb->setToolTip("VAX channel (not yet bound to a radio model)");
+        m_vaxCmb->setToolTip("VAX channel (waiting for the radio)");
         if (m_rxAntCmb) { m_rxAntCmb->setEnabled(false); }
         if (m_txAntCmb) { m_txAntCmb->setEnabled(false); }
+        showAttValues();
         return;
     }
+
+    // R-R3-21: the ATT flyout follows the step attenuator's object.
+    if (StepAttenuatorFacade* att = m_radioModel->stepAttFacade()) {
+        connect(att, &StepAttenuatorFacade::enabledChanged,
+                this, [this](bool) { showAttValues(); });
+        for (auto signal : {&StepAttenuatorFacade::attenuationDbChanged,
+                            &StepAttenuatorFacade::minDbChanged,
+                            &StepAttenuatorFacade::maxDbChanged}) {
+            connect(att, signal, this, [this](int) { showAttValues(); });
+        }
+        connect(att, &StepAttenuatorFacade::windowAvailabilityChanged,
+                this, [this](bool) { showAttValues(); });
+        connect(att, &StepAttenuatorFacade::editRejected, this,
+                [this](const QString& reason) {
+            if (m_attReason) {
+                m_attReason->setText(reason);
+                m_attReason->setVisible(true);
+            }
+        });
+    }
+    showAttValues();
 
     // Any slice topology change can change this pan's resolved slice.
     const auto rebind = [this](int) {
@@ -1070,8 +1019,12 @@ void SpectrumOverlayPanel::bindToPanSlice()
             m_updatingFromModel = false;
         });
 
+        // R-R3-44: live in a remote window too. There it picks this
+        // computer's VAX channel for the Core's slice, which the remote
+        // model keeps on this computer and RemoteVaxRouter feeds from the
+        // Core's receiver stream.
         m_vaxCmb->setEnabled(true);
-        m_vaxCmb->setToolTip("Route this slice's RX audio to a VAX channel");
+        m_vaxCmb->setToolTip(QStringLiteral("Route this slice's RX audio to a VAX channel"));
         if (m_rxAntCmb) { m_rxAntCmb->setEnabled(true); }
         if (m_txAntCmb) { m_txAntCmb->setEnabled(true); }
 
@@ -1161,6 +1114,14 @@ void SpectrumOverlayPanel::setBoardCapabilities(const BoardCapabilities& caps)
     if (m_rxAntRow) { m_rxAntRow->setVisible(show); }
     if (m_txAntRow) { m_txAntRow->setVisible(show); }
 
+    // R-R3-49: with both rows hidden the ANT flyout would open empty, so
+    // the ANT button is not shown on such a board (Hermes Lite 2, Atlas).
+    if (m_antAvailable != show) {
+        m_antAvailable = show;
+        if (!show && m_activeFlyout == m_antFlyout) { hideFlyout(); }
+        updateLayout();
+    }
+
     // Reseed from the resolved slice so the combo label matches persisted state.
     if (show && m_radioModel) {
         if (SliceModel* s = resolvedSlice()) {
@@ -1196,13 +1157,147 @@ void SpectrumOverlayPanel::toggleVaxFlyout()
     vaxBtn->setStyleSheet(OverlayColors::kMenuBtnActive);
 }
 
+// ── ATT flyout (R-R3-21) ─────────────────────────────────────────────────────
+//
+// The ATT button was a disabled placeholder. It now opens the radio's step
+// attenuator: its on/off and its level, through RadioModel::stepAttFacade(),
+// the object the RX applet's ATT row and Setup > General > Options use. A
+// local window reaches the StepAttenuatorController; a remote window
+// reaches the Core's, and shows the Core's reason while it cannot.
+
+void SpectrumOverlayPanel::buildAttFlyout()
+{
+    m_attFlyout = new QWidget(parentWidget());
+    m_attFlyout->setObjectName(QStringLiteral("attFlyout"));
+    m_attFlyout->setStyleSheet(OverlayColors::kPanelStyle);
+    m_attFlyout->hide();
+
+    auto* vb = new QVBoxLayout(m_attFlyout);
+    vb->setContentsMargins(6, 6, 6, 6);
+    vb->setSpacing(4);
+
+    m_attEnableChk = new QCheckBox(QStringLiteral("Step attenuator"));
+    m_attEnableChk->setObjectName(QStringLiteral("attEnableCheck"));
+    m_attEnableChk->setStyleSheet(OverlayColors::kLabelStyle);
+    m_attEnableChk->setToolTip(QStringLiteral("Use the radio's step attenuator"));
+    vb->addWidget(m_attEnableChk);
+
+    auto* row = new QHBoxLayout;
+    row->setSpacing(4);
+    auto* lbl = new QLabel(QStringLiteral("ATT"));
+    lbl->setStyleSheet(OverlayColors::kLabelStyle);
+    row->addWidget(lbl);
+    m_attSpin = new QSpinBox;
+    m_attSpin->setObjectName(QStringLiteral("attSpin"));
+    m_attSpin->setSuffix(QStringLiteral(" dB"));
+    m_attSpin->setRange(0, 31);
+    m_attSpin->setToolTip(QStringLiteral("Step attenuator level"));
+    row->addWidget(m_attSpin, 1);
+    vb->addLayout(row);
+
+    m_attReason = new QLabel;
+    m_attReason->setObjectName(QStringLiteral("attReason"));
+    m_attReason->setWordWrap(true);
+    m_attReason->setStyleSheet(OverlayColors::kLabelStyle);
+    m_attReason->setVisible(false);
+    vb->addWidget(m_attReason);
+
+    connect(m_attEnableChk, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_updatingFromModel || !m_radioModel) { return; }
+        if (!m_attHeldReason.isEmpty()) { return; }  // TX rulings (item 3)
+        if (StepAttenuatorFacade* att = m_radioModel->stepAttFacade()) {
+            att->setEnabled(on);
+        }
+        showAttValues();
+    });
+    connect(m_attSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int dB) {
+        if (m_updatingFromModel || !m_radioModel) { return; }
+        if (!m_attHeldReason.isEmpty()) { return; }  // TX rulings (item 3)
+        if (StepAttenuatorFacade* att = m_radioModel->stepAttFacade()) {
+            att->setAttenuationDb(dB);
+        }
+        showAttValues();
+    });
+
+    m_attFlyout->setFixedWidth(160);
+    m_attFlyout->adjustSize();
+    showAttValues();
+}
+
+void SpectrumOverlayPanel::showAttValues()
+{
+    if (!m_attEnableChk || !m_attSpin || !m_attReason) { return; }
+    StepAttenuatorFacade* att = m_radioModel ? m_radioModel->stepAttFacade() : nullptr;
+    if (!att) {
+        m_attEnableChk->setEnabled(false);
+        m_attSpin->setEnabled(false);
+        m_attReason->setVisible(false);
+        return;
+    }
+    // A local model's object is bound to the radio's controller; a remote
+    // one reaches the Core only while the window says it can.
+    const bool available = att->isBound() || att->windowAvailable();
+    m_updatingFromModel = true;
+    {
+        QSignalBlocker blockChk(m_attEnableChk);
+        QSignalBlocker blockSpin(m_attSpin);
+        m_attEnableChk->setChecked(att->enabled());
+        if (att->maxDb() > att->minDb()) {
+            m_attSpin->setRange(att->minDb(), att->maxDb());
+        }
+        m_attSpin->setValue(att->attenuationDb());
+    }
+    m_updatingFromModel = false;
+    // TX rulings (item 3): held on a listened slice, with the reason.
+    const bool held = !m_attHeldReason.isEmpty();
+    m_attEnableChk->setEnabled(available && !held);
+    m_attSpin->setEnabled(available && !held && att->enabled());
+    const QString reason = held ? m_attHeldReason
+                         : available ? QString() : att->windowUnavailableReason();
+    m_attEnableChk->setToolTip(held ? m_attHeldReason
+                                    : QStringLiteral("Use the radio's step attenuator"));
+    m_attSpin->setToolTip(held ? m_attHeldReason : QStringLiteral("Step attenuator level"));
+    m_attReason->setText(reason);
+    m_attReason->setVisible(!reason.isEmpty());
+}
+
+void SpectrumOverlayPanel::setAttHeldReason(const QString& reason)
+{
+    if (reason == m_attHeldReason) { return; }
+    m_attHeldReason = reason;
+    showAttValues();
+}
+
+void SpectrumOverlayPanel::toggleAttFlyout()
+{
+    // Button index 6 (ATT)
+    QPushButton* attBtn = m_menuBtns[6];
+
+    if (m_activeFlyout == m_attFlyout) {
+        hideFlyout();
+        return;
+    }
+    hideFlyout();
+    showAttValues();
+    m_attFlyout->adjustSize();
+
+    const int btnCenterY = attBtn->y() + attBtn->height() / 2;
+    const int panelY = y() + btnCenterY - m_attFlyout->sizeHint().height() / 2;
+    m_attFlyout->move(x() + width(), std::max(0, panelY));
+    m_attFlyout->raise();
+    m_attFlyout->show();
+    m_activeFlyout = m_attFlyout;
+    m_activeButton = attBtn;
+    attBtn->setStyleSheet(OverlayColors::kMenuBtnActive);
+}
+
 void SpectrumOverlayPanel::wheelEvent(QWheelEvent* event) { event->accept(); }
 void SpectrumOverlayPanel::mousePressEvent(QMouseEvent* event) { event->accept(); }
 void SpectrumOverlayPanel::mouseReleaseEvent(QMouseEvent* event) { event->accept(); }
 
 // ── Waterfall zoom buttons ─────────────────────────────────────────────────────
 // Four small buttons [S][B][-][+] docked at bottom-left of the spectrum widget.
-// [S] = Segment zoom (fit visible slice passband), [B] = Band zoom (fit whole band),
+// [S] = Segment zoom (fit the band plan segment), [B] = Band zoom (fit whole band),
 // [-] = zoom out, [+] = zoom in.
 // From AetherSDR SpectrumOverlayMenu.cpp zoom controls section.
 
@@ -1237,10 +1332,10 @@ void SpectrumOverlayPanel::buildZoomButtons()
     m_zoomOutBtn  = makeZBtn(QStringLiteral("-"));
     m_zoomInBtn   = makeZBtn(QStringLiteral("+"));
 
-    m_zoomSegBtn->setToolTip(QStringLiteral("Segment zoom — fit visible slice passband"));
-    m_zoomBandBtn->setToolTip(QStringLiteral("Band zoom — fit entire amateur band"));
-    m_zoomOutBtn->setToolTip(QStringLiteral("Zoom out — increase visible bandwidth"));
-    m_zoomInBtn->setToolTip(QStringLiteral("Zoom in — decrease visible bandwidth"));
+    m_zoomSegBtn->setToolTip(QStringLiteral("Segment zoom: fit the band plan segment the slice is in"));
+    m_zoomBandBtn->setToolTip(QStringLiteral("Band zoom: fit the whole amateur band"));
+    m_zoomOutBtn->setToolTip(QStringLiteral("Zoom out: show more bandwidth"));
+    m_zoomInBtn->setToolTip(QStringLiteral("Zoom in: show less bandwidth"));
 
     connect(m_zoomSegBtn,  &QPushButton::clicked, this, &SpectrumOverlayPanel::zoomSegment);
     connect(m_zoomBandBtn, &QPushButton::clicked, this, &SpectrumOverlayPanel::zoomBand);
@@ -1273,6 +1368,15 @@ void SpectrumOverlayPanel::repositionZoomButtons()
     y = std::max(kMargin, y);
     m_zoomStrip->move(x, y);
     m_zoomStrip->raise();
+}
+
+// Parity Task 18: show the pan's grid state without reporting it back.
+void SpectrumOverlayPanel::setGridVisible(bool on)
+{
+    if (!m_showGridBtn) { return; }
+    QSignalBlocker block(m_showGridBtn);
+    m_showGridBtn->setChecked(on);
+    m_showGridBtn->setText(on ? "On" : "Off");
 }
 
 // ── Clarity status badge (Phase 3G-9c) ───────────────────────────────────────

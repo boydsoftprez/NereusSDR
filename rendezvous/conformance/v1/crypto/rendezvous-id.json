@@ -1,0 +1,21 @@
+{
+  "description": "id = RFC 4648 base32 (standard alphabet, lowercased, no padding) of SHA-256(\"NereusSDR rendezvous id v1\\n\" || SPKI DER), first 26 characters. digestHex is the SHA-256.",
+  "prefixHex": "4e65726575735344522072656e64657a766f75732069642076310a",
+  "cases": [
+    {
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw",
+      "digestHex": "5d8f4d2b096c4a3b55f7a8c4a03b6b0fd767ee04fdfc30888f6840eb62c9ff90",
+      "id": "lwhu2kyjnrfdwvpxvdckao3lb7"
+    },
+    {
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEETUOV4A7Wv4DiHwJ_LXhDKjjdjeihI0ec9NOsxO6q-VpA1PYmd271zF-ijWOx-Fc7Xn45w-FMcgkFhrcDeEuLA",
+      "digestHex": "4acb69ef8b50812826cb31d498443995cbfb98bf08981824fb841eb19da3559d",
+      "id": "jlfwt34lkcasqjwlghkjqrbzsx"
+    },
+    {
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHhXApVI9kcHQ8eJx10G4r4dcA4Tg99Z7tXhRFuunrZpsxFXn0mH8EdqdGgRzncPi6E0BA6AiEN7lPUC4k2gNPg",
+      "digestHex": "d702c9a77f80f9d77d72f5b6f5aa285bfebbaa850e8c4cda4a70dfd68cee8926",
+      "id": "24bmtj37qd45o7ls6w3plkrilp"
+    }
+  ]
+}

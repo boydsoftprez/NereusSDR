@@ -1,4 +1,3 @@
-// no-port-check: vendored upstream TAPR WDSP v1.29 — not a NereusSDR port of Thetis
 /*  anr.c
 
 This file is part of a program that implements a Software-Defined Radio.
@@ -24,6 +23,12 @@ The author can be reached by email at
 warren@wpratt.com
 
 */
+
+// NereusSDR modifications (2026-09-30 notice, J.J. Boyd KG4VCF, with Anthropic
+// Claude Code; changes made between 2026-09-22 and 2026-09-30 against the
+// pinned TAPR WDSP 2.10 tree at b02d5bac): RXAbp1Check takes the channel and reads the
+// stage run states itself, so each set-run call clears its own run flag before
+// the check instead of passing the pending state in. The file also ends with a newline.
 
 #include "comm.h"
 
@@ -170,11 +175,9 @@ SetRXAANRRun (int channel, int run)
 	ANR a = rxa[channel].anr.p;
 	if (a->run != run)
 	{
-        RXAbp1Check (channel, rxa[channel].amd.p->run, rxa[channel].snba.p->run,
-                        rxa[channel].emnr.p->run, rxa[channel].anf.p->run, run,
-                        rxa[channel].rnnr.p->run, rxa[channel].sbnr.p->run); // NR3 + NR4 support
 		EnterCriticalSection (&ch[channel].csDSP);
 		a->run = run;
+		RXAbp1Check (channel);
 		RXAbp1Set (channel);
 		flush_anr (a);
 		LeaveCriticalSection (&ch[channel].csDSP);

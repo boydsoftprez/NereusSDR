@@ -13,6 +13,17 @@
 //                Auto-hides on boards without Alex-2 (HL2, Hermes,
 //                Angelia). Live LED indicators are stubs; Phase H wires
 //                them to ep6 status feed.
+//   2026-09-28 - R-R3-46 / R-R3-49: the Alex Filters tabs' receive filter rows
+//                (per-row bypass and edges, Alex-2 master bypass) select the
+//                receive high-pass as Thetis's setAlexHPF /
+//                setBPF1ForOrionIISaturn / setAlex2HPF do (radioHardwareVersion
+//                8). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - R-R3-49 / R-IOS-18: the receive filter rows carry their
+//                Setup description ids (version 13). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-30: Fix wave GUI-M4: plain wording for the filters tooltip.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 //
 //=================================================================
@@ -70,6 +81,9 @@
 #include "core/HpsdrModel.h"
 #include "models/SliceModel.h"
 #include "models/RadioModel.h"
+#include "HardwareTransmitGate.h"
+
+#include <initializer_list>
 
 #include <QCheckBox>
 #include <QDoubleSpinBox>
@@ -205,7 +219,7 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     m_selectedLabel->setStyleSheet(
         QStringLiteral("QLabel { color: palette(mid); font-size: 10px; }"));
     m_selectedLabel->setToolTip(
-        tr("Live filter selection — derived from PanadapterModel centre frequency."));
+        tr("The filters in use, from the panadapter's center frequency."));
 
     statusLayout->addWidget(m_statusLed);
     statusLayout->addWidget(m_statusLabel);
@@ -261,6 +275,9 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     // Master bypass toggle.
     // Source: Thetis chkAlex2HPFBypass Text="ByPass/55 MHz BPF" (setup.designer.cs:26479-26488) [@501e3f5]
     m_hpfBypass55 = new QCheckBox(tr("ByPass / 55 MHz BPF (master)"), hpfGroup);
+    m_hpfBypass55->setObjectName(QStringLiteral("alex2HpfBypass55"));
+    // Setup description version 13: the same rows on the phone.
+    m_hpfBypass55->setProperty("nereusSetupId", "hardware.alex2Filters.bypass55MhzBpf");
     hpfVBox->addWidget(m_hpfBypass55);
     connect(m_hpfBypass55, &QCheckBox::toggled, this,
             [this](bool checked) {
@@ -293,6 +310,16 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
         hpfFormLayout->addRow(tr(band.label), rowWidget);
 
         const QString slug = QString::fromLatin1(band.slug);
+        // radioHardwareVersion 8: named for the tests and the remote gate.
+        w.bypass->setObjectName(QStringLiteral("alex2HpfBypass_%1").arg(slug));
+        w.start->setObjectName(QStringLiteral("alex2HpfStart_%1").arg(slug));
+        w.end->setObjectName(QStringLiteral("alex2HpfEnd_%1").arg(slug));
+        w.bypass->setProperty("nereusSetupId",
+                              QStringLiteral("hardware.alex2Filters.hpf.%1.bypass").arg(slug));
+        w.start->setProperty("nereusSetupId",
+                             QStringLiteral("hardware.alex2Filters.hpf.%1.start").arg(slug));
+        w.end->setProperty("nereusSetupId",
+                           QStringLiteral("hardware.alex2Filters.hpf.%1.end").arg(slug));
         const QString enabledKey = QStringLiteral("alex2/hpf/%1/enabled").arg(slug);
         const QString startKey   = QStringLiteral("alex2/hpf/%1/start").arg(slug);
         const QString endKey     = QStringLiteral("alex2/hpf/%1/end").arg(slug);
@@ -555,6 +582,13 @@ void AntennaAlexAlex2Tab::onHpfCheckChanged(bool checked, const QString& setting
             checked ? QStringLiteral("True") : QStringLiteral("False"));
         AppSettings::instance().save();
     }
+    // radioHardwareVersion 8: the receive filter rows reach the radio at
+    // once, as Thetis's per-row bypass setters re-select the high-pass
+    // (console.cs:18823-18833 [v2.10.3.15]). In a remote window the save
+    // goes to the Core, which applies it (scheduleRemoteHardwareApply).
+    if (m_model) {
+        m_model->applyAlexHpfSwitchSettings();
+    }
     emit settingChanged(settingsKey, checked);
 }
 
@@ -563,6 +597,13 @@ void AntennaAlexAlex2Tab::onHpfSpinChanged(double value, const QString& settings
     if (!m_currentMac.isEmpty()) {
         AppSettings::instance().setHardwareValue(m_currentMac, settingsKey, value);
         AppSettings::instance().save();
+    }
+    // radioHardwareVersion 8: the receive filter rows reach the radio at
+    // once, as Thetis's per-row bypass setters re-select the high-pass
+    // (console.cs:18823-18833 [v2.10.3.15]). In a remote window the save
+    // goes to the Core, which applies it (scheduleRemoteHardwareApply).
+    if (m_model) {
+        m_model->applyAlexHpfSwitchSettings();
     }
     emit settingChanged(settingsKey, value);
 }
@@ -576,6 +617,16 @@ void AntennaAlexAlex2Tab::onLpfSpinChanged(double value, const QString& settings
     emit settingChanged(settingsKey, value);
 }
 
+void AntennaAlexAlex2Tab::setHpfRowsAvailable(bool available, const QString& reason)
+{
+    HardwareTransmitGate::apply(m_hpfBypass55, available, reason);
+    for (const HpfRowWidgets& row : m_hpfRows) {
+        for (QWidget* w : std::initializer_list<QWidget*>{row.bypass, row.start, row.end}) {
+            HardwareTransmitGate::apply(w, available, reason);
+        }
+    }
+}
+
 void AntennaAlexAlex2Tab::onMasterCheckChanged(bool checked, const QString& settingsKey)
 {
     if (!m_currentMac.isEmpty()) {
@@ -584,12 +635,19 @@ void AntennaAlexAlex2Tab::onMasterCheckChanged(bool checked, const QString& sett
             checked ? QStringLiteral("True") : QStringLiteral("False"));
         AppSettings::instance().save();
     }
+    // radioHardwareVersion 8: the receive filter rows reach the radio at
+    // once, as Thetis's per-row bypass setters re-select the high-pass
+    // (console.cs:18823-18833 [v2.10.3.15]). In a remote window the save
+    // goes to the Core, which applies it (scheduleRemoteHardwareApply).
+    if (m_model) {
+        m_model->applyAlexHpfSwitchSettings();
+    }
     emit settingChanged(settingsKey, checked);
 }
 
 // ── Test seam ─────────────────────────────────────────────────────────────────
 
-// Always compiled — NEREUS_BUILD_TESTS is set on NereusSDRObjs globally.
+// Always compiled — NEREUS_BUILD_TESTS is set on NereusSDRLib globally.
 // Returns whether the status bar reflects an "Active" (hasAlex2=true) board.
 bool AntennaAlexAlex2Tab::isAlex2Active() const
 {

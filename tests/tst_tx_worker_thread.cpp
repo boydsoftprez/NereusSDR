@@ -19,6 +19,10 @@
 //   6. PC mic override path — when isPcMicOverrideActive() is true,
 //      the I-channel data passed to fexchange0 comes from PC mic, not
 //      radio mic.
+//   6b. PC mic source intent with an absent or closed capture bus still
+//       overwrites the radio block with silence.
+//   6c. PC mic short pulls zero-fill the rest of the block, and switching
+//       back to radio restores radio-mic routing even while the PC bus exists.
 //   7. Real worker thread fires fexchange0 in response to inbound().
 //   8. Cross-thread setter race — setMicPreamp from main thread
 //      while worker is pumping does not crash and the value lands.
@@ -69,6 +73,10 @@
 //                 sliceId argument and gains cases 15 and 16 for the
 //                 raw-pointer entry point that copies it.  Same author
 //                 / same AI tooling.
+//   2026-09-22 — R-R3-36 prerequisite: add deterministic source-intent
+//                 regressions for unavailable/short PC capture and source
+//                 switching. J.J. Boyd (KG4VCF), AI-assisted via OpenAI
+//                 Codex.
 // =================================================================
 
 // no-port-check: NereusSDR-original test file.  No Thetis logic ported.
@@ -327,6 +335,122 @@ private slots:
             // Float→double promotion: compare against the same promotion.
             QCOMPARE(in[2 * i + 0], static_cast<double>(0.7f));
             QCOMPARE(in[2 * i + 1], 0.0);  // Q always zero
+        }
+
+        src.stop();
+    }
+
+    void pcMicSelected_unavailableCaptureSilencesRadio_data()
+    {
+        QTest::addColumn<bool>("injectClosedBus");
+        QTest::newRow("absent-bus") << false;
+        QTest::newRow("closed-bus") << true;
+    }
+
+    void pcMicSelected_unavailableCaptureSilencesRadio()
+    {
+        QFETCH(bool, injectClosedBus);
+
+        AudioEngine engine;
+        if (injectClosedBus) {
+            AudioFormat fmt{};
+            fmt.sample = AudioFormat::Sample::Float32;
+            fmt.channels = 2;
+            fmt.sampleRate = 48000;
+            auto fakeBus = std::make_unique<FakeAudioBus>(
+                QStringLiteral("ClosedFakeMic"));
+            fakeBus->setNegotiatedFormat(fmt);
+            engine.setTxInputBusForTest(std::move(fakeBus));
+        }
+        engine.onMicSourceChanged(/*selectedSourceIsPc=*/true);
+
+        TxChannel ch(kChannelId, kBufSize, kBufSize);
+        MockConnection conn;
+        ch.setConnection(&conn);
+        ch.setRunning(true);
+
+        TxMicSource src;
+        src.start();
+
+        TxWorkerThread w;
+        w.setTxChannel(&ch);
+        w.setAudioEngine(&engine);
+        w.setMicSource(&src);
+
+        std::vector<float> loudRadio(kBufSize, 0.9f);
+        src.inbound(loudRadio.data(), kBufSize);
+        w.tickForTest();
+
+        QCOMPARE(conn.callCount.load(), 1);
+        const auto& in = ch.inForTest();
+        QCOMPARE(static_cast<int>(in.size()), 2 * kBufSize);
+        for (int i = 0; i < kBufSize; ++i) {
+            QCOMPARE(in[2 * i + 0], 0.0);
+            QCOMPARE(in[2 * i + 1], 0.0);
+        }
+
+        src.stop();
+    }
+
+    void pcMicSelected_shortPullZeroFills_thenRadioSwitchRestoresRadio()
+    {
+        AudioEngine engine;
+        AudioFormat fmt{};
+        fmt.sample = AudioFormat::Sample::Float32;
+        fmt.channels = 2;
+        fmt.sampleRate = 48000;
+        auto fakeBus = std::make_unique<FakeAudioBus>(QStringLiteral("FakeMic"));
+        fakeBus->open(fmt);
+        FakeAudioBus* bus = fakeBus.get();
+        engine.setTxInputBusForTest(std::move(fakeBus));
+        engine.onMicSourceChanged(/*selectedSourceIsPc=*/true);
+
+        TxChannel ch(kChannelId, kBufSize, kBufSize);
+        MockConnection conn;
+        ch.setConnection(&conn);
+        ch.setRunning(true);
+
+        TxMicSource src;
+        src.start();
+
+        TxWorkerThread w;
+        w.setTxChannel(&ch);
+        w.setAudioEngine(&engine);
+        w.setMicSource(&src);
+
+        constexpr int kPcFrames = kBufSize / 2;
+        QByteArray pcm(kPcFrames * 2 * static_cast<int>(sizeof(float)),
+                       Qt::Uninitialized);
+        float* p = reinterpret_cast<float*>(pcm.data());
+        for (int i = 0; i < kPcFrames; ++i) {
+            p[i * 2 + 0] = 0.6f;
+            p[i * 2 + 1] = -0.6f;
+        }
+        bus->setPullData(pcm);
+
+        std::vector<float> loudRadio(kBufSize, 0.9f);
+        src.inbound(loudRadio.data(), kBufSize);
+        w.tickForTest();
+
+        const auto& pcIn = ch.inForTest();
+        for (int i = 0; i < kPcFrames; ++i) {
+            QCOMPARE(pcIn[2 * i + 0], static_cast<double>(0.6f));
+            QCOMPARE(pcIn[2 * i + 1], 0.0);
+        }
+        for (int i = kPcFrames; i < kBufSize; ++i) {
+            QCOMPARE(pcIn[2 * i + 0], 0.0);
+            QCOMPARE(pcIn[2 * i + 1], 0.0);
+        }
+
+        engine.onMicSourceChanged(/*selectedSourceIsPc=*/false);
+        std::vector<float> radioAfterSwitch(kBufSize, 0.4f);
+        src.inbound(radioAfterSwitch.data(), kBufSize);
+        w.tickForTest();
+
+        const auto& radioIn = ch.inForTest();
+        for (int i = 0; i < kBufSize; ++i) {
+            QCOMPARE(radioIn[2 * i + 0], static_cast<double>(0.4f));
+            QCOMPARE(radioIn[2 * i + 1], 0.0);
         }
 
         src.stop();

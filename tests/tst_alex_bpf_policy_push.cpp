@@ -32,6 +32,12 @@
 //   window drives that same immediate-push setter when it opens, and
 //   wbClosing() restores it. Thetis has no deferred-until-next-tick
 //   path anywhere in this chain.
+//
+// Modification history (NereusSDR):
+//   2026-09-30 - HL2 in Auto: two N2ADR masks no longer bypass, 160 m
+//                included (JJ's ruling); the chain follows the highest
+//                slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -435,11 +441,13 @@ private slots:
                  "60m+40m share an N2ADR mask and must not bypass");
     }
 
-    // 20m (OC mask 0x48) and 40m (OC mask 0x44) do NOT share a relay. The
-    // fix narrows the false-positive above; it must not remove BYPASS for
-    // pairs that genuinely need two different filter selections at once.
-    // (This is also the exact PR #293 motivating scenario, now on HL2.)
-    void hl2_bands_with_different_oc_masks_bypass()
+    // 20m (OC mask 0x48) and 40m (OC mask 0x44) do NOT share a relay, so
+    // they stay two entries in the grouping. Since JJ's ruling of
+    // 2026-09-30 the HL2 in Auto no longer bypasses for that: the chain is
+    // handed over filtered for the band whose pins follow the highest slice
+    // (20 m), mi0bot's way. A slice on 160 m too: the board's high-pass
+    // (bit 6) goes off on the wire, but nothing bypasses.
+    void hl2_bands_with_different_oc_masks_follow_the_highest()
     {
         RadioModel model;
         model.setBoardForTest(HPSDRHW::HermesLite);
@@ -456,8 +464,16 @@ private slots:
         model.slices().at(b)->setFrequency(7150000.0);   // 40m
 
         QCOMPARE(model.alexController().adcState(0).effective,
-                 AlexController::BpfEffective::Bypass);
-        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc0, kBypassBits);
+                 AlexController::BpfEffective::Filtered);
+        QCOMPARE(model.alexController().adcState(0).currentBpfBand, Band::Band20m);
+        QVERIFY(mock->bpfCalls.last().hpfBitsAdc0 != kBypassBits);
+
+        // A slice on 160 m in place of 20 m: filtered for 40 m, no bypass.
+        model.slices().at(a)->setFrequency(1850000.0);   // 160m
+        QCOMPARE(model.alexController().adcState(0).effective,
+                 AlexController::BpfEffective::Filtered);
+        QCOMPARE(model.alexController().adcState(0).currentBpfBand, Band::Band40m);
+        QVERIFY(mock->bpfCalls.last().hpfBitsAdc0 != kBypassBits);
     }
 
     // Regression, bench-caught 2026-08-01 by J.J. Boyd (KG4VCF) and
@@ -468,9 +484,12 @@ private slots:
     // same 0x00. Grouping on that made two bands needing different relay
     // selections compare equal, and BYPASS stopped being entered at all.
     //
-    // Same slice pair as hl2_bands_with_different_oc_masks_bypass above, the
-    // single difference being an unconfigured matrix. The answer must not
-    // change: 20m and 40m still conflict.
+    // The pair is 160m and 40m, which need different selections on the
+    // preselector ladder. Since JJ's ruling of 2026-09-30 the HL2 in Auto
+    // never bypasses for a band difference: a detected conflict hands the
+    // chain over for the highest slice's band (40 m). Grouping the two as
+    // one would leave the first slice's band (160 m) instead, so the band
+    // shows the conflict is still detected with an empty matrix.
     void hl2_unconfigured_oc_matrix_still_detects_conflict()
     {
         RadioModel model;
@@ -482,13 +501,14 @@ private slots:
         DetachConnection detach{&model};
 
         const int a = model.addSlice();
-        model.slices().at(a)->setFrequency(14200000.0);  // 20m
+        model.slices().at(a)->setFrequency(1850000.0);   // 160m
 
         const int b = model.addSlice();
         model.slices().at(b)->setFrequency(7150000.0);   // 40m
 
         QCOMPARE(model.alexController().adcState(0).effective,
-                 AlexController::BpfEffective::Bypass);
+                 AlexController::BpfEffective::Filtered);
+        QCOMPARE(model.alexController().adcState(0).currentBpfBand, Band::Band40m);
     }
 
     // The other half of the same regression: an unconfigured matrix must not

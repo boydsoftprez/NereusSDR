@@ -55,6 +55,8 @@ constexpr quint8 kMaskDdc2 = 0x04;
 // From Thetis ChannelMaster/network.c:1097-1103 [v2.10.3.15]:
 //   packetbuf[7] = (prn->rx[6].enable << 6 | ... | prn->rx[0].enable) & 0xff;
 constexpr int kCmdRxEnableByte = 7;
+constexpr int kCmdRxFirstDdcByte = 17;
+constexpr int kCmdRxDdcStride = 6;
 
 quint8 cmdRxEnableMask(const P2RadioConnection& conn)
 {
@@ -63,16 +65,26 @@ quint8 cmdRxEnableMask(const P2RadioConnection& conn)
     return buf[kCmdRxEnableByte];
 }
 
-// P2RadioConnection::setState is protected, and RadioModel gates the wire
-// push on RadioConnection::isConnected(). Exposing it from a test-local
-// subclass keeps the seam out of production entirely; the qobject_cast in
-// invokeCodecDdcAssignment still matches, because this IS a
-// P2RadioConnection.
+int cmdRxRateKhz(const P2RadioConnection& conn, int ddc)
+{
+    quint8 buf[1444] = {};
+    conn.composeCmdRxForTest(buf);
+    const int base = kCmdRxFirstDdcByte + (ddc * kCmdRxDdcStride);
+    return (static_cast<int>(buf[base + 1]) << 8)
+        | static_cast<int>(buf[base + 2]);
+}
+
+// P2RadioConnection::setState is protected. Exposing it from a test-local
+// subclass lets the regression keep the model and the real connection in the
+// same lifecycle state without adding a production seam; the qobject_cast in
+// invokeCodecDdcAssignment still matches, because this IS a P2RadioConnection.
 class TestableP2Connection : public P2RadioConnection {
     Q_OBJECT
 public:
     using P2RadioConnection::P2RadioConnection;
+    void markConnectingForTest() { setState(ConnectionState::Connecting); }
     void markConnectedForTest() { setState(ConnectionState::Connected); }
+    void markDisconnectedForTest() { setState(ConnectionState::Disconnected); }
 };
 
 } // namespace
@@ -153,6 +165,188 @@ private slots:
         QVERIFY2(observedOn == &worker,
                  "the assignment was not observed on the connection thread");
         QCOMPARE(maskAfterDrain, kMaskDdc2);
+    }
+
+    // A P2 codec becomes usable from inside the connection-thread
+    // connectToRadio() call, before the first I/Q packet can promote the model
+    // to Connected. The complete codec assignment must be allowed to replace
+    // the bootstrap DDC geometry during that Connecting window. Otherwise the
+    // sole Saturn slice can leave DDC2 at its 48 kHz constructor rate while
+    // the allocator and WDSP wait for 192 kHz input. A later slice add or
+    // retune used to hide that gap by issuing another assignment request.
+    void a_connecting_single_slice_publishes_its_rate_to_the_primary_ddc()
+    {
+        QThread worker;
+        worker.setObjectName(QStringLiteral("P2ConnectingWorker"));
+
+        auto* conn = new TestableP2Connection();
+        conn->setBoardForTest(HPSDRHW::Saturn);
+        conn->markConnectingForTest();
+        conn->moveToThread(&worker);   // hold the queued assignment for inspection
+
+        RadioModel model;
+        model.injectConnectionForTest(conn);
+        // Reproduce signal order: P2 has already selected the codec and moved
+        // its own atomic state to Connecting, while RadioModel still carries
+        // the prior cached state until the queued lifecycle signal is handled.
+        model.setConnectionStateForTest(ConnectionState::Probing);
+        model.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5,
+                                  /*defaultRateHz*/ 192000);
+        for (int st = 0; st < 5; ++st) {
+            model.receiverManager()->createReceiver();
+        }
+
+        const int sliceId = model.addSlice();
+        QCOMPARE(sliceId, 0);
+        QCOMPARE(model.slices().size(), 1);
+
+        // The connection thread is stopped, so the composed packet must still
+        // show constructor state until its own queue drains.
+        QCOMPARE(cmdRxEnableMask(*conn), quint8(0));
+        QCOMPARE(cmdRxRateKhz(*conn, /*DDC2*/ 2), 48);
+
+        model.onConnectionStateChangedForTest(ConnectionState::Connecting);
+        worker.start();
+
+        quint8 maskAfterDrain = 0;
+        int ddc2RateAfterDrainKhz = 0;
+        QMetaObject::invokeMethod(conn, [&]() {
+            maskAfterDrain = cmdRxEnableMask(*conn);
+            ddc2RateAfterDrainKhz = cmdRxRateKhz(*conn, /*DDC2*/ 2);
+        }, Qt::BlockingQueuedConnection);
+
+        model.injectConnectionForTest(nullptr);
+        worker.quit();
+        worker.wait();
+        delete conn;
+
+        QCOMPARE(maskAfterDrain, kMaskDdc2);
+        QCOMPARE(ddc2RateAfterDrainKhz, 192);
+    }
+
+    void a_disconnected_model_does_not_queue_a_ddc_wire_write()
+    {
+        QThread worker;
+        worker.setObjectName(QStringLiteral("P2DisconnectedWorker"));
+
+        auto* conn = new TestableP2Connection();
+        conn->setBoardForTest(HPSDRHW::Saturn);
+        conn->moveToThread(&worker);
+
+        RadioModel model;
+        model.injectConnectionForTest(conn);
+        model.setConnectionStateForTest(ConnectionState::Disconnected);
+        model.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5,
+                                  /*defaultRateHz*/ 192000);
+        for (int st = 0; st < 5; ++st) {
+            model.receiverManager()->createReceiver();
+        }
+        QCOMPARE(model.addSlice(), 0);
+
+        worker.start();
+
+        quint8 maskAfterDrain = 0xff;
+        int ddc2RateAfterDrainKhz = 0;
+        QMetaObject::invokeMethod(conn, [&]() {
+            maskAfterDrain = cmdRxEnableMask(*conn);
+            ddc2RateAfterDrainKhz = cmdRxRateKhz(*conn, /*DDC2*/ 2);
+        }, Qt::BlockingQueuedConnection);
+
+        model.injectConnectionForTest(nullptr);
+        worker.quit();
+        worker.wait();
+        delete conn;
+
+        QCOMPARE(maskAfterDrain, quint8(0));
+        QCOMPARE(ddc2RateAfterDrainKhz, 48);
+    }
+
+    void a_connected_transition_retries_an_assignment_suppressed_before_readiness()
+    {
+        QThread worker;
+        worker.setObjectName(QStringLiteral("P2ConnectedConvergenceWorker"));
+
+        auto* conn = new TestableP2Connection();
+        conn->setBoardForTest(HPSDRHW::Saturn);
+        conn->markConnectedForTest();
+        conn->moveToThread(&worker);
+
+        RadioModel model;
+        model.injectConnectionForTest(conn);
+        model.setConnectionStateForTest(ConnectionState::Probing);
+        model.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5,
+                                  /*defaultRateHz*/ 192000);
+        for (int st = 0; st < 5; ++st) {
+            model.receiverManager()->createReceiver();
+        }
+        QCOMPARE(model.addSlice(), 0);
+        QCOMPARE(cmdRxEnableMask(*conn), quint8(0));
+
+        // This production transition owns the idempotent convergence retry;
+        // no second slice, frequency write or explicit assignment request is
+        // needed to repair the bootstrap packet geometry.
+        model.onConnectionStateChangedForTest(ConnectionState::Connected);
+        worker.start();
+
+        quint8 maskAfterDrain = 0;
+        int ddc2RateAfterDrainKhz = 0;
+        QMetaObject::invokeMethod(conn, [&]() {
+            maskAfterDrain = cmdRxEnableMask(*conn);
+            ddc2RateAfterDrainKhz = cmdRxRateKhz(*conn, /*DDC2*/ 2);
+        }, Qt::BlockingQueuedConnection);
+
+        model.injectConnectionForTest(nullptr);
+        worker.quit();
+        worker.wait();
+        delete conn;
+
+        QCOMPARE(maskAfterDrain, kMaskDdc2);
+        QCOMPARE(ddc2RateAfterDrainKhz, 192);
+    }
+
+    void a_queued_disconnect_supersedes_an_admitted_connecting_assignment()
+    {
+        QThread worker;
+        worker.setObjectName(QStringLiteral("P2QueuedDisconnectWorker"));
+
+        auto* conn = new TestableP2Connection();
+        conn->setBoardForTest(HPSDRHW::Saturn);
+        conn->markConnectingForTest();
+        conn->moveToThread(&worker);
+
+        RadioModel model;
+        model.injectConnectionForTest(conn);
+        model.setConnectionStateForTest(ConnectionState::Connecting);
+        model.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5,
+                                  /*defaultRateHz*/ 192000);
+        for (int st = 0; st < 5; ++st) {
+            model.receiverManager()->createReceiver();
+        }
+
+        // The connection owns the final admission decision. Queue its
+        // disconnect first, then let the cached Connecting model admit an
+        // assignment behind it. The worker must discard that stale delivery.
+        QMetaObject::invokeMethod(conn, [conn]() {
+            conn->markDisconnectedForTest();
+        });
+        QCOMPARE(model.addSlice(), 0);
+
+        worker.start();
+
+        quint8 maskAfterDrain = 0xff;
+        int ddc2RateAfterDrainKhz = 0;
+        QMetaObject::invokeMethod(conn, [&]() {
+            maskAfterDrain = cmdRxEnableMask(*conn);
+            ddc2RateAfterDrainKhz = cmdRxRateKhz(*conn, /*DDC2*/ 2);
+        }, Qt::BlockingQueuedConnection);
+
+        model.injectConnectionForTest(nullptr);
+        worker.quit();
+        worker.wait();
+        delete conn;
+
+        QCOMPARE(maskAfterDrain, quint8(0));
+        QCOMPARE(ddc2RateAfterDrainKhz, 48);
     }
 };
 

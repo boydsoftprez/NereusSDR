@@ -19,6 +19,11 @@
 //                 via Anthropic Claude Code.
 //                 LevelBar widget ported from AetherSDR
 //                 `src/gui/VfoWidget.cpp:38-64`.
+//   2026-09-22: No-reading display (R-R3-13) by J.J. Boyd (KG4VCF),
+//                 with AI-assisted transformation via Anthropic Claude
+//                 Code.  A level at or below -400 dBm, or a non-finite
+//                 one, empties the bar and shows "-- dBm".
+//                 NereusSDR-native; no upstream equivalent.
 // =================================================================
 
 #include "VfoLevelBar.h"
@@ -26,6 +31,7 @@
 #include <QLinearGradient>
 #include <QPainter>
 #include <algorithm>
+#include <cmath>
 namespace NereusSDR {
 // From AetherSDR src/gui/VfoWidget.cpp:38-64 — LevelBar port,
 // extended with an S-unit tick strip above the bar (NereusSDR native).
@@ -33,11 +39,30 @@ VfoLevelBar::VfoLevelBar(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_OpaquePaintEvent, false);
 }
 void VfoLevelBar::setValue(float dbm) {
-    if (dbm == m_value) { return; }
+    // NereusSDR (R-R3-13): the -400 dBm sentinel or a non-finite level is
+    // no reading, not a signal at the bar floor.
+    const bool noReading = !std::isfinite(dbm) || dbm <= kNoReadingDbm;
+    if (noReading) {
+        if (m_noReading) { return; }
+        m_noReading = true;
+        m_value = kNoReadingDbm;
+        update();
+        return;
+    }
+    if (!m_noReading && dbm == m_value) { return; }
+    m_noReading = false;
     m_value = dbm;
     update();
 }
+QString VfoLevelBar::readoutText() const {
+    if (m_noReading) {
+        return QStringLiteral("-- dBm");
+    }
+    return QString::number(static_cast<int>(std::round(m_value)))
+        + QStringLiteral(" dBm");
+}
 double VfoLevelBar::fillFraction() const {
+    if (m_noReading) { return 0.0; }
     const double v = std::clamp(static_cast<double>(m_value),
                                 static_cast<double>(kFloorDbm),
                                 static_cast<double>(kCeilingDbm));
@@ -130,8 +155,6 @@ void VfoLevelBar::paintEvent(QPaintEvent*) {
     dbmFont.setPixelSize(10);
     dbmFont.setBold(true);
     p.setFont(dbmFont);
-    p.drawText(dbmRect, Qt::AlignVCenter | Qt::AlignLeft,
-               QString::number(static_cast<int>(std::round(m_value)))
-               + QStringLiteral(" dBm"));
+    p.drawText(dbmRect, Qt::AlignVCenter | Qt::AlignLeft, readoutText());
 }
 }

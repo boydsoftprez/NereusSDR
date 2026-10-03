@@ -1,0 +1,26 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "notice",
+    "id": 8,
+    "kind": "receiverTaken",
+    "reason": "iPhone took the receiver your slice B was on.",
+    "secondsAgo": 30,
+    "takeBack": true,
+    "byDeviceId": "example-device-a",
+    "byName": "iPhone",
+    "byShortName": "iPhone",
+    "byKind": "phone",
+    "bySource": "device",
+    "slices": [
+      {
+        "sliceId": 1,
+        "letter": "B",
+        "frequencyHz": 14074000,
+        "mode": 1,
+        "band": 5
+      }
+    ]
+  },
+  "decodes": true
+}

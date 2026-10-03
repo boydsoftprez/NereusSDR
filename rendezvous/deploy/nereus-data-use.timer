@@ -1,0 +1,15 @@
+# Every hour, for nereus-data-use.service (rendezvous/README.md, "Data
+# use"). Hourly readings keep what a reboot loses to at most an hour; the
+# service writes its line once a day. Installed as
+# /etc/systemd/system/nereus-data-use.timer by setup-server.sh.
+
+[Unit]
+Description=NereusSDR server data-use report, hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

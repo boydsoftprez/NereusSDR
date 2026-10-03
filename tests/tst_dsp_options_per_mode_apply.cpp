@@ -23,6 +23,9 @@
 //   Part A — RxChannel::onModeChanged() unit tests (no WDSP).
 //   Part B — TxChannel::onModeChanged() unit tests (no WDSP).
 //   Part C — RadioModel::rebuildDspOptionsForMode() guard-path tests.
+//   Part D - RadioModel::scheduleRemoteDspOptionsApply() (R-R3-21): a
+//            remote window's RX write re-runs the mode-change apply for
+//            each matching slice, one apply per burst.
 
 #include <QtTest/QtTest>
 #include <QSignalSpy>
@@ -33,6 +36,11 @@
 #include "core/WdspEngine.h"
 #include "core/dsp/ChannelConfig.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
+
+#include <QList>
+#include <QRegularExpression>
+#include <QPair>
 
 using namespace NereusSDR;
 
@@ -84,6 +92,15 @@ void setAppSettingsDefault()
     s.setValue("DspOptionsCacheImpulse",                 "False");
     s.setValue("DspOptionsCacheImpulseSaveRestore",      "False");
     s.setValue("DspOptionsHighResFilterCharacteristics", "False");
+}
+
+// addSlice on a model with no radio connection logs that the TX frequency
+// was not pushed (RadioModel::pushTxFrequencyFromTxSlice). Expected here, so
+// Part D tests declare it once per model that gets a slice.
+void expectNoConnectionTxPushWarning()
+{
+    QTest::ignoreMessage(QtWarningMsg,
+                         QRegularExpression(QStringLiteral("TX frequency NOT pushed: no connection yet")));
 }
 
 }  // namespace
@@ -141,7 +158,8 @@ private slots:
     {
         AppSettings::instance().setValue("DspOptionsBufferSizePhoneRx", "4096");
         AppSettings::instance().setValue("DspOptionsFilterSizePhoneRx", "4096");
-        AppSettings::instance().setValue("DspOptionsFilterTypePhoneRx", "Low Latency");
+        // R-IOS-13: a channel opens linear phase (WDSP create_nbp mp 0).
+        AppSettings::instance().setValue("DspOptionsFilterTypePhoneRx", "Linear Phase");
 
         RxChannel ch(kTestChannel, kTestBufSize, kTestRate);
 
@@ -158,7 +176,7 @@ private slots:
     {
         AppSettings::instance().setValue("DspOptionsBufferSizeCwRx",  "4096");
         AppSettings::instance().setValue("DspOptionsFilterSizeCwRx",  "4096");
-        AppSettings::instance().setValue("DspOptionsFilterTypeCwRx",  "Low Latency");
+        AppSettings::instance().setValue("DspOptionsFilterTypeCwRx",  "Linear Phase");
 
         RxChannel ch(kTestChannel, kTestBufSize, kTestRate);
         WdspEngine engine;
@@ -174,7 +192,7 @@ private slots:
     {
         AppSettings::instance().setValue("DspOptionsBufferSizeDigRx", "4096");
         AppSettings::instance().setValue("DspOptionsFilterSizeDigRx", "4096");
-        AppSettings::instance().setValue("DspOptionsFilterTypeDigRx", "Low Latency");
+        AppSettings::instance().setValue("DspOptionsFilterTypeDigRx", "Linear Phase");
 
         RxChannel ch(kTestChannel, kTestBufSize, kTestRate);
         WdspEngine engine;
@@ -189,7 +207,7 @@ private slots:
     {
         AppSettings::instance().setValue("DspOptionsBufferSizeFmRx",  "4096");
         AppSettings::instance().setValue("DspOptionsFilterSizeFmRx",  "4096");
-        AppSettings::instance().setValue("DspOptionsFilterTypeFmRx",  "Low Latency");
+        AppSettings::instance().setValue("DspOptionsFilterTypeFmRx",  "Linear Phase");
 
         RxChannel ch(kTestChannel, kTestBufSize, kTestRate);
         WdspEngine engine;
@@ -207,7 +225,7 @@ private slots:
         // differs from channel state.
         AppSettings::instance().setValue("DspOptionsFilterSizePhoneRx",  "8192");
         AppSettings::instance().setValue("DspOptionsBufferSizePhoneRx",  "4096");
-        AppSettings::instance().setValue("DspOptionsFilterTypePhoneRx",  "Low Latency");
+        AppSettings::instance().setValue("DspOptionsFilterTypePhoneRx",  "Linear Phase");
 
         RxChannel ch(kTestChannel, kTestBufSize, kTestRate);
         WdspEngine engine;
@@ -217,20 +235,21 @@ private slots:
         QCOMPARE(ch.onModeChanged(DSPMode::USB), qint64(-1));
     }
 
-    // Changing filter type from Low Latency (0) to Linear Phase (1)
-    // triggers a rebuild attempt.
+    // Changing filter type from the channel's opening Linear Phase (1) to
+    // Low Latency (0) triggers a rebuild attempt (R-IOS-13: the cache
+    // starts where WDSP opens the channel, linear phase).
     void rx_changed_filter_type_triggers_rebuild_attempt()
     {
         AppSettings::instance().setValue("DspOptionsBufferSizePhoneRx",  "4096");
         AppSettings::instance().setValue("DspOptionsFilterSizePhoneRx",  "4096");
-        // "Linear Phase" maps to filterType=1; m_filterType default is 0.
-        AppSettings::instance().setValue("DspOptionsFilterTypePhoneRx",  "Linear Phase");
+        // "Low Latency" maps to filterType=0; m_filterType starts at 1.
+        AppSettings::instance().setValue("DspOptionsFilterTypePhoneRx",  "Low Latency");
 
         RxChannel ch(kTestChannel, kTestBufSize, kTestRate);
         WdspEngine engine;
         ch.setWdspEngine(&engine);
 
-        // filterType 1 != 0 → channel-in-map check fires → -1.
+        // filterType 0 != 1 → channel-in-map check fires → -1.
         QCOMPARE(ch.onModeChanged(DSPMode::USB), qint64(-1));
     }
 
@@ -245,22 +264,23 @@ private slots:
         QCOMPARE(r, qint64(0));
     }
 
-    // TxChannel: filter size matching kTxDspBufferSize (2048) + Low Latency (0)
-    // → no rebuild (idempotent guard fires).
+    // TxChannel: filter size matching kTxDspBufferSize (2048) + Linear
+    // Phase (1) → no rebuild (idempotent guard fires).
     // m_txDspBlockSize / m_txFilterSize initialise to
-    // WdspEngine::kTxDspBufferSize = 2048; m_txFilterType to 0
-    // (LowLatency).  Schema-v5 reads `Tx`-suffixed keys.
+    // WdspEngine::kTxDspBufferSize = 2048; m_txFilterType to 1 (Linear
+    // Phase, where WDSP opens the channel; R-IOS-13).  Schema-v5 reads
+    // `Tx`-suffixed keys.
     void tx_same_settings_returns_zero()
     {
         AppSettings::instance().setValue("DspOptionsBufferSizePhoneTx", "2048");
         AppSettings::instance().setValue("DspOptionsFilterSizePhoneTx", "2048");
-        AppSettings::instance().setValue("DspOptionsFilterTypePhoneTx", "Low Latency");
+        AppSettings::instance().setValue("DspOptionsFilterTypePhoneTx", "Linear Phase");
 
         TxChannel tx(97, 64, 64);
         WdspEngine engine;
         tx.setWdspEngine(&engine);
 
-        // bufSize 2048 == 2048, filterSize 2048 == 2048, filterType 0 == 0
+        // bufSize 2048 == 2048, filterSize 2048 == 2048, filterType 1 == 1
         // → no rebuild → 0.
         QCOMPARE(tx.onModeChanged(DSPMode::USB), qint64(0));
     }
@@ -294,6 +314,149 @@ private slots:
 
         // No emission expected when unconnected.
         QCOMPARE(spy.count(), 0);
+    }
+
+    // ── Part D: RadioModel::scheduleRemoteDspOptionsApply() (R-R3-21) ────────
+
+    // A burst of RX keys for one mode group applies once, to the slice in
+    // that group, after the coalescing window and not before.
+    void remote_rx_burst_applies_matching_slice_once()
+    {
+        RadioModel model;
+        expectNoConnectionTxPushWarning();
+        QList<QPair<int, DSPMode>> applied;
+        model.setDspOptionsApplyObserverForTest([&applied](int index, DSPMode mode) {
+            applied.append(qMakePair(index, mode));
+        });
+        SliceModel* phone = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        SliceModel* cw = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        QVERIFY(phone != nullptr);
+        QVERIFY(cw != nullptr);
+        phone->setDspMode(DSPMode::USB);
+        cw->setDspMode(DSPMode::CWU);
+
+        model.scheduleRemoteDspOptionsApply(QStringLiteral("DspOptionsBufferSizePhoneRx"));
+        model.scheduleRemoteDspOptionsApply(QStringLiteral("DspOptionsFilterSizePhoneRx"));
+        model.scheduleRemoteDspOptionsApply(QStringLiteral("DspOptionsFilterTypePhoneRx"));
+        QVERIFY(applied.isEmpty());
+
+        QTRY_COMPARE(applied.size(), 1);
+        QCOMPARE(applied.first().first, phone->sliceIndex());
+        QCOMPARE(applied.first().second, DSPMode::USB);
+        QTest::qWait(200);
+        QCOMPARE(applied.size(), 1);
+    }
+
+    // Keys for two groups in one burst apply once to each matching slice.
+    void remote_rx_burst_across_groups_applies_each_slice_once()
+    {
+        RadioModel model;
+        expectNoConnectionTxPushWarning();
+        QList<QPair<int, DSPMode>> applied;
+        model.setDspOptionsApplyObserverForTest([&applied](int index, DSPMode mode) {
+            applied.append(qMakePair(index, mode));
+        });
+        SliceModel* phone = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        SliceModel* dig = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        QVERIFY(phone != nullptr);
+        QVERIFY(dig != nullptr);
+        phone->setDspMode(DSPMode::USB);
+        dig->setDspMode(DSPMode::DIGU);
+
+        model.scheduleRemoteDspOptionsApply(QStringLiteral("DspOptionsBufferSizeDigRx"));
+        model.scheduleRemoteDspOptionsApply(QStringLiteral("DspOptionsBufferSizePhoneRx"));
+        model.scheduleRemoteDspOptionsApply(QStringLiteral("DspOptionsFilterTypeDigRx"));
+
+        QTRY_COMPARE(applied.size(), 2);
+        QTest::qWait(200);
+        QCOMPARE(applied.size(), 2);
+        QVERIFY(applied.contains(qMakePair(phone->sliceIndex(), DSPMode::USB)));
+        QVERIFY(applied.contains(qMakePair(dig->sliceIndex(), DSPMode::DIGU)));
+    }
+
+    // TX keys, other DSP > Options keys, unknown groups and unrelated keys
+    // apply nothing; neither does an RX key for a group no slice is in.
+    void remote_unrelated_keys_apply_nothing()
+    {
+        RadioModel model;
+        expectNoConnectionTxPushWarning();
+        int applied = 0;
+        model.setDspOptionsApplyObserverForTest([&applied](int, DSPMode) { ++applied; });
+        SliceModel* slice = model.sliceById(model.addSlice(QStringLiteral("pan-0")));
+        QVERIFY(slice != nullptr);
+        slice->setDspMode(DSPMode::USB);
+
+        for (const char* key : {"DspOptionsBufferSizePhoneTx",
+                                "DspOptionsFilterTypePhoneTx",
+                                "DspOptionsCacheImpulse",
+                                "DspOptionsHighResFilterCharacteristics",
+                                "DspOptionsBufferSizeAmRx",
+                                "DspOptionsRx",
+                                "DisplayFftAverage",
+                                "DspOptionsBufferSizeFmRx",
+                                "DspOptionsFilterSizeCwRx"}) {
+            model.scheduleRemoteDspOptionsApply(QString::fromLatin1(key));
+        }
+        QTest::qWait(200);
+        QCOMPARE(applied, 0);
+    }
+
+    // Local half: a remote-role model never applies, and a plain local
+    // AppSettings write (what DspOptionsPage does before its own
+    // rebuildDspOptionsForMode) schedules nothing.
+    void remote_apply_is_core_only()
+    {
+        RadioModel remote(RadioModel::Role::Remote);
+        int remoteApplied = 0;
+        remote.setDspOptionsApplyObserverForTest([&remoteApplied](int, DSPMode) {
+            ++remoteApplied;
+        });
+        remote.scheduleRemoteDspOptionsApply(QStringLiteral("DspOptionsBufferSizePhoneRx"));
+
+        RadioModel local;
+        expectNoConnectionTxPushWarning();
+        int localApplied = 0;
+        local.setDspOptionsApplyObserverForTest([&localApplied](int, DSPMode) {
+            ++localApplied;
+        });
+        SliceModel* slice = local.sliceById(local.addSlice(QStringLiteral("pan-0")));
+        QVERIFY(slice != nullptr);
+        slice->setDspMode(DSPMode::USB);
+        AppSettings::instance().setValue(QStringLiteral("DspOptionsBufferSizePhoneRx"),
+                                         QStringLiteral("512"));
+
+        QTest::qWait(200);
+        QCOMPARE(remoteApplied, 0);
+        QCOMPARE(localApplied, 0);
+    }
+
+    // The one mode-group mapping RxChannel, RadioModel's remote apply and
+    // DspOptionsPage's live-apply gate share (core/RxChannel.h).
+    void mode_group_mapping_is_pinned_data()
+    {
+        QTest::addColumn<int>("mode");
+        QTest::addColumn<QString>("group");
+        const QList<QPair<DSPMode, QString>> rows{
+            {DSPMode::USB, QStringLiteral("Phone")}, {DSPMode::LSB, QStringLiteral("Phone")},
+            {DSPMode::AM, QStringLiteral("Phone")},  {DSPMode::SAM, QStringLiteral("Phone")},
+            {DSPMode::DSB, QStringLiteral("Phone")}, {DSPMode::CWU, QStringLiteral("Cw")},
+            {DSPMode::CWL, QStringLiteral("Cw")},    {DSPMode::DIGU, QStringLiteral("Dig")},
+            {DSPMode::DIGL, QStringLiteral("Dig")},  {DSPMode::SPEC, QStringLiteral("Dig")},
+            {DSPMode::DRM, QStringLiteral("Dig")},   {DSPMode::FM, QStringLiteral("Fm")},
+            {DSPMode::RADE_U, QStringLiteral("Phone")},
+            {DSPMode::RADE_L, QStringLiteral("Phone")},
+        };
+        for (const auto& [mode, group] : rows) {
+            QTest::newRow(qPrintable(QString::number(static_cast<int>(mode))))
+                << static_cast<int>(mode) << group;
+        }
+    }
+
+    void mode_group_mapping_is_pinned()
+    {
+        QFETCH(int, mode);
+        QFETCH(QString, group);
+        QCOMPARE(dspOptionsModeGroup(static_cast<DSPMode>(mode)), group);
     }
 };
 

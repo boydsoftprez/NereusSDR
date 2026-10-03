@@ -11,6 +11,17 @@
 
 namespace NereusSDR {
 
+namespace {
+
+// Operator wording for a radio whose receivers are all taken.
+QString allReceiversInUse(int count)
+{
+    return count == 1 ? QStringLiteral("The radio's only receiver is in use")
+                      : QStringLiteral("All %1 of the radio's receivers are in use").arg(count);
+}
+
+} // namespace
+
 void SliceStreamAllocator::configure(int userDdcCount, int maxSlices)
 {
     m_streams.clear();
@@ -54,6 +65,26 @@ int SliceStreamAllocator::firstFreeStream() const
         if (!m_streams.at(i).active) { return i; }
     }
     return -1;
+}
+
+SliceStreamAllocator::Placement SliceStreamAllocator::joinStream(
+    int streamIndex, double frequencyHz) const
+{
+    Placement placement;
+    if (streamIndex < 0 || streamIndex >= m_streams.size()
+        || !windowContains(m_streams.at(streamIndex), frequencyHz)) {
+        // Plain operator wording (R-R3-34); U+00A0 keeps the number and its
+        // unit on one line.
+        placement.reason = QStringLiteral(
+            "The radio receiver this panadapter uses does not cover %1\u00A0MHz. "
+            "Retune into its range, or give this receiver a panadapter of its own.")
+            .arg(QString::number(frequencyHz / 1.0e6, 'f', 4));
+        return placement;
+    }
+    placement.outcome = Outcome::JoinedExisting;
+    placement.streamIndex = streamIndex;
+    placement.shiftOffsetHz = frequencyHz - m_streams.at(streamIndex).centreHz;
+    return placement;
 }
 
 SliceStreamAllocator::Placement
@@ -120,17 +151,20 @@ SliceStreamAllocator::placeSlice(double frequencyHz,
         // radio simply has no spare receiver to give this pan. Reusing the
         // "none covers" phrasing would send the operator off retuning, which
         // cannot help.
-        p.reason = QStringLiteral(
-            "All %1 receiver DDCs are in use, so this radio cannot give a new "
-            "panadapter its own receiver. Remove a panadapter, or add this "
-            "slice to an existing one to share its receiver.")
-            .arg(m_streams.size());
+        // Plain operator wording (R-R3-34): the radio's hardware receivers
+        // are "the radio's receivers"; no internal names.
+        p.reason = allReceiversInUse(m_streams.size())
+            + QStringLiteral(", so a new panadapter cannot have its own. Close a "
+                             "panadapter, or add this receiver to an existing "
+                             "panadapter instead.");
     } else {
-        p.reason = QStringLiteral(
-            "All %1 receiver DDCs are in use and none covers %2 MHz. "
-            "Retune or remove a slice, or widen a DDC's sample rate.")
-            .arg(m_streams.size())
-            .arg(frequencyHz / 1.0e6, 0, 'f', 4);
+        // U+00A0 keeps the number and its unit on one line.
+        p.reason = allReceiversInUse(m_streams.size())
+            + (m_streams.size() == 1 ? QStringLiteral(" and it does not cover ")
+                                     : QStringLiteral(" and none of them covers "))
+            + QString::number(frequencyHz / 1.0e6, 'f', 4)
+            + QStringLiteral("\u00A0MHz. Retune or close another receiver, or choose "
+                             "a higher sample rate so each one covers more.");
     }
     return p;
 }

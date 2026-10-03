@@ -17,6 +17,13 @@
 //                 (gzip format, NOT raw deflate, NOT zlib format) and
 //                 compression level Z_BEST_COMPRESSION (9) to mirror
 //                 the .NET CompressionLevel.Optimal Thetis selects.
+//   2026-09-30 — The gzip header's OS byte is 0 on every platform, as
+//                 Thetis's .NET GZipStream writes it, instead of zlib's
+//                 build-dependent code (0x13 macOS, 0x03 Linux), so the
+//                 Core sends the same envelope on every platform (CI:
+//                 the link conformance fixtures failed on Linux).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 //=================================================================
@@ -84,6 +91,15 @@ constexpr int kGzipWindowBits = 15 + 16;
 // (Common.cs:1780); larger amortises syscall-style overhead in zlib.
 constexpr int kChunkSize = 16384;
 
+// gzip header OS byte (RFC 1952 section 2.3.1). zlib writes its build's
+// OS_CODE there (0x13 on macOS, 0x03 on Linux, 0x0a for a Windows build),
+// so the same input encoded to different bytes on each platform. Thetis's
+// .NET GZipStream writes 0 on every machine: its stored blob at
+// database.cs:11211 [v2.10.3.15] (_default_settings) begins
+// 1f 8b 08 00 00 00 00 00 04 00. The XFL byte (04 there) stays zlib's
+// own, which deflateSetHeader does not set.
+constexpr int kGzipHeaderOs = 0;
+
 }  // namespace
 
 // From Thetis Common.cs:1745-1762 [v2.10.3.13].
@@ -110,6 +126,13 @@ QString encode(const QString& payload)
                      kGzipWindowBits,
                      8,
                      Z_DEFAULT_STRATEGY) != Z_OK) {
+        return QString();
+    }
+    // mtime 0, no name, comment or extra field, and the OS byte above.
+    gz_header header = {};
+    header.os = kGzipHeaderOs;
+    if (deflateSetHeader(&strm, &header) != Z_OK) {
+        deflateEnd(&strm);
         return QString();
     }
 
@@ -150,7 +173,7 @@ QString encode(const QString& payload)
 }
 
 // From Thetis Common.cs:1764-1790 [v2.10.3.13].
-std::optional<QString> decode(const QString& blob)
+std::optional<QString> decode(const QString& blob, qsizetype maxDecodedBytes)
 {
     // Thetis: "if (string.IsNullOrEmpty(compressed_input)) return null;"
     // Common.cs:1766 [v2.10.3.13].
@@ -205,7 +228,12 @@ std::optional<QString> decode(const QString& blob)
             inflateEnd(&strm);
             return std::nullopt;
         }
-        out.append(chunk, kChunkSize - static_cast<int>(strm.avail_out));
+        const int produced = kChunkSize - static_cast<int>(strm.avail_out);
+        if (maxDecodedBytes < 0 || produced > maxDecodedBytes - out.size()) {
+            inflateEnd(&strm);
+            return std::nullopt;
+        }
+        out.append(chunk, produced);
     } while (ret != Z_STREAM_END);
 
     inflateEnd(&strm);

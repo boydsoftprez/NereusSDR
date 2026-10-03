@@ -1,0 +1,5 @@
+{
+  "from": "station",
+  "wire": {"type": "session.held", "revision": 7, "devices": [{"deviceId": "id", "name": "Pat's iPad", "shortName": "iPad", "kind": "tablet", "state": "listening", "holdsTransmit": false, "listeningOn": [], "lastActivitySeconds": 12, "connectedForSeconds": 90, "awayForSeconds": 0, "transmittingForSeconds": 0, "from": "relay", "replaceable": true}], "placeTaken": {"byName": "Pat's iPad", "byId": "id", "secondsAgo": 4}},
+  "decodes": true
+}

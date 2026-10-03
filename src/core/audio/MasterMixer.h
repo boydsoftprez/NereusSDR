@@ -2,6 +2,141 @@
 // src/core/audio/MasterMixer.h  (NereusSDR)
 // =================================================================
 //
+// Ported from Thetis sources (structural derivation, not a line-by-line
+// translation -- the architecture is upstream's, the semantics are ours):
+//   Project Files/Source/ChannelMaster/aamix.c [v2.10.3.15]
+//     (per-producer ring + readiness barrier + one summed output)
+//   Project Files/Source/ChannelMaster/cmaster.c [v2.10.3.15]
+//     (RX and anti-VOX minimum ring capacity)
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-07-27 -- Per-slice mute / volume / pan mixer reworked from a
+//                 single shared accumulator into per-slice rings behind
+//                 a readiness barrier, so N slices produce ONE mixed
+//                 block per audio period instead of N pushes. The ring
+//                 + barrier + single-summed-output STRUCTURE is Warren
+//                 Pratt's from aamix.c; the per-slice gain / pan / mute
+//                 semantics and the anti-click gain ramp are
+//                 NereusSDR-original. Three divergences from the
+//                 upstream structure are argued in MasterMixer.h.
+//                 Authored by J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Anthropic Claude Code.
+//   2026-07-27 -- Replaced the stall-demotion heuristic with the explicit
+//                 leave that upstream uses. A member is now withdrawn
+//                 only by setSliceStreaming(false) or removeSlice(), so
+//                 a slice that is merely late can no longer be mistaken
+//                 for one that has stopped. Fixes the ANAN-G2E bench
+//                 defect where two pans produced scratchy, robotic audio.
+//                 Authored by J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Anthropic Claude Code.
+//   2026-07-27 -- Ported the master up-slew across a membership change.
+//                 The raised-cosine window is Warren Pratt's from
+//                 create_aaslew (aamix.c:86-92), armed where open_mixer
+//                 raises slew.uflag (aamix.c:494-496), and its 10 ms
+//                 length is the RX mixer's own tslewup from
+//                 cmaster.c:297-313. Fixes the ANAN-G2E bench report of a
+//                 "kerplunk at the end of the unkey": a slice re-admitted
+//                 after MOX resumed at full amplitude in one sample.
+//                 Down-slew is NOT ported; see divergence 4 below.
+//                 Authored by J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Anthropic Claude Code.
+//   2026-09-21 -- Preserve queued RADE/ordinary receiver sample pairs with
+//                 the upstream 4096-frame minimum ring, independent of the
+//                 small DSP block size. No prefill or barrier-policy change.
+//                 Authored by J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via OpenAI Codex.
+//   2026-09-23 -- R-R3-45: two mixes from one barrier. Each slice is
+//                 routed to the speakers OR the headphones (VAX design
+//                 6.2) and both sums leave in the same drain, from the
+//                 same per-slice gain, pan and mute. A route change
+//                 crossfades over the anti-click ramp. NereusSDR-original.
+//                 Authored by J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-25 -- iPhone app Task 76 (R-IOS-31; the several-devices
+//                 design, ruling 9.2): one mix per owner from the same
+//                 barrier. The local sums carry only the slices a local
+//                 mask names, and each owner output sums its own slices at
+//                 the same per-slice gain, pan, mute, route and up-slew.
+//                 NereusSDR-original. Authored by J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-27 -- Remote-window parity Task 32 (R-IOS-13, R-R3-49): the
+//                 transmit monitor to the device that holds transmit. An
+//                 owner output may take the slots outside the slice mask
+//                 (the transmit monitor) into its speakers or headphones
+//                 sum, and the local sums may leave them out. NereusSDR-
+//                 original. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-29 -- Slice control and shared listening plan Task 6: the AF
+//                 level rides into accumulate() and scales the slice in
+//                 its controller's sums, and each sum may also listen to
+//                 slices it does not control, at its own level, unpanned,
+//                 with a continuous hand-off between the two. Every owner
+//                 output is written each drain (a slot with no slice left
+//                 stale audio in its buffer before). NereusSDR-original.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-09-30 -- Radio codec (JJ's ruling): tryDrain's radioOut, the
+//                 radio's own speaker out, every receiving slice as
+//                 Thetis's mixer 0. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+// =================================================================
+
+// --- From aamix.c ---
+/*  aamix.c
+
+This file is part of a program that implements a Software-Defined Radio.
+
+Copyright (C) 2014 Warren Pratt, NR0V
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at  
+
+warren@wpratt.com
+
+*/
+
+
+// --- From cmaster.c ---
+/*  cmaster.c
+
+This file is part of a program that implements a Software-Defined Radio.
+
+Copyright (C) 2014-2019 Warren Pratt, NR0V
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at  
+
+warren@wpratt.com
+
+*/
+
 // Phase 3O per-slice mute / volume / pan mixer. Per-slice gain, pan,
 // mute and the anti-click ramp are NereusSDR-original; the ring +
 // barrier structure is derived from Thetis, see below.
@@ -37,7 +172,8 @@
 //     each stream's DSP block with bufferSizeForRate(), which scales the
 //     input size linearly with the sample rate, so every stream emits one
 //     64-frame 48 kHz block per period whatever its DDC rate. Cadences
-//     match by construction and the rings only ever absorb jitter.
+//     match by construction. Decoded RADE speech returns asynchronously
+//     at the same long-term rate; the rings absorb that scheduling skew.
 //
 //  3. Barrier membership is asymmetric: a slice JOINS implicitly on its
 //     first block, but LEAVES only when the slice lifecycle withdraws it
@@ -84,75 +220,9 @@
 // going. Ramping the per-slice gain targets our actual artifact and
 // keeps the audio-thread path branch-light.
 //
-// Ported from Thetis sources (structural derivation, not a line-by-line
-// translation -- the architecture is upstream's, the semantics are ours):
-//   Project Files/Source/ChannelMaster/aamix.c [v2.10.3.15]
-//     (per-producer ring + readiness barrier + one summed output)
-//
-// =================================================================
-// Modification history (NereusSDR):
-//   2026-07-27 -- Per-slice mute / volume / pan mixer reworked from a
-//                 single shared accumulator into per-slice rings behind
-//                 a readiness barrier, so N slices produce ONE mixed
-//                 block per audio period instead of N pushes. The ring
-//                 + barrier + single-summed-output STRUCTURE is Warren
-//                 Pratt's from aamix.c; the per-slice gain / pan / mute
-//                 semantics and the anti-click gain ramp are
-//                 NereusSDR-original. Three divergences from the
-//                 upstream structure are argued in MasterMixer.h.
-//                 Authored by J.J. Boyd (KG4VCF), with AI-assisted
-//                 transformation via Anthropic Claude Code.
-//   2026-07-27 -- Replaced the stall-demotion heuristic with the explicit
-//                 leave that upstream uses. A member is now withdrawn
-//                 only by setSliceStreaming(false) or removeSlice(), so
-//                 a slice that is merely late can no longer be mistaken
-//                 for one that has stopped. Fixes the ANAN-G2E bench
-//                 defect where two pans produced scratchy, robotic audio.
-//                 Authored by J.J. Boyd (KG4VCF), with AI-assisted
-//                 transformation via Anthropic Claude Code.
-//   2026-07-27 -- Ported the master up-slew across a membership change.
-//                 The raised-cosine window is Warren Pratt's from
-//                 create_aaslew (aamix.c:86-92), armed where open_mixer
-//                 raises slew.uflag (aamix.c:494-496), and its 10 ms
-//                 length is the RX mixer's own tslewup from
-//                 cmaster.c:297-313. Fixes the ANAN-G2E bench report of a
-//                 "kerplunk at the end of the unkey": a slice re-admitted
-//                 after MOX resumed at full amplitude in one sample.
-//                 Down-slew is NOT ported; see divergence 4 below.
-//                 Authored by J.J. Boyd (KG4VCF), with AI-assisted
-//                 transformation via Anthropic Claude Code.
-// =================================================================
-
-// --- From aamix.c ---
-/*  aamix.c
-
-This file is part of a program that implements a Software-Defined Radio.
-
-Copyright (C) 2014 Warren Pratt, NR0V
-
-This program is free software; you can redistribute it and/or
-modify it under the terms of the GNU General Public License
-as published by the Free Software Foundation; either version 2
-of the License, or (at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program; if not, write to the Free Software
-Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-
-The author can be reached by email at  
-
-warren@wpratt.com
-
-*/
-
-
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -213,8 +283,21 @@ public:
     // thread: setSliceMuted() takes the slice-map mutex and must not be
     // reached from there. Mute is applied as a ramp TARGET, so a muted
     // slice fades out over the ramp rather than cutting.
+    //
+    // R-R3-45: `headphones` rides in the same way and for the same reason.
+    // It picks which of the two sums tryDrain() builds the slice into
+    // (VAX design 6.2: speakers OR headphones). A change of route is a
+    // ramp too, so the slice crossfades from one output to the other.
+    //
+    // Slice control plan Task 6: `level` is the slice's AF level (0..1),
+    // applied here rather than in WDSP, and only in the sums of the device
+    // that controls the slice (the local sums through localMask, an owner's
+    // through its sliceMask). A listener's sum carries its own level
+    // instead (OwnerOutput::listenLevels), so the controller's AF and mute
+    // never reach it.
     void accumulate(int sliceId, const float* samples, int frames,
-                    bool muted = false);
+                    bool muted = false, bool headphones = false,
+                    float level = 1.0f);
 
 
     // Audio thread: sum one block if every barrier member has frames
@@ -224,7 +307,78 @@ public:
     // regardless of how many slices fed it.
     //
     // out is interleaved L/R float32 and must hold maxFrames * 2 floats.
+    //
+    // Only the speakers sum: slices routed to the headphones are drained
+    // (their rings keep time) but contribute nothing to out.
     int tryDrain(float* out, int maxFrames);
+
+    // R-R3-45: both sums from one barrier. speakersOut carries the slices
+    // routed to the speakers, headphonesOut those routed to the headphones,
+    // each at the slice's own gain, pan and mute. Either may be nullptr, in
+    // which case that sum is not written. Both hold maxFrames * 2 floats;
+    // the return value is the frame count written to each.
+    int tryDrain(float* speakersOut, float* headphonesOut, int maxFrames);
+
+    // iPhone app Task 76 (the several-devices design, ruling 9.2): one mix
+    // per owner. Each owner names its slices by a bit per slice id (0..31)
+    // and gets both sums of those slices alone, each slice at its own gain,
+    // pan, mute and route, with the same ramps and up-slew as the local
+    // sums. A null buffer is not written; an owner with no bit set is
+    // skipped whole. Owner sums never hold up or change the local drain:
+    // the barrier, the cursors and the ramps are the local drain's.
+    //
+    // Remote-window parity Task 32: `monitor` says where the slots outside
+    // 0..31 (the transmit monitor's) go for this owner: nowhere (the
+    // default), its speakers sum or its headphones sum, at the slot's own
+    // gain whichever local sum the slot's route builds it into. An owner
+    // with no slice bit but a monitor route is not skipped.
+    enum class OwnerMonitor : std::uint8_t { None, Speakers, Headphones };
+    //
+    // Slice control plan Task 6 (shared listening): `listenMask` names the
+    // slices this owner hears without controlling them, each into its
+    // speakers sum at listenLevels[id] (32 entries, 0 when muted), ramped,
+    // with no pan and no route of the controller's. A slice in both masks
+    // is the controller's. `listenSlot` (0..kMaxListenSlots-1) keys the
+    // ramp state this owner keeps from drain to drain; -1 keeps none, so
+    // the owner cannot listen. When a slice leaves an owner's sliceMask
+    // and enters its listenMask in the same drain, its listen level starts
+    // where the controller's gain was and ramps to the listen level, so a
+    // hand-off never steps by more than the two levels differ.
+    static constexpr int kMaxListenSlots = 7;
+    struct OwnerOutput {
+        std::uint32_t sliceMask{0};
+        float* speakers{nullptr};
+        float* headphones{nullptr};
+        OwnerMonitor monitor{OwnerMonitor::None};
+        std::uint32_t listenMask{0};
+        const float* listenLevels{nullptr};
+        int listenSlot{-1};
+    };
+    // As the two-sum tryDrain, except that speakersOut and headphonesOut
+    // carry only the slices `localMask` names (slot ids outside 0..31, the
+    // transmit monitor's, while `localOutOfMask`, the default), and each of
+    // `owners` (ownerCount of them, may be null when 0) gets its own sums.
+    // With `onlyWithoutMembers` it drains only while no slice is a barrier
+    // member (only the transmit monitor is queued), and returns 0 otherwise:
+    // a member's own call drains the period, so a second drain never hands
+    // the outputs two blocks in one period (Task 32, the MOX-gated slice).
+    //
+    // Slice control plan Task 6: `localListenMask` and `localListenLevels`
+    // are the local sums' listening, as an owner's listenMask and
+    // listenLevels (the hosting desktop listening to another device's
+    // slice plays it here at its own level).
+    int tryDrain(float* speakersOut, float* headphonesOut, int maxFrames,
+                 std::uint32_t localMask, OwnerOutput* owners, int ownerCount,
+                 bool localOutOfMask = true, bool onlyWithoutMembers = false,
+                 std::uint32_t localListenMask = 0,
+                 const float* localListenLevels = nullptr,
+                 float* radioOut = nullptr);
+    // Radio codec (JJ's ruling 2026-09-30): `radioOut`, when not null, is
+    // the radio's own speaker out, as Thetis's audio mixer 0: every
+    // receiving slice whatever localMask says, each at its own gain, pan
+    // and mute, both routes summed, plus the transmit monitor's slot
+    // exactly while it is in the local sums (localOutOfMask). maxFrames * 2
+    // floats; same ramps and up-slew as the other sums.
 
     // Test seam: ramp length in frames (default kDefaultRampFrames).
     void setRampFrames(int frames);
@@ -262,8 +416,12 @@ private:
     // short enough that it never smears a real signal.
     static constexpr int kDefaultRampFrames = 240;
 
-    // Ring depth in blocks. Cadences match by construction (see the
-    // header note), so this only has to cover jitter, not drift.
+    // From Thetis cmaster.c:159-168,297-306 [v2.10.3.15]: both RX and
+    // anti-VOX mixers retain 4096 frames independently of the DSP block size.
+    // At 48 kHz this holds 85.3 ms of queued-producer skew without dropping
+    // the ordinary receiver while RADE completes its DSP/main/DSP handoff.
+    // Capacity is not a prefill target: a ready pair still drains immediately.
+    static constexpr int kMinimumRingFrames = 4096;
     static constexpr int kRingBlocks = 4;
 
     // Master up-slew across a membership change, applied to the MIXED
@@ -299,10 +457,22 @@ private:
     //   }
     static const float* upSlewWindow();
 
+    // Listening ramp state per sum: [0] the local sums, [1 + listenSlot]
+    // each owner's.
+    static constexpr int kListenLanes = 1 + kMaxListenSlots;
+    using LaneLevels = std::array<float, kListenLanes>;
+    static_assert(kListenLanes == 8, "SliceState::ctlSeed lists one -1 per lane");
+
     struct SliceState {
         std::atomic<float> gain{1.0f};
+        // Slice control plan Task 6: the AF level, written by accumulate()
+        // on the audio thread; applied in the controller's sums only.
+        std::atomic<float> level{1.0f};
         std::atomic<float> pan{0.0f};
         std::atomic<bool>  muted{false};
+        // R-R3-45: routed to the headphones sum instead of the speakers.
+        // Written by accumulate() on the audio thread.
+        std::atomic<bool>  headphones{false};
 
         // Lifecycle generation. The control thread increments the atomic
         // when it withdraws a slice; the audio thread acknowledges that
@@ -337,6 +507,9 @@ private:
         // in instead of stepping in.
         float curL{0.0f};
         float curR{0.0f};
+        // The same ramped gains into the headphones sum (R-R3-45).
+        float hpCurL{0.0f};
+        float hpCurR{0.0f};
 
         // Audio-thread-only transactional drain state. tryDrain computes
         // against these snapshots and commits them only after the control
@@ -345,10 +518,22 @@ private:
         int stagedAvail{0};
         float stagedCurL{0.0f};
         float stagedCurR{0.0f};
+        float stagedHpCurL{0.0f};
+        float stagedHpCurR{0.0f};
         bool drainStaged{false};
+
+        // Slice control plan Task 6, audio thread only: each sum's ramped
+        // listen level, and the controller's gain in each sum the slice
+        // was controlled in last drain (-1 where it was not), the start
+        // of a hand-off's ramp.
+        LaneLevels listenCur{};
+        LaneLevels ctlSeed{-1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
+        LaneLevels stagedListenCur{};
+        LaneLevels stagedCtlSeed{-1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
     };
 
-    // Grow (or first-allocate) a slice's ring to hold kRingBlocks blocks.
+    // Grow (or first-allocate) a slice's ring to hold at least the upstream
+    // minimum or kRingBlocks larger blocks, whichever is greater.
     static void ensureRing(SliceState& st, int frames);
 
 

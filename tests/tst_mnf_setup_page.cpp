@@ -506,6 +506,8 @@ private slots:
                                                 /*dspSampleRate*/ 48000,
                                                 /*outputSampleRate*/ 48000);
         QVERIFY(ch);
+        // R-R3-39: the lane opens the channel and reads its minimum width.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         MnfSetupPage page(&model);
         page.show();
@@ -550,6 +552,8 @@ private slots:
         RxChannel* ch = engine->createRxChannel(WdspEngine::kFirstSliceChannelId,
                                                 238, 4096, 48000, 48000, 48000);
         QVERIFY(ch);
+        // R-R3-39: the lane opens the channel and reads its minimum width.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         MnfSetupPage page(&model);
         page.show();
@@ -560,6 +564,9 @@ private slots:
 
         QSignalSpy spy(ch, &RxChannel::minNotchWidthChanged);
         ch->setFilterSizeSamples(2048);
+        // R-R3-39: the resize and the re-read run on the receive lane, and
+        // the label follows the signal from there.
+        QVERIFY(model.waitForReceiveLaneForTest());
         QVERIFY(spy.count() >= 1);
 
         const double after = ch->minNotchWidthHz();

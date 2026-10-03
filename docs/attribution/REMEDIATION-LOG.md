@@ -1168,4 +1168,91 @@ should add rows to that table.
 
 ---
 
+## 2026-09-22 — Full WDSP upstream sync to pinned TAPR 2.10
+
+**Upstream:** TAPR/OpenHPSDR-wdsp
+
+**Old baseline:** TAPR WDSP v1.29 plus the 2026-04-30 partial Thetis
+v2.10.3.13 `cfcomp.c/.h` sync
+
+**New baseline:** commit `b02d5bac675dd2f33ec2bab2b339f79a597c47dd`,
+directory `wdsp 2.10/Source`
+
+**Execution base:** NereusSDR `dc64744c` on shared signed `3402d171`; the lead records the final integration
+commit when the shared change set is committed.
+
+**Inventory:** The pre-import source manifest contains 170 case-preserving
+`.c`/`.h` rows and was independently recomputed with zero SHA-256 mismatches.
+The final vendor directory contains 167 such files (83 C and 84 headers): 156
+names from the pinned tree and 11 retained/new Nereus files. Of the pinned
+names, 127 are byte-identical and 29 contain reviewed compatibility,
+portability, parser, or lifecycle changes. The non-Windows build explicitly
+lists 83 C units; Windows omits `linux_port.c`.
+
+**Imported and retained scope:**
+
+- Imported the pinned NNR implementation, binary model arrays, NNIO parser,
+  PS3 correction/calculation worker, NURBS/extrapolation code, WBFM/half-band
+  resampler, phase rotator, and all audited dependent 2.10 sources.
+- Kept upstream `snoop.c` dormant and kept the pinned monolithic `wdsp.h` out
+  of the curated host ABI.
+- Removed obsolete local `FDnoiseIQ.c/.h` and `fastmath.h`.
+- Retained the Thetis-derived RNNR/SBNR backends, the established CFC Qg/Qe
+  behavior, the POSIX shim, and the three Nereus ChannelMaster-facing stubs.
+- Added the narrow Nereus `nnr_compat.h` and `ps3_abi.h` declaration/status
+  boundaries. These wrappers contain no DSP algorithm.
+
+**Intentional downstream changes:** The exact file groups and reasons are in
+`WDSP-PROVENANCE.md` and the vendor inventory. They cover NR3/NR4 integration
+with pinned NNR arbitration; independent-Q CFC compatibility and measured
+construction geometry; checked NNR/model and PS3 correction parsing; PS3
+worker/IQC teardown cancellation and file-operation generation status;
+bounded display access; POSIX wait/headers; and null-safe readbacks for newly
+opaque pinned handles.
+
+**License/header census:** The current source has 160 files recognized by the
+existing census as standard GPLv2-or-later, `nnr_compat.h` carrying the same
+permission text in a star-prefixed comment style, and six documented
+declaration/resource/version headers without the standard WDSP block. The
+source notices remain controlling. `scripts/audit-wdsp-headers.py` was rerun
+and correctly flags its pre-import expected table (`135/0/10`) as stale versus
+the new tree (`160/1/6`); updating that tool's expected census and verifier
+exemption set belongs in the shared integration checkpoint rather than this
+documentation-only edit.
+
+**Verification:** On Apple Clang/arm64 macOS, the 83-unit `wdsp_static` archive
+and application compiled. The linked `tst_linux_port_wait`,
+`tst_wdsp_ps_smoke`, `tst_tx_channel_ps_setters`, and
+`tst_wdsp210_cfc_compat` targets passed, and the real linked NNR target passed
+in 34.78 seconds. The frozen CFC fixture was not regenerated. Linux, Windows,
+sanitizer, hardware, and RF acceptance are not claimed by this entry.
+
+---
+
+## 2026-09-22 — WDSP 2.10 integrated header census and host adapters
+
+**Discovered by:** Integrated WDSP feature verification.
+**Reported via:** Source inventory and staged attribution gates.
+**Affected files:** `WDSP-PROVENANCE.md`, `THETIS-PROVENANCE.md`, three Core
+adapter headers, WDSP header census and new-port verifier scripts.
+**Gap:** The import checkpoint above recorded an intermediate header census.
+The final compatibility declarations and Core adapters required registration,
+verbatim source notices, and recognition of star-prefixed GPL comment blocks.
+**Fix:** `codex/wdsp210-nnr-ps3-design`, rebased onto signed Core/GUI base
+`55e7d49f` (feature baseline `e8a65674`). The final 167-file vendor census is
+162 GPL-2.0-or-later files plus five documented utility exceptions; no file is
+classified as copyright without permission. Existing historical Thetis notices
+remain intact above replacement TAPR notices for CALCC, IQC and CFC. The three
+Core adapters are registered against their actual TAPR source notices.
+**Verification:** Staged hook checks passed: Thetis 362/362, FreeDV 13/13,
+Aether/WDSP header markers, full-tree/diff port registration, inline cites,
+inline author tags, compliance classification and GUI/DSP ownership gates.
+The native archive exports all eight declared PS3 lifecycle/status helpers.
+**Process improvement:** Diff-mode new-port registration consults all applicable
+provenance tables; header census recognizes both original comment styles.
+Verbatim upstream whitespace and the native correction-writer fixture's final
+blank line are retained as source evidence rather than reformatted.
+
+---
+
 *(Subsequent entries will be appended as omissions are discovered and cured.)*

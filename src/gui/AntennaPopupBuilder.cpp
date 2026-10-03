@@ -9,6 +9,10 @@
 //   2026-05-02 — Written for NereusSDR by J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
 //                Per docs/superpowers/plans/2026-05-01-ui-polish-cross-surface.md §B3.
+//   2026-09-27 - "RX out on TX" follows the BYPS gate (rxOutOnTxPresent:
+//                the relay and the product's RX out on TX; R-IOS-06,
+//                R-IOS-27). J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "AntennaPopupBuilder.h"
@@ -60,10 +64,11 @@ void AntennaPopupBuilder::populate(QMenu* menu,
         }
     }
 
-    // Section: Special — RX-bypass relay, shown only in RX mode.
-    // Gated on caps.hasRxBypassRelay (hardware gate, same as VfoWidget
-    // m_rxBypassBtn visibility logic from Phase 3P-I-b T9).
-    if (mode == Mode::RX && caps.hasRxBypassRelay) {
+    // Section: Special — RX-bypass relay, shown only in RX mode, on the
+    // VFO flag's BYPS gate: the board's relay and the product's RX out on
+    // TX (rxOutOnTxPresent). The relay alone offered it on a G2, whose
+    // BYPS button stays hidden.
+    if (mode == Mode::RX && rxOutOnTxPresent(caps, sku)) {
         menu->addSection(QStringLiteral("Special"));
         addAntAction(QStringLiteral("RX out on TX"));
     }

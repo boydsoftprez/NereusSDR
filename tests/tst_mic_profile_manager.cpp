@@ -313,7 +313,7 @@ private slots:
         // 2 FilterLow/FilterHigh (Plan 4 Cluster A D1) +
         // 2 line_in_gain/user_dig_out (P1 full-parity Task 2.4) +
         // 11 DEXP envelope/ratios/look-ahead/SCF (3M-3a-iii Tasks 7-10).
-        QCOMPARE(defs.size(), 106);
+        QCOMPARE(defs.size(), 108);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -491,7 +491,7 @@ private slots:
         tx.setMicBoost(false);
         tx.setMicXlr(false);
         tx.setLineIn(true);
-        tx.setLineInBoost(6.5);
+        tx.setLineInBoost(7.5);  // on the 1.5 dB grid (radio codec review)
         tx.setMicTipRing(false);
         tx.setMicBias(true);
         tx.setMicPttDisabled(true);
@@ -528,7 +528,7 @@ private slots:
         QCOMPARE(s.value(profileKey(kMacA, "MyProfile", "Line_Input_On")).toString(),
                  QStringLiteral("True"));
         QCOMPARE(s.value(profileKey(kMacA, "MyProfile", "Line_Input_Level")).toString(),
-                 QStringLiteral("6.5"));
+                 QStringLiteral("7.5"));
         QCOMPARE(s.value(profileKey(kMacA, "MyProfile", "Mic_TipRing")).toString(),
                  QStringLiteral("False"));
         QCOMPARE(s.value(profileKey(kMacA, "MyProfile", "Mic_Bias")).toString(),

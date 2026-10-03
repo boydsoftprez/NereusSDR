@@ -51,6 +51,11 @@
 // Modification history (NereusSDR):
 //   2026-04-29 — H.1/H.2/H.3 written by J.J. Boyd (KG4VCF), with AI-assisted
 //                implementation via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 5): every control is a setting on
+//                the Core's `transmit` and follows the transmit settings
+//                gate at version 5 in a remote window. The two-tone start
+//                is the TX applet's 2-Tone button, not on this page.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; no Thetis logic ported here.
@@ -82,6 +87,10 @@ class TestTwoTonePage : public SetupPage {
 public:
     explicit TestTwoTonePage(RadioModel* model, QWidget* parent = nullptr);
     ~TestTwoTonePage() override = default;
+
+    // R-R3-49 (parity Task 5): see the header's history.
+    void setTransmitSettingsPermittedAt(int version, bool permitted,
+                                        const QString& reason) override;
 
     // Test-introspection accessors (always exposed; pages pattern matches
     // AudioTxInputPage).  No NEREUS_BUILD_TESTS guard needed.

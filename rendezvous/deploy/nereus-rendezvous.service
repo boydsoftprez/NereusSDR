@@ -1,0 +1,108 @@
+# systemd unit for the NereusSDR rendezvous service.
+#
+# Installed as /etc/systemd/system/nereus-rendezvous.service by
+# rendezvous/deploy/setup-server.sh. The code lives in /opt/nereus-rendezvous
+# (put there by rendezvous/deploy.sh), the configuration in
+# /etc/nereus-rendezvous/rendezvous.conf and the TURN and relay secrets in
+# /etc/nereus-rendezvous/turn-secret and relay-secret (all written by
+# setup-server.sh).
+# The wire is docs/architecture/2026-09-23-rendezvous-v1.md.
+
+[Unit]
+Description=NereusSDR rendezvous service
+Documentation=https://github.com/boydsoftprez/NereusSDR/tree/main/rendezvous
+After=network.target
+
+[Service]
+Type=exec
+# Ubuntu's own python3 with its python3-websockets and python3-cryptography;
+# nothing from pip.
+ExecStart=/usr/bin/python3 -m nereus_rendezvous --config /etc/nereus-rendezvous/rendezvous.conf
+Environment=PYTHONPATH=/opt/nereus-rendezvous
+Environment=PYTHONDONTWRITEBYTECODE=1
+WorkingDirectory=/
+Restart=on-failure
+RestartSec=5
+# SIGTERM makes the service tell every connection it is going
+# (shuttingDown) and close them. On Python 3.12 with Ubuntu's websockets
+# 10.4 that takes up to about 11 s (a 5 s close handshake after a wait of
+# up to 5 s for each writer), so the stop timeout sits well above it.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# --- The TURN secret and the relay secret -------------------------------
+# systemd copies the root-only secret files to
+# /run/credentials/nereus-rendezvous.service/, readable by this service
+# alone, and rendezvous.conf's turn_secret_file and relay_secret_file point
+# there. The relay secret signs relay grants (rendezvous document section
+# 12.2); nereus-relay.service reads the same file to check them.
+LoadCredential=turn-secret:/etc/nereus-rendezvous/turn-secret
+LoadCredential=relay-secret:/etc/nereus-rendezvous/relay-secret
+
+# --- Identity -----------------------------------------------------------
+# A transient account made for each run; the service owns no files.
+DynamicUser=yes
+User=nereus-rendezvous
+Group=nereus-rendezvous
+
+# --- Network ------------------------------------------------------------
+# The service listens on loopback only (127.0.0.1 and ::1, port 8710 by
+# default); Caddy on the same host is its only peer. It makes no outgoing
+# connection, so nothing else is allowed.
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# --- Memory and files -----------------------------------------------------
+# The ceiling (MemoryMax) comes from the server's memory, in the drop-in
+# setup-server.sh writes beside this unit
+# (nereus-rendezvous.service.d/memory.conf; the formula is in the script and
+# the rendezvous document, section 9.1). At the default pools (2000
+# registered Cores and 256 other connections), all idle, the service holds
+# about 85 MiB. The ceiling is not the worst case: a peer holding every
+# connection with an unfinished message at once would need about 640 MiB.
+# Past the ceiling the kernel ends the service, systemd starts it again
+# (Restart=on-failure) and the Cores register again. Under memory pressure
+# on the whole host the kernel picks the service before Caddy and coturn
+# (OOMScoreAdjust below, and -100 in Caddy's drop-in), since ending the
+# service also frees the connections Caddy holds for it. Socket buffers are
+# charged to this unit too (cgroup v2); their size per connection is set by
+# the service itself (socket_buffer_bytes).
+MemorySwapMax=0
+OOMScoreAdjust=500
+TasksMax=64
+# One descriptor per connection: both pools (2256 by default), the
+# listening sockets and a margin for connections refused on arrival.
+# systemd's default of 1024 would stop the service accepting long before
+# its pools fill.
+LimitNOFILE=8192
+
+# --- Sandboxing ---------------------------------------------------------
+NoNewPrivileges=yes
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Not set, because no systemd was at hand to prove them against Python,
+# OpenSSL and libffi (cryptography's callbacks): MemoryDenyWriteExecute= and
+# SystemCallFilter=. Candidates once `systemd-analyze security
+# nereus-rendezvous` and a full check have run on the server.
+
+[Install]
+WantedBy=multi-user.target

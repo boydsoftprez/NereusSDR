@@ -12,6 +12,15 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-25 — wdspTxaMeterIndex(): each TxMeterType maps to the WDSP
+//                 txaMeterType index Thetis's CalculateTXMeter reads for it
+//                 (D14, R-R3-49), by J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-25 - calculateTxMeter() / thetisTxReading(): Thetis's whole
+//                 transmit meter reading, CalculateTXMeter (dsp.cs) and the
+//                 MOX reading step that floors and signs it (console.cs)
+//                 (D14, R-R3-49), by J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  wdsp.cs
@@ -209,8 +218,8 @@ enum class RxMeterType : int {
     AgcAvg       = 6    // RXA_AGC_AV — MW0LGE [2.9.0.7] added av [Thetis dsp.cs:882]
 };
 
-// TX meter types. Values match WDSP GetTXAMeter 'mt' argument.
-// From Thetis wdsp.cs txaMeterType
+// TX meter types. NereusSDR's own order, NOT WDSP's GetTXAMeter index:
+// map with wdspTxaMeterIndex() below (D14, R-R3-49).
 enum class TxMeterType : int {
     MicPeak      = 0,
     MicAvg       = 1,
@@ -230,6 +239,199 @@ enum class TxMeterType : int {
     LevelerAvg   = 15,
     LevelerGain  = 16
 };
+
+// D14, R-R3-49: the GetTXAMeter index (WDSP txaMeterType) a TxMeterType
+// reads. TxMeterType's values are NereusSDR's own order, not WDSP's, so
+// nothing passes one to WDSP raw; TxChannel::txMeter(TxMeterType) maps it
+// here. The WDSP enum this build compiles is third_party/wdsp/src/TXA.h
+// txaMeterType (TXA_MIC_PK 0 .. TXA_OUT_AV 16), the same order as Thetis's
+// own copy of it:
+// From Thetis Console/dsp.cs:899-919 [v2.10.3.15] — enum txaMeterType
+//   TXA_MIC_PK, TXA_MIC_AV, TXA_EQ_PK, TXA_EQ_AV, TXA_LVLR_PK, TXA_LVLR_AV,
+//   TXA_LVLR_GAIN, TXA_CFC_PK, TXA_CFC_AV, TXA_CFC_GAIN, TXA_COMP_PK,
+//   TXA_COMP_AV, TXA_ALC_PK, TXA_ALC_AV, TXA_ALC_GAIN, TXA_OUT_PK,
+//   TXA_OUT_AV, TXA_METERTYPE_LAST
+// Each meter reads the index Thetis reads for it:
+// From Thetis Console/dsp.cs:992-1050 [v2.10.3.15] — CalculateTXMeter
+//   MIC -> TXA_MIC_AV, PWR -> TXA_OUT_PK, ALC -> TXA_ALC_AV,
+//   EQ -> TXA_EQ_AV, LEVELER -> TXA_LVLR_AV, COMP -> TXA_COMP_AV,
+//   ALC_G -> TXA_ALC_GAIN, LVL_G -> TXA_LVLR_GAIN, MIC_PK -> TXA_MIC_PK,
+//   ALC_PK -> TXA_ALC_PK, EQ_PK -> TXA_EQ_PK, LEVELER_PK -> TXA_LVLR_PK,
+//   COMP_PK -> TXA_COMP_PK, CFC_PK -> TXA_CFC_PK, CFC_G -> TXA_CFC_GAIN,
+//   CFC_AV -> TXA_CFC_AV
+// Thetis reads no output average; OutAvg reads TXA_OUT_AV, the meter it
+// names.
+constexpr int wdspTxaMeterIndex(TxMeterType meter) noexcept
+{
+    switch (meter) {
+    case TxMeterType::MicPeak:     return 0;    // TXA_MIC_PK
+    case TxMeterType::MicAvg:      return 1;    // TXA_MIC_AV
+    case TxMeterType::EqPeak:      return 2;    // TXA_EQ_PK
+    case TxMeterType::EqAvg:       return 3;    // TXA_EQ_AV
+    case TxMeterType::LevelerPeak: return 4;    // TXA_LVLR_PK
+    case TxMeterType::LevelerAvg:  return 5;    // TXA_LVLR_AV
+    case TxMeterType::LevelerGain: return 6;    // TXA_LVLR_GAIN
+    case TxMeterType::CfcPeak:     return 7;    // TXA_CFC_PK
+    case TxMeterType::CfcAvg:      return 8;    // TXA_CFC_AV
+    case TxMeterType::CfcGain:     return 9;    // TXA_CFC_GAIN
+    case TxMeterType::CompPeak:    return 10;   // TXA_COMP_PK
+    case TxMeterType::CompAvg:     return 11;   // TXA_COMP_AV
+    case TxMeterType::AlcPeak:     return 12;   // TXA_ALC_PK
+    case TxMeterType::AlcAvg:      return 13;   // TXA_ALC_AV
+    case TxMeterType::AlcGain:     return 14;   // TXA_ALC_GAIN
+    case TxMeterType::OutPeak:     return 15;   // TXA_OUT_PK
+    case TxMeterType::OutAvg:      return 16;   // TXA_OUT_AV
+    }
+    return -1;
+}
+
+// D14, R-R3-49: Thetis's transmit meter reading, the whole of it. A WDSP
+// reading becomes what Thetis shows in two steps: CalculateTXMeter reads
+// one GetTXAMeter index per meter type and returns it offset and negated,
+// and the MOX branch of the meter update negates it again (for most
+// readings) and floors it.
+//
+// The transmit members of Thetis's WDSP.MeterType, the argument of
+// CalculateTXMeter (dsp.cs:857-885 [v2.10.3.15] lists them among the
+// receive ones; the names here are NereusSDR's, the set is Thetis's).
+enum class ThetisTxMeterType : int {
+    Mic, Pwr, Alc, Eq, Leveler, Comp, Cpdr, AlcG, LvlG,
+    MicPk, AlcPk, EqPk, LevelerPk, CompPk, CpdrPk, CfcPk, CfcG, CfcAv
+};
+
+// From Thetis Console/dsp.cs:982 [v2.10.3.15]:
+//   private static double alcgain = 3.0;
+// (ALCGain has a setter; nothing in Thetis v2.10.3.15 calls it.)
+inline constexpr double kThetisAlcGain = 3.0;
+
+// The GetTXAMeter index CalculateTXMeter reads for `meter`, as the
+// TxMeterType that wdspTxaMeterIndex maps to it.
+// From Thetis Console/dsp.cs:992-1053 [v2.10.3.15], CalculateTXMeter:
+//   case MeterType.MIC:        val = GetTXAMeter(channel, txaMeterType.TXA_MIC_AV);
+//   case MeterType.PWR:        val = GetTXAMeter(channel, txaMeterType.TXA_OUT_PK);
+//   case MeterType.ALC:        val = GetTXAMeter(channel, txaMeterType.TXA_ALC_AV);
+//   case MeterType.EQ:         val = GetTXAMeter(channel, txaMeterType.TXA_EQ_AV);
+//   case MeterType.LEVELER:    val = GetTXAMeter(channel, txaMeterType.TXA_LVLR_AV);
+//   case MeterType.COMP:       val = GetTXAMeter(channel, txaMeterType.TXA_COMP_AV);
+//   case MeterType.CPDR:       val = GetTXAMeter(channel, txaMeterType.TXA_COMP_AV);
+//   case MeterType.ALC_G:      val = GetTXAMeter(channel, txaMeterType.TXA_ALC_GAIN) + alcgain;
+//   case MeterType.LVL_G:      val = GetTXAMeter(channel, txaMeterType.TXA_LVLR_GAIN);
+//   case MeterType.MIC_PK:     val = GetTXAMeter(channel, txaMeterType.TXA_MIC_PK);
+//   case MeterType.ALC_PK:     val = GetTXAMeter(channel, txaMeterType.TXA_ALC_PK);
+//   case MeterType.EQ_PK:      val = GetTXAMeter(channel, txaMeterType.TXA_EQ_PK);
+//   case MeterType.LEVELER_PK: val = GetTXAMeter(channel, txaMeterType.TXA_LVLR_PK);
+//   case MeterType.COMP_PK:    val = GetTXAMeter(channel, txaMeterType.TXA_COMP_PK);
+//   case MeterType.CPDR_PK:    val = GetTXAMeter(channel, txaMeterType.TXA_COMP_PK);
+//   case MeterType.CFC_PK:     val = GetTXAMeter(channel, txaMeterType.TXA_CFC_PK);
+//   case MeterType.CFC_G:      val = GetTXAMeter(channel, txaMeterType.TXA_CFC_GAIN);
+//   case MeterType.CFC_AV:     val = GetTXAMeter(channel, txaMeterType.TXA_CFC_AV);
+//   default:                   val = -400.0;
+//   ...
+//   return -(float)val;
+constexpr TxMeterType calculateTxMeterSource(ThetisTxMeterType meter) noexcept
+{
+    switch (meter) {
+    case ThetisTxMeterType::Mic:       return TxMeterType::MicAvg;
+    case ThetisTxMeterType::Pwr:       return TxMeterType::OutPeak;
+    case ThetisTxMeterType::Alc:       return TxMeterType::AlcAvg;
+    case ThetisTxMeterType::Eq:        return TxMeterType::EqAvg;
+    case ThetisTxMeterType::Leveler:   return TxMeterType::LevelerAvg;
+    case ThetisTxMeterType::Comp:      return TxMeterType::CompAvg;
+    case ThetisTxMeterType::Cpdr:      return TxMeterType::CompAvg;
+    case ThetisTxMeterType::AlcG:      return TxMeterType::AlcGain;
+    case ThetisTxMeterType::LvlG:      return TxMeterType::LevelerGain;
+    case ThetisTxMeterType::MicPk:     return TxMeterType::MicPeak;
+    case ThetisTxMeterType::AlcPk:     return TxMeterType::AlcPeak;
+    case ThetisTxMeterType::EqPk:      return TxMeterType::EqPeak;
+    case ThetisTxMeterType::LevelerPk: return TxMeterType::LevelerPeak;
+    case ThetisTxMeterType::CompPk:    return TxMeterType::CompPeak;
+    case ThetisTxMeterType::CpdrPk:    return TxMeterType::CompPeak;
+    case ThetisTxMeterType::CfcPk:     return TxMeterType::CfcPeak;
+    case ThetisTxMeterType::CfcG:      return TxMeterType::CfcGain;
+    case ThetisTxMeterType::CfcAv:     return TxMeterType::CfcAvg;
+    }
+    return TxMeterType::MicAvg;   // every enumerator is handled above
+}
+
+// CalculateTXMeter's value for `meter`, given the GetTXAMeter reading of its
+// source (calculateTxMeterSource): ALC_G adds alcgain, and every value is
+// returned negated, as a float (the dsp.cs lines above).
+constexpr float calculateTxMeter(ThetisTxMeterType meter, double reading) noexcept
+{
+    double val = reading;
+    if (meter == ThetisTxMeterType::AlcG) {
+        val = reading + kThetisAlcGain;
+    }
+    return -static_cast<float>(val);
+}
+
+// The transmit readings Thetis's meters show while keyed (its Reading
+// enum's transmit members; PWR, SWR and the PA readings come from the
+// hardware, not CalculateTXMeter).
+enum class ThetisTxReading : int {
+    Mic, MicPk, Eq, EqPk, Leveler, LevelerPk, LvlG, CfcG, CfcPk, CfcAv,
+    Comp, CompPk, Alc, AlcPk, AlcG, AlcGroup
+};
+
+// What Thetis shows for `reading`. `readRaw(TxMeterType)` returns the
+// GetTXAMeter reading of one WDSP meter (TxChannel::txMeter).
+// From Thetis Console/console.cs:46969-46986 [v2.10.3.15], the MOX branch:
+//   updateMetersReading(Reading.MIC, (float)Math.Max(-195.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.MIC)), 0);
+//   updateMetersReading(Reading.MIC_PK, (float)Math.Max(-195.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.MIC_PK)), 0);
+//   updateMetersReading(Reading.EQ, (float)Math.Max(-30.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.EQ)), 0);
+//   updateMetersReading(Reading.EQ_PK, (float)Math.Max(-30.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.EQ_PK)), 0);
+//   updateMetersReading(Reading.LEVELER, (float)Math.Max(-30.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.LEVELER)), 0);
+//   updateMetersReading(Reading.LEVELER_PK, (float)Math.Max(-30.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.LEVELER_PK)), 0);
+//   updateMetersReading(Reading.LVL_G, (float)Math.Max(0, WDSP.CalculateTXMeter(1, WDSP.MeterType.LVL_G)), 0);
+//   updateMetersReading(Reading.CFC_G, (float)Math.Max(0, -WDSP.CalculateTXMeter(1, WDSP.MeterType.CFC_G)), 0);
+//   updateMetersReading(Reading.CFC_PK, (float)Math.Max(-30.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.CFC_PK)), 0);
+//   updateMetersReading(Reading.CFC_AV, (float)Math.Max(-30.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.CFC_AV)), 0);
+//   updateMetersReading(Reading.COMP, (float)Math.Max(-30.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.COMP)), 0);
+//   updateMetersReading(Reading.COMP_PK, (float)Math.Max(-30.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.COMP_PK)), 0);
+//
+//   updateMetersReading(Reading.ALC, (float)Math.Max(-30.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.ALC)), 0);
+//   updateMetersReading(Reading.ALC_PK, (float)Math.Max(-195.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.ALC_PK)), 0);
+//   updateMetersReading(Reading.ALC_G, (float)Math.Max(-195.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.ALC_G)), 0);
+//
+//   updateMetersReading(Reading.ALC_GROUP, (float)Math.Max(-30.0f, -WDSP.CalculateTXMeter(1, WDSP.MeterType.ALC_PK)) + (float)Math.Max(0, -WDSP.CalculateTXMeter(1, WDSP.MeterType.ALC_G)), 0);
+// (the RX2 transmit branch, console.cs:47146-47163, reads the same way).
+// One NereusSDR choice: a non-finite reading shows the floor (C#'s
+// Math.Max would pass NaN on); WDSP's meters never return one.
+template <class ReadRaw>
+float thetisTxReading(ThetisTxReading reading, ReadRaw&& readRaw)
+{
+    const auto calc = [&readRaw](ThetisTxMeterType meter) {
+        return calculateTxMeter(meter, readRaw(calculateTxMeterSource(meter)));
+    };
+    // Math.Max(floor, value) for floats, with a non-finite value taking the
+    // floor (see above). .NET's Math.Max returns +0 over -0, so a zero
+    // reading shows as 0, never -0.
+    const auto atLeast = [](float floor, float value) {
+        const float v = (value >= floor) ? value : floor;
+        return v == 0.0f ? 0.0f : v;
+    };
+    switch (reading) {
+    case ThetisTxReading::Mic:       return atLeast(-195.0f, -calc(ThetisTxMeterType::Mic));
+    case ThetisTxReading::MicPk:     return atLeast(-195.0f, -calc(ThetisTxMeterType::MicPk));
+    case ThetisTxReading::Eq:        return atLeast(-30.0f, -calc(ThetisTxMeterType::Eq));
+    case ThetisTxReading::EqPk:      return atLeast(-30.0f, -calc(ThetisTxMeterType::EqPk));
+    case ThetisTxReading::Leveler:   return atLeast(-30.0f, -calc(ThetisTxMeterType::Leveler));
+    case ThetisTxReading::LevelerPk: return atLeast(-30.0f, -calc(ThetisTxMeterType::LevelerPk));
+    case ThetisTxReading::LvlG:      return atLeast(0.0f, calc(ThetisTxMeterType::LvlG));
+    case ThetisTxReading::CfcG:      return atLeast(0.0f, -calc(ThetisTxMeterType::CfcG));
+    case ThetisTxReading::CfcPk:     return atLeast(-30.0f, -calc(ThetisTxMeterType::CfcPk));
+    case ThetisTxReading::CfcAv:     return atLeast(-30.0f, -calc(ThetisTxMeterType::CfcAv));
+    case ThetisTxReading::Comp:      return atLeast(-30.0f, -calc(ThetisTxMeterType::Comp));
+    case ThetisTxReading::CompPk:    return atLeast(-30.0f, -calc(ThetisTxMeterType::CompPk));
+    case ThetisTxReading::Alc:       return atLeast(-30.0f, -calc(ThetisTxMeterType::Alc));
+    case ThetisTxReading::AlcPk:     return atLeast(-195.0f, -calc(ThetisTxMeterType::AlcPk));
+    case ThetisTxReading::AlcG:      return atLeast(-195.0f, -calc(ThetisTxMeterType::AlcG));
+    case ThetisTxReading::AlcGroup:
+        return atLeast(-30.0f, -calc(ThetisTxMeterType::AlcPk))
+             + atLeast(0.0f, -calc(ThetisTxMeterType::AlcG));
+    }
+    return -400.0f;   // every enumerator is handled above
+}
 
 // WDSP channel type for OpenChannel 'type' parameter.
 enum class ChannelType : int {
@@ -261,7 +463,8 @@ enum class NrSlot : int {
     NR4  = 4,   // WDSP sbnr.c    (Samphire MW0LGE, libspecbleach backend)
     DFNR = 5,   // AetherSDR DeepFilterFilter (DeepFilterNet3, post-WDSP)
     BNR  = 6,   // AetherSDR NvidiaBnrFilter (NVIDIA Broadcast, Windows+NVIDIA, post-WDSP)
-    MNR  = 7    // AetherSDR MacNRFilter (Apple Accelerate, macOS, post-WDSP)
+    MNR  = 7,   // AetherSDR MacNRFilter (Apple Accelerate, macOS, post-WDSP)
+    NNR  = 8    // TAPR WDSP 2.10 neural NR; append to preserve saved values.
 };
 
 // From Thetis wdsp/anr.h:102 [v2.10.3.13] — SetRXAANRPosition(int channel, int position)

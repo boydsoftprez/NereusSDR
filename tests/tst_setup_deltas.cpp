@@ -228,7 +228,7 @@ private slots:
             QStringLiteral("chkSwapREDBluePSAColours"));
         QVERIFY2(chk, "chkSwapREDBluePSAColours must exist on the Options group");
         QCOMPARE(chk->text(),
-                 QStringLiteral("Swap red and blue PS-A feedback colours"));
+                 QStringLiteral("Swap red and blue PS-A feedback colors"));
         QVERIFY2(!chk->toolTip().isEmpty(),
                  "chkSwapREDBluePSAColours must carry a tooltip");
     }

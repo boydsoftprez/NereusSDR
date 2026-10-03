@@ -21,6 +21,11 @@
 //                 scaleFwdRevVoltage companion needed to drive the
 //                 PaValuesPage FWD voltage / REV voltage / Raw FWD power
 //                 readout labels.
+//   2026-09-28 — convertToAmps() ported from mi0bot-Thetis console.cs
+//                 convertToAmps (25114-25141 [v2.10.3.13-beta2]) with its
+//                 HL2 current branch, for the PA current reading and its
+//                 volt calibration. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //                 Callsite migration deferred to Phase 4 Agent 4A; the
 //                 RadioModel.cpp private copy is intentionally retained
 //                 here so this commit is a non-breaking ADD (not a
@@ -175,5 +180,26 @@ float scaleExciterPowerMw(HPSDRModel model, quint16 raw) noexcept;
 ///   _MKIIHL2Temp = (3.26f * (tempAverage / 4096.0f) - 0.5f) / 0.01f;
 ///   // MI0BOT: temp for HL2
 double scaleHermesLiteTempCelsius(quint16 raw) noexcept;
+
+/// Convert a raw PA current ADC reading to amps.
+///
+/// Non-HL2 boards: the reading is sensor millivolts (5000 mV over 4095
+/// counts), less the calibration offset `ampVoff` (mV), over the
+/// sensitivity `ampSens` (mV per amp), clamped at 0 (Thetis AmpVoff /
+/// AmpSens, set from Setup > Calibration > Volts/Amps Calibration).
+///
+/// HL2 (HPSDRModel::HERMESLITE): a fixed sense chain that takes no
+/// calibration: 3.26 V reference, 4096 steps, x50 sense amplifier, a
+/// 0.04 ohm sense resistor and a 1000/(1000+270) divider at the slow ADC.
+/// The HL2's current arrives on user ADC0; other boards' on user ADC1.
+///
+/// From mi0bot console.cs:25114-25141 [v2.10.3.13-beta2] convertToAmps:
+///   if (HardwareSpecific.Model == HPSDRModel.HERMESLITE)       // MI0BOT: HL2 current
+///   { amps = ((3.26f * (IOreading / 4096.0f)) / 50.0f) / 0.04f;
+///     amps = amps / (1000.0f / 1270.0f); }
+///   else { if (fwdvolts < 0) fwdvolts = 0.0f;
+///          amps = ((fwdvolts - voff) / sens); if (amps < 0) amps = 0.0f; }
+double convertToAmps(HPSDRModel model, double ioReading,
+                     double ampVoff, double ampSens) noexcept;
 
 }  // namespace NereusSDR

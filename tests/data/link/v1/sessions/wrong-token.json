@@ -1,0 +1,11 @@
+{
+    "runs": ["station", "app"],
+    "stationSetup": {"radio": "static", "slices": 1},
+    "steps": [
+        {"from": "station", "message": {"challenge": "$string", "features": {"deviceAuth": 1, "pairing": 1, "sessionHolder": 1}, "identity": {"certBinding": "$string", "publicKey": "$string"}, "major": 1, "majors": [1], "minor": 11, "peer": "nereusd", "settingsSchema": 0, "type": "hello"}},
+        {"from": "client", "role": "behaviour", "message": {"type": "hello", "major": 1, "minor": 11, "settingsSchema": "$int", "peer": "$string", "majors": "$majors", "features": "$object"}},
+        {"from": "client", "role": "behaviour", "message": {"type": "auth.request", "token": "$string"}},
+        {"from": "station", "message": {"accepted": false, "code": "wrongToken", "reason": "The Core did not accept this app's pairing token. Check the token saved for this Core.", "retryable": false, "type": "auth.result"}},
+        {"expectClosed": {"retryable": false}}
+    ]
+}

@@ -1,0 +1,15 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "auth.request",
+    "token": "",
+    "device": {
+      "id": "conformance-device-id",
+      "publicKey": "conformance-device-key",
+      "name": "Shack iPhone",
+      "kind": "phone",
+      "signature": "conformance-signature"
+    }
+  },
+  "decodes": true
+}

@@ -22,6 +22,11 @@
 //                 Theme palette imported from AetherSDR `src/gui/ComboStyle.h` /
 //                 `HGauge.h` / `SliceColors.h` and inline QColor calls
 //                 in `MainWindow.cpp` / `VfoWidget.cpp`.
+//   2026-09-26 - applyDarkPageStyle gives disabled controls the style
+//                 guide's disabled colours (darkPageDisabledRules), so a
+//                 control that cannot run looks disabled on every dark
+//                 Setup page. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -270,6 +275,32 @@ constexpr auto kButtonStyle =
     "QPushButton:hover { background: #203040; }"
     "QPushButton:pressed { background: #00b4d8; color: #0f0f1a; }";
 
+// The disabled look for the dark page style: a control that cannot run is
+// shown disabled, so it must not look like an enabled one. Every rule is
+// :disabled only, so enabled controls keep the page style unchanged. The
+// colours are the style guide's disabled trio (kDisabledBg / kDisabledText
+// / kDisabledBorder), the same the VFO flag's disabled buttons use
+// (VfoStyles.h kDisabledBtn). Placed after the enabled rules so a disabled
+// button that is hovered or pressed still draws disabled.
+inline QString darkPageDisabledRules()
+{
+    return QStringLiteral(
+        "QLabel:disabled, QCheckBox:disabled, QRadioButton:disabled,"
+        " QGroupBox:disabled { color: %1; }"
+        "QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled,"
+        " QLineEdit:disabled, QPushButton:disabled {"
+        "  color: %1; background: %2; border-color: %3; }"
+        "QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {"
+        "  background: %2; border-color: %3; }"
+        "QCheckBox::indicator:checked:disabled,"
+        " QRadioButton::indicator:checked:disabled {"
+        "  background: %1; border-color: %1; }"
+        "QSlider::groove:horizontal:disabled { background: %2; }"
+        "QSlider::sub-page:horizontal:disabled { background: %3; }"
+        "QSlider::handle:horizontal:disabled { background: %1; }"
+    ).arg(kDisabledText, kDisabledBg, kDisabledBorder);
+}
+
 // Apply the canonical "dark page" stylesheet to a Setup page that lays
 // itself out manually (i.e. doesn't inherit the SetupPage::addLabeledX
 // helper-based widgets). Replaces the 4 byte-for-byte copies of
@@ -327,7 +358,8 @@ inline void applyDarkPageStyle(QWidget* w)
         "  border-radius: 3px; padding: 3px 12px; }"
         "QPushButton:hover { background: %6; }"
         "QPushButton:pressed { background: %5; color: %1; }"
-    ).arg(kAppBg, kTextPrimary, kBorder, kButtonBg, kAccent, kButtonHover, kTextSecondary));
+    ).arg(kAppBg, kTextPrimary, kBorder, kButtonBg, kAccent, kButtonHover, kTextSecondary)
+     + darkPageDisabledRules());
 }
 
 // ── TX / RX filter overlay palette ────────────────────────────────────────────

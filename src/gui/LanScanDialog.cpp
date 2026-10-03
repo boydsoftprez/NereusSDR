@@ -8,10 +8,25 @@
 //
 // Phase 3P-II Task 18.
 // AI tooling: Anthropic Claude Code.
+//
+// 2026-09-25: R-R3-49 (parity Task 8): the Core's scan for a remote
+// window (LanScanDialog(RadioModel*, QWidget*)). J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
+//
+// 2026-09-25: R-R3-49 (parity Task 9): the Core's Power Genius scan
+// (scanPgxlLan) through the same dialog. J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code.
 
 #include "gui/LanScanDialog.h"
 
 #include "core/LanDiscovery.h"
+#include "core/session/IStationLink.h"
+#include "gui/OperatorReasonText.h"
+#include "models/RadioModel.h"
+
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include <QDialogButtonBox>
 #include <QHeaderView>
@@ -27,6 +42,101 @@ namespace NereusSDR {
 LanScanDialog::LanScanDialog(QWidget* parent)
     : QDialog(parent)
 {
+    buildUi(tr("Scanning LAN for 4O3A devices (3 seconds)..."));
+
+    // Wire up the discovery engine and start the 3-second scan.
+    m_discovery = new LanDiscovery(this);
+
+    connect(m_discovery, &LanDiscovery::deviceDiscovered,
+            this, &LanScanDialog::onDeviceDiscovered);
+    connect(m_discovery, &LanDiscovery::scanFinished,
+            this, &LanScanDialog::onScanFinished);
+
+    m_discovery->start(3000);
+}
+
+LanScanDialog::LanScanDialog(RadioModel* coreModel, QWidget* parent, CoreDevice device)
+    : QDialog(parent)
+    , m_coreModel(coreModel)
+{
+    const bool amp = device == CoreDevice::PowerGenius;
+    buildUi(amp ? tr("The Core is listening for a Power Genius on its network (3 seconds)...")
+                : tr("The Core is listening for a Tuner Genius on its network (3 seconds)..."));
+    IStationLink* link = m_coreModel ? m_coreModel->stationLink() : nullptr;
+    if (!link) {
+        finishCoreScan(false, amp ? IStationLink::pgxlFullControlUnavailableReason()
+                                  : IStationLink::tgxlFullControlUnavailableReason(),
+                       QString());
+        return;
+    }
+    const auto onAnswer = [this](quint32 commandId, bool accepted, const QString& reason,
+                                 const QString& devicesJson) {
+        if (m_coreScanPending && commandId == m_coreCommandId) {
+            finishCoreScan(accepted, reason, devicesJson);
+        }
+    };
+    if (amp) {
+        connect(m_coreModel, &RadioModel::stationPgxlLanScanFinished, this, onAnswer);
+    } else {
+        connect(m_coreModel, &RadioModel::stationTgxlLanScanFinished, this, onAnswer);
+    }
+    connect(m_coreModel, &RadioModel::stationLinkStateChanged, this, [this]() {
+        const IStationLink* current = m_coreModel->stationLink();
+        if (m_coreScanPending && (!current || !current->stationLinkReady())) {
+            finishCoreScan(false, tr("The link to the Core dropped before the scan finished."),
+                           QString());
+        }
+    });
+    const IStationLink::CommandOutcome outcome = amp ? link->requestPgxlLanScan()
+                                                     : link->requestTgxlLanScan();
+    if (!outcome.sent) {
+        finishCoreScan(false, outcome.reason, QString());
+        return;
+    }
+    m_coreCommandId = outcome.commandId;
+    m_coreScanPending = true;
+    // The dialog shows the Core's refusal itself (no second notice).
+    m_coreModel->noteAccessoryRequestShownOnPage(outcome.commandId, this);
+}
+
+void LanScanDialog::finishCoreScan(bool accepted, const QString& reason,
+                                   const QString& devicesJson)
+{
+    m_coreScanPending = false;
+    if (!accepted) {
+        m_progressBar->setValue(100);
+        m_statusLabel->setText(OperatorReasonText::forDisplay(reason));
+        return;
+    }
+    const QJsonArray devices = QJsonDocument::fromJson(devicesJson.toUtf8()).array();
+    for (const QJsonValue& value : devices) {
+        const QJsonObject device = value.toObject();
+        const int port = device.value(QStringLiteral("port")).toInt();
+        if (port < 1 || port > 65535) {
+            continue;
+        }
+        // The Core does not say the firmware version; the column stays empty.
+        onDeviceDiscovered(device.value(QStringLiteral("model")).toString(),
+                           device.value(QStringLiteral("address")).toString(),
+                           static_cast<quint16>(port), QString(),
+                           device.value(QStringLiteral("serial")).toString(),
+                           device.value(QStringLiteral("nickname")).toString());
+    }
+    onScanFinished();
+}
+
+int LanScanDialog::rowCountForTesting() const
+{
+    return m_table ? m_table->rowCount() : 0;
+}
+
+QString LanScanDialog::statusTextForTesting() const
+{
+    return m_statusLabel ? m_statusLabel->text() : QString();
+}
+
+void LanScanDialog::buildUi(const QString& status)
+{
     setWindowTitle(tr("Scan LAN for Peripherals"));
     setMinimumWidth(640);
     setModal(false);
@@ -36,7 +146,7 @@ LanScanDialog::LanScanDialog(QWidget* parent)
     layout->setSpacing(8);
 
     // Status label shown above the table.
-    m_statusLabel = new QLabel(tr("Scanning LAN for 4O3A devices (3 seconds)..."), this);
+    m_statusLabel = new QLabel(status, this);
     layout->addWidget(m_statusLabel);
 
     // Progress bar representing the 3-second scan window. Driven by
@@ -94,16 +204,6 @@ LanScanDialog::LanScanDialog(QWidget* parent)
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
-
-    // Wire up the discovery engine and start the 3-second scan.
-    m_discovery = new LanDiscovery(this);
-
-    connect(m_discovery, &LanDiscovery::deviceDiscovered,
-            this, &LanScanDialog::onDeviceDiscovered);
-    connect(m_discovery, &LanDiscovery::scanFinished,
-            this, &LanScanDialog::onScanFinished);
-
-    m_discovery->start(3000);
 }
 
 void LanScanDialog::onDeviceDiscovered(const QString& model,

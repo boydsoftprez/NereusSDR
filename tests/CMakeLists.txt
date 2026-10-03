@@ -1,8 +1,8 @@
 # NereusSDR test suite. Opt-in via -DNEREUS_BUILD_TESTS=ON.
 #
-# Test targets compile against NereusSDRObjs (the OBJECT library that backs
-# the main executable) so behavior under test is byte-identical to shipped
-# code. Each test gets its own thin executable + add_test() registration.
+# Test targets link the same shared NereusSDRLib image as the main executable,
+# so behavior under test is byte-identical to shipped code. Each test gets its
+# own thin executable plus add_test() registration.
 #
 # CI parallel sharding (added 2026-05-13, Linux speed-alignment epic):
 # When -DNEREUS_TEST_SHARDS=N -DNEREUS_TEST_SHARD=I is passed (0 ≤ I < N)
@@ -19,6 +19,15 @@
 # the full suite.
 
 find_package(Qt6 REQUIRED COMPONENTS Test)
+
+# Test windows (2026-09-22). Every GUI-backed test used to open real
+# windows on the developer's desktop, thousands of them in a full run.
+# By default each test now runs on Qt's offscreen platform plugin, so
+# nothing is drawn on screen. Turn this OFF to watch native windows
+# again; a single test that genuinely needs the native platform opts
+# out with nereus_add_test(<name> NATIVE_WINDOW ...).
+option(NEREUS_TESTS_OFFSCREEN
+    "Run Qt tests on the offscreen platform (no windows on screen)" ON)
 
 # Sharding inputs (CI-only; default to "off" for local dev builds).
 # Validated once here so a typo in the matrix YAML fails configure
@@ -101,7 +110,7 @@ endfunction()
 # guarantee that keeps ctest runs from overwriting the developer's real
 # NereusSDR.settings (see the header comment in TestSandboxInit.cpp).
 #
-# Deliberately does NOT reuse the NereusSDRObjs PCH.  This is one 50-line
+# Deliberately does NOT reuse the NereusCore PCH.  This is one 50-line
 # TU whose only include is <QStandardPaths>, so the PCH buys nothing, and
 # reusing it means compiling with a different -D set than the PCH was
 # built with (this target links only Qt6::Core, not the HAVE_WDSP /
@@ -111,7 +120,63 @@ endfunction()
 add_library(nereus_test_sandbox OBJECT EXCLUDE_FROM_ALL TestSandboxInit.cpp)
 target_link_libraries(nereus_test_sandbox PRIVATE Qt6::Core)
 
+# ── Shared FFTW wisdom cache for tests that start WDSP (2026-09-25) ─────
+# R-R3-49 parity mini-round. A test that starts WDSP in its own process
+# without WDSP's wisdom step (the synchronous test init, DaemonApp's
+# synchronous WDSP, the ConnectableRadioModel harness, or the WdspEngine
+# friend seam that primes m_initialized) planned every FFTW plan from
+# nothing: 45 to 85 s per test, enough to pass ctest's 120 s limit under
+# load. nereus_add_test() links this object into each such test (it finds
+# them by those names in the test's sources); its static constructor loads
+# one wisdom file per build directory and its exit step merges the new
+# plans back (see TestFftwWisdomCache.cpp). An OBJECT library for the same
+# reason as nereus_test_sandbox: it is all static constructor. It uses the
+# C++ library and FFTW's C API only, no PCH.
+if(FFTW3_FOUND)
+    add_library(nereus_test_fftw_wisdom OBJECT EXCLUDE_FROM_ALL TestFftwWisdomCache.cpp)
+    target_include_directories(nereus_test_fftw_wisdom PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_features(nereus_test_fftw_wisdom PRIVATE cxx_std_20)
+    target_compile_definitions(nereus_test_fftw_wisdom PRIVATE
+        NEREUS_TEST_FFTW_WISDOM_FILE="${CMAKE_CURRENT_BINARY_DIR}/test-fftw-wisdom")
+endif()
+
 function(nereus_add_test name)
+    # EXTRA_LABELS <label...> for the handful of tests whose subject
+    # cannot be derived from their own #include lines. Guard tests are
+    # the case that forced this: tst_core_has_no_gui_includes is the
+    # invariant check for the whole src/core boundary but includes no
+    # core header (it greps the tree instead), so derivation put it in
+    # `unclassified` and the project's own documented dev-loop command,
+    # `ctest -L core`, skipped the one test guarding that boundary.
+    #
+    # Everything not consumed by the keyword stays ARGN's original
+    # meaning: additional source files.
+    #
+    # NATIVE_WINDOW marks a test that needs something the offscreen
+    # platform cannot provide (native menu bar, Retina pixel ratio, a
+    # Cocoa view, GPU rendering). It keeps the native platform even when
+    # NEREUS_TESTS_OFFSCREEN is ON and gets the `native-window` label.
+    #
+    # CORE_ONLY links NereusCore alone, the way nereusd does, instead of
+    # NereusSDRLib. Use it for a test that must prove the Core stands on
+    # its own on every platform: macOS keeps every linked dylib loaded, so
+    # a test linked to NereusSDRLib there cannot see what GCC's default
+    # --as-needed drops on Linux (R-R3-10).
+    #
+    # REALTIME marks a test that measures real-time behaviour against the
+    # wall clock (R-R3-21, R-R3-40): how much processor time a worker gets,
+    # whether a paced stream keeps up, how long a thread waits. Other
+    # programs loading the machine can fail such a test, which RUN_SERIAL
+    # cannot prevent (it only keeps other tests of the same ctest run
+    # away). It appends the `realtime` label to the derived ones, so a busy
+    # machine can run the suite with `-LE realtime` and these alone after
+    # it (docs/development/fast-test-loop.md, "Real-time tests"); the label
+    # gets its tests_realtime build target like every other label. Each
+    # such test also prints the load average when a case fails
+    # (tests/RealtimeTestLoad.h).
+    cmake_parse_arguments(_nat "NATIVE_WINDOW;CORE_ONLY;REALTIME" "" "EXTRA_LABELS" ${ARGN})
+    set(_extra_sources ${_nat_UNPARSED_ARGUMENTS})
+
     # Sharding gate — when this test's hash bucket doesn't match the
     # active shard, register a stub OBJECT library (EXCLUDE_FROM_ALL,
     # backed by the shared stub source set up at the top of this file)
@@ -123,6 +188,13 @@ function(nereus_add_test name)
     # Skipping add_test() means ctest never sees the name.  A stable
     # MD5 of the test name keeps bucket assignment deterministic
     # across runs and across PRs.
+    #
+    # So a set_tests_properties(), set_property(TEST ...) or
+    # get_test_property() naming a test made here must sit inside
+    # if(TEST <name>): in the other shards the test does not exist and
+    # CMake stops the configure (PR #327, all four Linux shards).
+    # scripts/verify-test-registration.py checks it in the pre-commit hook
+    # and the CI compliance job.
     if(NEREUS_TEST_SHARDS GREATER 0)
         string(MD5 _hash "${name}")
         # Take the first 4 hex chars (16-bit) — plenty of entropy for
@@ -161,19 +233,42 @@ function(nereus_add_test name)
     # The aggregate `all_tests` target is created at the bottom of
     # this file from a global property each nereus_add_test() call
     # appends to.
-    add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox> ${ARGN})
-    target_link_libraries(${name} PRIVATE NereusSDRObjs Qt6::Test)
+    add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox> ${_extra_sources})
+    # R-R3-49 parity mini-round: a test that starts WDSP without its wisdom
+    # step gets the shared FFTW wisdom cache (nereus_test_fftw_wisdom above).
+    # Found by the names that start WDSP that way, in the test's own source
+    # or an extra source file it names (fakes/ConnectableRadioModel.cpp).
+    # R-R3-49 flaky-test round: a test that opens WDSP channels itself
+    # (OpenChannel) plans the same way, and did so from nothing:
+    # tst_wdsp_channel_shutdown spent 104 s of its 120 s in its first case
+    # under load, tst_receiver_dsp_load_frames 31 s at rest in initTestCase.
+    # Load findings 4: a test that builds a TxAnalyzer plans its display's
+    # FFTs the same way (SetAnalyzer's FFTW_PATIENT plans, TxAnalyzer.cpp):
+    # tst_remote_tx_display_settings spent 4.8 s of its 9 s at rest there,
+    # and passed its 120 s limit at load 342.
+    if(TARGET nereus_test_fftw_wisdom)
+        set(_wisdom_scan "${_extra_sources}")
+        file(READ "${CMAKE_CURRENT_SOURCE_DIR}/${name}.cpp" _wisdom_text)
+        string(APPEND _wisdom_scan "${_wisdom_text}")
+        if(_wisdom_scan MATCHES "setSynchronousInitForTest|m_synchronousWdspForTest|m_initialized = true|ConnectableRadioModel|OpenChannel\\(|TxAnalyzer")
+            target_sources(${name} PRIVATE $<TARGET_OBJECTS:nereus_test_fftw_wisdom>)
+        endif()
+    endif()
+    if(_nat_CORE_ONLY)
+        target_link_libraries(${name} PRIVATE NereusCore Qt6::Test)
+    else()
+        target_link_libraries(${name} PRIVATE NereusSDRLib Qt6::Test)
+    endif()
     set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS ${name})
 
-    # Reuse the NereusSDRObjs precompiled header (CMakeLists.txt §PCH).
-    # 451 test executables × per-target PCH compile would burn the wins;
-    # REUSE_FROM means the PCH is built once on NereusSDRObjs and shared
-    # across every test target. Save 5 to 10 minutes of test compile
-    # time on Linux CI. Gated on NEREUS_USE_PCH so users who turn the
+    # Reuse the shared test PIE/nonpedantic Qt/STL PCH (CMakeLists.txt §PCH).
+    # 589 test executables × per-target PCH compile would burn the wins;
+    # REUSE_FROM means the PCH is built once and shared
+    # across every test target. Gated on NEREUS_USE_PCH so users who turn the
     # PCH off (e.g. for header-hygiene auditing) don't get a broken
     # link.
     if(NEREUS_USE_PCH)
-        target_precompile_headers(${name} REUSE_FROM NereusSDRObjs)
+        target_precompile_headers(${name} REUSE_FROM nereus_test_pch)
     endif()
 
     add_test(NAME ${name} COMMAND ${name})
@@ -183,9 +278,78 @@ function(nereus_add_test name)
     # generous: the slowest test in the suite as of 2026-07-25 is
     # tst_ps_feedback_channel at ~30s.
     _nereus_derive_test_labels(_test_labels "${name}.cpp")
+    if(_nat_EXTRA_LABELS)
+        # Drop the "unclassified" placeholder derivation assigns when it
+        # found nothing; an explicit label is a classification.
+        list(REMOVE_ITEM _test_labels "unclassified")
+        list(APPEND _test_labels ${_nat_EXTRA_LABELS})
+        list(REMOVE_DUPLICATES _test_labels)
+    endif()
+    if(_nat_NATIVE_WINDOW)
+        list(REMOVE_ITEM _test_labels "unclassified")
+        list(APPEND _test_labels "native-window")
+    endif()
+    if(_nat_REALTIME)
+        # Appended, not a classification: the derived labels stay, including
+        # "unclassified", so `ctest -L core` still selects what it did.
+        list(APPEND _test_labels "realtime")
+    endif()
     set_tests_properties(${name} PROPERTIES
         LABELS "${_test_labels}"
         TIMEOUT 120)
+
+    # Test executables sit in build/tests while the application DLLs sit in
+    # build. Add that directory to PATH so Windows can load both shared
+    # libraries. CMake before 3.22 has no ENVIRONMENT_MODIFICATION support.
+    # APPEND, not set: the offscreen entry below shares this list property.
+    if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
+        set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:NereusSDRLib>")
+    endif()
+
+    # Offscreen by default (see NEREUS_TESTS_OFFSCREEN at the top of this
+    # file). `set:` overrides whatever QT_QPA_PLATFORM the caller exported,
+    # so a stray shell variable cannot bring windows back mid-run; turn the
+    # option OFF instead. CMake before 3.22 falls back to ENVIRONMENT.
+    if(NEREUS_TESTS_OFFSCREEN AND NOT _nat_NATIVE_WINDOW)
+        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
+            set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+                "QT_QPA_PLATFORM=set:offscreen")
+        else()
+            set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT
+                "QT_QPA_PLATFORM=offscreen")
+        endif()
+    endif()
+
+    # Each test gets its own settings location (R-R3-21). TestSandboxInit.cpp
+    # puts every test binary in QStandardPaths test mode, but test mode is one
+    # shared directory under $HOME (~/.qttest/config on Linux,
+    # ~/.qttest/Library/Preferences on macOS), so every test that uses
+    # AppSettings::instance() without its own profile wrote the same
+    # NereusSDR/NereusSDR.settings. Two tests that save, clear and reload it
+    # overwrote each other when ctest ran them side by side:
+    # tst_nnr_settings and tst_ps3_settings_persistence failed 23 of 150
+    # runs that way on Linux (47 of 150 on macOS). Test mode derives that
+    # directory from the home directory: $HOME on Linux, and on macOS
+    # NSHomeDirectory(), which ignores $HOME and follows CFFIXED_USER_HOME
+    # instead. A per-test home therefore gives each test its own settings
+    # file. A test that sets its own profile (AppSettings::setProfileOverride)
+    # keeps it, now under its own home; a child process a test starts
+    # inherits the same environment, so a test and the daemon it spawns
+    # still share one file. Two cases keep the shared location: Windows,
+    # whose test mode resolves the directory from the known-folder API that
+    # no environment variable redirects, and NATIVE_WINDOW tests on macOS,
+    # where CFFIXED_USER_HOME would also hide the operator's appearance and
+    # locale preferences from the native platform those tests exist to use.
+    if(NOT WIN32)
+        set(_test_home "${CMAKE_CURRENT_BINARY_DIR}/test-home/${name}")
+        file(MAKE_DIRECTORY "${_test_home}")
+        set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT "HOME=${_test_home}")
+        if(APPLE AND NOT _nat_NATIVE_WINDOW)
+            set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT
+                "CFFIXED_USER_HOME=${_test_home}")
+        endif()
+    endif()
 
     # Per-label build aggregates, so `ctest -L core` has a matching
     # `tests_core` target that actually builds what it is about to run.
@@ -202,9 +366,175 @@ function(nereus_add_test name)
     endforeach()
 endfunction()
 
+# nereus_split_test(<name> ENV <variable> GROUPS <group>...) runs one test
+# binary as several ctest entries (R-R3-49 load round): <name>_<group> for
+# each group, the same binary with <variable>=<group>, and <name> itself
+# with <variable>=rest. The test's main() picks its functions through
+# tests/TestFunctionGroups.h. Use it for a test whose cases add up near its
+# limit, so no entry carries another's time. Each entry takes the test's
+# labels, limit, RUN_SERIAL, PROCESSORS and environment, with a home of its
+# own. Call it after every set_tests_properties() on <name>; a test sharded
+# away is left alone.
+function(nereus_split_test name)
+    cmake_parse_arguments(_st "" "ENV" "GROUPS" ${ARGN})
+    if(NOT TEST ${name})
+        return()
+    endif()
+    foreach(_prop LABELS TIMEOUT RUN_SERIAL PROCESSORS ENVIRONMENT_MODIFICATION ENVIRONMENT)
+        get_test_property(${name} ${_prop} _st_${_prop})
+    endforeach()
+    # The test's home is its own; each entry gets another.
+    set(_st_env "")
+    foreach(_entry IN LISTS _st_ENVIRONMENT)
+        if(NOT _entry MATCHES "^(HOME|CFFIXED_USER_HOME)=")
+            list(APPEND _st_env "${_entry}")
+        endif()
+    endforeach()
+    foreach(_group IN LISTS _st_GROUPS)
+        set(_entry_name ${name}_${_group})
+        add_test(NAME ${_entry_name} COMMAND ${name})
+        foreach(_prop LABELS TIMEOUT RUN_SERIAL PROCESSORS ENVIRONMENT_MODIFICATION)
+            if(_st_${_prop})
+                set_property(TEST ${_entry_name} PROPERTY ${_prop} "${_st_${_prop}}")
+            endif()
+        endforeach()
+        set(_entry_env ${_st_env})
+        list(APPEND _entry_env "${_st_ENV}=${_group}")
+        if(_st_ENVIRONMENT MATCHES "(^|;)HOME=")
+            set(_entry_home "${CMAKE_CURRENT_BINARY_DIR}/test-home/${_entry_name}")
+            file(MAKE_DIRECTORY "${_entry_home}")
+            list(APPEND _entry_env "HOME=${_entry_home}")
+            if(_st_ENVIRONMENT MATCHES "(^|;)CFFIXED_USER_HOME=")
+                list(APPEND _entry_env "CFFIXED_USER_HOME=${_entry_home}")
+            endif()
+        endif()
+        set_property(TEST ${_entry_name} PROPERTY ENVIRONMENT "${_entry_env}")
+    endforeach()
+    set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT "${_st_ENV}=rest")
+endfunction()
+
 # ── Pre-existing tests from main (smoke + 3G-9 meter suite) ────────────────
 nereus_add_test(tst_setup_helpers)
 nereus_add_test(tst_smoke)
+
+# WDSP 2.10 migration: retain the real CFC Qg/Qe frequency response.
+nereus_add_test(tst_ps3_display_codec EXTRA_LABELS core)
+nereus_add_test(tst_ps3_display_transform EXTRA_LABELS core)
+nereus_add_test(tst_ps3_session fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+nereus_add_test(tst_dsp_asset_dialog EXTRA_LABELS gui)
+nereus_add_test(tst_dsp_asset_service EXTRA_LABELS core)
+nereus_add_test(tst_ps3_lifecycle EXTRA_LABELS core)
+nereus_add_test(tst_ps3_settings_persistence EXTRA_LABELS models)
+nereus_add_test(tst_nnr_settings EXTRA_LABELS models)
+nereus_add_test(tst_nnr_controls EXTRA_LABELS gui)
+nereus_add_test(tst_nnr_radio_persistence EXTRA_LABELS models)
+nereus_add_test(tst_session_property_result fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+nereus_add_test(tst_ps3_display_adapter EXTRA_LABELS core)
+nereus_add_test(tst_dsp_asset_store EXTRA_LABELS core)
+nereus_add_test(tst_ps3_correction_files EXTRA_LABELS core)
+if(TARGET wdsp_static)
+    nereus_add_test(tst_wdsp_nnr EXTRA_LABELS core)
+    nereus_add_test(tst_nnr_model_assets EXTRA_LABELS core)
+    if(NOT WIN32)
+        # wdsp_static arrives through the core library, as for tst_wdsp_nnr;
+        # linking it again here made the linker warn about a duplicate library.
+        nereus_add_test(tst_linux_port_wait EXTRA_LABELS core)
+        target_compile_definitions(tst_linux_port_wait PRIVATE WDSP_STATIC_BUILD)
+    endif()
+    # R-R3-39: a real RX channel with an overloaded worker still gives
+    # control calls a bounded turn at csDSP (dsplock.c).
+    # wdsp_static arrives through the core library, as for tst_wdsp_nnr.
+    # REALTIME: it times those turns and the worker's throughput on the
+    # wall clock.
+    nereus_add_test(tst_wdsp_dsp_turn_taking EXTRA_LABELS core REALTIME)
+    # R-R3-39: channel teardown and rebuilds wait for a slow DSP worker to
+    # leave its loop before freeing its memory (dsplock.c). REALTIME: it
+    # holds an idle teardown's wait to the worker's measured wake-up time.
+    nereus_add_test(tst_wdsp_channel_shutdown EXTRA_LABELS core REALTIME)
+    # 2026-10-01: iobuffs.c's dexchange copies the worker's input chunk
+    # before it releases Sem_OutReady, so a worker held right after the
+    # release (dsplock.c's test-only exchange hook) while fexchange0's caller
+    # runs ahead leaves a real TX channel's output bit-identical. Not
+    # REALTIME: the hold waits for the caller's stall, not a wall-clock bound.
+    nereus_add_test(tst_wdsp_dexchange_order EXTRA_LABELS core)
+    # R-R3-39: the DSP control lanes (ordering, keyed jobs, barriers,
+    # request completion) and the WDSP caller check that counts WDSP calls
+    # made from the event loop. wdsp_static arrives through the core
+    # library. REALTIME: it holds the event loop's 10 ms timer and every
+    # post() to wall-clock bounds while a lane waits on a 200 ms DSP block.
+    nereus_add_test(tst_dsp_control_thread EXTRA_LABELS core REALTIME)
+    # R-R3-39 (Task 31): receive DSP off the event loop. Two real channels
+    # on the receive lane with 150 ms blocks take setters, an off and on, a
+    # rate change and a destroy and recreate with no WDSP call on the event
+    # loop; the live rate change returns at once and finishes once; the
+    # MeterPoller reads the lane's cache. REALTIME: it holds the event
+    # loop's 10 ms timer to a wall-clock bound while the lane waits.
+    # Its OpenChannel plans through the shared FFTW wisdom cache with its
+    # 0.1 s plan limit (nereus_test_fftw_wisdom above), so the default 120 s
+    # holds (fix wave INFRA-I3: the 900 s override is gone).
+    nereus_add_test(tst_dsp_control_receive EXTRA_LABELS core REALTIME)
+    # R-R3-39 (Task 32): transmit DSP off the event loop. A real TX channel
+    # on the transmit lane keeps the rf_delay keying order; twenty MOX, TUNE
+    # and two-tone cycles with the PureSignal poll make no WDSP call on the
+    # event loop while both lanes' channels run 200 ms blocks; setters queued
+    # before a rebuild never run; the unkey drain is measured. REALTIME: it
+    # holds the event loop's 10 ms timer to a wall-clock bound. It plans
+    # through the shared wisdom cache, so the default 120 s holds.
+    nereus_add_test(tst_dsp_control_transmit EXTRA_LABELS core REALTIME)
+    # Task 33 (R-IOS-03): stopping transmission at once. With both lanes
+    # held for 200 ms, stopTransmitNow returns within 2 ms with the RF gate
+    # shut and MOX off at the connection before either lane is free, and no
+    # TX block follows it; the normal unkey drains before the hardware flip
+    # (Thetis's order). REALTIME: wall-clock bounds on real channels; it
+    # plans through the shared wisdom cache, so the default 120 s holds.
+    nereus_add_test(tst_stop_transmit_now EXTRA_LABELS core REALTIME)
+    if(NOT WIN32)
+        # R-R3-41: linux_port.c's thread-start hook fires once per channel
+        # worker and flush thread, on that thread, with its kind and channel.
+        nereus_add_test(tst_wdsp_thread_hook EXTRA_LABELS core)
+        # R-R3-40, R-R3-37: a real receive channel at the Core's settings,
+        # fed in real time, reads its load as busy time over wall time: a
+        # frame-like load (one long block in 12) reads the worker's busy
+        # share and never trips the NNR step-back; a real overload still
+        # does. Two references: dsplock.c's test block hook (each block's
+        # start and end) checks the sampler in every interval, and the
+        # worker's CPU clock checks the block edges both ways in the
+        # intervals where the worker ran whenever it was inside a block
+        # (a minimum count per case). Needs the thread-start hook for that
+        # clock, so not on Windows. Real time, about 45 s. RUN_SERIAL
+        # (R-R3-40): it measures the worker's real
+        # processor time, so ctest never runs it beside another test that
+        # would take that processor away.
+        nereus_add_test(tst_receiver_dsp_load_frames EXTRA_LABELS core REALTIME)
+        if(TEST tst_receiver_dsp_load_frames)
+            set_tests_properties(tst_receiver_dsp_load_frames PROPERTIES RUN_SERIAL TRUE)
+        endif()
+    endif()
+    nereus_add_test(tst_wdsp210_cfc_compat WdspCfcProbe.c EXTRA_LABELS core)
+    set_source_files_properties(WdspCfcProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_include_directories(tst_wdsp210_cfc_compat PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_wdsp210_cfc_compat PRIVATE WDSP_STATIC_BUILD)
+    # R-R3-49 (group A fix wave): the TX EQ's Q path ported from Thetis's
+    # WDSP. A profile without Q builds the impulse the WDSP 2.10 eq.c built
+    # before (WdspEqReference.h); one with Q builds a finite, non-flat
+    # impulse for 5, 10 and 18 points and keeps its Q through a rebuild.
+    nereus_add_test(tst_wdsp_txa_eq_q WdspEqProbe.c EXTRA_LABELS core)
+    set_source_files_properties(WdspEqProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_include_directories(tst_wdsp_txa_eq_q PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_wdsp_txa_eq_q PRIVATE WDSP_STATIC_BUILD)
+    # R-R3-49 (Task 27, row 15 of the TX display matrix): the transmit
+    # analyzer's skirt. A synthetic TUNE tone into Spectrum0 and a real TX
+    # channel's TUNE generator, both through the arguments TxAnalyzer gives
+    # SetAnalyzer with Blackman-Harris 4T, are at least 90 dB down 66 Hz from
+    # the peak and beyond; every DSP block reaches the siphon once, in order.
+    # Reads the analyzer's input ring (analyzer.h), hence the WDSP headers.
+    # REALTIME: real WDSP threads. The first SetAnalyzer's 32768-point
+    # FFTW_PATIENT plan goes through the shared wisdom cache and its 0.1 s
+    # plan limit, so the default 120 s holds.
+    nereus_add_test(tst_tx_analyzer_skirt EXTRA_LABELS core REALTIME)
+    target_include_directories(tst_tx_analyzer_skirt PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_tx_analyzer_skirt PRIVATE WDSP_STATIC_BUILD)
+endif()
 
 # ── Issue #75: receiver leak across disconnect/reconnect ──────────────────
 nereus_add_test(tst_receiver_manager_reconnect)
@@ -225,6 +555,9 @@ nereus_add_test(tst_radio_model_slice_state_restored)
 # MOX no longer requires a prior TUN press to seed TXA mode + bp0.
 nereus_add_test(tst_radio_model_push_tx_mode_and_bandpass)
 nereus_add_test(tst_container_persistence)
+# R-R3-49: container title bar and filter passband use native hand cursors
+# (Qt 6.11.0 crashes drawing SizeAllCursor on macOS).
+nereus_add_test(tst_native_cursors EXTRA_LABELS gui)
 nereus_add_test(tst_meter_item_bar)
 nereus_add_test(tst_reading_name)
 nereus_add_test(tst_meter_item_scale)
@@ -645,6 +978,12 @@ nereus_add_test(tst_p1_codec_anvelina_pro3)
 # ── Phase 3P-A P1CodecRedPitaya bank 12 ADC1 MOX carve-out (Task 8) ──
 nereus_add_test(tst_p1_codec_redpitaya)
 
+# ── Task 11: every Protocol 1 radio gets Thetis's receiver layout for its
+# own model (Phase 3F section 16.3.2). Table per model and per PS / diversity /
+# MOX / RX2 state, expected values from Thetis UpdateDDCs, GetDDC and the
+# CMLoadRouterAll router.
+nereus_add_test(tst_p1_ddc_layout_per_model)
+
 # ── Phase 3P-A P1CodecHl2 mi0bot WriteMainLoop_HL2 port (Tasks 9+10) ──
 nereus_add_test(tst_p1_codec_hl2)
 
@@ -713,6 +1052,10 @@ target_compile_definitions(tst_p2_regression_freeze PRIVATE
     NEREUS_BUILD_TESTS
     NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 
+# R-R3-49 load round: P1FakeRadio streams while the thread that made it is
+# busy (it runs on a thread of its own).
+nereus_add_test(tst_p1_fake_radio fakes/P1FakeRadio.cpp)
+
 # P1 loopback integration test — uses P1FakeRadio from tests/fakes/
 nereus_add_test(tst_p1_loopback_connection fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_p1_loopback_connection PRIVATE NEREUS_BUILD_TESTS)
@@ -720,6 +1063,21 @@ target_compile_definitions(tst_p1_loopback_connection PRIVATE NEREUS_BUILD_TESTS
 # P1 reconnection state machine test — uses P1FakeRadio auto-streaming (Task 10)
 nereus_add_test(tst_reconnect_on_silence fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_reconnect_on_silence PRIVATE NEREUS_BUILD_TESTS)
+
+# P1 transmit safety on a link loss: the reconnect comes back unkeyed, with
+# zero drive, the relay released and PureSignal off, and a key after the
+# loss is refused until it is released (whole-branch review 2026-09-30).
+nereus_add_test(tst_p1_reconnect_unkeyed fakes/P1FakeRadio.cpp)
+target_compile_definitions(tst_p1_reconnect_unkeyed PRIVATE NEREUS_BUILD_TESTS)
+
+# TX safety fix round 1 (I2): with PS-A running, the PureSignal run flag is
+# back after a link blip, P1 (its own reconnect, on the ep2 wire) and P2
+# (the rebuilt link). Fake radios only; nothing keys.
+nereus_add_test(tst_ps_run_after_link_blip
+    fakes/P1FakeRadio.cpp
+    fakes/P2FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
+target_compile_definitions(tst_ps_run_after_link_blip PRIVATE NEREUS_BUILD_TESTS)
 
 # Saved-radio persistence round-trip (Phase 3I Task 15)
 nereus_add_test(tst_connection_panel_saved_radios)
@@ -760,6 +1118,30 @@ nereus_add_test(tst_rx_dsp_worker_buffer_sizing)
 # chunk, and an unbound stream processes nothing.
 nereus_add_test(tst_rx_dsp_worker_multi_slice)
 
+# R-R3-40: RxDspWorker bounds how long a queued I/Q batch may wait. Stamped
+# batches, a test-only processing delay slower than real time, and the
+# one-log-line-per-episode contract. NereusSDR-original; no WDSP needed.
+# REALTIME: the bound is a wall-clock delay while batches arrive in real time.
+nereus_add_test(tst_rx_dsp_worker_input_delay REALTIME)
+
+# R-R3-40: one periodic sampler turns each receiver's WDSP load counters into
+# a snapshot every reader shares; a stuck block reads as overloaded, an idle
+# receiver as idle. NereusSDR-original; no WDSP needed.
+nereus_add_test(tst_receiver_dsp_load_sampler)
+
+# R-R3-40: a receiver that cannot keep up with NNR steps back one level
+# (Premium to Standard to off) after 2 s at 0.90 load, then settles 5 s; it
+# never raises a level and never judges idle. NereusSDR-original; no WDSP.
+nereus_add_test(tst_nnr_load_governor EXTRA_LABELS core)
+
+# Remote Daemon R3 R-R3-31: selecting RADE RX on slice B must leave slice A
+# on the ordinary AudioEngine path, route only B's demodulated audio to RADE,
+# and keep the already-enrolled A+B master mix producing while B is unsynced.
+# Uses real RxChannel processing and fake AudioEngine buses; no RF or media
+# transport is involved. NereusSDR-native ownership orchestration.
+nereus_add_test(tst_rade_rx_multislice_routing)
+target_compile_definitions(tst_rade_rx_multislice_routing PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3G-10 VFO DSP parity + AetherSDR flag port ─────────────────────
 nereus_add_test(tst_vfo_level_bar)
 nereus_add_test(tst_scrollable_label)
@@ -783,6 +1165,8 @@ nereus_add_test(tst_slice_agc_advanced)
 # Audited 2026-07-25: had no nereus_add_test() call site; compiles and
 # passes against current SliceModel APIs, registered here.
 nereus_add_test(tst_slice_auto_agc)
+nereus_add_test(tst_daemon_agc_source)
+nereus_add_test(tst_remote_receive_indicators)
 
 # ── Phase 3G-10 Stage 2: WDSP wiring — EMNR (NR2) ────────────────────────
 nereus_add_test(tst_rxchannel_emnr)
@@ -818,6 +1202,7 @@ nereus_add_test(tst_slice_nb_persistence)
 
 # ── Phase 3G-10 Stage 2: RIT/XIT client offset (S2.8) ───────────────────────
 nereus_add_test(tst_slice_rit_xit)
+nereus_add_test(tst_slice_tune_step_list)
 
 # ── Phase 3G-10 Stage 2: Frequency lock (S2.9) ──────────────────────────────
 nereus_add_test(tst_slice_frequency_lock)
@@ -854,6 +1239,10 @@ nereus_add_test(tst_board_capability_flag_wiring)
 
 # ── Issue #118: band-button auto-mode ────────────────────────────────────
 nereus_add_test(tst_band_from_name)
+# 2 m is its own band (JJ's ruling 2026-09-28; R-IOS-26, R-R3-49).
+nereus_add_test(tst_band_2m)
+nereus_add_test(tst_band_2m_stores)
+nereus_add_test(tst_band_link_fit EXTRA_LABELS session)
 nereus_add_test(tst_slice_has_settings_for)
 nereus_add_test(tst_band_defaults)
 nereus_add_test(tst_radio_model_band_click)
@@ -1055,6 +1444,15 @@ target_compile_definitions(tst_radio_model_drive_path PRIVATE NEREUS_BUILD_TESTS
 # btnTXProfileSave_Click / btnTXProfileDelete_Click handlers).
 nereus_add_test(tst_mic_profile_manager)
 
+# ── AM Mod Monitor: AmModulationAnalyzer + ModMonitorApplet ──
+# Synthetic AM I/Q (carrier + symmetric / asymmetric audio) through the
+# peak-reading analyzer: +/- peak %, carrier tracking, no-carrier, peak
+# hold vs window peaks, reset; applet flasher latch + carrier lamp.
+nereus_add_test(tst_am_modulation_analyzer)
+
+# ── AppletPanelWidget float / dock round-trip (AM Mod Monitor pop-out) ──
+nereus_add_test(tst_applet_float_dock)
+
 # ── Phase 3R Task K1: MicProfileManager "RADE" factory preset ──
 # Verifies the NereusSDR-native "RADE" factory profile is seeded on
 # first launch and that its EQ-off / Leveler-on / ALC-off /
@@ -1213,6 +1611,12 @@ if(UNIX AND NOT APPLE)
     nereus_add_test(tst_pipewire_stream_config)
 endif()
 
+# ── R3 receiver audio fix wave (R-R3-44): PipeWire output frames per cycle ───
+# Pure helper (no PipeWire headers): an output stream fills and counts the
+# frames the graph asked for (pw_buffer::requested), not the whole buffer.
+# Runs on every platform.
+nereus_add_test(tst_pipewire_output_frames)
+
 # ── Phase 3O Task 24: env-gated PipeWire stream integration test ─────────────
 # Real round-trip: PipeWireThreadLoop.connect() → PipeWireStream(Audio/Source)
 # → open() → wait for "streaming" signal → push 500 ms silence → close().
@@ -1231,6 +1635,14 @@ nereus_add_test(tst_virtual_cable_detector)
 # seam on AudioEngine. No real CoreAudioHalBus / LinuxPipeBus / PortAudio
 # backend required — runs on every platform.
 nereus_add_test(tst_audio_engine_vax_tee)
+
+# ── R3 receiver audio fix wave (R-R3-23): local speakers at any format ───────
+# The master mix reaches a fake speaker device at the device's own rate and
+# channel count (44.1 to 192 kHz, stereo and mono). No real device opened.
+nereus_add_test(tst_audio_engine_speaker_format)
+
+# ── R3 receiver audio fix wave (R-R3-42, R-R3-44): one notice per stop ───────
+nereus_add_test(tst_receiver_stop_notices)
 
 # ── Phase 3O Sub-Phase 10 Task 10a: AudioEngine master-mute API ──────────────
 # Covers setMasterMuted / masterMuted / masterMutedChanged. Verifies the
@@ -1273,6 +1685,20 @@ nereus_add_test(tst_connection_segment_v2)
 # as tst_audio_engine_vax_tee.
 nereus_add_test(tst_audio_engine_vax_gain)
 
+# ── R3 receiver audio (R-R3-43) Task 2: per-slice receiver audio taps ────────
+# A slice tap carries exactly that slice's audio at the VAX tee's point (after
+# the MOX gate, before mute/gain/pan/mix/master volume) with no AF level in
+# it; the master tap and speakers stay byte-for-byte unchanged.
+nereus_add_test(tst_audio_engine_slice_tap)
+# iPhone app Task 76 (R-IOS-31, ruling 9.2): one mix per owner, and the
+# Core's local output playing the station device's slices only.
+nereus_add_test(tst_audio_engine_owner_mix)
+# Slice control plan Task 6: listeners hear a slice at their own level, the
+# mixer applies each slice's AF, and VAX stays audible at AF 0.
+nereus_add_test(tst_slice_listen_audio)
+target_compile_definitions(tst_slice_listen_audio PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
 # ── Phase 3O Sub-Phase 9 Task 9.2b: VaxApplet smoke tests ────────────────────
 # Widget-level construction, signal plumbing, AppSettings round-trip.
 nereus_add_test(tst_vax_applet)
@@ -1301,6 +1727,52 @@ target_compile_definitions(tst_rxapplet_att_range PRIVATE NEREUS_BUILD_TESTS)
 # combinations, and prefix independence (Speakers vs Headphones).
 nereus_add_test(tst_audio_device_config_roundtrip)
 
+# R-R3-36 Task 1: capture helper record protocol. Framing, bounded
+# incremental reader, PCM and JSON codecs, malformed-input rejections.
+nereus_add_test(tst_capture_protocol)
+
+# R-R3-36 Task 2: the nereus-audio-capture helper as a real process. The
+# test re-executes itself as the helper (--capture-helper, through
+# src/capture_main.cpp) and as the scripted fake (--fake-capture-child),
+# so no separately built executable is needed. Only a nonexistent device
+# is ever requested; no real microphone is opened.
+nereus_add_test(tst_capture_helper_process fakes/FakeCaptureChild.cpp)
+
+# R-R3-36 Task 3: CaptureSupervisor and the stable CaptureAudioBus reader.
+# The test re-executes itself as the scripted fake helper
+# (--fake-capture-child <scenario>): demand leases, generations, open /
+# hello / stop deadlines, protocol errors, bounded shutdown against a
+# hanging child. No real microphone is opened.
+nereus_add_test(tst_capture_supervisor fakes/FakeCaptureChild.cpp)
+
+# R-R3-36 Task 5: AudioEngine and RadioModel PC microphone session demand.
+# start() opens no input; a hanging helper never delays start, connect or
+# disconnect; the local session holds a capture lease only while PC mic is
+# selected; a daemon-flagged model never starts the helper. Re-executes
+# itself as the scripted fake helper (--fake-capture-child); no real
+# microphone is opened.
+nereus_add_test(tst_capture_session_demand
+    fakes/FakeCaptureChild.cpp
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
+target_compile_definitions(tst_capture_session_demand PRIVATE NEREUS_BUILD_TESTS)
+
+# R-R3-36 Task 7: PC-microphone MOX admission. Keying that reads the PC
+# microphone is refused before any RF effect while capture is not Ready;
+# exemptions, no replay, input-loss release. Fake helper only, mock radio.
+nereus_add_test(tst_capture_admission
+    fakes/FakeCaptureChild.cpp)
+target_compile_definitions(tst_capture_admission PRIVATE NEREUS_BUILD_TESTS)
+
+# R-R3-36 Task 6: operator wording for every capture state and failure
+# reason, exact strings, no transport wording.
+nereus_add_test(tst_capture_status_text)
+
+# R-R3-36 Task 4: locateCaptureHelper() lookup order per platform against
+# temporary directory layouts (including none present), and the
+# supervisor's default program falling back to HelperMissing.
+nereus_add_test(tst_capture_helper_locator)
+
 # ── Phase 3O Sub-Phase 12 Task 12.2 Step 0: AudioEngine speakers live-reconfig ─
 # Verifies speakersConfigChanged / headphonesConfigChanged / txInputConfigChanged
 # / vaxConfigChanged signals, mutex safety in rxBlockReady (try_lock), and
@@ -1308,6 +1780,11 @@ nereus_add_test(tst_audio_device_config_roundtrip)
 # seam for debounce bypass and fake bus injection.
 nereus_add_test(tst_audio_engine_speakers_live_reconfig)
 target_compile_definitions(tst_audio_engine_speakers_live_reconfig PRIVATE NEREUS_BUILD_TESTS)
+
+# R-R3-21, R-R3-23: a test run never initialises PortAudio. An AudioEngine
+# and a RadioModel built in test mode make no Pa_Initialize or Pa_Terminate
+# call, and the PortAudio device lists come back empty.
+nereus_add_test(tst_audio_engine_no_portaudio)
 
 # ── Phase 3O Sub-Phase 12 Task 12.2 Step 0: MasterOutputWidget signal refresh ──
 # Verifies that speakersConfigChanged → onSpeakersConfigChanged syncs the widget's
@@ -1330,6 +1807,12 @@ nereus_add_test(tst_device_card)
 nereus_add_test(tst_audio_vax_page_auto_detect)
 target_compile_definitions(tst_audio_vax_page_auto_detect PRIVATE NEREUS_BUILD_TESTS)
 
+# R3 unfinished controls fix wave follow-up (R-R3-49, R-R3-21): every path
+# that changes AudioEngine::isVaxBusOpen emits vaxBusOpenChanged, and
+# Setup > Audio > VAX's channel cards follow it.
+nereus_add_test(tst_audio_engine_vax_open_signal)
+target_compile_definitions(tst_audio_engine_vax_open_signal PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3O Sub-Phase 12 Task 12.4: AudioEngine::resetAudioSettings ───────────
 # Verifies the clear-vs-preserve boundary from addendum §2.5:
 #   Cleared: audio/Speakers/*, Headphones/*, TxInput/*, Vax<1..4>/*,
@@ -1340,6 +1823,13 @@ target_compile_definitions(tst_audio_vax_page_auto_detect PRIVATE NEREUS_BUILD_T
 # audioSettingsReset. 12 test cases.
 nereus_add_test(tst_audio_engine_reset_audio_settings)
 target_compile_definitions(tst_audio_engine_reset_audio_settings PRIVATE NEREUS_BUILD_TESTS)
+
+# R3 remote window Setup plan, Task 1 (R-R3-10, R-R3-23): Setup > Audio >
+# Advanced Reset. A remote window removes only this computer's audio/* keys
+# (none the Core holds, nothing sent to it) and re-creates no VAX output;
+# local Reset is unchanged.
+nereus_add_test(tst_audio_advanced_page)
+target_compile_definitions(tst_audio_advanced_page PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-B Task 10: per-ADC OVL split + RX1 preamp byte 1403 bit 1 ─────
 # Single-ADC boards (HL2/Hermes): 1 OVL badge.
@@ -1376,6 +1866,9 @@ target_compile_definitions(tst_oc_outputs_hf_no_n2adr_writer PRIVATE NEREUS_BUIL
 nereus_add_test(tst_preamp_combo)
 target_compile_definitions(tst_preamp_combo PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Level Cal: the ten Thetis preamp modes, label map and stored-mode move ──
+nereus_add_test(tst_preamp_mode)
+
 # ── Phase 3P-D Task 1: OcMatrix model + per-MAC persistence ──────────────────
 # Verifies per-band × per-pin × {RX,TX} bit assignments, TXPinAction mapping
 # (Thetis enums.cs:443 TXPinActions [@501e3f5]), and AppSettings round-trip
@@ -1410,9 +1903,14 @@ target_compile_definitions(tst_n2adr_preset PRIVATE NEREUS_BUILD_TESTS)
 # range-clamping per mi0bot setup.designer.cs, idempotent setters, per-MAC
 # AppSettings round-trip.
 # Hl2OptionsTab: construction smoke, model→UI sync, output LED strip
-# reflects IoBoardHl2::currentOcByteChanged, I2C Write button gating.
+# reflects the composed OC byte (RadioModel::bandOutputsByte), I2C Write button gating.
 nereus_add_test(tst_hl2_options_tab)
 target_compile_definitions(tst_hl2_options_tab PRIVATE NEREUS_BUILD_TESTS)
+
+# RD-I8 (fix wave 2026-09-30): the HL2 options watch runs on the main thread
+# and only the setters cross to the P1 connection's thread.
+nereus_add_test(tst_hl2_options_wiring_thread)
+target_compile_definitions(tst_hl2_options_wiring_thread PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-D Task 3: P1RadioConnection ↔ OcMatrix codec wiring ─────────────
 # Verifies:
@@ -1544,6 +2042,11 @@ nereus_add_test(tst_alex_per_adc_bpf_wire)
 # NereusSDR-original: no Thetis port.
 nereus_add_test(tst_alex_bpf_policy_push)
 
+# R-R3-46 / R-R3-21: a local window's filter policy change is saved for its
+# radio at once, read back from a private settings file.
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_local_filter_policy_persistence)
+
 # ── RF-safety: the Alex TX low-pass is selected from the TRANSMIT frequency ───
 # P2RadioConnection::setReceiverFrequency used to recompute the LPF from the
 # receive frequency it was handed, and both Alex words read that one mask, so
@@ -1566,6 +2069,68 @@ nereus_add_test(tst_alex_tx_lpf_source)
 # whose RX2 shares the Alex chain (console.cs:15487-15498 [v2.10.3.15]).
 # NereusSDR-original: no Thetis port.
 nereus_add_test(tst_p1_alex_lpf_word_source)
+
+# R-R3-49: Protocol 1 VFO frequencies carry the calibration correction factor
+# (Thetis NetworkIO.VFOfreq).
+nereus_add_test(tst_p1_frequency_correction)
+
+# R-R3-49: Setup > Hardware Config > Calibration's Volts/Amps log (Thetis
+# console.cs LogVA and its reading loop).
+nereus_add_test(tst_volts_amps_log)
+
+# Phase 3F section 16.3.2: with slice A closed, the live receiver in the lowest
+# frame slot stands in for Thetis's RX1 as the source of the Protocol 1
+# receive filters (high-pass, receive low-pass, OC outputs / the HL2's N2ADR
+# board). Routing by frame slot left all three reading slot 0, A's last
+# frequency. NereusSDR-original: no Thetis port.
+nereus_add_test(tst_p1_rx_filter_follows_live_receiver)
+
+# Shared-input filters, rulings (c) and (d) 2026-09-30: both filters on one
+# receiver input follow the same counted slices, the low-pass the highest
+# (Thetis UpdateAlexTXFilter, mi0bot Penny.cs on the HL2), and the chain
+# names the slice holding it. NereusSDR-original: no Thetis port.
+nereus_add_test(tst_shared_input_filters)
+
+# Plan Task 14 (3M-1 transmit, Phase 3F section 16.3.2, R-R3-49): the band
+# outputs follow the transmitting slice while keyed and the VFO of the RX1
+# stand-in while not (Thetis Penny.cs:170-178, mi0bot Penny.cs:176-190);
+# Protocol 2 writes them to high-priority byte 1401 (network.c:1031) and takes
+# its receive low-pass from RX1 (console.cs:15487-15498); "HPF Bypass on TX"
+# reaches the wire on both protocols (console.cs:6843-6848).
+# NereusSDR-original tests: no Thetis port.
+nereus_add_test(tst_p1_band_outputs_follow_tx_slice)
+nereus_add_test(tst_p2_band_outputs_and_rx_lpf)
+nereus_add_test(tst_hpf_bypass_on_tx)
+# Plan Task 14 fix wave (R-R3-49): the Alex tab's other high-pass switches
+# (HPF Bypass on PureSignal feedback, HPF Bypass, Disable 6m LNA on TX / RX)
+# reach the wire as Thetis's setAlexHPF / setBPF1ForOrionIISaturn apply them
+# (console.cs:6839-6962). NereusSDR-original tests: no Thetis port.
+nereus_add_test(tst_alex_hpf_switches)
+# Setup > Transmit > Power's "Disable HF PA" (transmitSettingsVersion 11)
+# reaches the wire as Thetis's DisablePA sends it (P1 bank 10 C3 bit 7 and the
+# HL2's C2 bit 3; P2 CmdGeneral byte 58 and the Alex T/R relay) and the SWR
+# protection's pass (console.cs:26109-26110). NereusSDR-original tests.
+nereus_add_test(tst_disable_hf_pa)
+# radioHardwareVersion 8: the Alex Filters tabs' receive filter rows (each
+# row's bypass and edges, the Alex-2 master bypass) select the receive
+# high-pass as Thetis's setAlexHPF / setBPF1ForOrionIISaturn / setAlex2HPF
+# do (console.cs:6839-7175). NereusSDR-original tests.
+nereus_add_test(tst_alex_hpf_rows)
+nereus_add_test(tst_alex_lpf_rows)
+nereus_add_test(tst_alex_atten_wire)
+# Plan Task 14 fix wave, I1 and I2 (R-R3-49, remote parity): the HL2 I/O,
+# HL2 options and OC Outputs tabs show the band-output byte the connection
+# composed (RadioModel::bandOutputsByte), locally and in a remote window
+# through the station link, as Thetis's UpdateOCLedStrip shows the bits
+# UpdateExtCtrl returned (console.cs:29104-29107). NereusSDR-original.
+nereus_add_test(tst_band_outputs_display
+    fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_band_outputs_display PRIVATE NEREUS_BUILD_TESTS)
+# Plan Task 14 fix wave, M2 and M3 (3M-1 transmit): Protocol 2 sends a
+# high-priority packet for the band outputs when, and only when, the OC byte
+# changes: a pin edit at once, a VFO step only across a byte change
+# (netInterface.c:399-407 SetOCBits, setup.cs:12718). NereusSDR-original.
+nereus_add_test(tst_p2_band_outputs_push fakes/P2FakeRadio.cpp)
 
 # ── A band change must retune the DDC even while CTUN holds it ───────────────
 # CTUN pins the DDC via ReceiverManager::m_ddcFreqLocked so a VFO nudge inside
@@ -1656,6 +2221,22 @@ nereus_add_test(tst_pan_wide_badge)
 # NereusSDR-original: no upstream port.
 nereus_add_test(tst_pan_status_overlay)
 
+# R-R3-37 / R-R3-21: a pan's remote display status is a short line that fits
+# a 200 px pan plus a full explanation for hover, both in user words; Core
+# reasons are translated at display time, never shown raw.
+# NereusSDR-original: no upstream port.
+nereus_add_test(tst_pan_status_text)
+
+# R-R3-17 / R-R3-21 / R-R3-23 / R-R3-35: the wording sweep. Every sentence the
+# reason table can show, the rules for a reason it does not know, the remote
+# audio words and the rewritten NNR and 4O3A controls, checked against the
+# product's one internal-term list.
+# NereusSDR-original: no upstream port.
+nereus_add_test(tst_operator_wording_sweep)
+# Fix wave M1/M7: the sweep reads the sources it checks.
+target_compile_definitions(tst_operator_wording_sweep PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
 # ── Phase 3F Sub-Epic E Task 3: per-pan status-overlay badge clicks ─────────
 # The badges paint on every pan (00ab9522 lit WIDE, 0896b4f3 drove the whole
 # overlay from live state) but MainWindow connected txBadgeClicked /
@@ -1690,6 +2271,17 @@ nereus_add_test(tst_pan_active_slice_sync)
 # remove).
 nereus_add_test(tst_fft_router_fanout)
 
+# ── Phase 3F Sub-Epic I Tasks 8-9: FFTRouter subscription dedup + rebuild ──
+# Renamed from tst_fft_engine_pool.cpp when R1 Task 6 claimed that filename
+# for the real FftEnginePool class (src/core/spectrum/FftEnginePool.h).
+# Content unchanged: still pins the FFTRouter contract MainWindow's
+# per-stream FFTEngine pool relied on before FftEnginePool existed as a
+# class -- distinct streams reach distinct pans, co-hosted slices subscribe
+# their shared pan once (not once per slice), one stream can feed several
+# pans at different zooms, and a wholesale rebuild (remove + re-add) drops
+# stale receiver bindings.
+nereus_add_test(tst_fft_router_topology)
+
 # ── Phase 3F Sub-Epic I Task 2: SliceStreamAllocator placement policy ──────
 # NereusSDR-original pure-policy class. Decides whether a slice shares an
 # active DDC stream's window (shift offset only) or claims a free DDC.
@@ -1704,6 +2296,51 @@ nereus_add_test(tst_slice_stream_allocator)
 # cross-band promotion to a second DDC, four slices on one DDC, and the
 # hardware-exhaustion rejection path.
 nereus_add_test(tst_stream_pool_binding)
+
+# The stream pool follows the receiver count the radio reports in discovery
+# (ANAN-G2 reporting 4 against the table's five user streams): no receiver
+# ceiling warning at connect, a plain refusal for a pan past the count, the
+# table value when nothing is reported, Protocol 1 unchanged.
+nereus_add_test(tst_reported_receiver_pool)
+
+# Task 8 (receiver and transmit gaps plan): a stopping WDSP receive channel is
+# fed until WDSP finishes its stop, so a draining stop takes a few blocks of
+# input instead of WDSP's 100 ms timeout, a no-drain stop can restart without
+# a rebuild, and a five-slice live rate change stops within one DSP block per
+# channel. REALTIME: the bounds are wall-clock times while a feeder thread
+# delivers I/Q paced in real time.
+nereus_add_test(tst_rx_channel_stop_feed REALTIME)
+
+# R-R3-39, Sub-epic C-1: an RxChannel loads the DeepFilterNet3 model only at
+# its first DFNR selection, on its receive lane, never in the constructor, so
+# a connect's five channels load nothing.
+nereus_add_test(tst_rx_channel_dfnr_lazy)
+
+# R-R3-49, Sub-epic C-1: DFNR is offered only while it can run. No model (or
+# no DFNR in the build) hides the VFO flag's DFNR button and refuses DFNR; a
+# model failing at a channel's first selection turns it off with the reason;
+# a remote window follows the Core's mirrored dfnrRunnable.
+nereus_add_test(tst_dfnr_availability EXTRA_LABELS gui)
+
+# R-R3-49, Sub-epic C-1: MNR and BNR stay on the VFO flag, disabled with the
+# plain reason when they cannot run (MNR only on a Mac Core, mirrored to a
+# window; BNR in no build), and choosing them is refused.
+nereus_add_test(tst_mnr_bnr_availability EXTRA_LABELS gui)
+
+# R-IOS-06, R-IOS-27: the VFO flag's NR1 and MNR quick controls and the
+# Setup NR1 tab against their sources (Thetis's NR spinboxes and their
+# SetRXAANRVals conversion; MacNRFilter's DEF_* values for MNR's Reset).
+nereus_add_test(tst_nr_quick_controls EXTRA_LABELS gui)
+
+# D14, R-R3-49: every NereusSDR TX meter maps to the WDSP txaMeterType index
+# Thetis reads for it (wdspTxaMeterIndex); the expected indices are written
+# by hand from the compiled third_party/wdsp/src/TXA.h.
+nereus_add_test(tst_tx_meter_index)
+
+# D14, R-R3-49: every WDSP-read TX meter binding shows Thetis's reading
+# (CalculateTXMeter's alcgain and sign, then console.cs's MOX-branch floors);
+# the expected values are worked by hand from Thetis v2.10.3.15.
+nereus_add_test(tst_tx_meter_reading)
 
 # ── Tunable Notch Filter Task 1: the notch DB's tune frequency ─────────────
 # WDSP maps absolute-Hz notch centres into a channel's passband with
@@ -1732,12 +2369,32 @@ nereus_add_test(tst_notch_tune_frequency)
 # assert which ids it really opens.
 nereus_add_test(tst_wdsp_channel_id_map)
 
-# ── Phase 3F Sub-Epic I Tasks 8-9: per-stream FFT dispatch topology ────────
-# Pins the FFTRouter contract MainWindow's per-stream FFTEngine pool relies
-# on: distinct streams reach distinct pans, co-hosted slices subscribe their
-# shared pan once (not once per slice), one stream can feed several pans at
-# different zooms, and a wholesale rebuild drops stale subscriptions.
+# ── R1 Task 6: FftEnginePool -- per-stream FFTEngine lifecycle ─────────────
+# Extracted from MainWindow::createFftEngineForStream / m_fftEngines /
+# m_fftThread (MainWindow.cpp:1430-1530, MainWindow.h:597-626): one engine
+# per stream, reused on lookup, dropped on removeStream, configured from one
+# FftPoolConfig that reaches engines created before AND after setConfig() so
+# two streams never silently run different FFT sizes. threadCount defaults
+# to 1 per design section 4.5a's Pi 4B measurement (4 threads bought only
+# 1.35x aggregate throughput, the workload being memory-bandwidth bound).
 nereus_add_test(tst_fft_engine_pool)
+
+# ── R1 Task 7: FftTopology -- consumer-to-stream subscription algebra ──────
+# Extracted from the router-mutation half of MainWindow::rebuildFftRouting:
+# holds a consumer-to-stream SET (a consumer may hold more than one stream
+# at once -- subscribing to a second stream ADDS, it does not move the
+# consumer off the first) and rebuilds an FFTRouter from that set on
+# applyTo(). The one-active-stream-per-consumer reading this comment used
+# to give was the pre-fix-round-1 design; tst_fft_topology.cpp's
+# subscribingToASecondStreamAdds explicitly supersedes the
+# resubscribe-moves case it replaced. Covers subscription algebra
+# FftTopology owns itself (dedup by construction, whole-consumer and
+# single-stream unsubscribe, rebuild-not-patch idempotency, multi-stream
+# subscription) that
+# tst_fft_router_fanout.cpp and tst_fft_router_topology.cpp do not touch --
+# both of those pin FFTRouter's own pan/receiver mapping contract directly
+# and never construct an FftTopology.
+nereus_add_test(tst_fft_topology)
 
 # ── Phase 3F Sub-Epic D Task 8: PanFloatingWindow (multi-monitor detach) ────
 # Top-level QWidget wrapper for detaching a PanadapterApplet to a second
@@ -1951,11 +2608,10 @@ nereus_add_test(tst_alex1_live_leds)
 target_compile_definitions(tst_alex1_live_leds PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-H Task 5b: OC Outputs live pin-state LED row ─────────────────────
-# Verifies OcOutputsHfTab::onLiveStateChanged() computes the displayed OC
-# byte = OcMatrix::maskFor(currentBand, isTx) via RadioModel's first
-# panadapter + TransmitModel MOX state. Covers empty matrix, RX pin set
-# for 20m, band-change recompute, MOX-driven RX↔TX matrix flip, and
-# direct setCurrentOcByte path.
+# Plan Task 14 fix wave (R-R3-49): the row shows the OC byte the connection
+# composed (RadioModel::bandOutputsByte), never one computed from the
+# matrix, a band and MOX. Covers nothing composed, a reported byte, no
+# recompute on band / MOX / matrix changes, and direct setCurrentOcByte.
 nereus_add_test(tst_oc_outputs_live_pins)
 target_compile_definitions(tst_oc_outputs_live_pins PRIVATE NEREUS_BUILD_TESTS)
 
@@ -2009,7 +2665,12 @@ nereus_add_test(tst_antenna_labels)
 #   - setActivePlan() emits planChanged, ignores unknown names
 #   - segments() / spots() reflect the active plan
 #   - Default plan after loadPlans() is "ARRL (US)" (no AppSettings key)
-nereus_add_test(tst_bandplan_manager)
+# R-R3-10 / R-R3-21: CORE_ONLY, so the test is the Core-only program nereusd
+# is. It proves the band plans come from NereusCore (the GUI resources are
+# absent) and that the loaded set is byte-for-byte resources/bandplans.
+nereus_add_test(tst_bandplan_manager CORE_ONLY)
+target_compile_definitions(tst_bandplan_manager PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # ── Phase 3G RX Epic sub-epic E: waterfall scrollback math helpers ──────────
 # Pure-arithmetic checks for the capacity-clamp + age→row formulas used by
@@ -2023,6 +2684,26 @@ nereus_add_test(tst_waterfall_scrollback)
 # NF-AGC setter round-trips, offset clamp, stop-on-TX setter round-trips,
 # and smoke test for setActivePeakHoldTxActive + setWaterfallStopOnTx combo.
 nereus_add_test(tst_waterfall_defaults_changes)
+
+# The Spectrum Peaks settings are stored once for every pan: a Setup change
+# reaches every existing pan at once, and a new pan starts with them.
+nereus_add_test(tst_spectrum_peaks_all_pans EXTRA_LABELS gui)
+
+# Display settings stored once for every pan (spectrum overlays, normalize,
+# peak value readout, grid noise-floor tracking, band plan text size, the
+# per-band grid, dB step and 3D floor) reach every pan when one changes, so
+# another pan's later save cannot write the old value back.
+nereus_add_test(tst_display_shared_settings_all_pans EXTRA_LABELS gui)
+
+# Grid noise-floor tracking follows the pan's own display noise floor every
+# 500 ms, as Thetis tmrAutoAGC does (console.cs:46136-46167 [v2.10.3.15]),
+# so it works with Clarity off; a pan Clarity feeds keeps Clarity's grid.
+nereus_add_test(tst_grid_follows_display_noise_floor EXTRA_LABELS gui)
+
+# Thetis resets a receiver's peaks when its display centre moves or its
+# display edges change (display.cs:907-921, 1214-1245 [v2.10.3.15]); a pan
+# does the same, local or remote.
+nereus_add_test(tst_spectrum_peaks_resets EXTRA_LABELS gui)
 
 # ── Issue #230: waterfall threshold persistence under AGC/NF-AGC/Clarity ─────
 # Thetis sources: display.cs:2522-2548 + 6575-6594 (persistent vs runtime
@@ -2057,9 +2738,9 @@ nereus_add_test(tst_band_plan_guard_mode_allow_list)
 #   MoxController::setMoxCheck(fn) + moxRejected(QString) signal.
 #
 # MoxController cases (8):
-#   1. CWL → moxRejected("CW TX coming in Phase 3M-2"); state stays Rx.
+#   1. CWL → moxRejected("CW transmit is not available on this Core"); state stays Rx.
 #   2. CWU → moxRejected with CW reason.
-#   3. AM  → moxRejected("AM/FM TX coming in Phase 3M-3 (audio modes)"); state stays Rx.
+#   3. AM  → accepted (AM/SAM/DSB TX enabled); FM still rejected.
 #   4. FM  → moxRejected with audio-modes reason.
 #   5. LSB (allowed) → MOX engages; moxRejected NOT emitted.
 #   6. USB (allowed) → same.
@@ -2070,8 +2751,9 @@ nereus_add_test(tst_band_plan_guard_mode_allow_list)
 #
 # TxApplet::tooltipForMode static helper (12):
 #   USB/LSB/DIGL/DIGU → normal "Manual transmit (MOX)" tooltip.
-#   CWL/CWU → "CW TX coming in Phase 3M-2".
-#   AM/FM/SAM/DSB/DRM → "AM/FM TX coming in Phase 3M-3 (audio modes)".
+#   CWL/CWU → "CW transmit is not available on this Core".
+#   AM/SAM/DSB → allowed; FM → "FM transmit is not available on this Core";
+#   DRM → "DRM transmit is not available on this Core".
 #   SPEC → "Mode not supported for TX".
 #
 # Total: ~20 test cases. Uses QTEST_GUILESS_MAIN; no RadioModel required.
@@ -2086,16 +2768,56 @@ nereus_add_test(tst_band_plan_guard_mox_rejection)
 nereus_add_test(tst_swr_protection_controller)
 
 # ── Phase 3M-0 Task 4: TxInhibitMonitor GPIO poll + 4-source aggregation ─────
-# 8 tests cover: startup no-inhibit, UserIo01 active-low, reverse-logic inversion,
-# immediate Rx2OnlyRadio / OutOfBand / BlockTxAntenna notification paths,
+# 7 tests cover: startup no-inhibit, UserIo01 active-low, reverse-logic inversion,
+# immediate OutOfBand / BlockTxAntenna notification paths (Task 16 moved
+# receive only to MoxController::setRxOnly),
 # multi-source priority ordering + all-clear, and poll-cadence duplicate suppression.
 # Ports Thetis console.cs:25801-25839 [v2.10.3.13] (PollTXInhibit loop).
 nereus_add_test(tst_tx_inhibit_monitor)
 
+# ── Task 13 (receiver and transmit gaps plan): the radio's TX inhibit input ──
+# P1 case-0x00 C1 bits 1..4 and P2 high-priority datagram byte 59 (ReadBufp[55])
+# parsed as user_dig_in; the per-model bit choice and reverse option of Thetis
+# PollTXInhibit (console.cs:25849-25887 [v2.10.3.15]); a change reaching the
+# keying gate within one status frame; the Setup boxes reaching the monitor,
+# locally and from a remote window on the Core.
+nereus_add_test(tst_tx_inhibit_input fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_tx_inhibit_input PRIVATE NEREUS_BUILD_TESTS)
+
+# HL2 port part 2: the Hermes Lite 2 I/O board's fault register holds
+# transmit off steadily (mi0bot-Thetis console.cs:25874-25888 [@c26a8a4]
+# sets TXInhibit on a non-zero REG_FAULT), clears on a read of zero, drops a
+# keyed MOX or TUNE, disables the transmit buttons with the reason
+# "I/O Board: Fault Code N", and carries the reason to a remote window.
+nereus_add_test(tst_hl2_io_board_fault fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_hl2_io_board_fault PRIVATE NEREUS_BUILD_TESTS)
+
+# HL2 port part 2: the I/O board aerial values. mi0bot Alex.cs
+# UpdateAlexAntSelection's HERMESLITE branches and console.cs
+# SetIOBoardAerialPorts compose REG_RF_INPUTS and REG_ANTENNA from the
+# antenna selection; RadioModel hands them to the I/O board poll.
+nereus_add_test(tst_hl2_io_board_aerials)
+target_compile_definitions(tst_hl2_io_board_aerials PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Task 16 (receiver and transmit gaps plan): receive only stops every key ──
+# Thetis console.RXOnly (console.cs:15312-15334 [v2.10.3.15]), PollPTT's
+# _rx_only gate (25470), chkMOX_CheckedChanged2's refusal (29378) and Setup's
+# chkGeneralRXOnly_CheckedChanged (setup.cs:6479): every source refused
+# through MoxController, a keyed MOX dropped, the HL2 receive-only kit always
+# receive only, the Setup box never hidden, the transmit buttons disabled with
+# the reason (MOX in every mode; NereusSDR drops Thetis's SPEC / DRM exception),
+# Setup's Transmit, PA and Two-Tone IMD pages disabled (setup.cs:6499-6501),
+# two-tone through TwoToneController::setActive, the TGXL autotune and the
+# Tuner applet's TUNE, and a remote window's box reaching the Core's gate over
+# a session.
+nereus_add_test(tst_receive_only fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_receive_only PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-0 Task 5 (updated 3M-1a E.5): setWatchdogEnabled(bool) ──────────
 # 8 tests assert boolean state-tracking on RadioConnection (P1 + P2).
 # Default changed from false to true in 3M-1a E.5 (see RadioConnection.h).
-# Wire-format assertions (RUNSTOP pkt[3] bit 7) are in tst_p1_watchdog_wire.
+# Wire: P2 general packet byte 38 and the P1/P2 waits are in tst_network_watchdog;
+# the P1 start/stop packet (unchanged by the setting) in tst_p1_watchdog_wire.
 # API mirrors NetworkIOImports.cs:197-198 [v2.10.3.13] (DllImport SetWatchdogTimer).
 # HL2 cite: Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:399-400.
 nereus_add_test(tst_radio_connection_watchdog)
@@ -2177,20 +2899,13 @@ target_compile_definitions(tst_p1_trx_relay_wire PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_p1_drive_level_wire)
 target_compile_definitions(tst_p1_drive_level_wire PRIVATE NEREUS_BUILD_TESTS)
 
-# ── Phase 3M-1a Task E.5: P1 RUNSTOP watchdog wire-byte snapshot ─────────────
-# 12 tests assert that pkt[3] bit 7 of the RUNSTOP packet correctly encodes
-# m_watchdogEnabled (inverted: 0=enabled, 1=disabled) per HL2 firmware.
-#
-# Wire cite: Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:399-400
-#   watchdog_disable <= eth_data[7]; // Bit 7 can be used to disable watchdog
-#
-# deskhpsdr reference: deskhpsdr/src/old_protocol.c:3811 [@120188f]
-#   buffer[3] = command; // no bit-7 OR -- watchdog always enabled implicitly
-#
-# Default changed: m_watchdogEnabled{false} -> {true} in RadioConnection.h
-# so the first sendMetisStart() writes bit 7 = 0 (watchdog active), matching
-# deskhpsdr implicit behavior.
-nereus_add_test(tst_p1_watchdog_wire)
+# ── Phase 3M-1a Task E.5 (R-R3-49): P1 RUNSTOP byte 3 snapshot ───────────────
+# The Network Watchdog setting does not change the start/stop packet: byte 3
+# stays 0x01 / 0x00 whatever it says, as Thetis sends
+# (networkproto1.c:50, 85 [v2.10.3.15]), read from the datagrams a loopback
+# P1FakeRadio receives. The P1 wait it controls is covered by
+# tst_network_watchdog.
+nereus_add_test(tst_p1_watchdog_wire fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_p1_watchdog_wire PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-1a Task E.6: P2 sendTxIq wire-byte snapshot ─────────────────────
@@ -2212,6 +2927,39 @@ target_compile_definitions(tst_p1_watchdog_wire PRIVATE NEREUS_BUILD_TESTS)
 # Porting from deskhpsdr/src/new_protocol.c:2795-2837 [@120188f].
 nereus_add_test(tst_p2_tx_iq_wire)
 target_compile_definitions(tst_p2_tx_iq_wire PRIVATE NEREUS_BUILD_TESTS)
+
+# R-IOS-13, R-R3-42: the P2 transmit I/Q send path never drops a sample on a
+# transient stall (the Rock, 2026-09-26). Simulated time: a steady run at
+# 800 frames a second, connection-thread, send-thread and combined stalls of
+# 50, 100 and 200 ms, the unkeyed silence stream, a refused frame retried.
+nereus_add_test(tst_p2_tx_iq_send)
+target_compile_definitions(tst_p2_tx_iq_send PRIVATE NEREUS_BUILD_TESTS)
+# The same send thread for real, against a loopback receiver on the wall
+# clock (REALTIME: run it alone on a loaded machine).
+nereus_add_test(tst_p2_tx_iq_send_realtime REALTIME)
+target_compile_definitions(tst_p2_tx_iq_send_realtime PRIVATE NEREUS_BUILD_TESTS)
+# R-IOS-13, R-R3-42 (2026-09-27): the remote microphone's path from a packet
+# at the Core to the I/Q leaving for the radio, on simulated time: the added
+# latency per stage on a steady link, and after 200 ms stalls of the link,
+# the pump and the send thread it comes back within two seconds with every
+# word whole on the wire (a standing excess is shed only in silence).
+nereus_add_test(tst_tx_mic_latency)
+target_compile_definitions(tst_tx_mic_latency PRIVATE NEREUS_BUILD_TESTS)
+# R-IOS-13 (2026-09-27): the DSP side of the transmit path's latency, on real
+# WDSP channels: the Setup > DSP filter type reaches TXASetMP / RXASetMP as
+# Thetis sends it (Low Latency is minimum phase).
+nereus_add_test(tst_tx_latency_dsp)
+# Leveler lane (2026-10-01): remote microphone audio (the phone's Opus, a
+# desktop remote window's Opus or L16, the local microphone) through the real
+# WDSP TX channel with the Leveler and PROC, offline; the measurement matrix
+# prints with NEREUS_LEVELER_MATRIX=1.
+nereus_add_test(tst_tx_leveler_remote_mic)
+target_compile_definitions(tst_tx_leveler_remote_mic PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# R-IOS-13 (2026-09-27): every key path (MOX, TUNE, a remote key, VOX,
+# two-tone) applies the TX-bound slice's DSP > Options before the TX
+# channel's first block, on a real WDSP TX channel.
+nereus_add_test(tst_tx_key_dsp_options)
 
 # ── Phase 3M-1a Task E.7: P2 MOX wire byte (byte 4 bit 1 = 0x02) ─────────────
 # 10 tests verify:
@@ -2284,6 +3032,14 @@ nereus_add_test(tst_spectrum_widget_mox_overlay)
 # pollTxMeters() and poll().  No live WDSP reads — headless state tests only.
 # Derives from Thetis dsp.cs:995-1050 [v2.10.3.13] CalculateTXMeter dispatch.
 nereus_add_test(tst_meter_poller_tx_bindings)
+nereus_add_test(tst_remote_meter_poller)
+# R-R3-13: every numeric container meter item shows no reading (-400 dBm
+# sentinel or non-finite) as "--" and a real -140 dBm floor as a number.
+nereus_add_test(tst_meter_item_no_reading)
+# R-R3-21: the Compression reading's Thetis floor, the container bar and
+# the Phone/CW gauge mapping (reversed gauges: maximum is empty).
+nereus_add_test(tst_compression_reading)
+target_compile_definitions(tst_compression_reading PRIVATE NEREUS_BUILD_TESTS)
 
 # ── RX meter cal offset port (Thetis-faithful) ───────────────────────────────
 # Verifies the per-radio factory default lookup (rxMeterCalOffsetDefaultFor)
@@ -2292,6 +3048,24 @@ nereus_add_test(tst_meter_poller_tx_bindings)
 # Derived from Thetis clsHardwareSpecific.cs:395-411 + console.cs:1991-2001
 # + console.cs:21040 RXOffset(rx) [v2.10.3.13].
 nereus_add_test(tst_rx_meter_offset)
+# The RX1 6 m LNA gain offset in the station's receive calibration
+# (Thetis txtVFOAFreq_LostFocus / RXCalibrationOffset).
+nereus_add_test(tst_rx_6m_lna_offset)
+target_compile_definitions(tst_rx_6m_lna_offset PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Level calibration: meter + display offset storage, reset, TCI report ─────
+# RX1_MeterCalOffsetDb / RX1_DisplayCalOffsetDb with the Thetis per-model
+# defaults, ResetLevelCalibration, and calibration_ex (TciProtocol /
+# TciServer when WebSockets is present).
+nereus_add_test(tst_level_calibration)
+target_compile_definitions(tst_level_calibration PRIVATE NEREUS_BUILD_TESTS)
+if(Qt6WebSockets_FOUND)
+    target_link_libraries(tst_level_calibration PRIVATE Qt6::WebSockets)
+endif()
+
+# Level calibration procedure (Thetis CalibrateLevel) against a fake meter
+# and a fake spectrum: offsets, refusals, cancel and full restore.
+nereus_add_test(tst_level_calibration_run)
 
 # ── Phase 3M-1a H.3: TxApplet wiring model-layer contracts ───────────────────
 # Verifies TransmitModel::setPower/tunePowerForBand round-trips, powerChanged
@@ -2313,6 +3087,23 @@ nereus_add_test(tst_tx_applet_tune_wiring)
 # Mirrors Thetis ptbPWR_Scroll @ console.cs:28642 + TXBand setter @
 # console.cs:17513 [v2.10.3.13].
 nereus_add_test(tst_tx_applet_rf_power_per_band)
+
+# ── Slice control plan Task 11 (Q15, U8): TX applet follows transmit ─────────
+# The TX band and per-band power follow the transmit-bound slice, never the
+# active or a listened one; the letter row offers only controlled slices.
+# The hosted case runs a real Core with a second device over loopback. No
+# radio, no RF.
+nereus_add_test(tst_tx_applet_binding
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_tx_applet_binding PRIVATE NEREUS_BUILD_TESTS)
+
+# ── R-R3-21: TUNE button follows the true Tune state ─────────────────────────
+# Drives a real TxApplet: a band-plan-refused press leaves the button
+# unchecked and reading "TUNE"; an accepted press reads "TUNING..." and
+# unkeys cleanly; a refused press does not spoil the next one.
+nereus_add_test(tst_tx_applet_tune_state)
+target_compile_definitions(tst_tx_applet_tune_state PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-1b (relocated): PhoneCwApplet Mic Gain slider ──────────────────
 # Verifies the model-layer contracts that PhoneCwApplet's Mic Gain slider depends on
@@ -2385,6 +3176,11 @@ nereus_add_test(tst_phone_applet_vax_toggle)
 # instance() singleton pattern.
 nereus_add_test(tst_tx_eq_dialog)
 
+# R-R3-49 (parity Task 4, group A fix wave): the TX EQ arrays the TX
+# channel gets, as Thetis's sendTXDspUpdate and setTXEQProfile hand them to
+# WDSP, worked by hand from Thetis's code.
+nereus_add_test(tst_para_eq_curve)
+
 # ── Phase 3M-3a-ii Batch 6 Task A: TxCfcDialog (10-band CFC editor) ──────
 # Verifies the modeless 10-band CFC editor launched from the [CFC]
 # right-click on the TxApplet and from CfcSetupPage's [Configure CFC
@@ -2408,6 +3204,11 @@ nereus_add_test(tst_tx_cfc_dialog)
 # Closes Phase J (all 3 J tasks landed).
 # NereusSDR-native UI (no Thetis cite stamps required for the applet layer).
 nereus_add_test(tst_tx_applet_mon)
+
+# R-R3-45: the SPEAKERS / PHONES choice beside MON on the TX applet, and the
+# plain notice when the headphones are chosen and not open.
+nereus_add_test(tst_tx_applet_mon_output)
+target_compile_definitions(tst_tx_applet_mon_output PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-1a H.4: PowerPage wiring — Max Power, per-band Tune Power, ATT-on-TX ──
 # (class renamed from PowerPaPage in IA reshape Phase 6, 2026-05-02; test
@@ -2496,17 +3297,24 @@ nereus_add_test(tst_dexp_vox_setup_page)
 # Verifies grpHardwareConfig has 4 controls + 1 warning label per
 # Thetis tpGeneralHardware (setup.designer.cs:8045-8396 [v2.10.3.13]):
 # 24-entry Region combo (default United States), Extended checkbox, red warning
-# label, chkGeneralRXOnly hidden by default, chkNetworkWDT default ON.
+# label, chkGeneralRXOnly shown (Task 16; Thetis shows it for every model),
+# chkNetworkWDT default ON.
 nereus_add_test(tst_general_setup_hardware_config)
 
-# ── Phase 3M-1a G.2: Receive Only checkbox visibility wired from caps.isRxOnlySku ──
-# Verifies setReceiveOnlyVisible(bool) works correctly and that the constructor
-# reads initial caps (hidden for standard boards, visible for RX-only SKUs like
-# HermesLiteRxOnly).  Cite: Thetis setup.designer.cs:8535-8544 [v2.10.3.13]
-# (Visible=false default); BoardCapabilities::isRxOnlySku (NereusSDR-original).
+# ── Phase 3M-1a G.2: Receive Only checkbox wired from caps.isRxOnlySku ─────────
+# Task 16 (receiver and transmit gaps plan) replaced the contract: the box is
+# shown on every radio, and on an RX-only SKU (HermesLiteRxOnly) it is checked
+# and disabled with the reason. The constructor reads the initial caps and a
+# reconnect updates it. BoardCapabilities::isRxOnlySku (NereusSDR-original).
 # NEREUS_BUILD_TESTS required for RadioModel::setBoardForTest.
 nereus_add_test(tst_general_options_page_rx_only)
 target_compile_definitions(tst_general_options_page_rx_only PRIVATE NEREUS_BUILD_TESTS)
+
+# A disabled control on a page styled by Style::applyDarkPageStyle looks
+# disabled (the style guide's disabled colours) and an enabled one keeps the
+# page style: the operator's rule that a control that cannot run is shown
+# disabled with its reason.
+nereus_add_test(tst_dark_page_disabled_look)
 
 # ── Phase 3M-0 Task 13: Options group box on Setup → General ─────────────────
 # Verifies grpGeneralOptions has chkPreventTXonDifferentBandToRX per
@@ -2773,17 +3581,33 @@ nereus_add_test(tst_mox_controller_prime_wdsp_state)
 # Verifies:
 #   Accepted slots (5): onMicPttFromRadio, onCatPtt, onVoxActive, onSpacePtt,
 #     onX2Ptt — each press emits pttModeChanged(Xxx) then moxStateChanged(true);
-#     each release emits moxStateChanged(false); PttMode NOT cleared on release
-#     (F.1 contract: hardwareFlipped(false) subscriber in RadioModel clears it).
-#   Rejected slots (2): onCwPtt (deferred to 3M-2), onTciPtt (deferred to 3J) —
-#     both press and release emit no signals and leave m_pttMode unchanged.
-#   Cross-source switching (§G): last-setter-wins semantic.
+#     each release emits moxStateChanged(false); the unkey clears PttMode
+#     (Task 7: chkMOX_CheckedChanged2 console.cs:29547 [v2.10.3.15]).
+#   onTciPtt keys with PttMode::Tci (Task 7). Rejected slot: onCwPtt
+#     (deferred to 3M-2): press and release emit no signals.
+#   Cross-source rules (§G): PollPTT keys only from receive and releases only
+#     in the source's own mode (Task 7).
 #   Idempotency (§H): repeated press does not double-emit.
 #   PttMode integer values (§I): spot-check vs enums.cs:346-359 [v2.10.3.13].
 # Source: Thetis console.cs:25463-25507 [v2.10.3.13] (PollPTT dispatch);
 #   console.cs:26680 [v2.10.3.13] (SPACE); enums.cs:346-359 [v2.10.3.13].
 #   Pre-code review §0.3 + master design §5.2.1.
 nereus_add_test(tst_mox_controller_ptt_source_dispatch)
+
+# ── Receiver and transmit gaps plan, Task 7: keying sources follow Thetis ────
+# Verifies each keying source's PTT mode (mic, VOX, TCI, the MOX button as a
+# manual key, TUN, two-tone), the mode clearing on every unkey and on a
+# refused key, and the release guards per source: a mic or VOX release
+# during a manual key, a VOX release during a mic key, a mic release during a
+# VOX key, a second source during a key, the TCI release fallback to a held
+# mic, a held VOX keying after the MOX button goes off, and the RadioModel
+# TCI shim (PttMode::Tci) and MOX button. Bare MoxController or unconnected
+# RadioModel with 0 ms walk timers; nothing keys a radio.
+# Source: Thetis console.cs [v2.10.3.15] PollPTT (25463-25623),
+#   getFallbackPTTModeAfterTCIRelease (25429-25461), chkMOX_CheckedChanged2
+#   (29406-29411, 29547), chkMOX_Click (29730-29747), chkTUN (30144-30193);
+#   setup.cs:11162, 11193 [v2.10.3.15] (two-tone ManualMox).
+nereus_add_test(tst_mox_controller_ptt_sources)
 
 # ── Phase 3M-1c Tasks C.2 / C.3 / C.4: MoxController multicast Pre/Post signals ─
 # Verifies the new 3-arg Pre/Post MOX state-change signals that future
@@ -2825,10 +3649,10 @@ nereus_add_test(tst_mox_controller_multicast_signals)
 #
 # Prong B — End-to-end (status frame → MoxController):
 #   §C.1  P1 press → MoxController engaged, PttMode::Mic
-#   §C.2  P1 release → MoxController released, PttMode retained
+#   §C.2  P1 release → MoxController released, PttMode cleared
 #   §C.3  P1 repeated press → idempotent (no double-emit)
 #   §D.1  P2 press → MoxController engaged, PttMode::Mic
-#   §D.2  P2 release → MoxController released, PttMode retained
+#   §D.2  P2 release → MoxController released, PttMode cleared
 #   §D.3  P2 repeated press → idempotent (no double-emit)
 #   §E.1  P1: consecutive false frames both emit (unconditional emission)
 #   §E.2  P2: consecutive false packets both emit (unconditional emission)
@@ -3055,6 +3879,40 @@ nereus_add_test(tst_radio_model_dexp_routing)
 nereus_add_test(tst_radio_model_mox_hardware_flip)
 target_compile_definitions(tst_radio_model_mox_hardware_flip PRIVATE NEREUS_BUILD_TESTS)
 
+# Task 33 (R-IOS-03): RadioModel::stopAllTx, ported from Thetis console.cs
+# StopAllTx. MOX, TUNE and two-tone each end with all four keying states
+# off and one transmitStopped; nothing keyed does nothing; a held PTT does
+# not key again until released; a key queued before the stop does not key.
+nereus_add_test(tst_radio_model_stop_all_tx)
+target_compile_definitions(tst_radio_model_stop_all_tx PRIVATE NEREUS_BUILD_TESTS)
+
+# TX safety (whole-branch review 2026-09-30): a lost radio link unkeys the
+# model through stopAllTx.
+nereus_add_test(tst_radio_model_link_lost_unkey)
+target_compile_definitions(tst_radio_model_link_lost_unkey PRIVATE NEREUS_BUILD_TESTS)
+
+# iPhone app plan Task 77 fix round 2 (R-IOS-02, R-IOS-03, R-IOS-13): the
+# Power Genius changeover. A key's RF waits at the RF-flow gate from any
+# operate command until the amplifier reports that state (stopped after
+# 1.5 s); no Power Genius, nothing changes; the Core's own autotune is
+# refused on the air and its restore waits for every PTT source.
+nereus_add_test(tst_amp_changeover_gate)
+target_compile_definitions(tst_amp_changeover_gate PRIVATE NEREUS_BUILD_TESTS)
+
+# ── iPhone app plan Task 38 (R-IOS-04, D29): the transmit time-out ─────────
+# TxTimeOutTimer (Thetis TimeOutTimerManager) with an injected clock and
+# pinger: the MOX time-out from the rising edge, the ping time-out, the
+# remaining seconds; on a model with a mock radio: a phone's key stops
+# between 180 and 181 s, a computer's never with Thetis's defaults, TUNE and
+# two-tone stop too, and a limit changed while keyed counts from key-down.
+nereus_add_test(tst_tx_time_out_timer)
+target_compile_definitions(tst_tx_time_out_timer PRIVATE NEREUS_BUILD_TESTS)
+
+# The Options page's Time Out Timers group: Thetis's labels and ranges, the
+# phone and iPad row, the Station-scoped keys it writes, the host check.
+nereus_add_test(tst_general_options_time_out)
+target_compile_definitions(tst_general_options_time_out PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1a Task F.2: StepAttenuatorController TX-path activation ─────────
 # Verifies onMoxHardwareFlipped(bool isTx) slot and its four helpers:
 #   applyTxAttenuationForBand, shouldForce31Db, saveRxPreampMode,
@@ -3068,7 +3926,7 @@ target_compile_definitions(tst_radio_model_mox_hardware_flip PRIVATE NEREUS_BUIL
 #   5. CWU mode → force 31 dB
 #   6. USB mode + PS on → applies stored TX ATT (no force)
 #   7. isTx=false → clears TX ATT to 0 dB (TX→RX restore)
-#   8. HPSDR board, isTx=true → saves preamp, forces Minus20 (HPSDR_OFF)
+#   8. HPSDR board, isTx=true → saves preamp, forces Off (HPSDR_OFF)
 #   9. HPSDR board, isTx=false → restores saved preamp
 #  10. shouldForce31Db predicate table-driven (12 cases)
 #  11. TX ATT per-band storage round-trip (14 bands)
@@ -3538,6 +4396,9 @@ nereus_add_test(tst_tx_channel_leveler_alc_setters)
 # for the existing Stage::CfComp / Stage::Compressor / Stage::OsCtrl arms in
 # setStageRunning.  Same does-not-crash strategy as B-1 / B-2.
 nereus_add_test(tst_tx_channel_cfc_cpdr_cessb_setters)
+nereus_add_test(tst_cfc_profile)
+nereus_add_test(tst_cfc_edit_profile)
+nereus_add_test(tst_radio_model_cfc_profile_wiring)
 
 # ── Phase 3M-3a-ii follow-up Batch 7: TxChannel CFC live-display readback ──
 # Plan: 3M-3a-ii follow-up Batch 7 — TxChannel::getCfcDisplayCompression
@@ -3609,6 +4470,13 @@ nereus_add_test(tst_audio_engine_tx_monitor_state)
 # Pre-code review §4.3 + §4.4.
 nereus_add_test(tst_audio_engine_tx_monitor_block)
 target_compile_definitions(tst_audio_engine_tx_monitor_block PRIVATE NEREUS_BUILD_TESTS)
+
+# R-R3-45 (operator decision 2026-09-24): MON plays on the speakers or the
+# headphones, the operator's choice (audio/TxMonitor/Output, default
+# speakers). Default, saving, each route, a live change without doubling,
+# and MON never in the anti-VOX reference.
+nereus_add_test(tst_audio_engine_tx_monitor_output)
+target_compile_definitions(tst_audio_engine_tx_monitor_output PRIVATE NEREUS_BUILD_TESTS)
 
 # Plan: 3M-1b E.4. Exercises AudioEngine::rxBlockReady MOX gate —
 # the RX-leak-during-MOX fold that fixes the PR #144 cosmetic regression.
@@ -3810,6 +4678,34 @@ target_compile_definitions(tst_p2_mic_boost_wire PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_p1_line_in_wire)
 target_compile_definitions(tst_p1_line_in_wire PRIVATE NEREUS_BUILD_TESTS)
 
+# HL2 bank 0 C3 bits 3 and 4 (Band Volts, Disable PS Sync) follow the saved
+# HL2 options, both off by default; other P1 boards keep Thetis's dither and
+# random on. Source: mi0bot Console/setup.cs:2843-2848, 13376-13390 [@c26a8a4];
+# Thetis Console/setup.cs:296-298 [v2.10.3.15].
+nereus_add_test(tst_p1_hl2_band_volts_ps_sync fakes/P1FakeRadio.cpp)
+target_compile_definitions(tst_p1_hl2_band_volts_ps_sync PRIVATE NEREUS_BUILD_TESTS)
+
+# HL2 TX buffer latency and PTT hang: bank 17 carries the saved values.
+# Source: mi0bot Console/setup.cs:21236-21248, networkproto1.c:1162-1168 [@c26a8a4].
+nereus_add_test(tst_p1_hl2_tx_timing_wire)
+target_compile_definitions(tst_p1_hl2_tx_timing_wire PRIVATE NEREUS_BUILD_TESTS)
+
+# HL2 Reset on Ethernet disconnect: bank 18 C4 carries the saved option.
+# Source: mi0bot Console/setup.cs:21257-21262, networkproto1.c:1170-1176 [@c26a8a4].
+nereus_add_test(tst_p1_hl2_reset_on_disconnect_wire)
+target_compile_definitions(tst_p1_hl2_reset_on_disconnect_wire PRIVATE NEREUS_BUILD_TESTS)
+
+# HL2 I/O board ongoing poll and the I2C frame spacing. Source: mi0bot
+# Console/console.cs:25781-25945, ChannelMaster/networkproto1.c:898-942 [@c26a8a4].
+nereus_add_test(tst_p1_hl2_io_board_poll)
+target_compile_definitions(tst_p1_hl2_io_board_poll PRIVATE NEREUS_BUILD_TESTS)
+
+# HL2 clock chip: External 10 MHz on CL1 and the CL2 output, written to the
+# VersaClock over I2C bus 0. Source: mi0bot Console/setup.cs:21558-21756 and
+# console.cs:28033-28040 [@c26a8a4].
+nereus_add_test(tst_p1_hl2_clock)
+target_compile_definitions(tst_p1_hl2_clock PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1b Task G.2: P2 line_in wire-byte snapshot ──────────────────────
 # 10 tests pin the line_in bit (CmdTx byte 50 bit 0 = 0x01) in
 # P2RadioConnection::setLineIn():
@@ -3965,6 +4861,18 @@ target_compile_definitions(tst_p2_mic_ptt_wire PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_radio_model_mic_ptt_wire)
 target_compile_definitions(tst_radio_model_mic_ptt_wire PRIVATE NEREUS_BUILD_TESTS)
 
+# Radio codec lane (2026-09-30): mic boost, line in, tip/ring, bias and XLR
+# reach P1 bank 10/11 and P2 byte 50 on connect and on change; the line-in
+# dB value maps to Thetis's lineinboost index.
+nereus_add_test(tst_radio_model_mic_codec_wire)
+target_compile_definitions(tst_radio_model_mic_codec_wire PRIVATE NEREUS_BUILD_TESTS)
+
+# Radio codec lane (2026-09-30): the receive audio reaches the radio's own
+# speaker out (P1 EP2 L/R bytes, P2 port 1028 packets, the engine's radio
+# output tap at master volume and mute).
+nereus_add_test(tst_radio_codec_speaker_out)
+target_compile_definitions(tst_radio_codec_speaker_out PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1b Task G.6: P1 mic_xlr storage-only ──────────────────────────
 # 8 tests verify that P1RadioConnection::setMicXlr() is STORAGE-ONLY.
 # Saturn G2 P2-only feature — P1 hardware has no XLR jack. No wire emission.
@@ -4028,7 +4936,11 @@ target_compile_definitions(tst_audio_tx_input_page_skeleton PRIVATE NEREUS_BUILD
 #  11-13. TransmitModel idempotency for 3 new PC Mic properties.
 #  14-15. PC Mic group box visibility gated by mic-source selection.
 # NEREUS_BUILD_TESTS required for RadioModel::setCapsHasMicJackForTest.
-nereus_add_test(tst_audio_tx_input_pc_mic_group)
+# R-R3-36 Task 6: the page and the Devices page edit one audio/TxInput
+# config, show the capture status with Retry, and Test Mic holds a real
+# capture demand. Re-executes itself as the scripted fake helper
+# (--fake-capture-child); no real microphone is opened.
+nereus_add_test(tst_audio_tx_input_pc_mic_group fakes/FakeCaptureChild.cpp)
 target_compile_definitions(tst_audio_tx_input_pc_mic_group PRIVATE NEREUS_BUILD_TESTS)
 
 # =============================================================================
@@ -4217,6 +5129,12 @@ nereus_add_test(tst_metric_label)
 # CPU survives PA updates, clearing both hides row one, PA label override.
 nereus_add_test(tst_system_tile)
 
+# Parity ruling C9: the System tile's CPU row in a remote window cycles
+# between this computer's CPU and the Core's, pins either, holds on a hot
+# reading in the warning colour, and shows this computer only (with the
+# reason) when the Core's reading is unavailable.
+nereus_add_test(tst_cpu_row_cycler)
+
 # ── Shell-Chrome Redesign sub-PR-1: StationBlock widget ───────────────────
 # 5 tests: default/setRadioName/empty-name appearance switching, click +
 # right-click signal emission gated on appearance.
@@ -4244,6 +5162,14 @@ nereus_add_test(tst_audio_engine_flow_state)
 # 4 tests: null-safe construction, refresh on disconnected model, reset
 # clears counters, signal-wire safety. QTEST_MAIN — needs QApplication.
 nereus_add_test(tst_network_diagnostics_dialog)
+nereus_add_test(tst_telemetry_history)
+# R-R3-35: clock offset from probe exchanges and the measured audio delay.
+nereus_add_test(tst_audio_clock_estimator)
+# R-R3-21 / R-R3-08: the display presented on the audio's clock, gap rows.
+nereus_add_test(tst_remote_display_presenter)
+nereus_add_test(tst_time_series_graph)
+nereus_add_test(tst_remote_telemetry fakes/LoopbackTransport.cpp)
+nereus_add_test(tst_remote_diagnostics fakes/LoopbackTransport.cpp)
 
 # ── Bottom-banner cleanup Task A1: ChromeFoldPlan pure fold math ─────────
 # 9 tests: required-width gap/padding accounting, per-rung folding,
@@ -4311,6 +5237,8 @@ nereus_add_test(tst_filter_high_resolution)
 # bindRxChannel(nullptr) safety, paint-with-nullptr-channel no-crash,
 # bind-and-clear lifecycle.
 nereus_add_test(tst_filter_display_high_resolution)
+nereus_add_test(tst_mini_display_composition fakes/RemoteWindowHarness.cpp)
+nereus_add_test(tst_mini_filter_response_lifecycle)
 
 # ── Task 1.6: RadioModel::setSampleRateLive() coordinator ────────────────
 # Guard-path contracts (no live WDSP or connection required):
@@ -4425,6 +5353,52 @@ nereus_add_test(tst_dsp_options_warning_logic)
 # running app.  Direct SpectrumAvenger unit tests are a follow-up item.
 nereus_add_test(tst_detector_modes)
 
+# R1 Task 2 -- SpectrumDetectorMode extraction.  Pins the detector-mode
+# enumerator values (WDSP analyzer.c detector modes, Peak/Rosenfell/Average/
+# Sample/RMS) now that they live in core/spectrum/SpectrumDetectorMode.h
+# instead of gui/SpectrumWidget.h.  gui/SpectrumWidget.h keeps a using-alias
+# (SpectrumDetector = NereusSDR::SpectrumDetectorMode) so this is purely a
+# relocation, not a behavior change.
+nereus_add_test(tst_spectrum_detector_mode)
+
+# R1 Task 5 -- crop-and-reduce extracted from SpectrumWidget into
+# core/spectrum/SpectrumReducer.  Pins the bin-range arithmetic that used
+# to be SpectrumWidget::visibleBinRange (a private method reading widget
+# member state) and the detector -> avenger call sequence out of
+# updateSpectrumLinear, now driven by an explicit pixel count instead of
+# widget geometry.  The plan specified five tests; the rest pin guards and
+# clamping rules found by reading the implementation being extracted.
+nereus_add_test(tst_spectrum_reducer)
+
+# R1 Task 5 -- the standing guarantee behind the daemon split: what
+# SpectrumWidget renders must equal what a bare SpectrumReducer produces
+# from the same inputs, bit for bit, across widget widths / dBm-strip
+# visibility / crop windows / all 5 detectors x 4 averaging modes.  The
+# widget's only remaining contribution is filling ReducerConfig::pixels
+# from its geometry; anything else leaking back into the reduction path
+# fails here instead of shipping two different spectra.
+nereus_add_test(tst_spectrum_reducer_widget_parity)
+
+# Reset to Smooth Defaults sets and saves the spectrum averaging time
+# (650 ms, the March 0.05 new-frame weight at 30 FPS) instead of a
+# transient averaging constant.
+nereus_add_test(tst_clarity_smooth_defaults)
+
+# R1 Task 4 -- guard test for the ISpectrumSink extraction.  Walks src/core
+# and src/models and fails on any include that reaches into src/gui or into
+# the Qt widget / GUI rendering stack.  This is the property the whole R1
+# build split depends on: nereusd links NereusCore alone only as long as
+# neither tree reaches into src/gui.
+#
+# EXTRA_LABELS core because the test greps the tree instead of including
+# any core header, so label derivation cannot see its subject and left it
+# `unclassified` -- which meant `ctest -L core`, the command
+# docs/development/fast-test-loop.md tells everyone to use, skipped the
+# one test guarding the core boundary.
+nereus_add_test(tst_core_has_no_gui_includes EXTRA_LABELS core)
+target_compile_definitions(tst_core_has_no_gui_includes PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
 # Phase 1B verification -- exhaustive sweep of every detector x averaging
 # combination through SpectrumWidget::updateSpectrumLinear():
 #   spectrum  5 detectors x 4 averagings = 20
@@ -4478,6 +5452,21 @@ nereus_add_test(tst_active_peak_hold)
 #  Display.cs:5483 [v2.10.3.13]).
 # Uses QTEST_APPLESS_MAIN (no QApplication, WDSP-free, pure data logic).
 nereus_add_test(tst_peak_blob_detector)
+
+# iPhone app Task 20 (R-IOS-27): the noise floor, waterfall levels,
+# normalise, averaging constant, calibration range and blob passband moved
+# from SpectrumWidget into core/spectrum/DisplayFollowers. Links the Core
+# alone, as nereusd does, to prove they stand without the GUI.
+nereus_add_test(tst_display_followers CORE_ONLY)
+
+# iPhone app Task 20 (R-IOS-27): display extras. The Core's extras against
+# the desktop's SpectrumWidget for one recorded sequence, the NSDX datagram,
+# the subscription fields, and an endpoint through a real session.
+nereus_add_test(tst_display_extras
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_display_extras PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 
 # ── Task 2.3: Spectrum Defaults overlay group + decimation wire-up ──────────
 # Tests for SpectrumWidget overlay setters (ShowMHzOnCursor / ShowBinWidth /
@@ -4723,6 +5712,70 @@ target_compile_definitions(tst_step_att_cross_thread PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_p1_bank16_pursignal_run)
 target_compile_definitions(tst_p1_bank16_pursignal_run PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-5b: TX Waterfall Colormap (TDD red) ──────────────────────────────
+# 4 tests locking in Thetis-verbatim defaults and the per-frame MOX-conditional
+# render-path branch mirroring display.cs:6506-6595 [v2.10.3.13+501e3f51]:
+#   defaults_match_thetis: txWfLowLevel==-70, txWfHighLevel==30,
+#     txWfPalette==Enhanced, txWfLowColor==Qt::black.
+#   settings_round_trip: save+load cycle preserves all 4 TX-wf settings.
+#   mox_gate_thresholds: dbmToRgb uses TX thresholds on MOX, RX thresholds off.
+#   mox_gate_palette: dbmToRgb uses TX palette on MOX, RX palette off.
+# Sources: Display.cs:1911-1937 + :2516-2521 + :428-437 [v2.10.3.13+501e3f51]
+#          display.cs:6506-6595 [v2.10.3.13+501e3f51].
+# NOTE: Steps 1.3-1.8 add the impl + test seams; this target is RED until then.
+# Uses QTEST_MAIN (QApplication required for SpectrumWidget construction).
+nereus_add_test(tst_tx_waterfall_colormap)
+
+# ── Phase 3M-5c: Custom Gradient Picker widget (TDD red) ─────────────────────
+# 10 tests locking in Thetis ucLGPicker default-state, encoded format, color
+# interpolation, mutation rules, and 101-entry LUT consumer pattern. Sources:
+#   ucLGPicker.cs:55-130    (constants + default ctor 8-stop grayscale ramp)
+#   ucLGPicker.cs:75-80     (private GradColours struct)
+#   ucLGPicker.cs:387-446   (LGPicker_MouseDown add-on-empty-strip)
+#   ucLGPicker.cs:582-597   (RemoveSelectedGripper end-cap protection / min 2)
+#   ucLGPicker.cs:666-738   (Text get/set, malformed-input no-op)
+#   ucLGPicker.cs:770-792   (GetColourAtPercent — clamp + interp)
+#   ucLGPicker.cs:912-930   (EncodedText base64 wrapper)
+#   setup.cs:33304-33312    (101-entry waterfall LUT consumer pattern)
+# All v2.10.3.13+501e3f51. NOTE: Steps 2.3-2.6 add the impl + test seams; this
+# target is RED until then. Uses QTEST_MAIN (QApplication required for the
+# GradientPickerWidget QWidget subclass).
+nereus_add_test(tst_gradient_picker)
+
+# ── Phase 3M-5d: TX FFT + Detector + Averaging (TDD red) ─────────────────────
+# 8 tests pinning the TxAnalyzer 9-control state surface + n_pixout=2.
+#   defaults_match_spec: FFT=4096, Window=Hamming (4), PanDet=0, PanAvg=0,
+#     PanAvTimeMs=30, PanNormalize=false, WfDet=0, WfAvg=0, WfAvTimeMs=120.
+#   settings_round_trip: 9-key AppSettings save+load cycle preserves all.
+#   fft_size_formula: setFftSizeSliderPosition(N) ⇒ 4096 * 2^N.
+#   bin_width_formula: binWidthHz() = sampleRate / fftSize.
+#   normalize_gated_on_pan_detector: panNormalizeEnabled() true iff
+#     PanDet >= 2 (per MW0LGE comment at setup.cs:18111-18112).
+#   av_time_ms_to_tau_seconds: setter takes ms; tau() returns seconds.
+#   setAnalyzer_called_on_each_setter: each setter ticks
+#     analyzerConfigCount() test seam.
+#   pixout_2_after_phase: nPixout() == 2 (pan + wf independent).
+# Sources: setup.designer.cs:36493 (WF AvTime ms=120) + :36753 (Pan ms=30)
+#          setup.designer.cs:2200-2235 (control declarations)
+#          setup.cs:18105-18171        (9 control handlers)
+#          specHPSDR.cs:134, :301-322, :351-380, :382-418, :471-480
+# All v2.10.3.13+501e3f51. NOTE: Steps 3.3-3.4 add the impl + test seams;
+# this target is RED until then. Uses QTEST_MAIN (QCoreApplication only —
+# TxAnalyzer is non-GUI).
+nereus_add_test(tst_tx_analyzer_settings)
+
+# ── TX display span clipping (bench 2026-08-04 + 2026-08-05) ─────────────────
+# spanClipBins (specHPSDR.cs:762-775 CalcSpectrum) decides how much baseband
+# the transmit analyzer emits. Unclipped, the pan kept its receive window and
+# SpectrumWidget stretched 96 kHz across it, so the tone rendered at the wrong
+# dial frequency; clipped to the wrong width it left too few points and the
+# trace was a blob. Pure, so it needs no WDSP channel and no bench.
+nereus_add_test(tst_tx_display_window)
+# Remote-window parity Task 28 (R-R3-49, A11): TxDisplayFeed, the one
+# owner of the transmit analyzer's view (start and stop on every key, the
+# governing viewer's window and pixels, the carrier following XIT), and
+# TxAnalyzer::clampViewToBaseband.
+nereus_add_test(tst_tx_display_feed)
 # ── Phase 3J-1 Task 2.1: TciServer + ClientSession lifecycle ─────────────────
 # 3 tests: start/listen/signal, double-start rejection, stop/clear.
 # Gated on Qt6WebSockets_FOUND — TciServer.h/.cpp are #ifdef HAVE_WEBSOCKETS.
@@ -4776,6 +5829,15 @@ if(Qt6WebSockets_FOUND)
     target_link_libraries(tst_tci_audio_roundtrip PRIVATE Qt6::WebSockets)
 endif()
 
+# R-R3-39: TCI receive audio's WDSP resampler runs on the receive lane. With
+# apps subscribed at 12 kHz stereo, 24 kHz mono (changed to 8 kHz mid-stream)
+# and 48 kHz, through audio_stop, a disconnect and the server's stop, the
+# event loop makes no WDSP call, and every block matches a lane-less server's.
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_tci_rx_audio_lane EXTRA_LABELS core)
+    target_link_libraries(tst_tci_rx_audio_lane PRIVATE Qt6::WebSockets)
+endif()
+
 # ── Phase 3J-1 Task 18.1: IQ binary stream pipeline + IQSwap + AlwaysStreamIQ ──
 # Spins up a real TciServer + real QWebSocket client, subscribes to IQ for
 # slice 0, injects synthetic I/Q via the test-only injectRawIqForTest hook,
@@ -4796,6 +5858,17 @@ endif()
 if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_tci_tx_mutex)
     target_link_libraries(tst_tci_tx_mutex PRIVATE Qt6::WebSockets)
+endif()
+
+# ── R3 receiver audio plan, Task 4 (R-R3-42, R-R3-21, R-R3-25) ───────────────
+# TCI served by a remote window: no local taps, receive audio from the Core's
+# receiver streams (fake source and the real RemoteMediaController against an
+# in-process Core, Opus and lossless), every app on a receiver gets all of
+# it, an older Core leaves audio_start unanswered, vfo/modulation act on the
+# Core's slice. NereusSDR-native remote boundary; no upstream port applies.
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_tci_remote_window fakes/LoopbackTransport.cpp)
+    target_link_libraries(tst_tci_remote_window PRIVATE Qt6::WebSockets)
 endif()
 
 # ── Phase 3J-1 Task 1.1: TCI verification matrix runner ──────────────────────
@@ -4821,6 +5894,16 @@ nereus_add_test(tst_tci_priority_queues)
 # Transport-blind: no Qt6WebSockets dependency.
 nereus_add_test(tst_tci_vfo_coalescer)
 
+# Receiver and transmit gaps plan, Task 10 (R-R3-49): the per-app update gap
+# between outgoing vfo / dds / tx_frequency lines, ported from Thetis
+# TCIServer.cs:6421-6480 [v2.10.3.15] (VFOChange / CentreChange /
+# TXFrequencyChange) into TciUpdateGap. Pure logic with the clock passed in;
+# the TciServer case (live apps through a real server) needs Qt6WebSockets.
+nereus_add_test(tst_tci_update_gap)
+if(Qt6WebSockets_FOUND)
+    target_link_libraries(tst_tci_update_gap PRIVATE Qt6::WebSockets)
+endif()
+
 # ── Phase 3J-1 Task 10: TCI volume dB math (pure logic, no WebSockets) ───────
 # Tests tciLinearToDbVolume / tciDbToLinearVolume from TciVolume.h.
 # Port of Thetis TCIServer.cs:4110-4132 [v2.10.3.13] linearToDbVolume /
@@ -4842,6 +5925,10 @@ nereus_add_test(tst_tci_sensor_formats)
 # blind: no Qt6WebSockets dependency.
 # TestMockRadioModel.cpp provides the moc vtable for the QObject-derived mock.
 nereus_add_test(tst_tci_dispatch_seam TestMockRadioModel.cpp)
+# The TCI Server page's settings that were saved and never read, made to do
+# what Thetis's TCI server does, including the three RX2 VFO options
+# (formerly the tci-extras unbuilt entry).
+nereus_add_test(tst_tci_server_settings_real TestMockRadioModel.cpp)
 
 # ── Phase 3J-1 Task 4.1: TciProtocol init burst smoke ──────────────────────
 # Verifies buildInitBurst() returns non-empty, first entry starts with
@@ -5162,6 +6249,10 @@ nereus_add_test(tst_dspmode_rade)
 #   snrVisibleInRadeLower     - RADE_L also shows the row.
 nereus_add_test(tst_vfo_widget_snr)
 
+# R-R3-45: the flag's Speakers / Headphones buttons and the plain notice
+# when the headphones are chosen and none are set up (VAX design 6.2).
+nereus_add_test(tst_vfo_widget_output_route)
+
 # ── Phase 3R Task L2: RadeApplet ────────────────────────────────────────────
 # Pins the RadeApplet UI contract:
 #   constructsWithRadioModel              - builds against a primed
@@ -5302,7 +6393,7 @@ nereus_add_test(tst_radio_model_spot_wiring)
 # unit test (see tst_mainwindow_status_bar_safety for the established
 # isolate-the-logic pattern), so this suite pins the surrounding
 # contracts instead: dialog ctor signatures match RadioModel accessor
-# return types, SpotModel::clear (Ctrl+Shift+K) empties every row,
+# return types, SpotModel::clear (Ctrl+Shift+X) empties every row,
 # SpotHubDialog::spotsClearedAll routes into SpotModel::clear, and the
 # three FreeDVReporterDialog signals (qsyRequested,
 # messageSendRequested, tuneRequested) carry the right argument shape
@@ -5327,6 +6418,11 @@ nereus_add_test(tst_mainwindow_tools_spot_hub)
 # database.cs port, but the keys exercised here are all NereusSDR
 # additions for Phase 3J-2 + 3R.
 nereus_add_test(tst_spot_settings_round_trip)
+
+# R3 controls that work, Task 1 (R-R3-21): the Spot Hub's WSJT-X colour
+# swatches and Spot Life slider reach the spots RadioModel adds, and a
+# lifetime saved under the old WsjtxSpotLifetime name is migrated.
+nereus_add_test(tst_wsjtx_spot_settings)
 
 # ── Phase 3J-2 + 3R M2: SpotHub Display tab knobs end-to-end ───────────────
 # Pins the consumer side of the Display tab loop introduced by
@@ -5399,28 +6495,39 @@ nereus_add_test(tst_rade_channel)
 # CDSPResampler24 has nontrivial internal latency.
 nereus_add_test(tst_resampler)
 
-# ── Phase 3R Task I4: RadeText (callsign-over-EOO wrapper) ────────────────
-# Pins the five contracts of the thin Qt6 wrapper around the
-# third_party/rade callsign-over-EOO channel
-# (rade_tx_set_eoo_callsign / rade_rx_get_eoo_callsign, declared in
-# third_party/rade/src/rade_api.h:120-145 [@b289102]):
-#   constructsAndIsEmpty             fresh wrapper has empty ourCallsign
-#   setOurCallsignStoresValue        getter returns the value the setter
-#                                    stashed; lower / upper / empty all
-#                                    round-trip unchanged
-#   pushTxNullRadeIsNoOp             pushTxCallsign(nullptr) is safe
-#                                    (RadeChannel's m_rade is null
-#                                    between stop() and start())
-#   pushTxEmptyCallsignIsNoOp        pushTxCallsign on an empty stash
-#                                    must not clobber rade_tx.eoo_bits
-#   roundTripDecodesEncodedCallsign  setOurCallsign + pushTxCallsign +
-#                                    processRxEooBits emits
-#                                    textDecoded("KG4VCF") once
-# The headline test does a bit-level round-trip (no OFDM mod/demod)
-# because the wrapper only sits on set_eoo_callsign / get_eoo_callsign;
-# the full OFDM round-trip is exercised separately by the upstream
-# third_party/rade/src/rade_callsign_test.c executable.
+# ── RADE end-of-over callsigns: RadeText + FreeDV's format ────────────────
+# tst_rade_text: the RadeText wrapper writes FreeDV's EOO data into librade
+# (float for float against freedv-backend vectors), writes zeros with no
+# callsign, emits a FreeDV station's callsign and nothing for an empty or
+# rejected one, and a callsign survives librade's modem end to end
+# (rade_tx frames, rade_tx_eoo, the real leg only, rade_rx).
 nereus_add_test(tst_rade_text)
+
+# tst_rade_text_codec: RadeTextCodec (the port of freedv-backend's
+# rade_text + LDPC(112,56)) encodes exactly what FreeDV encodes and accepts
+# or rejects exactly what FreeDV accepts or rejects. The vectors in
+# tests/data/rade_text/freedv_backend_vectors.h come from the upstream code
+# itself (scripts/gen-rade-text-vectors.sh).
+nereus_add_test(tst_rade_text_codec)
+
+# tst_rade_end_of_over_tail: the transmit safety boundary around the RADE
+# end-of-over tail. MoxController sends the tail only on an operator's
+# release (never on a key, never under TX inhibit, the PA trip or
+# receive-only), keeps the hardware keyed and MOX off while it runs, bounds
+# it at 1 s, ends it on a new key or a stop; RadioModel permits it only for
+# a RADE release, reports it as txEnding, and stopAllTx stops a running one
+# at once.
+nereus_add_test(tst_rade_end_of_over_tail)
+target_compile_definitions(tst_rade_end_of_over_tail PRIVATE NEREUS_BUILD_TESTS)
+
+# tst_unkey_send_ring_drain (G-05): the transmit safety boundary around the
+# unkey's wait for the send ring. An operator's release holds the hardware
+# keyed, after the TX channel's drain and before mox_delay, until the
+# transmit I/Q send ring has drained, for at most the ring's own length (P1
+# 84 ms, P2 341 ms). TX inhibit, the PA trip, receive-only, Stop All TX and
+# a disconnect never wait, and end a wait already running.
+nereus_add_test(tst_unkey_send_ring_drain)
+target_compile_definitions(tst_unkey_send_ring_drain PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3R Task I5: RadeChannel -> RadioModel slot graph wiring ─────────
 # Pins the six contracts RadioModel::wireRadeChannel(sliceId, channel, slice)
@@ -5532,6 +6639,14 @@ nereus_add_test(tst_smeter_widget_peak_hold)
 # Phase 3P-II Phase 2, Task 39.
 nereus_add_test(tst_smeter_widget_context_menu)
 
+# Verifies the SMeterWidget meter-face selection: six vintage faces drawn by
+# gui/VintageMeterFace plus the original Classic look.  Default face, the
+# SMeter_FaceStyle AppSettings round-trip, the "Meter Face" context submenu
+# (index 3), and that every face renders and the pointer tracks the level.
+# NEREUS_SMETER_DUMP_DIR=<dir> writes a PNG of every face for eyeballing.
+# NereusSDR-native test; no upstream equivalent.
+nereus_add_test(tst_smeter_widget_face)
+
 # ── Phase 3P-II Phase 3 (Connection robustness) ──────────────────────────
 # Tasks 55+56: amplifierCreate frame format + flexradioPair accept/reject.
 # Wire formats from FlexRadio PowerGenius Ethernet API wiki spec (design §6.4).
@@ -5554,6 +6669,64 @@ nereus_add_test(tst_pgxl_connection_ping)
 # Tests: pingEmitsPongReceivedOnReply (V1.2.17 handshake + R-frame -> pongReceived);
 # pingTimesOutAfterFiveSeconds (testFlushPingTimeouts() -> pingTimedOut signal).
 nereus_add_test(tst_tgxl_connection_ping)
+nereus_add_test(tst_tgxl_connection_reconnect)
+nereus_add_test(tst_tgxl_connection_identity)
+nereus_add_test(tst_tgxl_station_identity)
+# R-R3-47 / R-R3-22: the Core's `amplifier` and `rfkit` status objects, the
+# one Power Genius gauge conversion, and the accessory control document's
+# fixtures (tests/fixtures/accessories, read through NEREUS_SOURCE_DIR).
+nereus_add_test(tst_station_accessory_state
+    fakes/LoopbackTransport.cpp)
+nereus_add_test(tst_accessory_tx_commands
+    fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_station_accessory_state PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# R-R3-47: a remote window's Power Genius and RF-Kit applets read the Core's
+# objects over the in-process loopback.
+nereus_add_test(tst_remote_peripherals
+    fakes/LoopbackTransport.cpp)
+# R-R3-48: the one TCI switch drives the Core's station server (TciServer).
+target_link_libraries(tst_remote_peripherals PRIVATE Qt6::WebSockets)
+# R-R3-47 / R-R3-22 / R-R3-25: the Core's Power Genius XL: identity before
+# admission (captured discovery and info replies), pairing only after it,
+# band follow, and cancellation in every phase. Loopback peers only.
+nereus_add_test(tst_station_pgxl_controller)
+# R-R3-49 (parity Task 9): a window's Power Genius OPERATE and STANDBY (the
+# local applet's operate=1 / operate=0 line through the Core's
+# PgxlConnection), the Core's LAN scan for it and its saved address;
+# OPERATE and STANDBY refused on the air with nothing sent to the (loopback)
+# amp, the scan and the address taken there (parity mini-round).
+nereus_add_test(tst_pgxl_station_control)
+# R-R3-49 (parity Task 10): a window's RF-Kit RF2K-S OPERATE and STANDBY,
+# antenna, TCI mode (the local applet's and page's REST requests through the
+# Core's Rf2ksConnection) and saved address; the switches refused on the air
+# with nothing sent to the (in-process HTTP) amp, the address taken there
+# (parity mini-round); the Core's connection counts on
+# accessoryData.
+nereus_add_test(tst_rfkit_station_control)
+target_link_libraries(tst_rfkit_station_control PRIVATE Qt6::Network)
+# R-R3-47 / R-R3-48 / R-R3-22 / R-R3-25: the Core's RF-Kit RF2K-S: identity
+# from /info before admission, the Core's configure/disconnect/switch rules,
+# cancellation, faults, and TCI mode through the amp's web interface while
+# the station's TCI server is on. An in-process HTTP fake stands in for the
+# amp.
+nereus_add_test(tst_station_rfkit_controller)
+target_link_libraries(tst_station_rfkit_controller PRIVATE Qt6::Network)
+# R-R3-48 / R-R3-25: the Core's station TCI server (where it listens, the
+# switch it keeps, what an app at the station hears, transmit refused), the
+# RF-Kit's band follow over it, and the app's one TCI switch. Loopback only.
+# iPhone app plan Task 35 (ruling 8.14): the Core's own server never keys,
+# with transmit unheld or held by a device (a Core over the loopback).
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_station_tci_server fakes/LoopbackTransport.cpp)
+    target_link_libraries(tst_station_tci_server PRIVATE Qt6::WebSockets Qt6::Network)
+endif()
+
+# R-R3-22 / R-R3-47: the Core's station listeners (the SmartSDR API listener
+# on 4992, the accessory discovery filter, the station TCI server) accept
+# connections on the station network only, one rule for all; a desktop
+# window binds as before. Loopback binds and injected interface lists only.
+nereus_add_test(tst_smartsdr_api_listener_bind)
 
 # Task 59: auto-reconnect exponential backoff (1/2/5/10/30/60 s, cap at 60 s).
 # Test: backoffSequence verifies 8 calls to testForceDisconnect() produce
@@ -5766,6 +6939,21 @@ nereus_add_test(tst_radio_model_max_slices)
 # Design: docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §12.
 nereus_add_test(tst_settings_schema_v6_migration)
 
+# R-R3-49 fix wave: SettingsSchemaVersion v6 -> v7 resets NetworkWatchdogEnabled
+# once, so a value saved while the checkbox did nothing does not come alive.
+# Source: NereusSDR-original (no Thetis upstream).
+nereus_add_test(tst_settings_schema_v7_migration)
+
+# Receiver and transmit gaps plan, Task 10 (R-R3-49): SettingsSchemaVersion
+# v7 -> v8 drops TciRateLimitMsgsPerSec once (the old msg/s unit; the gap is
+# now TciRateLimitMs). Source: NereusSDR-original (no Thetis upstream).
+nereus_add_test(tst_settings_schema_v8_migration)
+
+# R-IOS-06, R-IOS-27: SettingsSchemaVersion v8 -> v9 brings each slice's
+# saved NR1 values into Thetis's NR spinbox ranges once (old defaults to the
+# new ones, out-of-range values clamped, in-range values kept).
+nereus_add_test(tst_settings_schema_v9_migration)
+
 # Phase 3F Sub-Epic B Task 1: SliceConfig + DdcAssignment shared structs.
 # 2 tests: slice_config_struct_has_required_fields,
 #          ddc_assignment_struct_has_required_fields.
@@ -5819,6 +7007,7 @@ nereus_add_test(tst_p2_wideband_marshalling)
 # live slices on it, gated on BoardCapabilities::widebandAdcs, not the edge
 # from whichever slice happened to change last.
 nereus_add_test(tst_wideband_chain_state)
+nereus_add_test(tst_wideband_demand_owners)
 
 # Codex review, PR #293: shrinking the pan layout must rehome the slices whose
 # panes were deleted, not orphan them holding a DDC.
@@ -5925,11 +7114,35 @@ nereus_add_test(tst_p2_wideband_enable_byte)
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-f-wideband-plan.md Task 2.
 nereus_add_test(tst_wideband_frame_accumulator)
 
-# Phase 3F Sub-Epic F Task 4: WidebandFftEngine wraps an FFTW3 16384-pt
-# real-to-complex plan. Output is 8192 dBm-style bins (N/2+1 less DC).
+# Phase 3F Sub-Epic F Task 4: WidebandFftEngine zero-pads 16384 real samples
+# into a 65536-point transform. Output is 32768 raw dB bins (DC dropped).
 # Source: NereusSDR-original test for a NereusSDR-original class.
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-f-wideband-plan.md Task 4.
 nereus_add_test(tst_wideband_fft_engine)
+
+# R-R3-39: the display FFTs plan with single-precision FFTW on more than
+# one thread (every FFTEngine replans on its own spectrum thread, and
+# WidebandFftEngine plans in its constructor), and FFTW's thread-safe
+# planner switch is per precision library. Plans from four threads at
+# once, with no WdspEngine in the process; CORE_ONLY, as nereusd links.
+nereus_add_test(tst_fftw_planner_threads CORE_ONLY)
+
+# R3 Task 4b: the shared Core/local reference consumes real FFT output and
+# preserves detector-specific bandwidth normalization without GUI dependencies.
+nereus_add_test(tst_wideband_display_reference)
+nereus_add_test(tst_extended_spectrum_reducer)
+nereus_add_test(tst_wideband_spectrum_cache)
+
+# Phase 3F Sub-Epic F Tasks 8 + 9 (finished 2026-08-08): extended-pan
+# listenable-island geometry + wideband wing fill. Closes the bench report
+# that "the extendview wide wings is not working" -- Sub-Epic F shipped the
+# whole wideband DATA path in 2026-05 and never wrote the paint half, so the
+# stored bins had no reader and the DDC trace stretched across the full panel
+# once zoomed past the DDC rate.
+# Source: NereusSDR-original presentation; wing frequency axis and dB
+# calibration ported from Thetis wbDisplay.cs:440, 2106, 4511, 4680-4704
+# [v2.10.3.15].
+nereus_add_test(tst_extended_pan_wings)
 
 # Phase 3F: WdspEngine-owned external-diversity lifecycle/order/process tests
 # for create/destroy/xdiv plus SetEXTDIVRun / Nr / Output / Rotate. Ported
@@ -5943,6 +7156,33 @@ nereus_add_test(tst_rx_channel_ext_div_wrappers)
 # Source: NereusSDR-original test infrastructure.
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-g-diversity-plan.md Task 2.
 nereus_add_test(tst_diversity_dialog_persistence)
+# Phone wire batch: the Diversity dialog's sensitivity pattern
+# (core/DiversityPattern) and the slice's diversityPattern.
+nereus_add_test(tst_diversity_pattern)
+# Diversity's synchronized partner DDC1 is tuned to RX1 as Thetis tunes it
+# (UpdateRX1DDSFreq), on Protocol 2 and Protocol 1.
+nereus_add_test(tst_diversity_partner_ddc)
+# The Diversity dialog edits the slice RadioModel runs diversity for (slice
+# A, by id), and disables its controls with a reason while that slice is
+# closed.
+nereus_add_test(tst_diversity_dialog_owner)
+# Diversity lane B4: Protocol 1 sends the diversity VFO lock (bank 0 C4
+# bit 7) while diversity runs and clears it when diversity stops.
+nereus_add_test(tst_p1_diversity_lock_bit)
+# Phone wire batch: radio's logCategoryList (the Support dialog's categories
+# with their labels).
+nereus_add_test(tst_log_category_list)
+# The phone's direct addresses: which of the Core's addresses a signed-in
+# device is told it can dial, and the watcher that follows them.
+nereus_add_test(tst_core_addresses)
+
+# The opt-in ICE check log (NEREUS_ICE_DIAG): its switch, the address
+# redactor every line passes through, and two real peers on this computer
+# whose whole log carries none of its addresses.
+nereus_add_test(tst_ice_diagnostics CORE_ONLY EXTRA_LABELS session)
+target_link_libraries(tst_ice_diagnostics PRIVATE datachannel-static)
+target_include_directories(tst_ice_diagnostics PRIVATE
+    "${libdatachannel_SOURCE_DIR}/include")
 
 # ── Tunable Notch Filter Task 2: RxChannel manual-notch wrappers ──────────
 # The Notch value type plus add / edit / delete / sync / count, the
@@ -6028,6 +7268,10 @@ nereus_add_test(tst_notch_persistence)
 #         section 6.3.
 nereus_add_test(tst_notch_channel_sync)
 
+# R-R3-49: the Core's NR3 model load (RNNRloadModel) runs on the receive
+# lane, after the channel opens queued there, never on the event loop.
+nereus_add_test(tst_nr3_model_load_lane)
+
 # ── Tunable Notch Filter Task 5: TCI rx_nf_enable ─────────────────────────
 # TNF section 6.4: rx_nf_enable repoint + both-index broadcast.
 # Verifies the TCI master-notch surface against the real NotchModel:
@@ -6078,6 +7322,11 @@ nereus_add_test(tst_notch_hit_test)
 #   caller's preallocated real-time scratch).
 nereus_add_test(tst_port_audio_capture_resample)
 
+# R-R3-36 fix wave: strict named-input resolution accepts exact names only,
+# so a missing "USB Mic" never opens "USB Mic 2" (same or another host
+# API). Pure logic through PortAudioBus::matchNamedDevice(); no device.
+nereus_add_test(tst_port_audio_named_match)
+
 # MemoryLock stat accounting.  Callers unlock unconditionally even when
 # the lock failed (routine once RLIMIT_MEMLOCK is exhausted) and POSIX
 # munlock() succeeds on a mapped-but-unlocked range, so the counters
@@ -6112,6 +7361,779 @@ nereus_add_test(tst_pan_flag_positions)
 # edge on the lower pan of a 2v layout. Bench-reported 2026-07-28.
 nereus_add_test(tst_popup_placement)
 
+# R1 Task 8: CoreInit bundles the settings-migration sequence and the
+# file-logging install that used to live inline in main(), guarded by a
+# file-static flag so a second call is a genuine no-op. Pins the migration
+# floor (SettingsSchemaVersion >= 6), the idempotency guard via a run
+# counter, and that the profile argument (not AppSettings::profileOverride())
+# drives where the log file lands, so a daemon can call this without
+# replaying main()'s pre-QApplication argv scan.
+nereus_add_test(tst_core_init)
+
+# R1 Task 9: DaemonConfig parses nereusd's "key = value" config file
+# (src/core/daemon/DaemonConfig.{h,cpp}). Pins the on-disk format (# full
+# and trailing comments, whitespace trimmed), that a missing file yields
+# defaults() plus a non-empty error rather than a crash, and the generic
+# validate() floor (slice_count >= 1) that does not depend on any specific
+# radio being connected.  Also cross-checks the shipped
+# packaging/nereusd.conf.sample against the parser's key list, hence
+# NEREUS_SOURCE_DIR.
+nereus_add_test(tst_daemon_config)
+target_compile_definitions(tst_daemon_config PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+# Remote Daemon R2, Task 1: nereusd used to share the GUI client's own
+# settings/log directory whenever --profile was omitted entirely, which
+# would have let R2's state-mirroring feature (SettingsProxy, Task 15)
+# pass its own verification while doing nothing (a "remote" GUI reading
+# the same on-disk file the local daemon just wrote looks correct either
+# way). Pins that an absent --profile now resolves to
+# AppSettings::kDaemonProfileName instead, that an explicit --profile ""
+# still shares on purpose, that the log directory moves together with the
+# settings path when the same resolved profile string drives both (as
+# src/server_main.cpp does), and the first-run seed marker Task 15's Setup
+# gate will read.
+nereus_add_test(tst_daemon_settings_profile)
+
+# Remote Daemon R2, Task 2: a connectable RadioModel for tests.
+# RadioModel::connectToRadio() blocks on FFTW wisdom generation on a cold
+# config directory (which TestSandboxInit.cpp forces every run), so no test
+# in this suite had ever called it -- see tst_daemon_app.cpp's header
+# comment. WdspEngine::setSynchronousInitForTest() (WdspEngine.h) makes
+# initialize() skip spawning the WisdomThread and instead run
+# finishInitialization(false) synchronously, so connectToRadio()'s own
+# initializedChanged-driven RX/TX channel creation still fires at the right
+# moment. Pins the measured cost of that synchronous path (spike, must stay
+# well under TIMEOUT 120), that a RadioModel reaches ConnectionState::
+# Connected against a fakes/P1FakeRadio.cpp loopback fake, that no thread
+# named "WisdomThread" is ever live, and exposes ConnectableRadioModel
+# (tests/fakes/ConnectableRadioModel.{h,cpp}) as the reusable helper Tasks
+# 3, 12 and 20 build on.
+nereus_add_test(tst_connectable_radio_model
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
+target_compile_definitions(tst_connectable_radio_model PRIVATE NEREUS_BUILD_TESTS)
+
+# Remote Daemon R2, Task 3: make connected state storage-backed.
+# RadioModel::isConnected() used to derive from the connection pointer
+# (m_connection && m_connection->isConnected()), so a remote client that
+# deliberately owns no RadioConnection would report disconnected forever,
+# and maxSlices() short-circuits on that to 1. isConnected() is now
+# m_connectionState-backed, and setConnectionState(Disconnected) is hoisted
+# ahead of teardownWorkerThreadedConnection in teardownConnection() so
+# there is no window where m_connection is already null but isConnected()
+# still reads stale-Connected. Uses the Task 2 ConnectableRadioModel
+# harness to prove the new and old derivations agree across a REAL connect
+# and teardown, not just sampled before and after -- including the
+# disconnect transition observed from inside teardownConnection() itself.
+nereus_add_test(tst_connected_state_equivalence
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
+target_compile_definitions(tst_connected_state_equivalence PRIVATE NEREUS_BUILD_TESTS)
+
+# Remote Daemon R2, Task 4: RadioModel::Role, the station-link seam, and the
+# remote-inert guard. A Role::Remote model must never enter
+# connectToRadio()'s body -- no RadioConnection, no live WDSP RX channel, no
+# running AudioEngine -- because a later task's StateMirror drives it over
+# the wire instead. Drives both a Role::Local and a Role::Remote model
+# through connectToRadio() (via the Task 2 harness, extended here with a
+# Role parameter) and asserts opposite outcomes on the same four things, so
+# the test cannot pass against a no-op guard: a freshly constructed model
+# already satisfies every Remote-side assertion, since the constructor
+# allocates AudioEngine/WdspEngine but starts neither. Also pins that every
+# existing construction site keeps defaulting to Role::Local, and that
+# attachStation()/detachStation() hold their pointer non-owning.
+nereus_add_test(tst_remote_role_inert
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
+target_compile_definitions(tst_remote_role_inert PRIVATE NEREUS_BUILD_TESTS)
+
+# Remote Daemon R2, Task 6: SliceModel gains two Q_PROPERTYs the future
+# StateMirror (Task 7) needs -- sliceIndex (CONSTANT, the stable per-slice
+# id RadioModel::addSlice/removeSlice already maintain but never exposed to
+# the meta-object system) and band (NOTIFY bandChanged, a plain getter over
+# the existing m_currentBand member). No live radio connection needed: a
+# plain RadioModel with configureStreamPool() sized reproduces the real
+# addSlice()/removeSlice() id-allocation policy (lowest free id, no
+# renumbering of survivors), which is what makes sliceIndex diverge from
+# list position after a mid-list removal -- the exact case a
+# position-keyed mirror would get wrong. Does not need NEREUS_BUILD_TESTS
+# or the P1FakeRadio/ConnectableRadioModel fakes; nothing here calls
+# connectToRadio().
+nereus_add_test(tst_slice_mirror_identity)
+
+# Remote Daemon R2, Task 7: MirrorSchema (the meta-object walk that assigns
+# each mirrored Q_PROPERTY a dense session-scoped ordinal and a wire kind)
+# and MirrorPolicy (the default-deny direction table saying which of those a
+# remote GUI may write back).
+#
+# Carries the task's two spikes as permanent regression guards rather than
+# as throwaway probes:
+#   - connect(sender, QMetaMethod, receiver, QMetaMethod) into a
+#     ZERO-ARGUMENT slot, at notify arity 0, 1 and 2. Only arity 1 was ever
+#     verified before this task, and the existing precedent
+#     (MainWindow::wireSliceStatusOverlayTriggers) connects only the six
+#     properties in PanadapterApplet::statusOverlaySliceProperties(), none
+#     of which has a two-argument notifier. SliceModel::filterChanged(int,
+#     int) does, and it drives the whole filter surface.
+#   - QMetaType::IsEnumeration is set while QMetaProperty::isEnumType() is
+#     NOT, because these models' enums live in plain namespaces with no
+#     Q_NAMESPACE / Q_ENUM_NS (src/core/WdspTypes.h, src/models/Band.h).
+#     Classifying by isEnumType() would silently mis-encode twelve
+#     properties.
+#
+# The golden-list guard asserts MEMBERSHIP, never counts: the mirrored
+# property total has already moved twice inside this plan's own execution.
+# A count assertion turns a routine feature commit into a mysterious
+# failure; a membership assertion names the property needing an entry.
+nereus_add_test(tst_mirror_schema)
+
+# Remote Daemon R2, Task 7 (outbound half): StateMirror watches a model with
+# ONE zero-argument slot connected to every distinct NOTIFY in its schema,
+# maps senderSignalIndex() back to dirty ordinals, and re-reads each through
+# QMetaProperty::read instead of taking signal arguments.
+#
+# Re-reading is forced twice over: PanadapterModel::levelChanged() carries no
+# arguments yet names both dBmFloor and dBmCeiling, and SliceModel::
+# setDspMode rewrites both filter edges as a side effect while emitting
+# filterChanged separately. Also pins the snapshot path, which is the only
+# way a CONSTANT property (sliceIndex, the mirror's object identity) reaches
+# the wire at all. Inbound apply is Task 8; nothing here writes a model.
+nereus_add_test(tst_mirror_forwarder)
+
+# Remote Daemon R2, Task 8 (inbound half): StateMirror::applyInbound() applies
+# one write a remote peer sent for a watched object's property.
+#
+# A property with a real WRITE goes through MirrorPolicy::inboundAllowed()
+# then MirrorSchema::write(); the writable-but-Outbound SliceModel
+# properties are refused instead, sampleRateHz naming the client verb
+# (requestSliceSampleRate) the R2 plan assigns it. A property with NO WRITE
+# at all (TunerModel's whole ATU surface, SliceModel's active/txSlice/band,
+# RadioModel's name/model/version) routes to that model's own
+# applyMirroredValue(name, value) hook instead, a channel MirrorPolicy never
+# sees. Also pins that RadioModel::addSlice()'s two unconditional
+# co-hosted-slice peer mirrors (nbMode, and the mirrorNbTuning helper) still
+# run locally under an inbound apply -- the physical WDSP blanker they keep
+# in sync is shared per stream -- while producing no outbound delta for the
+# peer, and that the suppression is purely a StateMirror-side guard: no
+# behaviour in RadioModel.cpp changed to get it, so a purely local write
+# with no StateMirror involved mirrors to the co-hosted peer exactly as it
+# always has.
+nereus_add_test(tst_mirror_inbound)
+
+# Remote Daemon R2, Task 9 (slice lifecycle): ObjectRegistry watches
+# RadioModel::sliceAdded/sliceRemoved and calls StateMirror::watch()/
+# unwatch() at the right moments, emitting object.create (a full settled
+# snapshot, taken only once addSlice() has already run the TX arbiter
+# resync, the stream bind and wireSliceSignals) and object.destroy.
+#
+# The central hazard: RadioModel::removeSlice() calls slice->deleteLater()
+# BEFORE emitting sliceRemoved(), so the dying object is still fully alive
+# when the signal fires, and a same-event-loop-turn addSlice() can remint
+# the freed slice id while the corpse survives. ObjectRegistry keys its
+# live-object bookkeeping by QPointer<SliceModel> and detaches from
+# StateMirror synchronously inside the sliceRemoved handler -- never on
+# QObject::destroyed, which does not arrive until the event loop next
+# spins, by which point the corpse would still be watched under the key the
+# reused id needs. Also pins: a create for an id already considered live is
+# refused (protocol error, not a silent second create); removeSlice()'s
+# observable order (txSlice moves off the victim, then the victim's own
+# stream binding change, then object.destroy); and that neither of
+# RadioModel's two add-rejection paths (the allocator's bind-path refusal,
+# and addSliceOnPan()'s capacity check before addSlice() is even entered)
+# produces an object.create.
+nereus_add_test(tst_mirror_lifecycle)
+
+# Remote Daemon R2, Task 10: the connect-time snapshot (StateMirror::
+# attachSession()) and the outbound coalescer (MirrorCoalescer).
+#
+# attachSession() sends, via the new sessionMessageReady() signal: one
+# schema message per DISTINCT watched class, one object.create per watched
+# object (full property bag, watch order), then the snapshot-complete
+# marker -- built on ObjectRegistry's backfillExistingSlices() (Task 9) to
+# put three ALREADY-EXISTING slices under watch before attaching, which is
+# what makes three object.create messages possible at all.
+#
+# The ordering guarantee under test: a property write triggered
+# SYNCHRONOUSLY by a receiver reacting to one of the burst's own messages
+# must not be lost and must not be observable ahead of the marker.
+# onWatchedPropertyChanged() routes every change into MirrorCoalescer once
+# a session has attached, and a Delta is emitted only from
+# flushCoalescedDeltas(), which attachSession() calls exactly once, as its
+# LAST step -- so nothing can jump the marker without a Delta emission
+# path existing outside that one call, which this file's sabotage-and-
+# revert history (see task-10-report.md) confirmed by temporarily adding
+# one and watching the ordering assertion fail.
+#
+# Also covers: MirrorCoalescer standalone (latest-wins-per-ordinal is
+# structural overwrite, not sort order; arrival order preserved per object
+# and across objects; clear() drops without flushing), local direct mode
+# is provably unaffected when attachSession() is never called
+# (propertiesChanged() unchanged from Tasks 7-8), and SessionMessages'
+# JSON codec round-trips all five message kinds and rejects malformed
+# wire input.
+nereus_add_test(tst_mirror_snapshot)
+
+# iPhone app Task 72 (R-IOS-02; the several-devices design, rulings 5.6 and
+# 5.7): a MirrorView per device over one StateMirror. Echo per writer (a
+# shared blanker changed by A reaches B's view and not A's; WriterScope; a
+# write with no view; the single-session API unchanged), and each view's own
+# coalescer and burst (another view's pending deltas survive an attach; the
+# burst goes to its own view; nothing before attach or after close).
+nereus_add_test(tst_mirror_view)
+
+# Remote Daemon R2, Task 11: command verbs and results. Exercises the
+# SessionMessages CommandInvoke/CommandResult codec plus a real
+# SessionCommandDispatcher round trip over the in-process
+# fakes/LoopbackStationLink.h fake -- there is no transport until Task 18,
+# so "over the wire" here means the codec and dispatch, not a socket.
+#
+# Central case: with A(0) B(1) C(2), removing B (dispatched as a
+# removeSlice command) leaves ids and positions diverged (C sits at id 2 /
+# position 1), and RadioModel::setActiveSliceById(2) must still select
+# slice C, not position 2 (which no longer exists). Also covers: addSlice /
+# addSliceOnPan accept and reject paths (the real sliceAddRejected reason
+# relayed verbatim); removeSlice refusing to take the last remaining slice;
+# requestSliceSampleRate deferred to a LATER RadioModel event-loop turn
+# (never runs synchronously inside dispatch()); the CommandResult's
+# affectedKeys reporting the ACTUAL scope of a rate change rather than the
+# requested one, both for slices co-hosting one DDC stream and for a
+# Protocol 1 board's radio-wide 12-step RadioModel::setSampleRateLive
+# escalation (fakes/ConnectableRadioModel.h, a real HermesLite/P1FakeRadio
+# connection); the new RadioModel::activeSliceIdChanged(int) signal firing
+# the resolved slice ID beside the existing positional activeSliceChanged,
+# without disturbing it; and StateMirror::applyInbound()'s m_applying guard
+# surviving a genuinely NESTED apply (one watched property's write
+# triggering a second, inner applyInbound() call before the first
+# returns) -- the Task 8 defect Task 11's command dispatch makes reachable.
+nereus_add_test(tst_session_verbs
+    fakes/LoopbackStationLink.cpp
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
+
+# Receiver and transmit gaps plan, Task 1 (Phase 3F design section 3;
+# R-R3-21): every path that creates a slice on the Core's own side keeps to
+# the slice cap. A local addSlice() and the session verb addSlice are
+# refused at the cap with the same wording addSliceOnPan uses; a remote
+# window reproducing the Core's slices is never refused by its own count.
+nereus_add_test(tst_slice_cap_every_path
+    fakes/LoopbackStationLink.cpp
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
+
+# Remote Daemon R2, Task 12: the per-slice S-meter gets a model home.
+# SliceMeterPump (src/core/meters/) replaces MeterPoller::pollSliceSMeters()
+# -- GUI-only, so a headless nereusd could never produce a per-slice S-meter
+# reading -- with a core-side QTimer that writes SliceModel::
+# signalStrengthDbm directly. Pins: the property's shape (no WRITE, has a
+# NOTIFY, defaults to -140.0, emits once per distinct value); poll() against
+# an unconnected model (no WDSP channel leaves the default untouched;
+# RadioStatus::isTransmitting stops poll() from touching any slice, not
+# MeterPoller's narrower m_inTx); poll() against a REAL connected RxChannel
+# (fakes/ConnectableRadioModel) proving the rxMode()-driven source selector
+# actually reaches WDSP for SignalAverage (the no-selector default) and
+# SignalPeak, and passes the WdspEngine::getMaxBinDbm -400.0 "not active"
+# sentinel straight through for MaxBin; the interval clamp; and the
+# Role::Local / Role::Remote construction gate -- the fifth local-authority
+# assertion Task 5's brief could not write because this class did not exist
+# yet (see tst_remote_role_inert.cpp's own header comment).
+nereus_add_test(tst_slice_meter_pump
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
+
+# Remote-window parity Task 15 (R-R3-13, R-R3-49): meters from the Core. The
+# pump's ADC and AGC readings per slice (a real connected channel), their
+# trip to a window under meterReadingsVersion 1, and a window's Multimeter
+# polling delay setting the Core's pump rate at once (its polls counted).
+# Loopback only, no RF, no audio device.
+nereus_add_test(tst_slice_meter_pump_readings
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
+# Remote-window parity Task 16 (R-R3-49, R-R3-21, R-R3-40): DSP facts from the
+# Core under dspInfoVersion 1. The flag, NR/ANF and DSP > NR offer DFNR and
+# MNR by the Core's DspAssetService word (dfnrRunnable, mnrRunnable); the TNF page and a real remote
+# window's pan follow the Core's minNotchWidthHz; dsp.filterResponse's bins,
+# resampled in the window, are the curve the Core's channel draws; "Time to
+# last change" is the Core's. Loopback and a fake radio only, no RF, no
+# audio device.
+nereus_add_test(tst_remote_dsp_info
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp
+    fakes/LoopbackTransport.cpp
+    fakes/RemoteWindowHarness.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_remote_dsp_info PRIVATE NEREUS_BUILD_TESTS)
+
+# Remote Daemon R2, Task 13: AppSettings mutator funnel. Before this task
+# only setValue()/remove()/clear() touched the m_settings map directly;
+# everything else (setHardwareValue/hardwareValue/hardwareValues/
+# clearHardwareValues and the whole radios/* family) poked the map itself.
+# R2's SettingsProxy (Task 15) can only delegate reads/writes at a single
+# seam, so every one of those now calls setValue()/value()/remove()/
+# contains()/allKeys() internally, and a std::function<void(const
+# QString&)> change hook fires from inside setValue()/remove() -- which,
+# because of the funnel, covers every named mutator for free. Pins: the
+# hook fires for exactly the ten operations the brief names; it does NOT
+# fire for clear() (bulk test-isolation wipe, no single key to report) or
+# for a plain read; it is instance-scoped, not global; value() still
+# returns the caller's default for an unwritten key; hardwareValues()
+# still strips its "hardware/<mac>/" prefix to bare keys.
+nereus_add_test(tst_settings_mutator_funnel)
+
+# Remote Daemon R2, Task 14: classifySettingsKey (src/core/settings/
+# SettingsScope.{h,cpp}) and its completeness gate. A pure function over
+# QStringView deciding whether an AppSettings key belongs to the station
+# (crosses the wire, Task 15) or to the operator's own machine (never
+# does). Table-driven examples pin the brief's worked cases plus every
+# FftPoolConfig key and this task's own "audio/" split judgement calls.
+# The completeness sweep extracts every key literal passed directly to an
+# AppSettings accessor from src/core, src/models AND src/gui/setup/ --
+# recursively, which matters: the brief cites the OC keys as living in
+# src/gui/setup/OcOutputsHfTab.cpp, a path that does not exist (it is
+# src/gui/setup/hardware/OcOutputsHfTab.cpp, one directory deeper, and a
+# non-recursive scan silently misses it and 14 other files). Asserts every
+# core/models key classifies Station modulo a small justified exemption
+# list (mostly "audio/*": local sound hardware selection, touched by core
+# because that is wherever the device actually opens, but not a station
+# fact), and -- the valuable half -- that any key found in BOTH a Setup
+# page and a core/models consumer classifies Station, which is the
+# assertion that actually catches a misclassified key silently reading
+# and writing locally forever.
+nereus_add_test(tst_settings_scope)
+target_compile_definitions(tst_settings_scope PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+# Remote Daemon R2, Task 15: SettingsProxy / SettingsProxyServer. AppSettings
+# gains a non-owning ISettingsBackend* delegation seam (setRemoteBackend(),
+# nullptr default, one-branch guard in value/setValue/contains/remove, additive
+# union in allKeys()) plus snapshot(prefixes), a fully-qualified prefix-scoped
+# extraction. SettingsProxy (client) implements the interface as an in-memory
+# cache with a proven-unset set, optimistic writes, origin-tag echo handling,
+# and the Step 7 Setup-dialog gate. SettingsProxyServer (daemon) wraps
+# AppSettings from the outside -- buildSnapshot() for the connect-time bulk
+# transfer, applyInboundWrite() with the anti-echo suppression that answers
+# Task 13's review hazard ("an inbound remote write lands via setValue(), fires
+# the hook, and ships straight back out") by suppressing the CONSUMER's own
+# forwarding around one call, never inside AppSettings itself. Pins: the
+# routing seam reaches a Station-classified key and never an OperatorLocal one;
+# setRemoteBackend(nullptr) is byte-identical to today; reads are synchronous
+# (no event-loop/socket wait -- timed, not merely asserted); snapshot/
+# applySnapshot merge scoping incl. the hardware/oc/ literal-segment call-out;
+# the Step 7 gate's two conditions independently; and
+# serverSuppressesEchoOnInboundApply, the test directly proving the hazard is
+# closed (exactly one broadcast per inbound write, not two).
+nereus_add_test(tst_settings_proxy)
+nereus_add_test(tst_settings_backup_codec)
+nereus_add_test(tst_settings_backup_transfer)
+nereus_add_test(tst_settings_backup_export fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+nereus_add_test(tst_settings_backup_window)
+
+# Remote Daemon R2, Task 20: the remote-mode GUI gate. Pins RadioModel's
+# ownsLocalDsp() capability authority and the Role::Remote-only hand-out audit
+# that is the ONLY thing able to catch a reach-through to audioEngine(),
+# receiverManager() or wdspEngine() -- all three are constructed
+# unconditionally, so on a remote model they return a real but inert object
+# and a null-dereference assertion sees nothing. Also pins: every registered
+# Setup leaf realizes against a Role::Remote model without dereferencing the
+# null connection(); the per-page invariant "reached local DSP => disabled",
+# stated over the whole tree rather than as a page list so a leaf added later
+# is covered; the same sweep disabling NOTHING on a Role::Local model (the
+# local-direct-mode regression guard); MainWindow's three gating slots
+# resolved by name off staticMetaObject, because MainWindow cannot be
+# constructed in a unit test; the MOX refusal running through the EXISTING
+# MoxCheckFn so moxRejected still reaches the status-bar toast, including
+# after disconnectFromRadio() (whose teardown would otherwise clear the
+# callback, and an empty MoxCheckFn is MoxController's BYPASS); the
+# --station URL rule; and the SettingsProxy construction ordering that
+# SettingsProxy.h explicitly asks this task to confirm rather than inherit.
+#
+# NEREUS_BUILD_TESTS is required for SetupDialog's lazy-page seams
+# (pageLabelsForTest / realizePageForTest / realizedPageForTest), the same
+# way tst_setup_dialog_lazy_pages needs it.
+nereus_add_test(tst_remote_gui_gating)
+target_compile_definitions(tst_remote_gui_gating PRIVATE NEREUS_BUILD_TESTS)
+# Load findings 3: about 10 s on a quiet machine, past the 120 s limit in a
+# loaded full run; three entries of the same binary (the limit is not
+# raised; groups in the test's main()).
+nereus_split_test(tst_remote_gui_gating
+    ENV NEREUS_REMOTE_GUI_GATING_GROUP GROUPS setup containers)
+nereus_add_test(tst_remote_connection_controls fakes/LoopbackTransport.cpp)
+# R-R3-38 (R3 completion Task 5): the stop message of a remote window.
+nereus_add_test(tst_remote_core_stop_notice)
+nereus_add_test(tst_remote_tx_widgets)
+nereus_add_test(tst_remote_tx_presentation fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_remote_tx_presentation PRIVATE NEREUS_BUILD_TESTS)
+# R-IOS-13 / R-R3-49 (remote parity on the air): a real remote MainWindow
+# holding transmit and keyed (TUNE) keeps its transmit settings live, as a
+# local window does, on a Core that takes them on the air; against an older
+# Core they show disabled with the on-air reason. Loopback, no RF.
+nereus_add_test(tst_remote_window_on_air_settings fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_remote_window_on_air_settings PRIVATE NEREUS_BUILD_TESTS)
+# R-R3-49 / R-R3-46 (remote-window parity Task 12): the transmit antennas
+# and relays from a remote window (Antenna Control and the flag's BYPS), on
+# and off the air, and the routing and P1 / P2 bytes the Core then sends
+# its fake radio, compared with a local window's.
+nereus_add_test(tst_remote_tx_antennas fakes/RemoteWindowHarness.cpp
+    fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_remote_tx_antennas PRIVATE NEREUS_BUILD_TESTS)
+
+# R-R3-38: client-only saved Core credentials and coherent CLI selection.
+nereus_add_test(tst_core_target_store)
+nereus_add_test(tst_station_startup_selection)
+nereus_add_test(tst_gui_session_coordinator)
+target_compile_definitions(tst_gui_session_coordinator PRIVATE NEREUS_BUILD_TESTS)
+# R3 controls that work, Task 1 (R-R3-21, R-R3-17): shortcut uniqueness in
+# local and remote windows, developer-only Tools test entries, startup
+# apply of saved meter settings, Band > HF band memory, the bundled DXCC
+# table, and Connection Quality's EP6 sequence gap count.
+nereus_add_test(tst_controls_that_work)
+target_compile_definitions(tst_controls_that_work PRIVATE NEREUS_BUILD_TESTS)
+# R3 controls that work, Task 2 (R-R3-21): menu entries, the Phone/CW
+# applet's transmit controls, container controls, the pan overlay's ATT
+# and zoom buttons and the status badges reach their existing features.
+nereus_add_test(tst_controls_connected)
+target_compile_definitions(tst_controls_connected PRIVATE NEREUS_BUILD_TESTS)
+# ...and the Setup controls: Startup & Preferences, DSP ANF / CW peak
+# filter / AM and FM squelch, Meter Styles S-meter, Logs, VAX level.
+nereus_add_test(tst_setup_controls_connected)
+target_compile_definitions(tst_setup_controls_connected PRIVATE NEREUS_BUILD_TESTS)
+# R3 unfinished controls, Task 1 (R-R3-49, R-R3-21): the one list of
+# unbuilt features, every surface hidden through it in local and remote
+# windows, saved values kept, a saved Voice Rec/Play control kept.
+nereus_add_test(tst_unbuilt_features)
+target_compile_definitions(tst_unbuilt_features PRIVATE NEREUS_BUILD_TESTS)
+# R-R3-49 load round: 24 s quiet, up to 87 s loaded, and past the 120 s
+# limit in a suite run at load 50 to 110. markingOneFeatureBuiltShowsItsSurfacesOnly
+# (a window per listed feature, about two thirds of the time) runs its rows
+# as tst_unbuilt_features_each1 to _each3, every third feature each, the
+# rest as tst_unbuilt_features (the test's main()). Load findings 4:
+# the rest passed 120 s above load 330, so emptiedSetupPageIsNotShownOrFound
+# (every Setup page) runs as tst_unbuilt_features_setup and four cases that
+# build windows as _windows1 and _windows2 (the limit is not raised).
+if(TEST tst_unbuilt_features)
+    nereus_split_test(tst_unbuilt_features ENV NEREUS_UNBUILT_FEATURES_GROUP
+        GROUPS each1 each2 each3 setup windows1 windows2)
+endif()
+# R3 unfinished controls, Task 3 (R-R3-49, R-R3-21): the container function
+# and band buttons act on the container's own slice; the ones with nothing
+# behind them are hidden through the unbuilt list.
+nereus_add_test(tst_other_button_item)
+target_compile_definitions(tst_other_button_item PRIVATE NEREUS_BUILD_TESTS)
+# R3 unfinished controls, Task 4 (R-R3-49, R-R3-21): no control the app
+# builds, local or remote, carries a not-yet-implemented mark or tooltip,
+# including the surfaces hidden until their feature is built.
+nereus_add_test(tst_no_placeholder_marks)
+target_compile_definitions(tst_no_placeholder_marks PRIVATE NEREUS_BUILD_TESTS)
+# Linux sweep hang fix (R-R3-49, R-R3-21): a window built in a test run
+# opens no first-run dialog that blocks for a click.
+nereus_add_test(tst_first_run_prompts_test_run)
+target_compile_definitions(tst_first_run_prompts_test_run PRIVATE NEREUS_BUILD_TESTS)
+nereus_add_test(tst_connection_selector)
+nereus_add_test(tst_station_lan_cache)
+nereus_add_test(tst_station_lan_transport)
+nereus_add_test(tst_station_lan_selection)
+# iPhone app Task 16 (D36, R-IOS-16): the Core's Bonjour record and
+# advertiser. On macOS the real backend registers on this computer only and
+# the test browses for it; nothing reaches a network.
+nereus_add_test(tst_dns_sd_advertiser)
+# INFRA-C1: the interpreter the rendezvous helpers run on
+# (tests/RendezvousTestHarness.h, tests/scripts/traversal-harness.sh). It
+# needs websockets and cryptography. It is resolved once here and compiled
+# in as an absolute path, never looked up on PATH when a test runs: on the
+# Linux CI runner install-qt-action puts a toolcache Python without those
+# packages ahead of /usr/bin, so a PATH lookup started an interpreter that
+# could not import the service. CI passes -DNEREUS_TEST_PYTHON=/usr/bin/python3
+# (Ubuntu's python3-websockets and python3-cryptography from apt).
+find_program(NEREUS_TEST_PYTHON NAMES python3
+    DOC "Python 3 with websockets and cryptography, for the rendezvous test helpers")
+if(NEREUS_TEST_PYTHON)
+    execute_process(COMMAND "${NEREUS_TEST_PYTHON}" -c "import websockets, cryptography"
+        RESULT_VARIABLE _nereus_test_python_ok OUTPUT_QUIET ERROR_QUIET)
+    if(NOT _nereus_test_python_ok EQUAL 0)
+        message(WARNING
+            "${NEREUS_TEST_PYTHON} cannot import websockets and cryptography; "
+            "the rendezvous-backed tests (tst_rendezvous_client, tst_path_racer, "
+            "tst_relay_session, tst_gui_connection_controller) will fail. Set "
+            "-DNEREUS_TEST_PYTHON to an interpreter that has them.")
+    endif()
+else()
+    message(WARNING "No python3 found; set -DNEREUS_TEST_PYTHON for the rendezvous-backed tests.")
+    set(NEREUS_TEST_PYTHON python3)
+endif()
+
+nereus_add_test(tst_gui_connection_controller fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_gui_connection_controller PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
+# iPhone app Task 18 (R-IOS-08): the desktop pairs with a Core. Its own
+# device key, one tap and the code against a real StationServer over the
+# loopback (IPv4 and IPv6), every refusal, then a sign-in by key.
+# Slice control and shared listening plan Task 8b: this computer's names
+# carry its profile, and the default profile's names are today's.
+nereus_add_test(tst_client_device_identity)
+nereus_add_test(tst_station_pairing_client fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_station_pairing_client PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# iPhone app plan Task 27 (R-IOS-16): the ICE settings of a connection
+# through the remote access service, shaped by the pinned libdatachannel and
+# libjuice.
+nereus_add_test(tst_ice_configuration)
+# Task 56: the optional Core route owner lives with the actual ICE agent,
+# including a retained transport reference after its first owner closes.
+nereus_add_test(tst_ice_transport_lifetime CORE_ONLY EXTRA_LABELS session)
+target_link_libraries(tst_ice_transport_lifetime PRIVATE datachannel-static)
+target_include_directories(tst_ice_transport_lifetime PRIVATE
+    "${libdatachannel_SOURCE_DIR}/src"
+    "${libdatachannel_SOURCE_DIR}/include"
+    "${libdatachannel_SOURCE_DIR}/include/rtc"
+    "${libdatachannel_SOURCE_DIR}/deps/plog/include"
+    "${libdatachannel_SOURCE_DIR}/deps/usrsctp/usrsctplib"
+    "${libdatachannel_SOURCE_DIR}/deps/libjuice/include"
+    "${libdatachannel_SOURCE_DIR}/deps/libsrtp/include"
+    "${libdatachannel_SOURCE_DIR}/deps/json/include")
+# iPhone app plan Task 27 (R-IOS-08, R-IOS-16): the rendezvous wire and its
+# crypto and control vectors, the Core's and the desktop's conformance
+# runners (rendezvous/conformance/v1/), and the Core against the Python
+# service run on this computer: registration, introductions from paired and
+# unpaired devices, an ICE connection, pairing by code through the mailbox,
+# and a session that outlives the service.
+nereus_add_test(tst_rendezvous_client fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_rendezvous_client PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
+# iPhone app plan Task 28 (R-IOS-16): the control session over a data
+# channel on this computer: the chunking and heartbeat bytes and the framing
+# fixtures (tests/data/link/v1/framing/), each end's cap, a whole session
+# signed in by device key, a Core whose DTLS certificate is not the bound
+# one refused before anything is sent, and the heartbeat at both ends.
+nereus_add_test(tst_data_channel_transport
+    LinkFixtures.cpp
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_data_channel_transport PRIVATE
+    NEREUS_LINK_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data/link/v1")
+# A lingering close's context object is deleted by every application's
+# teardown, including one closed during that teardown, and nothing is left
+# for the next application (three applications in one process).
+nereus_add_test(tst_data_channel_linger_teardown EXTRA_LABELS session)
+# iPhone app plan Task 27: one end of a connection through the remote
+# access service, for the traversal harness below. Not linked with the test
+# sandbox: it reaches a service in another network namespace, which a
+# test-mode RendezvousClient refuses to contact.
+add_executable(nereus_rendezvous_peer EXCLUDE_FROM_ALL tools/nereus_rendezvous_peer.cpp)
+# Task 29 fix wave: the desktop's own media controller (session
+# --follow-media-ms) lives in the GUI library.
+target_link_libraries(nereus_rendezvous_peer PRIVATE NereusSDRLib)
+set_target_properties(nereus_rendezvous_peer PROPERTIES AUTOMOC ON)
+# iPhone app plan Task 29 Step 1 (R-IOS-16): the relay floor measurement's
+# probe (tests/scripts/floor-measurement.sh), with the prototypes of options
+# (C) and (E) it measures. Test tooling only; neither prototype is product
+# code.
+add_executable(nereus_floor_probe EXCLUDE_FROM_ALL
+    tools/nereus_floor_probe.cpp
+    tools/floor/TurnTlsShimPrototype.cpp
+    tools/floor/WsRelayPrototype.cpp)
+target_link_libraries(nereus_floor_probe PRIVATE NereusCore)
+set_target_properties(nereus_floor_probe PROPERTIES AUTOMOC ON)
+# Task 56: the Core's compiled vendor sources contain the exact reviewed
+# relay cleanup patches, including libjuice's public and internal headers.
+# This check and the next are plain add_test() calls, not nereus_add_test(),
+# so they are not hashed into a shard: run them in shard 0 only, not in
+# every shard (fix wave INFRA minor 8).
+set(_nereus_unsharded_checks_here FALSE)
+if(NOT NEREUS_TEST_SHARDS GREATER 0 OR NEREUS_TEST_SHARD EQUAL 0)
+    set(_nereus_unsharded_checks_here TRUE)
+endif()
+if(_nereus_unsharded_checks_here AND DEFINED libjuice_SOURCE_DIR
+   AND DEFINED NEREUS_ORIGINAL_JUICE_SOURCE_DIR
+   AND DEFINED NEREUS_ORIGINAL_DC_SOURCE_DIR)
+    add_test(NAME relay_cleanup_patches
+        COMMAND ${CMAKE_COMMAND}
+            -DREPO=${CMAKE_SOURCE_DIR}
+            -DBUILD=${CMAKE_BINARY_DIR}
+            -DORIGINAL_JUICE=${NEREUS_ORIGINAL_JUICE_SOURCE_DIR}
+            -DORIGINAL_DC=${NEREUS_ORIGINAL_DC_SOURCE_DIR}
+            -DPATCHED_JUICE=${libjuice_SOURCE_DIR}
+            -DDATACHANNEL=${libdatachannel_SOURCE_DIR}
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}/relay-cleanup-patches
+            -P ${CMAKE_SOURCE_DIR}/tests/scripts/check-relay-cleanup-patches.cmake)
+    set_tests_properties(relay_cleanup_patches PROPERTIES LABELS "session" TIMEOUT 120)
+endif()
+# R-R3-49: libdatachannel's remote description change
+# (cmake/patches/libdatachannel-keep-remote-description-first.cpp) and its
+# DTLS MTU change (cmake/patches/libdatachannel-set-dtls-mtu-before-incoming.cpp)
+# still apply to the pinned source, both library targets compile them, and
+# each opens with its pinned file's own licence notice. Configures a small
+# project only; nothing is built or fetched.
+if(_nereus_unsharded_checks_here AND DEFINED libdatachannel_SOURCE_DIR
+   AND EXISTS "${libdatachannel_SOURCE_DIR}/src/peerconnection.cpp")
+    add_test(NAME libdatachannel_patch_applies
+        COMMAND ${CMAKE_COMMAND}
+            -DREPO=${CMAKE_SOURCE_DIR}
+            -DPC_CPP=${libdatachannel_SOURCE_DIR}/src/peerconnection.cpp
+            -DDTLS_CPP=${libdatachannel_SOURCE_DIR}/src/impl/dtlstransport.cpp
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}/libdatachannel-patch
+            -P ${CMAKE_SOURCE_DIR}/tests/scripts/check-libdatachannel-patch.cmake)
+    set_tests_properties(libdatachannel_patch_applies PROPERTIES LABELS "session" TIMEOUT 120)
+endif()
+# The traversal harness (tests/scripts/traversal-harness.sh): Linux network
+# namespaces with nftables NATs (endpoint-independent, port-randomising at
+# both ends), UDP blocked, large datagrams dropped, an IPv6-only client
+# behind NAT64 and DNS64 with a CLAT, netem loss, and routed IPv6 at both
+# ends (an IPv6 pair must win), with the rendezvous service and coturn
+# started inside it and every secret made at run time. Opt in with
+# -DNEREUS_TRAVERSAL_TESTS=ON; it needs root and runs under the ctest label
+# `traversal` (the CI job of the same name, started by hand), never on the
+# live server.
+option(NEREUS_TRAVERSAL_TESTS "Register the traversal harness (Linux, root)" OFF)
+if(NEREUS_TRAVERSAL_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # The harness launches this EXCLUDE_FROM_ALL helper. Both documented
+    # test build aggregates must refresh it with the libraries it loads.
+    set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS nereus_rendezvous_peer)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TEST_LABEL_NAMES traversal)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TESTS_LABEL_traversal nereus_rendezvous_peer)
+    add_test(NAME traversal_harness
+        COMMAND bash ${CMAKE_SOURCE_DIR}/tests/scripts/traversal-harness.sh
+            --peer $<TARGET_FILE:nereus_rendezvous_peer>
+            --source ${CMAKE_SOURCE_DIR}
+            --python ${NEREUS_TEST_PYTHON})
+    set_tests_properties(traversal_harness PROPERTIES
+        LABELS traversal
+        TIMEOUT 1800
+        RUN_SERIAL TRUE)
+endif()
+# Real ICE connections, each within the libraries' own deadlines. It runs
+# the Python service on NEREUS_TEST_PYTHON (above), which needs websockets
+# and cryptography (the Linux CI job installs them from apt and points
+# NEREUS_TEST_PYTHON at /usr/bin/python3).
+# QTEST_FUNCTION_TIMEOUT 120000 for this test only (240000 on the Linux CI
+# job for the rest): QtTest's function watchdog counts from the start of the
+# hung function, and here that starts about 53 s into the process on CI, so
+# a 240 s watchdog would fire at about 293 s, too close to the 300 s TIMEOUT
+# for its crash handler to print the stacks. The longest legitimate wait in
+# this test is the dial deadline plus 10 s, about 89 s
+# (RendezvousDialer.h kDialDeadlineMs, RendezvousTestHarness.h), and its
+# slowest passing function takes about 7 s. TIMEOUT unchanged.
+if(TEST tst_rendezvous_client)
+    set_tests_properties(tst_rendezvous_client PROPERTIES TIMEOUT 300)
+    set_property(TEST tst_rendezvous_client APPEND PROPERTY ENVIRONMENT
+        "QTEST_FUNCTION_TIMEOUT=120000")
+endif()
+
+# R3 remote window harness plan, Task 2 (R-R3-16/17/21/24): one real remote
+# MainWindow dialling an in-process StationServer over a loopback ws://
+# listener. Connection entry points, backoff cancel, manual disconnect,
+# held first snapshot (the extra-slice startup reproduction) and a live
+# capability change, each driven through the window's own actions.
+# NereusSDR-native session boundary; no upstream port applies.
+nereus_add_test(tst_remote_window_harness fakes/RemoteWindowHarness.cpp)
+# R3 Setup fix wave (R-R3-21): SetupDialog's test seams (page scopes by
+# registry index) for the case that realizes every Core page.
+target_compile_definitions(tst_remote_window_harness PRIVATE NEREUS_BUILD_TESTS)
+# Load findings 4: about 37 s on a quiet machine, past the 120 s limit under
+# 150 busy loops (200 s at load 180); six entries of the same binary (the
+# limit is not raised; groups in the test's main()).
+nereus_split_test(tst_remote_window_harness
+    ENV NEREUS_REMOTE_WINDOW_HARNESS_GROUP GROUPS connect disconnect links setup radio)
+
+# Remote-window parity Task 18 (R-R3-09, R-R3-24, R-R3-34, R-R3-49): a
+# control drawn on a pan acts on that pan, in a local window and a remote
+# one: the BAND flyout (B3.1), an empty pan's reason (C8), the Display
+# flyout and Clarity badge per pan, a spot's left-click, and the Pan Layout
+# limit. Loopback WebSocket and test models only; no RF, no audio device.
+nereus_add_test(tst_pan_actions_per_pan fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_pan_actions_per_pan PRIVATE NEREUS_BUILD_TESTS)
+
+# VFO flag crash lane (2026-09-30): Slice A closed from its flag in a remote
+# window leaves no flag writing the freed slice, and a Slice A made again
+# gets a flag and a pan bound to the new slice. Loopback WebSocket and test
+# models only; no RF, no audio device.
+nereus_add_test(tst_remote_window_slice_a_close fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_remote_window_slice_a_close PRIVATE NEREUS_BUILD_TESTS)
+
+# Remote Daemon R3 R-R3-30: a secondary slice flag may be destroyed and
+# replaced while its SliceModel and MainWindow remain alive during a pan-layout
+# rehome. Every direct model-to-flag presentation edge must therefore share the
+# flag's lifetime. The test checks actual Qt connection retirement handles
+# after SpectrumWidget::removeVfoWidget(), then exercises later property writes.
+# NereusSDR-native lifecycle boundary; no upstream port applies.
+nereus_add_test(tst_slice_flag_presentation_lifetime)
+
+# R1 Task 10: DaemonApp connects the daemon to a radio (or runs discovery)
+# and creates min(cfg.sliceCount, connected-board-maxSlices) slices via
+# RadioModel's own addSlice() -- the same entry point connectToRadio()
+# uses for Slice A, not the GUI-only addSliceOnPan(). Pins that a headless
+# start() creates the full configured slice count (not just Slice A), that
+# the count clamps to the connected board's real BoardCapabilities::
+# maxSlices (HermesLite's 5, primed via DaemonApp::primeBoardForTest() --
+# see the test file header for why this bypasses RadioModel::
+# connectToRadio() entirely: it blocks on cold-cache WDSP wisdom
+# generation for minutes, which no test in this suite can afford), that
+# stop() is safe with no prior start() and leaves sliceCount() == 0, and
+# that a restart does not accumulate slices from the previous run.
+nereus_add_test(tst_daemon_app)
+nereus_add_test(tst_station_host fakes/LoopbackTransport.cpp)
+nereus_add_test(tst_station_handover EXTRA_LABELS session)
+nereus_add_test(tst_station_handover_roundtrip EXTRA_LABELS session)
+nereus_add_test(tst_desktop_station_controller)
+nereus_add_test(tst_desktop_station_window)
+# TX rulings review: MainWindow::hostingSliceActionsForTest and
+# HostingSliceActions::hasTakeBackForTest.
+target_compile_definitions(tst_desktop_station_window PRIVATE NEREUS_BUILD_TESTS)
+nereus_add_test(tst_receive_layout_store)
+nereus_add_test(tst_receive_layout_hydration)
+nereus_add_test(tst_receive_layout_runtime)
+nereus_add_test(tst_receive_layout_session fakes/LoopbackTransport.cpp)
+nereus_add_test(tst_receive_layout_native fakes/P1FakeRadio.cpp)
+nereus_add_test(tst_receive_slice_seed)
+nereus_add_test(tst_p2_established_silence fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_p2_established_silence PRIVATE NEREUS_BUILD_TESTS)
+# The P2 receive socket listens on the address the radio answers, so no
+# other socket on that address can take the radio's frames.
+nereus_add_test(tst_p2_loopback_bind fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_p2_loopback_bind PRIVATE NEREUS_BUILD_TESTS)
+# R-R3-49 / R-R3-11: the Network Watchdog setting does what Thetis does with
+# it. P2 fake: general packet byte 38 at connect and on change, the immediate
+# send, the keepalive only while on, loss only while on. P1 fake: the start
+# packet unchanged, the 3000 ms wait while on, no loss while off.
+nereus_add_test(tst_network_watchdog fakes/P1FakeRadio.cpp fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_network_watchdog PRIVATE NEREUS_BUILD_TESTS)
+# R-R3-49 / R-R3-21 / R-R3-11: the Network Watchdog checkbox applied where
+# the radio is: a local window's radio, the connect path, a remote window's
+# change reaching the Core and its radio over the loopback, the gate, and an
+# older Core's refusal said in plain words.
+nereus_add_test(tst_network_watchdog_setting
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp
+    fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_network_watchdog_setting PRIVATE NEREUS_BUILD_TESTS)
+nereus_add_test(tst_realtime_audio_priority)
+# R-R3-41: nereusd's signal processing thread placement (fixture topologies,
+# the registry against a recording fake, and a Linux-only smoke test).
+nereus_add_test(tst_thread_placement EXTRA_LABELS core)
+nereus_add_test(tst_daemon_radio_recovery fakes/P1FakeRadio.cpp fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_daemon_radio_recovery PRIVATE NEREUS_BUILD_TESTS)
+
+# Exercise the real daemon signal handler and detect allocation from signal
+# context, where a queued Qt invocation can deadlock the interrupted thread.
+nereus_add_test(tst_daemon_signals)
+
+# R1 Task 11: nereusd needs its own thread for the wideband FFT dispatch
+# hop (P2RadioConnection::widebandFrameReady -> WidebandFftEngine::
+# computeFft, wired in RadioModel::wireConnectionSignals) because that hop
+# has always implicitly targeted RadioModel's own thread -- fine for the
+# GUI (that thread IS the main thread; the whole point is getting off the
+# network thread), but nereusd's RadioModel lives on the daemon's single
+# Qt event-loop thread, which will carry other daemon responsibilities
+# too. Pins that RadioModel::setWidebandDispatchThread makes the hop
+# target injectable and that DaemonApp::widebandThread() is running after
+# start(), never the calling thread, and joined (quit()+wait()'d, but not
+# destroyed -- see the header doc comment) after stop(); also that a
+# restart on the same DaemonApp instance produces a running thread again.
+nereus_add_test(tst_wideband_thread)
 # Phase 3F Task B2: painted pan-layout preview tile (ported from AetherSDR
 # PanLayoutDialog.cpp LayoutThumbnail [@c6481cb]). Geometry tests guard
 # cellRects() against a would-be empty-vector stub by asserting the exact
@@ -6161,6 +8183,1567 @@ nereus_add_test(tst_tnf_ui_wiring)
 #         section 8.3 + section 11.
 nereus_add_test(tst_notch_visual_does_not_perturb_noise_floor_or_maxbin)
 
+# ── Remote Daemon R2, Task 17: TLS certificate provisioning ───────────────
+# CertificateStore mints (first run) or loads (every run after) a
+# self-signed RSA-3072 certificate + key for nereusd's future wss::
+# listener, stored beside the daemon profile's own settings directory.
+# Pins: generation produces something that parses back through both
+# QSslCertificate and QSslKey (independently re-read from disk, not just
+# the store's own cached copy); a second construction against the same
+# directory reuses rather than regenerates (fingerprint AND raw PEM bytes
+# identical across two independent constructions -- see the slot's own
+# comment for why that is real evidence and not a vacuous pass); a corrupt
+# on-disk pair is treated as a fresh first run instead of wedging
+# permanently; the private key file is owner-only on UNIX (QSKIP on
+# Windows, where QFile::permissions() mirrors owner bits into group/other);
+# tlsBackendDiagnostic() is empty exactly when QSslSocket::supportsSsl() is
+# true; and defaultDirectory() resolves through
+# AppSettings::resolveConfigDir(AppSettings::kDaemonProfileName) rather than
+# a hand-built equivalent.
+#
+# Unconditional (fix round 1 review, Important 1): the top-level
+# CMakeLists.txt find_package(OpenSSL) is REQUIRED, so CertificateStore.cpp
+# is always in CORE_SOURCES and this test always has something to link
+# against. A prior revision gated this on OPENSSL_FOUND, which the review
+# flagged as losing both the class AND its only test with no signal on a
+# runner that happened to lack OpenSSL.
+nereus_add_test(tst_certificate_store)
+
+# iPhone app Task 12 (R-IOS-08, R-IOS-02): the Core's identity key (created
+# once, mode 0600, reused), its label rules, and the paired-device store
+# (well-formed records only, 0600, failing closed on a damaged file).
+nereus_add_test(tst_station_identity)
+nereus_add_test(tst_station_label)
+nereus_add_test(tst_device_store)
+# The device sign-in itself: the authenticator's refusals and rate limits
+# (injected clock), and the link's refusals, token enrolment and admission
+# over the in-process loopback.
+nereus_add_test(tst_device_auth
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# iPhone app Task 13 (R-IOS-08): the `devices` object, rename, the key
+# backup acknowledgement, revoke and token retirement, and the connection a
+# removed device or a retired token loses, over the in-process loopback.
+nereus_add_test(tst_station_devices
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# iPhone app Task 71 (R-IOS-02): who holds a place on the Core (the four,
+# the same device, away and its 180 s, leaving, names and short names, the
+# redial arithmetic) over an injected clock, and several devices signed in
+# at once over the in-process loopback.
+nereus_add_test(tst_device_session_registry EXTRA_LABELS session)
+# iPhone app plan Task 34 (R-IOS-13, R-IOS-02, R-IOS-03): transmit
+# refusals, the station transmit gate, the unkey-confirmed gate, the
+# transmit holder and its transfer, the keying gate on press edges, and the
+# on-air refusals.
+nereus_add_test(tst_tx_refusal)
+nereus_add_test(tst_station_tx_gate)
+nereus_add_test(tst_unkey_gate)
+nereus_add_test(tst_transmit_holder)
+nereus_add_test(tst_keying_gate)
+nereus_add_test(tst_on_air_refusals
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+nereus_add_test(tst_station_multi_session
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# TGXL tune lane (bench 2026-09-30): the Tuner Genius's LAN PTT and a
+# device's tx.tunerTune against a real Core over loopback links. No RF.
+nereus_add_test(tst_tgxl_core_tune
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# TGXL tune lane round 2: what the Core sent the tuner that it may answer
+# with its own tune on/off, as one table of sequences. No sockets.
+nereus_add_test(tst_tgxl_answer_tracker)
+nereus_add_test(tst_station_fifth_device
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# Slice control and shared listening plan Task 4: the sliceAccess feature,
+# the SliceAccess objects, and listen, stop listening, take control and
+# release against a real Core over loopback links. No radio, no RF.
+nereus_add_test(tst_slice_access_verbs
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# Slice control and shared listening plan Task 7: zero slices is a valid
+# idle Core. The claims rule's close of the last unclaimed slice, the state
+# it leaves, a working new slice from zero, and every first-slice reader at
+# zero. No radio, no RF.
+nereus_add_test(tst_zero_slice_core)
+# Slice control and shared listening plan Task 8: a device's claims at the
+# end of its 180 s, at leave and on its return, fenced by the away period's
+# generation; Amendment 8a (an away device's slices in the preselector and
+# the several-devices questions). No radio, no RF.
+nereus_add_test(tst_slice_claims_expiry
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# Slice control and shared listening plan Task 13: the bottom RX area's
+# all-slice chooser: rows and actions per state, waiting for the Core,
+# the empty window, narrow widths, the row builders. Offscreen renders
+# (NEREUS_TASK78_SHOTS). No radio, no RF.
+nereus_add_test(tst_slice_chooser
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS gui)
+# Slice control and shared listening plan Task 14a: a slice flag says who
+# controls the slice; a listened flag disables the shared tuning controls
+# with that reason, never writes the slice, and offers Take control and
+# Stop listening; a controlled flag offers Release. No radio, no RF.
+nereus_add_test(tst_vfo_widget_slice_access EXTRA_LABELS gui)
+
+# Slice control plan Task 15: the RX applet holds every shared slice control
+# on a listened slice, with the reason naming the controlling device, never
+# writes that slice, and offers Take control from its tab menus.
+nereus_add_test(tst_rx_applet_slice_access EXTRA_LABELS gui)
+target_compile_definitions(tst_rx_applet_slice_access PRIVATE NEREUS_BUILD_TESTS)
+# Slice control and shared listening plan Task 5: the remote window's side
+# of listening to and taking a slice (SliceAccessMirror, the four verbs, a
+# listened slice held read-only, the refusals and the controlTaken notice
+# as toasts) against a real Core over loopback links. No radio, no RF.
+nereus_add_test(tst_slice_access_client
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_slice_access_client PRIVATE NEREUS_BUILD_TESTS)
+# iPhone app plan Task 78 (R-IOS-02, R-IOS-07, R-IOS-30): the desktop
+# remote window's screens for several devices on one Core, driven against a
+# real Core over a loopback link with a second device; offscreen renders of
+# every state (NEREUS_TASK78_SHOTS keeps them). No radio, no RF.
+nereus_add_test(tst_multi_device_screens
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_multi_device_screens PRIVATE NEREUS_BUILD_TESTS)
+# iPhone app plan Task 35 (R-IOS-13): keying from a remote device (tx.key,
+# tx.unkey, tx.tune, tx.twoTone): every refusal, holder and gate rule, the
+# keying epoch and its copies, the reconnect, and keyedBy.
+nereus_add_test(tst_remote_keying
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# iPhone app plan Task 37 (R-IOS-13; remote design sections 12.1 and 12.3):
+# the transmit watchdog's rules and the per-mode starvation action, on an
+# injected clock; and the watchdog on each path that exists, severed with
+# a key on (real time).
+nereus_add_test(tst_remote_tx_watchdog EXTRA_LABELS session)
+nereus_add_test(tst_tx_watch_server EXTRA_LABELS session)
+nereus_add_test(tst_station_watch_relay
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+nereus_add_test(tst_starvation_policy EXTRA_LABELS session)
+nereus_add_test(tst_tx_link_loss_each_path
+    fakes/LoopbackTransport.cpp
+    REALTIME
+    EXTRA_LABELS session)
+# iPhone app plan Task 39 (D14, R-IOS-13, R-IOS-21): the Core's transmit
+# meter pump, and the mirrored `txState` object (TransmitState): who keyed,
+# the time left, the meters ten times a second while keyed, and why the Core
+# last stopped a transmission.
+nereus_add_test(tst_tx_meter_pump)
+nereus_add_test(tst_transmit_state_facade
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# iPhone app Task 73 (R-IOS-02): whose each slice is (owners, held for,
+# adoption, each owner's active slice and the station-level one), and each
+# device's closed slices kept for its return.
+nereus_add_test(tst_slice_ownership EXTRA_LABELS session)
+# Slice control and shared listening plan Task 2: who may see, hear and
+# change each slice (SliceAccessPolicy): the predicates, a listener's
+# writes, verbs and transmit refused at the Core, the station TCI server's
+# gate on a slice nobody controls, and a scan of src/ for owner comparisons
+# outside the policy.
+nereus_add_test(tst_slice_access_policy
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_link_libraries(tst_slice_access_policy PRIVATE Qt6::WebSockets Qt6::Network)
+target_compile_definitions(tst_slice_access_policy PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# iPhone app Task 74 (R-IOS-02, R-IOS-30): each receiver's anchor, and the
+# confirm step (a pan move, a take, Take it back, the readback, notices).
+nereus_add_test(tst_receiver_anchor EXTRA_LABELS session)
+# iPhone app Task 75 (R-IOS-30): which other devices a radio-wide setting
+# disturbs, table-driven; the receive antenna kept on a band crossing.
+nereus_add_test(tst_disturbance_check EXTRA_LABELS session)
+nereus_add_test(tst_antenna_kept
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_antenna_kept PRIVATE NEREUS_BUILD_TESTS)
+nereus_add_test(tst_radio_bound_antenna_rows
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_radio_bound_antenna_rows PRIVATE NEREUS_BUILD_TESTS)
+nereus_add_test(tst_confirm_step
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
+# Level Cal as a Core procedure: a paired device starts and cancels it,
+# progress comes back on the wire, a remote window makes the same calls.
+nereus_add_test(tst_level_calibration_station
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# Shared-input filters, ruling (d): the low-pass reason and forcing slice
+# reach only a peer that declared rxFilterLowPass 1.
+nereus_add_test(tst_shared_input_filters_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# RADE reason: a slice's radeReason reaches only a peer that declared
+# radeReason 1, and a remote window's mirrored slice carries it.
+nereus_add_test(tst_rade_reason_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_rade_reason_link PRIVATE NEREUS_BUILD_TESTS)
+# Level Cal: the window's grid stops following the noise floor while a run
+# goes and is put back after (Thetis CalibrateLevel).
+nereus_add_test(tst_level_cal_grid_follow_guard)
+# Slice control and shared listening plan Task 10: the hosting desktop's
+# slice requests run as the station device (HostingSliceActions).
+nereus_add_test(tst_hosting_slice_operations
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+nereus_add_test(tst_device_layout_store EXTRA_LABELS session)
+# Parity Task 19 (R-IOS-25, R-R3-49): the link's record streams: backlog,
+# merged changes, a slow peer bounded to a reset, the record.batch codec.
+nereus_add_test(tst_record_stream EXTRA_LABELS session)
+# Parity Task 19 (R-IOS-25): SpotSourceHost's placements, the Core's
+# refusals, a remote window's forwarding, a spot record's fields and the
+# listeners' settings scope. Loopback ports only.
+nereus_add_test(tst_spot_source_host EXTRA_LABELS session)
+# Parity Task 19 (R-IOS-25, B7.1, B7.2): the Core's spots, consoles and
+# sources in a remote window over the loopback, and the Spot Hub's Core
+# settings in a real remote window. No RF, no audio device.
+nereus_add_test(tst_remote_spots
+    fakes/LoopbackTransport.cpp
+    fakes/RemoteWindowHarness.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_remote_spots PRIVATE NEREUS_BUILD_TESTS)
+# R-IOS-13 / R-R3-49 (iPhone plan Task 39 row A10, txModMonitorVersion 1):
+# the AM Mod Monitor in a remote window: the Core's readings on the
+# txAmModulation streams match a local window's on the same I/Q, the Core
+# spends nothing with no watcher, RESET and the feedback receiver reach the
+# Core, and below the capability the applet is disabled with its reason.
+# The in-process loopback only; nothing keys a radio.
+nereus_add_test(tst_remote_mod_monitor
+    fakes/LoopbackTransport.cpp
+    fakes/RemoteWindowHarness.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_remote_mod_monitor PRIVATE NEREUS_BUILD_TESTS)
+# iPhone plan Task 22 / parity Task 20 (R-IOS-26, B7.3, B7.4): FreeDV
+# Reporter at the Core: its own registration (never the Core's label), the
+# freedvStations stream in a remote window, the freedv.* verbs, the RADE
+# slice's listing, and a real remote window's FreeDV tab and dialog. A fake
+# Socket.IO server on 127.0.0.1 only; no RF, no audio device.
+nereus_add_test(tst_freedv_reporter_station
+    fakes/LoopbackTransport.cpp
+    fakes/RemoteWindowHarness.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_freedv_reporter_station PRIVATE NEREUS_BUILD_TESTS)
+# Remote-window parity Task 22 / iPhone plan Task 25 (R-R3-49, R-IOS-18,
+# B6.4): the support bundle's ZIP, its 2 MiB cap and its secrets scan, and a
+# window's bundle with the Core's under core/. Temporary files only.
+nereus_add_test(tst_support_bundle EXTRA_LABELS session)
+# Remote-window parity Task 22 (R-R3-49): the log sink no logging thread
+# waits on, a stuck writer included. Temporary files only.
+nereus_add_test(tst_log_sink EXTRA_LABELS core)
+# Fix wave (2026-09-30): a fatal message reaches the log file before Qt
+# aborts. Runs the fatal in a child process of the same binary.
+nereus_add_test(tst_core_init_fatal_log EXTRA_LABELS core)
+target_compile_definitions(tst_core_init_fatal_log PRIVATE NEREUS_BUILD_TESTS)
+# Remote-window parity Task 22 (R-R3-49, B6.4, B6.6): the Core's log,
+# logging categories and bundle in a remote window over the loopback, the
+# Support dialog and Setup > Diagnostics > Logs. No RF, no audio device.
+nereus_add_test(tst_remote_core_log
+    fakes/LoopbackTransport.cpp
+    fakes/RemoteWindowHarness.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_remote_core_log PRIVATE NEREUS_BUILD_TESTS)
+# Parity Task 21 (R-IOS-18, R-R3-38): the Core's choice of radio (the
+# order, the requests, the on-air rule, DaemonApp's wait, switch and saved
+# choice). Discovery is the test's own list; nothing connects.
+nereus_add_test(tst_station_radios EXTRA_LABELS session)
+target_compile_definitions(tst_station_radios PRIVATE NEREUS_BUILD_TESTS)
+# Parity Task 21 (B6.2, B6.3): Setup > This Core and the menus in a real
+# remote window over a local WebSocket. No radio, no audio device.
+nereus_add_test(tst_this_core_page
+    fakes/RemoteWindowHarness.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_this_core_page PRIVATE NEREUS_BUILD_TESTS)
+nereus_add_test(tst_remote_station_page EXTRA_LABELS gui)
+# The catalogue's `display` key against the desktop's Setup > Display pages,
+# for the G2 and the HL2, and the page unchanged by reading the shared
+# table (R-IOS-18, R-IOS-27, R-R3-08).
+nereus_add_test(tst_display_catalogue EXTRA_LABELS session)
+# R-IOS-06, R-IOS-27: the catalogue's board.transmit, board.rx1Preamp,
+# board.relays and noiseReduction against the desktop's own widgets (TX
+# applet, Power page, antenna popup, the VFO flag's NR popups,
+# NnrControls) on the G2 and the HL2.
+nereus_add_test(tst_catalogue_ranges EXTRA_LABELS session)
+# iPhone app Task 19 (R-IOS-06): the Core's catalogue; the G2 and HL2
+# catalogue fixtures against the desktop's own values, the revision, a
+# preset change reaching a client over the in-process loopback, the size.
+nereus_add_test(tst_station_catalog
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+nereus_add_test(tst_setup_description_service fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+nereus_add_test(tst_setup_description_parity EXTRA_LABELS gui)
+nereus_add_test(tst_setup_description_live fakes/LoopbackTransport.cpp EXTRA_LABELS core)
+target_compile_definitions(tst_station_catalog PRIVATE
+    NEREUS_LINK_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data/link/v1")
+# iPhone app plan Task 25 (D41, R-IOS-18): the catalogue's Tools and Radio
+# items follow the radio, the Core and the unbuilt features list. No radio,
+# no listening socket, no audio device.
+nereus_add_test(tst_station_tools EXTRA_LABELS session)
+# iPhone app plan Task 25 (R-IOS-18): the `vax` object and the vaxLevels
+# stream, over a loopback link. No radio, no audio device opened.
+nereus_add_test(tst_station_vax
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# R-IOS-13 / R-R3-49 (txEqCurveVersion 2): txEq.setCurve and
+# txEq.resetCurve from a device that declared txEqCurve 2, as its own
+# txEqParaEqData write. Loopback only, no RF, no audio device.
+nereus_add_test(tst_tx_eq_set_curve
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# transmitSettingsVersion 15: cfc.setProfile, the CFC band editor applied
+# whole against an expected revision, as the device's own cfcParaEqData
+# write. Loopback only, no RF, no audio device.
+nereus_add_test(tst_cfc_set_profile
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# Control logging lane: the Core's log lines for each control write and
+# command, its answer and handling time, and the gaps between a device's
+# control messages, rate-limited. Loopback only, no RF, no audio device.
+nereus_add_test(tst_station_control_log
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# iPhone app plan Task 25 (R-IOS-18): a remote window's VAX applet, its
+# "Station computer" section from the Core's `vax` object. Loopback only.
+nereus_add_test(tst_remote_station_vax
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS gui session)
+# iPhone app Task 14 (R-IOS-08, D37): the pairing code and its word list,
+# the pairing window (injected clock), and the SPAKE2+EE exchange with its
+# confirmation boxes.
+nereus_add_test(tst_pairing_code EXTRA_LABELS core)
+target_compile_definitions(tst_pairing_code PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_pairing_window EXTRA_LABELS core)
+nereus_add_test(tst_spake_exchange EXTRA_LABELS core)
+
+# iPhone app Task 14 (R-IOS-08): the Core's side of one pairing over
+# standard input and output, for the cross-implementation tests (the iPhone
+# app's pairing interop test, Task 15, and tst_station_pairing below). The
+# phone session's Task 10 adds tests/tools/ on its own branch: keep both
+# sets of tools here when the two meet.
+add_executable(nereus_pairing_peer EXCLUDE_FROM_ALL
+    tools/nereus_pairing_peer.cpp
+    $<TARGET_OBJECTS:nereus_test_sandbox>)
+target_link_libraries(nereus_pairing_peer PRIVATE NereusCore)
+set_target_properties(nereus_pairing_peer PROPERTIES AUTOMOC ON)
+set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS nereus_pairing_peer)
+
+# The pairing on the link: LAN mode's refusals and success, code mode's
+# burn, backoff and success, the code kept from token sign-ins and from the
+# logging categories, pairing.open and pairing.close, and the peer tool
+# above paired with the C++ device side in code and LAN mode.
+nereus_add_test(tst_station_pairing
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+add_dependencies(tst_station_pairing nereus_pairing_peer)
+target_compile_definitions(tst_station_pairing PRIVATE
+    NEREUS_PAIRING_PEER="$<TARGET_FILE:nereus_pairing_peer>")
+# Load findings 3: about 13 s on a quiet machine, past the 120 s limit in a
+# loaded full run; three entries of the same binary (the limit is not
+# raised; groups in the test's main()).
+nereus_split_test(tst_station_pairing
+    ENV NEREUS_STATION_PAIRING_GROUP GROUPS code peer)
+
+# iPhone app Task 17 (R-IOS-08): the Core's read-only status page on
+# loopback (the code only while unclaimed, nothing for a peer elsewhere, 404
+# for anything but GET /), and the owner-only console socket with every
+# console command against a Core started in the test, including the real
+# entry point (server_main.cpp, as tst_daemon_signals runs it) and the real
+# nereusd binary finding the socket through --config.
+nereus_add_test(tst_station_status_page EXTRA_LABELS session)
+nereus_add_test(tst_station_control_socket
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+if(TARGET nereusd)
+    add_dependencies(tst_station_control_socket nereusd)
+endif()
+target_compile_definitions(tst_station_control_socket PRIVATE
+    NEREUSD_BINARY="$<TARGET_FILE:nereusd>")
+
+# Remote Daemon R2, Task 18: the wss session. Everything tasks 7 through 17
+# built converges here -- StateMirror, ObjectRegistry,
+# SessionCommandDispatcher and SettingsProxyServer on a socket, behind Task
+# 17's TLS certificate and this task's TokenStore.
+#
+# Split deliberately: every PROTOCOL assertion (the section 7.0 connect
+# sequence and its exact message order, the version policy from both sides,
+# token rejection and rate limiting, session preemption, mirror round trip
+# and echo suppression, settings-proxy readiness, schema skew by name
+# comparison, and the heartbeat) runs over an in-process, NON-TLS
+# SessionTransport (fakes/LoopbackTransport) and therefore runs on every
+# build. Only the two genuinely TLS-specific slots QSKIP when
+# QSslSocket::supportsSsl() is false, naming the active Qt TLS backend.
+#
+# The slot that matters most is heartbeatDetectsAPeerThatWentSilentWithout-
+# Closing: the fake transport keeps the link nominally OPEN and simply stops
+# answering pings, which is what a laptop lid, a cell handoff or a NAT
+# timeout actually produces and what a loopback QWebSocket cannot simulate
+# (its Qt stack answers every ping automatically). TciServer's in-tree ping
+# timer, which this task was pointed at as precedent, explicitly does not
+# track pongs and would not pass this slot.
+nereus_add_test(tst_station_telemetry
+    EXTRA_LABELS session)
+nereus_add_test(tst_session_transport_telemetry
+    EXTRA_LABELS session)
+
+nereus_add_test(tst_tx_watch_client EXTRA_LABELS session)
+nereus_add_test(tst_watch_relay_context EXTRA_LABELS session)
+nereus_add_test(tst_station_tx_watch_direct EXTRA_LABELS session)
+nereus_add_test(tst_station_tx_watch_relay EXTRA_LABELS session)
+nereus_add_test(tst_station_session
+    fakes/LoopbackTransport.cpp)
+# Load finding: about 19 s on a quiet machine, past ctest's 120 s under a
+# loaded full run; two entries of the same binary (the limit is not raised;
+# the group is in the test's main()).
+nereus_split_test(tst_station_session
+    ENV NEREUS_STATION_SESSION_GROUP GROUPS controls)
+# The session tests' waits (SessionWait.h): NEREUS_TRY_COMPARE waits for the
+# compare QCOMPARE makes (fuzzy for floating point).
+nereus_add_test(tst_session_wait EXTRA_LABELS session)
+nereus_add_test(tst_core_build_identity
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# R-R3-49 (parity Task 1): a receive-only Core takes a transmit setting off
+# the air, refuses it on the air and still refuses the keying set; a
+# window's on-the-air state follows the Core. Loopback only, no RF.
+nereus_add_test(tst_transmit_settings_gate
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# R-R3-49 (parity Task 2): the TX and Phone/CW applets' settings from a
+# remote window: round trips to the Core's TX chain (a test TxChannel, no
+# WDSP channel), range and on-air refusals, the Tune Power command and the
+# applets. Loopback only, no RF, no audio device.
+nereus_add_test(tst_transmit_model_properties
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
+# R-R3-49 (parity Task 4): the TX EQ, CFC, phase rotator, CESSB, leveler and
+# ALC settings from a remote window: round trips to the Core's TX channel (a
+# test TxChannel, no WDSP channel), band arrays refused whole, on-air
+# refusals, the EQ and CFC dialogs and Setup > DSP > CFC and AGC/ALC, and a
+# local window's curves unchanged. Loopback only, no RF, no audio device.
+nereus_add_test(tst_remote_tx_eq_cfc
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
+# R-R3-49 (parity Task 5): Setup > Transmit > Power, DEXP/VOX and Test >
+# Two-Tone IMD from a remote window: the SWR protection keys applied to the
+# Core's live controller, ATT on TX on `stepAtt`, the version 5 `transmit`
+# settings with their range and on-air refusals, the three pages, and
+# nothing on them keying the radio. Loopback only, no RF, no audio device.
+nereus_add_test(tst_remote_transmit_setup_pages
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
+# R-R3-49 (parity Task 3; iPhone plan Task 40): the Core's TX profiles on the
+# `transmit` object, a window's profile manager as a mirror that never saves,
+# and txProfile.select / save / delete with their refusals. Loopback only, no
+# RF, no audio device.
+nereus_add_test(tst_tx_profile_select
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
+# R-IOS-27, R-IOS-06: slice.selectBand, a device's band button for a slice,
+# runs the desktop's band restore on the Core (bandSelectVersion 1), with its
+# refusals. Loopback only, no RF, no audio device.
+nereus_add_test(tst_slice_select_band
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
+# R-IOS-27, R-IOS-06: notch.addAtSlice, the desktop's +TNF for a device's
+# slice on the Core (notchControlVersion 2), with notch.add's refusals.
+# Loopback only, no RF, no audio device.
+nereus_add_test(tst_notch_add_at_slice
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
+# R-R3-49 (parity Task 3): a remote window's profile combos (TX, Phone/CW,
+# RADE), Setup > Audio > TX Profile and TX Input's radio microphone, and
+# RADE's Reset vocoder, against an in-process Core. Loopback only, no RF, no
+# audio device.
+nereus_add_test(tst_remote_tx_profiles
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
+# iPhone app plan, Task 1 (R-IOS-01): the link's surface, captured from the
+# code (LinkSurface.cpp) and guarded against tests/data/link/v1/surface.json.
+# The manifest test also scans the routing and media sources, and dispatches
+# every declared verb on a connected model. The regen target writes the file
+# only into NEREUS_LINK_REGEN_OUT; otherwise into a temporary directory.
+nereus_add_test(tst_link_surface_manifest
+    LinkSurface.cpp
+    fakes/LoopbackTransport.cpp
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_link_surface_manifest PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    NEREUS_LINK_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data/link/v1")
+nereus_add_test(tst_link_surface_manifest_regen
+    LinkSurface.cpp
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
+# iPhone app plan, Task 3 (R-IOS-01): the conformance suite both ends of the
+# link run, from tests/data/link/v1/ (manifest.json, control/, sessions/,
+# media/). tests/LinkFixtures holds the loader, the placeholder matcher and
+# the session script player. tst_link_conformance_regen writes the media
+# vectors from the station's own encoders, into NEREUS_LINK_REGEN_OUT only.
+# iPhone app plan, Task 4 (R-IOS-01): link versions both ways (each end
+# supports its own major and the one before, agrees the highest shared) and
+# the hello's declared features, with injected supported lists.
+nereus_add_test(tst_link_version
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# Core WebSocket opening requests (R-IOS-01, R-R3-26): every Host form the
+# phone and desktop send opens a session over the Core's real listener; a
+# request the Core cannot read gets 400; an opening that never finishes
+# holds a place only until the opening deadline.
+nereus_add_test(tst_station_ws_host
+    EXTRA_LABELS session)
+# R3 completion carry, review I1 (R-R3-21, R-R3-38, R-IOS-01): the takeover
+# and version reasons, formatted and parsed back in one place.
+nereus_add_test(tst_session_end_reasons EXTRA_LABELS session)
+nereus_add_test(tst_link_conformance_control
+    LinkFixtures.cpp
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_link_conformance_control PRIVATE
+    NEREUS_LINK_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data/link/v1")
+nereus_add_test(tst_link_conformance_session
+    LinkFixtures.cpp
+    fakes/LoopbackTransport.cpp
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_link_conformance_session PRIVATE
+    NEREUS_LINK_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data/link/v1")
+# R-R3-49 (group B fix wave, I3): the connectable fixture (a model
+# connected to the fake radio, WDSP and all) runs as its own ctest entry,
+# the same binary with NEREUS_LINK_CONNECTABLE=only, and the first entry
+# skips it, so neither carries the other's time against the 120 s limit.
+# The second entry takes the first's labels, limit and environment, with
+# its own home.
+if(TEST tst_link_conformance_session)
+    get_test_property(tst_link_conformance_session LABELS _lcs_labels)
+    get_test_property(tst_link_conformance_session TIMEOUT _lcs_timeout)
+    get_test_property(tst_link_conformance_session ENVIRONMENT_MODIFICATION _lcs_env_mod)
+    add_test(NAME tst_link_conformance_session_connectable COMMAND tst_link_conformance_session)
+    set_tests_properties(tst_link_conformance_session_connectable PROPERTIES
+        LABELS "${_lcs_labels}"
+        TIMEOUT ${_lcs_timeout})
+    if(_lcs_env_mod)
+        set_property(TEST tst_link_conformance_session_connectable
+            PROPERTY ENVIRONMENT_MODIFICATION ${_lcs_env_mod})
+    endif()
+    # CMake 3.22 and later carry offscreen in ENVIRONMENT_MODIFICATION above.
+    if(NEREUS_TESTS_OFFSCREEN AND CMAKE_VERSION VERSION_LESS 3.22)
+        set_property(TEST tst_link_conformance_session_connectable APPEND PROPERTY ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen")
+    endif()
+    if(NOT WIN32)
+        set(_lcs_home "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_link_conformance_session_connectable")
+        file(MAKE_DIRECTORY "${_lcs_home}")
+        set_property(TEST tst_link_conformance_session_connectable APPEND PROPERTY ENVIRONMENT
+            "HOME=${_lcs_home}")
+        if(APPLE)
+            set_property(TEST tst_link_conformance_session_connectable APPEND PROPERTY ENVIRONMENT
+                "CFFIXED_USER_HOME=${_lcs_home}")
+        endif()
+    endif()
+    set_property(TEST tst_link_conformance_session APPEND PROPERTY ENVIRONMENT
+        "NEREUS_LINK_CONNECTABLE=skip")
+    set_property(TEST tst_link_conformance_session_connectable APPEND PROPERTY ENVIRONMENT
+        "NEREUS_LINK_CONNECTABLE=only" "NEREUS_LINK_MODE=loopback")
+    # iPhone app plan Task 28 (R-IOS-16): the first entry runs every other
+    # fixture, and it got more time for running them over both transports
+    # (the in-process pipe and the control data channel); the connectable
+    # fixture over the data channel runs in its own process, as the
+    # in-process one does.
+    # Load findings 3: the two transports are now two entries of the same
+    # binary, the first NEREUS_LINK_MODE=loopback (and every other check),
+    # tst_link_conformance_session_datachannel NEREUS_LINK_MODE=datachannel.
+    # Each keeps the 300 s override. Locally each takes about 28 s at load
+    # 10 to 14 (2026-09-30). On the Linux CI runner (01d797e56) they took
+    # 92.60 s and 104.16 s, but those runs failed (two fixtures' gzip OS
+    # byte, since fixed), so there is no passing CI time yet; 120 s would
+    # be too close. Making them faster is an open item; the limit is not
+    # raised past 300.
+    set_tests_properties(tst_link_conformance_session PROPERTIES TIMEOUT 300)
+    set_property(TEST tst_link_conformance_session APPEND PROPERTY ENVIRONMENT
+        "NEREUS_LINK_MODE=loopback")
+    add_test(NAME tst_link_conformance_session_datachannel COMMAND tst_link_conformance_session)
+    set_tests_properties(tst_link_conformance_session_datachannel PROPERTIES
+        LABELS "${_lcs_labels}"
+        TIMEOUT 300)
+    if(_lcs_env_mod)
+        set_property(TEST tst_link_conformance_session_datachannel
+            PROPERTY ENVIRONMENT_MODIFICATION ${_lcs_env_mod})
+    endif()
+    if(NEREUS_TESTS_OFFSCREEN AND CMAKE_VERSION VERSION_LESS 3.22)
+        set_property(TEST tst_link_conformance_session_datachannel APPEND PROPERTY ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen")
+    endif()
+    if(NOT WIN32)
+        set(_lcs_dcall_home
+            "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_link_conformance_session_datachannel")
+        file(MAKE_DIRECTORY "${_lcs_dcall_home}")
+        set_property(TEST tst_link_conformance_session_datachannel APPEND PROPERTY
+            ENVIRONMENT "HOME=${_lcs_dcall_home}")
+        if(APPLE)
+            set_property(TEST tst_link_conformance_session_datachannel APPEND
+                PROPERTY ENVIRONMENT "CFFIXED_USER_HOME=${_lcs_dcall_home}")
+        endif()
+    endif()
+    set_property(TEST tst_link_conformance_session_datachannel APPEND PROPERTY
+        ENVIRONMENT "NEREUS_LINK_CONNECTABLE=skip" "NEREUS_LINK_MODE=datachannel")
+    add_test(NAME tst_link_conformance_session_connectable_datachannel
+        COMMAND tst_link_conformance_session)
+    set_tests_properties(tst_link_conformance_session_connectable_datachannel PROPERTIES
+        LABELS "${_lcs_labels}"
+        TIMEOUT ${_lcs_timeout})
+    if(_lcs_env_mod)
+        set_property(TEST tst_link_conformance_session_connectable_datachannel
+            PROPERTY ENVIRONMENT_MODIFICATION ${_lcs_env_mod})
+    endif()
+    if(NEREUS_TESTS_OFFSCREEN AND CMAKE_VERSION VERSION_LESS 3.22)
+        set_property(TEST tst_link_conformance_session_connectable_datachannel APPEND PROPERTY
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endif()
+    if(NOT WIN32)
+        set(_lcs_dc_home
+            "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_link_conformance_session_connectable_datachannel")
+        file(MAKE_DIRECTORY "${_lcs_dc_home}")
+        set_property(TEST tst_link_conformance_session_connectable_datachannel APPEND PROPERTY
+            ENVIRONMENT "HOME=${_lcs_dc_home}")
+        if(APPLE)
+            set_property(TEST tst_link_conformance_session_connectable_datachannel APPEND
+                PROPERTY ENVIRONMENT "CFFIXED_USER_HOME=${_lcs_dc_home}")
+        endif()
+    endif()
+    set_property(TEST tst_link_conformance_session_connectable_datachannel APPEND PROPERTY
+        ENVIRONMENT "NEREUS_LINK_CONNECTABLE=only" "NEREUS_LINK_MODE=datachannel")
+    # iPhone app plan Task 77 fix wave, M4: the fixtures whose MOX walk runs
+    # in real time (stationSetup.unkeyWalkMs, transfer-refuses-keys) run as
+    # a third entry of the same binary, NEREUS_LINK_REALTIME=only, labelled
+    # realtime so a busy machine's `-LE realtime` run leaves them out; the
+    # other two entries skip them.
+    add_test(NAME tst_link_conformance_session_realtime COMMAND tst_link_conformance_session)
+    set(_lcs_rt_labels ${_lcs_labels})
+    list(APPEND _lcs_rt_labels "realtime")
+    list(REMOVE_DUPLICATES _lcs_rt_labels)
+    set_tests_properties(tst_link_conformance_session_realtime PROPERTIES
+        LABELS "${_lcs_rt_labels}"
+        TIMEOUT ${_lcs_timeout})
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TEST_LABEL_NAMES "realtime")
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TESTS_LABEL_realtime tst_link_conformance_session)
+    if(_lcs_env_mod)
+        set_property(TEST tst_link_conformance_session_realtime
+            PROPERTY ENVIRONMENT_MODIFICATION ${_lcs_env_mod})
+    endif()
+    if(NEREUS_TESTS_OFFSCREEN AND CMAKE_VERSION VERSION_LESS 3.22)
+        set_property(TEST tst_link_conformance_session_realtime APPEND PROPERTY ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen")
+    endif()
+    if(NOT WIN32)
+        set(_lcs_rt_home "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_link_conformance_session_realtime")
+        file(MAKE_DIRECTORY "${_lcs_rt_home}")
+        set_property(TEST tst_link_conformance_session_realtime APPEND PROPERTY ENVIRONMENT
+            "HOME=${_lcs_rt_home}")
+        if(APPLE)
+            set_property(TEST tst_link_conformance_session_realtime APPEND PROPERTY ENVIRONMENT
+                "CFFIXED_USER_HOME=${_lcs_rt_home}")
+        endif()
+    endif()
+    foreach(_lcs_entry tst_link_conformance_session tst_link_conformance_session_connectable
+            tst_link_conformance_session_connectable_datachannel
+            tst_link_conformance_session_datachannel)
+        set_property(TEST ${_lcs_entry} APPEND PROPERTY ENVIRONMENT "NEREUS_LINK_REALTIME=skip")
+    endforeach()
+    set_property(TEST tst_link_conformance_session_realtime APPEND PROPERTY ENVIRONMENT
+        "NEREUS_LINK_REALTIME=only")
+endif()
+nereus_add_test(tst_link_conformance_media
+    LinkFixtures.cpp
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_link_conformance_media PRIVATE
+    NEREUS_LINK_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data/link/v1")
+nereus_add_test(tst_link_conformance_regen
+    LinkFixtures.cpp
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_link_conformance_regen PRIVATE
+    NEREUS_LINK_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data/link/v1")
+
+# iPhone app plan, Task 4b (R-IOS-01, R-R3-21): every reason the station
+# sends an app is plain operator words. A source scan of the reason sites,
+# a guard that fails on a new unplaced one, and the reasons the session
+# fixtures record.
+nereus_add_test(tst_station_reason_wording
+    EXTRA_LABELS session)
+target_compile_definitions(tst_station_reason_wording PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+# R-R3-46 / R-R3-11 / R-R3-13: the Core's step attenuator and preamp as the
+# mirrored `stepAtt` object, end to end: a DaemonApp Core on a primed board
+# with a fake radio connection, a StationServer, and a remote window over the
+# in-process loopback. A window's edit reaches the radio and is saved for its
+# band; each radio's range and settle reasons; a Core band change and ADC
+# overload reach the window.
+nereus_add_test(tst_remote_step_attenuator
+    fakes/LoopbackTransport.cpp)
+
+# R-R3-46 / R-R3-11: with a local radio each band remembers its attenuator
+# and preamp, as through the Core: a local RadioModel's transmit slice feeds
+# the step attenuator controller its band and mode, and a band change
+# restores and sends that band's values to a fake radio connection.
+nereus_add_test(tst_local_step_attenuator_band_restore)
+
+# R-R3-46 / R-R3-11: a step attenuator per receive ADC (Thetis RX1's and
+# RX2's, each sent to the ADC its receiver uses), each slice's and stream's
+# receive offset from its own ADC, one value for slices sharing an ADC and
+# for linked diversity, and the P1 bank 12 / P2 byte 1442 ADC1 wire.
+nereus_add_test(tst_per_adc_step_attenuator)
+
+# R-R3-16/17: a connect that never finishes setting up gives up and retries.
+# The GUI's handshake deadline against a silent Core, a Core blocked past the
+# deadline that recovers, the Core Connections status and Cancel, and Core's
+# own deadline for a GUI that never sends its hello. Deadlines are shortened
+# through the injectable value; the wss slots QSKIP without a TLS backend.
+nereus_add_test(tst_station_handshake_deadline
+    fakes/LoopbackTransport.cpp)
+
+# Remote Daemon R2, Task 19: link loss, daemon restart, and reconnect.
+# Nothing before this task defined what the client does with a mirror of
+# objects that no longer exist. Split the same way tst_station_session.cpp
+# is: the link-loss CONTRACT (mirror teardown, the defined stale state,
+# settings-proxy offline behaviour, the session epoch, reconnect
+# convergence) runs over the same in-process LoopbackTransport and
+# therefore on every build; the automatic-reconnect TIMER mechanism itself
+# can only be exercised through connectToStation(), which always creates a
+# real QWebSocket, so those three slots QSKIP when QSslSocket::supportsSsl()
+# is false.
+#
+# The slot that matters most is silentlyDeadPeerIsDetectedNotJustAClean-
+# Close: killing the daemon produces a clean TCP close, which does all the
+# work by itself. This slot covers the case that motivated pulling the
+# heartbeat into R2 at all -- a peer that stops responding WITHOUT closing,
+# reusing Task 18's LoopbackTransport::setAnswersPings(false) mechanism.
+nereus_add_test(tst_session_link_loss
+    fakes/LoopbackTransport.cpp)
+
+# Remote Daemon R3, Task 1: two live direct peers prove DTLS/SCTP display,
+# SRTP RTP, bounded signalling/media inputs, stop cancellation, and restart.
+# REALTIME (2026-09-24 checkpoint follow-up): each case does a real encrypted
+# loopback handshake inside a fixed 10 s wait, which misses at load 20-30.
+nereus_add_test(tst_media_transport REALTIME)
+# Mic 48k lane: the Core's real offerer against an answerer that writes the
+# microphone line as the phone does (NereusKit MediaPeer.microphoneAnswer,
+# on libdatachannel directly): the 48 kbit/s ceiling is offered and echoed,
+# phone Opus at 48 kbit/s decodes, and lossless is granted and decodes.
+# REALTIME: a real encrypted loopback handshake inside a fixed wait.
+nereus_add_test(tst_mic_line_phone_answer CORE_ONLY REALTIME)
+if(TEST tst_mic_line_phone_answer)
+    target_link_libraries(tst_mic_line_phone_answer PRIVATE datachannel-static)
+    target_include_directories(tst_mic_line_phone_answer PRIVATE
+        "${libdatachannel_SOURCE_DIR}/include")
+endif()
+nereus_add_test(tst_remote_iq_codec)
+
+# iPhone app plan Task 36 (R-IOS-13): the microphone uplink at the Core: the
+# feed's 60 ms target and 120 ms maximum, a tone through 1 % loss, a sender
+# 200 ppm fast and slow for 10 simulated minutes, the key's wait and
+# starvation. Injected clocks throughout.
+nereus_add_test(tst_remote_mic_receiver)
+# Two 10-minute runs of simulated time through WDSP rmatch: 13 s of its
+# 17 s alone, 31 s at load 10 to 14 (2026-09-30), so the default 120 s holds
+# (fix wave INFRA-I3: the 600 s override is gone).
+
+# iPhone app plan Task 36 (R-IOS-13): the remote microphone ring at the
+# transmitter: the pump's branch in the normal and RADE paths, the Core's
+# microphone line, keying on a filled buffer (micNotReady), VOX from the
+# device, and the monitor in the remote audio.
+nereus_add_test(tst_tx_worker_remote_ring
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_tx_worker_remote_ring PRIVATE NEREUS_BUILD_TESTS)
+
+# Remote Daemon R3, Task 1: strict connection-scoped signalling bridge and
+# live queued-control exchange over the encrypted media transport.
+nereus_add_test(tst_media_peer)
+
+# iPhone app plan Task 10: the station side of the app's media interop tests.
+# Not a test itself: ios/scripts/interop-test.sh builds it and the app's
+# MediaPeerInteropTests drive it, the Core's own media transport as the
+# offerer. It reads its commands from a pipe, so it is not built on Windows.
+if(NOT WIN32)
+    add_executable(nereus_media_offerer EXCLUDE_FROM_ALL
+        tools/nereus_media_offerer.cpp $<TARGET_OBJECTS:nereus_test_sandbox>)
+    target_link_libraries(nereus_media_offerer PRIVATE NereusCore)
+endif()
+
+# Remote Daemon R3, Task 5: the existing RADE-pinned Opus encodes and decodes
+# the bounded mixed-stereo RTP profile without a second codec build.
+nereus_add_test(tst_opus_audio_codec)
+# R-R3-23 lossless audio: L16 packetisation, 16-bit round trip and the
+# shared 940-byte RTP cap.
+nereus_add_test(tst_pcm_audio_codec)
+
+# Remote Daemon R3 audio source: bounded master-mix delivery and synchronous
+# tap retirement across an admitted DSP callback. REALTIME: its soak paces a
+# producer at the DSP cadence against a polling consumer and allows no drop.
+nereus_add_test(tst_daemon_audio_source REALTIME)
+nereus_add_test(tst_daemon_audio_sender)
+nereus_add_test(tst_audio_jitter_buffer)
+# R-R3-23 Task 2: RFC 3550 jitter and sequence accounting for one context.
+nereus_add_test(tst_rtp_reception_stats)
+nereus_add_test(tst_remote_audio_clock)
+# Two simulated hours (-500 and +500 ppm) of continuous 48 kHz stereo
+# interpolation. A CPU profile puts about 94% of the time in WDSP xvarsamp,
+# the resampler under test, and about 4% in generating the input tones, so
+# the cost is the coverage itself: shortening either hour weakens the drift
+# gate. Measured 2026-09-22 on the M5 Max: 116 s alone (load 7.3), 212 s in a
+# full -j6 run (load 18.8 at start, 8.7 at end). PROCESSORS 2 makes a -jN run
+# start one fewer neighbour while this single-threaded loop runs.
+# R-R3-21: each hour is its own data row, so QtTest's function watchdog
+# (300 s by default; the Linux CI job sets QTEST_FUNCTION_TIMEOUT to 240 s)
+# bounds one hour, not both; on a Linux aarch64 host both hours took 347 s
+# alone and were aborted by the 300 s default, and 267 s at the end of a
+# full run. TIMEOUT 700 is about twice the slowest (Linux, alone)
+# measurement. Load findings 3: one hour row still passed the 300 s default
+# above load 200, so each hour now runs as four quarter-hour rows carrying
+# one simulation on; the watchdog bounds a quarter (all of them together
+# took 197 to 226 s on the Linux CI runner). TIMEOUT unchanged.
+if(TEST tst_remote_audio_clock)
+    set_tests_properties(tst_remote_audio_clock PROPERTIES TIMEOUT 700 PROCESSORS 2)
+endif()
+nereus_add_test(tst_daemon_audio_session fakes/LoopbackTransport.cpp)
+# R-R3-06/07/09: the 48 kHz mixed-audio contract through live radio rate,
+# mode, band and slice-count changes, on a RadioModel genuinely connected to
+# a Protocol 1 fake with real WDSP (fakes/ConnectableRadioModel.h).
+nereus_add_test(tst_daemon_audio_transitions
+    fakes/LoopbackTransport.cpp
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
+# Each of its four slots connects a fresh radio with real WDSP. Its FFTW
+# planning goes through the shared wisdom cache with the 0.1 s plan limit
+# (it names ConnectableRadioModel), so the 30 s cold plan that once needed
+# a 300 s override is gone and the default 120 s holds (fix wave INFRA-I3).
+nereus_add_test(tst_daemon_telemetry fakes/LoopbackTransport.cpp)
+# R-R3-32/33: Core host sampler against fixture procfs/sysfs trees.
+nereus_add_test(tst_host_telemetry_sampler EXTRA_LABELS core)
+nereus_add_test(tst_remote_audio_receiver REALTIME)
+# R-R3-23, R-R3-07, R-R3-21: playsOnEverySpeakerFormat plays through the
+# real receiver worker against a speaker that plays on the wall clock, and
+# asserts the speaker never ran short once playing. The worker keeps two
+# 10 ms blocks queued, so that is a real-time guarantee: a loaded -j4 Linux
+# run starved the 192 kHz row for one 1 ms callback (1461 dry frames against
+# 1269) while it passed every run alone. RUN_SERIAL (as for
+# tst_receiver_dsp_load_frames, R-R3-40): ctest never runs it beside another
+# test that would take the worker's processor away.
+# R-R3-49 load round: the whole run is about 118 s of wall-clock playback
+# (measured 2026-09-27, 117.6 s at load 130 to 260, and about the same on a
+# quiet machine), against the 120 s limit; the two Wi-Fi stall rows are 35 s
+# each. They run as tst_remote_audio_receiver_wifi (about 70 s), the rest as
+# tst_remote_audio_receiver (about 48 s).
+if(TEST tst_remote_audio_receiver)
+    set_tests_properties(tst_remote_audio_receiver PROPERTIES RUN_SERIAL TRUE)
+    nereus_split_test(tst_remote_audio_receiver
+        ENV NEREUS_REMOTE_AUDIO_RECEIVER_GROUP GROUPS wifi)
+endif()
+# REALTIME: its lossless case measures the stream's rate over a wall-clock
+# window, and its delay cases compare the measured delay with the heard one
+# on the wall clock within half a millisecond.
+nereus_add_test(tst_remote_audio_session fakes/LoopbackTransport.cpp REALTIME)
+# R-R3-44 (R3 receiver audio plan, Task 5): VAX in a remote window. The
+# feed contract (two 10-minute runs of the harness clock at +/-200 ppm
+# through WDSP rmatch), the Core opening no VAX device, the per-Core
+# choice, and end to end against the in-process Core, Opus and lossless.
+nereus_add_test(tst_remote_vax_feeder fakes/LoopbackTransport.cpp)
+if(TEST tst_remote_vax_feeder)
+    set_tests_properties(tst_remote_vax_feeder PROPERTIES TIMEOUT 300)
+endif()
+# R-R3-23: the audio-context wire codec in both negotiated shapes.
+nereus_add_test(tst_remote_audio_context)
+# R-R3-01/08: the spectrum-context wire codec in both negotiated shapes.
+nereus_add_test(tst_remote_spectrum_context)
+# R-R3-23 Task 3: the GUI's remote audio status derivation and wording.
+nereus_add_test(tst_remote_audio_status)
+
+# Remote Daemon R3, Task 3: bounded native trace, waterfall, and DSS codec.
+nereus_add_test(tst_display_codec)
+nereus_add_test(tst_display_budget)
+# iPhone app Task 76 (R-IOS-31): the Core's display budget shared among
+# the devices signed in to it, holder first.
+nereus_add_test(tst_display_budget_split)
+nereus_add_test(tst_display_budget_contract fakes/LoopbackTransport.cpp)
+nereus_add_test(tst_remote_display_allocator)
+# R-R3-08/37/40: the Core lowers spectrum first when its computer is busy.
+nereus_add_test(tst_display_load_governor)
+
+# Remote Daemon R3, Task 2: synthetic live stream I/Q reaches a daemon-owned
+# FFT source with tier isolation and bounded source lifecycle.
+nereus_add_test(tst_remote_fft_production)
+
+# Remote Daemon R3, Task 4: endpoint state, tier switching, frame reduction,
+# cadence, compression, and bounded DSS wide-row composition.
+nereus_add_test(tst_spectrum_endpoint)
+nereus_add_test(tst_wideband_display_context)
+
+# Remote Daemon R3 GUI receive seam: decoded remote spectrum reaches the
+# existing renderer entry point without local FFT ownership.
+nereus_add_test(tst_remote_spectrum_render)
+
+# Remote Daemon R3 GUI controller: authenticated media signalling, endpoint
+# subscription lifecycle, stale context rejection, and teardown.
+nereus_add_test(tst_remote_media_controller
+    fakes/LoopbackTransport.cpp)
+# R-R3-21: its real-session cases take about 115 s alone on a quiet Mac
+# (repeatedAudioRestartsBackOff waits out the 1, 2, 4, 4 s retry backoff),
+# too close to the default 120 s, and a loaded machine stretches them.
+if(TEST tst_remote_media_controller)
+    set_tests_properties(tst_remote_media_controller PROPERTIES TIMEOUT 300)
+endif()
+# Parity Tasks 27-29 fix wave (R-R3-49): the audio functions (the test's
+# kAudioFunctions) run as their own ctest entry, the same binary with
+# NEREUS_REMOTE_MEDIA_GROUP=audio, and the first entry runs the rest, so
+# neither carries the other's time against the 120 s limit (the whole run
+# reached 110 to 117 s under load). The second entry takes the first's
+# labels, limit and environment, with its own home.
+if(TEST tst_remote_media_controller)
+    get_test_property(tst_remote_media_controller LABELS _rmc_labels)
+    get_test_property(tst_remote_media_controller TIMEOUT _rmc_timeout)
+    get_test_property(tst_remote_media_controller ENVIRONMENT_MODIFICATION _rmc_env_mod)
+    add_test(NAME tst_remote_media_controller_audio COMMAND tst_remote_media_controller)
+    set_tests_properties(tst_remote_media_controller_audio PROPERTIES
+        LABELS "${_rmc_labels}"
+        TIMEOUT ${_rmc_timeout})
+    if(_rmc_env_mod)
+        set_property(TEST tst_remote_media_controller_audio
+            PROPERTY ENVIRONMENT_MODIFICATION ${_rmc_env_mod})
+    endif()
+    if(NEREUS_TESTS_OFFSCREEN AND CMAKE_VERSION VERSION_LESS 3.22)
+        set_property(TEST tst_remote_media_controller_audio APPEND PROPERTY ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen")
+    endif()
+    if(NOT WIN32)
+        set(_rmc_home "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_remote_media_controller_audio")
+        file(MAKE_DIRECTORY "${_rmc_home}")
+        set_property(TEST tst_remote_media_controller_audio APPEND PROPERTY ENVIRONMENT
+            "HOME=${_rmc_home}")
+        if(APPLE)
+            set_property(TEST tst_remote_media_controller_audio APPEND PROPERTY ENVIRONMENT
+                "CFFIXED_USER_HOME=${_rmc_home}")
+        endif()
+    endif()
+    set_property(TEST tst_remote_media_controller APPEND PROPERTY ENVIRONMENT
+        "NEREUS_REMOTE_MEDIA_GROUP=rest")
+    set_property(TEST tst_remote_media_controller_audio APPEND PROPERTY ENVIRONMENT
+        "NEREUS_REMOTE_MEDIA_GROUP=audio")
+endif()
+
+# iPhone app plan, desktop remote transmit (R-IOS-13, R-R3-42): the window's
+# side of the transmit verbs (copies, epochs, releases) on its own.
+nereus_add_test(tst_remote_transmit_client EXTRA_LABELS session)
+
+# iPhone app plan, desktop remote transmit (R-IOS-13, R-R3-42): a remote
+# window keys a real in-process Core (MOX, TUNE, two-tone, the microphone,
+# VOX and TCI) through the transmit verbs; nothing keys a real radio and
+# the window's microphone is a test bus.
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_remote_window_transmit
+        fakes/LoopbackTransport.cpp)
+    target_link_libraries(tst_remote_window_transmit PRIVATE Qt6::WebSockets)
+endif()
+
+# Remote Daemon R3 daemon controller: authenticated session/media lifecycle,
+# real FFT/display production, stale control rejection, and slice cleanup.
+nereus_add_test(tst_daemon_media_controller
+    fakes/LoopbackTransport.cpp)
+
+# iPhone app plan Task 24 (R-IOS-10): a session with no display endpoint
+# keeps its audio, metrics and S-meter readings and gets no display.
+nereus_add_test(tst_sound_only_session
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
+# Remote-window parity Task 28 (R-R3-49, A11): the Core sends the transmit
+# analyzer's display for the transmitting pan while keyed, to a media peer
+# that declared txDisplayVersion; txState's high-SWR state.
+nereus_add_test(tst_remote_tx_display
+    fakes/LoopbackTransport.cpp)
+
+# Remote-window parity Task 29 (A11, R-R3-49, R-R3-12, rows 14 and 16): one
+# MOX display controller for a local and a remote window. The local rise and
+# fall make the old MainWindow lambda's calls; a remote window shows the
+# Core's transmit display with the transmit grid, palette, waterfall levels
+# and red border; XIT while keyed, tuning while keyed, high SWR and a layout
+# change while keyed, in both windows.
+nereus_add_test(tst_mox_display_controller
+    fakes/LoopbackTransport.cpp)
+
+# Remote-window parity Task 31 (A11, R-R3-49): display duplex (DUP) in both
+# windows, off by default as Thetis. The calibration rule (RX1Offset), noise
+# blanking off while keyed with DUP on (a Core reads the transmit holder's
+# DUP), the receiver kept under the transmit grid locally and from a Core at
+# txDisplayVersion 3, a change while keyed, an older Core, the setting.
+# Loopback and a test TxChannel only, no RF, no audio device.
+nereus_add_test(tst_display_duplex
+    fakes/LoopbackTransport.cpp)
+
+# Remote-window parity Task 30 (A12, R-R3-49, R-R3-21, R-R3-10): Setup >
+# Display > TX Display from a remote window. The Core applies a window's
+# write of the nine TX analyzer keys to its TxAnalyzer at once, keyed or
+# not and on a receive-only Core (txDisplayVersion 2); the page shows and
+# writes the Core's keys, disabled below version 2; a local window keeps its
+# own analyzer. Loopback and a test TxChannel only, no RF, no audio device.
+nereus_add_test(tst_remote_tx_display_settings
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_remote_tx_display_settings PRIVATE NEREUS_BUILD_TESTS)
+
+# Parity ruling C12: Setup > Display > Grid & Scales' per-band dB max and
+# min are the Core's. A window's write reaches the Core's pan at once; a
+# remote window's pan never pushes its own values on a band crossing and
+# re-reads a band when the Core's value arrives; a local pan is unchanged.
+# Loopback only, no radio, no audio device.
+nereus_add_test(tst_remote_pan_grid
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_remote_pan_grid PRIVATE NEREUS_BUILD_TESTS)
+
+# Remote-window parity Task 32 (R-IOS-13, R-R3-49): the transmit monitor
+# goes to the device that holds transmit. The owner mixes with fake devices
+# and recording taps (route, level, another device, the Core's own outputs
+# quiet while a remote device holds, the unkey), and the session over the
+# loopback control link (the capability, monitor-audio and its answer, the
+# wrong shapes, an older peer, the holder rule). No radio is keyed, no sound
+# device is opened.
+nereus_add_test(tst_remote_tx_monitor
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_remote_tx_monitor PRIVATE NEREUS_BUILD_TESTS)
+
+# Remote Daemon R2: the GUI's slice controls reach the daemon.
+#
+# Task 11 built the command verbs, task 18 built the session that could
+# carry them, task 20 gated the GUI, and nothing connected the three:
+# StationClient::invokeCommand() had zero callers. Every slot here stands
+# up a REAL StationServer and StationClient over the same in-process
+# LoopbackTransport the two files above use, and asserts on the DAEMON's
+# own RadioModel -- "the client called a function" is exactly the
+# assertion that would have passed while the defect shipped.
+#
+# No TLS anywhere in this file, so no slot QSKIPs.
+nereus_add_test(tst_remote_slice_commands
+    fakes/LoopbackTransport.cpp)
+
+# ── 3D stacked-trace spectrum plan, Task 2: Angle mapping safety properties
+# Pins the 3D Angle mapping's safety guarantees: slider 50 reproduces
+# upstream's geometry exactly, no angle can push a full-scale back-row ridge
+# off the top of the plot, spread and convergence move together as a real
+# camera would, and the widest row span falls at the edge-on end (which
+# Task 3's mesh sizing relies on).
+nereus_add_test(tst_dss_angle)
+
+# ── 3D stacked-trace spectrum plan, Task 1: DssGeometry ───────────────────
+# Golden test asserting kDssUpstreamShape reproduces AetherSDR DssRenderer.h's
+# constants exactly, and that dssDepthScale / dssProjectPerspective /
+# dssProjectSurface / the row-span helpers match upstream's formulas bit
+# for bit. Source: AetherSDR src/gui/DssRenderer.h:36-187 [@1872028c].
+nereus_add_test(tst_dss_geometry)
+
+# ── 3D stacked-trace spectrum plan, Task 3: DssMeshGeometry ───────────────
+# Pins the GPU mesh vertex generation: the default angle reproduces
+# upstream's ~33.7 MiB mesh size exactly, the widest angle costs materially
+# more and is only paid when the shape demands it, the density invariant
+# dss_mesh.vert's Nearest sampler depends on holds at every angle (and is
+# caught failing if a resize is skipped), the vertex-count formula matches
+# upstream, and emitted vertices land in-range, back-to-front, with
+# decodable edge tags. Source: AetherSDR src/gui/SpectrumWidget.cpp:148-172,
+# :13136-13200 and src/gui/DssRenderer.h:66-82 [@1872028c].
+nereus_add_test(tst_dss_mesh_geometry)
+
+# ── 3D stacked-trace spectrum plan, Task 4: DssRenderer ring store ────────
+# Pins the row ring store: peak-preserving downsample survives a single-bin
+# carrier, median-of-3 rejects a one-frame broadband impulse, the ring wraps
+# and bounds rowCount()/visibleRowCount(), pushed rows stamp their frequency
+# frame, a retune (frame change) drops the temporal blend rather than
+# smearing signals across the pan, the wide (off-screen) channel records
+# coverage independently of the exact FFT channel, newestWideBandwidthMhz()
+# looks past bare front rows rather than collapsing to 0 the instant one
+# push omits a wide slice, clear() resets everything AND (mutation-verified,
+# whole-ring-filled precondition) actually wipes the per-row frame stamps
+# rather than leaving them for ringAtAge()'s unguarded clamp to hand back
+# stale, and rowGeneration() advances on every push. Source: AetherSDR
+# src/gui/DssRenderer.cpp:30-33, :50-60, :183-216, :218-250 [@1872028c].
+nereus_add_test(tst_dss_renderer_ring)
+
+# ── 3D stacked-trace spectrum plan, Task 5: DSS mesh shader contract ──────
+# The shaders are GLSL and cannot be unit-tested directly, but the C++ host
+# and the GLSL UBO layout must agree on two numbers or the surface renders
+# garbage with no compile error: the rowFrames[] array length must equal
+# kDssRows, and the std140 UBO float count must match the host's write
+# order. Reads the actual shader source files from disk rather than
+# restating a copy of the constants, so a drift in either file is caught.
+# Source: AetherSDR resources/shaders/dss_mesh.{vert,frag} [@1872028c].
+nereus_add_test(tst_dss_shader_contract)
+target_compile_definitions(tst_dss_shader_contract PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+# ── 3D stacked-trace spectrum plan, Task 24: 3D Speed row divider ───────
+# Pins the row-cadence divider that matches the 3D ring's history to the
+# waterfall's: a manual divider pushes one folded row per N waterfall
+# ticks, divider 1 reproduces the pre-Task-24 one-row-per-tick behaviour,
+# the fold is peak-hold per column (not "last row wins" or an average) so
+# a one-tick burst still raises a ridge, a size change mid-fold discards
+# the partial fold and restarts, lowering the divider mid-fold pushes on
+# the very next tick instead of waiting out the old count, the automatic
+# divider tracks the waterfall's own pixel height live, the glide-clock
+# increment scales by the divider so the scroll phase still completes
+# once per pushed row, the stop-on-TX gate pauses the fold exactly like
+# it pauses the waterfall, and leaving 3D resets the in-progress fold.
+# NereusSDR-original: upstream AetherSDR at 1872028c has no row divider
+# and no 3D-specific cadence control at all (crew workspace
+# scout-scroll-speed.md, section 5), so there is no upstream source to
+# cite.
+nereus_add_test(tst_dss_row_divider)
+
+# ── 3D stacked-trace spectrum plan, Task 6: render mode + row tee ────────
+# Pins the SpectrumRenderMode enum default and the five 3D control values'
+# defaults/clamps, that 3D Angle 50 reproduces upstream's fixed shape, and
+# above all the row-tee placement: pushDssRow() must run from inside
+# pushWaterfallRow() downstream of the stop-on-TX early return so the 3D
+# stack and the flat waterfall advance and freeze in lockstep. A ticker-
+# callback tee (upstream of the gate) would desync the two panes on every
+# over -- stopOnTx_freezesBothPanesTogether drives TX both ways to catch it.
+# Source: AetherSDR src/gui/SpectrumWidget.h:78-82 [@1872028c].
+nereus_add_test(tst_dss_row_tee)
+
+# ── 3D stacked-trace spectrum plan, Task 8: palette LUT decoupling ───────
+# Pins that the 3DSS palette is baked from the shared scheme gradient stops,
+# gamma-shaped only by "3D Gain" -- never through dbmToRgb(), so the 2D
+# waterfall's gain / black-level sliders cannot silently reshape the 3D
+# surface. Also pins the gain-to-gamma identities (50 linear, 100 -> 0.25,
+# 0 -> 4), that every scheme still renders distinct colours in 3D, and that
+# the LUT re-bake token folds scheme + gain only (never per-frame jitter).
+# Source: AetherSDR src/gui/SpectrumWidget.cpp:11710-11733, :12713-12741
+# [@1872028c].
+nereus_add_test(tst_dss_palette)
+
+# ── 3D stacked-trace spectrum plan, Task 9: floor anchoring + wide feed ───
+# Pins the 3D Floor control (offsets the measured noise floor down, so the
+# stack keeps a constant apparent height as conditions move), the dBm span
+# (tracks m_refLevel/m_dynamicRange), the colour aperture (caps at
+# kDssColorSpanDb but narrows further with a tighter dBm range -- review-
+# round fix, the first pass wrote the constant unconditionally),
+# buildDssWideRow()'s off-screen-DDC-bins windowing (sized for the WIDEST
+# angle so a runtime angle change never invalidates retained rows; empty at
+# full DDC width), and dssRowSpanTarget() scaling the available overhang by
+# the 3D Span percentage. Source: AetherSDR src/gui/SpectrumWidget.cpp:
+# 12743-12784, :14195 [@1872028c].
+nereus_add_test(tst_dss_floor_and_span)
+
+# ── 3D stacked-trace spectrum plan, Task 10: CPU fallback surface ────────
+# Pins DssRenderer::image()'s cache gate -- rebuilds only when px / scale
+# strip / floor / range / zCurve / palette token / DssShape actually change,
+# holds otherwise -- and the painter's-algorithm occlusion test
+# (dssDepthVisibleSegments) the Task 12 depth-shadow overlay consumes. The
+# shape-in-cache-key case is NereusSDR-original: upstream renders at one
+# fixed angle, so its cache has no shape to invalidate on.
+# Source: AetherSDR src/gui/DssRenderer.cpp:753-903 [@1872028c].
+nereus_add_test(tst_dss_cpu_surface)
+
+# ── GPU spectrum frames do not grow the heap ─────────────────────────────
+# A 3D pan wrote the 2D trace's line and fill vertices into dynamic buffers
+# every GPU frame without ever binding them, and a 2D pan with pan fill off
+# did the same to the fill buffer. Qt's Metal backend holds each partial
+# dynamic-buffer write until the buffer is bound, so the unbound buffers
+# kept every frame's copy: 23 GB in 2.5 hours on the desktop window. Drives
+# a real QRhi for a few hundred frames and bounds the heap growth, so it
+# needs a native window (the offscreen platform gives the widget no GPU
+# backend); the `gpu` label marks it for a CI job with a GPU. Skips where no
+# QRhi comes up. NereusSDR-original.
+if(NEREUS_GPU_SPECTRUM)
+    nereus_add_test(tst_spectrum_gpu_buffer_growth NATIVE_WINDOW EXTRA_LABELS gpu)
+endif()
+
+# The same rule without a GPU, on every platform CI runs: every combination
+# of planSpectrumTraceFrame()'s inputs binds each trace buffer it writes and
+# draws no fill or peak left from another trace, and MeterWidget's geometry
+# buffer is written only when it is bound. renderGpuFrame() takes both its
+# uploads and its draws from these helpers. NereusSDR-original.
+nereus_add_test(tst_gpu_buffer_write_bind_plan)
+
+# ── 3D stacked-trace spectrum plan, Task 11: 3D dBm scale ────────────────
+# Pins drawDbmScale3D(): floor-anchored (dssFloorDbm() + rounded 3D Span),
+# not Ref-anchored like the 2D scale, so its rendered output must move when
+# the measured noise floor moves. Also pins the ported rangeDb<=0 guard
+# (drawDbmScaleLabels) against degenerate/zero-size rects and non-positive
+# spans without crashing or dividing by zero.
+# Source: AetherSDR src/gui/SpectrumWidget.cpp:17223-17335 [@1872028c].
+nereus_add_test(tst_dss_dbm_scale)
+
+# ── 3D stacked-trace spectrum plan, Task 12: slice shadow decals ─────────
+# Pins buildDssShadowBands(): maps each visible slice's passband (and its
+# own carrier frequency, as the shadow's cue position) into the same [0,1]
+# viewport-unit space hzToX() uses, entirely empty when 3D Slice Shadow is
+# off, truncated to the shader's fixed 8-descriptor shadowBands/shadowStyles
+# budget, and dropping a slice whose passband never touches the visible
+# viewport rather than clamping it in place.
+# Source: AetherSDR src/gui/SpectrumWidget.cpp:14216-14366, :9975-9979
+# [@1872028c].
+nereus_add_test(tst_dss_slice_shadow)
+
+# ── 3D stacked-trace spectrum plan, Task 13: the 3D VIEW control section ─
+# Pins SpectrumOverlayMenu's "3D VIEW" section: the Spectrum render-mode
+# combo plus 3D Floor / 3D Gain / 3D Span / 3D Angle / 3D Slice Shadow, with
+# upstream's exact labels, ranges, defaults and tooltip wording for the five
+# ported controls and the NereusSDR-original 3D Angle slider. setDssValues
+# seeds all six widgets without echoing back out through the change
+# signals, and setDssRowSpanSupported greys out only the 3D Span row on the
+# CPU-fallback render path. The final test right-clicks a real SpectrumWidget
+# (same idiom as tst_notch_hit_test.cpp) to prove the six connect() calls in
+# SpectrumWidget.cpp reach the real Task 6 setters, not a parallel test-only
+# wiring.
+# Source: AetherSDR src/gui/SpectrumOverlayMenu.cpp:1874-1943, :2250-2273
+# [@1872028c].
+nereus_add_test(tst_dss_overlay_menu)
+
+# ── 3D stacked-trace spectrum plan, Task 14: persistence ─────────────────
+# Pins the six-control persistence split: Spectrum render-mode / 3D Gain /
+# 3D Span / 3D Angle / 3D Slice Shadow round-trip per panadapter through
+# SpectrumWidget's existing settingsKey() helper (and write "True"/"False"
+# strings, not 1/0); 3D Floor round-trips per BAND instead on
+# PanadapterModel, keyed exactly like the existing DisplayGridMax_<band>
+# grid keys (no pan index), recalled across a real setCenterFrequency()
+# band change, and never written by either SpectrumWidget's per-pan save
+# path or a plain per-band grid-range edit that never touched 3D. This is
+# a NereusSDR-original persistence scheme (upstream AetherSDR groups its
+# 3D settings in a single JSON object rather than per-band/per-pan flat
+# keys), so there is no upstream source to cite.
+nereus_add_test(tst_dss_persistence)
+
+# ── 3D stacked-trace spectrum plan, Task 15: Setup mirror + two-way sync ──
+# Pins Display3DSetupPage (Setup -> Display -> 3D View): the same six
+# controls Task 13 put in the right-click overlay menu, now also reachable
+# from the Setup dialog. An edit on the Setup page reaches SpectrumWidget;
+# an edit on SpectrumWidget (as the overlay menu would drive it) reaches
+# back to the Setup page's own widgets; and driving the round trip through
+# SpectrumWidget::dssAngleChanged (the new Task 15 signal) settles in
+# exactly one emission rather than an echo cascade between the two
+# surfaces. "Reset 3D to defaults" restores all six ship defaults. This is
+# a NereusSDR-original Setup-dialog page with no AetherSDR counterpart --
+# AetherSDR's own RadioSetupDialog has no 3D View section at all (verified
+# against the pinned commit; see the file header) -- so there is no
+# upstream source to cite for the page itself; labels/ranges/defaults
+# match the already-cited Task 13 overlay-menu row.
+nereus_add_test(tst_dss_setup_sync)
+
+# ── 3D stacked-trace spectrum plan, Task 16: dBm-strip drag wired to 3D
+# Floor ────────────────────────────────────────────────────────────────
+# Bench fix. The plain vertical drag on the right-edge dBm strip
+# (SpectrumWidget.cpp, m_draggingDbm) always wrote m_refLevel, which the
+# 3D surface never reads -- it anchors to dssFloorDbm() instead. Pins the
+# mode-gated fix: in 3D the same drag now moves dssFloorDepth() (down
+# reveals more noise, up hides it, full strip height mapped to the full
+# 0..24 range) and leaves refLevel() untouched; in 2D the pre-existing
+# formula and output are completely unchanged and dssFloorDepth() is left
+# alone. Also pins the 0..24 saturation bound under the new mapping.
+# NereusSDR-original: upstream AetherSDR's 3D Floor has no drag binding at
+# all, so there is no upstream source to cite.
+nereus_add_test(tst_dss_floor_drag)
+
+# ── 3D stacked-trace spectrum plan, Task 19: Ctrl-drag dBm-range zoom ────
+# Pins the ported m_draggingDbmRange gesture: Ctrl (Cmd/Meta too) drag on
+# the right-edge dBm strip zooms the amplitude span with the bottom pinned,
+# instead of panning it the way the plain drag does. Runs identically in 2D
+# and 3D (no mode branch, matching upstream, which has none on this
+# gesture) because dssSpanDb() reads m_dynamicRange directly, so the 3D
+# surface's span genuinely changes even though m_refLevel has no 3D reader
+# of its own. Pins: dynamicRange() changes under Ctrl-drag and only under
+# Ctrl-drag (plain drag in both modes is re-verified unaffected, closing
+# the regression risk against Task 16's established behaviour); the 2D and
+# 3D bottom-anchor invariant refLevel()-dynamicRange(); upstream's exact
+# clamp bounds (10..180, ported verbatim as clampDbmRangeForBottom, not the
+# sibling wheel-zoom gesture's local 10..200); and Meta-alone engaging the
+# gesture (NereusSDR's cross-platform simplification of upstream's
+# #ifdef Q_OS_MAC split).
+# Source: AetherSDR src/gui/SpectrumWidget.cpp:337-340, 389-410, 3365,
+# 9537-9550, 10493-10501, 10893-10926 [@1872028c].
+nereus_add_test(tst_dbm_range_drag)
+
+# ── 3D stacked-trace spectrum plan, Task 18: SpectrumWidget <->
+#    DisplaySettingsModel binding ─────────────────────────────────────────
+# Pins the two-way wiring in SpectrumWidget::bindDisplaySettings(): all
+# fourteen model-to-widget appliers, the six 3D widget-to-model signal
+# connections, and the eight non-3D fields' explicit push at every widget
+# write site (named setters, setDbmRange(), loadSettings(), the dBm-strip
+# and divider mouse drags). Also pins echo termination (a QSignalSpy on
+# the model's refLevelChanged sees exactly one emission per real change
+# from either direction, and zero on a no-op re-apply), that loadSettings()
+# never drives the widget's own apply counter, that the model's widened
+# Dyn Range clamp (10..200) never narrows a value the widget itself
+# accepts, and that the pre-existing 3D Floor widget<->PanadapterModel
+# bridge still fires exactly once when driven through the model.
+# NereusSDR-original: see tst_display_settings_model.cpp's own comment
+# below for why there is no upstream source to cite.
+nereus_add_test(tst_display_settings_binding)
+
+# ── 3D stacked-trace spectrum plan, Task 23: persistence moves onto the
+#    model ────────────────────────────────────────────────────────────────
+# GOLDEN TEST, committed alone first, green against the pre-refactor code:
+# pins the on-disk format of all fourteen per-pan display keys byte for
+# byte (exact stored strings, not just getter round trips) before
+# SpectrumWidget::loadSettings()/saveSettings() stop reading and writing
+# them directly and start routing through DisplaySettingsModel::load()/
+# save() instead. Also pins pan-0-fallback inheritance for an untouched
+# pan 2, that pan 2's own save writes only the "_2" suffixed keys and
+# leaves pan 0's untouched, and that loadSettings() -- seeded with
+# genuinely non-default values, not an empty AppSettings -- neither
+# schedules a save nor drives the widget's own apply counter
+# (displaySettingsApplyCountForTest() stays 0) while still leaving the
+# model holding the loaded values. NereusSDR-original: this is a
+# NereusSDR persistence-scheme refactor with no upstream AetherSDR or
+# Thetis counterpart (see DisplaySettingsModel.h's file header), so
+# there is no upstream source to cite.
+nereus_add_test(tst_display_settings_golden)
+
+# ── 3D stacked-trace spectrum plan, Task 17: DisplaySettingsModel ────────
+# Pins the NereusSDR-original model that replaces point-to-point
+# `m_updatingFromModel`-style sync between the right-click SpectrumOverlayMenu
+# popup and Setup -> Display: a QObject owning all fourteen display values,
+# one setter + one changed signal each, save()/load() round trip. Round trip
+# uses two DISTINCT instances so a load() that silently does nothing cannot
+# pass; booleans are asserted as the raw "True"/"False" strings, not through
+# the bool getter; every changed signal is proven to fire exactly once on a
+# real change and exactly zero times on a no-op (including a value that
+# CLAMPS to the current one); clamping is proven at both ends of every
+# ranged control; and 3D Floor is proven untouched by load()/save() (no
+# AppSettings key written under any name -- its persistence moved to
+# PanadapterModel per band in Task 18) while the other thirteen are
+# proven pan-scoped (SpectrumWidget's own settingsKey(base, panIndex)
+# convention, including the pan-0-fallback-inheritance rule from
+# tst_pan_display_settings_inherit.cpp). NereusSDR-original: neither
+# Thetis nor AetherSDR has a consolidating display-settings model to port
+# (see the class-header comment for why), so there is no upstream source
+# to cite.
+nereus_add_test(tst_display_settings_model)
+
+# R-R3-32 / R-R3-49 (remote-window parity Task 6): the radio link's datagram
+# counters (UDP packets seen, packet loss, RFC 3550 jitter, packet gap), as a
+# unit and from fake radios on both protocols.
+nereus_add_test(tst_radio_link_stats fakes/P1FakeRadio.cpp fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_radio_link_stats PRIVATE NEREUS_BUILD_TESTS)
+
+# RADE threads lane (2026-09-30): one Protocol 2 socket drain's I/Q reaches
+# the DSP worker as one post per stream, with the same samples in order.
+nereus_add_test(tst_p2_iq_drain_batching fakes/P2FakeRadio.cpp)
+target_compile_definitions(tst_p2_iq_drain_batching PRIVATE NEREUS_BUILD_TESTS)
+
+# R-R3-46 / R-R3-49 / R-R3-32 (remote-window parity Task 6): Setup > PA,
+# Radio Status's PA card and the HW meters in a remote window; the PA keys
+# taken by the Core off the air and applied at once; the Core's TX inhibit
+# mirrored. Loopback only, no RF, no audio device.
+nereus_add_test(tst_remote_pa_pages
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_remote_pa_pages PRIVATE NEREUS_BUILD_TESTS)
+
+# R-R3-49 / R-R3-32 / R-IOS-13 (remote-window parity Task 33): the CFC bar
+# chart and PA Values' transmit readings in a remote window
+# (txReadingsVersion 1), the remote window's transmit bars, meters and
+# S-meter from the Core, and Max Bin measured from the slice's own pan.
+# Loopback and a test TxChannel only, no RF, no audio device.
+nereus_add_test(tst_remote_tx_readings
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_remote_tx_readings PRIVATE NEREUS_BUILD_TESTS)
+
+# R-R3-49 (remote-window parity Task 7): PureSignal arming from a remote
+# window: a Core at transmitSettingsVersion 7 takes Single Cal, Automatic,
+# Apply current correction, Restore and the PureSignal settings off the air
+# and refuses them on the air; the two-tone test stays with remote transmit;
+# PsForm, the PureSignal applet, PS-A and the container follow. Loopback
+# only, a test TxChannel, no RF, no audio device; nothing keys.
+nereus_add_test(tst_remote_puresignal_arming
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_remote_puresignal_arming PRIVATE NEREUS_BUILD_TESTS)
+# R-R3-46 / R-R3-49 (remote-window parity Task 13): Hardware Config's OC
+# transmit pins (off the air), OC pin actions and transmit calibration (on
+# and off the air, as in Thetis) and User Dig Out from a remote window, the
+# OC byte the Core's P1 codec composes, and the hidden Alex-1 TX filter
+# options and HL2 TX timings. Loopback only, a test TxChannel, no RF, no
+# audio device; nothing keys.
+nereus_add_test(tst_remote_oc_cal
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_remote_oc_cal PRIVATE NEREUS_BUILD_TESTS)
+# R-R3-46 / R-R3-49 (remote-window parity Task 14): HL2 Options' I2C tool
+# and Pin Control through the Core (a fake I/O board answers or does not),
+# refused on the air; the Alex-1 tab's three transmit high-pass switches
+# from a remote window on and off the air. Loopback only, a test TxChannel,
+# no RF, no audio device; nothing keys.
+nereus_add_test(tst_remote_hl2_io
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_remote_hl2_io PRIVATE NEREUS_BUILD_TESTS)
+
+# iPhone app plan Task 29 (R-IOS-16, R-IOS-08; the link document, section
+# 21.2): a session moves to another connection make-before-break, beneath
+# the session, with the path.switch barrier, no sign-in and no snapshot; a
+# bad or spent ticket ends only the new connection; nothing moves while the
+# Core is on the air. In-process links only.
+nereus_add_test(tst_session_transport_switch
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# iPhone app plan Task 29 (R-IOS-16; the remote media control document,
+# "Replacing the media connection"): media moves to a new peer with no gap
+# and no repeat: the Core sends on both peers across the overlap and hands
+# over, the window merges the two paths (DualPathAudio), and end to end
+# over the real DTLS/SRTP session. The end-to-end case measures real-time
+# audio, so the test is REALTIME.
+nereus_add_test(tst_media_replace fakes/LoopbackTransport.cpp REALTIME)
+# R-R3-49: a wait on the window's media connection allows the window's own
+# bounds (RemoteMediaController::kMediaDescriptionDeadlineMs +
+# kMediaConnectDeadlineMs, 125.5 s; RemoteAudioSessionHarness::
+# kMediaConnectionWaitMs), so one that stalls reports its stage before
+# ctest ends the binary. The default 120 s would end it first, silently.
+# tst_remote_media_controller already runs under 300 s.
+foreach(_media_wait_test tst_remote_audio_session tst_media_replace
+        tst_remote_telemetry tst_remote_connection_controls)
+    if(TEST ${_media_wait_test})
+        set_tests_properties(${_media_wait_test} PROPERTIES TIMEOUT 300)
+    endif()
+endforeach()
+# iPhone app plan Task 29 (R-IOS-16, R-IOS-08; the link document, section
+# 21.1): the path race. Rungs of its own; then a window and a Core on this
+# computer with the remote access service (the real Python service and the
+# fake STUN/TURN server, loopback only): the direct path wins when open,
+# the service's when not, the session moves to the address once it opens,
+# the relay a Core turned off is not raced, and an older Core is told in
+# plain words.
+nereus_add_test(tst_path_racer fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+target_compile_definitions(tst_path_racer PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
+# 22 s at load 10 to 14 (2026-09-30), on the Python NEREUS_TEST_PYTHON
+# names, but it runs real sessions like the link conformance entries, which
+# took 3 to 4 times longer on the Linux CI runner than here. It has no
+# passing CI time yet: on 01d797e56 it failed at 3.23 s on service.start()
+# (the helper's Python lacked its packages, since fixed). It keeps the
+# 400 s override it had.
+if(TEST tst_path_racer)
+    set_tests_properties(tst_path_racer PROPERTIES TIMEOUT 400)
+endif()
+# iPhone app plan Task 29 step 2b (R-IOS-16, R-IOS-08; the rendezvous
+# document, section 12.8): the Core's relay-leg runner over the relay
+# fixtures in rendezvous/conformance/v1/relay/, and the leg's own rules.
+# Loopback only.
+nereus_add_test(tst_relay_leg EXTRA_LABELS session)
+target_compile_definitions(tst_relay_leg PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# A whole session over the web relay on this computer: the local
+# rendezvous service minting grants, a stand-in relay pairing the legs
+# (rendezvous section 12), the Core and a window. Loopback only.
+nereus_add_test(tst_relay_session fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+target_compile_definitions(tst_relay_session PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
+# 5 s at load 10 to 14 (2026-09-30); the default 120 s holds (INFRA-I3:
+# the 400 s override is gone).
+# Media inside a direct WebSocket session (the media tunnel): real Core,
+# real window, real DTLS/SRTP over an in-process link. Plays real-time
+# audio, so REALTIME.
+nereus_add_test(tst_media_tunnel fakes/LoopbackTransport.cpp REALTIME EXTRA_LABELS session)
+# R-R3-49: its direct-pair and tunnel-pair waits each allow the product's
+# own ICE bound (IceConfiguration::kConnectDeadlineMs, 63 s), so one that
+# stalls reports its stage before ctest ends the binary. Two such waits
+# pass the default 120 s, which would end it first, silently.
+if(TEST tst_media_tunnel)
+    set_tests_properties(tst_media_tunnel PROPERTIES TIMEOUT 300)
+endif()
+
+# ── R-R3-49: the audio thread reads a published view of the slices ───────────
+# rxBlockReady used to walk RadioModel's slice list on the DSP thread while
+# the main thread removed a slice from it and deleted the SliceModel. The
+# stress case adds and removes slices while a feeder thread delivers blocks
+# for every id; run it under the ThreadSanitizer build to see a race.
+nereus_add_test(tst_slice_audio_view_race)
+target_compile_definitions(tst_slice_audio_view_race PRIVATE NEREUS_BUILD_TESTS)
+
+# Task 47: packaged station discovery and injected OS-owned startup operations.
+nereus_add_test(tst_station_binary_locator CORE_ONLY)
+target_compile_definitions(tst_station_binary_locator PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_station_service_manager)
+# Desktop Remote Access runtime; temporary profile and logical local model only.
+nereus_add_test(tst_gui_desktop_station_runtime EXTRA_LABELS gui)
+
+# ── 3D stacked-trace spectrum plan, Task 20: right-click popup binding ───
+# Pins the popup-controls migration onto DisplaySettingsModel: all thirteen
+# SpectrumOverlayMenu change signals that have a model field connect
+# straight to the matching model setter (never to a SpectrumWidget setter
+# or a lambda touching a widget member); setValues()/setDssValues() seed
+# the popup from the model's own getters, proven by a model-driven change
+# made before the right-click; a new live-refresh path re-seeds the popup
+# from the model while it stays open, without emitting any of the popup's
+# own change signals (QSignalSpy count 0), so a popup-driven change cannot
+# bounce back out through its own controls; a popup-driven change is
+# proven to reach both the model and, through Task 18's existing binding,
+# the widget; and setDssRowSpanSupported()'s push on open (unrelated to
+# the model -- it is derived from the widget's DDC width) is unchanged.
+# NereusSDR-original: neither Thetis nor AetherSDR routes its right-click
+# display menu through a consolidating settings model, so there is no
+# upstream source to cite.
+nereus_add_test(tst_display_popup_binding)
+
+# ── 3D stacked-trace spectrum plan, Task 21: Setup -> Display binding ────
+# Pins the Setup-dialog migration onto DisplaySettingsModel: Display3DSetupPage's
+# six 3D controls and Reset button, WaterfallDefaultsPage's Colour Scheme, and
+# SpectrumDefaultsPage's Fill Alpha and Fill trace all connect straight to the
+# model's setters and read the model's getters on load, replacing the old
+# direct-to-SpectrumWidget wiring (and, on Display3DSetupPage, the
+# m_updatingFromModel flag it used before this task). A model-driven change on
+# each of the six 3D fields is proven to land on the page's own widget without
+# the reflected control re-emitting its own change signal (each field checked
+# in its own scope, per the batching trap Task 20's review caught); a
+# page-driven change is proven to reach both the model and, through Task 18's
+# existing binding, the live SpectrumWidget getter; and the Reset button is
+# proven to write all six ship defaults onto the model. WaterfallDefaultsPage
+# and SpectrumDefaultsPage are constructed the fallback way (RadioModel,
+# SpectrumWidget, radioModel.setSpectrumWidget(&w), then the page) since no
+# existing test builds either directly.
+# NereusSDR-original: neither Thetis nor AetherSDR routes its Setup-equivalent
+# dialog through a consolidating display-settings model, so there is no
+# upstream source to cite.
+nereus_add_test(tst_display_setup_binding)
+
+# ── 3D stacked-trace spectrum plan, Task 22: DisplayApplet ───────────────
+# Pins the left-panel display-controls applet: RadioModel::
+# spectrumWidgetChanged fires exactly once for a same-widget re-set;
+# every one of the fifteen DisplaySettingsModel fields is wired both
+# ways (model -> control reflected under QSignalBlocker with zero echo,
+# proven one field per scope per the batching trap Task 20's review
+# caught; control -> model reaches the bound model's setter); the applet
+# follows RadioModel::spectrumWidget() and rebinds cleanly (a control
+# moved after a rebind changes the NEW widget's model, never the old
+# one); Reset 3D writes the seven ship defaults; three sections in order
+# (Waterfall, Spectrum, 3D VIEW) with two dividers between them.
+# NereusSDR-original: neither Thetis nor AetherSDR has a left-panel
+# applet bound to a consolidating display-settings model, so there is no
+# upstream source to cite.
+nereus_add_test(tst_display_applet)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
@@ -6201,7 +9784,3 @@ if(_label_names)
     endforeach()
     message(STATUS "NereusSDR: per-label test targets: ${_label_names}")
 endif()
-
-# Complete CFC profiles and production model-to-audio snapshot routing.
-nereus_add_test(tst_cfc_profile)
-nereus_add_test(tst_radio_model_cfc_profile_wiring)

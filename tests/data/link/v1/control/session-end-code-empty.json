@@ -1,0 +1,10 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "session.end",
+    "reason": "The Core is shutting down.",
+    "retryable": true,
+    "code": ""
+  },
+  "decodes": false
+}

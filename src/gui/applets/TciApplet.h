@@ -19,6 +19,10 @@
 //                level meters use placeholder values; real meter wiring
 //                + setup/show-clients navigation in Phase 23.
 //                AppSettings keys: TciSliceAGain, TciTxGain.
+//   2026-09-23 - R3 receiver audio plan, Task 4 (R-R3-42) by J.J. Boyd
+//                (KG4VCF): a notice line for what TCI refused or why a
+//                receiver's audio stopped. AI-assisted transformation via
+//                Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -26,6 +30,7 @@
 #ifdef HAVE_WEBSOCKETS
 
 #include "AppletWidget.h"
+#include <QPointer>
 
 class QLabel;
 class QPushButton;
@@ -38,6 +43,8 @@ namespace NereusSDR {
 
 class HGauge;
 class TciServer;
+class TciSwitch;
+class RadioModel;
 
 // TciApplet — operator-facing TCI status applet.
 //
@@ -64,6 +71,10 @@ public:
     QString appletTitle() const override { return QStringLiteral("TCI Server"); }
     void    syncFromModel() override;
 
+    // R-R3-42: the notice line, in plain words; empty while hidden.
+    QString noticeText() const;
+    void setStationContext(TciSwitch* control, RadioModel* model);
+
 signals:
     // Emitted when the user clicks the Setup button.
     // Phase 23 wires this to open Setup -> Network -> TCI Server.
@@ -89,6 +100,12 @@ private slots:
     void onTxGainChanged(int dB);
 
 private:
+    // Label and audio path only; the slots above add the save. The
+    // startup push uses these, so reading a saved value never writes it
+    // back (R3 Setup fix wave, R-R3-17 / R-R3-21).
+    void applySliceAGain(int dB);
+    void applyTxGain(int dB);
+
     void buildUI();
     void buildHeaderRow(QVBoxLayout* vbox);
     void buildSliceRow(QVBoxLayout* vbox);
@@ -101,8 +118,12 @@ private:
 
     // Update the status dot color + port label + client count labels.
     void updateStatusWidgets();
+    void updateCoreStatus();
 
     TciServer*   m_server{nullptr};
+    QPointer<TciSwitch> m_switch;
+    QPointer<RadioModel> m_model;
+    QLabel* m_coreStatus{nullptr};
     QTimer*      m_refreshTimer{nullptr};
 
     // ── Main content widgets (hidden when server is stopped) ─────────────────
@@ -123,6 +144,10 @@ private:
     HGauge*      m_txGauge{nullptr};
     QSlider*     m_txGain{nullptr};
     QLabel*      m_txGainLabel{nullptr};
+
+    // R-R3-42: the latest TciServer::operatorNotice, in plain words.
+    QLabel*      m_noticeLabel{nullptr};
+    void showNotice(const QString& reason);
 
     // Footer
     QLabel*      m_footerCount{nullptr};

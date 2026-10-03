@@ -94,7 +94,8 @@ MmioVariablePickerPopup::MmioVariablePickerPopup(const QUuid& initialGuid,
     , m_selectedGuid(initialGuid)
     , m_selectedVariable(initialVariable)
 {
-    setWindowTitle(QStringLiteral("Pick MMIO Variable"));
+    // R-R3-21 (operator wording, 2026-09-24).
+    setWindowTitle(QStringLiteral("Choose a value"));
     setMinimumSize(420, 420);
     setStyleSheet(QLatin1String(kPickerStyle));
 
@@ -103,21 +104,21 @@ MmioVariablePickerPopup::MmioVariablePickerPopup(const QUuid& initialGuid,
     root->setSpacing(6);
 
     auto* lbl = new QLabel(
-        QStringLiteral("Select an endpoint variable to bind this item to, "
-                       "or click Clear to unbind."),
+        QStringLiteral("Choose a value from one of your meter data sources for this "
+                       "item to show, or click Unlink from this meter to stop showing one."),
         this);
     lbl->setWordWrap(true);
     root->addWidget(lbl);
 
     m_tree = new QTreeWidget(this);
     m_tree->setColumnCount(2);
-    m_tree->setHeaderLabels({QStringLiteral("Variable"),
+    m_tree->setHeaderLabels({QStringLiteral("Name"),
                               QStringLiteral("Value")});
     m_tree->setAlternatingRowColors(true);
     root->addWidget(m_tree, 1);
 
     auto* btnRow = new QHBoxLayout();
-    m_btnClear = new QPushButton(QStringLiteral("Clear binding"), this);
+    m_btnClear = new QPushButton(QStringLiteral("Unlink from this meter"), this);
     btnRow->addWidget(m_btnClear);
     btnRow->addStretch();
     m_btnCancel = new QPushButton(QStringLiteral("Cancel"), this);

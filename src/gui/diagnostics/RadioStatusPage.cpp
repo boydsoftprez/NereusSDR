@@ -15,6 +15,19 @@
 //   2026-04-20 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-09-25 - R-R3-32 / R-R3-46 (parity Task 6): PA Temp, PA Current
+//                and PA Voltage (set at last) from RadioModel::paReadings(),
+//                the Core's in a remote window and said so; unavailable,
+//                never 0, when absent. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-09-26 - R-R3-32 (remote-window parity Task 14): the Connection
+//                Quality figures from RadioModel::hl2LinkFigures(), the
+//                Core's HL2 link in a remote window and said so;
+//                unavailable, never 0, when absent. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - R-R3-49 / R-IOS-18: Setup description version 15 ids on
+//                the readouts. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 #include "RadioStatusPage.h"
@@ -23,6 +36,7 @@
 #include "core/PaTempUnit.h"
 #include "core/RadioStatus.h"
 #include "core/SettingsHygiene.h"
+#include "core/session/IStationLink.h"
 #include "core/HermesLiteBandwidthMonitor.h"
 #include "core/PttSource.h"
 #include "gui/StyleConstants.h"
@@ -174,23 +188,34 @@ RadioStatusPage::RadioStatusPage(RadioModel* model, QWidget* parent)
     scroll->setWidget(cardsContainer);
     outer->addWidget(scroll);
 
+    // Setup description version 15: the readouts' ids.
+    const std::pair<QLabel*, const char*> readouts[] = {
+        {m_radioLabel, "radio"}, {m_uptimeLabel, "uptime"}, {m_firmwareLabel, "firmware"},
+        {m_modeLabel, "mode"}, {m_paTemperatureLabel, "paTemperature"},
+        {m_paCurrentLabel, "paCurrent"}, {m_paVoltageLabel, "paVoltage"},
+        {m_forwardLabel, "forward"}, {m_reflectedLabel, "reflected"}, {m_swrLabel, "swr"},
+        {m_bwEp6Label, "ep6"}, {m_bwEp2Label, "ep2"}, {m_bwThrottleLabel, "throttle"},
+        {m_bwSeqGapLabel, "sequenceGaps"}};
+    for (const auto& [label, id] : readouts) {
+        label->setProperty("nereusSetupId",
+                           QStringLiteral("diagnostics.radioStatus.") + QLatin1String(id));
+    }
+
     // ── Wire signals if model present ─────────────────────────────────────
     if (m_model) {
         RadioStatus& rs = m_model->radioStatus();
-        connect(&rs, &RadioStatus::paTemperatureChanged,
-                this, &RadioStatusPage::onPaTemperatureChanged);
+        // R-R3-32 / R-R3-46 (parity Task 6): PA temperature, current and
+        // voltage come from the one PA reading source (the Core's in a
+        // remote window).
+        connect(m_model, &RadioModel::paReadingsChanged,
+                this, &RadioStatusPage::refreshPaReadings);
         // Live re-format on °C / °F toggle. The progress bar stays in
         // °C; only the text label converts.
         connect(&PaTempUnitNotifier::instance(),
                 &PaTempUnitNotifier::unitChanged, this,
                 [this](PaTempUnit /*unit*/) {
-            if (m_paTemperatureLabel) {
-                m_paTemperatureLabel->setText(
-                    PaTempUnitNotifier::format(m_paTempLastCelsius));
-            }
+            refreshPaReadings();
         });
-        connect(&rs, &RadioStatus::paCurrentChanged,
-                this, &RadioStatusPage::onPaCurrentChanged);
         connect(&rs, &RadioStatus::powerChanged,
                 this, &RadioStatusPage::onPowerChanged);
         connect(&rs, &RadioStatus::pttChanged,
@@ -203,11 +228,16 @@ RadioStatusPage::RadioStatusPage(RadioModel* model, QWidget* parent)
         // Populate initial state
         onIssuesChanged();
         refreshPttPills();
+        refreshPaReadings();
     }
 
     // ── Uptime timer ──────────────────────────────────────────────────────
-    m_connectClock.start();
     connect(&m_uptimeTimer, &QTimer::timeout, this, &RadioStatusPage::onUptimeTick);
+    if (m_model) {
+        connect(m_model, &RadioModel::connectionStateChanged,
+                this, &RadioStatusPage::onUptimeTick);
+    }
+    onUptimeTick();
     m_uptimeTimer.start(kUptimeIntervalMs);
 
     // ── BW poll timer ─────────────────────────────────────────────────────
@@ -238,7 +268,7 @@ void RadioStatusPage::buildStatusBar(QFrame* bar)
         hdr->setStyleSheet(QStringLiteral("font-size: 9px; color: %1;")
                                .arg(QLatin1String(Style::kTextTertiary)));
         v->addWidget(hdr);
-        m_radioLabel = makeCol(QStringLiteral("—"));
+        m_radioLabel = makeCol(QStringLiteral("–"));
         v->addWidget(m_radioLabel);
         h->addLayout(v);
     }
@@ -266,7 +296,7 @@ void RadioStatusPage::buildStatusBar(QFrame* bar)
         hdr->setStyleSheet(QStringLiteral("font-size: 9px; color: %1;")
                                .arg(QLatin1String(Style::kTextTertiary)));
         v->addWidget(hdr);
-        m_firmwareLabel = makeCol(QStringLiteral("—"));
+        m_firmwareLabel = makeCol(QStringLiteral("–"));
         v->addWidget(m_firmwareLabel);
         h->addLayout(v);
     }
@@ -291,9 +321,9 @@ void RadioStatusPage::buildStatusBar(QFrame* bar)
         if (!m_model->name().isEmpty()) {
             radioStr = m_model->name();
         }
-        m_radioLabel->setText(radioStr.isEmpty() ? QStringLiteral("—") : radioStr);
+        m_radioLabel->setText(radioStr.isEmpty() ? QStringLiteral("–") : radioStr);
         m_firmwareLabel->setText(m_model->version().isEmpty()
-                                     ? QStringLiteral("—") : m_model->version());
+                                     ? QStringLiteral("–") : m_model->version());
     }
 }
 
@@ -310,6 +340,7 @@ void RadioStatusPage::buildPaStatusCard(QFrame* card)
         "font-size: 10px; font-weight: bold; color: %1; border: none;"
     ).arg(QLatin1String(Style::kAccent)));
     v->addWidget(title);
+    m_paTitleLabel = title;
 
     // ── Temperature row ───────────────────────────────────────────────────
     {
@@ -369,7 +400,7 @@ void RadioStatusPage::buildPaStatusCard(QFrame* card)
         row->addStretch();
         // PA voltage is not a separately-exposed status field in Thetis
         // (see RadioStatus.h header comment re: source-first deviation).
-        m_paVoltageLabel = new QLabel(QStringLiteral("—"), card);
+        m_paVoltageLabel = new QLabel(QStringLiteral("–"), card);
         m_paVoltageLabel->setStyleSheet(QStringLiteral(
             "font-size: 10px; font-weight: bold; color: %1; border: none;"
         ).arg(QLatin1String(Style::kTextInactive)));
@@ -402,7 +433,7 @@ void RadioStatusPage::buildPowerCard(QFrame* card)
                                .arg(QLatin1String(Style::kTextSecondary)));
         row->addWidget(lbl);
         row->addStretch();
-        m_forwardLabel = new QLabel(QStringLiteral("— W"), card);
+        m_forwardLabel = new QLabel(QStringLiteral("– W"), card);
         m_forwardLabel->setStyleSheet(QStringLiteral(
             "font-size: 10px; font-weight: bold; color: %1; border: none;"
         ).arg(QLatin1String(Style::kTextPrimary)));
@@ -426,7 +457,7 @@ void RadioStatusPage::buildPowerCard(QFrame* card)
                                .arg(QLatin1String(Style::kTextSecondary)));
         row->addWidget(lbl);
         row->addStretch();
-        m_reflectedLabel = new QLabel(QStringLiteral("— W"), card);
+        m_reflectedLabel = new QLabel(QStringLiteral("– W"), card);
         m_reflectedLabel->setStyleSheet(QStringLiteral(
             "font-size: 10px; font-weight: bold; color: %1; border: none;"
         ).arg(QLatin1String(Style::kTextPrimary)));
@@ -538,6 +569,7 @@ void RadioStatusPage::buildConnectionCard(QFrame* card)
     v->setContentsMargins(8, 6, 8, 6);
 
     auto* title = new QLabel(QStringLiteral("Connection Quality"), card);
+    m_connTitleLabel = title;
     title->setStyleSheet(QStringLiteral(
         "font-size: 10px; font-weight: bold; color: %1; border: none;"
     ).arg(QLatin1String(Style::kAccent)));
@@ -550,7 +582,7 @@ void RadioStatusPage::buildConnectionCard(QFrame* card)
                                .arg(QLatin1String(Style::kTextSecondary)));
         row->addWidget(lbl);
         row->addStretch();
-        out = new QLabel(QStringLiteral("—"), card);
+        out = new QLabel(QStringLiteral("–"), card);
         out->setStyleSheet(QStringLiteral(
             "font-size: 10px; font-weight: bold; color: %1; border: none;"
         ).arg(QLatin1String(Style::kTextPrimary)));
@@ -609,8 +641,8 @@ void RadioStatusPage::buildHygieneCard(QFrame* card)
     auto* btnRow = new QHBoxLayout;
     btnRow->setSpacing(4);
 
-    m_resetBtn = new QPushButton(QStringLiteral("Reset to defaults"), card);
-    m_resetBtn->setStyleSheet(QStringLiteral(
+    m_repairBtn = new QPushButton(QStringLiteral("Repair invalid settings"), card);
+    m_repairBtn->setStyleSheet(QStringLiteral(
         "QPushButton { background: %1; border: 1px solid %2; border-radius: 3px;"
         " color: %3; font-size: 9px; padding: 2px 6px; }"
         "QPushButton:hover { background: %4; }"
@@ -618,7 +650,7 @@ void RadioStatusPage::buildHygieneCard(QFrame* card)
           QLatin1String(Style::kAmberBorder),
           QLatin1String(Style::kAmberText),
           QLatin1String(Style::kButtonHover)));
-    btnRow->addWidget(m_resetBtn);
+    btnRow->addWidget(m_repairBtn);
 
     m_forgetBtn = new QPushButton(QStringLiteral("Forget this radio"), card);
     m_forgetBtn->setStyleSheet(QStringLiteral(
@@ -637,24 +669,45 @@ void RadioStatusPage::buildHygieneCard(QFrame* card)
 
     // Wire buttons
     if (m_model) {
-        connect(m_resetBtn, &QPushButton::clicked, this, [this]() {
+        connect(m_repairBtn, &QPushButton::clicked, this, [this]() {
+            const QString mac = m_model->currentRadioMac();
             auto reply = QMessageBox::warning(this,
-                QStringLiteral("Reset settings"),
-                QStringLiteral("Reset all settings for this radio to safe defaults?"),
+                QStringLiteral("Repair settings"),
+                QStringLiteral("Repair the settings that are invalid for this radio? Values "
+                               "outside its range are brought back into range, and settings "
+                               "for hardware it does not have are removed."),
                 QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel);
             if (reply == QMessageBox::Ok) {
-                m_model->settingsHygiene().resetSettingsToDefaults(
-                    QString{}, m_model->boardCapabilities());
+                if (mac.isEmpty() || mac != m_model->currentRadioMac()) { return; }
+                QString reason;
+                if (m_model->stationOnAirRefusal(&reason)) { return; }
+                if (m_model->ownsLocalDsp()) {
+                    m_model->settingsHygiene().resetSettingsToDefaults(
+                        mac, m_model->boardCapabilities());
+                } else if (IStationLink* link = m_model->stationLink();
+                           link && link->settingsRepairAvailable()) {
+                    // G-38: the same repair, run on the Core.
+                    link->requestSettingsHygiene("station.repairSettings", mac);
+                }
             }
         });
 
         connect(m_forgetBtn, &QPushButton::clicked, this, [this]() {
+            const QString mac = m_model->currentRadioMac();
             auto reply = QMessageBox::warning(this,
                 QStringLiteral("Forget radio"),
                 QStringLiteral("Remove all saved settings for this radio? This cannot be undone."),
                 QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel);
             if (reply == QMessageBox::Ok) {
-                m_model->settingsHygiene().forgetRadio(QString{});
+                if (mac.isEmpty() || mac != m_model->currentRadioMac()) { return; }
+                QString reason;
+                if (m_model->stationOnAirRefusal(&reason)) { return; }
+                if (m_model->ownsLocalDsp()) {
+                    m_model->settingsHygiene().forgetRadio(mac);
+                } else if (IStationLink* link = m_model->stationLink();
+                           link && link->settingsHygieneAvailable()) {
+                    link->requestSettingsHygiene("station.forgetSettings", mac);
+                }
             }
         });
     }
@@ -692,6 +745,51 @@ void RadioStatusPage::onPaCurrentChanged(double amps)
     m_paCurrentBar->setStyleSheet(progressBarStyle(fill));
 }
 
+void RadioStatusPage::refreshPaReadings()
+{
+    if (!m_model || !m_paTemperatureLabel || !m_paCurrentLabel || !m_paVoltageLabel) { return; }
+    const RadioModel::PaReadings readings = m_model->paReadings();
+    const bool fromCore = m_model->paReadingsFromCore();
+    // R-R3-32: a remote window's readings are the Core's, and say so.
+    const QString source = fromCore ? tr("From the Core") : QString();
+    if (m_paTitleLabel) {
+        m_paTitleLabel->setText(fromCore ? tr("PA Status, from the Core") : tr("PA Status"));
+    }
+    const QString unavailable = tr("Unavailable");
+    if (readings.paTemperatureCelsius) {
+        onPaTemperatureChanged(*readings.paTemperatureCelsius);
+    } else {
+        m_paTemperatureLabel->setText(unavailable);
+        m_paTempBar->setValue(0);
+        m_paTempBar->setStyleSheet(progressBarStyle(Style::kGaugeNormal));
+    }
+    if (readings.paCurrentAmps) {
+        onPaCurrentChanged(*readings.paCurrentAmps);
+    } else {
+        m_paCurrentLabel->setText(unavailable);
+        m_paCurrentBar->setValue(0);
+        m_paCurrentBar->setStyleSheet(progressBarStyle(Style::kGaugeNormal));
+    }
+    // PA Voltage: the PA row's volts as the System tile shows them (the
+    // supply volts on the ANAN-G2E, the PA drain volts elsewhere).
+    const RadioModel::PaRowVolts row = m_model->paRowVolts();
+    m_paVoltageLabel->setText(row.volts ? QStringLiteral("%1 V").arg(*row.volts, 0, 'f', 1)
+                                        : unavailable);
+    m_paVoltageLabel->setStyleSheet(QStringLiteral(
+        "font-size: 10px; font-weight: bold; color: %1; border: none;"
+    ).arg(QLatin1String(row.volts ? Style::kTextPrimary : Style::kTextInactive)));
+    for (QLabel* label : {m_paTemperatureLabel, m_paCurrentLabel, m_paVoltageLabel}) {
+        label->setToolTip(source);
+    }
+}
+
+void RadioStatusPage::refreshPower()
+{
+    if (!m_model) { return; }
+    const RadioStatus& rs = m_model->radioStatus();
+    onPowerChanged(rs.forwardPowerWatts(), rs.reflectedPowerWatts(), rs.swrRatio());
+}
+
 void RadioStatusPage::onPowerChanged(double forward, double reflected, double swr)
 {
     if (!m_model) { return; }
@@ -702,8 +800,8 @@ void RadioStatusPage::onPowerChanged(double forward, double reflected, double sw
         m_reflectedLabel->setText(QStringLiteral("%1 W").arg(reflected, 0, 'f', 1));
         m_swrLabel->setText(QStringLiteral("%1:1").arg(swr, 0, 'f', 1));
     } else {
-        m_forwardLabel->setText(QStringLiteral("— W"));
-        m_reflectedLabel->setText(QStringLiteral("— W"));
+        m_forwardLabel->setText(QStringLiteral("– W"));
+        m_reflectedLabel->setText(QStringLiteral("– W"));
         m_swrLabel->setText(QStringLiteral("1.0:1"));
     }
 
@@ -725,6 +823,8 @@ void RadioStatusPage::onPttChanged()
 
     m_pttActiveLabel->setText(QStringLiteral("Active: %1").arg(pttSourceLabel(src)));
     m_modeLabel->setText(tx ? QStringLiteral("TX") : QStringLiteral("RX (idle)"));
+    // The power readouts show only while keyed, so they follow the key too.
+    refreshPower();
 
     // Refresh history list
     m_pttHistoryList->clear();
@@ -745,31 +845,41 @@ void RadioStatusPage::onIssuesChanged()
 
 void RadioStatusPage::onUptimeTick()
 {
-    qint64 elapsedMs = m_connectClock.elapsed();
-    int totalSec = static_cast<int>(elapsedMs / 1000);
-    int min = totalSec / 60;
-    int sec = totalSec % 60;
-    m_uptimeLabel->setText(QStringLiteral("%1:%2")
-        .arg(min, 2, 10, QLatin1Char('0'))
-        .arg(sec, 2, 10, QLatin1Char('0')));
+    m_uptimeLabel->setText(m_model ? m_model->connectionUptimeText() : QStringLiteral("–"));
 }
 
 void RadioStatusPage::onBwPollTick()
 {
     if (!m_model) { return; }
 
-    const HermesLiteBandwidthMonitor& bw = m_model->bwMonitor();
-
-    double ep6Bps = bw.ep6IngressBytesPerSec();
-    double ep2Bps = bw.ep2EgressBytesPerSec();
-    bool throttled = bw.isThrottled();
-    int throttleEvents = bw.throttleEventCount();
-
-    m_bwEp6Label->setText(QStringLiteral("%1 KB/s").arg(ep6Bps / 1024.0, 0, 'f', 1));
-    m_bwEp2Label->setText(QStringLiteral("%1 KB/s").arg(ep2Bps / 1024.0, 0, 'f', 1));
-    m_bwThrottleLabel->setText(QStringLiteral("%1%2")
-        .arg(throttleEvents)
-        .arg(throttled ? QStringLiteral(" (active)") : QString{}));
+    // R-R3-32 (parity Task 14): this window's HL2 link, or in a remote
+    // window the Core's; one the Core has not sent shows as unavailable.
+    const RadioModel::Hl2LinkFigures figures = m_model->hl2LinkFigures();
+    const bool fromCore = m_model->hl2LinkFiguresFromCore();
+    const QString unavailable = tr("Unavailable");
+    const QString source = fromCore ? tr("From the Core") : QString();
+    if (m_connTitleLabel) {
+        m_connTitleLabel->setText(fromCore ? tr("Connection Quality, from the Core")
+                                           : tr("Connection Quality"));
+    }
+    const auto kilobytes = [&unavailable](std::optional<double> bps) {
+        return bps ? QStringLiteral("%1 KB/s").arg(*bps / 1024.0, 0, 'f', 1) : unavailable;
+    };
+    m_bwEp6Label->setText(kilobytes(figures.rxBytesPerSecond));
+    m_bwEp2Label->setText(kilobytes(figures.txBytesPerSecond));
+    const bool throttled = figures.throttled.value_or(false);
+    const QString active = throttled ? QStringLiteral(" (active)") : QString{};
+    if (figures.throttleEvents) {
+        m_bwThrottleLabel->setText(QStringLiteral("%1%2").arg(*figures.throttleEvents).arg(active));
+    } else if (figures.throttled) {
+        // The Core sends whether its link is throttled, not the count.
+        m_bwThrottleLabel->setText(throttled ? tr("Active") : tr("None active"));
+    } else {
+        m_bwThrottleLabel->setText(unavailable);
+    }
+    for (QLabel* label : {m_bwEp6Label, m_bwEp2Label, m_bwThrottleLabel, m_bwSeqGapLabel}) {
+        label->setToolTip(source);
+    }
 
     if (throttled) {
         m_bwThrottleLabel->setStyleSheet(QStringLiteral(
@@ -781,7 +891,10 @@ void RadioStatusPage::onBwPollTick()
         ).arg(QLatin1String(Style::kTextPrimary)));
     }
 
-    m_bwSeqGapLabel->setText(QStringLiteral("—"));  // Phase 3L will fill this in
+    // R-R3-21: the EP6 sequence error count P1RadioConnection keeps (the
+    // Connection Quality page shows the same number).
+    m_bwSeqGapLabel->setText(figures.sequenceGaps ? QString::number(*figures.sequenceGaps)
+                                                  : unavailable);
 }
 
 void RadioStatusPage::refreshPttPills()
@@ -815,10 +928,15 @@ void RadioStatusPage::refreshHygieneRows()
     if (!m_model) { return; }
 
     m_issueList->clear();
+    const QString unavailable = m_model->settingsHygiene().remoteUnavailableReason();
+    if (!unavailable.isEmpty()) {
+        m_issueList->addItem(unavailable);
+        return;
+    }
     const QVector<SettingsHygiene::Issue> issues = m_model->settingsHygiene().issues();
 
     if (issues.isEmpty()) {
-        auto* item = new QListWidgetItem(QStringLiteral("No issues found — settings are valid."));
+        auto* item = new QListWidgetItem(QStringLiteral("No issues found. Settings are valid."));
         item->setForeground(QColor(QLatin1String(Style::kGreenText)));
         m_issueList->addItem(item);
         return;
@@ -826,7 +944,7 @@ void RadioStatusPage::refreshHygieneRows()
 
     for (const auto& issue : issues) {
         auto* item = new QListWidgetItem(
-            QStringLiteral("[%1] %2 — %3")
+            QStringLiteral("[%1] %2: %3")
                 .arg(issue.severity == SettingsHygiene::Severity::Critical ? QStringLiteral("CRIT")
                      : issue.severity == SettingsHygiene::Severity::Warning ? QStringLiteral("WARN")
                      : QStringLiteral("INFO"),
@@ -848,6 +966,24 @@ void RadioStatusPage::refreshHygieneRows()
         item->setForeground(col);
         m_issueList->addItem(item);
     }
+}
+
+void RadioStatusPage::setStationSettingsAvailable(bool available, const QString& reason)
+{
+    const IStationLink* link = m_model ? m_model->stationLink() : nullptr;
+    const bool hygiene = !m_model || m_model->ownsLocalDsp()
+        || (link && link->settingsHygieneAvailable());
+    const bool paired = !m_model || m_model->ownsLocalDsp()
+        || (link && link->signedInWithDeviceKey());
+    gateStationControls({m_forgetBtn}, available && hygiene && paired,
+        !hygiene ? IStationLink::settingsHygieneUnavailableReason() : paired ? reason
+            : QStringLiteral("Pair this computer with the Core to forget its radio settings."));
+    // G-38: Repair runs on the Core from a remote window, with Forget's gates.
+    const bool repair = !m_model || m_model->ownsLocalDsp()
+        || (link && link->settingsRepairAvailable());
+    gateStationControls({m_repairBtn}, available && repair && paired,
+        !repair ? IStationLink::settingsRepairUnavailableReason() : paired ? reason
+            : QStringLiteral("Pair this computer with the Core to repair its radio settings."));
 }
 
 } // namespace NereusSDR

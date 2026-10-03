@@ -1,0 +1,11 @@
+{
+    "runs": ["station"],
+    "stationSetup": {"radio": "static", "slices": 1, "priorFailedAuthentications": 5},
+    "steps": [
+        {"from": "station", "message": {"challenge": "$string", "features": {"deviceAuth": 1, "pairing": 1, "sessionHolder": 1}, "identity": {"certBinding": "$string", "publicKey": "$string"}, "major": 1, "majors": [1], "minor": 11, "peer": "nereusd", "settingsSchema": 0, "type": "hello"}},
+        {"from": "client", "role": "scripted", "message": {"type": "hello", "major": 1, "minor": 11, "settingsSchema": 0, "peer": "NereusSDR iPhone"}},
+        {"from": "client", "role": "scripted", "message": {"type": "auth.request", "token": "$ref:token"}},
+        {"from": "station", "message": {"accepted": false, "reason": "The Core is refusing pairing tokens for a while after too many wrong ones. Try again later.", "retryable": true, "type": "auth.result"}},
+        {"expectClosed": {"retryable": true}}
+    ]
+}

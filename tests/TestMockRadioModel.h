@@ -41,7 +41,7 @@
 // Phase 11: 44 accessors total — added 1 IQ-stream accessor pair:
 //           setIqSampleRate/iqSampleRate.
 // Phase 13: 55 accessors total — added 11 bespoke-_ex accessors:
-//           setRxEnable/rxEnable (per-slice bool, default true),
+//           setRxEnable/rxEnable (removed: rx_enable reads RX2 and MOX),
 //           setRxCtun/rxCtun (per-slice bool, default false),
 //           setTxProfile/txProfile (global string, default "Default"),
 //           txProfilesList (returns QStringList{"Default"}),
@@ -85,6 +85,10 @@ public:
         }
         return 0;
     }
+
+    // The frequency of the VFO that transmits (RadioModel::transmitVfoHz).
+    Q_INVOKABLE qint64 transmitVfoHz() const { return m_transmitVfoHz; }
+    void setTransmitVfoHzForTest(qint64 hz) { m_transmitVfoHz = hz; }
 
     // Set the DSP mode string for a given slice (e.g. "USB", "LSB", "CW").
     // Q_INVOKABLE: called via QMetaObject::invokeMethod from TciProtocol modulation handler.
@@ -448,20 +452,6 @@ public:
 
     // ── Phase 13: bespoke _ex command accessors ───────────────────────────────
 
-    // RX enable per slice (default true — rx0 is always enabled in Thetis).
-    // From Thetis TCIServer.cs:4413-4450 [v2.10.3.13] — handleRXEnable.
-    // rx_enable set: rx==0 always on; rx==1 sets RX2Enabled.
-    // rx_enable query: rx==0 → !MOX; rx==1 → RX2Enabled && !MOX.
-    // NereusSDR simplification: MOX-gating deferred to Phase 17; stored directly.
-    Q_INVOKABLE void setRxEnable(int slice, bool on)
-    {
-        if (slice >= 0 && slice < 2) { m_rxEnable[slice] = on; }
-    }
-    Q_INVOKABLE bool rxEnable(int slice) const
-    {
-        return (slice >= 0 && slice < 2) ? m_rxEnable[slice] : true;
-    }
-
     // CTUN (Center Tune) enable per slice.
     // From Thetis TCIServer.cs:4696-4710 [v2.10.3.13] — handleCTUN.
     // rx_ctun_ex set: 2-arg (rx, bool) — SetCTUN(rx+1, enable).
@@ -610,7 +600,6 @@ public:
         // Phase 11: IQ stream state resets.
         m_iqSampleRate = 192000;
         // Phase 13: bespoke _ex state resets.
-        m_rxEnable   = { true, true };  // rx0 always on per Thetis default
         m_rxCtun     = {};
         m_txProfile  = QStringLiteral("Default");
         m_calibration = {};  // all 5 doubles per slice reset to 0.0
@@ -624,6 +613,7 @@ public:
     }
 
 private:
+    qint64 m_transmitVfoHz{0};
     // 2 slices x 2 channels is sufficient for Phase 1; expand in later phases.
     std::array<std::array<qint64, 2>, 2> m_vfoHz{};
     std::array<QString, 2> m_mode{};
@@ -668,7 +658,6 @@ private:
     // Phase 11: IQ stream state.
     int     m_iqSampleRate{192000};
     // Phase 13: bespoke _ex state.
-    std::array<bool, 2>    m_rxEnable{true, true};   // default ON
     std::array<bool, 2>    m_rxCtun{};
     QString                m_txProfile{QStringLiteral("Default")};
     std::array<std::array<double, 5>, 2> m_calibration{};  // [slice][meter,display,xvtr,6m,txdisp]

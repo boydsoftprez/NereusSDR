@@ -1,0 +1,477 @@
+{
+  "version": 1,
+  "category": {
+    "id": "general",
+    "title": "General",
+    "where": "mixed",
+    "coverage": "partial"
+  },
+  "pages": [
+    {
+      "id": "general.startup",
+      "title": "Startup & Preferences",
+      "where": "mixed",
+      "sections": [
+        {
+          "title": "Startup",
+          "controls": [
+            {
+              "id": "general.startup.callsign",
+              "label": "Callsign",
+              "tooltip": "Your callsign, as the spot sources send it",
+              "kind": "text",
+              "binding": {
+                "setting": "User/Callsign"
+              },
+              "applies": "live"
+            },
+            {
+              "id": "general.startup.gridSquare",
+              "label": "Grid Square",
+              "tooltip": "Your Maidenhead grid square (4 or 6 characters)",
+              "kind": "text",
+              "binding": {
+                "setting": "User/GridSquare"
+              },
+              "applies": "live"
+            }
+          ]
+        }
+      ],
+      "coverage": "identityOnly"
+    },
+    {
+      "id": "general.options",
+      "title": "Options",
+      "where": "mixed",
+      "sections": [
+        {
+          "title": "Hardware Configuration",
+          "controls": [
+            {
+              "id": "general.options.region",
+              "label": "Region:",
+              "tooltip": "Select Region for your location",
+              "kind": "choice",
+              "binding": {
+                "setting": "BandPlanRegion"
+              },
+              "applies": "live",
+              "choices": [
+                "Australia",
+                "Europe",
+                "India",
+                "Italy",
+                "Israel",
+                "Japan",
+                "Spain",
+                "United Kingdom",
+                "United States",
+                "Norway",
+                "Denmark",
+                "Sweden",
+                "Latvia",
+                "Slovakia",
+                "Bulgaria",
+                "Greece",
+                "Hungary",
+                "Netherlands",
+                "France",
+                "Russia",
+                "IARU Region 1",
+                "IARU Region 2",
+                "IARU Region 3",
+                "Germany"
+              ],
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 9,
+                "offAir": true
+              }
+            },
+            {
+              "id": "general.options.extended",
+              "label": "Extended",
+              "tooltip": "Enable extended TX (out of band)",
+              "kind": "toggle",
+              "binding": {
+                "setting": "ExtendedTransmit"
+              },
+              "applies": "live",
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 12,
+                "offAir": true,
+                "transmit": true
+              }
+            },
+            {
+              "id": "general.options.rxOnly",
+              "label": "Receive Only",
+              "tooltip": "Check to disable transmit functionality.",
+              "kind": "toggle",
+              "binding": {
+                "setting": "RxOnly"
+              },
+              "applies": "live",
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              }
+            },
+            {
+              "id": "general.options.networkWatchdog",
+              "label": "Network Watchdog",
+              "tooltip": "How long NereusSDR waits for data from the radio before it treats the radio as lost. On: three seconds. Off: it keeps waiting. On a Hermes Lite 2, or a radio on the newer network link, the radio's own safety timer stays on either way.",
+              "kind": "toggle",
+              "binding": {
+                "setting": "NetworkWatchdogEnabled"
+              },
+              "applies": "live",
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              }
+            }
+          ]
+        },
+        {
+          "title": "Options",
+          "controls": [
+            {
+              "id": "general.options.preventDifferentBand",
+              "label": "Prevent TX'ing on a different band to the RX band",
+              "tooltip": "Refuse to transmit when the transmitting slice is not your active slice and is on a different band from it",
+              "kind": "toggle",
+              "binding": {
+                "setting": "PreventTxOnDifferentBandToRx"
+              },
+              "applies": "live",
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 14,
+                "offAir": true,
+                "transmit": true
+              }
+            },
+            {
+              "id": "general.options.hideFeedback",
+              "label": "Hide feedback level",
+              "tooltip": "When checked, the bottom-banner FB indicator shows \"Feedback\" text instead of the numeric level. Same as right-clicking the FB indicator.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "HideFeedbackLevel"
+              },
+              "applies": "live"
+            },
+            {
+              "id": "general.options.swapRedBlue",
+              "label": "Swap red and blue PS-A feedback colors",
+              "tooltip": "For users with red/blue color blindness or alternate display preferences. Same as left-clicking the FB indicator.",
+              "kind": "toggle",
+              "binding": {
+                "phone": "InvertRedBluePsa"
+              },
+              "applies": "live"
+            },
+            {
+              "id": "general.options.cpuMeterRate",
+              "label": "CPU meter rate:",
+              "tooltip": "Update rate for the CPU usage indicator in the title bar (1-30 Hz).",
+              "kind": "integer",
+              "binding": {
+                "phone": "GeneralCpuMeterUpdateRateHz"
+              },
+              "applies": "live",
+              "min": 1,
+              "max": 30,
+              "step": 1,
+              "unit": "Hz"
+            }
+          ]
+        },
+        {
+          "title": "Time Out Timers",
+          "controls": [
+            {
+              "id": "general.options.moxTimeoutEnabled",
+              "label": "MOX",
+              "tooltip": "Time out Mox after X seconds",
+              "kind": "toggle",
+              "binding": {
+                "setting": "MoxTimeOutEnabled"
+              },
+              "applies": "live",
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              }
+            },
+            {
+              "id": "general.options.moxTimeoutSeconds",
+              "label": "secs",
+              "tooltip": "Stop mox if it is enabled for this duration",
+              "kind": "integer",
+              "binding": {
+                "setting": "MoxTimeOutSeconds"
+              },
+              "applies": "live",
+              "min": 30,
+              "max": 1800,
+              "step": 1,
+              "unit": "s"
+            },
+            {
+              "id": "general.options.pingTimeoutEnabled",
+              "label": "Ping",
+              "tooltip": "If ping fails for X seconds, then stop mox.\nNote: use cmd line to check you can ping this IP.",
+              "kind": "toggle",
+              "binding": {
+                "setting": "PingTimeOutEnabled"
+              },
+              "applies": "live",
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              }
+            },
+            {
+              "id": "general.options.pingTimeoutSeconds",
+              "label": "secs",
+              "tooltip": "If unable to ping for this long, stop mox",
+              "kind": "integer",
+              "binding": {
+                "setting": "PingTimeOutSeconds"
+              },
+              "applies": "live",
+              "min": 30,
+              "max": 1800,
+              "step": 1,
+              "unit": "s"
+            },
+            {
+              "id": "general.options.pingTimeoutHost",
+              "label": "IP",
+              "tooltip": "Try to ping this IP",
+              "kind": "text",
+              "binding": {
+                "setting": "PingTimeOutHost"
+              },
+              "applies": "live"
+            },
+            {
+              "id": "general.options.remoteTimeoutEnabled",
+              "label": "Phone and iPad",
+              "tooltip": "Stop a transmission from a phone or iPad after this many seconds. MOX and Ping above apply to this radio's own keys and to computers.",
+              "kind": "toggle",
+              "binding": {
+                "setting": "RemoteMoxTimeOutEnabled"
+              },
+              "applies": "live",
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              }
+            },
+            {
+              "id": "general.options.remoteTimeoutSeconds",
+              "label": "secs",
+              "tooltip": "Stop a transmission from a phone or iPad if it lasts this long",
+              "kind": "integer",
+              "binding": {
+                "setting": "RemoteMoxTimeOutSeconds"
+              },
+              "applies": "live",
+              "min": 30,
+              "max": 1800,
+              "step": 1,
+              "unit": "s"
+            }
+          ]
+        },
+        {
+          "title": "Step Attenuator",
+          "controls": [
+            {
+              "id": "general.options.rx1StepAttEnable",
+              "label": "RX1 Enable",
+              "tooltip": "Enable the step attenuator.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "stepAtt",
+                  "name": "enabled"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "board": "attenuator.present"
+              }
+            },
+            {
+              "id": "general.options.rx1StepAtt",
+              "label": "RX1 Attenuation",
+              "tooltip": "",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "stepAtt",
+                  "name": "attenuationDb"
+                }
+              },
+              "rangeSource": "board.attenuator",
+              "applies": "live",
+              "gate": {
+                "board": "attenuator.present"
+              }
+            },
+            {
+              "id": "general.options.rx2StepAttEnable",
+              "label": "RX2 Enable",
+              "tooltip": "Enable the step attenuator.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "stepAtt",
+                  "name": "rx2StepAttEnabled"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "adcAttenuatorVersion",
+                "min": 1,
+                "board": "attenuator.secondAdc"
+              }
+            },
+            {
+              "id": "general.options.rx2StepAtt",
+              "label": "RX2 Attenuation",
+              "tooltip": "Attenuation for slices on the second receiver input (EXT1 or EXT2).",
+              "kind": "integer",
+              "binding": {
+                "property": {
+                  "object": "stepAtt",
+                  "name": "rx2AttenuationDb"
+                }
+              },
+              "rangeSource": "board.attenuator",
+              "applies": "live",
+              "gate": {
+                "capability": "adcAttenuatorVersion",
+                "min": 1,
+                "board": "attenuator.secondAdc"
+              }
+            }
+          ]
+        },
+        {
+          "title": "RX1 Auto Attenuate",
+          "controls": [
+            {
+              "id": "general.options.autoAttEnable",
+              "label": "Enable",
+              "tooltip": "Auto attenuate RX1 on ADC overload",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "stepAtt",
+                  "name": "autoAttEnabled"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "board": "attenuator.present"
+              }
+            },
+            {
+              "id": "general.options.autoAttMode",
+              "label": "Mode:",
+              "tooltip": "Classic: bump ATT on red overload, stack-based undo.\nAdaptive: 1 dB/tick attack, configurable hold/decay, per-band memory.",
+              "kind": "choice",
+              "binding": {
+                "property": {
+                  "object": "stepAtt",
+                  "name": "autoAttMode"
+                }
+              },
+              "applies": "live",
+              "choices": [
+                "Classic",
+                "Adaptive"
+              ],
+              "gate": {
+                "board": "attenuator.present"
+              }
+            },
+            {
+              "id": "general.options.autoAttUndo",
+              "label": "Undo",
+              "tooltip": "Undo the changes made after the hold period.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "stepAtt",
+                  "name": "autoAttUndo"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "board": "attenuator.present"
+              }
+            }
+          ]
+        },
+        {
+          "title": "RX2 Auto Attenuate",
+          "controls": [
+            {
+              "id": "general.options.rx2AutoAttEnable",
+              "label": "Enable",
+              "tooltip": "Auto attenuate RX2 on ADC overload",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "stepAtt",
+                  "name": "rx2AutoAttEnabled"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "adcAttenuatorVersion",
+                "min": 1,
+                "board": "attenuator.secondAdc"
+              }
+            },
+            {
+              "id": "general.options.rx2AutoAttUndo",
+              "label": "Undo",
+              "tooltip": "Undo the changes made after the hold period.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "stepAtt",
+                  "name": "rx2AutoAttUndo"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "adcAttenuatorVersion",
+                "min": 1,
+                "board": "attenuator.secondAdc"
+              }
+            }
+          ]
+        }
+      ],
+      "coverage": "partial"
+    }
+  ]
+}

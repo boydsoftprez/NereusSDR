@@ -111,6 +111,56 @@
 //                 Behaviour unchanged; pure visual. Authored by J.J. Boyd
 //                 (KG4VCF) with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-09-25 - R-R3-46 / R-R3-49 / R-R3-32 (remote-window parity
+//                 Task 6): PA Gain's editor and the Watt Meter's PA table
+//                 follow transmitSettingsVersion 6 in a remote window (the
+//                 auto-calibrate sweep keeps the transmit permission); PA
+//                 Values' PA current, temperature and supply volts come from
+//                 RadioModel::paReadings() (the Core's in a remote window),
+//                 unavailable when absent. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-27 - R-R3-49 / R-R3-32 (remote-window parity Task 33): PA
+//                 Values in a remote window shows the Core's forward,
+//                 reflected and SWR readings and its raw forward and
+//                 reflected readings (scaled here with the Core's radio
+//                 model, as the local page scales its own), with the same
+//                 peak and minimum tracking, and ADC overload from the
+//                 mirrored step attenuator; each says it is the Core's, and
+//                 a Core below txReadingsVersion 1 shows each unavailable
+//                 with the reason. The local page's two handlers became
+//                 applyPowerReadings and applyRawAdc, unchanged. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - R-R3-49 / R-IOS-18: PA Values' temperature, ADC overload
+//                 and Reset Peak/Min, and the Watt Meter's Show PA Values
+//                 page and Reset PA Values carry their Setup description
+//                 ids; Show PA Values page now shows or hides the PA Values
+//                 page, as Thetis's chkPAValues does (found bug: nothing read
+//                 it). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-09-29 - R-R3-49 / R-IOS-18: PA Gain's profiles for a remote client
+//                 (paProfileActionForStation; the page's ids, plain tooltips,
+//                 the adjust tooltip's stray %, and the Default profile found
+//                 by its real name after a delete). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - R-R3-49: PA Gain follows Thetis's on-the-air lock (found
+//                 bug: a local window could switch, create, copy, delete or
+//                 reset a profile, or change another band's values, while
+//                 the radio transmitted, and a profile switch reaches the
+//                 drive at its next recompute). While the Core is on the
+//                 air the profile controls and every band's row but the
+//                 transmitting band's are disabled, in a local and a remote
+//                 window. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-29 - R-R3-49 / R-IOS-27 (JJ's ruling): the transmitting band's
+//                 row opens on the air only while this window's device holds
+//                 transmit, with plain-words reasons; an adjust taken on the
+//                 air moves the drive to that step, as Thetis's
+//                 nudAdjustGain_ValueChanged does. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - PA on-air gate review: the open row follows the Core's
+//                 transmit band change, which holds while keyed, not the
+//                 slice's band. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -173,11 +223,15 @@
 #include "core/PaTelemetryScaling.h"
 #include "core/RadioConnection.h"
 #include "core/RadioStatus.h"
+#include "core/StepAttenuatorFacade.h"
+#include "core/session/IStationLink.h"
+#include "core/session/TransmitStateFacade.h"
 #include "gui/StyleConstants.h"
 #include "gui/setup/hardware/PaCalibrationGroup.h"
 #include "gui/widgets/MetricLabel.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
 #include "models/TransmitModel.h"
 
 #include <QCheckBox>
@@ -337,9 +391,8 @@ void buildPhase8WarningRows(
     contentLayout->insertWidget(contentLayout->count() - 1, noPaSupportBanner);
 
     ganymedeWarning = new QLabel(QStringLiteral(
-        "ANAN Ganymede 500W PA support is a follow-up to this PR. The "
-        "standard PA Gain table below applies to the radio's internal PA. "
-        "Ganymede-specific PA calibration will arrive in a separate Setup tab."), parent);
+        "NereusSDR has no settings for the ANAN Ganymede 500 W amplifier. "
+        "The PA Gain table below applies to the radio's internal PA."), parent);
     ganymedeWarning->setStyleSheet(bannerInfoStyle());
     ganymedeWarning->setWordWrap(true);
     ganymedeWarning->setVisible(false);
@@ -372,10 +425,10 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
     // surface but still build the Phase 8 informational warning labels so
     // applyCapabilityVisibility() has something to toggle.
     if (!model || !model->paProfileManager()) {
+        // Needs a RadioModel with a PaProfileManager.
+        // Source: Thetis setup.designer.cs:47386-47525 [v2.10.3.13]
         auto* lbl = buildPlaceholderLabel(QStringLiteral(
-            "PA Gain -- requires a connected RadioModel with PaProfileManager.\n"
-            "\n"
-            "Source: Thetis setup.designer.cs:47386-47525 [v2.10.3.13]"));
+            "PA Gain -- requires a connected radio."));
         contentLayout()->insertWidget(contentLayout()->count() - 1, lbl);
         // Phase 8 (#167): Track the placeholder so test seams have a proxy
         // for editor-enabled state. Tests construct PaGainByBandPage(nullptr)
@@ -400,6 +453,7 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
         // non-null target in the model-less path.  Defaults hidden (standard board).
         m_bypassPaSettingsCheck = new QCheckBox(
             QStringLiteral("Bypass ANAN PA Settings"), this);
+        m_bypassPaSettingsCheck->setProperty("nereusSetupId", "pa.gain.bypassPaSettings");
         m_bypassPaSettingsCheck->setVisible(false);
         return;
     }
@@ -418,15 +472,20 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
 
     m_profileCombo = new QComboBox(this);
     m_profileCombo->setMinimumWidth(220);
+    // R-R3-49: plain words (it named the audio-volume scalar).
     m_profileCombo->setToolTip(QStringLiteral(
-        "Active PA gain profile.  Per-band PA gain compensation drives the "
-        "audio-volume scalar that prevents over-power on high-gain finals."));
+        "Active PA gain profile. Its per-band PA gain keeps the drive right for "
+        "this radio's power amplifier, so a high-gain amplifier is not overdriven."));
+    m_profileCombo->setAccessibleName(QStringLiteral("PA profile"));
+    // R-IOS-18: the Setup description's ids for the profile row.
+    m_profileCombo->setProperty("nereusSetupId", "pa.gain.profile");
     toolbar->addWidget(m_profileCombo, 1);
 
     constexpr int kLifecycleButtonWidth = 110;  // wide enough for "Reset Defaults"
 
     m_btnNew = new QPushButton(QStringLiteral("New"), this);
     m_btnNew->setMinimumWidth(kLifecycleButtonWidth);
+    m_btnNew->setProperty("nereusSetupId", "pa.gain.new");
     m_btnNew->setToolTip(QStringLiteral(
         "Create a new empty profile seeded from the connected radio's "
         "factory PA gain row."));
@@ -434,12 +493,14 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
 
     m_btnCopy = new QPushButton(QStringLiteral("Copy"), this);
     m_btnCopy->setMinimumWidth(kLifecycleButtonWidth);
+    m_btnCopy->setProperty("nereusSetupId", "pa.gain.copy");
     m_btnCopy->setToolTip(QStringLiteral(
         "Duplicate the active profile under a new name."));
     toolbar->addWidget(m_btnCopy);
 
     m_btnDelete = new QPushButton(QStringLiteral("Delete"), this);
     m_btnDelete->setMinimumWidth(kLifecycleButtonWidth);
+    m_btnDelete->setProperty("nereusSetupId", "pa.gain.delete");
     m_btnDelete->setToolTip(QStringLiteral(
         "Delete the active profile.  The last remaining profile cannot be "
         "deleted."));
@@ -447,6 +508,7 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
 
     m_btnReset = new QPushButton(QStringLiteral("Reset Defaults"), this);
     m_btnReset->setMinimumWidth(kLifecycleButtonWidth);
+    m_btnReset->setProperty("nereusSetupId", "pa.gain.reset");
     m_btnReset->setToolTip(QStringLiteral(
         "Re-seed the active profile from the canonical factory PA gain row "
         "for its model.  Drive-step adjusts and max-power columns are "
@@ -489,8 +551,8 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
     // the user-visible tooltip stays plain English; the upstream cite is
     // kept in this source comment.
     m_newCalCheck->setToolTip(QStringLiteral(
-        "New-calibration mode marker. No client-side behaviour is hooked "
-        "to it yet — tracked for parity only."));
+        "New-calibration mode marker. Nothing in this app acts on it; "
+        "it is kept for parity only."));
     // From Thetis chkPANewCal Visible=false default at setup.designer.cs:47417
     // [v2.10.3.13]; Thetis Ctrl+Alt+A keyhandler (setup.cs:12490-12498) unhides
     // it. NereusSDR has no live behaviour wired to NewCal mode (deferred to
@@ -504,6 +566,7 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
     // ── Main grid: PA Gain by Band (dB) ──────────────────────────────────
     // 14 bands x (band label + gain + 9 adjusts + max-power + use-max)
     m_gainByBandGroup = new QGroupBox(QStringLiteral("PA Gain by Band (dB)"), this);
+    m_gainByBandGroup->setProperty("nereusSetupId", "pa.gain.table");
     auto* gainGroup = m_gainByBandGroup;
     auto* grid = new QGridLayout(gainGroup);
     grid->setHorizontalSpacing(4);
@@ -567,10 +630,11 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
         // (`Maximum = 100`, `Minimum = 38.8`) and 24 sibling sites match.
         m_gainSpins[n] = buildSpin(38.8, 100.0, 0.1, 1, gainGroup);
         m_gainSpins[n]->setFixedWidth(kGainSpinWidth);
+        // R-R3-49: plain words (it named the audio-volume scalar and the
+        // TX FIFO the scalar drives).
         m_gainSpins[n]->setToolTip(QStringLiteral(
-            "PA gain compensation for %1 in dB.  Subtracted from the "
-            "target dBm to compute the audio-volume scalar that drives "
-            "the radio's TX FIFO.").arg(bandLabel(band)));
+            "PA gain for %1 in dB. The Core subtracts it from the power you "
+            "ask for to set the drive.").arg(bandLabel(band)));
         grid->addWidget(m_gainSpins[n], row, kColGain);
         wireGainSpin(m_gainSpins[n], band);
 
@@ -583,7 +647,7 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
             auto* spin = buildSpin(-10.0, 10.0, 0.1, 1, gainGroup);
             spin->setFixedWidth(kAdjustSpinWidth);
             spin->setToolTip(QStringLiteral(
-                "Per-step adjust at %1%% drive for %2.")
+                "Per-step adjust at %1% drive for %2.")  // R-R3-49: showed "10%%"
                 .arg((step + 1) * 10).arg(bandLabel(band)));
             m_adjustSpins[n][step] = spin;
             grid->addWidget(spin, row, kAdjustColumnFirst + step);
@@ -710,11 +774,12 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
     // defaults hidden (false) here, shown by applyCapabilityVisibility().
     m_bypassPaSettingsCheck = new QCheckBox(
         QStringLiteral("Bypass ANAN PA Settings"), this);
+    m_bypassPaSettingsCheck->setProperty("nereusSetupId", "pa.gain.bypassPaSettings");
     m_bypassPaSettingsCheck->setToolTip(QStringLiteral(
         "Bypass the board-specific PA calibration table (BP PA). "
         "When checked, the generic Hermes gain row is used instead "
-        "of the ANAN-G2E factory row. Useful if you have not yet "
-        "calibrated PA gain for this radio."));
+        "of the ANAN-G2E factory row. Useful when PA gain for this "
+        "radio is not calibrated."));
     m_bypassPaSettingsCheck->setVisible(false);  // hidden until applyCapabilityVisibility
     contentLayout()->insertWidget(contentLayout()->count() - 1,
                                    m_bypassPaSettingsCheck);
@@ -802,9 +867,8 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
     contentLayout()->insertWidget(contentLayout()->count() - 1, m_noPaSupportBanner);
 
     m_ganymedeWarning = new QLabel(QStringLiteral(
-        "ANAN Ganymede 500W PA support is a follow-up to this PR. The "
-        "standard PA Gain table below applies to the radio's internal PA. "
-        "Ganymede-specific PA calibration will arrive in a separate Setup tab."), this);
+        "NereusSDR has no settings for the ANAN Ganymede 500 W amplifier. "
+        "The PA Gain table below applies to the radio's internal PA."), this);
     m_ganymedeWarning->setStyleSheet(bannerInfoStyle());
     m_ganymedeWarning->setWordWrap(true);
     m_ganymedeWarning->setVisible(false);
@@ -824,6 +888,224 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
     if (const PaProfile* active = m_paProfileManager->activeProfile()) {
         loadProfileIntoUi(*active);
     }
+
+    // R-R3-46 / R-R3-49 (remote-window parity Task 6): a profile's values
+    // saved elsewhere (another window, the Core, or the Core handing back
+    // its own after a refused change) reach the editor.
+    connect(m_paProfileManager, &PaProfileManager::profileDataChanged, this, [this]() {
+        if (const PaProfile* active = m_paProfileManager->activeProfile()) {
+            loadProfileIntoUi(*active);
+        }
+    });
+    // In a remote window the editor starts closed until SetupDialog pushes
+    // the version 6 gate and the transmit permission.
+    if (!model->ownsLocalDsp()) {
+        setTransmitSettingsPermittedAt(6, false, QString());
+        setTransmitPermitted(false, QString());
+    }
+
+    // R-R3-49: Thetis's on-the-air lock. isCoreOnAir follows the Core's MOX,
+    // TUNE and two-tone in a local and a remote window alike.
+    connect(model, &RadioModel::coreOnAirChanged, this,
+            [this](bool onAir) { applyOnAirState(onAir); });
+    // JJ's ruling (holder only, both ways): the transmitting band opens
+    // only while this window's device holds transmit, so the lock follows
+    // the holder too.
+    connect(model, &RadioModel::transmitHolderChanged, this,
+            [this]() { applyPaSettingsGate(); });
+    // The open row is the Core's transmit band (paOnAirBandIndex), which
+    // holds while keyed: Thetis OnTXBandChanged (setup.cs:23835-23839
+    // [v2.10.3.15]) moves _adjustingBand only from the TXBand setter, and
+    // that returns while MOX.
+    //   lblTXattBand.Text = newBand.ToString(); //[2.3.10.6]MW0LGE added (also in ATTOnTX)
+    // A local window follows its own transmit band. A remote window takes
+    // the Core's held band from the paTransmitBand property, which also
+    // raises transmitBandChanged. The slice followers below serve only a
+    // remote window on an older Core that does not send paTransmitBand; its
+    // row then follows the window's own transmit slice as before.
+    connect(model, &RadioModel::transmitBandChanged, this,
+            [this]() { refreshOnAirBand(); });
+    const auto followSlice = [this](SliceModel* slice) {
+        if (!slice) {
+            return;
+        }
+        connect(slice, &SliceModel::bandChanged, this, [this](Band) { refreshOnAirBand(); });
+        connect(slice, &SliceModel::txSliceChanged, this,
+                [this](bool) { refreshOnAirBand(); });
+    };
+    for (SliceModel* slice : model->slices()) {
+        followSlice(slice);
+    }
+    connect(model, &RadioModel::sliceAdded, this, [this, followSlice](int index) {
+        if (RadioModel* const radio = this->model()) {
+            followSlice(radio->slices().value(index, nullptr));
+        }
+        refreshOnAirBand();
+    });
+    if (model->isCoreOnAir()) {
+        applyOnAirState(true);
+    }
+}
+
+QList<QWidget*> PaGainByBandPage::paSettingsControls() const
+{
+    QList<QWidget*> controls{m_profileCombo, m_btnNew, m_btnCopy, m_btnDelete, m_btnReset,
+                             m_newCalCheck, m_bypassPaSettingsCheck};
+    for (int n = 0; n < kPaBandCount; ++n) {
+        controls << m_gainSpins[n] << m_maxPowerSpins[n] << m_useMaxPowerChecks[n];
+        for (int step = 0; step < kAutoCalDriveSteps; ++step) {
+            controls << m_adjustSpins[n][step];
+        }
+    }
+    return controls;
+}
+
+QList<QWidget*> PaGainByBandPage::paBandControls(int bandIndex) const
+{
+    QList<QWidget*> controls{m_gainSpins[bandIndex], m_maxPowerSpins[bandIndex],
+                             m_useMaxPowerChecks[bandIndex]};
+    for (int step = 0; step < kAutoCalDriveSteps; ++step) {
+        controls << m_adjustSpins[bandIndex][step];
+    }
+    return controls;
+}
+
+// R-R3-49: what Thetis locks while the radio is on the air.
+// From Thetis setup.cs:23826-23834 [v2.10.3.15] OnMoxChangeHandler:
+//   PAProfileEnableControls(newMox);
+//   if (newMox) enabledAllPAnuds(false); else enabledAllPAnuds(true);
+//   //[2.3.10.6]MW0LGE added (also in ATTOnTX)  [original inline comment from
+//   setup.cs:23838, OnTXBandChanged's TX attenuator label line, not ported]
+// From Thetis setup.cs:23479-23496 [v2.10.3.15] PAProfileEnableControls:
+//   //prevent profile switch during a tx
+//   //user can only tweak the NUD's
+//   comboPAProfile.Enabled = !tx; btnNewPAProfile.Enabled = !tx;
+//   if (tx) { btnDeletePAProfile, btnResetPAProfile, btnCopyPAProfile
+//             .Enabled = false; }
+// From Thetis setup.cs:24169-24192 [v2.10.3.15] enabledAllPAnuds(false):
+//   // ignore current band
+//   if (b != _adjustingBand) c.Enabled = false;
+// Thetis shows the adjust matrix, max power and use-max for _adjustingBand
+// alone (panelAdjustGain, enabledPAAdjust), so under MOX only that band's
+// values can change; NereusSDR shows every band's row and locks the others.
+// New Cal and the G2E's bypass box are not in Thetis's lock.
+QList<QWidget*> PaGainByBandPage::onAirLockedControls() const
+{
+    if (!m_onAir) {
+        return {};
+    }
+    QList<QWidget*> controls{m_profileCombo, m_btnNew, m_btnCopy, m_btnDelete, m_btnReset};
+    for (int n = 0; n < kPaBandCount; ++n) {
+        if (n != m_onAirBandIndex) {
+            controls << paBandControls(n);
+        }
+    }
+    return controls;
+}
+
+void PaGainByBandPage::applyOnAirState(bool onAir)
+{
+    if (onAir == m_onAir) {
+        return;
+    }
+    m_onAir = onAir;
+    m_onAirBandIndex = currentOnAirBandIndex();
+    applyPaSettingsGate();
+}
+
+int PaGainByBandPage::currentOnAirBandIndex()
+{
+    // Thetis _adjustingBand, read where the Core's own refusals read it.
+    // From Thetis setup.cs:23836-23852 [v2.10.3.15] OnTXBandChanged / setAdjustingBand:
+    //   lblTXattBand.Text = newBand.ToString(); //[2.3.10.6]MW0LGE added (also in ATTOnTX)
+    //   _adjustingBand = Band.FIRST; // MW0LGE_[2.9.0.7] reset
+    RadioModel* const radio = model();
+    return (m_onAir && radio) ? radio->paOnAirBandIndex() : -1;
+}
+
+void PaGainByBandPage::refreshOnAirBand()
+{
+    const int band = currentOnAirBandIndex();
+    if (band == m_onAirBandIndex) {
+        return;
+    }
+    m_onAirBandIndex = band;
+    applyPaSettingsGate();
+}
+
+void PaGainByBandPage::applyPaSettingsGate()
+{
+    const QList<QWidget*> all = paSettingsControls();
+    if (!m_paSettingsPermitted) {
+        gateTransmitControls(all, false, m_paSettingsReason);
+        return;
+    }
+    const QList<QWidget*> locked = onAirLockedControls();
+    // JJ's ruling: on the air only the device that holds transmit changes
+    // the transmitting band's values; this window too, when another device
+    // holds it (RadioModel::paOnAirEditRefusal gives the Core's refusal).
+    QList<QWidget*> holderOnly;
+    if (m_onAir && m_onAirBandIndex >= 0 && !holdsTransmitHere()) {
+        holderOnly = paBandControls(m_onAirBandIndex);
+    }
+    QList<QWidget*> open;
+    for (QWidget* control : all) {
+        if (!locked.contains(control) && !holderOnly.contains(control)) {
+            open << control;
+        }
+    }
+    gateTransmitControls(open, true, QString());
+    gateTransmitControls(locked, false, RadioModel::paOnAirLockedReason());
+    gateTransmitControls(holderOnly, false, RadioModel::paHolderOnlyReason());
+}
+
+bool PaGainByBandPage::holdsTransmitHere()
+{
+    const RadioModel* const radio = model();
+    if (!radio) {
+        return false;
+    }
+    // The Core's own window holds it unless another device does; a remote
+    // window only while the Core names this device the holder.
+    if (radio->ownsLocalDsp()) {
+        return radio->otherDeviceHoldsRefusal().isEmpty();
+    }
+    const IStationLink* const link = radio->stationLink();
+    return link && link->holdsTransmitHere();
+}
+
+QList<QWidget*> PaGainByBandPage::paKeyingControls() const
+{
+    // The sweep engages TUNE on every band (Thetis chkAutoPACalibrate), so
+    // it waits for remote transmit.
+    return {m_autoCalibrateCheck, m_autoCalPanel};
+}
+
+void PaGainByBandPage::applyPaGates()
+{
+    applyPaSettingsGate();
+    gateTransmitControls(paKeyingControls(), m_paKeyingPermitted, m_paKeyingReason);
+}
+
+void PaGainByBandPage::setTransmitPermitted(bool permitted, const QString& reason)
+{
+    m_paKeyingPermitted = permitted;
+    m_paKeyingReason = reason.isEmpty()
+        ? tr("Remote transmit controls are not available from this Core.")
+        : reason;
+    gateTransmitControls(paKeyingControls(), m_paKeyingPermitted, m_paKeyingReason);
+}
+
+void PaGainByBandPage::setTransmitSettingsPermittedAt(int version, bool permitted,
+                                                      const QString& reason)
+{
+    if (version != 6) {
+        return;
+    }
+    m_paSettingsPermitted = permitted;
+    m_paSettingsReason = reason.isEmpty() ? IStationLink::transmitSettingsUnavailableReason()
+                                          : reason;
+    applyPaSettingsGate();
 }
 
 // ── Phase 8 of #167: per-SKU visibility wiring ────────────────────────────────
@@ -853,6 +1135,11 @@ void PaGainByBandPage::applyCapabilityVisibility(const BoardCapabilities& caps)
     // isn't built; m_placeholderLabel rides the same editorEnabled flag
     // so test seams can verify the toggle behavior.
     const bool editorEnabled = caps.hasPaProfile;
+
+    // R-R3-46 (parity Task 6): the capability decides each control's own
+    // enabled state; the transmit gates are laid over it again below.
+    gateTransmitControls(paSettingsControls(), true, QString());
+    gateTransmitControls(paKeyingControls(), true, QString());
 
     if (m_profileCombo)        { m_profileCombo->setEnabled(editorEnabled); }
     if (m_btnNew)              { m_btnNew->setEnabled(editorEnabled); }
@@ -929,6 +1216,8 @@ void PaGainByBandPage::applyCapabilityVisibility(const BoardCapabilities& caps)
     // for Phase 3M-4 PureSignal but has no observable behaviour in v0.3.2;
     // the user-facing UI surface lands with PureSignal in 3M-4.
     // (Field caps.hasStepAttenuatorCal is still consulted by other components.)
+
+    applyPaGates();
 }
 
 #ifdef NEREUS_BUILD_TESTS
@@ -1224,8 +1513,10 @@ void PaGainByBandPage::onDeleteProfile()
     // Mirrors Thetis btnDeletePAProfile_Click at setup.cs:23015-23024 [v2.10.3.13]:
     // after delete, select Default - <connectedModel> if available, else first
     // remaining profile.
-    const QString defaultName = QStringLiteral("Default - %1")
-        .arg(QString::fromUtf8(displayName(m_connectedModel)));
+    // R-R3-49 (found bug): the factory profile is named after the model's
+    // enum name ("Default - ANAN_G2"), not its display name, so this never
+    // found it and fell back to the first profile.
+    const QString defaultName = PaProfileManager::defaultProfileName(m_connectedModel);
     QString nextActive;
     if (m_paProfileManager->profileNames().contains(defaultName)) {
         nextActive = defaultName;
@@ -1289,6 +1580,7 @@ void PaGainByBandPage::onGainChanged(Band band, double value)
     mutated.setGainForBand(band, static_cast<float>(value));
     m_paProfileManager->saveProfile(active->name(), mutated);
     warnIfProfileDiverged();
+    applyEditOnAir(band, /*adjust=*/false, -1);
 }
 
 void PaGainByBandPage::onAdjustChanged(Band band, int step, double value)
@@ -1301,6 +1593,25 @@ void PaGainByBandPage::onAdjustChanged(Band band, int step, double value)
     PaProfile mutated = *active;
     mutated.setAdjust(band, step, static_cast<float>(value));
     m_paProfileManager->saveProfile(active->name(), mutated);
+    // From Thetis setup.cs:24210-24222 [v2.10.3.15] nudAdjustGain_ValueChanged:
+    //   if (console.MOX) ... console.PWR = nNumber + 10; // set drive to the value we are adjusting
+    applyEditOnAir(band, /*adjust=*/true, step);
+}
+
+void PaGainByBandPage::applyEditOnAir(Band band, bool adjust, int step)
+{
+    // The Core's own window drives the radio: an edit taken on the air
+    // reaches the drive as Thetis's does. A remote window's edit reaches
+    // it at the Core (RadioModel::applyPaSettingOnAir). Only an edit to
+    // the band transmitting now moves the drive (Thetis _adjustingBand);
+    // the band is read at the edit, never latched at key.
+    RadioModel* const radio = model();
+    if (radio && radio->ownsLocalDsp() && radio->paOnAirNow()
+        && static_cast<int>(band) == radio->paOnAirBandIndex()) {
+        radio->applyPaEditOnAir(adjust ? RadioModel::PaProfileAction::SetAdjust
+                                       : RadioModel::PaProfileAction::SetGain,
+                                step);
+    }
 }
 
 void PaGainByBandPage::onMaxPowerChanged(Band band, double watts)
@@ -1359,7 +1670,9 @@ constexpr std::array<Band, 11> kAutoCalHfBands = {
     Band::Band12m,  Band::Band10m, Band::Band6m,
 };
 
-// True if `b` is an HF band the auto-cal sweep iterates over.
+#ifdef NEREUS_BUILD_TESTS
+// True if `b` is an HF band the auto-cal sweep iterates over. Only the
+// test-only sweep driver below reads it.
 bool isAutoCalBand(Band b) noexcept
 {
     for (Band hf : kAutoCalHfBands) {
@@ -1367,6 +1680,7 @@ bool isAutoCalBand(Band b) noexcept
     }
     return false;
 }
+#endif
 
 // Default per-band max-watts ceiling per HPSDRModel for the safety check.
 // From Thetis console.cs:10270 [v2.10.3.13]:
@@ -1899,10 +2213,9 @@ PaWattMeterPage::PaWattMeterPage(RadioModel* model, QWidget* parent)
         // render something coherent.
         // ASCII em-dash (--) for the disabled-italic placeholder; see
         // PaGainByBandPage above for the rationale.
+        // Source: Thetis setup.designer.cs:49304-49309 [v2.10.3.13]
         auto* lbl = buildPlaceholderLabel(QStringLiteral(
-            "Watt Meter -- requires a connected radio model.\n"
-            "\n"
-            "Source: Thetis setup.designer.cs:49304-49309 [v2.10.3.13]"));
+            "Watt Meter -- requires a connected radio."));
         contentLayout()->insertWidget(contentLayout()->count() - 1, lbl);
         // Note: the chkPAValues toggle and btnResetPAValues button are
         // model-independent (settings + signal only), so we fall through to
@@ -1933,6 +2246,11 @@ PaWattMeterPage::PaWattMeterPage(RadioModel* model, QWidget* parent)
                 m_paCalGroup->populate(calCtrl, calCtrl->paCalProfile().boardClass);
             }
         });
+        // R-R3-46 (parity Task 6): in a remote window the table starts
+        // closed until SetupDialog pushes the version 6 gate.
+        if (!model->ownsLocalDsp()) {
+            setTransmitSettingsPermittedAt(6, false, QString());
+        }
     }
 
     // ── chkPAValues "Show PA Values page" toggle ────────────────────────────
@@ -1943,6 +2261,7 @@ PaWattMeterPage::PaWattMeterPage(RadioModel* model, QWidget* parent)
     // PaValuesPage / SetupDialog navigation can honor it.
     m_showPaValuesCheck = new QCheckBox(tr("Show PA Values page"), this);
     m_showPaValuesCheck->setObjectName(QStringLiteral("chkPAValues"));
+    m_showPaValuesCheck->setProperty("nereusSetupId", "pa.wattMeter.showPaValues");
     // Tooltip is user-visible plain English; Thetis cite kept in the
     // surrounding header comment (and the From Thetis cite block above)
     // per CLAUDE.md "No source cites in user-visible strings".
@@ -1953,10 +2272,17 @@ PaWattMeterPage::PaWattMeterPage(RadioModel* model, QWidget* parent)
         QStringLiteral("True")).toString() == QStringLiteral("True");
     m_showPaValuesCheck->setChecked(showPaValues);
     connect(m_showPaValuesCheck, &QCheckBox::toggled, this,
-            [](bool checked) {
+            [this](bool checked) {
         AppSettings::instance().setValue(
             QStringLiteral("display/showPaValuesPage"),
             checked ? QStringLiteral("True") : QStringLiteral("False"));
+        // R-R3-49 (found bug): nothing read the setting, so the PA Values
+        // page stayed whatever the box said. Thetis shows or hides the
+        // panel at once:
+        // From Thetis setup.cs:16381-16385 [v2.10.3.15] chkPAValues_CheckedChanged
+        //   panelPAValues.Visible = chkPAValues.Checked;
+        // SetupDialog shows or hides the PA Values page.
+        emit showPaValuesPageChanged(checked);
     });
     contentLayout()->insertWidget(contentLayout()->count() - 1, m_showPaValuesCheck);
 
@@ -1968,6 +2294,7 @@ PaWattMeterPage::PaWattMeterPage(RadioModel* model, QWidget* parent)
     // peak/min tracking.
     m_resetPaValuesButton = new QPushButton(tr("Reset PA Values"), this);
     m_resetPaValuesButton->setObjectName(QStringLiteral("btnResetPAValues"));
+    m_resetPaValuesButton->setProperty("nereusSetupId", "pa.wattMeter.resetPaValues");
     // Tooltip is user-visible plain English; Thetis cite kept in the
     // surrounding header comment per CLAUDE.md "No source cites in
     // user-visible strings".
@@ -1987,6 +2314,22 @@ PaWattMeterPage::PaWattMeterPage(RadioModel* model, QWidget* parent)
 // chkPAValues toggle + Reset PA Values button; the page itself is hidden by
 // SetupDialog when the parent PA category goes hidden (caps.isRxOnlySku
 // or !caps.hasPaProfile).
+void PaWattMeterPage::setTransmitSettingsPermittedAt(int version, bool permitted,
+                                                     const QString& reason)
+{
+    // R-R3-46 / R-R3-49 (parity Task 6): the PA forward-power table
+    // (hardware/<mac>/paCalibration/...) is taken by the Core on or off the
+    // air, as Thetis has no transmit rule for it; a point changed while the
+    // radio transmits reaches the meter once it is back on receive. Show PA
+    // Values and Reset PA Values are this window's own.
+    if (version != 6 || !m_paCalGroup) {
+        return;
+    }
+    gateTransmitControls({m_paCalGroup}, permitted,
+                         reason.isEmpty() ? IStationLink::transmitSettingsUnavailableReason()
+                                          : reason);
+}
+
 void PaWattMeterPage::applyCapabilityVisibility(const BoardCapabilities& caps)
 {
     // The PaCalibrationGroup auto-rebuilds via paCalProfileChanged when the
@@ -2071,10 +2414,9 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
         // Model-less preview path: render a brief hint label so the page
         // doesn't ship as an empty widget when Setup is opened before a
         // RadioModel is wired (mirrors the PaWattMeterPage fallback).
+        // Source: Thetis panelPAValues setup.designer.cs:51155-51177 [v2.10.3.13]
         auto* lbl = buildPlaceholderLabel(QStringLiteral(
-            "PA Values — requires a connected radio model.\n"
-            "\n"
-            "Source: Thetis panelPAValues setup.designer.cs:51155-51177 [v2.10.3.13]"));
+            "PA Values -- requires a connected radio."));
         contentLayout()->insertWidget(contentLayout()->count() - 1, lbl);
         return;
     }
@@ -2088,16 +2430,20 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
     auto* powerForm   = new QFormLayout(powerGroup);
     m_fwdCalibratedLabel = new MetricLabel(QStringLiteral("FWD (cal)"),
                                            QStringLiteral("0.00 W"), powerGroup);
+    m_fwdCalibratedLabel->setProperty("nereusSetupId", "pa.values.forwardCalibrated");
     // Phase 5B (#167) — Raw FWD power label, scaled from raw ADC counts via
     // PaTelemetryScaling helpers (Phase 1B).
     // From Thetis panelPAValues textPAFwdPower setup.designer.cs:51155-51177
     // [v2.10.3.13] — `alex_fwd.ToString("f1") + " W"` at console.cs:24670.
     m_fwdRawLabel        = new MetricLabel(QStringLiteral("FWD (raw)"),
                                            QStringLiteral("0.00 W"), powerGroup);
+    m_fwdRawLabel->setProperty("nereusSetupId", "pa.values.forwardRawPower");
     m_revPowerLabel      = new MetricLabel(QStringLiteral("REV"),
                                            QStringLiteral("0.00 W"), powerGroup);
+    m_revPowerLabel->setProperty("nereusSetupId", "pa.values.reflectedPower");
     m_swrLabel           = new MetricLabel(QStringLiteral("SWR"),
                                            QStringLiteral("1.00"), powerGroup);
+    m_swrLabel->setProperty("nereusSetupId", "pa.values.swr");
     // Phase 5B (#167) — Drive label, populated from TransmitModel::power().
     // From Thetis panelPAValues textDrivePower setup.designer.cs:51155-51177
     // [v2.10.3.13] — Thetis renders averaged exciter drive in mW; NereusSDR
@@ -2105,6 +2451,7 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
     // and the slider 0..100 maps directly to watts on most boards).
     m_driveLabel         = new MetricLabel(QStringLiteral("Drive"),
                                            QStringLiteral("0 W"), powerGroup);
+    m_driveLabel->setProperty("nereusSetupId", "pa.values.drive");
     powerForm->addRow(QStringLiteral("Forward (calibrated):"), m_fwdCalibratedLabel);
     powerForm->addRow(QStringLiteral("Forward (raw):"),        m_fwdRawLabel);
     powerForm->addRow(QStringLiteral("Reflected:"),            m_revPowerLabel);
@@ -2117,10 +2464,14 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
     auto* paForm  = new QFormLayout(paGroup);
     m_paCurrentLabel   = new MetricLabel(QStringLiteral("PA I"),
                                          QStringLiteral("0.00 A"), paGroup);
+    m_paCurrentLabel->setProperty("nereusSetupId", "pa.values.paCurrent");
     m_paTempLabel      = new MetricLabel(QStringLiteral("PA T"),
                                          QStringLiteral("0.0 \xC2\xB0""C"), paGroup);
+    // R-IOS-18: the Setup description's id for the temperature readout.
+    m_paTempLabel->setProperty("nereusSetupId", "pa.values.paTemperature");
     m_supplyVoltsLabel = new MetricLabel(QStringLiteral("V"),
                                          QStringLiteral("0.0 V"), paGroup);
+    m_supplyVoltsLabel->setProperty("nereusSetupId", "pa.values.dcVoltage");
     // Phase 5B (#167) — FWD/REV RF voltage labels, derived from raw ADC
     // via PaTelemetryScaling::scaleFwdRevVoltage (Phase 1B).
     // From Thetis panelPAValues textFwdVoltage / textRevVoltage at
@@ -2128,13 +2479,26 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
     // at console.cs:25068 / :25002.
     m_fwdVoltageLabel  = new MetricLabel(QStringLiteral("FWD V"),
                                          QStringLiteral("0.00 V"), paGroup);
+    m_fwdVoltageLabel->setProperty("nereusSetupId", "pa.values.forwardVoltage");
     m_revVoltageLabel  = new MetricLabel(QStringLiteral("REV V"),
                                          QStringLiteral("0.00 V"), paGroup);
+    m_revVoltageLabel->setProperty("nereusSetupId", "pa.values.reflectedVoltage");
     m_adcOverloadLabel = new MetricLabel(QStringLiteral("ADC OVF"),
                                          QStringLiteral("No"), paGroup);
+    m_adcOverloadLabel->setProperty("nereusSetupId", "pa.values.adcOverload");
     paForm->addRow(QStringLiteral("PA Current:"),     m_paCurrentLabel);
     paForm->addRow(QStringLiteral("PA Temperature:"), m_paTempLabel);
-    paForm->addRow(QStringLiteral("Supply Voltage:"), m_supplyVoltsLabel);
+    // Group A follow-up (group B fix wave): the AIN6 reading carries
+    // Thetis's name for it. On MkII-class boards (the G2) it is not the
+    // 13.8 V supply (RadioConnection::handleSupplyRaw).
+    // From Thetis setup.designer.cs:51365 [v2.10.3.15]
+    //   this.labelTS254.Text = "DC Voltage";
+    // That label ships hidden; the reading itself carries the name in
+    // Thetis's own computation of it (parity mini-round):
+    // From Thetis console.cs:24782 [v2.10.3.15]
+    //   public float computeHermesDCVoltage()
+    //   ... int adc = NetworkIO.getHermesDCVoltage();
+    paForm->addRow(QStringLiteral("DC Voltage:"), m_supplyVoltsLabel);
     paForm->addRow(QStringLiteral("FWD Voltage:"),    m_fwdVoltageLabel);
     paForm->addRow(QStringLiteral("REV Voltage:"),    m_revVoltageLabel);
     paForm->addRow(QStringLiteral("ADC Overload:"),   m_adcOverloadLabel);
@@ -2145,8 +2509,10 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
     auto* adcForm  = new QFormLayout(adcGroup);
     m_fwdAdcLabel = new MetricLabel(QStringLiteral("FWD"),
                                     QStringLiteral("0"), adcGroup);
+    m_fwdAdcLabel->setProperty("nereusSetupId", "pa.values.forwardAdc");
     m_revAdcLabel = new MetricLabel(QStringLiteral("REV"),
                                     QStringLiteral("0"), adcGroup);
+    m_revAdcLabel->setProperty("nereusSetupId", "pa.values.reflectedAdc");
     adcForm->addRow(QStringLiteral("FWD ADC:"), m_fwdAdcLabel);
     adcForm->addRow(QStringLiteral("REV ADC:"), m_revAdcLabel);
     contentLayout()->insertWidget(contentLayout()->count() - 1, adcGroup);
@@ -2162,6 +2528,7 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
     resetLayout->addStretch(1);
     m_resetButton = new QPushButton(tr("Reset Peak/Min"), resetRow);
     m_resetButton->setToolTip(tr("Reset running peak/min trackers to current values."));
+    m_resetButton->setProperty("nereusSetupId", "pa.values.resetPeakMin");
     resetLayout->addWidget(m_resetButton);
     contentLayout()->insertWidget(contentLayout()->count() - 1, resetRow);
 
@@ -2176,46 +2543,17 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
     RadioStatus& rs = model->radioStatus();
 
     connect(&rs, &RadioStatus::powerChanged, this,
-            [this](double fwdW, double revW, double swr) {
-                m_fwdCurrent = fwdW;
-                m_revCurrent = revW;
-                m_swrCurrent = swr;
-                m_fwdPeakMin.update(fwdW);
-                m_revPeakMin.update(revW);
-                m_swrPeakMin.update(swr);
-                if (m_fwdCalibratedLabel) {
-                    m_fwdCalibratedLabel->setValue(formatWithPeakMin(
-                        fwdW, m_fwdPeakMin, QStringLiteral(" W"), 2));
-                }
-                if (m_revPowerLabel) {
-                    m_revPowerLabel->setValue(formatWithPeakMin(
-                        revW, m_revPeakMin, QStringLiteral(" W"), 2));
-                }
-                if (m_swrLabel) {
-                    m_swrLabel->setValue(formatWithPeakMin(
-                        swr, m_swrPeakMin, QString(), 2));
-                }
+            [this, model](double fwdW, double revW, double swr) {
+                if (model->paReadingsFromCore()) { return; }  // see the ctor's end
+                applyPowerReadings(fwdW, revW, swr);
             });
 
-    connect(&rs, &RadioStatus::paCurrentChanged, this,
-            [this](double amps) {
-                m_paCurrentCurrent = amps;
-                m_paCurrentPeakMin.update(amps);
-                if (m_paCurrentLabel) {
-                    m_paCurrentLabel->setValue(formatWithPeakMin(
-                        amps, m_paCurrentPeakMin, QStringLiteral(" A"), 2));
-                }
-            });
-
-    connect(&rs, &RadioStatus::paTemperatureChanged, this,
-            [this](double celsius) {
-                m_paTempCurrent = celsius;
-                m_paTempPeakMin.update(celsius);
-                if (m_paTempLabel) {
-                    m_paTempLabel->setValue(
-                        formatPaTempWithPeakMin(celsius, m_paTempPeakMin));
-                }
-            });
+    // R-R3-32 / R-R3-46 (parity Task 6): PA current, PA temperature and
+    // supply volts come from the one PA reading source,
+    // RadioModel::paReadings() (the Core's in a remote window), an absent
+    // reading shown as unavailable.
+    connect(model, &RadioModel::paReadingsChanged,
+            this, &PaValuesPage::refreshPaReadings);
 
     // Live re-format on °C / °F toggle without waiting for the next
     // telemetry sample — the peak/min trackers stay in their canonical
@@ -2223,7 +2561,7 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
     connect(&PaTempUnitNotifier::instance(),
             &PaTempUnitNotifier::unitChanged, this,
             [this](PaTempUnit /*unit*/) {
-        if (m_paTempLabel) {
+        if (m_paTempLabel && m_paTempPresent) {
             m_paTempLabel->setValue(
                 formatPaTempWithPeakMin(m_paTempCurrent, m_paTempPeakMin));
         }
@@ -2237,18 +2575,13 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
     m_fwdCurrent       = rs.forwardPowerWatts();
     m_revCurrent       = rs.reflectedPowerWatts();
     m_swrCurrent       = rs.swrRatio();
-    m_paCurrentCurrent = rs.paCurrentAmps();
-    m_paTempCurrent    = rs.paTemperatureCelsius();
     m_fwdCalibratedLabel->setValue(formatWithPeakMin(
         m_fwdCurrent, m_fwdPeakMin, QStringLiteral(" W"), 2));
     m_revPowerLabel->setValue(formatWithPeakMin(
         m_revCurrent, m_revPeakMin, QStringLiteral(" W"), 2));
     m_swrLabel->setValue(formatWithPeakMin(
         m_swrCurrent, m_swrPeakMin, QString(), 2));
-    m_paCurrentLabel->setValue(formatWithPeakMin(
-        m_paCurrentCurrent, m_paCurrentPeakMin, QStringLiteral(" A"), 2));
-    m_paTempLabel->setValue(
-        formatPaTempWithPeakMin(m_paTempCurrent, m_paTempPeakMin));
+    refreshPaReadings();
 
     // ── TransmitModel drive subscription (Phase 5B #167) ─────────────────
     // The Drive label tracks the user's TX power slider position via
@@ -2270,17 +2603,6 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
     // time SetupDialog opens, so a stale page will be destroyed first).
     auto* conn = model->connection();
     if (conn) {
-        connect(conn, &RadioConnection::supplyVoltsChanged, this,
-                [this](float volts) {
-                    const double v = static_cast<double>(volts);
-                    m_supplyCurrent = v;
-                    m_supplyPeakMin.update(v);
-                    if (m_supplyVoltsLabel) {
-                        m_supplyVoltsLabel->setValue(formatWithPeakMin(
-                            v, m_supplyPeakMin, QStringLiteral(" V"), 1));
-                    }
-                });
-
         // Capture HPSDRModel by value so the lambda survives any later
         // hardware-profile swap (PaValuesPage reconstructs on Setup-open
         // anyway; this is just defensive against mid-page-life swaps).
@@ -2290,40 +2612,7 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
                 [this, hpsdrModel](quint16 fwdRaw, quint16 revRaw,
                                    quint16 /*exciterRaw*/, quint16 /*userAdc0*/,
                                    quint16 /*userAdc1*/,   quint16 /*supply*/) {
-                    if (m_fwdAdcLabel) {
-                        m_fwdAdcLabel->setValue(QString::number(fwdRaw));
-                    }
-                    if (m_revAdcLabel) {
-                        m_revAdcLabel->setValue(QString::number(revRaw));
-                    }
-                    // Phase 5B (#167) — Raw FWD power label, scaled via
-                    // PaTelemetryScaling::scaleFwdPowerWatts (Phase 1B).
-                    // From Thetis console.cs computeAlexFwdPower
-                    // [v2.10.3.13] — the raw alex_fwd shown on
-                    // textPAFwdPower at console.cs:24670.
-                    if (m_fwdRawLabel) {
-                        const double watts = scaleFwdPowerWatts(hpsdrModel, fwdRaw);
-                        m_fwdRawLabel->setValue(
-                            QString::number(watts, 'f', 2)
-                            + QStringLiteral(" W"));
-                    }
-                    // Phase 5B (#167) — FWD/REV voltage labels.  Both use
-                    // the FWD-side scaler curve per Phase 1B's combined-API
-                    // design (REV-side per-board offset difference is below
-                    // the f2 UI display resolution).
-                    // From Thetis console.cs:25068 / :25002 [v2.10.3.13].
-                    if (m_fwdVoltageLabel) {
-                        const double v = scaleFwdRevVoltage(hpsdrModel, fwdRaw);
-                        m_fwdVoltageLabel->setValue(
-                            QString::number(v, 'f', 2)
-                            + QStringLiteral(" V"));
-                    }
-                    if (m_revVoltageLabel) {
-                        const double v = scaleFwdRevVoltage(hpsdrModel, revRaw);
-                        m_revVoltageLabel->setValue(
-                            QString::number(v, 'f', 2)
-                            + QStringLiteral(" V"));
-                    }
+                    applyRawAdc(hpsdrModel, fwdRaw, revRaw);
                 });
 
         connect(conn, &RadioConnection::adcOverflow, this,
@@ -2341,6 +2630,179 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
                         }
                     });
                 });
+    }
+
+    // R-R3-32 / R-R3-46 (parity Task 6): in a remote window the power,
+    // raw ADC and RF voltage readings are the Core's transmit readings.
+    // R-R3-49 / R-R3-32 (parity Task 33): a Core at txReadingsVersion 1
+    // sends them in `txState`; below it each says unavailable with the
+    // reason rather than showing a 0 nothing measured.
+    if (model->paReadingsFromCore()) {
+        if (TransmitState* coreTx = model->stationTransmitState()) {
+            // As the local page: power on each power reading, the raw
+            // readings on each raw sample.
+            connect(coreTx, &TransmitState::metersChanged, this, [this, coreTx]() {
+                if (coreSendsTransmitReadings() && m_coreReadingsShown) {
+                    applyPowerReadings(coreTx->forwardPowerWatts(),
+                                       coreTx->reflectedPowerWatts(), coreTx->swr());
+                }
+            });
+            connect(coreTx, &TransmitState::adcRawChanged, this, [this, model, coreTx]() {
+                if (coreSendsTransmitReadings() && m_coreReadingsShown) {
+                    applyRawAdc(model->hardwareProfile().model,
+                                static_cast<quint16>(std::clamp<qint64>(coreTx->forwardAdcRaw(), 0, 65535)),
+                                static_cast<quint16>(std::clamp<qint64>(coreTx->reflectedAdcRaw(), 0, 65535)));
+                }
+            });
+        }
+        connect(model, &RadioModel::stationTxReadingsVersionChanged, this,
+                &PaValuesPage::refreshCoreTransmitReadings);
+        // The Core's ADC overload, as its step attenuator reports it.
+        if (StepAttenuatorFacade* stepAtt = model->stepAttFacade()) {
+            connect(stepAtt, &StepAttenuatorFacade::overloadAdc0Changed, this,
+                    [this](int) { refreshCoreAdcOverload(); });
+            connect(stepAtt, &StepAttenuatorFacade::overloadAdc1Changed, this,
+                    [this](int) { refreshCoreAdcOverload(); });
+        }
+        refreshCoreTransmitReadings();
+    }
+}
+
+void PaValuesPage::applyPowerReadings(double fwdW, double revW, double swr)
+{
+    m_fwdCurrent = fwdW;
+    m_revCurrent = revW;
+    m_swrCurrent = swr;
+    m_fwdPeakMin.update(fwdW);
+    m_revPeakMin.update(revW);
+    m_swrPeakMin.update(swr);
+    if (m_fwdCalibratedLabel) {
+        m_fwdCalibratedLabel->setValue(formatWithPeakMin(
+            fwdW, m_fwdPeakMin, QStringLiteral(" W"), 2));
+    }
+    if (m_revPowerLabel) {
+        m_revPowerLabel->setValue(formatWithPeakMin(
+            revW, m_revPeakMin, QStringLiteral(" W"), 2));
+    }
+    if (m_swrLabel) {
+        m_swrLabel->setValue(formatWithPeakMin(
+            swr, m_swrPeakMin, QString(), 2));
+    }
+}
+
+void PaValuesPage::applyRawAdc(HPSDRModel hpsdrModel, quint16 fwdRaw, quint16 revRaw)
+{
+    if (m_fwdAdcLabel) {
+        m_fwdAdcLabel->setValue(QString::number(fwdRaw));
+    }
+    if (m_revAdcLabel) {
+        m_revAdcLabel->setValue(QString::number(revRaw));
+    }
+    // Phase 5B (#167) — Raw FWD power label, scaled via
+    // PaTelemetryScaling::scaleFwdPowerWatts (Phase 1B).
+    // From Thetis console.cs computeAlexFwdPower
+    // [v2.10.3.13] — the raw alex_fwd shown on
+    // textPAFwdPower at console.cs:24670.
+    if (m_fwdRawLabel) {
+        const double watts = scaleFwdPowerWatts(hpsdrModel, fwdRaw);
+        m_fwdRawLabel->setValue(
+            QString::number(watts, 'f', 2)
+            + QStringLiteral(" W"));
+    }
+    // Phase 5B (#167) — FWD/REV voltage labels.  Both use
+    // the FWD-side scaler curve per Phase 1B's combined-API
+    // design (REV-side per-board offset difference is below
+    // the f2 UI display resolution).
+    // From Thetis console.cs:25068 / :25002 [v2.10.3.13].
+    if (m_fwdVoltageLabel) {
+        const double v = scaleFwdRevVoltage(hpsdrModel, fwdRaw);
+        m_fwdVoltageLabel->setValue(
+            QString::number(v, 'f', 2)
+            + QStringLiteral(" V"));
+    }
+    if (m_revVoltageLabel) {
+        const double v = scaleFwdRevVoltage(hpsdrModel, revRaw);
+        m_revVoltageLabel->setValue(
+            QString::number(v, 'f', 2)
+            + QStringLiteral(" V"));
+    }
+}
+
+bool PaValuesPage::coreSendsTransmitReadings()
+{
+    RadioModel* const radio = model();
+    return radio != nullptr && radio->paReadingsFromCore()
+        && radio->stationTransmitState() != nullptr && radio->stationTxReadingsVersion() >= 1;
+}
+
+void PaValuesPage::refreshCoreTransmitReadings()
+{
+    RadioModel* const radio = model();
+    if (radio == nullptr || !radio->paReadingsFromCore()) {
+        return;
+    }
+    const QList<MetricLabel*> labels{m_fwdCalibratedLabel, m_fwdRawLabel, m_revPowerLabel,
+                                     m_swrLabel, m_fwdVoltageLabel, m_revVoltageLabel,
+                                     m_adcOverloadLabel, m_fwdAdcLabel, m_revAdcLabel};
+    if (!coreSendsTransmitReadings()) {
+        m_coreReadingsShown = false;
+        const QString reason = TransmitState::txReadingNotSentText();
+        for (MetricLabel* label : labels) {
+            if (label) {
+                label->setValue(tr("Unavailable"));
+                label->setToolTip(reason);
+            }
+        }
+        return;
+    }
+    const TransmitState* tx = radio->stationTransmitState();
+    // As the local page does at construction, the readings the page opens
+    // on are shown without starting the peak and minimum tracking; each
+    // change after that is tracked (the handlers in the constructor).
+    m_coreReadingsShown = true;
+    m_fwdCurrent = tx->forwardPowerWatts();
+    m_revCurrent = tx->reflectedPowerWatts();
+    m_swrCurrent = tx->swr();
+    m_fwdCalibratedLabel->setValue(formatWithPeakMin(
+        m_fwdCurrent, m_fwdPeakMin, QStringLiteral(" W"), 2));
+    m_revPowerLabel->setValue(formatWithPeakMin(
+        m_revCurrent, m_revPeakMin, QStringLiteral(" W"), 2));
+    m_swrLabel->setValue(formatWithPeakMin(
+        m_swrCurrent, m_swrPeakMin, QString(), 2));
+    const auto rawOf = [](qint64 v) {
+        return static_cast<quint16>(std::clamp<qint64>(v, 0, 65535));
+    };
+    applyRawAdc(radio->hardwareProfile().model, rawOf(tx->forwardAdcRaw()),
+                rawOf(tx->reflectedAdcRaw()));
+    refreshCoreAdcOverload();
+    // R-R3-32: each says it is the Core's.
+    for (MetricLabel* label : labels) {
+        if (label) {
+            label->setToolTip(tr("From the Core"));
+        }
+    }
+}
+
+void PaValuesPage::refreshCoreAdcOverload()
+{
+    RadioModel* const radio = model();
+    if (!m_adcOverloadLabel || !coreSendsTransmitReadings()) {
+        return;
+    }
+    // The Core's step attenuator reports each ADC's overload (0 none,
+    // 1 yellow, 2 red); either one overloaded reads as the local page's
+    // "Yes (ADC n)" does, until it clears.
+    const StepAttenuatorFacade* stepAtt = radio->stepAttFacade();
+    if (stepAtt == nullptr) {
+        m_adcOverloadLabel->setValue(tr("Unavailable"));
+        return;
+    }
+    if (stepAtt->overloadAdc0() > 0) {
+        m_adcOverloadLabel->setValue(QStringLiteral("Yes (ADC %1)").arg(0));
+    } else if (stepAtt->overloadAdc1() > 0) {
+        m_adcOverloadLabel->setValue(QStringLiteral("Yes (ADC %1)").arg(1));
+    } else {
+        m_adcOverloadLabel->setValue(QStringLiteral("No"));
     }
 }
 
@@ -2411,6 +2873,9 @@ void PaValuesPage::applyCapabilityVisibility(const BoardCapabilities& caps)
 // ---------------------------------------------------------------------------
 void PaValuesPage::resetPaValues()
 {
+    // R-R3-32 (parity Task 6): take the latest PA readings first, so each
+    // tracker restarts at the live value rather than a stale one.
+    refreshPaReadings();
     m_fwdPeakMin.reset(m_fwdCurrent);
     m_revPeakMin.reset(m_revCurrent);
     m_swrPeakMin.reset(m_swrCurrent);
@@ -2421,30 +2886,66 @@ void PaValuesPage::resetPaValues()
     // Re-render every tracked label so the (P/M) annotation collapses to
     // P==M==current — the reset is visible to the user immediately even
     // when telemetry is paused (e.g. radio disconnected).
-    if (m_fwdCalibratedLabel) {
+    // R-R3-32 (parity Task 6): a remote window's power readings stay
+    // unavailable (see the ctor's end).
+    const bool powerFromCore = model() && model()->paReadingsFromCore()
+        && !coreSendsTransmitReadings();
+    if (m_fwdCalibratedLabel && !powerFromCore) {
         m_fwdCalibratedLabel->setValue(formatWithPeakMin(
             m_fwdCurrent, m_fwdPeakMin, QStringLiteral(" W"), 2));
     }
-    if (m_revPowerLabel) {
+    if (m_revPowerLabel && !powerFromCore) {
         m_revPowerLabel->setValue(formatWithPeakMin(
             m_revCurrent, m_revPeakMin, QStringLiteral(" W"), 2));
     }
-    if (m_swrLabel) {
+    if (m_swrLabel && !powerFromCore) {
         m_swrLabel->setValue(formatWithPeakMin(
             m_swrCurrent, m_swrPeakMin, QString(), 2));
     }
+    // R-R3-32 (parity Task 6): an absent PA reading stays unavailable.
+    refreshPaReadings();
+}
+
+void PaValuesPage::refreshPaReadings()
+{
+    RadioModel* const radio = model();
+    if (!radio) { return; }
+    const RadioModel::PaReadings readings = radio->paReadings();
+    const QString unavailable = tr("Unavailable");
+    m_paCurrentPresent = readings.paCurrentAmps.has_value();
+    m_paTempPresent = readings.paTemperatureCelsius.has_value();
+    m_supplyPresent = readings.supplyVolts.has_value();
+    if (m_paCurrentPresent) {
+        m_paCurrentCurrent = *readings.paCurrentAmps;
+        m_paCurrentPeakMin.update(m_paCurrentCurrent);
+    }
+    if (m_paTempPresent) {
+        m_paTempCurrent = *readings.paTemperatureCelsius;
+        m_paTempPeakMin.update(m_paTempCurrent);
+    }
+    if (m_supplyPresent) {
+        m_supplyCurrent = *readings.supplyVolts;
+        m_supplyPeakMin.update(m_supplyCurrent);
+    }
     if (m_paCurrentLabel) {
-        m_paCurrentLabel->setValue(formatWithPeakMin(
-            m_paCurrentCurrent, m_paCurrentPeakMin, QStringLiteral(" A"), 2));
+        m_paCurrentLabel->setValue(m_paCurrentPresent
+            ? formatWithPeakMin(m_paCurrentCurrent, m_paCurrentPeakMin, QStringLiteral(" A"), 2)
+            : unavailable);
     }
     if (m_paTempLabel) {
-        m_paTempLabel->setValue(formatWithPeakMin(
-            m_paTempCurrent, m_paTempPeakMin,
-            QStringLiteral(" \xC2\xB0""C"), 1));
+        m_paTempLabel->setValue(m_paTempPresent
+            ? formatPaTempWithPeakMin(m_paTempCurrent, m_paTempPeakMin)
+            : unavailable);
     }
     if (m_supplyVoltsLabel) {
-        m_supplyVoltsLabel->setValue(formatWithPeakMin(
-            m_supplyCurrent, m_supplyPeakMin, QStringLiteral(" V"), 1));
+        m_supplyVoltsLabel->setValue(m_supplyPresent
+            ? formatWithPeakMin(m_supplyCurrent, m_supplyPeakMin, QStringLiteral(" V"), 1)
+            : unavailable);
+    }
+    // R-R3-32: a remote window's readings are the Core's, and say so.
+    const QString source = radio->paReadingsFromCore() ? tr("From the Core") : QString();
+    for (MetricLabel* label : {m_paCurrentLabel, m_paTempLabel, m_supplyVoltsLabel}) {
+        if (label) { label->setToolTip(source); }
     }
 }
 

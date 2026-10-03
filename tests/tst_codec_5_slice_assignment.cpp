@@ -401,7 +401,10 @@ private slots:
         QCOMPARE(a.p1DdcConfig, 4);
         // SyncEnable = 0 (no diversity)
         QCOMPARE(a.syncEnable, 0);
-        QCOMPARE(a.nDdc, 1);
+        // nDdc is Thetis's nddc, fixed per model: nddc = 4 for this case,
+        // console.cs:8392 [v2.10.3.15] (plan Task 11; it counted enabled
+        // DDCs before).
+        QCOMPARE(a.nDdc, 4);
     }
 
     // -----------------------------------------------------------------------
@@ -515,7 +518,11 @@ private slots:
         QCOMPARE(a.ddcEnable & 0x0c, 0x0c);  // DDC2 + DDC3
         QCOMPARE(a.rate[2], 96000);
         QCOMPARE(a.rate[3], 48000);
-        QCOMPARE(a.nDdc, 2);
+        // From Thetis console.cs:8229 [v2.10.3.15]: nddc = 5 (plan Task 11).
+        QCOMPARE(a.nDdc, 5);
+        // Frame slots, GetDDC Protocol 1 OrionMKII: rx1 = 0; rx2 = 2.
+        QCOMPARE(a.streamDdc[0], 0);
+        QCOMPARE(a.streamDdc[1], 2);
     }
 
     // ── Task 10b: P1CodecRedPitaya (own case, //DH1KLM, nddc=5) ───────────────
@@ -571,7 +578,9 @@ private slots:
         const auto a = codec.applyDdcAssignment(ctx, slices);
         QCOMPARE(a.ddcEnable & 0x04, 0x04);  // DDC2 bit
         QCOMPARE(a.p1DdcConfig, 1);
-        QCOMPARE(a.nDdc, 1);
+        // From Thetis console.cs:8307 [v2.10.3.15] //DH1KLM: nddc = 5 (plan Task 11).
+        QCOMPARE(a.nDdc, 5);
+        QCOMPARE(a.streamDdc[0], 0);  // frame slot 0 (GetDDC Protocol 1: rx1 = 0)
     }
 
     void redpitaya_diversity_sets_rate2_too()

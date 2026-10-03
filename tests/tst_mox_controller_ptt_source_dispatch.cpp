@@ -10,7 +10,15 @@
 //   - MoxController::onSpacePtt(bool)         — H.4 Phase 3M-1b
 //   - MoxController::onX2Ptt(bool)            — H.4 Phase 3M-1b
 //   - MoxController::onCwPtt(bool)            — H.4 rejected (3M-2)
-//   - MoxController::onTciPtt(bool)           — H.4 rejected (3J)
+//   - MoxController::onTciPtt(bool)           : keys with PttMode::Tci
+//                                                (receiver and transmit
+//                                                gaps plan, Task 7)
+//
+// Task 7 (2026-09-24) replaced two H.4 contracts with Thetis's: the unkey
+// now clears the PTT mode (chkMOX_CheckedChanged2, console.cs:29547
+// [v2.10.3.15]), and cross-source events follow PollPTT (keys only from
+// receive, releases only in the source's own mode) instead of
+// last-setter-wins. tst_mox_controller_ptt_sources covers the pairs.
 //
 // Source references (for traceability):
 //   Thetis Project Files/Source/Console/console.cs [v2.10.3.13]:
@@ -96,13 +104,13 @@ private slots:
         QVERIFY(ctrl.isMox());
     }
 
-    // §A.2 — release engages setMox(false); PttMode is NOT cleared
+    // §A.2: release engages setMox(false); the unkey clears PttMode
     //
     // onMicPttFromRadio(false) must drive setMox(false), emitting
     // moxStateChanged(false) at end of the TX→RX walk.
-    // m_pttMode must remain PttMode::Mic — not cleared by the dispatch slot
-    // (F.1 contract: RadioModel hardwareFlipped(false) subscriber clears it).
-    void mic_release_drivesMoxOff_pttModeRetained()
+    // m_pttMode is PttMode::None afterwards: setMox(false) clears it, as
+    // chkMOX_CheckedChanged2 does on every unkey (Task 7).
+    void mic_release_drivesMoxOff_pttModeCleared()
     {
         MoxController ctrl;
         makeSync(ctrl);
@@ -121,9 +129,10 @@ private slots:
         QCOMPARE(moxSpy.at(0).at(0).toBool(), false);
         QVERIFY(!ctrl.isMox());
 
-        // PttMode NOT cleared — F.1 contract
-        QCOMPARE(pttSpy.count(), 0);
-        QCOMPARE(ctrl.pttMode(), PttMode::Mic);
+        // PttMode cleared by the unkey (chkMOX_CheckedChanged2,
+        // console.cs:29547 [v2.10.3.15]; Task 7)
+        QCOMPARE(pttSpy.count(), 1);
+        QCOMPARE(ctrl.pttMode(), PttMode::None);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -151,8 +160,8 @@ private slots:
         QVERIFY(ctrl.isMox());
     }
 
-    // §B.2 — release drives MOX off; PttMode retained
-    void cat_release_drivesMoxOff_pttModeRetained()
+    // §B.2: release drives MOX off; PttMode cleared
+    void cat_release_drivesMoxOff_pttModeCleared()
     {
         MoxController ctrl;
         makeSync(ctrl);
@@ -170,8 +179,8 @@ private slots:
         QCOMPARE(moxSpy.at(0).at(0).toBool(), false);
         QVERIFY(!ctrl.isMox());
 
-        QCOMPARE(pttSpy.count(), 0);
-        QCOMPARE(ctrl.pttMode(), PttMode::Cat);
+        QCOMPARE(pttSpy.count(), 1);
+        QCOMPARE(ctrl.pttMode(), PttMode::None);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -199,8 +208,8 @@ private slots:
         QVERIFY(ctrl.isMox());
     }
 
-    // §C.2 — inactive drives MOX off; PttMode retained
-    void vox_inactive_drivesMoxOff_pttModeRetained()
+    // §C.2: inactive drives MOX off; PttMode cleared
+    void vox_inactive_drivesMoxOff_pttModeCleared()
     {
         MoxController ctrl;
         makeSync(ctrl);
@@ -218,8 +227,8 @@ private slots:
         QCOMPARE(moxSpy.at(0).at(0).toBool(), false);
         QVERIFY(!ctrl.isMox());
 
-        QCOMPARE(pttSpy.count(), 0);
-        QCOMPARE(ctrl.pttMode(), PttMode::Vox);
+        QCOMPARE(pttSpy.count(), 1);
+        QCOMPARE(ctrl.pttMode(), PttMode::None);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -247,8 +256,8 @@ private slots:
         QVERIFY(ctrl.isMox());
     }
 
-    // §D.2 — release drives MOX off; PttMode retained
-    void space_release_drivesMoxOff_pttModeRetained()
+    // §D.2: release drives MOX off; PttMode cleared
+    void space_release_drivesMoxOff_pttModeCleared()
     {
         MoxController ctrl;
         makeSync(ctrl);
@@ -266,8 +275,8 @@ private slots:
         QCOMPARE(moxSpy.at(0).at(0).toBool(), false);
         QVERIFY(!ctrl.isMox());
 
-        QCOMPARE(pttSpy.count(), 0);
-        QCOMPARE(ctrl.pttMode(), PttMode::Space);
+        QCOMPARE(pttSpy.count(), 1);
+        QCOMPARE(ctrl.pttMode(), PttMode::None);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -295,8 +304,8 @@ private slots:
         QVERIFY(ctrl.isMox());
     }
 
-    // §E.2 — release drives MOX off; PttMode retained
-    void x2_release_drivesMoxOff_pttModeRetained()
+    // §E.2: release drives MOX off; PttMode cleared
+    void x2_release_drivesMoxOff_pttModeCleared()
     {
         MoxController ctrl;
         makeSync(ctrl);
@@ -314,8 +323,8 @@ private slots:
         QCOMPARE(moxSpy.at(0).at(0).toBool(), false);
         QVERIFY(!ctrl.isMox());
 
-        QCOMPARE(pttSpy.count(), 0);
-        QCOMPARE(ctrl.pttMode(), PttMode::X2);
+        QCOMPARE(pttSpy.count(), 1);
+        QCOMPARE(ctrl.pttMode(), PttMode::None);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -369,11 +378,10 @@ private slots:
         QLoggingCategory::setFilterRules(QString());
     }
 
-    // §F.3 — TCI press is rejected: no pttModeChanged, no moxStateChanged
-    void tci_press_rejected_noSignals()
+    // §F.3: TCI press keys with PttMode::Tci (Task 7; was rejected
+    // before TCI shipped). PollPTT, console.cs:25507-25511 [v2.10.3.15].
+    void tci_press_setsPttModeAndEngagesMox()
     {
-        QLoggingCategory::setFilterRules(QStringLiteral("nereus.dsp=false"));
-
         MoxController ctrl;
         makeSync(ctrl);
 
@@ -383,19 +391,16 @@ private slots:
         ctrl.onTciPtt(true);
         drainEvents();
 
-        QCOMPARE(pttSpy.count(), 0);
-        QCOMPARE(moxSpy.count(), 0);
-        QVERIFY(!ctrl.isMox());
-        QCOMPARE(ctrl.pttMode(), PttMode::None);
-
-        QLoggingCategory::setFilterRules(QString());
+        QCOMPARE(pttSpy.count(), 1);
+        QCOMPARE(pttSpy.at(0).at(0).value<PttMode>(), PttMode::Tci);
+        QCOMPARE(moxSpy.count(), 1);
+        QVERIFY(ctrl.isMox());
+        QCOMPARE(ctrl.pttMode(), PttMode::Tci);
     }
 
-    // §F.4 — TCI release is rejected: no signals regardless of direction
-    void tci_release_rejected_noSignals()
+    // §F.4: TCI release with nothing keyed does nothing
+    void tci_release_whileUnkeyed_noSignals()
     {
-        QLoggingCategory::setFilterRules(QStringLiteral("nereus.dsp=false"));
-
         MoxController ctrl;
         makeSync(ctrl);
 
@@ -409,20 +414,18 @@ private slots:
         QCOMPARE(moxSpy.count(), 0);
         QVERIFY(!ctrl.isMox());
         QCOMPARE(ctrl.pttMode(), PttMode::None);
-
-        QLoggingCategory::setFilterRules(QString());
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // § G — Cross-source switching (last-setter-wins semantic)
+    // § G: Cross-source rules (Thetis PollPTT, Task 7)
+    //
+    // PollPTT keys only from receive and releases only in the mode the
+    // source set (console.cs:25479-25608 [v2.10.3.15]). The old
+    // "last-setter-wins" semantic is gone.
     // ════════════════════════════════════════════════════════════════════════
 
-    // §G.1 — Mic press then Cat press: PttMode transitions Mic → Cat
-    //
-    // Both sources assert PTT; the second call (Cat) updates PttMode.
-    // This tests the last-setter-wins semantic (no refcounting or arbitration
-    // in the dispatch layer — the upstream PollPTT equivalent handles that).
-    void crossSource_micPressedThenCatPressed_pttModeTransitions()
+    // §G.1: Mic press then Cat press: the key stays Mic's
+    void crossSource_micPressedThenCatPressed_pttModeStaysMic()
     {
         MoxController ctrl;
         makeSync(ctrl);
@@ -433,28 +436,18 @@ private slots:
         QCOMPARE(ctrl.pttMode(), PttMode::Mic);
         QVERIFY(ctrl.isMox());
 
-        // Cat press while Mic is active — PttMode transitions to Cat
         QSignalSpy pttSpy(&ctrl, &MoxController::pttModeChanged);
 
         ctrl.onCatPtt(true);
         drainEvents();
 
-        // PttMode should now be Cat
-        QCOMPARE(pttSpy.count(), 1);
-        QCOMPARE(pttSpy.at(0).at(0).value<PttMode>(), PttMode::Cat);
-        QCOMPARE(ctrl.pttMode(), PttMode::Cat);
-        // MOX still engaged (was already on; setMox(true) idempotent on state)
+        QCOMPARE(pttSpy.count(), 0);
+        QCOMPARE(ctrl.pttMode(), PttMode::Mic);
         QVERIFY(ctrl.isMox());
     }
 
-    // §G.2 — Mic press then Cat release: PttMode stays Mic, MOX stays engaged
-    //
-    // Cat releases while Mic is still active.  The Cat release calls setMox(false)
-    // which releases MOX.  This verifies the dispatch layer's "last-setter-wins"
-    // semantics: Cat release wins and drops MOX even though Mic is still pressed.
-    // (In production, the upstream PollPTT/arbiter would NOT call onCatPtt(false)
-    // while Mic is still active; this test verifies the raw dispatch semantic.)
-    void crossSource_micPressedThenCatReleased_moxDrops()
+    // §G.2: Mic press then Cat release: MOX stays on
+    void crossSource_micPressedThenCatReleased_moxStays()
     {
         MoxController ctrl;
         makeSync(ctrl);
@@ -468,17 +461,12 @@ private slots:
         QSignalSpy pttSpy(&ctrl, &MoxController::pttModeChanged);
         QSignalSpy moxSpy(&ctrl, &MoxController::moxStateChanged);
 
-        // Cat releases while Mic is still pressed — last-setter-wins drops MOX
         ctrl.onCatPtt(false);
         drainEvents();
 
-        // Cat release: pressed=false → setPttMode NOT called (no pttModeChanged)
         QCOMPARE(pttSpy.count(), 0);
-        // setMox(false) called; MOX should be released
-        QCOMPARE(moxSpy.count(), 1);
-        QCOMPARE(moxSpy.at(0).at(0).toBool(), false);
-        QVERIFY(!ctrl.isMox());
-        // PttMode retains Mic (not cleared by dispatch slot)
+        QCOMPARE(moxSpy.count(), 0);
+        QVERIFY(ctrl.isMox());
         QCOMPARE(ctrl.pttMode(), PttMode::Mic);
     }
 

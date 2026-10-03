@@ -13,6 +13,10 @@
 //   2026-04-23 — Added rnnoiseDefaultSmallBin() and dfnrModelTarball()
 //                 helpers for Sub-epic C-1 packaging. Refactored to
 //                 share probe logic via internal probeModel() helper.
+//   2026-09-25 - setDfnrModelTarballForTest() (NEREUS_BUILD_TESTS only), so
+//                 a test can make the DFNR model missing (R-R3-39), by
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "ModelPaths.h"
@@ -21,6 +25,13 @@
 #include <QDir>
 #include <QFile>
 #include <QStandardPaths>
+
+#ifdef NEREUS_BUILD_TESTS
+#include <QMutex>
+#include <QMutexLocker>
+
+#include <optional>
+#endif
 
 namespace NereusSDR::ModelPaths {
 
@@ -100,8 +111,35 @@ QString rnnoiseDefaultSmallBin()
     return probeModel(QStringLiteral("rnnoise"), QStringLiteral("Default_small.bin"));
 }
 
+#ifdef NEREUS_BUILD_TESTS
+namespace {
+QMutex g_dfnrOverrideMutex;
+std::optional<QString> g_dfnrOverride;
+} // namespace
+
+void setDfnrModelTarballForTest(const QString& path)
+{
+    QMutexLocker lock(&g_dfnrOverrideMutex);
+    g_dfnrOverride = path;
+}
+
+void clearDfnrModelTarballForTest()
+{
+    QMutexLocker lock(&g_dfnrOverrideMutex);
+    g_dfnrOverride.reset();
+}
+#endif
+
 QString dfnrModelTarball()
 {
+#ifdef NEREUS_BUILD_TESTS
+    {
+        QMutexLocker lock(&g_dfnrOverrideMutex);
+        if (g_dfnrOverride) {
+            return *g_dfnrOverride;
+        }
+    }
+#endif
     return probeModel(QStringLiteral("dfnet3"), QStringLiteral("DeepFilterNet3_onnx.tar.gz"));
 }
 

@@ -15,6 +15,9 @@
 //                Detects HL2 LAN PHY throttling via ep6 ingress byte-rate
 //                analysis, faithfully porting upstream compute_bps() using
 //                std::atomic<int64_t> in place of Windows InterlockedAdd64.
+//   2026-09-23 - R-R3-21: EP6 sequence error counter (NereusSDR addition)
+//                for Diagnostics > Connection Quality. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From bandwidth_monitor.h ---
@@ -163,6 +166,15 @@ public:
     bool isThrottled() const;
     int  throttleEventCount() const;
 
+    // R-R3-21: EP6 sequence errors. P1RadioConnection decides what counts
+    // (see its onReadyRead()); this monitor only stores the number, since
+    // it is the per-connection counter set Diagnostics > Connection
+    // Quality reads. NereusSDR addition, no upstream equivalent here.
+    // Written on the connection thread, read on the GUI thread; cleared by
+    // reset() at each connect.
+    void recordEp6SequenceError();
+    int  ep6SequenceErrorCount() const;
+
     // Hard reset — clears all counters and throttle state.
     // Source: mi0bot bandwidth_monitor.c:59-72 bandwidth_monitor_reset() [@c26a8a4]
     // Original: InterlockedExchange64() across all six volatile fields.
@@ -198,6 +210,9 @@ private:
     bool m_throttled{false};
     int  m_silentTicks{0};
     int  m_throttleEventCount{0};
+
+    // R-R3-21: EP6 sequence error count (see recordEp6SequenceError()).
+    std::atomic<int> m_ep6SequenceErrors{0};
 
     // Inner compute_bps() — ported from bandwidth_monitor.c:86-113 [@c26a8a4]
     double computeBps(std::atomic<int64_t>& totalBytes,

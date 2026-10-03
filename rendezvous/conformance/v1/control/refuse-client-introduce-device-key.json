@@ -1,0 +1,11 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "introduce",
+    "id": "lwhu2kyjnrfdwvpxvdckao3lb7",
+    "device": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE_WtfdDw6w8-gD6JwPzj8eZiLZ5Ou1vLPBx5t7tqo3n6IusVGiMZJJHaEuOODaV8FdxtdqD0PWB9LkjgrET82Mw",
+    "deviceSignature": "KQ0RuGlhoBWV1kXWKxkK5vhQMVsKC_lKsadj4HApIh42dq9fhPDURBEXN5Z2TAvYdRlFEUTXPcnV9g-y9uGbPw",
+    "offer": "v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\na=msid-semantic: WMS\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=ice-ufrag:Nx3q\r\na=ice-pwd:conformanceconformance12\r\na=ice-options:trickle\r\na=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r\na=setup:actpass\r\na=mid:0\r\na=sctp-port:5000\r\na=max-message-size:262144\r\n"
+  },
+  "decodes": false
+}

@@ -1,0 +1,9 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "settings.remove",
+    "key": "StationCallsign",
+    "properties": []
+  },
+  "decodes": true
+}

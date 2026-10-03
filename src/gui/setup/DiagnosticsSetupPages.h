@@ -67,8 +67,6 @@ private:
 // Diagnostics > Logging & Performance
 // Log section: level combo, file path label, open log button, clear log button.
 // Categories section: filter placeholder label.
-// Performance section: spectral warning LEDs + purge-buffers toggle (folded
-//   from Thetis Display→General per design Section 3B).
 // ---------------------------------------------------------------------------
 class DiagLoggingPage : public SetupPage {
     Q_OBJECT
@@ -83,11 +81,6 @@ private:
     QPushButton* m_openLogButton{nullptr};
     QPushButton* m_clearLogButton{nullptr};
     QLabel*      m_filterLabel{nullptr};
-
-    // Performance controls (Design Section 3B)
-    QCheckBox* m_specWarningRenderDelay{nullptr};
-    QCheckBox* m_specWarningGetPixels{nullptr};
-    QCheckBox* m_purgeBuffers{nullptr};
 
     void buildUI();
 };

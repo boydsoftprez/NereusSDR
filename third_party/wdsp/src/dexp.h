@@ -103,21 +103,21 @@ typedef struct _dexp
 
 extern DEXP pdexp[];
 
-void create_dexp (int id, int run_dexp, int size, double* in, double* out, int rate, double dettau, double tattack, double tdecay, 
+__declspec (dllexport) void create_dexp (int id, int run_dexp, int size, double* in, double* out, int rate, double dettau, double tattack, double tdecay, 
 	double thold, double exp_ratio, double hyst_ratio, double attack_thresh, int nc, int wtype, double lowcut, double highcut, 
 	int run_filt, int run_vox, int run_audelay, double audelay, void (__stdcall *pushvox)(int id, int active),
 	int antivox_run, int antivox_size, int antivox_rate, double antivox_gain, double antivox_tau);
 
-void destroy_dexp (int id);
+__declspec (dllexport) void destroy_dexp (int id);
 
-void flush_dexp (int id);
+__declspec (dllexport) void flush_dexp (int id);
 
-void xdexp (int id);
+__declspec (dllexport) void xdexp (int id);
 
-void SetDEXPSize (int id, int size);
+__declspec (dllexport) void SetDEXPSize (int id, int size);
 
-void SetDEXPRate (int id, double rate);
+__declspec (dllexport) void SetDEXPRate (int id, double rate);
 
-void SendAntiVOXData (int id, int nsamples, double* data);
+__declspec (dllexport) void SendAntiVOXData (int id, int nsamples, double* data);
 
 #endif

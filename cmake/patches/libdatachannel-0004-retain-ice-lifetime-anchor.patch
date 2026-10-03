@@ -1,0 +1,100 @@
+libdatachannel v0.24.5: retain an application ICE resource through agent retirement
+
+NereusSDR Core-only patch applied after the shared 0003 ICE retirement patch.
+MPL-2.0, like the covered files it changes. Task 56, 2026-09-27.
+
+An optional Configuration owner keeps a Core UDP candidate route alive until
+the closing libjuice agent actually destroys its socket. The retirement
+continuation releases the agent, then the owner, then its Init token. The
+public field is null by default and contains no Core or Qt implementation.
+
+--- a/include/rtc/configuration.hpp
++++ b/include/rtc/configuration.hpp
+@@ -11,6 +11,7 @@
+ 
+ #include "common.hpp"
+ 
++#include <memory>
+ #include <vector>
+ 
+ namespace rtc {
+@@ -93,6 +94,9 @@
+ 	optional<string> certificatePemFile;
+ 	optional<string> keyPemFile;
+ 	optional<string> keyPemPass;
++
++	// Optional application resource retained through final ICE agent destruction.
++	std::shared_ptr<void> iceTransportLifetime;
+ };
+ 
+ #ifdef RTC_ENABLE_WEBSOCKET
+--- a/src/impl/icetransport.hpp
++++ b/src/impl/icetransport.hpp
+@@ -80,6 +80,10 @@
+ 	candidate_callback mCandidateCallback;
+ 	gathering_state_callback mGatheringStateChangeCallback;
+ 
++	// Declared before backend resources so ordinary teardown frees them first.
++	// The libjuice retirement owner takes this during close.
++	std::shared_ptr<void> mIceTransportLifetime;
++
+ #if !USE_NICE
+ 	unique_ptr<juice_agent_t, void (*)(juice_agent_t *)> mAgent;
+ 	int mTurnServersAdded = 0;
+--- a/src/impl/icetransport.cpp
++++ b/src/impl/icetransport.cpp
+@@ -48,8 +48,9 @@
+ public:
+ 	using owner = std::unique_ptr<juice_agent_t, void (*)(juice_agent_t *)>;
+ 
+-	RetiringJuiceAgent(owner agent, init_token token)
+-	    : mAgent(std::move(agent)), mToken(std::move(token)) {}
++	RetiringJuiceAgent(owner agent, init_token token, std::shared_ptr<void> lifetime)
++	    : mToken(std::move(token)), mIceTransportLifetime(std::move(lifetime)),
++	      mAgent(std::move(agent)) {}
+ 
+ 	void schedule(std::chrono::steady_clock::duration delay = 0ms) {
+ 		auto self = shared_from_this();
+@@ -66,11 +67,14 @@
+ 		if (status == JUICE_CLOSE_EXPIRED)
+ 			PLOG_WARNING << "TURN allocation release window expired before confirmation";
+ 		mAgent.reset();
++		mIceTransportLifetime.reset();
+ 		mToken.reset();
+ 	}
+ 
++	// Reverse destruction order also keeps the route until the agent is gone.
++	init_token mToken;
++	std::shared_ptr<void> mIceTransportLifetime;
+ 	owner mAgent;
+-	init_token mToken;
+ };
+ 
+ void IceTransport::Init() {
+@@ -88,7 +92,7 @@
+       mMid("0"), mGatheringState(GatheringState::New),
+       mCandidateCallback(std::move(candidateCallback)),
+       mGatheringStateChangeCallback(std::move(gatheringStateChangeCallback)),
+-      mAgent(nullptr, nullptr) {
++      mIceTransportLifetime(config.iceTransportLifetime), mAgent(nullptr, nullptr) {
+ 
+ 	PLOG_DEBUG << "Initializing ICE transport (libjuice)";
+ 
+@@ -222,7 +226,8 @@
+ 	// before transferring the agent to its independently scheduled owner.
+ 	auto token = Init::Instance().token();
+ 	juice_begin_close(mAgent.get());
+-	auto retiring = std::make_shared<RetiringJuiceAgent>(std::move(mAgent), std::move(token));
++	auto retiring = std::make_shared<RetiringJuiceAgent>(
++	    std::move(mAgent), std::move(token), std::move(mIceTransportLifetime));
+ 	retiring->schedule();
+ }
+ 
+@@ -482,6 +487,7 @@
+       mMid("0"), mGatheringState(GatheringState::New),
+       mCandidateCallback(std::move(candidateCallback)),
+       mGatheringStateChangeCallback(std::move(gatheringStateChangeCallback)),
++      mIceTransportLifetime(config.iceTransportLifetime),
+       mNiceAgent(nullptr, nullptr), mOutgoingDscp(0) {
+ 
+ 	PLOG_DEBUG << "Initializing ICE transport (libnice)";

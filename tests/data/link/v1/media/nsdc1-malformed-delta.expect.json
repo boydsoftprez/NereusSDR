@@ -1,0 +1,8 @@
+{
+    "codec": "nsdc1",
+    "expect": {
+        "disposition": "rejected",
+        "keyframe": false,
+        "reason": "malformed"
+    }
+}

@@ -46,12 +46,31 @@
 //                                    distance / initial-bearing
 //                                    computation when our grid is set.
 //                                    AI tooling: Anthropic Claude Code.
+//   2026-09-27  J.J. Boyd / KG4VCF  iPhone plan Task 22 / parity Task 20
+//                                    (R-IOS-26, R-R3-49): the
+//                                    `freedvStations` record's fields
+//                                    (recordFields / stationFromRecord),
+//                                    when each station's message last
+//                                    changed (messageChangedAtMs, injected
+//                                    clock), and a remote window's model
+//                                    fed from the Core's stream with the
+//                                    Core's distance and heading
+//                                    (setComputesDistance(false),
+//                                    applyStationRecord). NereusSDR-
+//                                    original additions. AI-assisted via
+//                                    Anthropic Claude Code.
+//   2026-09-28  J.J. Boyd / KG4VCF  R-IOS-26 (stationFreedvVersion 2): the
+//                                    record's band. AI-assisted via
+//                                    Anthropic Claude Code.
 
 #pragma once
 
 #include <QObject>
 #include <QHash>
+#include <QJsonObject>
 #include <QString>
+
+#include <functional>
 
 #include "core/FreeDVStation.h"
 
@@ -76,6 +95,32 @@ public:
     // add / update events. Empty grid disables the computation.
     void setOurGridSquare(const QString& grid);
 
+    // ── iPhone plan Task 22 / parity Task 20 (stationFreedvVersion 1) ────
+    /// When the station's message last changed, in ms since the epoch on
+    /// the model's clock (0: never, or not known).
+    qint64 messageChangedAtMs(const QString& sid) const;
+    /// The model's clock (ms since the epoch); a test injects its own.
+    void setClockForTest(std::function<qint64()> clock) { m_clock = std::move(clock); }
+
+    /// The `freedvStations` record for one station (the link's "Record
+    /// streams"): the dialog's 14 columns (callsign, gridSquare,
+    /// distanceKm, headingDeg with headingCardinal, version, frequencyHz,
+    /// txMode, status, userMessage, lastTxUtc, lastRxCallsign, lastRxMode,
+    /// snrDb, lastUpdateUtc), then transmitting, receivingFrom,
+    /// messageChangedAtMs and lastRxUtc; and band (stationFreedvVersion 2,
+    /// Band::bandFromFrequency of the frequency, absent while it is 0).
+    static QJsonObject recordFields(const FreeDVStation& info, qint64 messageChangedAtMs);
+    /// The station a `freedvStations` record describes (`sid` its id).
+    static FreeDVStation stationFromRecord(const QString& sid, const QJsonObject& fields);
+
+    /// A remote window: the Core computes distance and heading from its
+    /// own grid, so this model keeps the values it is given.
+    void setComputesDistance(bool computes) { m_computesDistance = computes; }
+    bool computesDistance() const { return m_computesDistance; }
+    /// A remote window: one record of the Core's `freedvStations` stream
+    /// (added or updated as it is new or held).
+    void applyStationRecord(const QString& sid, const QJsonObject& fields);
+
 public slots:
     void onStationAdded(const QString& sid, const FreeDVStation& info);
     void onStationUpdated(const QString& sid, const FreeDVStation& info);
@@ -94,8 +139,13 @@ private:
     // 4 characters.
     void applyDistanceHeading(FreeDVStation& info) const;
 
+    void noteMessage(const QString& sid, const FreeDVStation& info);
+
     QHash<QString, FreeDVStation> m_stations;
     QString m_ourGrid;
+    bool m_computesDistance = true;
+    QHash<QString, qint64> m_messageChangedAtMs;
+    std::function<qint64()> m_clock;
 };
 
 } // namespace NereusSDR

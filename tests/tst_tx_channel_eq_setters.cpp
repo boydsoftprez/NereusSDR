@@ -148,6 +148,40 @@ private slots:
         ch.setTxEqProfile(freqs10, badGains);
     }
 
+    // ── R-R3-49 (group A fix wave): setTxEqProfile(F, G, Q) ────────────────
+    //
+    // The arrays Thetis's sendTXDspUpdate hands SetTXAEQProfile
+    // (eqform.cs:3041-3072 [v2.10.3.15]): nfreqs = F.size() - 1, Q empty
+    // for null. The read-back holds what was handed over; sizes that are
+    // not a profile change nothing.
+    void setTxEqProfileWithQ_recordsTheArraysAndRefusesBadSizes()
+    {
+        TxChannel ch(kTxChannelId);
+        const std::vector<double> F{0, 0, 675, 1350, 2025, 2700};
+        const std::vector<double> G{1.5, -4, 6.5, -4, 6.5, -4};
+        const std::vector<double> Q{0, 2, 2, 2, 2, 2};
+        ch.setTxEqProfile(F, G, Q);
+        QCOMPARE(ch.lastTxEqProfileFForTest(), F);
+        QCOMPARE(ch.lastTxEqProfileGForTest(), G);
+        QCOMPARE(ch.lastTxEqProfileQForTest(), Q);
+        const int pushes = ch.txEqProfilePushCountForTest();
+
+        ch.setTxEqProfile(F, {1.5, -4}, Q);                   // G too short
+        ch.setTxEqProfile(F, G, {0, 2});                      // Q too short
+        ch.setTxEqProfile({0}, {0}, {});                      // no points
+        ch.setTxEqProfile(std::vector<double>(258, 0.0),      // 257 points
+                          std::vector<double>(258, 0.0), {});
+        QCOMPARE(ch.txEqProfilePushCountForTest(), pushes);
+        QCOMPARE(ch.lastTxEqProfileQForTest(), Q);
+
+        // The ten-band form: F with its pad slot, no Q.
+        ch.setTxEqProfile(std::vector<double>{32, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000},
+                          std::vector<double>{0, -12, -12, -12, -1, 1, 4, 9, 12, -10, -10});
+        QCOMPARE(ch.lastTxEqProfileFForTest(),
+                 (std::vector<double>{0, 32, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000}));
+        QVERIFY(ch.lastTxEqProfileQForTest().empty());
+    }
+
     // ── B-1.4: setTxEqNc (filter coefficients) ──────────────────────────────
     //
     // Wraps SetTXAEQNC(channel, nc).  Default 2048 per WDSP create_eqp.

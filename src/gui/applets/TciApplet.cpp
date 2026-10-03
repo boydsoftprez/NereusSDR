@@ -19,6 +19,18 @@
 //                level meters use placeholder values; real meter wiring
 //                + setup/show-clients navigation in Phase 23.
 //                AppSettings keys: TciSliceAGain, TciTxGain.
+//   2026-09-23 — R3 Setup fix wave (R-R3-17, R-R3-21) by J.J. Boyd
+//                (KG4VCF); AI-assisted transformation via Anthropic
+//                Claude Code. The startup gain push no longer writes the
+//                value it just read back to settings.
+//   2026-09-23 - R3 receiver audio plan, Task 4 (R-R3-42) by J.J. Boyd
+//                (KG4VCF); AI-assisted transformation via Anthropic
+//                Claude Code. The TCI gains are this computer's settings
+//                now; a notice line shows, in plain words, what TCI
+//                refused or why a receiver's audio stopped.
+//   2026-09-27 - Parity Task 23 control UI by J.J. Boyd (KG4VCF);
+//                AI-assisted implementation via OpenAI Codex. The applet
+//                names both TCI servers and saves Enable through TciSwitch.
 // =================================================================
 
 #ifdef HAVE_WEBSOCKETS
@@ -26,12 +38,18 @@
 #include "TciApplet.h"
 
 #include "core/AppSettings.h"
+#include "gui/OperatorReasonText.h"
 #include "core/LogCategories.h"
 #include "core/TciServer.h"
+#include "core/TciSwitch.h"
+#include "core/session/IStationLink.h"
 #include "gui/HGauge.h"
 #include "gui/StyleConstants.h"
+#include "models/RadioModel.h"
+#include "models/StationTciModel.h"
 
 #include <QFrame>
+#include <QHostAddress>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
@@ -133,13 +151,30 @@ TciApplet::TciApplet(TciServer* server, QWidget* parent)
     // (linear 1.0, no attenuation) which matches the TciServer defaults --
     // but persisted non-zero values must propagate or the slider's UI
     // position would lie about what the audio path is doing.
+    //
+    // Apply only, never save: the values were just read from settings, so
+    // writing them back would be an edit nobody made. Since R-R3-42 these
+    // keys are this computer's in a remote window too (SettingsScope
+    // "Tci"); the R3 Setup fix wave's first reason, that a remote window's
+    // write would reach the Core, no longer applies, but the rule stands.
+    // In a remote window TciServer ignores the TX gain (no transmit).
     if (m_server) {
         if (m_sliceAGain) {
-            onSliceAGainChanged(m_sliceAGain->value());
+            applySliceAGain(m_sliceAGain->value());
         }
         if (m_txGain) {
-            onTxGainChanged(m_txGain->value());
+            applyTxGain(m_txGain->value());
         }
+    }
+
+    // R-R3-42: what TCI refused, or why a receiver's audio stopped. After
+    // buildUI(), which made the notice line.
+    if (m_server) {
+        connect(m_server, &TciServer::operatorNotice, this,
+                [this](const QString&, const QString& reason, bool) { showNotice(reason); });
+        connect(m_server, &TciServer::operatorNoticeCleared, this,
+                [this] { showNotice(QString()); });
+        showNotice(m_server->operatorNoticeReason());
     }
 
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
@@ -167,6 +202,14 @@ void TciApplet::buildUI()
         buildSliceRow(vbox);
         buildTxRow(vbox);
         vbox->addWidget(divider());
+        // R-R3-42: hidden until TciServer has something to tell the operator.
+        m_noticeLabel = new QLabel(this);
+        m_noticeLabel->setObjectName(QStringLiteral("tciNotice"));
+        m_noticeLabel->setWordWrap(true);
+        m_noticeLabel->setStyleSheet(QStringLiteral(
+            "QLabel { color: %1; font-size: 9px; }").arg(Style::kTextSecondary));
+        m_noticeLabel->setVisible(false);
+        vbox->addWidget(m_noticeLabel);
         buildFooter(vbox);
         vbox->addStretch();
     }
@@ -181,6 +224,48 @@ void TciApplet::buildUI()
         buildDisabledState(vbox);
     }
     root->addWidget(m_disabledContent);
+
+    m_coreStatus = makeSecondaryLabel(QString(), this);
+    m_coreStatus->setObjectName(QStringLiteral("tciCoreStatus"));
+    m_coreStatus->setWordWrap(true);
+    m_coreStatus->setVisible(false);
+    root->addWidget(m_coreStatus);
+}
+
+void TciApplet::setStationContext(TciSwitch* control, RadioModel* model)
+{
+    m_switch = control;
+    m_model = model;
+    if (model && model->stationTciModel()) {
+        connect(model->stationTciModel(), &StationTciModel::stateChanged,
+                this, &TciApplet::updateCoreStatus);
+        connect(model->stationTciModel(), &StationTciModel::clientsChanged,
+                this, &TciApplet::updateCoreStatus);
+        connect(model, &RadioModel::stationLinkStateChanged,
+                this, &TciApplet::updateCoreStatus);
+    }
+    updateCoreStatus();
+}
+
+void TciApplet::updateCoreStatus()
+{
+    if (!m_coreStatus) {
+        return;
+    }
+    const IStationLink* link = m_model ? m_model->stationLink() : nullptr;
+    const StationTciModel* station = m_model ? m_model->stationTciModel() : nullptr;
+    if (!link || !link->stationTciAvailable() || !station) {
+        m_coreStatus->hide();
+        return;
+    }
+    const QString state = station->listening()
+        ? QStringLiteral("listening on port %1").arg(station->port())
+        : station->enabled() ? QStringLiteral("waiting to listen")
+                             : QStringLiteral("off");
+    const QString clients = link->stationTciServerAvailable()
+        ? QStringLiteral(", %1 apps connected").arg(station->clients().size()) : QString();
+    m_coreStatus->setText(QStringLiteral("The Core's TCI server: %1%2").arg(state, clients));
+    m_coreStatus->show();
 }
 
 void TciApplet::buildHeaderRow(QVBoxLayout* vbox)
@@ -191,7 +276,7 @@ void TciApplet::buildHeaderRow(QVBoxLayout* vbox)
     m_statusDot = makeStatusDot(this);
     row->addWidget(m_statusDot);
 
-    auto* titleLbl = new QLabel(QStringLiteral("TCI Server"), this);
+    auto* titleLbl = new QLabel(QStringLiteral("This window's TCI server"), this);
     titleLbl->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; font-size: 10px; font-weight: bold; }"
     ).arg(Style::kTextPrimary));
@@ -362,7 +447,8 @@ void TciApplet::buildDisabledState(QVBoxLayout* vbox)
     m_enableBtn = new QPushButton(QStringLiteral("Enable Server"), this);
     m_enableBtn->setFixedHeight(24);
     m_enableBtn->setToolTip(
-        QStringLiteral("Start the TCI WebSocket server"));
+        QStringLiteral("Turn on the TCI server so programs like WSJT-X or JTDX "
+                       "can control this radio."));
     m_enableBtn->setStyleSheet(QStringLiteral(
         "QPushButton {"
         "  background: %1; border: 1px solid %2; border-radius: 3px;"
@@ -439,6 +525,24 @@ void TciApplet::updateStatusWidgets()
     }
 }
 
+// ── R-R3-42: notice line ─────────────────────────────────────────────────────
+
+void TciApplet::showNotice(const QString& reason)
+{
+    if (!m_noticeLabel) { return; }
+    // The Core's wire reasons and this computer's own sentences, both shown
+    // in the operator's words.
+    const QString shown = reason.isEmpty() ? QString() : OperatorReasonText::forDisplay(reason);
+    m_noticeLabel->setText(shown);
+    m_noticeLabel->setToolTip(shown);
+    m_noticeLabel->setVisible(!shown.isEmpty());
+}
+
+QString TciApplet::noticeText() const
+{
+    return (m_noticeLabel && !m_noticeLabel->isHidden()) ? m_noticeLabel->text() : QString();
+}
+
 // ── AppletWidget override ─────────────────────────────────────────────────────
 
 void TciApplet::syncFromModel()
@@ -447,6 +551,7 @@ void TciApplet::syncFromModel()
         return;
     }
     applyEnabledState(m_server->isRunning());
+    updateCoreStatus();
 }
 
 // ── Periodic refresh ──────────────────────────────────────────────────────────
@@ -532,16 +637,26 @@ void TciApplet::onEnableToggled(bool on)
     if (!m_server) {
         return;
     }
-    // Phase 3J-1 review P2.4: handle both enable (on=true → start) and
-    // disable (on=false → stop) so the TciApplet enable button is a
-    // true live toggle — not a one-way latch.
+    // Keep the applet's switch, Setup, and the Core's station switch in
+    // one path. The saved choice survives the next link report.
+    auto& settings = AppSettings::instance();
+    settings.setValue(QStringLiteral("TciServerEnabled"),
+                      on ? QStringLiteral("True") : QStringLiteral("False"));
+    settings.save();
+    const quint16 port = static_cast<quint16>(
+        settings.value(QStringLiteral("TciServerPort"), QStringLiteral("50001"))
+            .toString().toUShort());
+    QHostAddress bind;
+    if (!bind.setAddress(settings.value(QStringLiteral("TciServerBindAddress"),
+                                         QStringLiteral("127.0.0.1")).toString())) {
+        bind = QHostAddress(QHostAddress::LocalHost);
+    }
+    if (m_switch) {
+        m_switch->setSwitch(on, port, bind);
+        return;
+    }
     if (on) {
-        // Read the persisted port preference; default 50001.
-        const quint16 port = static_cast<quint16>(
-            AppSettings::instance()
-                .value(QStringLiteral("TciServerPort"), QStringLiteral("50001"))
-                .toString().toUShort());
-        if (!m_server->start(port)) {
+        if (!m_server->start(bind, port)) {
             qCWarning(lcTci) << "TciApplet: failed to start TCI server on port" << port;
         }
     } else {
@@ -572,13 +687,17 @@ void TciApplet::onShowClientsClicked()
 // (AF Gain on the speaker bus); this is a TCI-only trim.
 void TciApplet::onSliceAGainChanged(int dB)
 {
-    if (m_sliceAGainLabel) {
-        m_sliceAGainLabel->setText(QStringLiteral("%1").arg(dB));
-    }
     auto& s = AppSettings::instance();
     s.setValue(QLatin1String(kKeySliceAGain), QString::number(dB));
     s.save();
+    applySliceAGain(dB);
+}
 
+void TciApplet::applySliceAGain(int dB)
+{
+    if (m_sliceAGainLabel) {
+        m_sliceAGainLabel->setText(QStringLiteral("%1").arg(dB));
+    }
     if (m_server) {
         const float lin = std::pow(10.0f, dB / 20.0f);
         m_server->setSliceRxGainLinear(0, lin);  // slice "A" == rx 0
@@ -591,13 +710,17 @@ void TciApplet::onSliceAGainChanged(int dB)
 // PhoneCwApplet); both apply at different stages of the TXA chain.
 void TciApplet::onTxGainChanged(int dB)
 {
-    if (m_txGainLabel) {
-        m_txGainLabel->setText(QStringLiteral("%1").arg(dB));
-    }
     auto& s = AppSettings::instance();
     s.setValue(QLatin1String(kKeyTxGain), QString::number(dB));
     s.save();
+    applyTxGain(dB);
+}
 
+void TciApplet::applyTxGain(int dB)
+{
+    if (m_txGainLabel) {
+        m_txGainLabel->setText(QStringLiteral("%1").arg(dB));
+    }
     if (m_server) {
         const float lin = std::pow(10.0f, dB / 20.0f);
         m_server->setTciTxGainLinear(lin);

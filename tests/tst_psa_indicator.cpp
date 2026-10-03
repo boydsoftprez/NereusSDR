@@ -73,7 +73,7 @@ private slots:
     {
         PsaIndicatorWidget w(nullptr);
         QCOMPARE(w.fbText(), QStringLiteral("Feedback"));
-        QCOMPARE(w.psText(), QStringLiteral("Pure Signal2"));
+        QCOMPARE(w.psText(), QStringLiteral("PureSignal 3"));
     }
 
     // ── State 1: PS off → DimGray / DimGray, FB "Feedback" ───────────────────
@@ -86,7 +86,7 @@ private slots:
         QCOMPARE(w.fbBackgroundColor(), kDimGray);
         QCOMPARE(w.psBackgroundColor(), kDimGray);
         QCOMPARE(w.fbText(), QStringLiteral("Feedback"));
-        QCOMPARE(w.psText(), QStringLiteral("Pure Signal2"));
+        QCOMPARE(w.psText(), QStringLiteral("PureSignal 3"));
     }
 
     // ── State 2: PS on, no MOX → SeaGreen / SeaGreen, FB "Feedback" ──────────
@@ -100,7 +100,7 @@ private slots:
         QCOMPARE(w.fbBackgroundColor(), kSeaGreen);
         QCOMPARE(w.psBackgroundColor(), kSeaGreen);
         QCOMPARE(w.fbText(), QStringLiteral("Feedback"));
-        QCOMPARE(w.psText(), QStringLiteral("Pure Signal2"));
+        QCOMPARE(w.psText(), QStringLiteral("PureSignal 3"));
     }
 
     // ── State 3: TX, hide-feedback → FB "Feedback" (text), color tracks level ─
@@ -117,7 +117,7 @@ private slots:
         w.setHideFeedback(true);
         QCOMPARE(w.fbText(), QStringLiteral("Feedback"));
         QCOMPARE(w.fbBackgroundColor(), kLime);
-        QCOMPARE(w.psText(), QStringLiteral("Pure Signal2"));
+        QCOMPARE(w.psText(), QStringLiteral("PureSignal 3"));
     }
 
     // ── State 4: TX, !hideFeedback, cal-changed → FB shows numeric level ─────
@@ -174,7 +174,7 @@ private slots:
         w.setPsEnabled(true);
         w.setMox(true);
         w.setCorrectionsBeingApplied(false);
-        QCOMPARE(w.psText(), QStringLiteral("Pure Signal2"));
+        QCOMPARE(w.psText(), QStringLiteral("PureSignal 3"));
         QCOMPARE(w.psBackgroundColor(), kSeaGreen);
     }
 
@@ -408,7 +408,7 @@ private slots:
         w.setPsEnabled(true);
         // m_mox stays at default (false)
         w.psInfo(150, true, true, true, kLime);
-        QCOMPARE(w.psText(), QStringLiteral("Pure Signal2")); // !_mox branch
+        QCOMPARE(w.psText(), QStringLiteral("PureSignal 3")); // !_mox branch
         QCOMPARE(w.psBackgroundColor(), kSeaGreen);
         // FB also takes the !_mox branch
         QCOMPARE(w.fbText(), QStringLiteral("Feedback"));
@@ -425,7 +425,7 @@ private slots:
         w.setPsEnabled(true);
         w.setMox(true);
         w.psInfo(150, true, /*corrApplied=*/false, true, kLime);
-        QCOMPARE(w.psText(), QStringLiteral("Pure Signal2"));
+        QCOMPARE(w.psText(), QStringLiteral("PureSignal 3"));
         QCOMPARE(w.psBackgroundColor(), kSeaGreen);
         // FB still shows numeric (calChanged=true && !hideFeedback)
         QCOMPARE(w.fbText(), QStringLiteral("150"));

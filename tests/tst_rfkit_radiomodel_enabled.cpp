@@ -10,6 +10,11 @@
 //                 writes per-MAC under hardware/<mac>/peripherals/.
 //                 Tests pin a MAC via setLastRadioInfoForTest and drive
 //                 the Connected state via setConnectionStateForTest.
+//   2026-09-24 -- R-R3-47: rfKitEnabled is the Core's switch, Core to
+//                 window only: no raw write, a remote window holds the
+//                 Core's value and never switches it itself, and on the
+//                 Core the switch runs the amp through StationRfKitController.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -17,6 +22,10 @@
 #include "core/AppSettings.h"
 #include "core/RadioDiscovery.h"   // RadioInfo
 #include "core/RadioConnection.h"  // ConnectionState
+#include "core/StationRfKitController.h"
+#include "models/RfKitModel.h"
+#include <QMetaProperty>
+#include <QTcpServer>
 
 class RfKitEnabledTest : public QObject {
     Q_OBJECT
@@ -31,6 +40,9 @@ private slots:
     void disablingTriggersDisconnect();
     void currentRadioMacIsEmptyWhileOffline();
     void currentRadioMacReturnsMacWhileConnected();
+    void switchHasNoRawWrite();
+    void remoteWindowHoldsTheCoresSwitch();
+    void coreRunsTheSwitchThroughItsController();
 
 private:
     static void primeConnectedRadio(NereusSDR::RadioModel& m,
@@ -178,6 +190,59 @@ void RfKitEnabledTest::currentRadioMacReturnsMacWhileConnected()
     // The normal case must keep working -- a gate that always denies
     // would pass the test above while breaking the whole peripherals UI.
     QCOMPARE(m.currentRadioMac(), QStringLiteral("aa:bb:cc:dd:ee:43"));
+}
+
+void RfKitEnabledTest::switchHasNoRawWrite()
+{
+    const QMetaObject& mo = NereusSDR::RadioModel::staticMetaObject;
+    const int index = mo.indexOfProperty("rfKitEnabled");
+    QVERIFY(index >= 0);
+    QVERIFY(!mo.property(index).isWritable());
+}
+
+void RfKitEnabledTest::remoteWindowHoldsTheCoresSwitch()
+{
+    NereusSDR::RadioModel window(NereusSDR::RadioModel::Role::Remote);
+    QSignalSpy spy(&window, &NereusSDR::RadioModel::rfKitEnabledChanged);
+    QVERIFY(!window.rfKitEnabled());
+    QVERIFY(window.applyMirroredValue("rfKitEnabled", QVariant(true)).isEmpty());
+    QVERIFY(window.rfKitEnabled());
+    QCOMPARE(spy.count(), 1);
+    QVERIFY(!window.applyMirroredValue("rfKitEnabled", QVariant(QStringLiteral("yes"))).isEmpty());
+
+    // The window never switches the Core's amp itself.
+    QTest::ignoreMessage(QtWarningMsg,
+        "setRfKitEnabled ignored in a remote window; the Core owns the RF-Kit switch");
+    window.setRfKitEnabled(false);
+    QVERIFY(window.rfKitEnabled());
+    QCOMPARE(spy.count(), 1);
+    QVERIFY(!window.rfKitConnection()->isConnected());
+    QVERIFY(window.rfKitConnection()->peerAddress().isEmpty());
+}
+
+void RfKitEnabledTest::coreRunsTheSwitchThroughItsController()
+{
+    QTcpServer reservation;
+    QVERIFY(reservation.listen(QHostAddress::LocalHost, 0));
+    const quint16 closed = reservation.serverPort();
+    reservation.close();
+
+    NereusSDR::RadioModel core;
+    core.enableStationAccessoryIdentity();
+    QVERIFY(core.stationRfKitController() != nullptr);
+    QVERIFY(core.rfKitConnection()->identityAdmissionRequired());
+    primeConnectedRadio(core, QStringLiteral("aa:bb:cc:dd:ee:44"));
+    core.setPeripheralValue(QStringLiteral("RfKit_ManualIp"), QStringLiteral("127.0.0.1"));
+    core.setPeripheralValue(QStringLiteral("RfKit_ManualPort"), QString::number(closed));
+    using Phase = NereusSDR::RfKitModel::ConnectionPhase;
+
+    core.setRfKitEnabled(true);
+    QCOMPARE(core.rfKitModel()->connectionPhase(), Phase::Connecting);
+    QCOMPARE(core.rfKitModel()->configuredHost(), QStringLiteral("127.0.0.1"));
+    core.setRfKitEnabled(false);
+    QCOMPARE(core.rfKitModel()->connectionPhase(), Phase::Disabled);
+    QVERIFY(!core.rfKitConnection()->reconnectPending());
+    QVERIFY(!core.rfKitConnection()->isConnected());
 }
 
 QTEST_MAIN(RfKitEnabledTest)

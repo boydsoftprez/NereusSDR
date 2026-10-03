@@ -1,0 +1,110 @@
+{
+  "runs": [
+    "service"
+  ],
+  "serverSetup": {},
+  "steps": [
+    {
+      "connect": "client"
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:clientNonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "from": "client",
+      "role": "behaviour",
+      "message": {
+        "type": "introduce",
+        "id": "$key:a:id",
+        "device": "$device:d:id",
+        "deviceSignature": "$introduce:d:a:clientNonce:signed",
+        "offer": "$sdp:offer:offer"
+      }
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "error",
+        "code": "offline",
+        "reason": "The Core is not reachable right now. Check that it is running and connected to the internet.",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "advanceMs": 20000
+    },
+    {
+      "from": "client",
+      "role": "scripted",
+      "message": {
+        "type": "introduce",
+        "id": "$key:b:id",
+        "device": "$device:d:id",
+        "deviceSignature": "$introduce:d:b:clientNonce:signed",
+        "offer": "$sdp:offer:offer"
+      }
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "error",
+        "code": "offline",
+        "reason": "The Core is not reachable right now. Check that it is running and connected to the internet.",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "from": "client",
+      "role": "scripted",
+      "message": {
+        "type": "mailbox.open",
+        "nameplate": 7
+      }
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "error",
+        "code": "nameplateUnknown",
+        "reason": "No Core is showing that pairing code right now. Check the code and try again.",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "advanceMs": 9999
+    },
+    {
+      "expectSilent": "client"
+    },
+    {
+      "advanceMs": 1
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "error",
+        "code": "idle",
+        "reason": "The connection was closed because it was not being used.",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "expectClosed": "client",
+      "code": 1000
+    }
+  ]
+}

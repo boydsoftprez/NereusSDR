@@ -1,0 +1,47 @@
+{
+  "runs": [
+    "relay",
+    "app"
+  ],
+  "steps": [
+    {
+      "connect": "device"
+    },
+    {
+      "from": "device",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:device:s:a"
+      ]
+    },
+    {
+      "to": "device",
+      "binary": [
+        "81",
+        "01",
+        "00"
+      ]
+    },
+    {
+      "advanceMs": 29999
+    },
+    {
+      "expectSilent": "device"
+    },
+    {
+      "advanceMs": 1
+    },
+    {
+      "to": "device",
+      "binary": [
+        "83",
+        "70656572476f6e65"
+      ]
+    },
+    {
+      "expectClosed": "device",
+      "code": 1000
+    }
+  ]
+}

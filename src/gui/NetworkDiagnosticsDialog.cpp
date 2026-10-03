@@ -24,10 +24,20 @@
 //                NereusSDR-original code (no Thetis port; no upstream
 //                attribution required). J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: Jitter, Packet loss and Packet gap are hidden
+//                (UnbuiltFeatures) until they are measured for a local
+//                radio. A remote window opens RemoteDiagnosticsDialog
+//                instead. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-09-25 - R-R3-32 / R-R3-49 (parity Task 6): Jitter, Packet loss,
+//                Packet gap and UDP seen are measured for a local radio
+//                (RadioLinkStats) and shown. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/NetworkDiagnosticsDialog.h"
 #include "StyleConstants.h"
+#include <optional>
 #include "models/RadioModel.h"
 #include "core/AudioEngine.h"
 #include "core/RadioConnection.h"
@@ -387,21 +397,23 @@ void NetworkDiagnosticsDialog::refresh()
                 : QStringLiteral("— ms"));
     }
 
-    // Jitter, packet loss, and packet gap are NYI: no production source
-    // yet. Earlier revisions hardcoded "0 ms" / "0.0%" which read as
-    // "perfect network" rather than "not measured" — replaced with
-    // em-dash so the dialog tells the truth. Wiring these requires
-    // protocol-level instrumentation (RTT-sample variance for jitter,
-    // sequence-number gap detection for loss, max inter-arrival time
-    // for gap) — tracked as a follow-up item.
+    // R-R3-32 / R-R3-49 (parity Task 6): jitter, packet loss, packet gap
+    // and UDP packets seen come from the connection's own counters
+    // (RadioLinkStats); a value not measured says so.
+    const RadioConnection* linkConn =
+        (m_model && m_model->isConnected()) ? m_model->connection() : nullptr;
+    const std::optional<RadioLinkStats::Snapshot> link =
+        linkConn ? std::optional<RadioLinkStats::Snapshot>(linkConn->linkStats())
+                 : std::nullopt;
+    const QString notMeasured = tr("Not measured");
     if (m_jitterLabel) {
-        m_jitterLabel->setText(QChar(0x2014));   // em-dash
-        m_jitterLabel->setToolTip(tr("Not yet measured"));
+        m_jitterLabel->setText(link && link->jitterMs
+            ? QString::asprintf("%.2f ms", *link->jitterMs) : notMeasured);
     }
 
     if (m_lossLabel) {
-        m_lossLabel->setText(QChar(0x2014));     // em-dash
-        m_lossLabel->setToolTip(tr("Not yet measured"));
+        m_lossLabel->setText(link && link->packetLossPercent
+            ? QString::asprintf("%.2f%%", *link->packetLossPercent) : notMeasured);
     }
 
     // RadioConnection::txByteRate / rxByteRate already return Mbps despite
@@ -433,8 +445,7 @@ void NetworkDiagnosticsDialog::refresh()
     }
 
     if (m_udpSeenLabel) {
-        // No production source yet — would come from RadioConnection packet counter
-        m_udpSeenLabel->setText(QStringLiteral("—"));
+        m_udpSeenLabel->setText(link ? QString::number(link->udpPacketsSeen) : notMeasured);
     }
 
     // ── Audio section ─────────────────────────────────────────────────────────
@@ -463,8 +474,10 @@ void NetworkDiagnosticsDialog::refresh()
     }
 
     if (m_packetGapLabel) {
-        m_packetGapLabel->setText(QChar(0x2014)); // em-dash, NYI — see above note
-        m_packetGapLabel->setToolTip(tr("Not yet measured"));
+        // The longest interval between two datagrams from the radio in the
+        // last second (RadioLinkStats).
+        m_packetGapLabel->setText(link && link->packetGapMs
+            ? QString::asprintf("%.1f ms", *link->packetGapMs) : notMeasured);
     }
 
     // ── Radio Telemetry section ───────────────────────────────────────────────

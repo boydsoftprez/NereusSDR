@@ -54,6 +54,11 @@
 //                 Claude Code.  Setup → Audio → TX Profile editor surface
 //                 mirroring the Thetis save / delete / unsaved-prompt
 //                 semantics; UI is NereusSDR-native.
+//   2026-09-25 - R-R3-49 (parity Task 3): in a remote window the page
+//                 works on the Core's profiles, each control gated on the
+//                 transmit settings version that carries it
+//                 (setTransmitSettingsPermitted / ...PermittedAt). J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived semantics are
@@ -101,6 +106,17 @@ public:
     QComboBox*   profileCombo() const { return m_combo; }
     QPushButton* saveButton()   const { return m_saveBtn; }
     QPushButton* deleteButton() const { return m_deleteBtn; }
+    QSpinBox*    filterLowSpin()  const { return m_filterLowSpin; }
+    QSpinBox*    filterHighSpin() const { return m_filterHighSpin; }
+    QSpinBox*    amCarrierSpin()  const { return m_amCarrierSpin; }
+
+    // R-R3-49 (parity Task 3): in a remote window the page changes the
+    // Core's profiles and settings while the Core takes them. The TX filter
+    // came with transmitSettingsVersion 1, the AM carrier with 2, and the
+    // profile combo, Save... and Delete with 3; each gates on its own.
+    void setTransmitSettingsPermitted(bool permitted, const QString& reason) override;
+    void setTransmitSettingsPermittedAt(int version, bool permitted,
+                                        const QString& reason) override;
 
     // ── Test seams ──────────────────────────────────────────────────────────
     // (No NEREUS_BUILD_TESTS guard — same convention as TestTwoTonePage.)
@@ -182,6 +198,9 @@ private:
     QComboBox*   m_combo{nullptr};
     QPushButton* m_saveBtn{nullptr};
     QPushButton* m_deleteBtn{nullptr};
+    QSpinBox*    m_filterLowSpin{nullptr};
+    QSpinBox*    m_filterHighSpin{nullptr};
+    QSpinBox*    m_amCarrierSpin{nullptr};
 
     // ── State ───────────────────────────────────────────────────────────────
     // The previous combo selection (used to revert on Cancel).

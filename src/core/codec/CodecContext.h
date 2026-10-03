@@ -21,6 +21,8 @@
 #include <QMetaType>
 #include <cstdint>
 
+#include "../HpsdrModel.h"
+
 namespace NereusSDR {
 
 /// Operator-driven configuration that the codec consumes to produce a
@@ -286,6 +288,19 @@ struct CodecContext {
     // Populated by buildCodecContext() from P1RadioConnection::m_trxRelay.
     bool    trxRelay{false};
 
+    // "Disable HF PA" (RadioConnection::setPaDisabled), Thetis prn->tx[0].pa
+    // = 1. P1: bank 10 C3 bit 7 set, and on the HL2 bank 10 C2 bit 3 clear.
+    // P2: the Alex T/R relay (Alex0 bits 27 and 18, Alex1 bit 18) left open
+    // while keyed. P2's CmdGeneral byte 58 reads p2TxPa, which the P2
+    // connection sets from the same flag.
+    // From Thetis ChannelMaster/networkproto1.c:583-586 [v2.10.3.15]
+    //   C3 = ... | ((prbpfilter->_6M_preamp & 1) << 6) | ((prn->tx[0].pa & 1) << 7);
+    // From Thetis ChannelMaster/netInterface.c:374-383 [v2.10.3.15] SetTRXrelay
+    //   if (!prn->tx[0].pa) // disable PA
+    //       prbpfilter->_TR_Relay = bit & 0x1;
+    //   prbpfilter->_trx_status = prbpfilter->_TR_Relay; // TXRX_STATUS
+    bool    txPaDisabled{false};
+
     // P1 mic-jack boost bit — bank 10 (C0=0x12) C2 bit 0 (0x01).
     // Polarity: 1 = boost on (no inversion).
     // Source: Thetis ChannelMaster/networkproto1.c:581 [v2.10.3.13]
@@ -371,6 +386,16 @@ struct CodecContext {
     // steering set in P1CodecHl2::applyPureSignalDdcConfig from mi0bot
     // console.cs:8486 [v2.10.3.13-beta2].
     int     p1PsNDdc{2};
+
+    // The radio model the operator connected, as Setup names it. Thetis's
+    // UpdateDDCs switches on HardwareSpecific.Model, and P1CodecStandard
+    // serves several of its cases with one class, so the DDC assignment
+    // reads the model to tell them apart. Seeded by
+    // RadioModel::currentCodecContext() and P1RadioConnection::
+    // buildCodecContext() from HardwareProfile::model. The default FIRST
+    // names no model, so a bare CodecContext{} in a test never takes a
+    // model-keyed branch it did not ask for.
+    HPSDRModel model{HPSDRModel::FIRST};
 
     // User digital outputs — prn->user_dig_out, low 4 bits (0-15).
     // Source: Thetis ChannelMaster/networkproto1.c:601 [v2.10.3.13+501e3f51]
@@ -458,6 +483,12 @@ struct CodecContext {
     // _Rx_1_Out relay (RX-Bypass-Out). Bank 0 C3 bit 7.
     // Source: Thetis networkproto1.c:455 [v2.10.3.13 @501e3f5]
     bool    rxOut{false};
+
+    // Alex receive attenuator as Thetis SetAlexAtten holds it: bit 1
+    // _20_dB_Atten, bit 0 _10_dB_Atten. P1 bank 0 C3 bits 1/0
+    // (networkproto1.c:453 [v2.10.3.15]); P2 Alex0 bits 13/14 (network.h:
+    // 284-285 [v2.10.3.15]). Always 0 on a Mk II BPF board.
+    int     alexAttenBits{0};
 
     // Mk II BPF board flag — true for ORIONMKII / ANAN-7000D / ANAN-8000D /
     // ANAN_G2 / ANAN_G2_1K / ANVELINAPRO3 (anything routed through the Mk II
@@ -555,13 +586,23 @@ struct PsDdcConfig {
     //   nddc=2 (HermesII / ANAN-10E / ANAN-100B):
     //       psFbDdc=0, txMonDdc=1 — networkproto1.c:984 bank-2/3 freq override
     //       forces DDC0+DDC1 to TX freq during PS-MOX
-    //   nddc=4 (Hermes / HL2 / ANAN-10 / ANAN-100):
+    //   nddc=4 (Hermes / G2E / HL2 / ANAN-10 / ANAN-100):
     //       psFbDdc=2, txMonDdc=3 — networkproto1.c MetisRead case 4
-    //       `twist(spr, 2, 3, 1)` pairs DDC2+DDC3 (and console.cs
-    //       GetDDC():8757-8762 confirms `psrx=2, pstx=3` for HL2 PS-MOX)
-    //   nddc=5 (Orion / Saturn / Andromeda / etc.):
+    //       `twist(spr, 2, 3, 1)` pairs DDC2+DDC3. GetDDC() confirms
+    //       `psrx=2, pstx=3` for PS-MOX on both: Thetis console.cs:8728-8733
+    //       for Hermes / G2E, mi0bot console.cs:8757-8762 for the HL2.
+    //       DdcAssignment::psFwdDdc / psRevDdc from P1CodecStandard and
+    //       P1CodecHl2 applyDdcAssignment carry the same pair (the HL2 one
+    //       said 0/1 until 2026-09-24; tst_codec_ps_ddc_config pins both).
+    //   nddc=5 on Protocol 1 (Orion class, AnvelinaPro3, RedPitaya,
+    //   ANAN-G2 / G2-1K):
+    //       psFbDdc=3, txMonDdc=4: networkproto1.c MetisRead case 5
+    //       `twist(spr, 3, 4, 1)` pairs slots 3+4 (slots 0+1 are RX1 and its
+    //       diversity partner); GetDDC Protocol 1 cases 5 and 7: psrx = 3;
+    //       pstx = 4 (Thetis console.cs:8651-8702 [v2.10.3.15]).
+    //   Saturn-class on Protocol 2:
     //       psFbDdc=0, txMonDdc=1 — P2 network.c:936-945 unconditional
-    //       freq override; P1 case 5 in MetisRead twists DDC0+DDC1
+    //       freq override
     //
     // From Thetis cmaster.cs:533-534 [v2.10.3.13]:
     //   SetPSRxIdx(0, 0);   // ps_rx_idx points to data[0] in InboundBlock
@@ -572,7 +613,7 @@ struct PsDdcConfig {
     // RadioConnection::iqDataReceived(ddcIndex, samples) so it needs the
     // actual DDC indices, which depend on the per-board read-loop dispatch.
     //
-    // From Thetis console.cs:8579 GetDDC() [v2.10.3.13]:
+    // GetDDC(), mi0bot console.cs:8579 (HL2) and Thetis console.cs:8550:
     //   HL2 P1 PS-MOX (case 5):  rx1=0, rx2=1, psrx=2, pstx=3
     //   HermesII P1 PS-MOX:      psrx=0, pstx=1
     //   Saturn-class P2 PS-MOX:  rx1=2, rx2=3 (DDC0+DDC1 implicit PS pair)

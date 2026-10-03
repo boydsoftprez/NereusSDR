@@ -11,6 +11,13 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23: profileForStation() added for remote windows (R-R3-46),
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-28: defaultVoltCalibrationFor() ported from
+//                 GetDefaultVoltCalibration (clsHardwareSpecific.cs:265-292
+//                 [v2.10.3.15]) for the PA current calibration. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  clsHardwareSpecific.cs
@@ -90,6 +97,43 @@ HardwareProfile profileForModel(HPSDRModel model);
 
 // Return the default (auto-guessed) HPSDRModel for a discovered board byte.
 HPSDRModel defaultModelForBoard(HPSDRHW board);
+
+// Plan Task 15 (NereusSDR-original): the profile for a radio whose board and
+// model are both known, the way a connect has them. profileForModel(model),
+// except that the HL2 receive-only kit (HPSDRHW::HermesLiteRxOnly, a
+// NereusSDR-only board with no Thetis value) keeps its own capability row
+// under the HL2 model. mi0bot-Thetis has one HL2 board (HPSDRHW.HermesLite,
+// enums.cs:396 [v2.10.3.13-beta2]) and one HL2 model (HERMESLITE), and
+// treats receive-only as the operator's RXOnly toggle (console.cs:15374-15395
+// [v2.10.3.13-beta2]); the kit's row carries isRxOnlySku, which blocks
+// transmit whatever the operator sets.
+HardwareProfile profileForRadio(HPSDRHW board, HPSDRModel model);
+
+// R-R3-46 (NereusSDR-original, remote windows only): the profile a remote
+// window uses for the Core's radio. The Core's reported model wins when its
+// own profile resolves to the reported board, so an ANAN-8000DLE or
+// ANAN-G2 1K keeps its row instead of the first model on its board. With no
+// usable model the board decides through defaultModelForBoard(), except that
+// an Unknown board (the Core has no radio) gives the Unknown profile
+// (model FIRST, the Unknown capability row), never Hermes. Local connects do
+// not use this: defaultModelForBoard() is unchanged for them.
+HardwareProfile profileForStation(HPSDRHW board, HPSDRModel reportedModel);
+
+// The PA current sensor's calibration: the sensor voltage offset (mV) and
+// the reading sensitivity (mV per amp), Thetis AmpVoff / AmpSens.
+struct VoltCalibration {
+    float voff{360.0f};
+    float sens{120.0f};
+};
+
+// The model's factory volt calibration, Thetis btnAmpDefault's source.
+// From Thetis clsHardwareSpecific.cs:265-292 [v2.10.3.15]
+// GetDefaultVoltCalibration. Upstream inline comments preserved verbatim:
+// Adjacent upstream tag (HasAmps, clsHardwareSpecific.cs:260): //N1GP G2E added
+//   :279  voff = 0.001f;                                // current sensor voltage offset
+//   :280  sens = 66.23f;                                // current reading sensitivity //0.001 to prevent /0 in the calcs
+//   :282  case HPSDRModel.ANAN_G2_1K:                       // will need adjustment probably
+VoltCalibration defaultVoltCalibrationFor(HPSDRModel model);
 
 // Return the list of HPSDRModel values compatible with a discovered board byte.
 // From Thetis NetworkIO.cs:164-171

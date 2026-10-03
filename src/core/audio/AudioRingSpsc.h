@@ -3,6 +3,8 @@
 // =================================================================
 //   Copyright (C) 2026 J.J. Boyd (KG4VCF) - GPLv2-or-later.
 //   2026-04-23 - created. AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - peekInto (consumer-side peek). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -190,6 +192,26 @@ public:
         const size_t toDrop = (bytes > used) ? used : bytes;
         if (toDrop == 0) { return; }
         m_rd.store(rd + toDrop, std::memory_order_release);
+    }
+
+    // Consumer-side: copy the oldest `bytes` without consuming them.
+    // Returns false (copying nothing) when fewer than `bytes` are queued.
+    // A record written by one tryPushCopy is visible whole once any of it
+    // is, so a consumer may peek a record header and then pop the record.
+    // (2026-09-30, RADE threads lane: RadeRxBridge reads its framed
+    // records this way.)
+    bool peekInto(uint8_t* dst, size_t bytes) const {
+        const size_t rd = m_rd.load(std::memory_order_relaxed);
+        const size_t wr = m_wr.load(std::memory_order_acquire);
+        if (bytes == 0 || wr - rd < bytes) { return false; }
+        const size_t readIdx = rd & kMask;
+        const size_t firstChunk =
+            (kCapacity - readIdx < bytes) ? kCapacity - readIdx : bytes;
+        std::memcpy(dst, &m_buf[readIdx], firstChunk);
+        if (firstChunk < bytes) {
+            std::memcpy(dst + firstChunk, &m_buf[0], bytes - firstChunk);
+        }
+        return true;
     }
 
     size_t usedBytes() const {

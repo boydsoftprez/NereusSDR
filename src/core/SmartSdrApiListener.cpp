@@ -9,6 +9,20 @@
 // captures/flex-pgxl-tgxl-capture_00001_20260519173452.pcapng.
 //
 // AI tooling: Anthropic Claude Code.
+// Modified 2026-09-24 by J.J. Boyd (KG4VCF): R-R3-22 / R-R3-47 station
+// network binding (setStationBind); AI-assisted via Anthropic Claude Code.
+// Modified 2026-10-01 by J.J. Boyd (KG4VCF): TGXL tune lane fix round,
+// tuneRequested carries the sender's address; AI-assisted via Anthropic
+// Claude Code.
+// Modified 2026-10-01 by J.J. Boyd (KG4VCF): TGXL tune lane round 2,
+// tuneStateBroadcast on each tune state change; AI-assisted via Anthropic
+// Claude Code.
+// Modified 2026-10-01 by J.J. Boyd (KG4VCF): TGXL tune lane round 3,
+// tuneStateSent for every tune=1 frame and each visible tune=0;
+// AI-assisted via Anthropic Claude Code.
+// Modified 2026-10-01 by J.J. Boyd (KG4VCF): TGXL tune lane round 4, a
+// new client's or a sub's push emits only for tune=1; AI-assisted via
+// Anthropic Claude Code.
 
 #include "SmartSdrApiListener.h"
 
@@ -34,27 +48,105 @@ SmartSdrApiListener::SmartSdrApiListener(QObject* parent)
     m_periodicTimer.setInterval(1000);
     connect(&m_periodicTimer, &QTimer::timeout,
             this, &SmartSdrApiListener::onPeriodicTick);
+
+    // G-20: one repeat of the interlock state, 400 ms after it is sent.
+    m_interlockRepeat.setSingleShot(true);
+    // Precise: a coarse timer may fire up to 5 % (20 ms) early.
+    m_interlockRepeat.setTimerType(Qt::PreciseTimer);
+    m_interlockRepeat.setInterval(kInterlockRepeatMs);
+    connect(&m_interlockRepeat, &QTimer::timeout,
+            this, &SmartSdrApiListener::onInterlockRepeat);
+}
+
+void SmartSdrApiListener::armInterlockRepeat(const QByteArray& frame)
+{
+    m_interlockRepeatFrame = frame;
+    m_interlockRepeat.start();
+}
+
+void SmartSdrApiListener::cancelInterlockRepeat()
+{
+    m_interlockRepeat.stop();
+    m_interlockRepeatFrame.clear();
+}
+
+void SmartSdrApiListener::onInterlockRepeat()
+{
+    // G-20: the FLEX repeats the current interlock state once, 400 ms
+    // after it first sends it. Any state change before now cancelled this.
+    const QByteArray frame = m_interlockRepeatFrame;
+    m_interlockRepeatFrame.clear();
+    if (frame.isEmpty()) {
+        return;
+    }
+    for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
+        QTcpSocket* sock = jt.key();
+        if (sock && sock->isOpen()) { sock->write(frame); }
+    }
+    qCInfo(lcSmartSdr).noquote() << "TX" << QString::fromUtf8(frame).trimmed()
+                                 << "(repeated after" << kInterlockRepeatMs << "ms)";
 }
 
 bool SmartSdrApiListener::start()
 {
+    // R-R3-22 / R-R3-47: the Core listens on the station network only.
+    if (m_stationBind) {
+        return startOn(m_stationBind->listenAddresses(), m_listenPort);
+    }
     // AnyIPv4 (not Any) because Qt's default Any binds IPv6-only on macOS,
     // which silently blocks IPv4 clients like Windows PowerGeniusDesktop.
-    return start(QHostAddress::AnyIPv4, 4992);
+    return start(m_listenAddress, m_listenPort);
 }
 
 bool SmartSdrApiListener::start(QHostAddress bindAddr, quint16 port)
 {
-    if (m_server.isListening()) {
-        m_server.close();
+    return startOn({bindAddr}, port);
+}
+
+void SmartSdrApiListener::closeServers()
+{
+    m_server.close();
+    m_extraServers.clear();
+    m_listening.clear();
+}
+
+bool SmartSdrApiListener::startOn(const QList<QHostAddress>& addresses, quint16 port)
+{
+    closeServers();
+    const QHostAddress first = addresses.isEmpty() ? QHostAddress(QHostAddress::AnyIPv4)
+                                                   : addresses.first();
+    bool ok = m_server.listen(first, port);
+    QString failedAddress = first.toString();
+    QString error = ok ? QString() : m_server.errorString();
+    // Port 0 (tests) lets the first bind choose; the rest share it.
+    const quint16 chosenPort = ok ? m_server.serverPort() : port;
+    for (int i = 1; ok && i < addresses.size(); ++i) {
+        auto server = std::make_unique<QTcpServer>();
+        connect(server.get(), &QTcpServer::newConnection,
+                this, &SmartSdrApiListener::onNewConnection);
+        if (!server->listen(addresses.at(i), chosenPort)) {
+            ok = false;
+            failedAddress = addresses.at(i).toString();
+            error = server->errorString();
+            break;
+        }
+        m_extraServers.push_back(std::move(server));
     }
-    bool ok = m_server.listen(bindAddr, port);
     if (!ok) {
+        closeServers();
+        // fourO3AListenerError reaches a remote app as sent: plain words
+        // here, the socket's own reason in the log line below.
+        m_lastListenError = QStringLiteral("The 4O3A connection port could not be opened. "
+                                           "Check that no other program is using it.");
+        emit statusChanged();
         qCWarning(lcSmartSdr) << "failed to bind"
-                               << bindAddr.toString() << ":" << port
-                               << ":" << m_server.errorString();
+                               << failedAddress << ":" << port
+                               << ":" << error;
         return false;
     }
+    m_listening = addresses.isEmpty() ? QList<QHostAddress>{first} : addresses;
+    m_lastListenError.clear();
+    emit statusChanged();
     // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C1: generate synthetic
     // local-client handle once per listener boot. Stable for the lifetime
     // of this start() call. Consumed by every interlock S-frame builder.
@@ -62,9 +154,31 @@ bool SmartSdrApiListener::start(QHostAddress bindAddr, quint16 port)
     qCInfo(lcSmartSdr) << "local-client handle:" << m_localClientHandle;
     m_periodicTimer.start();
     qCInfo(lcSmartSdr) << "SmartSDR API listener listening on"
-                       << m_server.serverAddress().toString()
+                       << m_listening
                        << ":" << m_server.serverPort();
     return true;
+}
+
+void SmartSdrApiListener::setStationBind(const StationNetwork::StationBind& bind)
+{
+    m_stationBind = bind;
+    if (!m_server.isListening()) {
+        return;
+    }
+    const QList<QHostAddress> wanted = bind.listenAddresses();
+    if (wanted == m_listening) {
+        return;
+    }
+    qCInfo(lcSmartSdr) << "station network changed: SmartSDR API listener moves from"
+                       << m_listening << "to" << wanted;
+    const quint16 port = m_listenPort;
+    stop();
+    startOn(wanted, port);
+}
+
+QList<QHostAddress> SmartSdrApiListener::listenAddresses() const
+{
+    return m_server.isListening() ? m_listening : QList<QHostAddress>{};
 }
 
 void SmartSdrApiListener::stop()
@@ -77,7 +191,8 @@ void SmartSdrApiListener::stop()
     // interlock state after the operator toggled 4O3A off in Setup.
     m_periodicTimer.stop();
     m_pttAckTimeout.stop();
-    m_server.close();
+    cancelInterlockRepeat();
+    closeServers();
 
     // Disconnect signals from each socket so the dangling deleteLater()
     // callbacks don't try to update m_clients while we're clearing it.
@@ -100,6 +215,8 @@ void SmartSdrApiListener::stop()
     // one.  m_lastTuneInitiator likewise.
     m_localClientHandle.clear();
     m_lastTuneInitiator.clear();
+    m_lastListenError.clear();
+    emit statusChanged();
 }
 
 bool SmartSdrApiListener::isListening() const
@@ -138,6 +255,10 @@ void SmartSdrApiListener::setTuneActive(bool active)
     m_tuneActive = active;
     qCInfo(lcSmartSdr) << "tune state change -> broadcasting transmit tune=" << (active ? 1 : 0);
     broadcastSliceState();
+    if (!active && !m_clients.isEmpty()) {
+        // Round 3: broadcastSliceState counts tune=1 frames itself.
+        emit tuneStateSent(false);
+    }
 }
 
 bool SmartSdrApiListener::hasInterlockedAmp() const
@@ -257,6 +378,8 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
                 QTcpSocket* sock = jt.key();
                 if (sock && sock->isOpen()) { sock->write(frame); }
             }
+            // G-20: sent again in 400 ms unless every amp acks first.
+            armInterlockRepeat(frame);
             qCInfo(lcSmartSdr) << "TX S0|interlock state=PTT_REQUESTED"
                                << "tx_client_handle=0x" << m_localClientHandle
                                << "reason=" << reasonField
@@ -294,6 +417,8 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
                 QTcpSocket* sock = jt.key();
                 if (sock && sock->isOpen()) { sock->write(frame); }
             }
+            // G-20: sent again in 400 ms unless the state changes first.
+            armInterlockRepeat(frame);
             qCInfo(lcSmartSdr) << "TX S0|interlock state=TRANSMITTING"
                                << "source=" << wireSource
                                << "(no registered amp interlocks)";
@@ -322,6 +447,9 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
         // initiator name is the one recorded for the in-flight TX (TUNE
         // path) or the first PGXL-class amp's name (MIC/MOX path).
         m_pttAckTimeout.stop();
+        // G-20: the un-key is a state change; the keyed state is not
+        // repeated after it.
+        cancelInterlockRepeat();
         const QString initiator = m_lastTuneInitiator.isEmpty()
             ? initiatingAmpName(QStringLiteral("MIC"))
             : m_lastTuneInitiator;
@@ -353,6 +481,9 @@ void SmartSdrApiListener::advanceToTransmittingIfReady()
     // the source, then schedule broadcastTransmitting() 30 ms in the
     // future per pcap T+167.704 -> T+167.734.
     m_pttAckTimeout.stop();
+    // G-20: every amp acked, so PTT_REQUESTED is not repeated;
+    // TRANSMITTING arms its own repeat when it is sent.
+    cancelInterlockRepeat();
     const QString source = m_pttPendingSource;
     m_pttPendingSource.clear();
 
@@ -389,6 +520,8 @@ void SmartSdrApiListener::broadcastTransmitting(const QString& source)
         QTcpSocket* sock = jt.key();
         if (sock && sock->isOpen()) { sock->write(frame); }
     }
+    // G-20: sent again in 400 ms unless the state changes first.
+    armInterlockRepeat(frame);
     qCInfo(lcSmartSdr) << "TX S0|interlock state=TRANSMITTING"
                        << "source=" << source
                        << "amplifier=" << ampHandles.join(QLatin1Char(','))
@@ -580,6 +713,9 @@ void SmartSdrApiListener::onPttAckTimeout()
         }
     }
     if (m_pttPendingSource.isEmpty()) { return; }
+    // G-20: the wait for acks is over; PTT_REQUESTED is not repeated after
+    // this. TRANSMITTING arms its own repeat when it is sent.
+    cancelInterlockRepeat();
     const QString source = m_pttPendingSource;
     m_pttPendingSource.clear();
     QTimer::singleShot(30, this, [this, source]() {
@@ -589,9 +725,16 @@ void SmartSdrApiListener::onPttAckTimeout()
 
 void SmartSdrApiListener::onNewConnection()
 {
-    while (m_server.hasPendingConnections()) {
-        QTcpSocket* sock = m_server.nextPendingConnection();
+    // Any of the listening servers (m_server or a station extra).
+    auto* server = qobject_cast<QTcpServer*>(sender());
+    if (!server) { server = &m_server; }
+    while (server->hasPendingConnections()) {
+        QTcpSocket* sock = server->nextPendingConnection();
         if (!sock) { continue; }
+        // Owned by the listener, not the server: a station extra server is
+        // destroyed when the station network changes, and its accepted
+        // sockets must outlive it until stop() retires them.
+        sock->setParent(this);
         connect(sock, &QTcpSocket::readyRead,
                 this, &SmartSdrApiListener::onClientDataReady);
         connect(sock, &QTcpSocket::disconnected,
@@ -655,6 +798,11 @@ void SmartSdrApiListener::onNewConnection()
                        .arg(m_sliceMode)
                        .arg(m_tuneActive ? 1 : 0)
                        .arg(m_txActive ? 1 : 0));
+        // TGXL tune lane round 3: the new client may echo this tune=1.
+        // Round 4: an idle tune=0 here is not a change, so not counted.
+        if (m_tuneActive) {
+            emit tuneStateSent(true);
+        }
 
         emit clientConnected(host, port);
     }
@@ -1018,7 +1166,7 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
         if (initIt != m_clients.end() && !initIt->interlockName.isEmpty()) {
             m_lastTuneInitiator = initIt->interlockName;
         }
-        emit tuneRequested(true);
+        emit tuneRequested(true, sock->peerAddress());
     } else if (emitTuneOff) {
         qCInfo(lcSmartSdr) << "LAN PTT tune off from"
                            << sock->peerAddress().toString();
@@ -1031,7 +1179,7 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
         // (the MIC-source fallback) instead of the canonical
         // reason=AMP:TG. Clear AFTER the emit returns so the next TUNE
         // cycle starts with a fresh initiator slot.
-        emit tuneRequested(false);
+        emit tuneRequested(false, sock->peerAddress());
         m_lastTuneInitiator.clear();
     } else if (emitMoxOn) {
         qCInfo(lcSmartSdr) << "LAN PTT mox on from"
@@ -1077,6 +1225,11 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
                        .arg(m_sliceMode)
                        .arg(m_tuneActive ? 1 : 0)
                        .arg(m_txActive ? 1 : 0));
+        // TGXL tune lane round 3: the subscriber may echo this tune=1.
+        // Round 4: an idle tune=0 here is not a change, so not counted.
+        if (m_tuneActive) {
+            emit tuneStateSent(true);
+        }
     }
 }
 
@@ -1157,6 +1310,11 @@ void SmartSdrApiListener::broadcastSliceState()
             : it.value().ampHandle;
         sendStatus(it.key(), prefix, sliceBody);
         sendStatus(it.key(), prefix, txBody);
+    }
+    // TGXL tune lane round 3: every tune=1 frame round may be echoed (the
+    // cadence of the tuner's echo is unknown), so each one is counted.
+    if (m_tuneActive) {
+        emit tuneStateSent(true);
     }
 }
 

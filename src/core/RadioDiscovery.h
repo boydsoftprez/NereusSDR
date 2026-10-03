@@ -64,6 +64,7 @@ mw0lge@grange-lane.co.uk
 #include <QUdpSocket>
 #include <QTimer>
 #include <QMap>
+#include <QMutex>
 #include <QMetaType>
 #include <QSet>
 #include <QStringList>
@@ -92,6 +93,12 @@ struct RadioInfo {
     int firmwareVersion{0};
     int adcCount{1};                     // Derived from boardType (1 or 2)
     int maxReceivers{4};                 // Board-dependent max simultaneous RX
+    // The receiver count the radio itself reported in discovery byte 20,
+    // or 0 when it reported none (a zero byte, a short reply, a radio typed
+    // in by hand or restored from the saved list). maxReceivers holds the
+    // table fallback in that case; this keeps the two apart so the stream
+    // pool can follow the radio's own number (Protocol 2).
+    int reportedReceivers{0};
 
     // Protocol
     ProtocolVersion protocol{ProtocolVersion::Protocol1};
@@ -229,7 +236,7 @@ public:
     // The holdOffScans deadline is process-wide (see s_scanHoldOff), so it
     // survives across test functions and would defer probes in unrelated
     // cases. Call from a QTest init() for a clean slate.
-    static void clearHoldOffForTest() { s_scanHoldOff = QDeadlineTimer(); }
+    static void clearHoldOffForTest();
 #endif
 
     // Public static parsers — exposed for unit-testing in Task 5.
@@ -301,6 +308,8 @@ private:
     // source, so clock synchronisation cannot shorten a radio-safety interval
     // or wedge discovery.
     static QDeadlineTimer s_scanHoldOff;
+    static QMutex s_scanHoldOffMutex;
+    bool scanCancelled() const;
 
     // Per-instance: stops a burst of startDiscovery() calls on THIS object
     // from queueing multiple delayed scans.

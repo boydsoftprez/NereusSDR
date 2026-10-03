@@ -12,6 +12,9 @@
 //   2026-05-02 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted authoring via Anthropic
 //                 Claude Code (Stage C2 filter preset editor).
+//   2026-09-24 - iPhone app Task 19 (R-IOS-06, D40): followStationSetting()
+//                 so a remote window's presets follow the Core's. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "FilterPresetStore.h"
@@ -208,6 +211,31 @@ void FilterPresetStore::resetAll()
         clearMode(m);
         emit presetsChanged(m);
     }
+}
+
+// ── followStationSetting ──────────────────────────────────────────────────────
+
+void FilterPresetStore::followStationSetting(const QString& key)
+{
+    // All 14 modes, DSPMode 0 to 13 (resetAll() above covers only the 12
+    // WDSP modes; a snapshot can carry RADE presets too).
+    constexpr int kModeCount = static_cast<int>(DSPMode::RADE_L) + 1;
+    if (key.isEmpty()) {
+        for (int id = 0; id < kModeCount; ++id) {
+            emit presetsChanged(static_cast<DSPMode>(id));
+        }
+        return;
+    }
+    // "filters/<mode>/<slot>/<field>"
+    const QStringList parts = key.split(QLatin1Char('/'));
+    if (parts.size() < 2 || parts.first() != QLatin1String("filters")) {
+        return;
+    }
+    const DSPMode mode = SliceModel::modeFromName(parts.at(1));
+    if (SliceModel::modeName(mode) != parts.at(1)) {
+        return;  // not a mode this store keeps presets for
+    }
+    emit presetsChanged(mode);
 }
 
 } // namespace NereusSDR

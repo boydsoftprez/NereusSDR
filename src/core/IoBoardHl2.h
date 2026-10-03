@@ -25,6 +25,13 @@
 //                model layer — Phase 3P-E Task 2 wires I2C intercept
 //                into P1CodecHl2; Task 4 builds the Setup → Hardware →
 //                HL2 I/O page UI.
+//   2026-09-26 - Remote-window parity Task 14 (R-R3-46): i2cReadAnswered,
+//                the answered read's device address and register. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - HL2 port part 2: the polling pause (mi0bot
+//                SetI2CPollingPause), held while the manual I2C tool waits
+//                on an answer. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 //
 // --- From Console/HPSDR/IoBoardHl2.cs ---
@@ -104,7 +111,10 @@
 
 #include <QObject>
 #include <QString>
+#include <QElapsedTimer>
 #include <array>
+#include <atomic>
+#include <functional>
 
 namespace NereusSDR {
 
@@ -234,13 +244,27 @@ public:
     explicit IoBoardHl2(QObject* parent = nullptr);
 
     // ── I2C queue ──
-    // Circular FIFO buffer, kMaxI2cQueue slots, enqueue/dequeue/depth/clear.
+    // Bounded FIFO, kMaxI2cQueue slots, safe from any thread without a lock.
     bool   enqueueI2c(const I2cTxn& txn);
     bool   dequeueI2c(I2cTxn& out);
     int    i2cQueueDepth() const;
     bool   i2cQueueIsEmpty() const;
     bool   i2cQueueIsFull() const;
     void   clearI2cQueue();
+    // How many transactions have left the queue since it was made. A
+    // writer that finds the queue full reads it to tell a queue that is
+    // draining from one that has stopped.
+    quint64 i2cDequeuedCount() const;
+    // How many transactions have gone into the queue since it was made. A
+    // writer reads it after its last write: once i2cDequeuedCount() reaches
+    // it, that write has left the queue.
+    quint64 i2cEnqueuedCount() const;
+    // Goes up by one as clearI2cQueue() starts and again as it ends. A
+    // writer that sees it change knows writes it queued may have been
+    // dropped rather than sent. Read it after i2cDequeuedCount(), with an
+    // acquire fence between the two: a count raised by the clear's own
+    // dequeues then always comes with the change.
+    quint64 i2cClearCount() const;
 
     // ── Pending-read FIFO ──
     // Mi0bot tracks one in-flight read at a time (IoBoardHl2.cs:142-143
@@ -262,11 +286,34 @@ public:
     int  pendingReadDepth() const;
     void clearPendingReads();
 
+    // A read the radio does not answer is given up, as mi0bot's poll gives
+    // up on it (console.cs:25866-25872 [@c26a8a4]):
+    //   do { await Task.Delay(1); status = ioBoard.readResponse();
+    //        if (timeout++ >= 20) break; } while (1 == status);
+    // and the next read then takes the answer slot (netInterface.c:1471-1497
+    // I2CReadInitiate clears i2c_control). Here a read that went out
+    // kReadAnswerMs or more before the next one is dropped from the
+    // pending-read FIFO when that next read goes out, so its missing answer
+    // cannot take the next read's answer.
+    static constexpr qint64 kReadAnswerMs = 21;
+    // Tests drive the clock the FIFO ages reads by (milliseconds, any
+    // origin, never going back). Null restores the monotonic clock.
+    void setClockForTest(std::function<qint64()> nowMs);
+
     // ── 12-step state machine ──
     // Mirrors the switch(state++) in mi0bot console.cs:25844-25928 [@c26a8a4].
     int     currentStep() const;
     void    advanceStep();                    // increments; wraps 11 → 0
     QString stepDescriptor(int step) const;  // human-readable label for logging/UI
+
+    // ── Polling pause ──
+    // From mi0bot console.cs:25640-25646 [@c26a8a4] I2CPollingPause /
+    // SetI2CPollingPause: while held, the poll waits on its current step
+    // (console.cs:25931-25935, the Task.Delay loop) so a manual I2C
+    // transaction has the bus to itself. Set on the main thread, read on
+    // the connection thread, hence atomic.
+    void setPollingPause(bool pause);
+    bool isPollingPaused() const;
 
     // ── Register mirror ──
     // Mirrors IoBoardHl2.cs:91 `byte[] registers = new byte[256]` [@c26a8a4].
@@ -304,17 +351,28 @@ signals:
     void hardwareVersionChanged(quint8 version);
     void detectedChanged(bool detected);
     // Emitted when applyI2cReadResponse() stores a new EP6 response.
-    // Consumers: Phase 3P-E Task 3 state machine, HL2 I/O diagnostics page.
+    // Consumer: the HL2 I/O diagnostics page's raw IN log.
     //
-    // `returnedSubAddress` is the sub-address (register byte) of the
-    // matching outstanding read — popped from the pending-read FIFO at
-    // emit time.  Consumers that need to disambiguate two reads from the
-    // same device (e.g. REG_FIRMWARE_MAJOR / REG_FIRMWARE_MINOR both at
-    // I2C addr 0x1d) must gate on `(returnedAddress, returnedSubAddress)`,
-    // not just `returnedAddress`.  Phase 3L Codex P2 fix.
+    // `returnedAddress` is C0's low 7 bits as the radio sent them; mi0bot
+    // never reads them (networkproto1.c:478-493 [@c26a8a4]), so no
+    // consumer may use them to tell which read was answered: listen to
+    // i2cReadAnswered for that (the HL2 probe does, parity Task 14
+    // follow-up).  `returnedSubAddress` is the register of the outstanding
+    // read popped from the pending-read FIFO at emit time.
     void i2cReadResponseReceived(quint8 returnedAddress,
                                  quint8 returnedSubAddress,
                                  quint8 b0, quint8 b1, quint8 b2, quint8 b3);
+
+    // Remote-window parity Task 14 (R-R3-46): the same answer as
+    // i2cReadResponseReceived, named by the (device address, register) of
+    // the read it answers, both taken from the pending-read FIFO when the
+    // answer popped it. Emitted only when an outstanding read was popped.
+    // The firmware's returned C0 names the I2C controller, not the device,
+    // so a consumer that must tell one device's answer from another's
+    // (RadioModel's I2C tool request, P1RadioConnection's HL2 probe)
+    // listens here.
+    void i2cReadAnswered(quint8 deviceAddress, quint8 subAddress,
+                         quint8 c1, quint8 c2, quint8 c3, quint8 c4);
 
     // Diagnostic tap: emitted from the HL2 codec just after it composes the
     // outbound I2C wire bytes for the next ep2 frame.  The diagnostics page
@@ -326,16 +384,38 @@ signals:
     // bank-0 OC byte changes (band switch or MOX flip).  Drives the live OC
     // pin grid + hex label on the HL2 I/O Board diagnostic page so the user
     // can see exactly which OC pins are active for the current band/MOX state.
+    // Plan Task 14 fix wave: the displays now read RadioModel::bandOutputsByte
+    // (every connection reports it, and a remote window gets the Core's);
+    // this signal is still emitted beside the Core's "HL2 ocByte=" log line.
     void currentOcByteChanged(quint8 ocByte, int bandIdx, bool mox);
 
 private:
-    // Circular FIFO for I2C queue (oldest entry at head, newest at tail-1).
-    std::array<I2cTxn, kMaxI2cQueue> m_i2cQueue{};
-    int  m_i2cHead{0};
-    int  m_i2cTail{0};
-    int  m_i2cCount{0};
+    // The I2C queue is filled from the main thread (the I2C tool, the
+    // output pins) and from the connection thread (the poll, the probe),
+    // and emptied by the codec on the connection thread as it builds each
+    // C&C frame. It is a bounded lock-free queue (each slot carries a
+    // sequence number; producers and consumers claim positions with a
+    // compare-exchange), so no thread ever waits on a lock and the send
+    // path never blocks. FIFO order holds across all producers.
+    static_assert((kMaxI2cQueue & (kMaxI2cQueue - 1)) == 0,
+                  "the I2C queue indexes by mask");
+    struct I2cSlot {
+        std::atomic<quint64> sequence{0};
+        I2cTxn txn;
+    };
+    std::array<I2cSlot, kMaxI2cQueue> m_i2cSlots{};
+    alignas(64) std::atomic<quint64> m_i2cEnqueuePos{0};
+    alignas(64) std::atomic<quint64> m_i2cDequeuePos{0};
+    std::atomic<quint64> m_i2cClearCount{0};
+
+    // When each pending read went out (nowMs()), parallel to m_pendingReads.
+    std::array<qint64, kMaxI2cQueue> m_pendingSentMs{};
+    QElapsedTimer m_clock;
+    std::function<qint64()> m_nowForTest;
+    qint64 nowMs() const;
 
     int  m_currentStep{0};
+    std::atomic<bool> m_pollingPaused{false};
 
     // Register mirror — index is the enum integer value (0–255).
     // Matches upstream `byte[] registers = new byte[256]` [@c26a8a4].
@@ -351,8 +431,9 @@ private:
     // Last EP6 I2C read response — mirrors prn->i2c.read_data[] + flag.
     I2cReadResponse m_lastI2cRead{};
 
-    // Pending-read FIFO — parallel to m_i2cQueue.  Each codec dequeue of a
-    // read txn pushes a record; each EP6 response pops the oldest.
+    // Pending-read FIFO — parallel to the I2C queue.  Each codec dequeue of a
+    // read txn pushes a record; each EP6 response pops the oldest.  Both run
+    // on the connection thread, so this FIFO needs no guard.
     std::array<PendingRead, kMaxI2cQueue> m_pendingReads{};
     int m_pendingHead{0};
     int m_pendingTail{0};

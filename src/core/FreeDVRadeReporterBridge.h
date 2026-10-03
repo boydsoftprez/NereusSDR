@@ -107,6 +107,8 @@ public:
     // pattern already used by FreeDVReporterClient
     // (handleSocketIOForTest, lastSentMessageForTest).
     void tickForTest();
+    // Test seam: the station-wide sync state the bridge last heard.
+    bool syncedForTest() const { return m_synced; }
 
 public slots:
     // Mirror of RadioModel::radeSyncChanged + radeSnrChanged. The

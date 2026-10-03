@@ -31,11 +31,10 @@
 
 using namespace NereusSDR;
 
-// Resolve the fixture independently of CTest's working directory and
-// relative compiler source paths.
+// Use Qt's source-directory-aware lookup; __FILE__ may be relative under ccache.
 static QString resolveFixturePath()
 {
-    return QString::fromUtf8(NEREUS_SOURCE_ROOT) + "/tests/fixtures/adif/sample.adi";
+    return QFINDTESTDATA("fixtures/adif/sample.adi");
 }
 
 class TestAdifParser : public QObject {

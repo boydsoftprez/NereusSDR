@@ -10,6 +10,7 @@
 //     - non-HL2 saved radios are skipped (filter doesn't apply to them).
 //     - explicit per-MAC value already present is preserved (defensive).
 //     - migration is idempotent (calling twice is safe).
+//     - the HL2 receive-only kit (HermesLiteRxOnly) is covered (Task 16).
 //
 // Uses QTemporaryDir + direct AppSettings construction so each case operates
 // on an isolated in-memory store. No singleton, no QApplication.
@@ -130,6 +131,51 @@ private slots:
                                  QStringLiteral("X")).toString(),
                  QStringLiteral("True"));
         // Global key is gone.
+        QVERIFY(!s.contains(QStringLiteral("hl2IoBoard/n2adrFilter")));
+    }
+
+    // Task 16 (receiver and transmit gaps plan): the HL2 receive-only kit
+    // (board byte 12) is an HL2 with the HL2's I/O board, so it gets the
+    // legacy value too, alongside a standard HL2.
+    void legacyGlobalMigrationCoversTheReceiveOnlyKit()
+    {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        AppSettings s(tmp.filePath(QStringLiteral("NereusSDR.settings")));
+
+        const QString kitMac = QStringLiteral("aa:bb:cc:12:12:12");
+        const QString hl2Mac = QStringLiteral("aa:bb:cc:06:06:06");
+        saveTestRadio(s, kitMac, HPSDRHW::HermesLiteRxOnly);
+        saveTestRadio(s, hl2Mac, HPSDRHW::HermesLite);
+        s.setValue(QStringLiteral("hl2IoBoard/n2adrFilter"), QStringLiteral("True"));
+
+        AppSettings::migrateLegacyN2adrFilter(s);
+
+        QCOMPARE(s.hardwareValue(kitMac, QStringLiteral("hl2IoBoard/n2adrFilter"),
+                                 QStringLiteral("X")).toString(),
+                 QStringLiteral("True"));
+        QCOMPARE(s.hardwareValue(hl2Mac, QStringLiteral("hl2IoBoard/n2adrFilter"),
+                                 QStringLiteral("X")).toString(),
+                 QStringLiteral("True"));
+        QVERIFY(!s.contains(QStringLiteral("hl2IoBoard/n2adrFilter")));
+    }
+
+    // A kit alone is enough to carry the value over and clear the global.
+    void legacyGlobalMigrationKitAloneClearsTheGlobal()
+    {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        AppSettings s(tmp.filePath(QStringLiteral("NereusSDR.settings")));
+
+        const QString kitMac = QStringLiteral("aa:bb:cc:12:34:56");
+        saveTestRadio(s, kitMac, HPSDRHW::HermesLiteRxOnly);
+        s.setValue(QStringLiteral("hl2IoBoard/n2adrFilter"), QStringLiteral("False"));
+
+        AppSettings::migrateLegacyN2adrFilter(s);
+
+        QCOMPARE(s.hardwareValue(kitMac, QStringLiteral("hl2IoBoard/n2adrFilter"),
+                                 QStringLiteral("X")).toString(),
+                 QStringLiteral("False"));
         QVERIFY(!s.contains(QStringLiteral("hl2IoBoard/n2adrFilter")));
     }
 

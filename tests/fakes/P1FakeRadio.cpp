@@ -21,7 +21,11 @@
 
 #include "P1FakeRadio.h"
 
+#include <QMutexLocker>
 #include <QNetworkDatagram>
+#include <QThread>
+#include <QTimer>
+#include <QUdpSocket>
 #include <cstring>
 
 namespace NereusSDR::Test {
@@ -34,53 +38,81 @@ P1FakeRadio::P1FakeRadio(QObject* parent)
 P1FakeRadio::~P1FakeRadio()
 {
     stop();
+    if (m_thread) {
+        m_thread->quit();
+        m_thread->wait();
+        delete m_radio;
+    }
+}
+
+void P1FakeRadio::onRadioThread(const std::function<void()>& work)
+{
+    Q_ASSERT_X(QThread::currentThread() != m_thread.get(), "P1FakeRadio",
+               "called on the fake's own thread");
+    QMetaObject::invokeMethod(m_radio, work, Qt::BlockingQueuedConnection);
 }
 
 void P1FakeRadio::start()
 {
-    if (m_socket) {
-        return;  // already started
+    if (!m_thread) {
+        m_thread = std::make_unique<QThread>();
+        m_thread->setObjectName(QStringLiteral("P1FakeRadio"));
+        m_radio = new QObject;
+        m_radio->moveToThread(m_thread.get());
+        m_thread->start();
     }
-    m_socket = new QUdpSocket(this);
-    bool ok = m_socket->bind(QHostAddress::LocalHost, 0);
-    Q_ASSERT_X(ok, "P1FakeRadio::start", "Failed to bind loopback UDP socket");
+    onRadioThread([this] {
+        if (m_socket) {
+            return;  // already started
+        }
+        m_socket = new QUdpSocket(m_radio);
+        bool ok = m_socket->bind(QHostAddress::LocalHost, 0);
+        Q_ASSERT_X(ok, "P1FakeRadio::start", "Failed to bind loopback UDP socket");
+        m_port.store(m_socket->localPort());
 
-    connect(m_socket, &QUdpSocket::readyRead, this, &P1FakeRadio::onReadyRead);
+        QObject::connect(m_socket, &QUdpSocket::readyRead, m_radio, [this] { onReadyRead(); });
 
-    // Auto-stream timer — fires every 10ms to push ep6 frames while running.
-    // This simulates the continuous ep6 stream a real HPSDR radio sends after
-    // receiving metis-start (networkproto1.c WriteMainLoop cadence).
-    m_streamTimer = new QTimer(this);
-    m_streamTimer->setInterval(10);
-    connect(m_streamTimer, &QTimer::timeout, this, &P1FakeRadio::onAutoStreamTick);
-    if (m_autoStreamEnabled) {
-        m_streamTimer->start();
-    }
+        // Auto-stream timer — fires every 10ms to push ep6 frames while running.
+        // This simulates the continuous ep6 stream a real HPSDR radio sends after
+        // receiving metis-start (networkproto1.c WriteMainLoop cadence).
+        m_streamTimer = new QTimer(m_radio);
+        m_streamTimer->setInterval(10);
+        QObject::connect(m_streamTimer, &QTimer::timeout, m_radio, [this] { onAutoStreamTick(); });
+        bool autoStream = false;
+        {
+            QMutexLocker lock(&m_mutex);
+            autoStream = m_autoStreamEnabled;
+        }
+        if (autoStream) {
+            m_streamTimer->start();
+        }
+    });
 }
 
 void P1FakeRadio::stop()
 {
-    if (m_streamTimer) {
-        m_streamTimer->stop();
-        m_streamTimer->deleteLater();
-        m_streamTimer = nullptr;
+    if (m_thread) {
+        onRadioThread([this] {
+            if (m_streamTimer) {
+                m_streamTimer->stop();
+                delete m_streamTimer;
+                m_streamTimer = nullptr;
+            }
+            if (m_socket) {
+                m_socket->close();
+                delete m_socket;
+                m_socket = nullptr;
+            }
+            m_port.store(0);
+        });
     }
-    if (m_socket) {
-        m_socket->close();
-        m_socket->deleteLater();
-        m_socket = nullptr;
-    }
+    QMutexLocker lock(&m_mutex);
     m_running = false;
-}
-
-quint16 P1FakeRadio::localPort() const
-{
-    if (!m_socket) { return 0; }
-    return m_socket->localPort();
 }
 
 void P1FakeRadio::goSilent()
 {
+    QMutexLocker lock(&m_mutex);
     m_silent = true;
     // Also clear client tracking so auto-stream stops sending.
     // The client address is restored when the next metis-start arrives.
@@ -89,6 +121,7 @@ void P1FakeRadio::goSilent()
 
 void P1FakeRadio::resume()
 {
+    QMutexLocker lock(&m_mutex);
     m_silent = false;
     // m_clientAddress/m_clientPort will be repopulated when the reconnect
     // attempt sends a fresh metis-start.
@@ -96,13 +129,73 @@ void P1FakeRadio::resume()
 
 void P1FakeRadio::setAutoStreamEnabled(bool enabled)
 {
-    m_autoStreamEnabled = enabled;
-    if (!m_streamTimer) { return; }  // start() not called yet
-    if (enabled) {
-        if (!m_streamTimer->isActive()) { m_streamTimer->start(); }
-    } else {
-        if (m_streamTimer->isActive()) { m_streamTimer->stop(); }
+    {
+        QMutexLocker lock(&m_mutex);
+        m_autoStreamEnabled = enabled;
     }
+    if (!m_thread) { return; }  // start() not called yet
+    onRadioThread([this, enabled] {
+        if (!m_streamTimer) { return; }
+        if (enabled) {
+            if (!m_streamTimer->isActive()) { m_streamTimer->start(); }
+        } else {
+            if (m_streamTimer->isActive()) { m_streamTimer->stop(); }
+        }
+    });
+}
+
+void P1FakeRadio::skipEp6Sequence(quint32 count)
+{
+    QMutexLocker lock(&m_mutex);
+    m_ep6Seq += count;
+}
+
+quint16 P1FakeRadio::clientPort() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_clientPort;
+}
+
+int P1FakeRadio::ep2FramesReceived() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_ep2Count;
+}
+
+QList<QByteArray> P1FakeRadio::ep2CcReceived() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_ep2Cc;
+}
+
+void P1FakeRadio::clearEp2CcLog()
+{
+    QMutexLocker lock(&m_mutex);
+    m_ep2Cc.clear();
+}
+
+bool P1FakeRadio::isRunning() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_running;
+}
+
+int P1FakeRadio::metisStopCount() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_stopCount;
+}
+
+QList<QByteArray> P1FakeRadio::metisCommandsReceived() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_metisCommands;
+}
+
+void P1FakeRadio::setFirmwareVersion(int fw)
+{
+    QMutexLocker lock(&m_mutex);
+    m_firmwareVersion = fw;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +209,10 @@ void P1FakeRadio::onReadyRead()
         QNetworkDatagram dg = m_socket->receiveDatagram();
         if (dg.data().isEmpty()) { continue; }
 
-        if (m_silent) { continue; }
+        {
+            QMutexLocker lock(&m_mutex);
+            if (m_silent) { continue; }
+        }
 
         const QByteArray& pkt  = dg.data();
         const QHostAddress from = dg.senderAddress();
@@ -167,7 +263,12 @@ void P1FakeRadio::handleDiscoveryProbe(const QHostAddress& from, quint16 port)
     reply[6] = static_cast<char>(0x11);
     reply[7] = static_cast<char>(0x22);
     reply[8] = static_cast<char>(0x33);
-    reply[9]  = static_cast<char>(m_firmwareVersion & 0xFF);  // configurable fw version (default 72)
+    int firmware = 0;
+    {
+        QMutexLocker lock(&m_mutex);
+        firmware = m_firmwareVersion;
+    }
+    reply[9]  = static_cast<char>(firmware & 0xFF);  // configurable fw version (default 72)
     reply[10] = static_cast<char>(0x06);  // HL2
     m_socket->writeDatagram(reply, from, port);
 }
@@ -182,6 +283,8 @@ void P1FakeRadio::handleMetisCommand(const QByteArray& pkt,
                                       quint16 port)
 {
     if (pkt.size() < 4) { return; }
+    QMutexLocker lock(&m_mutex);
+    m_metisCommands.append(pkt);
     const quint8 cmd = static_cast<quint8>(pkt[3]);
     if (cmd == 0x01 || cmd == 0x02 || cmd == 0x03) {
         // Start streaming — remember client address
@@ -191,16 +294,22 @@ void P1FakeRadio::handleMetisCommand(const QByteArray& pkt,
     } else if (cmd == 0x00) {
         m_running = false;
         ++m_stopCount;
+        // The C&C log starts again at each stop, so a test reads what a
+        // (re)start sent, not frames that were still in flight before it.
+        m_ep2Cc.clear();
     }
 }
 
 // ---------------------------------------------------------------------------
-// handleEp2Frame — count ep2 command frames from the client
+// handleEp2Frame — count ep2 command frames from the client and keep their
+// C&C bytes (subframe 0 at offset 11, subframe 1 at offset 523)
 // ---------------------------------------------------------------------------
 void P1FakeRadio::handleEp2Frame(const QByteArray& pkt)
 {
     if (pkt.size() == 1032) {
+        QMutexLocker lock(&m_mutex);
         ++m_ep2Count;
+        m_ep2Cc.append(pkt.mid(11, 5) + pkt.mid(523, 5));
     }
 }
 
@@ -279,11 +388,28 @@ QByteArray P1FakeRadio::buildEp6Frame(quint32 seq, int numRx)
 // ---------------------------------------------------------------------------
 void P1FakeRadio::sendEp6Frames(int count)
 {
-    if (!m_socket || m_clientPort == 0) { return; }
+    if (!m_thread) { return; }
+    onRadioThread([this, count] { writeEp6Frames(count); });
+}
+
+void P1FakeRadio::writeEp6Frames(int count)
+{
+    QHostAddress address;
+    quint16 port = 0;
+    quint32 first = 0;
+    {
+        QMutexLocker lock(&m_mutex);
+        if (m_clientPort == 0) { return; }
+        address = m_clientAddress;
+        port = m_clientPort;
+        first = m_ep6Seq;
+        m_ep6Seq += static_cast<quint32>(count);
+    }
+    if (!m_socket) { return; }
 
     for (int i = 0; i < count; ++i) {
-        QByteArray frame = buildEp6Frame(m_ep6Seq++, 1);
-        m_socket->writeDatagram(frame, m_clientAddress, m_clientPort);
+        QByteArray frame = buildEp6Frame(first + static_cast<quint32>(i), 1);
+        m_socket->writeDatagram(frame, address, port);
     }
 }
 
@@ -294,10 +420,11 @@ void P1FakeRadio::sendEp6Frames(int count)
 // ---------------------------------------------------------------------------
 void P1FakeRadio::onAutoStreamTick()
 {
-    if (!m_socket || !m_running || m_silent || m_clientPort == 0) { return; }
-
-    QByteArray frame = buildEp6Frame(m_ep6Seq++, 1);
-    m_socket->writeDatagram(frame, m_clientAddress, m_clientPort);
+    {
+        QMutexLocker lock(&m_mutex);
+        if (!m_running || m_silent) { return; }
+    }
+    writeEp6Frames(1);
 }
 
 } // namespace NereusSDR::Test

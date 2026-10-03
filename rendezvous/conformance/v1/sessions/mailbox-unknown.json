@@ -1,0 +1,43 @@
+{
+  "runs": [
+    "service",
+    "app"
+  ],
+  "serverSetup": {},
+  "steps": [
+    {
+      "connect": "client"
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:clientNonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "from": "client",
+      "role": "behaviour",
+      "message": {
+        "type": "mailbox.open",
+        "nameplate": 7
+      }
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "error",
+        "code": "nameplateUnknown",
+        "reason": "No Core is showing that pairing code right now. Check the code and try again.",
+        "retryAfterMs": 0
+      }
+    }
+  ]
+}

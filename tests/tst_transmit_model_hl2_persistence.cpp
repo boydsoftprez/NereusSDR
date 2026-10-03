@@ -26,6 +26,7 @@
 #include <QtTest/QtTest>
 #include "models/TransmitModel.h"
 #include "core/HpsdrModel.h"
+#include "core/AppSettings.h"
 
 using NereusSDR::HPSDRModel;
 
@@ -82,6 +83,59 @@ private slots:
         m.setHpsdrModel(HPSDRModel::HERMESLITE);
         m.setTunePower(150);
         QCOMPARE(m.tunePower(), 99);
+    }
+
+    // R-R3-46 fix wave + follow-up item 2. PowerPage::applyHpsdrModel no
+    // longer lets its spinbox's range clamp write tune power back, so the
+    // stored value must stay valid on its own, and saved under the right
+    // radio. A connect sets the new model (setHpsdrModel) before it loads
+    // the new radio's settings (loadFromSettings): the clamp happens at the
+    // load, for that radio. 100 W on another radio becomes 99 (0 dB) on an
+    // HL2, and the other radio's saved value is left as it was.
+    void modelChangeClampsTheStoredTunePower() {
+        const QString radioA = QStringLiteral("02:00:00:00:75:01");
+        const QString hl2 = QStringLiteral("02:00:00:00:75:02");
+        auto& s = NereusSDR::AppSettings::instance();
+        s.clearHardwareValues(radioA);
+        s.clearHardwareValues(hl2);
+        const auto fixedKey = [](const QString& mac) {
+            return QStringLiteral("hardware/%1/tx/FixedTunePower").arg(mac);
+        };
+
+        // Session on radio A: fixed tune power 100 W, saved for A.
+        NereusSDR::TransmitModel m;
+        m.setHpsdrModel(HPSDRModel::ANAN100);
+        m.loadFromSettings(radioA);
+        m.setTunePower(100);
+        QCOMPARE(s.value(fixedKey(radioA)).toString(), QStringLiteral("100"));
+
+        // Same session, connect to an HL2 whose saved value is also 100.
+        s.setValue(fixedKey(hl2), QStringLiteral("100"));
+        m.setHpsdrModel(HPSDRModel::HERMESLITE);   // before its settings load
+        QCOMPARE(s.value(fixedKey(radioA)).toString(), QStringLiteral("100"));
+        m.loadFromSettings(hl2);
+        QCOMPARE(m.tunePower(), 99);
+        QCOMPARE(s.value(fixedKey(hl2)).toString(), QStringLiteral("99"));
+        QCOMPARE(s.value(fixedKey(radioA)).toString(), QStringLiteral("100"));
+
+        // The in-memory value already equal to the clamp still fixes the
+        // HL2's saved value.
+        s.setValue(fixedKey(hl2), QStringLiteral("100"));
+        m.loadFromSettings(hl2);
+        QCOMPARE(m.tunePower(), 99);
+        QCOMPARE(s.value(fixedKey(hl2)).toString(), QStringLiteral("99"));
+
+        // A model that holds no radio's settings (a remote window's copy of
+        // the Core's) is left alone.
+        NereusSDR::TransmitModel window;
+        window.setHpsdrModel(HPSDRModel::ANAN100);
+        window.setTunePower(100);
+        QSignalSpy untouched(&window, &NereusSDR::TransmitModel::tunePowerChanged);
+        window.setHpsdrModel(HPSDRModel::HERMESLITE);
+        QCOMPARE(window.tunePower(), 100);
+        QCOMPARE(untouched.count(), 0);
+        s.clearHardwareValues(radioA);
+        s.clearHardwareValues(hl2);
     }
 
     void nonHl2_setTunePower_global_clamps_to_100() {

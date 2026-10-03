@@ -1,0 +1,10 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "mailbox",
+    "body": {
+      "type": "pair.start"
+    }
+  },
+  "decodes": false
+}

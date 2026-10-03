@@ -20,6 +20,7 @@
 
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterApplet.h"
+#include "core/AppSettings.h"
 
 #include <QVBoxLayout>
 #include <QCloseEvent>
@@ -28,21 +29,46 @@
 
 namespace NereusSDR {
 
-PanFloatingWindow::PanFloatingWindow(PanadapterApplet* applet, QWidget* parent)
+PanFloatingWindow::PanFloatingWindow(QWidget* parent)
     : QWidget(parent, Qt::Window)
-    , m_applet(applet)
 {
-    setWindowTitle(QStringLiteral("NereusSDR - Pan %1")
-                       .arg(applet ? applet->panId() : QString()));
-    auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
-    if (applet) {
-        layout->addWidget(applet);
-    }
+    setWindowTitle(QStringLiteral("NereusSDR - Pan"));
+    setMinimumSize(400, 300);
+    m_layout = new QVBoxLayout(this);
+    m_layout->setContentsMargins(0, 0, 0, 0);
+    m_layout->setSpacing(0);
     resize(800, 400);
 }
 
 PanFloatingWindow::~PanFloatingWindow() = default;
+
+// From AetherSDR src/gui/PanFloatingWindow.cpp:34-56 [@1e0718ad]
+//   adapter: NereusSDR's applet exposes no slice title, so the window is
+//   titled by pan id; the dock affordance is the applet's own floating-only
+//   title strip (PanadapterApplet::setFloatingState) rather than upstream's
+//   always-present one.
+void PanFloatingWindow::adoptApplet(PanadapterApplet* applet)
+{
+    if (!applet) { return; }
+    m_applet = applet;
+    // addWidget() reparents internally, so the applet goes straight from the
+    // splitter to this window in one step -- no intermediate nullptr parent,
+    // and therefore no transient top-level NSWindow.
+    m_layout->addWidget(applet, 1);
+    updateWindowTitle();
+}
+
+PanadapterApplet* PanFloatingWindow::takeApplet(QWidget* newParent)
+{
+    PanadapterApplet* applet = m_applet.data();
+    if (!applet) { return nullptr; }
+    m_layout->removeWidget(applet);
+    // Straight onto the destination, never through nullptr; same reason as
+    // adoptApplet.
+    applet->setParent(newParent);
+    m_applet = nullptr;
+    return applet;
+}
 
 PanadapterApplet* PanFloatingWindow::applet() const
 {
@@ -59,10 +85,45 @@ void PanFloatingWindow::requestDock()
     emit dockRequested(panId());
 }
 
+void PanFloatingWindow::updateWindowTitle()
+{
+    setWindowTitle(QStringLiteral("NereusSDR - Pan %1").arg(panId()));
+}
+
+// From AetherSDR src/gui/PanFloatingWindow.cpp:87-96 [@1e0718ad]
+//   The close box docks rather than destroys, and the event is IGNORED so Qt
+//   does not tear the window down underneath the stack. PanadapterStack::
+//   dockPanadapter owns the teardown, because it also has to move the applet
+//   out first -- letting Qt close the window here would delete the applet
+//   with it.
 void PanFloatingWindow::closeEvent(QCloseEvent* event)
 {
+    saveWindowGeometry();
     requestDock();
-    event->accept();
+    event->ignore();
+}
+
+// From AetherSDR src/gui/PanFloatingWindow.cpp:98-112 [@1e0718ad]
+void PanFloatingWindow::saveWindowGeometry()
+{
+    const QString pan = panId();
+    if (pan.isEmpty()) { return; }
+    AppSettings::instance().setValue(
+        QStringLiteral("FloatingPan_%1_Geometry").arg(pan),
+        QString::fromLatin1(saveGeometry().toBase64()));
+}
+
+void PanFloatingWindow::restoreWindowGeometry()
+{
+    const QString pan = panId();
+    if (pan.isEmpty()) { return; }
+    const QString geom =
+        AppSettings::instance()
+            .value(QStringLiteral("FloatingPan_%1_Geometry").arg(pan), QString())
+            .toString();
+    if (!geom.isEmpty()) {
+        restoreGeometry(QByteArray::fromBase64(geom.toLatin1()));
+    }
 }
 
 void PanFloatingWindow::moveEvent(QMoveEvent*)

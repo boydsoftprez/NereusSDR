@@ -13,6 +13,9 @@
 //   2026-05-02 — Written for NereusSDR by J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
 //                Per docs/superpowers/plans/2026-05-01-ui-polish-cross-surface.md §B3.
+//   2026-09-27 - The Special section follows rxOutOnTxPresent, the BYPS
+//                gate (R-IOS-06, R-IOS-27). J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -37,7 +40,7 @@ namespace NereusSDR {
 // Popup structure (RX mode):
 //   [Main TX/RX]  ANT1 .. ANTn   (up to antennaInputCount, max 3)
 //   [RX only]     sku.rxOnlyLabels[0..2]   (only when rxOnlyAntennaCount > 0)
-//   [Special]     "RX out on TX"            (only when hasRxBypassRelay)
+//   [Special]     "RX out on TX"            (only when rxOutOnTxPresent)
 //
 // Popup structure (TX mode):
 //   [Main TX/RX]  ANT1 .. ANTn   (RX-only and bypass sections omitted)
@@ -60,7 +63,7 @@ public:
     // and SKU-level UI profile.
     //
     // - In Mode::RX: shows Main TX/RX (ANT1-N) + RX-only (sku.rxOnlyLabels
-    //   when rxOnlyAntennaCount > 0) + Special bypass (when hasRxBypassRelay).
+    //   when rxOnlyAntennaCount > 0) + Special bypass (when rxOutOnTxPresent).
     // - In Mode::TX: shows Main TX/RX only. RX-only and bypass omitted.
     //
     // The currently-active antenna (`current`) is shown checked.

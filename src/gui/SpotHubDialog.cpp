@@ -102,6 +102,46 @@
 //                                    preserved verbatim from upstream
 //                                    `:146-178`. AI tooling:
 //                                    Anthropic Claude Code.
+//   2026-09-23  J.J. Boyd / KG4VCF  R-R3-21: the WSJT-X Spot Life slider
+//                                    reads and saves WsjtxSpotLifetimeSec,
+//                                    the name RadioModel reads. AI
+//                                    tooling: Anthropic Claude Code.
+//   2026-09-24  J.J. Boyd / KG4VCF  R-R3-49: the Memories option, the
+//                                    WSJT-X filters, the RBN rate limit
+//                                    and Report decodes to PSK Reporter
+//                                    are hidden (UnbuiltFeatures) until
+//                                    they are applied; the WSJT-X colour
+//                                    swatches keep their names as labels
+//                                    meanwhile. AI tooling: Anthropic
+//                                    Claude Code.
+//   2026-09-24  J.J. Boyd / KG4VCF  R-R3-49: the Display tab's Auto
+//                                    background toggle is removed; a
+//                                    saved IsSpotsOverrideToAuto...
+//                                    value stays in the file. AI
+//                                    tooling: Anthropic Claude Code.
+//   2026-09-26  J.J. Boyd / KG4VCF  Remote-window parity Task 18: the
+//                                    Display tab's Auto mode toggle
+//                                    (SpotAutoSwitchMode) from AetherSDR
+//                                    DxClusterDialog.cpp [@1e0718ad]: a
+//                                    spot click sets the slice's mode.
+//                                    AI tooling: Anthropic Claude Code.
+//   2026-09-26  J.J. Boyd / KG4VCF  Remote-window parity Task 19
+//                                    (R-IOS-25): in a remote window the
+//                                    Cluster, RBN, POTA and PSK Reporter
+//                                    tabs are the Core's (SpotSourceHost);
+//                                    the Core's settings disabled with a
+//                                    reason while there is no Core
+//                                    session. AI tooling: Anthropic Claude
+//                                    Code.
+//   2026-09-27  J.J. Boyd / KG4VCF  iPhone plan Task 22 / parity Task 20
+//                                    (R-IOS-26): the FreeDV tab is the
+//                                    Core's in a remote window (Start /
+//                                    Stop, state, console, "Hide my
+//                                    station"); locally its console now
+//                                    shows the client's lines and "Hide my
+//                                    station" goes through the spot source
+//                                    host. AI tooling: Anthropic Claude
+//                                    Code.
 
 #include "SpotHubDialog.h"
 
@@ -113,13 +153,16 @@
 #include "core/PotaClient.h"
 #include "core/PskReporterClient.h"
 #include "core/SpotCollectorClient.h"
+#include "core/SpotSourceHost.h"
 #include "core/WsjtxClient.h"
+#include "gui/UnbuiltFeatures.h"
 #include "gui/widgets/GuardedSlider.h"
 #include "models/BandFilterProxy.h"
 #include "models/SpotModel.h"
 #include "models/SpotTableModel.h"
 
 #include <QCheckBox>
+#include <QSignalBlocker>
 #include <QColor>
 #include <QColorDialog>
 #include <QComboBox>
@@ -342,6 +385,77 @@ SpotHubDialog::SpotHubDialog(DxClusterClient* clusterClient,
 // RadioModel::restoreSpotClientAutoStartState now re-applies identity
 // from the User/* fall-back chain before calling startConnection(),
 // and skips the call entirely when no identity is configured.
+QString SpotHubDialog::identityError(const QString& call, const QString& grid)
+{
+    // Validate callsign.
+    if (call.isEmpty()) {
+        return QStringLiteral("Callsign is required.");
+    }
+    if (call.length() < 3 || call.length() > 12) {
+        return QStringLiteral("Callsign must be 3 to 12 characters.");
+    }
+    // Validate Maidenhead grid: 4 or 6 chars, alpha+digit pattern
+    // (e.g. EM73 or EM73XY). Reject anything else.
+    if (grid.length() != 4 && grid.length() != 6) {
+        return QStringLiteral("Grid must be 4 or 6 character Maidenhead (e.g. EM73 or EM73XY).");
+    }
+    return QString();
+}
+
+void SpotHubDialog::saveIdentity(const QString& call, const QString& gridSquare,
+                                 const QString& message)
+{
+    auto& settings = AppSettings::instance();
+    // Canonical keys.
+    settings.setValue("User/Callsign", call);
+    settings.setValue("User/GridSquare", gridSquare);
+    settings.setValue("FreeDvReporter/Message", message);
+    settings.setValue("User/IdentityLastSaved",
+                      QDateTime::currentDateTime().toString(Qt::ISODate));
+
+    // Propagate to legacy per-source keys. Existing per-source-tab
+    // readers (Cluster / RBN / PSK Reporter) keep reading their
+    // per-source key on construction; propagation keeps them in
+    // sync with the central Settings entry.
+    //
+    // 2026-05-12 (PR #238 review P2): PSK Reporter keys unified
+    // on the slash-key family RadioModel reads
+    // (RadioModel.cpp:1000-1004, :1575-1582).  Flat-key writes
+    // were orphaned (nothing read them on restore), so a user
+    // who saved identity via Save & Propagate, restarted the
+    // app, and clicked PSK Start without re-entering the PSK
+    // tab would emit IPFIX datagrams with empty receiver
+    // fields.  Flat keys retained for DxCluster / Rbn (unrelated).
+    settings.setValue("DxClusterCallsign", call);
+    settings.setValue("RbnCallsign", call);
+    settings.setValue("PskReporter/Callsign", call);
+    settings.setValue("PskReporter/GridSquare", gridSquare);
+    settings.setValue("FreeDvReporter/Callsign", call);
+    settings.setValue("FreeDvReporter/GridSquare", gridSquare);
+
+    settings.save();
+}
+
+void SpotHubDialog::applyIdentityToClients(FreeDVReporterClient* freedv,
+                                           PskReporterClient* psk,
+                                           const QString& call,
+                                           const QString& gridSquare,
+                                           const QString& message)
+{
+    // Push to live clients if non-null. A connection that is
+    // already up picks up the new identity without disconnect.
+    // Version string comes from CMake (NEREUSSDR_VERSION); the
+    // FreeDV / PSK Reporter pools want a versioned client tag.
+    const QString version =
+        QStringLiteral("NereusSDR/") + QStringLiteral(NEREUSSDR_VERSION);
+    if (freedv) {
+        freedv->setIdentity(call, gridSquare, message, version);
+    }
+    if (psk) {
+        psk->setIdentity(call, gridSquare, version);
+    }
+}
+
 void SpotHubDialog::buildSettingsTab(QTabWidget* tabs)
 {
     auto* page = new QWidget;
@@ -365,7 +479,7 @@ void SpotHubDialog::buildSettingsTab(QTabWidget* tabs)
         s.value("User/Callsign").toString().trimmed().isEmpty();
     if (needsFirstRunPrompt) {
         auto* firstRunBanner = new QLabel(
-            "First-time setup — enter your callsign and grid square "
+            "First-time setup: enter your callsign and grid square "
             "below.  Spot sources stay disconnected until your "
             "callsign is set.");
         firstRunBanner->setObjectName("settingsFirstRunBanner");
@@ -395,7 +509,7 @@ void SpotHubDialog::buildSettingsTab(QTabWidget* tabs)
         s.value("User/Callsign").toString());
     m_settingsCallEdit->setObjectName("settingsCallEdit");
     m_settingsCallEdit->setPlaceholderText(
-        "Enter Callsign Here (4-12 chars — required to publish spots)");
+        "Enter Callsign Here (4-12 characters, required to publish spots)");
     m_settingsCallEdit->setMaxLength(12);
     m_settingsCallEdit->setStyleSheet(kLineEditStyle);
     grid->addWidget(m_settingsCallEdit, row, 1);
@@ -406,7 +520,7 @@ void SpotHubDialog::buildSettingsTab(QTabWidget* tabs)
         s.value("User/GridSquare").toString());
     m_settingsGridEdit->setObjectName("settingsGridEdit");
     m_settingsGridEdit->setPlaceholderText(
-        "Enter Grid Here (Maidenhead — e.g. EM73 or EM73XY)");
+        "Enter Grid Here (Maidenhead, e.g. EM73 or EM73XY)");
     m_settingsGridEdit->setMaxLength(6);
     m_settingsGridEdit->setStyleSheet(kLineEditStyle);
     grid->addWidget(m_settingsGridEdit, row, 1);
@@ -465,66 +579,14 @@ void SpotHubDialog::buildSettingsTab(QTabWidget* tabs)
         m_settingsErrorLabel->clear();
         m_settingsSavedLabel->clear();
 
-        // Validate callsign.
-        if (call.isEmpty()) {
-            m_settingsErrorLabel->setText("Callsign is required.");
-            return;
-        }
-        if (call.length() < 3 || call.length() > 12) {
-            m_settingsErrorLabel->setText(
-                "Callsign must be 3 to 12 characters.");
-            return;
-        }
-        // Validate Maidenhead grid: 4 or 6 chars, alpha+digit pattern
-        // (e.g. EM73 or EM73XY). Reject anything else.
-        if (gridSquare.length() != 4 && gridSquare.length() != 6) {
-            m_settingsErrorLabel->setText(
-                "Grid must be 4 or 6 character Maidenhead (e.g. EM73 or EM73XY).");
+        const QString error = identityError(call, gridSquare);
+        if (!error.isEmpty()) {
+            m_settingsErrorLabel->setText(error);
             return;
         }
 
-        auto& settings = AppSettings::instance();
-        // Canonical keys.
-        settings.setValue("User/Callsign", call);
-        settings.setValue("User/GridSquare", gridSquare);
-        settings.setValue("FreeDvReporter/Message", message);
-        settings.setValue("User/IdentityLastSaved",
-                          QDateTime::currentDateTime().toString(Qt::ISODate));
-
-        // Propagate to legacy per-source keys. Existing per-source-tab
-        // readers (Cluster / RBN / PSK Reporter) keep reading their
-        // per-source key on construction; propagation keeps them in
-        // sync with the central Settings entry.
-        //
-        // 2026-05-12 (PR #238 review P2): PSK Reporter keys unified
-        // on the slash-key family RadioModel reads
-        // (RadioModel.cpp:1000-1004, :1575-1582).  Flat-key writes
-        // were orphaned (nothing read them on restore), so a user
-        // who saved identity via Save & Propagate, restarted the
-        // app, and clicked PSK Start without re-entering the PSK
-        // tab would emit IPFIX datagrams with empty receiver
-        // fields.  Flat keys retained for DxCluster / Rbn (unrelated).
-        settings.setValue("DxClusterCallsign", call);
-        settings.setValue("RbnCallsign", call);
-        settings.setValue("PskReporter/Callsign", call);
-        settings.setValue("PskReporter/GridSquare", gridSquare);
-        settings.setValue("FreeDvReporter/Callsign", call);
-        settings.setValue("FreeDvReporter/GridSquare", gridSquare);
-
-        settings.save();
-
-        // Push to live clients if non-null. A connection that is
-        // already up picks up the new identity without disconnect.
-        // Version string comes from CMake (NEREUSSDR_VERSION); the
-        // FreeDV / PSK Reporter pools want a versioned client tag.
-        const QString version =
-            QStringLiteral("NereusSDR/") + QStringLiteral(NEREUSSDR_VERSION);
-        if (m_freedvClient) {
-            m_freedvClient->setIdentity(call, gridSquare, message, version);
-        }
-        if (m_pskClient) {
-            m_pskClient->setIdentity(call, gridSquare, version);
-        }
+        saveIdentity(call, gridSquare, message);
+        applyIdentityToClients(m_freedvClient, m_pskClient, call, gridSquare, message);
         // 2026-05-12 bench fix #2: propagate the new identity into
         // each per-source tab's QLineEdit so the user sees the
         // change in every editable field, not just the Settings tab.
@@ -588,7 +650,7 @@ void SpotHubDialog::buildSettingsTab(QTabWidget* tabs)
         s.value("User/IdentityLastSaved").toString();
     QString summary;
     if (persistedCall.isEmpty()) {
-        summary = "No identity saved yet. Fill in the fields above and click Save.";
+        summary = "No identity saved. Fill in the fields above and click Save.";
     } else {
         summary = QString("Current identity: %1 / %2")
                       .arg(persistedCall, persistedGrid);
@@ -700,7 +762,8 @@ void SpotHubDialog::buildClusterTab(QTabWidget* tabs)
     m_connectBtn->setFixedWidth(100);
     m_connectBtn->setStyleSheet(kStartBtnStyle);
     connect(m_connectBtn, &QPushButton::clicked, this, [this] {
-        if (m_clusterClient && m_clusterClient->isConnected()) {
+        if (sourceRunning(SpotSourceHost::kDxCluster,
+                          m_clusterClient && m_clusterClient->isConnected())) {
             emit disconnectRequested();
             return;
         }
@@ -816,6 +879,13 @@ void SpotHubDialog::buildClusterTab(QTabWidget* tabs)
     m_cmdEdit->setEnabled(m_clusterClient && m_clusterClient->isConnected());
     connect(m_cmdEdit, &QLineEdit::returnPressed, this, [this] {
         QString cmd = m_cmdEdit->text().trimmed();
+        // Parity Task 19: the Core's cluster in a remote window; its
+        // console echoes the command from the Core.
+        if (stationRemote() && !cmd.isEmpty()) {
+            m_sourceHost->typeCommand(SpotSourceHost::kDxCluster, cmd);
+            m_cmdEdit->clear();
+            return;
+        }
         if (cmd.isEmpty() || !m_clusterClient || !m_clusterClient->isConnected()) {
             return;
         }
@@ -914,6 +984,9 @@ void SpotHubDialog::buildRbnTab(QTabWidget* tabs)
     rateRow->addStretch();
     grid->addLayout(rateRow, row, 1);
     row++;
+    // R-R3-49: nothing applies the rate limit yet; the row is hidden until
+    // something does.
+    UnbuiltFeatures::hideRowUnlessBuilt(rateSpin, UnbuiltFeature::RbnRateLimit, grid);
 
     connLayout->addLayout(grid);
 
@@ -946,7 +1019,7 @@ void SpotHubDialog::buildRbnTab(QTabWidget* tabs)
     m_rbnConnectBtn->setFixedWidth(100);
     m_rbnConnectBtn->setStyleSheet(kStartBtnStyle);
     connect(m_rbnConnectBtn, &QPushButton::clicked, this, [this] {
-        if (m_rbnClient && m_rbnClient->isConnected()) {
+        if (sourceRunning(SpotSourceHost::kRbn, m_rbnClient && m_rbnClient->isConnected())) {
             emit rbnDisconnectRequested();
             return;
         }
@@ -1053,6 +1126,11 @@ void SpotHubDialog::buildRbnTab(QTabWidget* tabs)
     m_rbnCmdEdit->setEnabled(m_rbnClient && m_rbnClient->isConnected());
     connect(m_rbnCmdEdit, &QLineEdit::returnPressed, this, [this] {
         QString cmd = m_rbnCmdEdit->text().trimmed();
+        if (stationRemote() && !cmd.isEmpty()) {
+            m_sourceHost->typeCommand(SpotSourceHost::kRbn, cmd);
+            m_rbnCmdEdit->clear();
+            return;
+        }
         if (cmd.isEmpty() || !m_rbnClient || !m_rbnClient->isConnected()) {
             return;
         }
@@ -1321,6 +1399,20 @@ void SpotHubDialog::buildWsjtxTab(QTabWidget* tabs)
     defaultLabel->setStyleSheet("QLabel { color: #a0b0c0; font-size: 14px; }");
     filterRow->addWidget(defaultLabel);
 
+    // R-R3-49: nothing applies the three filters yet; they are hidden until
+    // something does. Their colours are applied, so each swatch keeps its
+    // name beside it, as Default does.
+    if (!UnbuiltFeatures::isBuilt(UnbuiltFeature::WsjtxFilters)) {
+        for (QCheckBox* box : {m_wsjtxFilterCQ, m_wsjtxFilterPOTA, m_wsjtxFilterCallingMe}) {
+            box->setVisible(false);
+            auto* caption = new QLabel(box->text());
+            caption->setObjectName(box->objectName() + QStringLiteral("Caption"));
+            caption->setStyleSheet(defaultLabel->styleSheet());
+            filterRow->insertWidget(filterRow->indexOf(box), caption, 1);
+        }
+        filterLabel->setText(QStringLiteral("Spot Colors:"));
+    }
+
     layout->addLayout(filterRow);
 
     // Decodes label + spot-life slider
@@ -1334,7 +1426,9 @@ void SpotHubDialog::buildWsjtxTab(QTabWidget* tabs)
     lifeLabel->setStyleSheet("QLabel { color: #808080; font-size: 12px; }");
     decodeRow->addWidget(lifeLabel);
 
-    int wsjtxLife = s.value("WsjtxSpotLifetime", 120).toInt();
+    // R-R3-21: WsjtxSpotLifetimeSec is the name RadioModel reads; this
+    // saved WsjtxSpotLifetime, which nothing read (CoreInit migrates it).
+    int wsjtxLife = s.value("WsjtxSpotLifetimeSec", 120).toInt();
     auto* wsjtxLifeSlider = new QSlider(Qt::Horizontal);
     wsjtxLifeSlider->setObjectName("wsjtxLifeSlider");
     wsjtxLifeSlider->setRange(30, 300);
@@ -1351,7 +1445,7 @@ void SpotHubDialog::buildWsjtxTab(QTabWidget* tabs)
     connect(wsjtxLifeSlider, &QSlider::valueChanged, this, [wsjtxLifeValue](int v) {
         wsjtxLifeValue->setText(QString("%1s").arg(v));
         auto& settings = AppSettings::instance();
-        settings.setValue("WsjtxSpotLifetime", v);
+        settings.setValue("WsjtxSpotLifetimeSec", v);
         settings.save();
     });
     layout->addLayout(decodeRow);
@@ -1571,7 +1665,7 @@ void SpotHubDialog::buildPotaTab(QTabWidget* tabs)
     m_potaStartBtn->setFixedWidth(100);
     m_potaStartBtn->setStyleSheet(kStartBtnStyle);
     connect(m_potaStartBtn, &QPushButton::clicked, this, [this] {
-        if (m_potaClient && m_potaClient->isPolling()) {
+        if (sourceRunning(SpotSourceHost::kPota, m_potaClient && m_potaClient->isPolling())) {
             emit potaStopRequested();
             return;
         }
@@ -1709,7 +1803,7 @@ void SpotHubDialog::buildFreeDvTab(QTabWidget* tabs)
     int row = 0;
 
     grid->addWidget(new QLabel("Server:"), row, 0);
-    auto* serverLabel = new QLabel("qso.freedv.org (WebSocket)");
+    auto* serverLabel = new QLabel("qso.freedv.org");
     serverLabel->setStyleSheet("QLabel { color: #808890; }");
     grid->addWidget(serverLabel, row, 1);
     row++;
@@ -1760,8 +1854,16 @@ void SpotHubDialog::buildFreeDvTab(QTabWidget* tabs)
     m_freedvStartBtn->setFixedWidth(100);
     m_freedvStartBtn->setStyleSheet(kStartBtnStyle);
     connect(m_freedvStartBtn, &QPushButton::clicked, this, [this] {
-        if (m_freedvClient && m_freedvClient->isConnected()) {
+        // iPhone plan Task 22 / parity Task 20: in a remote window FreeDV
+        // Reporter is the Core's; the Core checks its own identity and its
+        // refusal comes back to the status label.
+        if (sourceRunning(SpotSourceHost::kFreedvReporter,
+                          m_freedvClient && m_freedvClient->isConnected())) {
             emit freedvStopRequested();
+            return;
+        }
+        if (stationRemote()) {
+            emit freedvStartRequested();
             return;
         }
         // Post-3J-2 UX fix: refuse to start with an empty identity.
@@ -1820,6 +1922,15 @@ void SpotHubDialog::buildFreeDvTab(QTabWidget* tabs)
                             "QLabel { color: #e6c200; font-size: 11px; }");
                     }
                 });
+        // iPhone plan Task 22: the client's lines in the FreeDV console, as
+        // every other tab streams its client's (the Core's arrive through
+        // the spot source host in a remote window).
+        connect(m_freedvClient, &FreeDVReporterClient::rawLineReceived,
+                this, [this](const QString& line) {
+                    if (m_freedvConsole && !stationRemote()) {
+                        m_freedvConsole->appendPlainText(line);
+                    }
+                });
     }
 
     layout->addWidget(connGroup);
@@ -1871,6 +1982,9 @@ void SpotHubDialog::buildFreeDvTab(QTabWidget* tabs)
             settings.save();
         });
         prefsLayout->addWidget(pskChk);
+        // R-R3-49: nothing sends FreeDV decodes to PSK Reporter yet; hidden
+        // until something does.
+        UnbuiltFeatures::hideUnlessBuilt(pskChk, UnbuiltFeature::FreeDvToPsk);
 
         // Direction display 3-way combo, mirroring freedv-gui's
         // reportingDirectionAsCardinal toggle. NereusSDR exposes a
@@ -1888,11 +2002,12 @@ void SpotHubDialog::buildFreeDvTab(QTabWidget* tabs)
                           QStringLiteral("Cardinal"));
         dirCombo->addItem("Numeric only (045°)",
                           QStringLiteral("Numeric"));
+        // Mirrors freedv-gui's reportingDirectionAsCardinal setting; the
+        // combined option matches NereusSDR's default pre-bench rendering.
         dirCombo->setToolTip(
             "Heading column rendering in the FreeDV Reporter dialog. "
-            "Mirrors freedv-gui's reportingDirectionAsCardinal setting "
-            "with an extra combined option matching NereusSDR's "
-            "default pre-bench rendering.");
+            "Matches the FreeDV app's heading setting, with an extra "
+            "combined option that is the default.");
         const QString savedDir =
             s.value("FreeDvReporter/DirectionAsCardinal",
                     QStringLiteral("Combined")).toString();
@@ -1920,8 +2035,7 @@ void SpotHubDialog::buildFreeDvTab(QTabWidget* tabs)
         khzChk->setObjectName("freedvFrequencyKhzChk");
         khzChk->setToolTip(
             "When checked, the FreeDV Reporter dialog's MHz column "
-            "shows kHz instead. Mirrors freedv-gui's "
-            "reportingFrequencyAsKhz setting.");
+            "shows kHz instead, as the FreeDV app's own setting does.");
         khzChk->setChecked(
             s.value("FreeDvReporter/FrequencyAsKhz", "False").toString()
             == "True");
@@ -1948,6 +2062,13 @@ void SpotHubDialog::buildFreeDvTab(QTabWidget* tabs)
             s.value("FreeDvReporter/Hidden", "False").toString() == "True");
         connect(hideChk, &QCheckBox::toggled, this,
                 [this](bool on) {
+                    // iPhone plan Task 22 / parity Task 20: through the spot
+                    // source host, which saves it and shows or hides the
+                    // station at once (the Core's in a remote window).
+                    if (m_sourceHost) {
+                        m_sourceHost->hideFreedvStation(on);
+                        return;
+                    }
                     auto& settings = AppSettings::instance();
                     settings.setValue("FreeDvReporter/Hidden",
                                       on ? "True" : "False");
@@ -2111,7 +2232,8 @@ void SpotHubDialog::buildPskTab(QTabWidget* tabs)
     m_pskStartBtn->setFixedWidth(100);
     m_pskStartBtn->setStyleSheet(kStartBtnStyle);
     connect(m_pskStartBtn, &QPushButton::clicked, this, [this] {
-        if (m_pskClient && m_pskClient->isListening()) {
+        if (sourceRunning(SpotSourceHost::kPskReporter,
+                          m_pskClient && m_pskClient->isListening())) {
             emit pskStopRequested();
             return;
         }
@@ -2163,6 +2285,10 @@ void SpotHubDialog::buildPskTab(QTabWidget* tabs)
     connect(this, &SpotHubDialog::pskStartRequested,
             this, [this](const QString& /*call*/,
                          const QString& /*grid*/) {
+        // Parity Task 19: the Core's state shows in a remote window.
+        if (stationRemote()) {
+            return;
+        }
         if (m_pskStatusLabel) {
             m_pskStatusLabel->setText(
                 "Auto-send every 5 minutes");
@@ -2172,6 +2298,9 @@ void SpotHubDialog::buildPskTab(QTabWidget* tabs)
     });
     connect(this, &SpotHubDialog::pskStopRequested,
             this, [this]() {
+        if (stationRemote()) {
+            return;
+        }
         if (m_pskStatusLabel) {
             m_pskStatusLabel->setText("Stopped");
             m_pskStatusLabel->setStyleSheet(kStatusIdleStyle);
@@ -2435,7 +2564,7 @@ void SpotHubDialog::buildSpotListTab(QTabWidget* tabs)
 // (verbatim port): all knobs from AetherSDR
 // src/gui/SpotSettingsDialog.cpp:38-292 [@0cd4559] (Spots /
 // Memories toggles + Levels / Position / Font Size / Spot Lifetime
-// sliders + Override Colors / Override Background + Auto +
+// sliders + Override Colors / Override Background +
 // swatches + BG Opacity slider). Every knob change writes to the
 // upstream AppSettings keys (`SpotSettingsDialog.cpp:22-37
 // [@0cd4559]`) and emits settingsChanged() so MainWindow can
@@ -2537,9 +2666,10 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
     // load persisted state for the knobs.
     bool spotsEnabled       = s.value("IsSpotsEnabled", "True").toString() == "True";
     bool memoriesEnabled    = s.value("IsMemorySpotsEnabled", "False").toString() == "True";
+    // Parity Task 18: from AetherSDR DxClusterDialog.cpp:2375 [@1e0718ad].
+    bool autoMode           = s.value("SpotAutoSwitchMode", "True").toString() == "True";
     bool overrideColors     = s.value("IsSpotsOverrideColorsEnabled", "False").toString() == "True";
     bool overrideBg         = s.value("IsSpotsOverrideBackgroundColorsEnabled", "True").toString() == "True";
-    bool overrideBgAutoMode = s.value("IsSpotsOverrideToAutoBackgroundColorEnabled", "True").toString() == "True";
     int  levelsVal   = s.value("SpotsMaxLevel", 3).toInt();
     int  positionVal = s.value("SpotsStartingHeightPercentage", 50).toInt();
     int  fontSizeVal = s.value("SpotFontSize", 16).toInt();
@@ -2610,6 +2740,29 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
         save("IsMemorySpotsEnabled", on ? "True" : "False");
     });
     grid->addWidget(memoriesToggle, row++, 1, Qt::AlignLeft);
+    // R-R3-49: memories are not built yet; the row is hidden until they are.
+    UnbuiltFeatures::hideRowUnlessBuilt(memoriesToggle, UnbuiltFeature::Memories, grid);
+
+    // Parity Task 18: Auto mode, whether a left-click on a spot also sets
+    // the slice's mode. Toggle and tooltip from AetherSDR
+    // DxClusterDialog.cpp:2452-2457 [@1e0718ad], in this tab's
+    // Enabled/Disabled style.
+    grid->addWidget(new QLabel("Auto mode:"), row, 0);
+    auto* autoModeToggle = new QPushButton(autoMode ? "Enabled" : "Disabled");
+    autoModeToggle->setObjectName("displayAutoModeToggle");
+    autoModeToggle->setCheckable(true);
+    autoModeToggle->setChecked(autoMode);
+    autoModeToggle->setFixedWidth(80);
+    autoModeToggle->setToolTip(
+        "Automatically switch slice mode when clicking a spot\n"
+        "that includes mode information (e.g. CW, FT8, RTTY)");
+    autoModeToggle->setStyleSheet(kToggleStyle);
+    connect(autoModeToggle, &QPushButton::toggled, this,
+            [autoModeToggle, save](bool on) {
+        autoModeToggle->setText(on ? "Enabled" : "Disabled");
+        save("SpotAutoSwitchMode", on ? "True" : "False");
+    });
+    grid->addWidget(autoModeToggle, row++, 1, Qt::AlignLeft);
 
     // Levels slider. Upstream :91-106 [@0cd4559].
     grid->addWidget(new QLabel("Levels:"), row, 0);
@@ -2757,8 +2910,8 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
     colorRow->addStretch();
     grid->addLayout(colorRow, row++, 1);
 
-    // Override Background + Auto + swatch. Upstream :212-252
-    // [@0cd4559].
+    // Override Background + swatch. Upstream :212-252
+    // [@0cd4559]. The upstream Auto toggle is removed (R-R3-49).
     grid->addWidget(new QLabel("Override Background:"), row, 0);
     auto* bgRow = new QHBoxLayout;
     auto* overrideBgToggle = new QPushButton("Enabled");
@@ -2767,22 +2920,11 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
     overrideBgToggle->setChecked(overrideBg);
     overrideBgToggle->setFixedWidth(70);
     overrideBgToggle->setStyleSheet(kToggleStyle);
-    auto* overrideBgAutoToggle = new QPushButton("Auto");
-    overrideBgAutoToggle->setObjectName("displayOverrideBgAutoToggle");
-    overrideBgAutoToggle->setCheckable(true);
-    overrideBgAutoToggle->setChecked(overrideBgAutoMode);
-    overrideBgAutoToggle->setFixedWidth(50);
-    overrideBgAutoToggle->setStyleSheet(kToggleStyle);
     connect(overrideBgToggle, &QPushButton::toggled, this,
             [save](bool on) {
         save("IsSpotsOverrideBackgroundColorsEnabled", on ? "True" : "False");
     });
-    connect(overrideBgAutoToggle, &QPushButton::toggled, this,
-            [save](bool on) {
-        save("IsSpotsOverrideToAutoBackgroundColorEnabled", on ? "True" : "False");
-    });
     bgRow->addWidget(overrideBgToggle);
-    bgRow->addWidget(overrideBgAutoToggle);
 
     auto* bgColorSwatch = new QPushButton;
     bgColorSwatch->setObjectName("displayBgColorSwatch");
@@ -2999,6 +3141,268 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
 // view's autoscroll-on-selection-change default).
 //
 // -1 sentinel clears the selection ("mouse is no longer over a spot").
+// ── Parity Task 19 (R-IOS-25): the Core's spot sources ──────────────────
+
+void SpotHubDialog::setSourceHost(SpotSourceHost* host)
+{
+    if (m_sourceHost == host) {
+        return;
+    }
+    if (m_sourceHost) {
+        disconnect(m_sourceHost, nullptr, this, nullptr);
+    }
+    m_sourceHost = host;
+    if (host == nullptr) {
+        return;
+    }
+    connect(host, &SpotSourceHost::sourceChanged, this, &SpotHubDialog::refreshStationSource);
+    connect(host, &SpotSourceHost::consoleLine, this,
+            [this](const QString& source, const QString& line) {
+        // A window running its own radio fills its consoles from the
+        // clients directly (above); only the Core's lines come this way.
+        if (!stationRemote() || !SpotSourceHost::isStationSource(source)) {
+            return;
+        }
+        if (QPlainTextEdit* console = consoleFor(source)) {
+            console->appendPlainText(line);
+        }
+    });
+    connect(host, &SpotSourceHost::consoleCleared, this, [this](const QString& source) {
+        if (!stationRemote() || !SpotSourceHost::isStationSource(source)) {
+            return;
+        }
+        if (QPlainTextEdit* console = consoleFor(source)) {
+            console->clear();
+        }
+    });
+    connect(host, &SpotSourceHost::sourceRefused, this,
+            [this](const QString& source, const QString& reason) {
+        QLabel* label = source == SpotSourceHost::kDxCluster ? m_statusLabel
+            : source == SpotSourceHost::kRbn                  ? m_rbnStatusLabel
+            : source == SpotSourceHost::kPota                 ? m_potaStatusLabel
+            : source == SpotSourceHost::kPskReporter          ? m_pskStatusLabel
+            : source == SpotSourceHost::kFreedvReporter       ? m_freedvStatusLabel
+                                                              : nullptr;
+        if (label != nullptr && !reason.isEmpty()) {
+            label->setText(reason);
+            label->setStyleSheet(QStringLiteral("QLabel { color: #ff4444; font-size: 11px; }"));
+        }
+        // A refused "Hide my station" goes back to what the Core holds.
+        if (source == SpotSourceHost::kFreedvReporter) {
+            syncFreedvHidden();
+        }
+    });
+    for (const QString& source : SpotSourceHost::stationSources()) {
+        refreshStationSource(source);
+    }
+    syncFreedvHidden();
+}
+
+void SpotHubDialog::setStationFreedvAvailable(bool available, const QString& reason)
+{
+    m_stationFreedvAvailable = available;
+    m_stationFreedvReason = reason;
+    applyStationAvailability();
+    refreshStationSource(SpotSourceHost::kFreedvReporter);
+}
+
+void SpotHubDialog::syncFreedvHidden()
+{
+    auto* hideChk = findChild<QCheckBox*>(QStringLiteral("freedvHideFromViewChk"));
+    if (hideChk == nullptr || !m_sourceHost) {
+        return;
+    }
+    const QSignalBlocker block(hideChk);
+    hideChk->setChecked(m_sourceHost->freedvReporterHidden());
+}
+
+void SpotHubDialog::setStationSettingsAvailable(bool available, const QString& reason)
+{
+    m_stationSettingsAvailable = available;
+    m_stationSettingsReason = reason;
+    applyStationAvailability();
+}
+
+void SpotHubDialog::setStationSourcesAvailable(bool available, const QString& reason)
+{
+    m_stationSourcesAvailable = available;
+    m_stationSourcesReason = reason;
+    applyStationAvailability();
+    for (const QString& source : SpotSourceHost::stationSources()) {
+        refreshStationSource(source);
+    }
+}
+
+bool SpotHubDialog::stationRemote() const
+{
+    return m_sourceHost && m_sourceHost->forwardsStationSources();
+}
+
+bool SpotHubDialog::sourceRunning(const QString& source, bool localRunning) const
+{
+    if (stationRemote() && SpotSourceHost::isStationSource(source)) {
+        return m_sourceHost->isRunning(source);
+    }
+    return localRunning;
+}
+
+QPlainTextEdit* SpotHubDialog::consoleFor(const QString& source) const
+{
+    if (source == SpotSourceHost::kDxCluster) {
+        return m_console;
+    }
+    if (source == SpotSourceHost::kRbn) {
+        return m_rbnConsole;
+    }
+    if (source == SpotSourceHost::kPota) {
+        return m_potaConsole;
+    }
+    if (source == SpotSourceHost::kPskReporter) {
+        return m_pskConsole;
+    }
+    if (source == SpotSourceHost::kFreedvReporter) {
+        return m_freedvConsole;
+    }
+    return nullptr;
+}
+
+void SpotHubDialog::refreshStationSource(const QString& source)
+{
+    if (source == SpotSourceHost::kFreedvReporter) {
+        syncFreedvHidden();
+    }
+    if (!stationRemote()) {
+        return;
+    }
+    const QString state = m_sourceHost->state(source);
+    const QString text = m_sourceHost->text(source);
+    const bool running = m_sourceHost->isRunning(source);
+    const bool cluster = source == SpotSourceHost::kDxCluster || source == SpotSourceHost::kRbn;
+    QLabel* label = nullptr;
+    QPushButton* button = nullptr;
+    QLineEdit* cmdEdit = nullptr;
+    QPushButton* sendBtn = nullptr;
+    if (source == SpotSourceHost::kDxCluster) {
+        label = m_statusLabel;
+        button = m_connectBtn;
+        cmdEdit = m_cmdEdit;
+        sendBtn = m_sendBtn;
+    } else if (source == SpotSourceHost::kRbn) {
+        label = m_rbnStatusLabel;
+        button = m_rbnConnectBtn;
+        cmdEdit = m_rbnCmdEdit;
+        sendBtn = m_rbnSendBtn;
+    } else if (source == SpotSourceHost::kPota) {
+        label = m_potaStatusLabel;
+        button = m_potaStartBtn;
+    } else if (source == SpotSourceHost::kPskReporter) {
+        label = m_pskStatusLabel;
+        button = m_pskStartBtn;
+    } else if (source == SpotSourceHost::kFreedvReporter) {
+        label = m_freedvStatusLabel;
+        button = m_freedvStartBtn;
+    }
+    // FreeDV's tab says Connected and Stopped, as it does locally.
+    const bool freedv = source == SpotSourceHost::kFreedvReporter;
+    if (label != nullptr) {
+        // The words each tab uses locally, for the Core's source.
+        QString words;
+        if (state == SpotSourceHost::kConnected) {
+            words = !text.isEmpty()   ? text
+                : cluster || freedv ? QStringLiteral("Connected")
+                                    : QStringLiteral("Running");
+            label->setStyleSheet(kStatusActiveStyle);
+        } else if (state == SpotSourceHost::kConnecting) {
+            words = QStringLiteral("Connecting");
+            label->setStyleSheet(kStatusIdleStyle);
+        } else if (state == SpotSourceHost::kError) {
+            words = QStringLiteral("Error: %1").arg(text);
+            label->setStyleSheet(QStringLiteral("QLabel { color: #e6c200; font-size: 11px; }"));
+        } else if (freedv && !text.isEmpty()) {
+            // Off with the Core's reason (no identity for its auto-start).
+            words = text;
+            label->setStyleSheet(QStringLiteral("QLabel { color: #e6c200; font-size: 11px; }"));
+        } else {
+            words = cluster ? QStringLiteral("Disconnected") : QStringLiteral("Stopped");
+            label->setStyleSheet(kStatusIdleStyle);
+        }
+        label->setText(words);
+    }
+    if (button != nullptr) {
+        button->setText(cluster ? (running ? QStringLiteral("Disconnect")
+                                           : QStringLiteral("Connect"))
+                                : (running ? QStringLiteral("Stop") : QStringLiteral("Start")));
+    }
+    const bool typeable = m_stationSourcesAvailable && state == SpotSourceHost::kConnected;
+    if (cmdEdit != nullptr) {
+        cmdEdit->setEnabled(typeable);
+    }
+    if (sendBtn != nullptr) {
+        sendBtn->setEnabled(typeable);
+    }
+}
+
+void SpotHubDialog::applyStationAvailability()
+{
+    // A widget's own tooltip comes back when it is enabled again.
+    const auto gate = [](QWidget* w, bool enabled, const QString& reason) {
+        if (w == nullptr) {
+            return;
+        }
+        if (!w->property("nereusBaseToolTip").isValid()) {
+            w->setProperty("nereusBaseToolTip", w->toolTip());
+        }
+        w->setEnabled(enabled);
+        w->setToolTip(enabled ? w->property("nereusBaseToolTip").toString() : reason);
+    };
+    // The Core's settings on these tabs (Station scope): everything but
+    // the WSJT-X and SpotCollector tabs, which are this computer's.
+    const QList<QWidget*> settings{
+        m_settingsCallEdit, m_settingsGridEdit, m_settingsFreedvMsgEdit, m_settingsSaveBtn,
+        m_hostEdit, m_portSpin, m_callEdit, m_autoConnectBtn,
+        findChild<QPushButton*>(QStringLiteral("clusterColorBtn")),
+        m_rbnHostEdit, m_rbnPortSpin, m_rbnCallEdit, m_rbnAutoConnectBtn,
+        findChild<QPushButton*>(QStringLiteral("rbnColorBtn")),
+        m_potaIntervalSpin, m_potaAutoStartBtn,
+        findChild<QPushButton*>(QStringLiteral("potaColorBtn")),
+        m_freedvAutoStartBtn, findChild<QPushButton*>(QStringLiteral("freedvColorBtn")),
+        findChild<QCheckBox*>(QStringLiteral("freedvHideFromViewChk")),
+        m_pskCallEdit, m_pskGridEdit, m_pskAutoStartBtn,
+    };
+    for (QWidget* w : settings) {
+        gate(w, m_stationSettingsAvailable, m_stationSettingsReason);
+    }
+    // The station sources' buttons: the Core's own availability, and the
+    // Core's settings (a Connect saves them first).
+    const bool sources = m_stationSourcesAvailable && m_stationSettingsAvailable;
+    const QString why = !m_stationSettingsAvailable ? m_stationSettingsReason
+                                                    : m_stationSourcesReason;
+    for (QPushButton* b : {m_connectBtn, m_rbnConnectBtn, m_potaStartBtn, m_pskStartBtn}) {
+        gate(b, sources, why);
+    }
+    // iPhone plan Task 22 / parity Task 20: FreeDV Reporter's Start, and
+    // "Hide my station", need a Core that runs FreeDV Reporter too.
+    const bool freedv = sources && m_stationFreedvAvailable;
+    const QString freedvWhy = !sources ? why : m_stationFreedvReason;
+    gate(m_freedvStartBtn, freedv, freedvWhy);
+    if (!freedv) {
+        gate(findChild<QCheckBox*>(QStringLiteral("freedvHideFromViewChk")), false, freedvWhy);
+    }
+    // The command lines follow their source's state as well
+    // (refreshStationSource); here only the reason they cannot be used.
+    for (QWidget* w : std::initializer_list<QWidget*>{m_cmdEdit, m_sendBtn, m_rbnCmdEdit,
+                                                      m_rbnSendBtn}) {
+        if (w == nullptr) {
+            continue;
+        }
+        if (!sources) {
+            gate(w, false, why);
+        } else if (w->property("nereusBaseToolTip").isValid()) {
+            w->setToolTip(w->property("nereusBaseToolTip").toString());
+        }
+    }
+}
+
 void SpotHubDialog::setHoveredPanadapterSpot(int spotIdx)
 {
     if (!m_spotTable || !m_spotTableModel) {

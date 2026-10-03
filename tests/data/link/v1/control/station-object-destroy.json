@@ -1,0 +1,9 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "object.destroy",
+    "key": "slice:1",
+    "class": "SliceModel"
+  },
+  "decodes": true
+}

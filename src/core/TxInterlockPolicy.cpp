@@ -6,6 +6,14 @@
 // full design notes.
 //
 // AI tooling: Anthropic Claude Code.
+//
+// Modification history (NereusSDR):
+//   2026-09-24  J.J. Boyd / KG4VCF  R-R3-47 / R-R3-22: reloadFromSettings()
+//                                    and applyMirrored(). AI-assisted via
+//                                    Anthropic Claude Code.
+//   2026-09-25  J.J. Boyd / KG4VCF  iPhone app plan Task 34 (R-IOS-13):
+//                                    the refusal's kind for lastDenial().
+//                                    AI-assisted via Anthropic Claude Code.
 
 #include "core/TxInterlockPolicy.h"
 #include "core/AppSettings.h"
@@ -16,6 +24,38 @@ namespace NereusSDR {
 
 TxInterlockPolicy::TxInterlockPolicy(QObject* parent)
     : QObject(parent)
+{
+    load();
+}
+
+void TxInterlockPolicy::reloadFromSettings()
+{
+    const Mode mode = m_mode;
+    const int graceMs = m_graceMs;
+    const bool gate = m_swrGateEnabled;
+    const float gateMax = m_swrGateMax;
+    load();
+    if (mode != m_mode || graceMs != m_graceMs || gate != m_swrGateEnabled
+        || !qFuzzyCompare(gateMax, m_swrGateMax)) {
+        emit changed();
+    }
+}
+
+void TxInterlockPolicy::applyMirrored(Mode mode, int graceMs, bool swrGateEnabled,
+                                      float swrGateMax)
+{
+    if (mode == m_mode && graceMs == m_graceMs && swrGateEnabled == m_swrGateEnabled
+        && qFuzzyCompare(swrGateMax, m_swrGateMax)) {
+        return;
+    }
+    m_mode = mode;
+    m_graceMs = graceMs;
+    m_swrGateEnabled = swrGateEnabled;
+    m_swrGateMax = swrGateMax;
+    emit changed();
+}
+
+void TxInterlockPolicy::load()
 {
     auto& s = AppSettings::instance();
 
@@ -36,6 +76,7 @@ TxInterlockPolicy::TxInterlockPolicy(QObject* parent)
 
 bool TxInterlockPolicy::evaluateTxRequest(bool ampPresent, bool ampInOperate, float currentSwr)
 {
+    m_lastDenial = Denial::None;
     if (m_mode == Disabled) {
         return true;
     }
@@ -44,6 +85,7 @@ bool TxInterlockPolicy::evaluateTxRequest(bool ampPresent, bool ampInOperate, fl
     if (ampPresent && !ampInOperate) {
         const QString reason = "Amplifier present but not in OPERATE";
         if (m_mode == Block) {
+            m_lastDenial = Denial::AmpStandby;
             emit denied(reason);
             return false;
         }
@@ -64,6 +106,7 @@ bool TxInterlockPolicy::evaluateTxRequest(bool ampPresent, bool ampInOperate, fl
                                        .arg(static_cast<double>(currentSwr))
                                        .arg(static_cast<double>(m_swrGateMax));
             if (m_mode == Block) {
+                m_lastDenial = Denial::Swr;
                 emit denied(reason);
                 return false;
             }

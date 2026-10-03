@@ -1,0 +1,38 @@
+{
+  "receiver": "station",
+  "message": [
+    {
+      "text": "{\"type\":\"notice\",\"text\":\""
+    },
+    {
+      "repeat": "c",
+      "times": 70000
+    },
+    {
+      "text": "\"}"
+    }
+  ],
+  "frames": [
+    {
+      "chunk": "more",
+      "from": 0,
+      "length": 61439
+    },
+    {
+      "hex": "1000000007"
+    },
+    {
+      "hex": "1100000003"
+    },
+    {
+      "chunk": "last",
+      "from": 61439,
+      "length": 8588
+    }
+  ],
+  "encodes": false,
+  "outcome": "delivered",
+  "replies": [
+    "1100000007"
+  ]
+}

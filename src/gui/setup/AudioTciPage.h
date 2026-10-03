@@ -11,7 +11,7 @@
 //
 // Phase 24 Task 24.2 (2026-05-10): Flesh out AudioTciPage.
 //   Four group boxes:
-//     1. Output Sample Rate per Slice (Slice A / Slice B combos)
+//     1. Output Sample Rate per Slice (Slice A combo)
 //     2. Sample Format (format combo / channels combo / block size)
 //     3. TX Direction (TX channel combo / TX buffering spinbox)
 //     4. Master Mute Note (read-only info label)
@@ -44,7 +44,7 @@ namespace NereusSDR {
 // AudioTciPage
 //
 // Audio bridge configuration for the TCI server. Wires:
-//   - Per-slice output sample rate (Slice A / Slice B)
+//   - Per-slice output sample rate (Slice A)
 //   - Audio stream sample format + channel count + block size
 //   - TX audio direction + TX buffering
 //   - Read-only note explaining master-mute independence
@@ -57,7 +57,6 @@ public:
 private:
     // Group 1: Output Sample Rate per Slice
     QComboBox* m_sliceARateCombo{nullptr};
-    QComboBox* m_sliceBRateCombo{nullptr};
 
     // Group 2: Sample Format
     QComboBox* m_formatCombo{nullptr};

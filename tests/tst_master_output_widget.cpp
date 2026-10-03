@@ -244,6 +244,41 @@ private slots:
         w.setCurrentOutputDevice(QStringLiteral("SomeDevice"));
         QCOMPARE(spy.count(), 0);
     }
+
+    // ── 11. A picked device is saved before it is announced (R-R3-23) ──────
+    //
+    // In a remote window the announcement leads, synchronously, to remote
+    // playback re-reading audio/Speakers (MainWindow -> setSpeakersConfig
+    // -> speakersConfigChanged -> RemoteMediaController). When the widget
+    // announced first and saved after, that read found the previous device
+    // and the remote audio status named it. The picker's per-device action
+    // is selectOutputDevice(); it is invoked by name because the menu itself
+    // needs a real popup and real output devices.
+
+    void pickedDeviceIsSavedBeforeItIsAnnounced() {
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("audio/Speakers/DeviceName"),
+                   QStringLiteral("Previous speakers"));
+
+        AudioEngine engine;
+        MasterOutputWidget w(&engine);
+
+        QStringList savedWhenAnnounced;
+        connect(&w, &MasterOutputWidget::outputDeviceChanged, this,
+                [&savedWhenAnnounced](const QString&) {
+            savedWhenAnnounced << AppSettings::instance()
+                .value(QStringLiteral("audio/Speakers/DeviceName")).toString();
+        });
+
+        QVERIFY(QMetaObject::invokeMethod(&w, "selectOutputDevice",
+                                          Q_ARG(QString, QStringLiteral("New speakers"))));
+        QCOMPARE(savedWhenAnnounced, QStringList{QStringLiteral("New speakers")});
+
+        // Picking the device already in use announces nothing.
+        QVERIFY(QMetaObject::invokeMethod(&w, "selectOutputDevice",
+                                          Q_ARG(QString, QStringLiteral("New speakers"))));
+        QCOMPARE(savedWhenAnnounced.size(), 1);
+    }
 };
 
 QTEST_MAIN(TstMasterOutputWidget)

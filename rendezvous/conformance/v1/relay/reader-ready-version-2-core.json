@@ -1,0 +1,33 @@
+{
+  "runs": [
+    "core"
+  ],
+  "steps": [
+    {
+      "connect": "core"
+    },
+    {
+      "from": "core",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:core:s:a"
+      ]
+    },
+    {
+      "to": "core",
+      "binary": [
+        "81",
+        "02",
+        "01"
+      ]
+    },
+    {
+      "to": "core",
+      "binary": [
+        "02",
+        "$bytes:30:m1"
+      ]
+    }
+  ]
+}

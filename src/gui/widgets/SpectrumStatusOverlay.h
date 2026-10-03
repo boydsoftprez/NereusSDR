@@ -10,9 +10,9 @@
 //
 // NereusSDR-original; no upstream port. Top-right per-pan overlay
 // widget for Phase 3F multi-slice UI atlas. Paint-based (QPainter,
-// not a QPushButton tree) for performance. Shows the slice letter
-// badge, frequency.kHz + mode text, CH N tag, and optional pills
-// for TX, WIDE BPF, DIV (diversity), and PS HOLD. Hit-tests in
+// not a QPushButton tree) for performance. Shows the CH N tag and
+// optional pills for TX, WIDE BPF, DIV (diversity), and PS HOLD,
+// with an optional second row for remote display status. Hit-tests in
 // mousePressEvent emit txBadgeClicked / wideBadgeClicked /
 // chainTagClicked signals for parent consumption.
 //
@@ -24,18 +24,28 @@
 //                                    upstream port. AI-assisted
 //                                    transformation via Anthropic Claude
 //                                    Code.
+//   2026-09-23  J.J. Boyd / KG4VCF  Remote display row paints the longest
+//                                    form of its short line that fits,
+//                                    never an elided one (R-R3-37).
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-09-26  J.J. Boyd / KG4VCF  iPhone app plan Task 78 (R-IOS-02,
+//                R-IOS-30): the TX pill offers Take transmit while another
+//                device holds it. AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
+
+#include "gui/PanStatusText.h"
 
 #include <QWidget>
 #include <QChar>
 #include <QRect>
 #include <QString>
+#include <QStringList>
 
 namespace NereusSDR {
 
 /// Top-right per-pan overlay widget. Mirror of SpectrumOverlayPanel pattern.
-/// Shows: slice letter badge, freq, mode, CH N tag, TX/WIDE/DIV/PS HOLD pills.
+/// Shows CH N, TX/WIDE/DIV/PS HOLD pills and optional remote display status.
 /// Click WIDE -> opens FilterPolicyDialog (parent-wired). Click TX -> requests
 /// TxSliceArbiter handoff (parent-wired). Click CH tag -> chain swap menu
 /// (parent-wired).
@@ -67,6 +77,16 @@ public:
     void setTxBound(bool tx);
     bool txBound() const { return m_txBound; }
 
+    /// iPhone app plan Task 78 (the several-devices design, section 12
+    /// item 2): another device (or the radio's own PTT) holds transmit and
+    /// this window can take it. While this pan's slice is not the TX
+    /// slice, the TX pill reads TAKE TX (outlined red while `holderOnAir`)
+    /// and a click emits takeTransmitClicked instead of txBadgeClicked.
+    void setTakeTransmitOffered(bool offered, const QString& holderName, bool holderOnAir);
+    bool takeTransmitOffered() const { return m_takeOffered && !m_txBound; }
+    /// The pill's hover sentence while it offers a take, else empty.
+    QString takeTransmitToolTip() const;
+
     /// Light (or clear) the WIDE pill. `reason` is the operator-facing
     /// sentence naming the cause of the bypass; it becomes this overlay's
     /// tooltip while the pill is lit, and is cleared with it. Composed by
@@ -86,6 +106,28 @@ public:
     void setPsPaused(bool paused);
     bool psPaused() const { return m_psPaused; }
 
+    /// Remote display observation, distinct from the radio's RF/status pills
+    /// (R-R3-37). The short line is painted on a second row; empty hides the
+    /// row. The explanation is the hover text.
+    void setRemoteDisplayStatus(const PanStatusText& status);
+    /// The longest form of the short line.
+    QString remoteDisplayStatus() const { return m_remoteDisplayStatus; }
+    /// Every form of the short line, longest first.
+    QStringList remoteDisplayForms() const { return m_remoteDisplayForms; }
+    QString remoteDisplayExplanation() const { return m_remoteDisplayExplanation; }
+
+    /// The form the second row paints at the current width: the longest
+    /// that fits, measured in the row's font, never elided (the shortest
+    /// when none fits). paintEvent draws exactly this, so a test can read
+    /// back which form a narrow pan shows.
+    QString visibleRemoteDisplayStatus() const;
+
+    /// The second row's width for text, and the width `text` takes in the
+    /// row's font rounded up: the two numbers visibleRemoteDisplayStatus
+    /// compares, so a test can show the painted form fits.
+    int remoteStatusRowWidth() const;
+    int remoteStatusTextWidth(const QString& text) const;
+
     /// The clickable badges, in the order paintEvent lays them out.
     enum class Badge { ChainTag, Tx, Wide };
 
@@ -102,12 +144,14 @@ public:
     /// would silently start clicking empty background whenever the layout
     /// moved. Same reasoning as the wideBpf() / chainIndex() read-backs.
     ///
-    /// Only the horizontal extent is meaningful; the region spans the full
-    /// widget height, which is exactly what mousePressEvent tests.
+    /// The region covers the badge row only; the remote display status row
+    /// is observational and cannot activate a radio command.
     QRect badgeRect(Badge badge) const;
 
 signals:
     void txBadgeClicked();
+    /// Task 78: the TAKE TX pill was clicked.
+    void takeTransmitClicked();
     void wideBadgeClicked();
     void chainTagClicked(int chainIdx);
 
@@ -121,10 +165,8 @@ public:
     /// why the status strip, and with it the WIDE badge, appeared to be
     /// missing entirely. Bench-caught 2026-07-26.
     ///
-    /// Width tracks minimumWidth(), which paintEvent keeps at the true content
-    /// extent (`setMinimumWidth(x + kRightPad)`), so the hint self-corrects as
-    /// pills light and go dark. The constructor seeds it with the no-pill
-    /// width so the very first layout, before any paint, is already right.
+    /// Width derives from current pill flags and remote status text before
+    /// painting, so a newly lit pill is placed correctly on its first frame.
     QSize sizeHint() const override;
 
 protected:
@@ -137,10 +179,19 @@ private:
     QString  m_mode {QStringLiteral("USB")};
     int      m_chainIndex {0};
     bool     m_txBound {false};
+    bool     m_takeOffered {false};
+    QString  m_takeHolderName;
+    bool     m_takeHolderOnAir {false};
+    bool     txPillLit() const { return m_txBound || m_takeOffered; }
     bool     m_wideBpf {false};
     QString  m_wideReason;
     bool     m_diversityActive {false};
     bool     m_psPaused {false};
+    QString  m_remoteDisplayStatus;
+    QStringList m_remoteDisplayForms;
+    QString  m_remoteDisplayExplanation;
+    void updateStatusToolTip();
+    QRect remoteStatusRect() const;
 };
 
 } // namespace NereusSDR

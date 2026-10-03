@@ -101,9 +101,10 @@ private slots:
         conn.composeCmdTxForTest(buf);
         // Bit 4 (mic_bias) must be 1.
         QCOMPARE(int(buf[50] & 0x10), 0x10);
-        // Bits 0 (line_in) and 1 (mic_boost) must be 0.
+        // Bit 0 (line_in) must be 0; bit 1 (mic_boost) keeps its default.
         QCOMPARE(int(buf[50] & 0x01), 0);
-        QCOMPARE(int(buf[50] & 0x02), 0);
+        // mic_boost stays at its default, on (Thetis console.cs:13259 mic_boost = true).
+        QCOMPARE(int(buf[50] & 0x02), 0x02);
         // Bit 3 (mic_trs, G.3, default tipHot=true → inverted → 0) must be 0.
         QCOMPARE(int(buf[50] & 0x08), 0);
     }

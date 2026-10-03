@@ -482,7 +482,7 @@ void NeedleItemEditor::buildTypeSpecific()
         needle->setNormaliseTo100W(on);
         notifyChanged();
     });
-    addLabeled(pwrForm, QStringLiteral("Normalise to 100 W"), m_chkNormaliseTo100W);
+    addLabeled(pwrForm, QStringLiteral("Normalize to 100 W"), m_chkNormaliseTo100W);
 
     m_spinMaxPower = new QDoubleSpinBox(pwrGroup);
     styleSpin(m_spinMaxPower, 1.0, 10000.0, 1.0, 1);

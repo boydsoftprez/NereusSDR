@@ -21,6 +21,13 @@
 //                reflects OcMatrix::maskFor(currentBand, isTx) for
 //                the current PanadapterModel band and TransmitModel
 //                MOX state.
+//   2026-09-23 - R-R3-46: transmit permission. J.J. Boyd (KG4VCF), AI-
+//                 assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-46 / R-R3-49 (remote-window parity Task 13): the TX
+//                 pins, pin actions and resets follow their own gates.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis Console/setup.designer.cs header (lines 1-50) ===
@@ -88,6 +95,9 @@
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+#include "models/Band.h"
+
+#include <QList>
 #include <QWidget>
 #include <array>
 #include <vector>
@@ -135,8 +145,9 @@ public:
     bool txPinCheckedForTest(int bandIdx, int pin) const;
 
     // Phase 3P-H Task 5b test seams.
-    // Current OC byte displayed by the live LED row — mirrors the last
-    // OcMatrix::maskFor(currentBand, isTx) passed to updateLiveLeds().
+    // Current OC byte displayed by the live LED row. Plan Task 14 fix wave
+    // (R-R3-49): the byte the connection composed (RadioModel::
+    // bandOutputsByte, the Core's in a remote window), 0 when none is known.
     quint8 currentOcByteForTest() const { return m_currentOcByte; }
     bool   livePinLitForTest(int pin) const;
 
@@ -145,10 +156,24 @@ public:
     // inject a byte without spinning a full RadioModel + band change.
     void setCurrentOcByte(quint8 byte);
 
+    // R-R3-46: the external PA group and "Allow hot switching" (both hidden
+    // until built) follow the transmit permission with its reason. Always
+    // permitted locally.
+    void setTransmitPermitted(bool permitted, const QString& reason);
+    // R-R3-46 / R-R3-49 (parity Task 13): the TX pin matrix and Reset OC
+    // defaults (which clears the TX pins too), closed while the radio is on
+    // the air in either window, and in a remote window while its Core does
+    // not take them (HardwarePage decides).
+    void setTransmitPinsPermitted(bool permitted, const QString& reason);
+    // R-R3-46 / R-R3-49 (parity Task 13): the TX pin actions, which Thetis
+    // changes while transmitting; closed only in a remote window whose Core
+    // does not take them.
+    void setPinActionsPermitted(bool permitted, const QString& reason);
+
 private slots:
     void onMatrixChanged();
     void onResetClicked();
-    // Phase 3P-H Task 5b: recompute OC byte from current band + MOX state.
+    // Phase 3P-H Task 5b; plan Task 14 fix wave: show the composed byte.
     void onLiveStateChanged();
 
 private:
@@ -162,11 +187,16 @@ private:
 
     // Master toggles (AppSettings keys under hardware/<mac>/oc/)
     // Issue #174: m_n2adrFilter removed — see OcOutputsHfTab.cpp:113.
+    QList<QWidget*> m_transmitWidgets;
+    QWidget*     m_txGroup{nullptr};
+    QWidget*     m_actionGroup{nullptr};
+    QPushButton* m_resetButton{nullptr};
     QCheckBox* m_pennyExtCtrl{nullptr};
     QCheckBox* m_allowHotSwitching{nullptr};
 
-    // RX / TX matrix grids: [bandIdx][pinIdx 0-6]
-    static constexpr int kBandCount = 14;
+    // RX / TX matrix grids: [per-band state slot][pinIdx 0-6] (Band.h:
+    // 160m .. XVTR at their numbers, 2 m at 14)
+    static constexpr int kBandCount = kPerBandStateCount;
     static constexpr int kPinCount  = 7;
 
     std::array<std::array<QCheckBox*, kPinCount>, kBandCount> m_rxPins{};
@@ -192,9 +222,11 @@ private:
     // Guard against feedback loops between matrix changed() and checkbox toggled()
     bool m_syncing{false};
 
-    // Phase 3P-H Task 5b: last computed OC byte for the live-LED row.
-    // bit N == 1 means pin N lit. Recomputed on OcMatrix::changed,
-    // PanadapterModel::bandChanged, and TransmitModel::moxChanged.
+    // Phase 3P-H Task 5b: the OC byte the live-LED row shows; bit N == 1
+    // means pin N lit. Plan Task 14 fix wave: this is the byte the
+    // connection composed (RadioModel::bandOutputsByte), refreshed on
+    // RadioModel::bandOutputsChanged and connectionStateChanged; 0 (nothing
+    // lit) until a byte is known. The tab computes no byte of its own.
     quint8 m_currentOcByte{0};
 };
 

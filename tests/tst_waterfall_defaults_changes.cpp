@@ -39,6 +39,9 @@ private slots:
     void stopOnTx_skipsRowWhenTxActive();
     void stopOnTx_proceedsWhenFlagClear();
     void stopOnTx_proceedsWhenTxNotActive();
+    void stopOnTx_localPanStopsWhileTransmitting();
+    void stopOnTx_remotePanStopsWhileTransmitting();
+    void stopOnTx_offKeepsRowsWhileTransmitting();
 };
 
 void TestWaterfallDefaultsChanges::nfAgcEnabled_defaultFalse()
@@ -133,6 +136,82 @@ void TestWaterfallDefaultsChanges::stopOnTx_proceedsWhenTxNotActive()
     w.setActivePeakHoldTxActive(false);
     // TX not active — stop-on-TX gate is inactive; no crash.
     QVERIFY(w.waterfallStopOnTx());
+}
+
+namespace {
+
+// A shown 3D pan, so pushWaterfallRow() allocates its waterfall and counts
+// each row it draws (dssRowsPushedForTest), as tst_dss_row_tee does.
+void showCountingPan(SpectrumWidget& w)
+{
+    w.resize(400, 200);
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    w.setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode3D));
+}
+
+QVector<float> wfRow() { return QVector<float>(768, -130.0f); }
+
+} // namespace
+
+// Thetis display.cs:7601-7604 [v2.10.3.15]: the receive waterfall stops on
+// TX when the option is on AND that receiver is transmitting (local_mox).
+// The transmitting state is the pan's own MOX overlay, which
+// MoxDisplayController sets on the transmitting pan for a local radio and
+// for a Core alike. Before this fix the gate read a flag nothing set, so
+// the row was drawn anyway.
+void TestWaterfallDefaultsChanges::stopOnTx_localPanStopsWhileTransmitting()
+{
+    SpectrumWidget w;
+    showCountingPan(w);
+    w.setWaterfallStopOnTx(true);
+    w.pushWaterfallRowForTest(wfRow());
+    const int before = w.dssRowsPushedForTest();
+    QCOMPARE(before, 1);
+
+    w.setMoxOverlay(true);
+    w.pushWaterfallRowForTest(wfRow());
+    w.pushWaterfallRowForTest(wfRow());
+    QCOMPARE(w.dssRowsPushedForTest(), before);
+
+    w.setMoxOverlay(false);
+    w.pushWaterfallRowForTest(wfRow());
+    QCOMPARE(w.dssRowsPushedForTest(), before + 1);
+}
+
+void TestWaterfallDefaultsChanges::stopOnTx_remotePanStopsWhileTransmitting()
+{
+    SpectrumWidget w;
+    showCountingPan(w);
+    w.invalidateRemoteSpectrumFrame();
+    w.setWaterfallTickerPausedForTest(true);
+    w.setWaterfallStopOnTx(true);
+    const double centre = w.centerFrequency();
+    const double span = w.bandwidth();
+    QVERIFY(w.enqueueRemoteWaterfallRow(wfRow(), {}, centre, span));
+    w.tickWaterfallForTest();
+    const int before = w.dssRowsPushedForTest();
+    QCOMPARE(before, 1);
+
+    w.setMoxOverlay(true);
+    QVERIFY(w.enqueueRemoteWaterfallRow(wfRow(), {}, w.centerFrequency(), w.bandwidth()));
+    w.tickWaterfallForTest();
+    QCOMPARE(w.dssRowsPushedForTest(), before);
+
+    w.setMoxOverlay(false);
+    QVERIFY(w.enqueueRemoteWaterfallRow(wfRow(), {}, w.centerFrequency(), w.bandwidth()));
+    w.tickWaterfallForTest();
+    QCOMPARE(w.dssRowsPushedForTest(), before + 1);
+}
+
+void TestWaterfallDefaultsChanges::stopOnTx_offKeepsRowsWhileTransmitting()
+{
+    SpectrumWidget w;
+    showCountingPan(w);
+    w.setWaterfallStopOnTx(false);
+    w.setMoxOverlay(true);
+    w.pushWaterfallRowForTest(wfRow());
+    QCOMPARE(w.dssRowsPushedForTest(), 1);
 }
 
 QTEST_MAIN(TestWaterfallDefaultsChanges)

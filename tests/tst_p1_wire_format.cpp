@@ -316,14 +316,15 @@ private slots:
         QCOMPARE(conn.currentAttenForTest(), 0);
     }
 
-    void hermesAttenClampsTo31() {
-        // Hermes range is 0..31 per BoardCapabilities.cpp kHermes.
-        // Source: specHPSDR.cs per-HPSDRHW atten limits.
+    void hermesAttenClampsToTheAlexRange() {
+        // Hermes with Alex reaches 61 dB, the step attenuator carrying the
+        // value + 2 above 31 (Thetis console.cs:11044-11056 [v2.10.3.15]),
+        // so the wire range is 0..63 (BoardCapsTable::stepAttWireMaxDb).
         P1RadioConnection conn;
         conn.init();
         conn.setBoardForTest(HPSDRHW::Hermes);
         conn.setAttenuator(80);  // above max
-        QCOMPARE(conn.currentAttenForTest(), 31);
+        QCOMPARE(conn.currentAttenForTest(), 63);
     }
 
     // --- HL2-specific helpers (Task 12) ---

@@ -12,6 +12,9 @@
 //   2026-05-19 - Implemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-24 - R-R3-22 / R-R3-47: setSourceAddress and the no-send test
+//                 mode. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "FlexRadioDiscoveryBroadcaster.h"
@@ -104,6 +107,10 @@ void FlexRadioDiscoveryBroadcaster::setModel(const QString& model)
 
 void FlexRadioDiscoveryBroadcaster::start()
 {
+    if (m_noSendForTest) {
+        m_runningForTest = true;
+        return;
+    }
     // Refresh LAN IP on every start() call in case interface state changed.
     m_ip = detectLanIpv4();
     if (m_ip == QStringLiteral("0.0.0.0")) {
@@ -178,6 +185,7 @@ void FlexRadioDiscoveryBroadcaster::start()
 
 void FlexRadioDiscoveryBroadcaster::stop()
 {
+    m_runningForTest = false;
     if (m_timer.isActive()) {
         m_timer.stop();
         qCInfo(lcFlexDisc) << "FlexRadio discovery beacon stopped";
@@ -459,6 +467,12 @@ QByteArray FlexRadioDiscoveryBroadcaster::buildBeacon(
 
 QString FlexRadioDiscoveryBroadcaster::detectLanIpv4() const
 {
+    // R-R3-22 / R-R3-47: a caller-chosen source (the Core's station network
+    // address) wins over every lookup below.
+    if (!m_sourceAddress.isNull()) {
+        return m_sourceAddress.toString();
+    }
+
     // Primary: kernel route lookup via connected UDP socket.
     //
     // On multi-interface hosts (e.g. macOS with feth* virtual ethernets coexisting

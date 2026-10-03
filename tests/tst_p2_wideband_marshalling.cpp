@@ -37,6 +37,7 @@
 #include <QCoreApplication>
 #include <QThread>
 
+#include "core/DdcAssignment.h"
 #include "core/P2RadioConnection.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -50,9 +51,11 @@ namespace {
 //   packetbuf[23] = (char)_InterlockedAnd(&prn->wb_enable, 0xff);
 constexpr int kCmdGeneralWbEnableByte = 23;
 
-// A fresh SliceModel carries chainIndex 0, so the wideband request lands
-// on ADC0 and sets bit 0.
+// The marshalling regression routes its only bound stream to physical ADC1.
+// The connection command must therefore carry ADC1's bit; filter-chain policy
+// is a separate identity and is deliberately not inferred here.
 constexpr quint8 kMaskAdc0 = 0x01;
+constexpr quint8 kMaskAdc1 = 0x02;
 
 quint8 cmdGeneralWbMask(const P2RadioConnection& conn)
 {
@@ -84,8 +87,6 @@ private slots:
         conn->setBoardForTest(HPSDRHW::Saturn);
         const quint8 maskBefore = cmdGeneralWbMask(*conn);
 
-        conn->moveToThread(&worker);   // worker deliberately not started yet
-
         RadioModel model;
         // Codex review rounds 5 and 6, PR #293: wideband honours
         // BoardCapabilities::widebandAdcs, which a boardless model reports as
@@ -100,11 +101,26 @@ private slots:
             model.setLastRadioInfoForTest(info);
         }
         model.injectConnectionForTest(conn);
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
 
         const int a = model.addSlice();
         SliceModel* slice = model.sliceById(a);
         QVERIFY(slice != nullptr);
-        QCOMPARE(slice->chainIndex(), 0);
+        const int stream = slice->streamIndex();
+        QVERIFY(stream >= 0);
+
+        // Route the bound stream before parking the connection thread. The
+        // later request must marshal an ADC1 mask push, rather than relying on
+        // SliceModel's old default chain field as if it named a physical ADC.
+        DdcAssignment assignment{};
+        assignment.streamDdc[stream] = 0;
+        assignment.rate[0] = 192000;
+        assignment.ddcEnable = 0x01;
+        assignment.adcCtrl1 = 0x01; // DDC0 -> physical ADC1
+        model.publishDdcAssignmentForTest(assignment);
+        QCOMPARE(model.sliceAdcIndex(a), 1);
+
+        conn->moveToThread(&worker);   // worker deliberately not started yet
 
         slice->setWidebandExtensionRequested(true);
 
@@ -145,7 +161,7 @@ private slots:
         QVERIFY2(observedOn == &worker,
                  "the wideband enable was not observed on the connection "
                  "thread");
-        QCOMPARE(maskAfterDrain, kMaskAdc0);
+        QCOMPARE(maskAfterDrain, kMaskAdc1);
     }
 
     // Turning the request back off has to travel the same way. An off-flip
@@ -173,6 +189,7 @@ private slots:
             model.setLastRadioInfoForTest(info);
         }
         model.injectConnectionForTest(conn);
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
 
         const int a = model.addSlice();
         SliceModel* slice = model.sliceById(a);

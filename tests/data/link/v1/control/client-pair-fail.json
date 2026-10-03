@@ -1,0 +1,9 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "pair.fail",
+    "reason": "The code did not match.",
+    "retryAfterMs": 0
+  },
+  "decodes": true
+}

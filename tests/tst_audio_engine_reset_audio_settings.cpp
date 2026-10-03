@@ -12,7 +12,11 @@
 // (channels 1–4), and audioSettingsReset.
 //
 // Uses NEREUS_BUILD_TESTS seam for fake bus injection so the test
-// does not require a real PortAudio or CoreAudio backend.
+// does not require a real PortAudio or CoreAudio backend. R3 receiver
+// audio fix wave follow-up (2026-09-23, J.J. Boyd KG4VCF, AI-assisted via
+// Anthropic Claude Code): the reset's rebuilt speakers and VAX devices are
+// fakes and the run is in test mode; before this it opened this
+// computer's real default output and VAX devices.
 //
 // Cross-platform. No radioModel required (AudioEngine standalone
 // construction with a dedicated AppSettings instance).
@@ -20,6 +24,7 @@
 
 #include <QtTest/QtTest>
 #include <QSignalSpy>
+#include <QStandardPaths>
 
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
@@ -32,10 +37,37 @@
 
 using namespace NereusSDR;
 
+namespace {
+
+// R3 receiver audio fix wave follow-up: every device the engine opens is a
+// fake, and test mode (initTestCase) stops anything else from reaching this
+// computer's real speakers, microphone or VAX devices. `opened` counts the
+// fake devices made.
+void useFakeDevices(AudioEngine* engine, int* opened)
+{
+    engine->setDeviceBusFactoryForTest([opened](const AudioDeviceConfig&, bool) {
+        if (opened) { ++*opened; }
+        return std::make_unique<FakeAudioBus>(QStringLiteral("FakeDevice"));
+    });
+    engine->setVaxBusFactoryForTest([opened](int channel) -> std::unique_ptr<IAudioBus> {
+        if (opened) { ++*opened; }
+        auto bus = std::make_unique<FakeAudioBus>(QStringLiteral("FakeVax%1").arg(channel));
+        AudioFormat fmt;
+        fmt.sampleRate = 48000;
+        fmt.channels = 2;
+        fmt.sample = AudioFormat::Sample::Float32;
+        bus->open(fmt);
+        return bus;
+    });
+}
+
+} // namespace
+
 class TstAudioEngineResetAudioSettings : public QObject {
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void init();
 
     // Clear boundary: all audio/* keys are removed after reset.
@@ -55,14 +87,24 @@ private slots:
     void emitsSpeakersConfigChanged();
     void emitsVaxConfigChangedForAllChannels();
     void emitsAudioSettingsReset();
+    // R-R3-45: the MON output choice goes with the rest.
+    void putsTheMonitorBackOnTheSpeakers();
+    void operatorLocalResetPreservesCoreAudioSettingsAndRebuildsOutputs();
 
 private:
+    int m_opened{0};   // fake devices made by the engines under test
     // Seed AppSettings with a known set of keys covering all §2.5 clear
     // categories plus the two preservation keys.
     void seedSettings(AppSettings& s);
 };
 
 // ---------------------------------------------------------------------------
+void TstAudioEngineResetAudioSettings::initTestCase()
+{
+    // With no fake device supplied, the engine opens nothing real.
+    QStandardPaths::setTestModeEnabled(true);
+}
+
 void TstAudioEngineResetAudioSettings::init()
 {
     // Wipe the singleton's in-memory store before each test so previous
@@ -107,6 +149,7 @@ void TstAudioEngineResetAudioSettings::clearsAudioSpeakersKeys()
     seedSettings(s);
 
     RadioModel radio;
+    useFakeDevices(radio.audioEngine(), &m_opened);
     radio.audioEngine()->resetAudioSettings();
 
     QCOMPARE(s.value(QStringLiteral("audio/Speakers/DeviceName"),   QString()).toString(), QString());
@@ -121,6 +164,7 @@ void TstAudioEngineResetAudioSettings::clearsAudioVaxKeys()
     seedSettings(s);
 
     RadioModel radio;
+    useFakeDevices(radio.audioEngine(), &m_opened);
     radio.audioEngine()->resetAudioSettings();
 
     QCOMPARE(s.value(QStringLiteral("audio/Vax1/DeviceName"), QString()).toString(), QString());
@@ -135,6 +179,7 @@ void TstAudioEngineResetAudioSettings::clearsAudioDspRateAndBlockSize()
     seedSettings(s);
 
     RadioModel radio;
+    useFakeDevices(radio.audioEngine(), &m_opened);
     radio.audioEngine()->resetAudioSettings();
 
     QCOMPARE(s.value(QStringLiteral("audio/DspRate"),      QString()).toString(), QString());
@@ -147,6 +192,7 @@ void TstAudioEngineResetAudioSettings::clearsAudioVacFeedbackKeys()
     seedSettings(s);
 
     RadioModel radio;
+    useFakeDevices(radio.audioEngine(), &m_opened);
     radio.audioEngine()->resetAudioSettings();
 
     QCOMPARE(s.value(QStringLiteral("audio/VacFeedback/1/Gain"), QString()).toString(), QString());
@@ -159,6 +205,7 @@ void TstAudioEngineResetAudioSettings::clearsAudioFeatureFlagKeys()
     seedSettings(s);
 
     RadioModel radio;
+    useFakeDevices(radio.audioEngine(), &m_opened);
     radio.audioEngine()->resetAudioSettings();
 
     QCOMPARE(s.value(QStringLiteral("audio/SendIqToVax"),                  QString()).toString(), QString());
@@ -172,6 +219,7 @@ void TstAudioEngineResetAudioSettings::clearsAudioFirstRunComplete()
     seedSettings(s);
 
     RadioModel radio;
+    useFakeDevices(radio.audioEngine(), &m_opened);
     radio.audioEngine()->resetAudioSettings();
 
     QCOMPARE(s.value(QStringLiteral("audio/FirstRunComplete"), QString()).toString(), QString());
@@ -183,6 +231,7 @@ void TstAudioEngineResetAudioSettings::clearsAudioLastDetectedCables()
     seedSettings(s);
 
     RadioModel radio;
+    useFakeDevices(radio.audioEngine(), &m_opened);
     radio.audioEngine()->resetAudioSettings();
 
     QCOMPARE(s.value(QStringLiteral("audio/LastDetectedCables"), QString()).toString(), QString());
@@ -198,6 +247,7 @@ void TstAudioEngineResetAudioSettings::preservesSliceVaxChannel()
     seedSettings(s);
 
     RadioModel radio;
+    useFakeDevices(radio.audioEngine(), &m_opened);
     radio.audioEngine()->resetAudioSettings();
 
     QCOMPARE(s.value(QStringLiteral("slice/0/VaxChannel")).toString(),
@@ -212,6 +262,7 @@ void TstAudioEngineResetAudioSettings::preservesTxOwnerSlot()
     seedSettings(s);
 
     RadioModel radio;
+    useFakeDevices(radio.audioEngine(), &m_opened);
     radio.audioEngine()->resetAudioSettings();
 
     QCOMPARE(s.value(QStringLiteral("tx/OwnerSlot")).toString(),
@@ -229,6 +280,8 @@ void TstAudioEngineResetAudioSettings::emitsSpeakersConfigChanged()
 
     RadioModel radio;
     AudioEngine* engine = radio.audioEngine();
+    m_opened = 0;
+    useFakeDevices(engine, &m_opened);
 
     QSignalSpy spy(engine, &AudioEngine::speakersConfigChanged);
     engine->resetAudioSettings();
@@ -236,6 +289,8 @@ void TstAudioEngineResetAudioSettings::emitsSpeakersConfigChanged()
     // ensureSpeakersOpen() emits speakersConfigChanged after rebuilding the
     // default bus (or on the fake path if no PortAudio backend is available).
     QVERIFY(spy.count() >= 1);
+    // Rebuilt on fakes: the speakers and the four VAX devices.
+    QVERIFY(m_opened >= 5);
 }
 
 void TstAudioEngineResetAudioSettings::emitsVaxConfigChangedForAllChannels()
@@ -245,6 +300,7 @@ void TstAudioEngineResetAudioSettings::emitsVaxConfigChangedForAllChannels()
 
     RadioModel radio;
     AudioEngine* engine = radio.audioEngine();
+    useFakeDevices(engine, &m_opened);
 
     QSignalSpy spy(engine, &AudioEngine::vaxConfigChanged);
     engine->resetAudioSettings();
@@ -269,11 +325,50 @@ void TstAudioEngineResetAudioSettings::emitsAudioSettingsReset()
 
     RadioModel radio;
     AudioEngine* engine = radio.audioEngine();
+    useFakeDevices(engine, &m_opened);
 
     QSignalSpy spy(engine, &AudioEngine::audioSettingsReset);
     engine->resetAudioSettings();
 
     QCOMPARE(spy.count(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// R-R3-45: resetting the audio settings puts MON back on the speakers,
+// announces it, and does not write the key straight back.
+void TstAudioEngineResetAudioSettings::putsTheMonitorBackOnTheSpeakers()
+{
+    auto& s = AppSettings::instance();
+    RadioModel radio;
+    useFakeDevices(radio.audioEngine(), &m_opened);
+    radio.audioEngine()->setTxMonitorOutput(TxMonitorOutput::Headphones);
+    QCOMPARE(s.value(QStringLiteral("audio/TxMonitor/Output")).toString(),
+             QStringLiteral("Headphones"));
+
+    QSignalSpy spy(radio.audioEngine(), &AudioEngine::txMonitorOutputChanged);
+    radio.audioEngine()->resetAudioSettings();
+
+    QCOMPARE(radio.audioEngine()->txMonitorOutput(), TxMonitorOutput::Speakers);
+    QCOMPARE(spy.count(), 1);
+    QVERIFY(!s.contains(QStringLiteral("audio/TxMonitor/Output")));
+}
+
+void TstAudioEngineResetAudioSettings::operatorLocalResetPreservesCoreAudioSettingsAndRebuildsOutputs()
+{
+    auto& s = AppSettings::instance();
+    s.setValue(QStringLiteral("audio/DspRate"), QStringLiteral("96000"));
+    s.setValue(QStringLiteral("audio/Speakers/DeviceName"), QStringLiteral("old-device"));
+    RadioModel radio;
+    AudioEngine* engine = radio.audioEngine();
+    useFakeDevices(engine, &m_opened);
+    engine->setTxMonitorOutput(TxMonitorOutput::Headphones);
+    QSignalSpy vax(engine, &AudioEngine::vaxConfigChanged);
+    engine->resetAudioSettings(true);
+    QCOMPARE(s.value(QStringLiteral("audio/DspRate")).toString(), QStringLiteral("96000"));
+    QVERIFY(!s.contains(QStringLiteral("audio/Speakers/DeviceName")));
+    QCOMPARE(engine->txMonitorOutput(), TxMonitorOutput::Speakers);
+    QCOMPARE(vax.count(), 4);
+    QVERIFY(m_opened >= 5);
 }
 
 QTEST_MAIN(TstAudioEngineResetAudioSettings)

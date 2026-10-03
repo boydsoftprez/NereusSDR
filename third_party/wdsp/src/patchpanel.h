@@ -57,20 +57,20 @@ extern void setSize_panel (PANEL a, int size);
 
 // RXA Properties
 
-extern void SetRXAPanelRun (int channel, int run);
+extern __declspec (dllexport) void SetRXAPanelRun (int channel, int run);
 
-extern void SetRXAPanelGain1 (int channel, double gain);
+extern __declspec (dllexport) void SetRXAPanelGain1 (int channel, double gain);
 
-extern void SetRXAPanelGain2 (int channel, double gainI, double gainQ);
+extern __declspec (dllexport) void SetRXAPanelGain2 (int channel, double gainI, double gainQ);
 
-extern void SetRXAPanelPan (int channel, double pan);
+extern __declspec (dllexport) void SetRXAPanelPan (int channel, double pan);
 
-extern void SetRXAPanelCopy (int channel, int copy);
+extern __declspec (dllexport) void SetRXAPanelCopy (int channel, int copy);
 
-extern void SetRXAPanelBinaural (int channel, int bin);
+extern __declspec (dllexport) void SetRXAPanelBinaural (int channel, int bin);
 
 // TXA Properties
 
-extern void SetTXAPanelRun (int channel, int run);
+extern __declspec (dllexport) void SetTXAPanelRun (int channel, int run);
 
 #endif

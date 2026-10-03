@@ -1,0 +1,45 @@
+# The server's data-use report (rendezvous/README.md, "Data use"): one
+# reading of the outbound byte counter, and once a day a journal line with
+# the total so far this calendar month. Started every hour by
+# nereus-data-use.timer. It changes nothing and caps nothing.
+#
+# Installed as /etc/systemd/system/nereus-data-use.service by
+# rendezvous/deploy/setup-server.sh, with the script as
+# /usr/local/libexec/nereus-rendezvous/data-use and its settings in
+# /etc/nereus-rendezvous/data-use.conf. Read it with:
+#   journalctl -u nereus-data-use
+
+[Unit]
+Description=NereusSDR server data-use report
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/nereus-rendezvous/data-use.conf
+ExecStart=/usr/local/libexec/nereus-rendezvous/data-use --interface ${RV_DATA_USE_INTERFACE} --threshold-gb ${RV_TRANSFER_GB_PER_MONTH} --state /var/lib/nereus-data-use/state.json
+# The month's total so far lives here, across reboots.
+StateDirectory=nereus-data-use
+DynamicUser=yes
+NoNewPrivileges=yes
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+# Not PrivateNetwork=: the counters under /sys/class/net are those of the
+# network namespace, so the report must stay in the host's. It sends and
+# receives nothing.
+IPAddressDeny=any
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX

@@ -15,9 +15,17 @@
 //   4. setHeadphonesConfig emits headphonesConfigChanged.
 //   5. setTxInputConfig emits txInputConfigChanged.
 //   6. setVaxConfig emits vaxConfigChanged for each channel.
+//   8. R-R3-45 (2026-09-23): the headphones output beside the speakers.
+//      start() opens it when audio/Headphones/Enabled is set and not
+//      otherwise; the Enabled box opens and closes it; it plays the
+//      headphones mix. Fake devices only.
 //
 // Uses the NEREUS_BUILD_TESTS seam (setSpeakersBusForTest,
-// setHeadphonesBusForTest).
+// setHeadphonesBusForTest). R3 receiver audio fix wave follow-up
+// (2026-09-23, J.J. Boyd KG4VCF, AI-assisted via Anthropic Claude Code):
+// every device the engine opens is a fake (setDeviceBusFactoryForTest,
+// setVaxBusFactoryForTest) and the run is in test mode, so no case opens
+// this computer's real output, microphone or VAX devices.
 //
 // Design spec:
 //   docs/architecture/2026-04-20-phase3o-subphase12-addendum.md §4
@@ -25,7 +33,9 @@
 
 #include <QtTest/QtTest>
 #include <QSignalSpy>
+#include <QStandardPaths>
 
+#include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
 #include "core/IAudioBus.h"
@@ -44,6 +54,42 @@ namespace {
 constexpr int kFrames = 2;
 const float kSamples[kFrames * 2] = { 0.1f, 0.2f, 0.3f, 0.4f };
 
+// R3 receiver audio fix wave follow-up: every device the engine opens is a
+// fake, and test mode (initTestCase) stops anything else from reaching this
+// computer's real speakers, microphone or VAX devices. `opened` counts the
+// fake devices made.
+void useFakeDevices(AudioEngine* engine, int* opened)
+{
+    engine->setDeviceBusFactoryForTest([opened](const AudioDeviceConfig&, bool) {
+        if (opened) { ++*opened; }
+        return std::make_unique<FakeAudioBus>(QStringLiteral("FakeDevice"));
+    });
+    engine->setVaxBusFactoryForTest([opened](int channel) -> std::unique_ptr<IAudioBus> {
+        if (opened) { ++*opened; }
+        auto bus = std::make_unique<FakeAudioBus>(QStringLiteral("FakeVax%1").arg(channel));
+        AudioFormat fmt;
+        fmt.sampleRate = 48000;
+        fmt.channels = 2;
+        fmt.sample = AudioFormat::Sample::Float32;
+        bus->open(fmt);
+        return bus;
+    });
+}
+
+// R-R3-45: fake VAX devices only; the caller supplies the device factory.
+void useFakeVaxOnly(AudioEngine* engine)
+{
+    engine->setVaxBusFactoryForTest([](int channel) -> std::unique_ptr<IAudioBus> {
+        auto bus = std::make_unique<FakeAudioBus>(QStringLiteral("FakeVax%1").arg(channel));
+        AudioFormat fmt;
+        fmt.sampleRate = 48000;
+        fmt.channels = 2;
+        fmt.sample = AudioFormat::Sample::Float32;
+        bus->open(fmt);
+        return bus;
+    });
+}
+
 } // namespace
 
 class TstAudioEngineSpeakersLiveReconfig : public QObject {
@@ -54,6 +100,7 @@ private:
         std::unique_ptr<RadioModel> radio;
         AudioEngine*  engine{nullptr};   // non-owning
         FakeAudioBus* speakers{nullptr}; // non-owning (engine owns it)
+        int opened{0};                   // fake devices the engine made
 
         int addSlice(int vaxCh = 0) {
             const int idx = radio->addSlice();
@@ -66,6 +113,7 @@ private:
         Harness h;
         h.radio  = std::make_unique<RadioModel>();
         h.engine = h.radio->audioEngine();
+        useFakeDevices(h.engine, &h.opened);
         // No debounce in AudioEngine — setSpeakersConfig applies synchronously.
 
         auto bus = std::make_unique<FakeAudioBus>(QStringLiteral("FakeSpeakers"));
@@ -80,6 +128,11 @@ private:
     }
 
 private slots:
+    void initTestCase()
+    {
+        // With no fake device supplied, the engine opens nothing real.
+        QStandardPaths::setTestModeEnabled(true);
+    }
 
     // ── 1. setSpeakersConfig + concurrent rxBlockReady doesn't crash ────────
     //
@@ -117,6 +170,8 @@ private slots:
 
         // Signal fires synchronously (setSpeakersConfig applies synchronously).
         QVERIFY(spy.count() >= 1);
+        // The device it opened was the fake.
+        QCOMPARE(h.opened, 1);
     }
 
     // ── 3. rxBlockReady drops block when mutex is held ─────────────────────
@@ -151,6 +206,7 @@ private slots:
 
     void setHeadphonesConfigEmitsSignal() {
         AudioEngine engine;
+        useFakeDevices(&engine, nullptr);
 
         QSignalSpy spy(&engine, &AudioEngine::headphonesConfigChanged);
 
@@ -165,6 +221,7 @@ private slots:
 
     void setTxInputConfigEmitsSignal() {
         AudioEngine engine;
+        useFakeDevices(&engine, nullptr);
 
         QSignalSpy spy(&engine, &AudioEngine::txInputConfigChanged);
 
@@ -179,6 +236,7 @@ private slots:
 
     void setVaxConfigEmitsSignal() {
         AudioEngine engine;
+        useFakeDevices(&engine, nullptr);
 
         for (int ch = 1; ch <= 4; ++ch) {
             QSignalSpy spy(&engine, &AudioEngine::vaxConfigChanged);
@@ -214,6 +272,92 @@ private slots:
             spy.first().at(0).value<AudioDeviceConfig>();
         QCOMPARE(emitted.deviceName, QStringLiteral("TestDevice"));
         QCOMPARE(emitted.sampleRate, 96000);
+    }
+
+    // ── 8. R-R3-45: the headphones output beside the speakers ─────────────
+
+    void startOpensHeadphonesWhenEnabled() {
+        AppSettings::instance().clear();
+        AppSettings::instance().setValue(QStringLiteral("audio/Headphones/Enabled"),
+                                         QStringLiteral("True"));
+        AppSettings::instance().setValue(QStringLiteral("audio/Headphones/DeviceName"),
+                                         QStringLiteral("Desk headphones"));
+
+        AudioEngine engine;
+        QStringList openedNames;
+        engine.setDeviceBusFactoryForTest([&openedNames](const AudioDeviceConfig& cfg, bool) {
+            openedNames << cfg.deviceName;
+            return std::make_unique<FakeAudioBus>(QStringLiteral("FakeDevice"));
+        });
+        useFakeVaxOnly(&engine);
+        QSignalSpy spy(&engine, &AudioEngine::headphonesAvailableChanged);
+
+        QVERIFY(engine.headphonesEnabled());
+        QVERIFY(!engine.headphonesAvailable());
+        engine.start();
+
+        QVERIFY(openedNames.contains(QStringLiteral("Desk headphones")));
+        QVERIFY(engine.headphonesAvailable());
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.first().at(0).toBool(), true);
+
+        // The Enabled box turned off closes it.
+        engine.setHeadphonesEnabled(false);
+        QVERIFY(!engine.headphonesAvailable());
+        QCOMPARE(spy.count(), 2);
+        QCOMPARE(spy.last().at(0).toBool(), false);
+
+        // A device change while disabled opens nothing.
+        openedNames.clear();
+        AudioDeviceConfig cfg;
+        cfg.deviceName = QStringLiteral("Other headphones");
+        engine.setHeadphonesConfig(cfg);
+        QVERIFY(!openedNames.contains(QStringLiteral("Other headphones")));
+        QVERIFY(!engine.headphonesAvailable());
+
+        // Turned back on, it opens the stored device.
+        engine.setHeadphonesEnabled(true);
+        QVERIFY(openedNames.contains(QStringLiteral("Other headphones")));
+        QVERIFY(engine.headphonesAvailable());
+        engine.stop();
+        QVERIFY(!engine.headphonesAvailable());
+        AppSettings::instance().clear();
+    }
+
+    void startLeavesHeadphonesClosedWhenNotEnabled() {
+        AppSettings::instance().clear();
+        AudioEngine engine;
+        int opened = 0;
+        useFakeDevices(&engine, &opened);
+        engine.start();
+        QVERIFY(!engine.headphonesEnabled());
+        QVERIFY(!engine.headphonesAvailable());
+        engine.stop();
+    }
+
+    // The headphones output plays the headphones mix, the speakers the
+    // speakers mix, side by side from the same period.
+    void headphonesPlayBesideSpeakers() {
+        AppSettings::instance().clear();
+        Harness h = makeHarness();
+        h.radio->configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5,
+                                     /*defaultRateHz*/ 192000);
+        auto hp = std::make_unique<FakeAudioBus>(QStringLiteral("FakeHeadphones"));
+        AudioFormat fmt;
+        fmt.sampleRate = 48000;
+        fmt.channels = 2;
+        fmt.sample = AudioFormat::Sample::Float32;
+        hp->open(fmt);
+        FakeAudioBus* headphones = hp.get();
+        h.engine->setHeadphonesBusForTest(std::move(hp));
+
+        const int s = h.addSlice();
+        for (int i = 0; i < 10; ++i) {
+            h.engine->rxBlockReady(s, kSamples, kFrames);
+        }
+        QCOMPARE(h.speakers->pushCount(), 10);
+        QCOMPARE(headphones->pushCount(), 10);
+        AppSettings::instance().clear();
     }
 };
 

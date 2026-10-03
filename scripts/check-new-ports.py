@@ -27,8 +27,11 @@ Skip conditions (file is not flagged):
     for genuine false positives — e.g. a docstring that mentions a Thetis
     file purely for context, not as a derivation claim)
 
-Diff range: `git merge-base BASE_REF HEAD`..HEAD, computed once. Override
-BASE_REF via the CHECK_NEW_PORTS_BASE_REF env var (default: origin/main).
+Diff mode audits the cumulative `git merge-base BASE_REF HEAD`-to-index
+snapshot. That includes committed PR changes and staged edits, and reads both
+source text and provenance tables from the index so unstaged worktree content
+cannot mask a staged attribution violation. Override BASE_REF via the
+CHECK_NEW_PORTS_BASE_REF env var (default: origin/main).
 
 Full-tree mode: set `CHECK_NEW_PORTS_FULL=1` (or pass `--full-tree` on the
 CLI) to walk every `src/**/*.{cpp,h,...}` instead of the diff. This closes
@@ -47,6 +50,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from header_block import header_text  # noqa: E402
+
 REPO = Path(__file__).resolve().parent.parent
 PROVENANCE = REPO / "docs" / "attribution" / "THETIS-PROVENANCE.md"
 WDSP_PROVENANCE = REPO / "docs" / "attribution" / "WDSP-PROVENANCE.md"
@@ -62,8 +68,8 @@ FULL_TREE = (
 # Markdown all skipped automatically.
 EXTENSIONS = {".cpp", ".h", ".c", ".cc", ".hpp", ".hxx"}
 
-# Header window used to detect the per-file skip markers.
-HEADER_WINDOW = 160
+# The per-file skip markers are read from the leading comment block
+# (scripts/header_block.py: the whole block, never less than 160 lines).
 
 OPT_OUT_MARKER = "Independently implemented from"
 NO_PORT_CHECK_MARKER = "no-port-check:"
@@ -185,17 +191,26 @@ def run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True, cwd=REPO)
 
 
-def diffed_files():
-    """Return paths of added or modified files in the BASE_REF..HEAD range."""
+def diff_base():
+    """Return the merge-base used for the cumulative base-to-index audit."""
     mb = run(["git", "merge-base", BASE_REF, "HEAD"])
     if mb.returncode != 0:
         # Fallback: compare directly to BASE_REF (may include unrelated work
         # but conservative — better to over-check than miss).
-        base = BASE_REF
-    else:
-        base = mb.stdout.strip()
+        return BASE_REF
+    return mb.stdout.strip()
+
+
+def diffed_files(base):
+    """Return added, modified, or renamed source paths from base to index.
+
+    `--cached base` deliberately compares the base tree to the index rather
+    than HEAD to include both committed PR content and staged pre-commit
+    content. Renames are included by their destination path; deleted paths
+    have no index blob and are intentionally not scanned.
+    """
     diff = run(
-        ["git", "diff", f"{base}..HEAD", "--diff-filter=AM", "--name-only"]
+        ["git", "diff", "--cached", "--diff-filter=AMR", "--name-only", base]
     )
     if diff.returncode != 0:
         print(f"WARN: git diff failed: {diff.stderr}", file=sys.stderr)
@@ -203,17 +218,15 @@ def diffed_files():
     return [line for line in diff.stdout.splitlines() if line]
 
 
-def diffed_lines(rel):
-    """Return set of 1-based line numbers added/modified in BASE_REF..HEAD for this file.
+def diffed_lines(base, rel):
+    """Return added/modified 1-based lines in the base-to-index snapshot.
 
     Parses unified-diff hunk headers like `@@ -45,0 +46,3 @@` (meaning
     3 lines starting at new line 46 were added). Pure deletions
     (new-count == 0) contribute nothing. Returns an empty set if the
     file has no diff hunks on the NEW side.
     """
-    mb = run(["git", "merge-base", BASE_REF, "HEAD"])
-    base = mb.stdout.strip() if mb.returncode == 0 else BASE_REF
-    diff = run(["git", "diff", "-U0", f"{base}..HEAD", "--", rel])
+    diff = run(["git", "diff", "--cached", "-U0", base, "--", rel])
     if diff.returncode != 0:
         return set()
     lines = set()
@@ -230,10 +243,25 @@ def diffed_lines(rel):
     return lines
 
 
-def parse_provenance_paths(*doc_paths):
+def index_snapshot_text(rel):
+    """Read a repository-relative path from the index, not the worktree.
+
+    A staged deletion has no `:<path>` blob and is therefore safely absent.
+    Callers intentionally treat that as unlisted/no-source rather than falling
+    back to an unstaged file on disk.
+    """
+    blob = run(["git", "show", f":{rel}"])
+    if blob.returncode != 0:
+        return None
+    return blob.stdout
+
+
+def parse_provenance_paths(*doc_paths, text_reader=None):
     """Return union of *first-column* file paths listed in provenance tables.
 
-    Default (no args): just THETIS-PROVENANCE.md (diff-mode contract).
+    Default (no args): just THETIS-PROVENANCE.md. Callers select the complete
+    registry set for their audit mode. `text_reader`, when supplied, receives
+    repo-relative paths and supplies snapshot text (diff mode uses the index).
 
     Full-tree mode passes (PROVENANCE, WDSP_PROVENANCE, AETHER_RECONCILIATION)
     to get the complete "registered somewhere" set. All three docs use the
@@ -254,9 +282,19 @@ def parse_provenance_paths(*doc_paths):
         doc_paths = (PROVENANCE,)
     paths = set()
     for doc in doc_paths:
-        if not doc.is_file():
-            continue
-        for line in doc.read_text().splitlines():
+        if text_reader is None:
+            if not doc.is_file():
+                continue
+            text = doc.read_text()
+        else:
+            try:
+                rel = str(doc.relative_to(REPO))
+            except ValueError:
+                continue
+            text = text_reader(rel)
+            if text is None:
+                continue
+        for line in text.splitlines():
             line = line.strip()
             if not line.startswith("|") or line.startswith("|---"):
                 continue
@@ -288,20 +326,21 @@ def all_src_files():
     return sorted(out)
 
 
-def check_file(rel, listed, diff_lines=None):
+def check_file(rel, listed, diff_lines=None, text=None):
     """Return list of (line_num, label, match_text) findings, or [] if OK."""
-    path = REPO / rel
-    if not path.is_file():
-        return []
     if rel in listed:
         return []
 
-    try:
-        text = path.read_text(errors="replace")
-    except Exception:
-        return []
+    if text is None:
+        path = REPO / rel
+        if not path.is_file():
+            return []
+        try:
+            text = path.read_text(errors="replace")
+        except Exception:
+            return []
 
-    head = "\n".join(text.splitlines()[:HEADER_WINDOW])
+    head = header_text(text, Path(rel).suffix)
     if OPT_OUT_MARKER in head:
         return []
     if NO_PORT_CHECK_MARKER in head:
@@ -367,8 +406,16 @@ def main():
         )
         mode_label = "full-tree"
     else:
-        files = diffed_files()
-        listed = parse_provenance_paths()
+        base = diff_base()
+        files = diffed_files(base)
+        # A changed WDSP/Core adapter has the same recorded provenance as
+        # it does in the full-tree audit; source family does not depend on
+        # whether this invocation happens to inspect a PR diff.
+        listed = parse_provenance_paths(
+            PROVENANCE, WDSP_PROVENANCE, AETHER_RECONCILIATION,
+            FREEDV_PROVENANCE,
+            text_reader=index_snapshot_text,
+        )
         mode_label = "diff"
     if not files:
         print("No added/modified files in diff range — nothing to check.")
@@ -382,8 +429,14 @@ def main():
         if ext not in EXTENSIONS:
             continue
         checked += 1
-        dlines = diffed_lines(rel) if not FULL_TREE else None
-        findings = check_file(rel, listed, diff_lines=dlines)
+        dlines = diffed_lines(base, rel) if not FULL_TREE else None
+        snapshot = index_snapshot_text(rel) if not FULL_TREE else None
+        # A deletion/rename source missing from the index must not fall back
+        # to unstaged worktree content. A deletion is not in `files`; this
+        # also makes an unusual missing index blob a safe no-op.
+        if not FULL_TREE and snapshot is None:
+            continue
+        findings = check_file(rel, listed, diff_lines=dlines, text=snapshot)
         if not findings:
             continue
         failures += 1

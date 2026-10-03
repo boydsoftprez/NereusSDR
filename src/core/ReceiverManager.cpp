@@ -10,6 +10,23 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23 - iqDataForReceiverStamped and enqueueClockNs (monotonic
+//                 enqueue stamp for the DSP input delay bound, R-R3-40) by
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code. NereusSDR-original; no Thetis
+//                 counterpart.
+//   2026-09-23 - hardwareIqDataStamped (the stamped raw hardware-DDC batch
+//                 for the external-diversity input bound, R-R3-40) by J.J.
+//                 Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code. NereusSDR-original.
+//   2026-09-30 - beginIqBatch / endIqBatch: the queued stamped batches of
+//                 one socket drain go to the DSP worker as one post per
+//                 stream, not one per packet, by J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//                 NereusSDR-original.
+//   2026-09-30 - reset() drops a held batch and ends batching. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -65,6 +82,8 @@
 
 #include "ReceiverManager.h"
 #include "LogCategories.h"
+
+#include <QThread>
 
 #include "codec/IP1Codec.h"
 #include "codec/IP2Codec.h"
@@ -152,12 +171,23 @@ void ReceiverManager::reset()
     m_rxAdcCtrl1 = 0;
     m_rxAdcCtrl2 = 0;
 
+    // RADE threads review: a batch the connection held when it went away
+    // belongs to receivers that are gone; drop it, and end the batch, so
+    // nothing held is posted after the reset and no thread stays batching.
+    // Lock order as in feedIqData: the routing lock, then the batch lock.
+    {
+        QMutexLocker batchLock(&m_iqBatchMutex);
+        m_iqBatchThread.store(nullptr, std::memory_order_release);
+        m_heldIq.clear();
+    }
+
     for (int idx : indices) {
         emit receiverDestroyed(idx);
     }
 
     if (priorCount > 0) {
         emit activeReceiverCountChanged(0);
+        emit hardwareSlotsChanged(0);
         emit hardwareReceiverCountChanged(0);
     }
 
@@ -331,6 +361,37 @@ void ReceiverManager::feedIqData(int hwReceiverIndex, const QVector<float>& samp
     // the hash structure can not flip mid-lookup.  Hot-path cost: one
     // uncontended mutex acquire per packet (~100 ns) plus the existing
     // hash lookups + emit setup.
+    // R-R3-40: the external-diversity fork needs every hardware leg,
+    // mapped or not; emitting outside the routing lock keeps it short.
+    QVector<HeldIqBatch> full;
+    const bool held =
+        m_iqBatchThread.load(std::memory_order_acquire) == QThread::currentThreadId();
+    const auto hold = [&](bool hardware, int index) {
+        // Joins this packet to the stream's held batch, in arrival order.
+        QMutexLocker batchLock(&m_iqBatchMutex);
+        HeldIqBatch* batch = nullptr;
+        for (HeldIqBatch& candidate : m_heldIq) {
+            if (candidate.hardware == hardware && candidate.index == index) {
+                batch = &candidate;
+                break;
+            }
+        }
+        if (!batch) {
+            m_heldIq.append(HeldIqBatch{hardware, index, {}});
+            batch = &m_heldIq.last();
+        }
+        batch->samples += samples;
+        if (batch->samples.size() / 2 >= kIqBatchMaxSamples) {
+            full.append(std::move(*batch));
+            batch->samples = QVector<float>();
+        }
+    };
+    if (held) {
+        hold(true, hwReceiverIndex);
+    } else {
+        emit hardwareIqDataStamped(hwReceiverIndex, samples, enqueueClockNs());
+    }
+
     QMutexLocker locker(&m_routingMutex);
     auto it = m_hwToLogical.constFind(hwReceiverIndex);
     if (it == m_hwToLogical.constEnd()) {
@@ -344,6 +405,8 @@ void ReceiverManager::feedIqData(int hwReceiverIndex, const QVector<float>& samp
                                   << "hwReceiverIndex=" << hwReceiverIndex
                                   << "map=" << (mapped.isEmpty() ? QStringLiteral("(empty)") : mapped.join(','));
         }
+        locker.unlock();
+        flushHeldIq(full);
         return;
     }
 
@@ -359,10 +422,50 @@ void ReceiverManager::feedIqData(int hwReceiverIndex, const QVector<float>& samp
                                << "samples=" << samples.size();
         }
         emit iqDataForReceiver(logicalIndex, samples);
+        if (held) {
+            hold(false, logicalIndex);
+        } else {
+            emit iqDataForReceiverStamped(logicalIndex, samples, enqueueClockNs());
+        }
         if (rxIt->wdspChannel >= 0) {
             emit iqDataForChannel(rxIt->wdspChannel, samples);
         }
     }
+    locker.unlock();
+    flushHeldIq(full);
+}
+
+void ReceiverManager::beginIqBatch()
+{
+    // A batch this thread left open (it cannot, but be safe) goes out first.
+    endIqBatch();
+    m_iqBatchThread.store(QThread::currentThreadId(), std::memory_order_release);
+}
+
+void ReceiverManager::endIqBatch()
+{
+    QVector<HeldIqBatch> batches;
+    {
+        QMutexLocker batchLock(&m_iqBatchMutex);
+        m_iqBatchThread.store(nullptr, std::memory_order_release);
+        batches.swap(m_heldIq);
+    }
+    flushHeldIq(batches);
+}
+
+void ReceiverManager::flushHeldIq(QVector<HeldIqBatch>& batches)
+{
+    for (const HeldIqBatch& batch : batches) {
+        if (batch.samples.isEmpty()) {
+            continue;
+        }
+        if (batch.hardware) {
+            emit hardwareIqDataStamped(batch.index, batch.samples, enqueueClockNs());
+        } else {
+            emit iqDataForReceiverStamped(batch.index, batch.samples, enqueueClockNs());
+        }
+    }
+    batches.clear();
 }
 
 void ReceiverManager::rebuildHardwareMapping()
@@ -376,12 +479,16 @@ void ReceiverManager::rebuildHardwareMapping()
     // From Thetis console.cs:8216 UpdateDDCs — DDC mapping is board-dependent.
     int nextAutoHw = 0;
     int count = 0;
+    quint32 slotMask = 0;
     for (auto it = m_receivers.begin(); it != m_receivers.end(); ++it) {
         if (it->active) {
             int hwIdx = (it->ddcIndex >= 0) ? it->ddcIndex : nextAutoHw++;
             it->hardwareRx = hwIdx;
             m_hwToLogical.insert(hwIdx, it->receiverIndex);
             ++count;
+            if (hwIdx >= 0 && hwIdx < 32) {
+                slotMask |= (1u << hwIdx);
+            }
         } else {
             it->hardwareRx = -1;
         }
@@ -390,6 +497,10 @@ void ReceiverManager::rebuildHardwareMapping()
     qCDebug(lcReceiver) << "Hardware mapping rebuilt:" << count << "active receivers";
 
     emit activeReceiverCountChanged(count);
+    // Slots first, then the count: a Protocol 1 connection sizes the frame
+    // from both, and seeing the slots first means the count arrives against
+    // the slot set it belongs to (Phase 3F section 16.3.2).
+    emit hardwareSlotsChanged(slotMask);
     emit hardwareReceiverCountChanged(count);
 
     // Re-emit frequency for each active receiver

@@ -1,0 +1,152 @@
+{
+    "runs": [
+        "station"
+    ],
+    "stationSetup": {
+        "radio": "static",
+        "slices": 1,
+        "otherPairedDevices": 4,
+        "otherClients": [
+            {
+                "name": "me",
+                "device": "self",
+                "features": {
+                    "deviceAuth": 1,
+                    "sessionHolder": 1
+                }
+            },
+            {
+                "name": "a",
+                "device": 1,
+                "features": {
+                    "deviceAuth": 1,
+                    "sessionHolder": 1
+                }
+            },
+            {
+                "name": "b",
+                "device": 2,
+                "features": {
+                    "deviceAuth": 1,
+                    "sessionHolder": 1
+                }
+            },
+            {
+                "name": "c",
+                "device": 3,
+                "features": {
+                    "deviceAuth": 1,
+                    "sessionHolder": 1
+                }
+            },
+            {
+                "name": "d",
+                "device": 4,
+                "features": {
+                    "deviceAuth": 1,
+                    "sessionHolder": 1
+                }
+            }
+        ],
+        "token": "none",
+        "pairedDevice": true,
+        "deferOwnConnection": true
+    },
+    "steps": [
+        {
+            "connect": "me"
+        },
+        {
+            "close": "me"
+        },
+        {
+            "advanceMs": 180000
+        },
+        {
+            "connect": "a"
+        },
+        {
+            "connect": "b"
+        },
+        {
+            "connect": "c"
+        },
+        {
+            "connect": "d"
+        },
+        {
+            "advanceMs": 20000
+        },
+        {
+            "openOwnConnection": true
+        },
+        {
+            "from": "station",
+            "message": {
+                "challenge": "$capture:challenge",
+                "features": {
+                    "deviceAuth": 1,
+                    "pairing": 1,
+                    "sessionHolder": 1
+                },
+                "identity": {
+                    "certBinding": "$string",
+                    "publicKey": "$string"
+                },
+                "major": 1,
+                "majors": [
+                    1
+                ],
+                "minor": 11,
+                "peer": "nereusd",
+                "settingsSchema": 0,
+                "type": "hello"
+            }
+        },
+        {
+            "from": "client",
+            "role": "behaviour",
+            "message": {
+                "type": "hello",
+                "major": 1,
+                "minor": 11,
+                "settingsSchema": "$int",
+                "peer": "$string",
+                "majors": "$majors",
+                "features": {
+                    "deviceAuth": 1,
+                    "sessionHolder": 1
+                }
+            }
+        },
+        {
+            "from": "client",
+            "role": "behaviour",
+            "message": {
+                "type": "auth.request",
+                "token": "",
+                "device": "$device:signed"
+            }
+        },
+        {
+            "from": "station",
+            "message": {
+                "accepted": true,
+                "reason": "",
+                "retryable": false,
+                "type": "auth.result"
+            }
+        },
+        {
+            "from": "station",
+            "message": {
+                "type": "session.held",
+                "devices": "$any",
+                "revision": "$int",
+                "placeFreed": {
+                    "secondsAgo": 20
+                }
+            }
+        }
+    ]
+}

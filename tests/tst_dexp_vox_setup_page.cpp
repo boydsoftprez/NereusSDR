@@ -461,13 +461,16 @@ private slots:
         auto* lbl = page.findChild<QLabel*>(QStringLiteral("lblAntiVoxSourceInfo"));
         QVERIFY(lbl != nullptr);
         // The tooltip should explain why this is an info row rather than a
-        // Thetis-style RX/VAC selector — i.e. cite the architectural
-        // divergence and mention VAX explicitly so the operator understands
-        // why no toggle is offered.
+        // Thetis-style RX/VAC selector, in the operator's words: mention VAX
+        // explicitly and say the output device is the only reference, so the
+        // operator understands why no toggle is offered. The Thetis control
+        // it replaces (chkAntiVoxSource) is named in the source comment
+        // beside the tooltip, never in it (plain operator words, 2026-09-28).
         const QString tip = lbl->toolTip();
         QVERIFY(tip.contains(QStringLiteral("VAX")));
         QVERIFY(tip.contains(QStringLiteral("speaker bleed")));
-        QVERIFY(tip.contains(QStringLiteral("chkAntiVoxSource")));
+        QVERIFY(tip.contains(QStringLiteral("only valid cancellation reference")));
+        QVERIFY(!tip.contains(QStringLiteral("chkAntiVoxSource")));
     }
 
     void gainSpinbox_defaultZero()

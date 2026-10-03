@@ -14,6 +14,11 @@
 //   3. resetPresetRestoresDefault:  mutate then resetPreset, verify default.
 //   4. setPresetsForModeReorderPersists: swap two slots, verify order survives.
 //   5. presetsChangedSignalFires:   QSignalSpy confirms every mutator emits.
+//   6. followStationSetting... (iPhone app Task 19, D40): a Core setting
+//      that changes in a remote window emits presetsChanged for its mode.
+//   7. aRemoteWindowReadsAndWritesTheCoresPresets / aLocalWindowIsUnchanged:
+//      with "filters/" in Station scope, the settings proxy carries the
+//      presets to and from the Core; without it they stay local.
 //
 // Isolation: uses AppSettings::clear() in initTestCase/init/cleanup so that
 // filter overrides written here cannot bleed into other tests.
@@ -22,6 +27,9 @@
 //   2026-05-02 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted authoring via Anthropic
 //                 Claude Code (Stage C2 filter preset editor).
+//   2026-09-24 - iPhone app Task 19 (R-IOS-06, D40): the presets follow the
+//                 Core in a remote window. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -29,6 +37,8 @@
 #include <QSignalSpy>
 
 #include "core/AppSettings.h"
+#include "core/settings/SettingsProxy.h"
+#include "core/settings/SettingsScope.h"
 #include "models/FilterPresetStore.h"
 #include "models/SliceModel.h"
 
@@ -40,7 +50,11 @@ class TstFilterPresetStore : public QObject {
 private slots:
     void initTestCase() { AppSettings::instance().clear(); }
     void init()         { AppSettings::instance().clear(); }
-    void cleanup()      { AppSettings::instance().clear(); }
+    void cleanup()
+    {
+        AppSettings::instance().setRemoteBackend(nullptr);
+        AppSettings::instance().clear();
+    }
 
     // ── 1. Defaults match SliceModel ────────────────────────────────────────
     // Verifies that FilterPresetStore::defaultPreset(mode, slot) returns the
@@ -192,6 +206,100 @@ private slots:
         store.resetAll();
         // DSPMode has 12 values (LSB..DRM = 0..11)
         QCOMPARE(spy.count(), 12);
+    }
+
+    // ── 6. A Core setting that changes emits for its mode ───────────────────
+    // RadioModel forwards stationSettingChanged (remote windows only) here.
+    void followStationSettingEmitsForItsMode()
+    {
+        FilterPresetStore store;
+        QSignalSpy spy(&store, &FilterPresetStore::presetsChanged);
+
+        store.followStationSetting(QStringLiteral("filters/USB/3/low"));
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.last().first().value<DSPMode>(), DSPMode::USB);
+
+        store.followStationSetting(QStringLiteral("filters/RADE-U/0/name"));
+        QCOMPARE(spy.count(), 2);
+        QCOMPARE(spy.last().first().value<DSPMode>(), DSPMode::RADE_U);
+
+        // Not a preset: nothing.
+        store.followStationSetting(QStringLiteral("Slice0/Band20m/FilterLow"));
+        store.followStationSetting(QStringLiteral("filters/NotAMode/1/low"));
+        store.followStationSetting(QStringLiteral("filters"));
+        QCOMPARE(spy.count(), 2);
+
+        // A whole snapshot: every one of the 14 modes.
+        spy.clear();
+        store.followStationSetting(QString());
+        QCOMPARE(spy.count(), 14);
+    }
+
+    // ── 7. The presets are the Core's in a remote window (D40) ──────────────
+    void aRemoteWindowReadsAndWritesTheCoresPresets()
+    {
+        QCOMPARE(classifySettingsKey(QStringLiteral("filters/USB/0/name")),
+                 SettingsScope::Station);
+
+        // This computer's own override, which a remote window must not show.
+        FilterPreset local;
+        local.name = QStringLiteral("Local");
+        local.low = 200;
+        local.high = 2600;
+        FilterPresetStore store;
+        store.setPreset(DSPMode::USB, 0, local);
+
+        SettingsProxy proxy;
+        AppSettings::instance().setRemoteBackend(&proxy);
+        proxy.applySnapshot({{QStringLiteral("filters/USB/0/name"), QStringLiteral("Core")},
+                             {QStringLiteral("filters/USB/0/low"), QStringLiteral("150")},
+                             {QStringLiteral("filters/USB/0/high"), QStringLiteral("2850")}});
+        proxy.setReady(true);
+
+        // Shows the Core's.
+        const FilterPreset shown = store.presetsForMode(DSPMode::USB).first();
+        QCOMPARE(shown.name, QStringLiteral("Core"));
+        QCOMPARE(shown.low, 150);
+        QCOMPARE(shown.high, 2850);
+
+        // Edits the Core's: the three settings go out through the proxy.
+        QSignalSpy outbound(&proxy, &SettingsProxy::outboundWriteRequested);
+        FilterPreset edited;
+        edited.name = QStringLiteral("Rag chew");
+        edited.low = 100;
+        edited.high = 3100;
+        store.setPreset(DSPMode::USB, 1, edited);
+        QStringList keys;
+        for (const QList<QVariant>& call : outbound) {
+            keys << call.first().toString();
+        }
+        keys.sort();
+        QCOMPARE(keys, (QStringList{QStringLiteral("filters/USB/1/high"),
+                                    QStringLiteral("filters/USB/1/low"),
+                                    QStringLiteral("filters/USB/1/name")}));
+
+        // And this computer's own store was not touched.
+        AppSettings::instance().setRemoteBackend(nullptr);
+        const FilterPreset mine = store.presetsForMode(DSPMode::USB).first();
+        QCOMPARE(mine.name, QStringLiteral("Local"));
+        QCOMPARE(mine.low, 200);
+        QVERIFY(!AppSettings::instance().contains(QStringLiteral("filters/USB/1/name")));
+    }
+
+    // A window running its radio locally has no remote backend: its presets
+    // stay in its own settings, as before.
+    void aLocalWindowIsUnchanged()
+    {
+        QCOMPARE(AppSettings::instance().remoteBackend(), nullptr);
+        FilterPresetStore store;
+        FilterPreset p;
+        p.name = QStringLiteral("Mine");
+        p.low = 300;
+        p.high = 2400;
+        store.setPreset(DSPMode::LSB, 2, p);
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("filters/LSB/2/name")).toString(),
+                 QStringLiteral("Mine"));
+        QCOMPARE(store.presetsForMode(DSPMode::LSB).at(2).low, 300);
     }
 };
 

@@ -14,6 +14,9 @@
 //                Reusable extraction of inline status-bar LED strip.
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                via Anthropic Claude Code.
+//   2026-09-29 - The TX property (ucOCLedStrip.TX): a lit LED is drawn
+//                orange-red while the radio transmits. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -85,6 +88,13 @@ void OcLedStripWidget::setBits(quint8 b)
     refreshLedColors();
 }
 
+void OcLedStripWidget::setTx(bool on)
+{
+    if (on == m_tx) { return; }
+    m_tx = on;
+    refreshLedColors();
+}
+
 void OcLedStripWidget::setInteractive(bool on)
 {
     m_interactive = on;
@@ -124,6 +134,14 @@ void OcLedStripWidget::refreshLedColors()
 {
     for (int i = 0; i < static_cast<int>(m_leds.size()); ++i) {
         const bool on = (m_bits >> i) & 0x01;
+        // From mi0bot ucOCLedStrip.cs:101-111 [@c26a8a4]: a lit pin is
+        // Brushes.OrangeRed while TX, Brushes.GreenYellow otherwise.
+        if (on && m_tx) {
+            m_leds[i]->setStyleSheet(
+                QStringLiteral("QFrame { background: #ff4500; border: 1px solid #ff7f50; "
+                               "border-radius: 5px; }"));
+            continue;
+        }
         m_leds[i]->setStyleSheet(on
             ? QStringLiteral("QFrame { background: #44ff44; border: 1px solid #88ff88; "
                              "border-radius: 5px; }")

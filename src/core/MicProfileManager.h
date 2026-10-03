@@ -53,6 +53,12 @@
 //                 captureLiveValues, and applyValuesToModel (93 keys total).
 //                 NereusSDR-original additions.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 3): a remote window's manager
+//                 mirrors the Core's profiles (setStationMirror,
+//                 applyStationProfiles, applyStationActiveProfile) and asks
+//                 the Core to select, save and delete; it never saves here.
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived handler logic
@@ -65,6 +71,8 @@
 #include <QString>
 #include <QStringList>
 #include <QVariant>
+
+#include <functional>
 
 namespace NereusSDR {
 
@@ -161,6 +169,31 @@ public:
     /// expand this to all 93 profile fields.
     bool isActiveProfileModified(const TransmitModel* tx) const;
 
+    // ── R-R3-49 (parity Task 3): a remote window's mirror of the Core ─────
+    //
+    // In a remote window the profiles are the Core's. setStationMirror()
+    // turns this manager into a mirror: profileNames() and
+    // activeProfileName() are the Core's (applyStationProfiles,
+    // applyStationActiveProfile, fed from the mirrored `transmit` object),
+    // and setActiveProfile / saveProfile / saveActiveProfile / deleteProfile
+    // ask the Core through `requester` instead of changing anything here.
+    // A mirror never reads or writes AppSettings (setMacAddress and load do
+    // nothing), so this computer keeps no copy of the Core's profiles. The
+    // combos show the Core's active profile when it arrives; a refused
+    // request (reportStationRequestRefused) shows it again.
+    enum class StationRequest { Select, Save, Delete };
+    /// Sends one request to the Core; false when it was not sent (the
+    /// requester says why to the operator).
+    using StationRequester = std::function<bool(StationRequest, const QString& name)>;
+    void setStationMirror(StationRequester requester);
+    bool isStationMirror() const { return static_cast<bool>(m_stationRequester); }
+    /// The Core's profile list, in the Core's order.
+    void applyStationProfiles(const QStringList& names);
+    /// The Core's active profile.
+    void applyStationActiveProfile(const QString& name);
+    /// The Core refused a request: the combos show its active profile again.
+    void reportStationRequestRefused();
+
 signals:
     /// Emitted when the dirty/clean state of the active profile changes.
     /// true = active profile has unsaved changes; false = in sync with stored.
@@ -218,6 +251,11 @@ private:
     /// Per-MAC scope.  Empty until setMacAddress() is called; all mutators
     /// no-op when empty.
     QString m_mac;
+
+    // R-R3-49 (parity Task 3): a remote window's mirror of the Core.
+    StationRequester m_stationRequester;
+    QStringList m_stationNames;
+    QString m_stationActive;
 };
 
 } // namespace NereusSDR

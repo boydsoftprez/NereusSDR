@@ -11,6 +11,18 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-24 - R-R3-49: the Voice Rec/Play control is not offered or
+//                 listed until the voice recorder is built; one already in a
+//                 container is kept. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: the Discord control, its factory entries and its
+//                 editor are removed. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-24 - R-R3-21: the container's slice choice lists slices A to D
+//                 (a saved RX1 / RX2 reads as slice A / B), and the item
+//                 editor opens for the button boxes and the VFO display (its
+//                 tags match what they save). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -133,7 +145,6 @@ mw0lge@grange-lane.co.uk
 #include "meter_property_editors/TuneStepButtonItemEditor.h"
 #include "meter_property_editors/OtherButtonItemEditor.h"
 #include "meter_property_editors/VoiceRecordPlayItemEditor.h"
-#include "meter_property_editors/DiscordButtonItemEditor.h"
 #include "ContainerWidget.h"
 #include "../meters/MeterWidget.h"
 #include "../meters/MeterItem.h"
@@ -162,7 +173,7 @@ mw0lge@grange-lane.co.uk
 #include "../meters/TuneStepButtonItem.h"
 #include "../meters/OtherButtonItem.h"
 #include "../meters/VoiceRecordPlayItem.h"
-#include "../meters/DiscordButtonItem.h"
+#include "../UnbuiltFeatures.h"
 #include "../meters/VfoDisplayItem.h"
 #include "../meters/ClockItem.h"
 #include "../meters/ClickBoxItem.h"
@@ -246,13 +257,6 @@ constexpr const char* kLabelStyle =
 
 constexpr const char* kSectionHeaderStyle =
     "color: #8aa8c0; font-weight: bold; font-size: 12px;";
-
-constexpr const char* kSpinStyle =
-    "background: #0a0a18;"
-    "color: #c8d8e8;"
-    "border: 1px solid #1e2e3e;"
-    "border-radius: 3px;"
-    "padding: 2px;";
 
 QPushButton* makeBtn(const QString& text, QWidget* parent)
 {
@@ -563,7 +567,7 @@ void ContainerSettingsDialog::populateAvailableList()
         {"IMAGE",          "Image"},
         {"MAGICEYE",       "Magic Eye"},
         {"ROTATOR",        "Rotator"},
-        {"SOLID",          "Solid Colour"},
+        {"SOLID",          "Solid Color"},
         {"SPACER",         "Spacer"},
         {"TEXTOVERLAY",    "Text Overlay"},
         {"VFODISPLAY",     "VFO Display"},
@@ -838,18 +842,21 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     m_borderCheck = new QCheckBox(bar);
     m_borderCheck->setStyleSheet("QCheckBox { color: #c8d8e8; }");
 
-    // RX Source
-    QLabel* rxLabel = new QLabel(QStringLiteral("RX:"), bar);
+    // R-R3-21: the slice the container's controls act on, slices A to D.
+    // Saved as 1..4 (Thetis's RX field), so a layout saved as RX1 / RX2
+    // reads as slice A / B.
+    QLabel* rxLabel = new QLabel(QStringLiteral("Slice:"), bar);
     rxLabel->setStyleSheet(kLabelStyle);
     m_rxSourceCombo = new QComboBox(bar);
-    m_rxSourceCombo->addItem(QStringLiteral("RX1"), 1);
-    m_rxSourceCombo->addItem(QStringLiteral("RX2"), 2);
+    for (int rx = 1; rx <= 4; ++rx) {
+        m_rxSourceCombo->addItem(ContainerWidget::sliceNameForRxSource(rx), rx);
+    }
     m_rxSourceCombo->setStyleSheet(
         "QComboBox { background: #0a0a18; color: #c8d8e8;"
         "  border: 1px solid #1e2e3e; border-radius: 3px; padding: 2px 4px; }"
         "QComboBox QAbstractItemView { background: #0a0a18; color: #c8d8e8;"
         "  border: 1px solid #205070; selection-background-color: #00b4d8; }");
-    m_rxSourceCombo->setFixedWidth(64);
+    m_rxSourceCombo->setFixedWidth(76);
 
     // Show on RX / TX
     QLabel* showRxLabel = new QLabel(QStringLiteral("Show RX:"), bar);
@@ -907,7 +914,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
                                          m_container && m_container->isLocked());
     m_hideTitleCheck         = makeCheck(QStringLiteral("Hide title"),
                                          m_container && !m_container->isTitleBarVisible());
-    m_minimisesCheck         = makeCheck(QStringLiteral("Minimises"),
+    m_minimisesCheck         = makeCheck(QStringLiteral("Minimizes"),
                                          m_container && m_container->containerMinimises());
     m_autoHeightCheck        = makeCheck(QStringLiteral("Auto height"),
                                          m_container && m_container->autoHeight());
@@ -979,7 +986,7 @@ void ContainerSettingsDialog::buildButtonBar()
     m_btnPreset = makeBtn(QStringLiteral("Presets\u2026"), this);
     m_btnImport = makeBtn(QStringLiteral("Import"),        this);
     m_btnExport = makeBtn(QStringLiteral("Export"),        this);
-    m_btnMmio   = makeBtn(QStringLiteral("MMIO Variables\u2026"), this);
+    m_btnMmio   = makeBtn(QStringLiteral("Meter Data Sources (MMIO)\u2026"), this);
 
     barLayout->addWidget(m_btnSave);
     barLayout->addWidget(m_btnLoad);
@@ -1153,14 +1160,18 @@ void ContainerSettingsDialog::onAddItem()
     controlsMenu->addAction(QStringLiteral("Antenna Buttons"),   this, [this]{ addNewItem(QStringLiteral("ANTENNABTNS")); });
     controlsMenu->addAction(QStringLiteral("Tune Step Buttons"), this, [this]{ addNewItem(QStringLiteral("TUNESTEPBTNS")); });
     controlsMenu->addAction(QStringLiteral("Other Buttons"),     this, [this]{ addNewItem(QStringLiteral("OTHERBTNS")); });
-    controlsMenu->addAction(QStringLiteral("Voice Rec/Play"),    this, [this]{ addNewItem(QStringLiteral("VOICERECPLAY")); });
+    QAction* voiceAction =
+        controlsMenu->addAction(QStringLiteral("Voice Rec/Play"), this,
+                                [this]{ addNewItem(QStringLiteral("VOICERECPLAY")); });
+    // R-R3-49: not offered until the voice recorder is built.
+    UnbuiltFeatures::hideUnlessBuilt(voiceAction, UnbuiltFeature::Voice);
     controlsMenu->addAction(QStringLiteral("VFO Display"),       this, [this]{ addNewItem(QStringLiteral("VFO")); });
-    controlsMenu->addAction(QStringLiteral("Discord Buttons"),   this, [this]{ addNewItem(QStringLiteral("DISCORDBTNS")); });
 
     // --- Display ---
     QMenu* displayMenu = menu->addMenu(QStringLiteral("Display"));
     displayMenu->setStyleSheet(menu->styleSheet());
-    displayMenu->addAction(QStringLiteral("Filter Display"), this, [this]{ addNewItem(QStringLiteral("FILTERDISPLAY")); });
+    QAction* filterDisplayAction = displayMenu->addAction(QStringLiteral("Filter Display"), this, [this]{ addNewItem(QStringLiteral("FILTERDISPLAY")); });
+    UnbuiltFeatures::hideUnlessBuilt(filterDisplayAction, UnbuiltFeature::ContainerFilterDisplay);
     displayMenu->addAction(QStringLiteral("Rotator"),        this, [this]{ addNewItem(QStringLiteral("ROTATOR")); });
 
     // --- Layout ---
@@ -1171,7 +1182,8 @@ void ContainerSettingsDialog::onAddItem()
     layoutMenu->addAction(QStringLiteral("Web Image"),   this, [this]{ addNewItem(QStringLiteral("WEBIMAGE")); });
     layoutMenu->addAction(QStringLiteral("Spacer"),      this, [this]{ addNewItem(QStringLiteral("SPACER")); });
     layoutMenu->addAction(QStringLiteral("Fade Cover"),  this, [this]{ addNewItem(QStringLiteral("FADECOVER")); });
-    layoutMenu->addAction(QStringLiteral("Click Box"),   this, [this]{ addNewItem(QStringLiteral("CLICKBOX")); });
+    QAction* clickBoxAction = layoutMenu->addAction(QStringLiteral("Click Box"), this, [this]{ addNewItem(QStringLiteral("CLICKBOX")); });
+    UnbuiltFeatures::hideUnlessBuilt(clickBoxAction, UnbuiltFeature::ContainerClickBox);
     layoutMenu->addAction(QStringLiteral("Scale"),       this, [this]{ addNewItem(QStringLiteral("SCALE")); });
 
     // --- Data ---
@@ -1366,8 +1378,6 @@ MeterItem* ContainerSettingsDialog::createDefaultItem(const QString& typeTag)
         return new OtherButtonItem();
     } else if (typeTag == QLatin1String("VOICERECPLAY")) {
         return new VoiceRecordPlayItem();
-    } else if (typeTag == QLatin1String("DISCORDBTNS")) {
-        return new DiscordButtonItem();
     } else if (typeTag == QLatin1String("VFO")) {
         return new VfoDisplayItem();
     } else if (typeTag == QLatin1String("CLOCK")) {
@@ -1499,10 +1509,6 @@ MeterItem* ContainerSettingsDialog::createItemFromSerialized(const QString& data
         VoiceRecordPlayItem* item = new VoiceRecordPlayItem();
         if (item->deserialize(data)) { return item; }
         delete item;
-    } else if (typeTag == QLatin1String("DISCORDBTNS")) {
-        DiscordButtonItem* item = new DiscordButtonItem();
-        if (item->deserialize(data)) { return item; }
-        delete item;
     } else if (typeTag == QLatin1String("VFO")) {
         VfoDisplayItem* item = new VfoDisplayItem();
         if (item->deserialize(data)) { return item; }
@@ -1559,7 +1565,6 @@ QString ContainerSettingsDialog::typeTagDisplayName(const QString& tag)
         { QStringLiteral("TUNESTEPBTNS"),  QStringLiteral("Tune Step Buttons") },
         { QStringLiteral("OTHERBTNS"),     QStringLiteral("Other Buttons") },
         { QStringLiteral("VOICERECPLAY"),  QStringLiteral("Voice Rec/Play") },
-        { QStringLiteral("DISCORDBTNS"),   QStringLiteral("Discord Buttons") },
         { QStringLiteral("VFO"),           QStringLiteral("VFO Display") },
         { QStringLiteral("CLOCK"),         QStringLiteral("Clock") },
         { QStringLiteral("CLICKBOX"),      QStringLiteral("Click Box") },
@@ -1594,6 +1599,11 @@ void ContainerSettingsDialog::refreshItemList()
             label += QStringLiteral(" [id:%1]").arg(bindingId);
         }
         m_itemList->addItem(label);
+        // R-R3-49: an item whose feature is not built yet stays in the
+        // container (and is saved with it) but is not listed.
+        if (!MeterWidget::itemFeatureBuilt(item)) {
+            m_itemList->item(m_itemList->count() - 1)->setHidden(true);
+        }
     }
 }
 
@@ -2286,6 +2296,9 @@ QWidget* ContainerSettingsDialog::buildTypeSpecificEditor(MeterItem* item)
 
     BaseItemEditor* ed = nullptr;
 
+    // R-R3-21: each tag is the one its item saves (serialize()); the button
+    // boxes and the VFO display were listed under names they never write,
+    // so their editors never opened.
     if      (typeTag == QLatin1String("BAR"))            ed = new BarItemEditor(this);
     else if (typeTag == QLatin1String("SOLID"))          ed = new SolidColourItemEditor(this);
     else if (typeTag == QLatin1String("SPACER"))         ed = new SpacerItemEditor(this);
@@ -2305,17 +2318,16 @@ QWidget* ContainerSettingsDialog::buildTypeSpecificEditor(MeterItem* item)
     else if (typeTag == QLatin1String("FILTERDISPLAY"))  ed = new FilterDisplayItemEditor(this);
     else if (typeTag == QLatin1String("ROTATOR"))        ed = new RotatorItemEditor(this);
     else if (typeTag == QLatin1String("CLOCK"))          ed = new ClockItemEditor(this);
-    else if (typeTag == QLatin1String("VFODISPLAY"))     ed = new VfoDisplayItemEditor(this);
+    else if (typeTag == QLatin1String("VFO"))            ed = new VfoDisplayItemEditor(this);
     else if (typeTag == QLatin1String("CLICKBOX"))       ed = new ClickBoxItemEditor(this);
     else if (typeTag == QLatin1String("DATAOUT"))        ed = new DataOutItemEditor(this);
-    else if (typeTag == QLatin1String("BANDBUTTON"))     ed = new BandButtonItemEditor(this);
-    else if (typeTag == QLatin1String("MODEBUTTON"))     ed = new ModeButtonItemEditor(this);
-    else if (typeTag == QLatin1String("FILTERBUTTON"))   ed = new FilterButtonItemEditor(this);
-    else if (typeTag == QLatin1String("ANTENNABUTTON"))  ed = new AntennaButtonItemEditor(this);
-    else if (typeTag == QLatin1String("TUNESTEPBUTTON")) ed = new TuneStepButtonItemEditor(this);
-    else if (typeTag == QLatin1String("OTHERBUTTON"))    ed = new OtherButtonItemEditor(this);
+    else if (typeTag == QLatin1String("BANDBTNS"))       ed = new BandButtonItemEditor(this);
+    else if (typeTag == QLatin1String("MODEBTNS"))       ed = new ModeButtonItemEditor(this);
+    else if (typeTag == QLatin1String("FILTERBTNS"))     ed = new FilterButtonItemEditor(this);
+    else if (typeTag == QLatin1String("ANTENNABTNS"))    ed = new AntennaButtonItemEditor(this);
+    else if (typeTag == QLatin1String("TUNESTEPBTNS"))   ed = new TuneStepButtonItemEditor(this);
+    else if (typeTag == QLatin1String("OTHERBTNS"))      ed = new OtherButtonItemEditor(this);
     else if (typeTag == QLatin1String("VOICERECPLAY"))   ed = new VoiceRecordPlayItemEditor(this);
-    else if (typeTag == QLatin1String("DISCORDBUTTON"))  ed = new DiscordButtonItemEditor(this);
 
     if (ed) {
         ed->setItem(item);

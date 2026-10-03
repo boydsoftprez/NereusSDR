@@ -33,6 +33,33 @@
 //                 m_voxDlyLabel/m_voxPeakMeter removed.  DEXP row (#11)
 //                 stays.  pollDexpMeters() trimmed to drive only the DEXP
 //                 strip; VOX peak polling lives on TxApplet now.
+//   2026-09-24 - R-R3-49: +ACC and the ACC microphone source, MON and its
+//                 level, and the CW and FM pages are hidden (UnbuiltFeatures)
+//                 until built; with one page left there are no page tabs.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - iPhone app Task 19 (R-IOS-06): the mic level gauge's range
+//                 and zones come from ControlRanges.h, which the Core's
+//                 catalogue reads too. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-25 - iPhone app plan Task 39 (D14, R-IOS-13): the compression
+//                 gauge can be shown unavailable with a reason (a remote
+//                 window's Core does not send it yet). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49 (parity Task 2): the mic level, PROC and its
+//                 level, AM carrier and DEXP follow the transmit settings
+//                 gate (setTransmitSettingsPermitted), not the keying gate.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 3): the mic profile combo follows
+//                 setTxProfilePermitted; in a remote window it picks the
+//                 Core's profiles. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-30 - Radio codec lane: the Hermes Lite 2's Mic and Line
+//                 items open (radioMicSelectable) with the audio add-on
+//                 note as their tooltip. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-30: Fix wave GUI-M3: the DEXP right-click opens Setup
+//               without the transmit check. J.J. Boyd (KG4VCF), AI-
+//               assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -82,27 +109,35 @@
 
 #include "PhoneCwApplet.h"
 #include "gui/HGauge.h"
+#include "gui/meters/MeterPoller.h"
 #include "gui/ComboStyle.h"
 #include "gui/widgets/DexpPeakMeter.h"
-#include "NyiOverlay.h"
 #include "core/BoardCapabilities.h"
+#include "core/ControlRanges.h"
+#include "core/HpsdrModel.h"
+#include "core/MicProfileManager.h"
 #include "core/AudioEngine.h"
 #include "core/MoxController.h"
 #include "core/TxChannel.h"
+#include "core/session/IStationLink.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 #include "gui/StyleConstants.h"
+#include "gui/UnbuiltFeatures.h"
 
 #include <QButtonGroup>
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QListView>
 #include <QPainter>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStackedWidget>
 #include <QTimer>
+#include <QStandardItemModel>
+#include <QVariant>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -114,12 +149,6 @@ static constexpr int kLeftColW = 70;
 static constexpr int kValueW   = 36;
 // kGap (4) removed — only used by the CW page, now a placeholder (Phase 3M-2).
 
-// NYI phase tags
-static const QString kNyiPhone  = QStringLiteral("Phase 3I-1");
-// kNyiCw removed — CW page is now a placeholder (Phase 3M-2 deferred).
-static const QString kNyiProc   = QStringLiteral("Phase 3I-3");
-static const QString kNyiVax    = QStringLiteral("Phase 3-VAX");
-static const QString kNyiFm     = QStringLiteral("Phase 3I-1");
 
 // Phone/CW-specific button background — bluer (#1a3a5a) than the
 // canonical kButtonBg (#1a2a3a) used by Style::buttonBaseStyle().
@@ -165,6 +194,11 @@ PhoneCwApplet::PhoneCwApplet(RadioModel* model, QWidget* parent)
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     buildUI();
     wireControls();
+    if (model && model->role() == RadioModel::Role::Remote) {
+        setTransmitPermitted(false);
+        setTransmitSettingsPermitted(false);
+        setTxProfilePermitted(false);
+    }
 }
 
 PhoneCwApplet::~PhoneCwApplet()
@@ -231,6 +265,21 @@ void PhoneCwApplet::buildUI()
     m_stack->setCurrentIndex(0);
     root->addWidget(m_stack);
 
+    // R-R3-49: controls whose feature is not built yet are hidden. The CW
+    // and FM pages are never shown (showPage falls back to Phone), and with
+    // Phone the only page left the applet shows no page tabs.
+    UnbuiltFeatures::hideUnlessBuilt(m_cwTabBtn, UnbuiltFeature::Cwx);
+    if (!UnbuiltFeatures::isBuilt(UnbuiltFeature::Cwx)) {
+        m_phoneTabBtn->setVisible(false);
+    }
+    UnbuiltFeatures::hideUnlessBuilt(m_accBtn, UnbuiltFeature::Acc);
+    if (!UnbuiltFeatures::isBuilt(UnbuiltFeature::Acc)) {
+        if (auto* list = qobject_cast<QListView*>(m_micSourceCombo->view())) {
+            list->setRowHidden(static_cast<int>(MicInput::Accessory), true);
+        }
+    }
+    UnbuiltFeatures::hideRowUnlessBuilt(m_monBtn, UnbuiltFeature::PhoneMon);
+
     // ── Wire tab buttons via QButtonGroup ────────────────────────────────────
     connect(m_tabGroup, &QButtonGroup::idToggled, this,
             [this](int id, bool checked) {
@@ -254,9 +303,11 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     // HGauge(-40, +10, redStart=0, yellowStart=-10)
     // Ticks: -40/-30/-20/-10/0/+5/+10
     m_levelGauge = new HGauge(page);
-    m_levelGauge->setRange(-40.0, 10.0);
-    m_levelGauge->setYellowStart(-10.0);
-    m_levelGauge->setRedStart(0.0);
+    // The values are ControlRanges.h's, which the Core's catalogue reads too
+    // (iPhone app Task 19).
+    m_levelGauge->setRange(ControlRanges::kMicLevelMinDb, ControlRanges::kMicLevelMaxDb);
+    m_levelGauge->setYellowStart(ControlRanges::kMicLevelYellowFromDb);
+    m_levelGauge->setRedStart(ControlRanges::kMicLevelRedFromDb);
     m_levelGauge->setTitle(QStringLiteral("Level"));
     m_levelGauge->setUnit(QStringLiteral("dB"));
     m_levelGauge->setTickLabels({QStringLiteral("-40dB"), QStringLiteral("-30"),
@@ -267,17 +318,24 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     vbox->addWidget(m_levelGauge);
 
     // ── Control 2: Compression gauge ─────────────────────────────────────────
-    // HGauge(-25, 0, redStart=1, reversed=true)
-    // Ticks: -25/-20/-15/-10/-5/0
+    // HGauge(-25, 0, redStart=1), ticks -25/-20/-15/-10/-5/0.
+    // R-R3-21: a normal (not reversed) gauge. It shows the meters'
+    // Compression reading, max(-30, TXA_COMP_AV) (Thetis console.cs:46979
+    // [v2.10.3.15]), the compressed level in dB: empty at -25 and below
+    // (at rest, PROC off), fuller as the level rises. AetherSDR's reversed
+    // face (PhoneCwApplet.cpp:928-933 [@1e0718ad]) takes a compression
+    // amount from the radio, which this reading is not.
     m_compGauge = new HGauge(page);
     m_compGauge->setRange(-25.0, 0.0);
     m_compGauge->setRedStart(1.0);
-    m_compGauge->setReversed(true);
     m_compGauge->setTitle(QStringLiteral("Compression"));
     m_compGauge->setTickLabels({QStringLiteral("-25dB"), QStringLiteral("-20"),
                                  QStringLiteral("-15"),   QStringLiteral("-10"),
                                  QStringLiteral("-5"),    QStringLiteral("0")});
     m_compGauge->setAccessibleName(QStringLiteral("Compression gauge"));
+    m_compGauge->setToolTip(QStringLiteral(
+        "Speech compression while transmitting, as the Compression meter shows it"));
+    m_compGauge->setValue(-25.0);  // empty until a transmit reading arrives
     vbox->addWidget(m_compGauge);
     vbox->addSpacing(4);
 
@@ -287,6 +345,8 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     m_micProfileCombo->addItems({QStringLiteral("Default"), QStringLiteral("DX"),
                                  QStringLiteral("Contest"), QStringLiteral("Custom")});
     m_micProfileCombo->setAccessibleName(QStringLiteral("Microphone profile"));
+    m_micProfileCombo->setToolTip(QStringLiteral(
+        "Transmit profile (the same list as the TX applet's profile)"));
     applyComboStyle(m_micProfileCombo);
     vbox->addWidget(m_micProfileCombo);
 
@@ -303,6 +363,10 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
                                     QStringLiteral("LINE"), QStringLiteral("ACC"),
                                     QStringLiteral("PC")});
         m_micSourceCombo->setAccessibleName(QStringLiteral("Microphone source"));
+        m_micSourceCombo->setToolTip(QStringLiteral(
+            "Transmit audio input: the radio's microphone jack (MIC), its "
+            "balanced XLR input (BAL), its line input (LINE), or this "
+            "computer's microphone (PC)"));
         applyComboStyle(m_micSourceCombo);
         row->addWidget(m_micSourceCombo);
 
@@ -354,7 +418,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         m_procBtn->setAccessibleName(QStringLiteral("Speech processor"));
         m_procBtn->setObjectName(QStringLiteral("PhoneCwProcButton"));
         m_procBtn->setToolTip(QStringLiteral(
-            "CPDR speech compressor — left-click toggles."));
+            "CPDR speech compressor. Left-click toggles."));
         row->addWidget(m_procBtn);
 
         // Control 8: PROC slider (0..20 dB CPDR level) + numeric "X dB"
@@ -385,9 +449,9 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         m_procSlider->setStyleSheet(NereusSDR::Style::sliderHStyle());
         m_procSlider->setAccessibleName(QStringLiteral("CPDR speech compressor level (dB)"));
         m_procSlider->setObjectName(QStringLiteral("PhoneCwProcSlider"));
+        // Range 0..20 dB matches Thetis ptbCPDR.
         m_procSlider->setToolTip(QStringLiteral(
-            "CPDR speech compressor level (dB).  Range 0..20 dB matches "
-            "Thetis ptbCPDR."));
+            "CPDR speech compressor level (dB).  Range 0..20 dB."));
         procVbox->addWidget(m_procSlider);
 
         row->addWidget(procGroup, 1);
@@ -515,6 +579,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         m_amCarSlider->setValue(25);
         m_amCarSlider->setStyleSheet(NereusSDR::Style::sliderHStyle());
         m_amCarSlider->setAccessibleName(QStringLiteral("AM carrier level"));
+        m_amCarSlider->setToolTip(QStringLiteral("AM carrier level, in percent"));
         row->addWidget(m_amCarSlider, 1);
 
         m_amCarLabel = new QLabel(QStringLiteral("25"), page);
@@ -526,7 +591,9 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         vbox->addLayout(row);
     }
 
-    // ── Mark Phone controls NYI (wired controls NOT marked) ──────────────────
+    // ── Phone controls with nothing behind them yet (wired ones are live) ───
+    // R-R3-49: these stay disabled and are hidden through the unbuilt list
+    // (acc, phone-mon); they carry no not-yet-implemented mark or tooltip.
     // #1  m_levelGauge       — wired (Phase 3M-1b mic level gauge)
     // #5  m_micLevelSlider   — wired (Phase 3M-1b mic gain)
     // #7  m_procBtn / m_procSlider — wired (Phase 3M-3a-ii post-bench cleanup)
@@ -534,14 +601,12 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     //     members removed entirely)
     // #11 m_dexpBtn / m_dexpSlider — wired (Phase 3M-3a-iii Task 15;
     //     m_dexpSlider is decorative-only per Thetis quirk, see wireControls())
-    NyiOverlay::markNyi(m_compGauge,        kNyiProc);    // #2 — Phase 3I-3
-    NyiOverlay::markNyi(m_micProfileCombo,  kNyiPhone);   // #3
-    NyiOverlay::markNyi(m_micSourceCombo,   kNyiPhone);   // #4
-    NyiOverlay::markNyi(m_accBtn,           kNyiPhone);   // #6
+    // #2 m_compGauge, #3 m_micProfileCombo, #4 m_micSourceCombo and #13
+    // m_amCarSlider: wired (R-R3-21, see wireControls()).
+    m_accBtn->setEnabled(false);   // #6
     // #8 m_vaxBtn: wired (Phase 3M-VAX-toggle)
-    NyiOverlay::markNyi(m_monBtn,           kNyiPhone);   // #9
-    NyiOverlay::markNyi(m_monSlider,        kNyiPhone);   // #9 slider
-    NyiOverlay::markNyi(m_amCarSlider,      kNyiProc);    // #13 — Phase 3I-3
+    m_monBtn->setEnabled(false);   // #9
+    m_monSlider->setEnabled(false);   // #9 slider
 }
 
 // ── CW page — placeholder until Phase 3M-2 ───────────────────────────────────
@@ -557,10 +622,9 @@ void PhoneCwApplet::buildCwPage(QWidget* page)
     layout->setAlignment(Qt::AlignCenter);
 
     auto* label = new QLabel(QStringLiteral(
-        "CW TX coming in Phase 3M-2.\n\n"
-        "Speed, pitch, sidetone, break-in, iambic, firmware keyer\n"
-        "controls will appear here when CW TX is wired up.\n\n"
-        "For now, see Setup \xe2\x86\x92 DSP \xe2\x86\x92 CW for available CW config."
+        "NereusSDR does not send CW in this version.\n\n"
+        "Speed, pitch, sidetone, break-in and keyer\n"
+        "controls are not available."
     ), page);
     label->setAlignment(Qt::AlignCenter);
     label->setWordWrap(true);
@@ -794,23 +858,25 @@ void PhoneCwApplet::buildFmPage(QWidget* page)
 
     vbox->addStretch();
 
-    // ── Mark all FM controls NYI (Phase 3I-1) ────────────────────────────────
-    NyiOverlay::markNyi(m_fmMicSlider,     kNyiFm);
-    NyiOverlay::markNyi(m_fmMicLabel,      kNyiFm);
-    NyiOverlay::markNyi(m_dev5kBtn,        kNyiFm);
-    NyiOverlay::markNyi(m_dev25kBtn,       kNyiFm);
-    NyiOverlay::markNyi(m_ctcssBtn,        kNyiFm);
-    NyiOverlay::markNyi(m_ctcssCombo,      kNyiFm);
-    NyiOverlay::markNyi(m_simplexBtn,      kNyiFm);
-    NyiOverlay::markNyi(m_rptOffsetSlider, kNyiFm);
-    NyiOverlay::markNyi(m_rptOffsetLabel,  kNyiFm);
-    NyiOverlay::markNyi(m_offsetMinusBtn,  kNyiFm);
-    NyiOverlay::markNyi(m_offsetPlusBtn,   kNyiFm);
-    NyiOverlay::markNyi(m_offsetRevBtn,    kNyiFm);
-    NyiOverlay::markNyi(m_fmProfileCombo,  kNyiFm);
-    NyiOverlay::markNyi(m_fmMemCombo,      kNyiFm);
-    NyiOverlay::markNyi(m_fmMemPrev,       kNyiFm);
-    NyiOverlay::markNyi(m_fmMemNext,       kNyiFm);
+    // ── FM controls: nothing behind them yet ─────────────────────────────────
+    // R-R3-49: the FM page is hidden through the unbuilt list (fm-page); the
+    // controls stay disabled and carry no not-yet-implemented mark.
+    m_fmMicSlider->setEnabled(false);
+    m_fmMicLabel->setEnabled(false);
+    m_dev5kBtn->setEnabled(false);
+    m_dev25kBtn->setEnabled(false);
+    m_ctcssBtn->setEnabled(false);
+    m_ctcssCombo->setEnabled(false);
+    m_simplexBtn->setEnabled(false);
+    m_rptOffsetSlider->setEnabled(false);
+    m_rptOffsetLabel->setEnabled(false);
+    m_offsetMinusBtn->setEnabled(false);
+    m_offsetPlusBtn->setEnabled(false);
+    m_offsetRevBtn->setEnabled(false);
+    m_fmProfileCombo->setEnabled(false);
+    m_fmMemCombo->setEnabled(false);
+    m_fmMemPrev->setEnabled(false);
+    m_fmMemNext->setEnabled(false);
 }
 
 // ── wireControls — Phase 3M-1b mic gain slider + mic level gauge ─────────────
@@ -856,7 +922,7 @@ void PhoneCwApplet::wireControls()
 
     // UI → Model
     connect(m_micLevelSlider, &QSlider::valueChanged, this, [this, &tx](int val) {
-        if (m_updatingFromModel) { return; }
+        if (m_updatingFromModel || !m_transmitSettingsPermitted) { return; }
         m_micLevelLabel->setText(QStringLiteral("%1 dB").arg(val));
         tx.setMicGainDb(val);
     });
@@ -875,7 +941,11 @@ void PhoneCwApplet::wireControls()
     // Mic mute state → slider enabled / greyed.
     // NOTE: micMute == true means mic IS in use; false means muted/disabled.
     connect(&tx, &TransmitModel::micMuteChanged, this, [this](bool micInUse) {
-        m_micLevelSlider->setEnabled(micInUse);
+        if (m_transmitSettingsPermitted) {
+            m_micLevelSlider->setEnabled(micInUse);
+        } else {
+            m_micLevelSlider->setProperty("PhoneCwSavedTransmitEnabled", micInUse);
+        }
     });
 
     // ── #7 PROC button + slider (CPDR speech compressor) ────────────────────
@@ -897,7 +967,7 @@ void PhoneCwApplet::wireControls()
         }
         // UI → Model
         connect(m_procBtn, &QPushButton::toggled, this, [this, &tx](bool on) {
-            if (m_updatingFromModel) { return; }
+            if (m_updatingFromModel || !m_transmitSettingsPermitted) { return; }
             tx.setCpdrOn(on);
         });
         // Model → UI
@@ -924,7 +994,7 @@ void PhoneCwApplet::wireControls()
             if (m_procValueLabel) {
                 m_procValueLabel->setText(QStringLiteral("%1 dB").arg(v));
             }
-            if (m_updatingFromModel) { return; }
+            if (m_updatingFromModel || !m_transmitSettingsPermitted) { return; }
             tx.setCpdrLevelDb(v);
         });
         // Model → UI
@@ -956,7 +1026,7 @@ void PhoneCwApplet::wireControls()
         }
         // UI -> Model
         connect(m_vaxBtn, &QPushButton::toggled, this, [this, &tx](bool on) {
-            if (m_updatingFromModel) { return; }
+            if (m_updatingFromModel || !m_transmitPermitted) { return; }
             tx.toggleVaxSource(on);
         });
         // Model -> UI (mirrors button to model so external changes - profile
@@ -973,6 +1043,7 @@ void PhoneCwApplet::wireControls()
         m_vaxBtn->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(m_vaxBtn, &QPushButton::customContextMenuRequested, this,
                 [this](const QPoint&) {
+            if (!m_transmitPermitted) { return; }
             emit openSetupRequested(QStringLiteral("Audio"),
                                     QStringLiteral("TX Input"));
         });
@@ -998,7 +1069,7 @@ void PhoneCwApplet::wireControls()
         }
         // UI → Model
         connect(m_dexpBtn, &QPushButton::toggled, this, [this, &tx](bool on) {
-            if (m_updatingFromModel) { return; }
+            if (m_updatingFromModel || !m_transmitSettingsPermitted) { return; }
             tx.setDexpEnabled(on);
         });
         // Model → UI
@@ -1070,6 +1141,9 @@ void PhoneCwApplet::wireControls()
         m_dexpBtn->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(m_dexpBtn, &QPushButton::customContextMenuRequested, this,
                 [this](const QPoint&) {
+            // GUI-M3 (fix wave): opening the page is navigation; the
+            // DEXP/VOX page gates its own controls, so the right-click
+            // works whether or not this window may transmit.
             emit openSetupRequested(QStringLiteral("Transmit"),
                                     QStringLiteral("DEXP/VOX"));
         });
@@ -1085,6 +1159,73 @@ void PhoneCwApplet::wireControls()
     connect(m_dexpMeterTimer, &QTimer::timeout,
             this, &PhoneCwApplet::pollDexpMeters);
     m_dexpMeterTimer->start();
+
+    // ── #3 Mic profile combo ↔ MicProfileManager (R-R3-21) ───────────────────
+    // The same profiles the TX applet's profile combo picks from, wired the
+    // same way (TxApplet::setMicProfileManager / rebuildProfileCombo).
+    if (MicProfileManager* mgr = m_model->micProfileManager()) {
+        connect(mgr, &MicProfileManager::profileListChanged,
+                this, &PhoneCwApplet::rebuildMicProfileCombo);
+        connect(mgr, &MicProfileManager::activeProfileChanged,
+                this, [this](const QString& name) {
+            QSignalBlocker b(m_micProfileCombo);
+            const int idx = m_micProfileCombo->findText(name);
+            if (idx >= 0) { m_micProfileCombo->setCurrentIndex(idx); }
+        });
+        connect(m_micProfileCombo, &QComboBox::currentTextChanged,
+                this, [this, &tx](const QString& name) {
+            if (m_updatingFromModel || !m_txProfilePermitted || name.isEmpty()) { return; }
+            if (MicProfileManager* m = m_model->micProfileManager()) {
+                m->setActiveProfile(name, &tx);
+            }
+        });
+    }
+    rebuildMicProfileCombo();
+
+    // ── #4 Mic source combo ↔ TransmitModel (R-R3-21) ────────────────────────
+    // Setup > Audio > TX Input's choices: PC mic, or the radio's mic input
+    // with its line-in (Hermes family) or XLR (Saturn) selection.
+    connect(m_micSourceCombo, QOverload<int>::of(&QComboBox::activated),
+            this, [this](int index) {
+        if (m_updatingFromModel || !m_transmitPermitted) { return; }
+        applyMicInput(static_cast<MicInput>(index));
+    });
+    connect(&tx, &TransmitModel::micSourceChanged,
+            this, [this](MicSource) { showMicSourceFromModel(); });
+    connect(&tx, &TransmitModel::lineInChanged,
+            this, [this](bool) { showMicSourceFromModel(); });
+    connect(&tx, &TransmitModel::micXlrChanged,
+            this, [this](bool) { showMicSourceFromModel(); });
+    connect(m_model, &RadioModel::currentRadioChanged,
+            this, [this](const RadioInfo&) { refreshMicSourceItems(); });
+    refreshMicSourceItems();
+
+    // ── #13 AM carrier level ↔ TransmitModel::amCarrierLevel (R-R3-21) ──────
+    {
+        QSignalBlocker b(m_amCarSlider);
+        m_amCarSlider->setRange(TransmitModel::kAmCarrierLevelMin,
+                                TransmitModel::kAmCarrierLevelMax);
+        m_amCarSlider->setValue(tx.amCarrierLevel());
+        m_amCarLabel->setText(QString::number(tx.amCarrierLevel()));
+    }
+    connect(m_amCarSlider, &QSlider::valueChanged, this, [this, &tx](int v) {
+        m_amCarLabel->setText(QString::number(v));
+        if (m_updatingFromModel || !m_transmitSettingsPermitted) { return; }
+        tx.setAmCarrierLevel(v);
+    });
+    connect(&tx, &TransmitModel::amCarrierLevelChanged, this, [this](int percent) {
+        QSignalBlocker b(m_amCarSlider);
+        m_amCarSlider->setValue(percent);
+        m_amCarLabel->setText(QString::number(percent));
+    });
+
+    // ── #2 Compression gauge: back to none on receive (R-R3-21) ─────────────
+    // MainWindow feeds setCompressionReading() from the meter poller while
+    // transmitting; the poller stops the transmit readings on receive, so
+    // receive puts the gauge back to the reading's floor (empty).
+    connect(&tx, &TransmitModel::moxChanged, this, [this](bool on) {
+        if (!on) { setCompressionReading(MeterBinding::kTxCompFloorDb); }
+    });
 
     // ── #1 Mic level gauge ────────────────────────────────────────────────────
     // 50 ms timer (20 fps) — same polling cadence as VAX/HGauge meter precedent.
@@ -1117,7 +1258,8 @@ void PhoneCwApplet::wireControls()
         }
 
         // Clamp to gauge range [-40, +10].
-        m_levelGauge->setValue(qBound(-40.0, dB, 10.0));
+        m_levelGauge->setValue(qBound(ControlRanges::kMicLevelMinDb, dB,
+                                      ControlRanges::kMicLevelMaxDb));
     });
     m_micLevelTimer->start();
 }
@@ -1138,7 +1280,11 @@ void PhoneCwApplet::syncFromModel()
         m_micLevelSlider->setRange(caps.micGainMinDb, caps.micGainMaxDb);
         m_micLevelSlider->setValue(tx.micGainDb());
         m_micLevelLabel->setText(QStringLiteral("%1 dB").arg(tx.micGainDb()));
-        m_micLevelSlider->setEnabled(tx.micMute());
+        if (m_transmitSettingsPermitted) {
+            m_micLevelSlider->setEnabled(tx.micMute());
+        } else {
+            m_micLevelSlider->setProperty("PhoneCwSavedTransmitEnabled", tx.micMute());
+        }
         m_updatingFromModel = false;
     }
 
@@ -1188,6 +1334,232 @@ void PhoneCwApplet::syncFromModel()
     }
 
     // Other controls wired in Phase 3I-1 (Phone/FM) / Phase 3I-2 (CW)
+}
+
+void PhoneCwApplet::setTransmitPermitted(bool permitted, const QString& reason)
+{
+    m_transmitPermitted = permitted;
+    m_transmitPermissionReason = reason.isEmpty()
+        ? tr("Transmit controls are unavailable until the Core confirms transmit permission.")
+        : reason;
+    updateTransmitControlAvailability();
+}
+
+// R-R3-49 (parity Task 2): the transmit settings that key nothing. The two
+// gates hold disjoint controls.
+void PhoneCwApplet::setTransmitSettingsPermitted(bool permitted, const QString& reason)
+{
+    m_transmitSettingsPermitted = permitted;
+    m_transmitSettingsReason = reason.isEmpty()
+        ? IStationLink::transmitSettingsUnavailableReason()
+        : reason;
+    updateTransmitControlAvailability();
+}
+
+// R-R3-49 (parity Task 3): the mic profile combo's own gate.
+void PhoneCwApplet::setTxProfilePermitted(bool permitted, const QString& reason)
+{
+    m_txProfilePermitted = permitted;
+    m_txProfileReason = reason.isEmpty()
+        ? IStationLink::transmitSettingsUnavailableReason()
+        : reason;
+    updateTransmitControlAvailability();
+}
+
+void PhoneCwApplet::updateTransmitControlAvailability()
+{
+    const auto gate = [](QWidget* control, bool permitted, const QString& reason) {
+        if (!control) { return; }
+        static constexpr auto kSavedTooltip = "PhoneCwSavedTransmitTooltip";
+        static constexpr auto kSavedDescription = "PhoneCwSavedTransmitDescription";
+        static constexpr auto kSavedEnabled = "PhoneCwSavedTransmitEnabled";
+        if (!permitted) {
+            if (!control->property(kSavedTooltip).isValid()) {
+                control->setProperty(kSavedTooltip, control->toolTip());
+                control->setProperty(kSavedDescription, control->accessibleDescription());
+                control->setProperty(kSavedEnabled, control->isEnabled());
+            }
+            control->setEnabled(false);
+            control->setToolTip(reason);
+            control->setAccessibleDescription(reason);
+            return;
+        }
+        if (control->property(kSavedTooltip).isValid()) {
+            control->setEnabled(control->property(kSavedEnabled).toBool());
+            control->setToolTip(control->property(kSavedTooltip).toString());
+            control->setAccessibleDescription(control->property(kSavedDescription).toString());
+            control->setProperty(kSavedTooltip, QVariant());
+            control->setProperty(kSavedDescription, QVariant());
+            control->setProperty(kSavedEnabled, QVariant());
+        }
+    };
+
+    // The keying gate: the mic source and VAX.
+    for (QWidget* control : {static_cast<QWidget*>(m_micSourceCombo),
+                             static_cast<QWidget*>(m_vaxBtn)}) {
+        gate(control, m_transmitPermitted, m_transmitPermissionReason);
+    }
+    // R-R3-49 (parity Task 3): the mic profile.
+    gate(m_micProfileCombo, m_txProfilePermitted, m_txProfileReason);
+    // R-R3-49 (parity Task 2): the transmit settings gate.
+    for (QWidget* control : {static_cast<QWidget*>(m_micLevelSlider),
+                             static_cast<QWidget*>(m_amCarSlider),
+                             static_cast<QWidget*>(m_procBtn),
+                             static_cast<QWidget*>(m_procSlider),
+                             static_cast<QWidget*>(m_dexpBtn)}) {
+        gate(control, m_transmitSettingsPermitted, m_transmitSettingsReason);
+    }
+}
+
+// ── R-R3-21: compression gauge, mic profile and mic source ───────────────────
+
+void PhoneCwApplet::setCompressionReading(double dB)
+{
+    if (!m_compGauge) { return; }
+    // Gauge range -25..0 dB (AetherSDR PhoneCwApplet layout). The reading
+    // is floored at -30 by the poller; anything at or below -25, and a
+    // non-finite value, draws an empty gauge.
+    const double v = std::isfinite(dB) ? std::clamp(dB, -25.0, 0.0) : -25.0;
+    m_compGauge->setValue(v);
+}
+
+void PhoneCwApplet::setCompressionUnavailable(const QString& reason)
+{
+    if (!m_compGauge) { return; }
+    static constexpr auto kSavedTooltip = "PhoneCwSavedCompressionTooltip";
+    if (!reason.isEmpty()) {
+        if (!m_compGauge->property(kSavedTooltip).isValid()) {
+            m_compGauge->setProperty(kSavedTooltip, m_compGauge->toolTip());
+        }
+        m_compGauge->setUnavailable(true);
+        m_compGauge->setToolTip(reason);
+        m_compGauge->setAccessibleDescription(reason);
+        return;
+    }
+    m_compGauge->setUnavailable(false);
+    if (m_compGauge->property(kSavedTooltip).isValid()) {
+        m_compGauge->setToolTip(m_compGauge->property(kSavedTooltip).toString());
+        m_compGauge->setProperty(kSavedTooltip, QVariant());
+    }
+    m_compGauge->setAccessibleDescription(QString());
+}
+
+void PhoneCwApplet::rebuildMicProfileCombo()
+{
+    MicProfileManager* mgr = m_model ? m_model->micProfileManager() : nullptr;
+    if (!m_micProfileCombo || !mgr) { return; }
+    QSignalBlocker b(m_micProfileCombo);
+    m_micProfileCombo->clear();
+    m_micProfileCombo->addItems(mgr->profileNames());
+    const int idx = m_micProfileCombo->findText(mgr->activeProfileName());
+    if (idx >= 0) { m_micProfileCombo->setCurrentIndex(idx); }
+}
+
+namespace {
+
+bool isHermesFamily(HPSDRHW hw)
+{
+    // The boards Setup > Audio > TX Input shows its Mic In / Line In
+    // choice for (AudioTxInputPage::updateRadioMicGroupVisibility).
+    // The Hermes Lite 2 is one of them with its audio add-on board (the
+    // Mic and Line items are open only when the board can take the radio
+    // mic, BoardCapabilities::radioMicSelectable).
+    return hw == HPSDRHW::Hermes || hw == HPSDRHW::HermesII
+        || hw == HPSDRHW::Angelia || hw == HPSDRHW::Atlas
+        || hw == HPSDRHW::HermesLite;
+}
+
+bool isSaturnFamily(HPSDRHW hw)
+{
+    // The boards it shows the 3.5 mm jack / XLR choice for.
+    return hw == HPSDRHW::Saturn || hw == HPSDRHW::SaturnMKII;
+}
+
+} // namespace
+
+void PhoneCwApplet::refreshMicSourceItems()
+{
+    if (!m_micSourceCombo || !m_model) { return; }
+    auto* items = qobject_cast<QStandardItemModel*>(m_micSourceCombo->model());
+    if (!items) { return; }
+
+    const BoardCapabilities& caps = m_model->boardCapabilities();
+    const HPSDRHW hw = caps.board;
+    const QString noJack = tr("This radio has no microphone jack.");
+    // Radio codec lane: a mic jack, or the HL2's audio add-on board.
+    const bool radioMic = caps.radioMicSelectable();
+    // The HL2's gateware cannot report the add-on board: its items stay
+    // open with the note (RadioModel::radioMicAddOnNote).
+    const QString note = caps.radioMicNeedsAddOn ? RadioModel::radioMicAddOnNote() : QString();
+    struct Row { MicInput input; bool available; QString why; QString note; };
+    const Row rows[] = {
+        {MicInput::Mic, radioMic, noJack, note},
+        {MicInput::Balanced, radioMic && isSaturnFamily(hw),
+         radioMic ? tr("This radio has no balanced XLR input.") : noJack, QString()},
+        {MicInput::Line, radioMic && isHermesFamily(hw),
+         radioMic ? tr("This radio has no line input.") : noJack, note},
+        {MicInput::Accessory, false, tr("This radio has no accessory audio input."), QString()},
+        {MicInput::Pc, true, QString(), QString()},
+    };
+    for (const Row& row : rows) {
+        QStandardItem* item = items->item(static_cast<int>(row.input));
+        if (!item) { continue; }
+        item->setEnabled(row.available);
+        item->setToolTip(row.available ? row.note : row.why);
+    }
+    showMicSourceFromModel();
+}
+
+void PhoneCwApplet::showMicSourceFromModel()
+{
+    if (!m_micSourceCombo || !m_model) { return; }
+    const TransmitModel& tx = m_model->transmitModel();
+    // VAX has its own button; the combo keeps showing the source VAX
+    // hands back to (TransmitModel::previousNonVaxMicSource).
+    const MicSource src = tx.micSource() == MicSource::Vax
+        ? tx.previousNonVaxMicSource() : tx.micSource();
+    MicInput shown = MicInput::Pc;
+    if (src == MicSource::Radio) {
+        const HPSDRHW hw = m_model->boardCapabilities().board;
+        if (isSaturnFamily(hw) && tx.micXlr()) {
+            shown = MicInput::Balanced;
+        } else if (isHermesFamily(hw) && tx.lineIn()) {
+            shown = MicInput::Line;
+        } else {
+            shown = MicInput::Mic;
+        }
+    }
+    QSignalBlocker b(m_micSourceCombo);
+    m_micSourceCombo->setCurrentIndex(static_cast<int>(shown));
+}
+
+void PhoneCwApplet::applyMicInput(MicInput input)
+{
+    if (!m_model) { return; }
+    TransmitModel& tx = m_model->transmitModel();
+    const HPSDRHW hw = m_model->boardCapabilities().board;
+    switch (input) {
+    case MicInput::Pc:
+        tx.setMicSource(MicSource::Pc);
+        break;
+    case MicInput::Mic:
+        if (isSaturnFamily(hw)) { tx.setMicXlr(false); }
+        if (isHermesFamily(hw)) { tx.setLineIn(false); }
+        tx.setMicSource(MicSource::Radio);
+        break;
+    case MicInput::Balanced:
+        tx.setMicXlr(true);
+        tx.setMicSource(MicSource::Radio);
+        break;
+    case MicInput::Line:
+        tx.setLineIn(true);
+        tx.setMicSource(MicSource::Radio);
+        break;
+    case MicInput::Accessory:
+        break;  // disabled item: no radio here has one
+    }
+    // The model may coerce (HL2 has no jack): show what it settled on.
+    showMicSourceFromModel();
 }
 
 // ── pollDexpMeters — Phase 3M-3a-iii Task 15 ─────────────────────────────────
@@ -1247,6 +1619,11 @@ void PhoneCwApplet::pollDexpMeters()
 
 void PhoneCwApplet::showPage(int index)
 {
+    // R-R3-49: a page whose feature is not built yet is not shown; Phone is.
+    if ((index == 1 && !UnbuiltFeatures::isBuilt(UnbuiltFeature::Cwx))
+        || (index == 2 && !UnbuiltFeatures::isBuilt(UnbuiltFeature::FmPage))) {
+        index = 0;
+    }
     if (m_stack) {
         m_stack->setCurrentIndex(index);
     }

@@ -126,6 +126,11 @@ AboutDialog::AboutDialog(QWidget* parent)
     layout()->setSizeConstraint(QLayout::SetFixedSize);
 }
 
+QUrl AboutDialog::releaseNotesUrl()
+{
+    return QUrl(QStringLiteral("https://github.com/boydsoftprez/NereusSDR/releases"));
+}
+
 void AboutDialog::buildUI()
 {
     auto* mainLayout = new QVBoxLayout(this);
@@ -156,7 +161,7 @@ void AboutDialog::buildUI()
     mainLayout->addWidget(title);
 
     auto* version = new QLabel(
-        QStringLiteral("v%1 — Cross-platform SDR Console")
+        QStringLiteral("v%1: Cross-platform SDR Console")
             .arg(QCoreApplication::applicationVersion()),
         this);
     version->setAlignment(Qt::AlignCenter);
@@ -307,7 +312,7 @@ void AboutDialog::buildUI()
 
     auto* links = new QLabel(
         QStringLiteral(
-            "<a href=\"https://github.com/boydsoftprez/NereusSDR/releases\">"
+            "<a href=\"%1\">"
             "NereusSDR releases</a> &nbsp;·&nbsp; "
             "<a href=\"https://github.com/boydsoftprez/NereusSDR/tree/main/docs/attribution\">"
             "docs/attribution</a> &nbsp;·&nbsp; "
@@ -320,7 +325,8 @@ void AboutDialog::buildUI()
             "<a href=\"https://github.com/TAPR/OpenHPSDR-Protocol1-Programmers\">OpenHPSDR Protocol 1</a> &nbsp;·&nbsp; "
             "<a href=\"https://github.com/TAPR/OpenHPSDR-Protocol2-Programmers\">OpenHPSDR Protocol 2</a><br>"
             "<a href=\"https://community.apache-labs.com/index.php\">Apache-Labs Community</a> &nbsp;·&nbsp; "
-            "<a href=\"https://apache-labs.com/\">Apache-Labs Home</a>"),
+            "<a href=\"https://apache-labs.com/\">Apache-Labs Home</a>")
+            .arg(releaseNotesUrl().toString()),
         this);
     links->setOpenExternalLinks(true);
     links->setWordWrap(true);
@@ -375,6 +381,22 @@ void AboutDialog::buildUI()
     }
 
     mainLayout->addLayout(cardRow);
+
+    // R-R3-50: the other libraries NereusSDR is built with, named in the
+    // same plain words as the cards above. Their licence texts ship in the
+    // licenses folder (packaging/third-party-licenses/README.md lists each).
+    mainLayout->addSpacing(8);
+    // §D exception: #aabbcc matches the card subtitle colour above.
+    auto* alsoBuiltWith = new QLabel(
+        QStringLiteral("Also built with RADE, Opus, PortAudio, r8brain, rnnoise, "
+                       "DeepFilterNet, libspecbleach, libdatachannel, libjuice, "
+                       "usrsctp, libsrtp, plog, nlohmann json, OpenSSL and zlib. "
+                       "Their licenses ship with NereusSDR in its licenses folder."),
+        this);
+    alsoBuiltWith->setAlignment(Qt::AlignCenter);
+    alsoBuiltWith->setWordWrap(true);
+    alsoBuiltWith->setStyleSheet(QStringLiteral("color: #aabbcc; font-size: 11px;"));  // §D exception
+    mainLayout->addWidget(alsoBuiltWith);
 
     // ── Divider ─────────────────────────────────────────────────────────
     auto* div3 = new QFrame(this);

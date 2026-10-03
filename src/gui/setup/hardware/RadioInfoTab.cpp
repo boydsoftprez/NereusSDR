@@ -10,6 +10,39 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23 - R-R3-46: a remote window's RX1 sample rate sets the
+//                 Core's first receiver. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: the disabled RX2 sample rate combo is removed.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49, R-R3-21: the one remaining rate is labelled
+//                 "Sample rate (Hz):" (no RX1/RX2 words). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-39: the live rate change is asked for without
+//                 waiting (setSampleRateLiveAsync). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - Receiver and transmit gaps plan, Task 5: the support info's
+//                 top sample rate is the protocol's, not the board row's.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - Parity ruling C4: a remote window's rate change goes to
+//                 every receiver and the radio's own rate, as a local
+//                 window's live change does (RadioModel::
+//                 requestRadioSampleRate); on an older Core, each of its
+//                 receivers, with the reason on the rate box. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - R-R3-49 / R-IOS-18: the identity text and the support
+//                 info come from radioInfoFacts, which the Core's Setup
+//                 description publishes too; each readout and the copy
+//                 button carry their description ids. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - R-R3-49 / R-IOS-18: the sample rate box carries its
+//                 Setup description id (version 13). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - Max RX (label and support info) shows the radio's
+//                 reported receiver count where it gave one
+//                 (BoardCapsTable::effectiveReceiverCount, read in
+//                 radioInfoFacts), the count the stream pool uses. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -64,9 +97,12 @@
 #include "core/HardwareProfile.h"
 #include "core/HpsdrModel.h"
 #include "core/RadioDiscovery.h"
+#include "core/RadioInfoFacts.h"
 #include "core/SampleRateCatalog.h"
+#include "core/session/IStationLink.h"
 #include "gui/ComboStyle.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
 
 #include <QCheckBox>
 #include <QClipboard>
@@ -106,6 +142,14 @@ RadioInfoTab::RadioInfoTab(RadioModel* model, QWidget* parent)
                         m_maxRxLabel, m_firmwareLabel, m_macLabel, m_ipLabel}) {
         lbl->setTextInteractionFlags(Qt::TextSelectableByMouse);
     }
+    // R-IOS-18: the Setup description's ids for these readouts.
+    m_boardLabel->setProperty("nereusSetupId", "hardware.radioInfo.board");
+    m_protocolLabel->setProperty("nereusSetupId", "hardware.radioInfo.protocol");
+    m_adcCountLabel->setProperty("nereusSetupId", "hardware.radioInfo.adcCount");
+    m_maxRxLabel->setProperty("nereusSetupId", "hardware.radioInfo.maxRx");
+    m_firmwareLabel->setProperty("nereusSetupId", "hardware.radioInfo.firmware");
+    m_macLabel->setProperty("nereusSetupId", "hardware.radioInfo.mac");
+    m_ipLabel->setProperty("nereusSetupId", "hardware.radioInfo.ip");
 
     form->addRow(tr("Board:"),      m_boardLabel);
     form->addRow(tr("Protocol:"),   m_protocolLabel);
@@ -128,29 +172,14 @@ RadioInfoTab::RadioInfoTab(RadioModel* model, QWidget* parent)
     applyComboStyle(m_sampleRateRx1Combo);
     m_sampleRateRx1Combo->setMinimumWidth(120);
     m_sampleRateRx1Combo->setMaximumWidth(160);
-
-    // RX2 sample rate combo — disabled stub in PR #35. Thetis exposes an
-    // independent RX2 rate (setup.cs comboAudioSampleRateRX2). When Phase 3F
-    // multi-panadapter lands, this combo becomes live with these gating rules
-    // (from setup.cs:7065-7073 and 7155-7156):
-    //   • P1 (all boards): RX2 forced equal to RX1, combo disabled.
-    //   • P2 ANAN-10E / ANAN-100B: RX2 forced equal to RX1 (single-ADC).
-    //   • P2 other boards: RX2 independent.
-    m_sampleRateRx2Combo = new QComboBox(paramGroup);
-    applyComboStyle(m_sampleRateRx2Combo);
-    m_sampleRateRx2Combo->setMinimumWidth(120);
-    m_sampleRateRx2Combo->setMaximumWidth(160);
-    m_sampleRateRx2Combo->setEnabled(false);
-    m_sampleRateRx2Combo->setToolTip(
-        tr("Enabled when Phase 3F multi-panadapter support lands."));
+    m_sampleRateRx1Combo->setProperty("nereusSetupId", "hardware.radioInfo.sampleRate");
 
     // Active RX count widget removed from UI 2026-05-08 — non-functional in
     // single-RX builds (capped at 1, disabled until a radio is connected).
     // The underlying RadioModel::setActiveRxCountLive coordinator stays
     // wired and re-exposes when Phase 3F multi-panadapter lands.
 
-    paramForm->addRow(tr("RX1 sample rate (Hz):"), m_sampleRateRx1Combo);
-    paramForm->addRow(tr("RX2 sample rate (Hz):"), m_sampleRateRx2Combo);
+    paramForm->addRow(tr("Sample rate (Hz):"), m_sampleRateRx1Combo);
 
     outerLayout->addWidget(paramGroup);
 
@@ -206,6 +235,7 @@ RadioInfoTab::RadioInfoTab(RadioModel* model, QWidget* parent)
     // Left-aligned page-level action.  setSizePolicy(Maximum, Fixed) prevents
     // QVBoxLayout from stretching the button to the dialog's full width.
     m_copySupportInfoButton = new QPushButton(tr("Copy Support Info to Clipboard"), this);
+    m_copySupportInfoButton->setProperty("nereusSetupId", "hardware.radioInfo.copySupportInfo");
     m_copySupportInfoButton->setToolTip(
         tr("Copies board identity and firmware version to the clipboard for bug reports."));
     m_copySupportInfoButton->setFixedHeight(Style::kButtonH);
@@ -231,33 +261,32 @@ RadioInfoTab::RadioInfoTab(RadioModel* model, QWidget* parent)
 
 void RadioInfoTab::populate(const RadioInfo& info, const BoardCapabilities& caps)
 {
-    // Fill read-only identity labels
-    m_boardLabel->setText(info.name.isEmpty()
-        ? QString::fromLatin1(caps.displayName)
-        : info.name);
-    m_protocolLabel->setText(
-        info.protocol == ProtocolVersion::Protocol2
-            ? QStringLiteral("Protocol 2")
-            : QStringLiteral("Protocol 1"));
-    m_adcCountLabel->setText(QString::number(caps.adcCount));
-    m_maxRxLabel->setText(QString::number(caps.maxReceivers));
-    m_firmwareLabel->setText(
-        info.firmwareVersion > 0
-            ? QString::number(info.firmwareVersion)
-            : QStringLiteral("—"));
-    m_macLabel->setText(info.macAddress.isEmpty() ? QStringLiteral("—") : info.macAddress);
-    m_ipLabel->setText(info.address.isNull()
-        ? QStringLiteral("—")
-        : info.address.toString());
+    HPSDRModel model = HPSDRModel::HERMES;
+    if (m_model) {
+        model = m_model->hardwareProfile().model;
+    }
+    // Fill read-only identity labels. R-R3-49 / R-IOS-18: the same text the
+    // Core's Setup description publishes (radioInfoFacts).
+    const RadioInfoFacts facts = radioInfoFacts(info, caps, model);
+    m_boardLabel->setText(facts.board);
+    m_protocolLabel->setText(facts.protocol);
+    m_adcCountLabel->setText(facts.adcCount);
+    m_maxRxLabel->setText(facts.maxRx);
+    m_firmwareLabel->setText(facts.firmware);
+    m_macLabel->setText(facts.mac);
+    m_ipLabel->setText(facts.ip);
+
+    // Parity ruling C4: a remote window on an older Core changes only its
+    // own receivers' rate; the rate box says so.
+    m_sampleRateRx1Combo->setToolTip(
+        m_model && !m_model->radioSampleRateReachesEveryReceiver()
+            ? IStationLink::radioSampleRateUnavailableReason()
+            : QString());
 
     // Rebuild RX1 combo from allowedSampleRates(proto, caps, model) — matches
     // Thetis setup.cs:847-852 filtering (per-protocol list ∩ caps.sampleRates,
     // with the RedPitaya extra-384k exception). Default selection is 192000
     // per setup.cs:866; if absent, first allowed entry.
-    HPSDRModel model = HPSDRModel::HERMES;
-    if (m_model) {
-        model = m_model->hardwareProfile().model;
-    }
     const auto allowed = allowedSampleRates(info.protocol, caps, model);
     const int fallbackRate = defaultSampleRate(info.protocol, caps, model);
     {
@@ -282,16 +311,6 @@ void RadioInfoTab::populate(const RadioInfo& info, const BoardCapabilities& caps
         }
     }
 
-    // RX2 combo mirrors RX1 items and selection (disabled stub).
-    {
-        QSignalBlocker blocker(m_sampleRateRx2Combo);
-        m_sampleRateRx2Combo->clear();
-        for (int rate : allowed) {
-            m_sampleRateRx2Combo->addItem(QStringLiteral("%1").arg(rate), rate);
-        }
-        m_sampleRateRx2Combo->setCurrentIndex(m_sampleRateRx1Combo->currentIndex());
-    }
-
     // ANAN-8000DLE volts/amps toggle: visible only for ANAN8000D model.
     // HPSDRModel::ANAN8000D (value 10) is the OrionMKII-family SKU that
     // Thetis ships as the "ANAN-8000DLE"; gated here to avoid showing this
@@ -301,24 +320,9 @@ void RadioInfoTab::populate(const RadioInfo& info, const BoardCapabilities& caps
         m_anan8000DleVoltsAmpsToggle->setVisible(is8000D);
     }
 
-    // Build clipboard text for Copy Support Info button
-    m_currentInfo = QStringLiteral(
-        "Board: %1\n"
-        "Protocol: %2\n"
-        "ADC count: %3\n"
-        "Max RX: %4\n"
-        "Firmware: %5\n"
-        "MAC: %6\n"
-        "IP: %7\n"
-        "Max sample rate: %8 Hz\n")
-        .arg(m_boardLabel->text())
-        .arg(m_protocolLabel->text())
-        .arg(caps.adcCount)
-        .arg(caps.maxReceivers)
-        .arg(m_firmwareLabel->text())
-        .arg(m_macLabel->text())
-        .arg(m_ipLabel->text())
-        .arg(caps.maxSampleRate);
+    // Build clipboard text for Copy Support Info button (the facts' own
+    // text, which the Setup description's copy action carries too).
+    m_currentInfo = facts.supportText();
 }
 
 // ── private slots ─────────────────────────────────────────────────────────────
@@ -329,9 +333,6 @@ void RadioInfoTab::onSampleRateChanged(int index)
     int rate = m_sampleRateRx1Combo->itemData(index).toInt();
     if (rate > 0) {
         emit settingChanged(QStringLiteral("radioInfo/sampleRate"), rate);
-        // Mirror into RX2 stub visually.
-        QSignalBlocker blocker(m_sampleRateRx2Combo);
-        m_sampleRateRx2Combo->setCurrentIndex(index);
         // Apply live via the RadioModel coordinator (Task 1.6) when a
         // radio is connected.  Returns >= 0 ms on success — the banner
         // then hides itself once wireSampleRateChanged fires from the
@@ -340,8 +341,17 @@ void RadioInfoTab::onSampleRateChanged(int index)
         // connect via settingChanged above).  Without this call the
         // live-apply infrastructure added in PR #219 (Task 1.6) was
         // unreachable from the UI; codex post-merge review flagged as P2.
+        //
+        // R-R3-46: a remote window's radio is the Core's. The rate saved
+        // above stays the Core's default for that radio (its next connect).
+        // Parity ruling C4: every window makes the same change now, without
+        // a reconnect: every receiver and the radio's own rate
+        // (RadioModel::requestRadioSampleRate; a remote window asks the
+        // Core, whose confirm step asks another device first). R-R3-39: a
+        // local change runs on the receive lane; this returns at once, and
+        // wireSampleRateChanged hides the banner when it is done.
         if (m_model) {
-            m_model->setSampleRateLive(rate);
+            m_model->requestRadioSampleRate(rate);
         }
         updateReconnectBanner();
     }
@@ -386,9 +396,6 @@ void RadioInfoTab::restoreSettings(const QMap<QString, QVariant>& settings)
         for (int i = 0; i < m_sampleRateRx1Combo->count(); ++i) {
             if (m_sampleRateRx1Combo->itemData(i).toInt() == rate) {
                 m_sampleRateRx1Combo->setCurrentIndex(i);
-                // Mirror into RX2 stub so it stays visually aligned.
-                QSignalBlocker b2(m_sampleRateRx2Combo);
-                m_sampleRateRx2Combo->setCurrentIndex(i);
                 break;
             }
         }

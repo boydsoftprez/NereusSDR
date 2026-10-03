@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NereusSDR Setup &rarr; Display &rarr; TX (Mockup)</title>
+<style>
+  :root {
+    --bg-page: #0d0d12;
+    --bg-panel: #14141c;
+    --bg-group: #1a1a24;
+    --bg-row: #11111a;
+    --border: #2a2a38;
+    --border-strong: #3a3a48;
+    --fg: #d8d8e2;
+    --fg-dim: #8a8a99;
+    --fg-strong: #ffffff;
+    --accent: #00d4ff;
+    --accent-warn: #ff8c00;
+    --thetis-tag: #5c5c70;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    background: var(--bg-page);
+    color: var(--fg);
+    font: 13px/1.45 system-ui, -apple-system, "SF Pro Text", sans-serif;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; color: var(--fg-strong); font-weight: 500; }
+  h2 { font-size: 14px; margin: 0 0 10px; color: var(--fg-dim); font-weight: 400; }
+  .breadcrumb { color: var(--fg-dim); margin-bottom: 18px; font-size: 12px; }
+  .breadcrumb b { color: var(--accent); font-weight: 500; }
+  .tag { display: inline-block; padding: 1px 6px; font-size: 10px; border-radius: 3px; background: var(--thetis-tag); color: #d0d0d8; margin-left: 6px; vertical-align: middle; font-family: monospace; }
+  .tag.phase1 { background: #2a4a2a; color: #88ff88; }
+  .tag.phase2 { background: #2a3a4a; color: #88aaff; }
+  .tag.phase3 { background: #4a3a2a; color: #ffcc88; }
+  .tag.phase4 { background: #4a2a4a; color: #ff88dd; }
+  .tag.phase5 { background: #3a2a3a; color: #cc99cc; }
+  .tag.phase6 { background: #2a4a3a; color: #99ddcc; }
+  .tag.existing { background: #3a3a45; color: #aaaab8; }
+
+  .page {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    overflow: hidden;
+    max-width: 720px;
+  }
+  .page-header {
+    padding: 8px 12px;
+    background: #1c1c28;
+    border-bottom: 1px solid var(--border);
+    color: var(--fg-strong);
+    font-weight: 500;
+  }
+  .page-body { padding: 12px; }
+
+  .group {
+    background: var(--bg-group);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin-bottom: 10px;
+  }
+  .group-title {
+    padding: 6px 10px;
+    background: #1f1f2a;
+    border-bottom: 1px solid var(--border);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    display: flex; align-items: center;
+  }
+  .group-title .thetis-cite {
+    margin-left: auto;
+    font-family: monospace;
+    font-size: 10px;
+    color: var(--fg-dim);
+    font-weight: 400;
+  }
+  .group-body {
+    padding: 8px 10px 10px;
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    gap: 6px 10px;
+    align-items: center;
+  }
+  .group-body.cols-3 { grid-template-columns: 130px 1fr 1fr 1fr; }
+  .group-body.cols-2 { grid-template-columns: 130px 1fr; }
+  .label { color: var(--fg-dim); font-size: 12px; }
+  .ctl { background: var(--bg-row); border: 1px solid var(--border); border-radius: 3px; padding: 4px 8px; font-size: 12px; min-height: 22px; display: flex; align-items: center; }
+  .ctl.spin { justify-content: space-between; }
+  .ctl.spin .arrows { color: var(--fg-dim); font-size: 10px; margin-left: 8px; }
+  .ctl.combo { justify-content: space-between; }
+  .ctl.combo .caret { color: var(--fg-dim); margin-left: 8px; }
+  .ctl.color { padding: 0; overflow: hidden; height: 22px; min-height: 22px; display: flex; align-items: stretch; }
+  .ctl.color .swatch { width: 30px; border-right: 1px solid var(--border); }
+  .ctl.color .hex { padding: 4px 8px; font-family: monospace; font-size: 11px; flex: 1; display: flex; align-items: center; }
+  .ctl.slider { background: transparent; border: none; padding: 0; min-height: auto; flex-direction: column; align-items: stretch; gap: 2px; }
+  .ctl.slider .track { height: 4px; background: var(--bg-row); border-radius: 2px; position: relative; margin: 9px 0; }
+  .ctl.slider .fill { height: 4px; background: var(--accent); border-radius: 2px; position: absolute; left: 0; }
+  .ctl.slider .knob { width: 12px; height: 12px; background: var(--accent); border-radius: 50%; position: absolute; top: -4px; }
+  .ctl.slider .ticks { color: var(--fg-dim); font-size: 10px; display: flex; justify-content: space-between; padding: 0 2px; font-family: monospace; }
+  .ctl.gradient {
+    height: 24px;
+    background: linear-gradient(90deg, #000 0%, #0033ff 25%, #00ffff 45%, #00ff00 60%, #ffff00 75%, #ff0000 100%);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0;
+    min-height: 24px;
+    position: relative;
+  }
+  .ctl.gradient::after {
+    content: "[edit]";
+    position: absolute; right: 6px; top: 4px;
+    color: #ffffff;
+    font-size: 10px;
+    background: rgba(0,0,0,0.5);
+    padding: 1px 4px;
+    border-radius: 2px;
+  }
+  .ctl.checkbox { padding: 2px 8px; }
+  .ctl.checkbox .box { width: 12px; height: 12px; border: 1px solid var(--fg-dim); display: inline-block; margin-right: 6px; vertical-align: middle; border-radius: 2px; position: relative; }
+  .ctl.checkbox.checked .box::after { content: "\2713"; position: absolute; left: 1px; top: -3px; font-size: 12px; color: var(--accent); font-weight: bold; }
+  .ctl.checkbox .lbl { font-size: 12px; }
+  .ctl.readonly { color: var(--fg-dim); font-style: italic; }
+  .info-row {
+    grid-column: 1 / -1;
+    color: var(--fg-dim);
+    font-size: 11px;
+    padding: 4px 0 0;
+    font-family: monospace;
+  }
+
+  .legend { margin: 24px 0 12px; max-width: 720px; padding: 10px 12px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 4px; }
+  .legend h3 { margin: 0 0 6px; font-size: 12px; color: var(--fg-dim); font-weight: 500; }
+  .legend-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 11px; }
+  .legend-row .tag { margin-left: 0; }
+
+  .footnotes { margin-top: 18px; max-width: 720px; color: var(--fg-dim); font-size: 11px; line-height: 1.5; }
+  .footnotes p { margin: 4px 0; }
+  .footnotes code { background: #11111a; padding: 1px 4px; border-radius: 2px; font-family: monospace; font-size: 10px; }
+</style>
+</head>
+<body>
+
+<h1>NereusSDR &mdash; Setup &rarr; Display &rarr; TX (Mockup)</h1>
+<h2>Full Thetis-parity port. Layout adapted from <code>setup.designer.cs:36232+</code> (tpDisplayTransmit) <code>[v2.10.3.13+501e3f51]</code>.</h2>
+
+<div class="breadcrumb">Setup &rsaquo; <b>Display</b> &rsaquo; <b>TX</b></div>
+
+<div class="legend">
+  <h3>Legend (sub-phase tagging on each control)</h3>
+  <div class="legend-row">
+    <span class="tag existing">existing</span> already wired in NereusSDR (today)
+    <span class="tag phase1">P1</span> Waterfall colormap (the "still hot" fix)
+    <span class="tag phase2">P2</span> Custom Gradient Picker widget
+    <span class="tag phase3">P3</span> FFT + Detector + Averaging
+    <span class="tag phase4">P4</span> Grid Scale
+    <span class="tag phase5">P5</span> Appearance colors (separate Setup tab)
+    <span class="tag phase6">P6</span> Cal Offset (separate Setup tab)
+  </div>
+</div>
+
+<div class="page">
+  <div class="page-header">TX Display</div>
+  <div class="page-body">
+
+    <!-- ============================================================== -->
+    <!-- Group 1: Fast Fourier Transform -->
+    <!-- ============================================================== -->
+    <div class="group">
+      <div class="group-title">
+        Fast Fourier Transform
+        <span class="thetis-cite">groupBoxTS8 [setup.designer.cs:36509-36643]</span>
+      </div>
+      <div class="group-body">
+        <span class="label">Size <span class="tag phase3">P3</span></span>
+        <div class="ctl slider">
+          <div class="track">
+            <div class="fill" style="width: 50%;"></div>
+            <div class="knob" style="left: 50%;"></div>
+          </div>
+          <div class="ticks"><span>4096</span><span>8192</span><span>16384</span><span>32768</span><span>65536</span><span>131072</span><span>262144</span></div>
+        </div>
+
+        <span class="label">Window <span class="tag phase3">P3</span></span>
+        <div class="ctl combo">Hann <span class="caret">&#9660;</span></div>
+
+        <span class="label">Bin Width</span>
+        <div class="ctl readonly">23.44 Hz/bin (computed)</div>
+      </div>
+    </div>
+
+    <!-- ============================================================== -->
+    <!-- Group 2: Panadapter -->
+    <!-- ============================================================== -->
+    <div class="group">
+      <div class="group-title">
+        Panadapter
+        <span class="thetis-cite">groupBoxTS7 [setup.designer.cs:36645-36758]</span>
+      </div>
+      <div class="group-body">
+        <span class="label">Detector <span class="tag phase3">P3</span></span>
+        <div class="ctl combo">Peak <span class="caret">&#9660;</span></div>
+
+        <span class="label">Averaging <span class="tag phase3">P3</span></span>
+        <div class="ctl combo">Log Recursive <span class="caret">&#9660;</span></div>
+
+        <span class="label">Time (ms) <span class="tag phase3">P3</span></span>
+        <div class="ctl spin">30 <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">1 Hz BW <span class="tag phase3">P3</span></span>
+        <div class="ctl checkbox checked"><span class="box"></span><span class="lbl">Av / Sa normalize</span></div>
+      </div>
+    </div>
+
+    <!-- ============================================================== -->
+    <!-- Group 3: Waterfall (FFT side) -->
+    <!-- ============================================================== -->
+    <div class="group">
+      <div class="group-title">
+        Waterfall
+        <span class="thetis-cite">groupBoxTS9 [setup.designer.cs:36401-36498]</span>
+      </div>
+      <div class="group-body">
+        <span class="label">Detector <span class="tag phase3">P3</span></span>
+        <div class="ctl combo">Peak <span class="caret">&#9660;</span></div>
+
+        <span class="label">Averaging <span class="tag phase3">P3</span></span>
+        <div class="ctl combo">Log Recursive <span class="caret">&#9660;</span></div>
+
+        <span class="label">Time (ms) <span class="tag phase3">P3</span></span>
+        <div class="ctl spin">120 <span class="arrows">&#9650;&#9660;</span></div>
+      </div>
+    </div>
+
+    <!-- ============================================================== -->
+    <!-- Group 4: Waterfall Amplitude Scale (THE COLORMAP FIX) -->
+    <!-- ============================================================== -->
+    <div class="group" style="border-color: #88ff88; box-shadow: 0 0 0 1px rgba(136,255,136,0.15);">
+      <div class="group-title" style="background: #1c2a1c;">
+        Waterfall Amplitude Scale
+        <span class="thetis-cite">grpTXWFAmpScale [setup.designer.cs:36246-36379]</span>
+      </div>
+      <div class="group-body">
+        <span class="label">Low Level <span class="tag phase1">P1</span></span>
+        <div class="ctl spin">-70 dBm <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">High Level <span class="tag phase1">P1</span></span>
+        <div class="ctl spin">+30 dBm <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">Palette <span class="tag phase1">P1</span></span>
+        <div class="ctl combo">Enhanced <span class="caret">&#9660;</span></div>
+
+        <span class="label">Low Color <span class="tag phase1">P1</span></span>
+        <div class="ctl color">
+          <div class="swatch" style="background: #000000;"></div>
+          <div class="hex">#000000FF</div>
+        </div>
+
+        <span class="label">Custom Gradient <span class="tag phase2">P2</span></span>
+        <div class="ctl gradient"></div>
+
+        <div class="info-row">Visible only when Palette = "Custom" (P2 widget)</div>
+      </div>
+    </div>
+
+    <!-- ============================================================== -->
+    <!-- Group 5: TX Grid Scale -->
+    <!-- ============================================================== -->
+    <div class="group">
+      <div class="group-title">
+        TX Grid Scale
+        <span class="thetis-cite">grpTXSpectrumGrid [setup.designer.cs:36769-36932]</span>
+      </div>
+      <div class="group-body">
+        <span class="label">Max <span class="tag phase4">P4</span></span>
+        <div class="ctl spin">+20 dBm <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">Min <span class="tag phase4">P4</span></span>
+        <div class="ctl spin">-80 dBm <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">Step <span class="tag phase4">P4</span></span>
+        <div class="ctl spin">2 dB <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">Display Grid <span class="tag phase4">P4</span></span>
+        <div class="ctl checkbox checked"><span class="box"></span><span class="lbl">show grid lines</span></div>
+
+        <span class="label">Fill Panadapter <span class="tag phase4">P4</span></span>
+        <div class="ctl checkbox checked"><span class="box"></span><span class="lbl">fill below trace</span></div>
+
+        <span class="label">Label Align <span class="tag phase4">P4</span></span>
+        <div class="ctl combo">Center <span class="caret">&#9660;</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============================================================== -->
+<!-- Setup -> Appearance -> TX Display tab (sister page mockup) -->
+<!-- ============================================================== -->
+
+<h1 style="margin-top: 32px;">Sister tab: Setup &rarr; Appearance &rarr; TX Display</h1>
+<div class="breadcrumb">Setup &rsaquo; <b>Appearance</b> &rsaquo; <b>TX Display</b></div>
+
+<div class="page">
+  <div class="page-header">TX Display</div>
+  <div class="page-body">
+
+    <div class="group">
+      <div class="group-title">
+        Panadapter / Alpha
+        <span class="thetis-cite">groupBoxTS3 [setup.designer.cs:53042+]</span>
+      </div>
+      <div class="group-body cols-3">
+        <span class="label">Data Line <span class="tag phase5">P5</span></span>
+        <div class="ctl color"><div class="swatch" style="background: #00d4ff;"></div><div class="hex">#00D4FF</div></div>
+        <span class="label">Data Line Alpha</span>
+        <div class="ctl spin">255 <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">Data Fill <span class="tag phase5">P5</span></span>
+        <div class="ctl color"><div class="swatch" style="background: #00aacc;"></div><div class="hex">#00AACC</div></div>
+        <span class="label">Data Fill Alpha</span>
+        <div class="ctl spin">128 <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">Custom Gradient <span class="tag phase2">P2</span></span>
+        <div class="ctl gradient" style="grid-column: 2 / -1;"></div>
+
+        <span class="label">TX Filter Color <span class="tag phase5">P5</span></span>
+        <div class="ctl color"><div class="swatch" style="background: #ffaa00;"></div><div class="hex">#FFAA00</div></div>
+        <span class="label">TX Filter Alpha</span>
+        <div class="ctl spin">96 <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">Line Width <span class="tag phase5">P5</span></span>
+        <div class="ctl spin">1 px <span class="arrows">&#9650;&#9660;</span></div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">
+        Grid / Alpha
+        <span class="thetis-cite">groupBoxTS2</span>
+      </div>
+      <div class="group-body cols-3">
+        <span class="label">Background <span class="tag existing">exists</span></span>
+        <div class="ctl color"><div class="swatch" style="background: #0a0a14;"></div><div class="hex">#0A0A14</div></div>
+        <span class="label">BG Alpha</span>
+        <div class="ctl spin">255 <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">V Grid (course) <span class="tag phase5">P5</span></span>
+        <div class="ctl color"><div class="swatch" style="background: #203040;"></div><div class="hex">#203040</div></div>
+        <span class="label">V Grid Alpha</span>
+        <div class="ctl spin">128 <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">V Grid (fine) <span class="tag phase5">P5</span></span>
+        <div class="ctl color"><div class="swatch" style="background: #182838;"></div><div class="hex">#182838</div></div>
+        <span class="label">Fine Alpha</span>
+        <div class="ctl spin">96 <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">H Grid <span class="tag phase5">P5</span></span>
+        <div class="ctl color"><div class="swatch" style="background: #203040;"></div><div class="hex">#203040</div></div>
+        <span class="label">H Grid Alpha</span>
+        <div class="ctl spin">128 <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">Zero Line <span class="tag phase5">P5</span></span>
+        <div class="ctl color"><div class="swatch" style="background: #ff0000;"></div><div class="hex">#FF0000</div></div>
+        <span class="label">Zero Line Alpha</span>
+        <div class="ctl spin">192 <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">Text <span class="tag phase5">P5</span></span>
+        <div class="ctl color"><div class="swatch" style="background: #d8d8e2;"></div><div class="hex">#D8D8E2</div></div>
+        <span class="label">Text Alpha</span>
+        <div class="ctl spin">255 <span class="arrows">&#9650;&#9660;</span></div>
+
+        <span class="label">Band Edge <span class="tag phase5">P5</span></span>
+        <div class="ctl color"><div class="swatch" style="background: #ffaa00;"></div><div class="hex">#FFAA00</div></div>
+        <div></div>
+        <div></div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">
+        Waterfall (overlays)
+        <span class="thetis-cite">grpAppTXWaterfall</span>
+      </div>
+      <div class="group-body">
+        <span class="label">Show Filter <span class="tag phase5">P5</span></span>
+        <div class="ctl checkbox"><span class="box"></span><span class="lbl">Filter band overlay on TX waterfall</span></div>
+
+        <span class="label">Show Zero Line <span class="tag phase5">P5</span></span>
+        <div class="ctl checkbox"><span class="box"></span><span class="lbl">Zero-Hz line on TX waterfall</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============================================================== -->
+<!-- Setup -> General -> Calibration (TX Display Cal) -->
+<!-- ============================================================== -->
+
+<h1 style="margin-top: 32px;">Sister tab: Setup &rarr; General &rarr; Calibration (TX Display Cal)</h1>
+<div class="breadcrumb">Setup &rsaquo; <b>General</b> &rsaquo; <b>Calibration</b> &rsaquo; <i>TX Display Cal section</i></div>
+
+<div class="page">
+  <div class="page-header">Calibration &mdash; TX Display Cal section</div>
+  <div class="page-body">
+    <div class="group">
+      <div class="group-title">
+        TX Display Cal
+        <span class="thetis-cite">grpBoxTXDisplayCal [setup.designer.cs:11792+]</span>
+      </div>
+      <div class="group-body">
+        <span class="label">TX Display Offset <span class="tag phase6">P6</span></span>
+        <div class="ctl spin">0.0 dB <span class="arrows">&#9650;&#9660;</span></div>
+
+        <div class="info-row">Shifts all TX panadapter / waterfall dBm readings by this amount. Default 0.0 dB. Range -100 to +100, step 0.1 dB.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footnotes">
+  <p><strong>Notes:</strong></p>
+  <p>1. Group titles include the Thetis source cite [v2.10.3.13+501e3f51] for traceability. NereusSDR's existing <code>TxDisplayPage</code> at <code>DisplaySetupPages.cpp:2234+</code> currently has just 4 controls (Background, Grid Color, Line Width, Cal Offset, with the latter two stubbed); Phase 1 expands this page to the full 5-group layout above.</p>
+  <p>2. <span class="tag phase1">P1</span> = Phase 1 (TX Waterfall Colormap, the immediate "still hot" fix) is the green-bordered group (Waterfall Amplitude Scale). Five controls: Low Level, High Level, Palette, Low Color, and the Custom Gradient picker (which depends on the <span class="tag phase2">P2</span> widget).</p>
+  <p>3. <span class="tag phase2">P2</span> Custom Gradient Picker is a reusable widget needed for both the TX Waterfall Custom palette AND the TX Panadapter Custom Gradient (Appearance tab). Once it lands it also unlocks the same on the RX side.</p>
+  <p>4. Cal Offset (<span class="tag phase6">P6</span>) is already wired in <code>CalibrationTab.cpp</code> as a UI control but not yet applied to the TX render pipeline. Phase 6 closes that gap.</p>
+  <p>5. <strong>Render-path swap mechanism</strong>: Thetis does NOT save/restore on MOX edge. The render path (<code>display.cs:6506-6595 [v2.10.3.13+501e3f51]</code>) does an inline per-frame conditional: <code>if (localMox()) use TX values else use RX values</code>. NereusSDR will mirror this in <code>SpectrumWidget::pushWaterfallRow</code> and the trace render path. No state machine, no event handler.</p>
+  <p>6. Per-band: <strong>none</strong> of these settings are per-band in Thetis. All global. Confirmed by exhaustive grep.</p>
+</div>
+
+</body>
+</html>

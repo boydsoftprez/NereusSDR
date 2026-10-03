@@ -45,6 +45,30 @@ const std::array<float, kTestStereoFloats> kTestSamples = {
     -0.30f, -0.40f, // frame 1  L,R
 };
 
+bool bufferHasSignal(const QByteArray& bytes)
+{
+    const int count = static_cast<int>(bytes.size() / sizeof(float));
+    const float* f = reinterpret_cast<const float*>(bytes.constData());
+    for (int i = 0; i < count; ++i) {
+        if (f[i] != 0.0f) { return true; }
+    }
+    return false;
+}
+
+// R-R3-45: a fake headphones output beside the fake speakers.
+FakeAudioBus* injectFakeHeadphones(AudioEngine* engine)
+{
+    auto bus = std::make_unique<FakeAudioBus>(QStringLiteral("FakeHeadphones"));
+    AudioFormat fmt;
+    fmt.sampleRate = 48000;
+    fmt.channels = 2;
+    fmt.sample = AudioFormat::Sample::Float32;
+    bus->open(fmt);
+    FakeAudioBus* view = bus.get();
+    engine->setHeadphonesBusForTest(std::move(bus));
+    return view;
+}
+
 } // namespace
 
 class TstAudioEngineMasterMute : public QObject {
@@ -234,6 +258,46 @@ private slots:
         QSignalSpy spy(&engine, &AudioEngine::masterMutedChanged);
         engine.setMasterMuted(false);
         QCOMPARE(spy.count(), 0);
+    }
+
+    // ── R-R3-45: master volume and mute act on the speakers (design 6.3) ──
+
+    void masterMuteLeavesTheHeadphonesPlaying() {
+        Harness h = makeHarness();
+        FakeAudioBus* headphones = injectFakeHeadphones(h.engine);
+        const int s = h.addSlice(/*vaxChannel=*/0);
+        h.radio->sliceById(s)->setOutputRoute(SliceModel::OutputRoute::Headphones);
+
+        h.engine->setMasterMuted(true);
+        const int flushes = headphones->flushCount();
+        for (int i = 0; i < 200; ++i) {
+            h.engine->rxBlockReady(s, kTestSamples.data(), kTestFrames);
+        }
+
+        QCOMPARE(h.speakers->pushCount(), 0);
+        QCOMPARE(headphones->pushCount(), 200);
+        QVERIFY(bufferHasSignal(headphones->buffer()));
+        QCOMPARE(headphones->flushCount(), flushes);
+        h.radio->sliceById(s)->setOutputRoute(SliceModel::OutputRoute::Speakers);
+    }
+
+    void masterVolumeActsOnTheSpeakersOnly() {
+        Harness h = makeHarness();
+        FakeAudioBus* headphones = injectFakeHeadphones(h.engine);
+        const int a = h.addSlice(/*vaxChannel=*/0);
+        const int b = h.addSlice(/*vaxChannel=*/0);
+        h.radio->sliceById(b)->setOutputRoute(SliceModel::OutputRoute::Headphones);
+
+        h.engine->setVolume(0.0f);
+        for (int i = 0; i < 200; ++i) {
+            h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+            h.engine->rxBlockReady(b, kTestSamples.data(), kTestFrames);
+        }
+
+        QVERIFY(h.speakers->pushCount() > 0);
+        QVERIFY(!bufferHasSignal(h.speakers->buffer()));
+        QVERIFY(bufferHasSignal(headphones->buffer()));
+        h.radio->sliceById(b)->setOutputRoute(SliceModel::OutputRoute::Speakers);
     }
 };
 

@@ -83,13 +83,19 @@ branding.
 
 ## resources/shaders/
 
-GLSL shaders for Qt6 QRhi-based spectrum, waterfall, and meter rendering.
-Most are original NereusSDR work; one (`waterfall.frag`) inherits its
-ring-buffer UV-offset sampling pattern from AetherSDR
+GLSL shaders for Qt6 QRhi-based spectrum, waterfall, meter, and 3DSS
+rendering. Most are original NereusSDR work; `waterfall.frag` inherits
+its ring-buffer UV-offset sampling pattern from AetherSDR
 (ten9876/AetherSDR, GPLv3) and is annotated as such in its file header
 per `docs/attribution/HOW-TO-PORT.md` rule 6 (project-level citation —
-AetherSDR has no per-file shader headers to copy verbatim). No shader
-source was ported from Thetis (which uses GDI+/WinForms rendering).
+AetherSDR has no per-file shader headers to copy verbatim). `dss_mesh.vert`
+and `dss_mesh.frag` are full byte-for-byte ports of AetherSDR's 3DSS
+height-map mesh shaders at pinned commit `1872028c`, carrying the same
+project-level citation; `dss_mesh.vert` additionally carries one
+NereusSDR comment-only deviation (`//-KG4VCF [v0.5.3]`, see
+`docs/architecture/2026-08-08-3d-stacked-trace-spectrum-design.md`
+section 2.3 — no GLSL statement was changed). No shader source was
+ported from Thetis (which uses GDI+/WinForms rendering).
 
 | File | Purpose | License |
 | --- | --- | --- |
@@ -103,6 +109,8 @@ source was ported from Thetis (which uses GDI+/WinForms rendering).
 | `meter_geometry.vert` | Vertex shader for meter geometry pipeline | GPL-2.0-or-later |
 | `meter_textured.frag` | Fragment shader for MeterWidget textured pipeline (background images: ananMM, cross-needle) | GPL-2.0-or-later |
 | `meter_textured.vert` | Vertex shader for meter textured pipeline | GPL-2.0-or-later |
+| `dss_mesh.vert` | Vertex shader for the 3DSS GPU height-map mesh (perspective trapezoid projection, ridge/curtain geometry, screen-space ribbon outline expansion); ported byte-for-byte from AetherSDR `dss_mesh.vert` [@1872028c] (GPLv3), plus one NereusSDR comment-only annotation (`scrollDistanceRows` pinned at 1.0; no GLSL statement changed) | GPLv3 (AetherSDR-derived body) + GPL-2.0-or-later (NereusSDR comment annotation) |
+| `dss_mesh.frag` | Fragment shader for the 3DSS GPU height-map mesh (palette LUT lookup, haze/depth fade, slice shadow decals); ported byte-for-byte from AetherSDR `dss_mesh.frag` [@1872028c] (GPLv3) | GPLv3 (AetherSDR-derived) |
 
 ---
 

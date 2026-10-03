@@ -1,4 +1,16 @@
 // =================================================================
+// Historical PureSignal 2 provenance record retained by NereusSDR
+// =================================================================
+//
+// The block below describes the retired iqc.c predecessor imported from
+// Thetis v2.10.3.13 in May 2026.  On 2026-09-22 it was superseded by the
+// pinned TAPR OpenHPSDR WDSP 2.10 baseline at
+// b02d5bac675dd2f33ec2bab2b339f79a597c47dd.  The current implementation and
+// its Nereus compatibility/cancellation changes begin after this historical
+// record; the old provenance and notices remain here for attribution only.
+// =================================================================
+
+// =================================================================
 // third_party/wdsp/src/iqc.c  (NereusSDR)
 // =================================================================
 //
@@ -49,67 +61,67 @@ warren@wpratt.com
 //                "Ported from Thetis source" preamble added above the
 //                original NR0V license header, mirroring cfcomp.c.
 // =================================================================
+
+/*  iqc.c
+
+This file is part of a program that implements a Software-Defined Radio.
+
+Copyright (C) 2013, 2016, 2026 Warren Pratt, NR0V
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at  
+
+warren@pratt.one
+
+*/
+
+// NereusSDR modifications (2026-09-30 notice, J.J. Boyd KG4VCF, with Anthropic
+// Claude Code; changes made between 2026-09-22 and 2026-09-30 against the
+// pinned TAPR WDSP 2.10 tree at b02d5bac): adds a stopping flag to the IQC state;
+// SetTXAiqcSwap and SetTXAiqcStart return whether they installed the
+// transition and wrap new Checked variants that test a cancellation flag
+// under csDSP and stop their busy waits on stop or cancel; SetTXAiqcEnd's
+// busy wait also stops once the stopping flag is set; END clears the run
+// bit when the ramp completes; and adds SetTXAiqcStopping,
+// RequestTXAiqcEnd, StopTXAiqcQuiescent, ApplyTXAiqcRetained,
+// GetTXAiqcCorrectionAvailable and GetPSCorrectionState.
+// The "No NereusSDR-level edits" line in the historical record above
+// describes the retired May 2026 Thetis vendor only, not this file.
+
 #include "comm.h"
-
-void size_iqc (IQC a)
-{
-	int i;
-	a->t =	(double *) malloc0 ((a->ints + 1) * sizeof(double));
-	for (i = 0; i <= a->ints; i++)
-		a->t[i] = (double)i / (double)a->ints;
-	for (i = 0; i < 2; i++)
-	{
-		a->cm[i] = (double *) malloc0 (a->ints * 4 * sizeof(double));
-		a->cc[i] = (double *) malloc0 (a->ints * 4 * sizeof(double));
-		a->cs[i] = (double *) malloc0 (a->ints * 4 * sizeof(double));
-	}
-	a->dog.cpi = (int *) malloc0 (a->ints * sizeof (int));
-	a->dog.count = 0;
-	a->dog.full_ints = 0;
-}
-
-void desize_iqc (IQC a)
-{
-	int i;
-	_aligned_free (a->dog.cpi);
-	for (i = 0; i < 2; i++)
-	{
-		_aligned_free (a->cm[i]);
-		_aligned_free (a->cc[i]);
-		_aligned_free (a->cs[i]);
-	}
-	_aligned_free (a->t);
-}
 
 void calc_iqc (IQC a)
 {
-	int i;
-	double delta, theta;
 	a->cset = 0;
 	a->count = 0;
 	a->state = 0;
 	a->busy = 0;
+	a->stopping = 0;
 	a->ntup = (int)(a->tup * a->rate);
 	a->cup = (double *) malloc0 ((a->ntup + 1) * sizeof (double));
-	delta = PI / (double)a->ntup;
-	theta = 0.0;
-	for (i = 0; i <= a->ntup; i++)
+	double delta = PI / (double)a->ntup;
+	double theta = 0.0;
+	for (int i = 0; i <= a->ntup; i++)
 	{
 		a->cup[i] = 0.5 * (1.0 - cos (theta));
 		theta += delta;
 	}
-	InitializeCriticalSectionAndSpinCount (&a->dog.cs, 2500);
-	size_iqc (a);
 }
 
-void decalc_iqc (IQC a)
-{
-	desize_iqc (a);
-	DeleteCriticalSection (&a->dog.cs);
-	_aligned_free (a->cup);
-}
-
-IQC create_iqc (int run, int size, double* in, double* out, double rate, int ints, double tup, int spi)
+IQC create_iqc (int run, int size, double* in, double* out, double rate, double tup)
 {
 	IQC a = (IQC) malloc0 (sizeof (iqc));
 	a->run = run;
@@ -117,16 +129,24 @@ IQC create_iqc (int run, int size, double* in, double* out, double rate, int int
 	a->in = in;
 	a->out = out;
 	a->rate = rate;
-	a->ints = ints;
 	a->tup = tup;
-	a->dog.spi = spi;
+	a->m_spline[0] = a->m_spline[1] = NULL;
+	a->c_spline[0] = a->c_spline[1] = NULL;
+	a->s_spline[0] = a->s_spline[1] = NULL;
 	calc_iqc (a);
 	return a;
 }
 
 void destroy_iqc (IQC a)
 {
-	decalc_iqc (a);
+	_aligned_free(a->cup);
+
+	ns_free(a->m_spline[0]); ns_free(a->m_spline[1]);
+	ns_free(a->c_spline[0]); ns_free(a->c_spline[1]);
+	ns_free(a->s_spline[0]); ns_free(a->s_spline[1]);
+	a->m_spline[0] = a->m_spline[1] = NULL;
+	a->c_spline[0] = a->c_spline[1] = NULL;
+	a->s_spline[0] = a->s_spline[1] = NULL;
 	_aligned_free (a);
 }
 
@@ -144,40 +164,30 @@ enum _iqcstate
 	DONE
 };
 
+#define IQC_OUT_MAX 0.999
+
 void xiqc (IQC a)
 {
 	if (_InterlockedAnd(&a->run, 1))
 	{
-		int i, k, cset, mset;
-		double I, Q, env, dx, ym, yc, ys, PRE0, PRE1;
-		for (i = 0; i < a->size; i++)
+		int cset, altset;
+		double  I, Q, env, ym, yc, ys, PRE0, PRE1;
+		for (int i = 0; i < a->size; i++)
 		{
 			I = a->in[2 * i + 0];
 			Q = a->in[2 * i + 1];
 			env = sqrt (I * I + Q * Q);
-			if ((k = (int)(env * a->ints)) > a->ints - 1) k = a->ints - 1;
-			dx = env - a->t[k];
 			cset = a->cset;
-			ym = a->cm[cset][4 * k + 0] + dx * (a->cm[cset][4 * k + 1] + dx * (a->cm[cset][4 * k + 2] + dx * a->cm[cset][4 * k + 3]));
-			yc = a->cc[cset][4 * k + 0] + dx * (a->cc[cset][4 * k + 1] + dx * (a->cc[cset][4 * k + 2] + dx * a->cc[cset][4 * k + 3]));
-			ys = a->cs[cset][4 * k + 0] + dx * (a->cs[cset][4 * k + 1] + dx * (a->cs[cset][4 * k + 2] + dx * a->cs[cset][4 * k + 3]));
+			ym = get_mag_correction_ema  (&a->m_calavg[cset], env, &a->m_prev_y[cset]);
+			yc = get_phase_correction_ema(&a->c_calavg[cset], env, &a->c_prev_y[cset]);
+			ys = get_phase_correction_ema(&a->s_calavg[cset], env, &a->s_prev_y[cset]);
 			PRE0 = ym * (I * yc - Q * ys);
 			PRE1 = ym * (I * ys + Q * yc);
 
 			switch (a->state)
 			{
 			case RUN:
-				if (a->dog.cpi[k] != a->dog.spi)
-					if (++a->dog.cpi[k] == a->dog.spi)
-						a->dog.full_ints++;
-				if (a->dog.full_ints == a->ints)
-				{
-					EnterCriticalSection (&a->dog.cs);
-					++a->dog.count;
-					LeaveCriticalSection (&a->dog.cs);
-					a->dog.full_ints = 0;
-					memset (a->dog.cpi, 0, a->ints * sizeof (int));
-				}
+			
 				break;
 			case BEGIN:
 				PRE0 = (1.0 - a->cup[a->count]) * I + a->cup[a->count] * PRE0;
@@ -190,16 +200,17 @@ void xiqc (IQC a)
 				}
 				break;
 			case SWAP:
-				mset = 1 - cset;
-				ym = a->cm[mset][4 * k + 0] + dx * (a->cm[mset][4 * k + 1] + dx * (a->cm[mset][4 * k + 2] + dx * a->cm[mset][4 * k + 3]));
-				yc = a->cc[mset][4 * k + 0] + dx * (a->cc[mset][4 * k + 1] + dx * (a->cc[mset][4 * k + 2] + dx * a->cc[mset][4 * k + 3]));
-				ys = a->cs[mset][4 * k + 0] + dx * (a->cs[mset][4 * k + 1] + dx * (a->cs[mset][4 * k + 2] + dx * a->cs[mset][4 * k + 3]));
-				PRE0 = (1.0 - a->cup[a->count]) * ym * (I * yc - Q * ys) + a->cup[a->count] * PRE0;
-				PRE1 = (1.0 - a->cup[a->count]) * ym * (I * ys + Q * yc) + a->cup[a->count] * PRE1;
+				altset = 1 - cset;
+				ym = get_mag_correction_ema(&a->m_calavg[altset], env, &a->m_prev_y[altset]);
+				yc = get_phase_correction_ema(&a->c_calavg[altset], env, &a->c_prev_y[altset]);
+				ys = get_phase_correction_ema(&a->s_calavg[altset], env, &a->s_prev_y[altset]);
+				PRE0 = a->cup[a->count] * ym * (I * yc - Q * ys) + (1.0 - a->cup[a->count]) * PRE0;
+				PRE1 = a->cup[a->count] * ym * (I * ys + Q * yc) + (1.0 - a->cup[a->count]) * PRE1;
 				if (a->count++ == a->ntup)
 				{
 					a->state = RUN;
 					a->count = 0;
+					a->cset = altset;
 					InterlockedBitTestAndReset (&a->busy, 0);
 				}
 				break;
@@ -210,6 +221,7 @@ void xiqc (IQC a)
 				{
 					a->state = DONE;
 					a->count = 0;
+					InterlockedBitTestAndReset (&a->run, 0);
 					InterlockedBitTestAndReset (&a->busy, 0);
 				}
 				break;
@@ -218,9 +230,19 @@ void xiqc (IQC a)
 				PRE1 = Q;
 				break;
 			}
+
+			{
+				double omag2 = PRE0 * PRE0 + PRE1 * PRE1;
+				if (omag2 > IQC_OUT_MAX * IQC_OUT_MAX) 
+				{
+					double sc = IQC_OUT_MAX / sqrt(omag2);
+					PRE0 *= sc;
+					PRE1 *= sc;
+				}
+			}
+
 			a->out[2 * i + 0] = PRE0;
 			a->out[2 * i + 1] = PRE1;
-			// print_iqc_values("iqc.txt", a->state, env, PRE0, PRE1, ym, yc, ys, 1.1);
 		}
 	}
 	else if (a->out != a->in)
@@ -235,7 +257,7 @@ void setBuffers_iqc (IQC a, double* in, double* out)
 
 void setSamplerate_iqc (IQC a, int rate)
 {
-	decalc_iqc (a);
+	_aligned_free(a->cup);
 	a->rate = rate;
 	calc_iqc (a);
 }
@@ -251,90 +273,257 @@ void setSize_iqc (IQC a, int size)
 *																										*
 ********************************************************************************************************/
 
-PORT
-void GetTXAiqcValues (int channel, double* cm, double* cc, double* cs)
+void GetTXAiqcValues (int channel, NS_Spline** m_spline, CurveEMA* m_calavg, double *m_prev_y,
+	                               NS_Spline** c_spline, CurveEMA* c_calavg, double *c_prev_y,
+	                               NS_Spline** s_spline, CurveEMA* s_calavg, double *s_prev_y)
 {
-	IQC a;
+	IQC a = txa[channel].iqc.p;
 	EnterCriticalSection (&ch[channel].csDSP);
-	a = txa[channel].iqc.p0;
-	memcpy (cm, a->cm[a->cset], a->ints * 4 * sizeof (double));
-	memcpy (cc, a->cc[a->cset], a->ints * 4 * sizeof (double));
-	memcpy (cs, a->cs[a->cset], a->ints * 4 * sizeof (double));
+	ns_free(*m_spline);
+	*m_spline = ns_copy(a->m_spline[a->cset]);
+	memcpy(m_calavg, &a->m_calavg[a->cset], sizeof(CurveEMA));
+	*m_prev_y = a->m_prev_y[a->cset];
+
+	ns_free(*c_spline);
+	*c_spline = ns_copy(a->c_spline[a->cset]);
+	memcpy(c_calavg, &a->c_calavg[a->cset], sizeof(CurveEMA));
+	*c_prev_y = a->c_prev_y[a->cset];
+
+	ns_free(*s_spline);
+	*s_spline = ns_copy(a->s_spline[a->cset]);
+	memcpy(s_calavg, &a->s_calavg[a->cset], sizeof(CurveEMA));
+	*s_prev_y = a->s_prev_y[a->cset];
+
 	LeaveCriticalSection (&ch[channel].csDSP);
 }
 
-PORT
-void SetTXAiqcValues (int channel, double* cm, double* cc, double* cs)
+int SetTXAiqcSwap (int channel, NS_Spline* m_spline, CurveEMA* m_calavg, double m_prev_y,
+		                         NS_Spline* c_spline, CurveEMA* c_calavg, double c_prev_y,
+	                             NS_Spline* s_spline, CurveEMA* s_calavg, double s_prev_y)
 {
-	IQC a;
-	EnterCriticalSection (&ch[channel].csDSP);
-	a = txa[channel].iqc.p0;
-	a->cset = 1 - a->cset;
-	memcpy (a->cm[a->cset], cm, a->ints * 4 * sizeof (double));
-	memcpy (a->cc[a->cset], cc, a->ints * 4 * sizeof (double));
-	memcpy (a->cs[a->cset], cs, a->ints * 4 * sizeof (double));
-	a->state = RUN;
-	LeaveCriticalSection (&ch[channel].csDSP);
+	return SetTXAiqcSwapChecked(channel,
+		m_spline, m_calavg, m_prev_y,
+		c_spline, c_calavg, c_prev_y,
+		s_spline, s_calavg, s_prev_y, NULL);
 }
 
-PORT
-void SetTXAiqcSwap (int channel, double* cm, double* cc, double* cs)
+int SetTXAiqcSwapChecked (int channel, NS_Spline* m_spline, CurveEMA* m_calavg, double m_prev_y,
+		                                NS_Spline* c_spline, CurveEMA* c_calavg, double c_prev_y,
+	                                    NS_Spline* s_spline, CurveEMA* s_calavg, double s_prev_y,
+	                                    volatile LONG* cancelled)
 {
-	IQC a = txa[channel].iqc.p1;
+	IQC a = txa[channel].iqc.p;
 	EnterCriticalSection (&ch[channel].csDSP);
-	a->cset = 1 - a->cset;
-	memcpy (a->cm[a->cset], cm, a->ints * 4 * sizeof (double));
-	memcpy (a->cc[a->cset], cc, a->ints * 4 * sizeof (double));
-	memcpy (a->cs[a->cset], cs, a->ints * 4 * sizeof (double));
+	if (_InterlockedAnd (&a->stopping, 1) ||
+		(cancelled != NULL && _InterlockedAnd(cancelled, 1)))
+	{
+		LeaveCriticalSection (&ch[channel].csDSP);
+		return 0;
+	}
+	int altset = 1 - a->cset;
+
+	ns_free(a->m_spline[altset]);
+	a->m_spline[altset] = m_spline;
+	memcpy(&a->m_calavg[altset], m_calavg, sizeof(CurveEMA));
+	a->m_prev_y[altset] = m_prev_y;
+
+	ns_free(a->c_spline[altset]);
+	a->c_spline[altset] = c_spline;
+	memcpy(&a->c_calavg[altset], c_calavg, sizeof(CurveEMA));
+	a->c_prev_y[altset] = c_prev_y;
+
+	ns_free(a->s_spline[altset]);
+	a->s_spline[altset] = s_spline;
+	memcpy(&a->s_calavg[altset], s_calavg, sizeof(CurveEMA));
+	a->s_prev_y[altset] = s_prev_y;
+
 	InterlockedBitTestAndSet (&a->busy, 0);
 	a->state = SWAP;
 	a->count = 0;
 	LeaveCriticalSection (&ch[channel].csDSP);
-	while (_InterlockedAnd (&a->busy, 1)) Sleep(1);
+
+	while (_InterlockedAnd (&a->busy, 1) &&
+		!_InterlockedAnd (&a->stopping, 1) &&
+		(cancelled == NULL || !_InterlockedAnd(cancelled, 1))) Sleep(1);
+	return 1;
 }
 
-PORT
-void SetTXAiqcStart (int channel, double* cm, double* cc, double* cs)
+
+int SetTXAiqcStart (int channel, NS_Spline* m_spline, CurveEMA* m_calavg, double m_prev_y,
+	                              NS_Spline* c_spline, CurveEMA* c_calavg, double c_prev_y,
+	                              NS_Spline* s_spline, CurveEMA* s_calavg, double s_prev_y)
 {
-	IQC a = txa[channel].iqc.p1;
+	return SetTXAiqcStartChecked(channel,
+		m_spline, m_calavg, m_prev_y,
+		c_spline, c_calavg, c_prev_y,
+		s_spline, s_calavg, s_prev_y, NULL);
+}
+
+int SetTXAiqcStartChecked (int channel, NS_Spline* m_spline, CurveEMA* m_calavg, double m_prev_y,
+	                                     NS_Spline* c_spline, CurveEMA* c_calavg, double c_prev_y,
+	                                     NS_Spline* s_spline, CurveEMA* s_calavg, double s_prev_y,
+	                                     volatile LONG* cancelled)
+{
+	IQC a = txa[channel].iqc.p;
 	EnterCriticalSection (&ch[channel].csDSP);
+	if (_InterlockedAnd (&a->stopping, 1) ||
+		(cancelled != NULL && _InterlockedAnd(cancelled, 1)))
+	{
+		LeaveCriticalSection (&ch[channel].csDSP);
+		return 0;
+	}
 	a->cset = 0;
-	memcpy (a->cm[a->cset], cm, a->ints * 4 * sizeof (double));
-	memcpy (a->cc[a->cset], cc, a->ints * 4 * sizeof (double));
-	memcpy (a->cs[a->cset], cs, a->ints * 4 * sizeof (double));
+
+	ns_free(a->m_spline[a->cset]);
+	a->m_spline[a->cset] = m_spline;
+	memcpy(&a->m_calavg[a->cset], m_calavg, sizeof(CurveEMA));
+	a->m_prev_y[a->cset] = m_prev_y;
+
+	ns_free(a->c_spline[a->cset]);
+	a->c_spline[a->cset] = c_spline;
+	memcpy(&a->c_calavg[a->cset], c_calavg, sizeof(CurveEMA));
+	a->c_prev_y[a->cset] = c_prev_y;
+
+	ns_free(a->s_spline[a->cset]);
+	a->s_spline[a->cset] = s_spline;
+	memcpy(&a->s_calavg[a->cset], s_calavg, sizeof(CurveEMA));
+	a->s_prev_y[a->cset] = s_prev_y;
 	InterlockedBitTestAndSet (&a->busy, 0);
 	a->state = BEGIN;
 	a->count = 0;
+	InterlockedBitTestAndSet (&a->run, 0);
 	LeaveCriticalSection (&ch[channel].csDSP);
-	InterlockedBitTestAndSet   (&txa[channel].iqc.p1->run, 0);
-	while (_InterlockedAnd (&a->busy, 1)) Sleep(1);
+	while (_InterlockedAnd (&a->busy, 1) &&
+		!_InterlockedAnd (&a->stopping, 1) &&
+		(cancelled == NULL || !_InterlockedAnd(cancelled, 1))) Sleep(1);
+	return 1;
 }
 
-PORT
 void SetTXAiqcEnd (int channel)
 {
-	IQC a = txa[channel].iqc.p1;
+	IQC a = txa[channel].iqc.p;
 	EnterCriticalSection (&ch[channel].csDSP);
 	InterlockedBitTestAndSet (&a->busy, 0);
 	a->state = END;
 	a->count = 0;
 	LeaveCriticalSection (&ch[channel].csDSP);
-	while (_InterlockedAnd (&a->busy, 1)) Sleep(1);
-	InterlockedBitTestAndReset (&txa[channel].iqc.p1->run, 0);
+	while (_InterlockedAnd (&a->busy, 1) &&
+		!_InterlockedAnd (&a->stopping, 1)) Sleep(1);
+	InterlockedBitTestAndReset (&txa[channel].iqc.p->run, 0);
 }
 
-void GetTXAiqcDogCount (int channel, int* count)
+void SetTXAiqcStopping (int channel, int stopping)
 {
-	IQC a = txa[channel].iqc.p1;
-	EnterCriticalSection (&a->dog.cs);
-	*count = a->dog.count;
-	LeaveCriticalSection (&a->dog.cs);
+	IQC a = txa[channel].iqc.p;
+	if (a == 0) return;
+	EnterCriticalSection (&ch[channel].csDSP);
+	if (stopping)
+	{
+		InterlockedBitTestAndSet (&a->stopping, 0);
+		InterlockedBitTestAndReset (&a->busy, 0);
+	}
+	else
+		InterlockedBitTestAndReset (&a->stopping, 0);
+	LeaveCriticalSection (&ch[channel].csDSP);
 }
 
-void SetTXAiqcDogCount (int channel, int count)
+int RequestTXAiqcEnd (int channel)
 {
-	IQC a = txa[channel].iqc.p1;
-	EnterCriticalSection (&a->dog.cs);
-	a->dog.count = count;
-	LeaveCriticalSection (&a->dog.cs);
+	IQC a;
+	if (channel < 0 || channel >= MAX_CHANNELS) return 0;
+	a = txa[channel].iqc.p;
+	if (a == 0) return 0;
+	EnterCriticalSection (&ch[channel].csDSP);
+	if (_InterlockedAnd (&a->stopping, 1))
+	{
+		LeaveCriticalSection (&ch[channel].csDSP);
+		return 0;
+	}
+	if (_InterlockedAnd (&a->run, 1))
+	{
+		InterlockedBitTestAndSet (&a->busy, 0);
+		a->state = END;
+		a->count = 0;
+	}
+	else
+	{
+		a->state = DONE;
+		a->count = 0;
+		InterlockedBitTestAndReset (&a->busy, 0);
+	}
+	LeaveCriticalSection (&ch[channel].csDSP);
+	return 1;
+}
+
+int StopTXAiqcQuiescent (int channel)
+{
+	IQC a;
+	if (channel < 0 || channel >= MAX_CHANNELS) return 0;
+	a = txa[channel].iqc.p;
+	if (a == 0) return 0;
+	EnterCriticalSection (&ch[channel].csDSP);
+	if (_InterlockedAnd (&a->stopping, 1))
+	{
+		LeaveCriticalSection (&ch[channel].csDSP);
+		return 0;
+	}
+	a->state = DONE;
+	a->count = 0;
+	InterlockedBitTestAndReset (&a->busy, 0);
+	InterlockedBitTestAndReset (&a->run, 0);
+	LeaveCriticalSection (&ch[channel].csDSP);
+	return 1;
+}
+
+int ApplyTXAiqcRetained (int channel)
+{
+	IQC a;
+	int cset;
+	if (channel < 0 || channel >= MAX_CHANNELS) return 0;
+	a = txa[channel].iqc.p;
+	if (a == 0) return 0;
+	EnterCriticalSection (&ch[channel].csDSP);
+	cset = a->cset;
+	if (_InterlockedAnd (&a->stopping, 1) || a->m_spline[cset] == 0 ||
+		a->c_spline[cset] == 0 || a->s_spline[cset] == 0)
+	{
+		LeaveCriticalSection (&ch[channel].csDSP);
+		return 0;
+	}
+	InterlockedBitTestAndSet (&a->busy, 0);
+	a->state = BEGIN;
+	a->count = 0;
+	InterlockedBitTestAndSet (&a->run, 0);
+	LeaveCriticalSection (&ch[channel].csDSP);
+	return 1;
+}
+
+int GetTXAiqcCorrectionAvailable (int channel, int* available)
+{
+	IQC a;
+	int cset;
+	if (channel < 0 || channel >= MAX_CHANNELS || available == 0) return 0;
+	a = txa[channel].iqc.p;
+	if (a == 0) return 0;
+	EnterCriticalSection (&ch[channel].csDSP);
+	cset = a->cset;
+	*available = a->m_spline[cset] != 0 && a->c_spline[cset] != 0 &&
+		a->s_spline[cset] != 0;
+	LeaveCriticalSection (&ch[channel].csDSP);
+	return 1;
+}
+
+PORT
+int GetPSCorrectionState (int channel, int* run, int* busy)
+{
+	IQC a;
+	if (channel < 0 || channel >= MAX_CHANNELS || run == 0 || busy == 0)
+		return 0;
+	a = txa[channel].iqc.p;
+	if (a == 0) return 0;
+	EnterCriticalSection (&ch[channel].csDSP);
+	*run = _InterlockedAnd(&a->run, 1) ? 1 : 0;
+	*busy = _InterlockedAnd(&a->busy, 1) ? 1 : 0;
+	LeaveCriticalSection (&ch[channel].csDSP);
+	return 1;
 }

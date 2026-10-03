@@ -33,6 +33,12 @@ using namespace NereusSDR;
 
 namespace {
 
+class DiagnosticsP2Connection : public P2RadioConnection {
+public:
+    void markConnected() { setState(ConnectionState::Connected); }
+    void retire() { setState(ConnectionState::Disconnected); }
+};
+
 // Build a 60-byte High-Priority status packet with the given big-endian
 // 16-bit values placed at the Thetis ReadBufp offsets (shifted by +4 to
 // account for NereusSDR's leading sequence-number prefix).
@@ -67,6 +73,50 @@ QByteArray makeHighPriorityPacket(quint16 exciter, quint16 fwd, quint16 rev,
 class TestP2StatusTelemetry : public QObject {
     Q_OBJECT
 private slots:
+
+    void highPriorityBitsAndLiveBasePortAreObserved()
+    {
+        DiagnosticsP2Connection conn;
+        conn.init();
+        conn.setPortBasesForTest(45000, 46000);
+        conn.markConnected();
+        QSignalSpy replies(&conn, &RadioConnection::telemetryObservationReady);
+        QSignalSpy positiveSignals(&conn, &RadioConnection::adcOverflow);
+        QByteArray packet = makeHighPriorityPacket(0, 0, 0, 0, 0, 0);
+        packet[5] = 0x05; // ADC0 and ADC2
+        conn.processHighPriorityStatusForTest(packet);
+        conn.processHighPriorityStatusForTest(packet);
+        conn.collectTelemetryObservation(1);
+        QCOMPARE(replies.count(), 1);
+        QCOMPARE(replies.at(0).size(), 7);
+        const RadioDiagnosticsObservation set =
+            qvariant_cast<RadioDiagnosticsObservation>(replies.takeFirst().at(6));
+        QCOMPARE(set.radioUdpBasePort, std::optional<quint16>(45000));
+        QVERIFY(set.adcOverloads[0].active);
+        QCOMPARE(set.adcOverloads[0].eventsSinceConnection, 1);
+        QVERIFY(set.adcOverloads[1].known);
+        QVERIFY(!set.adcOverloads[1].active);
+        QVERIFY(set.adcOverloads[2].active);
+        QCOMPARE(positiveSignals.count(), 4); // unchanged positive-only signal
+
+        packet[5] = 0;
+        conn.processHighPriorityStatusForTest(packet);
+        packet[5] = 0x01;
+        conn.processHighPriorityStatusForTest(packet);
+        conn.collectTelemetryObservation(2);
+        const RadioDiagnosticsObservation again =
+            qvariant_cast<RadioDiagnosticsObservation>(replies.takeFirst().at(6));
+        QCOMPARE(again.adcOverloads[0].eventsSinceConnection, 2);
+        QCOMPARE(again.adcOverloads[2].eventsSinceConnection, 1);
+        QVERIFY(!again.adcOverloads[2].active);
+
+        conn.retire();
+        conn.markConnected();
+        conn.collectTelemetryObservation(3);
+        const RadioDiagnosticsObservation reset =
+            qvariant_cast<RadioDiagnosticsObservation>(replies.takeFirst().at(6));
+        QVERIFY(!reset.adcOverloads[0].known);
+    }
 
     void parsesAllSixFields_fromKnownVector()
     {

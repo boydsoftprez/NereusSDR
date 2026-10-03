@@ -10,6 +10,11 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-26 - R-R3-49 (remote-window parity Task 16): the
+//                 high-resolution curve can come from a Core's bins
+//                 (setFilterResponseBins) in a remote window, resampled as
+//                 the local channel's is. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -57,11 +62,13 @@ mw0lge@grange-lane.co.uk
 // From Thetis clsFilterItem (MeterManager.cs:16852+)
 
 #include "core/RxChannel.h"
+#include "core/spectrum/WaterfallPalettes.h"
 
 #include <QPainter>
 #include <QPolygonF>
 #include <QStringList>
 #include <algorithm>
+#include <iterator>
 #include <cmath>
 
 namespace NereusSDR {
@@ -74,10 +81,7 @@ namespace NereusSDR {
 FilterDisplayItem::FilterDisplayItem(QObject* parent)
     : MeterItem(parent)
 {
-    // From Thetis clsFilterItem ctor (MeterManager.cs:17006) — MiniSpec.PIXELS
-    m_spectrumData.assign(kSpectrumPixels, 0.0f);
-
-    // Waterfall image: kSpectrumPixels wide, 200 rows tall, RGB32
+    // From Thetis clsFilterItem ctor (MeterManager.cs:18326) [@3759d096] — MiniSpec.PIXELS
     m_waterfallImage = QImage(kSpectrumPixels, 200, QImage::Format_RGB32);
     m_waterfallImage.fill(Qt::black);
 }
@@ -113,8 +117,7 @@ void FilterDisplayItem::bindRxChannel(RxChannel* channel)
 
 // ---------------------------------------------------------------------------
 // setSpectrumData()
-// Copy up to kSpectrumPixels bins; zero-pad if count < kSpectrumPixels.
-// From Thetis clsFilterItem Update() (MeterManager.cs:18296+)
+// Compatibility entry point for a trace already reduced to display dBm.
 // ---------------------------------------------------------------------------
 void FilterDisplayItem::setSpectrumData(const float* bins, int count)
 {
@@ -122,12 +125,110 @@ void FilterDisplayItem::setSpectrumData(const float* bins, int count)
         return;
     }
 
-    const int copyCount = std::min(count, kSpectrumPixels);
-    std::copy(bins, bins + copyCount, m_spectrumData.begin());
+    m_spectrumData.assign(bins, bins + count);
+    m_frameAvailable = true;
+}
 
-    // Zero-pad remaining bins if count < kSpectrumPixels
-    if (copyCount < kSpectrumPixels) {
-        std::fill(m_spectrumData.begin() + copyCount, m_spectrumData.end(), 0.0f);
+void FilterDisplayItem::clearFrame()
+{
+    m_spectrumData.clear();
+    m_frameAvailable = false;
+    m_frameTransmitting = false;
+    m_frameCentreHz = 0.0;
+    m_frameSpanHz = 0.0;
+    m_rxLow = m_rxHigh = m_txLow = m_txHigh = -1;
+    m_notchPositions.clear();
+    m_filterResponseBins.clear();
+    m_rfFilterResponseDb.clear();
+    m_rxChannel = nullptr;
+    m_waterfallFrameCount = 0;
+    m_waterfallImage.fill(Qt::black);
+}
+
+int FilterDisplayItem::tracePeakPixelForTest() const
+{
+    if (m_spectrumData.empty()) { return -1; }
+    return int(std::distance(m_spectrumData.begin(),
+        std::max_element(m_spectrumData.begin(), m_spectrumData.end())));
+}
+
+void FilterDisplayItem::setRfFilterResponse(const QVector<double>& magnitudesDb,
+                                            double startHz, double stepHz,
+                                            double referenceHz)
+{
+    m_rxChannel = nullptr;
+    m_filterResponseBins.clear();
+    m_rfFilterResponseDb = magnitudesDb;
+    m_rfFilterStartHz = startHz;
+    m_rfFilterStepHz = stepHz;
+    m_rfFilterReferenceHz = referenceHz;
+}
+
+void FilterDisplayItem::setRfMarkers(double rxLowHz, double rxHighHz,
+                                     double txLowHz, double txHighHz,
+                                     const QVector<double>& notchCentresHz)
+{
+    if (!m_frameAvailable) { return; }
+    const auto pixel = [this](double frequency) {
+        const double position = (frequency - (m_frameCentreHz - m_frameSpanHz / 2.0))
+            / m_frameSpanHz * m_spectrumData.size();
+        return std::isfinite(position) && position >= 0.0
+                && position < m_spectrumData.size()
+            ? std::min(int(m_spectrumData.size()) - 1, int(std::lround(position))) : -1;
+    };
+    m_rxLow = pixel(rxLowHz);
+    m_rxHigh = pixel(rxHighHz);
+    m_txLow = pixel(txLowHz);
+    m_txHigh = pixel(txHighHz);
+    m_notchPositions.clear();
+    for (double centre : notchCentresHz) {
+        const int x = pixel(centre);
+        if (x >= 0) { m_notchPositions.push_back(x); }
+    }
+}
+
+void FilterDisplayItem::presentFrame(const QVector<float>& traceDbm,
+                                     const QVector<float>& waterfallDbm,
+                                     double centreHz, double spanHz,
+                                     bool transmit, bool waterfallAdvance)
+{
+    if (traceDbm.isEmpty() || waterfallDbm.size() != traceDbm.size()
+        || !std::isfinite(centreHz) || !std::isfinite(spanHz) || spanHz <= 0.0) {
+        clearFrame();
+        return;
+    }
+    if (m_frameCentreHz != centreHz || m_frameSpanHz != spanHz
+        || m_frameTransmitting != transmit || m_waterfallImage.width() != traceDbm.size()) {
+        m_waterfallImage = QImage(traceDbm.size(), 200, QImage::Format_RGB32);
+        m_waterfallImage.fill(Qt::black);
+        m_waterfallFrameCount = 0;
+    }
+    m_frameCentreHz = centreHz;
+    m_frameSpanHz = spanHz;
+    m_frameTransmitting = transmit;
+    m_spectrumData.assign(traceDbm.cbegin(), traceDbm.cend());
+    m_frameAvailable = true;
+    if (!waterfallAdvance || ++m_waterfallFrameCount % std::max(1, m_waterfallFrameInterval)) {
+        return;
+    }
+    // From Thetis MeterManager.cs:34289-34305,35690-35730 [v2.10.3.15]:
+    // each new analyzer waterfall row is coloured from its own dB plane.
+    for (int row = m_waterfallImage.height() - 1; row > 0; --row) {
+        const uchar* source = m_waterfallImage.constScanLine(row - 1);
+        uchar* destination = m_waterfallImage.scanLine(row);
+        std::copy(source, source + m_waterfallImage.bytesPerLine(), destination);
+    }
+    QRgb* top = reinterpret_cast<QRgb*>(m_waterfallImage.scanLine(0));
+    if (m_waterfallPalette == WaterfallPalette::LinAuto) {
+        const auto [low, high] = std::minmax_element(waterfallDbm.cbegin(),
+                                                     waterfallDbm.cend());
+        // From Thetis MeterManager.cs:35041-35043 [v2.10.3.15]:
+        // LINAUTO maps each new row from its minimum minus 5 dB to maximum.
+        m_autoWaterfallMinDb = *low - 5.0f;
+        m_autoWaterfallMaxDb = *high;
+    }
+    for (int i = 0; i < waterfallDbm.size(); ++i) {
+        top[i] = dbToWaterfallColor(waterfallDbm[i]).rgb();
     }
 }
 
@@ -145,6 +246,11 @@ void FilterDisplayItem::paint(QPainter& p, int widgetW, int widgetH)
 
     // Background
     p.fillRect(rect, m_meterBackColour);
+    if (!m_frameAvailable) {
+        p.setPen(m_textColour);
+        p.drawText(rect, Qt::AlignCenter, QStringLiteral("Spectrum unavailable"));
+        return;
+    }
 
     if (m_displayMode == DisplayMode::Panafall) {
         // From Thetis FIDisplayMode.PANAFALL: spectrum top half, waterfall bottom
@@ -175,7 +281,7 @@ void FilterDisplayItem::paintSpectrum(QPainter& p, const QRect& rect)
         return;
     }
 
-    const int n = kSpectrumPixels;
+    const int n = int(m_spectrumData.size());
     const float dbRange = m_specMaxDb - m_specMinDb;
     if (std::abs(dbRange) < 1e-6f) {
         return;
@@ -226,28 +332,6 @@ void FilterDisplayItem::paintWaterfall(QPainter& p, const QRect& rect)
         return;
     }
 
-    ++m_waterfallFrameCount;
-
-    // From Thetis _waterfall_frame_interval — only update every Nth frame
-    if ((m_waterfallFrameCount % m_waterfallFrameInterval) == 0) {
-        const int imgW = m_waterfallImage.width();
-        const int imgH = m_waterfallImage.height();
-
-        // Shift all rows down by 1 (oldest row at bottom, newest at top)
-        for (int row = imgH - 1; row > 0; --row) {
-            const uchar* srcLine = m_waterfallImage.constScanLine(row - 1);
-            uchar*       dstLine = m_waterfallImage.scanLine(row);
-            std::copy(srcLine, srcLine + static_cast<size_t>(m_waterfallImage.bytesPerLine()), dstLine);
-        }
-
-        // Write new top row from current spectrum data
-        QRgb* topRow = reinterpret_cast<QRgb*>(m_waterfallImage.scanLine(0));
-        for (int i = 0; i < imgW && i < kSpectrumPixels; ++i) {
-            const QColor c = dbToWaterfallColor(m_spectrumData[static_cast<size_t>(i)]);
-            topRow[i] = c.rgb();
-        }
-    }
-
     // Draw the waterfall image scaled to the destination rect
     p.drawImage(rect, m_waterfallImage);
 }
@@ -260,17 +344,75 @@ void FilterDisplayItem::paintWaterfall(QPainter& p, const QRect& rect)
 // ---------------------------------------------------------------------------
 QColor FilterDisplayItem::dbToWaterfallColor(float db) const
 {
-    const float dbRange = m_specMaxDb - m_specMinDb;
-    float intensity = (dbRange > 1e-6f)
-        ? std::clamp((db - m_specMinDb) / dbRange, 0.0f, 1.0f)
-        : 0.0f;
-
-    // From Thetis Enhanced palette: blue (240°) → cyan → green → yellow → red (0°)
-    const int hue = static_cast<int>(240.0f - intensity * 240.0f); // 240 → 0
-    const int sat = 255;
-    const int val = static_cast<int>(60.0f + intensity * 195.0f);  // dim floor at low signals
-
-    return QColor::fromHsv(hue, sat, val);
+    const float lowDb = m_waterfallPalette == WaterfallPalette::LinAuto
+        ? m_autoWaterfallMinDb : m_specMinDb;
+    const float highDb = m_waterfallPalette == WaterfallPalette::LinAuto
+        ? m_autoWaterfallMaxDb : m_specMaxDb;
+    if (!std::isfinite(db) || highDb <= lowDb) { return Qt::black; }
+    const float range = highDb - lowDb;
+    const float fraction = std::clamp((db - lowDb) / range, 0.0f, 1.0f);
+    // Direct MiniSpec colour rules, MeterManager.cs:34321-35100
+    // [v2.10.3.15]. In particular LinLog/LinRad/LinAuto use hard 23-band
+    // colours rather than the full pan's interpolated waterfall gradients.
+    if (m_waterfallPalette == WaterfallPalette::Custom) {
+        const QVector<QColor>& lut = m_frameTransmitting ? m_customTxGradient
+                                                         : m_customRxGradient;
+        return lut.size() == 101 ? lut[std::min(100, int(fraction * 100.0f))]
+                                 : Qt::black;
+    }
+    if (m_waterfallPalette == WaterfallPalette::BlackWhite) {
+        const int grey = db >= highDb ? 255 : int(fraction * 255.0f);
+        return QColor(grey, grey, grey);
+    }
+    if (m_waterfallPalette == WaterfallPalette::Spectran) {
+        if (db >= highDb) { return QColor(240, 240, 240); }
+        const float percent = fraction * 100.0f;
+        if (percent < 51.0f) { return QColor(0, 0, std::min(255, int(percent) * 5)); }
+        const int multiplier = percent < 66.0f ? 2 : percent < 77.0f ? 3
+                               : percent < 88.0f ? 4 : 5;
+        const int rg = std::clamp(int(percent - 50.0f) * multiplier, 0, 255);
+        return QColor(rg, rg, 255);
+    }
+    if (m_waterfallPalette == WaterfallPalette::Enhanced) {
+        if (db <= lowDb) { return m_waterfallLowColour; }
+        if (db >= highDb) { return QColor(192, 124, 255); }
+        const auto blend = [](float local, int left, int right) {
+            return std::clamp(int((1.0f - local) * left + local * right), 0, 255);
+        };
+        const float p = fraction;
+        if (p < 2.0f / 9.0f) {
+            const float q = p * 9.0f / 2.0f;
+            return QColor(blend(q, m_waterfallLowColour.red(), 0),
+                          blend(q, m_waterfallLowColour.green(), 0),
+                          blend(q, m_waterfallLowColour.blue(), 255));
+        }
+        if (p < 3.0f / 9.0f) { return QColor(0, blend(p * 9 - 2, 0, 255), 255); }
+        if (p < 4.0f / 9.0f) { return QColor(0, 255, blend(p * 9 - 3, 255, 0)); }
+        if (p < 5.0f / 9.0f) { return QColor(blend(p * 9 - 4, 0, 255), 255, 0); }
+        if (p < 7.0f / 9.0f) { return QColor(255, blend((p * 9 - 5) / 2, 255, 0), 0); }
+        if (p < 8.0f / 9.0f) { return QColor(255, 0, blend(p * 9 - 7, 0, 255)); }
+        const float q = p * 9 - 8;
+        return QColor(int((1.0f - 0.25f * q) * 255), int(q * 127.5f), 255);
+    }
+    struct Rgb { int r; int g; int b; };
+    static constexpr Rgb kBands[] = {
+        {0,0,0}, {32,0,0}, {64,0,0}, {96,0,0}, {104,40,0}, {112,60,0},
+        {116,88,0}, {92,112,0}, {80,132,0}, {20,140,0}, {0,160,40},
+        {0,160,120}, {0,140,148}, {0,132,192}, {0,112,200}, {0,88,208},
+        {0,60,232}, {0,40,252}, {80,80,252}, {124,124,252},
+        {172,172,252}, {252,252,252}
+    };
+    if (db <= lowDb) { return Qt::black; }
+    if (db >= highDb) { return QColor(252, 252, 252); }
+    float mapped = fraction;
+    if (m_waterfallPalette == WaterfallPalette::LinRad) {
+        mapped = (db - lowDb + 2.0f) / range;
+    } else if (m_waterfallPalette == WaterfallPalette::LinLog) {
+        const float value = 1024.0f * (db - lowDb - 14.0f) / range;
+        mapped = value > 0.0f ? std::log10(value) / std::log10(1024.0f) : -1.0f;
+    }
+    const int band = std::clamp(int(std::floor(mapped * 23.0f)), 0, 21);
+    return QColor(kBands[band].r, kBands[band].g, kBands[band].b);
 }
 
 // ---------------------------------------------------------------------------
@@ -293,7 +435,8 @@ void FilterDisplayItem::paintFilterEdges(QPainter& p, const QRect& rect)
         paintHighResolutionFilterCurve(p, rect);
     }
 
-    const float scale = static_cast<float>(rect.width()) / static_cast<float>(kSpectrumPixels);
+    const float scale = static_cast<float>(rect.width()) /
+        static_cast<float>(std::max(1, int(m_spectrumData.size())));
 
     auto pixelToX = [&](int pixPos) -> int {
         return rect.left() + static_cast<int>(static_cast<float>(pixPos) * scale);
@@ -304,16 +447,24 @@ void FilterDisplayItem::paintFilterEdges(QPainter& p, const QRect& rect)
     // RX filter edges — 2px solid yellow
     // From Thetis _edges_colour_rx (MeterManager.cs:16951)
     p.setPen(QPen(m_edgesColourRX, 2));
-    p.drawLine(pixelToX(m_rxLow),  rect.top(), pixelToX(m_rxLow),  rect.bottom());
-    p.drawLine(pixelToX(m_rxHigh), rect.top(), pixelToX(m_rxHigh), rect.bottom());
+    if (m_rxLow >= 0) {
+        p.drawLine(pixelToX(m_rxLow),  rect.top(), pixelToX(m_rxLow),  rect.bottom());
+    }
+    if (m_rxHigh >= 0) {
+        p.drawLine(pixelToX(m_rxHigh), rect.top(), pixelToX(m_rxHigh), rect.bottom());
+    }
 
     // TX filter edges — 1px dashed red (only when txLow >= 0)
     // From Thetis _edges_colour_tx (MeterManager.cs:16952)
-    if (m_txLow >= 0 && m_txHigh >= 0) {
+    if (m_txLow >= 0 || m_txHigh >= 0) {
         QPen txPen(m_edgesColourTX, 1, Qt::DashLine);
         p.setPen(txPen);
-        p.drawLine(pixelToX(m_txLow),  rect.top(), pixelToX(m_txLow),  rect.bottom());
-        p.drawLine(pixelToX(m_txHigh), rect.top(), pixelToX(m_txHigh), rect.bottom());
+        if (m_txLow >= 0) {
+            p.drawLine(pixelToX(m_txLow), rect.top(), pixelToX(m_txLow), rect.bottom());
+        }
+        if (m_txHigh >= 0) {
+            p.drawLine(pixelToX(m_txHigh), rect.top(), pixelToX(m_txHigh), rect.bottom());
+        }
     }
 }
 
@@ -334,7 +485,8 @@ void FilterDisplayItem::paintFilterEdges(QPainter& p, const QRect& rect)
 // ---------------------------------------------------------------------------
 void FilterDisplayItem::paintHighResolutionFilterCurve(QPainter& p, const QRect& rect)
 {
-    if (!m_rxChannel || rect.isEmpty()) {
+    if ((!m_rxChannel && m_filterResponseBins.isEmpty()
+         && m_rfFilterResponseDb.isEmpty()) || rect.isEmpty()) {
         return;
     }
 
@@ -343,7 +495,31 @@ void FilterDisplayItem::paintHighResolutionFilterCurve(QPainter& p, const QRect&
         return;
     }
 
-    const QVector<float> mag = m_rxChannel->filterResponseMagnitudes(nPoints);
+    // R-R3-49 (parity Task 16): the bound channel's own curve, or in a
+    // remote window the Core's bins resampled the same way.
+    QVector<float> mag;
+    if (!m_rfFilterResponseDb.isEmpty() && m_rfFilterStepHz > 0.0
+        && m_frameAvailable) {
+        mag.reserve(nPoints);
+        for (int x = 0; x < nPoints; ++x) {
+            const double rfHz = m_frameCentreHz - m_frameSpanHz / 2.0
+                + (double(x) + 0.5) / double(nPoints) * m_frameSpanHz;
+            const double offsetHz = std::abs(rfHz - m_rfFilterReferenceHz);
+            const double index = (offsetHz - m_rfFilterStartHz) / m_rfFilterStepHz;
+            if (index < 0.0 || index >= m_rfFilterResponseDb.size() - 1) {
+                mag.append(-120.0f);
+            } else {
+                const int lower = int(std::floor(index));
+                const double alpha = index - lower;
+                mag.append(float(m_rfFilterResponseDb[lower] * (1.0 - alpha)
+                                 + m_rfFilterResponseDb[lower + 1] * alpha));
+            }
+        }
+    } else {
+        mag = m_rxChannel
+            ? m_rxChannel->filterResponseMagnitudes(nPoints)
+            : RxChannel::resampleFilterResponse(m_filterResponseBins, nPoints);
+    }
     if (mag.size() != nPoints) {
         // filterResponseMagnitudes() returns empty when WDSP/FFTW3 unavailable
         // or when nPoints is invalid — silently skip.
@@ -387,7 +563,8 @@ void FilterDisplayItem::paintNotches(QPainter& p, const QRect& rect)
         return;
     }
 
-    const float scale = static_cast<float>(rect.width()) / static_cast<float>(kSpectrumPixels);
+    const float scale = static_cast<float>(rect.width()) /
+        static_cast<float>(std::max(1, int(m_spectrumData.size())));
 
     p.setRenderHint(QPainter::Antialiasing, false);
     p.setPen(QPen(m_notchColour, 1));

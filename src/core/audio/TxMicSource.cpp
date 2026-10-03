@@ -40,6 +40,10 @@ warren@wpratt.com
 //                 Phase 3M-1c TX pump architecture redesign v3, with
 //                 AI-assisted implementation via Anthropic Claude
 //                 Code.
+//   2026-10-01: TX diagnostics lane: waitForBlock times each wake that
+//                 brings a block (TxMicWakeWatch). Measurement only.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include "TxMicSource.h"
@@ -47,6 +51,7 @@ warren@wpratt.com
 #include <QLoggingCategory>
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 
 Q_LOGGING_CATEGORY(lcTxMicSrc, "nereus.tx.micsrc")
@@ -235,11 +240,26 @@ bool TxMicSource::waitForBlock(int timeoutMs)
     // Mirrors cm_main's WaitForSingleObject(Sem_BuffReady, INFINITE)
     // at cmbuffs.c:163 [v2.10.3.13].  Returns false on timeout or
     // when the source has been stopped (poison release in stop()).
+    // TX diagnostics lane: each wake that brings a block is timed
+    // (measurement only; see TxMicWakeWatch).
+    const auto noteWake = [this] {
+        m_wakeWatch.noteWake(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count());
+    };
     if (timeoutMs < 0) {
         m_blockReadySem.acquire(1);
-        return m_running.load(std::memory_order_acquire);
+        const bool running = m_running.load(std::memory_order_acquire);
+        if (running) {
+            noteWake();
+        }
+        return running;
     }
-    return m_blockReadySem.tryAcquire(1, timeoutMs);
+    const bool acquired = m_blockReadySem.tryAcquire(1, timeoutMs);
+    if (acquired) {
+        noteWake();
+    }
+    return acquired;
 }
 
 // ---------------------------------------------------------------------------

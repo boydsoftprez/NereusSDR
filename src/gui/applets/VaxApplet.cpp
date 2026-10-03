@@ -18,12 +18,42 @@
 //                 (KG4VCF), with AI-assisted transformation via
 //                 Anthropic Claude Code. Phase 3O Sub-Phase 9 Task 9.2b.
 //                 See VaxApplet.h for full provenance / scope notes.
+//   2026-09-23 - R-R3-21: unavailable, with a plain reason, on a
+//                 remote-station model. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-23 - R-R3-44: usable in a remote window again. The VAX
+//                 channels there are this computer's, fed by the Core's
+//                 receiver streams (RemoteVaxRouter), so the gain, mute and
+//                 level rows work; the TX row follows the transmit
+//                 permission (setTransmitPermitted). J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude
+//                 Code.
+//   2026-09-28 - iPhone app plan Task 25 (R-IOS-18): the "Station computer"
+//                 section below this computer's channels, the Core
+//                 computer's VAX through the Core's `vax` object; its TX row
+//                 follows this device's transmit permission, and its meters
+//                 are wanted only while it is shown and the applet visible.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-09-30 - The section is titled "Core computer", and where it does
+//                 not apply (a local window, or a Core that shares no VAX
+//                 channels) it stays in place disabled, with a plain reason
+//                 on each of its controls, instead of hidden. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-09-30 - JJ's ruling: a window that runs the radio directly hides
+//                 the section (it can never have one); a remote window
+//                 keeps it, disabled with its reason while the Core shares
+//                 no VAX. Its labels grey when it is disabled. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "VaxApplet.h"
 
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
+#include "core/session/StationVaxFacade.h"
 #include "gui/StyleConstants.h"
 #include "gui/widgets/MeterSlider.h"
 #include "models/RadioModel.h"
@@ -37,6 +67,7 @@
 #include <QShowEvent>
 #include <QSignalBlocker>
 #include <QTimer>
+#include <QVariant>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -101,6 +132,79 @@ VaxApplet::VaxApplet(RadioModel* model, AudioEngine* audio, QWidget* parent)
     buildUi();
     connectSliceTagsTracking();
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+
+    // R-R3-44: in a remote window the VAX channels are this computer's,
+    // fed by the Core's receiver streams through RemoteVaxRouter, which
+    // applies this applet's gain and mute (AudioEngine::writeVaxOutput). The
+    // TX row sets the level of VAX used as the microphone, which waits for
+    // remote transmit: it starts unavailable until MainWindow pushes the
+    // negotiated permission.
+    if (m_model && !m_model->ownsLocalDsp()) {
+        setTransmitPermitted(false, QString());
+    }
+}
+
+namespace {
+
+// The tooltip a widget had before a reason replaced it, kept on the widget.
+constexpr auto kSavedStationTooltip = "VaxSavedStationTooltip";
+
+// While the Core computer section cannot be used, each of its controls
+// shows the reason in place of its own tooltip; the tooltip comes back
+// when the section can be used again (the TX row's pattern below).
+// A label in the Core computer section: its own color, and the disabled
+// text color while the section is disabled, as the title has.
+QString stationLabelStyle(const char* color, int pixelSize)
+{
+    return QStringLiteral("QLabel { color: %1; font-size: %2px; }"
+                          "QLabel:disabled { color: %3; }")
+        .arg(QLatin1String(color))
+        .arg(pixelSize)
+        .arg(QLatin1String(Style::kDisabledText));
+}
+
+void showStationReason(QWidget* w, bool available, const QString& reason)
+{
+    if (w == nullptr) {
+        return;
+    }
+    if (!available) {
+        if (!w->property(kSavedStationTooltip).isValid()) {
+            w->setProperty(kSavedStationTooltip, w->toolTip());
+        }
+        w->setToolTip(reason);
+        return;
+    }
+    if (w->property(kSavedStationTooltip).isValid()) {
+        w->setToolTip(w->property(kSavedStationTooltip).toString());
+        w->setProperty(kSavedStationTooltip, QVariant());
+    }
+}
+
+} // namespace
+
+void VaxApplet::setTransmitPermitted(bool permitted, const QString& reason)
+{
+    if (!m_txMeter) {
+        return;
+    }
+    static constexpr auto kSavedTooltip = "VaxSavedTransmitTooltip";
+    if (!permitted) {
+        const QString shown = reason.isEmpty()
+            ? tr("Transmit controls are unavailable until the Core confirms transmit permission.")
+            : reason;
+        if (!m_txMeter->property(kSavedTooltip).isValid()) {
+            m_txMeter->setProperty(kSavedTooltip, m_txMeter->toolTip());
+        }
+        m_txMeter->setEnabled(false);
+        m_txMeter->setToolTip(shown);
+        return;
+    }
+    m_txMeter->setEnabled(true);
+    if (m_txMeter->property(kSavedTooltip).isValid()) {
+        m_txMeter->setToolTip(m_txMeter->property(kSavedTooltip).toString());
+        m_txMeter->setProperty(kSavedTooltip, QVariant());
+    }
 }
 
 void VaxApplet::buildUi()
@@ -291,10 +395,248 @@ void VaxApplet::buildUi()
         });
     }
 
+    buildStationSection(body, vbox);
+
     // ── 20 Hz level poll (Pattern A — isolated per-applet timer) ──────
     m_levelTimer = new QTimer(this);
     m_levelTimer->setInterval(50);  // 50 ms = 20 Hz, "quiet meter" feel
     connect(m_levelTimer, &QTimer::timeout, this, &VaxApplet::pollLevels);
+}
+
+// iPhone app plan Task 25 (R-IOS-18): the Core computer's VAX channels, as
+// this computer's rows above show its own, each control going through the
+// Core's `vax` object.
+void VaxApplet::buildStationSection(QWidget* body, QVBoxLayout* vbox)
+{
+    m_stationSection = new QWidget(body);
+    auto* box = new QVBoxLayout(m_stationSection);
+    box->setContentsMargins(0, 4, 0, 0);
+    box->setSpacing(4);
+
+    auto* line = new QFrame(m_stationSection);
+    line->setFrameShape(QFrame::HLine);
+    line->setFrameShadow(QFrame::Plain);
+    line->setStyleSheet(QStringLiteral("QFrame { color: #203040; }"));
+    box->addWidget(line);
+
+    m_stationTitle = new QLabel(QStringLiteral("Core computer"), m_stationSection);
+    m_stationTitle->setStyleSheet(
+        QStringLiteral("QLabel { color: %1; font-size: 11px; font-weight: bold; }"
+                       "QLabel:disabled { color: %2; }")
+            .arg(Style::kTextPrimary, Style::kDisabledText));
+    m_stationTitle->setToolTip(QStringLiteral("The VAX channels on the computer the Core runs on"));
+    box->addWidget(m_stationTitle);
+
+    for (int i = 0; i < kChannels; ++i) {
+        const int channel = i + 1;
+        auto* row = new QHBoxLayout;
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(4);
+
+        auto* chLabel = new QLabel(QStringLiteral("VAX %1:").arg(channel), m_stationSection);
+        chLabel->setStyleSheet(stationLabelStyle(Style::kTextSecondary, 11));
+        chLabel->setFixedWidth(44);
+        row->addWidget(chLabel);
+
+        m_stationTagsLbl[i] = new QLabel(QStringLiteral("\u2014"), m_stationSection);
+        m_stationTagsLbl[i]->setStyleSheet(stationLabelStyle("#506070", 11));
+        m_stationTagsLbl[i]->setFixedWidth(56);
+        row->addWidget(m_stationTagsLbl[i]);
+
+        m_stationRxMeter[i] = new MeterSlider(m_stationSection);
+        connect(m_stationRxMeter[i], &MeterSlider::gainChanged, this, [this, channel](float g) {
+            if (m_stationVax) {
+                m_stationVax->setRxGain(channel, g);
+            }
+        });
+        row->addWidget(m_stationRxMeter[i], 1);
+
+        m_stationMuteBtn[i] = new QPushButton(QStringLiteral("Mute"), m_stationSection);
+        m_stationMuteBtn[i]->setCheckable(true);
+        m_stationMuteBtn[i]->setStyleSheet(vaxButtonStyle() + Style::greenCheckedStyle());
+        m_stationMuteBtn[i]->setFixedSize(46, 20);
+        m_stationMuteBtn[i]->setToolTip(
+            QStringLiteral("Mute VAX channel %1 on the computer the Core runs on").arg(channel));
+        connect(m_stationMuteBtn[i], &QPushButton::toggled, this, [this, channel](bool on) {
+            if (m_stationVax) {
+                m_stationVax->setMuted(channel, on);
+            }
+        });
+        row->addWidget(m_stationMuteBtn[i]);
+        box->addLayout(row);
+
+        auto* devRow = new QHBoxLayout;
+        devRow->setContentsMargins(48, 0, 0, 0);
+        devRow->setSpacing(0);
+        m_stationDeviceLbl[i] = new QLabel(QString(), m_stationSection);
+        m_stationDeviceLbl[i]->setStyleSheet(stationLabelStyle("#506070", 10));
+        devRow->addWidget(m_stationDeviceLbl[i]);
+        devRow->addStretch();
+        box->addLayout(devRow);
+    }
+
+    auto* row = new QHBoxLayout;
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(4);
+    auto* txLabel = new QLabel(QStringLiteral("TX:"), m_stationSection);
+    txLabel->setStyleSheet(stationLabelStyle(Style::kTextSecondary, 11));
+    txLabel->setFixedWidth(44);
+    row->addWidget(txLabel);
+    m_stationTxTagsLbl = new QLabel(QStringLiteral("\u2014"), m_stationSection);
+    m_stationTxTagsLbl->setStyleSheet(stationLabelStyle("#506070", 11));
+    m_stationTxTagsLbl->setFixedWidth(56);
+    row->addWidget(m_stationTxTagsLbl);
+    m_stationTxMeter = new MeterSlider(m_stationSection);
+    connect(m_stationTxMeter, &MeterSlider::gainChanged, this, [this](float g) {
+        if (m_stationVax) {
+            m_stationVax->setTxGain(g);
+        }
+    });
+    row->addWidget(m_stationTxMeter, 1);
+    auto* spacer = new QWidget(m_stationSection);
+    spacer->setFixedWidth(46);
+    row->addWidget(spacer);
+    box->addLayout(row);
+
+    vbox->addWidget(m_stationSection);
+    // A window that runs the radio directly can never have the section:
+    // its own rows above are the Core computer's, so it is hidden there.
+    // In a remote window it stays in place, disabled with its reason,
+    // until the Core sends its VAX.
+    m_stationSection->setVisible(m_model != nullptr && !m_model->ownsLocalDsp());
+    applyStationAvailability();
+    setStationTransmitPermitted(false, QString());
+}
+
+QString VaxApplet::stationUnavailableReason() const
+{
+    // Only a remote window shows the section (a local one hides it).
+    return QStringLiteral("The Core computer is not sharing its VAX channels.");
+}
+
+void VaxApplet::applyStationAvailability()
+{
+    if (!m_stationSection) {
+        return;
+    }
+    const QString reason = m_stationShown ? QString() : stationUnavailableReason();
+    m_stationSection->setEnabled(m_stationShown);
+    showStationReason(m_stationSection, m_stationShown, reason);
+    showStationReason(m_stationTitle, m_stationShown, reason);
+    for (int i = 0; i < kChannels; ++i) {
+        showStationReason(m_stationRxMeter[i], m_stationShown, reason);
+        showStationReason(m_stationMuteBtn[i], m_stationShown, reason);
+    }
+    updateStationTxRow();
+}
+
+void VaxApplet::setStationVax(StationVax* vax, bool shown)
+{
+    if (m_stationVax != vax) {
+        if (m_stationVax) {
+            disconnect(m_stationVax, nullptr, this, nullptr);
+        }
+        m_stationVax = vax;
+        if (vax != nullptr) {
+            connect(vax, &StationVax::slicesChanged, this, &VaxApplet::refreshStationValues);
+            connect(vax, &StationVax::gainsChanged, this, &VaxApplet::refreshStationValues);
+            connect(vax, &StationVax::mutesChanged, this, &VaxApplet::refreshStationValues);
+            connect(vax, &StationVax::devicesChanged, this, &VaxApplet::refreshStationValues);
+            connect(vax, &StationVax::levelsChanged, this, &VaxApplet::refreshStationLevels);
+        }
+    }
+    m_stationShown = shown && vax != nullptr;
+    applyStationAvailability();
+    refreshStationValues();
+    refreshStationLevels();
+    updateStationLevelsWanted();
+}
+
+void VaxApplet::setStationTransmitPermitted(bool permitted, const QString& reason)
+{
+    m_stationTxPermitted = permitted;
+    m_stationTxReason = reason;
+    updateStationTxRow();
+}
+
+void VaxApplet::updateStationTxRow()
+{
+    if (!m_stationTxMeter) {
+        return;
+    }
+    // The section's own reason comes first: while the section cannot be
+    // used, the transmit permission is not what stops the row.
+    m_stationTxMeter->setEnabled(m_stationTxPermitted);
+    if (!m_stationShown) {
+        m_stationTxMeter->setToolTip(stationUnavailableReason());
+        return;
+    }
+    m_stationTxMeter->setToolTip(
+        m_stationTxPermitted
+            ? QStringLiteral("Level of VAX used as the microphone on the computer the "
+                             "Core runs on")
+            : (m_stationTxReason.isEmpty()
+                   ? tr("Transmit controls are unavailable until the Core confirms "
+                        "transmit permission.")
+                   : m_stationTxReason));
+}
+
+void VaxApplet::refreshStationValues()
+{
+    StationVax* vax = m_stationVax.data();
+    if (vax == nullptr) {
+        return;
+    }
+    const auto tag = [](const QString& letters) {
+        if (letters.isEmpty()) {
+            return QStringLiteral("\u2014");
+        }
+        QStringList parts;
+        for (const QChar letter : letters) {
+            parts << QString(letter);
+        }
+        // As this computer's rows show theirs ("Slice A+B").
+        return QStringLiteral("Slice %1").arg(parts.join(QLatin1Char('+')));
+    };
+    for (int i = 0; i < kChannels; ++i) {
+        const int channel = i + 1;
+        m_stationTagsLbl[i]->setText(tag(vax->property(
+            QStringLiteral("ch%1Slices").arg(channel).toLatin1().constData()).toString()));
+        m_stationDeviceLbl[i]->setText(vax->device(channel));
+        {
+            QSignalBlocker b(m_stationRxMeter[i]);
+            m_stationRxMeter[i]->setGain(static_cast<float>(vax->rxGain(channel)));
+        }
+        {
+            QSignalBlocker b(m_stationMuteBtn[i]);
+            m_stationMuteBtn[i]->setChecked(vax->muted(channel));
+        }
+    }
+    m_stationTxTagsLbl->setText(tag(vax->txSlice()));
+    QSignalBlocker b(m_stationTxMeter);
+    m_stationTxMeter->setGain(static_cast<float>(vax->txGain()));
+}
+
+void VaxApplet::refreshStationLevels()
+{
+    StationVax* vax = m_stationVax.data();
+    if (vax == nullptr) {
+        return;
+    }
+    for (int i = 0; i < kChannels; ++i) {
+        m_stationRxMeter[i]->setLevel(static_cast<float>(vax->stationLevel(i + 1)));
+    }
+    m_stationTxMeter->setLevel(static_cast<float>(vax->stationTxLevel()));
+}
+
+void VaxApplet::updateStationLevelsWanted()
+{
+    const bool wanted = m_stationShown && isVisible();
+    if (wanted == m_stationLevelsWanted) {
+        return;
+    }
+    m_stationLevelsWanted = wanted;
+    emit stationLevelsWantedChanged(wanted);
 }
 
 void VaxApplet::connectSliceTagsTracking()
@@ -447,6 +789,8 @@ void VaxApplet::showEvent(QShowEvent* e)
     if (m_levelTimer) {
         m_levelTimer->start();
     }
+    // The Core computer's meters only while they can be seen.
+    updateStationLevelsWanted();
 }
 
 void VaxApplet::hideEvent(QHideEvent* e)
@@ -455,6 +799,7 @@ void VaxApplet::hideEvent(QHideEvent* e)
         m_levelTimer->stop();
     }
     AppletWidget::hideEvent(e);
+    updateStationLevelsWanted();
 }
 
 } // namespace NereusSDR

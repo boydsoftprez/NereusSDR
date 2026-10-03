@@ -1,0 +1,60 @@
+{
+  "runs": [
+    "service"
+  ],
+  "serverSetup": {
+    "connectionsPerAddress": 1
+  },
+  "steps": [
+    {
+      "connect": "client"
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:clientNonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "connect": "client2"
+    },
+    {
+      "from": "server",
+      "to": "client2",
+      "message": {
+        "type": "error",
+        "code": "tooManyConnections",
+        "reason": "Too many connections are open from this network. Try again shortly.",
+        "retryAfterMs": 5000
+      }
+    },
+    {
+      "expectClosed": "client2",
+      "code": 1000
+    },
+    {
+      "connect": "client3",
+      "address": "203.0.113.9"
+    },
+    {
+      "from": "server",
+      "to": "client3",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:client3Nonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    }
+  ]
+}

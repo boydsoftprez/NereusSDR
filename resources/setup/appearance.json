@@ -1,0 +1,208 @@
+{
+  "version": 12,
+  "category": {
+    "id": "appearance",
+    "title": "Appearance",
+    "where": "phone",
+    "coverage": "partial"
+  },
+  "pages": [
+    {
+      "id": "appearance.colorsTheme",
+      "title": "Colors & Theme",
+      "where": "phone",
+      "coverage": "partial",
+      "sections": [
+        {
+          "title": "Spectrum",
+          "controls": [
+            {
+              "id": "appearance.colorsTheme.traceFillColor",
+              "label": "Trace & Fill Color:",
+              "tooltip": "Click to choose the spectrum trace line and fill color. The color picker lets you adjust alpha for the fill opacity.",
+              "kind": "colour",
+              "binding": {
+                "phone": "DisplayFillColor"
+              },
+              "applies": "live",
+              "default": "#00E5FFFF"
+            },
+            {
+              "id": "appearance.colorsTheme.gridColor",
+              "label": "Grid Color:",
+              "tooltip": "Color of the major vertical grid lines on the panadapter.",
+              "kind": "colour",
+              "binding": {
+                "phone": "DisplayGridColor"
+              },
+              "applies": "live",
+              "default": "#FFFFFF28"
+            },
+            {
+              "id": "appearance.colorsTheme.gridFineColor",
+              "label": "Grid Fine Color:",
+              "tooltip": "Color of the minor (fine) grid lines between major grid lines on the panadapter.",
+              "kind": "colour",
+              "binding": {
+                "phone": "DisplayGridFineColor"
+              },
+              "applies": "live",
+              "default": "#FFFFFF14"
+            },
+            {
+              "id": "appearance.colorsTheme.hGridColor",
+              "label": "H-Grid Color:",
+              "tooltip": "Color of the horizontal dB grid lines on the panadapter.",
+              "kind": "colour",
+              "binding": {
+                "phone": "DisplayHGridColor"
+              },
+              "applies": "live",
+              "default": "#FFFFFF28"
+            },
+            {
+              "id": "appearance.colorsTheme.gridTextColor",
+              "label": "Grid Text Color:",
+              "tooltip": "Color of the frequency and dB labels drawn on the panadapter grid.",
+              "kind": "colour",
+              "binding": {
+                "phone": "DisplayGridTextColor"
+              },
+              "applies": "live",
+              "default": "#FFFF00FF"
+            },
+            {
+              "id": "appearance.colorsTheme.bandEdgeColor",
+              "label": "Band Edge Color:",
+              "tooltip": "Color of the band edge markers drawn at the amateur band boundaries on the panadapter.",
+              "kind": "colour",
+              "binding": {
+                "phone": "DisplayBandEdgeColor"
+              },
+              "applies": "live",
+              "default": "#FF0000FF"
+            },
+            {
+              "id": "appearance.colorsTheme.rxZeroLineColor",
+              "label": "RX Zero Line Color:",
+              "tooltip": "Color of the RX zero line (0 dBm marker) drawn on the panadapter when Show zero line is checked.",
+              "kind": "colour",
+              "binding": {
+                "phone": "DisplayRxZeroLineColor"
+              },
+              "applies": "live",
+              "default": "#FF0000FF"
+            },
+            {
+              "id": "appearance.colorsTheme.txZeroLineColor",
+              "label": "TX Zero Line Color:",
+              "tooltip": "Color of the TX zero line drawn on the panadapter and waterfall at the TX center frequency when transmitting (MOX active).",
+              "kind": "colour",
+              "binding": {
+                "phone": "DisplayTxZeroLineColor"
+              },
+              "applies": "live",
+              "default": "#FFB800FF"
+            },
+            {
+              "id": "appearance.colorsTheme.rxFilterColor",
+              "label": "RX Passband Color:",
+              "tooltip": "Click to choose the RX passband overlay color and opacity. Shown on the panadapter and waterfall slice band during receive.",
+              "kind": "colour",
+              "binding": {
+                "phone": "DisplayRxFilterColor"
+              },
+              "applies": "live",
+              "default": "#00B4D850"
+            },
+            {
+              "id": "appearance.colorsTheme.txFilterColor",
+              "label": "TX Passband Color:",
+              "tooltip": "Click to choose the TX passband overlay color and opacity. Shown on the panadapter and waterfall during MOX/TUNE.",
+              "kind": "colour",
+              "binding": {
+                "phone": "DisplayTxFilterColor"
+              },
+              "applies": "live",
+              "default": "#FF783C2E"
+            }
+          ]
+        },
+        {
+          "title": "Reset",
+          "controls": [
+            {
+              "id": "appearance.colorsTheme.resetColors",
+              "label": "Reset all colors to defaults",
+              "tooltip": "Reset all spectrum and waterfall colors to factory defaults. Other display settings (FPS, averaging, thresholds, etc.) are not affected.",
+              "kind": "button",
+              "binding": {
+                "phone": "resetColors"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 12,
+              "confirm": "Reset all spectrum and waterfall colors to factory defaults?\n\nCustom colors set here will be discarded. Other display settings are not affected."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "appearance.meterStyles",
+      "title": "Meter Styles",
+      "where": "phone",
+      "coverage": "partial",
+      "sections": [
+        {
+          "title": "S-Meter",
+          "controls": [
+            {
+              "id": "appearance.meterStyles.face",
+              "label": "Face:",
+              "tooltip": "The S-meter's face",
+              "kind": "choice",
+              "binding": {"phone": "SMeter_FaceStyle"},
+              "applies": "live",
+              "requiresDescriptionVersion": 7,
+              "options": [
+                {"value": 0, "label": "Aged Cream"},
+                {"value": 1, "label": "VU Amber"},
+                {"value": 2, "label": "Collins White"},
+                {"value": 3, "label": "Blackface"},
+                {"value": 4, "label": "Carbon"},
+                {"value": 5, "label": "Ice"},
+                {"value": 6, "label": "Classic (flat)"}
+              ],
+              "default": 0
+            },
+            {
+              "id": "appearance.meterStyles.peakHold",
+              "label": "Peak hold",
+              "tooltip": "Hold the S-meter's peak reading",
+              "kind": "toggle",
+              "binding": {"phone": "PeakHoldEnabled"},
+              "applies": "live",
+              "requiresDescriptionVersion": 7,
+              "default": true
+            },
+            {
+              "id": "appearance.meterStyles.peakDecay",
+              "label": "Decay Rate:",
+              "tooltip": "How fast the held peak falls back",
+              "kind": "choice",
+              "binding": {"phone": "PeakDecayRate"},
+              "applies": "live",
+              "requiresDescriptionVersion": 7,
+              "options": [
+                {"value": 0, "label": "Fast (20 dB/s)"},
+                {"value": 1, "label": "Medium (10 dB/s)"},
+                {"value": 2, "label": "Slow (5 dB/s)"}
+              ],
+              "default": 1
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

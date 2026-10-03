@@ -1,64 +1,75 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// NereusSDR - tst_rade_text: tests for the Phase 3R Task I4 RadeText
-// callsign-over-EOO wrapper.
+// no-port-check: NereusSDR-original test.
 //
-// RadeText is a thin Qt6 wrapper around the third_party/rade library's
-// native callsign-over-EOO channel (rade_tx_set_eoo_callsign /
-// rade_rx_get_eoo_callsign, declared in third_party/rade/src/rade_api.h
-// :120-145 [@b289102]). The wrapper does not own any rade state;
-// callers pass the active `struct rade*` from RadeChannel when
-// encoding, and pass raw EOO soft-decision bits when decoding. Wire-up
-// into RadeChannel's processIq / txEncode paths is deferred to
-// Phase L per the plan.
+// NereusSDR - tst_rade_text: the RadeText wrapper sends and reads the RADE
+// end-of-over callsign in FreeDV's format through librade.
 //
-// Five lifecycle / behaviour contracts:
+//   constructsAndIsEmpty            a fresh RadeText has no callsign.
+//   setOurCallsignStoresValue       the setter keeps what it is given.
+//   pushTxNullRadeIsNoOp            pushTxCallsign(nullptr) is safe (a
+//                                   stopped RadeChannel has no rade).
+//   pushTxWritesFreeDvFormat        the EOO data librade will send is,
+//                                   float for float, what FreeDV's
+//                                   rade_text writes for the callsign
+//                                   (freedv-backend vectors).
+//   pushTxEmptyCallsignWritesZeros  no callsign: zeros, what FreeDV sends
+//                                   when it has none, not a stale call.
+//   decodesFreeDvStation            a FreeDV station's EOO data (upstream
+//                                   vector, with noise) emits its callsign.
+//   emptyCallsignNotEmitted         a valid empty callsign emits nothing.
+//   noiseNotEmitted                 data FreeDV rejects emits nothing.
+//   endToEndThroughModem            the callsign survives librade: rade_tx
+//                                   frames, rade_tx_eoo, the real leg only
+//                                   (what goes on air), rade_rx, and
+//                                   processRxEooBits emits it once.
 //
-//   1. constructsAndIsEmpty             a fresh RadeText reports an
-//                                       empty ourCallsign().
-//   2. setOurCallsignStoresValue        setOurCallsign("KG4VCF") then
-//                                       ourCallsign() returns the same
-//                                       string.
-//   3. pushTxNullRadeIsNoOp             pushTxCallsign(nullptr) is
-//                                       safe; no crash.
-//   4. pushTxEmptyCallsignIsNoOp        pushTxCallsign(rade) when
-//                                       ourCallsign() is empty is a
-//                                       no-op; the underlying EOO bits
-//                                       must remain in their pre-call
-//                                       state (rade_tx.eoo_bits cleared
-//                                       to a known fingerprint).
-//   5. roundTripDecodesEncodedCallsign  setOurCallsign("KG4VCF") then
-//                                       pushTxCallsign(rade), read the
-//                                       resulting eoo_bits out of the
-//                                       rade struct, feed them to
-//                                       processRxEooBits, and verify
-//                                       the textDecoded signal fires
-//                                       once with "KG4VCF". This is
-//                                       the headline test; it mirrors
-//                                       the upstream
-//                                       third_party/rade/src/rade_callsign_test.c
-//                                       round-trip but skips the full
-//                                       OFDM modulation/demodulation
-//                                       (the wrapper only sits on
-//                                       set_eoo_callsign / get_eoo_callsign,
-//                                       so a bit-level round-trip
-//                                       exercises everything the
-//                                       wrapper actually does).
-//
-// See src/core/RadeText.h for the public surface and design notes.
+// Modification history (NereusSDR):
+//   2026-05-11  J.J. Boyd / KG4VCF  Phase 3R Task I4: initial tests over
+//                 librade's raw ASCII helpers. AI tooling: Anthropic Claude
+//                 Code.
+//   2026-09-28  J.J. Boyd / KG4VCF  RADE end-of-over callsigns: rewritten
+//                 for FreeDV's format. AI tooling: Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 #include <QString>
+
+#include <cstring>
 #include <vector>
 
 #include "core/RadeText.h"
+#include "data/rade_text/freedv_backend_vectors.h"
 
 extern "C" {
 #include "rade_api.h"
 }
 
 using namespace NereusSDR;
+
+namespace {
+
+const RadeTextVectors::EncodeVector* encodeVector(const char* callsign)
+{
+    for (const auto& v : RadeTextVectors::kEncode) {
+        if (std::strcmp(v.callsign, callsign) == 0) {
+            return &v;
+        }
+    }
+    return nullptr;
+}
+
+const RadeTextVectors::DecodeVector* decodeVector(const char* label)
+{
+    for (const auto& v : RadeTextVectors::kDecode) {
+        if (std::strcmp(v.label, label) == 0) {
+            return &v;
+        }
+    }
+    return nullptr;
+}
+
+}  // namespace
 
 class TestRadeText : public QObject {
     Q_OBJECT
@@ -70,25 +81,25 @@ private slots:
     void constructsAndIsEmpty();
     void setOurCallsignStoresValue();
     void pushTxNullRadeIsNoOp();
-    void pushTxEmptyCallsignIsNoOp();
-    void roundTripDecodesEncodedCallsign();
+    void pushTxWritesFreeDvFormat();
+    void pushTxEmptyCallsignWritesZeros();
+    void decodesFreeDvStation();
+    void emptyCallsignNotEmitted();
+    void noiseNotEmitted();
+    void endToEndThroughModem();
 
 private:
-    // One rade instance shared across the tests that need it. opened
-    // in initTestCase() with the "dummy" sentinel (built-in weights;
-    // see third_party/rade/src/rade_api_nopy.c:58-76 [@b289102]) and
-    // closed in cleanupTestCase().
+    // Built-in weights ("dummy"; rade_api_nopy.c:58-76 [@b289102]).
     struct rade* m_rade{nullptr};
 };
 
 void TestRadeText::initTestCase()
 {
-    // Initialise librade once; rade_open("dummy", ...) returns a
-    // working rade context whose tx.eoo_bits[] is the only field we
-    // actually read in these tests.
     rade_initialize();
-    m_rade = rade_open(const_cast<char*>("dummy"), RADE_VERBOSE_0);
+    m_rade = rade_open(const_cast<char*>("dummy"),
+                       RADE_USE_C_ENCODER | RADE_USE_C_DECODER | RADE_VERBOSE_0);
     QVERIFY2(m_rade != nullptr, "rade_open(\"dummy\") returned NULL");
+    QCOMPARE(rade_n_eoo_bits(m_rade), RadeTextVectors::kEooFloats);
 }
 
 void TestRadeText::cleanupTestCase()
@@ -109,96 +120,147 @@ void TestRadeText::constructsAndIsEmpty()
 void TestRadeText::setOurCallsignStoresValue()
 {
     RadeText rt;
-    rt.setOurCallsign("KG4VCF");
+    rt.setOurCallsign(QStringLiteral("KG4VCF"));
     QCOMPARE(rt.ourCallsign(), QStringLiteral("KG4VCF"));
-
-    // Lowercase input must also round-trip through the setter
-    // unchanged; pushTxCallsign() is the layer that upper-cases on the
-    // way to the wire.
-    rt.setOurCallsign("kg4vcf");
+    rt.setOurCallsign(QStringLiteral("kg4vcf"));
     QCOMPARE(rt.ourCallsign(), QStringLiteral("kg4vcf"));
-
-    // Empty input clears the stash.
     rt.setOurCallsign(QString());
     QVERIFY(rt.ourCallsign().isEmpty());
 }
 
 void TestRadeText::pushTxNullRadeIsNoOp()
 {
-    // pushTxCallsign(nullptr) must not crash even when a callsign is
-    // stashed. RadeChannel calls pushTxCallsign with its m_rade
-    // pointer; that pointer is null between stop() and the next
-    // start(), so this is the contract that keeps the wire-up safe
-    // across MOX transitions in the Phase L follow-up.
     RadeText rt;
-    rt.setOurCallsign("KG4VCF");
+    rt.setOurCallsign(QStringLiteral("KG4VCF"));
     rt.pushTxCallsign(nullptr);
-    // No assert: the test passes iff it returns without crashing.
     QVERIFY(true);
 }
 
-void TestRadeText::pushTxEmptyCallsignIsNoOp()
+void TestRadeText::pushTxWritesFreeDvFormat()
 {
-    // pushTxCallsign() when ourCallsign() is empty must NOT clobber
-    // the rade_tx eoo_bits[] buffer. We pre-seed the buffer with a
-    // recognisable fingerprint (-2.0f everywhere, an out-of-band value
-    // that rade_tx_set_eoo_callsign never writes - it writes +1.0f or
-    // -1.0f per bit; see rade_api_nopy.c:159-173 [@b289102]) and
-    // confirm none of the first RADE_EOO_CALLSIGN_MAX*7 = 56 bits were
-    // touched.
-    QVERIFY(m_rade != nullptr);
-
-    constexpr float kSentinel = -2.0f;
-    constexpr int kBitsTouchedIfActive = RADE_EOO_CALLSIGN_MAX * 7;
-    for (int i = 0; i < kBitsTouchedIfActive; ++i) {
-        m_rade->tx.eoo_bits[i] = kSentinel;
-    }
-
-    RadeText rt;  // ourCallsign empty by construction
-    rt.pushTxCallsign(m_rade);
-
-    for (int i = 0; i < kBitsTouchedIfActive; ++i) {
-        QCOMPARE(m_rade->tx.eoo_bits[i], kSentinel);
+    for (const char* call : {"KG4VCF", "kg4vcf", "W1AW/P", "KG4VCF/QRP"}) {
+        const auto* v = encodeVector(call);
+        QVERIFY(v != nullptr);
+        RadeText rt;
+        rt.setOurCallsign(QString::fromLatin1(call));
+        rt.pushTxCallsign(m_rade);
+        for (int i = 0; i < RadeTextVectors::kEooFloats; ++i) {
+            QVERIFY2(m_rade->tx.eoo_bits[i] == v->syms[i],
+                     qPrintable(QStringLiteral("%1: EOO float %2").arg(call).arg(i)));
+        }
     }
 }
 
-void TestRadeText::roundTripDecodesEncodedCallsign()
+void TestRadeText::pushTxEmptyCallsignWritesZeros()
 {
-    // Headline test: stash a callsign, encode it into the rade
-    // tx.eoo_bits[] buffer via pushTxCallsign, then hand the buffer
-    // straight to processRxEooBits as if it had survived the OFDM
-    // round-trip (which is exercised separately by
-    // third_party/rade/src/rade_callsign_test.c). textDecoded must
-    // fire exactly once with the original callsign.
-    //
-    // We skip the OFDM modulate/demodulate hop because the wrapper
-    // only sits on set_eoo_callsign / get_eoo_callsign; a bit-level
-    // round-trip is the tightest test of the wrapper's actual
-    // surface and avoids the rade_ofdm dependency the upstream test
-    // pulls in.
-    QVERIFY(m_rade != nullptr);
-
     RadeText rt;
-    QSignalSpy decodedSpy(&rt, &RadeText::textDecoded);
-
-    const QString kCall = QStringLiteral("KG4VCF");
-    rt.setOurCallsign(kCall);
+    rt.setOurCallsign(QStringLiteral("KG4VCF"));
     rt.pushTxCallsign(m_rade);
+    rt.setOurCallsign(QString());
+    rt.pushTxCallsign(m_rade);
+    for (int i = 0; i < RadeTextVectors::kEooFloats; ++i) {
+        QCOMPARE(m_rade->tx.eoo_bits[i], 0.0f);
+    }
+}
 
-    // rade_n_eoo_bits is the soft-decision bit count for the EOO
-    // frame; rade_api.h:114 [@b289102]. At the v1 default this is
-    // 180 bits; the callsign occupies the first 56. We pass the
-    // whole buffer to mirror what rade_rx populates in production.
-    const int nEooBits = rade_n_eoo_bits(m_rade);
-    QVERIFY2(nEooBits >= RADE_EOO_CALLSIGN_MAX * 7,
-             qPrintable(QString("rade_n_eoo_bits() returned %1, expected >= %2")
-                            .arg(nEooBits)
-                            .arg(RADE_EOO_CALLSIGN_MAX * 7)));
+void TestRadeText::decodesFreeDvStation()
+{
+    const auto* v = decodeVector("KG4VCF sigma 0.6 seed 5");
+    QVERIFY(v != nullptr);
+    QVERIFY(v->decoded);
+    RadeText rt;
+    QSignalSpy spy(&rt, &RadeText::textDecoded);
+    rt.processRxEooBits(v->syms, RadeTextVectors::kEooFloats);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.first().value(0).toString(), QStringLiteral("KG4VCF"));
+}
 
-    rt.processRxEooBits(m_rade->tx.eoo_bits, nEooBits);
+void TestRadeText::emptyCallsignNotEmitted()
+{
+    const auto* v = decodeVector("clean ");
+    QVERIFY(v != nullptr);
+    QVERIFY(v->decoded);  // FreeDV accepts it (an empty text)...
+    RadeText rt;
+    QSignalSpy spy(&rt, &RadeText::textDecoded);
+    rt.processRxEooBits(v->syms, RadeTextVectors::kEooFloats);
+    QCOMPARE(spy.count(), 0);  // ...and there is no callsign to show.
+}
 
-    QCOMPARE(decodedSpy.count(), 1);
-    QCOMPARE(decodedSpy.first().value(0).toString(), kCall);
+void TestRadeText::noiseNotEmitted()
+{
+    const auto* v = decodeVector("VK5DGR sigma 2.0 seed 8");
+    QVERIFY(v != nullptr);
+    QVERIFY(!v->decoded);
+    RadeText rt;
+    QSignalSpy spy(&rt, &RadeText::textDecoded);
+    rt.processRxEooBits(v->syms, RadeTextVectors::kEooFloats);
+    QCOMPARE(spy.count(), 0);
+}
+
+void TestRadeText::endToEndThroughModem()
+{
+    // A fresh pair so the other cases' state does not matter.
+    struct rade* tx = rade_open(const_cast<char*>("dummy"),
+                                RADE_USE_C_ENCODER | RADE_USE_C_DECODER | RADE_VERBOSE_0);
+    struct rade* rx = rade_open(const_cast<char*>("dummy"),
+                                RADE_USE_C_ENCODER | RADE_USE_C_DECODER | RADE_VERBOSE_0);
+    QVERIFY(tx != nullptr && rx != nullptr);
+
+    RadeText sender;
+    sender.setOurCallsign(QStringLiteral("KG4VCF"));
+    sender.pushTxCallsign(tx);
+
+    // About 1.5 s of modem frames (zero features), the EOO, then silence.
+    std::vector<float> air;
+    const int nFeat = rade_n_features_in_out(tx);
+    const int nOut = rade_n_tx_out(tx);
+    std::vector<float> features(static_cast<size_t>(nFeat), 0.0f);
+    std::vector<RADE_COMP> out(static_cast<size_t>(std::max(nOut, rade_n_tx_eoo_out(tx))));
+    int frames = 0;
+    while (static_cast<int>(air.size()) < RADE_MODEM_SAMPLE_RATE * 3 / 2) {
+        const int n = rade_tx(tx, out.data(), features.data());
+        for (int i = 0; i < n; ++i) {
+            air.push_back(out[static_cast<size_t>(i)].real);  // the real leg goes on air
+        }
+        ++frames;
+    }
+    const int nEoo = rade_tx_eoo(tx, out.data());
+    for (int i = 0; i < nEoo; ++i) {
+        air.push_back(out[static_cast<size_t>(i)].real);
+    }
+    air.insert(air.end(), RADE_MODEM_SAMPLE_RATE / 2, 0.0f);
+    QVERIFY(frames > 0);
+
+    RadeText receiver;
+    QSignalSpy spy(&receiver, &RadeText::textDecoded);
+    std::vector<float> feat(static_cast<size_t>(rade_n_features_in_out(rx)));
+    std::vector<float> eoo(static_cast<size_t>(rade_n_eoo_bits(rx)));
+    std::vector<RADE_COMP> in(static_cast<size_t>(rade_nin_max(rx)));
+    size_t pos = 0;
+    int eooFrames = 0;
+    for (;;) {
+        const int nin = rade_nin(rx);
+        if (pos + static_cast<size_t>(nin) > air.size()) {
+            break;
+        }
+        for (int i = 0; i < nin; ++i) {
+            in[static_cast<size_t>(i)].real = air[pos + static_cast<size_t>(i)];
+            in[static_cast<size_t>(i)].imag = 0.0f;
+        }
+        pos += static_cast<size_t>(nin);
+        int hasEoo = 0;
+        rade_rx(rx, feat.data(), &hasEoo, eoo.data(), in.data());
+        if (hasEoo) {
+            ++eooFrames;
+            receiver.processRxEooBits(eoo.data(), static_cast<int>(eoo.size()));
+        }
+    }
+    rade_close(tx);
+    rade_close(rx);
+
+    QVERIFY2(eooFrames >= 1, "rade_rx never reported the end-of-over frame");
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.first().value(0).toString(), QStringLiteral("KG4VCF"));
 }
 
 QTEST_GUILESS_MAIN(TestRadeText)

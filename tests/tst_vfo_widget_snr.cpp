@@ -50,6 +50,7 @@ private slots:
     void negativeSnrFormats();
     void snrHiddenInNonRadeMode();
     void snrVisibleInRadeLower();
+    void radeReasonReadsOffWithTheReasonAsItsTooltip();
 };
 
 namespace {
@@ -181,6 +182,42 @@ void TestVfoWidgetSnr::snrVisibleInRadeLower() {
     QLabel* label = vfo.snrLabelForTest();
     QVERIFY(label != nullptr);
     QVERIFY(label->isVisibleTo(&vfo));
+}
+
+// RADE reason (2026-09-30): a RADE slice with no working decoder reads
+// "off", with the slice's reason as the row's tooltip (the same reason a
+// remote window's mirrored slice carries). The reason clearing puts the
+// row back to its sync and SNR text.
+void TestVfoWidgetSnr::radeReasonReadsOffWithTheReasonAsItsTooltip() {
+    SliceModel slice;
+    VfoWidget vfo;
+    seedRadeMode(&vfo, &slice);
+    QVERIFY(vfo.radeRowToolTipForTest().isEmpty());
+    QVERIFY(!vfo.radeRowTextForTest().contains(QStringLiteral("off")));
+
+    const QString reason = QStringLiteral(
+        "RADE could not start on slice A: its RADE decoder could not be created.");
+    slice.setRadeReason(reason);
+    QVERIFY2(vfo.radeRowTextForTest().endsWith(QStringLiteral("</font> off")),
+             qPrintable(vfo.radeRowTextForTest()));
+    QCOMPARE(vfo.radeRowToolTipForTest(), reason);
+    // The row is shown, never hidden, while the reason is set.
+    QVERIFY(vfo.snrLabelForTest() && vfo.snrLabelForTest()->isVisibleTo(&vfo));
+
+    slice.setRadeReason(QString());
+    QVERIFY2(!vfo.radeRowTextForTest().contains(QStringLiteral("off")),
+             qPrintable(vfo.radeRowTextForTest()));
+    QVERIFY(vfo.radeRowToolTipForTest().isEmpty());
+
+    // A slice bound with its reason already set shows it at once.
+    SliceModel failed;
+    failed.setDspMode(DSPMode::RADE_U);
+    failed.setRadeReason(reason);
+    VfoWidget second;
+    seedRadeMode(&second, &failed);
+    QVERIFY2(second.radeRowTextForTest().endsWith(QStringLiteral("</font> off")),
+             qPrintable(second.radeRowTextForTest()));
+    QCOMPARE(second.radeRowToolTipForTest(), reason);
 }
 
 QTEST_MAIN(TestVfoWidgetSnr)

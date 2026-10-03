@@ -14,6 +14,11 @@
 //   device:    vfo:    dds:    if:    tx_frequency:    tx_frequency_thetis:
 // These vary across radios + slice positions and are not byte-stable across
 // captures from different hardware.
+//
+// R3 receiver audio plan, Task 4 (R-R3-42, R-R3-25), 2026-09-23, J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code: the local burst is
+// unchanged (the three cases above); a remote window's burst differs from
+// it only in receive_only (true) and the two tx_enable lines (false).
 
 #include <QtTest>
 #include <QFile>
@@ -41,6 +46,7 @@ private slots:
     void burst_line_count_matches_golden();
     void burst_strict_prefixes_match_golden_byte_for_byte();
     void burst_loose_prefixes_match_by_kind();
+    void remote_window_burst_differs_only_in_receive_only_and_tx_enable();
 };
 
 void TestTciInitBurstGolden::pinAppSettingsToGoldenCaptureConditions()
@@ -139,6 +145,32 @@ void TestTciInitBurstGolden::burst_loose_prefixes_match_by_kind()
         const QString goldenPrefix = extractPrefix(golden[i]);
         QCOMPARE(oursPrefix, goldenPrefix);
     }
+}
+
+void TestTciInitBurstGolden::remote_window_burst_differs_only_in_receive_only_and_tx_enable()
+{
+    pinAppSettingsToGoldenCaptureConditions();
+    TestMockRadioModel mock;
+    TciProtocol local(&mock);
+    TciProtocol remote(&mock);
+    QVERIFY(!local.remoteWindow());
+    remote.setRemoteWindow(true);
+    const QStringList localBurst = local.buildInitBurst();
+    const QStringList remoteBurst = remote.buildInitBurst();
+    QCOMPARE(remoteBurst.size(), localBurst.size());
+    QStringList differing;
+    for (int i = 0; i < localBurst.size(); ++i) {
+        if (localBurst.at(i) != remoteBurst.at(i)) {
+            differing << remoteBurst.at(i);
+        }
+    }
+    // tx_enable:1 is already false in this capture (RX2 off), so only two
+    // lines move; both tx_enable lines read false in the remote burst.
+    QCOMPARE(differing, (QStringList{QStringLiteral("receive_only:true;"),
+                                     QStringLiteral("tx_enable:0,false;")}));
+    QVERIFY(remoteBurst.contains(QStringLiteral("tx_enable:1,false;")));
+    QVERIFY(localBurst.contains(QStringLiteral("receive_only:false;")));
+    QVERIFY(localBurst.contains(QStringLiteral("tx_enable:0,true;")));
 }
 
 QTEST_GUILESS_MAIN(TestTciInitBurstGolden)

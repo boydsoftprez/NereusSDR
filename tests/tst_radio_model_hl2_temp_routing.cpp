@@ -75,6 +75,49 @@ private slots:
                  qPrintable(QStringLiteral("HL2 temp %1 °C — expected ~25").arg(publishedC)));
     }
 
+    // ── HL2 PA current from user ADC0 (mi0bot HL2 current branch) ──────────
+    // From mi0bot console.cs:24937-24941 [v2.10.3.13-beta2]:
+    //   _ampsQueue.Enqueue(NetworkIO.getUserADC0());   // MI0BOT: HL2 temperature & current
+    // and console.cs:25121-25131 convertToAmps (MI0BOT: HL2 current).
+    // raw=1000 -> 0.5054 A; user ADC1 is not the HL2's current.
+    void hl2_publishes_pa_current_from_user_adc0()
+    {
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::HermesLite);
+        QVERIFY(model.boardCapabilities().hasPaAmpsTelemetry);
+        model.handlePaTelemetryForTest(
+            /*fwdRaw*/      0,
+            /*revRaw*/      0,
+            /*exciterRaw*/  942,
+            /*userAdc0Raw*/ 1000,
+            /*userAdc1Raw*/ 3000,
+            /*supplyRaw*/   0);
+        const double amps = model.radioStatus().paCurrentAmps();
+        QVERIFY2(qAbs(amps - 0.5054) < 1e-3, qPrintable(QString::number(amps, 'f', 6)));
+    }
+
+    // Non-HL2 current applies the saved volt calibration (Thetis AmpVoff /
+    // AmpSens, console.cs:24937-24975 [v2.10.3.15]).
+    void calibrated_pa_current_uses_the_volt_calibration()
+    {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANAN7000D);
+        model.calibrationControllerMutable().setPaCurrentSensitivity(100.0);
+        model.calibrationControllerMutable().setPaCurrentOffset(200.0);
+        model.handlePaTelemetryForTest(0, 0, 0, /*userAdc0Raw*/ 0,
+                                       /*userAdc1Raw*/ 2048, 0);
+        const double amps = model.radioStatus().paCurrentAmps();
+        QVERIFY2(qAbs(amps - 23.0061) < 1e-3, qPrintable(QString::number(amps, 'f', 6)));
+
+        // The model's defaults when nothing was saved: 340 mV / 88.
+        RadioModel fresh;
+        fresh.setHpsdrModelForTest(HPSDRModel::ANAN7000D);
+        fresh.handlePaTelemetryForTest(0, 0, 0, 0, 2048, 0);
+        const double def = fresh.radioStatus().paCurrentAmps();
+        QVERIFY2(qAbs(def - (2500.6105 - 340.0) / 88.0) < 1e-3,
+                 qPrintable(QString::number(def, 'f', 6)));
+    }
+
     // ── 2. HL2 board suppresses setExciterPowerMw with the temp ADC ─────────
     // The test seam force-engages TX (m_forceTxForTest=true), which would
     // otherwise let setExciterPowerMw(static_cast<int>(exciterRaw)) fire on

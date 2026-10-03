@@ -56,12 +56,12 @@ private slots:
     // DEFAULT VALUES
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    void default_lineInGain_isZero() {
-        // Default 0 = no line-in attenuation.
-        // Source: Thetis networkproto1.c:600 [v2.10.3.13] — line_in_gain
-        // ships zero when the host has not set it.
+    void default_lineInGain_isIndexForZeroDb() {
+        // Radio codec lane: the index follows lineInBoost, whose default is
+        // 0.0 dB, entry 23 of Thetis's table (SetMicGain / MakeLineInList).
+        // Source: Thetis console.cs:13247, 40900-40932 [v2.10.3.15].
         TransmitModel t;
-        QCOMPARE(t.lineInGain(), 0);
+        QCOMPARE(t.lineInGain(), 23);
     }
 
     void default_userDigOut_isZero() {
@@ -189,10 +189,10 @@ private slots:
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     void idempotent_lineInGain_default_noSignal() {
-        // setLineInGain(0) on fresh model (default 0) must NOT emit.
+        // setLineInGain(23) on fresh model (default 23) must NOT emit.
         TransmitModel t;
         QSignalSpy spy(&t, &TransmitModel::lineInGainChanged);
-        t.setLineInGain(0);
+        t.setLineInGain(23);
         QCOMPARE(spy.count(), 0);
     }
 
@@ -242,10 +242,12 @@ private slots:
     // PERSISTENCE ROUND-TRIP (loadFromSettings ⇄ persistToSettings)
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    void firstRunDefaults_lineInGain_zero() {
+    void firstRunDefaults_lineInGain_indexForZeroDb() {
+        // Radio codec lane: the index follows lineInBoost (default 0.0 dB),
+        // which is index 23 in Thetis's lineinboost list.
         TransmitModel t;
         t.loadFromSettings(kMacA);
-        QCOMPARE(t.lineInGain(), 0);
+        QCOMPARE(t.lineInGain(), 23);
     }
 
     void firstRunDefaults_userDigOut_zero() {
@@ -260,12 +262,13 @@ private slots:
         {
             TransmitModel t;
             t.loadFromSettings(kMacA);
-            t.setLineInGain(17);
+            // -9.0 dB is index 17 ((-9.0 + 34.5) / 1.5).
+            t.setLineInBoost(-9.0);
         }
         // Verify the key was written under the per-MAC tx prefix.
         const QString key = QStringLiteral("hardware/%1/tx/LineInGain").arg(kMacA);
         QCOMPARE(AppSettings::instance().value(key).toString(), QStringLiteral("17"));
-        // Fresh load must restore the persisted value.
+        // Fresh load derives the index from the persisted dB value.
         TransmitModel t2;
         t2.loadFromSettings(kMacA);
         QCOMPARE(t2.lineInGain(), 17);
@@ -284,10 +287,44 @@ private slots:
         QCOMPARE(t2.userDigOut(), 11);
     }
 
+    // Radio codec review (2026-09-30): lineInBoost is held on Thetis's
+    // 1.5 dB udLineInBoost grid (setup.designer.cs:47006-47034
+    // [v2.10.3.15]), at the entry the radio is sent, so the value shown and
+    // the wire index agree for an off-grid write.
+    void lineInBoost_offGridWrite_snapsToTheSentEntry() {
+        TransmitModel t;
+        QSignalSpy spy(&t, &TransmitModel::lineInBoostChanged);
+        t.setLineInBoost(5.0);  // between 4.5 (index 26) and 6.0 (index 27)
+        QCOMPARE(t.lineInBoost(), 4.5);
+        QCOMPARE(t.lineInGain(), 26);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.takeFirst().at(0).toDouble(), 4.5);
+        t.setLineInBoost(5.5);  // nearer 6.0
+        QCOMPARE(t.lineInBoost(), 6.0);
+        QCOMPARE(t.lineInGain(), 27);
+        t.setLineInBoost(-10.0);  // a pre-24 whole-dB step: -10.5, index 16
+        QCOMPARE(t.lineInBoost(), -10.5);
+        QCOMPARE(t.lineInGain(), 16);
+        spy.clear();
+        t.setLineInBoost(-10.4);  // the same entry: no change, no signal
+        QCOMPARE(spy.count(), 0);
+    }
+
+    void lineInBoost_storedWholeDbValue_loadsOnTheGrid() {
+        // A value saved in whole dB before the 1.5 dB steps.
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/%1/tx/Line_Input_Level").arg(kMacA),
+            QStringLiteral("5"));
+        TransmitModel t;
+        t.loadFromSettings(kMacA);
+        QCOMPARE(t.lineInBoost(), 4.5);
+        QCOMPARE(t.lineInGain(), 26);
+    }
+
     void roundTrip_lineInGain_persistToSettings_bulk() {
         // Bulk-write path (persistToSettings(mac)) preserves the same value.
         TransmitModel t;
-        t.setLineInGain(25);
+        t.setLineInBoost(3.0);  // index 25
         t.persistToSettings(kMacA);
         TransmitModel t2;
         t2.loadFromSettings(kMacA);
@@ -333,12 +370,12 @@ private slots:
         mgr.load();
         TransmitModel tx;
         tx.loadFromSettings(kMacA);
-        tx.setLineInGain(22);
+        tx.setLineInBoost(-1.5);  // index 22
         tx.setUserDigOut(12);
         QVERIFY(mgr.saveProfile(QStringLiteral("Custom"), &tx));
 
         // Mutate model away from the saved values.
-        tx.setLineInGain(0);
+        tx.setLineInBoost(-34.5);  // index 0
         tx.setUserDigOut(0);
         QCOMPARE(tx.lineInGain(), 0);
         QCOMPARE(tx.userDigOut(), 0);
@@ -349,8 +386,9 @@ private slots:
         QCOMPARE(tx.userDigOut(), 12);
     }
 
-    void micProfileManager_defaultProfile_lineInGainAndUserDigOutAreZero() {
-        // The seeded "Default" profile carries the design defaults (both 0).
+    void micProfileManager_defaultProfile_lineInGainAndUserDigOutAreDefaults() {
+        // The seeded "Default" profile carries 0.0 dB line in (index 23)
+        // and user dig out 0.
         MicProfileManager mgr;
         mgr.setMacAddress(kMacA);
         mgr.load();
@@ -358,10 +396,10 @@ private slots:
         tx.loadFromSettings(kMacA);
         // Force model to non-default to verify the active-profile load
         // overwrites correctly.
-        tx.setLineInGain(31);
+        tx.setLineInBoost(12.0);  // index 31
         tx.setUserDigOut(15);
         QVERIFY(mgr.setActiveProfile(QStringLiteral("Default"), &tx));
-        QCOMPARE(tx.lineInGain(), 0);
+        QCOMPARE(tx.lineInGain(), 23);
         QCOMPARE(tx.userDigOut(), 0);
     }
 };

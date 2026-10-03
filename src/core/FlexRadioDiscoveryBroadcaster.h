@@ -12,6 +12,10 @@
 //   2026-05-19 - Implemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-24 - R-R3-22 / R-R3-47: setSourceAddress (the Core announces
+//                 its station network address, where its 4992 listener
+//                 listens), isRunning and a no-send test mode. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -54,9 +58,22 @@ public:
     // is ever sent to the hint address; UDP connect is a local-only operation.
     void setPeerHint(const QHostAddress& peer) { m_peerHint = peer; }
 
+    // R-R3-22 / R-R3-47: the address the beacon announces and sends from,
+    // chosen by the caller. The Core sets its station network address so an
+    // amplifier connects where the Core's 4992 listener listens; null (a
+    // desktop window) keeps the route lookup above.
+    void setSourceAddress(const QHostAddress& source) { m_sourceAddress = source; }
+    // The address the beacon announces (ip=) when it starts.
+    QString advertisedAddress() const { return detectLanIpv4(); }
+
     // Lifecycle
     void start();  // begins 1 Hz emission; safe to call repeatedly
     void stop();   // stops emission; safe to call repeatedly
+    bool isRunning() const { return m_timer.isActive() || m_runningForTest; }
+
+    // Test-only: start() and stop() only record whether the beacon runs;
+    // nothing is bound and no packet leaves the machine.
+    void setNoSendForTesting(bool noSend) { m_noSendForTest = noSend; }
 
     // Test-only: build the full packet bytes (header + ASCII payload) for a
     // given sequence count and timestamp without actually sending. Lets unit
@@ -85,6 +102,9 @@ private:
     QString m_mac;  // dashed uppercase form for radio_license_id
     QString m_ip;
     QHostAddress m_broadcastAddress; // subnet broadcast for the LAN interface
+    QHostAddress m_sourceAddress;    // caller-chosen source (the Core's station address)
+    bool         m_noSendForTest{false};
+    bool         m_runningForTest{false};
     QHostAddress m_peerHint;         // optional route-lookup hint; default-route probe if null
 };
 

@@ -18,7 +18,7 @@
 //   7. Active profile label updates when MicProfileManager::activeProfileChanged emits.
 //   8. ALC row is hard-labelled "always-on" (no signal wiring).
 //   9. Cross-link buttons emit openSetupRequested(category, page) with the
-//      correct setup-page leaf labels (AGC/ALC, CFC, VOX/DEXP).
+//      correct setup-page leaf labels (AGC/ALC, CFC, DEXP/VOX).
 //   10. Phase Rotator label reflects initial TM defaults — "OFF" because
 //       phaseRotatorEnabled defaults to false.
 //   11. Phrot label updates live on phaseRotatorEnabledChanged + freq/stages.
@@ -33,6 +33,7 @@
 #include <QPushButton>
 #include <QSignalSpy>
 
+#include "OperatorWording.h"
 #include "core/AppSettings.h"
 #include "core/MicProfileManager.h"
 #include "gui/setup/TransmitSetupPages.h"
@@ -191,7 +192,7 @@ private slots:
     // Verifies the deep-link signal contract.  After 3M-3a-ii Batch 5, the
     // Phrot / CFC / CESSB buttons all route to "CFC" (co-located on the CFC
     // Setup page); the Leveler button routes to "AGC/ALC"; AM-SQ/DEXP routes
-    // to "VOX/DEXP".
+    // to "DEXP/VOX".
     void crossLinkButtons_emitOpenSetupRequested()
     {
         RadioModel model;
@@ -232,13 +233,18 @@ private slots:
         QCOMPARE(spy.count(), 1);
         QCOMPARE(spy.takeFirst().at(1).toString(), QStringLiteral("CFC"));
 
-        // AM-SQ / DEXP row → VOX/DEXP.
+        // AM-SQ / DEXP row → Transmit > DEXP/VOX (R-R3-21: it asked for a
+        // "VOX/DEXP" page that does not exist, so the click did nothing).
         auto* btnDexp = page.findChild<QPushButton*>(QStringLiteral("btn_AM-SQ / DEXP"));
         QVERIFY(btnDexp);
         QVERIFY(btnDexp->isEnabled());
+        QVERIFY(OperatorWording::isPlain(btnDexp->text()));
+        QVERIFY(OperatorWording::isPlain(btnDexp->toolTip()));
         btnDexp->click();
         QCOMPARE(spy.count(), 1);
-        QCOMPARE(spy.takeFirst().at(1).toString(), QStringLiteral("VOX/DEXP"));
+        const QList<QVariant> dexpArgs = spy.takeFirst();
+        QCOMPARE(dexpArgs.at(0).toString(), QStringLiteral("Transmit"));
+        QCOMPARE(dexpArgs.at(1).toString(), QStringLiteral("DEXP/VOX"));
     }
 
     // ── 10. Phrot status label initial — "OFF" (default phaseRotatorEnabled=false) ─

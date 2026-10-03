@@ -1,0 +1,14 @@
+{
+  "from": "server",
+  "to": "client",
+  "wire": {
+    "type": "hello",
+    "version": 1,
+    "nonce": "_Bop5VvgG7xUD7jGmvpA63z0zc4DeWmTPBs-5H65aQ0",
+    "stun": [
+      "stun:rv4.nereussdr.com:3478",
+      "stun:rv6.nereussdr.com:3478"
+    ]
+  },
+  "decodes": true
+}

@@ -21,6 +21,11 @@
 //                 scaleFwdRevVoltage companion needed to drive the
 //                 PaValuesPage FWD voltage / REV voltage / Raw FWD power
 //                 readout labels.
+//   2026-09-28 — convertToAmps() ported from mi0bot-Thetis console.cs
+//                 convertToAmps (25114-25141 [v2.10.3.13-beta2]) with its
+//                 HL2 current branch, for the PA current reading and its
+//                 volt calibration. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // --- From console.cs ---
@@ -321,6 +326,51 @@ float scaleExciterPowerMw(HPSDRModel model, quint16 raw) noexcept
 double scaleHermesLiteTempCelsius(quint16 raw) noexcept
 {
     return (3.26 * (static_cast<double>(raw) / 4096.0) - 0.5) / 0.01;
+}
+
+double convertToAmps(HPSDRModel model, double ioReading,
+                     double ampVoff, double ampSens) noexcept
+{
+    // From mi0bot console.cs:25114-25141 [v2.10.3.13-beta2]:
+    //   private float convertToAmps(float IOreading)
+    //   {
+    //       float voff = _amp_voff;
+    //       float sens = _amp_sens;
+    //       float amps = 0f;
+    //
+    //       float fwdvolts = (IOreading * 5000.0f) / 4095.0f;
+    //       if (HardwareSpecific.Model == HPSDRModel.HERMESLITE)       // MI0BOT: HL2 current
+    //       { ... }
+    //       else { ... }
+    //       return amps;
+    //   }
+    // Float arithmetic as upstream.
+    const float reading = static_cast<float>(ioReading);
+    const float voff = static_cast<float>(ampVoff);
+    const float sens = static_cast<float>(ampSens);
+    float amps = 0.0f;
+
+    float fwdvolts = (reading * 5000.0f) / 4095.0f;
+    if (model == HPSDRModel::HERMESLITE)       // MI0BOT: HL2 current
+    {
+        // 3.26 Ref voltage
+        // 4096 steps in ADC
+        // Gain of x50 for sense amp
+        // Sense resistor is 0.04 Ohms
+        amps = ((3.26f * (reading / 4096.0f)) / 50.0f) / 0.04f;
+
+        // Scale by resistor voltage divider 1000/(1000+270) at input of slow ADC
+        amps = amps / (1000.0f / 1270.0f);
+    }
+    else
+    {
+        if (fwdvolts < 0) { fwdvolts = 0.0f; }
+        amps = ((fwdvolts - voff) / sens);
+        //  float amps = (0.01f * adc - 2.91f);
+        if (amps < 0) { amps = 0.0f; }
+    }
+
+    return static_cast<double>(amps);
 }
 
 }  // namespace NereusSDR

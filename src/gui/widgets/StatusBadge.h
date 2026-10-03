@@ -44,6 +44,10 @@ public:
     // Label text (e.g. "USB", "2.4k", "NR2").
     void setLabel(const QString& label);
     void setVariant(Variant v);
+    /// R-R3-21: a badge whose click opens something shows the hand cursor;
+    /// the rest keep the arrow. Off by default.
+    void setClickable(bool clickable);
+    bool isClickable() const noexcept { return m_clickable; }
 
     QString icon() const noexcept { return m_icon; }
     QString svgIcon() const noexcept { return m_svgIcon; }
@@ -67,6 +71,7 @@ private:
     QString  m_svgIcon;
     QString  m_label;
     Variant  m_variant{Variant::Info};
+    bool     m_clickable{false};
     QLabel*  m_iconLabel{nullptr};
     QLabel*  m_textLabel{nullptr};
 };

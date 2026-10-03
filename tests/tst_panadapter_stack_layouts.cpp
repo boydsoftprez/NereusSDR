@@ -7,9 +7,11 @@
 // =================================================================
 #include <QtTest/QtTest>
 #include <QPointer>
+#include <QSplitter>
 #include "gui/PanadapterStack.h"
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterApplet.h"
+#include "gui/SpectrumWidget.h"
 #include "gui/MainWindow.h"
 #include "core/AppSettings.h"
 
@@ -191,9 +193,64 @@ private slots:
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
         QVERIFY(omitted.isNull());
-        QVERIFY(floater.isNull());
+        // The old graphics owner is retired only after its widget dies.
+        QTRY_VERIFY(floater.isNull());
         QCOMPARE(stack.count(), 1);
         QVERIFY(stack.panadapter(QStringLiteral("pan-0")) != nullptr);
+    }
+
+    void removing_floating_pan_releases_window_and_allows_reused_id()
+    {
+        PanadapterStack stack;
+        const QString id = QStringLiteral("pan-0");
+        QPointer<PanadapterApplet> retired(stack.panadapter(id));
+        stack.floatPanadapter(id);
+        QPointer<PanFloatingWindow> oldWindow(stack.floatingWindowForTest(id));
+        QVERIFY(oldWindow);
+        QSignalSpy retirements(&stack, &PanadapterStack::panRetired);
+
+        stack.removePanadapter(id);
+        QCOMPARE(stack.count(), 0);
+        QCOMPARE(retirements.size(), 1);
+        QVERIFY(!stack.floatingWindowForTest(id));
+        QVERIFY(!oldWindow->isVisible());
+
+        auto* replacement = stack.addPanadapter(id);
+        stack.floatPanadapter(id);
+        QPointer<PanFloatingWindow> replacementWindow(stack.floatingWindowForTest(id));
+        QVERIFY(replacementWindow);
+        QVERIFY(replacementWindow != oldWindow);
+        oldWindow->requestDock(); // A retiring window must not dock the replacement.
+        QCOMPARE(stack.floatingWindowForTest(id), replacementWindow.data());
+
+        // Force child destruction before the queued first-float render callback.
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(retired.isNull());
+        QTRY_VERIFY(oldWindow.isNull());
+        QCoreApplication::processEvents();
+        QCOMPARE(stack.panadapter(id), replacement);
+        QCOMPARE(stack.floatingWindowForTest(id), replacementWindow.data());
+        QTRY_VERIFY(replacement->spectrumWidget()->isVisible());
+    }
+
+    void deferred_dock_refresh_does_not_show_replacement_pan()
+    {
+        PanadapterStack stack;
+        const QString id = QStringLiteral("pan-0");
+        stack.floatPanadapter(id);
+        QTRY_VERIFY(stack.spectrum(id)->isVisible());
+        QPointer<PanadapterApplet> retired(stack.panadapter(id));
+        stack.dockPanadapter(id); // Queues a render refresh for this instance.
+        stack.removePanadapter(id);
+        auto* replacement = stack.addPanadapter(id);
+        replacement->spectrumWidget()->hide();
+
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(retired.isNull());
+        QCoreApplication::processEvents();
+        // A pending refresh for the retired pan must not act on a reused ID.
+        QVERIFY(replacement->spectrumWidget()->isHidden());
+        QCOMPARE(stack.panadapter(id), replacement);
     }
 
     void layout_retaining_a_floating_pan_docks_before_reparenting()
@@ -213,10 +270,98 @@ private slots:
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
         QVERIFY(retained);
-        QVERIFY(floater.isNull());
+        // A hidden destination cannot render yet. The outgoing graphics owner
+        // must survive until the retained widget renders in the new window.
+#ifdef NEREUS_GPU_SPECTRUM
+        QVERIFY(floater);
+        QVERIFY(!floater->isVisible());
+#endif
+        stack.show();
+        QTRY_VERIFY(floater.isNull());
         QCOMPARE(stack.panadapter(QStringLiteral("pan-1")), retained.data());
         QVERIFY(!retained->isWindow());
         QCOMPARE(stack.count(), 2);
+    }
+
+    void shutdown_with_pending_retired_pans_data()
+    {
+        QTest::addColumn<int>("state");
+        QTest::newRow("docked") << 0;
+        QTest::newRow("floating") << 1;
+        QTest::newRow("returning-from-float") << 2;
+    }
+
+    void shutdown_with_pending_retired_pans()
+    {
+        QFETCH(int, state);
+        PanadapterStack stack;
+        stack.show();
+        const QString id = QStringLiteral("pan-0");
+        QPointer<PanadapterApplet> applet(stack.panadapter(id));
+        QPointer<PanFloatingWindow> floater;
+        if (state > 0) {
+            stack.floatPanadapter(id);
+            floater = stack.floatingWindowForTest(id);
+            QTRY_VERIFY(applet->spectrumWidget()->isVisible());
+        }
+        if (state == 2) { stack.dockPanadapter(id); }
+        stack.removePanadapter(id);
+        // Quit before deferred deletion or the destination's next frame.
+        stack.prepareShutdown();
+        QVERIFY(applet.isNull());
+        QVERIFY(floater.isNull());
+        QCOMPARE(stack.count(), 0);
+        stack.prepareShutdown(); // Idempotent when the owner subsequently dies.
+        QCoreApplication::processEvents();
+    }
+
+    void rapid_float_dock_preserves_all_outgoing_owners_data()
+    {
+        QTest::addColumn<int>("completion");
+        QTest::newRow("destination-frame") << 0;
+        QTest::newRow("remove") << 1;
+        QTest::newRow("shutdown") << 2;
+    }
+
+    void rapid_float_dock_preserves_all_outgoing_owners()
+    {
+        QFETCH(int, completion);
+        PanadapterStack stack;
+        const QString id = QStringLiteral("pan-0");
+        QPointer<PanadapterApplet> applet(stack.panadapter(id));
+        stack.floatPanadapter(id);
+        QTRY_VERIFY(applet->spectrumWidget()->isVisible());
+        QPointer<PanFloatingWindow> first(stack.floatingWindowForTest(id));
+        stack.dockPanadapter(id);
+        stack.floatPanadapter(id);
+        QPointer<PanFloatingWindow> second(stack.floatingWindowForTest(id));
+        QVERIFY(first != second);
+        stack.dockPanadapter(id);
+
+        // No destination has rendered between these moves. Deferred deletion
+        // must not destroy either candidate owner of the widget's last QRhi.
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+#ifdef NEREUS_GPU_SPECTRUM
+        QVERIFY(first);
+        QVERIFY(second);
+        QVERIFY(!first->isVisible());
+        QVERIFY(!second->isVisible());
+#endif
+        if (completion == 0) {
+            stack.show();
+            QTRY_VERIFY(first.isNull() && second.isNull());
+            QVERIFY(applet);
+            QVERIFY(applet->spectrumWidget()->isVisible());
+        } else {
+            if (completion == 1) {
+                stack.removePanadapter(id);
+                QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            } else {
+                stack.prepareShutdown();
+            }
+            QVERIFY(applet.isNull());
+            QTRY_VERIFY(first.isNull() && second.isNull());
+        }
     }
 
     void layout2h1BuildsThreePans() {
@@ -287,6 +432,105 @@ private slots:
         QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("2h")).size(), 2);
         QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("12h")).size(), 3);
         QCOMPARE(MainWindow::panIdsForLayout(QStringLiteral("2x2")).size(), 4);
+    }
+
+    // Bench report 2026-08-08: "the mouse over area for resizing the space
+    // between two pans is so small it is hard to hit". PanadapterStack never
+    // called setHandleWidth, so every splitter it built fell back to the style
+    // metric -- and a QSplitter's grab area IS its handle rect, so the drag
+    // target was a few logical pixels wide on a Retina panel.
+    //
+    // Asserted over findChildren<QSplitter*> rather than a new accessor
+    // because the point is that EVERY splitter in the tree is grabbable,
+    // including the nested row splitters the 4 multi-row layouts build. A
+    // test keyed on the root alone would have passed while 2x2's two row
+    // splitters stayed at the style default.
+    void every_splitter_has_a_grabbable_handle()
+    {
+        const QList<QString> layouts = {
+            QStringLiteral("1"),  QStringLiteral("2v"), QStringLiteral("2h"),
+            QStringLiteral("12h"), QStringLiteral("2h1"), QStringLiteral("3v"),
+            QStringLiteral("2x2"), QStringLiteral("4v"), QStringLiteral("3h2"),
+        };
+        for (const QString& layoutId : layouts) {
+            PanadapterStack stack;
+            stack.applyLayout(layoutId, MainWindow::panIdsForLayout(layoutId));
+
+            const QList<QSplitter*> splitters = stack.findChildren<QSplitter*>();
+            QVERIFY2(!splitters.isEmpty(),
+                     qPrintable(QStringLiteral("layout %1 built no splitter")
+                                    .arg(layoutId)));
+            for (QSplitter* s : splitters) {
+                QVERIFY2(s->handleWidth() >= PanadapterStack::kSplitterHandleWidth,
+                         qPrintable(QStringLiteral("layout %1: handleWidth %2 < %3")
+                                        .arg(layoutId)
+                                        .arg(s->handleWidth())
+                                        .arg(PanadapterStack::kSplitterHandleWidth)));
+                // A collapsible child lets a drag past the end swallow a pan
+                // whole, leaving no handle to drag back out with.
+                QVERIFY2(!s->childrenCollapsible(),
+                         qPrintable(QStringLiteral("layout %1: children collapsible")
+                                        .arg(layoutId)));
+            }
+        }
+    }
+
+    // Quitting with a pan still floating must not lose its geometry.
+    //
+    // dockPanadapter saves, and the window's close box saves, but
+    // dockAllFloatingPans did not, and that is the path the destructor takes.
+    // So the ordinary way to end a session was the one way guaranteed to
+    // discard the last move or resize. Found by Codex on PR #318.
+    void floating_geometry_survives_stack_teardown()
+    {
+        auto& s = AppSettings::instance();
+        const QString key =
+            QStringLiteral("FloatingPan_pan-0_Geometry");
+        s.setValue(key, QString());
+
+        {
+            PanadapterStack stack;
+            stack.applyLayout(QStringLiteral("1"),
+                              MainWindow::panIdsForLayout(QStringLiteral("1")));
+            stack.floatPanadapter(QStringLiteral("pan-0"));
+            QVERIFY2(!s.value(key, QString()).toString().isEmpty()
+                         || true,
+                     "float itself need not save; teardown must");
+            s.setValue(key, QString());   // ignore anything the float wrote
+        }   // stack destructs here, still holding a floating pan
+
+        QVERIFY2(!s.value(key, QString()).toString().isEmpty(),
+                 "tearing the stack down with a pan floating discarded its "
+                 "geometry");
+    }
+
+    // The save that actually survives a quit.
+    //
+    // The teardown save added for the previous finding writes to AppSettings'
+    // in-memory map, and MainWindow::closeEvent calls AppSettings::save()
+    // BEFORE ~PanadapterStack runs, with a defaulted AppSettings destructor
+    // behind it. So the geometry was still stale on disk at next launch. This
+    // is the explicit pass closeEvent makes while a flush is still coming.
+    // Found by Codex on PR #318.
+    void floating_geometry_is_saved_before_the_flush()
+    {
+        auto& s = AppSettings::instance();
+        const QString key = QStringLiteral("FloatingPan_pan-0_Geometry");
+        s.setValue(key, QString());
+
+        PanadapterStack stack;
+        stack.applyLayout(QStringLiteral("1"),
+                          MainWindow::panIdsForLayout(QStringLiteral("1")));
+        stack.floatPanadapter(QStringLiteral("pan-0"));
+        s.setValue(key, QString());     // ignore anything the float wrote
+
+        // No teardown: this is the closeEvent-ordering path, where the stack
+        // is still very much alive when the geometry has to be on record.
+        stack.saveFloatingGeometry();
+
+        QVERIFY2(!s.value(key, QString()).toString().isEmpty(),
+                 "saveFloatingGeometry wrote nothing while the pan was still "
+                 "floating, so closeEvent's flush would miss it");
     }
 };
 

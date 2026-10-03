@@ -58,7 +58,7 @@ radio behavior knobs:
 - `chkDisconnectReset` (force disconnect/reset on next start)
 - `udPTTHang` + `labelPttHang` (ms)
 - `udTxBufferLat` + `labelTxLatency` (ms)
-- `chkHL2PsSync` (PureSignal sync)
+- `chkHL2PsSync` ("Disable PS Sync": the power supply clock sync, not PureSignal)
 - `chkHL2BandVolts` (band voltage output 0–3.3 V on RJ45 — useful for amp keying)
 
 **`groupBoxI2CControl`** — manual I2C R/W tool: `chkI2CEnable`, bus combo,

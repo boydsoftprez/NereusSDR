@@ -1,0 +1,11 @@
+{
+  "from": "server",
+  "to": "client",
+  "wire": {
+    "type": "error",
+    "code": "rateLimited",
+    "reason": "Too many attempts. Try again in a minute.",
+    "retryAfterMs": 41250
+  },
+  "decodes": true
+}

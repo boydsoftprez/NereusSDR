@@ -39,9 +39,26 @@
 //                                    (`(result == 360) ? 0 : result`)
 //                                    preserved verbatim. AI tooling:
 //                                    Anthropic Claude Code.
+//   2026-09-27  J.J. Boyd / KG4VCF  iPhone plan Task 22 / parity Task 20
+//                                    (R-IOS-26, R-R3-49): the
+//                                    `freedvStations` record, the message
+//                                    change time and a remote window's
+//                                    model fed from the Core's stream.
+//                                    NereusSDR-original additions.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-09-28  J.J. Boyd / KG4VCF  R-IOS-26 (stationFreedvVersion 2): the
+//                                    record's `band`, from the desktop's
+//                                    own Band::bandFromFrequency (called,
+//                                    not copied). NereusSDR-original
+//                                    addition. AI-assisted via Anthropic
+//                                    Claude Code.
 
 #include "FreeDVStationModel.h"
 
+#include "models/Band.h"
+
+#include <QDateTime>
+#include <QTimeZone>
 #include <QtMath>
 
 #include <cmath>
@@ -189,7 +206,128 @@ double calculateBearingInDegrees(const QString& gridSquare1, const QString& grid
 
 FreeDVStationModel::FreeDVStationModel(QObject* parent)
     : QObject(parent)
+    , m_clock([]() { return QDateTime::currentMSecsSinceEpoch(); })
 {
+}
+
+namespace {
+
+QString utcText(const QDateTime& when)
+{
+    return when.isValid() ? when.toUTC().toString(Qt::ISODate) : QString();
+}
+
+QDateTime utcFrom(const QJsonObject& fields, const char* key)
+{
+    const QString text = fields.value(QLatin1String(key)).toString();
+    if (text.isEmpty()) {
+        return {};
+    }
+    QDateTime when = QDateTime::fromString(text, Qt::ISODate);
+    if (when.isValid() && when.timeSpec() == Qt::LocalTime) {
+        when.setTimeZone(QTimeZone::UTC);
+    }
+    return when;
+}
+
+} // namespace
+
+QJsonObject FreeDVStationModel::recordFields(const FreeDVStation& info,
+                                             qint64 messageChangedAtMs)
+{
+    // receivingFrom: whom the station reported hearing, while its latest
+    // receive report stands (a frequency change clears it).
+    const QString receivingFrom = info.lastRxDate.isValid() ? info.lastRxCallsign : QString();
+    QJsonObject fields{
+        {QStringLiteral("callsign"), info.callsign},
+        {QStringLiteral("gridSquare"), info.gridSquare},
+        {QStringLiteral("distanceKm"), info.distanceKm},
+        {QStringLiteral("headingDeg"), info.headingDeg},
+        {QStringLiteral("headingCardinal"), info.headingCardinal},
+        {QStringLiteral("version"), info.version},
+        {QStringLiteral("frequencyHz"), static_cast<double>(info.frequencyHz)},
+        {QStringLiteral("txMode"), info.txMode},
+        {QStringLiteral("status"), info.status},
+        {QStringLiteral("userMessage"), info.userMessage},
+        {QStringLiteral("lastTxUtc"), utcText(info.lastTxDate)},
+        {QStringLiteral("lastRxCallsign"), info.lastRxCallsign},
+        {QStringLiteral("lastRxMode"), info.lastRxMode},
+        {QStringLiteral("snrDb"), info.snrVal},
+        {QStringLiteral("lastUpdateUtc"), utcText(info.lastUpdate)},
+        {QStringLiteral("transmitting"), info.transmitting},
+        {QStringLiteral("receivingFrom"), receivingFrom},
+        {QStringLiteral("messageChangedAtMs"), static_cast<double>(messageChangedAtMs)},
+        {QStringLiteral("lastRxUtc"), utcText(info.lastRxDate)},
+    };
+    // stationFreedvVersion 2 (R-IOS-26): the station's band, as the desktop's
+    // band filter finds it for this frequency (Band::bandFromFrequency),
+    // numbered as the spots record numbers its band. None while the
+    // frequency is not known: the desktop lists such a station under All only.
+    if (info.frequencyHz > 0) {
+        fields.insert(QStringLiteral("band"),
+                      static_cast<int>(bandFromFrequency(static_cast<double>(info.frequencyHz))));
+    }
+    return fields;
+}
+
+FreeDVStation FreeDVStationModel::stationFromRecord(const QString& sid, const QJsonObject& fields)
+{
+    FreeDVStation info;
+    info.sid = sid;
+    info.callsign = fields.value(QStringLiteral("callsign")).toString();
+    info.gridSquare = fields.value(QStringLiteral("gridSquare")).toString();
+    info.distanceKm = fields.value(QStringLiteral("distanceKm")).toDouble();
+    info.headingDeg = fields.value(QStringLiteral("headingDeg")).toDouble();
+    info.headingCardinal = fields.value(QStringLiteral("headingCardinal")).toString();
+    info.version = fields.value(QStringLiteral("version")).toString();
+    const double hz = fields.value(QStringLiteral("frequencyHz")).toDouble();
+    info.frequencyHz = hz > 0.0 ? static_cast<quint64>(std::llround(hz)) : 0;
+    info.txMode = fields.value(QStringLiteral("txMode")).toString();
+    info.status = fields.value(QStringLiteral("status")).toString();
+    info.rxOnly = info.status == QStringLiteral("RX Only");
+    info.userMessage = fields.value(QStringLiteral("userMessage")).toString();
+    info.lastTxDate = utcFrom(fields, "lastTxUtc");
+    info.lastRxCallsign = fields.value(QStringLiteral("lastRxCallsign")).toString();
+    info.lastRxMode = fields.value(QStringLiteral("lastRxMode")).toString();
+    info.snrVal = fields.value(QStringLiteral("snrDb")).toInt(-99);
+    info.snrText = info.snrVal == -99 ? QString() : QString::number(info.snrVal);
+    info.lastUpdate = utcFrom(fields, "lastUpdateUtc");
+    info.transmitting = fields.value(QStringLiteral("transmitting")).toBool();
+    info.lastRxDate = utcFrom(fields, "lastRxUtc");
+    return info;
+}
+
+void FreeDVStationModel::applyStationRecord(const QString& sid, const QJsonObject& fields)
+{
+    const FreeDVStation info = stationFromRecord(sid, fields);
+    const bool held = m_stations.contains(sid);
+    m_stations.insert(sid, info);
+    const qint64 changedAt =
+        static_cast<qint64>(fields.value(QStringLiteral("messageChangedAtMs")).toDouble());
+    if (changedAt > 0) {
+        m_messageChangedAtMs.insert(sid, changedAt);
+    } else {
+        m_messageChangedAtMs.remove(sid);
+    }
+    if (held) {
+        emit stationUpdated(sid, info);
+    } else {
+        emit stationAdded(sid, info);
+    }
+}
+
+qint64 FreeDVStationModel::messageChangedAtMs(const QString& sid) const
+{
+    return m_messageChangedAtMs.value(sid, 0);
+}
+
+void FreeDVStationModel::noteMessage(const QString& sid, const FreeDVStation& info)
+{
+    const auto held = m_stations.constFind(sid);
+    const QString before = held == m_stations.cend() ? QString() : held->userMessage;
+    if (info.userMessage != before) {
+        m_messageChangedAtMs.insert(sid, m_clock ? m_clock() : 0);
+    }
 }
 
 QHash<QString, FreeDVStation> FreeDVStationModel::stations() const
@@ -213,6 +351,9 @@ void FreeDVStationModel::setOurGridSquare(const QString& grid)
         return;
     }
     m_ourGrid = grid;
+    if (!m_computesDistance) {
+        return; // a remote window keeps the Core's values
+    }
 
     // Re-stamp every existing station with new distance/heading AND
     // emit stationUpdated so subscribers (FreeDVReporterDialog) repaint
@@ -235,6 +376,7 @@ void FreeDVStationModel::onStationAdded(const QString& sid, const FreeDVStation&
 {
     FreeDVStation stamped = info;
     applyDistanceHeading(stamped);
+    noteMessage(sid, stamped);
     m_stations.insert(sid, stamped);
     emit stationAdded(sid, stamped);
 }
@@ -243,12 +385,14 @@ void FreeDVStationModel::onStationUpdated(const QString& sid, const FreeDVStatio
 {
     FreeDVStation stamped = info;
     applyDistanceHeading(stamped);
+    noteMessage(sid, stamped);
     m_stations.insert(sid, stamped);
     emit stationUpdated(sid, stamped);
 }
 
 void FreeDVStationModel::onStationRemoved(const QString& sid)
 {
+    m_messageChangedAtMs.remove(sid);
     if (m_stations.remove(sid) > 0) {
         emit stationRemoved(sid);
     }
@@ -257,11 +401,15 @@ void FreeDVStationModel::onStationRemoved(const QString& sid)
 void FreeDVStationModel::clear()
 {
     m_stations.clear();
+    m_messageChangedAtMs.clear();
     emit cleared();
 }
 
 void FreeDVStationModel::applyDistanceHeading(FreeDVStation& info) const
 {
+    if (!m_computesDistance) {
+        return; // a remote window keeps the Core's values
+    }
     if (m_ourGrid.size() < 4 || info.gridSquare.size() < 4) {
         info.distanceKm = 0.0;
         info.headingDeg = 0.0;

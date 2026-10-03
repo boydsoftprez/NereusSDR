@@ -14,6 +14,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-09-27  J.J. Boyd / KG4VCF  Task 24: remote issue-list state for
+//                                    Core-owned validation replies.
+//                                    AI-assisted implementation via Codex.
 //   2026-04-20 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
@@ -66,6 +69,20 @@ void SettingsHygiene::validate(const QString& mac, const BoardCapabilities& caps
 QVector<SettingsHygiene::Issue> SettingsHygiene::issues() const
 {
     return m_issues;
+}
+
+void SettingsHygiene::replaceRemoteIssues(const QVector<Issue>& issues)
+{
+    m_issues = issues;
+    m_remoteUnavailableReason.clear();
+    emit issuesChanged();
+}
+
+void SettingsHygiene::setRemoteUnavailable(const QString& reason)
+{
+    m_issues.clear();
+    m_remoteUnavailableReason = reason;
+    emit issuesChanged();
 }
 
 int SettingsHygiene::issueCount() const

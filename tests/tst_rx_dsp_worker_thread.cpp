@@ -28,12 +28,16 @@
 
 #include <QtTest/QtTest>
 #include <QCoreApplication>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
 #include <QSignalSpy>
+#include <QStringList>
 #include <QThread>
 #include <QVector>
 #include <atomic>
+#include <memory>
 
 #include "models/RxDspWorker.h"
 
@@ -100,6 +104,86 @@ WorkerHarness makeHarness()
     return h;
 }
 
+// R-R3-21: processIqBatch_runsOnWorkerThread's 5 s wait timed out once in
+// a loaded Linux run (1 of 3 full runs, 0 of 200 alone or under stress) and
+// the failure said nothing about why. This describes, after the wait has
+// already failed, what each thread was doing, so the next occurrence
+// carries its cause: whether the worker had emitted at all (the direct-
+// connected probe ran), whether its event loop still answers a queued
+// call posted behind the batch (idle versus stuck inside a slot), whether
+// the batch ran by the time that call was answered, and on Linux every
+// thread of the process with its scheduler state and kernel wait channel.
+// It runs only on the failure path.
+QString describeStalledBatch(const WorkerHarness& h,
+                             const std::atomic<QThread*>& emittedOn,
+                             const QSignalSpy& spy)
+{
+    const auto yesNo = [](bool b) {
+        return b ? QStringLiteral("yes") : QStringLiteral("no");
+    };
+    const auto emitted = [&] {
+        QThread* const thread = emittedOn.load();
+        if (thread == nullptr) {
+            return QStringLiteral("no");
+        }
+        return thread == h.thread ? QStringLiteral("yes, on the worker thread")
+                                  : QStringLiteral("yes, on another thread");
+    };
+    QStringList lines;
+    lines << QStringLiteral("at the timeout: worker emitted batchProcessed: %1; spy count: %2")
+                 .arg(emitted())
+                 .arg(spy.count());
+    lines << QStringLiteral("worker thread: running=%1 finished=%2 dispatcher=%3")
+                 .arg(yesNo(h.thread->isRunning()), yesNo(h.thread->isFinished()),
+                      yesNo(h.thread->eventDispatcher() != nullptr));
+
+    // Queued behind the batch, so an answer means the worker's loop reached
+    // it. Shared, so a worker that answers after this returns writes to
+    // live memory rather than to this frame.
+    auto answered = std::make_shared<std::atomic<bool>>(false);
+    QMetaObject::invokeMethod(h.worker, [answered] { answered->store(true); },
+                              Qt::QueuedConnection);
+    QElapsedTimer probe;
+    probe.start();
+    while (!answered->load() && probe.elapsed() < 1000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        QThread::msleep(5);
+    }
+    QCoreApplication::processEvents();
+    lines << QStringLiteral("worker event loop answered a call queued behind the batch "
+                            "within 1 s: %1")
+                 .arg(yesNo(answered->load()));
+    lines << QStringLiteral("after that probe: worker emitted batchProcessed: %1; "
+                            "spy count: %2")
+                 .arg(emitted())
+                 .arg(spy.count());
+
+#ifdef Q_OS_LINUX
+    const QDir tasks(QStringLiteral("/proc/self/task"));
+    const QStringList tids = tasks.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    lines << QStringLiteral("threads in this process: %1").arg(tids.size());
+    const auto readFirstLine = [](const QString& path) {
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly)) {
+            return QStringLiteral("?");
+        }
+        return QString::fromUtf8(f.readLine()).trimmed();
+    };
+    for (const QString& tid : tids) {
+        const QString base = tasks.filePath(tid);
+        const QString comm = readFirstLine(base + QStringLiteral("/comm"));
+        // Field 3 of stat, after the parenthesised name, is the state.
+        const QString stat = readFirstLine(base + QStringLiteral("/stat"));
+        const qsizetype close = stat.lastIndexOf(QLatin1Char(')'));
+        const QString state = close >= 0 ? stat.mid(close + 2, 1) : QStringLiteral("?");
+        const QString wchan = readFirstLine(base + QStringLiteral("/wchan"));
+        lines << QStringLiteral("  tid %1 %2 state=%3 wchan=%4")
+                     .arg(tid, comm, state, wchan.isEmpty() ? QStringLiteral("-") : wchan);
+    }
+#endif
+    return lines.join(QLatin1Char('\n'));
+}
+
 } // namespace
 
 void TestRxDspWorkerThread::processIqBatch_runsOnWorkerThread()
@@ -127,7 +211,24 @@ void TestRxDspWorkerThread::processIqBatch_runsOnWorkerThread()
                               Q_ARG(int, 0),
                               Q_ARG(QVector<float>, samples));
 
-    QVERIFY(spy.wait(5000));
+    // R-R3-21: the worker can emit before this thread reaches the wait (a
+    // loaded Linux run caught it: "worker emitted batchProcessed: yes, on
+    // the worker thread; spy count: 1" at the timeout). QSignalSpy::wait
+    // counts only emissions that land while it waits, so an early one read
+    // as a stall. Wait on the count instead: an emission at any moment after
+    // the batch was queued counts, and each short wait still returns on the
+    // emission itself.
+    QElapsedTimer waited;
+    waited.start();
+    while (spy.count() == 0 && waited.elapsed() < 5000) {
+        spy.wait(20);
+    }
+    if (spy.count() == 0) {
+        const QByteArray why = QByteArrayLiteral(
+                                   "no batchProcessed within 5 s; thread states:\n")
+            + describeStalledBatch(h, observed, spy).toUtf8();
+        QFAIL(why.constData());
+    }
     QCOMPARE(spy.count(), 1);
 
     QThread* slotThread = observed.load();

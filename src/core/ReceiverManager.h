@@ -12,6 +12,23 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23 - iqDataForReceiverStamped and enqueueClockNs (monotonic
+//                 enqueue stamp for the DSP input delay bound, R-R3-40) by
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code. NereusSDR-original; no Thetis
+//                 counterpart.
+//   2026-09-23 - hardwareIqDataStamped (the stamped raw hardware-DDC batch
+//                 for the external-diversity input bound, R-R3-40) by J.J.
+//                 Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code. NereusSDR-original.
+//   2026-09-30 - beginIqBatch / endIqBatch: the queued stamped batches of
+//                 one socket drain go to the DSP worker as one post per
+//                 stream, not one per packet, by J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//                 NereusSDR-original.
+//   2026-09-30 - reset() drops a held batch and ends batching. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 NereusSDR-original.
 // =================================================================
 
 //=================================================================
@@ -70,6 +87,9 @@
 #include <QMap>
 #include <QMutex>
 
+#include <atomic>
+#include <chrono>
+
 #include "codec/CodecContext.h"   // PsDdcConfig + Q_DECLARE_METATYPE
 #include "HpsdrModel.h"           // HPSDRModel
 
@@ -103,6 +123,16 @@ class ReceiverManager : public QObject {
 public:
     explicit ReceiverManager(QObject* parent = nullptr);
     ~ReceiverManager() override;
+
+    // Monotonic clock (std::chrono::steady_clock, nanoseconds) used to stamp
+    // iqDataForReceiverStamped. RxDspWorker reads the same clock to measure
+    // how long a batch waited before processing (R-R3-40).
+    static qint64 enqueueClockNs() noexcept
+    {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    }
 
     // --- Configuration ---
     void setMaxReceivers(int max);
@@ -166,6 +196,24 @@ public:
     // Called when I/Q data arrives for a hardware DDC.
     // Routes to the correct logical receiver.
     void feedIqData(int hwReceiverIndex, const QVector<float>& samples);
+
+    // One socket drain's worth of I/Q, bracketed by the connection thread
+    // (RadioConnection::iqBatchStarted / iqBatchFinished, DirectConnection).
+    // Between the two, feedIqData still emits iqDataForReceiver and
+    // iqDataForChannel for every packet, but holds the queued stamped
+    // batches (iqDataForReceiverStamped, hardwareIqDataStamped) and joins
+    // each stream's packets, in order, into one batch, emitted at
+    // endIqBatch: one post per stream per drain instead of one per packet.
+    // The samples and their order per stream are unchanged. A stream's
+    // held batch is emitted early once it reaches kIqBatchMaxSamples. Only
+    // the thread that began the batch is held; any other thread's
+    // feedIqData emits at once, as before.
+    void beginIqBatch();
+    void endIqBatch();
+    // Bounds one held batch: about eight 238-sample Protocol 2 packets.
+    // Far below RxDspWorker's kMaxSaneSamplesPerBatch and its diversity
+    // leg backlog, so no joined batch is refused or trimmed there.
+    static constexpr int kIqBatchMaxSamples = 2048;
 
     // -------------------------------------------------------------------
     // Phase 3M-4 Task 6: PureSignal DDC orchestration
@@ -257,11 +305,40 @@ signals:
     void hardwareReceiverCountChanged(int count);
     void hardwareFrequencyChanged(int hardwareRx, quint64 frequencyHz);
 
+    // Which hardware receivers are live after a rebuild: bit n set means an
+    // active receiver sits on hardware index n (the frame slot on Protocol 1,
+    // the DDC on Protocol 2). Emitted before hardwareReceiverCountChanged
+    // on every rebuild, and with 0 on reset.
+    //
+    // A count cannot say this. Protocol 1 routes by frame slot, so closing
+    // slice A leaves slice B on slot 1 (slot 2 on the Orion class) and the
+    // count drops to 1 while slot 1 is still the one carrying audio. The
+    // connection needs the slots themselves to know which receiver stands in
+    // for Thetis's RX1 and how many slots the frame must announce.
+    void hardwareSlotsChanged(quint32 slotMask);
+
     // I/Q data routed to the appropriate WDSP channel.
     void iqDataForChannel(int wdspChannel, const QVector<float>& samples);
 
     // I/Q data routed to the appropriate receiver (by logical index).
     void iqDataForReceiver(int receiverIndex, const QVector<float>& samples);
+
+    // The same batch, emitted right after iqDataForReceiver with the
+    // enqueueClockNs() time it left this manager. RxDspWorker consumes it
+    // through a queued connection, so the stamp travels with the batch and
+    // the worker can tell how long the batch waited in its queue (R-R3-40).
+    void iqDataForReceiverStamped(int receiverIndex,
+                                  const QVector<float>& samples,
+                                  qint64 enqueuedNs);
+
+    // Every hardware-DDC batch feedIqData receives, before the logical
+    // mapping, with the enqueueClockNs() time it arrived. RxDspWorker's
+    // external-diversity route consumes it through a queued connection:
+    // that route's secondary leg has no logical receiver, and the stamp lets
+    // the worker bound its input delay like any receiver's (R-R3-40).
+    void hardwareIqDataStamped(int hwReceiverIndex,
+                               const QVector<float>& samples,
+                               qint64 enqueuedNs);
 
     // Phase 3M-4 Task 6: emitted whenever ReceiverManager re-runs the
     // per-board PS DDC computation (either codec dispatch).  Carries the
@@ -319,6 +396,19 @@ private:
     // destroyReceiver -> rebuildHardwareMapping do not deadlock.  Mutable
     // so the reader can take it.
     mutable QRecursiveMutex m_routingMutex;
+
+    // beginIqBatch / endIqBatch state. The mutex is taken on the connection
+    // thread, and by reset() on the owner's thread (never an audio
+    // callback), and never while emitting.
+    struct HeldIqBatch {
+        bool hardware{false};  // hardwareIqDataStamped, else iqDataForReceiverStamped
+        int index{-1};
+        QVector<float> samples;
+    };
+    void flushHeldIq(QVector<HeldIqBatch>& batches);
+    QMutex m_iqBatchMutex;
+    std::atomic<Qt::HANDLE> m_iqBatchThread{nullptr};
+    QVector<HeldIqBatch> m_heldIq;
 
     // Diagnostic: one-shot logging of first successful and first dropped feedIqData
     bool m_firstForwardLogged{false};

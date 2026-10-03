@@ -32,6 +32,7 @@
 
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QCheckBox>
 
 #include "core/AppSettings.h"
 #include "gui/SetupDialog.h"
@@ -70,6 +71,10 @@ private slots:
     // Phase 9 connect() is a no-op and downstream tests would silently
     // pass for the wrong reason.
     void both_pa_pages_are_constructed();
+
+    // R-R3-49 (found bug): Watt Meter > Show PA Values page shows or hides
+    // the PA Values page, at once and as saved (Thetis chkPAValues).
+    void show_pa_values_box_shows_and_hides_the_values_page();
 };
 
 // ---------------------------------------------------------------------------
@@ -78,6 +83,10 @@ private slots:
 void TstSetupDialogPaResetWiring::wattMeter_reset_button_clears_values_page_peak_min()
 {
     RadioModel model;
+    // A radio with power amplifier settings (an ANAN-G2): without one the
+    // PA pages are disabled with the reason (Task 16 fix wave 2) and the
+    // Reset button cannot be pressed.
+    model.setBoardForTest(HPSDRHW::Saturn);
     SetupDialog dialog(&model);
 
     // #272 / #301: pages are built on first visit, so realize both PA leaves
@@ -127,6 +136,39 @@ void TstSetupDialogPaResetWiring::both_pa_pages_are_constructed()
 
     QVERIFY(dialog.paWattMeterPageForTest() != nullptr);
     QVERIFY(dialog.paValuesPageForTest()    != nullptr);
+}
+
+void TstSetupDialogPaResetWiring::show_pa_values_box_shows_and_hides_the_values_page()
+{
+    RadioModel model;
+    model.setBoardForTest(HPSDRHW::Saturn);
+    {
+        SetupDialog dialog(&model);
+        QVERIFY(!dialog.isPaValuesPageHiddenForTest());
+        QVERIFY(dialog.realizePageForTest(QStringLiteral("Watt Meter")) != nullptr);
+        auto* box = dialog.paWattMeterPageForTest()->findChild<QCheckBox*>(
+            QStringLiteral("chkPAValues"));
+        QVERIFY(box != nullptr);
+        QVERIFY(box->isChecked());
+        box->setChecked(false);
+        QVERIFY(dialog.isPaValuesPageHiddenForTest());
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("display/showPaValuesPage"))
+                     .toString(), QStringLiteral("False"));
+        // A radio change that re-shows the PA pages keeps it hidden.
+        dialog.applyPaVisibilityForTest(model.boardCapabilities());
+        QVERIFY(dialog.isPaValuesPageHiddenForTest());
+    }
+    {
+        // As saved, the next time Setup opens.
+        SetupDialog dialog(&model);
+        QVERIFY(dialog.isPaValuesPageHiddenForTest());
+        QVERIFY(dialog.realizePageForTest(QStringLiteral("Watt Meter")) != nullptr);
+        auto* box = dialog.paWattMeterPageForTest()->findChild<QCheckBox*>(
+            QStringLiteral("chkPAValues"));
+        QVERIFY(box != nullptr && !box->isChecked());
+        box->setChecked(true);
+        QVERIFY(!dialog.isPaValuesPageHiddenForTest());
+    }
 }
 
 QTEST_MAIN(TstSetupDialogPaResetWiring)

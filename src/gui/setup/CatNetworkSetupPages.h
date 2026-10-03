@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gui/SetupPage.h"
+#include "gui/setup/RemoteStationPage.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -9,6 +10,8 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
+#include <QHash>
+#include <QSet>
 #include <QPointer>
 #include <QPushButton>
 #include <QSpinBox>
@@ -70,6 +73,14 @@ public:
     // Idempotent: re-calls with the same pointer just refresh the snapshot.
     void setTciServer(class NereusSDR::TciServer* server);
 
+    // R-R3-48: the window's RadioModel, so the page can show the Core's
+    // station TCI server ("Also at the station: <address>, port <port>").
+    void setRadioModel(class NereusSDR::RadioModel* model);
+    QString stationLineForTesting() const;
+    bool switchOnForTesting() const;
+    int portForTesting() const;
+    QSpinBox* portSpinForTesting() const { return m_portSpin; }
+
 signals:
     // Emitted when the operator toggles the Enable TCI Server checkbox.
     // Phase 3J-1 review P2.4: MainWindow::wireSetupDialog connects this to
@@ -125,6 +136,26 @@ private:
     bool m_tciServerRunning{false};
     int  m_tciClientCount{0};
     void refreshTciStatusDisplay();
+    // R-R3-48: the Core's station TCI server line.
+    QPointer<class NereusSDR::RadioModel> m_radioModelRef;
+    QLabel* m_stationLine{nullptr};
+    void refreshStationLine();
+    void refreshIqStreamGroup();
+    void reloadSwitchFromSettings();
+    QGroupBox* m_coreGroup{nullptr};
+    QLabel* m_coreBind{nullptr};
+    QLabel* m_coreReason{nullptr};
+    QCheckBox* m_coreExpert{nullptr};
+    QCheckBox* m_coreSunSdr{nullptr};
+    QCheckBox* m_coreCwlu{nullptr};
+    QCheckBox* m_coreInitial{nullptr};
+    void refreshCoreGroup();
+    void sendCoreOptions();
+    // JJ's ruling of 2026-09-28 (stationTciSettingsVersion 1): the rest of
+    // the page's settings for the Core's own server, by property name.
+    QHash<QByteArray, QWidget*> m_coreSettings;
+    QHash<QByteArray, QString> m_coreSettingTips;
+    void sendCoreSetting(const QByteArray& name, const QVariant& value);
 
     // Group 2: Compatibility
     QCheckBox*   m_emulateExpertSdr3Check{nullptr};
@@ -149,8 +180,18 @@ private:
     QCheckBox*   m_useRx1VfoaForRx2Check{nullptr};
     QCheckBox*   m_copyRx2VfobToVfoaCheck{nullptr};
 
+    // The RX2 VFO options' captions and tooltips, shared by this window's
+    // group and the Core's rows.
+    static QString rx2VfoForgetLabel();
+    static QString rx2VfoForgetTip();
+    static QString rx2VfoUseRx1Label();
+    static QString rx2VfoUseRx1Tip();
+    static QString rx2VfoCopyLabel();
+    static QString rx2VfoCopyTip();
+
     void buildUI();
     void buildServerGroup();
+    void buildCoreGroup();
     void buildCompatibilityGroup();
     void buildIqStreamGroup();
     void buildAudioStreamGroup();
@@ -211,6 +252,17 @@ class PeripheralsPage : public QWidget {
 
 public:
     explicit PeripheralsPage(RadioModel* model, QWidget* parent = nullptr);
+    ~PeripheralsPage() override;
+
+    // Group B fix wave (M1): whether the page still has its RadioModel.
+    // False once the model is gone, so nothing asks it again.
+    bool hasModelForTest() const { return !m_model.isNull(); }
+
+protected:
+    // R-R3-49 (parity Task 8): Setup closing (or the tab changing) sends a
+    // remote window's unsent Tuner Genius Host or Port to the Core
+    // (parity Task 9: and the Power Genius's).
+    void hideEvent(QHideEvent* event) override;
 
 private slots:
     void onScanLan(int rowIdx);
@@ -230,14 +282,42 @@ private:
     // to m_statusLabels[1] (PGXL) and m_statusLabels[0] (TGXL) respectively.
     // Called at end of constructor after both rows are built.
     void wireStatusSignals();
+    void refreshRemoteTgxlRow();
+    // R-R3-47 / R-R3-22: the Power Genius row in a remote window, a view of
+    // the Core's `amplifier` object plus the Core's PGXL commands.
+    void refreshRemotePgxlRow();
+    bool isRemoteMode() const;
 
-    RadioModel*   m_model{nullptr};
+    // Group B fix wave (M1): held weakly. RadioModel is MainWindow's first
+    // child, so it goes before a Setup dialog still open at quit, and the
+    // destructor's unsent-address flush must then find it gone.
+    QPointer<RadioModel> m_model;
     QGridLayout*  m_grid{nullptr};
 
     // Per-row status labels; indexed by row (0 = TGXL, 1 = PGXL).
     QVector<QLabel*>       m_statusLabels;
     // Per-row Connect buttons; label toggles "Connect" / "Disconnect".
     QVector<QPushButton*>  m_connectBtns;
+
+    // The endpoint Core last reported.  Keep this independently of the edit
+    // controls so a phase/error/identity update cannot replace an operator's
+    // unsent remote-TGXL draft.
+    QString m_lastDisplayedCoreTgxlHost;
+    quint16 m_lastDisplayedCoreTgxlPort{0};
+    QString m_lastDisplayedCorePgxlHost;
+    quint16 m_lastDisplayedCorePgxlPort{0};
+
+    // R-R3-49 (parity Task 8, remoteTgxlControlVersion 4): a Host or Port
+    // the operator typed in a remote window without pressing Connect goes
+    // to the Core (setTgxlAddress) when editing finishes or Setup closes.
+    void sendRemoteTgxlAddress();
+    bool m_tgxlAddressEdited{false};
+    bool m_fillingTgxlFromCore{false};
+    // R-R3-49 (parity Task 9, remotePgxlControlVersion 4): the same for the
+    // Power Genius row (setPgxlAddress).
+    void sendRemotePgxlAddress();
+    bool m_pgxlAddressEdited{false};
+    bool m_fillingPgxlFromCore{false};
 };
 
 } // namespace NereusSDR

@@ -1,6 +1,9 @@
 #include "LogCategories.h"
 #include "AppSettings.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QStandardPaths>
 #include <QDir>
 #include <QFile>
@@ -10,6 +13,9 @@
 namespace NereusSDR {
 
 // --- Category Definitions ---
+// lcApp: see the usage comment in LogCategories.h -- deliberately not in
+// LogManager::m_categories below (no GUI toggle row).
+Q_LOGGING_CATEGORY(lcApp,        "nereus.app")
 Q_LOGGING_CATEGORY(lcDiscovery,  "nereus.discovery")
 Q_LOGGING_CATEGORY(lcConnection, "nereus.connection")
 Q_LOGGING_CATEGORY(lcProtocol,   "nereus.protocol")
@@ -101,6 +107,50 @@ void LogManager::setAllEnabled(bool on)
         applyFilterRules();
         saveSettings();
         for (const auto& cat : m_categories) {
+            emit categoryChanged(cat.id, cat.enabled);
+        }
+    }
+}
+
+QString LogManager::enabledList() const
+{
+    QStringList ids;
+    for (const auto& cat : m_categories) {
+        if (cat.enabled) {
+            ids.append(cat.id);
+        }
+    }
+    return ids.join(QLatin1Char(','));
+}
+
+QString LogManager::categoryListJson() const
+{
+    QJsonArray list;
+    for (const auto& cat : m_categories) {
+        list.append(QJsonObject{{QStringLiteral("id"), cat.id},
+                                {QStringLiteral("label"), cat.label}});
+    }
+    const QJsonObject object{{QStringLiteral("categories"), list}};
+    return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
+}
+
+void LogManager::setEnabledList(const QStringList& ids)
+{
+    QStringList changedIds;
+    for (auto& cat : m_categories) {
+        const bool on = ids.contains(cat.id);
+        if (cat.enabled != on) {
+            cat.enabled = on;
+            changedIds.append(cat.id);
+        }
+    }
+    if (changedIds.isEmpty()) {
+        return;
+    }
+    applyFilterRules();
+    saveSettings();
+    for (const auto& cat : m_categories) {
+        if (changedIds.contains(cat.id)) {
             emit categoryChanged(cat.id, cat.enabled);
         }
     }

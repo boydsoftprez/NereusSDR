@@ -22,6 +22,10 @@
 //   * loadFromJson does NOT bail on an active drag (matches Thetis,
 //     which simply reorders mid-drag via enforceOrdering(true)).
 //   * Hand-crafted JSON fixtures pin schema and parsing edge cases.
+//   * R-IOS-13 / R-R3-49 (2026-09-28, J.J. Boyd (KG4VCF), AI-assisted via
+//     Anthropic Claude Code): loadFromJson reads through
+//     ParaEqCurve::readCurveJson, the Core's parser: a missing field is
+//     Json.NET's default (0, false), a point that is not an object fails.
 //
 // Hand-computed expected values trace each branch back to the C#
 // source in ucParametricEq.cs [v2.10.3.13].
@@ -29,6 +33,7 @@
 // =================================================================
 
 #include "../src/gui/widgets/ParametricEqWidget.h"
+#include "../src/core/ParaEqCurve.h"
 
 #include <QApplication>
 #include <QJsonArray>
@@ -128,6 +133,8 @@ private slots:
     void loadFromJsonRejectsBadFreqRange();
     void loadFromJsonResetPathOnBandCountChange();
     void loadFromJsonProducesIdenticalReSerialization();
+    void loadFromJsonTakesMissingFieldsAsThetisDefaults();
+    void loadFromJsonRefusesWhatTheCoreRefuses();
 };
 
 // -- Helpers --
@@ -578,6 +585,55 @@ void TestParametricEqJson::loadFromJsonProducesIdenticalReSerialization() {
 
     QString json2 = loader.saveToJson();
     QCOMPARE(json2, json1);  // byte-identical
+}
+
+// Json.NET leaves a missing field at its C# default (ucParametricEq.cs:
+// 220-252 [v2.10.3.15]): frequency_min_hz 0, parametric_eq false, a
+// point's gain_db 0 and q 0 (then clamped to QMin). Before, the widget
+// refused a missing range end and kept the old value of a missing point
+// field, where Thetis and the Core load 0.
+void TestParametricEqJson::loadFromJsonTakesMissingFieldsAsThetisDefaults() {
+    ParametricEqJsonTester w;
+    w.setParametricEq(true);
+    const QString json = QStringLiteral(
+        R"({"band_count":3,"frequency_max_hz":2000,)"
+        R"("points":[{"frequency_hz":0,"gain_db":2,"q":3},)"
+        R"({"frequency_hz":900},{"frequency_hz":2000,"gain_db":-1,"q":5}]})");
+    QVERIFY(w.loadFromJson(json));
+    QCOMPARE(w.frequencyMinHz(), 0.0);
+    QCOMPARE(w.frequencyMaxHz(), 2000.0);
+    QCOMPARE(w.parametricEq(), false);
+    QCOMPARE(w.globalGainDb(), 0.0);
+    QCOMPARE(w.pointsConst().at(1).frequencyHz, 900.0);
+    QCOMPARE(w.pointsConst().at(1).gainDb, 0.0);
+    QCOMPARE(w.pointsConst().at(1).q, w.qMin());
+
+    NereusSDR::ParaEqCurve::CurveJson core;
+    QVERIFY(NereusSDR::ParaEqCurve::readCurveJson(json, core));
+    QCOMPARE(core.frequencyMinHz, 0.0);
+    QCOMPARE(core.g[1], 0.0);
+    QCOMPARE(core.q[1], 0.0);
+}
+
+// Whatever the Core's reader refuses, the widget refuses, state unchanged.
+void TestParametricEqJson::loadFromJsonRefusesWhatTheCoreRefuses() {
+    const QString refused[] = {
+        QStringLiteral(R"({"points":[{"frequency_hz":0},5],"frequency_max_hz":10})"),
+        QStringLiteral(R"({"points":[{}, {}],"frequency_min_hz":5,"frequency_max_hz":5})"),
+        QStringLiteral(R"({"points":[{}, {}]})"),
+        QStringLiteral(R"([1,2])"),
+    };
+    for (const QString& json : refused) {
+        NereusSDR::ParaEqCurve::CurveJson core;
+        QVERIFY2(!NereusSDR::ParaEqCurve::readCurveJson(json, core), qPrintable(json));
+        ParametricEqJsonTester w;
+        QVector<double> fb, gb, qb;
+        w.getPointsData(fb, gb, qb);
+        QVERIFY2(!w.loadFromJson(json), qPrintable(json));
+        QVector<double> fa, ga, qa;
+        w.getPointsData(fa, ga, qa);
+        QCOMPARE(fa, fb);
+    }
 }
 
 QTEST_MAIN(TestParametricEqJson)

@@ -17,14 +17,25 @@
 //   8.  Hermes: lineIn model→UI — setLineIn(false) → Mic In button selected.
 //   9.  Hermes: +20 dB Mic Boost (UI→Model) — uncheck → micBoost=false.
 //  10.  Hermes: micBoost model→UI — setMicBoost(false) → checkbox unchecked.
-//  11.  Hermes: Line In Gain slider (UI→Model) — setValue(-10) → lineInBoost=-10.
-//  12.  Hermes: lineInBoost model→UI — setLineInBoost(5.0) → slider at 5.
+//  11.  Hermes: Line In Gain slider (UI→Model) — setValue(-21) → lineInBoost=-10.5
+//       (the slider counts half decibels, radio codec lane).
+//  12.  Hermes: lineInBoost model→UI — setLineInBoost(4.5) → slider at 9.
 //  13.  Orion: Mic Tip-Ring checkbox (UI→Model) — uncheck → micTipRing=false.
 //  14.  Orion: micPttDisabled model→UI — setMicPttDisabled(true) → checked.
 //  15.  Saturn: 3.5mm/XLR radio (UI→Model) — click 3.5mm → micXlr=false.
 //  16.  Saturn: micXlr model→UI — setMicXlr(false) → 3.5mm button selected.
 //  17.  Saturn: Mic Bias (UI→Model) — check → micBias=true.
 //  18.  No feedback loop — model setter triggers signal exactly once (no echo).
+//
+// Radio codec lane (2026-09-30, J.J. Boyd KG4VCF, AI-assisted via Anthropic
+// Claude Code):
+//  19.  Line In Gain moves in Thetis's 1.5 dB steps (udLineInBoost) and
+//       shows one decimal; a value between steps snaps to the nearest.
+//  20.  A real HL2 (the model's own row): Radio Mic enabled with the add-on
+//       note, the Hermes group titled for the HL2 and shown with Radio Mic.
+//  21.  Saturn G2 Mic Tip-Ring both ways, shared with the Orion group.
+//  22.  Red Pitaya: the Orion group is disabled with its reason; another
+//       Orion-MkII radio's is enabled.
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -317,13 +328,13 @@ private slots:
         QVERIFY2(!sliders.isEmpty(), "No slider found in Hermes group");
         QSlider* lineInSlider = sliders.first();
 
-        lineInSlider->setValue(-10);
+        lineInSlider->setValue(-21);
         QApplication::processEvents();
 
-        QCOMPARE(model.transmitModel().lineInBoost(), -10.0);
+        QCOMPARE(model.transmitModel().lineInBoost(), -10.5);
     }
 
-    // ── 12. Hermes: setLineInBoost(5.0) → slider at 5 (Model→UI) ─────────────
+    // ── 12. Hermes: setLineInBoost(4.5) → slider at 9 (Model→UI) ─────────────
 
     void hermes_lineInBoost_modelToUi()
     {
@@ -332,13 +343,14 @@ private slots:
         model.setCapsHwForTest(HPSDRHW::Hermes);
         AudioTxInputPage page(&model);
 
-        model.transmitModel().setLineInBoost(5.0);
+        model.transmitModel().setLineInBoost(4.5);
         QApplication::processEvents();
 
         QGroupBox* grp = page.hermesRadioMicGroup();
         const auto sliders = grp->findChildren<QSlider*>();
         QVERIFY2(!sliders.isEmpty(), "No slider found in Hermes group");
-        QCOMPARE(sliders.first()->value(), 5);
+        QCOMPARE(sliders.first()->value(), 9);
+        QCOMPARE(page.hermesLineInGainLabel()->text(), QStringLiteral("4.5 dB"));
     }
 
     // ── 13. Orion: uncheck Mic Tip-Ring → micTipRing=false (UI→Model) ─────────
@@ -461,6 +473,144 @@ private slots:
         model.transmitModel().setMicBoost(true);
         QApplication::processEvents();
         QCOMPARE(spy.count(), 2);
+    }
+
+    // ── 19. Line In Gain in 1.5 dB steps ─────────────────────────────────────
+
+    void hermes_lineInGain_movesInThetisSteps()
+    {
+        RadioModel model;
+        model.setCapsHasMicJackForTest(true);
+        model.setCapsHwForTest(HPSDRHW::Hermes);
+        AudioTxInputPage page(&model);
+
+        QSlider* slider = page.hermesLineInGainSlider();
+        QVERIFY(slider);
+        // udLineInBoost (setup.designer.cs:47006-47034 [v2.10.3.15]):
+        // -34.5 to 12 in 1.5 dB steps, counted in half decibels.
+        QCOMPARE(slider->property("nereusSetupScale").toDouble(), 2.0);
+        QCOMPARE(slider->minimum(), -69);
+        QCOMPARE(slider->maximum(), 24);
+        QCOMPARE(slider->singleStep(), 3);
+        QCOMPARE(slider->pageStep(), 3);
+
+        slider->setValue(-69);
+        QCOMPARE(model.transmitModel().lineInBoost(), -34.5);
+        QCOMPARE(page.hermesLineInGainLabel()->text(), QStringLiteral("-34.5 dB"));
+        slider->setValue(24);
+        QCOMPARE(model.transmitModel().lineInBoost(), 12.0);
+        QCOMPARE(page.hermesLineInGainLabel()->text(), QStringLiteral("12.0 dB"));
+
+        // A drag between steps snaps to the nearest step: -20 half dB
+        // (-10 dB) is nearer -10.5 than -9.
+        slider->setValue(-20);
+        QCOMPARE(slider->value(), -21);
+        QCOMPARE(model.transmitModel().lineInBoost(), -10.5);
+        QCOMPARE(page.hermesLineInGainLabel()->text(), QStringLiteral("-10.5 dB"));
+    }
+
+    // ── 20. A real HL2: Radio Mic open with the add-on note ──────────────────
+
+    void hl2_radioMicOpenWithAddOnNote()
+    {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::HERMESLITE);
+        QVERIFY(model.boardCapabilities().radioMicNeedsAddOn);
+        AudioTxInputPage page(&model);
+
+        const QString note = QStringLiteral(
+            "Needs the Hermes Lite 2 audio add-on board. A stock Hermes Lite 2 sends no mic audio.");
+        QVERIFY(page.radioMicButton()->isEnabled());
+        QCOMPARE(page.radioMicButton()->toolTip(), note);
+        QVERIFY(page.radioMicNoteLabel() != nullptr);
+        QCOMPARE(page.radioMicNoteLabel()->text(), note);
+        QVERIFY(!page.radioMicNoteLabel()->isHidden());
+        QCOMPARE(page.hermesRadioMicGroup()->title(), QStringLiteral("Radio Mic (Hermes Lite 2)"));
+
+        // Not locked to the PC mic: Radio Mic sticks and shows the group.
+        page.radioMicButton()->setChecked(true);
+        QApplication::processEvents();
+        QCOMPARE(model.transmitModel().micSource(), MicSource::Radio);
+        QVERIFY(!page.hermesRadioMicGroup()->isHidden());
+        QVERIFY(page.orionRadioMicGroup()->isHidden());
+        QVERIFY(page.saturnRadioMicGroup()->isHidden());
+
+        // Line In reaches the model, as on a Hermes.
+        QRadioButton* lineIn = findRadioButton(page.hermesRadioMicGroup(), QStringLiteral("Line In"));
+        QVERIFY(lineIn);
+        lineIn->setChecked(true);
+        QVERIFY(model.transmitModel().lineIn());
+
+        // A Hermes has no note.
+        RadioModel hermes;
+        hermes.setHpsdrModelForTest(HPSDRModel::HERMES);
+        AudioTxInputPage hermesPage(&hermes);
+        QVERIFY(hermesPage.radioMicNoteLabel() == nullptr);
+        QVERIFY(hermesPage.radioMicButton()->toolTip().isEmpty());
+        QCOMPARE(hermesPage.hermesRadioMicGroup()->title(),
+                 QStringLiteral("Radio Mic (Hermes / Atlas)"));
+    }
+
+    // ── 21. Saturn G2 Mic Tip-Ring ────────────────────────────────────────────
+
+    void saturn_micTipRing_bothWays()
+    {
+        RadioModel model;
+        model.setCapsHasMicJackForTest(true);
+        model.setCapsHwForTest(HPSDRHW::Saturn);
+        AudioTxInputPage page(&model);
+
+        QCheckBox* tipRing = page.saturnMicTipRingCheck();
+        QVERIFY(tipRing);
+        QCOMPARE(tipRing->parentWidget(), static_cast<QWidget*>(page.saturnRadioMicGroup()));
+        QCOMPARE(tipRing->text(), QStringLiteral("Mic Tip-Ring (Tip is Mic)"));
+        QCOMPARE(tipRing->property("nereusSetupId").toString(),
+                 QStringLiteral("audio.txInput.saturnMicTipRing"));
+        QCOMPARE(tipRing->isChecked(), model.transmitModel().micTipRing());
+
+        QSignalSpy spy(&model.transmitModel(), &TransmitModel::micTipRingChanged);
+        tipRing->setChecked(!tipRing->isChecked());
+        QCOMPARE(model.transmitModel().micTipRing(), tipRing->isChecked());
+        QCOMPARE(spy.count(), 1);
+
+        model.transmitModel().setMicTipRing(!model.transmitModel().micTipRing());
+        QCOMPARE(tipRing->isChecked(), model.transmitModel().micTipRing());
+        QCOMPARE(spy.count(), 2);
+    }
+
+    // ── 22. Red Pitaya: the Orion group disabled with its reason ─────────────
+
+    void redPitaya_orionGroupDisabledWithReason()
+    {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::REDPITAYA);
+        QCOMPARE(model.boardCapabilities().board, HPSDRHW::OrionMKII);
+        AudioTxInputPage page(&model);
+
+        QRadioButton* radioBtn = findRadioButton(&page, QStringLiteral("Radio Mic"));
+        QVERIFY(radioBtn && radioBtn->isEnabled());
+        radioBtn->setChecked(true);
+        QApplication::processEvents();
+
+        // In view, disabled, with the reason.
+        QVERIFY(!page.orionRadioMicGroup()->isHidden());
+        QVERIFY(!page.orionRadioMicGroup()->isEnabled());
+        QCOMPARE(page.orionRadioMicGroup()->toolTip(),
+                 QStringLiteral("These mic settings do not apply to the Red Pitaya."));
+
+        // The transmit gates put that state back, not an enabled group.
+        page.setTransmitSettingsPermittedAt(3, false, QStringLiteral("On the air"));
+        QCOMPARE(page.orionRadioMicGroup()->toolTip(), QStringLiteral("On the air"));
+        page.setTransmitSettingsPermittedAt(3, true, QString());
+        QVERIFY(!page.orionRadioMicGroup()->isEnabled());
+        QCOMPARE(page.orionRadioMicGroup()->toolTip(),
+                 QStringLiteral("These mic settings do not apply to the Red Pitaya."));
+
+        RadioModel anan;
+        anan.setHpsdrModelForTest(HPSDRModel::ANAN7000D);
+        AudioTxInputPage ananPage(&anan);
+        QVERIFY(ananPage.orionRadioMicGroup()->isEnabled());
+        QVERIFY(ananPage.orionRadioMicGroup()->toolTip().isEmpty());
     }
 };
 

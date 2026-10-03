@@ -77,10 +77,13 @@ private slots:
         Hl2IoBoardTab tab(&model);
         QCOMPARE(tab.bandwidthPollIntervalMsForTest(), 250);
 
-        // With a fresh monitor the rate is 0.0 Mbps.
+        // With a fresh monitor the rate is 0.0 Mbit/s: mi0bot's unit and
+        // one decimal (ucBandwidthView.cs toDisplayUnits / formatOverlayLine
+        // [@c26a8a4]).
         tab.pollBandwidthNowForTest();
-        QCOMPARE(tab.ep6RateTextForTest(), QStringLiteral("0.00 Mbps"));
-        QCOMPARE(tab.ep2RateTextForTest(), QStringLiteral("0.00 Mbps"));
+        QCOMPARE(tab.ep6RateTextForTest(), QStringLiteral("0.0 Mbit/s"));
+        QCOMPARE(tab.ep2RateTextForTest(), QStringLiteral("0.0 Mbit/s"));
+        QCOMPARE(tab.ep6BarPercentForTest(), 0);
 
         // Initial throttle text is "○ not throttled" per construction.
         QVERIFY(tab.throttleStatusTextForTest().contains(

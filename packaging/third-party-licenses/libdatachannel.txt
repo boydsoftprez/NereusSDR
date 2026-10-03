@@ -1,0 +1,61 @@
+libdatachannel v0.24.5
+Copyright (c) Paul-Louis Ageneau and contributors
+
+NereusSDR uses libdatachannel for direct ICE, DTLS, SCTP, and SRTP media
+transport. The pinned source is fetched from:
+
+  https://github.com/paullouisageneau/libdatachannel/tree/v0.24.5
+
+libdatachannel v0.24.5 is licensed under the Mozilla Public License 2.0.
+The complete license is supplied in MPLv2.txt. Corresponding source for the
+unmodified pinned version and its exact transitive revisions is available
+through the source URL and NereusSDR's written source offer.
+
+Modification (MPL-2.0 section 3.1): NereusSDR compiles the covered file
+src/peerconnection.cpp with a change of its own. PeerConnection::
+setRemoteDescription() keeps the remote description (and with it the
+fingerprint the DTLS handshake is checked against) before it gives the ICE
+agent the description, instead of after, so a handshake that completes at
+once cannot be checked against no fingerprint. The change is the source
+file cmake/patches/libdatachannel-keep-remote-description-first.cpp in the
+NereusSDR source, which cmake/NereusRemoteMedia.cmake puts in place of the
+two lines it reorders in a copy of peerconnection.cpp in the build tree
+(nereus_patch_libdatachannel_remote_description_first). Because it becomes
+part of a covered file, the change is licensed under the Mozilla Public
+License 2.0, like the rest of peerconnection.cpp, and carries that file's
+MPL-2.0 notice at the top; it is not under NereusSDR's GPLv3. Its source is
+offered with NereusSDR's (SOURCE-OFFER.txt).
+
+Modification (MPL-2.0 section 3.1): NereusSDR applies
+cmake/patches/libdatachannel-0003-retain-juice-agent-through-turn-release.patch
+to src/impl/icetransport.cpp. A scheduled retirement owner keeps a closing
+libjuice agent and its initialization token alive until its bounded TURN
+release and resolver work finish, rather than waiting in shared transport
+teardown or destroying the agent while that work still owns it.
+
+Modification (MPL-2.0 section 3.1): NereusSDR applies
+cmake/patches/libdatachannel-0004-retain-ice-lifetime-anchor.patch after that
+retirement change. It changes include/rtc/configuration.hpp,
+src/impl/icetransport.hpp and src/impl/icetransport.cpp to retain an optional
+application ICE resource until the retiring agent destroys its socket.
+The agent is released before that resource and its initialization token.
+
+Both numbered patches are applied by cmake/NereusRemoteMedia.cmake to
+build-owned copies of the pinned source. Their changes are licensed under
+MPL-2.0, like the covered files they modify; those files retain their
+upstream notices. The exact patches are supplied with NereusSDR's source
+and its written source offer (SOURCE-OFFER.txt).
+
+Modification (MPL-2.0 section 3.1): NereusSDR also compiles
+src/impl/dtlstransport.cpp with a change of its own. The OpenSSL
+DtlsTransport::start() sets the DTLS MTU before it registers for incoming
+records, instead of after, so a peer's ClientHello arriving at once is
+never handled with no MTU set (which failed the handshake). The change is
+the source file cmake/patches/libdatachannel-set-dtls-mtu-before-incoming.cpp
+in the NereusSDR source, which cmake/NereusRemoteMedia.cmake puts in place
+of the first lines of that function in a copy of dtlstransport.cpp in the
+build tree (nereus_patch_libdatachannel_dtls_mtu_first). Because it becomes
+part of a covered file, the change is licensed under the Mozilla Public
+License 2.0, like the rest of dtlstransport.cpp, and carries that file's
+MPL-2.0 notice at the top; it is not under NereusSDR's GPLv3. Its source is
+offered with NereusSDR's (SOURCE-OFFER.txt).

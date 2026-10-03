@@ -11,11 +11,117 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-01  J.J. Boyd / KG4VCF. Opt-in numeric RX history diagnostics.
+//                 AI-assisted via OpenAI Codex.
+//   2026-09-30 : m_fftFillHasData, whether the fill buffer holds the current
+//                 trace's fill now that the fill is written only while pan
+//                 fill is on (GUI memory leak). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-30 : setEdgeMarkedSlice, refreshSliceFlags and
+//                 drawOffScreenArrow: a listened slice a layout change
+//                 placed here draws its own edge marker, never through the
+//                 pan's VFO (desktop listening fix 3). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-30 : ForeignSliceMarker::unowned; a marker's click words say
+//                 who controls the slice and offer Take control (desktop
+//                 listening lane review). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-30 : setGridFollowSaveHold, the saved grid noise floor follow
+//                 held at the user's value while the level calibration
+//                 holds the follow off. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-29 : setCoreWaterfallLevelsAvailable / setCoreWaterfallLevels, a
+//                 remote window's waterfall AGC levels from the Core. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-09-24 : peakHoldEnabledChanged signal (R-R3-49, R-R3-21).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-26 : iPhone app plan Task 78 (R-IOS-02, R-IOS-30): other
+//                 devices' slices drawn as markers (dashed, no flag, not
+//                 draggable) with a label that says whose they are.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-24 : WfGradientStop and wfSchemeStops() moved to
+//                 core/spectrum/WaterfallPalettes.h (iPhone app Task 19,
+//                 R-IOS-06). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-08-08 — J.J. Boyd (KG4VCF). Two bench-reported defects.
+//                 (1) Extended pan: Sub-Epic F shipped the wideband DATA
+//                 path and never the paint, so the stored bins had no
+//                 reader and visibleBinRange()'s clamp stretched the DDC
+//                 trace across the whole panel once zoomed past the DDC
+//                 rate. Adds listenableIslandPixels() /
+//                 fillWidebandWings() / drawExtendedIslandBounds(); wing
+//                 frequency axis and dB calibration from Thetis
+//                 wbDisplay.cs:440, 2106, 4511, 4680-4704 [v2.10.3.15].
+//                 (2) A floated pan lost its render context. Adds
+//                 prepareForTopLevelChange() / resetGpuResources() /
+//                 applyNativeWindowIsolationPolicy(), ported from
+//                 AetherSDR src/gui/SpectrumWidget.cpp:1843-1857,
+//                 2227-2247, 7092-7110 [@1e0718ad]. AI-assisted
+//                 transformation via Anthropic Claude Code.
+//   2026-09-22 — J.J. Boyd (KG4VCF). Adapt prepareForShutdown() from
+//                 AetherSDR src/gui/SpectrumWidget.cpp:2397-2420 [@0dea0dd7].
+//                 Keep a standalone widget's owning graphics window alive
+//                 until QRhiWidget teardown. AI-assisted via OpenAI Codex.
+//   2026-09-26 : bandPlanManager() accessor, so a test reads the plan the
+//                 strip draws (R-IOS-11, R-R3-49). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-26  J.J. Boyd / KG4VCF  Parity Task 28 (R-R3-49, A11):
+//                                    transmitRefLevel() and
+//                                    transmitDynamicRange() readers.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-09-26  J.J. Boyd / KG4VCF  Parity Task 29 (R-R3-49, R-R3-12):
+//                                    drawsSpectrumTrace(); no stale receive
+//                                    trace under the transmit axis.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-09-26 : a remote waterfall row queue (R-R3-21, R-R3-08): rows wait
+//                 for the ticker with the RF window they were captured at.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-27 : Parity Task 31 (A11, R-R3-49): display duplex (DUP) off by
+//                 default as Thetis; with it on while keyed the pan keeps the
+//                 receive span and bins under the transmit grid and levels,
+//                 the TX filter sits against the receive span without XIT,
+//                 the receive trace takes the transmit calibration, and a
+//                 change while keyed swaps the view and resets the peaks.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 : VFO flag crash lane: test seams for the VFO marker and
+//                 passband. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-01: Completed attribution for per-slice marker colors
+//                 and selected-last paint order
+//                 by J.J. Boyd (KG4VCF), with AI assistance via
+//                 OpenAI Codex. Port introduced 2026-09-23.
+//                 Source: AetherSDR src/gui/SpectrumWidget.cpp [@9f81dc00].
+//                 Upstream has no per-file copyright header.
+//                 Copyright (C) 2024-2026 Jeremy (KK7GWY) and
+//                 AetherSDR contributors. GPLv3; project source:
+//                 https://github.com/ten9876/AetherSDR
+// =================================================================
+
+// =================================================================
+// Source attribution for 3D stacked-trace spectrum (AetherSDR, GPLv3):
+//   Project lead: Jeremy (KK7GWY) / AetherSDR contributors
+//   https://github.com/ten9876/AetherSDR
+//   Upstream files at 1872028c: src/gui/SpectrumWidget.h and
+//   src/gui/DssRenderer.h. AetherSDR has no per-file license header;
+//   its project LICENSE is GPLv3.
+//
+// Modification history (3D stacked-trace port, NereusSDR):
+//   2026-10-02 - Integrated the display bindings and speed fold with
+//                landed remote capture, RX/TX and marker paths for
+//                NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
+//                integration via OpenAI Codex.
+//   2026-08-08 - Adapted the AetherSDR 3D controls and renderer state
+//                for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Anthropic Claude Code. The 3D Speed
+//                row divider and peak-hold fold are NereusSDR additions.
+//   2026-10-01 - Corrected frame-fold and skipped-paint GPU upload state
+//                for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via OpenAI Codex.
 // =================================================================
 
 /*  enums.cs
@@ -150,27 +256,44 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+#include "gui/RemoteSpectrumCapture.h"
+
+#include <QElapsedTimer>
 #include <QWidget>
 #include <QVector>
 #include <QImage>
 #include <QPainterPath>
 #include <QPixmap>
 #include <QColor>
+#include <functional>
 #include <QPoint>
 #include <QMap>
+#include <QSet>
 #include <QHash>
 #include <QStaticText>
 #include <QTimer>
 #include <QPropertyAnimation>
 
-#include "spectrum/ActivePeakHoldTrace.h"
-#include "spectrum/PeakBlobDetector.h"
-#include "spectrum/SpectrumAvenger.h"
+#include <functional>
+#include <optional>
+#include <QStringList>
 
+#include "core/spectrum/ActivePeakHoldTrace.h"
+#include "core/spectrum/DisplayFollowers.h"
+#include "core/spectrum/PeakBlobDetector.h"
+#include "core/spectrum/SpectrumAvenger.h"
+#include "core/spectrum/SpectrumReducer.h"
+
+#include <array>
+#include "gui/DssRenderer.h"
 #include <utility>
 
 #include "core/ConnectionState.h"
 #include "core/WdspTypes.h"  // DSPMode — for TX filter IQ-space mapping (Plan 4 D9)
+#include "core/spectrum/SpectrumDetectorMode.h"
+#include "core/spectrum/ISpectrumSink.h"  // R1 Task 4: also supplies WfColorScheme + AverageMode
+#include "core/spectrum/WaterfallPalettes.h"  // iPhone app Task 19: WfGradientStop, wfSchemeStops
+#include "core/session/media/DisplayCodec.h"
 
 QT_BEGIN_NAMESPACE
 class QLabel;
@@ -183,10 +306,13 @@ QT_END_NAMESPACE
 #ifdef NEREUS_GPU_SPECTRUM
 #include <QRhiWidget>
 #include <rhi/qrhi.h>
+#include "gui/DssMeshGeometry.h"  // DssOutlinePipelineMode (Task 7 Step 6b)
 using SpectrumBaseClass = QRhiWidget;
 #else
 using SpectrumBaseClass = QWidget;
 #endif
+
+class TestDssRowTee;
 
 namespace NereusSDR {
 
@@ -195,22 +321,22 @@ class SpectrumOverlayMenu;
 class VfoWidget;
 class ImdOverlay;  // Phase 3M-4 Task 12 — two-tone IMD overlay analytical core
 class WaterfallTicker;  // src/gui/spectrum/WaterfallTicker.h
+struct SpectrumEndpointContext;
+class DisplaySettingsModel;  // src/models/DisplaySettingsModel.h (3D Stacked-Trace Spectrum Plan Task 18)
 
-// Waterfall color scheme presets.
-// Default matches AetherSDR/SmartSDR style.
-// From Thetis enums.cs:68-79 (ColorScheme enum). Expanded 4 → 7 in
-// Phase 3G-8 commit 5 (plan §7 W17 waterfall colour schemes expansion).
-enum class WfColorScheme : int {
-    Default = 0,    // AetherSDR: black → blue → cyan → green → yellow → red
-    Enhanced,       // Thetis enhanced (9-band progression)
-    Spectran,       // SPECTRAN
-    BlackWhite,     // Grayscale
-    LinLog,         // Linear in low, log in high — Thetis LinLog
-    LinRad,         // Linradiance-style cool → hot
-    Custom,         // User-defined custom stops (reads from AppSettings)
-    ClarityBlue,    // Phase 3G-9b: narrow-band monochrome (80% navy noise floor,
-                    // top 20% cyan→white signals). AetherSDR-style readability.
-    Count
+// Waterfall color scheme presets: extracted to core in R1 Task 4
+// (src/core/spectrum/ISpectrumSink.h) alongside AverageMode below, because
+// RadioModel::applyClaritySmoothDefaults names specific enumerators of
+// both and must keep compiling once this file is no longer reachable from
+// src/models. Same name, same namespace, no alias needed (contrast
+// SpectrumDetector below, which was renamed and does need one).
+
+// Spectrum render mode for the panadapter surface.
+// From AetherSDR SpectrumWidget.h:78-82 [@1872028c].
+enum class SpectrumRenderMode : int {
+    Mode2D = 0,    // FFT trace + scrolling waterfall (classic)
+    Mode3D,        // 3DSS perspective stacked-trace surface
+    Count          // sentinel
 };
 
 // Frequency label alignment for the bottom scale bar.
@@ -227,36 +353,14 @@ enum class FreqLabelAlign : int {
     Count
 };
 
-// Spectrum averaging mode. Ported from Thetis comboDispPanAveraging
-// (setup.designer.cs:34835, target console.specRX.GetSpecRX(0).AverageMode).
-// Thetis options: None / Recursive / Time Window / Log Recursive.
-// NereusSDR names: None / Weighted / TimeWindow / Logarithmic — the
-// previous single smoothing behavior (kSmoothAlpha * new + (1-a) * prev)
-// corresponds to Weighted.
-enum class AverageMode : int {
-    None = 0,        // pass frame through unchanged
-    Weighted,        // kSmoothAlpha exponential (current NereusSDR behavior)
-    Logarithmic,     // log-domain exponential (matches Thetis Log Recursive)
-    TimeWindow,      // approximated as slower exponential for now
-    Count
-};
+// AverageMode: see the ISpectrumSink.h comment above WfColorScheme; same
+// R1 Task 4 extraction, same reasoning, no alias needed.
 
-// Spectrum detector type. Ported from Thetis comboDispPanDetector /
-// comboDispWFDetector (setup.designer.cs:34876 + setup.designer.cs:34461
-// [v2.10.3.13]).  Thetis items: Peak / Rosenfell / Average / Sample / RMS
-// (Pan only has RMS; WF has 4 items).
-// Applied during bin reduction: when N FFT bins are mapped to M display
-// pixels, this policy decides which value is chosen.
-// From Thetis specHPSDR.cs:302-321 [v2.10.3.13] DetTypePan / DetTypeWF
-// → SetDisplayDetectorMode(disp, pixout, mode).
-enum class SpectrumDetector : int {
-    Peak       = 0, // take max bin in window (Thetis "Peak")
-    Rosenfell  = 1, // Rosenfell: alternate max/min per pixel (Thetis "Rosenfell")
-    Average    = 2, // arithmetic mean of bins in window (Thetis "Average")
-    Sample     = 3, // take first bin in window (Thetis "Sample")
-    RMS        = 4, // root-mean-square of bins in window — Pan only; Thetis "RMS"
-    Count
-};
+// Spectrum detector type: extracted to core in R1 (src/core/spectrum/
+// SpectrumDetectorMode.h) so this GUI header is no longer required to get
+// the enum; that header carries the full Thetis citation trail. Alias kept
+// so existing call sites (SpectrumDetector::Peak, etc.) are untouched.
+using SpectrumDetector = NereusSDR::SpectrumDetectorMode;
 
 // Spectrum averaging mode (split from legacy AverageMode for Thetis parity).
 // Ported from Thetis comboDispPanAveraging / comboDispWFAveraging
@@ -274,11 +378,15 @@ enum class SpectrumAveraging : int {
     Count
 };
 
-// Gradient stop for waterfall color mapping.
-struct WfGradientStop { float pos; int r, g, b; };
+// WfGradientStop and wfSchemeStops() live in core/spectrum/WaterfallPalettes.h
+// (iPhone app Task 19), included above, so the Core's catalogue reads the
+// same palettes.
 
-// Returns gradient stops for a given color scheme.
-const WfGradientStop* wfSchemeStops(WfColorScheme scheme, int& count);
+// Interpolate a 0..1 position across a scheme's gradient stops. Extracted
+// from dbmToRgb()'s inline loop so the 3DSS palette can share the stops
+// without inheriting the waterfall gain / black-level window applied above
+// it. Behaviour is unchanged for dbmToRgb.
+QRgb interpolateWfGradient(float t, const WfGradientStop* stops, int count);
 
 // CPU-rendered spectrum + waterfall display widget.
 // Phase A: QPainter fallback (get something visible fast).
@@ -292,8 +400,9 @@ const WfGradientStop* wfSchemeStops(WfColorScheme scheme, int& count);
 //   20px  - frequency scale bar
 //
 // From gpu-waterfall.md lines 274-289
-class SpectrumWidget : public SpectrumBaseClass {
+class SpectrumWidget : public SpectrumBaseClass, public NereusSDR::ISpectrumSink {
     Q_OBJECT
+    friend class ::TestDssRowTee;
 
     // Phase 3Q-8: animated dim factor for the disconnect overlay.
     // 1.0 = no dim (connected), 0.4 = 60% dim (disconnected, after 800 ms fade).
@@ -318,6 +427,112 @@ public:
 
     // ---- Frequency range ----
     void setFrequencyRange(double centerHz, double bandwidthHz);
+
+    /// R-R3-21: the pan overlay's zoom buttons. zoomBy() scales the visible
+    /// span (factor > 1 zooms out); zoomToSegment() fits the band-plan
+    /// segment holding the VFO; zoomToBand() fits every segment of the
+    /// VFO's band. Each goes through the Ctrl+wheel zoom's path, so the
+    /// FFT replans and the wideband view follows as it does there. The
+    /// fits do nothing where the band plan has no segment under the VFO.
+    void zoomBy(double factor);
+    void zoomToSegment();
+    void zoomToBand();
+
+    /// Re-aim the display window WITHOUT touching waterfall history.
+    ///
+    /// setFrequencyRange treats any bandwidth change as a large shift and
+    /// clears the scrollback (SpectrumWidget.cpp:1238-1249). That is right
+    /// for a band jump and wrong for the MOX edge, which changes the window
+    /// twice per transmission: using it there deleted the receive
+    /// scrollback on every key-up and again on every un-key. The 2026-05-08
+    /// handoff called for exactly the opposite -- "on MOX-down, RX1
+    /// spectrum returns to the panadapter without losing waterfall
+    /// scrollback continuity".
+    ///
+    /// No reprojection either. Transmit rows and receive rows describe
+    /// different windows, and mapping one onto the other and back is lossy
+    /// in both directions; leaving the plane alone keeps the receive
+    /// history exactly as it was. Found by Codex on PR #317.
+    void setDisplayWindowPreservingHistory(double centerHz, double bandwidthHz);
+
+    /// Render already-detected transmit pixels, bypassing the receive
+    /// detector and avenger.
+    ///
+    /// TxAnalyzer's output has ALREADY had a detector and averaging applied
+    /// by WDSP, using the TX Display controls. Feeding it through
+    /// updateSpectrumLinear ran applySpectrumDetector and m_spectrumAvenger
+    /// over it a second time using the RECEIVE controls, so the transmit
+    /// settings only behaved as labelled while receive happened to sit at
+    /// Peak / None. Found by Codex on PR #317.
+    ///
+    /// Input is dBm, matching TxAnalyzer::txFftReady, so there is no
+    /// linear round trip either: the previous path raised each pixel to a
+    /// power and took its log again purely to satisfy a signature.
+    ///
+    /// This is the trace-plane twin of setTxExternalWaterfall, which
+    /// already stands the receive path down for the waterfall plane.
+    void updateSpectrumFromTxPixels(int receiverId,
+                                    const QVector<float>& binsDbm);
+    /// R3: render Core's independent, already reduced dBm planes without
+    /// running the local detector/averager over them again.
+    /// R-R3-01/R-R3-08 (parity Task 17): `grantedFftSize` is the FFT size
+    /// the Core runs for this pan (its grant, or what was asked of an older
+    /// Core), 0 when unknown. The bin width, the Hz/bin readout and the
+    /// normalise shift follow it, and the context's frame rate (the rate the
+    /// Core actually sends, after the display budget) times the peak hold,
+    /// blob and noise-floor decay.
+    void setRemoteSpectrumContext(const SpectrumEndpointContext& context,
+                                  double sourceCentreHz, double sampleRateHz,
+                                  int grantedFftSize = 0);
+    bool updateRemoteSpectrum(const DisplayCodecFrame& frame);
+    bool updateRemoteSpectrum(const DisplayCodecFrame& frame,
+                              const NereusSDR::RemoteSpectrumCapture& capture);
+    /// R-R3-21 / R-R3-08: one remote waterfall row, captured at centreHz and
+    /// spanHz, queued for the ticker without touching the trace: a gap row
+    /// (blended or repeated) or a row presented after its pan was tuned. It
+    /// is drawn at the frequency it was captured at. False outside a remote
+    /// window or for an empty or non-finite row.
+    bool enqueueRemoteWaterfallRow(const QVector<float>& pixelsDbm,
+                                   const QVector<float>& wideDbm,
+                                   double centreHz, double spanHz);
+    bool enqueueRemoteWaterfallRow(const QVector<float>& pixelsDbm,
+                                   const QVector<float>& wideDbm,
+                                   const NereusSDR::RemoteSpectrumCapture& capture);
+    /// Rows the ticker has not drawn yet; beyond this the oldest is dropped.
+    static constexpr int kMaxRemoteRowQueue = 32;
+    /// R-R3-21: a remote trace captured at centreHz and spanHz, drawn on the
+    /// current axis (a frame presented after its pan was tuned). False
+    /// outside a remote window, during MOX, or for a non-finite trace.
+    bool presentRemoteTraceCaptured(const QVector<float>& traceDbm,
+                                    double centreHz, double spanHz);
+    /// Rows dropped because the queue was full, this widget's life.
+    quint64 remoteRowsDropped() const { return m_remoteRowsDropped; }
+    /// The Core's granted FFT size for this pan, 0 outside a remote window
+    /// or before its first context.
+    int remoteGrantedFftSize() const { return m_remoteSpectrum ? m_remoteFftSize : 0; }
+    /// The frame rate the Core sends this pan, 0 outside a remote window or
+    /// before its first context.
+    int remoteFrameRate() const { return m_remoteSpectrum ? m_remoteFps : 0; }
+    /// Retire incoming/pending planes while preserving painted RF history.
+    /// Used while renewing the same remote display binding; full retirement
+    /// (disconnect, replacement or rejection) uses clearRemoteSpectrum().
+    void invalidateRemoteSpectrumFrame();
+    void clearRemoteSpectrum();
+    // Opt-in diagnostic events; numeric fields only. No history policy changes.
+    enum class RxHistoryEvent {
+        RemoteFullClear = 1, Leave3D = 2, LiveImageResize = 3,
+        HistoryBufferReset = 4, WaterfallClear = 5, RfReproject = 6,
+        ViewportRebuild = 7, MediaRetired = 8, BudgetBindingRetired = 9,
+        LegacyBindingRetired = 10, LegacyBindingCreated = 11,
+        BudgetBindingCreated = 12, BindingPreserved = 13,
+        EndpointRejected = 14, FrameRenewal = 15
+    };
+    void traceRxHistoryEvent(RxHistoryEvent event, int sourceStream = -1,
+                             quint64 sourceEpoch = 0, QSize nextImageSize = {},
+                             double oldCentreHz = 0, double oldSpanHz = 0,
+                             double newCentreHz = 0, double newSpanHz = 0) const;
+    bool remoteWidebandAvailable() const { return m_remoteWidebandAvailable; }
+    bool remoteWidebandActive() const { return m_remoteWidebandActive; }
     void setCenterFrequency(double centerHz);
     double centerFrequency() const { return m_centerHz; }
     double bandwidth() const { return m_bandwidthHz; }
@@ -339,13 +554,50 @@ public:
     void setSampleRate(double hz);
     double sampleRate() const { return m_sampleRateHz; }
 
+    /// 3M-5d follow-up: TX-side bin-frequency context used by
+    /// visibleBinRange() when m_moxOverlay is true.  RX path is
+    /// unchanged.  m_txCenterHz is the TX channel center (VFO
+    /// frequency on the air); m_txSampleRateHz is the TX baseband
+    /// sample rate the TxAnalyzer feeds into WDSP (96000 Hz on the
+    /// HL2 + ANAN-G2 family).  Without these, the WDSP bin array
+    /// from GetPixels(pixout=0|1) gets sliced against the RX DDC
+    /// rate + center, which produces a stretched, mis-mapped
+    /// waterfall during MOX (bench 2026-05-10 surfaced three peaks
+    /// across the visible window from a single TUNE tone).
+    void setTxCenterFrequency(double hz);
+    double txCenterFrequency() const noexcept { return m_txCenterHz; }
+    void setTxSampleRate(double hz);
+    double txSampleRate() const noexcept { return m_txSampleRateHz; }
+
     // ---- Display range ----
     void setDbmRange(float minDbm, float maxDbm);
+    // 3D Stacked-Trace Spectrum Plan Task 18: named setters for the two
+    // fields setDbmRange() has always written directly, so
+    // DisplaySettingsModel has something to bind each of the fifteen
+    // values to individually (setDbmRange sets both at once; the popup's
+    // Ref Level and Dyn Range sliders each set one).
+    void setRefLevel(float dBm);
+    void setDynamicRange(float dB);
     float refLevel() const { return m_refLevel; }
     float dynamicRange() const { return m_dynamicRange; }
+    /// Parity Task 28: the transmit grid's pair whether or not it is live
+    /// (setMoxOverlay swaps it in while keyed), for the transmit window a
+    /// remote pan asks the Core for.
+    float transmitRefLevel() const { return m_moxOverlay ? m_refLevel : m_txRefLevel; }
+    float transmitDynamicRange() const
+    {
+        return m_moxOverlay ? m_dynamicRange : m_txDynamicRange;
+    }
+
+    // Waterfall/spectrum vertical split fraction (Task 18's third new
+    // setter): DisplaySettingsModel's binding target for the divider
+    // drag in mouseMoveEvent. No popup or Setup control reaches this
+    // directly (yet); persisted via DisplaySpectrumFrac regardless.
+    void  setSpectrumFrac(float frac);
+    float spectrumFrac() const { return m_spectrumFrac; }
 
     // ---- Waterfall settings ----
-    void setWfColorScheme(WfColorScheme scheme);
+    void setWfColorScheme(WfColorScheme scheme) override;
     WfColorScheme wfColorScheme() const { return m_wfColorScheme; }
     void setWfColorGain(int gain);
     int  wfColorGain() const { return m_wfColorGain; }
@@ -357,7 +609,7 @@ public:
     // Legacy combined averaging mode — kept for backward compat (existing
     // callers not yet migrated).  Routes internally to setSpectrumAveraging().
     // Retired key: DisplayAverageMode (migration in Task 5.1).
-    void setAverageMode(AverageMode m);
+    void setAverageMode(AverageMode m) override;
     AverageMode averageMode() const { return m_averageMode; }
 
     // ---- Detector + Averaging split (Task 2.1, handwave fix from 3G-8) ----
@@ -412,11 +664,12 @@ public:
     // from the display pipeline makes the meter read what the operator
     // visually sees on the trace.
     double peakDbmInSlicePassband() const;
+    double peakDbmInPassband(double lowHz, double highHz) const;
 
     // Static helper for detector math. Exposed for unit tests.
     // Note: legacy bin-reduction helper, kept for tst_detector_modes;
     // production rendering uses applySpectrumDetector() (free function in
-    // spectrum/SpectrumDetector.h, verbatim WDSP analyzer.c port) instead.
+    // core/spectrum/SpectrumDetector.h, verbatim WDSP analyzer.c port) instead.
     // From Thetis specHPSDR.cs:302-321 [v2.10.3.13] DetTypePan / DetTypeWF.
     static void applyDetector(const QVector<float>& input, QVector<float>& output,
                               SpectrumDetector mode, int outputBins);
@@ -440,7 +693,7 @@ public:
     // From Thetis specHPSDR.cs:351-380 [v2.10.3.13] — AvTau / AvTauWF.
     // From Thetis setup.cs udDisplayAVGTime_ValueChanged (default 30 ms)
     // and udDisplayAVTimeWF_ValueChanged (default 120 ms).
-    void setSpectrumAverageTimeMs(int ms);
+    void setSpectrumAverageTimeMs(int ms) override;
     int  spectrumAverageTimeMs() const { return m_spectrumAverageTimeMs; }
     void setWaterfallAverageTimeMs(int ms);
     int  waterfallAverageTimeMs() const { return m_waterfallAverageTimeMs; }
@@ -468,10 +721,21 @@ public:
     // trace (which would otherwise hide the peak trace behind a same-coloured
     // solid line).
     void setActivePeakHoldColor(const QColor& c);
-    // Called by RadioModel on MOX state change (MoxController::moxStateChanged).
+    /// Re-read the Spectrum Peaks settings (stored once for every pan) and
+    /// redraw. reloadSpectrumPeaksSettingsOnAllPans does it for every pan
+    /// that exists, so a Setup change reaches them all at once.
+    void reloadSpectrumPeaksSettings();
+    static void reloadSpectrumPeaksSettingsOnAllPans();
+
+    // This pan transmitting, for the peak hold's transmit gate. setMoxOverlay
+    // drives it on every MOX edge (MoxDisplayController, local and remote).
     void setActivePeakHoldTxActive(bool tx);
 
     bool   activePeakHoldEnabled()    const { return m_activePeakHold.enabled(); }
+    /// Enabled and not switched off by this pan transmitting (Thetis
+    /// display.cs:5011 [v2.10.3.15] bSpectralPeakHold).
+    bool   activePeakHoldActive()     const { return m_activePeakHold.active(); }
+    bool   activePeakHoldOnTx()       const { return m_activePeakHold.onTx(); }
     int    activePeakHoldDurationMs() const { return m_activePeakHold.durationMs(); }
     double activePeakHoldDropDbPerSec() const { return m_activePeakHold.dropDbPerSec(); }
     bool   activePeakHoldFill()        const { return m_activePeakHold.fill(); }
@@ -493,11 +757,16 @@ public:
 
     bool   peakBlobsEnabled()     const { return m_peakBlobs.enabled(); }
     int    peakBlobsCount()       const { return m_peakBlobs.count(); }
+    bool   peakBlobsInsideFilterOnly() const { return m_peakBlobs.insideOnly(); }
+    bool   peakBlobsHoldEnabled() const { return m_peakBlobs.holdEnabled(); }
+    int    peakBlobsHoldMs()      const { return m_peakBlobs.holdMs(); }
+    bool   peakBlobsHoldDrop()    const { return m_peakBlobs.holdDrop(); }
+    double peakBlobsFallDbPerSec() const { return m_peakBlobs.fallDbPerSec(); }
     QColor peakBlobColor()        const { return m_peakBlobColor; }
     QColor peakBlobTextColor()    const { return m_peakBlobTextColor; }
 
     // Trace fill (under-the-curve shaded region).
-    void setPanFillEnabled(bool on);
+    void setPanFillEnabled(bool on) override;
     bool panFillEnabled() const { return m_panFill; }
     void setFillAlpha(float a);       // 0.0 .. 1.0
     float fillAlpha() const { return m_fillAlpha; }
@@ -523,7 +792,7 @@ public:
     // Trace colour (Phase 3G-8 commit 6 wiring). Single colour used for
     // both the line and the fill in the current renderer; plan §6 S11/S13
     // track splitting these if needed by future UI polish.
-    void setFillColor(const QColor& c);
+    void setFillColor(const QColor& c) override;
     QColor fillColor() const { return m_fillColor; }
 
     // ---- Waterfall renderer controls (Phase 3G-8 commit 4) ----
@@ -532,8 +801,31 @@ public:
     float wfHighThreshold() const { return m_wfHighThreshold; }
     void setWfLowThreshold(float dbm);
     float wfLowThreshold() const { return m_wfLowThreshold; }
-    void setWfAgcEnabled(bool on);
+    void setWfAgcEnabled(bool on) override;
     bool wfAgcEnabled() const { return m_wfAgcEnabled; }
+
+    /// Force the waterfall-AGC running min/max tracker to re-prime on the
+    /// next bin push.  Use when the bin source changes dynamic range
+    /// abruptly (e.g. MOX edge: RX colormap is centered around -100 dBm,
+    /// TX bins land around -50 dBm) — without this, the 0.05 alpha
+    /// follower takes ~3 s to converge and the waterfall saturates solid
+    /// red in the meantime.
+    void resetWaterfallAgc() { m_wfLevels.resetAgc(); }
+
+    /// Clear the spectrum + waterfall avenger accumulators.  Use on bin-source
+    /// changes that are abrupt enough that fading from the previous source's
+    /// state via LogRecursive smoothing produces visible artifacts (e.g. MOX
+    /// rise: the trace pipeline averages over ~3 s and during that window the
+    /// trace shows a blend of pre-MOX RX state and post-MOX TX state, which
+    /// looks like mic-driven content overlaid on the tune tone).
+    void clearAvengers()
+    {
+        m_spectrumReducer.clearAveraging();
+        m_waterfallReducer.clearAveraging();
+        m_extendedSpectrumAvenger.clear();
+        m_extendedWaterfallAvenger.clear();
+    }
+
     void setClarityActive(bool on);
     bool clarityActive() const { return m_clarityActive; }
 
@@ -562,6 +854,25 @@ public:
     // user fields. Mirrors the Thetis local-variable composition at
     // display.cs:6575-6594 [v2.10.3.13].
     void composeWaterfallActiveThresholds(const QVector<float>& wfPixelsDbm);
+
+    // JJ's ruling of 2026-09-28: a remote window's waterfall AGC and NF-AGC
+    // use the Core's levels (display extras, the same the phone draws with),
+    // not a follower of their own run on rows the Core has already clamped
+    // to the dBm window. RemoteMediaController turns this on for a Core that
+    // offers display extras. While on, and AGC or NF-AGC is the mode (not
+    // Clarity), the waterfall colours against the last levels the Core sent
+    // (the stored levels until the first arrive) and the local follower
+    // does not run.
+    void setCoreWaterfallLevelsAvailable(bool available);
+    bool coreWaterfallLevelsAvailable() const { return m_coreWfLevelsAvailable; }
+    /// The Core's levels are the ones in use now.
+    bool coreWaterfallLevelsInUse() const
+    {
+        return m_coreWfLevelsAvailable && !m_clarityActive
+            && (m_wfAgcEnabled || m_wfNfAgcEnabled);
+    }
+    /// The Core's levels for the latest waterfall line (NSDX section 0x08).
+    void setCoreWaterfallLevels(float lowDbm, float highDbm);
     // NF-AGC: auto-track waterfall thresholds to noise floor + offset.
     void setWaterfallNFAGCEnabled(bool on);
     bool waterfallNFAGCEnabled() const { return m_wfNfAgcEnabled; }
@@ -570,9 +881,193 @@ public:
     // Stop-on-TX: pause pushWaterfallRow() while TX is active.
     void setWaterfallStopOnTx(bool on);
     bool waterfallStopOnTx() const { return m_wfStopOnTx; }
+
+    // ── 3DSS stacked-trace mode ───────────────────────────────────────────
+    // Persistence (3D Stacked-Trace Spectrum Plan Task 14): render mode,
+    // gain, row span, angle and slice-shadow persist per panadapter here
+    // (loadSettings()/saveSettings(), settingsKey() convention) -- see
+    // DisplaySpectrumRenderMode / Display3DGain / Display3DSpan /
+    // Display3DAngle / Display3DSliceShadow. 3D Floor is the exception: it
+    // persists per BAND instead, on PanadapterModel::dss3DFloorDepthForBand,
+    // because it is anchored to the measured noise floor, which is a
+    // per-band property. setDssFloorDepth()/dssFloorDepth() below remain
+    // the live runtime mirror the 3D renderer reads every frame; they do
+    // not write an AppSettings key themselves.
+    void setSpectrumRenderMode(int mode);
+    int  spectrumRenderMode() const { return static_cast<int>(m_spectrumRenderMode); }
+    void setDssFloorDepth(int dB);
+    int  dssFloorDepth() const { return m_dssFloorDepth; }
+    void setDssGain(int pct);
+    int  dssGain() const { return m_dssGain; }
+    void setDssRowSpan(int pct);
+    int  dssRowSpan() const { return m_dssRowSpan; }
+    void setDssAngle(int pct);
+    int  dssAngle() const { return m_dssAngle; }
+
+    // 3D Speed (3D Stacked-Trace Spectrum Plan Task 24, NereusSDR-
+    // original): how many waterfall rows each pushed 3D row covers. 0..10,
+    // persisted per panadapter as Display3DSpeed, default 0. 0 clamps to
+    // "Match" -- see effectiveDssRowDivider() below for what that resolves
+    // to. Design doc section 4.5.
+    void setDssRowDivider(int n);
+    int  dssRowDivider() const { return m_dssRowDivider; }
+    // The divider actually in effect: dssRowDivider() when it is a manual
+    // 1..10 value, otherwise the automatic Match value -- the waterfall's
+    // own pixel height divided by kDssVisibleRows, rounded, clamped to
+    // [1, kDssMaxAutoRowDivider]. Read live on every use (no cached value,
+    // no resize hook), so a window or split-fraction change is followed
+    // with no extra plumbing.
+    int  effectiveDssRowDivider() const;
+    // Ceiling on the automatic (Match) divider, so an extreme window size
+    // cannot make the 3D surface crawl to a near-standstill.
+    static constexpr int kDssMaxAutoRowDivider = 64;
+
+    void setThreeDSliceDepth(bool on);
+    bool threeDSliceDepth() const { return m_threeDSliceDepth; }
+    DssShape dssShape() const { return dssShapeForAngle(m_dssAngle); }
+
+    // Maps a normalised 0..1 surface strength to a colour, gamma-shaped by
+    // "3D Gain" alone. Deliberately independent of the waterfall gain /
+    // black-level knobs -- see the .cpp for why. Public so it is directly
+    // testable and so uploadDssPaletteLut() (GPU-only) has a CPU-callable
+    // sibling.
+    QRgb dssStrengthToRgb(float s) const;
+    // Folds the inputs that actually change dssStrengthToRgb()'s output, so
+    // the palette LUT re-bakes only on a real change.
+    quint64 dssPaletteToken() const;
+
+    // The 3DSS surface baseline: the measured noise floor (NoiseFloorTracker
+    // / m_nfLerpAverage) offset down by 3D Floor, so the stack keeps a
+    // constant apparent height as band conditions move.
+    float dssFloorDbm() const;
+    // The dBm display span the surface height maps across.
+    float dssSpanDb() const;
+    // dssSpanDb() rounded to the nearest 0.5 dB. The scale (drawDbmScale3D),
+    // the CPU fallback surface (buildDssImage), and the GPU mesh's rangeDb
+    // uniform (writeDssMeshUbo) must all read the SAME rounded value, or
+    // their pixel mappings disagree by up to 0.25 dB whenever the configured
+    // dBm range is not already an exact 0.5 dB multiple -- Task 11 fast-
+    // follow, closing a gap where writeDssMeshUbo wrote the unrounded value.
+    float dssRoundedSpanDb() const;
+    // The dBm span the COLOUR mapping (not the height mapping) reads
+    // across: dssSpanDb() capped at kDssColorSpanDb. A stable aperture
+    // independent of the Ref-level height span, so a wide dBm range does
+    // not stretch the colormap thinner than kDssColorSpanDb and wash the
+    // surface out relative to the reference implementation -- see the
+    // review-round fix note on writeDssMeshUbo()'s colorRangeDb field.
+    float dssColorRangeDb() const;
+    // Windows the off-screen DDC bins of `fullBins` (the same FFT frame
+    // that produced the on-screen row) into the wide channel that fills the
+    // wedge beside the exact-channel trapezoid. Public so it is directly
+    // testable without a live FFT pipeline.
+    QVector<float> buildDssWideRow(const QVector<float>& fullBins,
+                                   double& wideCenterMhzOut,
+                                   double& wideBandwidthMhzOut) const;
+    // Wedge-closing row span for the current 3D Span setting, scaled
+    // against whatever wide-channel overhang is actually on screen.
+    float dssRowSpanTarget(double targetBandwidthMhz) const;
+
+    // One slice passband darkened onto the 3D surface (dss_mesh.frag's
+    // applySliceShadow). low/high/centre are in the same [0,1] viewport-unit
+    // space hzToX() uses (0 = the on-screen bandwidth's left edge, 1 = its
+    // right edge): centreUnit is the slice's own CARRIER frequency, matching
+    // drawSliceMarker()'s separate VFO-centre-line pixel, not the passband
+    // midpoint. alpha/centreAlpha are the band-fill and centre-cue mix
+    // strengths the shader applies; cue is the slice's accent colour tinting
+    // both. From AetherSDR SpectrumWidget.cpp:14216-14366 [@1872028c]
+    // (writeShadowSlot's per-descriptor fields).
+    struct DssShadowBand {
+        float lowUnit{0.0f};
+        float highUnit{0.0f};
+        float centreUnit{0.0f};
+        float alpha{0.0f};
+        QColor cue;
+        float centreAlpha{0.0f};
+    };
+
+    // Maps every visible slice's passband (sliceMarkerGeometry()) onto
+    // viewport units for the DSS shader's slice-shadow decal, clamped to the
+    // shader's fixed 8-entry shadowBands/shadowStyles arrays. Empty when 3D
+    // Slice Shadow (threeDSliceDepth()) is off, or when a slice's passband
+    // never touches the visible viewport.
+    QVector<DssShadowBand> buildDssShadowBands() const;
+
+    // Test seams. pushWaterfallRow() is private and normally driven by the
+    // WaterfallTicker thread; these let the row-tee placement be proven
+    // without standing up a ticker or a QRhi context.
+    void pushWaterfallRowForTest(const QVector<float>& wfPixelsDbm) {
+        pushWaterfallRow(wfPixelsDbm);
+    }
+    void setTxActiveForTest(bool on) { m_txActiveForTest = on; }
+    int  dssRowsPushedForTest() const { return m_dssRowsPushed; }
+    // R-R3-21: the remote row queue, and the ticker run by hand.
+    int  remoteRowQueueDepthForTest() const { return int(m_remoteRowQueue.size()); }
+    quint64 remoteRowsDroppedForTest() const { return m_remoteRowsDropped; }
+    quint64 remoteRowsPushedForTest() const { return m_remoteRowsPushed; }
+    QVector<float> lastRemoteRowPushedForTest() const { return m_lastRemoteRowPushed; }
+    void setWaterfallTickerPausedForTest(bool paused) { m_waterfallTickerPausedForTest = paused; }
+    void tickWaterfallForTest() { onWaterfallTick(); }
+    // Parity Task 18 (B3.5): the waterfall's rewind history, in rows.
+    int  waterfallHistoryRowsForTest() const { return m_wfHistoryRowCount; }
+    const QImage& liveWaterfallForTest() const { return m_waterfall; }
+    int liveWaterfallWriteRowForTest() const { return m_wfWriteRow; }
+    // 3D Speed (Task 24) test seams.
+    int  effectiveDssRowDividerForTest() const { return effectiveDssRowDivider(); }
+    int  dssFoldCountForTest() const { return m_dssFoldCount; }
+    float dssScrollIncrementForTest(int deltaMs) const { return dssScrollIncrement(deltaMs); }
+    // The waterfall image height in pixels, what effectiveDssRowDivider()'s
+    // automatic branch actually divides by kDssVisibleRows. Did not exist
+    // before Task 24; there was no prior reason for a test to read it.
+    int  waterfallHeightForTest() const { return m_waterfall.height(); }
+    // Forwards DssRenderer's own existing rowDataRing()/headRing() row
+    // accessors (both already public and used by tst_dss_renderer_ring.cpp
+    // against a standalone DssRenderer) so a test can read one column of
+    // the newest ring row without a live GPU paint. column must be in
+    // [0, kDssCols).
+    float dssNewestRowColumnForTest(int column) const {
+        return m_dss.rowDataRing(m_dss.headRing())[column];
+    }
+    // NoiseFloorTracker runs from live FFT frames; this seam drives
+    // dssFloorDbm() directly so the floor-anchoring math is testable
+    // without standing up the noise-floor pipeline.
+    void setMeasuredNoiseFloorForTest(float dbm) { m_noiseFloor.setLerpAverage(dbm); }
+    // updateSpectrumLinear() is the only production writer of
+    // m_lastFullBinsDbm (see its definition); this seam drives
+    // buildDssWideRow()'s production call path (via pushDssRow()) without
+    // standing up the FFT pipeline.
+    void setFullBinsForTest(const QVector<float>& binsDbm) {
+        m_lastFullBinsDbm = binsDbm;
+    }
+    double dssNewestRowWideBandwidthForTest() const {
+        return m_dss.rowWideBandwidthMhzAtAge(0);
+    }
+    // Public one-line forward (drawDbmScale3D is private) so the 3D dBm
+    // scale can be painted onto an off-widget QImage/QPainter without a
+    // live paintEvent(), following the drawSpotMarkersForTest /
+    // drawNotchMarkersForTest convention above.
+    void drawDbmScale3DForTest(QPainter& p, const QRect& specRect, float floorDbm) {
+        drawDbmScale3D(p, specRect, floorDbm);
+    }
+    // drawDbmScaleLabels' rangeDb<=0 guard is unreachable through
+    // drawDbmScale3DForTest() alone: dssSpanDb() floors at 1.0f (Task 9), so
+    // drawDbmScale3D() can never compute a non-positive span in production.
+    // This seam drives the guard directly so the degenerate-span case can be
+    // proven, not just argued.
+    void drawDbmScaleLabelsForTest(QPainter& p, const QRect& specRect,
+                                   float topDbm, float rangeDb) {
+        drawDbmScaleLabels(p, specRect, topDbm, rangeDb);
+    }
+    // Lets a test independently reconstruct drawDbmScale3D's exact output
+    // (chrome, then labels at floorDbm+dssRoundedSpanDb()) from public
+    // pieces alone, to cross-check that drawDbmScale3D really uses the
+    // rounded span rather than an independently-diverged computation.
+    void drawDbmScaleChromeForTest(QPainter& p, const QRect& specRect) {
+        drawDbmScaleChrome(p, specRect);
+    }
+
     void setWfOpacity(int percent);          // 0..100
     int  wfOpacity() const { return m_wfOpacity; }
-    void setWfUpdatePeriodMs(int ms);
+    void setWfUpdatePeriodMs(int ms) override;
     int  wfUpdatePeriodMs() const { return m_wfUpdatePeriodMs; }
 
     qint64 waterfallHistoryMs() const  { return m_waterfallHistoryMs; }
@@ -619,6 +1114,8 @@ public:
 
     // Bandplan overlay (Phase 3G RX Epic sub-epic D)
     void setBandPlanManager(NereusSDR::BandPlanManager* mgr);
+    // The plan manager whose active plan the strip draws (non-owning).
+    NereusSDR::BandPlanManager* bandPlanManager() const { return m_bandPlanMgr; }
     void setBandPlanFontSize(int pt);             // 0 = off
     int  bandPlanFontSize() const { return m_bandPlanFontSize; }
     bool bandPlanVisible() const { return m_bandPlanFontSize > 0; }
@@ -635,6 +1132,12 @@ public:
     // "ShowPerfOverlay"; View -> Performance Overlay wires here.
     void setShowPerfOverlay(bool on);
     bool showPerfOverlay() const { return m_showPerfOverlay; }
+    // Parity ruling C13: in a remote window, the Core's counters the
+    // overlay shows below this computer's, each group headed. Read at each
+    // overlay refresh; empty (the default) in a local window.
+    void setCorePerfLinesProvider(std::function<QStringList()> provider);
+    /// The overlay's lines as drawn (this computer's, then the Core's).
+    QStringList perfOverlayLines() const;
 
     // B8 Task 21: cursor frequency readout visibility.
     // Default true (matches the previously always-on behavior).
@@ -731,7 +1234,7 @@ public:
     // average is still settling.  Caller (MainWindow) sets on band/freq
     // change and clears after attack-time elapses.
     void setNoiseFloorFastAttack(bool on);
-    bool noiseFloorFastAttack() const { return m_noiseFloorFastAttack; }
+    bool noiseFloorFastAttack() const { return m_noiseFloor.fastAttack(); }
 
     // NF colour customisation — From Thetis display.cs:2316/2329 [v2.10.3.13]:
     //   noisefloor_color      = Color.Red     (line + box)
@@ -760,6 +1263,13 @@ public:
     //   with per-pan override via ContainerSettings dialog (3G-6 pattern).
     void setAdjustGridMinToNoiseFloor(bool on);
     bool adjustGridMinToNoiseFloor() const { return m_adjustGridMinToNF; }
+    // Level Cal: while the level calibration holds the follow off, every
+    // pan saves `saved` (the user's value) for it instead of the live one,
+    // so a quit or a crash in the middle of a run never stores the held
+    // value. std::nullopt ends the hold. One setting for every pan, so one
+    // hold for the process.
+    static void setGridFollowSaveHold(std::optional<bool> saved);
+    static std::optional<bool> gridFollowSaveHold();
 
     // Offset added to the NF estimate to compute the new grid min.
     // From Thetis console.cs:46035 _RX1NFoffsetGridFollow = 5f [v2.10.3.13]
@@ -785,6 +1295,7 @@ public:
     // a live ClarityController. Exposed in tests only; production code
     // uses the onNoiseFloorChanged() slot via signal/slot connection.
     void testApplyNoiseFloor(float nfDbm) { onNoiseFloorChanged(nfDbm); }
+    void gridFollowTickForTest() { gridFollowTick(); }
 
     // DispNormalize — normalize-to-1-Hz before display.
     // Routes to SetDisplayNormOneHz in the WDSP spectrum engine.
@@ -795,6 +1306,10 @@ public:
     // the WDSP spectrum engine is integrated (Task 5.x).
     void setDispNormalize(bool on);
     bool dispNormalize() const { return m_dispNormalize; }
+    // Normalise is on and the spectrum detector is Average, Sample or RMS
+    // (Thetis applies it only then; DisplayFollowers
+    // normalizeAppliesToDetector). The stored choice is dispNormalize().
+    bool normalizeActive() const;
 
     // ShowPeakValueOverlay — scan visible bins, render "Peak: X.X dBm @ Y.YYYY MHz"
     // as corner text. Refreshed on a timer throttled by m_peakTextDelayMs.
@@ -816,7 +1331,7 @@ public:
     // 6 px red border around the spectrum area. When `foldback` is true,
     // "\n\nPOWER FOLD BACK" is appended to the text per display.cs:4187-4194.
     // //MW0LGE_21k8  [original inline comment from display.cs:4213]
-    void setHighSwrOverlay(bool active, bool foldback) noexcept;
+    void setHighSwrOverlay(bool active, bool foldback) noexcept override;
     bool isHighSwrOverlayActive() const noexcept { return m_highSwrActive; }
     bool isHighSwrFoldback()      const noexcept { return m_highSwrFoldback; }
 
@@ -841,7 +1356,38 @@ public:
     // this slot drives the spectrum-panel TX filter shadow.
 
     bool isMoxOverlayActive() const noexcept { return m_moxOverlay; }
+    /// Whether the GPU path draws a spectrum trace this frame: new pixels,
+    /// or the last trace it built. Parity Task 29: never the last trace
+    /// while the MOX overlay is on and there are no transmit pixels (a
+    /// remote pan on a Core that sends no transmit display): the receive
+    /// trace would sit under the transmit axis and read at the wrong
+    /// frequencies, so the pan stays blank with its status line.
+    bool drawsSpectrumTrace() const noexcept
+    {
+        return !m_renderedPixels.isEmpty() || (m_visibleBinCount > 0 && !showsTransmitView());
+    }
     float txAttenuatorOffsetDb() const noexcept { return m_txAttOffsetDb; }
+    /// Parity Task 31 (A11): display duplex (DUP). Off by default, as
+    /// Thetis's _display_duplex (console.cs:15390-15395 [v2.10.3.15]).
+    bool displayDuplex() const noexcept { return m_displayDuplex; }
+    /// Whether the pan shows the transmit display: keyed (the MOX overlay)
+    /// with DUP off. Keyed with DUP on the pan keeps the receiver's span,
+    /// bins and frames, under the transmit grid and waterfall levels.
+    bool showsTransmitView() const noexcept { return m_moxOverlay && !m_displayDuplex; }
+    /// The transmit display calibration (Setup > Calibration's TX Display
+    /// Cal Offset), Thetis tx_display_cal_offset: the keyed trace's
+    /// calibration, DUP on or off (display.cs:4820-4850 [v2.10.3.15],
+    /// RX1Offset).
+    float txDisplayCalOffsetDb() const noexcept { return m_txDisplayCalOffsetDb; }
+    void setTxDisplayCalOffsetDb(float db);
+    /// The preamp half of the receive calibration (setDbmCalOffset carries
+    /// both), Thetis Display.RX1PreampOffset; keyed with DUP on the trace
+    /// adds the receive calibration without it.
+    float rxPreampOffsetDb() const noexcept { return m_rxPreampOffsetDb; }
+    void setRxPreampOffsetDb(float db);
+    /// The calibration the trace is drawn with now (see displayCalOffsetDb
+    /// in the .cpp for the rule).
+    float displayCalOffsetDb() const;
     bool txFilterVisible() const noexcept { return m_txFilterVisible; }
 
 public slots:
@@ -877,11 +1423,11 @@ public slots:
     //   setShowIMDMeasurements(bool)   <- PureSignal::show2ToneMeasurementsChanged
     //                                      (mirrors Thetis Display.ShowIMDMeasurments,
     //                                      display.cs:304-311 [v2.10.3.13])
-    //   setDisplayDuplex(bool)         <- console.cs:15363-15369 [v2.10.3.13]
-    //                                      DisplayDuplex; defaults to true in
-    //                                      NereusSDR (panadapter stays live
-    //                                      during MOX, equivalent to Thetis
-    //                                      duplex mode).
+    //   setDisplayDuplex(bool)         <- console.cs:15390-15395 [v2.10.3.15]
+    //                                      DisplayDuplex, false by default as
+    //                                      Thetis (parity Task 31); set on the
+    //                                      transmitting pan by
+    //                                      MoxDisplayController.
     //
     // setShowIMDMeasurements(false) calls ImdOverlay::reset() to clear EMA
     // state, mirroring the Thetis display.cs:5680 [v2.10.3.13] behaviour:
@@ -925,10 +1471,82 @@ public slots:
     void setRxFilterColor(const QColor& c);
     QColor rxFilterColor() const noexcept { return m_rxFilterColor; }
 
+    // ---- 3M-5b: TX waterfall colormap setters / getters ----
+    // From Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51] -- TX thresholds,
+    // palette, and low-color are switched inline per-frame when MOX is active.
+    // MW0LGE [2.9.0.7]  [original inline comment from display.cs:6588]
+    int  txWfLowLevel()  const noexcept { return m_txWfLowLevel;  }
+    int  txWfHighLevel() const noexcept { return m_txWfHighLevel; }
+    WfColorScheme txWfPalette()   const noexcept { return m_txWfPalette;   }
+    QColor        txWfLowColor()  const noexcept { return m_txWfLowColor;  }
+    QString       txWfGradient()  const noexcept { return m_txWfGradient;  }
+
+    void setTxWfLowLevel(int dbm);
+    void setTxWfHighLevel(int dbm);
+    void setTxWfPalette(WfColorScheme s);
+    void setTxWfLowColor(const QColor& c);
+    void setTxWfGradient(const QString& encoded);
+
+    // ---- 3M-5d: TX waterfall pixout=1 tap ----
+    // When true, updateSpectrumLinear() skips its internal call to
+    // pushWaterfallRow() because the waterfall plane is being driven
+    // separately via pushTxWaterfallRow() (TxAnalyzer's pixout=1 stream,
+    // wired in MainWindow on MOX-up).  Defaults to false; only flipped
+    // by MainWindow on MOX edges.  RX path is unaffected.
+    void setTxExternalWaterfall(bool on);
+    bool txExternalWaterfall() const noexcept { return m_txExternalWaterfall; }
+
+public slots:
+    /// Slot that bridges TxAnalyzer::txWaterfallReady (pixout=1, WDSP
+    /// already applied DetTypeWF + AverageModeWF) into the existing
+    /// waterfall-row push path.  Skips the spectrum-trace pipeline
+    /// entirely.  Only meaningful while setTxExternalWaterfall(true) has
+    /// been called by MainWindow on MOX-up; otherwise the internal
+    /// updateSpectrumLinear path is already pushing rows and a second
+    /// push would race.
+    void pushTxWaterfallRow(int receiverId, const QVector<float>& binsDbm);
+
+public:
+
+#ifdef NEREUS_BUILD_TESTS
+    // Test seams for tst_tx_waterfall_colormap (3M-5b).
+    // These expose private methods via the NEREUS_BUILD_TESTS gate so the
+    // test binary can round-trip settings and call dbmToRgb directly.
+    void saveSettingsForTest()              { saveSettings(); }
+    void loadSettingsForTest()              { loadSettings(); }
+    /// The MOX tune gate is the property under test; synthesising a press,
+    /// a wheel notch and a spot-label hit would test Qt's event delivery
+    /// instead. Every emitter routes through requestTune, which is greppable.
+    void requestTuneForTest(double hz)      { requestTune(hz); }
+    QRgb dbmToRgbForTest(float dbm) const  { return dbmToRgb(dbm); }
+    void setWfLowThresholdForTest(float dbm)  { m_wfLowThreshold  = dbm; }
+    void setWfHighThresholdForTest(float dbm) { m_wfHighThreshold = dbm; }
+    // VFO flag crash lane: this pan's VFO marker and passband, which the
+    // slice the pan hosts drives.
+    double vfoFrequencyForTest() const { return m_vfoHz; }
+    int filterLowForTest() const { return m_filterLowHz; }
+    int filterHighForTest() const { return m_filterHighHz; }
+#endif
+
     // ---- Per-pan settings persistence ----
-    void setPanIndex(int idx) { m_panIndex = idx; }
+    // setPanIndex() also forwards to this widget's owned
+    // DisplaySettingsModel (Task 18) so the child's per-pan keys always
+    // track this widget's own. Out-of-line (not inline) because
+    // DisplaySettingsModel is only forward-declared in this header.
+    void setPanIndex(int idx);
     int  panIndex() const { return m_panIndex; }
+    // The DisplaySettingsModel this widget owns and binds to (Task 18):
+    // one per SpectrumWidget, i.e. one per panadapter. Surfaces that
+    // follow the active pan reach it through
+    // RadioModel::spectrumWidget()->displaySettings().
+    DisplaySettingsModel* displaySettings() const { return m_displaySettings; }
     void loadSettings();
+    void loadSpectrumPeaksSettings();
+    // The grid's noise-floor tracking rule both feeds share, and its timer.
+    void applyGridFollow(float nfDbm);
+    void updateGridFollowTimer();
+    // Applies a shared (once for every pan) setting to every other pan.
+    void shareWithOtherPans(const std::function<void(SpectrumWidget*)>& apply);
     void saveSettings();
     // Public coalesced-save trigger. Used by setup pages that call setDbmRange()
     // directly (which has no internal save) and need to ensure the new range
@@ -942,7 +1560,21 @@ public slots:
     // ---- CTUN mode (SmartSDR-style independent pan) ----
     void setCtunEnabled(bool enabled);
     bool ctunEnabled() const { return m_ctunEnabled; }
+    bool ctunPreference() const { return m_ctunPreference; }
+    bool ctunAvailable() const { return m_ctunAvailable; }
+    // Core's effective stream state must not emit a gesture or overwrite the
+    // per-pan preference restored when a new station stream is acquired.
+    void applyRemoteCtunState(bool available, bool pinned);
     void recenterOnVfo();
+    // R-R3-18/19: true while centerChanged comes from a zoom (wheel zoom or
+    // frequency-scale drag) re-centring the view on the VFO, not from the
+    // operator moving the pan. A remote window uses it to keep a zoom a view
+    // change on a stream other receivers share.
+    bool isZoomRecentring() const { return m_draggingBandwidth || m_wheelZoomRecentring; }
+    // Ends the current pan drag without a click-to-tune on release; the
+    // rest of the drag leaves the view where it is. Used when the Core
+    // refuses to move its window for this drag.
+    void endPanDrag();
 
     // ---- Tuning step ----
     void setStepSize(int hz) { m_stepHz = hz; }
@@ -953,6 +1585,14 @@ public slots:
     void removeVfoWidget(int sliceIndex);
     VfoWidget* vfoWidget(int sliceIndex) const;
     void updateVfoPositions();
+    /// A slice this pan shows only as its flag and, off the span, as its own
+    /// edge marker, never through the pan's VFO: a listened slice a layout
+    /// change placed on this pan. Cleared when its flag is removed.
+    void setEdgeMarkedSlice(int sliceIndex, bool edgeMarked);
+    bool isEdgeMarkedSlice(int sliceIndex) const { return m_edgeMarkedSlices.contains(sliceIndex); }
+    /// Re-place the flags and repaint the edge markers, for a slice whose
+    /// tune must not go through the pan's VFO.
+    void refreshSliceFlags();
 
     /// Pin sliceIndex's flag to the front of this pan's stacking order.
     ///
@@ -986,21 +1626,73 @@ public:
     /// One RX marker's inputs: a slice centre, that slice's own signed filter
     /// edges, and the flag whose bottom edge its triangle hangs from (null
     /// when the pan is drawing its own VFO with no flag created yet).
+    ///
+    /// Also which slice the marker belongs to, whether that slice is the one
+    /// the operator has selected (VfoWidget::isActiveSlice), and the two
+    /// colours that follow from those. The selected slice draws everything in
+    /// its own slice colour. Any other slice draws its centre line and
+    /// triangle in the darker partner of its colour and its filter edges in
+    /// a neutral grey. Both colours are opaque; drawSliceMarker applies each
+    /// element's own alpha. The shaded passband is not here: it stays the
+    /// operator's m_rxFilterColor for every slice.
     struct SliceMarkerGeometry {
         double centreHz{0.0};
         int    filterLowHz{0};
         int    filterHighHz{0};
         const VfoWidget* flag{nullptr};
+        int    sliceIndex{0};
+        bool   active{true};
+        QColor lineColor;  // VFO centre line and triangle
+        QColor edgeColor;  // filter edge lines
     };
 
-    /// Every RX marker this pan must paint, one per hosted slice, in slice
-    /// order.
+    /// iPhone app plan Task 78 (the several-devices design, section 12
+    /// item 1; D46): another device's slice, drawn as the phone draws it: a
+    /// dashed centre line in the slice's colour with a hollow triangle,
+    /// dashed grey passband edges with no fill, and a label at the foot of
+    /// the spectrum (the letter and the device's short name, plus TX by
+    /// ruling 5.4a). No flag; not draggable.
+    struct ForeignSliceMarker {
+        int     sliceId{-1};
+        double  centreHz{0.0};
+        int     filterLowHz{0};
+        int     filterHighHz{0};
+        QColor  color;
+        QString letter;
+        QString ownerShortName;
+        QString ownerName;
+        bool    tx{false};
+        bool    away{false};
+        /// Nobody controls the slice (the Core's access entry names no
+        /// controller, or the Core sends no access data for it).
+        bool    unowned{false};
+    };
+    void setForeignSliceMarkers(const QVector<ForeignSliceMarker>& markers);
+    const QVector<ForeignSliceMarker>& foreignSliceMarkers() const { return m_foreignMarkers; }
+    void setOwnSliceMarkerPresentationAllowed(bool allowed);
+    /// The label's text: "B iPhone", "B iPhone TX".
+    static QString foreignMarkerLabel(const ForeignSliceMarker& marker);
+    /// What a click on the label says.
+    static QString foreignMarkerExplanation(const ForeignSliceMarker& marker);
+    /// Where the label was last drawn (an invalid rect before a paint, or
+    /// while the slice is off this pan).
+    QRect foreignMarkerLabelRect(int sliceId) const { return m_foreignLabelRects.value(sliceId); }
+    /// Test seam: paints the foreign markers alone, as paintEvent does.
+    void drawForeignMarkersForTest(QPainter& p, const QRect& specRect, const QRect& wfRect)
+    { drawForeignMarkers(p, specRect, wfRect); }
+
+    /// Every RX marker this pan must paint, one per hosted slice, in paint
+    /// order: the slices the operator has not selected first, in slice order,
+    /// then the selected slice, so its marker lands on top where two overlap.
     ///
     /// This is drawVfoMarker()'s whole decision, split out so it is reachable
-    /// without a live QPainter or a shown QRhiWidget: the harness cannot
-    /// render this widget, so the geometry is what gets pinned and the pixel
-    /// emission is what does not. See tests/tst_pan_flag_positions.cpp.
+    /// without a shown QRhiWidget. See tests/tst_pan_flag_positions.cpp.
     QVector<SliceMarkerGeometry> sliceMarkerGeometry() const;
+    /// Paint-only seams for palette assertions without a shown QRhiWidget.
+    void drawOwnMarkersForTest(QPainter& p, const QRect& specRect, const QRect& wfRect)
+    { drawVfoMarker(p, specRect, wfRect); }
+    void drawOffScreenIndicatorForTest(QPainter& p, const QRect& specRect, const QRect& wfRect)
+    { drawOffScreenIndicator(p, specRect, wfRect); }
 
 public slots:
     // Phase 3Q-8: update connection state for the disconnect overlay.
@@ -1030,6 +1722,8 @@ public slots:
     // Range delta uses std::abs() — abs incase //MW0LGE [2.9.0.7] [original inline comment from console.cs:46081]
     // NereusSDR-original: global panadapter default, no RX1/RX2 split.
     void onNoiseFloorChanged(float nfDbm);
+    // Thetis tmrAutoAGC port: the grid rule on the pan's own noise floor.
+    void gridFollowTick();
 
     // ── Waterfall scrollback (sub-epic E) ─────────────────────────────────
     // Reset the rewind ring buffer back to empty + live state. Public so
@@ -1041,14 +1735,104 @@ public slots:
     void clearWaterfallHistory();
 
     /// Phase 3F Sub-Epic F Task 6: receive wideband bins for the active-ADC
-    /// extended pan. Bins are stored per-ADC; actual painting wires in F
-    /// polish (T7-T10). Setter alone enables Sub-Epic H bench operators to
-    /// confirm the wideband data path is flowing without UI rendering.
+    /// extended pan. Bins are stored per-ADC; Task 8 (2026-08-08) is what
+    /// finally paints them.
     void setWidebandBins(int adcIndex, const QVector<float>& dbmBins);
     QVector<float> widebandBinsForTest(int adcIndex) const
     {
         return adcIndex == 0 ? m_widebandBinsAdc0 : m_widebandBinsAdc1;
     }
+
+    /// Which ADC's wideband bins this pan's wings read.
+    ///
+    /// MainWindow fans every ADC's frame to every pan, so without this a pan
+    /// on ADC1 would paint ADC0's spectrum in its wings. Resolved from the
+    /// pan's active slice through RadioModel::sliceChainIndex, the same
+    /// answer the WIDE pill and the CH tag are keyed on.
+    void setWidebandAdcIndex(int adcIndex);
+    int  widebandAdcIndex() const { return m_widebandAdcIndex; }
+
+    /// ADC clock backing the wideband stream. Sets the wing frequency axis:
+    /// the wideband FFT is real-input, so its bins span 0..rate/2.
+    /// From Thetis wbDisplay.cs:4511 [v2.10.3.15] — `private int
+    /// sample_rate = 122880000;`, the same value RadioModel already seeds
+    /// WidebandFftEngine with. Upstream hardcodes it too; nothing in Thetis
+    /// writes wbDisplay.SampleRate.
+    void setWidebandAdcRateHz(double rateHz);
+    double widebandAdcRateHz() const { return m_widebandAdcRateHz; }
+
+    /// Zoom-out ceiling for both operator zoom gestures.
+    ///
+    /// Bench 2026-08-08: the wheel and the frequency-scale drag both clamped
+    /// visible bandwidth to the DDC sample rate, and `m_bandwidthHz >
+    /// m_sampleRateHz` is the ONLY trigger for extended mode -- so the
+    /// "Extended view (wideband wings)" toggle enabled a state no gesture
+    /// could reach. With extended view allowed the ceiling becomes the
+    /// wideband ADC's Nyquist (the span wing data actually covers); with it
+    /// switched off the ceiling stays at the DDC rate, exactly as before.
+    /// A remote pan uses the same rule only after its accepted context says
+    /// that a concrete ADC source is available; active streaming is separate.
+    double maxZoomOutBandwidthHz() const;
+
+    /// Set the display window with the span held to what this pan may show.
+    ///
+    /// The ceiling is maxZoomOutBandwidthHz(): the DDC rate normally, the
+    /// wideband ADC's Nyquist once extended view is allowed. A span of zero
+    /// or less, or one above the ceiling, becomes the ceiling.
+    ///
+    /// This exists because three separate places in MainWindow re-apply a
+    /// span (restore at startup, the sample-rate handler, and the stream
+    /// re-subscription path) and each clamped against the DDC rate on its
+    /// own. An extended zoom therefore survived until whichever of them ran
+    /// last, and Codex found them one at a time over three rounds on PR #318.
+    /// One definition, so there is no fourth.
+    void setDisplayWindowClamped(double centreHz, double requestedSpanHz);
+
+    /// dB correction applied to a raw wideband bin before it is drawn beside
+    /// the DDC trace. Two terms; see the definitions for the derivations.
+    ///
+    ///  1. FFT normalisation — refers the transform to 0 dBFS.
+    ///  2. Bandwidth normalisation — refers the wideband bin to the DDC's
+    ///     bin width, so the two halves of the trace are power densities on
+    ///     one scale rather than power-per-bin on two different scales.
+    ///
+    /// Public so tests can assert both terms are present. Bench 2026-08-08
+    /// found each one alone puts the wings off the panel: with only term 1
+    /// they saturate, and term 2 is what brings them onto the island's scale.
+    ///
+    /// `detector` is the one that produced the DDC pixels this wing sits
+    /// beside, and it is not decoration: Average / Sample / RMS are handed
+    /// invEnb and divide the window ENB out of the island
+    /// (SpectrumDetector.cpp cases 2, 3, 4), while Peak and Rosenfell take a
+    /// max and leave it in. The island's effective noise reference therefore
+    /// differs by the ENB depending on which one is selected, and the trace
+    /// and waterfall planes select independently.
+    static float widebandFftNormalisationDb();
+    float widebandBandwidthNormalisationDb(SpectrumDetector detector) const;
+    float widebandTotalCalibrationDb(SpectrumDetector detector) const;
+
+    /// Half-width of the DDC span actually drawn, kDdcClipFraction of the
+    /// rate already removed from each side.
+    ///
+    /// One definition for three consumers: the island pixel geometry, the
+    /// dashed boundary markers, and the click router that decides whether a
+    /// click retunes the slice or the DDC. They disagreed before this
+    /// existed, so each 4% edge strip painted wideband data while the marker
+    /// sat outside it and a click there still retuned the slice. Meaningful
+    /// only in extended mode, which is the only place all three use it.
+    double ddcIslandHalfSpanHz() const;
+
+    /// Pixel span [first, last] the DDC actually covers inside the current
+    /// display window; the wings are everything outside it.
+    ///
+    /// Outside extended mode this is the whole width, which is what makes
+    /// the ordinary path a no-op. Public so a test can assert the geometry
+    /// without a GPU: the bug it closes is that visibleBinRange() CLAMPS to
+    /// the DDC bin array, so zooming past the DDC rate used to stretch the
+    /// DDC's spectrum across the whole panel instead of shrinking it into
+    /// its true span — a trace that no longer agreed with the frequency
+    /// scale drawn beneath it.
+    std::pair<int, int> listenableIslandPixels(int displayWidth) const;
 
     /// Phase 3F Sub-Epic F Tasks 7-10: allow extended-pan rendering.
     /// The actual state is on only when allowed AND the visible bandwidth
@@ -1061,7 +1845,76 @@ public slots:
     bool extendedViewAllowed() const { return m_extendedViewAllowed; }
     bool extendedMode() const { return m_extendedMode; }
 
+    // ── Detach-safe RHI lifecycle (float / dock a pan) ────────────────────
+    //
+    // Bench report 2026-08-08: floating a pan painted one frame and then
+    // logged "QRhiWidget: No QRhi" once per display tick forever, i.e. a
+    // frozen panadapter in the popped-out window. Confirmed on an ANAN-G2E:
+    // one `got CAMetalLayer, pixel size 2356x1702` followed by 30 warnings a
+    // second (the display timer's rate, one widget).
+    //
+    // A QRhiWidget's render context belongs to the top-level window it lives
+    // in, so moving one between windows is a teardown and a rebuild, not a
+    // reparent. The three calls below are that teardown, split the way
+    // AetherSDR splits them because each has to happen at a different point
+    // relative to the setParent() call.
+    //
+    // From AetherSDR src/gui/SpectrumWidget.cpp:2227-2247, 7092-7110,
+    // 1843-1857 [@1e0718ad].
+
+    /// Tell Qt's RHI machinery this widget is leaving its top-level, BEFORE
+    /// the reparent. QRhiWidget registers a cleanup callback on the current
+    /// backing-store QRhi; a direct reparent can miss Qt's own notification
+    /// and leave that callback pointing at a QRhiWidgetPrivate the old QRhi
+    /// will later fire against.
+    ///
+    /// Must be sent exactly once, before the move. refreshAfterReparent must
+    /// not re-send it.
+    void prepareForTopLevelChange();
+
+    /// Idempotent final teardown while the owning top-level QRhi still lives.
+    void prepareForShutdown();
+
+    /// Drop the pipelines/buffers/textures so initialize() rebuilds them
+    /// against the new window's surface. Linux/OpenGL survives the move, so
+    /// there it is just a repaint request.
+    void resetGpuResources();
+
+    /// Re-assert the native-window attributes as one unit.
+    ///
+    /// WA_NativeWindow gives the widget its own Metal leaf;
+    /// WA_DontCreateNativeAncestors stops realizing that leaf from dragging
+    /// the ancestor QWidget tree native behind it. They are set together,
+    /// here, so a reparent that re-realizes the native window can never
+    /// reassert one without the other. Idempotent; a no-op off macOS and on
+    /// non-GPU builds.
+    void applyNativeWindowIsolationPolicy();
+
+private:
+    bool m_shutdownPrepared {false};
+
 public:
+    /// Fraction of the DDC's spectrum discarded at EACH edge when drawing
+    /// the listenable island.
+    ///
+    /// From Thetis specHPSDR.cs:529 [v2.10.3.15] — `const double
+    /// CLIP_FRACTION = 0.04;` with upstream's own comment "fraction of the
+    /// spectrum to clip off each side of each sub-span", applied at :535 as
+    /// `clip = floor(CLIP_FRACTION * fft_size)`.
+    ///
+    /// Bench 2026-08-08: "still black gaps between wideband" and the DDC.
+    /// The outermost DDC bins sit in the decimation filter's transition band
+    /// and read near-nothing. At normal zoom you never see them because the
+    /// window is inside the DDC, but the extended pan draws the island at
+    /// its true width and puts the skirt on screen as a dark band at each
+    /// edge. Upstream discards it; so do we, and the wideband wings cover
+    /// that span instead.
+    ///
+    /// Applied ONLY in extended mode. The ordinary path keeps every bin it
+    /// always had -- clipping there would be a wider behaviour change than
+    /// the reported defect.
+    static constexpr double kDdcClipFraction = 0.04;
+
     // ── Spot overlay (Phase 3J-2 Task E1) ─────────────────────────────────
     // Public structs + setters re-declared under a fresh `public:` access
     // specifier so MOC doesn't try to interpret the nested struct as a
@@ -1230,7 +2083,8 @@ public:
     // Visual-notch test seams (design section 8.3). Read-only views into the
     // state updateSpectrumLinear rebuilds each frame, so the section 11 test
     // can pin the measurement-routing contract without a paint cycle.
-    float nfFftBinAverageForTest() const { return m_nfFftBinAverage; }
+    float nfFftBinAverageForTest() const { return m_noiseFloor.fftBinAverage(); }
+    float nfLerpAverageForTest() const { return m_noiseFloor.lerpAverage(); }
     const QVector<float>& undentedPixelsForTest() const {
         return measurementPixels();
     }
@@ -1285,8 +2139,28 @@ public:
         m_overlayStaticDirty = false;
 #endif
     }
+    // I2 fix seam: runs the same GPU-path 3D dBm-scale overlay-cache
+    // freshness check updateSpectrumLinear() runs every frame (right
+    // after processNoiseFloor()), without needing a synthetic FFT frame.
+    // No-op on a CPU-only build -- nothing is cached there to go stale,
+    // matching overlayStaticDirtyForTest() above.
+    void refreshDssScaleOverlayFreshnessForTest() {
+#ifdef NEREUS_GPU_SPECTRUM
+        updateDssScaleOverlayFreshness();
+#endif
+    }
+    // Task 18: counts real (non-guarded) applies across all fifteen
+    // DisplaySettingsModel-bound appliers. Used to prove loadSettings()
+    // never drives an apply (it pushes straight into the model, bypassing
+    // these appliers entirely) and that a no-op re-apply does not move it.
+    int displaySettingsApplyCountForTest() const { return m_displaySettingsApplyCount; }
 
 signals:
+    /// Task 78: a click on another device's slice label, with what it says.
+    void foreignMarkerClicked(int sliceId, const QString& explanation);
+    // 3M-5b: emitted when any TX waterfall colormap property changes.
+    // Setup page wires this to update the preview / UI state.
+    void txWfSettingsChanged();
     // 2026-05-22 bench fix: emitted after each updateSpectrumLinear
     // completes (m_renderedPixels populated). MainWindow consumes this
     // to push peakDbmInSlicePassband() into WdspEngine's MaxBin detector
@@ -1295,6 +2169,23 @@ signals:
     // ~12-17 dB lower due to window-spread power and missing detector
     // pipeline). See peakDbmInSlicePassband doc.
     void spectrumFrameRendered();
+    /// A remote pan's granted FFT size or sample rate changed, so its bin
+    /// width did (parity Task 17). Setup > Spectrum Defaults refreshes its
+    /// readouts from it.
+    void remoteSpectrumGrantChanged();
+
+    /// The transmit view window moved or resized. Carries the window the
+    /// analyzer must now cover.
+    ///
+    /// Thetis derives analyzer span and display window from ONE zoom state
+    /// (specHPSDR.cs initAnalyzer), so its pixels always cover exactly what
+    /// is on screen. Ours are set independently, which is fine until the
+    /// operator zooms mid-transmission: the analyzer stays clipped to the
+    /// span chosen at key-down, the pan shows something wider, and
+    /// SpectrumWidget stretches one across the other -- the trace then sits
+    /// wherever that stretch puts it rather than on frequency. Bench
+    /// 2026-08-05, "zoom out and the tone is stuck where key down occurred".
+    void txViewWindowChanged(double centerHz, double bandwidthHz);
 
     // Phase 3Q-8: emitted on a left-click while not Connected.
     // MainWindow wires this to showConnectionPanel().
@@ -1372,6 +2263,10 @@ signals:
     // Emitted when CTUN mode changes
     void ctunEnabledChanged(bool enabled);
 
+    // R-R3-21 (R3 unfinished controls fix wave M3): peak hold was turned
+    // on or off, so a container's Peak button lights at once.
+    void peakHoldEnabledChanged(bool enabled);
+
     // Emitted when m_ddcCenterHz changes (panadapter pan, band jump, etc.).
     // Used by MainWindow to re-push the CTUN slice offset into MaxBin's
     // detector so its scan window tracks the slice even when only the DDC
@@ -1385,6 +2280,32 @@ signals:
     // Same pattern as TxChannel::txFilterApplied (Plan 4 D8).
     void txFilterOverlayPainted(int xLeft, int xRight);
 
+    // ── 3DSS Setup-dialog mirror (3D Stacked-Trace Spectrum Plan Task 15) ──
+    // Two surfaces now edit the seven DSS controls above (Task 24 adds
+    // dssRowDividerChanged, the seventh): the Task 13 right-click overlay
+    // menu and Setup -> Display -> 3D View (Display3DSetupPage). Each
+    // setter emits its matching signal here after its own
+    // state-settles/early-return guard (`if (m_field == v) { return; }`),
+    // so the Setup page can follow a change made through the overlay menu
+    // (or any other caller) the same way it already follows its own
+    // widgets, without a second polling path. Six of the seven are
+    // NereusSDR-original signal infrastructure -- source-first governs
+    // DSP/radio logic, not this control-surface wiring.
+    // dssFloorDepthChanged borrows its guarded-emit shape from AetherSDR
+    // SpectrumWidget.h:799 [@1872028c] dssFloorDepthResolved (a real but
+    // narrower-purpose upstream signal that fed the SAME overlay menu
+    // back for a Flex/Kiwi source-dispatch reason NereusSDR's single-
+    // source model does not have) -- see docs/attribution/aethersdr-
+    // reconciliation.md, "3D Stacked-Trace Spectrum Plan" section, the
+    // Task 15 rows for this file, for the full citation.
+    void spectrumRenderModeChanged(int mode);
+    void dssFloorDepthChanged(int dB);
+    void dssGainChanged(int pct);
+    void dssRowSpanChanged(int pct);
+    void dssAngleChanged(int pct);
+    void dssRowDividerChanged(int n);
+    void threeDSliceDepthChanged(bool on);
+
 protected:
 #ifdef NEREUS_GPU_SPECTRUM
     void initialize(QRhiCommandBuffer* cb) override;
@@ -1397,6 +2318,9 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    /// Swallowed over the dBm strip, where right-drag adjusts the range;
+    /// ignored elsewhere so PanadapterApplet still gets the pan menu.
+    void contextMenuEvent(QContextMenuEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void leaveEvent(QEvent* event) override;
 
@@ -1410,7 +2334,39 @@ private:
     QVector<float> m_widebandBinsAdc1;
     bool           m_extendedViewAllowed{true};
     bool           m_extendedMode{false};
+    int            m_widebandAdcIndex{0};
+    double         m_widebandAdcRateHz{122880000.0};  // Thetis wbDisplay.cs:4511
     void recomputeExtendedMode();
+
+    /// Pull the visible span back to `bandwidthHz` when extended view is
+    /// withdrawn, through setFrequencyRange so the change carries the same
+    /// repaint and waterfall handling as any other zoom.
+    void applyViewWindowForExtendedClamp(double bandwidthHz);
+    /// The Ctrl+wheel zoom's steps for an operator zoom to `bandwidthHz`
+    /// around `centreHz` (clamped to 1 kHz .. maxZoomOutBandwidthHz()).
+    void applyOperatorZoom(double centreHz, double bandwidthHz);
+
+    /// Overwrite the wing pixels (everything outside the listenable island)
+    /// with wideband ADC data, in the linear-power domain the avenger
+    /// expects. `dbmOffset` is the same offset the DDC plane is folded
+    /// through, so both sides of a boundary land on one dB scale.
+    ///
+    /// Writes a floor rather than leaving stale island data when no wideband
+    /// frame has arrived (P1 boards, wideband disabled, or the first frames
+    /// after a zoom-out): a wing showing the DDC's spectrum repeated would
+    /// be a display that invents signals.
+    ///
+    /// `detector` is the one that produced this plane's island pixels; it
+    /// picks the DDC noise reference the wings are calibrated against. Passed
+    /// per call rather than read off a member because the trace and the
+    /// waterfall choose their detectors independently.
+    void fillWidebandWings(QVector<float>& linearPixels,
+                           int islandFirstPx, int islandLastPx,
+                           double dbmOffset,
+                           SpectrumDetector detector) const;
+
+
+
 
     // ---- Phase 3Q-8: disconnect overlay state ----
     // The CPU paintEvent path can paint a QPainter overlay, but the GPU
@@ -1426,7 +2382,25 @@ private:
 
     // ---- Drawing helpers ----
     void drawGrid(QPainter& p, const QRect& specRect);
+
+    /// Dashed markers at the DDC edges while an extended pan is showing
+    /// wideband wings. Called from drawGrid so it rides the same cached
+    /// static-overlay texture as the rest of the chrome.
+    void drawExtendedIslandBounds(QPainter& p, const QRect& specRect);
     void drawSpectrum(QPainter& p, const QRect& specRect);
+    // 3DSS CPU fallback surface (Task 10): builds/caches the DssRenderer
+    // QImage at up to px, capped by kDssFallbackMaxW/H so a HiDPI/maximized
+    // window doesn't rebuild a multi-megapixel image every frame -- the
+    // surface is intrinsically low-res and gets stretched on draw either
+    // way. Shared by drawSpectrum()'s QPainter path (NEREUS_GPU_SPECTRUM=OFF
+    // builds, which never reach renderGpuFrame() at all) and
+    // uploadDssFallbackImage() (the RGBA16F-unsupported GPU path). Unlike
+    // upstream's buildDssImage(), floorDbm is not a caller-supplied
+    // parameter: NereusSDR has one floor source (dssFloorDbm()), not
+    // upstream's per-caller value (m_lastDetectDssFloor in 2D, dssFloorDbm()
+    // in 3D).
+    // From AetherSDR SpectrumWidget.cpp:11880-11894 [@1872028c].
+    const QImage& buildDssImage(const QSize& px, int scaleStripPx);
     // Active Peak Hold separate render pass (Q14.1). Called from drawSpectrum()
     // after the fill path so the peak trace sits on top of fill but below
     // the live trace line.  Iterates the per-display-pixel peak array
@@ -1458,6 +2432,7 @@ private:
     // Also runs the fast-attack convergence-gated auto-clear from
     // display.cs:5904-5908.
     void processNoiseFloor();
+    void updateReducedSpectrumOverlays();
     void drawWaterfall(QPainter& p, const QRect& wfRect);
     // HIGH SWR / PA safety overlay — ported from display.cs:4183-4201 [v2.10.3.13]
     void paintHighSwrOverlay(QPainter& p);
@@ -1472,6 +2447,19 @@ private:
     void drawWaterfallChrome(QPainter& p, const QRect& wfRect);
     void drawFreqScale(QPainter& p, const QRect& r);
     void drawDbmScale(QPainter& p, const QRect& specRect);
+    // Task 11 (3D dBm scale). drawDbmScaleChrome/drawDbmScaleLabels are new
+    // additions -- ported from AetherSDR's shared 2D/3D helpers -- and are
+    // NOT wired into drawDbmScale() above, which stays untouched so the 2D
+    // path sees zero behavioural change. Only drawDbmScale3D() calls them.
+    // From AetherSDR SpectrumWidget.cpp:17223-17335 [@1872028c]
+    void drawDbmScaleChrome(QPainter& p, const QRect& specRect);
+    void drawDbmScaleLabels(QPainter& p, const QRect& specRect,
+                            float topDbm, float rangeDb);
+    // In 3D mode, a single right-side axis cannot be pixel-exact for every
+    // perspective row. Keep it as a full-height amplitude reference anchored
+    // to the 3D floor, so plain drag visibly shifts the dBm numbers and
+    // Ctrl/Meta-drag changes the span.
+    void drawDbmScale3D(QPainter& p, const QRect& specRect, float floorDbm);
     void drawBandPlan(QPainter& p, const QRect& specRect);
 
     // ── Waterfall scrollback (sub-epic E) ─────────────────────────────────
@@ -1499,6 +2487,11 @@ private:
     void drawVfoMarker(QPainter& p, const QRect& specRect, const QRect& wfRect);
     void drawSliceMarker(QPainter& p, const QRect& specRect, const QRect& wfRect,
                          const SliceMarkerGeometry& g);
+    // Task 78: other devices' slices, after this window's own.
+    void drawForeignMarkers(QPainter& p, const QRect& specRect, const QRect& wfRect);
+    QVector<ForeignSliceMarker> m_foreignMarkers;
+    bool m_ownSliceMarkerPresentationAllowed{true};
+    QHash<int, QRect> m_foreignLabelRects;
     void drawCursorInfo(QPainter& p, const QRect& specRect);
 
     // ---- Spot overlay (Phase 3J-2 Task E1) ----
@@ -1566,6 +2559,28 @@ private:
     //   Called when m_showTxFilterOnRxWaterfall && m_moxOverlay.
     // Per deskhpsdr/transmitter.c:2136-2186 [@120188f] for IQ-space mapping.
     void drawTxFilterOverlay(QPainter& p, const QRect& specRect);
+    // The XIT the TX filter overlay adds to the VFO: none while keyed with
+    // DUP on (parity Task 31).
+    double txFilterXitHz() const;
+    // setMoxOverlay's span half: park the receive view and load the
+    // transmit span, or give the receive view back (parity Task 31 moved
+    // them out so a DUP change while keyed makes the same swap).
+    // pushTxWaterfallRow's row: the visible bins, calibrated as the trace
+    // (parity Task 31).
+    QVector<float> txWaterfallRow(const QVector<float>& binsDbm) const;
+    void loadTransmitSpan();
+    void restoreReceiveSpan();
+    // Parity Task 31: a DUP change while keyed resets the blob maxima and
+    // the active peak hold (Thetis display.cs:514-521 [v2.10.3.15]).
+    void resetPeaksForDuplexChange();
+public:
+    /// Thetis's peak reset for one receiver (ResetBlobMaximums(rx, true) +
+    /// ResetSpectrumPeaks(rx)): the blobs and the active peak hold empty and
+    /// wait out the 500 ms display delay. applyViewWindow calls it on every
+    /// moved or resized view; MoxDisplayController on every MOX edge and on
+    /// the radio connecting.
+    void resetPeaks();
+private:
     void drawTxFilterWaterfallColumn(QPainter& p, const QRect& wfRect);
 
     // ---- Two-tone IMD overlay (Phase 3M-4 Task 12) ----
@@ -1626,29 +2641,76 @@ private:
     void   pushWaterfallRow(const QVector<float>& wfPixelsDbm);
     QRgb   dbmToRgb(float dbm) const;
 
+    // 3D Speed (Task 24): folds up to effectiveDssRowDivider() waterfall
+    // rows into one 3D row by per-column peak-hold before handing the
+    // result to pushDssRow(), so a divider above 1 does not lose a
+    // one-tick burst. Called from pushWaterfallRow() downstream of the
+    // stop-on-TX gate: same placement rule pushDssRow() documented
+    // directly before this task; see the call site there for why
+    // placement matters.
+    void accumulateDssRow(const QVector<float>& wfPixelsDbm);
+
+    // 3DSS: resamples + stores one already-folded row into the
+    // stacked-trace ring. Called only from accumulateDssRow(), once its
+    // fold count reaches effectiveDssRowDivider(): wfPixelsDbm is the
+    // folded exact row (m_dssFoldRow), and the wide (off-screen) channel
+    // is built from the folded m_dssFoldFullBins rather than
+    // m_lastFullBinsDbm directly (Task 24), so a burst that lasts a
+    // single waterfall tick still reaches both channels even when
+    // several ticks are folded into one 3D row. Task 8 extended this to
+    // also feed the wide channel via pushRowWithWide.
+    void pushDssRow(const QVector<float>& wfPixelsDbm);
+
+    // The glide-clock increment per millisecond of wall-clock delta
+    // between display ticks, scaled by effectiveDssRowDivider() so the
+    // scroll phase still completes exactly once per pushed 3D row
+    // regardless of how many waterfall ticks that row folds (Task 24).
+    // Used by the m_displayTimer lambda and exposed by
+    // dssScrollIncrementForTest().
+    float dssScrollIncrement(int deltaMs) const;
+
     // ---- FFT pipeline state ----
     // Single Thetis-faithful pipeline: linear-power FFT bins -> visible
     // slice -> detector -> avenger -> dBm display pixels.  Spectrum and
     // waterfall keep separate detector + avenger state per WDSP per-plane
     // model (each ANALYZER_INFO[] entry has its own DetType + AvMode).
     QVector<float> m_fullLinearBins;       // FFTEngine input cache (|X[k]|²)
-    QVector<float> m_displayLinearPixels;  // spectrum detector output (linear)
     QVector<float> m_renderedPixels;       // spectrum avenger output (dBm)
-    QVector<float> m_wfDisplayLinearPixels; // waterfall detector output (linear)
     QVector<float> m_wfRenderedPixels;     // waterfall avenger output (dBm)
+    // 3DSS wide channel feed: m_fullLinearBins converted to dBm at full
+    // bin resolution (unsliced -- NOT visibleBinRange()'d), so
+    // buildDssWideRow() can window bins outside the current view. Cached
+    // once per FFT frame in updateSpectrumLinear(), gated on Mode3D since
+    // nothing reads it in 2D. See buildDssWideRow()/pushDssRow() (.cpp).
+    QVector<float> m_lastFullBinsDbm;
 
-    // Equivalent Noise Bandwidth of the current FFT window, in bins.
-    // Refreshed every frame via the windowEnb arg on fftReadyLinear so
-    // the detector's invEnb scaling stays in lock-step with the bins it
-    // just received.  No setter coordination needed.
+    // Equivalent noise bandwidth of the current DDC FFT window. The normal
+    // reducer receives the value per call. Extended mode also caches it so
+    // widebandBandwidthNormalisationDb can align wing and island power.
     double m_fftWindowEnb{1.0};
 
-    // Per-channel WDSP-style frame averagers.  See SpectrumAvenger.h for
-    // the av_mode wire-format mapping (-1 peak / 0 none / 1 recursive /
-    // 2 window / 3 log-recursive); analyzer.c:464-554 [v2.10.3.13] is the
-    // verbatim port.
-    NereusSDR::SpectrumAvenger m_spectrumAvenger;
-    NereusSDR::SpectrumAvenger m_waterfallAvenger;
+    // R1 Task 5: the crop-and-reduce stage (visible-slice -> detector ->
+    // avenger) moved to core as NereusSDR::SpectrumReducer, which owns what
+    // used to be m_displayLinearPixels / m_wfDisplayLinearPixels and the two
+    // SpectrumAvenger instances.  One reducer per display plane, because
+    // WDSP gives each ANALYZER_INFO[] plane its own DetType + AvMode.
+    // See SpectrumAvenger.h for the av_mode wire-format mapping (-1 peak /
+    // 0 none / 1 recursive / 2 window / 3 log-recursive);
+    // analyzer.c:464-554 [v2.10.3.13] is the verbatim port.
+    //
+    // The widget still supplies ReducerConfig::pixels from its own geometry,
+    // so rendering is unchanged; the dependency is now explicit rather than
+    // baked into the reduction stage.
+    NereusSDR::SpectrumReducer m_spectrumReducer;
+    NereusSDR::SpectrumReducer m_waterfallReducer;
+
+    // Extended mode needs one composition buffer and avenger per plane so
+    // the DDC island and wideband wings can be combined in linear power.
+    // Normal rendering and daemon endpoints continue to use SpectrumReducer.
+    QVector<float> m_extendedSpectrumLinearPixels;
+    QVector<float> m_extendedWaterfallLinearPixels;
+    NereusSDR::SpectrumAvenger m_extendedSpectrumAvenger;
+    NereusSDR::SpectrumAvenger m_extendedWaterfallAvenger;
 
     // ---- Frequency range ----
     double m_centerHz{14225000.0};    // 14.225 MHz default
@@ -1675,6 +2737,7 @@ private:
     QImage          m_waterfallHistory;            // RGB32 ring buffer
     QVector<qint64> m_wfHistoryTimestamps;         // parallel; per-row wall-clock ms
     int             m_wfHistoryWriteRow{0};        // LIFO; index 0 = newest
+    mutable QElapsedTimer m_historyTraceViewportClock;
     int             m_wfHistoryRowCount{0};        // saturates at capacity
     int             m_wfHistoryOffsetRows{0};      // 0 = newest visible at top
     bool            m_wfLive{true};                // pause/live state
@@ -1822,9 +2885,78 @@ private:
     // Ported from Thetis Display.RX1DisplayCalOffset (display.cs:1372).
     float       m_dbmCalOffset{0.0f};
 
+    // ---- 3M-5b: TX-specific waterfall colormap settings ----
+    // Active during MOX per Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51]
+    // inline per-frame branch.  No state machine.
+    int           m_txWfLowLevel{-70};        // dBm, from Thetis Display.cs:1925 [v2.10.3.13+501e3f51] tx_wf_amp_min default
+    int           m_txWfHighLevel{30};         // dBm, from Thetis Display.cs:1911 [v2.10.3.13+501e3f51] tx_wf_amp_max default
+    WfColorScheme m_txWfPalette{WfColorScheme::Enhanced}; // Thetis Display.cs:428 [v2.10.3.13+501e3f51] _tx_color_scheme = ColorScheme.enhanced
+    QColor        m_txWfLowColor{Qt::black};   // Thetis Display.cs:2516 [v2.10.3.13+501e3f51] waterfall_low_color_tx = Color.Black
+    QString       m_txWfGradient;              // encoded gradient string for Custom palette
+    // 3M-5c: 101-entry color LUT cached from m_txWfGradient encoded text.
+    // Mirrors the Thetis WaterfallTXGradient() 101-color array built at
+    // setup.cs:33314-33322 [v2.10.3.13+501e3f51]. Rebuilt inside
+    // setTxWfGradient() whenever the encoded string changes; consumed by
+    // dbmToRgb() when isTx && palette == Custom. m_txCustomLutValid stays
+    // false until the LUT has been populated at least once (signals "fall
+    // back to kCustomFallbackStops" so the Custom palette behaves usefully
+    // before the user picks one in Setup -> Display -> TX).
+    std::array<QRgb, 101> m_txCustomLut{};
+    bool                  m_txCustomLutValid{false};
+
+    // 3M-5d: when true, updateSpectrumLinear skips its internal
+    // pushWaterfallRow because the waterfall is being driven externally
+    // via pushTxWaterfallRow (TxAnalyzer's pixout=1 stream).  Only set
+    // true during MOX, by MainWindow.
+    bool                  m_txExternalWaterfall{false};
+    bool m_remoteSpectrum{false};
+    DisplayCodecContext m_remoteCodec;
+    NereusSDR::RemoteSpectrumCapture m_remoteCapture;
+    NereusSDR::RemoteSpectrumCapture m_pendingRemoteCapture;
+    double m_remoteExactCentreHz{0.0};
+    double m_remoteExactSpanHz{0.0};
+    // Parity Task 17: the Core's granted FFT size and frame rate for this
+    // remote pan (0 until its first context).
+    int m_remoteFftSize{0};
+    int m_remoteFps{0};
+    bool m_remoteWidebandAvailable{false};
+    bool m_remoteWidebandActive{false};
+    double m_remoteWidebandAdcRateHz{0.0};
+    QVector<float> m_pendingRemoteWide;
+    // R-R3-21 / R-R3-08: remote waterfall rows waiting for the ticker,
+    // oldest first, each with the RF window it was captured at. The ticker
+    // draws one a tick, two while more than two wait (a late burst plays out
+    // instead of being squeezed into one row).
+    struct RemoteWaterfallRow {
+        QVector<float> pixelsDbm;
+        QVector<float> wideDbm;
+        double centreHz{0.0};
+        double spanHz{0.0};
+        NereusSDR::RemoteSpectrumCapture capture;
+    };
+    QList<RemoteWaterfallRow> m_remoteRowQueue;
+    quint64 m_remoteRowsDropped{0};
+    quint64 m_remoteRowsPushed{0};
+    QVector<float> m_lastRemoteRowPushed;
+    bool m_waterfallTickerPausedForTest{false};
+    void onWaterfallTick();
+    void drainRemoteWaterfallRows();
+    QVector<float> reprojectedToView(const QVector<float>& pixelsDbm,
+                                     double centreHz, double spanHz) const;
+    void refreshRemoteTraceProjection();
+    // R-R3-21: the last trace the Core sent, as sent, and its window.
+    QVector<float> m_remoteTraceCaptured;
+    double m_remoteTraceCentreHz{0.0};
+    double m_remoteTraceSpanHz{0.0};
+    double m_remoteWideCentreHz{0.0};
+    double m_remoteWideSpanHz{0.0};
+
     // ---- Phase 3G-8 commit 4: waterfall renderer state ----
 
     bool  m_wfAgcEnabled{true};
+    // The Core's waterfall AGC levels (setCoreWaterfallLevelsAvailable).
+    bool  m_coreWfLevelsAvailable{false};
+    std::optional<std::pair<float, float>> m_coreWfLevels;
     bool  m_clarityActive{false};     // Phase 3G-9c: suppresses legacy AGC when Clarity drives thresholds
     // NF-AGC: Task 2.8 — auto-track thresholds to noise floor + offset.
     bool  m_wfNfAgcEnabled{false};
@@ -1844,10 +2976,77 @@ private:
     bool  m_showRxZeroLineOnWaterfall{false};
     bool  m_showTxZeroLineOnWaterfall{false};
 
-    // AGC rolling envelope (tracked across waterfall rows).
-    float m_wfAgcRunMin{0.0f};
-    float m_wfAgcRunMax{0.0f};
-    bool  m_wfAgcPrimed{false};
+    // ---- 3DSS stacked-trace mode state ----
+    SpectrumRenderMode m_spectrumRenderMode{SpectrumRenderMode::Mode2D};
+    // 3DSS floor depth: how far below the measured noise floor the surface
+    // baseline sits, in dB. Persisted per band (design doc section 6.3).
+    int  m_dssFloorDepth{6};
+    // colour gamma 0-100
+    int  m_dssGain{70};   // 3DSS colour floor 0-100 (gamma of palette lookup)
+    // [original inline comment from AetherSDR src/gui/SpectrumWidget.h:1485-1492 @1872028c]
+    // 3DSS wedge close-in 0-100 (see setDssRowSpan). Defaults to 100 -- fully
+    // ON -- by deliberate product decision, not by omission: three reviewers
+    // read 0 as the safer default since it is the reference rendering. The
+    // control is buried in the Display overlay's 3D VIEW section, so shipping
+    // it off would mean most operators never discover the feature exists.
+    // Anyone who wants the classic trapezoid has a labelled slider; anyone who
+    // does not know to look gets the intended view. Do not flip this to 0
+    // without also solving the discoverability side.
+    int  m_dssRowSpan{100};
+    //-KG4VCF [v0.5.3] NereusSDR-original: upstream renders at one fixed
+    // viewing angle. 50 reproduces its geometry exactly.
+    int  m_dssAngle{50};
+    // 3D Speed (Task 24, NereusSDR-original): 0 == Match (automatic; see
+    // effectiveDssRowDivider()), 1..10 == manual row divider.
+    // m_dssFoldRow/m_dssFoldFullBins/m_dssFoldCount hold the peak-hold
+    // fold in progress across the waterfall ticks between two pushed 3D
+    // rows -- see accumulateDssRow() and design doc section 4.5.
+    int  m_dssRowDivider{0};
+    QVector<float> m_dssFoldRow;
+    QVector<float> m_dssFoldFullBins; // Actual calibrated wide plane, not raw DDC bins.
+    double m_dssFoldWideCenterMhz{0.0};
+    double m_dssFoldWideBandwidthMhz{0.0};
+    NereusSDR::RemoteSpectrumCapture m_dssFoldCapture;
+    bool m_dssFoldRemote{false};
+    bool m_dssFoldTx{false};
+    int m_localSpectrumSource{-1};
+    int m_dssFoldLocalSource{-1};
+    int  m_dssFoldCount{0};
+    double m_dssFoldCenterHz{0.0};
+    double m_dssFoldBandwidthHz{0.0};
+    double m_dssFoldDdcCenterHz{0.0};
+    double m_dssFoldSampleRateHz{0.0};
+    bool m_threeDSliceDepth{false};
+    // [original inline comment from AetherSDR src/gui/SpectrumWidget.h:1474-1476 @1872028c]
+    // GUI-thread only: pushRow() (updateSpectrum / updateKiwiSdrWaterfallRow) and
+    // the renderGpuFrame/paint reads all run on the GUI thread, so m_dss needs no
+    // lock. Do NOT call pushRow() from a worker/audio thread without adding one.
+    DssRenderer m_dss;
+    int  m_dssRowsPushed{0};
+    bool m_txActiveForTest{false};
+    // Continuous scroll progress toward the back between discrete DSS row
+    // pushes (0 just after a push, ramping to 1 by the time the next one
+    // lands), so the mesh glides instead of popping once per push. Advanced
+    // from wall clock in the m_displayTimer tick, reset in pushDssRow().
+    // NereusSDR-original: upstream drives the equivalent quantity from a
+    // QElapsedTimer restarted per push burst (SpectrumWidget.cpp:6031-6064
+    // [@1872028c]); NereusSDR's producer always advances by exactly one
+    // row, so an accumulate/reset pair on the existing display timer needs
+    // no new clock object.
+    float  m_dssScrollProgressRows{0.0f};
+    qint64 m_dssLastTickMs{0};   // wall clock of the previous display tick
+
+    // 3DSS CPU fallback surface (Task 10). Consumed by BOTH the GPU
+    // "mesh unavailable" path and the CPU paint path, so these stay outside
+    // the NEREUS_GPU_SPECTRUM block below -- the QPainter path needs them
+    // even when GPU spectrum rendering is disabled (-DNEREUS_GPU_SPECTRUM=OFF).
+    // From AetherSDR SpectrumWidget.h:1510-1511 [@1872028c].
+    static constexpr int kDssFallbackMaxW = 1024;   // 3DSS surface texture/image caps
+    static constexpr int kDssFallbackMaxH = 512;
+
+    // AGC rolling envelope (tracked across waterfall rows), in
+    // core/spectrum/DisplayFollowers since iPhone app Task 20.
+    WaterfallLevelFollower m_wfLevels;
 
     // Rate-limit waterfall pushes per m_wfUpdatePeriodMs.
     qint64 m_wfLastPushMs{0};
@@ -1880,6 +3079,49 @@ private:
     bool  m_gridEnabled{true};
     bool  m_showZeroLine{false};
     bool  m_showFps{false};
+    // ── Two grids, one live ─────────────────────────────────────────────
+    //
+    // From Thetis display.cs:1782-1804 + :1887-1905 [v2.10.3.15]:
+    //     private static int tx_spectrum_grid_max =  20;
+    //     private static int tx_spectrum_grid_min = -80;
+    //     public static int SpectrumGridMaxMoxModified {
+    //         get { return localMox(1) ? tx_spectrum_grid_max
+    //                                  : spectrum_grid_max; }
+    //     }
+    // Receive and transmit each keep their own range, and the renderer picks
+    // which to read. Nothing is saved and restored across the MOX edge.
+    //
+    // NereusSDR keeps m_refLevel / m_dynamicRange as the LIVE pair so the
+    // ~60 render sites that read them stay untouched, and stores the two
+    // inactive halves here. setMoxOverlay is the only swap point.
+    //
+    // This replaces a save-and-restore around the MOX edges, which was
+    // fragile in a way this design cannot be: with one variable plus a
+    // capture on un-key, ANY writer between the edges silently redefines
+    // what the operator "chose". The receive noise-floor tracker did exactly
+    // that on an ORION-class radio, whose receiver keeps running through
+    // transmit, and the captured range came back on the next key-up with no
+    // drawable labels. With two stores a receive-side tracker cannot reach
+    // the transmit grid at all, whether or not anyone remembered to gate it.
+    // Bench 2026-08-05, JJ KG4VCF: "we need a dynamic range for transmit and
+    // a dynamic range for receive just like Thetis has".
+    // The view window is stored per direction for the same reason the grid
+    // is: re-imposing a default on every rise edge throws away whatever the
+    // operator did last transmission. Bench 2026-08-05, zooming out during
+    // transmit held for that cycle and snapped back on the next.
+    //
+    // Only the SPAN is really remembered for transmit -- the centre is
+    // recomputed from the carrier on each key-up, since the carrier moves.
+    double m_rxViewCenterHz{0.0};
+    double m_rxViewBandwidthHz{0.0};
+    double m_txViewCenterHz{0.0};
+    double m_txViewBandwidthHz{8000.0};   // Thetis +/-4 kHz seed
+
+    float m_rxRefLevel{-48.0f};
+    float m_rxDynamicRange{68.0f};
+    float m_txRefLevel{20.0f};      // Thetis tx_spectrum_grid_max
+    float m_txDynamicRange{100.0f}; // tx_spectrum_grid_max - tx_spectrum_grid_min
+
     bool  m_dbmScaleVisible{true};  // right-edge dBm strip; false → spectrum fills full width
     bool  m_showCursorFreq{true};   // B8 Task 21: cursor frequency readout; default on
     FreqLabelAlign m_freqLabelAlign{FreqLabelAlign::Center};
@@ -1905,6 +3147,24 @@ private:
     qint64 m_fpsLastUpdateMs{0};
     float  m_fpsDisplayValue{0.0f};
 
+    // Toggle for the in-spectrum perf overlay (drawn in a corner showing
+    // paint/gap/fft/overlay-rebuild timings + audio underruns + memory
+    // pressure).  Persisted via AppSettings key "ShowPerfOverlay"; View
+    // menu wires the setter.  Declared unconditionally (unlike the
+    // renderGpuFrame-only perf fields further down, guarded by
+    // NEREUS_GPU_SPECTRUM): showPerfOverlay()/setShowPerfOverlay() and the
+    // constructor's m_perfPollTimer setup are ordinary shared code, so a
+    // CPU-only build needs the same storage even though it has no GPU
+    // overlay to actually draw the HUD into -- same reasoning as
+    // dssMeshReady() above. This was a pre-existing CPU-build break
+    // (predates the 3DSS port) caught while verifying -DNEREUS_GPU_SPECTRUM=OFF
+    // for this fix wave.
+    bool m_showPerfOverlay{false};
+    std::function<QStringList()> m_corePerfLinesProvider;
+    // 1 Hz timer that polls memory pressure + drives perf overlay refresh.
+    // Owned by SpectrumWidget via Qt parent ownership.
+    QTimer* m_perfPollTimer{nullptr};
+
     // ---- VFO / filter overlay ----
     double m_vfoHz{0.0};
     int    m_filterLowHz{-2850};    // LSB default — from Thetis
@@ -1913,8 +3173,20 @@ private:
 
     int    m_panIndex{0};            // for per-pan settings keys
 
+    // 3D Stacked-Trace Spectrum Plan Task 18: this widget's owned
+    // DisplaySettingsModel (one per SpectrumWidget / panadapter),
+    // constructed in the SpectrumWidget constructor and bound in
+    // bindDisplaySettings(). m_displaySettingsApplyCount is a test seam;
+    // see displaySettingsApplyCountForTest().
+    DisplaySettingsModel* m_displaySettings{nullptr};
+    int                   m_displaySettingsApplyCount{0};
+    bool                  m_reflectingDisplaySettings{false};
+
     // ---- VFO flag widgets ----
     QMap<int, VfoWidget*> m_vfoWidgets;
+    // Slices shown here only as their flag and their own edge marker
+    // (setEdgeMarkedSlice).
+    QSet<int> m_edgeMarkedSlices;
 
     // Which slice's flag stays on top -- see setFrontSliceIndex(). -1 = no
     // pin; updateVfoPositions() falls back to its own ascending-index order.
@@ -1929,9 +3201,14 @@ private:
 
     // ---- CTUN mode ----
     bool   m_ctunEnabled{true};  // true = SmartSDR-style (pan independent of VFO)
+    bool   m_ctunPreference{true};
+    bool   m_ctunAvailable{true};
     enum class VfoOffScreen { None, Left, Right };
     VfoOffScreen m_vfoOffScreen{VfoOffScreen::None};
     void drawOffScreenIndicator(QPainter& p, const QRect& specRect, const QRect& wfRect);
+    // One edge arrow and its frequency label; row 0 is the pan's own VFO.
+    void drawOffScreenArrow(QPainter& p, const QRect& specRect, bool left,
+                            const QColor& arrowColor, double hz, int row);
 
     // ---- Mouse tracking overlay (QRhiWidget macOS workaround) ----
     QWidget* m_mouseOverlay{nullptr};
@@ -2116,19 +3393,13 @@ private:
     // Updated each spectrum frame in processNoiseFloor() after
     // updateSpectrumLinear finalises m_renderedPixels.  paintNoiseFloorOverlay
     // uses m_nfLerpAverage for line/box Y and m_nfFftBinAverage for actual Y.
-    float m_nfFftBinAverage{-200.0f};
-    float m_nfLerpAverage{-200.0f};
-
-    // From Thetis display.cs:4638 [v2.10.3.13] m_fAttackTimeInMSForRX1=2000.
-    float m_nfAttackTimeMs{2000.0f};
-
-    // From Thetis display.cs:5775 + 5783 [v2.10.3.13]:
-    //   _NFsensitivity = 3 (default), clamped to [0, 19] in setter.
-    // requireSamples = (int)(width * (sensitivity / 20)) — with default 3
-    // that's ~15% of pixels, achievable on any normal band.  Higher values
-    // make the estimate harder to converge; values >= 20 make it unreachable
-    // (requireSamples > width) and fftBinAverage perpetually drifts to +200.
-    int m_nfSensitivity{3};
+    // The estimates, the attack time (Thetis display.cs:4638 [v2.10.3.13]
+    // m_fAttackTimeInMSForRX1=2000), the sensitivity (display.cs:5775 +
+    // 5783, _NFsensitivity = 3) and the fast-attack flag (display.cs:917-927
+    // m_bFastAttackNoiseFloorRX1, set on band change / freq jump / MOX
+    // transition, cleared per display.cs:5904-5908) live in
+    // core/spectrum/DisplayFollowers since iPhone app Task 20.
+    NoiseFloorFollower m_noiseFloor;
 
     // Operator-tunable NF shift — From Thetis display.cs:5763 [v2.10.3.13]:
     //   private static float _fNFshiftDBM = 0;
@@ -2136,16 +3407,6 @@ private:
     // display.cs:5771).  Applied to both lerp and actual values per
     // display.cs:5400 + 5403.
     float m_nfShiftDbm{0.0f};
-
-    // Fast-attack flag — From Thetis display.cs:917-927 [v2.10.3.13]
-    // m_bFastAttackNoiseFloorRX1.  Set on band change / freq jump / MOX
-    // transition.  Auto-clear is now Thetis-faithful: gated on
-    // |fftBinAverage - lerpAverage| < 1.0 AND elapsed > kFastAttackMinMs
-    // (display.cs:5904-5908) — the convergence check is what tells Thetis
-    // the smoothed estimate has settled to the new band.
-    bool   m_noiseFloorFastAttack{false};
-    qint64 m_nfLastFastAttackMs{0};
-    static constexpr qint64 kFastAttackMinMs = 1000;  // display.cs:5906 Math.Max(1000, ...)
 
     // ---- NF-aware grid (Task 2.9) ----
     // From Thetis console.cs:46025-46085 [v2.10.3.13] GridMinFollowsNFRX1,
@@ -2155,11 +3416,21 @@ private:
     bool m_adjustGridMinToNF{false};
     int  m_nfOffsetGridFollow{0};    // dB offset added to NF estimate (default 0)
     bool m_maintainNFAdjustDelta{false};
+    // Thetis tmrAutoAGC port (gridFollowTick): the display noise floor
+    // Thetis exposes (m_fNoiseFloorRX1, lerp + NF shift) and whether it is
+    // good (m_bNoiseFloorGoodRX1), the 500 ms timer, and when Clarity last
+    // fed this pan (a pan Clarity feeds keeps Clarity's grid).
+    float   m_gridFollowNfDbm{-200.0f};
+    bool    m_gridFollowNfGood{false};
+    QTimer* m_gridFollowTimer{nullptr};
+    qint64  m_lastClarityGridNfMs{0};
+    static constexpr qint64 kClarityGridHoldMs = 1500;
 
     // From Thetis specHPSDR.cs:325 [v2.10.3.13] NormOneHzPan
     bool m_dispNormalize{false};
 
     // From Thetis console.cs:20073 peak_text_delay=500 [v2.10.3.13]
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     // Color from console.cs:20278 Color.DodgerBlue [v2.10.3.13]
     bool            m_showPeakValueOverlay{false};
     OverlayPosition m_peakValuePosition{OverlayPosition::TopRight};
@@ -2182,16 +3453,125 @@ private:
     void scheduleSettingsSave();
     bool m_settingsSaveScheduled{false};
 
+    // 3D Stacked-Trace Spectrum Plan Task 18: wires m_displaySettings
+    // bidirectionally (called once from the constructor).
+    // syncDisplaySettingsFromWidget() is called from every write site of
+    // the eight fields with no per-field widget signal (named setters,
+    // setDbmRange(), loadSettings(), the dBm-strip and divider mouse
+    // drags, wheelEvent) -- see SpectrumWidget.cpp for the full list.
+    // Task 20 extended it to also push the six 3D fields (Task 24 makes
+    // it seven), so loadSettings() (which assigns those directly, with no
+    // signal) still seeds the model; at every other call site the seven
+    // 3D pushes are redundant no-ops, since the dedicated widget-level
+    // signal already reached the model first.
+    void bindDisplaySettings();
+    void syncDisplaySettingsFromWidget();
+
     // Recompute m_spectrumAverageAlpha + m_waterfallAverageAlpha from the
     // current per-side time constants and live FPS using the Thetis formula:
     //   α = exp(-1 / (fps × τ_seconds))
     // From Thetis specHPSDR.cs:351-380 [v2.10.3.13] AvTau / AvTauWF setters.
     void recomputeAverageAlphas();
+    // Frames per second the per-frame overlays (active peak hold, peak
+    // blobs, noise floor) advance at: a remote pan's frame rate from the
+    // Core, else this window's display timer (parity Task 17).
+    int overlayFrameRate() const;
 
     // ---- Mouse state ----
     bool   m_draggingDbm{false};
     int    m_dragStartY{0};
     float  m_dragStartRef{0.0f};
+    /// Right-drag on the dBm strip: move the TOP only, leaving the floor
+    /// where it is, so the range stretches instead of sliding.
+    ///
+    /// From Thetis PanDisplay.cs [v2.10.3.15]: left-press on
+    /// dBmScalePanadapterRegion sets gridminmaxadjust (:4105-4115, max AND
+    /// min move together), right-press sets gridmaxadjust (:4424-4431, max
+    /// only). Two modes on the same strip, chosen by button. We had only
+    /// the pan, with range relegated to the scroll wheel.
+    /// True when `pos` is on the dBm strip: right of the strip edge and
+    /// above the spectrum/waterfall divider. Shared by the press handler and
+    /// contextMenuEvent so the two cannot disagree about where the strip is.
+    bool isOnDbmStrip(const QPoint& pos) const;
+
+    /// Emit txViewWindowChanged when transmitting and the window actually
+    /// moved. Called from every site that writes m_centerHz / m_bandwidthHz
+    /// so no zoom path can silently leave the analyzer behind.
+    /// THE only place m_centerHz / m_bandwidthHz may be written.
+    ///
+    /// The transmit display has two things that must agree: the window on
+    /// screen, and the span the WDSP analyzer is clipped to. Thetis gets
+    /// that for free because initAnalyzer derives both from one zoom state.
+    /// Ours are separate objects, so agreement depends on every writer
+    /// remembering to announce itself -- and on 2026-08-05 six separate
+    /// defects came from writers that did not: a stuck tone, a stretched
+    /// axis, a jittering passband.
+    ///
+    /// Routing every write through here makes the announcement structural
+    /// rather than remembered. A new zoom or pan path added later cannot
+    /// silently desync the analyzer, because it cannot change the window
+    /// without going through this.
+    ///
+    /// Pass the current value for whichever of the two is not changing.
+    void applyViewWindow(double centreHz, double bandwidthHz);
+
+    void notifyTxViewWindow();
+
+    /// THE only place frequencyClicked may be emitted.
+    ///
+    /// Withheld while this pan is showing transmit, for the reason the
+    /// release branch already gave: panning and zooming during transmit are
+    /// new on this branch, so a pointer gesture over the pan can now move a
+    /// keyed transmitter into an antenna and an amplifier.
+    ///
+    /// That gate went on the short-pan-release branch alone, and it was not
+    /// the only way in. A press inside the passband sets m_draggingVfo and
+    /// mouseMoveEvent tunes on every move; a spot label tunes on press; the
+    /// wheel tunes on every notch. Codex found all three on PR #317, and the
+    /// lesson is the same one applyViewWindow already learned on this branch:
+    /// a rule enforced at one of several call sites is a rule that holds
+    /// until someone adds the next call site. Routed rather than repeated.
+    ///
+    /// Menu actions go through it too. The hazard is the radio moving while
+    /// keyed, which does not care whether the operator meant it.
+    void requestTune(double hz);
+
+    bool   m_draggingDbmRange{false};
+    float  m_dragStartFloor{0.0f};
+
+    // 3D stacked-trace spectrum plan, Task 16: the dBm-strip drag-pan
+    // gesture targets 3D Floor instead of Ref Level while in 3D mode (see
+    // the mode branch in mouseMoveEvent). dssFloorDepth() is captured here
+    // at press time, the same way m_dragStartRef captures m_refLevel above,
+    // so the 3D branch has its own drag-start baseline to offset from.
+    // NereusSDR-original: upstream AetherSDR's 3D Floor has no drag
+    // binding at all (SpectrumWidget.cpp's m_draggingDbm only ever moves
+    // its Ref Level equivalent), so there is no upstream field to port.
+    int    m_dragStartDssFloorDepth{0};
+
+    // Task 19: Ctrl-drag (Cmd/Meta too) on the dBm strip -- zooms the span
+    // with the bottom pinned, instead of panning the plain drag above does.
+    // A separate flag + capture set from m_draggingDbm's, even though the
+    // two gestures are mutually exclusive at press time (arrowRow/Ctrl/body
+    // hit-tests are checked in order and each `return`s), because they
+    // capture different quantities: m_dragStartRef is the pre-drag TOP,
+    // these are the pre-drag RANGE and BOTTOM. Named m_dbmRangeDragStartY
+    // rather than reusing m_dragStartY for the same reason -- one drag
+    // reads "Y since press" against a Ref baseline, the other against a
+    // Range baseline, and giving them the same storage would make a stale
+    // read silently plausible after a copy/paste edit.
+    //
+    // Mirrors upstream's m_dbmDragStartY / m_dbmDragStartRange /
+    // m_dbmDragStartBottom (AetherSDR SpectrumWidget.h, used by
+    // SpectrumWidget.cpp:9537-9550, 10493-10501 [@1872028c]). Upstream also
+    // keeps m_dbmDragStartRef for its release-handler transition math
+    // (oldMinDbm/oldMaxDbm for beginDbmRangeTransition); NereusSDR's release
+    // handler has no transition system to feed (see the .cpp mouseRelease
+    // change), so that field has no NereusSDR counterpart.
+    bool   m_draggingDbmRangeZoom{false};
+    int    m_dbmRangeDragStartY{0};
+    float  m_dbmRangeDragStartRange{0.0f};
+    float  m_dbmRangeDragStartBottom{0.0f};
     QPoint m_mousePos;              // for cursor frequency display
     bool   m_mouseInWidget{false};
 
@@ -2214,6 +3594,7 @@ private:
 
     // Bandwidth drag (frequency scale bar) — AetherSDR:421-423
     bool   m_draggingBandwidth{false};
+    bool   m_wheelZoomRecentring{false};
     int    m_bwDragStartX{0};
     double m_bwDragStartBw{0.0};
 
@@ -2228,6 +3609,17 @@ private:
     // ---- MOX / TX overlay state (H.1, Phase 3M-1a) ----
     // From Thetis display.cs:1568 [v2.10.3.13]: static bool _mox = false;
     bool  m_moxOverlay{false};
+
+    // 3M-5d follow-up: TX-side bin-frequency context for visibleBinRange().
+    // Set by MainWindow on MOX rise (and on VFO change during TX) so the
+    // TX FFT pixel array can be sliced against the TX channel center
+    // + TX sample rate instead of the RX DDC rate + center.  Without
+    // these, the same WDSP bin array gets sliced as if it covered the
+    // RX DDC bandwidth, which on HL2 is 8x wider than the TX bandwidth
+    // -- producing a stretched display that aliases TX-baseband edges
+    // onto the visible window (bench 2026-05-10).
+    double m_txCenterHz{0.0};
+    double m_txSampleRateHz{96000.0};
     // TX attenuator cal offset — applied as an additional dBm shift during TX.
     // From Thetis display.cs:4840 [v2.10.3.13]: if (!local_mox) fOffset += rx1_preamp_offset;
     // Upstream tags preserved: //MW0LGE (from cited upstream lines) [v2.10.3.15]
@@ -2243,12 +3635,18 @@ private:
     // flags below are true.
     bool m_testingIMD{false};            // Display.TestingIMD mirror
     bool m_showIMDMeasurements{false};   // Display.ShowIMDMeasurments mirror
-    // displayduplex defaults to true in NereusSDR — the panadapter stays
-    // live during MOX (the trace switches from RX to TX feedback), which
-    // is the equivalent of Thetis's "duplex" mode where DisplayDuplex=true
-    // routes feedback DDC streams to the RX1 panadapter window.  Wire
-    // setDisplayDuplex(false) only if a Setup checkbox is added later.
-    bool m_displayDuplex{true};
+    // Parity Task 31 (A11): display duplex, false by default as Thetis's
+    // _display_duplex (console.cs:15390-15395 [v2.10.3.15]). With it on
+    // while keyed the pan keeps the receiver (showsTransmitView() false).
+    bool m_displayDuplex{false};
+    // Whether setMoxOverlay loaded the transmit span (the rise with DUP
+    // off, or DUP turned off while keyed), so the fall or DUP turned on
+    // gives the receive span back.
+    bool m_txSpanLoaded{false};
+    // Thetis tx_display_cal_offset (display.cs:1413 [v2.10.3.15]).
+    float m_txDisplayCalOffsetDb{0.0f};
+    // Thetis rx1_preamp_offset (RadioModel::rxPreampOffsetDb).
+    float m_rxPreampOffsetDb{0.0f};
     // Allocated in the constructor (init list) so the include stays in
     // the .cpp.  std::unique_ptr would require pulling ImdOverlay.h into
     // the header.  Raw pointer with QObject parenting is the established
@@ -2302,6 +3700,20 @@ private:
     bool   m_overlayStaticDirty{true};
     bool   m_overlayNeedsUpload{true};
 
+    // I2 fix (final review of the 3D stacked-trace spectrum port): dBm
+    // value of dssFloorDbm() as of the last time the 3D dBm-scale strip's
+    // label set was actually baked into m_overlayStatic. Compared each
+    // frame (updateDssScaleOverlayFreshness(), called from
+    // updateSpectrumLinear right after processNoiseFloor()) against the
+    // live dssFloorDbm() -- itself re-lerped every frame -- so the overlay
+    // is only marked dirty when the ROUNDED LABEL SET would actually
+    // change, not on every sub-pixel lerp step. std::nullopt means "never
+    // baked yet"; harmless, since m_overlayStaticDirty already starts
+    // true above and bakes the first real frame regardless of this check.
+    std::optional<float> m_dssLastBakedFloorDbm;
+    // I2 fix: the freshness check itself -- see m_dssLastBakedFloorDbm.
+    void updateDssScaleOverlayFreshness();
+
     // 2026-05-26 KG4VCF dual-layer overlay split.
     //
     // The static texture above carries chrome (grid, scales, bandplan,
@@ -2339,14 +3751,6 @@ private:
     // perf overlay can show if paint events are arriving on time.
     // A gap > the display period == main thread was blocked.
     qint64 m_lastPaintWallMs{0};
-    // Toggle for the in-spectrum perf overlay (drawn in a corner
-    // showing paint/gap/fft/overlay-rebuild timings + audio underruns
-    // + memory pressure).  Persisted via AppSettings key
-    // "ShowPerfOverlay"; View menu wires the setter.
-    bool m_showPerfOverlay{false};
-    // 1 Hz timer that polls memory pressure + drives perf overlay
-    // refresh.  Owned by SpectrumWidget via Qt parent ownership.
-    QTimer* m_perfPollTimer{nullptr};
 
     // ---- FFT spectrum GPU resources ----
     QRhiGraphicsPipeline*       m_fftLinePipeline{nullptr};
@@ -2359,11 +3763,91 @@ private:
     // false between peak decay resets so we skip the draw call.
     QRhiBuffer*                 m_fftPeakVbo{nullptr};
     bool                        m_peakHoldHasData{false};
+    // Whether m_fftFillVbo holds the fill for the trace m_fftLineVbo holds.
+    // The fill is written only while pan fill is on, so turning it on draws
+    // no fill left over from an earlier trace.
+    bool                        m_fftFillHasData{false};
     // From AetherSDR: kMaxFftBins = 8192, kFftVertStride = 6
     static constexpr int kMaxFftBins = 65536;
     static constexpr int kFftVertStride = 6;  // x, y, r, g, b, a
-    int m_visibleBinCount{0};  // bins rendered this frame (for draw call count)
 
+    // ---- 3DSS mesh GPU resources ----
+    bool initDssMeshPipeline();
+    void rebuildDssMeshIfNeeded(QRhiResourceUpdateBatch* batch);
+    QVector<int> dssHeightRowsToUpload() const;
+    void uploadDssHeightRows(QRhiResourceUpdateBatch* batch);
+    void uploadDssPaletteLut(QRhiResourceUpdateBatch* batch);
+    void writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
+                         const QRect& specRect, float dpr);
+
+    QRhiGraphicsPipeline*       m_dssFillPipeline{nullptr};
+    QRhiGraphicsPipeline*       m_dssLinePipeline{nullptr};
+    QRhiShaderResourceBindings* m_dssSrb{nullptr};
+    QRhiBuffer*                 m_dssMeshVbo{nullptr};
+    QRhiBuffer*                 m_dssMeshLineVbo{nullptr};
+    QRhiBuffer*                 m_dssUbo{nullptr};
+    QRhiTexture*                m_dssHeightTex{nullptr};
+    QRhiTexture*                m_dssPaletteTex{nullptr};
+    QRhiSampler*                m_dssHeightSampler{nullptr};
+    QRhiSampler*                m_dssPaletteSampler{nullptr};
+    bool    m_dssMeshReady{false};
+    // False until rebuildDssMeshIfNeeded() has actually pushed vertices
+    // for m_dssMeshCols. Guards the first-upload case that a plain dirty
+    // flag misses, and is reset on teardown so a rebuilt pipeline uploads
+    // again.
+    bool    m_dssMeshUploaded{false};
+    int     m_dssMeshCols{0};
+    quint64 m_dssLutToken{~0ull};
+    quint64 m_dssUploadedRowGeneration{~0ull};
+    int     m_dssLastUploadedHead{-1};
+    // Linux takes Qt's default QRhiWidget backend (this file's setApi() only
+    // covers Q_OS_MAC/Q_OS_WIN), which is typically OpenGL -- so this cannot
+    // default to DedicatedRibbonPipeline and stay correct there; it is
+    // overwritten from the real backend at the top of initDssMeshPipeline()
+    // before anything reads it.
+    DssOutlinePipelineMode m_dssOutlinePipelineMode{
+        DssOutlinePipelineMode::DedicatedRibbonPipeline};
+
+    // ---- 3DSS CPU-fallback quad (Task 10: RGBA16F unsupported) ----
+    // Composited through the SAME overlay pipeline (m_ovPipeline/m_ovVbo/
+    // m_ovSampler) the static/dynamic chrome layers already use -- "blit it
+    // through the existing overlay pipeline" per the task brief -- with its
+    // own texture + SRB sized to the spectrum viewport (capped at
+    // kDssFallbackMaxW/H) rather than the full window. Deliberately NOT
+    // named m_dssSrb/m_dssGpuTex: those upstream names belong to the GPU
+    // MESH resources above (m_dssFillPipeline/m_dssSrb/...), claimed by
+    // Task 7 before this task's cached-image fallback existed to need its
+    // own pair -- see docs/attribution/aethersdr-reconciliation.md, Task 7
+    // row, "Task 10 must pick different names for the fallback quad's own
+    // SRB/texture". Upstream itself keeps these two concepts separate too
+    // (m_dssMeshFillPipeline/m_dssMeshSrb for the mesh vs. m_dssGpuTex/
+    // m_dssSrb for its own cached-image fallback); NereusSDR's mesh
+    // resources just happen to have already claimed the shorter names.
+    void uploadDssFallbackImage(QRhiResourceUpdateBatch* batch,
+                                const QRect& specRect, float dpr);
+    QRhiTexture*                m_dssFallbackTex{nullptr};
+    QRhiShaderResourceBindings* m_dssFallbackSrb{nullptr};
+    int     m_dssFallbackTexW{0};
+    int     m_dssFallbackTexH{0};
+    quint64 m_dssFallbackUploadedGen{~0ull};
+
+#endif
+
+    // Also reset on MOX/context changes in the shared path. The CPU painter
+    // uses m_renderedPixels for its trace; this count remains zero there.
+    int m_visibleBinCount{0};  // GPU bins rendered this frame (draw call count)
+
+    // Whether the GPU 3DSS mesh pipeline is up and has data this frame.
+    // Deliberately declared OUTSIDE the NEREUS_GPU_SPECTRUM block above
+    // (unlike the GPU-only resources and helpers it reads) because callers
+    // such as the 3D VIEW overlay menu's "3D Span" control gate
+    // (dssRowSpanSupported(), DssMeshGeometry.h) need to ask this question
+    // in both build configurations. A CPU-only build has no GPU mesh at
+    // all, so the answer there is always false.
+#ifdef NEREUS_GPU_SPECTRUM
+    bool dssMeshReady() const { return m_dssMeshReady; }
+#else
+    bool dssMeshReady() const { return false; }
 #endif
 
     // Invalidate the GPU-path cached overlay texture so grid, labels,

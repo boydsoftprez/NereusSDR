@@ -71,6 +71,11 @@
 //                                    [@77e793a]); both shapes end up
 //                                    calling the same FreeDVStationModel
 //                                    ::onStationRemoved entry point.
+//   2026-09-27  J.J. Boyd / KG4VCF  iPhone plan Task 22 / parity Task 20
+//                                    (R-IOS-26): setCoreRequestsAvailable
+//                                    gates Send QSY, Send and Clear with a
+//                                    reason. AI tooling: Anthropic Claude
+//                                    Code.
 
 #include "FreeDVReporterDialog.h"
 
@@ -1500,7 +1505,31 @@ void FreeDVReporterDialog::onTableSelectionChanged(
     // From freedv-gui freedv_reporter.cpp:2186-2192 [@77e793a]
     //   (refreshQSYButtonState enables only when a single row is
     //   selected AND we are connected to the server).
-    m_qsySendButton->setEnabled(rows.size() == 1);
+    // iPhone plan Task 22: and while the request can reach FreeDV Reporter.
+    m_qsySendButton->setEnabled(rows.size() == 1 && m_coreRequestsAvailable);
+}
+
+void FreeDVReporterDialog::setCoreRequestsAvailable(bool available, const QString& reason) {
+    m_coreRequestsAvailable = available;
+    m_coreRequestsReason = available ? QString() : reason;
+    // A widget's own tooltip comes back when it is enabled again.
+    const auto gate = [this](QPushButton* button, bool enabled) {
+        if (button == nullptr) {
+            return;
+        }
+        if (!button->property("nereusBaseToolTip").isValid()) {
+            button->setProperty("nereusBaseToolTip", button->toolTip());
+        }
+        button->setEnabled(enabled);
+        button->setToolTip(m_coreRequestsAvailable
+                               ? button->property("nereusBaseToolTip").toString()
+                               : m_coreRequestsReason);
+    };
+    gate(m_msgSendButton, available);
+    gate(m_msgClearButton, available);
+    const bool oneRow = m_table != nullptr && m_table->selectionModel() != nullptr
+        && m_table->selectionModel()->selectedRows().size() == 1;
+    gate(m_qsySendButton, available && oneRow);
 }
 
 QString FreeDVReporterDialog::currentSelectedSid() const {

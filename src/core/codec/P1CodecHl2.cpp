@@ -13,6 +13,15 @@
 //                Claude Code. HL2-only codec; mirrors mi0bot's
 //                literal WriteMainLoop_HL2 vs WriteMainLoop split.
 //                Fixes reported HL2 S-ATT bug at the wire layer.
+//   2026-09-28 - R-R3-49 / R-R3-46: Setup > Transmit > Power's Disable HF PA
+//                applied (Thetis DisablePA and hf_tr_relay,
+//                transmitSettingsVersion 11). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
+//   2026-09-29 - Level Cal: the Alex receive attenuator (Thetis SetAlexAtten,
+//                netInterface.c:421-432 [v2.10.3.15]) on the wire, and the step
+//                attenuator range above 31 dB on Alex boards (value + 2,
+//                console.cs:11044-11056 [v2.10.3.15]). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // === Verbatim mi0bot networkproto1.c header (lines 1-19) ===
@@ -72,6 +81,9 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
                 default: break;                     // 0 = no RX-only path selected
             }
             if (ctx.rxOut) { c3 |= 0b1000'0000; }  // _Rx_1_Out relay
+            // Bits 0-1: the Alex attenuator, _10_dB_Atten | _20_dB_Atten << 1.
+            // From Thetis networkproto1.c:453 [v2.10.3.15]
+            c3 |= quint8(ctx.alexAttenBits & 0x03);
             out[3] = c3;
             out[4] = quint8((ctx.antennaIdx & 0x03)
                           | (ctx.duplex ? 0x04 : 0)
@@ -211,9 +223,9 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
         // C2 bit 3 = HL2 PA-enable (repurposed `ApolloTuner` slot per mi0bot).
         // mi0bot routes DisablePA() on HL2 through EnableApolloTuner(!bit), so
         // the bit follows tx[0].pa polarity inverted: PA enabled ⇒ bit set,
-        // PA disabled ⇒ bit cleared.  We emit bit set always — NereusSDR has
-        // no user-facing "Disable PA" wiring for HL2 yet, and PA-enabled is
-        // the only state in which TUNE / MOX produce RF.  Without this bit,
+        // PA disabled ⇒ bit cleared.  Setup > Transmit > Power's "Disable HF
+        // PA" clears it (ctx.txPaDisabled); otherwise it is set, as PA-enabled
+        // is the only state in which TUNE / MOX produce RF.  Without this bit,
         // the HL2 FPGA sees MOX asserted with PA-not-enabled and the T/R
         // relay flutters because it cannot reconcile.  This was the root
         // cause of the "rapid relay clicking on TUNE" bench symptom.
@@ -233,9 +245,13 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
             out[2] = quint8(
                 (ctx.p1MicBoost ? 0x01 : 0x00) |
                 (ctx.p1LineIn   ? 0x02 : 0x00) |
-                /*HL2 PA enable*/ 0x08 |
+                /*HL2 PA enable*/ (ctx.txPaDisabled ? 0x00 : 0x08) |
                 /*always-on*/     0x40);
-            out[3] = quint8(ctx.alexHpfBits | (ctx.trxRelay ? 0x00 : 0x80));  // T/R relay engaged (INVERTED: 1 = disabled)
+            // C3 bit 7 also carries tx[0].pa on the HL2, as on every P1 board:
+            // From mi0bot ChannelMaster/networkproto1.c:1081-1084 [@c26a8a4]
+            //   C3 = ... | ((prbpfilter->_6M_preamp & 1) << 6) | ((prn->tx[0].pa & 1) << 7);
+            out[3] = quint8(ctx.alexHpfBits
+                            | ((!ctx.trxRelay || ctx.txPaDisabled) ? 0x80 : 0x00));  // T/R relay engaged (INVERTED: 1 = disabled)
             out[4] = quint8(ctx.alexLpfBits);
             return;
 
@@ -926,10 +942,20 @@ DdcAssignment P1CodecHl2::applyDdcAssignment(
             a.rate[1] = rx1Rate;
             a.adcCtrl1 = 4;
             a.adcCtrl2 = 0;
-            // PS DDC pair indices (same as applyPureSignalDdcConfig — psFbDdc=2, txMonDdc=3).
-            // From mi0bot networkproto1.c:549-553 [v2.10.3.13-beta2].
-            a.psFwdDdc = 0;
-            a.psRevDdc = 1;
+            // PS DDC pair indices, the same pair applyPureSignalDdcConfig
+            // emits as psFbDdc / txMonDdc. DDC0 stays slice A's receiver.
+            // From mi0bot console.cs:8733-8762 [@c26a8a4] GetDDC(), P1 branch:
+            //   case HPSDRHW.HermesLite: // MI0BOT: Hermes Lite 2
+            //   ...
+            //   case 5: // on off on
+            //       rx1 = 0; rx2 = 1; psrx = 2; pstx = 3;
+            // From mi0bot ChannelMaster/networkproto1.c:549-553 [@c26a8a4]
+            // (the read loop pairs the same two slots for nddc == 4):
+            //   case 4:
+            //       xrouter(0, 0, 0, spr, prn->RxBuff[0]);
+            //       twist(spr, 2, 3, 1);
+            a.psFwdDdc = 2;  // psrx = 2, PS feedback
+            a.psRevDdc = 3;  // pstx = 3, TX monitor
         }
     }
 

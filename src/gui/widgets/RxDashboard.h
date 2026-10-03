@@ -1,7 +1,12 @@
 #pragma once
 
 #include <QChar>
+#include <QPointer>
+#include <QString>
 #include <QWidget>
+
+class QLabel;
+class QPushButton;
 
 class QHBoxLayout;
 class QLabel;
@@ -56,7 +61,7 @@ public:
     explicit RxDashboard(QWidget* parent = nullptr);
 
     void bindSlice(SliceModel* slice);
-    SliceModel* slice() const noexcept { return m_slice; }
+    SliceModel* slice() const noexcept { return m_slice.data(); }
 
     /// Slice this dashboard is describing. Prepended to the row so a
     /// multi-pan operator can tell which slice the readings belong to.
@@ -65,6 +70,13 @@ public:
 
     /// Mode badge text, for tests and for the overflow tooltip.
     QString modeText() const;
+
+    /// Slice control plan Task 13: the picker's words beside the letter
+    /// ("You control", "Listening", "Choose a slice" with none), and the
+    /// picker itself, which opens the all-slice chooser.
+    void setChooserState(const QString& words);
+    QString chooserState() const;
+    QPushButton* chooserButton() const noexcept { return m_picker; }
 
     /// Badge that folds at this rung, or nullptr if the rung is not ours.
     /// 5 SQL, 6 APF, 7 NB, 8 NR, 9 AGC. Mode and filter never fold.
@@ -84,7 +96,17 @@ public:
     /// design doc §5.1 invariant 2).
     int residualWidth() const;
 
+    /// R-R3-21: which badge was clicked. MainWindow opens the matching
+    /// tab of the slice's VFO flag.
+    enum class Badge { Mode, Filter, Agc, Nr, Nb, Apf, Squelch };
+
 signals:
+    /// Slice control plan Task 13: the picker was clicked.
+    void chooserRequested();
+
+    /// R-R3-21: a badge was left-clicked.
+    void badgeClicked(NereusSDR::RxDashboard::Badge badge);
+
     /// A pill's DSP-active state (and/or its content, hence its width)
     /// just changed. rung matches badgeForRung's mapping (5 SQL .. 9 AGC).
     /// available is the badge's new should-show state; AGC has no "off"
@@ -107,6 +129,9 @@ private slots:
     void onFilterChanged(int low, int high);
     void onAgcChanged(int agcMode);
     void onNrChanged(int nrSlot);
+    // R-R3-40: the NR badge warns while the Core holds NNR below the saved
+    // choice, with the reason as its tooltip.
+    void onNnrLimitChanged(int limit);
     void onNbChanged(int nbMode);
     void onApfChanged(bool active);
     void onSsqlChanged(bool active);
@@ -116,7 +141,9 @@ private:
 
     QChar        m_sliceLetter{QLatin1Char('A')};
     QLabel*      m_sliceTag{nullptr};
-    SliceModel*  m_slice{nullptr};
+    QPushButton* m_picker{nullptr};
+    QLabel*      m_pickerState{nullptr};
+    QPointer<SliceModel> m_slice;
     StatusBadge* m_modeBadge{nullptr};
     StatusBadge* m_filterBadge{nullptr};
     StatusBadge* m_agcBadge{nullptr};

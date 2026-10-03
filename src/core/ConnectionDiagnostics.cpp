@@ -10,6 +10,11 @@
 //   section 4.6.
 //
 // AI tooling: Anthropic Claude Code.
+//
+// Modification history (NereusSDR):
+//   2026-09-24  J.J. Boyd / KG4VCF  R-R3-47 / R-R3-22: counters() and
+//                                    applyMirroredCounters(). AI-assisted
+//                                    via Anthropic Claude Code.
 // =================================================================
 
 #include "ConnectionDiagnostics.h"
@@ -248,6 +253,41 @@ void ConnectionDiagnostics::onCoalesceTick()
         emit changed();
         m_dirty = false;
     }
+}
+
+ConnectionDiagnostics::Counters ConnectionDiagnostics::counters() const
+{
+    Counters c;
+    c.connectedSinceMs = m_connectedSinceMs;
+    c.lastRttMs        = m_lastRttMs;
+    c.keepaliveMissed  = m_keepaliveMissed;
+    c.reconnectCount   = m_reconnectCount;
+    c.framesIn         = static_cast<qint64>(m_framesIn);
+    c.framesOut        = static_cast<qint64>(m_framesOut);
+    c.bytesIn          = static_cast<qint64>(m_bytesIn);
+    c.bytesOut         = static_cast<qint64>(m_bytesOut);
+    c.lastFrameMs      = m_lastFrameMs;
+    c.faultsSession    = m_faultsSession;
+    return c;
+}
+
+void ConnectionDiagnostics::applyMirroredCounters(const Counters& c)
+{
+    if (m_pgxl || m_tgxl) {
+        disconnectPrior();
+    }
+    m_connectedSinceMs = c.connectedSinceMs;
+    m_lastRttMs        = c.lastRttMs;
+    m_keepaliveMissed  = c.keepaliveMissed;
+    m_reconnectCount   = c.reconnectCount;
+    m_framesIn         = static_cast<quint64>(qMax<qint64>(0, c.framesIn));
+    m_framesOut        = static_cast<quint64>(qMax<qint64>(0, c.framesOut));
+    m_bytesIn          = static_cast<quint64>(qMax<qint64>(0, c.bytesIn));
+    m_bytesOut         = static_cast<quint64>(qMax<qint64>(0, c.bytesOut));
+    m_lastFrameMs      = c.lastFrameMs;
+    m_faultsSession    = c.faultsSession;
+    m_dirty = false;
+    emit changed();
 }
 
 // ---------------------------------------------------------------------------

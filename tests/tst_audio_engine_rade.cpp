@@ -9,29 +9,33 @@
 // RxChannel.  The connection is set up by
 // RadioModel::wireRadeChannel(sliceId, channel, slice) (which now
 // adds the audio connection on top of the I5 signal graph) and
-// emits float32 stereo PCM into AudioEngine::rxBlockReady through
-// a per-slice adapter slot.
+// returns float32 stereo PCM to the generation-checked DSP worker, which
+// is the single producer calling AudioEngine::rxBlockReady.
 //
-// RadeChannel emits QByteArray of interleaved float32 stereo at
-// 24 kHz; AudioEngine::rxBlockReady takes (const float*, int frames)
-// for interleaved stereo float.  The adapter slot reinterprets the
-// byte buffer as a float pointer and calls through.
-//
-// Tests use a small RadeChannel test subclass exposing an
-// emit-helper for rxSpeechReady so we can drive the audio path
-// without standing up the full I2 RX pipeline (which would require
-// a live RADE codec + I/Q feed).
+// The regression drives a real WDSP receiver, worker and RADE wrapper so it
+// covers the production 48 -> 24 -> codec -> 48 kHz route and its ownership
+// generation rather than bypassing it with a signal-only test seam.
 //
 // Test case (1):
-//   1. switchToRadeRoutesAudioToAudioEngine - emitting rxSpeechReady
-//      with a small PCM block after wireRadeChannel must push to the
-//      FakeAudioBus speakers stand-in.
+//   1. switchToRadeRoutesAudioToAudioEngine - real worker input after
+//      wireRadeChannel must push to the FakeAudioBus speakers stand-in.
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-05-11 - New test file for Phase 3R Task J4.  J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-09-21 - Updated for generation-checked worker return by J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via OpenAI Codex.
+//   2026-09-30 - RADE threads: the codec decodes on its own thread and the
+//                 worker plays its speech; the test waits for that thread
+//                 instead of spying the retired radeIqReady hop. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-09-30 - RADE threads review: the decoder's own blocks reach the
+//                 speakers (playedSlots), past the late bound. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -39,53 +43,34 @@
 #include "core/AudioEngine.h"
 #include "core/IAudioBus.h"
 #include "core/RadeChannel.h"
+#include "core/RadeRxWorker.h"
+#include "core/RxChannel.h"
+#include "core/WdspEngine.h"
 #include "models/RadioModel.h"
+#include "models/RxDspWorker.h"
 #include "models/SliceModel.h"
 
 #include "fakes/FakeAudioBus.h"
 
 #include <memory>
+#include <QStandardPaths>
 
 using namespace NereusSDR;
 
 namespace {
 
-// Test seam: RadeChannel subclass exposing a thin wrapper around
-// emit rxSpeechReady so the test can drive the audio path without
-// the I2 RX pipeline standing up a live librade decoder.
-class TestableRadeChannel : public RadeChannel {
-    Q_OBJECT
-public:
-    using RadeChannel::RadeChannel;
-
-    void emitRxSpeechReadyForTest(const QByteArray& pcm) {
-        emit rxSpeechReady(pcm);
+struct DspWorkerDetach {
+    RadioModel* radio{nullptr};
+    ~DspWorkerDetach()
+    {
+        if (radio) {
+            radio->attachDspWorkerForTest(nullptr);
+        }
     }
 };
 
-// Build an N-frame interleaved-stereo float32 PCM block at 24 kHz
-// (the rate RadeChannel emits on rxSpeechReady).  Bench-fix path in
-// RadioModel::wireRadeChannel upsamples 24 -> 48 kHz before pushing
-// to AudioEngine; the lazy-built per-leg Resampler has a 4096-sample
-// internal window, so the first push of a tiny block produces zero
-// output frames ("resampler warmup") and never reaches the speakers
-// bus.  Sizing the test block to 1024 frames (~42 ms) clears the
-// warmup on the first call and gives the test something to count.
-QByteArray makeStereoFloatPcm(int frames) {
-    QByteArray buf;
-    buf.resize(frames * 2 * static_cast<int>(sizeof(float)));
-    auto* dst = reinterpret_cast<float*>(buf.data());
-    for (int i = 0; i < frames; ++i) {
-        // Cheap deterministic content: small sine-ish ramp.  Magnitude
-        // stays inside the speakers-bus float32 range.
-        const float v = 0.1f * static_cast<float>((i % 17) - 8) / 8.0f;
-        dst[2 * i + 0] = v;
-        dst[2 * i + 1] = v;
-    }
-    return buf;
-}
-
 } // namespace
+
 
 class TstAudioEngineRade : public QObject {
     Q_OBJECT
@@ -122,7 +107,7 @@ private slots:
         // used to look like it did, because the speakers push was
         // unconditional and an empty push still incremented pushCount().
         radio->configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
-                                   /*defaultRateHz=*/192000);
+                                   /*defaultRateHz=*/48000);
 
         const int sliceId = radio->addSlice();
         SliceModel* slice = radio->sliceById(sliceId);
@@ -130,29 +115,72 @@ private slots:
 
         // Wire the RADE channel.  J4's audio connection is added inside
         // RadioModel::wireRadeChannel alongside the I5 signal graph.
-        TestableRadeChannel channel;
+        WdspEngine* const wdsp = radio->wdspEngine();
+        wdsp->setSynchronousInitForTest(true);
+        QVERIFY(wdsp->initialize(QStandardPaths::writableLocation(
+            QStandardPaths::AppConfigLocation)));
+        RxChannel* const rx = wdsp->createRxChannel(
+            sliceId, 64, 4096, 48000, 48000, 48000);
+        QVERIFY(rx);
+        rx->setActive(true);
+
+        RadeChannel channel;
+        QVERIFY(channel.start(QStringLiteral("dummy")));
+        RxDspWorker worker;
+        worker.setEngines(wdsp, engine);
+        worker.setBufferSizes(64, 64);
+        worker.setStreamSlices(0, QVector<int>{sliceId});
+        radio->attachDspWorkerForTest(&worker);
+        DspWorkerDetach detach{radio.get()};
         radio->wireRadeChannel(sliceId, &channel, slice);
+        QSignalSpy speech(&channel, &RadeChannel::rxSpeechReady);
+        QVERIFY(speech.isValid());
+        QVERIFY(channel.rxWorkerRunning());
+        QCoreApplication::processEvents();
 
         // Baseline: speakers bus has not been pushed yet.
         const int baselinePushes = speakersRaw->pushCount();
         QCOMPARE(baselinePushes, 0);
 
-        // Drive the audio path.  r8brain CDSPResampler24 ships with
-        // ReqAtten=206.91 dB by default — a very long filter with
-        // latency in the thousands of input samples (same caveat
-        // tst_rade_tx_pump:170-178 documents).  Pump 4 emissions of
-        // 1024 stereo frames at 24 kHz to fully clear the warmup
-        // window and guarantee at least one 48 kHz output block
-        // reaches the speakers bus on subsequent calls.
-        const QByteArray pcm = makeStereoFloatPcm(1024);
-        for (int rep = 0; rep < 4; ++rep) {
-            channel.emitRxSpeechReadyForTest(pcm);
+        const std::shared_ptr<RadeRxBridge> bridge = channel.rxBridge();
+        QVERIFY(bridge);
+
+        QVector<float> iq(128, 0.05f);
+        // Two resamplers warm here: worker 48 -> 24 kHz and the returned
+        // speech 24 -> 48 kHz adapter. The latter's high-attenuation filter
+        // can retain more than the 3,072 24-kHz frames produced by the old
+        // 96-block bound on some platforms. 256 blocks remain a bounded
+        // 341-ms input while clearing that documented filter history.
+        // RADE threads review: and past the late bound (105 blocks of 64),
+        // so the decoder's own output fills a slot rather than silence.
+        constexpr int kMaxInputBlocks = 256;
+        QVERIFY(kMaxInputBlocks > radeLateBoundBlocks(64));
+        // RADE threads: the codec runs on the channel's decoder thread; wait
+        // for it to take each block so the loop's count is deterministic.
+        for (int rep = 0;
+             rep < kMaxInputBlocks
+             && (speakersRaw->pushCount() == baselinePushes
+                 || speech.count() == 0
+                 || bridge->playedSlots() == 0);
+             ++rep) {
+            worker.processIqBatch(0, iq);
+            QVERIFY(channel.waitRxIdleForTest(5000));
+            QCoreApplication::processEvents();
         }
 
-        QVERIFY2(speakersRaw->pushCount() > baselinePushes,
-                 "wireRadeChannel must connect RadeChannel::rxSpeechReady "
-                 "through AudioEngine::rxBlockReady so emitting a valid "
-                 "PCM block reaches the speakers bus");
+        const QString evidence = QStringLiteral(
+            "speech=%1 speakers=%2 played=%3 silent=%4 after at most %5 blocks")
+            .arg(speech.count())
+            .arg(speakersRaw->pushCount() - baselinePushes)
+            .arg(bridge->playedSlots())
+            .arg(bridge->silentSlots())
+            .arg(kMaxInputBlocks);
+        QVERIFY2(speakersRaw->pushCount() > baselinePushes
+                     && speech.count() > 0,
+                 qPrintable(evidence));
+        // The decoded blocks themselves reached the speakers, not only the
+        // silence of slots with nothing due.
+        QVERIFY2(bridge->playedSlots() > 0, qPrintable(evidence));
     }
 };
 

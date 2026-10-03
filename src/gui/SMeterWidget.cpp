@@ -46,8 +46,38 @@
 //                 (cross-vendor aggregator) rather than PgxlConnection::statusUpdated
 //                 directly when constructed via the RadioModel* overload.
 //                 Existing QWidget* constructor and MainWindow wiring unchanged.
+//   2026-09-18  Vintage meter faces (Lee, AI-assisted via Anthropic Claude
+//                 Code).  paintEvent now dispatches on FaceStyle: the AetherSDR
+//                 paint body moved unchanged into paintClassic(); paintVintage()
+//                 draws the six gui/VintageMeterFace themes (single scale that
+//                 follows RX / TX mode, red band above S9 / the TX red line,
+//                 lance pointer, S-units and dBm readouts flanking the hub).
+//                 "Meter Face" context submenu + SMeter_FaceStyle persistence.
+//                 NereusSDR-native; no upstream equivalent.
+//   2026-09-22  No-reading display (R-R3-13) by J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Anthropic Claude Code.
+//                 setLevel() treats a level at or below -400 dBm, or a
+//                 non-finite one, as no reading: both faces show "--" and
+//                 "-- dBm", the pointer falls to the scale minimum and both
+//                 peak markers clear; the next real level displays as before.
+//                 The RX readout text and the peak-marker conditions moved
+//                 unchanged out of paintClassic() / paintVintage() into
+//                 shared helpers.  sUnitsText() returns "--" with no reading.
+//                 NereusSDR-native; no upstream equivalent.
+//   2026-09-24  The vintage faces' steps above S9 read ControlRanges.h
+//                 (iPhone app Task 19, R-IOS-06) by J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-27  TX modes without a reading (R-R3-49, remote-window parity
+//                 Task 33) by J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//                 setTxModeUnavailable(): a TX mode a remote window's Core
+//                 does not send shows "--" with the reason, never 0.  The TX
+//                 readout text of both faces moved unchanged into txReadout().
+//                 NereusSDR-native; no upstream equivalent.
 // =================================================================
 #include "SMeterWidget.h"
+
+#include <cmath>
 
 #include <QActionGroup>
 #include <QContextMenuEvent>
@@ -59,6 +89,7 @@
 #include <QFontMetrics>
 
 #include "core/AppSettings.h"
+#include "gui/VintageMeterFace.h"
 #include "models/RadioModel.h"
 
 namespace NereusSDR {
@@ -127,6 +158,11 @@ SMeterWidget::SMeterWidget(QWidget* parent)
 
     const QString decayRate = s.value("PeakDecayRate", QString("Medium")).toString();
     setPeakDecayRate(decayRate);
+
+    // Meter face.  Read directly (not via setFaceStyle) so constructing the
+    // widget does not write the default back to AppSettings.
+    m_faceStyle = faceStyleFromKey(
+        s.value("SMeter_FaceStyle", faceStyleKey(FaceStyle::AgedCream)).toString());
 }
 
 // RadioModel* overload: delegates to the QWidget* constructor then wires the
@@ -167,6 +203,29 @@ void SMeterWidget::connectToRadioModel(RadioModel* model)
 
 void SMeterWidget::setLevel(float dbm)
 {
+    // No reading (R-R3-13, NereusSDR-native).  A level at or below the
+    // -400 dBm sentinel, or a non-finite one, is not a signal: the readouts
+    // show "--", the pointer falls to the scale minimum (the sentinel maps
+    // there through dbmToFraction) and both peak markers clear, so the next
+    // real level starts afresh.  Repeats change nothing and repaint nothing.
+    if (!std::isfinite(dbm) || dbm <= kNoReadingDbm) {
+        if (m_noReading) {
+            return;
+        }
+        m_noReading = true;
+        m_levelDbm = kNoReadingDbm;
+        m_peakDbm = kNoReadingDbm;
+        m_peakDecay.stop();
+        m_peakHoldDbm = kNoReadingDbm;
+        m_peakHoldDecayStartDbm = kNoReadingDbm;
+        m_peakHoldTimerRunning = false;
+        updateNeedleTarget();
+        if (!m_transmitting) {
+            update();
+        }
+        return;
+    }
+
     // Sub-perceivable change guard.  MeterPoller pushes this 10 times a
     // second; radio noise causes the dBm reading to wiggle by a few tenths
     // even on a quiet band.  Below 0.5 dB the needle position is the same
@@ -174,9 +233,11 @@ void SMeterWidget::setLevel(float dbm)
     // rebuild + repaint for those sub-threshold ticks was the largest
     // single contributor to the macOS paint-pipeline saturation observed
     // in the 2026-05-24 bench profile.
-    if (std::abs(dbm - m_levelDbm) < 0.5f) {
+    // NereusSDR (R-R3-13): never skip the first real level after no reading.
+    if (!m_noReading && std::abs(dbm - m_levelDbm) < 0.5f) {
         return;
     }
+    m_noReading = false;
     m_levelDbm = dbm;
 
     // Peak hold (existing needle/triangle behavior)
@@ -243,6 +304,7 @@ void SMeterWidget::setTransmitting(bool tx)
         m_txPower = 0.0f;
         m_txSwr   = 1.0f;
     }
+    refreshTxToolTip();
     updateNeedleTarget();
     update();
 }
@@ -259,6 +321,7 @@ void SMeterWidget::setTxMode(const QString& mode)
     // NereusSDR-native key per design doc ss5.4.2.
     AppSettings::instance().setValue("SMeter_TxSelect",
                                      static_cast<int>(m_txMode));
+    refreshTxToolTip();
     updateNeedleTarget();
     update();
 }
@@ -306,7 +369,10 @@ void SMeterWidget::updateNeedleTarget()
 {
     updatePeakHoldValue();
 
-    if (m_transmitting) {
+    if (m_transmitting && currentTxModeUnavailable()) {
+        // Parity Task 33: no reading in this TX mode; the pointer rests.
+        m_targetNeedleFraction = 0.0f;
+    } else if (m_transmitting) {
         m_targetNeedleFraction = txValueToFraction(currentTxValue());
     } else if (m_rxMode == RxMode::SMeterPeak) {
         m_targetNeedleFraction = dbmToFraction(m_peakDbm);
@@ -418,6 +484,10 @@ void SMeterWidget::testAdvanceTime(int ms)
 
 QString SMeterWidget::sUnitsText() const
 {
+    // NereusSDR: no reading has no S-unit value (R-R3-13).
+    if (m_noReading) {
+        return QStringLiteral("--");
+    }
     if (m_levelDbm <= S0_DBM) return "S0";
     if (m_levelDbm <= S9_DBM) {
         const int s = qRound((m_levelDbm - S0_DBM) / DB_PER_S);
@@ -425,6 +495,50 @@ QString SMeterWidget::sUnitsText() const
     }
     const int over = qRound(m_levelDbm - S9_DBM);
     return QString("S9+%1").arg(over);
+}
+
+// --- RX readouts and peak markers --------------------------------------------
+// Shared by paintClassic() and paintVintage().  The S-unit / dBm formatting
+// and the two marker conditions are the ones both paint bodies used inline,
+// moved here unchanged; only the no-reading cases are new.  NereusSDR-native
+// (R-R3-13).
+
+QString SMeterWidget::rxSUnitsReadout() const
+{
+    if (m_noReading) {
+        return QStringLiteral("--");
+    }
+    const float displayDbm = (m_rxMode == RxMode::SMeterPeak) ? m_peakDbm : m_levelDbm;
+    if (displayDbm <= S0_DBM) {
+        return QStringLiteral("S0");
+    }
+    if (displayDbm <= S9_DBM) {
+        return QString("S%1").arg(qBound(0, qRound((displayDbm - S0_DBM) / DB_PER_S), 9));
+    }
+    return QString("S9+%1").arg(qRound(displayDbm - S9_DBM));
+}
+
+QString SMeterWidget::rxDbmReadout() const
+{
+    if (m_noReading) {
+        return QStringLiteral("-- dBm");
+    }
+    const float displayDbm = (m_rxMode == RxMode::SMeterPeak) ? m_peakDbm : m_levelDbm;
+    return QString("%1 dBm").arg(displayDbm, 0, 'f', 0);
+}
+
+// Peak marker (classic triangle / vintage wedge): RX Signal Peak mode only.
+bool SMeterWidget::peakMarkerVisible() const
+{
+    return !m_noReading && !m_transmitting && m_rxMode == RxMode::SMeterPeak
+        && m_peakDbm > m_levelDbm + 1.0f;
+}
+
+// Peak hold line: configurable overlay, independent of RX mode.
+bool SMeterWidget::peakHoldLineVisible() const
+{
+    return !m_noReading && m_peakHoldEnabled && !m_transmitting
+        && m_peakHoldDbm > S0_DBM + 1.0f;
 }
 
 // --- Mapping -----------------------------------------------------------------
@@ -463,6 +577,52 @@ float SMeterWidget::txValueToFraction(float value) const
     return 0.0f;
 }
 
+// Parity Task 33 (R-R3-49): the TX readout both faces draw.  The per-mode
+// text is the faces' own (classic: "1.5", vintage: "1.5 : 1"); a mode with
+// no reading here reads "--".  NereusSDR-native.
+QString SMeterWidget::txReadout(bool swrRatio) const
+{
+    if (currentTxModeUnavailable()) {
+        return QStringLiteral("--");
+    }
+    switch (m_txMode) {
+    case TxMode::Power:       return QString("%1 W").arg(m_txPower, 0, 'f', 0);
+    case TxMode::SWR:         return swrRatio ? QString("%1 : 1").arg(m_txSwr, 0, 'f', 1)
+                                              : QString("%1").arg(m_txSwr, 0, 'f', 1);
+    case TxMode::Level:       return QString("%1 dB").arg(m_micLevel, 0, 'f', 0);
+    case TxMode::Compression: return QString("%1 dB").arg(m_compLevel, 0, 'f', 0);
+    }
+    return QString();
+}
+
+bool SMeterWidget::currentTxModeUnavailable() const
+{
+    return !m_txUnavailable[static_cast<std::size_t>(m_txMode)].isEmpty();
+}
+
+void SMeterWidget::setTxModeUnavailable(TxMode mode, const QString& reason)
+{
+    QString& slot = m_txUnavailable[static_cast<std::size_t>(mode)];
+    if (slot == reason) {
+        return;
+    }
+    slot = reason;
+    refreshTxToolTip();
+    updateNeedleTarget();
+    update();
+}
+
+QString SMeterWidget::txModeUnavailableReason(TxMode mode) const
+{
+    return m_txUnavailable[static_cast<std::size_t>(mode)];
+}
+
+void SMeterWidget::refreshTxToolTip()
+{
+    // The reason shows while it applies: transmitting in that mode.
+    setToolTip(m_transmitting ? m_txUnavailable[static_cast<std::size_t>(m_txMode)] : QString());
+}
+
 // From AetherSDR src/gui/SMeterWidget.cpp:278-287 [@0cd4559]
 float SMeterWidget::currentTxValue() const
 {
@@ -483,6 +643,19 @@ void SMeterWidget::paintEvent(QPaintEvent*)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
+    if (m_faceStyle == FaceStyle::Classic) {
+        paintClassic(p);
+    } else {
+        paintVintage(p);
+    }
+}
+
+// The AetherSDR paint body, unchanged.
+// NereusSDR 2026-09-22 (R-R3-13): the RX readout text and the two peak-marker
+// conditions now come from the helpers above, shared with paintVintage(), so
+// both faces show the no-reading display.
+void SMeterWidget::paintClassic(QPainter& p)
+{
     const int w = width();
     const int h = height();
 
@@ -721,8 +894,7 @@ void SMeterWidget::paintEvent(QPaintEvent*)
     }
 
     // Draw peak marker (small triangle) - only in RX S-Meter Peak mode
-    if (!m_transmitting && m_rxMode == RxMode::SMeterPeak
-        && m_peakDbm > m_levelDbm + 1.0f) {
+    if (peakMarkerVisible()) {
         const float frac = dbmToFraction(m_peakDbm);
         const float angle = fractionToAngle(frac);
         const float markerR = radius - 2;
@@ -748,8 +920,7 @@ void SMeterWidget::paintEvent(QPaintEvent*)
     }
 
     // -- Draw peak hold line (configurable overlay, independent of RX mode) ---
-    if (m_peakHoldEnabled && !m_transmitting
-        && m_peakHoldDbm > S0_DBM + 1.0f) {
+    if (peakHoldLineVisible()) {
         float frac = dbmToFraction(m_peakHoldDbm);
         if (m_peakHoldDbm <= m_levelDbm + 0.01f) {
             frac = m_needleFraction;
@@ -794,13 +965,7 @@ void SMeterWidget::paintEvent(QPaintEvent*)
         p.drawText(6, topY, "TX");
 
         // Right: formatted value
-        QString valText;
-        switch (m_txMode) {
-        case TxMode::Power:       valText = QString("%1 W").arg(m_txPower, 0, 'f', 0); break;
-        case TxMode::SWR:         valText = QString("%1").arg(m_txSwr, 0, 'f', 1); break;
-        case TxMode::Level:       valText = QString("%1 dB").arg(m_micLevel, 0, 'f', 0); break;
-        case TxMode::Compression: valText = QString("%1 dB").arg(m_compLevel, 0, 'f', 0); break;
-        }
+        const QString valText = txReadout(false);
         p.setPen(QColor(0xc8, 0xd8, 0xe8));
         p.drawText(w - vfm.horizontalAdvance(valText) - 6, topY, valText);
     } else {
@@ -809,25 +974,253 @@ void SMeterWidget::paintEvent(QPaintEvent*)
         p.setPen(QColor(0x80, 0x90, 0xa0));
         p.drawText((w - sfm.horizontalAdvance(m_source)) / 2, topY, m_source);
 
-        const float displayDbm = (m_rxMode == RxMode::SMeterPeak) ? m_peakDbm : m_levelDbm;
-
         p.setFont(valFont);
         p.setPen(QColor(0x00, 0xb4, 0xd8));
         // Show S-units based on the displayed value
-        QString sText;
-        if (displayDbm <= S0_DBM) {
-            sText = "S0";
-        } else if (displayDbm <= S9_DBM) {
-            sText = QString("S%1").arg(qBound(0, qRound((displayDbm - S0_DBM) / DB_PER_S), 9));
-        } else {
-            sText = QString("S9+%1").arg(qRound(displayDbm - S9_DBM));
-        }
+        const QString sText = rxSUnitsReadout();
         p.drawText(6, topY, sText);
 
-        const QString dbmText = QString("%1 dBm").arg(displayDbm, 0, 'f', 0);
+        const QString dbmText = rxDbmReadout();
         p.setPen(QColor(0xc8, 0xd8, 0xe8));
         p.drawText(w - vfm.horizontalAdvance(dbmText) - 6, topY, dbmText);
     }
+}
+
+// --- Vintage face ------------------------------------------------------------
+// NereusSDR-native; no upstream equivalent.  Artwork by gui/VintageMeterFace
+// (design carried over from Lee's TubeMeter project).  Unlike the classic face,
+// which prints the RX scale outside the arc and the TX scale inside it, the
+// vintage card carries one scale at a time: the S scale on receive, the
+// selected TX scale on transmit.  Scale ranges and red-line points are the
+// same ones the classic face uses (dbmToFraction / txValueToFraction).
+
+void SMeterWidget::paintVintage(QPainter& p)
+{
+    const VintageFaceTheme& theme = VintageMeterFace::theme(static_cast<int>(m_faceStyle));
+    const QRectF bounds = rect();
+
+    // -- Static artwork, cached -----------------------------------------------
+    const qreal dpr = devicePixelRatioF();
+    const QString scaleKey = m_transmitting
+        ? QString("tx%1:%2:%3").arg(static_cast<int>(m_txMode))
+                               .arg(m_powerScaleMax).arg(m_powerRedStart)
+        : QString("rx%1").arg(static_cast<int>(m_rxMode));
+    const QString key = QString("%1x%2@%3|%4|%5")
+        .arg(width()).arg(height()).arg(dpr)
+        .arg(static_cast<int>(m_faceStyle)).arg(scaleKey);
+
+    if (key != m_faceCacheKey || m_faceCache.isNull()) {
+        VintageScale scale;
+        QString title;
+        QString legend;
+        auto tick = [&scale](float frac, bool major, const QString& label = QString()) {
+            scale.ticks.append({frac, major, label});
+        };
+        auto redFrom = [&scale](float frac) {
+            scale.bands.append({frac, 1.0f, VintageScaleBand::Color::Red});
+        };
+
+        if (!m_transmitting) {
+            title = QStringLiteral("SIGNAL STRENGTH");
+            switch (m_rxMode) {
+            case RxMode::SMeter:        legend = QStringLiteral("S UNITS"); break;
+            case RxMode::SignalAverage: legend = QStringLiteral("S UNITS  AVERAGE"); break;
+            case RxMode::SMeterPeak:    legend = QStringLiteral("S UNITS  PEAK"); break;
+            case RxMode::MaxBin:        legend = QStringLiteral("S UNITS  MAX BIN"); break;
+            }
+            // Every S-unit gets a tick, odd ones a numeral; every 10 dB over
+            // S9 a tick, every 20 dB a numeral.  Red from S9 up; the band
+            // starts a hair past the S9 tick so "9" itself stays in ink, as
+            // on the classic face (S9 white, +20 / +40 red).
+            for (int su = 0; su <= 9; ++su) {
+                const bool odd = (su % 2) == 1;
+                tick(dbmToFraction(S0_DBM + su * DB_PER_S), odd,
+                     odd ? QString::number(su) : QString());
+            }
+            for (int over = ControlRanges::kSMeterOverS9StepDb;
+                 over <= static_cast<int>(MAX_DBM - S9_DBM);
+                 over += ControlRanges::kSMeterOverS9StepDb) {
+                const bool major = (over % 20) == 0;
+                tick(dbmToFraction(S9_DBM + over), major,
+                     major ? QString("+%1").arg(over) : QString());
+            }
+            redFrom(dbmToFraction(S9_DBM) + 0.002f);
+        } else {
+            switch (m_txMode) {
+            case TxMode::Power: {
+                title  = QStringLiteral("FORWARD POWER");
+                legend = QStringLiteral("WATTS");
+                const int maxW = static_cast<int>(m_powerScaleMax);
+                int tickStep, labelStep;
+                if (maxW >= 2000)     { tickStep = 100; labelStep = 500; }
+                else if (maxW >= 600) { tickStep = 50;  labelStep = 100; }
+                else                  { tickStep = 10;  labelStep = 20;  }
+                for (int pw = 0; pw <= maxW; pw += tickStep) {
+                    const bool major = (pw % labelStep) == 0;
+                    const QString label = (pw >= 1000)
+                        ? QString("%1k").arg(pw / 1000.0f, 0, 'f', (pw % 1000) ? 1 : 0)
+                        : QString::number(pw);
+                    tick(static_cast<float>(pw) / m_powerScaleMax, major,
+                         major ? label : QString());
+                }
+                redFrom(m_powerRedStart / m_powerScaleMax);
+                break;
+            }
+            case TxMode::SWR:
+                title  = QStringLiteral("STANDING WAVE RATIO");
+                legend = QStringLiteral("S.W.R.");
+                for (int tenths = 10; tenths <= 30; ++tenths) {
+                    const bool major = (tenths % 5) == 0;
+                    tick((tenths - 10) / 20.0f, major,
+                         major ? QString::number(tenths / 10.0, 'f', (tenths % 10) ? 1 : 0)
+                               : QString());
+                }
+                redFrom((2.5f - 1.0f) / 2.0f);
+                break;
+            case TxMode::Level:
+                title  = QStringLiteral("MIC LEVEL");
+                legend = QStringLiteral("DECIBELS");
+                for (int db = -40; db <= 5; db += 5) {
+                    const bool major = (db % 10) == 0;
+                    tick((db + 40.0f) / 45.0f, major, major ? QString::number(db) : QString());
+                }
+                redFrom((0.0f + 40.0f) / 45.0f);
+                break;
+            case TxMode::Compression:
+                title  = QStringLiteral("COMPRESSION");
+                legend = QStringLiteral("DECIBELS");
+                for (int db = -25; db <= 0; ++db) {
+                    const bool major = (db % 5) == 0;
+                    tick((db + 25.0f) / 25.0f, major, major ? QString::number(db) : QString());
+                }
+                break;
+            }
+        }
+
+        m_faceCache = QPixmap((QSizeF(size()) * dpr).toSize());
+        m_faceCache.setDevicePixelRatio(dpr);
+        QPainter fp(&m_faceCache);
+        VintageMeterFace::paintStatic(fp, bounds, QColor(0x0f, 0x0f, 0x1a), theme,
+                                      scale, title, legend);
+        m_faceCacheKey = key;
+    }
+    p.drawPixmap(0, 0, m_faceCache);
+
+    const VintageMeterFace::Geometry g = VintageMeterFace::geometryFor(bounds);
+    const double u = g.unit;
+
+    // -- Readouts flanking the hub: S-units (or TX) left, value right ---------
+    {
+        QString leftText;
+        QString rightText;
+        QColor leftColor(theme.ink);
+        if (m_transmitting) {
+            leftText  = QStringLiteral("TX");
+            leftColor = QColor(theme.red);
+            rightText = txReadout(true);
+        } else {
+            leftText  = rxSUnitsReadout();
+            rightText = rxDbmReadout();
+        }
+
+        const double gap  = std::max(12.0, 44.0 * u);
+        const double px   = std::max(11.0, g.face.height() * 0.115);
+        const double boxH = px * 1.4;
+        const double cy   = g.pivot.y() - px * 0.18;
+        const double pad  = g.face.width() * 0.04;
+
+        p.setFont(VintageMeterFace::faceFont(px, true));
+        p.setPen(leftColor);
+        p.drawText(QRectF(g.face.left() + pad, cy - boxH / 2.0,
+                          g.pivot.x() - gap - g.face.left() - pad, boxH),
+                   Qt::AlignRight | Qt::AlignVCenter, leftText);
+        p.setFont(VintageMeterFace::faceFont(px * 0.86, false));
+        p.setPen(QColor(theme.ink));
+        p.drawText(QRectF(g.pivot.x() + gap, cy - boxH / 2.0,
+                          g.face.right() - pad - g.pivot.x() - gap, boxH),
+                   Qt::AlignLeft | Qt::AlignVCenter, rightText);
+    }
+
+    // -- Peak marker (RX Signal Peak mode): wedge riding outside the arc ------
+    if (peakMarkerVisible()) {
+        const float frac = dbmToFraction(m_peakDbm);
+        const double a = qDegreesToRadians(VintageMeterFace::angleDeg(frac));
+        const QPointF radial(std::sin(a), -std::cos(a));
+        const QPointF across(std::cos(a), std::sin(a));
+        const QPointF tipPt  = VintageMeterFace::pointAt(g, frac, g.radius + 1.0 * u);
+        const QPointF basePt = tipPt + radial * std::max(5.0, 13.0 * u);
+        const double half = std::max(2.5, 5.5 * u);
+        QPainterPath wedge;
+        wedge.moveTo(tipPt);
+        wedge.lineTo(basePt + across * half);
+        wedge.lineTo(basePt - across * half);
+        wedge.closeSubpath();
+        p.setPen(QPen(QColor(theme.ink), 0.6));
+        p.setBrush(QColor(theme.yellow));
+        p.drawPath(wedge);
+    }
+
+    // -- Peak hold line (same rules as the classic face) ----------------------
+    if (peakHoldLineVisible()) {
+        float frac = dbmToFraction(m_peakHoldDbm);
+        if (m_peakHoldDbm <= m_levelDbm + 0.01f) {
+            frac = m_needleFraction;
+        } else {
+            frac = qMax(frac, m_needleFraction);
+        }
+        p.setPen(QPen(QColor(theme.red), std::max(1.6, 3.0 * u), Qt::SolidLine, Qt::FlatCap));
+        p.drawLine(VintageMeterFace::pointAt(g, frac, g.radius + 1.5 * u),
+                   VintageMeterFace::pointAt(g, frac, g.radius + 15.0 * u));
+    }
+
+    VintageMeterFace::paintPointer(p, g, theme, m_needleFraction);
+    VintageMeterFace::paintHub(p, g, theme);
+}
+
+// --- Face style --------------------------------------------------------------
+// NereusSDR-native; no upstream equivalent.
+
+void SMeterWidget::setFaceStyle(FaceStyle style)
+{
+    m_faceStyle = style;
+    m_faceCache = QPixmap();
+    m_faceCacheKey.clear();
+    AppSettings::instance().setValue("SMeter_FaceStyle", faceStyleKey(style));
+    update();
+    emit settingsChanged();
+}
+
+QString SMeterWidget::faceStyleKey(FaceStyle style)
+{
+    switch (style) {
+    case FaceStyle::AgedCream:    return "AgedCream";
+    case FaceStyle::VuAmber:      return "VuAmber";
+    case FaceStyle::CollinsWhite: return "CollinsWhite";
+    case FaceStyle::Blackface:    return "Blackface";
+    case FaceStyle::Carbon:       return "Carbon";
+    case FaceStyle::Ice:          return "Ice";
+    case FaceStyle::Classic:      return "Classic";
+    }
+    return "AgedCream";
+}
+
+SMeterWidget::FaceStyle SMeterWidget::faceStyleFromKey(const QString& key)
+{
+    for (int i = 0; i <= static_cast<int>(FaceStyle::Classic); ++i) {
+        const FaceStyle style = static_cast<FaceStyle>(i);
+        if (faceStyleKey(style) == key) {
+            return style;
+        }
+    }
+    return FaceStyle::AgedCream;
+}
+
+QString SMeterWidget::faceStyleLabel(FaceStyle style)
+{
+    if (style == FaceStyle::Classic) {
+        return "Classic (flat)";
+    }
+    return QLatin1String(VintageMeterFace::theme(static_cast<int>(style)).name);
 }
 
 // --- Power scale -------------------------------------------------------------
@@ -870,6 +1263,7 @@ void SMeterWidget::setPeakHoldEnabled(bool enabled)
                                      enabled ? QString("True") : QString("False"));
     updateNeedleTarget();
     update();
+    emit settingsChanged();
 }
 
 void SMeterWidget::setPeakHoldTimeMs(int ms)
@@ -899,6 +1293,7 @@ void SMeterWidget::setPeakDecayRate(const QString& rate)
                             : (rate == "Slow")  ? QString("Slow")
                                                 : QString("Medium");
     AppSettings::instance().setValue("PeakDecayRate", canonical);
+    emit settingsChanged();
 }
 
 void SMeterWidget::resetPeak()
@@ -1016,6 +1411,25 @@ QMenu* SMeterWidget::buildContextMenu(QObject* parent)
     // Reset transient action
     auto* resetA = peakMenu->addAction("Reset");
     connect(resetA, &QAction::triggered, this, &SMeterWidget::resetPeak);
+
+    // ---- Meter Face submenu (exclusive action group) -------------------------
+    // Appended last so the TX Mode / RX Mode / Peak Hold indices stay put.
+    QMenu* faceMenu = menu->addMenu("Meter Face");
+    auto* faceGroup = new QActionGroup(menu);
+    faceGroup->setExclusive(true);
+    for (int i = 0; i <= static_cast<int>(FaceStyle::Classic); ++i) {
+        const FaceStyle style = static_cast<FaceStyle>(i);
+        if (style == FaceStyle::Classic) {
+            faceMenu->addSeparator();
+        }
+        auto* a = faceMenu->addAction(faceStyleLabel(style));
+        a->setCheckable(true);
+        a->setChecked(m_faceStyle == style);
+        faceGroup->addAction(a);
+        connect(a, &QAction::triggered, this, [this, style]() {
+            setFaceStyle(style);
+        });
+    }
 
     return menu;
 }

@@ -1,0 +1,11 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "auth.result",
+    "accepted": false,
+    "reason": "This Core uses paired devices. Pair this device first.",
+    "retryable": false,
+    "code": "pairingRequired"
+  },
+  "decodes": true
+}

@@ -1,0 +1,9 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "registered",
+    "id": "lwhu2kyjnrfdwvpxvdckao3lb7"
+  },
+  "decodes": true
+}

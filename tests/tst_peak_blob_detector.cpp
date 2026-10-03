@@ -72,7 +72,7 @@
 //============================================================================================//
 
 #include <QtTest/QtTest>
-#include "gui/spectrum/PeakBlobDetector.h"
+#include "core/spectrum/PeakBlobDetector.h"
 
 using namespace NereusSDR;
 
@@ -388,6 +388,39 @@ private slots:
         // Expected decay: 6.0 / 30 = 0.2 dB
         const float expected = -40.0f - 6.0f / 30.0f;
         QVERIFY(qFuzzyCompare(det.blobs()[0].max_dBm, expected));
+    }
+
+    // Thetis display.cs:4542-4544, 859-877, 4219-4221, 5013 [v2.10.3.15]:
+    // a clearing reset (ResetBlobMaximums(rx, true)) holds the blobs back
+    // for 500 ms. No blob is found or drawn until a frame that starts more
+    // than 500 ms after the reset has ended.
+    void clear_holds_blobs_back_for_500_ms()
+    {
+        QVector<float> bins(256, -100.0f);
+        bins[100] = -40.0f;
+
+        PeakBlobDetector det;
+        det.setEnabled(true);
+        det.setCount(1);
+        det.update(bins, 0, 255);
+        det.tickFrame(25, 40);
+        QVERIFY(!det.blobs().isEmpty() && det.blobs()[0].enabled);
+
+        det.clearMaximums();                 // reset at 40 ms: delay to 540 ms
+        QVERIFY(det.blobs().isEmpty());
+        // Frames starting at 40 .. 520 ms: nothing is found.
+        for (int frame = 0; frame < 13; ++frame) {
+            det.update(bins, 0, 255);
+            QVERIFY(det.blobs().isEmpty());
+            det.tickFrame(25, 40);
+        }
+        // The frame starting at 560 ms (> 540) ends the delay.
+        det.update(bins, 0, 255);
+        QVERIFY(det.blobs().isEmpty());
+        det.tickFrame(25, 40);
+        det.update(bins, 0, 255);
+        QVERIFY(!det.blobs().isEmpty());
+        QCOMPARE(det.blobs()[0].max_dBm, -40.0f);
     }
 };
 

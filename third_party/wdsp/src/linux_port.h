@@ -3,6 +3,17 @@
 // cross-platform shim macro tweaks documented in the modification
 // history below; not a Thetis port, attribution already lives in the
 // preserved header copyright block.
+//
+// NereusSDR modification history:
+//   2026-09-23 - Declare the thread-start hook (WDSPSetThreadStartHook) and
+//                the thread kinds it reports, so the application can name,
+//                place and prioritise each channel's worker and flush
+//                threads as they start (R-R3-41). J.J. Boyd (KG4VCF), with
+//                AI assistance from Anthropic Claude Code.
+//   2026-09-23 - WDSP_THREAD_WORKER_EXIT: the hook also hears from a channel
+//                worker just before it ends, so the application forgets
+//                its thread ID (R-R3-41). J.J. Boyd (KG4VCF), with AI
+//                assistance from Anthropic Claude Code.
 
 /*  linux_port.h
 
@@ -83,13 +94,16 @@ typedef pthread_mutex_t *LPCRITICAL_SECTION;
 #define Sleep(ms) usleep(ms*1000)
 
 #define CreateSemaphore(a,b,c,d) LinuxCreateSemaphore(a,b,c,d)
+#define CreateSemaphoreW(a,b,c,d) LinuxCreateSemaphore(a,b,c,0)
 #define WaitForSingleObject(x, y) LinuxWaitForSingleObject(x, y)
+#define WaitForMultipleObjects(n, h, all, ms) LinuxWaitForMultipleObjects(n, h, all, ms)
 #define ReleaseSemaphore(x,y,z) LinuxReleaseSemaphore(x,y,z)
 #define SetEvent(x) LinuxSetEvent(x)
 #define ResetEvent(x) LinuxResetEvent(x)
 
 #define AllocConsole() ((void)0)
 #define FreeConsole()  ((void)0)
+#define OutputDebugStringA(text) fputs((text), stderr)
 
 // Windows AVRT (multimedia thread scheduling) — no-ops on POSIX
 #define AvSetMmThreadCharacteristics(name, idx) ((HANDLE)0)
@@ -106,10 +120,15 @@ typedef pthread_mutex_t *LPCRITICAL_SECTION;
 #endif
 
 #define INFINITE -1
+#define WAIT_OBJECT_0 0u
+#define WAIT_TIMEOUT 258u
+#define WAIT_FAILED 0xffffffffu
 
 void QueueUserWorkItem(void *function,void *context,int flags);
 
 void InitializeCriticalSectionAndSpinCount(pthread_mutex_t *mutex,int count);
+
+#define InitializeCriticalSection(mutex) InitializeCriticalSectionAndSpinCount((mutex), 0)
 
 void EnterCriticalSection(pthread_mutex_t *mutex);
 
@@ -122,6 +141,9 @@ sem_t *LinuxCreateSemaphore(int attributes,int initial_count,int maximum_count,c
 
 int LinuxWaitForSingleObject(sem_t *sem,int x);
 
+unsigned int LinuxWaitForMultipleObjects(unsigned int count, HANDLE* handles,
+	int wait_all, int milliseconds);
+
 void LinuxReleaseSemaphore(sem_t *sem,int release_count, int* previous_count);
 
 sem_t *CreateEvent(void* security_attributes,int bManualReset,int bInitialState,char* name);
@@ -132,6 +154,26 @@ void LinuxResetEvent(sem_t* sem);
 
 HANDLE wdsp_beginthread( void( __cdecl *start_address )( void * ), unsigned stack_size, void *arglist);
 
+// NereusSDR: the kinds of WDSP thread wdsp_beginthread reports to the
+// thread-start hook. A channel's worker (wdspmain) is reported by the
+// channel's type (1 = TX, anything else = RX); flushChannel is the channel's
+// flush thread. Other WDSP threads are named but not reported. Macros, like
+// the rest of this header, because it has no include guard.
+#define WDSP_THREAD_RX_MAIN 1
+#define WDSP_THREAD_TX_MAIN 2
+#define WDSP_THREAD_FLUSH 3
+// NereusSDR: a channel worker reports this kind, on itself, just after its
+// start routine returns and before the thread ends.
+#define WDSP_THREAD_WORKER_EXIT 4
+
+// NereusSDR: install (or, with 0, remove) a function each reported WDSP
+// thread calls once on itself, before its start routine runs, with its kind
+// and channel; a channel worker calls it once more, with
+// WDSP_THREAD_WORKER_EXIT, after its start routine returns. The hook runs on the new thread; it must not wait for the
+// thread that created it. Not built on Windows, where WDSP threads start
+// through the platform _beginthread.
+void WDSPSetThreadStartHook (void (*hook)(int kind, int channel));
+
 void _endthread();
 
 void SetThreadPriority(HANDLE thread, int priority);
@@ -139,4 +181,3 @@ void SetThreadPriority(HANDLE thread, int priority);
 int CloseHandle(HANDLE hObject);
 
 #endif
-

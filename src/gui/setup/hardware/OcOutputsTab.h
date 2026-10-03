@@ -19,6 +19,12 @@
 //                checkboxes wired to TransmitModel::userDigOut, gated on
 //                BoardCapabilities::hasPennyLane. J.J. Boyd (KG4VCF), with
 //                AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-23 - R-R3-46: transmit permission. J.J. Boyd (KG4VCF), AI-
+//                 assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-46 / R-R3-49 (remote-window parity Task 13): User
+//                 Dig Out follows the transmit settings gate; the TX pins,
+//                 pin actions and resets follow their own gates.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -101,6 +107,21 @@ public:
     // (AppSettings under hardware/<mac>/oc/...) — this is a no-op stub so
     // the HardwarePage API contract is met without extra coupling.
     void restoreSettings(const QMap<QString, QVariant>& settings);
+
+    // R-R3-46: the HF tab's hidden extras (hot switching, external PA)
+    // follow the transmit permission with its reason. Always permitted
+    // locally.
+    void setTransmitPermitted(bool permitted, const QString& reason);
+    // R-R3-49 (parity Task 1 / Task 13): User Dig Out writes the mirrored
+    // `transmit.userDigOut`, a transmit setting the Core takes off the air
+    // (transmitSettingsVersion 1), so it follows that gate, not the
+    // transmit permission.
+    void setUserDigOutPermitted(bool permitted, const QString& reason);
+    // R-R3-46 / R-R3-49 (parity Task 13): the HF and SWL TX pin matrices
+    // and resets, and the HF TX pin actions (OcOutputsHfTab /
+    // OcOutputsSwlTab), each with its own gate and reason.
+    void setTransmitPinsPermitted(bool permitted, const QString& reason);
+    void setPinActionsPermitted(bool permitted, const QString& reason);
 
     // ── Test seams (P1 full-parity §4.3 — User Dig Out) ──────────────────
     // Exposed for tst_board_capability_flag_wiring; not part of the

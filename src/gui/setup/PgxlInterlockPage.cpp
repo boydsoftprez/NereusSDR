@@ -6,11 +6,21 @@
 // See PgxlInterlockPage.h for full design notes.
 //
 // AI tooling: Anthropic Claude Code.
+//
+// Modification history (NereusSDR):
+//   2026-09-24  J.J. Boyd / KG4VCF  R-R3-47 / R-R3-22: remote window through
+//                                    the Core (setTxInterlockPolicy); every
+//                                    window follows policy changes.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-09-29 -- R-R3-49 / R-IOS-18: Setup description version 15 ids.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/setup/PgxlInterlockPage.h"
 #include "models/RadioModel.h"
 #include "core/TxInterlockPolicy.h"
+#include "core/session/IStationLink.h"
+#include "gui/OperatorReasonText.h"
 
 #include <QComboBox>
 #include <QSpinBox>
@@ -32,6 +42,85 @@ PgxlInterlockPage::PgxlInterlockPage(RadioModel* model, QWidget* parent)
 {
     buildUi();
     loadFromPolicy();
+    // Setup description version 15: this page's ids.
+    const std::pair<QWidget*, const char*> setupIds[] = {
+        {m_modeCombo, "interlockMode"},
+        {m_graceSpinbox, "interlockGrace"},
+        {m_swrGateCheckbox, "swrGate"},
+        {m_swrGateMaxSpinbox, "swrGateMax"}};
+    for (const auto& [widget, id] : setupIds) {
+        if (widget) {
+            widget->setProperty("nereusSetupId", QStringLiteral("catNetwork.fourO3A.") + QLatin1String(id));
+        }
+    }
+    // R-R3-47: the page follows the policy wherever it changes (another
+    // window, the Core, a remote window's own change coming back).
+    if (m_policy) {
+        connect(m_policy, &TxInterlockPolicy::changed, this, &PgxlInterlockPage::loadFromPolicy);
+    }
+    if (isRemote()) {
+        connect(m_model, &RadioModel::stationLinkStateChanged,
+                this, &PgxlInterlockPage::refreshRemoteAvailability);
+        // A change the Core refused leaves the Core's policy on the page
+        // (only the interlock's refusals; never an unrelated one).
+        connect(m_model, &RadioModel::accessoryRequestRefused, this,
+                [this](const QString& device, const QString&) {
+            if (device == QLatin1String("interlock")) {
+                loadFromPolicy();
+            }
+        });
+        refreshRemoteAvailability();
+    }
+}
+
+bool PgxlInterlockPage::isRemote() const
+{
+    return m_model && m_model->role() == RadioModel::Role::Remote;
+}
+
+QString PgxlInterlockPage::remoteNoteForTesting() const
+{
+    return m_remoteNote ? m_remoteNote->text() : QString();
+}
+
+void PgxlInterlockPage::refreshRemoteAvailability()
+{
+    if (!isRemote()) {
+        return;
+    }
+    const IStationLink* link = m_model->stationLink();
+    const bool available = link && link->accessoryDataAvailable();
+    for (QWidget* w : { static_cast<QWidget*>(m_modeCombo),
+                        static_cast<QWidget*>(m_graceSpinbox),
+                        static_cast<QWidget*>(m_swrGateCheckbox) }) {
+        w->setEnabled(available);
+    }
+    m_swrGateMaxSpinbox->setEnabled(available && m_swrGateCheckbox->isChecked());
+    if (m_remoteNote) {
+        m_remoteNote->setText(available
+            ? tr("The Core applies this policy to the station's transmitter. Changes here "
+                 "take effect there at once and show in every window.")
+            : tr("This Core does not share its transmit interlock with this app. Updating the "
+                 "Core may help."));
+    }
+}
+
+void PgxlInterlockPage::sendRemotePolicy()
+{
+    IStationLink* link = m_model->stationLink();
+    int mode = m_modeCombo->currentIndex();
+    if (mode < 0) { mode = 0; }
+    const IStationLink::CommandOutcome outcome = link
+        ? link->requestTxInterlockPolicy(mode, m_graceSpinbox->value(),
+                                         m_swrGateCheckbox->isChecked(),
+                                         m_swrGateMaxSpinbox->value())
+        : IStationLink::CommandOutcome{ false, tr("Connect to the Core first.") };
+    if (!outcome.sent) {
+        if (m_remoteNote) {
+            m_remoteNote->setText(OperatorReasonText::forDisplay(outcome.reason));
+        }
+        loadFromPolicy();
+    }
 }
 
 void PgxlInterlockPage::buildUi()
@@ -61,7 +150,7 @@ void PgxlInterlockPage::buildUi()
         "  is present but not in OPERATE (or SWR gate trips).\n"
         "Block: TX is prevented when the amplifier is present but not in\n"
         "  OPERATE (or SWR gate trips).\n"
-        "Default: Disabled (matches AetherSDR behavior).");
+        "Default: Disabled.");
     modeForm->addRow("Interlock Mode:", m_modeCombo);
 
     topLay->addWidget(modeBox);
@@ -75,12 +164,13 @@ void PgxlInterlockPage::buildUi()
     m_graceSpinbox->setRange(0, 30000);
     m_graceSpinbox->setSingleStep(100);
     m_graceSpinbox->setSuffix(" ms");
+    // Applied by TxInterlockPolicy::evaluateTxRequest against the OPERATE
+    // rising edge timestamp; persisted as PGXL_TxInterlockGraceMs.
     m_graceSpinbox->setToolTip(
         "Grace period (ms) after the amplifier transitions to OPERATE before\n"
         "the SWR gate is enforced. Ignores SWR spikes during PA warm-up so\n"
-        "the gate does not nuisance-trip on PSU current ramps. Applied by\n"
-        "TxInterlockPolicy::evaluateTxRequest against the OPERATE rising\n"
-        "edge timestamp. Persisted as PGXL_TxInterlockGraceMs.\n"
+        "the gate does not nuisance-trip on PSU current ramps. Timed from\n"
+        "the moment the amplifier enters OPERATE.\n"
         "Range: 0..30000 ms.  Default: 3000 ms.");
     graceForm->addRow("Grace Period:", m_graceSpinbox);
 
@@ -125,6 +215,18 @@ void PgxlInterlockPage::buildUi()
     m_helpText->setStyleSheet("color: #8aa8c0; font-size: 11px;");
     topLay->addWidget(m_helpText);
 
+    // R-R3-47: a remote window says whose policy this is.
+    if (isRemote()) {
+        m_remoteNote = new QLabel;
+        m_remoteNote->setObjectName(QStringLiteral("pgxlInterlockRemoteNote"));
+        m_remoteNote->setWordWrap(true);
+        m_remoteNote->setStyleSheet("color: #8aa8c0; font-size: 11px;");
+        topLay->addWidget(m_remoteNote);
+        // One request per finished edit, not per keystroke.
+        m_graceSpinbox->setKeyboardTracking(false);
+        m_swrGateMaxSpinbox->setKeyboardTracking(false);
+    }
+
     topLay->addStretch();
 
     scroll->setWidget(content);
@@ -164,11 +266,16 @@ void PgxlInterlockPage::loadFromPolicy()
     m_swrGateMaxSpinbox->setEnabled(m_policy->swrGateEnabled());
 
     m_loading = false;
+    refreshRemoteAvailability();
 }
 
 void PgxlInterlockPage::onModeChanged(int idx)
 {
     if (m_loading || !m_policy) {
+        return;
+    }
+    if (isRemote()) {
+        sendRemotePolicy();
         return;
     }
     TxInterlockPolicy::Mode mode = TxInterlockPolicy::Disabled;
@@ -185,6 +292,10 @@ void PgxlInterlockPage::onGraceChanged(int ms)
     if (m_loading || !m_policy) {
         return;
     }
+    if (isRemote()) {
+        sendRemotePolicy();
+        return;
+    }
     m_policy->setGraceMs(ms);
 }
 
@@ -193,13 +304,21 @@ void PgxlInterlockPage::onSwrGateToggled(bool on)
     if (m_loading || !m_policy) {
         return;
     }
-    m_policy->setSwrGateEnabled(on);
     m_swrGateMaxSpinbox->setEnabled(on);
+    if (isRemote()) {
+        sendRemotePolicy();
+        return;
+    }
+    m_policy->setSwrGateEnabled(on);
 }
 
 void PgxlInterlockPage::onSwrGateMaxChanged(double val)
 {
     if (m_loading || !m_policy) {
+        return;
+    }
+    if (isRemote()) {
+        sendRemotePolicy();
         return;
     }
     m_policy->setSwrGateMax(static_cast<float>(val));

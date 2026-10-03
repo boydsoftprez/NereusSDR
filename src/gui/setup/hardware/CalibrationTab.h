@@ -25,6 +25,13 @@
 //                  backed by CalibrationController model (Phase 3P-G).
 //                  J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                  Anthropic Claude Code.
+//   2026-09-23 - R-R3-46: transmit permission for TX Display and
+//                 Volts/Amps. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-09-25 - R-R3-46 / R-R3-49 (remote-window parity Task 13): TX
+//                 Display Cal and Volts/Amps Calibration follow the transmit
+//                 settings gate instead of the transmit permission.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From setup.cs ---
@@ -132,9 +139,13 @@
 #include <QVariant>
 #include <QWidget>
 
+#include <functional>
+
 class QCheckBox;
 class QDoubleSpinBox;
 class QGroupBox;
+class QLabel;
+class QProgressBar;
 class QPushButton;
 
 namespace NereusSDR {
@@ -174,9 +185,22 @@ public:
     void populate(const RadioInfo& info, const BoardCapabilities& caps);
     void restoreSettings(const QMap<QString, QVariant>& settings);
 
+    // R-R3-46 / R-R3-49 (parity Task 13): TX Display Cal and Volts/Amps
+    // Calibration (the PA's current reading) follow the transmit settings
+    // gate with its reason: closed only in a remote window whose Core does
+    // not take them (Thetis changes them while transmitting, so the radio
+    // being on the air does not close them). The frequency and level
+    // calibration stay live. Always permitted locally.
+    void setTransmitCalibrationPermitted(bool permitted, const QString& reason);
+
 #ifdef NEREUS_BUILD_TESTS
     // Test seam: counts QGroupBox children of the main layout.
     int groupBoxCountForTest() const;
+    // Test seam: Level Cal's question before a run and its messages, in
+    // place of the message boxes.
+    void setLevelCalPromptsForTest(
+        std::function<bool()> confirm,
+        std::function<void(const QString& title, const QString& text, bool warning)> tell);
 #endif
 
 signals:
@@ -205,6 +229,18 @@ private:
     QDoubleSpinBox* m_rx2LnaSpin{nullptr};         // ud6mRx2LNAGainOffset
     QPushButton*    m_levelCalStartBtn{nullptr};   // btnGeneralCalLevelStart
     QPushButton*    m_levelCalResetBtn{nullptr};   // btnResetLevelCal
+    // Level Cal: Thetis's progress window (Progress, its bar and Abort),
+    // shown in the group as a Cancel button, a bar and the run's last word.
+    QPushButton*    m_levelCalCancelBtn{nullptr};
+    QProgressBar*   m_levelCalProgress{nullptr};
+    QLabel*         m_levelCalStatusLabel{nullptr};
+    // True from this tab's Start until the run it started ends.
+    bool            m_levelCalStartedHere{false};
+    bool            m_levelCalWasRunning{false};
+    std::function<bool()> m_levelCalConfirm;
+    std::function<void(const QString&, const QString&, bool)> m_levelCalTell;
+    void refreshLevelCalControls();
+    void startLevelCalibration();
 
     // -- Group 3: HPSDR Freq Cal Diagnostic ------------------------------------
     // Source: setup.cs:5137-5144; 14036-14050; 22690-22706 [@501e3f5]
@@ -238,6 +274,8 @@ private:
 
     // Echo-loop guard: prevents model->UI update from triggering UI->model write
     bool m_updatingFromModel{false};
+    QWidget* m_txDisplayGroup{nullptr};
+    QWidget* m_vaCalGroup{nullptr};
 };
 
 } // namespace NereusSDR

@@ -102,21 +102,34 @@ void ClarityController::setPercentile(float p)         { m_estimator.setPercenti
 
 void ClarityController::feedBins(const QVector<float>& bins, qint64 nowMs)
 {
-    if (!m_enabled || m_transmitting || m_paused) {
-        return;
-    }
     if (nowMs < 0) {
         nowMs = QDateTime::currentMSecsSinceEpoch();
     }
+    if (!acceptsInput(nowMs)) {
+        return;
+    }
+    feedNoiseFloor(m_estimator.estimate(bins), nowMs);
+}
 
+bool ClarityController::acceptsInput(qint64 nowMs) const
+{
+    if (!m_enabled || m_transmitting || m_paused) {
+        return false;
+    }
     // Cadence gate: skip frames that land inside the current poll window.
     if (m_pollIntervalMs > 0 && m_hasEmitted &&
         (nowMs - m_lastPollMs) < m_pollIntervalMs) {
-        return;
+        return false;
     }
+    return true;
+}
 
-    const float rawFloor = m_estimator.estimate(bins);
-    if (qIsNaN(rawFloor)) {
+void ClarityController::feedNoiseFloor(float rawFloor, qint64 nowMs)
+{
+    if (nowMs < 0) {
+        nowMs = QDateTime::currentMSecsSinceEpoch();
+    }
+    if (!std::isfinite(rawFloor) || !acceptsInput(nowMs)) {
         return;
     }
 

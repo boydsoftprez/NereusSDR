@@ -11,6 +11,10 @@
 //
 // Phase 24 Task 24.2 (2026-05-10): Written by J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
+//
+// 2026-09-24: R-R3-49 by J.J. Boyd (KG4VCF), with AI-assisted
+// implementation via Anthropic Claude Code. The Slice B rate control is
+// removed; nothing read its setting.
 // =================================================================
 
 #include "AudioTciPage.h"
@@ -45,8 +49,9 @@ void AudioTciPage::buildUI()
 
 // ---------------------------------------------------------------------------
 // Group 1: Output Sample Rate per Slice
-// AppSettings: TciSliceA_OutputSampleRate (default 48000),
-//              TciSliceB_OutputSampleRate (default 48000).
+// AppSettings: TciSliceA_OutputSampleRate (default 48000). The Slice B
+// rate control is removed (R-R3-49); a saved TciSliceB_OutputSampleRate
+// stays in the settings file.
 // Slices C/D not exposed via TCI in Phase 3J-1 per design doc Section 1.2.
 // ---------------------------------------------------------------------------
 void AudioTciPage::buildSampleRateGroup()
@@ -83,30 +88,10 @@ void AudioTciPage::buildSampleRateGroup()
     });
     form->addRow(tr("Slice A rate:"), m_sliceARateCombo);
 
-    // Slice B
-    m_sliceBRateCombo = new QComboBox(group);
-    m_sliceBRateCombo->setStyleSheet(QString::fromLatin1(Style::kComboStyle));
-    for (int i = 0; kRates[i] != nullptr; ++i) {
-        m_sliceBRateCombo->addItem(QString::fromLatin1(kRates[i]));
-    }
-    m_sliceBRateCombo->setToolTip(
-        tr("Output sample rate for the Slice B TCI audio stream (24000/48000/96000/192000 Hz). "
-           "Higher rates require more CPU and network bandwidth."));
-    {
-        const QString saved = s.value(
-            QStringLiteral("TciSliceB_OutputSampleRate"),
-            QStringLiteral("48000")).toString();
-        const int idx = m_sliceBRateCombo->findText(saved);
-        m_sliceBRateCombo->setCurrentIndex(idx >= 0 ? idx : m_sliceBRateCombo->findText(QStringLiteral("48000")));
-    }
-    connect(m_sliceBRateCombo, &QComboBox::currentTextChanged, this, [](const QString& text) {
-        AppSettings::instance().setValue(QStringLiteral("TciSliceB_OutputSampleRate"), text);
-    });
-    form->addRow(tr("Slice B rate:"), m_sliceBRateCombo);
-
     // Slices C/D not exposed: informational note
     auto* noteLabel = new QLabel(
-        tr("Slices C and D are not exposed via TCI in Phase 3J-1."), group);
+        // R-R3-17: user words (TCI carries Slices A and B only, Phase 3J-1).
+        tr("Slices C and D are not available over TCI."), group);
     noteLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
     form->addRow(noteLabel);
 
@@ -155,11 +140,16 @@ void AudioTciPage::buildFormatGroup()
     // Channel count
     m_channelsCombo = new QComboBox(group);
     m_channelsCombo->setStyleSheet(QString::fromLatin1(Style::kComboStyle));
+    m_channelsCombo->setObjectName(QStringLiteral("tciStreamChannelsCombo"));
     m_channelsCombo->addItem(tr("Mono"),   1);
     m_channelsCombo->addItem(tr("Stereo"), 2);
+    // Each app starts with this count; Thetis starts it at 2 and a mono
+    // stream carries the left channel (TCIServer.cs:781, 5897-5900
+    // [v2.10.3.15]). The server reads it when an app connects.
     m_channelsCombo->setToolTip(
-        tr("Number of audio channels in the TCI audio stream. "
-           "Stereo carries I/Q or L/R pairs; Mono carries a single downmixed channel."));
+        tr("Number of audio channels a TCI app starts with. "
+           "Stereo carries left and right; Mono carries the left channel only. "
+           "An app can choose its own."));
     {
         const int saved = s.value(QStringLiteral("TciAudioStreamChannels"), 2).toInt();
         const int idx   = m_channelsCombo->findData(saved);

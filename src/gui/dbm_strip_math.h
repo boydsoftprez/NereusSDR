@@ -2,6 +2,7 @@
 #pragma once
 
 #include <QRect>
+#include <QVector>
 
 namespace NereusSDR::DbmStrip {
 
@@ -33,5 +34,24 @@ int arrowHit(int x, const QRect& arrowRow);
 //            2 otherwise
 // From AetherSDR SpectrumWidget.cpp:4901-4906 [@0cd4559]
 float adaptiveStepDb(float dynamicRange);
+
+// The rounded (lround'd) dBm values SpectrumWidget::drawDbmScaleLabels()
+// would draw for a given topDbm/rangeDb: the adaptive-step tick run plus
+// the always-drawn bottom label. Empty when rangeDb <= 0 (mirrors that
+// function's guard).
+//
+// Two (topDbm, rangeDb) pairs that return equal sets paint identical
+// visible label TEXT for a fixed specRect: drawDbmScaleLabels' own
+// on-screen Y-position culling only ever trims entries from this same
+// set, deterministically for a fixed layout, so an unchanged set can
+// never diverge after culling.
+//
+// NereusSDR-original (no upstream equivalent -- AetherSDR has no overlay
+// cache to keep fresh): pulled out of SpectrumWidget so the GPU-path 3D
+// dBm-scale overlay-cache staleness check (SpectrumWidget's
+// updateDssScaleOverlayFreshness(), final-review fix I2) can ask "would
+// the operator see different text" without a QPainter or a live
+// SpectrumWidget.
+QVector<int> dssRoundedLabelSet(float topDbm, float rangeDb);
 
 }  // namespace NereusSDR::DbmStrip

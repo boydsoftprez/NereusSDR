@@ -1,0 +1,11 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "hello",
+    "major": 65536,
+    "minor": 11,
+    "settingsSchema": 0,
+    "peer": "NereusSDR iPhone"
+  },
+  "decodes": false
+}

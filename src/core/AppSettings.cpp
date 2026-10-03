@@ -12,6 +12,20 @@
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
 //                 AppSettings XML persistence: key/value semantics (PascalCase keys, True/False string booleans, per-StationName nesting) port Thetis database.cs SaveVarsDictionary/RestoreVarsDictionary pattern; QXmlStream file I/O skeleton follows AetherSDR `src/core/AppSettings.{h,cpp}`.
+//   2026-09-23 - R-R3-21: migrateRenamedKeys() one-shot rename for keys
+//                 whose writer and reader disagreed (WsjtxSpotLifetime).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: settings schema v8 drops the TCI rate limit
+//                 saved in messages per second (TciRateLimitMsgsPerSec).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - Receiver and transmit gaps plan, Task 16: the N2ADR
+//                 filter migration covers the HL2 receive-only kit.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-27 - Schema v9 (R-IOS-06, R-IOS-27): each slice's saved NR1
+//                 values brought into Thetis's NR spinbox ranges once (old
+//                 defaults to the new ones, out-of-range values clamped).
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -62,17 +76,24 @@
 
 #include "AppSettings.h"
 
+#include "core/ControlRanges.h"
+#include "core/settings/ISettingsBackend.h"
+
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QBuffer>
 #include <QSet>
 #include <QStandardPaths>
 #include <QXmlStreamReader>
 #include <QXmlStreamWriter>
 #include <QDebug>
+
+#include <algorithm>
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -147,6 +168,24 @@ AppSettings::AppSettings(const QString& filePath)
 void AppSettings::initFilePath()
 {
     m_filePath = resolveSettingsPath(s_profileOverride);
+}
+
+// Remote Daemon R2, Task 1 -- see the doc comment on
+// kDaemonProfileSeededKey (AppSettings.h) for why this exists. Mirrors
+// the immediate-save() pattern used elsewhere for rare, important,
+// one-shot writes (e.g. migrateVaxSchemaV1ToV2() below) rather than the
+// debounced scheduleSettingsSave() timer RadioModel uses for frequent
+// live changes: this writes at most once per settings store, so there is
+// nothing to coalesce, and the marker must reach disk immediately so it
+// is readable on the daemon's next launch even if this process is killed
+// a moment later.
+void AppSettings::seedDaemonProfileMarker()
+{
+    if (contains(QLatin1String(kDaemonProfileSeededKey))) {
+        return;
+    }
+    setValue(QLatin1String(kDaemonProfileSeededKey), QStringLiteral("True"));
+    save();
 }
 
 // ---------------------------------------------------------------------------
@@ -397,12 +436,14 @@ bool parseSettingsXml(const QString& sanitizedXml,
     QXmlStreamReader xml(sanitizedXml);
     QString currentStation;
     bool inStation = false;
+    bool rootSeen = false;
 
     while (!xml.atEnd()) {
         xml.readNext();
         if (xml.isStartElement()) {
             const QString tag = xml.name().toString();
-            if (tag == QStringLiteral("NereusSDR")) {
+            if (!rootSeen && tag == QStringLiteral("NereusSDR")) {
+                rootSeen = true;
                 continue;
             }
             if (!inStation && xml.attributes().hasAttribute(QStringLiteral("type"))
@@ -435,6 +476,138 @@ bool parseSettingsXml(const QString& sanitizedXml,
         return false;
     }
     return true;
+}
+
+bool parseImportXml(const QByteArray& input, QMap<QString, QString>& settings,
+                    QMap<QString, QString>& stationSettings, QString& stationName,
+                    QString* error)
+{
+    auto reject = [error](const QString& reason) {
+        if (error) {
+            *error = reason;
+        }
+        return false;
+    };
+    if (input.isEmpty()) {
+        return reject(QStringLiteral("Settings XML is empty"));
+    }
+    if (input.size() > 16 * 1024 * 1024) {
+        return reject(QStringLiteral("Settings XML exceeds 16 MiB"));
+    }
+    QXmlStreamReader xml(input);
+    int depth = 0;
+    bool rootSeen = false;
+    bool rootClosed = false;
+    bool stationSeen = false;
+    bool inStation = false;
+    stationName = QStringLiteral("NereusSDR");
+    while (!xml.atEnd()) {
+        const QXmlStreamReader::TokenType token = xml.readNext();
+        if (token == QXmlStreamReader::DTD || token == QXmlStreamReader::EntityReference) {
+            return reject(QStringLiteral("Settings XML may not contain DTDs or entities"));
+        }
+        if (token == QXmlStreamReader::StartElement) {
+            ++depth;
+            const QString tag = xml.name().toString();
+            const QXmlStreamAttributes attrs = xml.attributes();
+            if (depth == 1) {
+                if (rootSeen || rootClosed || tag != QStringLiteral("NereusSDR")
+                    || !attrs.isEmpty()) {
+                    return reject(QStringLiteral("Settings XML has the wrong root"));
+                }
+                rootSeen = true;
+                continue;
+            }
+            if (depth == 2 && attrs.size() == 1
+                && attrs.value(QStringLiteral("type")) == QStringLiteral("station")) {
+                if (stationSeen) {
+                    return reject(QStringLiteral("Settings XML has multiple Core groups"));
+                }
+                stationSeen = true;
+                inStation = true;
+                stationName = tag;
+                continue;
+            }
+            if ((depth == 2 && !inStation) || (depth == 3 && inStation)) {
+                if (!attrs.isEmpty()) {
+                    return reject(QStringLiteral("Settings XML key has unexpected attributes"));
+                }
+                const QString key = decodeXmlKey(tag);
+                QMap<QString, QString>& target = inStation ? stationSettings : settings;
+                if (target.contains(key)) {
+                    return reject(QStringLiteral("Settings XML has a duplicate key: %1").arg(key));
+                }
+                const QString value = xml.readElementText();
+                if (xml.hasError()) {
+                    return reject(QStringLiteral("Settings XML has unexpected nested structure: %1")
+                                  .arg(xml.errorString()));
+                }
+                target.insert(key, value);
+                --depth; // readElementText consumed this element's end token.
+                continue;
+            }
+            return reject(QStringLiteral("Settings XML has unexpected nested structure"));
+        }
+        if (token == QXmlStreamReader::EndElement) {
+            if (depth == 2 && inStation) {
+                inStation = false;
+            }
+            --depth;
+            if (depth == 0) {
+                rootClosed = true;
+            }
+        } else if (token == QXmlStreamReader::Characters && !xml.isWhitespace()) {
+            return reject(QStringLiteral("Settings XML has text outside a value"));
+        }
+    }
+    if (xml.hasError() || !rootClosed || depth != 0) {
+        return reject(QStringLiteral("Settings XML is malformed: %1").arg(xml.errorString()));
+    }
+    if (error) {
+        error->clear();
+    }
+    return true;
+}
+
+QByteArray serializeLocalXml(const QMap<QString, QString>& settings,
+                             const QMap<QString, QString>& stationSettings,
+                             const QString& stationName, QString* error)
+{
+    QByteArray output;
+    QBuffer buffer(&output);
+    if (!buffer.open(QIODevice::WriteOnly)) {
+        if (error) {
+            *error = QStringLiteral("Settings XML buffer could not be opened");
+        }
+        return {};
+    }
+    QXmlStreamWriter xml(&buffer);
+    xml.setAutoFormatting(true);
+    xml.writeStartDocument();
+    xml.writeStartElement(QStringLiteral("NereusSDR"));
+    for (auto it = settings.constBegin(); it != settings.constEnd(); ++it) {
+        xml.writeTextElement(encodeXmlKey(it.key()), it.value());
+    }
+    if (!stationSettings.isEmpty()) {
+        xml.writeStartElement(stationName);
+        xml.writeAttribute(QStringLiteral("type"), QStringLiteral("station"));
+        for (auto it = stationSettings.constBegin(); it != stationSettings.constEnd(); ++it) {
+            xml.writeTextElement(encodeXmlKey(it.key()), it.value());
+        }
+        xml.writeEndElement();
+    }
+    xml.writeEndElement();
+    xml.writeEndDocument();
+    if (xml.hasError()) {
+        if (error) {
+            *error = QStringLiteral("Settings XML could not be written");
+        }
+        return {};
+    }
+    if (error) {
+        error->clear();
+    }
+    return output;
 }
 
 void logLoadedSummary(const QMap<QString, QString>& settings,
@@ -480,7 +653,15 @@ void AppSettings::load()
 
     if (mainRead == ReadResult::Ok) {
         const QString sanitized = sanitizeXmlForLoad(rawXml);
+        // Remote Daemon R2, Task 13: this bulk populate (and its .bak-
+        // recovery twin below) does not fire the change hook per key.
+        // Same reasoning as the corrupt-file m_settings.clear() fallback
+        // further down in this function: startup state establishment via
+        // a free function writing into m_settings/m_stationSettings by
+        // reference, not a series of individually-meaningful mutations
+        // through setValue().
         if (parseSettingsXml(sanitized, m_settings, m_stationSettings, m_stationName)) {
+            migrateLegacyNnrSettings();
             logLoadedSummary(m_settings, m_stationSettings.size());
             return;
         }
@@ -555,7 +736,10 @@ void AppSettings::load()
         const ReadResult bakRead = readFileForParse(bakPath, bakXml);
         if (bakRead == ReadResult::Ok) {
             const QString sanitized = sanitizeXmlForLoad(bakXml);
+            // Same "bulk populate, no hook fire" reasoning as the
+            // main-file parse above.
             if (parseSettingsXml(sanitized, m_settings, m_stationSettings, m_stationName)) {
+                migrateLegacyNnrSettings();
                 m_recoveredFromBackup = true;
                 qWarning() << "Recovered settings from backup file" << bakPath;
                 logLoadedSummary(m_settings, m_stationSettings.size());
@@ -576,12 +760,28 @@ void AppSettings::load()
     // Defaults path — leave both maps empty so first save() writes a fresh
     // factory-default file. The corrupt file (if rename succeeded) and the
     // .bak (if any) are untouched on disk for forensic inspection.
+    //
+    // Remote Daemon R2, Task 13: deliberately raw m_settings.clear(), not
+    // the public clear() method, and does not fire the change hook. This
+    // is a wholesale reset triggered by a recovery path, not a value
+    // change a delegation backend needs to mirror -- the same reasoning
+    // that excludes the public clear() from firing (see setChangeHook()'s
+    // doc comment in AppSettings.h), and load() runs at startup before
+    // any caller could plausibly have installed a hook yet regardless.
     m_settings.clear();
     m_stationSettings.clear();
 }
 
-void AppSettings::save()
+bool AppSettings::save(QString* error)
 {
+    if (error) {
+        error->clear();
+    }
+    const QByteArray localXml = serializeLocalXml(m_settings, m_stationSettings,
+                                                   m_stationName, error);
+    if (localXml.isEmpty()) {
+        return false;
+    }
     // Ensure directory exists
     QDir().mkpath(QFileInfo(m_filePath).absolutePath());
 
@@ -635,46 +835,88 @@ void AppSettings::save()
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         qWarning() << "Could not save settings to" << m_filePath
                    << ":" << file.errorString();
-        return;
+        if (error) {
+            *error = QStringLiteral("Settings could not be saved: %1").arg(file.errorString());
+        }
+        return false;
     }
 
-    {
-        QXmlStreamWriter xml(&file);
-        xml.setAutoFormatting(true);
-        xml.writeStartDocument();
-        xml.writeStartElement(QStringLiteral("NereusSDR"));
-
-        // Write top-level settings (encode keys so XML element names are valid)
-        for (auto it = m_settings.constBegin(); it != m_settings.constEnd(); ++it) {
-            xml.writeTextElement(encodeXmlKey(it.key()), it.value());
+    if (file.write(localXml) != localXml.size()) {
+        const QString reason = QStringLiteral("Settings XML could not be written: %1")
+            .arg(file.errorString());
+        file.cancelWriting();
+        if (error) {
+            *error = reason;
         }
-
-        // Write station settings
-        if (!m_stationSettings.isEmpty()) {
-            xml.writeStartElement(m_stationName);
-            xml.writeAttribute(QStringLiteral("type"), QStringLiteral("station"));
-            for (auto it = m_stationSettings.constBegin(); it != m_stationSettings.constEnd(); ++it) {
-                xml.writeTextElement(encodeXmlKey(it.key()), it.value());
-            }
-            xml.writeEndElement();
-        }
-
-        xml.writeEndElement(); // NereusSDR
-        xml.writeEndDocument();
+        return false;
     }
 
     if (!file.commit()) {
         qWarning() << "Could not commit settings to" << m_filePath
                    << ":" << file.errorString();
-        return;
+        if (error) {
+            *error = QStringLiteral("Settings could not be saved: %1").arg(file.errorString());
+        }
+        return false;
     }
 
     QFile::setPermissions(m_filePath,
                           QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    return true;
+}
+
+QByteArray AppSettings::exportLocalXml(QString* error) const
+{
+    return serializeLocalXml(m_settings, m_stationSettings, m_stationName, error);
+}
+
+bool AppSettings::validateLocalXml(const QByteArray& input, QString* error)
+{
+    QMap<QString, QString> settings;
+    QMap<QString, QString> stationSettings;
+    QString stationName;
+    return parseImportXml(input, settings, stationSettings, stationName, error);
+}
+
+bool AppSettings::importLocalXml(const QByteArray& input, QString* error)
+{
+    if (error) {
+        error->clear();
+    }
+    if (m_remoteBackend || m_changeHook) {
+        if (error) {
+            *error = QStringLiteral("Settings owner is still active; stop its proxy and change hook before import");
+        }
+        return false;
+    }
+    QMap<QString, QString> settings;
+    QMap<QString, QString> stationSettings;
+    QString stationName;
+    if (!parseImportXml(input, settings, stationSettings, stationName, error)) {
+        return false;
+    }
+    AppSettings replacement(m_filePath);
+    replacement.m_settings = settings;
+    replacement.m_stationSettings = stationSettings;
+    replacement.m_stationName = stationName;
+    if (!replacement.save(error)) {
+        return false;
+    }
+    m_settings.swap(settings);
+    m_stationSettings.swap(stationSettings);
+    m_stationName.swap(stationName);
+    return true;
 }
 
 QVariant AppSettings::value(const QString& key, const QVariant& defaultValue) const
 {
+    // Remote Daemon R2, Task 15 -- one-branch delegation. See
+    // setRemoteBackend()'s doc comment (AppSettings.h) for the full
+    // contract; nullptr (or a backend that declines this key) falls
+    // straight through to the ORIGINAL body below, unchanged.
+    if (m_remoteBackend && m_remoteBackend->handlesKey(key)) {
+        return m_remoteBackend->value(key, defaultValue);
+    }
     auto it = m_settings.constFind(key);
     if (it != m_settings.constEnd()) {
         return QVariant(it.value());
@@ -684,27 +926,163 @@ QVariant AppSettings::value(const QString& key, const QVariant& defaultValue) co
 
 void AppSettings::setValue(const QString& key, const QVariant& val)
 {
+    // Remote Daemon R2, Task 15 -- one-branch delegation (see value()).
+    // The delegated path does not touch m_settings and does not fire
+    // m_changeHook: that hook is this LOCAL instance's own "something in
+    // my own map changed" signal (Task 13), and a delegated write never
+    // touches this instance's own map at all.
+    if (m_remoteBackend && m_remoteBackend->handlesKey(key)) {
+        m_remoteBackend->setValue(key, val);
+        return;
+    }
     m_settings.insert(key, val.toString());
+    if (m_changeHook) {
+        m_changeHook(key);
+    }
 }
 
 void AppSettings::remove(const QString& key)
 {
+    // Remote Daemon R2, Task 15 -- delegation, but NOT strictly
+    // one-branch the way value()/setValue()/contains() are. Fix round 1
+    // (review, Important 1): a purely-delegated remove() left a STALE
+    // local m_settings entry (from a previous LOCAL session, before a
+    // backend was ever installed) completely unreachable once a backend
+    // claimed that key's family -- allKeys()'s own fix (above) makes such
+    // an entry correctly invisible to allKeys()/contains()/value(), but
+    // invisible is not the same as gone, and "forget radio"
+    // (AppSettings::clearHardwareValues() / AppSettings::forgetRadio(),
+    // BOTH of which fully funnel through this method) needs it actually
+    // gone, not just hidden while a backend happens to be installed.
+    // remove() is the one of the five delegated operations where
+    // touching BOTH targets is safe: unlike setValue() (which must NEVER
+    // touch m_settings for a backend-claimed key, or a remote-mode GUI's
+    // own local file would end up storing another station's data -- see
+    // AppSettings.h's snapshot() doc comment), removing a key that is
+    // not locally present is a harmless no-op, so there is no
+    // symmetrical contamination risk here.
+    //
+    // Fix round 2 (review, smaller item): NOT covered by this method at
+    // all, despite the name collision -- SettingsHygiene::forgetRadio()
+    // (SettingsHygiene.cpp:136-154, a DIFFERENT class's method sharing
+    // this method's colloquial name) discovers what to remove via its
+    // OWN s.allKeys() scan, not via this class's remove(). Once
+    // allKeys() correctly excludes a backend-claimed local key (this
+    // file's own fix, above), that scan cannot find such a key either,
+    // so this method's local-cleanup half never runs for it -- the exact
+    // shape of gap clearHardwareValues() had before its own fix.
+    // Currently inert: both live call sites
+    // (DiagnosticsPhaseHPages.cpp:184, RadioStatusPage.cpp:657) pass an
+    // empty mac, so the scan's own prefix ("hardware//") never matches a
+    // real key regardless. A future caller passing a real mac to
+    // SettingsHygiene::forgetRadio() would resurrect this exact bug for
+    // that call site; fixing it is that class's responsibility, not
+    // this one's, since AppSettings has no way to know SettingsHygiene
+    // exists.
+    if (m_remoteBackend && m_remoteBackend->handlesKey(key)) {
+        m_remoteBackend->remove(key);
+        // Best-effort local cleanup, not a locally-observed value
+        // change -- deliberately does NOT fire m_changeHook, matching
+        // this delegated branch's existing contract (see value()'s own
+        // comment: "does not touch m_settings and does not fire
+        // m_changeHook") for anything reads/writes through this branch.
+        m_settings.remove(key);
+        return;
+    }
     m_settings.remove(key);
+    if (m_changeHook) {
+        m_changeHook(key);
+    }
 }
 
 bool AppSettings::contains(const QString& key) const
 {
+    // Remote Daemon R2, Task 15 -- one-branch delegation (see value()).
+    if (m_remoteBackend && m_remoteBackend->handlesKey(key)) {
+        return m_remoteBackend->contains(key);
+    }
     return m_settings.contains(key);
 }
 
 QStringList AppSettings::allKeys() const
 {
-    return m_settings.keys();
+    // Remote Daemon R2, Task 15 -- additive, not a guard clause: there is
+    // no single key to ask handlesKey() about, so this unions the local
+    // keys with whatever the backend currently holds real values for
+    // (ISettingsBackend::handledKeys()). m_remoteBackend == nullptr
+    // (today's only path outside a test, and every path before this
+    // task) takes the early return below, leaving the return value
+    // byte-identical to `m_settings.keys()`.
+    //
+    // Fix round 1 (review, Important 1): a local m_settings entry the
+    // backend now CLAIMS (handlesKey() true) MUST be excluded from the
+    // local half of the union. Before this fix the union only ever
+    // added, so a key left over in m_settings from a previous LOCAL
+    // session -- the ordinary case for an operator who has used the
+    // radio directly before going remote -- stayed listed here forever
+    // even though contains()/value() already delegate it away to the
+    // backend and report it absent. Two concrete breakages that produced:
+    // hardwareValues() (below) iterates allKeys() and calls value(k) for
+    // each match, so a stale local hardware/<mac>/* entry became a
+    // phantom map entry whose value() came back as the caller's invalid
+    // default instead of the key being absent from the result at all;
+    // and clearHardwareValues() (below) called remove(k), which
+    // delegates and never touches the stale local m_settings entry, so
+    // "forget radio" on a remote client left those keys on disk forever
+    // and they kept reappearing in allKeys(). A QSet does the membership
+    // test in O(1) rather than QStringList::contains()'s O(n) scan
+    // repeated for every remote key (the previous shape was O(n x m));
+    // hardwareValues() calls this on every Setup-page restore.
+    if (!m_remoteBackend) {
+        return m_settings.keys();
+    }
+    QSet<QString> out;
+    const QStringList localKeys = m_settings.keys();
+    out.reserve(localKeys.size());
+    for (const QString& k : localKeys) {
+        if (!m_remoteBackend->handlesKey(k)) {
+            out.insert(k);
+        }
+    }
+    const QStringList remoteKeys = m_remoteBackend->handledKeys();
+    for (const QString& k : remoteKeys) {
+        out.insert(k);
+    }
+    return out.values();
 }
 
 void AppSettings::clear()
 {
+    // Deliberately does not fire the change hook -- see the doc comment
+    // on setChangeHook() (AppSettings.h): a bulk test-isolation wipe has
+    // no single key to report, and is not one of the ten operations the
+    // R2 Task 13 brief lists as required to fire.
     m_settings.clear();
+}
+
+void AppSettings::setChangeHook(std::function<void(const QString& key)> hook)
+{
+    m_changeHook = std::move(hook);
+}
+
+QMap<QString, QString> AppSettings::snapshot(const QStringList& prefixes) const
+{
+    // Remote Daemon R2, Task 15 -- see the doc comment on this
+    // declaration (AppSettings.h) for the full contract: fully-qualified
+    // keys, raw QString values, a pure read over THIS instance's own
+    // m_settings with no m_remoteBackend involvement at all. O(keys x
+    // prefixes); a real snapshot call happens once per connect, against
+    // a handful of prefixes, so this is not a hot path.
+    QMap<QString, QString> out;
+    for (auto it = m_settings.constBegin(); it != m_settings.constEnd(); ++it) {
+        for (const QString& prefix : prefixes) {
+            if (it.key().startsWith(prefix)) {
+                out.insert(it.key(), it.value());
+                break;
+            }
+        }
+    }
+    return out;
 }
 
 QVariant AppSettings::stationValue(const QString& key, const QVariant& defaultValue) const
@@ -767,35 +1145,46 @@ void AppSettings::saveRadio(const RadioInfo& info, bool pinToMac, bool autoConne
         : info.macAddress;
 
     const QString prefix = radioKeyPrefix(macKey);
-    m_settings.insert(prefix + QStringLiteral("name"),            info.name);
-    m_settings.insert(prefix + QStringLiteral("ipAddress"),       info.address.toString());
-    m_settings.insert(prefix + QStringLiteral("port"),            QString::number(info.port));
-    m_settings.insert(prefix + QStringLiteral("macAddress"),      info.macAddress);
-    m_settings.insert(prefix + QStringLiteral("boardType"),
-                      QString::number(static_cast<int>(info.boardType)));
-    m_settings.insert(prefix + QStringLiteral("protocol"),
-                      QString::number(static_cast<int>(info.protocol)));
-    m_settings.insert(prefix + QStringLiteral("firmwareVersion"), QString::number(info.firmwareVersion));
-    m_settings.insert(prefix + QStringLiteral("pinToMac"),        pinToMac   ? QStringLiteral("True") : QStringLiteral("False"));
-    m_settings.insert(prefix + QStringLiteral("autoConnect"),     autoConnect ? QStringLiteral("True") : QStringLiteral("False"));
-    m_settings.insert(prefix + QStringLiteral("lastSeen"),
-                      QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    setValue(prefix + QStringLiteral("name"),            info.name);
+    setValue(prefix + QStringLiteral("ipAddress"),       info.address.toString());
+    setValue(prefix + QStringLiteral("port"),            QString::number(info.port));
+    setValue(prefix + QStringLiteral("macAddress"),      info.macAddress);
+    setValue(prefix + QStringLiteral("boardType"),
+             QString::number(static_cast<int>(info.boardType)));
+    setValue(prefix + QStringLiteral("protocol"),
+             QString::number(static_cast<int>(info.protocol)));
+    setValue(prefix + QStringLiteral("firmwareVersion"), QString::number(info.firmwareVersion));
+    setValue(prefix + QStringLiteral("pinToMac"),        pinToMac   ? QStringLiteral("True") : QStringLiteral("False"));
+    setValue(prefix + QStringLiteral("autoConnect"),     autoConnect ? QStringLiteral("True") : QStringLiteral("False"));
+    setValue(prefix + QStringLiteral("lastSeen"),
+             QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
 
     // Model override (Phase 3I-RP). FIRST = no override.
     if (info.modelOverride != HPSDRModel::FIRST) {
-        m_settings.insert(prefix + QStringLiteral("modelOverride"),
-                          QString::number(static_cast<int>(info.modelOverride)));
+        setValue(prefix + QStringLiteral("modelOverride"),
+                 QString::number(static_cast<int>(info.modelOverride)));
     }
+}
+
+void AppSettings::setRadioAutoConnect(const QString& macKey, bool autoConnect)
+{
+    const QString prefix = radioKeyPrefix(macKey);
+    if (!contains(prefix + QStringLiteral("macAddress"))
+        && !contains(prefix + QStringLiteral("ipAddress"))) {
+        return;  // not a saved radio
+    }
+    setValue(prefix + QStringLiteral("autoConnect"),
+             autoConnect ? QStringLiteral("True") : QStringLiteral("False"));
 }
 
 void AppSettings::forgetRadio(const QString& macKey)
 {
     const QString prefix = radioKeyPrefix(macKey);
     // Remove all keys with this prefix
-    const QStringList keys = m_settings.keys();
+    const QStringList keys = allKeys();
     for (const QString& k : keys) {
         if (k.startsWith(prefix)) {
-            m_settings.remove(k);
+            remove(k);
         }
     }
 }
@@ -803,7 +1192,7 @@ void AppSettings::forgetRadio(const QString& macKey)
 void AppSettings::clearSavedRadios()
 {
     // Remove all radios/<key>/<field> entries (but preserve lastConnected, discoveryProfile)
-    const QStringList keys = m_settings.keys();
+    const QStringList keys = allKeys();
     for (const QString& k : keys) {
         if (!k.startsWith(QStringLiteral("radios/"))) {
             continue;
@@ -811,7 +1200,7 @@ void AppSettings::clearSavedRadios()
         // Only remove keys that have a per-radio sub-path (3 segments: radios/<mac>/<field>)
         const QString rest = k.mid(7); // strip "radios/"
         if (rest.contains(QLatin1Char('/'))) {
-            m_settings.remove(k);
+            remove(k);
         }
     }
 }
@@ -820,8 +1209,9 @@ QList<SavedRadio> AppSettings::savedRadios() const
 {
     // Collect all distinct macKeys
     QSet<QString> macKeys;
-    for (auto it = m_settings.constBegin(); it != m_settings.constEnd(); ++it) {
-        const QString mk = macKeyFromSettingsKey(it.key());
+    const QStringList keys = allKeys();
+    for (const QString& k : keys) {
+        const QString mk = macKeyFromSettingsKey(k);
         if (!mk.isEmpty()) {
             macKeys.insert(mk);
         }
@@ -841,42 +1231,42 @@ std::optional<SavedRadio> AppSettings::savedRadio(const QString& macKey) const
 {
     const QString prefix = radioKeyPrefix(macKey);
     const QString nameKey = prefix + QStringLiteral("name");
-    if (!m_settings.contains(nameKey)) {
+    if (!contains(nameKey)) {
         return std::nullopt;
     }
 
     SavedRadio sr;
 
     // RadioInfo fields
-    sr.info.name            = m_settings.value(prefix + QStringLiteral("name"));
-    sr.info.address         = QHostAddress(m_settings.value(prefix + QStringLiteral("ipAddress")));
+    sr.info.name            = value(prefix + QStringLiteral("name")).toString();
+    sr.info.address         = QHostAddress(value(prefix + QStringLiteral("ipAddress")).toString());
     sr.info.port            = static_cast<quint16>(
-                                m_settings.value(prefix + QStringLiteral("port"),
-                                                 QStringLiteral("1024")).toUInt());
-    sr.info.macAddress      = m_settings.value(prefix + QStringLiteral("macAddress"));
+                                value(prefix + QStringLiteral("port"),
+                                      QStringLiteral("1024")).toUInt());
+    sr.info.macAddress      = value(prefix + QStringLiteral("macAddress")).toString();
     sr.info.boardType       = static_cast<HPSDRHW>(
-                                m_settings.value(prefix + QStringLiteral("boardType"),
-                                                 QStringLiteral("999")).toInt());
+                                value(prefix + QStringLiteral("boardType"),
+                                      QStringLiteral("999")).toInt());
     sr.info.protocol        = static_cast<ProtocolVersion>(
-                                m_settings.value(prefix + QStringLiteral("protocol"),
-                                                 QStringLiteral("1")).toInt());
-    sr.info.firmwareVersion = m_settings.value(prefix + QStringLiteral("firmwareVersion"),
-                                               QStringLiteral("0")).toInt();
+                                value(prefix + QStringLiteral("protocol"),
+                                      QStringLiteral("1")).toInt());
+    sr.info.firmwareVersion = value(prefix + QStringLiteral("firmwareVersion"),
+                                    QStringLiteral("0")).toInt();
 
     // Saved-only flags
-    sr.pinToMac    = (m_settings.value(prefix + QStringLiteral("pinToMac"),
-                                       QStringLiteral("False")) == QStringLiteral("True"));
-    sr.autoConnect = (m_settings.value(prefix + QStringLiteral("autoConnect"),
-                                       QStringLiteral("False")) == QStringLiteral("True"));
+    sr.pinToMac    = (value(prefix + QStringLiteral("pinToMac"),
+                            QStringLiteral("False")).toString() == QStringLiteral("True"));
+    sr.autoConnect = (value(prefix + QStringLiteral("autoConnect"),
+                            QStringLiteral("False")).toString() == QStringLiteral("True"));
 
-    const QString lastSeenStr = m_settings.value(prefix + QStringLiteral("lastSeen"));
+    const QString lastSeenStr = value(prefix + QStringLiteral("lastSeen")).toString();
     if (!lastSeenStr.isEmpty()) {
         sr.lastSeen = QDateTime::fromString(lastSeenStr, Qt::ISODate);
     }
 
     // Model override (Phase 3I-RP)
-    const QString moStr = m_settings.value(prefix + QStringLiteral("modelOverride"),
-                                            QStringLiteral("-1"));
+    const QString moStr = value(prefix + QStringLiteral("modelOverride"),
+                                 QStringLiteral("-1")).toString();
     int moInt = moStr.toInt();
     if (moInt > static_cast<int>(HPSDRModel::FIRST) &&
         moInt < static_cast<int>(HPSDRModel::LAST)) {
@@ -888,30 +1278,95 @@ std::optional<SavedRadio> AppSettings::savedRadio(const QString& macKey) const
 
 QString AppSettings::lastConnected() const
 {
-    return m_settings.value(QStringLiteral("radios/lastConnected"));
+    return value(QStringLiteral("radios/lastConnected")).toString();
+}
+
+QString AppSettings::normalizedRadioMac(const QString& mac)
+{
+    QString compact = mac.trimmed().toUpper();
+    compact.remove(QLatin1Char(':'));
+    compact.remove(QLatin1Char('-'));
+    if (compact.size() != 12)
+        return {};
+    for (QChar c : compact) {
+        if (!((c >= QLatin1Char('0') && c <= QLatin1Char('9'))
+              || (c >= QLatin1Char('A') && c <= QLatin1Char('F'))))
+            return {};
+    }
+    QString result;
+    for (int i = 0; i < compact.size(); i += 2) {
+        if (!result.isEmpty())
+            result += QLatin1Char(':');
+        result += compact.mid(i, 2);
+    }
+    return result;
+}
+
+void AppSettings::migrateLegacyNnrSettings()
+{
+    // Only the last owner recorded in the loaded file can claim station-wide
+    // Slice<N> NR selection. Run before connection mutates radios/lastConnected.
+    if (m_remoteBackend)
+        return;
+    const QString mac = normalizedRadioMac(lastConnected());
+    if (mac.isEmpty())
+        return;
+    const QString radioPrefix = QStringLiteral("hardware/%1/").arg(mac);
+    const QString marker = radioPrefix + QStringLiteral("NnrMigrationComplete");
+    if (contains(marker))
+        return;
+
+    const auto keys = allKeys();
+    bool sawLegacyNr = false;
+    for (const QString& key : keys) {
+        if (!key.startsWith(QLatin1String("Slice")) || !key.endsWith(QLatin1String("/NrActive")))
+            continue;
+        const QString idText = key.mid(5, key.size() - 5 - 9);
+        bool validId = false;
+        const int id = idText.toInt(&validId);
+        if (!validId || id < 0 || QString::number(id) != idText)
+            continue;
+        bool validValue = false;
+        const int selected = value(key).toInt(&validValue);
+        if (!validValue || selected < 0 || selected > 8)
+            continue;
+        sawLegacyNr = true;
+        const QString target = radioPrefix + QStringLiteral("slices/%1/nnr/").arg(id);
+        bool exists = false;
+        for (const QString& existing : keys) {
+            if (existing.startsWith(target)) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists)
+            setValue(target + QStringLiteral("NrActive"), selected);
+    }
+    if (sawLegacyNr)
+        setValue(marker, QStringLiteral("True"));
 }
 
 void AppSettings::setLastConnected(const QString& macKey)
 {
     if (macKey.isEmpty()) {
-        m_settings.remove(QStringLiteral("radios/lastConnected"));
+        remove(QStringLiteral("radios/lastConnected"));
     } else {
-        m_settings.insert(QStringLiteral("radios/lastConnected"), macKey);
+        setValue(QStringLiteral("radios/lastConnected"), macKey);
     }
 }
 
 DiscoveryProfile AppSettings::discoveryProfile() const
 {
     // Default to SafeDefault (4)
-    const int v = m_settings.value(QStringLiteral("radios/discoveryProfile"),
-                                   QStringLiteral("4")).toInt();
+    const int v = value(QStringLiteral("radios/discoveryProfile"),
+                        QStringLiteral("4")).toInt();
     return static_cast<DiscoveryProfile>(v);
 }
 
 void AppSettings::setDiscoveryProfile(DiscoveryProfile p)
 {
-    m_settings.insert(QStringLiteral("radios/discoveryProfile"),
-                      QString::number(static_cast<int>(p)));
+    setValue(QStringLiteral("radios/discoveryProfile"),
+             QString::number(static_cast<int>(p)));
 }
 
 // ---------------------------------------------------------------------------
@@ -921,28 +1376,27 @@ void AppSettings::setDiscoveryProfile(DiscoveryProfile p)
 void AppSettings::setHardwareValue(const QString& mac, const QString& key, const QVariant& value)
 {
     const QString fullKey = QStringLiteral("hardware/%1/%2").arg(mac, key);
-    m_settings.insert(fullKey, value.toString());
+    setValue(fullKey, value);
 }
 
 QVariant AppSettings::hardwareValue(const QString& mac, const QString& key,
                                      const QVariant& defaultValue) const
 {
     const QString fullKey = QStringLiteral("hardware/%1/%2").arg(mac, key);
-    auto it = m_settings.constFind(fullKey);
-    if (it != m_settings.constEnd()) {
-        return QVariant(it.value());
-    }
-    return defaultValue;
+    return value(fullKey, defaultValue);
 }
 
 QMap<QString, QVariant> AppSettings::hardwareValues(const QString& mac) const
 {
+    // Returns bare keys (prefix stripped): Task 15's snapshot() deliberately
+    // does the opposite (fully-qualified keys); do not unify the two.
     const QString prefix = QStringLiteral("hardware/%1/").arg(mac);
     QMap<QString, QVariant> result;
-    for (auto it = m_settings.constBegin(); it != m_settings.constEnd(); ++it) {
-        if (it.key().startsWith(prefix)) {
-            const QString bareKey = it.key().mid(prefix.size());
-            result.insert(bareKey, QVariant(it.value()));
+    const QStringList keys = allKeys();
+    for (const QString& k : keys) {
+        if (k.startsWith(prefix)) {
+            const QString bareKey = k.mid(prefix.size());
+            result.insert(bareKey, value(k));
         }
     }
     return result;
@@ -951,10 +1405,36 @@ QMap<QString, QVariant> AppSettings::hardwareValues(const QString& mac) const
 void AppSettings::clearHardwareValues(const QString& mac)
 {
     const QString prefix = QStringLiteral("hardware/%1/").arg(mac);
-    const QStringList keys = m_settings.keys();
-    for (const QString& k : keys) {
+
+    // Fix round 1 (review, Important 1) -- scans m_settings.keys()
+    // DIRECTLY, not the backend-aware allKeys(). allKeys() now
+    // deliberately EXCLUDES a local entry the backend claims (see its
+    // own comment above), which is exactly the shape "forget radio"
+    // needs to find in order to delete: a STALE local leftover from a
+    // previous LOCAL session that is invisible through the normal read
+    // API but still physically present and still needs to actually go
+    // away. Using allKeys() here (the pre-fix shape) meant this loop
+    // could no longer even SEE such an entry to call remove() on it,
+    // so the entry stayed on disk forever despite an explicit "forget"
+    // action -- remove()'s own fix (below) can only do its job if this
+    // loop still hands it the key.
+    const QStringList localKeys = m_settings.keys();
+    for (const QString& k : localKeys) {
         if (k.startsWith(prefix)) {
-            m_settings.remove(k);
+            remove(k);
+        }
+    }
+
+    // Also clear anything the backend itself holds for this MAC that was
+    // never sitting in m_settings at all (e.g. a value that only ever
+    // arrived via a connect-time snapshot, with no local session ever
+    // having cached it first).
+    if (m_remoteBackend) {
+        const QStringList remoteKeys = m_remoteBackend->handledKeys();
+        for (const QString& k : remoteKeys) {
+            if (k.startsWith(prefix)) {
+                remove(k);
+            }
         }
     }
 }
@@ -966,8 +1446,8 @@ void AppSettings::clearHardwareValues(const QString& mac)
 HPSDRModel AppSettings::modelOverride(const QString& macKey) const
 {
     const QString prefix = radioKeyPrefix(macKey);
-    const QString val = m_settings.value(prefix + QStringLiteral("modelOverride"),
-                                          QStringLiteral("-1"));
+    const QString val = value(prefix + QStringLiteral("modelOverride"),
+                               QStringLiteral("-1")).toString();
     int v = val.toInt();
     if (v > static_cast<int>(HPSDRModel::FIRST) &&
         v < static_cast<int>(HPSDRModel::LAST)) {
@@ -979,8 +1459,8 @@ HPSDRModel AppSettings::modelOverride(const QString& macKey) const
 void AppSettings::setModelOverride(const QString& macKey, HPSDRModel model)
 {
     const QString prefix = radioKeyPrefix(macKey);
-    m_settings.insert(prefix + QStringLiteral("modelOverride"),
-                      QString::number(static_cast<int>(model)));
+    setValue(prefix + QStringLiteral("modelOverride"),
+             QString::number(static_cast<int>(model)));
 }
 
 // ---------------------------------------------------------------------------
@@ -1066,7 +1546,12 @@ void AppSettings::migrateLegacyN2adrFilter(AppSettings& s)
     int hl2Count      = 0;
     int migratedCount = 0;
     for (const SavedRadio& r : s.savedRadios()) {
-        if (r.info.boardType != HPSDRHW::HermesLite) {
+        // Task 16 (receiver and transmit gaps plan): the HL2 receive-only
+        // kit is an HL2 (Task 15) and has the HL2's I/O board
+        // (hasIoBoardHl2), so a kit saved while the global setting was in
+        // use gets the value too.
+        if (r.info.boardType != HPSDRHW::HermesLite
+            && r.info.boardType != HPSDRHW::HermesLiteRxOnly) {
             continue;
         }
         ++hl2Count;
@@ -1097,6 +1582,59 @@ void AppSettings::migrateLegacyN2adrFilter(AppSettings& s)
     s.save();
 }
 
+// R-R3-21: legacy global Penny Ext Control -> per-MAC migration
+// ---------------------------------------------------------------------------
+
+void AppSettings::migrateLegacyPennyExtCtrl(AppSettings& s)
+{
+    static constexpr auto kLegacyKey = QLatin1String("hardware/oc/pennyExtCtrl");
+    static constexpr auto kRadioKey  = QLatin1String("penny/extCtrlEnabled");
+    if (!s.contains(QString(kLegacyKey))) {
+        return;  // nothing to carry over (also the idempotent path)
+    }
+
+    // The old checkbox stored a QVariant(bool), saved as "true"/"false";
+    // PennyLaneController reads "True"/"False".
+    const bool legacyOn = s.value(QString(kLegacyKey)).toString()
+                              .compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0;
+    const QString legacyValue = legacyOn ? QStringLiteral("True") : QStringLiteral("False");
+
+    const QList<SavedRadio> radios = s.savedRadios();
+    int migratedCount = 0;
+    int realRadios = 0;
+    bool placeholderRadios = false;
+    for (const SavedRadio& r : radios) {
+        // A manual radio saved without its MAC (key manual-<ip>-<port>, empty
+        // macAddress) or under a MANUAL:<ip>:<port> placeholder has no key
+        // PennyLaneController will read once the real MAC is known. Leave it
+        // alone; the global stays so its real-MAC entry takes it later.
+        const QString& mac = r.info.macAddress;
+        if (mac.isEmpty() || mac.startsWith(QStringLiteral("MANUAL:"))) {
+            placeholderRadios = true;
+            continue;
+        }
+        ++realRadios;
+        // A radio that already has its own value keeps it.
+        if (s.hardwareValue(mac, QString(kRadioKey)).isValid()) {
+            continue;
+        }
+        s.setHardwareValue(mac, QString(kRadioKey), legacyValue);
+        ++migratedCount;
+    }
+
+    if (realRadios > 0 && !placeholderRadios) {
+        s.remove(QString(kLegacyKey));
+        qDebug() << "Migrated legacy Penny Ext Control setting (" << legacyValue
+                 << ") to" << migratedCount << "saved radio(s); legacy global removed";
+    } else {
+        qDebug() << "Legacy Penny Ext Control setting (" << legacyValue
+                 << "): no saved radio with a known MAC yet, or one still without it; "
+                    "legacy global kept for next launch";
+    }
+    s.save();
+}
+
+// ---------------------------------------------------------------------------
 // Issue #174: orphan-key cleanup for hardware/oc/n2adrFilter
 // ---------------------------------------------------------------------------
 
@@ -1110,6 +1648,35 @@ void AppSettings::removeOrphanOcN2adrFilter(AppSettings& s)
     qDebug() << "Removed orphan settings key" << QString(kOrphanKey)
              << "(issue #174 — OcOutputsHfTab N2ADR checkbox had no consumer)";
     s.save();
+}
+
+// ---------------------------------------------------------------------------
+// R-R3-21: one-shot renames (see AppSettings.h)
+// ---------------------------------------------------------------------------
+
+void AppSettings::migrateRenamedKeys(AppSettings& s)
+{
+    struct Rename { const char* oldKey; const char* newKey; };
+    static constexpr Rename kRenames[] = {
+        {"WsjtxSpotLifetime", "WsjtxSpotLifetimeSec"},
+    };
+    bool changed = false;
+    for (const Rename& r : kRenames) {
+        const QString oldKey = QString::fromLatin1(r.oldKey);
+        if (!s.contains(oldKey)) {
+            continue;
+        }
+        const QString newKey = QString::fromLatin1(r.newKey);
+        if (!s.contains(newKey)) {
+            s.setValue(newKey, s.value(oldKey));
+        }
+        s.remove(oldKey);
+        changed = true;
+        qDebug() << "Renamed settings key" << oldKey << "to" << newKey;
+    }
+    if (changed) {
+        s.save();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1212,6 +1779,95 @@ void AppSettings::ensureSettingsAtVersion(int currentVersion)
         // are populated lazily by SliceModel::saveToSettings on first write. Operators with
         // existing v5 settings see no behavioural change until they touch the new controls.
         // See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §12.
+    }
+
+    // v6 -> v7 migration (R-R3-49). Setup > General > Options saved
+    // NetworkWatchdogEnabled for years while nothing read it. R-R3-49 made
+    // the key drive the radio's watchdog, so a value an operator saved
+    // while the checkbox did nothing would come alive on upgrade with no
+    // notice. Reset it once so every operator starts from the default (on);
+    // a choice made on a v7 settings file is kept.
+    if (storedVersion < 7 && currentVersion >= 7) {
+        qDebug() << "Migrating settings to schema v7 (Network Watchdog reset)";
+        remove(QStringLiteral("NetworkWatchdogEnabled"));
+        qDebug() << "Settings migration to schema v7 complete";
+    }
+
+    // v7 -> v8 migration (R-R3-49). Setup > Network > TCI Server > Rate
+    // limit was a messages-per-second box (TciRateLimitMsgsPerSec) that
+    // nothing read. It is now Thetis's udTCIRateLimit, the shortest gap in
+    // ms between frequency updates sent to each TCI app (TciRateLimitMs,
+    // default 100). A number saved in the old unit means nothing in the new
+    // one, so drop it once; every operator starts from the default.
+    if (storedVersion < 8 && currentVersion >= 8) {
+        qDebug() << "Migrating settings to schema v8 (TCI rate limit in ms)";
+        remove(QStringLiteral("TciRateLimitMsgsPerSec"));
+        qDebug() << "Settings migration to schema v8 complete";
+    }
+
+    // v8 -> v9 migration (R-IOS-06, R-IOS-27). NR1's ranges and defaults
+    // became Thetis's NR spinboxes (ControlRanges.h: taps 1-1024, delay
+    // 1-1023, gain 1-1000 x 1e-6, leak 1-1000 x 1e-3, defaults 64 / 16 /
+    // 100 / 100). Every slice saved its NR1 values, so without this a saved
+    // value outside the new range would run while the popup's slider showed
+    // it pinned at an end. Once, per slice (Slice<N>/Nr1*):
+    //   - a gain or leak exactly equal to the old default (16e-4, 10e-7,
+    //     radio.cs's initialisers, never chosen by an operator) becomes the
+    //     new default;
+    //   - a value outside the range is clamped into it and written back;
+    //   - a value inside the range stays as the operator set it.
+    if (storedVersion < 9 && currentVersion >= 9) {
+        qDebug() << "Migrating settings to schema v9 (NR1 ranges)";
+        using namespace ControlRanges;
+        struct Nr1Key {
+            const char* suffix;
+            const NrControl* control;
+            double oldDefault;  // NaN where the default did not change
+            bool whole;
+        };
+        const double none = std::nan("");
+        const Nr1Key keys[] = {
+            {"Nr1Taps", &kNr1Taps, none, true},
+            {"Nr1Delay", &kNr1Delay, none, true},
+            {"Nr1Gain", &kNr1Gain, 16e-4, false},
+            {"Nr1Leakage", &kNr1Leak, 10e-7, false},
+        };
+        static const QRegularExpression sliceKey(
+            QStringLiteral("^Slice\\d+/(Nr1Taps|Nr1Delay|Nr1Gain|Nr1Leakage)$"));
+        for (const QString& key : allKeys()) {
+            const QRegularExpressionMatch match = sliceKey.match(key);
+            if (!match.hasMatch()) {
+                continue;
+            }
+            for (const Nr1Key& entry : keys) {
+                if (match.captured(1) != QLatin1String(entry.suffix)) {
+                    continue;
+                }
+                bool ok = false;
+                const double saved = value(key).toString().toDouble(&ok);
+                const double low = entry.control->min * entry.control->scale;
+                const double high = entry.control->max * entry.control->scale;
+                double next = saved;
+                if (!ok || !std::isfinite(saved)) {
+                    next = entry.control->defaultValue;
+                } else if (!std::isnan(entry.oldDefault) && saved == entry.oldDefault) {
+                    next = entry.control->defaultValue;
+                } else {
+                    next = std::clamp(saved, low, high);
+                }
+                if (ok && next == saved) {
+                    break;
+                }
+                if (entry.whole) {
+                    setValue(key, static_cast<int>(std::lround(next)));
+                } else {
+                    setValue(key, next);
+                }
+                qDebug() << "Settings v9:" << key << "from" << saved << "to" << next;
+                break;
+            }
+        }
+        qDebug() << "Settings migration to schema v9 complete";
     }
 
     setValue(versionKey, QString::number(currentVersion));

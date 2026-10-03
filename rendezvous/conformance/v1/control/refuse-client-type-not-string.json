@@ -1,0 +1,7 @@
+{
+  "from": "client",
+  "wire": {
+    "type": 7
+  },
+  "decodes": false
+}

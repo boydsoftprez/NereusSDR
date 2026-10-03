@@ -39,16 +39,57 @@
 //                 to AppSettings: PeakHoldEnabled ("True"/"False") and
 //                 PeakDecayRate ("Fast"/"Medium"/"Slow").
 //                 buildContextMenuForTesting() public accessor for Task 39 test.
+//   2026-09-18  Vintage meter faces (Lee, AI-assisted via Anthropic Claude
+//                 Code).  FaceStyle enum + setFaceStyle(): six vintage panel-
+//                 meter faces drawn by gui/VintageMeterFace (design carried
+//                 over from Lee's TubeMeter project) alongside the original
+//                 AetherSDR look, kept as FaceStyle::Classic.  "Meter Face"
+//                 submenu appended to the context menu (index 3, so the
+//                 Task 39 indices are unchanged); persisted as
+//                 SMeter_FaceStyle.  The static face is cached in a pixmap;
+//                 only pointer, markers and readouts are drawn per frame.
+//                 NereusSDR-native; no upstream equivalent.
+//   2026-09-22  No-reading display (R-R3-13) by J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Anthropic Claude Code.
+//                 kNoReadingDbm + m_noReading: a level at or below -400 dBm,
+//                 or a non-finite one, is no reading.  Both faces then show
+//                 "--" and "-- dBm", the pointer rests at the scale minimum
+//                 and the peak markers clear until the next real value.
+//                 rxSUnitsReadout() / rxDbmReadout() / peakMarkerVisible() /
+//                 peakHoldLineVisible() hold the readout text and marker
+//                 conditions both faces share.  Test seams added.
+//   2026-09-24  settingsChanged() signal (R-R3-21) by J.J. Boyd (KG4VCF),
+//                 with AI-assisted transformation via Anthropic Claude Code:
+//                 emitted when the face, peak hold or peak decay changes, so
+//                 Setup > Appearance > Meter Styles follows a right-click
+//                 change while it is open.
+//                 NereusSDR-native; no upstream equivalent.
+//   2026-09-24  The S-unit reference moved to core/ControlRanges.h (iPhone
+//                 app Task 19, R-IOS-06) by J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Anthropic Claude Code; the
+//                 Core's catalogue sends the same scale to an app.
+//   2026-09-27  TX modes without a reading (R-R3-49, remote-window parity
+//                 Task 33) by J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//                 setTxModeUnavailable(): a TX mode a remote window's Core
+//                 does not send shows "--" with the reason, never 0.  The TX
+//                 readout text of both faces moved unchanged into txReadout().
+//                 NereusSDR-native; no upstream equivalent.
 // =================================================================
 #pragma once
 
+#include "core/ControlRanges.h"
+
 #include <QWidget>
+#include <array>
+#include <QPixmap>
 #include <QTimer>
 #include <QElapsedTimer>
 
 // Forward declarations
 class QContextMenuEvent;
 class QMenu;
+class QPainter;
 
 namespace NereusSDR {
 
@@ -79,10 +120,11 @@ public:
     QSize sizeHint() const override { return {280, 140}; }
     QSize minimumSizeHint() const override { return {200, 100}; }
 
-    // Current reading in dBm.
+    // Current reading in dBm; -400 (kNoReadingDbm) when there is no reading.
     float levelDbm() const { return m_levelDbm; }
 
-    // Reading as S-units string (e.g. "S7", "S9+20").
+    // Reading as S-units string (e.g. "S7", "S9+20"), or "--" when there is
+    // no reading.
     QString sUnitsText() const;
 
     // From AetherSDR src/gui/SMeterWidget.h:32-34 [@0cd4559]
@@ -93,6 +135,13 @@ public:
     // MaxBin        -> WDSP GetDetectMaxBin (Task 32 WdspEngine::getMaxBinDbm).
     enum class RxMode { SMeter, SignalAverage, SMeterPeak, MaxBin };
     enum class DecayRate { Fast, Medium, Slow };
+
+    // Meter face.  The first six are the vintage panel-meter themes of
+    // gui/VintageMeterFace, in its theme-table order; Classic is the flat
+    // AetherSDR / SmartSDR look this widget was ported with.
+    // NereusSDR-native; no upstream equivalent.
+    enum class FaceStyle { AgedCream, VuAmber, CollinsWhite, Blackface, Carbon, Ice, Classic };
+    FaceStyle faceStyle() const { return m_faceStyle; }
 
     // Current RX/TX mode accessors.
     // Used by MeterPoller::pollSMeter() (Task 41) to branch on the active
@@ -132,6 +181,28 @@ public:
     // Production code reads m_peakHoldDbm indirectly via paintEvent.
     float testPeakLevel() const { return m_peakHoldDbm; }
 
+    // Test-only: the RX readouts both faces draw (S-units on the left, dBm
+    // on the right), and whether either peak marker would be drawn.
+    // NereusSDR-native test seams; no upstream equivalent.
+    QString testSUnitsReadout() const { return rxSUnitsReadout(); }
+    QString testDbmReadout() const { return rxDbmReadout(); }
+    bool testPeakMarkersShown() const { return peakMarkerVisible() || peakHoldLineVisible(); }
+
+    // Test-only: the TX value the needle heads for and the TX readout the
+    // faces draw, in the current TX mode.  NereusSDR-native.
+    float testTxValue() const { return currentTxValue(); }
+    QString testTxReadout() const { return txReadout(false); }
+
+    // Test-only: where the pointer is heading and where it is now
+    // (0.0 = scale minimum, 1.0 = scale maximum).
+    float testNeedleTarget() const { return m_targetNeedleFraction; }
+    float testNeedleFraction() const { return m_needleFraction; }
+
+signals:
+    // R-R3-21: the face, peak hold or peak decay changed (and was saved),
+    // from the right-click menu or from Setup.
+    void settingsChanged();
+
 public slots:
     // Update the displayed RX level (S-meter dBm).
     // From AetherSDR src/gui/SMeterWidget.h:38 [@0cd4559]
@@ -167,6 +238,26 @@ public slots:
     void setPeakDecayRate(const QString& rate);
     void resetPeak();
 
+    // Select the meter face; persists SMeter_FaceStyle.
+    // NereusSDR-native; no upstream equivalent.
+    void setFaceStyle(FaceStyle style);
+
+    // R-R3-49 (remote-window parity Task 33): a TX mode this window has no
+    // reading for (a remote window whose Core does not send it).  While
+    // transmitting in that mode both faces show "--", the pointer rests at
+    // the scale minimum and the widget's tool tip says `reason`, never a 0
+    // standing in for a reading.  An empty reason clears it.  The mode stays
+    // offered in the right-click menu.  NereusSDR-native.
+    void setTxModeUnavailable(TxMode mode, const QString& reason);
+    QString txModeUnavailableReason(TxMode mode) const;
+
+    // Persisted name <-> enum for SMeter_FaceStyle, and the menu label.
+    // Public for Setup > Appearance > Meter Styles, which offers the same
+    // faces (R-R3-21).
+    static QString faceStyleKey(FaceStyle style);
+    static FaceStyle faceStyleFromKey(const QString& key);
+    static QString faceStyleLabel(FaceStyle style);
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     // Right-click context menu delegates to buildContextMenu().
@@ -176,9 +267,33 @@ protected:
     void contextMenuEvent(QContextMenuEvent* ev) override;
 
 private:
+    // paintEvent dispatches on m_faceStyle.  paintClassic is the AetherSDR
+    // paint body, unchanged; paintVintage draws via gui/VintageMeterFace.
+    void paintClassic(QPainter& p);
+    void paintVintage(QPainter& p);
+
+
     void updateNeedleTarget();
     void animateNeedle();
     void updatePeakHoldValue();
+
+    // RX readouts both faces draw: S-units ("S7", "S9+20") and dBm
+    // ("-97 dBm") for the value on display, or "--" and "-- dBm" when there
+    // is no reading.  NereusSDR-native.
+    QString rxSUnitsReadout() const;
+    QString rxDbmReadout() const;
+    // TX readout in the current TX mode ("--" when the mode has no
+    // reading); `swrRatio` draws SWR as "1.5 : 1" (the vintage faces).
+    // NereusSDR-native (the per-mode text is the faces' existing text).
+    QString txReadout(bool swrRatio) const;
+    bool currentTxModeUnavailable() const;
+    void refreshTxToolTip();
+
+    // Whether a face draws the RX Signal Peak marker / the peak hold line.
+    // The conditions both faces share; false while there is no reading.
+    // NereusSDR-native.
+    bool peakMarkerVisible() const;
+    bool peakHoldLineVisible() const;
 
     // Connect to RadioModel's cross-vendor external-amp aggregator signals.
     // Called from the RadioModel* constructor overload only.
@@ -216,6 +331,10 @@ private:
     float   m_peakDbm{-127.0f};     // RX peak hold
     QString m_source{"S-Meter Peak"};
 
+    // No reading: set by setLevel() for a level at or below kNoReadingDbm
+    // or a non-finite one, cleared by the next real level.  NereusSDR-native.
+    bool    m_noReading{false};
+
     // Visual-change guard for animateNeedle's update() throttle.  Stores
     // the needle fraction last drawn so we can skip the repaint when the
     // physics tick produces sub-pixel movement.  Initialised to a value
@@ -232,8 +351,16 @@ private:
     // Mode state
     // From AetherSDR src/gui/SMeterWidget.h:92-94 [@0cd4559]
     TxMode  m_txMode{TxMode::Power};
+    // Parity Task 33: why each TX mode has no reading here (by TxMode).
+    std::array<QString, 4> m_txUnavailable;
     RxMode  m_rxMode{RxMode::SMeter};
     bool    m_transmitting{false};
+
+    // Vintage face: the static artwork (bezel, card, scale, lettering) is
+    // rendered once per size / theme / scale and blitted each frame.
+    FaceStyle m_faceStyle{FaceStyle::AgedCream};
+    QPixmap   m_faceCache;
+    QString   m_faceCacheKey;
 
     // From AetherSDR src/gui/SMeterWidget.h:96-99 [@0cd4559]
     QTimer  m_needleAnimation;
@@ -259,12 +386,19 @@ private:
     // updatePeakHoldValue(). Always 0 in production; testAdvanceTime() sets it.
     qint64         m_testTimeOffsetMs{0};
 
-    // S-unit reference: S0 = -127 dBm, each S-unit = 6 dB
-    // From AetherSDR src/gui/SMeterWidget.h:114-117 [@0cd4559]
-    static constexpr float S0_DBM  = -127.0f;
-    static constexpr float S9_DBM  = -73.0f;
-    static constexpr float MAX_DBM = -13.0f;  // S9+60
-    static constexpr float DB_PER_S = 6.0f;
+    // S-unit reference: S0 = -127 dBm, each S-unit = 6 dB. The values (with
+    // their AetherSDR cite, src/gui/SMeterWidget.h:114-117 [@0cd4559]) live
+    // in core/ControlRanges.h, which the Core's catalogue reads too.
+    static constexpr float S0_DBM  = ControlRanges::kSMeterS0Dbm;
+    static constexpr float S9_DBM  = ControlRanges::kSMeterS9Dbm;
+    static constexpr float MAX_DBM = ControlRanges::kSMeterMaxDbm;  // S9+60
+    static constexpr float DB_PER_S = ControlRanges::kSMeterDbPerSUnit;
+
+    // At or below this level, or not finite, the widget has no reading.
+    // -400 dBm is the value MeterPoller feeds when Max Bin has nothing to
+    // report, locally (passed through unchanged) and on a remote GUI with
+    // no reading.  NereusSDR-native.
+    static constexpr float kNoReadingDbm = -400.0f;
 
     // From AetherSDR src/gui/SMeterWidget.h:119-122 [@0cd4559]
     // NereusSDR bench-2026-05-24: bumped 8 -> 33 ms (125 Hz -> 30 Hz).

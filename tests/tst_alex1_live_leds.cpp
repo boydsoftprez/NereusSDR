@@ -62,16 +62,16 @@ private slots:
     }
 
     // Above 61.44 MHz — out of every row's [start, end] range, so HPF
-    // falls back to the 6m-bypass row (Thetis fallback) and LPF reports
-    // no match (no LED lit). 70 MHz is safely past the 6m LPF end of
-    // 61.44 MHz.
-    void above_all_rows_falls_to_bypass_hpf_and_no_lpf()
+    // falls back to the 6m-bypass row and LPF falls through to the 6m
+    // lamp, as setAlexLPF's else branch does (console.cs:7236-7240
+    // [v2.10.3.15]). 70 MHz is safely past the 6m LPF end of 61.44 MHz.
+    void above_all_rows_falls_to_bypass_hpf_and_6m_lpf()
     {
         RadioModel model;
         AntennaAlexAlex1Tab tab(&model);
         tab.setCurrentFrequencyHz(70.0e6);
         QCOMPARE(tab.activeHpfLedForTest(), 5);   // 6m-bypass row = fallback
-        QCOMPARE(tab.activeLpfLedForTest(), -1);  // no LPF match
+        QCOMPARE(tab.activeLpfLedForTest(), 6);   // 6m LPF = fallback
     }
 
     void sliceFrequencyChanged_signal_drives_leds()

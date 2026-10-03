@@ -1,0 +1,30 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "record.batch",
+    "stream": "spots",
+    "generation": 1,
+    "reset": false,
+    "upserts": [
+      {
+        "id": "12",
+        "fields": {
+          "timeUtc": "2026-09-26T18:24:00Z",
+          "frequencyHz": 14025000,
+          "call": "JA1ABC",
+          "mode": "CW",
+          "source": "Cluster",
+          "spotter": "W3LPL",
+          "comment": "CW big signal",
+          "band": 5,
+          "dxccColour": "",
+          "dxccPriority": 0
+        }
+      }
+    ],
+    "removes": [
+      "9"
+    ]
+  },
+  "decodes": true
+}

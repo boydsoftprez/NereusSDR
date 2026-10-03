@@ -1,0 +1,16 @@
+{
+  "receiver": "client",
+  "message": [
+    {
+      "text": "{\"type\":\"notice\"}"
+    }
+  ],
+  "frames": [
+    {
+      "hex": "10000001"
+    }
+  ],
+  "encodes": false,
+  "outcome": "refused",
+  "replies": []
+}

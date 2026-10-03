@@ -7,12 +7,62 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-09-27: Match NR2/NR4 controls and defaults to Thetis v2.10.3.15.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//               (R-IOS-06, R-IOS-27).
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
 //   2026-05-04 — Issue #175 Wave 1: dropped misplaced AM TX / Carrier
 //                 Level stub from AmSamSetupPage (control belongs at
 //                 Thetis grpTXAM on tpTransmit, not the DSP/AM tab).
+//   2026-09-23 - R-R3-21: AgcAlcSetupPage TX Leveler and TX ALC groups
+//                 follow the remote transmit permission. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-23 - R-R3-21 / R-R3-09: the TNF page's row commit sends a
+//                 remote window's centre and width to the Core as one move.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-23 - R-R3-46: the CW sidetone row reads the Core's radio
+//                 at build in a remote window. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: controls whose feature is not built yet are
+//                 hidden through UnbuiltFeatures: the CW keyer and timing
+//                 groups, the APF bandwidth and gain, the SAM group, the AM
+//                 squelch maximum tail, the FM receive deviation and
+//                 de-emphasis. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-24 - iPhone app follow-up (R-IOS-06): the AM and FM squelch
+//                 threshold ranges come from ControlRanges.h, which the
+//                 Core's catalogue reads too. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 4): AGC/ALC's TX Leveler and TX ALC
+//                 groups and every CFC page setting follow the transmit
+//                 settings gate at version 4 (the Core mirrors them)
+//                 instead of the transmit permission. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-26 - R-R3-49 / R-R3-21 (parity Task 16): NR/ANF's DFNR and MNR
+//                 tabs follow what the station can run (the Core's in a
+//                 remote window), disabled with the plain reason; TNF's
+//                 minimum notch width is the Core's in a remote window.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-26 - R-R3-49 (trunk merge of parity Tasks 16 to 18): the DFNR
+//                 and MNR tabs read RadioModel::nrCannotRunReason (the one
+//                 source, DspAssetService) and follow its signals.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-27 - R-IOS-06, R-IOS-27: the NR1 tab reads ControlRanges.h,
+//                 its ranges and defaults corrected to Thetis's NR
+//                 spinboxes (taps 1-1024, delay 1-1023, gain and leak
+//                 1-1000, defaults 64 / 16 / 100 / 100) with Thetis's
+//                 tooltips. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-27 - R-IOS-06, R-IOS-27: the MNR tab reads ControlRanges.h;
+//                 with no slice it starts at MacNRFilter's DEF_* values
+//                 (Aggressiveness 4, Bias 1.2), where it showed 6 and 1.5.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - R-R3-49 / R-IOS-18: Setup description version 15 ids on
+//                 the NR3 model, NNR limit and Diagnostics, APF Center Freq
+//                 and Visual Notch. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -64,15 +114,22 @@
 
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
+#include "core/ControlRanges.h"
 #include "core/RadioConnection.h"
 #include "core/RxChannel.h"
 #include "core/WdspEngine.h"
+#include "core/dsp/DspAssetService.h"
+#include "core/session/IStationLink.h"
 #include "core/wdsp_api.h"
 #include "models/NotchModel.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
+#include "gui/widgets/NnrControls.h"
+#include "gui/DspAssetDialog.h"
+#include "gui/UnbuiltFeatures.h"
 
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -93,7 +150,64 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include <cmath>
+#include <functional>
+#include <memory>
+
 namespace NereusSDR {
+
+void DspReceiverSelection::setSelector(std::function<SliceModel*()> selector,
+                                       std::function<bool()> requiresOwnedReceiver)
+{
+    m_selector = std::move(selector);
+    m_requiresOwnedReceiver = std::move(requiresOwnedReceiver);
+    m_lastSelected = m_selector ? m_selector() : nullptr;
+    m_lastRestricted = restrictsReceiver();
+    emit changed();
+}
+
+bool DspReceiverSelection::restrictsReceiver() const
+{
+    return m_requiresOwnedReceiver && m_requiresOwnedReceiver();
+}
+
+SliceModel* DspReceiverSelection::selected(RadioModel* model) const
+{
+    return m_selector ? m_selector() : (model ? model->activeSlice() : nullptr);
+}
+
+void DspReceiverSelection::notifyChanged(RadioModel* model)
+{
+    SliceModel* now = selected(model);
+    const bool restricted = restrictsReceiver();
+    if (now == m_lastSelected && restricted == m_lastRestricted) { return; }
+    m_lastSelected = now;
+    m_lastRestricted = restricted;
+    emit changed();
+}
+
+ReceiverDspSetupPage::ReceiverDspSetupPage(const QString& title, RadioModel* model,
+                                           QWidget* parent, DspReceiverSelection* selection)
+    : SetupPage(title, model, parent), m_selection(selection)
+{}
+
+SliceModel* ReceiverDspSetupPage::selectedSlice()
+{
+    return m_selection ? m_selection->selected(model())
+                       : (model() ? model()->activeSlice() : nullptr);
+}
+
+void ReceiverDspSetupPage::watchReceiverSelection(std::function<void()> update)
+{
+    if (model()) {
+        connect(model(), &RadioModel::activeSliceChanged, this,
+                [update](int) { update(); });
+    }
+    if (m_selection) {
+        connect(m_selection, &DspReceiverSelection::changed, this,
+                [update] { update(); });
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: disable every child widget inside a group box (NYI guard).
@@ -101,6 +215,74 @@ namespace NereusSDR {
 static void disableGroup(QGroupBox* grp)
 {
     grp->setEnabled(false);
+}
+
+using SliceBindings = QList<QMetaObject::Connection>;
+
+// R-R3-21: keeps Setup controls bound to the active slice while the page is
+// open. bind(slice) makes the connections for one slice (slice is null when
+// there is none) and returns them; when the active slice changes they are
+// dropped and bind() runs again for the new one.
+static void bindToActiveSlice(QObject* owner, RadioModel* model,
+                              DspReceiverSelection* selection,
+                              std::function<SliceBindings(SliceModel*)> bind)
+{
+    auto held = std::make_shared<SliceBindings>();
+    const auto rebind = [held, bind = std::move(bind)](SliceModel* slice) {
+        for (const QMetaObject::Connection& c : std::as_const(*held)) {
+            QObject::disconnect(c);
+        }
+        *held = bind(slice);
+    };
+    const auto current = [model, selection] {
+        return selection ? selection->selected(model)
+                         : (model ? model->activeSlice() : nullptr);
+    };
+    rebind(current());
+    if (model) {
+        QObject::connect(model, &RadioModel::activeSliceChanged, owner,
+                         [current, rebind](int) { rebind(current()); });
+    }
+    if (selection) {
+        QObject::connect(selection, &DspReceiverSelection::changed, owner,
+                         [current, rebind] { rebind(current()); });
+    }
+}
+
+// With no slice a control is off and says why; with one it is on again.
+static void setSliceAvailable(QWidget* w, bool available, const QString& tip = QString())
+{
+    w->setEnabled(available);
+    w->setToolTip(available ? tip : QStringLiteral("Connect to a radio to change this."));
+}
+
+// R-R3-21: a squelch threshold slider (dB) bound both ways to one setting of
+// the active slice; with no slice it says why it is off.
+static void bindSquelchThreshold(QObject* owner, RadioModel* model,
+                                 DspReceiverSelection* selection, QSlider* slider,
+                                 QLabel* value,
+                                 double (SliceModel::*getter)() const,
+                                 void (SliceModel::*setter)(double),
+                                 void (SliceModel::*changed)(double))
+{
+    bindToActiveSlice(owner, model, selection, [=](SliceModel* slice) {
+        SliceBindings conns;
+        setSliceAvailable(slider, slice != nullptr);
+        if (!slice) { return conns; }
+        const auto show = [slider, value](double dB) {
+            QSignalBlocker block(slider);
+            slider->setValue(static_cast<int>(std::lround(dB)));
+            value->setText(QStringLiteral("%1 dB").arg(slider->value()));
+        };
+        show((slice->*getter)());
+        conns << QObject::connect(slider, &QSlider::valueChanged, slice,
+                                  [slice, setter, value](int dB) {
+            value->setText(QStringLiteral("%1 dB").arg(dB));
+            (slice->*setter)(static_cast<double>(dB));
+        });
+        conns << QObject::connect(slice, changed, slider, show);
+        return conns;
+    });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -112,10 +294,28 @@ static void disableGroup(QGroupBox* grp)
 //   udAGCMaxGain, tbAGCHangThreshold, udALCDecay, udALCMaxGain,
 //   chkLevelerEnable, udLevelerThreshold, udLevelerDecay
 //
-AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
-    : SetupPage("AGC/ALC", model, parent)
+AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent,
+                                 DspReceiverSelection* selection)
+    : ReceiverDspSetupPage("AGC/ALC", model, parent, selection)
 {
-    SliceModel* slice = model->activeSlice();
+    rebuildForActiveSlice();
+    watchReceiverSelection([this] { rebuildForActiveSlice(); });
+}
+
+void AgcAlcSetupPage::rebuildForActiveSlice()
+{
+    // Drop the old receiver widgets and their slice connections before a
+    // new selection can receive a pending gesture (same contract as NR/ANF).
+    QVBoxLayout* layout = contentLayout();
+    while (layout->count() > 0) {
+        QLayoutItem* item = layout->takeAt(0);
+        delete item->widget();
+        delete item;
+    }
+    m_txLevelerGrp = nullptr;
+    m_txAlcGrp = nullptr;
+    RadioModel* model = this->model();
+    SliceModel* slice = selectedSlice();
     if (!slice) {
         // No active slice (disconnected) — show disabled placeholder
         QGroupBox* grp = addSection("RX1 AGC");
@@ -128,6 +328,7 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     QVBoxLayout* agcLay = qobject_cast<QVBoxLayout*>(agcGrp->layout());
 
     m_agcModeCombo = new QComboBox;
+    m_agcModeCombo->setProperty("nereusSetupId", "dsp.agcAlc.agcMode");
     m_agcModeCombo->addItems({"Off", "Long", "Slow", "Med", "Fast", "Custom"});
     m_agcModeCombo->setCurrentIndex(static_cast<int>(slice->agcMode()));
     // From Thetis v2.10.3.13 console.resx:4555 — comboAGC.ToolTip
@@ -135,12 +336,14 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     addLabeledCombo(agcLay, "Mode", m_agcModeCombo);
 
     m_agcAttack = new QSpinBox;
+    m_agcAttack->setProperty("nereusSetupId", "dsp.agcAlc.agcAttack");
     m_agcAttack->setRange(1, 1000);
     m_agcAttack->setSuffix(" ms");
     m_agcAttack->setValue(slice->agcAttack());
     addLabeledSpinner(agcLay, "Attack", m_agcAttack);
 
     m_agcDecay = new QSpinBox;
+    m_agcDecay->setProperty("nereusSetupId", "dsp.agcAlc.agcDecay");
     m_agcDecay->setRange(1, 5000);
     m_agcDecay->setSuffix(" ms");
     m_agcDecay->setValue(slice->agcDecay());
@@ -149,6 +352,7 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     addLabeledSpinner(agcLay, "Decay", m_agcDecay);
 
     m_agcHang = new QSpinBox;
+    m_agcHang->setProperty("nereusSetupId", "dsp.agcAlc.agcHang");
     m_agcHang->setRange(10, 5000);
     m_agcHang->setSuffix(" ms");
     m_agcHang->setValue(slice->agcHang());
@@ -157,6 +361,8 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     addLabeledSpinner(agcLay, "Hang", m_agcHang);
 
     m_agcSlope = new QSlider(Qt::Horizontal);
+    m_agcSlope->setProperty("nereusSetupId", "dsp.agcAlc.agcSlope");
+    m_agcSlope->setProperty("nereusSetupScale", 0.1);
     m_agcSlope->setRange(0, 20);
     m_agcSlope->setValue(slice->agcSlope() / 10);
     // From Thetis v2.10.3.13 setup.designer.cs:39358 — udDSPAGCSlope.ToolTip
@@ -164,6 +370,7 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     addLabeledSlider(agcLay, "Slope", m_agcSlope);
 
     m_agcMaxGain = new QSpinBox;
+    m_agcMaxGain->setProperty("nereusSetupId", "dsp.agcAlc.agcMaxGain");
     m_agcMaxGain->setRange(-20, 120);
     m_agcMaxGain->setSuffix(" dB");
     m_agcMaxGain->setValue(slice->agcMaxGain());
@@ -172,6 +379,7 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     addLabeledSpinner(agcLay, "Max Gain", m_agcMaxGain);
 
     m_agcFixedGain = new QSpinBox;
+    m_agcFixedGain->setProperty("nereusSetupId", "dsp.agcAlc.agcFixedGain");
     m_agcFixedGain->setRange(-20, 120);
     m_agcFixedGain->setSuffix(" dB");
     m_agcFixedGain->setValue(slice->agcFixedGain());
@@ -180,6 +388,7 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     addLabeledSpinner(agcLay, "Fixed Gain", m_agcFixedGain);
 
     m_agcHangThresh = new QSlider(Qt::Horizontal);
+    m_agcHangThresh->setProperty("nereusSetupId", "dsp.agcAlc.agcHangThreshold");
     m_agcHangThresh->setRange(0, 100);
     m_agcHangThresh->setValue(slice->agcHangThreshold());
     // From Thetis v2.10.3.13 setup.designer.cs:39250 — tbDSPAGCHangThreshold.ToolTip
@@ -225,12 +434,14 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     QVBoxLayout* autoAgcLay = qobject_cast<QVBoxLayout*>(autoAgcGrp->layout());
 
     m_autoAgcChk = new QCheckBox("Auto AGC RX1");
+    m_autoAgcChk->setProperty("nereusSetupId", "dsp.agcAlc.autoAgcEnabled");
     m_autoAgcChk->setChecked(slice->autoAgcEnabled());
     // From Thetis v2.10.3.13 setup.designer.cs:38679 — chkAutoAGCRX1.ToolTip
     m_autoAgcChk->setToolTip(QStringLiteral("Automatically adjust AGC based on Noise Floor"));
     autoAgcLay->addWidget(m_autoAgcChk);
 
     m_autoAgcOffset = new QSpinBox;
+    m_autoAgcOffset->setProperty("nereusSetupId", "dsp.agcAlc.autoAgcOffset");
     m_autoAgcOffset->setRange(-60, 60);
     m_autoAgcOffset->setSuffix(" dB");
     m_autoAgcOffset->setValue(static_cast<int>(slice->autoAgcOffset()));
@@ -263,9 +474,11 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     TransmitModel& tx = model->transmitModel();
 
     QGroupBox* txLevGrp = addSection("TX Leveler");
+    m_txLevelerGrp = txLevGrp;
     QVBoxLayout* txLevLay = qobject_cast<QVBoxLayout*>(txLevGrp->layout());
 
     m_txLevelerOnChk = new QCheckBox("Enable");
+    m_txLevelerOnChk->setProperty("nereusSetupId", "dsp.agcAlc.txLevelerOn");
     m_txLevelerOnChk->setChecked(tx.txLevelerOn());
     // From Thetis setup.Designer.cs:38707 [v2.10.3.13] — chkDSPLevelerEnabled tooltip.
     m_txLevelerOnChk->setToolTip(
@@ -273,6 +486,7 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     txLevLay->addWidget(m_txLevelerOnChk);
 
     m_txLevelerTopSpin = new QSpinBox;
+    m_txLevelerTopSpin->setProperty("nereusSetupId", "dsp.agcAlc.txLevelerMaxGain");
     m_txLevelerTopSpin->setRange(TransmitModel::kTxLevelerMaxGainDbMin,
                                  TransmitModel::kTxLevelerMaxGainDbMax);
     m_txLevelerTopSpin->setSuffix(" dB");
@@ -284,6 +498,7 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     addLabeledSpinner(txLevLay, "Max Gain", m_txLevelerTopSpin);
 
     m_txLevelerDecaySpin = new QSpinBox;
+    m_txLevelerDecaySpin->setProperty("nereusSetupId", "dsp.agcAlc.txLevelerDecay");
     m_txLevelerDecaySpin->setRange(TransmitModel::kTxLevelerDecayMsMin,
                                    TransmitModel::kTxLevelerDecayMsMax);
     m_txLevelerDecaySpin->setSuffix(" ms");
@@ -331,9 +546,11 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     // 38793-38866 [v2.10.3.13].
     //
     QGroupBox* txAlcGrp = addSection("TX ALC");
+    m_txAlcGrp = txAlcGrp;
     QVBoxLayout* txAlcLay = qobject_cast<QVBoxLayout*>(txAlcGrp->layout());
 
     m_txAlcMaxGainSpin = new QSpinBox;
+    m_txAlcMaxGainSpin->setProperty("nereusSetupId", "dsp.agcAlc.txAlcMaxGain");
     m_txAlcMaxGainSpin->setRange(TransmitModel::kTxAlcMaxGainDbMin,
                                  TransmitModel::kTxAlcMaxGainDbMax);
     m_txAlcMaxGainSpin->setSuffix(" dB");
@@ -344,6 +561,7 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     addLabeledSpinner(txAlcLay, "Max Gain", m_txAlcMaxGainSpin);
 
     m_txAlcDecaySpin = new QSpinBox;
+    m_txAlcDecaySpin->setProperty("nereusSetupId", "dsp.agcAlc.txAlcDecay");
     m_txAlcDecaySpin->setRange(TransmitModel::kTxAlcDecayMsMin,
                                TransmitModel::kTxAlcDecayMsMax);
     m_txAlcDecaySpin->setSuffix(" ms");
@@ -370,6 +588,28 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
         QSignalBlocker b(m_txAlcDecaySpin);
         m_txAlcDecaySpin->setValue(ms);
     });
+
+    // R-R3-49 (parity Task 4): the Core mirrors the TX Leveler and TX ALC
+    // settings (transmitSettingsVersion 4). In a remote window both groups
+    // start closed until SetupDialog pushes that gate, then change the
+    // Core's values while its radio is off the air.
+    if (!model->ownsLocalDsp()) {
+        setTransmitSettingsPermittedAt(4,
+            m_txSettingsGateKnown && m_txSettingsPermitted, m_txSettingsReason);
+    }
+}
+
+void AgcAlcSetupPage::setTransmitSettingsPermittedAt(int version, bool permitted,
+                                                     const QString& reason)
+{
+    if (version != 4) {
+        return;
+    }
+    m_txSettingsGateKnown = true;
+    m_txSettingsPermitted = permitted;
+    m_txSettingsReason = reason;
+    gateTransmitControls({m_txLevelerGrp, m_txAlcGrp}, permitted,
+        reason.isEmpty() ? IStationLink::transmitSettingsUnavailableReason() : reason);
 }
 
 // From Thetis v2.10.3.13 setup.cs:5046-5076 — CustomRXAGCEnabled
@@ -405,12 +645,13 @@ void AgcAlcSetupPage::updateCustomGating(AGCMode mode)
 //   MNR tab:  (AetherSDR native, macOS only, not Thetis)
 //   ANF tab:  chkANFEnable (Thetis chkDSPANFEnable)
 //
-// Slice-tracking policy: binds to model->activeSlice() at construction
-// (simple pattern matching AgcAlcSetupPage). Slice-switch requires
-// close+reopen of Setup dialog. Full dynamic rebind deferred to Task 21.
+// Each active-slice change reconstructs these tab controls from the new
+// slice's values. Destroying the prior widgets disconnects their edits and
+// readbacks, so an in-progress gesture cannot retarget another receiver.
 //
-NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
-    : SetupPage("NR/ANF", model, parent)
+NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent,
+                               DspReceiverSelection* selection)
+    : ReceiverDspSetupPage("NR/ANF", model, parent, selection)
 {
     // Embed QTabWidget directly in the inherited contentLayout().
     // This is identical to HardwarePage's pattern (HardwarePage.cpp:90-95).
@@ -440,7 +681,22 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
     tabs->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     contentLayout()->addWidget(tabs, /*stretch=*/1);
 
-    SliceModel* slice = model ? model->activeSlice() : nullptr;
+    rebuildForActiveSlice();
+    watchReceiverSelection([this] { rebuildForActiveSlice(); });
+}
+
+void NrAnfSetupPage::rebuildForActiveSlice()
+{
+    RadioModel* model = this->model();
+    QTabWidget* tabs = m_tabs;
+    const int oldTab = tabs->currentIndex();
+    m_nnrControls = nullptr;
+    while (tabs->count() != 0) {
+        QWidget* old = tabs->widget(0);
+        tabs->removeTab(0);
+        delete old;
+    }
+    SliceModel* slice = selectedSlice();
 
     // Helper: build a tab-page widget with a QVBoxLayout + scroll.
     // Returns {outer QWidget (used as tab), inner QVBoxLayout (for sections)}.
@@ -622,6 +878,14 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
         return {preRdo, postRdo};
     };
 
+    const auto nrDoubleRow = [&](QVBoxLayout* layout, const ControlRanges::NrControl& control,
+                                  double value, const QString& tooltip = QString()) {
+        return addDoubleSliderRow(layout, QString::fromUtf8(control.label),
+            control.min * control.scale, control.max * control.scale, value,
+            control.step * control.scale, control.decimals, tooltip,
+            QString::fromUtf8(control.suffix));
+    };
+
     // ── NR1 tab ───────────────────────────────────────────────────────────────
     // From Thetis setup.designer.cs NR1 (ANR) group [v2.10.3.13].
     {
@@ -629,42 +893,41 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
         Q_UNUSED(tabPage)
         QVBoxLayout* grpLay = makeGroup(tabLay, "NR1 (LMS)");
 
-        // Taps — udDSPNRTaps: 16-1024, default 64
-        // From Thetis setup.designer.cs — udDSPNRTaps.ToolTip [v2.10.3.13]
-        auto [taps, tapsVal] = addSliderRow(grpLay, "Taps", 16, 1024,
-            slice ? slice->nr1Taps() : 64,
-            tr("LMS filter length (number of taps). Longer = more suppression, "
-               "more latency. Range 16-1024."));
-
-        // Delay — udDSPNRDelay: 1-256, default 16
-        auto [delay, delayVal] = addSliderRow(grpLay, "Delay", 1, 256,
-            slice ? slice->nr1Delay() : 16,
-            tr("LMS adaptive delay in samples. Separates desired signal "
-               "from correlated noise."));
-
-        // Gain — tbDSPNRGain: UI range 0-999 → WDSP domain = UI × 1e-6
-        // From Thetis setup.cs NR1 gain rescaling [v2.10.3.13].
-        // Reverse-scale from WDSP domain: WDSP_val = UI / 1e6 → UI = WDSP_val × 1e6
-        // Clamped to 999 (slider max) — WDSP default 16e-4 = 1600 overflows range.
-        const int gainDefault = slice
-            ? std::min(999, static_cast<int>(slice->nr1Gain() * 1e6))
-            : 999;
-        auto [gain, gainVal] = addSliderRow(grpLay, "Gain", 0, 999,
-            gainDefault,
-            tr("LMS adaptation rate (gain). UI units × 1e-6 = WDSP domain value. "
-               "Default 999 (clamped from 16e-4 WDSP)."));
-
-        // Leakage — tbDSPNRLeak: UI range 0-999 → WDSP domain = UI × 1e-3
-        // From Thetis setup.cs NR1 leakage rescaling [v2.10.3.13].
-        // Reverse-scale: WDSP_val = UI / 1e3 → UI = WDSP_val × 1e3
-        // Default slice value is 10e-7; scaled UI = 10e-7 × 1e3 ≈ 0
-        auto [leak, leakVal] = addSliderRow(grpLay, "Leak", 0, 999,
-            slice ? static_cast<int>(slice->nr1Leakage() * 1e3) : 0,
-            tr("LMS leakage factor. UI units × 1e-3 = WDSP domain value. "
-               "Default 0 (= 10e-7 WDSP)."));
+        // Taps, Delay, Gain and Leak: Thetis's NR spinboxes (ranges,
+        // defaults and the gain x 1e-6 / leak x 1e-3 conversion) from
+        // ControlRanges.h, the table the VFO flag's NR1 quick controls read.
+        // Tooltips from Thetis setup.designer.cs:43440-43551 [v2.10.3.15].
+        using namespace ControlRanges;
+        const auto nr1Row = [&](const NrControl& control, double current,
+                                const QString& tooltip) {
+            return addSliderRow(grpLay, QString::fromUtf8(control.label),
+                                static_cast<int>(control.min), static_cast<int>(control.max),
+                                nrSliderFromValue(control, current), tooltip);
+        };
+        auto [taps, tapsVal] = nr1Row(kNr1Taps, slice ? slice->nr1Taps() : kNr1Taps.defaultValue,
+            tr("Determines the length of the NR computed filter."));
+        taps->setProperty("nereusSetupId", "dsp.nrAnf.nr1Taps");
+        auto [delay, delayVal] = nr1Row(kNr1Delay,
+            slice ? slice->nr1Delay() : kNr1Delay.defaultValue,
+            tr("Determines how far back you look in the signal before you begin to "
+               "compute a coherent signal enhancement filter."));
+        delay->setProperty("nereusSetupId", "dsp.nrAnf.nr1Delay");
+        auto [gain, gainVal] = nr1Row(kNr1Gain, slice ? slice->nr1Gain() : kNr1Gain.defaultValue,
+            tr("Determines the adaptation rate of the filter."));
+        gain->setProperty("nereusSetupId", "dsp.nrAnf.nr1Gain");
+        gain->setProperty("nereusSetupScale", 1000000.0);
+        auto [leak, leakVal] = nr1Row(kNr1Leak,
+            slice ? slice->nr1Leakage() : kNr1Leak.defaultValue,
+            tr("Determines the adaptation rate of the filter."));
+        leak->setProperty("nereusSetupId", "dsp.nrAnf.nr1Leakage");
+        leak->setProperty("nereusSetupScale", 1000.0);
 
         // Position radio
         auto [preRdo, postRdo] = addPositionRow(grpLay);
+        auto* choice = new QButtonGroup(grpLay->parentWidget());
+        choice->setProperty("nereusSetupId", "dsp.nrAnf.nr1Position");
+        choice->addButton(preRdo, 0);
+        choice->addButton(postRdo, 1);
         const bool isPost = !slice || (slice->nr1Position() == NrPosition::PostAgc);
         preRdo->setChecked(!isPost);
         postRdo->setChecked(isPost);
@@ -681,14 +944,14 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
 
             connect(gain, &QSlider::valueChanged,
                     slice, [slice](int v) {
-                // UI × 1e-6 → WDSP domain (matching VfoWidget Task 8 scaling).
-                slice->setNr1Gain(static_cast<double>(v) * 1e-6);
+                // Slider x 1e-6 to the WDSP domain, as Thetis converts it.
+                slice->setNr1Gain(ControlRanges::nrValueFromSlider(ControlRanges::kNr1Gain, v));
             });
 
             connect(leak, &QSlider::valueChanged,
                     slice, [slice](int v) {
-                // UI × 1e-3 → WDSP domain (matching VfoWidget Task 8 scaling).
-                slice->setNr1Leakage(static_cast<double>(v) * 1e-3);
+                // Slider x 1e-3 to the WDSP domain, as Thetis converts it.
+                slice->setNr1Leakage(ControlRanges::nrValueFromSlider(ControlRanges::kNr1Leak, v));
             });
 
             connect(preRdo, &QRadioButton::toggled, slice, [slice](bool checked) {
@@ -707,10 +970,11 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
             });
             connect(slice, &SliceModel::nr1GainChanged, gain, [gain](double v) {
                 QSignalBlocker b(gain);
-                gain->setValue(std::min(999, static_cast<int>(v * 1e6)));
+                gain->setValue(ControlRanges::nrSliderFromValue(ControlRanges::kNr1Gain, v));
             });
             connect(slice, &SliceModel::nr1LeakageChanged, leak, [leak](double v) {
-                QSignalBlocker b(leak); leak->setValue(static_cast<int>(v * 1e3));
+                QSignalBlocker b(leak);
+                leak->setValue(ControlRanges::nrSliderFromValue(ControlRanges::kNr1Leak, v));
             });
             connect(slice, &SliceModel::nr1PositionChanged, preRdo,
                     [preRdo, postRdo](NrPosition p) {
@@ -744,6 +1008,9 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
                 gmGrp->addWidget(rdo);
                 gmRdos.append(rdo);
             }
+            auto* gmChoice = new QButtonGroup(gmGrp->parentWidget());
+            gmChoice->setProperty("nereusSetupId", "dsp.nrAnf.nr2GainMethod");
+            for (int i = 0; i < gmRdos.size(); ++i) { gmChoice->addButton(gmRdos[i], i); }
             const int gmIdx = slice ? static_cast<int>(slice->nr2GainMethod()) : 2; // Gamma default
             if (gmIdx >= 0 && gmIdx < gmRdos.size()) { gmRdos[gmIdx]->setChecked(true); }
         }
@@ -759,6 +1026,9 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
                 npeGrp->addWidget(rdo);
                 npeRdos.append(rdo);
             }
+            auto* npeChoice = new QButtonGroup(npeGrp->parentWidget());
+            npeChoice->setProperty("nereusSetupId", "dsp.nrAnf.nr2NpeMethod");
+            for (int i = 0; i < npeRdos.size(); ++i) { npeChoice->addButton(npeRdos[i], i); }
             const int npeIdx = slice ? static_cast<int>(slice->nr2NpeMethod()) : 0; // OSMS default
             if (npeIdx >= 0 && npeIdx < npeRdos.size()) { npeRdos[npeIdx]->setChecked(true); }
         }
@@ -772,21 +1042,30 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
             0.1, 1,
             tr("EMNR Zeta threshold (T1). Controls the asymmetry of the "
                "noise estimator. Range -5.0 to +5.0."));
+        t1->setProperty("nereusSetupId", "dsp.nrAnf.nr2TrainT1");
+        t1->setProperty("nereusSetupScale", 10.0);
 
         // T2 — udDSPEMNRTrainT2: 0.0 .. 2.0 step 0.05, default 0.20
         auto [t2, t2Val, t2Scale] = addDoubleSliderRow(tfGrp, "T2",
             0.0, 2.0, slice ? slice->nr2TrainT2() : 0.20,
             0.05, 2,
             tr("EMNR T2 training parameter. Range 0.0 to 2.0."));
+        t2->setProperty("nereusSetupId", "dsp.nrAnf.nr2TrainT2");
+        t2->setProperty("nereusSetupScale", 20.0);
 
         // AE Filter checkbox
         auto* aeChk = new QCheckBox("AE Filter");
+        aeChk->setProperty("nereusSetupId", "dsp.nrAnf.nr2AeFilter");
         aeChk->setChecked(slice ? slice->nr2AeFilter() : true);
         aeChk->setToolTip(tr("Enable EMNR Acoustic Echo (AE) filter stage."));
         tfGrp->addWidget(aeChk);
 
         // Position radio
         auto [preRdo, postRdo] = addPositionRow(tfGrp);
+        auto* choice = new QButtonGroup(tfGrp->parentWidget());
+        choice->setProperty("nereusSetupId", "dsp.nrAnf.nr2Position");
+        choice->addButton(preRdo, 0);
+        choice->addButton(postRdo, 1);
         {
             const bool isPost = !slice || (slice->nr2Position() == NrPosition::PostAgc);
             preRdo->setChecked(!isPost);
@@ -797,6 +1076,7 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
         QVBoxLayout* ppGrp = makeGroup(tabLay, "Noise Post-Proc");
 
         auto* ppRun = new QCheckBox("Enable");
+        ppRun->setProperty("nereusSetupId", "dsp.nrAnf.nr2Post2Run");
         ppRun->setChecked(slice ? slice->nr2Post2Run() : false);
         ppRun->setToolTip(tr("Enable EMNR Noise Post-Processing cascade."));
         ppGrp->addWidget(ppRun);
@@ -805,20 +1085,25 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
         auto [ppLevel, ppLevelVal, ppLevelScale] = addDoubleSliderRow(ppGrp, "Level",
             0.0, 100.0, slice ? slice->nr2Post2Level() : 15.0,
             1.0, 0);
+        ppLevel->setProperty("nereusSetupId", "dsp.nrAnf.nr2Post2Level");
+        ppLevel->setProperty("nereusSetupScale", 1.0);
 
-        // Factor — udDSPEMNRPost2Factor: 0-100 step 1, default 15.0
-        auto [ppFactor, ppFactorVal, ppFactorScale] = addDoubleSliderRow(ppGrp, "Factor",
-            0.0, 100.0, slice ? slice->nr2Post2Factor() : 15.0,
-            1.0, 0);
-
-        // Rate — udDSPEMNRPost2Rate: 0-100 step 0.1, default 5.0
-        auto [ppRate, ppRateVal, ppRateScale] = addDoubleSliderRow(ppGrp, "Rate",
-            0.0, 100.0, slice ? slice->nr2Post2Rate() : 5.0,
-            0.1, 1);
+        // From Thetis setup.designer.cs:43019-43158 [v2.10.3.15]:
+        // Factor and Rate both span 0..100 in 0.1 steps.
+        using namespace ControlRanges;
+        auto [ppFactor, ppFactorVal, ppFactorScale] = nrDoubleRow(ppGrp, kNr2Post2Factor,
+            slice ? slice->nr2Post2Factor() : kNr2Post2Factor.defaultValue);
+        ppFactor->setProperty("nereusSetupId", "dsp.nrAnf.nr2Post2Factor");
+        ppFactor->setProperty("nereusSetupScale", 10.0);
+        auto [ppRate, ppRateVal, ppRateScale] = nrDoubleRow(ppGrp, kNr2Post2Rate,
+            slice ? slice->nr2Post2Rate() : kNr2Post2Rate.defaultValue);
+        ppRate->setProperty("nereusSetupId", "dsp.nrAnf.nr2Post2Rate");
+        ppRate->setProperty("nereusSetupScale", 10.0);
 
         // Taper — udDSPEMNRPost2Taper (integer): 0-100, default 12
         auto [ppTaper, ppTaperVal] = addSliderRow(ppGrp, "Taper", 0, 100,
             slice ? slice->nr2Post2Taper() : 12);
+        ppTaper->setProperty("nereusSetupId", "dsp.nrAnf.nr2Post2Taper");
 
         tabLay->addStretch(1);
 
@@ -872,7 +1157,7 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
                     slice, &SliceModel::setNr2Post2Taper);
 
             // ── Model → UI (bi-directional sync) ────────────────────────────
-            connect(slice, &SliceModel::nr2GainMethodChanged,
+            connect(slice, &SliceModel::nr2GainMethodChanged, gmGrp->parentWidget(),
                     [gmRdos](EmnrGainMethod v) {
                 const int idx = static_cast<int>(v);
                 if (idx >= 0 && idx < gmRdos.size()) {
@@ -880,7 +1165,7 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
                     gmRdos[idx]->setChecked(true);
                 }
             });
-            connect(slice, &SliceModel::nr2NpeMethodChanged,
+            connect(slice, &SliceModel::nr2NpeMethodChanged, npeGrp->parentWidget(),
                     [npeRdos](EmnrNpeMethod v) {
                 const int idx = static_cast<int>(v);
                 if (idx >= 0 && idx < npeRdos.size()) {
@@ -934,6 +1219,10 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
 
         // Position radio
         auto [preRdo, postRdo] = addPositionRow(grpLay);
+        auto* choice = new QButtonGroup(grpLay->parentWidget());
+        choice->setProperty("nereusSetupId", "dsp.nrAnf.nr3Position");
+        choice->addButton(preRdo, 0);
+        choice->addButton(postRdo, 1);
         {
             const bool isPost = !slice || (slice->nr3Position() == NrPosition::PostAgc);
             preRdo->setChecked(!isPost);
@@ -942,54 +1231,38 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
 
         // "Use fixed gain for input samples" — chkRXANR3FixedGain [v2.10.3.13]
         auto* fixedGainChk = new QCheckBox("Use fixed gain for input samples");
+        fixedGainChk->setProperty("nereusSetupId", "dsp.nrAnf.nr3UseDefaultGain");
         fixedGainChk->setChecked(slice ? slice->nr3UseDefaultGain() : true);
         // Tooltip source: Thetis setup.cs:35460 chkRXANR3FixedGain [v2.10.3.13]
         fixedGainChk->setToolTip(tr("Use a fixed (rather than adaptive) input sample gain."));
         grpLay->addWidget(fixedGainChk);
 
-        // Model selector group — GLOBAL (not per-slice), stored in AppSettings
+        // Model selector group: GLOBAL (not per-slice). R-R3-21: the Core
+        // owns the NR3 model; this chooses among the Core's models (bundled
+        // large/small plus any added) in local and remote windows alike.
         QVBoxLayout* mdlGrp = makeGroup(tabLay, "RNNoise Model (Global)");
-
-        auto* modelLabel = new QLabel;
-        modelLabel->setStyleSheet("QLabel { color: #00c8ff; font-size: 12px; }");
-        {
-            const QString saved = AppSettings::instance().value("Nr3ModelPath", "").toString();
-            modelLabel->setText(saved.isEmpty() ? "Default (large)" : QFileInfo(saved).baseName());
+        auto* nr3Picker = new Nr3ModelPicker(model, model ? model->dspAssets() : nullptr);
+        if (auto* modelsBtn = nr3Picker->findChild<QPushButton*>(QStringLiteral("nr3ModelsButton"))) {
+            modelsBtn->setStyleSheet(
+                "QPushButton { background: #1a2a3a; border: 1px solid #304050; "
+                "border-radius: 3px; color: #c8d8e8; font-size: 12px; padding: 3px 10px; }"
+                "QPushButton:hover { background: #203040; }"
+                "QPushButton:pressed { background: #00b4d8; color: #0f0f1a; }");
         }
-        mdlGrp->addWidget(modelLabel);
-
-        auto* btnRow = new QHBoxLayout;
-        auto* useModelBtn = new QPushButton("Use Model...");
-        useModelBtn->setStyleSheet(
-            "QPushButton { background: #1a2a3a; border: 1px solid #304050; "
-            "border-radius: 3px; color: #c8d8e8; font-size: 12px; padding: 3px 10px; }"
-            "QPushButton:hover { background: #203040; }"
-            "QPushButton:pressed { background: #00b4d8; color: #0f0f1a; }");
-        auto* defBtn = new QPushButton("Default");
-        defBtn->setStyleSheet(useModelBtn->styleSheet());
-        btnRow->addWidget(useModelBtn);
-        btnRow->addWidget(defBtn);
-        btnRow->addStretch(1);
-        mdlGrp->addLayout(btnRow);
+        if (auto* statusLbl = nr3Picker->findChild<QLabel*>(QStringLiteral("nr3ModelStatusLabel"))) {
+            statusLbl->setStyleSheet("QLabel { color: #00c8ff; font-size: 12px; }");
+            statusLbl->setProperty("nereusSetupId", "dsp.nrAnf.nr3ModelStatus");
+        }
+        // Setup description version 15: the Core's NR3 model choice.
+        if (auto* modelCombo = nr3Picker->findChild<QComboBox*>(QStringLiteral("nr3ModelCombo"))) {
+            modelCombo->setProperty("nereusSetupId", "dsp.nrAnf.nr3Model");
+            modelCombo->setAccessibleName(QStringLiteral("Model"));
+        }
+        mdlGrp->addWidget(nr3Picker);
 
         tabLay->addStretch(1);
 
-        // ── Wire NR3 controls → SliceModel / global ──────────────────────────
-        connect(useModelBtn, &QPushButton::clicked, this, [this, modelLabel]() {
-            const QString path = QFileDialog::getOpenFileName(
-                this, tr("Choose RNNoise Model"), QString(), tr("Model Files (*.bin *.rnnn);;All files (*)"));
-            if (path.isEmpty()) { return; }
-            AppSettings::instance().setValue("Nr3ModelPath", path);
-            RNNRloadModel(path.toStdString().c_str());
-            modelLabel->setText(QFileInfo(path).baseName());
-        });
-
-        connect(defBtn, &QPushButton::clicked, this, [modelLabel]() {
-            AppSettings::instance().setValue("Nr3ModelPath", "");
-            RNNRloadModel("");
-            modelLabel->setText("Default (large)");
-        });
-
+        // ── Wire NR3 controls → SliceModel ───────────────────────────────────
         if (slice) {
             connect(preRdo, &QRadioButton::toggled, slice, [slice](bool checked) {
                 if (checked) { slice->setNr3Position(NrPosition::PreAgc); }
@@ -1021,45 +1294,34 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
 
         QVBoxLayout* grpLay = makeGroup(tabLay, "NR4 (SpecBleach)");
 
-        // Reduction — udDSPSBNRreduction: 0-20 step 0.1, default 10.0
-        // Tooltip source: Thetis setup.cs udDSPSBNRreduction [v2.10.3.13]
-        auto [reduction, reductionVal, reductionScale] = addDoubleSliderRow(grpLay, "Reduction",
-            0.0, 20.0, slice ? slice->nr4Reduction() : 10.0,
-            0.1, 1,
-            tr("Spectral reduction amount in dB. Range 0-20, step 0.1."),
-            " dB");
-
-        // Smoothing — udDSPSBNRsmooth: 0-100 step 1, default 65.0
-        // Tooltip source: Thetis setup.cs udDSPSBNRsmooth [v2.10.3.13]
-        auto [smoothing, smoothingVal, smoothingScale] = addDoubleSliderRow(grpLay, "Smoothing",
-            0.0, 100.0, slice ? slice->nr4Smoothing() : 65.0,
-            1.0, 0,
-            tr("Spectral smoothing factor. Range 0-100."),
-            " %");
-
-        // Whitening — udDSPSBNRwhiten: 0-100 step 1, default 2.0
-        // Tooltip source: Thetis setup.cs udDSPSBNRwhiten [v2.10.3.13]
-        auto [whitening, whiteningVal, whiteningScale] = addDoubleSliderRow(grpLay, "Whitening",
-            0.0, 100.0, slice ? slice->nr4Whitening() : 2.0,
-            1.0, 0,
-            tr("Spectral whitening factor. Range 0-100."),
-            " %");
-
-        // Rescale — udDSPSBNRrescale: 0-12 step 0.1, default 2.0
-        // Tooltip source: Thetis setup.cs udDSPSBNRrescale [v2.10.3.13]
-        auto [rescale, rescaleVal, rescaleScale] = addDoubleSliderRow(grpLay, "Rescale",
-            0.0, 12.0, slice ? slice->nr4Rescale() : 2.0,
-            0.1, 1,
-            tr("Output rescale factor. Range 0-12, step 0.1."),
-            " dB");
-
-        // SNR Threshold — udDSPSBNRsnrthresh: -10..10 step 0.5, default -10.0
-        // Tooltip source: Thetis setup.cs udDSPSBNRsnrthresh [v2.10.3.13]
-        auto [snrThresh, snrThreshVal, snrThreshScale] = addDoubleSliderRow(grpLay, "SNR Thresh",
-            -10.0, 10.0, slice ? slice->nr4PostThresh() : -10.0,
-            0.5, 1,
-            tr("Post-processing SNR threshold. Range -10 to +10 dB, step 0.5."),
-            " dB");
+        // From Thetis setup.designer.cs:42186-42412 [v2.10.3.15].
+        // Use the popup/catalogue's ranges, increments and defaults.
+        using namespace ControlRanges;
+        auto [reduction, reductionVal, reductionScale] = nrDoubleRow(grpLay, kNr4Reduction,
+            slice ? slice->nr4Reduction() : kNr4Reduction.defaultValue,
+            tr("Spectral reduction amount in dB. Range 0-20, step 1."));
+        reduction->setProperty("nereusSetupId", "dsp.nrAnf.nr4Reduction");
+        reduction->setProperty("nereusSetupScale", 1.0);
+        auto [smoothing, smoothingVal, smoothingScale] = nrDoubleRow(grpLay, kNr4Smoothing,
+            slice ? slice->nr4Smoothing() : kNr4Smoothing.defaultValue,
+            tr("Spectral smoothing factor. Range 0-100."));
+        smoothing->setProperty("nereusSetupId", "dsp.nrAnf.nr4Smoothing");
+        smoothing->setProperty("nereusSetupScale", 1.0);
+        auto [whitening, whiteningVal, whiteningScale] = nrDoubleRow(grpLay, kNr4Whitening,
+            slice ? slice->nr4Whitening() : kNr4Whitening.defaultValue,
+            tr("Spectral whitening factor. Range 0-100."));
+        whitening->setProperty("nereusSetupId", "dsp.nrAnf.nr4Whitening");
+        whitening->setProperty("nereusSetupScale", 1.0);
+        auto [rescale, rescaleVal, rescaleScale] = nrDoubleRow(grpLay, kNr4Rescale,
+            slice ? slice->nr4Rescale() : kNr4Rescale.defaultValue,
+            tr("Output rescale factor. Range 0-12, step 1."));
+        rescale->setProperty("nereusSetupId", "dsp.nrAnf.nr4Rescale");
+        rescale->setProperty("nereusSetupScale", 1.0);
+        auto [snrThresh, snrThreshVal, snrThreshScale] = nrDoubleRow(grpLay, kNr4PostThresh,
+            slice ? slice->nr4PostThresh() : kNr4PostThresh.defaultValue,
+            tr("Post-processing SNR threshold. Range -10 to +10 dB, step 1."));
+        snrThresh->setProperty("nereusSetupId", "dsp.nrAnf.nr4PostThresh");
+        snrThresh->setProperty("nereusSetupScale", 1.0);
 
         // Algorithm radio — rdoSBNR1/2/3 [v2.10.3.13]
         const QString rdoStyle =
@@ -1078,12 +1340,18 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
         algo3->setStyleSheet(rdoStyle);
 
         {
-            const int algoIdx = slice ? static_cast<int>(slice->nr4Algo()) : 1; // Algo2 default
+            const int algoIdx = slice ? static_cast<int>(slice->nr4Algo())
+                                      : static_cast<int>(kNr4Algo.defaultValue); // Algo 1
             if (algoIdx == 0) { algo1->setChecked(true); }
             else if (algoIdx == 2) { algo3->setChecked(true); }
             else { algo2->setChecked(true); }
         }
 
+        auto* algoChoice = new QButtonGroup(grpLay->parentWidget());
+        algoChoice->setProperty("nereusSetupId", "dsp.nrAnf.nr4Algo");
+        algoChoice->addButton(algo1, 0);
+        algoChoice->addButton(algo2, 1);
+        algoChoice->addButton(algo3, 2);
         auto* algoRow = new QHBoxLayout;
         auto* algoLbl = new QLabel("Algorithm");
         algoLbl->setStyleSheet(kLbl);
@@ -1161,20 +1429,36 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
     // integration; UI is always shown so users can understand the feature gate.
     {
         auto [tabPage, tabLay] = makeTab(tabs, "DFNR");
-        Q_UNUSED(tabPage)
 
         QVBoxLayout* grpLay = makeGroup(tabLay, "DeepFilter NR");
 
-#ifndef HAVE_DFNR
-        // Feature not compiled in — show a helpful note and gray out the group.
-        auto* note = new QLabel(
-            "DFNR is not enabled in this build.\n"
-            "Run ./setup-deepfilter.sh and rebuild to enable DeepFilter NR.");
-        note->setStyleSheet(kInfoLbl);
-        note->setWordWrap(true);
-        grpLay->addWidget(note);
-        grpLay->parentWidget()->setEnabled(false);
-#endif
+        // Parity Task 16 (R-R3-49, R-R3-21): offered by what the station
+        // can run (the Core's in a remote window, whatever this computer's
+        // build), never hidden; while it cannot, the group is disabled and
+        // the note says why.
+        auto* dfnrNote = new QLabel(QString(), tabPage);
+        dfnrNote->setObjectName(QStringLiteral("dfnrUnavailableNote"));
+        dfnrNote->setStyleSheet(kInfoLbl);
+        dfnrNote->setWordWrap(true);
+        tabLay->insertWidget(0, dfnrNote);
+        QWidget* dfnrGroup = grpLay->parentWidget();
+        const auto applyDfnr = [model, dfnrNote, dfnrGroup]() {
+            const QString reason = model ? model->nrCannotRunReason(NrSlot::DFNR)
+                                         : RadioModel::nrCannotRunInThisBuildReason(
+                                               NrSlot::DFNR);
+            dfnrNote->setText(reason);
+            dfnrNote->setVisible(!reason.isEmpty());
+            dfnrGroup->setEnabled(reason.isEmpty());
+        };
+        applyDfnr();
+        if (model) {
+            // Trunk merge: the one availability source, DspAssetService,
+            // and whether an older Core says at all.
+            if (model->dspAssets()) {
+                connect(model->dspAssets(), &DspAssetService::dfnrAvailabilityChanged, dfnrGroup, applyDfnr);
+            }
+            connect(model, &RadioModel::nrAvailabilityChanged, dfnrGroup, applyDfnr);
+        }
 
         // Attenuation Limit (0-100 dB) — use the shared addSliderRow helper
         // so the style matches NR1/NR2/NR4 (label | slider | value label).
@@ -1184,6 +1468,8 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
             tr("Maximum noise attenuation in dB (0 = bypass, 100 = maximum). "
                "Default 100. Higher values suppress more noise but may clip speech peaks."),
             " dB");
+        attenSl->setProperty("nereusSetupId", "dsp.nrAnf.dfnrAttenLimit");
+        attenSl->setProperty("nereusSetupScale", 1.0);
 
         // Post-Filter Beta (0.00-0.30 step 0.01) — use the double helper.
         auto [betaSl, betaVal, betaScale] = addDoubleSliderRow(
@@ -1193,6 +1479,8 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
                "Higher values reduce residual musical-noise artifacts but may "
                "over-attenuate consonants."),
             QString());
+        betaSl->setProperty("nereusSetupId", "dsp.nrAnf.dfnrPostFilterBeta");
+        betaSl->setProperty("nereusSetupScale", 100.0);
         Q_UNUSED(attenVal); Q_UNUSED(betaVal);
 
         tabLay->addStretch(1);
@@ -1217,138 +1505,212 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
     }
 
     // ── MNR tab ───────────────────────────────────────────────────────────────
-    // AetherSDR-native macOS noise reduction (not in Thetis). Always shown
-    // so Windows/Linux users see the feature exists; controls grayed out on
-    // non-Apple builds.
+    // AetherSDR-native macOS noise reduction (not in Thetis). Always shown.
+    // Parity Task 16 (R-R3-49, R-R3-21): its controls follow what the
+    // station can run, the Core's in a remote window (a Linux window on a
+    // Mac Core tunes the Core's MNR), disabled with the plain reason while
+    // it cannot.
     {
         auto [tabPage, tabLay] = makeTab(tabs, "MNR");
-        Q_UNUSED(tabPage)
 
         QVBoxLayout* grpLay = makeGroup(tabLay, "macOS NR (MNR)");
 
-#ifndef Q_OS_APPLE
-        auto* note = new QLabel(
-            "MNR uses Apple Accelerate and is only available on macOS.\n"
-            "On this platform the MNR controls are inactive.");
-        note->setStyleSheet(kInfoLbl);
-        note->setWordWrap(true);
-        grpLay->addWidget(note);
-#endif
+        auto* mnrNote = new QLabel(QString(), tabPage);
+        mnrNote->setObjectName(QStringLiteral("mnrUnavailableNote"));
+        mnrNote->setStyleSheet(kInfoLbl);
+        mnrNote->setWordWrap(true);
+        tabLay->insertWidget(0, mnrNote);
 
         // Full 6-knob tuning surface matching the VFO right-click MNR popup
         // (see VfoWidget::showMnrPopup). Ranges + factory defaults identical.
 
-        auto [strSl, strVal] = addSliderRow(
-            grpLay, "Strength", 0, 200,
-            slice ? static_cast<int>(slice->mnrStrength() * 100.0) : 100,
+        using namespace ControlRanges;
+        const auto mnrRow = [&](const NrControl& control, double current,
+                                const QString& tooltip) {
+            return addSliderRow(grpLay, QString::fromUtf8(control.label),
+                                static_cast<int>(control.min), static_cast<int>(control.max),
+                                nrSliderFromValue(control, current), tooltip,
+                                QString::fromUtf8(control.suffix));
+        };
+        auto [strSl, strVal] = mnrRow(
+            kMnrStrength, slice ? slice->mnrStrength() : kMnrStrength.defaultValue,
             tr("Dry/wet blend. 0%% = bypass (filter runs but output = input), "
                "100%% = full NR, 200%% = over-drive (phase-flip, destructive). "
-               "Default 100%%."),
-            QStringLiteral("%"));
+               "Default 100%%."));
+        strSl->setProperty("nereusSetupId", "dsp.nrAnf.mnrStrength");
+        strSl->setProperty("nereusSetupScale", 100.0);
         Q_UNUSED(strVal);
 
-        auto [oversubSl, oversubVal] = addSliderRow(
-            grpLay, "Aggressiveness", 1, 1000,
-            slice ? static_cast<int>(slice->mnrOversub()) : 6,
+        auto [oversubSl, oversubVal] = mnrRow(
+            kMnrOversub, slice ? slice->mnrOversub() : kMnrOversub.defaultValue,
             tr("MMSE-Wiener oversubtraction factor. Higher = more attenuation "
-               "on low-SNR bins; 1 = gentle, 6 = default, 20+ = underwater."),
-            QString());
+               "on low-SNR bins; 1 = gentle, 4 = default, 20+ = underwater."));
+        oversubSl->setProperty("nereusSetupId", "dsp.nrAnf.mnrOversub");
+        oversubSl->setProperty("nereusSetupScale", 1.0);
         Q_UNUSED(oversubVal);
 
-        auto [floorSl, floorVal] = addSliderRow(
-            grpLay, "Floor", 0, 2000,
-            slice ? static_cast<int>(slice->mnrFloor() * 1000.0) : 50,
+        auto [floorSl, floorVal] = mnrRow(
+            kMnrFloor, slice ? slice->mnrFloor() : kMnrFloor.defaultValue,
             tr("Minimum Wiener gain per bin (x0.001). 0 = silence, "
-               "50 = -26 dB (default), 1000 = 0 dB, 2000 = amplify."),
-            QStringLiteral("m"));
+               "50 = -26 dB (default), 1000 = 0 dB, 2000 = amplify."));
+        floorSl->setProperty("nereusSetupId", "dsp.nrAnf.mnrFloor");
+        floorSl->setProperty("nereusSetupScale", 1000.0);
         Q_UNUSED(floorVal);
 
-        auto [alphaSl, alphaVal] = addSliderRow(
-            grpLay, "Alpha", 0, 100,
-            slice ? static_cast<int>(slice->mnrAlpha() * 100.0) : 92,
+        auto [alphaSl, alphaVal] = mnrRow(
+            kMnrAlpha, slice ? slice->mnrAlpha() : kMnrAlpha.defaultValue,
             tr("Decision-directed smoothing (x0.01). 0 = no smoothing "
                "(chattery), 92 = Ephraim-Malah classic (default), "
-               "100 = frozen prior SNR."),
-            QString());
+               "100 = frozen prior SNR."));
+        alphaSl->setProperty("nereusSetupId", "dsp.nrAnf.mnrAlpha");
+        alphaSl->setProperty("nereusSetupScale", 100.0);
         Q_UNUSED(alphaVal);
 
-        auto [biasSl, biasVal] = addSliderRow(
-            grpLay, "Bias", 0, 100,
-            slice ? static_cast<int>(slice->mnrBias() * 10.0) : 15,
+        auto [biasSl, biasVal] = mnrRow(
+            kMnrBias, slice ? slice->mnrBias() : kMnrBias.defaultValue,
             tr("Min-statistics noise-floor bias (x0.1). <10 = underestimate "
-               "noise (less NR), 15 = default, >30 = overestimate (erodes signal). "
-               "Nudge up if NR is weak, down if it eats speech."),
-            QString());
+               "noise (less NR), 12 = default, >30 = overestimate (erodes signal). "
+               "Nudge up if NR is weak, down if it eats speech."));
+        biasSl->setProperty("nereusSetupId", "dsp.nrAnf.mnrBias");
+        biasSl->setProperty("nereusSetupScale", 10.0);
         Q_UNUSED(biasVal);
 
-        auto [gsmoothSl, gsmoothVal] = addSliderRow(
-            grpLay, "Gsmooth", 0, 100,
-            slice ? static_cast<int>(slice->mnrGsmooth() * 100.0) : 70,
+        auto [gsmoothSl, gsmoothVal] = mnrRow(
+            kMnrGsmooth, slice ? slice->mnrGsmooth() : kMnrGsmooth.defaultValue,
             tr("Temporal gain smoothing (x0.01). 0 = instant (musical noise), "
-               "70 = balanced (default), 100 = frozen gain."),
-            QString());
+               "70 = balanced (default), 100 = frozen gain."));
+        gsmoothSl->setProperty("nereusSetupId", "dsp.nrAnf.mnrGsmooth");
+        gsmoothSl->setProperty("nereusSetupScale", 100.0);
         Q_UNUSED(gsmoothVal);
 
-#ifndef Q_OS_APPLE
-        strSl->setEnabled(false);
-        oversubSl->setEnabled(false);
-        floorSl->setEnabled(false);
-        alphaSl->setEnabled(false);
-        biasSl->setEnabled(false);
-        gsmoothSl->setEnabled(false);
-#endif
+        QWidget* mnrGroup = grpLay->parentWidget();
+        const auto applyMnr = [model, mnrNote, mnrGroup]() {
+            const QString reason = model ? model->nrCannotRunReason(NrSlot::MNR)
+                                         : RadioModel::nrCannotRunInThisBuildReason(
+                                               NrSlot::MNR);
+            mnrNote->setText(reason);
+            mnrNote->setVisible(!reason.isEmpty());
+            mnrGroup->setEnabled(reason.isEmpty());
+        };
+        applyMnr();
+        if (model) {
+            // Trunk merge: the one availability source, DspAssetService,
+            // and whether an older Core says at all.
+            if (model->dspAssets()) {
+                connect(model->dspAssets(), &DspAssetService::mnrAvailabilityChanged, mnrGroup, applyMnr);
+            }
+            connect(model, &RadioModel::nrAvailabilityChanged, mnrGroup, applyMnr);
+        }
 
         tabLay->addStretch(1);
 
         // ── Wire MNR controls → SliceModel ──────────────────────────────────
-#ifdef Q_OS_APPLE
+        // Parity Task 16: wired on every build; the slice's MNR settings
+        // reach the Core that runs it (a remote window) or stay with the
+        // slice (a computer that cannot run it, with the group disabled).
         if (slice) {
             connect(strSl, &QSlider::valueChanged, slice, [slice](int v) {
-                slice->setMnrStrength(static_cast<double>(v) / 100.0);
+                slice->setMnrStrength(ControlRanges::nrValueFromSlider(ControlRanges::kMnrStrength, v));
             });
             connect(slice, &SliceModel::mnrStrengthChanged, strSl, [strSl](double v) {
-                QSignalBlocker b(strSl); strSl->setValue(static_cast<int>(v * 100.0));
+                QSignalBlocker b(strSl); strSl->setValue(ControlRanges::nrSliderFromValue(ControlRanges::kMnrStrength, v));
             });
 
             connect(oversubSl, &QSlider::valueChanged, slice, [slice](int v) {
                 slice->setMnrOversub(static_cast<double>(v));
             });
             connect(slice, &SliceModel::mnrOversubChanged, oversubSl, [oversubSl](double v) {
-                QSignalBlocker b(oversubSl); oversubSl->setValue(static_cast<int>(v));
+                QSignalBlocker b(oversubSl); oversubSl->setValue(ControlRanges::nrSliderFromValue(ControlRanges::kMnrOversub, v));
             });
 
             connect(floorSl, &QSlider::valueChanged, slice, [slice](int v) {
-                slice->setMnrFloor(static_cast<double>(v) * 0.001);
+                slice->setMnrFloor(ControlRanges::nrValueFromSlider(ControlRanges::kMnrFloor, v));
             });
             connect(slice, &SliceModel::mnrFloorChanged, floorSl, [floorSl](double v) {
-                QSignalBlocker b(floorSl); floorSl->setValue(static_cast<int>(v * 1000.0));
+                QSignalBlocker b(floorSl); floorSl->setValue(ControlRanges::nrSliderFromValue(ControlRanges::kMnrFloor, v));
             });
 
             connect(alphaSl, &QSlider::valueChanged, slice, [slice](int v) {
-                slice->setMnrAlpha(static_cast<double>(v) * 0.01);
+                slice->setMnrAlpha(ControlRanges::nrValueFromSlider(ControlRanges::kMnrAlpha, v));
             });
             connect(slice, &SliceModel::mnrAlphaChanged, alphaSl, [alphaSl](double v) {
-                QSignalBlocker b(alphaSl); alphaSl->setValue(static_cast<int>(v * 100.0));
+                QSignalBlocker b(alphaSl); alphaSl->setValue(ControlRanges::nrSliderFromValue(ControlRanges::kMnrAlpha, v));
             });
 
             connect(biasSl, &QSlider::valueChanged, slice, [slice](int v) {
-                slice->setMnrBias(static_cast<double>(v) * 0.1);
+                slice->setMnrBias(ControlRanges::nrValueFromSlider(ControlRanges::kMnrBias, v));
             });
             connect(slice, &SliceModel::mnrBiasChanged, biasSl, [biasSl](double v) {
-                QSignalBlocker b(biasSl); biasSl->setValue(static_cast<int>(v * 10.0));
+                QSignalBlocker b(biasSl); biasSl->setValue(ControlRanges::nrSliderFromValue(ControlRanges::kMnrBias, v));
             });
 
             connect(gsmoothSl, &QSlider::valueChanged, slice, [slice](int v) {
-                slice->setMnrGsmooth(static_cast<double>(v) * 0.01);
+                slice->setMnrGsmooth(ControlRanges::nrValueFromSlider(ControlRanges::kMnrGsmooth, v));
             });
             connect(slice, &SliceModel::mnrGsmoothChanged, gsmoothSl, [gsmoothSl](double v) {
-                QSignalBlocker b(gsmoothSl); gsmoothSl->setValue(static_cast<int>(v * 100.0));
+                QSignalBlocker b(gsmoothSl); gsmoothSl->setValue(ControlRanges::nrSliderFromValue(ControlRanges::kMnrGsmooth, v));
             });
         }
-#endif
     }
 
     // ── ANF tab ───────────────────────────────────────────────────────────────
+    // NNR uses the same editor in the quick popup and in Setup. This tab's
+    // existing scroll area supplies scrolling for the full control set.
+    {
+        auto [tabPage, tabLay] = makeTab(tabs, "NNR");
+        m_nnrControls = new NnrControls(model, slice, NnrControls::Presentation::Full,
+                                        tabPage);
+        connect(m_nnrControls, &NnrControls::openModelsRequested, this,
+                [this, model](int sliceId) {
+            if (!model->sliceById(sliceId)) {
+                return;
+            }
+            auto* dialog = new DspAssetDialog(model, DspAssetKind::NnrModel, this);
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            dialog->show();
+        });
+        const std::pair<const char*, const char*> nnrIds[] = {
+            {"nnrModelCombo", "nnrModelSlot"}, {"nnrMaskFloorSpin", "nnrMaskFloorDb"},
+            {"nnrPositionCombo", "nnrPosition"}, {"nnrAlphaSpin", "nnrAlpha"},
+            {"nnrAlphaKneeSpin", "nnrAlphaKneeDb"}, {"nnrTauSpin", "nnrTauSeconds"},
+            {"nnrMaxGainSpin", "nnrMaxGainDb"}, {"nnrAttackSpin", "nnrAttackMs"},
+            {"nnrReleaseSpin", "nnrReleaseMs"}, {"nnrResetButton", "nnrResetTuning"},
+            // Setup description version 15: the limit row and Diagnostics.
+            {"nnrLimitNotice", "nnrLimit"}, {"nnrTryAgainButton", "nnrTryAgain"},
+            {"nnrTestModeCombo", "nnrTestMode"}, {"nnrOutputModeCombo", "nnrOutputMode"},
+            {"nnrApplyDiagnosticButton", "nnrApplyDiagnostics"}
+        };
+        for (const auto& [objectName, property] : nnrIds) {
+            if (auto* control = m_nnrControls->findChild<QWidget*>(QLatin1String(objectName))) {
+                control->setProperty("nereusSetupId", QStringLiteral("dsp.nrAnf.")
+                    + QLatin1String(property));
+            }
+        }
+        // Each Diagnostics line shows several of the described readouts.
+        const std::pair<const char*, QStringList> nnrReadouts[] = {
+            {"nnrRuntimeReadback", {QStringLiteral("dsp.nrAnf.nnrAvailable"),
+                                    QStringLiteral("dsp.nrAnf.nnrReady"),
+                                    QStringLiteral("dsp.nrAnf.nnrRunning")}},
+            {"nnrModelsReadback", {QStringLiteral("dsp.nrAnf.nnrStandardAvailable"),
+                                   QStringLiteral("dsp.nrAnf.nnrPremiumAvailable"),
+                                   QStringLiteral("dsp.nrAnf.nnrActualModelSlot")}},
+            {"nnrRateLatencyReadback", {QStringLiteral("dsp.nrAnf.nnrDspRateHz"),
+                                        QStringLiteral("dsp.nrAnf.nnrNetworkRateHz"),
+                                        QStringLiteral("dsp.nrAnf.nnrRateSupported"),
+                                        QStringLiteral("dsp.nrAnf.nnrDelaySamples"),
+                                        QStringLiteral("dsp.nrAnf.nnrLatencyMs")}},
+            {"nnrSourceReadback", {QStringLiteral("dsp.nrAnf.nnrModelSource")}},
+            {"nnrStatusReadback", {QStringLiteral("dsp.nrAnf.nnrProfilingAvailable"),
+                                   QStringLiteral("dsp.nrAnf.nnrStatus")}}};
+        for (const auto& [objectName, ids] : nnrReadouts) {
+            if (auto* label = m_nnrControls->findChild<QLabel*>(QLatin1String(objectName))) {
+                label->setProperty("nereusSetupIds", ids);
+            }
+        }
+        tabLay->addWidget(m_nnrControls);
+        tabLay->addStretch(1);
+    }
+
     // From Thetis setup.designer.cs — chkDSPANFEnable [v2.10.3.13].
     // Advanced ANF tuning (Taps/Delay/Gain/Leakage) is not yet in SliceModel;
     // deferred to a future phase. This tab wires the Enable toggle only.
@@ -1361,31 +1723,40 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
         // Note: NrSlot::Off means ANF is included as part of the NR selector
         // but ANF itself doesn't have a dedicated NrSlot — in Thetis ANF is a
         // parallel stage enabled independently of the NR slot selection.
-        // For now expose an informational note and a placeholder Enable toggle
-        // that will be wired once SliceModel gains anfEnabled.
         auto* note = new QLabel(
-            "ANF is available via the VFO popup ANF button.\n"
-            "Advanced tuning (Taps, Delay, Gain, Leakage) will be added in a future phase.\n"
-            "Enable toggle below mirrors the VFO ANF button state (not yet wired).");
+            "This switch and the VFO flag's ANF button are the same setting.");
         note->setStyleSheet(kInfoLbl);
         note->setWordWrap(true);
         grpLay->addWidget(note);
 
-        // Placeholder Enable toggle — from Thetis chkDSPANFEnable [v2.10.3.13].
-        // NYI: SliceModel does not yet expose anfEnabled / setAnfEnabled.
-        // Deferred to the same phase that adds Taps/Delay/Gain/Leakage to SliceModel.
+        // From Thetis chkDSPANFEnable [v2.10.3.13]. R-R3-21: bound to the
+        // active slice's anfEnabled, the setting the VFO flag's ANF button
+        // sets (SliceModel::setAnfEnabled); it was a greyed placeholder.
         auto* anfEnableChk = new QCheckBox("Enable ANF");
-        anfEnableChk->setChecked(false);
-        // Tooltip source: Thetis setup.designer.cs chkDSPANFEnable [v2.10.3.13]
-        anfEnableChk->setToolTip(tr("Enable Adaptive Notch Filter. Full ANF tuning (Taps/Delay/"
-                                    "Gain/Leakage) coming in a future phase."));
-        anfEnableChk->setEnabled(false);  // NYI until SliceModel has anfEnabled
+        anfEnableChk->setProperty("nereusSetupId", "dsp.nrAnf.anfEnabled");
+        anfEnableChk->setObjectName(QStringLiteral("anfEnableCheck"));
+        const QString anfTip = tr("Enable Adaptive Notch Filter.");
+        setSliceAvailable(anfEnableChk, slice != nullptr, anfTip);
+        if (slice) {
+            anfEnableChk->setChecked(slice->anfEnabled());
+            connect(anfEnableChk, &QCheckBox::toggled,
+                    slice, &SliceModel::setAnfEnabled);
+            connect(slice, &SliceModel::anfEnabledChanged, anfEnableChk,
+                    [anfEnableChk](bool on) {
+                QSignalBlocker block(anfEnableChk);
+                anfEnableChk->setChecked(on);
+            });
+        }
         grpLay->addWidget(anfEnableChk);
 
         tabLay->addStretch(1);
-        // No wiring: SliceModel::anfEnabled does not yet exist (Task 17 scope).
+    }
+    tabs->setEnabled(slice != nullptr);
+    if (oldTab >= 0 && oldTab < tabs->count()) {
+        tabs->setCurrentIndex(oldTab);
     }
 }
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 // NbSnbSetupPage
@@ -1395,8 +1766,9 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
 //   tbNB1Threshold, comboNB1Mode, tbNB2Threshold,
 //   tbSNBK1, tbSNBK2, udSNBOutputBW
 //
-NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
-    : SetupPage("NB/SNB", model, parent)
+NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent,
+                               DspReceiverSelection* selection)
+    : ReceiverDspSetupPage("NB/SNB", model, parent, selection)
 {
     // Sliders with inline live-value labels. Tooltips use Thetis's own user-
     // facing text (from setup.designer.cs ToolTip attributes [v2.10.3.13]).
@@ -1413,12 +1785,11 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
     // gone: RadioModel's push resolves the channel and no-ops when there
     // isn't one.
     //
-    // Slice-tracking policy: binds to model->activeSlice() at construction,
-    // matching the sibling NrAnfSetupPage and AgcAlcSetupPage. Setup is not
-    // attached to any flag, so the rule is that it targets the active slice;
-    // switching slices needs a close and reopen of the dialog. Full dynamic
-    // rebind is deferred with the rest of the pages.
-    SliceModel* slice = model ? model->activeSlice() : nullptr;
+    // Slice-tracking policy: Setup is not attached to any flag, so the rule
+    // is that it targets the active slice, and it follows a change of active
+    // slice while open (R-R3-21, bindToActiveSlice at the end). `slice` here
+    // only seeds the controls' first values.
+    SliceModel* slice = selectedSlice();
 
     // Helper: integer slider, live value label showing "value / max" with unit.
     // Returns the slider so caller can wire valueChanged.
@@ -1505,9 +1876,8 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         tr("Controls the detection threshold for impulse noise.\n"
            "Lower = more aggressive (blanks weaker impulses too).\n"
            "Higher = more conservative (only strong clicks get blanked)."));
-    connect(nb1Thresh, &QSlider::valueChanged, this, [slice](int v) {
-        if (slice) { slice->setNb1Threshold(v); }
-    });
+    nb1Thresh->setProperty("nereusSetupId", "dsp.nbSnb.nb1Threshold");
+    nb1Thresh->setObjectName(QStringLiteral("nb1ThresholdSlider"));
 
     // Transition — udDSPNBTransition: 0.01-2.00 ms, step 0.01, default 0.01.
     // Slider internal: 1-200 (×100 scale). Label shows "X.XX / 2.00 ms".
@@ -1516,13 +1886,10 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         slice ? qRound(slice->nb1TransitionMs() * 100.0) : 1,
         100.0, 2, tr(" ms"),
         tr("Time to decrease/increase to/from zero amplitude around an\n"
-           "impulse. Controls how gradually the blanker fades in and out\n"
-           "— very short = crisp click; longer = gentler but audible."));
-    connect(nb1Trans, &QSlider::valueChanged, this, [slice](int v) {
-        // Slider is the x100 integer; the model stores real milliseconds and
-        // RadioModel does the ms -> seconds conversion on the way to WDSP.
-        if (slice) { slice->setNb1TransitionMs(static_cast<double>(v) / 100.0); }
-    });
+           "impulse. Controls how gradually the blanker fades in and out:\n"
+           "very short = crisp click; longer = gentler but audible."));
+    nb1Trans->setProperty("nereusSetupId", "dsp.nbSnb.nb1TransitionMs");
+    nb1Trans->setProperty("nereusSetupScale", 100.0);
 
     // Lead — udDSPNBLead: 0.01-2.00 ms, default 0.01.
     QSlider* nb1Lead = addScaledSlider(nb1Lay, tr("Lead"),
@@ -1532,9 +1899,8 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         tr("Time at zero amplitude BEFORE the detected impulse. Blanks\n"
            "the leading edge of the click that the detector would\n"
            "otherwise miss. Raise slightly if clicks still get through."));
-    connect(nb1Lead, &QSlider::valueChanged, this, [slice](int v) {
-        if (slice) { slice->setNb1LeadMs(static_cast<double>(v) / 100.0); }
-    });
+    nb1Lead->setProperty("nereusSetupId", "dsp.nbSnb.nb1LeadMs");
+    nb1Lead->setProperty("nereusSetupScale", 100.0);
 
     // Lag — udDSPNBLag: 0.01-2.00 ms, default 0.01.
     QSlider* nb1Lag = addScaledSlider(nb1Lay, tr("Lag"),
@@ -1544,12 +1910,12 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         tr("Time to remain at zero amplitude AFTER the impulse. Blanks\n"
            "the decay tail of the click. Raise this if pops still have\n"
            "an audible ringing after the initial transient."));
-    connect(nb1Lag, &QSlider::valueChanged, this, [slice](int v) {
-        if (slice) { slice->setNb1LagMs(static_cast<double>(v) / 100.0); }
-    });
+    nb1Lag->setProperty("nereusSetupId", "dsp.nbSnb.nb1LagMs");
+    nb1Lag->setProperty("nereusSetupScale", 100.0);
 
     // NB2 Mode — Thetis comboDSPNOBmode.
     auto* nb1Mode = new QComboBox;
+    nb1Mode->setProperty("nereusSetupId", "dsp.nbSnb.nb2Mode");
     // Item text matches Thetis comboDSPNOBmode verbatim (setup.designer.cs:44434 [v2.10.3.13]).
     nb1Mode->addItems({tr("Zero"), tr("Sample && Hold"), tr("Mean-Hold"),
                        tr("Hold && Sample"), tr("Linear Interpolate")});
@@ -1560,10 +1926,6 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         "a replacement waveform from surrounding samples to reduce\n"
         "audible artifacts on voice peaks."));
     addLabeledCombo(nb1Lay, "NB2 Mode", nb1Mode);
-    connect(nb1Mode, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [slice](int v) {
-        if (slice) { slice->setNb2Mode(v); }
-    });
 
     // ── NB2 Threshold — intentionally absent (Thetis parity) ─────────────────
     // Thetis has no NB2 threshold UI. NB2 runs at cmaster.c:68 [v2.10.3.13]
@@ -1595,9 +1957,8 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         tr("Multiple of the running noise power at which a sample is\n"
            "flagged as a candidate outlier. Lower = more aggressive\n"
            "first-pass detection; higher = miss weaker noise."));
-    connect(snbK1, &QSlider::valueChanged, this, [slice](int v) {
-        if (slice) { slice->setSnbK1(static_cast<double>(v) / 10.0); }
-    });
+    snbK1->setProperty("nereusSetupId", "dsp.nbSnb.snbK1");
+    snbK1->setProperty("nereusSetupScale", 10.0);
 
     // Threshold 2 — udDSPSNBThresh2: 4.0-60.0, step 0.1, default 20.0.
     // Slider internal: 40-600 (×10 scale).
@@ -1605,13 +1966,12 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         40, 600,
         qRound((slice ? slice->snbK2() : 20.0) * 10.0),
         10.0, 1, QString{},
-        tr("Multiplier applied to the final detection threshold — confirms\n"
+        tr("Multiplier applied to the final detection threshold. It confirms\n"
            "candidates from Threshold 1 as real noise outliers. Lower =\n"
            "more aggressive overall blanking; higher = fewer false triggers\n"
            "on genuine voice peaks."));
-    connect(snbK2, &QSlider::valueChanged, this, [slice](int v) {
-        if (slice) { slice->setSnbK2(static_cast<double>(v) / 10.0); }
-    });
+    snbK2->setProperty("nereusSetupId", "dsp.nbSnb.snbK2");
+    snbK2->setProperty("nereusSetupScale", 10.0);
 
     // SNB Output Bandwidth — NOT in Thetis Setup page. Thetis sets it
     // automatically per mode in rxa.cs:112-124. Kept as a NereusSDR-native
@@ -1620,23 +1980,75 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         100, 96000,
         slice ? slice->snbOutputBandwidthHz() : 6000,
         tr(" Hz"),
-        tr("Width of the audio band SNB operates on, centred on zero.\n"
+        tr("Width of the audio band SNB operates on, centered on zero.\n"
            "Smaller = focuses the blanker on the active passband;\n"
            "larger = covers wider modes (FM, DRM). Default 6000 Hz\n"
            "covers SSB + AM comfortably."));
-    connect(snbOutBw, &QSlider::valueChanged, this, [slice](int v) {
-        if (slice) { slice->setSnbOutputBandwidthHz(v); }
-    });
+    snbOutBw->setProperty("nereusSetupId", "dsp.nbSnb.snbOutputBandwidthHz");
 
-    // No slice yet means Setup was opened before any receiver existed. The
-    // controls have nothing to address, so disable rather than silently
-    // dropping the operator's adjustments.
-    if (!slice) {
-        nb1Grp->setEnabled(false);
-        snbGrp->setEnabled(false);
-        nb1Grp->setToolTip(tr("Connect to a radio to tune the noise blanker."));
-        snbGrp->setToolTip(tr("Connect to a radio to tune the noise blanker."));
-    }
+    // R-R3-21: the controls act on the active slice and follow it while
+    // Setup is open (bindToActiveSlice). Every connection is owned by the
+    // slice, so removing it while the page is open leaves nothing pointing
+    // at it (the page used to keep a raw pointer to the slice it was built
+    // with). No slice yet means Setup was opened before any receiver
+    // existed: the controls have nothing to address, so they are disabled
+    // rather than silently dropping the operator's adjustments.
+    const QString noSliceTip = tr("Connect to a radio to tune the noise blanker.");
+    bindToActiveSlice(this, model, receiverSelection(), [=](SliceModel* s) {
+        SliceBindings conns;
+        nb1Grp->setEnabled(s != nullptr);
+        snbGrp->setEnabled(s != nullptr);
+        nb1Grp->setToolTip(s ? QString() : noSliceTip);
+        snbGrp->setToolTip(s ? QString() : noSliceTip);
+        if (!s) { return conns; }
+
+        // Show the slice's values (the value labels follow), then connect.
+        auto showing = std::make_shared<bool>(false);
+        const auto show = [=]() {
+            *showing = true;
+            nb1Thresh->setValue(s->nb1Threshold());
+            nb1Trans->setValue(qRound(s->nb1TransitionMs() * 100.0));
+            nb1Lead->setValue(qRound(s->nb1LeadMs() * 100.0));
+            nb1Lag->setValue(qRound(s->nb1LagMs() * 100.0));
+            nb1Mode->setCurrentIndex(s->nb2Mode());
+            snbK1->setValue(qRound(s->snbK1() * 10.0));
+            snbK2->setValue(qRound(s->snbK2() * 10.0));
+            snbOutBw->setValue(s->snbOutputBandwidthHz());
+            *showing = false;
+        };
+        show();
+
+        // Control -> slice. The sliders hold x100 / x10 integers; the model
+        // stores real values and RadioModel converts on the way to WDSP.
+        const auto toSlice = [&conns, s, showing](QSlider* sl, auto apply) {
+            conns << connect(sl, &QSlider::valueChanged, s, [s, showing, apply](int v) {
+                if (!*showing) { apply(s, v); }
+            });
+        };
+        toSlice(nb1Thresh, [](SliceModel* m, int v) { m->setNb1Threshold(v); });
+        toSlice(nb1Trans, [](SliceModel* m, int v) { m->setNb1TransitionMs(v / 100.0); });
+        toSlice(nb1Lead, [](SliceModel* m, int v) { m->setNb1LeadMs(v / 100.0); });
+        toSlice(nb1Lag, [](SliceModel* m, int v) { m->setNb1LagMs(v / 100.0); });
+        toSlice(snbK1, [](SliceModel* m, int v) { m->setSnbK1(v / 10.0); });
+        toSlice(snbK2, [](SliceModel* m, int v) { m->setSnbK2(v / 10.0); });
+        toSlice(snbOutBw, [](SliceModel* m, int v) { m->setSnbOutputBandwidthHz(v); });
+        conns << connect(nb1Mode, QOverload<int>::of(&QComboBox::currentIndexChanged), s,
+                         [s, showing](int v) {
+            if (!*showing) { s->setNb2Mode(v); }
+        });
+
+        // Slice -> controls (the VFO flag or a remote change).
+        for (auto signal : {&SliceModel::nb1ThresholdChanged, &SliceModel::nb2ModeChanged,
+                            &SliceModel::snbOutputBandwidthHzChanged}) {
+            conns << connect(s, signal, nb1Grp, show);
+        }
+        for (auto signal : {&SliceModel::nb1TransitionMsChanged, &SliceModel::nb1LeadMsChanged,
+                            &SliceModel::nb1LagMsChanged, &SliceModel::snbK1Changed,
+                            &SliceModel::snbK2Changed}) {
+            conns << connect(s, signal, nb1Grp, show);
+        }
+        return conns;
+    });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1648,8 +2060,9 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
 //   udCWSemiBreakInDelay, tbCWSidetoneVolume,
 //   chkAPFEnable, udAPFFreq, udAPFBandwidth, tbAPFGain
 //
-CwSetupPage::CwSetupPage(RadioModel* model, QWidget* parent)
-    : SetupPage("CW", model, parent)
+CwSetupPage::CwSetupPage(RadioModel* model, QWidget* parent,
+                         DspReceiverSelection* selection)
+    : ReceiverDspSetupPage("CW", model, parent, selection)
 {
     // ── Keyer ─────────────────────────────────────────────────────────────────
     QGroupBox* keyerGrp = addSection("Keyer");
@@ -1672,6 +2085,10 @@ CwSetupPage::CwSetupPage(RadioModel* model, QWidget* parent)
     addLabeledSlider(keyerLay, "Dot-Dash Ratio", dotDashRatio);
 
     disableGroup(keyerGrp);
+    // R-R3-49: the CW keyer settings are hidden until CWX and CW transmit
+    // are built.
+    keyerGrp->setObjectName(QStringLiteral("cwKeyerGroup"));
+    UnbuiltFeatures::hideUnlessBuilt(keyerGrp, UnbuiltFeature::Cwx);
 
     // ── Timing ────────────────────────────────────────────────────────────────
     QGroupBox* timingGrp = addSection("Timing");
@@ -1718,27 +2135,81 @@ CwSetupPage::CwSetupPage(RadioModel* model, QWidget* parent)
     m_sidetoneRow->setVisible(false);
 
     disableGroup(timingGrp);
+    // R-R3-49: break-in delay and sidetone are keyer settings too.
+    timingGrp->setObjectName(QStringLiteral("cwTimingGroup"));
+    UnbuiltFeatures::hideUnlessBuilt(timingGrp, UnbuiltFeature::Cwx);
 
     // ── APF ───────────────────────────────────────────────────────────────────
     QGroupBox* apfGrp = addSection("APF");
     QVBoxLayout* apfLay = qobject_cast<QVBoxLayout*>(apfGrp->layout());
 
     auto* apfEnable = new QPushButton("Enable");
+    apfEnable->setProperty("nereusSetupId", "dsp.cw.apfEnabled");
+    apfEnable->setCheckable(true);
+    apfEnable->setObjectName(QStringLiteral("apfEnableButton"));
     addLabeledToggle(apfLay, "Enable", apfEnable);
 
+    // R-R3-21: Enable and Center Freq are the active slice's APF, the VFO
+    // flag's APF button and tune slider (SliceModel apfEnabled /
+    // apfTuneHz). The centre is the CW pitch plus the slice's tune offset,
+    // as RadioModel sends it: From Thetis setup.cs:17071 [v2.10.3.13] --
+    // freq = CWPitch + tuneOffset, with RadioModel's pitch
+    // (RadioModel::kApfCwPitchHz). The range is the flag slider's
+    // -500..+500 Hz around it.
+    static constexpr int kApfPitchHz = RadioModel::kApfCwPitchHz;
     auto* apfCenter = new QSlider(Qt::Horizontal);
-    apfCenter->setRange(200, 3000);
-    addLabeledSlider(apfLay, "Center Freq", apfCenter);
+    apfCenter->setObjectName(QStringLiteral("apfCenterSlider"));
+    apfCenter->setProperty("nereusSetupId", "dsp.cw.apfCenter");
+    apfCenter->setRange(kApfPitchHz - 500, kApfPitchHz + 500);
+    auto* apfCenterValue = new QLabel;
+    addLabeledSlider(apfLay, "Center Freq", apfCenter, apfCenterValue);
 
+    // No slice setting holds these two yet; they stay as they were.
     auto* apfBw = new QSlider(Qt::Horizontal);
     apfBw->setRange(10, 500);
-    addLabeledSlider(apfLay, "Bandwidth", apfBw);
+    apfBw->setEnabled(false);
+    apfBw->setObjectName(QStringLiteral("apfBandwidthSlider"));
+    // R-R3-49: hidden until a slice setting holds them.
+    UnbuiltFeatures::hideLayoutUnlessBuilt(addLabeledSlider(apfLay, "Bandwidth", apfBw),
+                                           UnbuiltFeature::ApfParams);
 
     auto* apfGain = new QSlider(Qt::Horizontal);
     apfGain->setRange(0, 100);
-    addLabeledSlider(apfLay, "Gain", apfGain);
+    apfGain->setEnabled(false);
+    apfGain->setObjectName(QStringLiteral("apfGainSlider"));
+    UnbuiltFeatures::hideLayoutUnlessBuilt(addLabeledSlider(apfLay, "Gain", apfGain),
+                                           UnbuiltFeature::ApfParams);
 
-    disableGroup(apfGrp);
+    bindToActiveSlice(this, model, receiverSelection(),
+                      [apfEnable, apfCenter, apfCenterValue](SliceModel* s) {
+        SliceBindings conns;
+        setSliceAvailable(apfEnable, s != nullptr);
+        setSliceAvailable(apfCenter, s != nullptr);
+        if (!s) { return conns; }
+        {
+            QSignalBlocker blockEnable(apfEnable);
+            QSignalBlocker blockCenter(apfCenter);
+            apfEnable->setChecked(s->apfEnabled());
+            apfCenter->setValue(kApfPitchHz + s->apfTuneHz());
+        }
+        apfCenterValue->setText(QStringLiteral("%1 Hz").arg(apfCenter->value()));
+        conns << connect(apfEnable, &QPushButton::toggled, s, &SliceModel::setApfEnabled);
+        conns << connect(apfCenter, &QSlider::valueChanged, s, [s, apfCenterValue](int hz) {
+            apfCenterValue->setText(QStringLiteral("%1 Hz").arg(hz));
+            s->setApfTuneHz(hz - kApfPitchHz);
+        });
+        conns << connect(s, &SliceModel::apfEnabledChanged, apfEnable, [apfEnable](bool on) {
+            QSignalBlocker block(apfEnable);
+            apfEnable->setChecked(on);
+        });
+        conns << connect(s, &SliceModel::apfTuneHzChanged, apfCenter,
+                         [apfCenter, apfCenterValue](int tune) {
+            QSignalBlocker block(apfCenter);
+            apfCenter->setValue(kApfPitchHz + tune);
+            apfCenterValue->setText(QStringLiteral("%1 Hz").arg(apfCenter->value()));
+        });
+        return conns;
+    });
 
     // P1 full-parity §4.2 — subscribe to model so the Sidetone Volume row
     // visibility reflects the connected board's hasSidetoneGenerator flag
@@ -1768,6 +2239,15 @@ CwSetupPage::CwSetupPage(RadioModel* model, QWidget* parent)
         if (model->isConnected() && model->connection()) {
             const auto& caps = NereusSDR::BoardCapsTable::forBoard(
                 model->connection()->radioInfo().boardType);
+            setHasSidetoneGenerator(caps.hasSidetoneGenerator);
+        } else if (!model->ownsLocalDsp()
+                   && !model->currentRadioInfo().macAddress.isEmpty()) {
+            // R-R3-46 (carried): a remote window has no connection of its
+            // own; the Core's radio, once known, is the model's stored
+            // radio info, and currentRadioChanged fired before this page
+            // was built.
+            const auto& caps = NereusSDR::BoardCapsTable::forBoard(
+                model->currentRadioInfo().boardType);
             setHasSidetoneGenerator(caps.hasSidetoneGenerator);
         }
     }
@@ -1802,8 +2282,9 @@ bool CwSetupPage::sidetoneRowVisibleForTest() const
 // 40200, 40326-40336 [v2.10.3.13-beta2].  NereusSDR is missing this
 // group entirely; tracked as a separate follow-up issue, not this PR.
 //
-AmSamSetupPage::AmSamSetupPage(RadioModel* model, QWidget* parent)
-    : SetupPage("AM/SAM", model, parent)
+AmSamSetupPage::AmSamSetupPage(RadioModel* model, QWidget* parent,
+                               DspReceiverSelection* selection)
+    : ReceiverDspSetupPage("AM/SAM", model, parent, selection)
 {
     // ── SAM ───────────────────────────────────────────────────────────────────
     QGroupBox* samGrp = addSection("SAM");
@@ -1818,21 +2299,36 @@ AmSamSetupPage::AmSamSetupPage(RadioModel* model, QWidget* parent)
     addLabeledCombo(samLay, "DSB Mode", dsbMode);
 
     disableGroup(samGrp);
+    // R-R3-49: the synchronous AM options are hidden until they are built.
+    samGrp->setObjectName(QStringLiteral("samGroup"));
+    UnbuiltFeatures::hideUnlessBuilt(samGrp, UnbuiltFeature::Sam);
 
     // ── Squelch ───────────────────────────────────────────────────────────────
     QGroupBox* sqGrp = addSection("Squelch");
     QVBoxLayout* sqLay = qobject_cast<QVBoxLayout*>(sqGrp->layout());
 
+    // R-R3-21: the active slice's AM squelch threshold (SliceModel
+    // amsqThresh, dB, sent to WDSP SetRXAAMSQThreshold by RadioModel).
     auto* sqThresh = new QSlider(Qt::Horizontal);
-    sqThresh->setRange(-160, 0);
-    addLabeledSlider(sqLay, "AM Squelch Threshold", sqThresh);
+    sqThresh->setProperty("nereusSetupId", "dsp.amSam.amsqThresh");
+    sqThresh->setObjectName(QStringLiteral("amSquelchThresholdSlider"));
+    sqThresh->setRange(ControlRanges::kAmsqThreshMinDb, ControlRanges::kAmsqThreshMaxDb);
+    sqThresh->setSingleStep(ControlRanges::kAmsqThreshStepDb);
+    auto* sqThreshValue = new QLabel;
+    addLabeledSlider(sqLay, "AM Squelch Threshold", sqThresh, sqThreshValue);
+    bindSquelchThreshold(this, model, receiverSelection(), sqThresh, sqThreshValue,
+                         &SliceModel::amsqThresh, &SliceModel::setAmsqThresh,
+                         &SliceModel::amsqThreshChanged);
 
+    // No slice setting holds the tail yet; it stays as it was.
     auto* sqMaxTail = new QSpinBox;
     sqMaxTail->setRange(1, 1000);
     sqMaxTail->setSuffix(" ms");
-    addLabeledSpinner(sqLay, "Max Tail", sqMaxTail);
-
-    disableGroup(sqGrp);
+    sqMaxTail->setEnabled(false);
+    sqMaxTail->setObjectName(QStringLiteral("amSquelchMaxTailSpin"));
+    // R-R3-49: hidden until a slice setting holds it.
+    UnbuiltFeatures::hideLayoutUnlessBuilt(addLabeledSpinner(sqLay, "Max Tail", sqMaxTail),
+                                           UnbuiltFeature::AmSquelchTail);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1843,8 +2339,9 @@ AmSamSetupPage::AmSamSetupPage(RadioModel* model, QWidget* parent)
 //   comboFMDeviation, tbFMSquelchThreshold, chkFMDeEmphasis,
 //   comboFMTXDeviation, tbFMMicGain, comboFMTXEmphasisPosition
 //
-FmSetupPage::FmSetupPage(RadioModel* model, QWidget* parent)
-    : SetupPage("FM", model, parent)
+FmSetupPage::FmSetupPage(RadioModel* model, QWidget* parent,
+                         DspReceiverSelection* selection)
+    : ReceiverDspSetupPage("FM", model, parent, selection)
 {
     // ── RX ────────────────────────────────────────────────────────────────────
     QGroupBox* rxGrp = addSection("RX");
@@ -1852,16 +2349,31 @@ FmSetupPage::FmSetupPage(RadioModel* model, QWidget* parent)
 
     auto* rxDeviation = new QComboBox;
     rxDeviation->addItems({"5k", "2.5k"});
-    addLabeledCombo(rxLay, "Deviation", rxDeviation);
+    rxDeviation->setObjectName(QStringLiteral("fmRxDeviationCombo"));
+    // R-R3-49: hidden until a slice setting holds it.
+    UnbuiltFeatures::hideLayoutUnlessBuilt(addLabeledCombo(rxLay, "Deviation", rxDeviation),
+                                           UnbuiltFeature::FmDeviation);
 
+    // R-R3-21: the active slice's FM squelch threshold (SliceModel
+    // fmsqThresh, dB; RxChannel::setFmsqThresh converts it for WDSP).
     auto* squelchThresh = new QSlider(Qt::Horizontal);
-    squelchThresh->setRange(-160, 0);
-    addLabeledSlider(rxLay, "Squelch Threshold", squelchThresh);
+    squelchThresh->setProperty("nereusSetupId", "dsp.fm.fmsqThresh");
+    squelchThresh->setObjectName(QStringLiteral("fmSquelchThresholdSlider"));
+    squelchThresh->setRange(ControlRanges::kFmsqThreshMinDb, ControlRanges::kFmsqThreshMaxDb);
+    squelchThresh->setSingleStep(ControlRanges::kFmsqThreshStepDb);
+    auto* squelchThreshValue = new QLabel;
+    addLabeledSlider(rxLay, "Squelch Threshold", squelchThresh, squelchThreshValue);
+    bindSquelchThreshold(this, model, receiverSelection(), squelchThresh,
+                         squelchThreshValue, &SliceModel::fmsqThresh,
+                         &SliceModel::setFmsqThresh, &SliceModel::fmsqThreshChanged);
 
+    // No slice setting holds these two yet; they stay as they were.
+    rxDeviation->setEnabled(false);
     auto* deEmphasis = new QPushButton("Enable");
-    addLabeledToggle(rxLay, "De-Emphasis", deEmphasis);
-
-    disableGroup(rxGrp);
+    deEmphasis->setEnabled(false);
+    deEmphasis->setObjectName(QStringLiteral("fmDeEmphasisButton"));
+    UnbuiltFeatures::hideLayoutUnlessBuilt(addLabeledToggle(rxLay, "De-Emphasis", deEmphasis),
+                                           UnbuiltFeature::FmDeviation);
 
     // ── TX ────────────────────────────────────────────────────────────────────
     QGroupBox* txGrp = addSection("TX");
@@ -1880,6 +2392,9 @@ FmSetupPage::FmSetupPage(RadioModel* model, QWidget* parent)
     addLabeledCombo(txLay, "Emphasis Position", emphasisPos);
 
     disableGroup(txGrp);
+    // R-R3-49 (fm-tx): hidden until FM transmit is built.
+    txGrp->setObjectName(QStringLiteral("fmTxGroup"));
+    UnbuiltFeatures::hideUnlessBuilt(txGrp, UnbuiltFeature::FmTransmit);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1929,6 +2444,7 @@ CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
     QVBoxLayout* phRotLay = qobject_cast<QVBoxLayout*>(phRotGrp->layout());
 
     m_phRotEnableChk = new QCheckBox("Enable");
+    m_phRotEnableChk->setProperty("nereusSetupId", "dsp.cfc.phaseRotatorEnabled");
     m_phRotEnableChk->setObjectName(QStringLiteral("chkPHROTEnable"));
     m_phRotEnableChk->setChecked(tx.phaseRotatorEnabled());
     // From Thetis setup.Designer.cs:46281 [v2.10.3.13] — chkPHROTEnable tooltip.
@@ -1936,6 +2452,7 @@ CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
     phRotLay->addWidget(m_phRotEnableChk);
 
     m_phRotFreqSpin = new QSpinBox;
+    m_phRotFreqSpin->setProperty("nereusSetupId", "dsp.cfc.phaseRotatorFreqHz");
     m_phRotFreqSpin->setObjectName(QStringLiteral("udPhRotFreq"));
     m_phRotFreqSpin->setRange(TransmitModel::kPhaseRotatorFreqHzMin,
                               TransmitModel::kPhaseRotatorFreqHzMax);
@@ -1947,6 +2464,7 @@ CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
     addLabeledSpinner(phRotLay, "FREQ", m_phRotFreqSpin);
 
     m_phRotStagesSpin = new QSpinBox;
+    m_phRotStagesSpin->setProperty("nereusSetupId", "dsp.cfc.phaseRotatorStages");
     m_phRotStagesSpin->setObjectName(QStringLiteral("udPHROTStages"));
     m_phRotStagesSpin->setRange(TransmitModel::kPhaseRotatorStagesMin,
                                 TransmitModel::kPhaseRotatorStagesMax);
@@ -1958,6 +2476,7 @@ CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
     addLabeledSpinner(phRotLay, "STAGES", m_phRotStagesSpin);
 
     m_phRotReverseChk = new QCheckBox("Reverse Phase");
+    m_phRotReverseChk->setProperty("nereusSetupId", "dsp.cfc.phaseReverseEnabled");
     m_phRotReverseChk->setObjectName(QStringLiteral("chkPHROTReverse"));
     m_phRotReverseChk->setChecked(tx.phaseReverseEnabled());
     // From Thetis setup.Designer.cs:46186 [v2.10.3.13] — chkPHROTReverse tooltip.
@@ -2010,6 +2529,7 @@ CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
     QVBoxLayout* cfcLay = qobject_cast<QVBoxLayout*>(cfcGrp->layout());
 
     m_cfcEnableChk = new QCheckBox("Enable");
+    m_cfcEnableChk->setProperty("nereusSetupId", "dsp.cfc.cfcEnabled");
     m_cfcEnableChk->setObjectName(QStringLiteral("chkCFCEnable"));
     m_cfcEnableChk->setChecked(tx.cfcEnabled());
     m_cfcEnableChk->setToolTip(QStringLiteral(
@@ -2017,6 +2537,7 @@ CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
     cfcLay->addWidget(m_cfcEnableChk);
 
     m_cfcPostEqEnableChk = new QCheckBox("Post-EQ Enable");
+    m_cfcPostEqEnableChk->setProperty("nereusSetupId", "dsp.cfc.cfcPostEqEnabled");
     m_cfcPostEqEnableChk->setObjectName(QStringLiteral("chkCFCPeqEnable"));
     m_cfcPostEqEnableChk->setChecked(tx.cfcPostEqEnabled());
     m_cfcPostEqEnableChk->setToolTip(QStringLiteral(
@@ -2024,6 +2545,7 @@ CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
     cfcLay->addWidget(m_cfcPostEqEnableChk);
 
     m_cfcPrecompSpin = new QSpinBox;
+    m_cfcPrecompSpin->setProperty("nereusSetupId", "dsp.cfc.cfcPrecompDb");
     m_cfcPrecompSpin->setObjectName(QStringLiteral("udCFCPreComp"));
     m_cfcPrecompSpin->setRange(TransmitModel::kCfcPrecompDbMin,
                                TransmitModel::kCfcPrecompDbMax);
@@ -2035,6 +2557,7 @@ CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
     addLabeledSpinner(cfcLay, "Pre-Comp", m_cfcPrecompSpin);
 
     m_cfcPostEqGainSpin = new QSpinBox;
+    m_cfcPostEqGainSpin->setProperty("nereusSetupId", "dsp.cfc.cfcPostEqGainDb");
     m_cfcPostEqGainSpin->setObjectName(QStringLiteral("udCFCPostEqGain"));
     m_cfcPostEqGainSpin->setRange(TransmitModel::kCfcPostEqGainDbMin,
                                   TransmitModel::kCfcPostEqGainDbMax);
@@ -2047,8 +2570,11 @@ CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
     m_cfcBandsBtn = new QPushButton("Configure CFC bands…");
     m_cfcBandsBtn->setObjectName(QStringLiteral("btnCFCBandsConfigure"));
     m_cfcBandsBtn->setAutoDefault(false);
+    // Setup description version 19 publishes this editor as dsp.cfc.bands;
+    // the row's tooltip is this one.
+    m_cfcBandsBtn->setProperty("nereusSetupId", QStringLiteral("dsp.cfc.bands"));
     m_cfcBandsBtn->setToolTip(QStringLiteral(
-        "Open the per-band CFC editor (10-band ParaEQ + compression sliders)"));
+        "Open the per-band CFC editor: 5, 10 or 18 bands of compression and post-EQ."));
     cfcLay->addWidget(m_cfcBandsBtn);
 
     // ── Wiring: CFC widgets ↔ TransmitModel ──────────────────────────────────
@@ -2114,6 +2640,7 @@ CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
     QVBoxLayout* cessbLay = qobject_cast<QVBoxLayout*>(cessbGrp->layout());
 
     m_cessbEnableChk = new QCheckBox("Enable");
+    m_cessbEnableChk->setProperty("nereusSetupId", "dsp.cfc.cessbOn");
     m_cessbEnableChk->setObjectName(QStringLiteral("chkCESSBEnable"));
     m_cessbEnableChk->setChecked(tx.cessbOn());
     m_cessbEnableChk->setToolTip(QStringLiteral(
@@ -2137,6 +2664,27 @@ CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
         QSignalBlocker b(m_cessbEnableChk);
         m_cessbEnableChk->setChecked(on);
     });
+
+    // R-R3-49 (parity Task 4): every setting here is on the Core's
+    // `transmit` object (transmitSettingsVersion 4). In a remote window they
+    // start closed until SetupDialog pushes that gate. [Configure CFC
+    // bands] stays live: the dialog shows why it is greyed.
+    if (!model->ownsLocalDsp()) {
+        setTransmitSettingsPermittedAt(4, false, QString());
+    }
+}
+
+void CfcSetupPage::setTransmitSettingsPermittedAt(int version, bool permitted,
+                                                  const QString& reason)
+{
+    if (version != 4) {
+        return;
+    }
+    gateTransmitControls({m_phRotEnableChk, m_phRotReverseChk, m_phRotFreqSpin,
+                          m_phRotStagesSpin, m_cfcEnableChk, m_cfcPostEqEnableChk,
+                          m_cfcPrecompSpin, m_cfcPostEqGainSpin, m_cessbEnableChk},
+        permitted,
+        reason.isEmpty() ? IStationLink::transmitSettingsUnavailableReason() : reason);
 }
 
 // ── MNF editor ranges ─────────────────────────────────────────────────────────
@@ -2166,8 +2714,9 @@ static constexpr double kMnfWidthStepHz = 1.0;
 // The prior placeholder carried a "Window" combo. No such control exists
 // upstream (there is no comboMNFWindow anywhere in Thetis v2.10.3.15) and the
 // bandpass window is out of scope, so it is dropped rather than wired.
-MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
-    : SetupPage("TNF", model, parent)
+MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent,
+                           DspReceiverSelection* selection)
+    : ReceiverDspSetupPage("TNF", model, parent, selection)
 {
     // Thetis captions this group "Multi Notch Filter" and names the tab
     // MNF (setup.designer.cs:44165, :44141 [v2.10.3.15]). NereusSDR says TNF
@@ -2189,6 +2738,7 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
     // ── Notch table ──────────────────────────────────────────────────────────
     m_notchTable = new QTableWidget(0, 4, mnfGrp);
     m_notchTable->setObjectName(QStringLiteral("tblMNFNotches"));
+    m_notchTable->setProperty("nereusSetupId", "dsp.tnf.list");
     // Column captions follow Thetis lblMNFFreq / lblMNFWidth / chkMNFActive
     // (setup.designer.cs:44308, :44298, :44260 [v2.10.3.15]); the frequency
     // column is Hz here where upstream is MHz.
@@ -2227,6 +2777,7 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
 
     m_addBtn = new QPushButton(QStringLiteral("Add"), mnfGrp);
     m_addBtn->setObjectName(QStringLiteral("btnMNFAdd"));
+    m_addBtn->setProperty("nereusSetupId", "dsp.tnf.add");
     // From Thetis setup.designer.cs:44286 [v2.10.3.15] — btnMNFAdd tooltip.
     m_addBtn->setToolTip(QStringLiteral("Add a notch"));
     m_addBtn->setStyleSheet(kMnfButtonStyle);
@@ -2243,7 +2794,7 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
         // is still in scope inside this lambda and would shadow the accessor.
         RadioModel* rm = SetupPage::model();
         if (!rm || !rm->notchModel()) { return; }
-        SliceModel* slice = rm->activeSlice();
+        SliceModel* slice = selectedSlice();
         if (!slice) { return; }
         // Thetis splits this into two clicks: btnMNFAdd opens an empty row and
         // btnVFOFreq fills it from VFOA ("Enter the Frequency from VFOA",
@@ -2267,14 +2818,18 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
     // to its notch popup rather than to the Setup tab.
     m_minWidthLbl = new QLabel(QStringLiteral("--"), mnfGrp);
     m_minWidthLbl->setObjectName(QStringLiteral("lblMNFMinWidth"));
+    m_minWidthLbl->setProperty("nereusSetupId", "dsp.tnf.minNotchWidthHz");
     m_minWidthLbl->setToolTip(QStringLiteral(
         "Narrowest notch the current bandpass filter can realise"));
     addLabeledLabel(mnfLay, QStringLiteral("Minimum Notch Width"), m_minWidthLbl);
 
     // The readout follows the active slice's channel, so it has to re-resolve
     // when the operator changes which slice that is.
-    connect(model, &RadioModel::activeSliceChanged, this,
-            [this](int) { refreshMinNotchWidth(); });
+    watchReceiverSelection([this] {
+        m_addBtn->setEnabled(selectedSlice() != nullptr);
+        refreshMinNotchWidth();
+    });
+    m_addBtn->setEnabled(selectedSlice() != nullptr);
 
     // ── Auto-increase ────────────────────────────────────────────────────────
     // From Thetis setup.designer.cs:44204 [v2.10.3.15] — chkMNFAutoIncrease.Text.
@@ -2282,6 +2837,7 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
         QStringLiteral("Auto-Increase width (if needed) to achieve >100dB attenuation"),
         mnfGrp);
     m_autoIncreaseChk->setObjectName(QStringLiteral("chkMNFAutoIncrease"));
+    m_autoIncreaseChk->setProperty("nereusSetupId", "dsp.tnf.autoIncrease");
     m_autoIncreaseChk->setChecked(nm->autoIncrease());
     // From Thetis setup.designer.cs:44205 [v2.10.3.15] — chkMNFAutoIncrease tooltip.
     m_autoIncreaseChk->setToolTip(QStringLiteral(
@@ -2309,6 +2865,7 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent)
                        "representation of the active notch)"),
         mnfGrp);
     m_visualNotchChk->setObjectName(QStringLiteral("chkVisualNotch"));
+    m_visualNotchChk->setProperty("nereusSetupId", "dsp.tnf.visualNotch");
     m_visualNotchChk->setChecked(nm->visualEnabled());
     m_visualNotchChk->setToolTip(QStringLiteral(
         "This is a simple approximation and does not accurately represent the notch"));
@@ -2384,6 +2941,7 @@ void MnfSetupPage::rebuildTable()
         // the editor takes the bounds NotchModel itself constrains to.
         auto* freqSpin = new QDoubleSpinBox(m_notchTable);
         freqSpin->setObjectName(QStringLiteral("udMNFFreq"));
+        freqSpin->setProperty("nereusSetupId", "dsp.tnf.list.centreHz");
         freqSpin->setDecimals(0);
         freqSpin->setRange(NotchModel::kMinNotchCentreHz,
                            NotchModel::kMaxNotchCentreHz);
@@ -2403,6 +2961,7 @@ void MnfSetupPage::rebuildTable()
         // Col 1: width.
         auto* widthSpin = new QDoubleSpinBox(m_notchTable);
         widthSpin->setObjectName(QStringLiteral("udMNFWidth"));
+        widthSpin->setProperty("nereusSetupId", "dsp.tnf.list.widthHz");
         widthSpin->setDecimals(0);
         widthSpin->setRange(kMnfWidthMinHz, NotchModel::kMaxNotchWidthHz);
         widthSpin->setSingleStep(kMnfWidthStepHz);
@@ -2420,6 +2979,7 @@ void MnfSetupPage::rebuildTable()
         // Col 2: active.
         auto* activeChk = new QCheckBox(m_notchTable);
         activeChk->setObjectName(QStringLiteral("chkMNFActive"));
+        activeChk->setProperty("nereusSetupId", "dsp.tnf.list.active");
         activeChk->setChecked(n.active);
         // From Thetis setup.designer.cs:44261 [v2.10.3.15] — chkMNFActive tooltip.
         activeChk->setToolTip(QStringLiteral("Checked if the notch is active"));
@@ -2435,6 +2995,7 @@ void MnfSetupPage::rebuildTable()
         // Col 3: delete.
         auto* delBtn = new QPushButton(QStringLiteral("Delete"), m_notchTable);
         delBtn->setObjectName(QStringLiteral("btnMNFDelete"));
+        delBtn->setProperty("nereusSetupId", "dsp.tnf.list.delete");
         // From Thetis setup.designer.cs:44219 [v2.10.3.15] — btnMNFDelete tooltip.
         delBtn->setToolTip(QStringLiteral("Delete the current notch index"));
         delBtn->setStyleSheet(kMnfRowButtonStyle);
@@ -2509,6 +3070,10 @@ void MnfSetupPage::commitRow(int notchId)
     NotchModel* nm = rm->notchModel();
     nm->setCenter(notchId, freqSpin->value());
     nm->setWidth(notchId, widthSpin->value());
+    // R-R3-21: on a remote window the two halves travel to the Core as one
+    // notch.move, sent now rather than at the end of a drag window. Nothing
+    // is held locally, so this is a no-op there.
+    nm->flushPendingMoves();
 }
 
 // ── MnfSetupPage::beginAdminEdit ──────────────────────────────────────────────
@@ -2558,12 +3123,42 @@ void MnfSetupPage::refreshMinNotchWidth()
         return;
     }
 
+    // R-R3-49 (parity Task 16): a remote window has no channel; the active
+    // slice carries the Core's channel's minimum (dspInfoVersion 1).
+    if (rm->role() == RadioModel::Role::Remote) {
+        static const QString kOwnTip = QStringLiteral(
+            "Narrowest notch the current bandpass filter can realise");
+        const auto show = [this, rm](double minWidthHz) {
+            if (!m_minWidthLbl) { return; }
+            const bool known = rm->stationDspInfoVersion() >= 1 && minWidthHz > 0.0;
+            m_minWidthLbl->setText(known ? QStringLiteral("%1 Hz").arg(minWidthHz, 0, 'f', 1)
+                                         : QStringLiteral("--"));
+            m_minWidthLbl->setToolTip(rm->stationDspInfoVersion() >= 1
+                ? kOwnTip
+                : QStringLiteral("This Core does not say how narrow a notch it can make. "
+                                 "Updating the Core may help."));
+        };
+        SliceModel* slice = selectedSlice();
+        if (!slice) {
+            show(0.0);
+            return;
+        }
+        m_minWidthConn = connect(slice, &SliceModel::minNotchWidthHzChanged, this, show);
+        show(slice->minNotchWidthHz());
+        return;
+    }
+
     // Thetis surfaces this per-RX (console.cs:48787-48818,
     // UpdateMinimumNotchWidthRX [v2.10.3.15]). NereusSDR's notch list is
     // global, so the readout follows the active slice's channel and falls
     // back to the first pooled channel before any slice exists.
-    const int sliceIndex = rm->activeSlice() ? rm->activeSlice()->sliceIndex()
-                                             : WdspEngine::kFirstSliceChannelId;
+    SliceModel* slice = selectedSlice();
+    if (!slice && receiverSelection() && receiverSelection()->restrictsReceiver()) {
+        m_minWidthLbl->setText(QStringLiteral("--"));
+        return;
+    }
+    const int sliceIndex = slice ? slice->sliceIndex()
+                               : WdspEngine::kFirstSliceChannelId;
     RxChannel* ch = rm->rxChannelForSlice(sliceIndex);
     if (!ch) {
         m_minWidthLbl->setText(QStringLiteral("--"));
@@ -2599,7 +3194,7 @@ void MnfSetupPage::showEvent(QShowEvent* event)
 // Settings…" popup button into the correct sub-tab. Tab order mirrors the
 // constructor's addTab calls.
 //
-void NrAnfSetupPage::selectSubtab(NrSlot slot)
+void NrAnfSetupPage::selectSubtab(NrSlot slot, int openerSliceId)
 {
     if (!m_tabs) { return; }
     // Map NrSlot → QTabWidget tab label. Must match the labels passed to
@@ -2612,6 +3207,17 @@ void NrAnfSetupPage::selectSubtab(NrSlot slot)
         case NrSlot::NR4:  target = QStringLiteral("NR4");  break;
         case NrSlot::DFNR: target = QStringLiteral("DFNR"); break;
         case NrSlot::MNR:  target = QStringLiteral("MNR");  break;
+        case NrSlot::NNR:
+            target = QStringLiteral("NNR");
+            if (m_nnrControls && model()) {
+                SliceModel* opener = selectedSlice();
+                if ((!receiverSelection() || !receiverSelection()->restrictsReceiver())
+                    && openerSliceId >= 0) {
+                    opener = model()->sliceById(openerSliceId);
+                }
+                m_nnrControls->bindSlice(opener);
+            }
+            break;
         case NrSlot::BNR:
         case NrSlot::Off:  return;  // no dedicated sub-tab
     }

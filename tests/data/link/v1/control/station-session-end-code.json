@@ -1,0 +1,10 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "session.end",
+    "reason": "Another app at 192.0.2.7:50000 connected to the Core and took over. Connect again to take it back.",
+    "retryable": false,
+    "code": "takenOver"
+  },
+  "decodes": true
+}

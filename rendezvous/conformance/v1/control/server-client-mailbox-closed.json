@@ -1,0 +1,9 @@
+{
+  "from": "server",
+  "to": "client",
+  "wire": {
+    "type": "mailbox.closed",
+    "code": "peerLeft"
+  },
+  "decodes": true
+}

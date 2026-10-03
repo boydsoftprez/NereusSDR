@@ -367,21 +367,20 @@ private slots:
         QCOMPARE(ps.saveCorrections(QString()), false);
     }
 
-    void saveCorrections_withTxChannelAndFilename_returnsTrue()
+    void saveCorrections_withoutLiveCalcc_returnsFalse()
     {
-        // The TxChannel has no live calcc (rsmpin null-guard returns
-        // immediately inside psSaveCorr), but the wrapper still returns
-        // true to indicate "request dispatched" semantics.
+        // Accepted and completed are distinct. A bare wrapper has no live
+        // CALCC status object, so the request was not accepted.
         TxChannel tx(kTxChannelId);
         PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
-        QCOMPARE(ps.saveCorrections(QStringLiteral("/tmp/nope.ps")), true);
+        QCOMPARE(ps.saveCorrections(QStringLiteral("/tmp/nope.ps")), false);
     }
 
-    void restoreCorrections_withTxChannelAndFilename_returnsTrue()
+    void restoreCorrections_withoutLiveCalcc_returnsFalse()
     {
         TxChannel tx(kTxChannelId);
         PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
-        QCOMPARE(ps.restoreCorrections(QStringLiteral("/tmp/nope.ps")), true);
+        QCOMPARE(ps.restoreCorrections(QStringLiteral("/tmp/nope.ps")), false);
     }
 
     // ── Test 12: setTwoToneOn forwards to TwoToneController ─────────────────
@@ -485,7 +484,7 @@ private slots:
         // when calCount is still 0 (calcc hasn't run yet).  Bump
         // calCount via the test seam to simulate a completed calcc cycle
         // and trigger the calCount-changed branch.
-        ps.setCalCountForTest(1);
+        ps.setAttemptCountForTest(1);
 
         ps.autoAttentionTick();
 
@@ -562,7 +561,7 @@ private slots:
         // to SetNewValues.
         // PR #212 follow-up: bump calCount via test seam since
         // m_aaLastSeenCalCount initial value changed from -1 to 0.
-        ps.setCalCountForTest(1);
+        ps.setAttemptCountForTest(1);
         ps.autoAttentionTick();
 
         QCOMPARE(static_cast<int>(ps.autoAttenuateState()),
@@ -607,6 +606,7 @@ private slots:
         int info[16] = {0};
         info[4]  = 200;     // feedbackLevel
         info[5]  = 1;       // calCount (changed from 0)
+        info[7]  = 1;       // calibration attempt (changed from 0)
         info[14] = 1;       // corrApplied
         info[15] = 6;       // state = LCALC
         ps.processNewInfo(info);
@@ -645,7 +645,7 @@ private slots:
         // = true.  Tick advances to SetNewValues.
         // PR #212 follow-up: bump calCount via test seam since
         // m_aaLastSeenCalCount initial value changed from -1 to 0.
-        ps.setCalCountForTest(1);
+        ps.setAttemptCountForTest(1);
         ps.autoAttentionTick();
         QCOMPARE(static_cast<int>(ps.autoAttenuateState()),
                  static_cast<int>(PureSignal::AutoAttenuateState::SetNewValues));
@@ -713,6 +713,7 @@ private slots:
         int info[16] = {};
         info[4] = 150;
         info[5] = 1;
+        info[7] = 1;
         info[14] = 1;
         ps.processNewInfo(info);
 
@@ -770,10 +771,9 @@ private slots:
     void processNewInfo_carriesCalAttemptsChangedCorrectly()
     {
         // From Thetis PSForm.cs:1097-1098 [v2.10.3.13]:
-        //   public static bool CalibrationAttemptsChanged
-        //     { get { return _info[5] != _oldInfo[5]; } }
-        // First call: info[5]=1 vs oldInfo[5]=0 → calChanged=true.
-        // Second call: info[5]=1 unchanged, info[4] flipped to trip
+        // PS3 reports attempts in info[7] (successful calibrations remain
+        // info[5]). First call: info[7]=1 vs oldInfo[7]=0 → true.
+        // Second call: info[7]=1 unchanged, info[4] flipped to trip
         // HasInfoChanged → calChanged=false in payload.
         TxChannel tx(kTxChannelId);
         PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
@@ -783,6 +783,7 @@ private slots:
         int info1[16] = {};
         info1[4] = 150;
         info1[5] = 1;
+        info1[7] = 1;
         info1[14] = 1;
         ps.processNewInfo(info1);   // calChanged=true
 
@@ -791,6 +792,7 @@ private slots:
         int info2[16] = {};
         info2[4] = 160;             // FeedbackLevel changed → HasInfoChanged
         info2[5] = 1;               // CalibrationCount unchanged
+        info2[7] = 1;               // CalibrationAttempts unchanged
         info2[14] = 1;
         ps.processNewInfo(info2);
 
@@ -945,6 +947,7 @@ private slots:
         int info[16] = {};
         info[4] = 0;        // FeedbackLevel=0 → log10(0) = -Infinity
         info[5] = 1;        // CalibrationCount changed
+        info[7] = 1;        // CalibrationAttempts changed
         info[14] = 1;       // corrApplied
         info[15] = 6;       // state
         ps.processNewInfo(info);
@@ -999,6 +1002,7 @@ private slots:
         int info[16] = {};
         info[4]  = 300;     // FeedbackLevel > 256 (IsFeedbackLevelOK false)
         info[5]  = 1;       // calCount changed
+        info[7]  = 1;       // calibration attempt changed
         info[14] = 1;
         info[15] = 6;
         ps.processNewInfo(info);
@@ -1043,6 +1047,7 @@ private slots:
         int info[16] = {};
         info[4]  = 0;       // FeedbackLevel=0 → log10(0) = -Infinity
         info[5]  = 1;
+        info[7]  = 1;
         info[14] = 1;
         info[15] = 6;
         ps.processNewInfo(info);
@@ -1070,6 +1075,57 @@ private slots:
     //
     // The fix: emit correctionsBeingAppliedChanged for the info[14] path and
     // keep correctingChanged only for the FeedbackLevel > 90 path.
+
+    // ── The info[] status line is written on change, not every second ─────
+    //
+    // The Core journal showed "PureSignal info[]: state=0 corrApplied=0 ..."
+    // once a second while nothing transmitted. The line now marks a change
+    // in what it reports, the same shape as the P1/P2 txLpf lines.
+
+    static int& statusLineCount()
+    {
+        static int count = 0;
+        return count;
+    }
+
+    static void countStatusLines(QtMsgType, const QMessageLogContext&,
+                                 const QString& msg)
+    {
+        if (msg.contains(QStringLiteral("PureSignal info[]:"))) {
+            ++statusLineCount();
+        }
+    }
+
+    void infoStatusLine_notRepeatedWhileValuesUnchanged()
+    {
+        TxChannel tx(kTxChannelId);
+        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
+        ps.setTimersEnabled(false);
+
+        statusLineCount() = 0;
+        const QtMessageHandler previous = qInstallMessageHandler(countStatusLines);
+
+        // 100 ticks is ten seconds of the 100 ms poll with nothing changing.
+        int info[16] = {};
+        for (int i = 0; i < 100; ++i) {
+            ps.processNewInfo(info);
+        }
+        const int idleLines = statusLineCount();
+
+        // A change in a reported value is still written.
+        info[15] = 3;   // engine state
+        for (int i = 0; i < 20; ++i) {
+            ps.processNewInfo(info);
+        }
+        const int afterChange = statusLineCount();
+
+        qInstallMessageHandler(previous);
+
+        QVERIFY2(idleLines <= 1,
+                 qPrintable(QStringLiteral("idle ticks wrote %1 status lines")
+                                .arg(idleLines)));
+        QCOMPARE(afterChange, idleLines + 1);
+    }
 
     void correctionsBeingAppliedChanged_emittedOnInfo14Toggle()
     {
@@ -1205,6 +1261,7 @@ private slots:
         PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
         ps.setEnabled(true);
         ps.setTimersEnabled(false);
+        ps.setCorrectionStateForTest(Ps3CorrectionState{false, false});
 
         QSignalSpy psEnabled(&ps, &PureSignal::psEnabledChanged);
 
@@ -1262,6 +1319,7 @@ private slots:
         PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
         ps.setEnabled(true);
         ps.setTimersEnabled(false);
+        ps.setCorrectionStateForTest(Ps3CorrectionState{false, false});
 
         // Drive auto-cal up.
         ps.setAutoCalEnabled(true);
@@ -1526,6 +1584,7 @@ private slots:
             PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
             ps.setEnabled(true);
             ps.setTimersEnabled(false);
+            ps.setCorrectionStateForTest(Ps3CorrectionState{false, false});
 
             QSignalSpy completeSpy(&ps, &PureSignal::calibrationComplete);
 
@@ -1566,170 +1625,6 @@ private slots:
                  "FB=181 must NOT retry (passes IsFeedbackLevelOKRange's <=181)");
         QVERIFY2( runAndCheckRetried(182),
                  "FB=182 must retry (fails IsFeedbackLevelOKRange's <=181)");
-    }
-
-    // ── Codex Fix F: setTintIndex routes (ints, spi) to TxChannel ──────────
-    //
-    // From Thetis PSForm.cs:351-369 [v2.10.3.13]:
-    //   private int _ints = 16;
-    //   private int _spi  = 256;
-    // From Thetis PSForm.cs:857-885 [v2.10.3.13] comboPSTint_SelectedIndexChanged:
-    //   case 0: SetPSIntsAndSpi(16, 256); _ints=16; _spi=256;
-    //           btnPSSave.Enabled = btnPSRestore.Enabled = true;
-    //   case 1: SetPSIntsAndSpi(8, 512);  _ints=8;  _spi=512;
-    //           btnPSSave.Enabled = btnPSRestore.Enabled = false;
-    //   case 2: SetPSIntsAndSpi(4, 1024); _ints=4;  _spi=1024;
-    //           btnPSSave.Enabled = btnPSRestore.Enabled = false;
-    //   default: SetPSIntsAndSpi(16, 256); _ints=16; _spi=256;
-    //            btnPSSave.Enabled = btnPSRestore.Enabled = true;
-    //
-    // Pre-fix: setTint(double) only stored the dB value and emitted
-    // tintChanged(db) — comment at PureSignal.cpp:531 explicitly deferred
-    // the engine call.  AmpView used default (16,256) regardless of TINT.
-    // Post-fix: setTintIndex(idx) maps the user-facing combo index to
-    // (ints, spi) and forwards through TxChannel::setPSIntsAndSpi.
-    // Save/Restore enabled-state mirrors index 0 only (per PSForm.cs:865/
-    // 871/877/883).
-    //
-    // Combo entries from PSForm.designer.cs:164-167 [v2.10.3.13]:
-    //   "0.5", "1.1", "2.5"
-    // — the dB labels for the three preset modes; index 0 = default 0.5 dB.
-
-    void setTintIndex_zero_setsInts16Spi256_andCallsTxChannel()
-    {
-        // From PSForm.cs:861-866 [v2.10.3.13] — case 0:
-        //   puresignal.SetPSIntsAndSpi(_txachannel, 16, 256);
-        //   _ints = 16; _spi = 256;
-        //   btnPSSave.Enabled = btnPSRestore.Enabled = true;
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
-
-        ps.setTintIndex(0);
-
-        QCOMPARE(tx.lastPSIntsForTest(), 16);
-        QCOMPARE(tx.lastPSSpiForTest(),  256);
-        QCOMPARE(ps.psInts(),            16);
-        QCOMPARE(ps.psSpi(),             256);
-        QCOMPARE(ps.saveRestoreEnabled(), true);
-    }
-
-    void setTintIndex_one_setsInts8Spi512_andCallsTxChannel()
-    {
-        // From PSForm.cs:867-872 [v2.10.3.13] — case 1:
-        //   puresignal.SetPSIntsAndSpi(_txachannel, 8, 512);
-        //   _ints = 8; _spi = 512;
-        //   btnPSSave.Enabled = btnPSRestore.Enabled = false;
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
-
-        ps.setTintIndex(1);
-
-        QCOMPARE(tx.lastPSIntsForTest(), 8);
-        QCOMPARE(tx.lastPSSpiForTest(),  512);
-        QCOMPARE(ps.psInts(),            8);
-        QCOMPARE(ps.psSpi(),             512);
-        QCOMPARE(ps.saveRestoreEnabled(), false);
-    }
-
-    void setTintIndex_two_setsInts4Spi1024_andCallsTxChannel()
-    {
-        // From PSForm.cs:873-878 [v2.10.3.13] — case 2:
-        //   puresignal.SetPSIntsAndSpi(_txachannel, 4, 1024);
-        //   _ints = 4; _spi = 1024;
-        //   btnPSSave.Enabled = btnPSRestore.Enabled = false;
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
-
-        ps.setTintIndex(2);
-
-        QCOMPARE(tx.lastPSIntsForTest(), 4);
-        QCOMPARE(tx.lastPSSpiForTest(),  1024);
-        QCOMPARE(ps.psInts(),            4);
-        QCOMPARE(ps.psSpi(),             1024);
-        QCOMPARE(ps.saveRestoreEnabled(), false);
-    }
-
-    void setTintIndex_outOfRange_fallsBackToZero()
-    {
-        // From PSForm.cs:879-884 [v2.10.3.13] — default case:
-        //   puresignal.SetPSIntsAndSpi(_txachannel, 16, 256);
-        //   _ints = 16; _spi = 256;
-        //   btnPSSave.Enabled = btnPSRestore.Enabled = true;
-        // The Thetis switch has a default that mirrors case 0 verbatim.
-        // Out-of-range index in NereusSDR must reach the same behaviour.
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
-
-        ps.setTintIndex(99);
-
-        QCOMPARE(tx.lastPSIntsForTest(), 16);
-        QCOMPARE(tx.lastPSSpiForTest(),  256);
-        QCOMPARE(ps.psInts(),            16);
-        QCOMPARE(ps.psSpi(),             256);
-        QCOMPARE(ps.saveRestoreEnabled(), true);
-    }
-
-    void setTintIndex_emitsSaveRestoreEnabledChanged_onTransitions()
-    {
-        // The combo handler unconditionally writes btnPSSave/Restore.Enabled
-        // for each case.  Wire the equivalent NereusSDR signal so subscribers
-        // (PsForm) can react.  Default state must come from initial value;
-        // we test transitions: 0 → 1 (true → false), 1 → 0 (false → true).
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
-
-        // Drive to a known starting state.
-        ps.setTintIndex(0);   // ensures saveRestoreEnabled = true
-
-        QSignalSpy spy(&ps, &PureSignal::saveRestoreEnabledChanged);
-
-        // 0 → 1: true → false
-        ps.setTintIndex(1);
-        QCOMPARE(spy.count(), 1);
-        QCOMPARE(spy.takeFirst().at(0).toBool(), false);
-
-        // 1 → 0: false → true
-        ps.setTintIndex(0);
-        QCOMPARE(spy.count(), 1);
-        QCOMPARE(spy.takeFirst().at(0).toBool(), true);
-    }
-
-    void setTintIndex_legacy_setTint_doubleAPI_stillWorks()
-    {
-        // Backward-compat: the existing PsForm wires the combo through
-        // PureSignal::setTint(double).  We need to keep that public API
-        // alive so the existing PsForm wiring + tintChanged(double)
-        // listeners don't break.  setTint(0.5/1.1/2.5) MUST map to
-        // setTintIndex(0/1/2) and produce the expected (ints, spi) pair.
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
-
-        ps.setTint(0.5);
-        QCOMPARE(tx.lastPSIntsForTest(), 16);
-        QCOMPARE(tx.lastPSSpiForTest(),  256);
-
-        ps.setTint(1.1);
-        QCOMPARE(tx.lastPSIntsForTest(), 8);
-        QCOMPARE(tx.lastPSSpiForTest(),  512);
-
-        ps.setTint(2.5);
-        QCOMPARE(tx.lastPSIntsForTest(), 4);
-        QCOMPARE(tx.lastPSSpiForTest(),  1024);
-    }
-
-    void setTintIndex_default_isZero_at_construction()
-    {
-        // From PSForm.cs:351-368 [v2.10.3.13]:
-        //   private int _ints = 16;   // default
-        //   private int _spi  = 256;  // default
-        // The accessors must return the defaults BEFORE any setTintIndex
-        // call.  Existing test (psInts/psSpi default to 16/256) covers this
-        // already; we add an explicit accessor check on tintIndex().
-        PureSignal ps(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
-        QCOMPARE(ps.tintIndex(), 0);
-        QCOMPARE(ps.psInts(),    16);
-        QCOMPARE(ps.psSpi(),     256);
-        QCOMPARE(ps.saveRestoreEnabled(), true);
     }
 
 };

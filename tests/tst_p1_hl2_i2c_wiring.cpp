@@ -329,9 +329,9 @@ private slots:
         // The signal carries the FwMinor sub (10) since that's what
         // popped.  So instead test the gate directly via signal emit —
         // which is exactly what the production lambda subscribes to.
-        emit io.i2cReadResponseReceived(/*retAddr=*/0x1D,
-                                        /*retSubAddr=*/0x42,
-                                        0xAA, 0xBB, 0xCC, 0xDD);
+        emit io.i2cReadAnswered(/*deviceAddress=*/0x1D,
+                                /*subAddress=*/0x42,
+                                0xAA, 0xBB, 0xCC, 0xDD);
         // Pre-fix: FSM would have advanced and enqueued nothing (write
         // doesn't enqueue a read).  Post-fix: FSM stays parked.  Either
         // way no NEW read enters the queue; we instead verify the
@@ -347,6 +347,52 @@ private slots:
         QCOMPARE(int(finalTxn.address), 0x1D);
         QCOMPARE(int(finalTxn.control), 5);     // REG_CONTROL = 5
         QCOMPARE(int(finalTxn.writeData), 1);   // value = 1
+        QVERIFY(!finalTxn.isRead);
+    }
+
+    // Parity Task 14 follow-up (R-R3-46): the probe advances on the answer
+    // to the read it sent, whatever address bits the firmware puts in C0.
+    // mi0bot networkproto1.c:478-493 [@c26a8a4] takes any EP6 frame with C0
+    // bit 7 set as the I2C answer and never reads C0's address bits
+    // (prn->i2c.returned_address is only zeroed, netInterface.c:1623); the
+    // answer belongs to the one read outstanding (I2CReadInitiate refuses
+    // while the queue holds anything, netInterface.c:1478).
+    void probe_advances_whatever_address_c0_carries_data() {
+        QTest::addColumn<int>("c0");
+        // The bus 1 controller's address as the request named it (0x3d << 1).
+        QTest::newRow("controller") << int(0x80 | (0x3d << 1));
+        QTest::newRow("no address") << int(0x80);
+    }
+    void probe_advances_whatever_address_c0_carries() {
+        QFETCH(int, c0);
+        P1RadioConnection conn(nullptr);
+        conn.setBoardForTest(HPSDRHW::HermesLite);
+        IoBoardHl2 io;
+        conn.setIoBoard(&io);
+        conn.requestIoBoardProbe();
+
+        const auto drainAndPushPending = [&](quint8 expectAddr, quint8 expectSub) {
+            IoBoardHl2::I2cTxn t{};
+            QVERIFY(io.dequeueI2c(t));
+            QCOMPARE(int(t.address), int(expectAddr));
+            QCOMPARE(int(t.control), int(expectSub));
+            io.pushPendingRead({t.address, t.control});
+        };
+        drainAndPushPending(0x41, 0);
+        conn.parseI2cResponseForTest(quint8(c0), 0, 0, 0, 0xF1);
+        QVERIFY(io.isDetected());
+        QCOMPARE(io.i2cQueueDepth(), 1);
+        drainAndPushPending(0x1D, 9);    // REG_FIRMWARE_MAJOR
+        conn.parseI2cResponseForTest(quint8(c0), 0, 0, 0, 0x05);
+        QCOMPARE(io.i2cQueueDepth(), 1);
+        drainAndPushPending(0x1D, 10);   // REG_FIRMWARE_MINOR
+        conn.parseI2cResponseForTest(quint8(c0), 0, 0, 0, 0x12);
+        QCOMPARE(io.i2cQueueDepth(), 1);
+        IoBoardHl2::I2cTxn finalTxn{};
+        QVERIFY(io.dequeueI2c(finalTxn));
+        QCOMPARE(int(finalTxn.address), 0x1D);
+        QCOMPARE(int(finalTxn.control), 5);     // REG_CONTROL
+        QCOMPARE(int(finalTxn.writeData), 1);
         QVERIFY(!finalTxn.isRead);
     }
 };

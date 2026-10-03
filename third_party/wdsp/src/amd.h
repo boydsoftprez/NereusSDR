@@ -109,10 +109,10 @@ extern void setSize_amd (AMD a, int size);
 
 // RXA Properties
 
-extern void SetRXAAMDRun(int channel, int run);
+extern __declspec (dllexport) void SetRXAAMDRun(int channel, int run);
 
-extern void SetRXAAMDSBMode(int channel, int sbmode);
+extern __declspec (dllexport) void SetRXAAMDSBMode(int channel, int sbmode);
 
-extern void SetRXAAMDFadeLevel(int channel, int levelfade);
+extern __declspec (dllexport) void SetRXAAMDFadeLevel(int channel, int levelfade);
 
 #endif

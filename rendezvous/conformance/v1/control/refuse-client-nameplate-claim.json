@@ -1,0 +1,7 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "nameplate.claim"
+  },
+  "decodes": false
+}

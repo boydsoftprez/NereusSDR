@@ -1,0 +1,38 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "confirm.request",
+    "id": 7,
+    "kind": "panMove",
+    "reason": "Waiting for you to confirm.",
+    "affected": [
+      {
+        "deviceId": "example-device-b",
+        "deviceName": "iPad",
+        "deviceShortName": "iPad",
+        "state": "listening",
+        "holdsTransmit": false,
+        "slices": [
+          {
+            "sliceId": 1,
+            "letter": "B",
+            "frequencyHz": 7150000,
+            "band": 3,
+            "mode": 1,
+            "adc": 0,
+            "streamIndex": 0,
+            "effect": "moves"
+          }
+        ]
+      }
+    ],
+    "expiresInMs": 60000,
+    "change": {
+      "label": "Receiver 1",
+      "from": "40 m",
+      "to": "20 m"
+    },
+    "forWriteId": 501
+  },
+  "decodes": true
+}

@@ -1,0 +1,11 @@
+OpenSSL 3
+Copyright the OpenSSL Project Authors and contributors
+
+NereusSDR and libdatachannel use OpenSSL 3 for application, certificate, and
+DTLS cryptography. The precise OpenSSL build is selected by each release
+platform and recorded in that release's dependency build output.
+
+OpenSSL 3 is licensed under the Apache License 2.0. The complete license is
+supplied in Apache-2.0.txt. Source is available from:
+
+  https://www.openssl.org/source/

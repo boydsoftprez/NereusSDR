@@ -1,3 +1,5 @@
+// 2026-09-27: shared TX filter geometry and validated band-edge admission.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 /*  TXA.c
 
 This file is part of a program that implements a Software-Defined Radio.
@@ -328,22 +330,79 @@ warren@wpratt.com
 //                 Source: Thetis wdsp/calcc.c:891-1132 [v2.10.3.13] +
 //                 Thetis cmaster.cs:143-147 [v2.10.3.13].  AI-assisted
 //                 transformation via Anthropic Claude Code.
+//   2026-09-25 : R-R3-39 (station Task 32) by J.J. Boyd (KG4VCF): the
+//                 transmit lane.  Every WDSP call this wrapper makes runs on
+//                 a DspControlThread (setControlLane): a setter changes the
+//                 wrapper's state at once and posts its WDSP call; meters,
+//                 stage flags, PureSignal status and the CFC and PS3 display
+//                 reads come from caches the lane refreshes.
+//                 setRunningAsync keeps the keying order (on: channel, then
+//                 the RF gate; off: the gate, then the drain).  With no lane
+//                 every call runs on the caller's thread, as before.  No
+//                 Thetis logic changes.  AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-09-25 : R-R3-39 by J.J. Boyd (KG4VCF): TCI transmit audio at a
+//                 rate other than 48 kHz is resampled on the transmit lane
+//                 (the float resampler's create, run and destroy); 48 kHz
+//                 blocks are pushed at once while nothing is queued there, so
+//                 the ring keeps the order blocks arrive in.  AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-25 : Task 33 (R-IOS-03) by J.J. Boyd (KG4VCF): the unkey
+//                 follows Thetis's order: the channel drains on the lane
+//                 with the RF gate open, then the lane closes the gate and
+//                 emits txDrained.  closeRfGate (the emergency stop) closes
+//                 it at once, supersedes a queued on, and waits for a block
+//                 already inside sendTxIq; each block is zeroed before
+//                 fexchange0.  AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-09-25 : R-R3-39 by J.J. Boyd (KG4VCF): the TCI transmit
+//                 resampler is freed on the transmit lane at every teardown
+//                 (channel destroy and rebuild through
+//                 releaseTciResamplerOnLane; the destructor as a last
+//                 resort); liveTciResamplersForTest counts them.
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49 (parity Task 2): setTxEqRunning records its
+//                 last value for the test read-back. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 4): the EQ profile, EQ globals, CFC
+//                 profile and phase rotator run record their last values
+//                 for the test read-back. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (group A fix wave): setTxEqProfile(F, G, Q) hands
+//                 SetTXAEQProfile the arrays Thetis's sendTXDspUpdate and
+//                 setTXEQProfile do, Q included (eqform.cs:3041-3072
+//                 [v2.10.3.15]); the ten-band overload calls it with no Q.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-27 — R-IOS-13: txIqQueuedMs(), the connection's send ring fill
+//                 for the remote microphone's buffer; dexpTimingRunning(),
+//                 so the buffer never splices while DEXP's hold, decay or
+//                 VOX turn-off counts (dexp.c [v2.10.3.15]); the filter
+//                 type sends Thetis's MP (Low Latency = minimum phase,
+//                 enums.cs:404-408, radio.cs:2659 [v2.10.3.15]; it was
+//                 inverted). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
+#include "core/AmModulationAnalyzer.h"
 #include "AppSettings.h"
+#include "DspControlThread.h"
 #include "LogCategories.h"
 #include "RadioConnection.h"
 #include "TxMicRouter.h"
 #include "WdspEngine.h"  // for rebuild() delegate to WdspEngine::rebuildTxChannel()
+#include "platform/ThreadPlacement.h"
 
 #include <QElapsedTimer>
 
 #include <QByteArray>   // toUtf8() return type for psSaveCorr / psRestoreCorr (Task 7)
 #include <algorithm>
 #include <cmath>        // std::isnan — NaN sentinel for double idempotent guards (D.3)
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
+#include <string_view>
+#include <thread>
 
 // WDSP API declarations (SetTXAPostGen*, fexchange0, fexchange2, etc.) —
 // guarded by HAVE_WDSP internally.  Include unconditionally; the header
@@ -379,12 +438,321 @@ extern DEXP pdexp[];
 // but are NOT declared in resample.h.  Same forward declaration pattern
 // as TciServer.cpp:44-46 for the RX path.
 void* create_resampleFV(int in_rate, int out_rate);
+// R-R3-39: PureSignal's feedback pump runs on the transmit lane (pumpPscc).
+// Same declaration as PsccPump.cpp; calcc.c:2075 has no header entry.
+void pscc(int channel, int size, double* tx, double* rx);
 void  xresampleFV(float* input, float* output, int numsamps, int* outsamps, void* ptr);
 void  destroy_resampleFV(void* ptr);
 }
 #endif
 
 namespace NereusSDR {
+
+namespace {
+// R-R3-39: TCI transmit resamplers alive now (m_tciTxResampler), across
+// every TxChannel; liveTciResamplersForTest reads it.
+std::atomic<int> s_liveTciResamplers{0};
+} // namespace
+
+static bool stageRunningDefault(TxChannel::Stage s);
+
+namespace {
+// R-R3-39: the transmit-lane key of one WDSP parameter, from the name of
+// the setter that writes it (FNV-1a). runKeyed mixes in the channel.
+constexpr quint64 laneParameter(std::string_view name)
+{
+    quint64 hash = 1469598103934665603ull;
+    for (const char c : name) {
+        hash ^= static_cast<unsigned char>(c);
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+// The PureSignal status cache is read again after a pscc block at most
+// this often while feedback flows (the poll that reads it runs every
+// 100 ms).
+constexpr std::int64_t kPsccCacheRefreshNs = 20'000'000;
+} // namespace
+
+// ---------------------------------------------------------------------------
+// R-R3-39: the transmit lane
+//
+// NereusSDR-original. Every WDSP call below goes through runKeyed or
+// runOrdered: at once with no lane, or on the lane itself; otherwise queued
+// on the lane. A keyed call replaces an older queued call with the same key
+// (never one queued before a barrier); an ordered call is a barrier. Each
+// queued job holds m_alive, so a job of a retired wrapper does nothing
+// (the rebuild generation check).
+// ---------------------------------------------------------------------------
+
+void TxChannel::setControlLane(DspControlThread* lane)
+{
+    // Set with no job of this channel queued (see the header), so the live
+    // read is safe here: a channel already open stays open for the at-once
+    // guards.
+    if (lane != nullptr && m_lane == nullptr) {
+        m_channelOpen.store(txaOpenLive(), std::memory_order_release);
+    }
+    m_lane = lane;
+}
+
+bool TxChannel::readsWdspDirectly() const noexcept
+{
+    return m_lane == nullptr || m_lane->isCurrentThread();
+}
+
+void TxChannel::runKeyed(quint64 parameter, std::function<void()> job) const
+{
+    if (readsWdspDirectly()) {
+        job();
+        return;
+    }
+    const quint64 key = parameter
+        ^ (static_cast<quint64>(static_cast<quint32>(m_channelId) + 1u) * 0x9E3779B97F4A7C15ull)
+        ^ 0x5458ull;   // "TX": keeps transmit keys apart from the receive lane's
+    m_lane->postKeyed(key, [this, alive = m_alive, job = std::move(job)]() {
+        if (alive->load(std::memory_order_acquire)) {
+            job();
+            refreshStageCacheOnLane();
+        }
+    });
+}
+
+void TxChannel::runOrdered(std::function<void()> job) const
+{
+    if (readsWdspDirectly()) {
+        job();
+        return;
+    }
+    m_lane->postBarrier([this, alive = m_alive, job = std::move(job)]() {
+        if (alive->load(std::memory_order_acquire)) {
+            job();
+            refreshStageCacheOnLane();
+        }
+    });
+}
+
+void TxChannel::postRefresh(quint64 parameter, std::function<void()> job) const
+{
+    if (readsWdspDirectly()) {
+        job();
+        return;
+    }
+    const quint64 key = parameter
+        ^ (static_cast<quint64>(static_cast<quint32>(m_channelId) + 1u) * 0x9E3779B97F4A7C15ull)
+        ^ 0x5458ull;
+    m_lane->postKeyed(key, [alive = m_alive, job = std::move(job)]() {
+        if (alive->load(std::memory_order_acquire)) {
+            job();
+        }
+    });
+}
+
+bool TxChannel::txaOpenLive() const noexcept
+{
+#ifdef HAVE_WDSP
+    if (m_channelId < 0 || m_channelId >= MAX_CHANNELS) {
+        return false;
+    }
+    return txa[m_channelId].rsmpin.p != nullptr;
+#else
+    return false;
+#endif
+}
+
+bool TxChannel::dexpOpenLive() const noexcept
+{
+#ifdef HAVE_WDSP
+    return txaOpenLive() && pdexp[m_channelId] != nullptr;
+#else
+    return false;
+#endif
+}
+
+bool TxChannel::txaOpenAtOnce() const noexcept
+{
+    if (readsWdspDirectly()) {
+        return txaOpenLive();
+    }
+    return m_channelOpen.load(std::memory_order_acquire)
+        && m_alive->load(std::memory_order_acquire);
+}
+
+void TxChannel::markRetired()
+{
+    m_alive->store(false, std::memory_order_release);
+    m_channelOpen.store(false, std::memory_order_release);
+    // A retired wrapper takes no more VOX callbacks; a rebuild's new
+    // wrapper registers itself next.
+    if (s_voxKeyInstance == this) {
+        s_voxKeyInstance = nullptr;
+    }
+}
+
+bool TxChannel::enterWorkerBlock() const noexcept
+{
+    // Dekker pairing with quiesceWorkerOnLane (both sides sequentially
+    // consistent): either the worker sees the channel no longer ready, or
+    // the lane sees the worker inside its block and waits for it.
+    m_workerBlocksInFlight.fetch_add(1, std::memory_order_seq_cst);
+    if (!m_wdspReady.load(std::memory_order_seq_cst)) {
+        m_workerBlocksInFlight.fetch_sub(1, std::memory_order_seq_cst);
+        return false;
+    }
+    return true;
+}
+
+void TxChannel::leaveWorkerBlock() const noexcept
+{
+    m_workerBlocksInFlight.fetch_sub(1, std::memory_order_seq_cst);
+}
+
+void TxChannel::quiesceWorkerOnLane()
+{
+    m_wdspReady.store(false, std::memory_order_seq_cst);
+    while (m_workerBlocksInFlight.load(std::memory_order_seq_cst) != 0) {
+        std::this_thread::yield();
+    }
+}
+
+void TxChannel::onWdspOpenedOnLane()
+{
+    registerVoxCallbackOnLane();
+    refreshStageCacheOnLane();
+    refreshDspSizeOnLane();
+    refreshPsCacheOnLane();
+    for (int mt = 0; mt < kTxMeterTypes; ++mt) {
+        refreshTxMeterOnLane(mt);
+    }
+    refreshDexpPeakOnLane();
+}
+
+void TxChannel::admitWorkerOnLane()
+{
+    m_wdspReady.store(true, std::memory_order_seq_cst);
+}
+
+bool TxChannel::canAttachMiniAnalyzerOnLane() const noexcept
+{
+    return m_lane && m_lane->isCurrentThread() && isWdspReady()
+        && !isRetired() && txaOpenLive();
+}
+
+void TxChannel::setRfGate(bool open)
+{
+    const bool was = m_running.exchange(open, std::memory_order_acq_rel);
+#ifdef NEREUS_BUILD_TESTS
+    if (was != open) {
+        std::function<void(bool)> observer;
+        {
+            std::lock_guard<std::mutex> lock(m_rfGateObserverMutex);
+            observer = m_rfGateObserverForTest;
+        }
+        if (observer) {
+            observer(open);
+        }
+    }
+#else
+    Q_UNUSED(was);
+#endif
+}
+
+void TxChannel::closeRfGateAndWaitForSender() noexcept
+{
+    // Dekker pairing with driveOneTxBlockFromInterleaved (both sides
+    // sequentially consistent): either the worker's re-check sees the gate
+    // closed and sends nothing, or this sees the worker inside its send and
+    // waits for it. The send is a copy into the connection's ring, never a
+    // WDSP call, so the wait is a few microseconds at most.
+    setRfGate(false);
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    while (m_txIqSendersInFlight.load(std::memory_order_seq_cst) != 0) {
+        std::this_thread::yield();
+    }
+}
+
+// Task 33 (R-IOS-03): the emergency stop's half. NereusSDR-original. The
+// normal unkey drains the transmitter first, as Thetis does:
+// From Thetis console.cs:29651-29658 [v2.10.3.15]
+//   Thread.Sleep(space_mox_delay); // default 0 // from PSDR MW0LGE
+//   psform.Mox = tx;
+//   WDSP.SetChannelState(WDSP.id(1, 0), 0, 1);  // turn off the transmitter (no action if it's already off)
+// The emergency stop does not wait for that drain.
+void TxChannel::closeRfGate() noexcept
+{
+    // A setRunningAsync(true) still queued on the lane must not open the
+    // gate again: its sequence is now stale (applyRunningOnLane).
+    m_runSequence.fetch_add(1, std::memory_order_acq_rel);
+    closeRfGateAndWaitForSender();
+}
+
+void TxChannel::refreshStageCacheOnLane() const
+{
+    if (m_lane == nullptr) {
+        return;
+    }
+    for (int i = 0; i < static_cast<int>(Stage::kStageCount); ++i) {
+        m_stageRunCache[static_cast<std::size_t>(i)].store(
+            stageRunningNow(static_cast<Stage>(i)), std::memory_order_relaxed);
+    }
+}
+
+void TxChannel::refreshTxMeterOnLane(int meterType) const
+{
+    if (meterType < 0 || meterType >= kTxMeterTypes) {
+        return;
+    }
+#ifdef HAVE_WDSP
+    if (!txaOpenLive()) {
+        return;
+    }
+    m_txMeterCache[static_cast<std::size_t>(meterType)].store(
+        GetTXAMeter(m_channelId, meterType), std::memory_order_relaxed);
+#endif
+}
+
+void TxChannel::refreshDexpPeakOnLane() const
+{
+#ifdef HAVE_WDSP
+    if (!dexpOpenLive()) {
+        return;
+    }
+    double peak = 0.0;
+    GetDEXPPeakSignal(m_channelId, &peak);
+    m_dexpPeakCache.store(peak, std::memory_order_relaxed);
+#endif
+}
+
+void TxChannel::refreshDspSizeOnLane() const
+{
+#ifdef HAVE_WDSP
+    if (!txaOpenLive()) {
+        return;
+    }
+    m_dspSizeCache.store(ch[m_channelId].dsp_size, std::memory_order_relaxed);
+#endif
+}
+
+double TxChannel::txMeter(int meterType) const
+{
+    if (meterType < 0 || meterType >= kTxMeterTypes) {
+        return -400.0;
+    }
+    if (readsWdspDirectly()) {
+#ifdef HAVE_WDSP
+        if (txaOpenLive()) {
+            return GetTXAMeter(m_channelId, meterType);
+        }
+#endif
+        return m_txMeterCache[static_cast<std::size_t>(meterType)].load(std::memory_order_relaxed);
+    }
+    // The newest read wins: the poller's next read sees what this refresh
+    // reads, whatever the lane's delay.
+    postRefresh(laneParameter("txMeter") + static_cast<quint64>(meterType) * 131ull,
+                [this, meterType]() { refreshTxMeterOnLane(meterType); });
+    return m_txMeterCache[static_cast<std::size_t>(meterType)].load(std::memory_order_relaxed);
+}
 
 // ---------------------------------------------------------------------------
 // Phase 3M-3a-iii Task 17 — DEXP pushvox bridge static members
@@ -443,6 +811,15 @@ TxChannel::TxChannel(int channelId,
                      int inputBufferSize,
                      int outputBufferSize,
                      QObject* parent)
+    : TxChannel(channelId, inputBufferSize, outputBufferSize, nullptr, parent)
+{
+}
+
+TxChannel::TxChannel(int channelId,
+                     int inputBufferSize,
+                     int outputBufferSize,
+                     DspControlThread* lane,
+                     QObject* parent)
     : QObject(parent)
     // Init order must match declaration order (-Wreorder-ctor):
     // m_inputBufferSize, m_outputBufferSize, m_channelId.
@@ -464,6 +841,24 @@ TxChannel::TxChannel(int channelId,
     m_out.assign(static_cast<size_t>(m_outputBufferSize) * 2, 0.0);
     m_outInterleavedFloat.assign(static_cast<size_t>(m_outputBufferSize) * 2, 0.0f);
     m_outIFloatScratch.assign(static_cast<size_t>(m_outputBufferSize), 0.0f);
+
+    // R-R3-39: the transmit lane. A lane wrapper is made before its WDSP
+    // channel opens (the open is the first job queued for it), so the
+    // at-once guards treat it as open and the worker waits for the lane to
+    // mark it ready. The caches start at create_txa's run defaults and at
+    // WDSP's idle meter value (meter.c:69-72).
+    m_lane = lane;
+    if (m_lane != nullptr) {
+        m_channelOpen.store(true, std::memory_order_release);
+        m_wdspReady.store(false, std::memory_order_seq_cst);
+    }
+    for (int i = 0; i < static_cast<int>(Stage::kStageCount); ++i) {
+        m_stageRunCache[static_cast<std::size_t>(i)].store(
+            stageRunningDefault(static_cast<Stage>(i)), std::memory_order_relaxed);
+    }
+    for (auto& slot : m_txMeterCache) {
+        slot.store(-400.0, std::memory_order_relaxed);
+    }
 
     // Phase 3M-1c TX pump v3 (2026-04-29): semaphore-wake.  No QTimer.
     // TxWorkerThread::run blocks on TxMicSource::waitForBlock; the
@@ -522,7 +917,14 @@ TxChannel::~TxChannel()
     // no-op.  Order matters: must run BEFORE the QObject base-class
     // destructor invalidates the QObject so the WDSP unregister call
     // doesn't risk emitting from a dead object.
+    // R-R3-39: any job of this wrapper still queued on a lane does nothing.
+    m_alive->store(false, std::memory_order_release);
     unregisterVoxCallback();
+    // R-R3-39: the destroy or rebuild barrier has freed it on the transmit
+    // lane; with no lane it is freed here, on the caller's thread, as every
+    // WDSP call of such a wrapper is. A lane that stopped for good before
+    // its barrier ran would otherwise leak it.
+    destroyTciResampler();
 }
 
 // ---------------------------------------------------------------------------
@@ -549,7 +951,7 @@ TxChannel::~TxChannel()
 // future regressions (or test fixtures that construct two TxChannels)
 // surface immediately.
 //
-// Cite: Thetis cmaster.cs:1125 [v2.10.3.13] — analogous registration
+// Cite: Thetis cmaster.cs:1134 [v2.10.3.15] — analogous registration
 // against the ChannelMaster wrapper VOX (`SendCBPushVox(0, PushVoxDel)`).
 // NereusSDR has no ChannelMaster shim, so the registration goes against
 // WDSP's DEXP pushvox directly (wdsp/dexp.c:399-403 [v2.10.3.13]).
@@ -566,6 +968,16 @@ void TxChannel::registerVoxCallback()
                          << "— overwriting (phase 3F follow-up: per-id table).";
     }
     s_voxKeyInstance = this;
+    // R-R3-39: with a lane the WDSP half runs there once the channel and
+    // its DEXP are open (WdspEngine calls onWdspOpenedOnLane).
+    if (m_lane == nullptr) {
+        registerVoxCallbackOnLane();
+    }
+}
+
+// The WDSP half of registerVoxCallback (lane, or at once with no lane).
+void TxChannel::registerVoxCallbackOnLane()
+{
 #ifdef HAVE_WDSP
     // 2026-05-13 (Linux CI #238): bounds-check m_channelId against
     // WDSP's MAX_CHANNELS (=32 in comm.h) BEFORE indexing txa[] / pdexp[].
@@ -586,7 +998,7 @@ void TxChannel::registerVoxCallback()
     if (txa[m_channelId].rsmpin.p == nullptr) return;
     if (pdexp[m_channelId] == nullptr) return;
     // From Thetis wdsp/dexp.c:399-403 [v2.10.3.13] — SendCBPushDexpVox impl.
-    // Cite: Thetis cmaster.cs:1125 [v2.10.3.13] — analogous registration.
+    // Cite: Thetis cmaster.cs:1134 [v2.10.3.15] — analogous registration.
     SendCBPushDexpVox(m_channelId, &TxChannel::s_pushVoxCallback);
 #endif
 }
@@ -605,6 +1017,21 @@ void TxChannel::registerVoxCallback()
 // path that sets a->pushvox to a non-null value.
 // ---------------------------------------------------------------------------
 void TxChannel::unregisterVoxCallback()
+{
+    // R-R3-39: a lane wrapper's WDSP half ran on the lane before its
+    // channel closed (unregisterVoxCallbackOnLane); its destructor runs
+    // after the close and must not reach WDSP.
+    if (m_lane == nullptr) {
+        unregisterVoxCallbackOnLane();
+    }
+    if (s_voxKeyInstance == this) {
+        s_voxKeyInstance = nullptr;
+    }
+}
+
+// The WDSP half of unregisterVoxCallback (lane, before CloseChannel, or at
+// once with no lane).
+void TxChannel::unregisterVoxCallbackOnLane()
 {
 #ifdef HAVE_WDSP
     // 2026-05-13 (Linux CI #238): bounds-check m_channelId against
@@ -679,6 +1106,15 @@ void TxChannel::pumpDexp(const double* interleavedIn)
         m_dexpBufferSizeDoubles == 0) {
         return;
     }
+    // R-R3-39: a lane wrapper admits the worker only while its channel is
+    // open, and the lane waits for this block before closing it.
+    if (!enterWorkerBlock()) {
+        return;
+    }
+    struct LeaveBlock {
+        const TxChannel* channel;
+        ~LeaveBlock() { channel->leaveWorkerBlock(); }
+    } leaveBlock{this};
 #ifdef HAVE_WDSP
     // Same null-guard pair as setVoxRun / registerVoxCallback / all DEXP
     // setters in this file.  Test builds never drove OpenChannel(type=1)
@@ -703,6 +1139,33 @@ void TxChannel::pumpDexp(const double* interleavedIn)
 #endif
 }
 
+bool TxChannel::dexpTimingRunning() const
+{
+#ifdef NEREUS_BUILD_TESTS
+    if (m_dexpTimingForTest.has_value()) {
+        return *m_dexpTimingForTest;
+    }
+#endif
+#ifdef HAVE_WDSP
+    if (m_channelId < 0 || m_channelId >= MAX_CHANNELS || pdexp[m_channelId] == nullptr) {
+        return false;
+    }
+    const DEXP a = pdexp[m_channelId];
+    if (!a->run_dexp && !a->run_vox) {
+        return false;
+    }
+    // From Thetis wdsp/dexp.c [v2.10.3.15]: the state machine's first state
+    // is DEXP_LOW (enum _dexpstate, :256-263, value 0). HOLD counts
+    // a->count = a->nhold samples (:357, 367; nhold = thold * rate at :142),
+    // DECAY counts ndecay (:373-377), and back in LOW the VOX turn-off waits
+    // for vox_count samples (:333-342; audelay * rate at :144).
+    constexpr int kDexpLow = 0;
+    return a->state != kDexpLow || (a->run_vox && a->vox_count > 0);
+#else
+    return false;
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // stageRunningDefault()
 //
@@ -714,7 +1177,7 @@ void TxChannel::pumpDexp(const double* interleavedIn)
 //   1. WDSP not compiled in (!HAVE_WDSP).
 //   2. WDSP compiled in but the channel was never opened (txa[] uninitialized).
 //      This occurs in unit-test builds that link WDSP but don't call
-//      OpenChannel (the HAVE_WDSP define propagates via NereusSDRObjs PUBLIC).
+//      OpenChannel (the HAVE_WDSP define propagates via NereusSDRLib PUBLIC).
 // ---------------------------------------------------------------------------
 static bool stageRunningDefault(TxChannel::Stage s)
 {
@@ -768,7 +1231,7 @@ static bool stageRunningDefault(TxChannel::Stage s)
 //
 // With HAVE_WDSP but uninitialized channel (txa[] pointers are null because
 // OpenChannel was never called — typical in unit-test builds that link WDSP
-// via NereusSDRObjs PUBLIC but don't initialize the engine): falls through to
+// via NereusSDRLib PUBLIC but don't initialize the engine): falls through to
 // stageRunningDefault(), which returns compile-time defaults matching
 // create_txa()'s run arguments.
 //
@@ -784,7 +1247,24 @@ static bool stageRunningDefault(TxChannel::Stage s)
 // ---------------------------------------------------------------------------
 bool TxChannel::stageRunning(Stage s) const
 {
+    // R-R3-39: with a lane, the flags as the lane last read them (after its
+    // latest setter); the live read below runs only where WDSP may be read.
+    if (!readsWdspDirectly()) {
+        const int i = static_cast<int>(s);
+        if (i < 0 || i >= static_cast<int>(Stage::kStageCount)) {
+            return false;
+        }
+        return m_stageRunCache[static_cast<std::size_t>(i)].load(std::memory_order_relaxed);
+    }
+    return stageRunningNow(s);
+}
+
+bool TxChannel::stageRunningNow(Stage s) const
+{
 #ifdef HAVE_WDSP
+    if (!txaOpenLive()) {
+        return stageRunningDefault(s);
+    }
     // Null-guard: txa[] is a zero-initialized global array; if OpenChannel was
     // never called for this channel ID (e.g. unit-test builds that link WDSP
     // but don't call WdspEngine::initialize), all pointer fields are null.
@@ -812,7 +1292,7 @@ bool TxChannel::stageRunning(Stage s) const
     // From TXA.c:130  run=1 — eqmeter (gated on eqp.run via second param)
     case Stage::EqMeter:   return txa[ch].eqmeter.p->run   != 0;
     // From TXA.c:145  run=0 — preemph (pre-emphasis filter)
-    case Stage::PreEmph:   return txa[ch].preemph.p->run   != 0;
+    case Stage::PreEmph:   return getRun_emphp(txa[ch].preemph.p) != 0;
     // From TXA.c:158  run=0 — leveler (wcpagc, OFF by default)
     case Stage::Leveler:   return txa[ch].leveler.p->run   != 0;
     // From TXA.c:183  run=1 — lvlrmeter (gated on leveler.run)
@@ -849,13 +1329,21 @@ bool TxChannel::stageRunning(Stage s) const
     case Stage::AlcMeter:  return txa[ch].alcmeter.p->run  != 0;
     // From TXA.c:394  run=1 — sip1 (siphon for TX spectrum)
     case Stage::Sip1:      return txa[ch].sip1.p->run      != 0;
-    // From TXA.c:405  run=1 (runcal) — calcc (PureSignal calibration, ON but unused until 3M-4)
-    // calcc struct uses 'runcal' not 'run' — from wdsp/calcc.h:34 [v2.10.3.13]
-    case Stage::Calcc:     return txa[ch].calcc.p->runcal  != 0;
-    // From TXA.c:424  run=0 — iqc (IQ correction)
-    case Stage::Iqc:       return txa[ch].iqc.p0->run      != 0;
+    // TAPR WDSP 2.10 makes CALCC opaque.  Read the run state through the
+    // narrow compatibility getter rather than dereferencing its structure.
+    case Stage::Calcc: {
+        int run = 0;
+        return ::GetPSRunCal(ch, &run) != 0 && run != 0;
+    }
+    // From TXA.c:424  run=0 — iqc (IQ correction). WDSP 2.10 keeps IQC
+    // opaque, so use the narrow native readback under ch[channel].csDSP.
+    case Stage::Iqc: {
+        int run = 0;
+        int busy = 0;
+        return ::GetPSCorrectionState(ch, &run, &busy) != 0 && run != 0;
+    }
     // From TXA.c:434  run=0 — cfir (custom CIC FIR, turned on if needed)
-    case Stage::Cfir:      return txa[ch].cfir.p->run      != 0;
+    case Stage::Cfir:      return getRun_cfir(txa[ch].cfir.p) != 0;
     // From TXA.c:451  run=0 — rsmpout (output resampler, turned on if needed)
     case Stage::RsmpOut:   return txa[ch].rsmpout.p->run   != 0;
     // From TXA.c:462  run=1 — outmeter
@@ -911,48 +1399,55 @@ void TxChannel::setTuneTone(bool on, double freqHz, double magnitude)
     // is null.  The SetTXAPostGen* functions call EnterCriticalSection on
     // ch[channel].csDSP, which would also be uninitialized and segfault.
     // Match the same sentinel guard used in stageRunning().
-    if (txa[m_channelId].rsmpin.p == nullptr) {
+    if (!txaOpenAtOnce()) {
         return;
     }
-
-    // 3M-1a bench fix: configure TXA mode + bandpass FIRST, before enabling the
-    // PostGen tone.  Without this the bp0 default cutoffs are [-5000, -100] Hz
-    // (TXA.c:34-35 [v2.10.3.13]), which is LSB-only — USB tones at +600 Hz get
-    // BLOCKED by the filter and the carrier never reaches the radio.
-    //
-    // Cite: deskhpsdr/src/transmitter.c:2828-2829 [@120188f] —
-    //   SetTXAMode(tx->id, mode);
-    //   tx_set_filter(tx);            // → SetTXABandpassFreqs(tx->id, low, high)
-    // Per-mode IQ-space bandpass mapping from deskhpsdr tx_set_filter
-    // (transmitter.c:2136-2186 [@120188f]):
-    //   USB / DIGU: [+150, +2850]
-    //   LSB / DIGL: [-2850, -150]
-    //   AM / DSB / SAM / SPEC: [-2850, +2850]  (or +/- high)
-    //   FM: [-3000, +3000]
-    //   CW (not used in TUN — swapped to LSB/USB by G.4 orchestrator first)
-    //
-    // For TUN we use a generous filter so the gen1 tone passes regardless of
-    // exact cw_pitch.  The mode is determined by the sign of freqHz:
-    //   freqHz < 0 → LSB-family (tone in lower sideband)
-    //   freqHz > 0 → USB-family (tone in upper sideband)
-    if (on) {
-        const bool isLsb = (freqHz < 0.0);
-        const int  txaMode = isLsb ? 0 /*TXA_LSB*/ : 1 /*TXA_USB*/;
-        SetTXAMode(m_channelId, txaMode);
-        if (isLsb) {
-            SetTXABandpassFreqs(m_channelId, -2850.0, -150.0);
-        } else {
-            SetTXABandpassFreqs(m_channelId, +150.0, +2850.0);
+    // R-R3-39: one lane barrier, so freq, mode, mag and run keep their order
+    // against every other transmit call (the channel on/off in particular).
+    runOrdered([this, on, freqHz, magnitude]() {
+        if (!txaOpenLive()) {
+            return;
         }
-    }
 
-    // From Thetis console.cs:30031-30040 [v2.10.3.13] — chkTUN_CheckedChanged.
-    // Caller passes signed freqHz (±cw_pitch); sign-flip per DSP mode is G.4's job.
-    // Call order matches Thetis: freq → mode → mag → run.
-    SetTXAPostGenToneFreq(m_channelId, freqHz);          // gen.c:808 [v2.10.3.13]
-    SetTXAPostGenMode(m_channelId, 0);                   // gen.c:792 [v2.10.3.13] — 0 = sine tone
-    SetTXAPostGenToneMag(m_channelId, magnitude);        // gen.c:800 [v2.10.3.13]
-    SetTXAPostGenRun(m_channelId, on ? 1 : 0);           // gen.c:784 [v2.10.3.13]
+        // 3M-1a bench fix: configure TXA mode + bandpass FIRST, before enabling the
+        // PostGen tone.  Without this the bp0 default cutoffs are [-5000, -100] Hz
+        // (TXA.c:34-35 [v2.10.3.13]), which is LSB-only — USB tones at +600 Hz get
+        // BLOCKED by the filter and the carrier never reaches the radio.
+        //
+        // Cite: deskhpsdr/src/transmitter.c:2828-2829 [@120188f] —
+        //   SetTXAMode(tx->id, mode);
+        //   tx_set_filter(tx);            // → SetTXABandpassFreqs(tx->id, low, high)
+        // Per-mode IQ-space bandpass mapping from deskhpsdr tx_set_filter
+        // (transmitter.c:2136-2186 [@120188f]):
+        //   USB / DIGU: [+150, +2850]
+        //   LSB / DIGL: [-2850, -150]
+        //   AM / DSB / SAM / SPEC: [-2850, +2850]  (or +/- high)
+        //   FM: [-3000, +3000]
+        //   CW (not used in TUN — swapped to LSB/USB by G.4 orchestrator first)
+        //
+        // For TUN we use a generous filter so the gen1 tone passes regardless of
+        // exact cw_pitch.  The mode is determined by the sign of freqHz:
+        //   freqHz < 0 → LSB-family (tone in lower sideband)
+        //   freqHz > 0 → USB-family (tone in upper sideband)
+        if (on) {
+            const bool isLsb = (freqHz < 0.0);
+            const int  txaMode = isLsb ? 0 /*TXA_LSB*/ : 1 /*TXA_USB*/;
+            SetTXAMode(m_channelId, txaMode);
+            if (isLsb) {
+                SetTXABandpassFreqs(m_channelId, -2850.0, -150.0);
+            } else {
+                SetTXABandpassFreqs(m_channelId, +150.0, +2850.0);
+            }
+        }
+
+        // From Thetis console.cs:30031-30040 [v2.10.3.13] — chkTUN_CheckedChanged.
+        // Caller passes signed freqHz (±cw_pitch); sign-flip per DSP mode is G.4's job.
+        // Call order matches Thetis: freq → mode → mag → run.
+        SetTXAPostGenToneFreq(m_channelId, freqHz);          // gen.c:808 [v2.10.3.13]
+        SetTXAPostGenMode(m_channelId, 0);                   // gen.c:792 [v2.10.3.13] — 0 = sine tone
+        SetTXAPostGenToneMag(m_channelId, magnitude);        // gen.c:800 [v2.10.3.13]
+        SetTXAPostGenRun(m_channelId, on ? 1 : 0);           // gen.c:784 [v2.10.3.13]
+    });
 #else
     Q_UNUSED(on);
     Q_UNUSED(freqHz);
@@ -984,33 +1479,32 @@ void TxChannel::setTuneTone(bool on, double freqHz, double magnitude)
 //   gen1: activated by setTuneTone(true).
 //   uslew: always-on inside WDSP's xuslew state machine (no run flag).
 // ---------------------------------------------------------------------------
-void TxChannel::setRunning(bool on)
+quint64 TxChannel::setRunningAsync(bool on)
 {
-    // Update the run-state atomic.  Phase 3M-1c TX pump v3:
-    // TxWorkerThread::run drains a block from TxMicSource at the radio's
-    // natural mic-frame cadence (~1.33 ms per 64-frame block at 48 kHz)
-    // and calls driveOneTxBlockFromInterleaved unconditionally;
-    // driveOneTxBlockFromInterleaved early-returns on !m_running, so
-    // toggling this flag is sufficient to gate fexchange0.  No timer to
-    // start/stop here — the worker runs as long as TxMicSource is
-    // running, and the !m_running guard handles RX↔TX transitions.
-    // release ordering pairs with driveOneTxBlockFromInterleaved's
-    // acquire load.
-    m_running.store(on, std::memory_order_release);
+    // R-R3-39: the keying order on the transmit lane.
+    //   on:  the lane switches the WDSP channel on, then opens the RF gate
+    //        (m_running), so the worker's first fexchange0 / sendTxIq meets a
+    //        running channel.
+    //   off: Task 33, Thetis's order. The lane drains the channel with the
+    //        RF gate still open, so the worker keeps calling fexchange0 and
+    //        WDSP's down-slew (and the zeros after it) reach the radio while
+    //        its MOX bit is still set; the gate closes when the drain
+    //        returns. Only the emergency stop (closeRfGate) closes the gate
+    //        first.
+    // Without a lane both halves run here, in the same order.
+    //
+    // m_running is the gate: TxWorkerThread::run drains a block from
+    // TxMicSource at the radio's natural mic-frame cadence (~1.33 ms per
+    // 64-frame block at 48 kHz) and calls driveOneTxBlockFromInterleaved
+    // unconditionally; driveOneTxBlockFromInterleaved early-returns on
+    // !m_running, so toggling this flag is sufficient to gate fexchange0.
+    // release ordering pairs with driveOneTxBlockFromInterleaved's acquire
+    // load.
+    const quint64 sequence = m_runSequence.fetch_add(1, std::memory_order_acq_rel) + 1;
 
     qCDebug(lcDsp) << "TxChannel" << m_channelId
                    << (on ? "started (channel ON, worker-thread pump armed)"
                           : "stopped (channel OFF, drain, worker-thread pump idle)");
-
-#ifdef HAVE_WDSP
-    // Null-guard: txa[] is a zero-initialized global array; if OpenChannel was
-    // never called for this channel ID (e.g. unit-test builds that link WDSP
-    // but don't call WdspEngine::initialize()), all pointer fields are null.
-    // Check the sentinel rsmpin.p — if null, the channel is uninitialized.
-    // Match the same guard used in stageRunning() and setTuneTone().
-    if (txa[m_channelId].rsmpin.p == nullptr) {
-        return;   // m_running and timer already updated above
-    }
 
     // CFIR is the CIC-compensating FIR filter that exists in the TXA pipeline
     // AFTER gen1 (TUNE tone insertion).  It is REQUIRED for Protocol 2's
@@ -1019,7 +1513,7 @@ void TxChannel::setRunning(bool on)
     // (bench-measured TX I/Q peak 0.214 vs Thetis 0.98 on HL2 at the same
     // mag=0.99999 tune-tone setting).
     //
-    // Authoritative source: Thetis ChannelMaster/cmaster.cs:525-533 [v2.10.3.14]
+    // Authoritative source: Thetis Console/cmaster.cs:525-533 [v2.10.3.15]
     //   if (CurrentRadioProtocol == RadioProtocol.USB) //p1
     //       WDSP.SetTXACFIRRun(txch, false);
     //   else
@@ -1028,39 +1522,95 @@ void TxChannel::setRunning(bool on)
     // Use the connection's protocolVersion() to gate.  Default (no connection
     // wired in unit-test stubs) is P1 → CFIR OFF, matching the test
     // expectation of byte-identical output without WDSP filtering.
+    // R-R3-39: read here, where the connection is set, not on the lane.
     const int proto = (m_connection ? m_connection->protocolVersion() : 1);
     const int cfirRun = (proto == 2) ? 1 : 0;
 
-    if (on) {
-        SetTXACFIRRun(m_channelId, cfirRun);   // p1=0 / p2=1 — Thetis cmaster.cs:525-533
+    runOrdered([this, on, cfirRun, sequence]() {
+        applyRunningOnLane(on, cfirRun, sequence);
+    });
+    return sequence;
+}
 
-        // Turn the TXA channel ON: state=1, dmode=0 (immediate start, no flush).
-        // From Thetis console.cs:29595 [v2.10.3.13] — RX→TX transition:
-        //   WDSP.SetChannelState(WDSP.id(1, 0), 1, 0);
-        SetChannelState(m_channelId, 1, 0);   // channel.c:259 [v2.10.3.13]
-    } else {
-        // 3M-3a-iii Task 18: if VOX-listening is on, leave the WDSP TXA
-        // channel running so the DEXP detector keeps receiving fexchange0
-        // calls when MOX drops back to RX.  The pre-fexchange0 gate in
-        // driveOneTxBlockFromInterleaved is (m_running || m_voxListening),
-        // so dropping the WDSP channel state here would silently break the
-        // VOX-listening path on every MOX→RX transition.  Only tear down
-        // the WDSP channel when neither MOX nor VOX-listening wants the
-        // pipeline up.
-        const bool voxListening = m_voxListening.load(std::memory_order_acquire);
-        if (!voxListening) {
-            // Turn the TXA channel OFF: state=0, dmode=1 (drain in-flight samples).
-            // From Thetis console.cs:29607 [v2.10.3.13] — TX→RX transition:
-            //   WDSP.SetChannelState(WDSP.id(1, 0), 0, 1);   // turn off, drain
-            //   (preceded by: Thread.Sleep(space_mox_delay); // default 0 // from PSDR MW0LGE [console.cs:29603])
-            SetChannelState(m_channelId, 0, 1);   // channel.c:259 [v2.10.3.13]
+void TxChannel::applyRunningOnLane(bool on, int cfirRun, quint64 sequence)
+{
+    m_laneRunning = on;
+#ifdef HAVE_WDSP
+    // Null-guard: txa[] is a zero-initialized global array; if OpenChannel was
+    // never called for this channel ID (e.g. unit-test builds that link WDSP
+    // but don't call WdspEngine::initialize()), all pointer fields are null.
+    // Check the sentinel rsmpin.p — if null, the channel is uninitialized.
+    // Match the same guard used in stageRunning() and setTuneTone().
+    if (txaOpenLive()) {
+        if (on) {
+            SetTXACFIRRun(m_channelId, cfirRun);   // p1=0 / p2=1 — Thetis cmaster.cs:525-533
 
-            // Drop CFIR after channel drain so no residual samples process
-            // through it on the next RX→TX engagement (P2 will re-arm above).
-            SetTXACFIRRun(m_channelId, 0);
+            // Turn the TXA channel ON: state=1, dmode=0 (immediate start, no flush).
+            // From Thetis console.cs:29595 [v2.10.3.13] — RX→TX transition:
+            //   WDSP.SetChannelState(WDSP.id(1, 0), 1, 0);
+            SetChannelState(m_channelId, 1, 0);   // channel.c:259 [v2.10.3.13]
+            // R-R3-41: nereusd gives the busy transmit worker a fast core.
+            ThreadPlacement::instance().setChannelActive(ThreadRole::TxWorker,
+                                                         m_channelId, true);
+        } else {
+            // 3M-3a-iii Task 18: if VOX-listening is on, leave the WDSP TXA
+            // channel running so the DEXP detector keeps receiving fexchange0
+            // calls when MOX drops back to RX.  The pre-fexchange0 gate in
+            // driveOneTxBlockFromInterleaved is (m_running || m_voxListening),
+            // so dropping the WDSP channel state here would silently break the
+            // VOX-listening path on every MOX→RX transition.  Only tear down
+            // the WDSP channel when neither MOX nor VOX-listening wants the
+            // pipeline up.
+            // R-R3-39: VOX listening as the lane has applied it, so the
+            // decision follows the calls' order.
+            if (!m_laneVoxListening) {
+                // Turn the TXA channel OFF: state=0, dmode=1 (drain in-flight samples).
+                // From Thetis console.cs:29607 [v2.10.3.13] — TX→RX transition:
+                //   WDSP.SetChannelState(WDSP.id(1, 0), 0, 1);   // turn off, drain
+                //   (preceded by: Thread.Sleep(space_mox_delay); // default 0 // from PSDR MW0LGE [console.cs:29603])
+                const auto drainStart = std::chrono::steady_clock::now();
+                SetChannelState(m_channelId, 0, 1);   // channel.c:259 [v2.10.3.13]
+#ifdef NEREUS_BUILD_TESTS
+                {
+                    const double drainMs = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - drainStart).count();
+                    std::function<void(double)> observer;
+                    {
+                        std::lock_guard<std::mutex> lock(m_rfGateObserverMutex);
+                        observer = m_drainObserverForTest;
+                    }
+                    if (observer) {
+                        observer(drainMs);
+                    }
+                }
+#else
+                Q_UNUSED(drainStart);
+#endif
+                ThreadPlacement::instance().setChannelActive(ThreadRole::TxWorker,
+                                                             m_channelId, false);
+
+                // Drop CFIR after channel drain so no residual samples process
+                // through it on the next RX→TX engagement (P2 will re-arm above).
+                SetTXACFIRRun(m_channelId, 0);
+            }
         }
     }
+#else
+    Q_UNUSED(cfirRun);
 #endif // HAVE_WDSP
+    // The RF gate opens only after the channel is on, and only for the
+    // newest request: an on superseded by a later call (or by closeRfGate)
+    // leaves it alone.
+    if (on && m_runSequence.load(std::memory_order_acquire) == sequence) {
+        setRfGate(true);
+    }
+    if (!on) {
+        // Task 33: the drain has returned (WDSP's last output block was its
+        // down-slew's zeros), so the gate closes now. A later on queued
+        // behind this job opens it again.
+        closeRfGateAndWaitForSender();
+        emit txDrained(sequence);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1101,33 +1651,49 @@ void TxChannel::setVoxListening(bool on)
                    << (on ? "vox-listening ON (pump forced)"
                           : "vox-listening OFF");
 
+    // R-R3-39: read where the connection is set, not on the lane.
+    const int proto = (m_connection ? m_connection->protocolVersion() : 1);
+    const int cfirRun = (proto == 2) ? 1 : 0;
+    runOrdered([this, on, cfirRun]() { applyVoxListeningOnLane(on, cfirRun); });
+}
+
+void TxChannel::applyVoxListeningOnLane(bool on, int cfirRun)
+{
+    m_laneVoxListening = on;
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) {
+    if (!txaOpenLive()) {
         return;  // WDSP not initialised — same null-guard as setRunning
     }
 
     // Mirror the WDSP TXA channel-state gating from setRunning() so
     // fexchange0 actually processes audio when we're pumping for VOX.
-    const bool actualRunning = m_running.load(std::memory_order_acquire);
+    // R-R3-39: MOX as the lane has applied it, so the decision follows the
+    // calls' order.
+    const bool actualRunning = m_laneRunning;
     if (on) {
         // Entering vox-listening: ensure WDSP TXA channel is on.
         // Idempotent if already on (setRunning(true) already called it).
         if (!actualRunning) {
-            const int proto = (m_connection ? m_connection->protocolVersion() : 1);
-            const int cfirRun = (proto == 2) ? 1 : 0;
             SetTXACFIRRun(m_channelId, cfirRun);
             SetChannelState(m_channelId, 1, 0);
+            // R-R3-41: VOX listening keeps the transmit worker busy too.
+            ThreadPlacement::instance().setChannelActive(ThreadRole::TxWorker,
+                                                         m_channelId, true);
         }
     } else {
         // Leaving vox-listening AND MOX is also off: drop the WDSP
         // TXA channel state (matches setRunning(false) path).
         if (!actualRunning) {
             SetChannelState(m_channelId, 0, 1);
+            ThreadPlacement::instance().setChannelActive(ThreadRole::TxWorker,
+                                                         m_channelId, false);
             SetTXACFIRRun(m_channelId, 0);
         }
         // If MOX is on (m_running=true), leave WDSP state alone —
         // setRunning will manage it on the next MOX→RX transition.
     }
+#else
+    Q_UNUSED(cfirRun);
 #endif // HAVE_WDSP
 }
 
@@ -1148,10 +1714,13 @@ void TxChannel::setVoxListening(bool on)
 void TxChannel::setStageRunning(Stage s, bool run)
 {
     const int r = run ? 1 : 0;
+    if (s == Stage::PhRot) {
+        m_phaseRotatorRunLast = run;  // R-R3-49 (parity Task 4): test read-back only
+    }
 
 #ifdef HAVE_WDSP
     // Null-guard: same sentinel as stageRunning() / setTuneTone() / setRunning().
-    if (txa[m_channelId].rsmpin.p == nullptr) {
+    if (!txaOpenAtOnce()) {
         qCWarning(lcDsp) << "TxChannel::setStageRunning: channel" << m_channelId
                          << "not initialized (no OpenChannel call)";
         return;
@@ -1163,7 +1732,12 @@ void TxChannel::setStageRunning(Stage s, bool run)
     // From Thetis wdsp/gen.c:636-641 [v2.10.3.13].
     case Stage::Gen0:
 #ifdef HAVE_WDSP
-        SetTXAPreGenRun(m_channelId, r);   // gen.c:636 [v2.10.3.13]
+        // R-R3-39: a run flag is a lane barrier.
+        runOrdered([this, r]() {
+            if (txaOpenLive()) {
+                SetTXAPreGenRun(m_channelId, r);   // gen.c:636 [v2.10.3.13]
+            }
+        });
 #endif
         return;
 
@@ -1171,7 +1745,12 @@ void TxChannel::setStageRunning(Stage s, bool run)
     // From Thetis wdsp/gen.c:784-789 [v2.10.3.13].
     case Stage::Gen1:
 #ifdef HAVE_WDSP
-        SetTXAPostGenRun(m_channelId, r);  // gen.c:784 [v2.10.3.13]
+        // R-R3-39: a run flag is a lane barrier.
+        runOrdered([this, r]() {
+            if (txaOpenLive()) {
+                SetTXAPostGenRun(m_channelId, r);  // gen.c:784 [v2.10.3.13]
+            }
+        });
 #endif
         return;
 
@@ -1179,7 +1758,12 @@ void TxChannel::setStageRunning(Stage s, bool run)
     // From Thetis wdsp/patchpanel.c:201-206 [v2.10.3.13] and patchpanel.h:74.
     case Stage::Panel:
 #ifdef HAVE_WDSP
-        SetTXAPanelRun(m_channelId, r);    // patchpanel.c:201 [v2.10.3.13]
+        // R-R3-39: a run flag is a lane barrier.
+        runOrdered([this, r]() {
+            if (txaOpenLive()) {
+                SetTXAPanelRun(m_channelId, r);    // patchpanel.c:201 [v2.10.3.13]
+            }
+        });
 #endif
         return;
 
@@ -1188,7 +1772,12 @@ void TxChannel::setStageRunning(Stage s, bool run)
     case Stage::PhRot:
         m_phaseRotatorOn = run;  // carry — mirrors WDSP run flag for captureState
 #ifdef HAVE_WDSP
-        SetTXAPHROTRun(m_channelId, r);    // iir.c:665 [v2.10.3.13]
+        // R-R3-39: a run flag is a lane barrier.
+        runOrdered([this, r]() {
+            if (txaOpenLive()) {
+                SetTXAPHROTRun(m_channelId, r);    // iir.c:665 [v2.10.3.13]
+            }
+        });
 #endif
         return;
 
@@ -1196,7 +1785,12 @@ void TxChannel::setStageRunning(Stage s, bool run)
     // From Thetis wdsp/amsq.c:246-252 [v2.10.3.13] and amsq.h:83.
     case Stage::AmSq:
 #ifdef HAVE_WDSP
-        SetTXAAMSQRun(m_channelId, r);     // amsq.c:246 [v2.10.3.13]
+        // R-R3-39: a run flag is a lane barrier.
+        runOrdered([this, r]() {
+            if (txaOpenLive()) {
+                SetTXAAMSQRun(m_channelId, r);     // amsq.c:246 [v2.10.3.13]
+            }
+        });
 #endif
         return;
 
@@ -1204,7 +1798,12 @@ void TxChannel::setStageRunning(Stage s, bool run)
     // From Thetis wdsp/eq.c:742-747 [v2.10.3.13].
     case Stage::Eqp:
 #ifdef HAVE_WDSP
-        SetTXAEQRun(m_channelId, r);       // eq.c:742 [v2.10.3.13]
+        // R-R3-39: a run flag is a lane barrier.
+        runOrdered([this, r]() {
+            if (txaOpenLive()) {
+                SetTXAEQRun(m_channelId, r);       // eq.c:742 [v2.10.3.13]
+            }
+        });
 #endif
         return;
 
@@ -1217,7 +1816,12 @@ void TxChannel::setStageRunning(Stage s, bool run)
     // From Thetis wdsp/compress.c:99-109 [v2.10.3.13] and compress.h:60.
     case Stage::Compressor:
 #ifdef HAVE_WDSP
-        SetTXACompressorRun(m_channelId, r);  // compress.c:100 [v2.10.3.13]
+        // R-R3-39: a run flag is a lane barrier.
+        runOrdered([this, r]() {
+            if (txaOpenLive()) {
+                SetTXACompressorRun(m_channelId, r);  // compress.c:100 [v2.10.3.13]
+            }
+        });
 #endif
         return;
 
@@ -1229,7 +1833,12 @@ void TxChannel::setStageRunning(Stage s, bool run)
     // From Thetis wdsp/osctrl.c:142-150 [v2.10.3.13].
     case Stage::OsCtrl:
 #ifdef HAVE_WDSP
-        SetTXAosctrlRun(m_channelId, r);   // osctrl.c:142 [v2.10.3.13]
+        // R-R3-39: a run flag is a lane barrier.
+        runOrdered([this, r]() {
+            if (txaOpenLive()) {
+                SetTXAosctrlRun(m_channelId, r);   // osctrl.c:142 [v2.10.3.13]
+            }
+        });
 #endif
         return;
 
@@ -1237,7 +1846,12 @@ void TxChannel::setStageRunning(Stage s, bool run)
     // From Thetis wdsp/cfir.c:233-238 [v2.10.3.13] and cfir.h:71.
     case Stage::Cfir:
 #ifdef HAVE_WDSP
-        SetTXACFIRRun(m_channelId, r);     // cfir.c:233 [v2.10.3.13]
+        // R-R3-39: a run flag is a lane barrier.
+        runOrdered([this, r]() {
+            if (txaOpenLive()) {
+                SetTXACFIRRun(m_channelId, r);     // cfir.c:233 [v2.10.3.13]
+            }
+        });
 #endif
         return;
 
@@ -1246,7 +1860,12 @@ void TxChannel::setStageRunning(Stage s, bool run)
     // From Thetis wdsp/cfcomp.c:632-641 [v2.10.3.13].
     case Stage::CfComp:
 #ifdef HAVE_WDSP
-        SetTXACFCOMPRun(m_channelId, r);   // cfcomp.c:632 [v2.10.3.13]
+        // R-R3-39: a run flag is a lane barrier.
+        runOrdered([this, r]() {
+            if (txaOpenLive()) {
+                SetTXACFCOMPRun(m_channelId, r);   // cfcomp.c:632 [v2.10.3.13]
+            }
+        });
 #endif
         return;
 
@@ -1254,7 +1873,12 @@ void TxChannel::setStageRunning(Stage s, bool run)
     // From Thetis wdsp/wcpAGC.c:613-618 [v2.10.3.13].
     case Stage::Leveler:
 #ifdef HAVE_WDSP
-        SetTXALevelerSt(m_channelId, r);   // wcpAGC.c:613 [v2.10.3.13]
+        // R-R3-39: a run flag is a lane barrier.
+        runOrdered([this, r]() {
+            if (txaOpenLive()) {
+                SetTXALevelerSt(m_channelId, r);   // wcpAGC.c:613 [v2.10.3.13]
+            }
+        });
 #endif
         return;
 
@@ -1267,7 +1891,12 @@ void TxChannel::setStageRunning(Stage s, bool run)
     // From Thetis wdsp/wcpAGC.c:570-575 [v2.10.3.13].
     case Stage::Alc:
 #ifdef HAVE_WDSP
-        SetTXAALCSt(m_channelId, r);       // wcpAGC.c:570 [v2.10.3.13]
+        // R-R3-39: a run flag is a lane barrier.
+        runOrdered([this, r]() {
+            if (txaOpenLive()) {
+                SetTXAALCSt(m_channelId, r);       // wcpAGC.c:570 [v2.10.3.13]
+            }
+        });
 #endif
         return;
 
@@ -1454,10 +2083,15 @@ void TxChannel::setTxMode(DSPMode mode)
 
 #ifdef HAVE_WDSP
     // From Thetis radio.cs:2670-2696 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) {
+    if (!txaOpenAtOnce()) {
         return;  // channel not yet opened (unit-test path)
     }
-    SetTXAMode(m_channelId, static_cast<int>(wdspMode));
+    // R-R3-39: the mode sets the modulator run flags, so it is a barrier.
+    runOrdered([this, wdspMode]() {
+        if (txaOpenLive()) {
+            SetTXAMode(m_channelId, static_cast<int>(wdspMode));
+        }
+    });
 #else
     Q_UNUSED(mode);
 #endif
@@ -1495,15 +2129,36 @@ void TxChannel::setTxBandpass(int lowHz, int highHz)
     m_filterHighHz = highHz;  // carry
 #ifdef HAVE_WDSP
     // From Thetis radio.cs:2730-2780 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) {
+    if (!txaOpenAtOnce()) {
         return;  // channel not yet opened (unit-test path)
     }
-    SetTXABandpassFreqs(m_channelId,
-                        static_cast<double>(lowHz),
-                        static_cast<double>(highHz));
+    runKeyed(laneParameter("setTxBandpass"), [this, lowHz, highHz]() {
+        if (txaOpenLive()) {
+            SetTXABandpassFreqs(m_channelId,
+                                static_cast<double>(lowHz),
+                                static_cast<double>(highHz));
+        }
+    });
 #else
     Q_UNUSED(lowHz);
     Q_UNUSED(highHz);
+#endif
+}
+
+int TxChannel::dspBlockFrames() const
+{
+#ifdef HAVE_WDSP
+    // R-R3-39: with a lane, the size the lane last read (after the open and
+    // after each buffer-size change).
+    if (!readsWdspDirectly()) {
+        return m_dspSizeCache.load(std::memory_order_relaxed);
+    }
+    if (!txaOpenLive()) {
+        return 0;
+    }
+    return ch[m_channelId].dsp_size;
+#else
+    return 0;
 #endif
 }
 
@@ -1569,7 +2224,8 @@ void TxChannel::applyPendingFilter()
 // CWL→LSB and CWU→USB upstream (MoxController G.4) before calling setTuneTone,
 // so reaching this function with a CW mode is unusual but handled safely.
 // ---------------------------------------------------------------------------
-void TxChannel::applyTxFilterForMode(int audioLowHz, int audioHighHz, DSPMode mode)
+std::pair<int, int> TxChannel::filterEdgesForMode(int audioLowHz, int audioHighHz,
+                                                DSPMode mode)
 {
     // Per deskhpsdr/transmitter.c:2136-2186 [@120188f] — tx_set_filter per-mode
     // IQ-space sign convention.  Same mapping as setTuneTone() lines 520-528.
@@ -1605,6 +2261,12 @@ void TxChannel::applyTxFilterForMode(int audioLowHz, int audioHighHz, DSPMode mo
         iqHigh = +audioHighHz;
     }
 
+    return {iqLow, iqHigh};
+}
+
+void TxChannel::applyTxFilterForMode(int audioLowHz, int audioHighHz, DSPMode mode)
+{
+    const auto [iqLow, iqHigh] = filterEdgesForMode(audioLowHz, audioHighHz, mode);
     // Signal first so QSignalSpy sees the values before the WDSP call.
     emit txFilterApplied(iqLow, iqHigh);
     setTxBandpass(iqLow, iqHigh);
@@ -1664,17 +2326,22 @@ void TxChannel::setVoxRun(bool run)
     if (run == m_voxRunLast) return;  // idempotent guard
     m_voxRunLast = run;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:199-200 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard.
-    // Thetis create_xmtr (cmaster.c:130-157 [v2.10.3.13]) calls
-    // create_dexp BEFORE OpenChannel, so pdexp[i] is non-null whenever
-    // rsmpin.p is non-null.  Task 20 (commit 109c09e) ports create_dexp
-    // into NereusSDR's WdspEngine::createTxChannel so pdexp[i] is now
-    // non-null in production; the guard remains for unit-test builds
-    // that don't drive WdspEngine::initialize().
-    if (pdexp[m_channelId] == nullptr) return;
-    SetDEXPRunVox(m_channelId, run ? 1 : 0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        // From Thetis cmaster.cs:199-200 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard.
+        // Thetis create_xmtr (cmaster.c:130-157 [v2.10.3.13]) calls
+        // create_dexp BEFORE OpenChannel, so pdexp[i] is non-null whenever
+        // rsmpin.p is non-null.  Task 20 (commit 109c09e) ports create_dexp
+        // into NereusSDR's WdspEngine::createTxChannel so pdexp[i] is now
+        // non-null in production; the guard remains for unit-test builds
+        // that don't drive WdspEngine::initialize().
+        if (pdexp[m_channelId] == nullptr) return;
+        SetDEXPRunVox(m_channelId, run ? 1 : 0);
+    });
 #else
     Q_UNUSED(run);
 #endif
@@ -1705,11 +2372,16 @@ void TxChannel::setVoxAttackThreshold(double thresh)
     if (!std::isnan(m_voxAttackThresholdLast) && thresh == m_voxAttackThresholdLast) return;
     m_voxAttackThresholdLast = thresh;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:187-188 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for the full rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    SetDEXPAttackThreshold(m_channelId, thresh);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setVoxAttackThreshold"), [=, this]() {
+        // From Thetis cmaster.cs:187-188 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for the full rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        SetDEXPAttackThreshold(m_channelId, thresh);
+    });
 #else
     Q_UNUSED(thresh);
 #endif
@@ -1745,11 +2417,16 @@ void TxChannel::setVoxHangTime(double seconds)
     if (!std::isnan(m_voxHangTimeLast) && seconds == m_voxHangTimeLast) return;
     m_voxHangTimeLast = seconds;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:178-179 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    SetDEXPHoldTime(m_channelId, seconds);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setVoxHangTime"), [=, this]() {
+        // From Thetis cmaster.cs:178-179 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        SetDEXPHoldTime(m_channelId, seconds);
+    });
 #else
     Q_UNUSED(seconds);
 #endif
@@ -1773,14 +2450,19 @@ void TxChannel::setAntiVoxRun(bool run)
     if (run == m_antiVoxRunLast) return;  // idempotent guard
     m_antiVoxRunLast = run;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:208-209 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    // Anti-VOX setters live inside the same DEXP struct as VOX setters
-    // (dexp.c:657 SetAntiVOXRun dereferences pdexp[id]), so the same guard
-    // applies here.
-    if (pdexp[m_channelId] == nullptr) return;
-    SetAntiVOXRun(m_channelId, run ? 1 : 0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        // From Thetis cmaster.cs:208-209 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        // Anti-VOX setters live inside the same DEXP struct as VOX setters
+        // (dexp.c:657 SetAntiVOXRun dereferences pdexp[id]), so the same guard
+        // applies here.
+        if (pdexp[m_channelId] == nullptr) return;
+        SetAntiVOXRun(m_channelId, run ? 1 : 0);
+    });
 #else
     Q_UNUSED(run);
 #endif
@@ -1805,11 +2487,16 @@ void TxChannel::setAntiVoxGain(double gain)
     if (!std::isnan(m_antiVoxGainLast) && gain == m_antiVoxGainLast) return;
     m_antiVoxGainLast = gain;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:211-212 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    SetAntiVOXGain(m_channelId, gain);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setAntiVoxGain"), [=, this]() {
+        // From Thetis cmaster.cs:211-212 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        SetAntiVOXGain(m_channelId, gain);
+    });
 #else
     Q_UNUSED(gain);
 #endif
@@ -1847,11 +2534,18 @@ void TxChannel::setAntiVoxSize(int size)
     m_antiVoxSize = size;
     m_antiVoxScratch.resize(static_cast<std::size_t>(2 * size));  // I and Q doubles
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.c:154 (create_dexp arg) -> dexp.c:666 (setter impl) [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    SetAntiVOXSize(m_channelId, size);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    // R-R3-39: a barrier, so no anti-VOX data block of the old size runs
+    // after this call and none of the new size runs before it.
+    runOrdered([=, this]() {
+        // From Thetis cmaster.c:154 (create_dexp arg) -> dexp.c:666 (setter impl) [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        SetAntiVOXSize(m_channelId, size);
+    });
 #endif
 }
 
@@ -1875,11 +2569,16 @@ void TxChannel::setAntiVoxRate(double rate)
     }
     m_antiVoxRate = rate;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.c:155 (create_dexp arg) -> dexp.c:677 (setter impl) [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    SetAntiVOXRate(m_channelId, rate);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setAntiVoxRate"), [=, this]() {
+        // From Thetis cmaster.c:155 (create_dexp arg) -> dexp.c:677 (setter impl) [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        SetAntiVOXRate(m_channelId, rate);
+    });
 #endif
 }
 
@@ -1905,11 +2604,16 @@ void TxChannel::setAntiVoxDetectorTau(double seconds)
     }
     m_antiVoxTauSec = seconds;
 #ifdef HAVE_WDSP
-    // From Thetis setup.cs:18995 (call-site) -> dexp.c:697 (impl) [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    SetAntiVOXDetectorTau(m_channelId, seconds);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setAntiVoxDetectorTau"), [=, this]() {
+        // From Thetis setup.cs:18995 (call-site) -> dexp.c:697 (impl) [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        SetAntiVOXDetectorTau(m_channelId, seconds);
+    });
 #endif
 }
 
@@ -1978,11 +2682,28 @@ void TxChannel::sendAntiVoxData(const float* interleaved, int nsamples)
         m_antiVoxScratch[i] = static_cast<double>(interleaved[i]);
     }
 #ifdef HAVE_WDSP
-    // From Thetis dexp.c:708-715 [v2.10.3.13] — SendAntiVOXData impl.
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    ::SendAntiVOXData(m_channelId, nsamples, m_antiVoxScratch.data());
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    if (readsWdspDirectly()) {
+        // From Thetis dexp.c:708-715 [v2.10.3.13] — SendAntiVOXData impl.
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        ::SendAntiVOXData(m_channelId, nsamples, m_antiVoxScratch.data());
+        return;
+    }
+    // R-R3-39: the lane takes its own copy of the block. WDSP keeps only the
+    // newest reference block (dexp.c:708-715 overwrites antivox_data), so a
+    // newer block replaces one still queued; setAntiVoxSize is a barrier, so
+    // a block never meets a size it was not made for.
+    runKeyed(laneParameter("sendAntiVoxData"),
+             [this, nsamples, block = m_antiVoxScratch]() mutable {
+        if (!dexpOpenLive()) {
+            return;
+        }
+        ::SendAntiVOXData(m_channelId, nsamples, block.data());
+    });
 #endif
 }
 
@@ -2022,6 +2743,34 @@ void TxChannel::feedTxAudioFromTci(const QByteArray& interleavedStereoBytes,
             || channels < 1 || channels > 2) {
         return;
     }
+    if (readsWdspDirectly()) {
+        feedTciAudioBlock(interleavedStereoBytes, frames, channels, srcRate);
+        return;
+    }
+    // R-R3-39: WDSP's float resampler (create_resampleFV, xresampleFV,
+    // destroy_resampleFV) runs on the transmit lane, not here. A 48 kHz
+    // block needs none and is pushed at once, as before, unless an earlier
+    // block or a cycle-stop drain is still queued on the lane: it then
+    // queues behind them so the ring keeps the order blocks arrive in.
+    constexpr int kWdspTxaInputRate = 48000;
+    const bool resamples = srcRate > 0 && srcRate != kWdspTxaInputRate;
+    if (!resamples && m_tciLaneJobs->load(std::memory_order_acquire) == 0) {
+        feedTciAudioBlock(interleavedStereoBytes, frames, channels, srcRate);
+        return;
+    }
+    m_tciLaneJobs->fetch_add(1, std::memory_order_acq_rel);
+    m_lane->post([this, alive = m_alive, pending = m_tciLaneJobs,
+                  bytes = interleavedStereoBytes, frames, channels, srcRate]() {
+        if (alive->load(std::memory_order_acquire)) {
+            feedTciAudioBlock(bytes, frames, channels, srcRate);
+        }
+        pending->fetch_sub(1, std::memory_order_release);
+    });
+}
+
+void TxChannel::feedTciAudioBlock(const QByteArray& interleavedStereoBytes,
+                                  int frames, int channels, int srcRate)
+{
     const float* interleavedStereo =
         reinterpret_cast<const float*>(interleavedStereoBytes.constData());
 
@@ -2092,13 +2841,14 @@ void TxChannel::feedTxAudioFromTci(const QByteArray& interleavedStereoBytes,
     if (srcRate > 0 && srcRate != kWdspTxaInputRate) {
         // Recreate the resampler if the input rate changed (or first call).
         if (m_tciTxResampler && m_tciTxResamplerInputRate != srcRate) {
-            destroy_resampleFV(m_tciTxResampler);
-            m_tciTxResampler = nullptr;
-            m_tciTxResamplerInputRate = 0;
+            destroyTciResampler();
         }
         if (!m_tciTxResampler) {
             m_tciTxResampler = create_resampleFV(srcRate, kWdspTxaInputRate);
             m_tciTxResamplerInputRate = srcRate;
+            if (m_tciTxResampler) {
+                s_liveTciResamplers.fetch_add(1, std::memory_order_relaxed);
+            }
         }
         if (m_tciTxResampler) {
             // Output buffer: worst case is upsample 8 kHz -> 48 kHz (6x).
@@ -2180,13 +2930,46 @@ int TxChannel::pullTciAudio(float* dst, int frames)
 
 void TxChannel::clearTciAudio()
 {
+    if (readsWdspDirectly()) {
+        drainTciInputRing();
+        destroyTciResampler();
+        return;
+    }
+    // R-R3-39: blocks still queued on the transmit lane belong to the cycle
+    // that just stopped, so the drain waits behind them there; with none
+    // queued it drains here at once, as before. The resampler is the lane's
+    // and is destroyed there, after every block queued before this stop.
+    if (m_tciLaneJobs->load(std::memory_order_acquire) == 0) {
+        drainTciInputRing();
+        m_lane->post([this, alive = m_alive]() {
+            if (alive->load(std::memory_order_acquire)) {
+                destroyTciResampler();
+            }
+        });
+        return;
+    }
+    m_tciLaneJobs->fetch_add(1, std::memory_order_acq_rel);
+    m_lane->post([this, alive = m_alive, pending = m_tciLaneJobs]() {
+        if (alive->load(std::memory_order_acquire)) {
+            drainTciInputRing();
+            destroyTciResampler();
+        }
+        pending->fetch_sub(1, std::memory_order_release);
+    });
+}
+
+void TxChannel::drainTciInputRing()
+{
     constexpr int kDrainScratchBytes = 4096;
     uint8_t scratch[kDrainScratchBytes];
     while (m_tciInputRing.popInto(scratch, kDrainScratchBytes) > 0) {
         // keep draining
     }
     m_tciTxAccumSize = 0;
+}
 
+void TxChannel::destroyTciResampler()
+{
     // Phase 3J-1 closeout Item 8 (2026-05-12): tear down the TCI TX-path
     // resampler so the next cycle starts with a fresh instance.  A client
     // that disconnects and reconnects (or a FreeDV mode change between
@@ -2198,8 +2981,19 @@ void TxChannel::clearTciAudio()
         destroy_resampleFV(m_tciTxResampler);
         m_tciTxResampler = nullptr;
         m_tciTxResamplerInputRate = 0;
+        s_liveTciResamplers.fetch_sub(1, std::memory_order_relaxed);
     }
 #endif
+}
+
+void TxChannel::releaseTciResamplerOnLane()
+{
+    destroyTciResampler();
+}
+
+int TxChannel::liveTciResamplersForTest()
+{
+    return s_liveTciResamplers.load(std::memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -2238,12 +3032,17 @@ void TxChannel::setDexpRun(bool run)
     if (run == m_dexpRunLast) return;  // idempotent guard
     m_dexpRunLast = run;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:166-167 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    // SetDEXPRun (dexp.c:410) dereferences pdexp[id] under cs_update.
-    if (pdexp[m_channelId] == nullptr) return;
-    SetDEXPRun(m_channelId, run ? 1 : 0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        // From Thetis cmaster.cs:166-167 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        // SetDEXPRun (dexp.c:410) dereferences pdexp[id] under cs_update.
+        if (pdexp[m_channelId] == nullptr) return;
+        SetDEXPRun(m_channelId, run ? 1 : 0);
+    });
 #else
     Q_UNUSED(run);
 #endif
@@ -2293,13 +3092,18 @@ void TxChannel::setDexpDetectorTau(double tauMs)
     }
     m_dexpDetectorTauMsLast = clamped;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:169-170 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    // ms→seconds for WDSP, matching setup.cs:18930 [v2.10.3.13]:
-    //   cmaster.SetDEXPDetectorTau(0, (double)udDEXPDetTau.Value / 1000.0);
-    SetDEXPDetectorTau(m_channelId, clamped / 1000.0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setDexpDetectorTau"), [=, this]() {
+        // From Thetis cmaster.cs:169-170 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        // ms→seconds for WDSP, matching setup.cs:18930 [v2.10.3.13]:
+        //   cmaster.SetDEXPDetectorTau(0, (double)udDEXPDetTau.Value / 1000.0);
+        SetDEXPDetectorTau(m_channelId, clamped / 1000.0);
+    });
 #endif
 }
 
@@ -2339,13 +3143,18 @@ void TxChannel::setDexpAttackTime(double attackMs)
     }
     m_dexpAttackTimeMsLast = clamped;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:172-173 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    // ms→seconds for WDSP, matching setup.cs:18893 [v2.10.3.13]:
-    //   cmaster.SetDEXPAttackTime(0, (double)udDEXPAttack.Value / 1000.0);
-    SetDEXPAttackTime(m_channelId, clamped / 1000.0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setDexpAttackTime"), [=, this]() {
+        // From Thetis cmaster.cs:172-173 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        // ms→seconds for WDSP, matching setup.cs:18893 [v2.10.3.13]:
+        //   cmaster.SetDEXPAttackTime(0, (double)udDEXPAttack.Value / 1000.0);
+        SetDEXPAttackTime(m_channelId, clamped / 1000.0);
+    });
 #endif
 }
 
@@ -2385,13 +3194,18 @@ void TxChannel::setDexpReleaseTime(double releaseMs)
     }
     m_dexpReleaseTimeMsLast = clamped;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:175-176 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    // ms→seconds for WDSP, matching setup.cs:18905 [v2.10.3.13]:
-    //   cmaster.SetDEXPReleaseTime(0, (double)udDEXPRelease.Value / 1000.0);
-    SetDEXPReleaseTime(m_channelId, clamped / 1000.0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setDexpReleaseTime"), [=, this]() {
+        // From Thetis cmaster.cs:175-176 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        // ms→seconds for WDSP, matching setup.cs:18905 [v2.10.3.13]:
+        //   cmaster.SetDEXPReleaseTime(0, (double)udDEXPRelease.Value / 1000.0);
+        SetDEXPReleaseTime(m_channelId, clamped / 1000.0);
+    });
 #endif
 }
 
@@ -2440,15 +3254,20 @@ void TxChannel::setDexpExpansionRatio(double ratioDb)
     }
     m_dexpExpansionRatioDbLast = clamped;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:181-182 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    // dB→linear via Math.Pow(10, dB/20.0) — POSITIVE sign — matches Thetis
-    // setup.cs:18918 [v2.10.3.13]:
-    //   cmaster.SetDEXPExpansionRatio(0,
-    //                                 Math.Pow(10.0, (double)udDEXPExpansionRatio.Value / 20.0));
-    SetDEXPExpansionRatio(m_channelId, std::pow(10.0, clamped / 20.0));
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setDexpExpansionRatio"), [=, this]() {
+        // From Thetis cmaster.cs:181-182 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        // dB→linear via Math.Pow(10, dB/20.0) — POSITIVE sign — matches Thetis
+        // setup.cs:18918 [v2.10.3.13]:
+        //   cmaster.SetDEXPExpansionRatio(0,
+        //                                 Math.Pow(10.0, (double)udDEXPExpansionRatio.Value / 20.0));
+        SetDEXPExpansionRatio(m_channelId, std::pow(10.0, clamped / 20.0));
+    });
 #endif
 }
 
@@ -2498,15 +3317,20 @@ void TxChannel::setDexpHysteresisRatio(double ratioDb)
     }
     m_dexpHysteresisRatioDbLast = clamped;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:184-185 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    // dB→linear via Math.Pow(10, -dB/20.0) — NEGATIVE sign — matches Thetis
-    // setup.cs:18924 [v2.10.3.13]:
-    //   cmaster.SetDEXPHysteresisRatio(0,
-    //                                  Math.Pow(10.0, -(double)udDEXPHysteresisRatio.Value / 20.0));
-    SetDEXPHysteresisRatio(m_channelId, std::pow(10.0, -clamped / 20.0));
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setDexpHysteresisRatio"), [=, this]() {
+        // From Thetis cmaster.cs:184-185 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        // dB→linear via Math.Pow(10, -dB/20.0) — NEGATIVE sign — matches Thetis
+        // setup.cs:18924 [v2.10.3.13]:
+        //   cmaster.SetDEXPHysteresisRatio(0,
+        //                                  Math.Pow(10.0, -(double)udDEXPHysteresisRatio.Value / 20.0));
+        SetDEXPHysteresisRatio(m_channelId, std::pow(10.0, -clamped / 20.0));
+    });
 #endif
 }
 
@@ -2546,11 +3370,16 @@ void TxChannel::setDexpLowCut(double lowCutHz)
     }
     m_dexpLowCutHzLast = clamped;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:190-191 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    SetDEXPLowCut(m_channelId, clamped);  // Hz, no conversion
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setDexpLowCut"), [=, this]() {
+        // From Thetis cmaster.cs:190-191 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        SetDEXPLowCut(m_channelId, clamped);  // Hz, no conversion
+    });
 #endif
 }
 
@@ -2590,11 +3419,16 @@ void TxChannel::setDexpHighCut(double highCutHz)
     }
     m_dexpHighCutHzLast = clamped;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:193-194 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    SetDEXPHighCut(m_channelId, clamped);  // Hz, no conversion
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setDexpHighCut"), [=, this]() {
+        // From Thetis cmaster.cs:193-194 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        SetDEXPHighCut(m_channelId, clamped);  // Hz, no conversion
+    });
 #endif
 }
 
@@ -2637,11 +3471,16 @@ void TxChannel::setDexpRunSideChannelFilter(bool run)
     if (run == m_dexpRunSideChannelFilterLast) return;  // idempotent guard
     m_dexpRunSideChannelFilterLast = run;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:196-197 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    SetDEXPRunSideChannelFilter(m_channelId, run ? 1 : 0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        // From Thetis cmaster.cs:196-197 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        SetDEXPRunSideChannelFilter(m_channelId, run ? 1 : 0);
+    });
 #else
     Q_UNUSED(run);
 #endif
@@ -2691,11 +3530,16 @@ void TxChannel::setDexpRunAudioDelay(bool run)
     if (run == m_dexpRunAudioDelayLast) return;  // idempotent guard
     m_dexpRunAudioDelayLast = run;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:202-203 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    SetDEXPRunAudioDelay(m_channelId, run ? 1 : 0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        // From Thetis cmaster.cs:202-203 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        SetDEXPRunAudioDelay(m_channelId, run ? 1 : 0);
+    });
 #else
     Q_UNUSED(run);
 #endif
@@ -2737,13 +3581,18 @@ void TxChannel::setDexpAudioDelay(double delayMs)
     }
     m_dexpAudioDelayMsLast = clamped;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:205-206 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
-    if (pdexp[m_channelId] == nullptr) return;
-    // ms→seconds for WDSP, matching setup.cs:18961 [v2.10.3.13]:
-    //   cmaster.SetDEXPAudioDelay(0, (double)udDEXPLookAhead.Value / 1000.0);
-    SetDEXPAudioDelay(m_channelId, clamped / 1000.0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setDexpAudioDelay"), [=, this]() {
+        // From Thetis cmaster.cs:205-206 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+        if (pdexp[m_channelId] == nullptr) return;
+        // ms→seconds for WDSP, matching setup.cs:18961 [v2.10.3.13]:
+        //   cmaster.SetDEXPAudioDelay(0, (double)udDEXPLookAhead.Value / 1000.0);
+        SetDEXPAudioDelay(m_channelId, clamped / 1000.0);
+    });
 #endif
 }
 
@@ -2768,6 +3617,11 @@ void TxChannel::setConnection(RadioConnection* conn)
     m_connection = conn;
     qCDebug(lcDsp) << "TxChannel" << m_channelId
                    << "connection" << (conn ? "attached" : "detached");
+}
+
+double TxChannel::txIqQueuedMs() const
+{
+    return m_connection != nullptr ? m_connection->txIqQueuedMs() : -1.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -2920,6 +3774,16 @@ void TxChannel::driveOneTxBlockFromInterleaved(const double* interleavedIn)
         return;
     }
 
+    // R-R3-39: a lane wrapper admits the worker only while its channel is
+    // open, and the lane waits for this block before closing it.
+    if (!enterWorkerBlock()) {
+        return;
+    }
+    struct LeaveBlock {
+        const TxChannel* channel;
+        ~LeaveBlock() { channel->leaveWorkerBlock(); }
+    } leaveBlock{this};
+
     // If the caller handed us an external buffer (not m_in.data()), copy
     // into m_in.  Identity comparison: TxWorkerThread will hand us its own
     // scratch buffer; the float-overload above hands us m_in.data() back
@@ -2937,6 +3801,11 @@ void TxChannel::driveOneTxBlockFromInterleaved(const double* interleavedIn)
     // From Thetis wdsp/iobuffs.c:464-516 [v2.10.3.13] — fexchange0 prototype:
     //   void fexchange0 (int channel, double* in, double* out, int* error)
     int error = 0;
+    // Task 33: fexchange0 writes nothing once WDSP's unkey drain has reset
+    // the channel's exchange bit, and the RF gate stays open until the
+    // lane's drain returns. Zero the block first so those last calls send
+    // silence, never a repeat of the previous block.
+    std::fill(m_out.begin(), m_out.end(), 0.0);
     fexchange0(m_channelId, m_in.data(), m_out.data(), &error);
     if (error != 0) {
         qCWarning(lcDsp) << "TxChannel" << m_channelId
@@ -2985,7 +3854,22 @@ void TxChannel::driveOneTxBlockFromInterleaved(const double* interleavedIn)
 
     // Push to connection's SPSC ring (producer side).
     // sendTxIq(iq, n): n = number of complex samples; buffer has 2*n floats.
+    //
+    // Task 33 (R-IOS-03): the RF gate is checked again inside the sender
+    // section closeRfGate waits for, so once closeRfGate returns no block
+    // reaches the connection, even one whose fexchange0 began before it.
+    m_txIqSendersInFlight.fetch_add(1, std::memory_order_seq_cst);
+    if (!m_running.load(std::memory_order_seq_cst)) {
+        m_txIqSendersInFlight.fetch_sub(1, std::memory_order_seq_cst);
+        return;
+    }
     m_connection->sendTxIq(m_outInterleavedFloat.data(), outN);
+    m_txIqSendersInFlight.fetch_sub(1, std::memory_order_seq_cst);
+
+    // AM Mod Monitor tap (NereusSDR-original): same block the radio gets.
+    if (auto* tap = m_amModTap.load(std::memory_order_acquire)) {
+        tap->pushIq(m_outInterleavedFloat.data(), outN);
+    }
 
     // Siphon signal — MON path (3M-1b D.5).
     //
@@ -3068,9 +3952,15 @@ void TxChannel::setMicPreamp(double linearGain)
 void TxChannel::recomputeTxAPanelGain1()
 {
 #ifdef HAVE_WDSP
-    // From Thetis wdsp/patchpanel.c:209-216 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPanelGain1(m_channelId, m_micPreampLast);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    // R-R3-39: the lane gets the value, not the member.
+    runKeyed(laneParameter("setMicPreamp"), [this, gain = m_micPreampLast]() {
+        // From Thetis wdsp/patchpanel.c:209-216 [v2.10.3.13]
+        if (!txaOpenLive()) return;
+        SetTXAPanelGain1(m_channelId, gain);
+    });
 #endif
 }
 
@@ -3094,10 +3984,17 @@ void TxChannel::recomputeTxAPanelGain1()
 float TxChannel::getTxMicMeter() const
 {
 #ifdef HAVE_WDSP
+    // R-R3-39: with a lane, the reading the lane last took.
+    if (!readsWdspDirectly()) {
+        if (!isWdspReady()) {
+            return kMeterUninitialisedSentinel;
+        }
+        return static_cast<float>(txMeter(TXA_MIC_PK));
+    }
     // From Thetis wdsp/meter.c:153-157 [v2.10.3.13] — GetTXAMeter accesses
     // txa[channel].pmtupdate[mt] (CRITICAL_SECTION*). Guard against uninitialised
     // channel using the same rsmpin.p sentinel used throughout this class.
-    if (txa[m_channelId].rsmpin.p == nullptr) return kMeterUninitialisedSentinel;
+    if (!txaOpenLive()) return kMeterUninitialisedSentinel;
     return static_cast<float>(GetTXAMeter(m_channelId, TXA_MIC_PK));  // TXA_MIC_PK = 0 [TXA.h:51]
 #else
     return kMeterUninitialisedSentinel;
@@ -3120,8 +4017,15 @@ float TxChannel::getTxMicMeter() const
 float TxChannel::getAlcMeter() const
 {
 #ifdef HAVE_WDSP
+    // R-R3-39: with a lane, the reading the lane last took.
+    if (!readsWdspDirectly()) {
+        if (!isWdspReady()) {
+            return kMeterUninitialisedSentinel;
+        }
+        return static_cast<float>(txMeter(TXA_ALC_PK));
+    }
     // Same rsmpin.p null-guard as getTxMicMeter().
-    if (txa[m_channelId].rsmpin.p == nullptr) return kMeterUninitialisedSentinel;
+    if (!txaOpenLive()) return kMeterUninitialisedSentinel;
     return static_cast<float>(GetTXAMeter(m_channelId, TXA_ALC_PK));  // TXA_ALC_PK = 12 [TXA.h:63]
 #else
     return kMeterUninitialisedSentinel;
@@ -3190,6 +4094,12 @@ float TxChannel::getCompMeter() const { return 0.0f; }  // deferred 3M-3a
 double TxChannel::getDexpPeakSignal() const noexcept
 {
 #ifdef HAVE_WDSP
+    // R-R3-39: with a lane, the peak the lane last read (0.0 before its
+    // first read, the idle default below), and a refresh is posted.
+    if (!readsWdspDirectly()) {
+        postRefresh(laneParameter("getDexpPeakSignal"), [this]() { refreshDexpPeakOnLane(); });
+        return m_dexpPeakCache.load(std::memory_order_relaxed);
+    }
     // From Thetis wdsp/dexp.c:650 [v2.10.3.13] — `DEXP a = pdexp[id];`
     // dereferences before any guard.  Match the existing setVoxRun /
     // setDexpRun null-guards (pdexp[m_channelId] == nullptr) so that
@@ -3265,11 +4175,18 @@ double TxChannel::getDexpPeakSignal() const noexcept
 double TxChannel::getTxMicMeterDb() const noexcept
 {
 #ifdef HAVE_WDSP
+    // R-R3-39: with a lane, the reading the lane last took.
+    if (!readsWdspDirectly()) {
+        if (!isWdspReady()) {
+            return -200.0;  // Thetis floor (console.cs:25346)
+        }
+        return txMeter(TXA_MIC_AV);
+    }
     // Same null-guard pattern as getTxMicMeter() (TxChannel.cpp:2200) and
     // getAlcMeter() — txa[].rsmpin.p == nullptr means OpenChannel was
     // never called, so GetTXAMeter would deref a null CRITICAL_SECTION
     // pointer (wdsp/meter.c:153 [v2.10.3.13]) and segfault.
-    if (txa[m_channelId].rsmpin.p == nullptr) return -200.0;  // Thetis floor (console.cs:25346)
+    if (!txaOpenLive()) return -200.0;  // Thetis floor (console.cs:25346)
     return GetTXAMeter(m_channelId, TXA_MIC_AV);  // TXA_MIC_AV = 1 [TXA.h:52]
 #else
     return -200.0;
@@ -3308,8 +4225,13 @@ double TxChannel::getTxMicMeterDb() const noexcept
 void TxChannel::setTxPostGenMode(int mode)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPostGenMode(m_channelId, mode);   // gen.c:792-797 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        if (!txaOpenLive()) return;
+        SetTXAPostGenMode(m_channelId, mode);   // gen.c:792-797 [v2.10.3.13]
+    });
 #else
     Q_UNUSED(mode);
 #endif
@@ -3329,10 +4251,15 @@ void TxChannel::setTxPostGenTTFreq1(double hz)
 {
     m_postGenTTFreq1Cache = hz;
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPostGenTTFreq(m_channelId,
-                        m_postGenTTFreq1Cache,
-                        m_postGenTTFreq2Cache);   // gen.c:826-833 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPostGenTTFreq"), [this, first = m_postGenTTFreq1Cache, second = m_postGenTTFreq2Cache]() {
+        if (!txaOpenLive()) return;
+        SetTXAPostGenTTFreq(m_channelId,
+                            first,
+                            second);   // gen.c:826-833 [v2.10.3.13]
+    });
 #endif
 }
 
@@ -3346,10 +4273,15 @@ void TxChannel::setTxPostGenTTFreq2(double hz)
 {
     m_postGenTTFreq2Cache = hz;
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPostGenTTFreq(m_channelId,
-                        m_postGenTTFreq1Cache,
-                        m_postGenTTFreq2Cache);   // gen.c:826-833 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPostGenTTFreq"), [this, first = m_postGenTTFreq1Cache, second = m_postGenTTFreq2Cache]() {
+        if (!txaOpenLive()) return;
+        SetTXAPostGenTTFreq(m_channelId,
+                            first,
+                            second);   // gen.c:826-833 [v2.10.3.13]
+    });
 #endif
 }
 
@@ -3363,10 +4295,15 @@ void TxChannel::setTxPostGenTTMag1(double linear)
 {
     m_postGenTTMag1Cache = linear;
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPostGenTTMag(m_channelId,
-                       m_postGenTTMag1Cache,
-                       m_postGenTTMag2Cache);     // gen.c:817-823 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPostGenTTMag"), [this, first = m_postGenTTMag1Cache, second = m_postGenTTMag2Cache]() {
+        if (!txaOpenLive()) return;
+        SetTXAPostGenTTMag(m_channelId,
+                           first,
+                           second);     // gen.c:817-823 [v2.10.3.13]
+    });
 #endif
 }
 
@@ -3379,10 +4316,15 @@ void TxChannel::setTxPostGenTTMag2(double linear)
 {
     m_postGenTTMag2Cache = linear;
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPostGenTTMag(m_channelId,
-                       m_postGenTTMag1Cache,
-                       m_postGenTTMag2Cache);     // gen.c:817-823 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPostGenTTMag"), [this, first = m_postGenTTMag1Cache, second = m_postGenTTMag2Cache]() {
+        if (!txaOpenLive()) return;
+        SetTXAPostGenTTMag(m_channelId,
+                           first,
+                           second);     // gen.c:817-823 [v2.10.3.13]
+    });
 #endif
 }
 
@@ -3396,10 +4338,15 @@ void TxChannel::setTxPostGenTTPulseToneFreq1(double hz)
 {
     m_postGenTTPulseToneFreq1Cache = hz;
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPostGenTTPulseToneFreq(m_channelId,
-                                 m_postGenTTPulseToneFreq1Cache,
-                                 m_postGenTTPulseToneFreq2Cache);   // gen.c:944-952 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPostGenTTPulseToneFreq"), [this, first = m_postGenTTPulseToneFreq1Cache, second = m_postGenTTPulseToneFreq2Cache]() {
+        if (!txaOpenLive()) return;
+        SetTXAPostGenTTPulseToneFreq(m_channelId,
+                                     first,
+                                     second);   // gen.c:944-952 [v2.10.3.13]
+    });
 #endif
 }
 
@@ -3412,10 +4359,15 @@ void TxChannel::setTxPostGenTTPulseToneFreq2(double hz)
 {
     m_postGenTTPulseToneFreq2Cache = hz;
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPostGenTTPulseToneFreq(m_channelId,
-                                 m_postGenTTPulseToneFreq1Cache,
-                                 m_postGenTTPulseToneFreq2Cache);   // gen.c:944-952 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPostGenTTPulseToneFreq"), [this, first = m_postGenTTPulseToneFreq1Cache, second = m_postGenTTPulseToneFreq2Cache]() {
+        if (!txaOpenLive()) return;
+        SetTXAPostGenTTPulseToneFreq(m_channelId,
+                                     first,
+                                     second);   // gen.c:944-952 [v2.10.3.13]
+    });
 #endif
 }
 
@@ -3428,10 +4380,15 @@ void TxChannel::setTxPostGenTTPulseMag1(double linear)
 {
     m_postGenTTPulseMag1Cache = linear;
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPostGenTTPulseMag(m_channelId,
-                            m_postGenTTPulseMag1Cache,
-                            m_postGenTTPulseMag2Cache);             // gen.c:915-923 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPostGenTTPulseMag"), [this, first = m_postGenTTPulseMag1Cache, second = m_postGenTTPulseMag2Cache]() {
+        if (!txaOpenLive()) return;
+        SetTXAPostGenTTPulseMag(m_channelId,
+                                first,
+                                second);             // gen.c:915-923 [v2.10.3.13]
+    });
 #endif
 }
 
@@ -3444,10 +4401,15 @@ void TxChannel::setTxPostGenTTPulseMag2(double linear)
 {
     m_postGenTTPulseMag2Cache = linear;
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPostGenTTPulseMag(m_channelId,
-                            m_postGenTTPulseMag1Cache,
-                            m_postGenTTPulseMag2Cache);             // gen.c:915-923 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPostGenTTPulseMag"), [this, first = m_postGenTTPulseMag1Cache, second = m_postGenTTPulseMag2Cache]() {
+        if (!txaOpenLive()) return;
+        SetTXAPostGenTTPulseMag(m_channelId,
+                                first,
+                                second);             // gen.c:915-923 [v2.10.3.13]
+    });
 #endif
 }
 
@@ -3461,11 +4423,16 @@ void TxChannel::setTxPostGenTTPulseMag2(double linear)
 void TxChannel::setTxPostGenTTPulseFreq(int hz)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // WDSP signature takes double; widen from int (Thetis stores as int and
-    // crosses the C# double boundary on the property setter — same widening
-    // semantics here).
-    SetTXAPostGenTTPulseFreq(m_channelId, static_cast<double>(hz));   // gen.c:926-933 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPostGenTTPulseFreq"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // WDSP signature takes double; widen from int (Thetis stores as int and
+        // crosses the C# double boundary on the property setter — same widening
+        // semantics here).
+        SetTXAPostGenTTPulseFreq(m_channelId, static_cast<double>(hz));   // gen.c:926-933 [v2.10.3.13]
+    });
 #else
     Q_UNUSED(hz);
 #endif
@@ -3481,8 +4448,13 @@ void TxChannel::setTxPostGenTTPulseFreq(int hz)
 void TxChannel::setTxPostGenTTPulseDutyCycle(double pct)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPostGenTTPulseDutyCycle(m_channelId, pct);   // gen.c:935-942 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPostGenTTPulseDutyCycle"), [=, this]() {
+        if (!txaOpenLive()) return;
+        SetTXAPostGenTTPulseDutyCycle(m_channelId, pct);   // gen.c:935-942 [v2.10.3.13]
+    });
 #else
     Q_UNUSED(pct);
 #endif
@@ -3498,8 +4470,13 @@ void TxChannel::setTxPostGenTTPulseDutyCycle(double pct)
 void TxChannel::setTxPostGenTTPulseTransition(double sec)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPostGenTTPulseTransition(m_channelId, sec);  // gen.c:955-962 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPostGenTTPulseTransition"), [=, this]() {
+        if (!txaOpenLive()) return;
+        SetTXAPostGenTTPulseTransition(m_channelId, sec);  // gen.c:955-962 [v2.10.3.13]
+    });
 #else
     Q_UNUSED(sec);
 #endif
@@ -3518,8 +4495,13 @@ void TxChannel::setTxPostGenTTPulseTransition(double sec)
 void TxChannel::setTxPostGenTTPulseIQOut(bool on)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPostGenTTPulseIQout(m_channelId, on ? 1 : 0); // gen.c:963-969 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPostGenTTPulseIQOut"), [=, this]() {
+        if (!txaOpenLive()) return;
+        SetTXAPostGenTTPulseIQout(m_channelId, on ? 1 : 0); // gen.c:963-969 [v2.10.3.13]
+    });
 #else
     Q_UNUSED(on);
 #endif
@@ -3534,8 +4516,13 @@ void TxChannel::setTxPostGenTTPulseIQOut(bool on)
 void TxChannel::setTxPostGenRun(bool on)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPostGenRun(m_channelId, on ? 1 : 0);   // gen.c:784-789 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        if (!txaOpenLive()) return;
+        SetTXAPostGenRun(m_channelId, on ? 1 : 0);   // gen.c:784-789 [v2.10.3.13]
+    });
 #else
     Q_UNUSED(on);
 #endif
@@ -3557,8 +4544,13 @@ void TxChannel::setPostGenToneMag(double mag)
 {
     m_postGenToneMag = mag;
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    SetTXAPostGenToneMag(m_channelId, mag);   // gen.c:800 [v2.10.3.13]
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setPostGenToneMag"), [=, this]() {
+        if (!txaOpenLive()) return;
+        SetTXAPostGenToneMag(m_channelId, mag);   // gen.c:800 [v2.10.3.13]
+    });
 #else
     Q_UNUSED(mag);
 #endif
@@ -3574,11 +4566,17 @@ void TxChannel::setPostGenToneMag(double mag)
 
 void TxChannel::setTxEqRunning(bool on)
 {
+    m_txEqRunningLast = on;  // R-R3-49 (parity Task 2): test read-back only
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/eq.c:742-747 [v2.10.3.13] — SetTXAEQRun(channel, run).
-    // csDSP-protected; safe from main thread while audio thread runs.
-    SetTXAEQRun(m_channelId, on ? 1 : 0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/eq.c:742-747 [v2.10.3.13] — SetTXAEQRun(channel, run).
+        // csDSP-protected; safe from main thread while audio thread runs.
+        SetTXAEQRun(m_channelId, on ? 1 : 0);
+    });
 #else
     Q_UNUSED(on);
 #endif
@@ -3587,16 +4585,21 @@ void TxChannel::setTxEqRunning(bool on)
 void TxChannel::setTxEqGraph10(const std::array<int, 11>& preampPlus10Bands)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/eq.c:859-883 [v2.10.3.13] — SetTXAGrphEQ10(channel, txeq).
-    //   txeq[0]      = preamp dB
-    //   txeq[1..10]  = 10-band gains dB at fixed centers per WDSP eq.c:870-879.
-    // SetTXAGrphEQ10 reallocates the impulse — main-thread only.
-    int txeq[11];
-    for (int i = 0; i < 11; ++i) {
-        txeq[i] = preampPlus10Bands[static_cast<std::size_t>(i)];
+    if (!txaOpenAtOnce()) {
+        return;
     }
-    SetTXAGrphEQ10(m_channelId, txeq);
+    runKeyed(laneParameter("setTxEqGraph10"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/eq.c:859-883 [v2.10.3.13] — SetTXAGrphEQ10(channel, txeq).
+        //   txeq[0]      = preamp dB
+        //   txeq[1..10]  = 10-band gains dB at fixed centers per WDSP eq.c:870-879.
+        // SetTXAGrphEQ10 reallocates the impulse — main-thread only.
+        int txeq[11];
+        for (int i = 0; i < 11; ++i) {
+            txeq[i] = preampPlus10Bands[static_cast<std::size_t>(i)];
+        }
+        SetTXAGrphEQ10(m_channelId, txeq);
+    });
 #else
     Q_UNUSED(preampPlus10Bands);
 #endif
@@ -3616,46 +4619,74 @@ void TxChannel::setTxEqProfile(const std::vector<double>& freqs10,
                          << gains11.size() << "— ignoring call";
         return;
     }
-
-#ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/eq.c:779-804 [v2.10.3.13] — SetTXAEQProfile(channel, nfreqs, F[], G[]).
-    // F is 1-indexed inside WDSP (F[0] is the unused pad slot), G is 0-indexed
-    // (G[0] = preamp).  Both buffers must be at least nfreqs+1 entries; we
-    // build them fresh on the stack.  (Q vector is exclusive to the parametric
-    // SetTXAGrphEQProfile variant — graphic EQ doesn't take a Q.)
-    //
-    // Mirrors the create_eqp call at wdsp/TXA.c:111-127 [v2.10.3.13]:
+    // From Thetis wdsp/TXA.c:111-127 [v2.10.3.13], the create_eqp call shape:
     //   double default_F[11] = {0.0,  32.0, ...};  // F[0] = 0.0 pad
     //   double default_G[11] = {0.0, -12.0, ...};  // G[0] = preamp (0 by default)
     //   //double default_G[11] =   {0.0,   0.0,   0.0,   0.0,   0.0,   0.0,    0.0,    0.0,    0.0,    0.0,     0.0};
     //   create_eqp(..., 10, default_F, default_G, ...);
-    constexpr int kNfreqs = 10;
-    double F[kNfreqs + 1];
-    double G[kNfreqs + 1];
-    F[0] = 0.0;  // WDSP F[0] pad slot
-    for (int i = 0; i < kNfreqs; ++i) {
-        F[i + 1] = freqs10[static_cast<std::size_t>(i)];
+    std::vector<double> F(11, 0.0);  // F[0] is WDSP's pad slot
+    for (std::size_t i = 0; i < 10; ++i) {
+        F[i + 1] = freqs10[i];
     }
-    for (int i = 0; i < kNfreqs + 1; ++i) {
-        G[i] = gains11[static_cast<std::size_t>(i)];
+    setTxEqProfile(F, gains11, {});
+}
+
+void TxChannel::setTxEqProfile(const std::vector<double>& F, const std::vector<double>& G,
+                               const std::vector<double>& Q)
+{
+    // R-R3-49 (group A fix wave): the arrays Thetis hands WDSP. nfreqs is
+    // at most WDSP's EQ_MAXIMUM_CONTROL_POINTS (256), which the TX EQ's
+    // F/G/Q buffers hold (third_party/wdsp/src/eq.c create_eqp).
+    constexpr std::size_t kMaxEqPoints = 256;
+    if (F.size() < 2 || F.size() > kMaxEqPoints + 1 || G.size() != F.size()
+        || (!Q.empty() && Q.size() != F.size())) {
+        qCWarning(lcDsp) << "TxChannel::setTxEqProfile: F, G and Q sizes" << F.size()
+                         << G.size() << Q.size() << "are not a profile; ignoring call";
+        return;
     }
-    SetTXAEQProfile(m_channelId, kNfreqs, F, G);
+    m_txEqProfileFLast = F;  // R-R3-49: test read-back only
+    m_txEqProfileGLast = G;
+    m_txEqProfileQLast = Q;
+    ++m_txEqProfilePushCount;
+
+#ifdef HAVE_WDSP
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    // R-R3-39: the WDSP call runs on the transmit lane, with its own copies.
+    std::vector<double> f = F;
+    std::vector<double> g = G;
+    std::vector<double> q = Q;
+    runKeyed(laneParameter("setTxEqProfile"), [this, f, g, q]() mutable {
+        if (!txaOpenLive()) return;
+        // From Thetis eqform.cs:3067-3071 [v2.10.3.15]:
+        //   WDSP.SetTXAEQProfile(WDSP.id(1, 0), nfreqs, Fptr, Gptr,
+        //                        _state.TX_ParametricEQ ? Qptr : null);
+        // SetTXAEQProfile copies the arrays; it takes non-const pointers.
+        const int nfreqs = static_cast<int>(f.size()) - 1;
+        SetTXAEQProfile(m_channelId, nfreqs, f.data(), g.data(), q.empty() ? nullptr : q.data());
+    });
 #endif
 #ifdef NEREUS_BUILD_TESTS
     // Accepted arguments after validation, channel guard and WDSP boundary.
-    m_lastEqProfile = {freqs10, gains11};
+    m_lastEqProfile = {std::vector<double>(F.begin() + 1, F.end()), G};
     ++m_eqProfileApplyCount;
 #endif
 }
 
 void TxChannel::setTxEqNc(int nc)
 {
+    m_txEqNcLast = nc;  // R-R3-49 (parity Task 4): test read-back only
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/eq.c:750-764 [v2.10.3.13] — SetTXAEQNC(channel, nc).
-    // Allocates eq_impulse — main-thread only.
-    SetTXAEQNC(m_channelId, nc);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/eq.c:750-764 [v2.10.3.13] — SetTXAEQNC(channel, nc).
+        // Allocates eq_impulse — main-thread only.
+        SetTXAEQNC(m_channelId, nc);
+    });
 #else
     Q_UNUSED(nc);
 #endif
@@ -3663,11 +4694,17 @@ void TxChannel::setTxEqNc(int nc)
 
 void TxChannel::setTxEqMp(bool mp)
 {
+    m_txEqMpLast = mp;  // R-R3-49 (parity Task 4): test read-back only
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/eq.c:767-776 [v2.10.3.13] — SetTXAEQMP(channel, mp).
-    // Allocates min-phase impulse via setMp_fircore — main-thread only.
-    SetTXAEQMP(m_channelId, mp ? 1 : 0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/eq.c:767-776 [v2.10.3.13] — SetTXAEQMP(channel, mp).
+        // Allocates min-phase impulse via setMp_fircore — main-thread only.
+        SetTXAEQMP(m_channelId, mp ? 1 : 0);
+    });
 #else
     Q_UNUSED(mp);
 #endif
@@ -3675,11 +4712,17 @@ void TxChannel::setTxEqMp(bool mp)
 
 void TxChannel::setTxEqCtfmode(int mode)
 {
+    m_txEqCtfmodeLast = mode;  // R-R3-49 (parity Task 4): test read-back only
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/eq.c:807-816 [v2.10.3.13] — SetTXAEQCtfmode(channel, mode).
-    // Allocates eq_impulse — main-thread only.
-    SetTXAEQCtfmode(m_channelId, mode);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxEqCtfmode"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/eq.c:807-816 [v2.10.3.13] — SetTXAEQCtfmode(channel, mode).
+        // Allocates eq_impulse — main-thread only.
+        SetTXAEQCtfmode(m_channelId, mode);
+    });
 #else
     Q_UNUSED(mode);
 #endif
@@ -3687,11 +4730,17 @@ void TxChannel::setTxEqCtfmode(int mode)
 
 void TxChannel::setTxEqWintype(int wintype)
 {
+    m_txEqWintypeLast = wintype;  // R-R3-49 (parity Task 4): test read-back only
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/eq.c:819-828 [v2.10.3.13] — SetTXAEQWintype(channel, wintype).
-    // Allocates eq_impulse — main-thread only.
-    SetTXAEQWintype(m_channelId, wintype);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxEqWintype"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/eq.c:819-828 [v2.10.3.13] — SetTXAEQWintype(channel, wintype).
+        // Allocates eq_impulse — main-thread only.
+        SetTXAEQWintype(m_channelId, wintype);
+    });
 #else
     Q_UNUSED(wintype);
 #endif
@@ -3708,12 +4757,17 @@ void TxChannel::setTxLevelerOn(bool on)
 {
     m_levelerOn = on;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/wcpAGC.c:613-618 [v2.10.3.13] — SetTXALevelerSt(channel, state).
-    // csDSP-protected.
-    // Cited handler: setup.cs:9108-9123 [v2.10.3.13] — chkDSPLevelerEnabled_CheckedChanged
-    //   routes through radio.cs DSPTX::TXLevelerOn setter which calls SetTXALevelerSt.
-    SetTXALevelerSt(m_channelId, on ? 1 : 0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/wcpAGC.c:613-618 [v2.10.3.13] — SetTXALevelerSt(channel, state).
+        // csDSP-protected.
+        // Cited handler: setup.cs:9108-9123 [v2.10.3.13] — chkDSPLevelerEnabled_CheckedChanged
+        //   routes through radio.cs DSPTX::TXLevelerOn setter which calls SetTXALevelerSt.
+        SetTXALevelerSt(m_channelId, on ? 1 : 0);
+    });
 #else
     Q_UNUSED(on);
 #endif
@@ -3723,12 +4777,17 @@ void TxChannel::setTxLevelerTopDb(double dB)
 {
     m_levelerMaxGainDb = dB;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/wcpAGC.c:647-650 [v2.10.3.13] — SetTXALevelerTop(channel, maxgain).
-    // Thetis converts dB → linear via pow(10, dB/20.0) inside wcpAGC; we pass dB
-    // straight, matching the radio.cs TXLevelerMaxGain setter pattern.
-    // Cited handler: setup.cs:9095-9099 [v2.10.3.13] — udDSPLevelerThreshold_ValueChanged.
-    SetTXALevelerTop(m_channelId, dB);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxLevelerTopDb"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/wcpAGC.c:647-650 [v2.10.3.13] — SetTXALevelerTop(channel, maxgain).
+        // Thetis converts dB → linear via pow(10, dB/20.0) inside wcpAGC; we pass dB
+        // straight, matching the radio.cs TXLevelerMaxGain setter pattern.
+        // Cited handler: setup.cs:9095-9099 [v2.10.3.13] — udDSPLevelerThreshold_ValueChanged.
+        SetTXALevelerTop(m_channelId, dB);
+    });
 #else
     Q_UNUSED(dB);
 #endif
@@ -3738,11 +4797,16 @@ void TxChannel::setTxLevelerDecayMs(int ms)
 {
     m_levelerDecayMs = ms;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/wcpAGC.c:629-635 [v2.10.3.13] — SetTXALevelerDecay(channel, decay).
-    // csDSP-protected.  WDSP stores decay/1000.0 sec internally.
-    // Cited handler: setup.cs:9101-9105 [v2.10.3.13] — udDSPLevelerDecay_ValueChanged.
-    SetTXALevelerDecay(m_channelId, ms);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxLevelerDecayMs"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/wcpAGC.c:629-635 [v2.10.3.13] — SetTXALevelerDecay(channel, decay).
+        // csDSP-protected.  WDSP stores decay/1000.0 sec internally.
+        // Cited handler: setup.cs:9101-9105 [v2.10.3.13] — udDSPLevelerDecay_ValueChanged.
+        SetTXALevelerDecay(m_channelId, ms);
+    });
 #else
     Q_UNUSED(ms);
 #endif
@@ -3752,12 +4816,17 @@ void TxChannel::setTxAlcMaxGainDb(double dB)
 {
     m_alcMaxGainDb = dB;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/wcpAGC.c:603-610 [v2.10.3.13] — SetTXAALCMaxGain(channel, maxgain).
-    // Thetis converts dB → linear via pow(10, dB/20.0) inside wcpAGC.
-    // Cited handler: setup.cs:9129-9134 [v2.10.3.13] — udDSPALCMaximumGain_ValueChanged
-    //   calls SetTXAALCMaxGain directly + updates WDSP.ALCGain readout cache.
-    SetTXAALCMaxGain(m_channelId, dB);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxAlcMaxGainDb"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/wcpAGC.c:603-610 [v2.10.3.13] — SetTXAALCMaxGain(channel, maxgain).
+        // Thetis converts dB → linear via pow(10, dB/20.0) inside wcpAGC.
+        // Cited handler: setup.cs:9129-9134 [v2.10.3.13] — udDSPALCMaximumGain_ValueChanged
+        //   calls SetTXAALCMaxGain directly + updates WDSP.ALCGain readout cache.
+        SetTXAALCMaxGain(m_channelId, dB);
+    });
 #else
     Q_UNUSED(dB);
 #endif
@@ -3767,11 +4836,16 @@ void TxChannel::setTxAlcDecayMs(int ms)
 {
     m_alcDecayMs = ms;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/wcpAGC.c:585-592 [v2.10.3.13] — SetTXAALCDecay(channel, decay).
-    // csDSP-protected.  WDSP stores decay/1000.0 sec internally.
-    // Cited handler: setup.cs:9136-9140 [v2.10.3.13] — udDSPALCDecay_ValueChanged.
-    SetTXAALCDecay(m_channelId, ms);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxAlcDecayMs"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/wcpAGC.c:585-592 [v2.10.3.13] — SetTXAALCDecay(channel, decay).
+        // csDSP-protected.  WDSP stores decay/1000.0 sec internally.
+        // Cited handler: setup.cs:9136-9140 [v2.10.3.13] — udDSPALCDecay_ValueChanged.
+        SetTXAALCDecay(m_channelId, ms);
+    });
 #else
     Q_UNUSED(ms);
 #endif
@@ -3793,10 +4867,15 @@ void TxChannel::setTxCfcRunning(bool on)
 {
     m_cfcOn = on;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/cfcomp.c:632-641 [v2.10.3.13] — SetTXACFCOMPRun(channel, run).
-    // csDSP-protected.
-    SetTXACFCOMPRun(m_channelId, on ? 1 : 0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/cfcomp.c:632-641 [v2.10.3.13] — SetTXACFCOMPRun(channel, run).
+        // csDSP-protected.
+        SetTXACFCOMPRun(m_channelId, on ? 1 : 0);
+    });
 #else
     Q_UNUSED(on);
 #endif
@@ -3805,10 +4884,15 @@ void TxChannel::setTxCfcRunning(bool on)
 void TxChannel::setTxCfcPosition(int pos)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/cfcomp.c:643-653 [v2.10.3.13] — SetTXACFCOMPPosition(channel, pos).
-    // csDSP-protected.
-    SetTXACFCOMPPosition(m_channelId, pos);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/cfcomp.c:643-653 [v2.10.3.13] — SetTXACFCOMPPosition(channel, pos).
+        // csDSP-protected.
+        SetTXACFCOMPPosition(m_channelId, pos);
+    });
 #else
     Q_UNUSED(pos);
 #endif
@@ -3855,23 +4939,35 @@ void TxChannel::setTxCfcProfile(const std::vector<double>& F,
                          << "— ignoring call";
         return;
     }
+    // R-R3-49 (parity Task 4): test read-back only.
+    m_txCfcProfileFLast = F;
+    m_txCfcProfileGLast = G;
+    m_txCfcProfileELast = E;
+    m_txCfcProfileQgLast = Qg;
+    m_txCfcProfileQeLast = Qe;
+    ++m_txCfcProfilePushCount;
 
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/cfcomp.c:656-698 [v2.10.3.13] — SetTXACFCOMPprofile.
-    //
-    // As of Phase 3M-3a-ii Batch 1.5 the bundled third_party/wdsp/src/cfcomp.c
-    // is the Thetis v2.10.3.13 version, so the 7-arg signature is exported
-    // and Qg/Qe forward through.  Empty vectors map to nullptr per the
-    // WDSP NULL-skirt semantics (cfcomp.c:669-682 [v2.10.3.13]: WDSP keeps
-    // a->Qg / a->Qe unallocated and calc_comp falls back to the linear
-    // interpolation path for that skirt).
-    double* qg = Qg.empty() ? nullptr : const_cast<double*>(Qg.data());
-    double* qe = Qe.empty() ? nullptr : const_cast<double*>(Qe.data());
-    SetTXACFCOMPprofile(m_channelId, static_cast<int>(nfreqs),
-                        const_cast<double*>(F.data()),
-                        const_cast<double*>(G.data()),
-                        const_cast<double*>(E.data()), qg, qe);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxCfcProfile"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/cfcomp.c:656-698 [v2.10.3.13] — SetTXACFCOMPprofile.
+        //
+        // As of Phase 3M-3a-ii Batch 1.5 the bundled third_party/wdsp/src/cfcomp.c
+        // is the Thetis v2.10.3.13 version, so the 7-arg signature is exported
+        // and Qg/Qe forward through.  Empty vectors map to nullptr per the
+        // WDSP NULL-skirt semantics (cfcomp.c:669-682 [v2.10.3.13]: WDSP keeps
+        // a->Qg / a->Qe unallocated and calc_comp falls back to the linear
+        // interpolation path for that skirt).
+        double* qg = Qg.empty() ? nullptr : const_cast<double*>(Qg.data());
+        double* qe = Qe.empty() ? nullptr : const_cast<double*>(Qe.data());
+        SetTXACFCOMPprofile(m_channelId, static_cast<int>(nfreqs),
+                            const_cast<double*>(F.data()),
+                            const_cast<double*>(G.data()),
+                            const_cast<double*>(E.data()), qg, qe);
+    });
 #else
     Q_UNUSED(Qg);
     Q_UNUSED(Qe);
@@ -3887,11 +4983,16 @@ void TxChannel::setTxCfcPrecompDb(double dB)
 {
     m_cfcPrecompDb = dB;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/cfcomp.c:700-715 [v2.10.3.13] — SetTXACFCOMPPrecomp(channel, precomp).
-    // csDSP-protected.  WDSP stores precomplin = pow(10, 0.05 * dB) and
-    // re-multiplies cfc_gain[].
-    SetTXACFCOMPPrecomp(m_channelId, dB);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxCfcPrecompDb"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/cfcomp.c:700-715 [v2.10.3.13] — SetTXACFCOMPPrecomp(channel, precomp).
+        // csDSP-protected.  WDSP stores precomplin = pow(10, 0.05 * dB) and
+        // re-multiplies cfc_gain[].
+        SetTXACFCOMPPrecomp(m_channelId, dB);
+    });
 #else
     Q_UNUSED(dB);
 #endif
@@ -3904,10 +5005,15 @@ void TxChannel::setTxCfcPostEqRunning(bool on)
 {
     m_cfcPostEqOn = on;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/cfcomp.c:717-727 [v2.10.3.13] — SetTXACFCOMPPeqRun(channel, run).
-    // csDSP-protected.
-    SetTXACFCOMPPeqRun(m_channelId, on ? 1 : 0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/cfcomp.c:717-727 [v2.10.3.13] — SetTXACFCOMPPeqRun(channel, run).
+        // csDSP-protected.
+        SetTXACFCOMPPeqRun(m_channelId, on ? 1 : 0);
+    });
 #else
     Q_UNUSED(on);
 #endif
@@ -3917,10 +5023,15 @@ void TxChannel::setTxCfcPrePeqDb(double dB)
 {
     m_cfcPostEqGainDb = dB;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/cfcomp.c:729-737 [v2.10.3.13] — SetTXACFCOMPPrePeq(channel, prepeq).
-    // csDSP-protected.  WDSP stores prepeqlin = pow(10, 0.05 * dB).
-    SetTXACFCOMPPrePeq(m_channelId, dB);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxCfcPrePeqDb"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/cfcomp.c:729-737 [v2.10.3.13] — SetTXACFCOMPPrePeq(channel, prepeq).
+        // csDSP-protected.  WDSP stores prepeqlin = pow(10, 0.05 * dB).
+        SetTXACFCOMPPrePeq(m_channelId, dB);
+    });
 #else
     Q_UNUSED(dB);
 #endif
@@ -3933,12 +5044,17 @@ void TxChannel::setTxCpdrOn(bool on)
 {
     m_cpdrOn = on;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/compress.c:99-109 [v2.10.3.13] — SetTXACompressorRun(channel, run).
-    // csDSP-protected.  Side effect: calls TXASetupBPFilters(channel) at
-    // compress.c:106, which rebuilds bp1 + the gated bp2 to track the
-    // compression-and-clip routing.  See header doc for the rationale.
-    SetTXACompressorRun(m_channelId, on ? 1 : 0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/compress.c:99-109 [v2.10.3.13] — SetTXACompressorRun(channel, run).
+        // csDSP-protected.  Side effect: calls TXASetupBPFilters(channel) at
+        // compress.c:106, which rebuilds bp1 + the gated bp2 to track the
+        // compression-and-clip routing.  See header doc for the rationale.
+        SetTXACompressorRun(m_channelId, on ? 1 : 0);
+    });
 #else
     Q_UNUSED(on);
 #endif
@@ -3948,12 +5064,40 @@ void TxChannel::setTxCpdrGainDb(double dB)
 {
     m_cpdrLevelDb = dB;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/compress.c:111-117 [v2.10.3.13] — SetTXACompressorGain(channel, gain).
-    // csDSP-protected.  WDSP stores pow(10, dB / 20.0) internally.
-    SetTXACompressorGain(m_channelId, dB);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxCpdrGainDb"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/compress.c:111-117 [v2.10.3.13] — SetTXACompressorGain(channel, gain).
+        // csDSP-protected.  WDSP stores pow(10, dB / 20.0) internally.
+        SetTXACompressorGain(m_channelId, dB);
+    });
 #else
     Q_UNUSED(dB);
+#endif
+}
+
+void TxChannel::setAmModulationTap(AmModulationAnalyzer* tap)
+{
+    m_amModTap.store(tap, std::memory_order_release);
+}
+
+void TxChannel::setTxAmCarrierLevel(int percent)
+{
+    m_amCarrierPct = std::clamp(percent, 0, 100);  // carry
+#ifdef HAVE_WDSP
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxAmCarrierLevel"), [this, pct = m_amCarrierPct]() {
+        if (!txaOpenLive()) return;
+        // From Thetis setup.cs:9706-9709 [v2.10.3.15]:
+        //   console.radio.GetDSPTX(0).TXAMCarrierLevel =
+        //       Math.Sqrt(0.01 * (double)udTXAMCarrierLevel.Value) * 0.5;
+        const double cLevel = std::sqrt(0.01 * static_cast<double>(pct)) * 0.5;
+        SetTXAAMCarrierLevel(m_channelId, cLevel);
+    });
 #endif
 }
 
@@ -3961,18 +5105,23 @@ void TxChannel::setTxCessbOn(bool on)
 {
     m_cessbOn = on;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/osctrl.c:142-150 [v2.10.3.13] — SetTXAosctrlRun(channel, run).
-    // csDSP-protected.  Side effect: calls TXASetupBPFilters(channel) at
-    // osctrl.c:148, which rebuilds bp2.
-    //
-    // bp2.run gating semantic: the CESSB-side bandpass only runs when *both*
-    // compressor.run AND osctrl.run are 1 (TXA.c:843-868 [v2.10.3.13],
-    // parallel switch arms).  Calling setTxCessbOn(true) without first
-    // turning CPDR on is therefore effectively a no-op at the audio level.
-    // This wrapper does NOT enforce that coupling — Thetis lets WDSP own it,
-    // and we match.
-    SetTXAosctrlRun(m_channelId, on ? 1 : 0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runOrdered([=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/osctrl.c:142-150 [v2.10.3.13] — SetTXAosctrlRun(channel, run).
+        // csDSP-protected.  Side effect: calls TXASetupBPFilters(channel) at
+        // osctrl.c:148, which rebuilds bp2.
+        //
+        // bp2.run gating semantic: the CESSB-side bandpass only runs when *both*
+        // compressor.run AND osctrl.run are 1 (TXA.c:843-868 [v2.10.3.13],
+        // parallel switch arms).  Calling setTxCessbOn(true) without first
+        // turning CPDR on is therefore effectively a no-op at the audio level.
+        // This wrapper does NOT enforce that coupling — Thetis lets WDSP own it,
+        // and we match.
+        SetTXAosctrlRun(m_channelId, on ? 1 : 0);
+    });
 #else
     Q_UNUSED(on);
 #endif
@@ -3993,11 +5142,16 @@ void TxChannel::setTxPhrotCornerHz(double hz)
 {
     m_phaseRotatorFreqHz = hz;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/iir.c:675-683 [v2.10.3.13] — SetTXAPHROTCorner(channel, corner).
-    // csDSP-protected.  WDSP rebuilds the all-pass bank on every set
-    // (decalc_phrot + a->fc = corner + calc_phrot) — non-trivial cost.
-    SetTXAPHROTCorner(m_channelId, hz);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPhrotCornerHz"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/iir.c:675-683 [v2.10.3.13] — SetTXAPHROTCorner(channel, corner).
+        // csDSP-protected.  WDSP rebuilds the all-pass bank on every set
+        // (decalc_phrot + a->fc = corner + calc_phrot) — non-trivial cost.
+        SetTXAPHROTCorner(m_channelId, hz);
+    });
 #else
     Q_UNUSED(hz);
 #endif
@@ -4007,11 +5161,16 @@ void TxChannel::setTxPhrotNstages(int nstages)
 {
     m_phaseRotatorStages = nstages;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/iir.c:686-694 [v2.10.3.13] — SetTXAPHROTNstages(channel, nstages).
-    // csDSP-protected.  WDSP rebuilds the coefficient bank on every set
-    // (decalc_phrot + a->nstages = nstages + calc_phrot) — non-trivial cost.
-    SetTXAPHROTNstages(m_channelId, nstages);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPhrotNstages"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/iir.c:686-694 [v2.10.3.13] — SetTXAPHROTNstages(channel, nstages).
+        // csDSP-protected.  WDSP rebuilds the coefficient bank on every set
+        // (decalc_phrot + a->nstages = nstages + calc_phrot) — non-trivial cost.
+        SetTXAPHROTNstages(m_channelId, nstages);
+    });
 #else
     Q_UNUSED(nstages);
 #endif
@@ -4021,10 +5180,15 @@ void TxChannel::setTxPhrotReverse(bool reverse)
 {
     m_phaseRotatorReverse = reverse;  // carry
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    // From Thetis wdsp/iir.c:697-703 [v2.10.3.13] — SetTXAPHROTReverse(channel, reverse).
-    // csDSP-protected.  Cheap — just flips a->reverse; no coefficient rebuild.
-    SetTXAPHROTReverse(m_channelId, reverse ? 1 : 0);
+    if (!txaOpenAtOnce()) {
+        return;
+    }
+    runKeyed(laneParameter("setTxPhrotReverse"), [=, this]() {
+        if (!txaOpenLive()) return;
+        // From Thetis wdsp/iir.c:697-703 [v2.10.3.13] — SetTXAPHROTReverse(channel, reverse).
+        // csDSP-protected.  Cheap — just flips a->reverse; no coefficient rebuild.
+        SetTXAPHROTReverse(m_channelId, reverse ? 1 : 0);
+    });
 #else
     Q_UNUSED(reverse);
 #endif
@@ -4057,12 +5221,46 @@ bool TxChannel::getCfcDisplayCompression(double* compValues, int bufferSize) noe
     if (compValues == nullptr) return false;
     if (bufferSize < kCfcDisplayBinCount) return false;
 #ifdef HAVE_WDSP
+    // R-R3-39: with a lane, a snapshot the lane took since the last call
+    // that returned one (WDSP's ready flag, as the lane read it), and a
+    // refresh is posted.
+    if (!readsWdspDirectly()) {
+        postRefresh(laneParameter("getCfcDisplayCompression"),
+                    [this]() { refreshCfcDisplayOnLane(); });
+        std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+        if (!m_cfcDisplayFresh
+            || m_cfcDisplayCache.size() < static_cast<std::size_t>(kCfcDisplayBinCount)) {
+            return false;
+        }
+        std::copy(m_cfcDisplayCache.begin(),
+                  m_cfcDisplayCache.begin() + kCfcDisplayBinCount, compValues);
+        m_cfcDisplayFresh = false;
+        return true;
+    }
     int ready = 0;
     GetTXACFCOMPDisplayCompression(m_channelId, compValues, &ready);
     return ready != 0;
 #else
     Q_UNUSED(bufferSize);
     return false;
+#endif
+}
+
+void TxChannel::refreshCfcDisplayOnLane() const
+{
+#ifdef HAVE_WDSP
+    if (!txaOpenLive()) {
+        return;
+    }
+    std::vector<double> bins(static_cast<std::size_t>(kCfcDisplayBinCount), 0.0);
+    int ready = 0;
+    GetTXACFCOMPDisplayCompression(m_channelId, bins.data(), &ready);
+    if (ready == 0) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+    m_cfcDisplayCache = std::move(bins);
+    m_cfcDisplayFresh = true;
 #endif
 }
 
@@ -4201,7 +5399,7 @@ void TxChannel::applyState(const TxChannelState& s)
 // ---------------------------------------------------------------------------
 //
 // Wraps the WDSP entry points that Thetis calls from its DSPTX property
-// setters at radio.cs:2628-2662 [v2.10.3.13]:
+// setters at radio.cs:2630-2662 [v2.10.3.15]:
 //
 //   public int FilterSize {
 //       set {
@@ -4226,7 +5424,7 @@ void TxChannel::applyState(const TxChannelState& s)
 //       }
 //   }
 //
-// TXASetNC and TXASetMP at third_party/wdsp/src/TXA.c:909-928 [v2.10.3.13]
+// TXASetNC and TXASetMP at Thetis wdsp/TXA.c:910-927 [v2.10.3.15]
 // internally quiesce the channel via SetChannelState(channel, 0, 1) — the
 // cm_main flushflag handshake at channel.c:259-297 [v2.10.3.13] — reconfigure
 // every dependent subsystem, then restore the prior run state.  Safe to call
@@ -4257,7 +5455,11 @@ void TxChannel::setTxDspBufferSizeSamples(int size)
     // Internally quiesces via SetChannelState (channel.c:259 [v2.10.3.13])
     // and rebuilds the DSP graph for the new block size.  Safe to call
     // from main thread while TxWorkerThread is running.
-    SetDSPBuffsize(m_channelId, size);
+    // R-R3-39: a barrier on the lane (it replans the channel's FFTs).
+    runOrdered([this, size]() {
+        SetDSPBuffsize(m_channelId, size);
+        refreshDspSizeOnLane();
+    });
 #endif
 }
 
@@ -4276,15 +5478,47 @@ void TxChannel::setTxFilterSizeSamples(int nc)
         m_txDspBlockSize = nc;
 #ifdef HAVE_WDSP
         // From Thetis radio.cs:2606 [v2.10.3.13] DSPTX.BufferSize setter.
-        SetDSPBuffsize(m_channelId, nc);
+        runOrdered([this, nc]() {
+            SetDSPBuffsize(m_channelId, nc);
+            refreshDspSizeOnLane();
+        });
 #endif
     }
     m_txFilterSize = nc;
 #ifdef HAVE_WDSP
     // From Thetis radio.cs:2628 [v2.10.3.13] DSPTX.FilterSize setter.
-    TXASetNC(m_channelId, nc);
+    runOrdered([this, nc]() { TXASetNC(m_channelId, nc); });
 #endif
 }
+
+#ifdef NEREUS_BUILD_TESTS
+// R-IOS-13: RxChannel::bandpassMinimumPhaseForTest's read of rxa[] (no
+// getter in the WDSP API); this file already includes WDSP's headers.
+int wdspRxBandpassMinimumPhaseForTest(int channelId)
+{
+#ifdef HAVE_WDSP
+    if (channelId < 0 || channelId >= MAX_CHANNELS || rxa[channelId].nbp0.p == nullptr) {
+        return -1;
+    }
+    return rxa[channelId].nbp0.p->mp;
+#else
+    Q_UNUSED(channelId);
+    return -1;
+#endif
+}
+
+int TxChannel::bandpassMinimumPhaseForTest() const
+{
+#ifdef HAVE_WDSP
+    if (m_channelId < 0 || m_channelId >= MAX_CHANNELS || txa[m_channelId].bp0.p == nullptr) {
+        return -1;
+    }
+    return txa[m_channelId].bp0.p->mp;
+#else
+    return -1;
+#endif
+}
+#endif
 
 void TxChannel::setTxFilterTypeLinearPhase(bool linearPhase)
 {
@@ -4294,11 +5528,17 @@ void TxChannel::setTxFilterTypeLinearPhase(bool linearPhase)
     }
     m_txFilterType = newType;
 #ifdef HAVE_WDSP
-    // From Thetis radio.cs:2647 [v2.10.3.13] DSPTX.FilterType setter:
+    // From Thetis radio.cs:2659 [v2.10.3.15] DSPTX.FilterType setter:
     //   WDSP.TXASetMP(WDSP.id(thread, 0), Convert.ToBoolean(value));
-    // C# Convert.ToBoolean((int)DSPFilterType) maps Low_Latency=0 → false,
-    // Linear_Phase=1 → true.  We pass the already-translated 0/1.
-    TXASetMP(m_channelId, newType);
+    // with enums.cs:404-408 [v2.10.3.15]
+    //   public enum DSPFilterType { Linear_Phase = 0, Low_Latency = 1, }
+    // so Convert.ToBoolean maps Low_Latency to true (minimum phase, MP 1)
+    // and Linear_Phase to false (MP 0). m_txFilterType counts the other
+    // way (0 = Low Latency), so the MP flag is its inverse. R-IOS-13
+    // (2026-09-27): this used to send m_txFilterType itself, so "Low
+    // Latency" ran linear phase (35.6 ms through TX DSP instead of 16.1).
+    const int minimumPhase = linearPhase ? 0 : 1;
+    runOrdered([this, minimumPhase]() { TXASetMP(m_channelId, minimumPhase); });
 #endif
 }
 
@@ -4423,6 +5663,17 @@ qint64 TxChannel::onModeChanged(DSPMode newMode)
     // chose larger, then filter type.  Each setter quiesces via
     // SetChannelState's flushflag handshake (channel.c:259 [v2.10.3.13])
     // — safe from main thread while TxWorkerThread is running.
+    if (!readsWdspDirectly()) {
+        // R-R3-39: the sizes change here at once; the lane times its own
+        // WDSP work and reports it through dspOptionsApplied.
+        auto timer = std::make_shared<QElapsedTimer>();
+        runOrdered([timer]() { timer->start(); });
+        setTxFilterSizeSamples(newFiltSize);
+        setTxDspBufferSizeSamples(newBufSize);
+        setTxFilterTypeLinearPhase(newFiltType == 1);
+        runOrdered([this, timer]() { emit dspOptionsApplied(timer->elapsed()); });
+        return 0;
+    }
     QElapsedTimer t;
     t.start();
     setTxFilterSizeSamples(newFiltSize);
@@ -4435,7 +5686,7 @@ qint64 TxChannel::onModeChanged(DSPMode newMode)
 //
 // Set the TXA fixed-gain scalar applied uniformly to the I and Q audio paths.
 // Wraps the cmaster/ChannelMaster SetTXFixedGain entry point used by Thetis
-// at cmaster.cs:1115-1119 [v2.10.3.13] CMSetTXOutputLevel:
+// at cmaster.cs:1124-1128 [v2.10.3.15] CMSetTXOutputLevel:
 //
 //   public static void CMSetTXOutputLevel()
 //   {
@@ -4480,8 +5731,7 @@ void TxChannel::setTxFixedGain(double level)
     if (!std::isnan(m_lastFixedGain) && level == m_lastFixedGain) return;
     m_lastFixedGain = level;
 #ifdef HAVE_WDSP
-    // From Thetis cmaster.cs:1115-1119 [v2.10.3.13] CMSetTXOutputLevel —
-    // Upstream tags preserved: //MW0LGE (from cited cmaster.cs:1114) [v2.10.3.15]
+    // From Thetis cmaster.cs:1124-1128 [v2.10.3.15] CMSetTXOutputLevel —
     // cmaster.SetTXFixedGain(0, level, level).  cmaster.SetTXFixedGain is
     // the C# P/Invoke at cmaster.cs:273-274 [v2.10.3.13]; the native impl
     // is Thetis ChannelMaster/txgain.c:127-134 [v2.10.3.13] —
@@ -4493,7 +5743,9 @@ void TxChannel::setTxFixedGain(double level)
     //       a->Qgain = Qgain;
     //       LeaveCriticalSection (&a->cs_update0);
     //   }
-    SetTXFixedGain(m_channelId, level, level);
+    runKeyed(laneParameter("setTxFixedGain"), [this, level]() {
+        SetTXFixedGain(m_channelId, level, level);
+    });
 #endif
 }
 
@@ -4501,34 +5753,117 @@ void TxChannel::setTxFixedGain(double level)
 // PureSignal API wrappers (Phase 3M-4 Task 3)
 //
 // Each instance method delegates to the matching WDSP entry point with
-// m_channelId as the channel arg.  All wrappers guard the WDSP call with
-// `txa[m_channelId].rsmpin.p == nullptr` (matching the existing CFC / DEXP
-// wrapper convention — a null rsmpin means create_txa() was never called for
-// this channel id, in which case calcc.p is also null).
+// m_channelId as the channel arg.  CALCC is opaque in TAPR WDSP 2.10, so the
+// compatibility GetPSRunCal readback supplies the common validity guard.
 //
 // The 2 static routing helpers wire the CMaster RX/TX feedback streams.
 // They take an explicit txid (always 0 for the primary transmitter at the
 // callsite — cmaster.cs:533-534 [v2.10.3.13]).
 //
-// From Thetis wdsp/calcc.c:891-1132 [v2.10.3.13]
+// From TAPR WDSP 2.10 calcc.c [@b02d5bac]
 // + Thetis cmaster.cs:143-147 [v2.10.3.13] (channel routing).
 // ===========================================================================
+
+bool TxChannel::psAvailable() const noexcept
+{
+#ifdef HAVE_WDSP
+    // R-R3-39: with a lane, the availability the lane last read.
+    if (!readsWdspDirectly()) {
+        std::lock_guard<std::mutex> lock(m_psCacheMutex);
+        return m_psCache.available;
+    }
+    int run = 0;
+    return ::GetPSRunCal(m_channelId, &run) != 0;
+#else
+    return false;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// R-R3-39: the PureSignal status cache.
+//
+// Read on the lane (or at once without one) after every PureSignal call,
+// after pscc blocks while feedback flows (at most every 20 ms), and on a
+// keyed refresh each cache read posts, so PureSignal's 100 ms poll reads
+// values at most one lane pass old. A save or restore accepted at once
+// keeps its kind's status until the lane has run it.
+// ---------------------------------------------------------------------------
+void TxChannel::refreshPsCacheOnLane() const
+{
+    if (m_lane == nullptr) {
+        return;
+    }
+    PsCache next;
+#ifdef HAVE_WDSP
+    int run = 0;
+    next.available = ::GetPSRunCal(m_channelId, &run) != 0;
+    if (next.available) {
+        ::GetPSInfo(m_channelId, next.info);
+        ::GetPSHWPeak(m_channelId, &next.hwPeak);
+        ::GetPSMaxTX(m_channelId, &next.maxTx);
+        next.runCal = run != 0;
+        int corrRun = 0;
+        int corrBusy = 0;
+        if (::GetPSCorrectionState(m_channelId, &corrRun, &corrBusy) != 0) {
+            next.correction = Ps3CorrectionState{corrRun != 0, corrBusy != 0};
+        }
+        int available = 0;
+        if (::GetPSCorrectionAvailable(m_channelId, &available) != 0) {
+            next.correctionAvailable = available != 0;
+        }
+        next.save = psFileOperationStatusNow(Ps3FileOperationKind::Save);
+        next.restore = psFileOperationStatusNow(Ps3FileOperationKind::Restore);
+    }
+#endif
+    std::lock_guard<std::mutex> lock(m_psCacheMutex);
+    next.saveAwaiting = m_psCache.saveAwaiting;
+    next.restoreAwaiting = m_psCache.restoreAwaiting;
+    if (next.saveAwaiting) {
+        next.save = m_psCache.save;
+    }
+    if (next.restoreAwaiting) {
+        next.restore = m_psCache.restore;
+    }
+    m_psCache = next;
+}
 
 void TxChannel::setPSRunCal(int run)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSRunCal(m_channelId, run);
+    runOrdered([this, run]() {
+        if (!psAvailable()) return;
+        ::SetPSRunCal(m_channelId, run);
+        refreshPsCacheOnLane();
+    });
 #else
     Q_UNUSED(run);
+#endif
+}
+
+std::optional<bool> TxChannel::psRunCal() const
+{
+#ifdef HAVE_WDSP
+    if (!readsWdspDirectly()) {
+        postRefresh(laneParameter("psStatus"), [this]() { refreshPsCacheOnLane(); });
+        std::lock_guard<std::mutex> lock(m_psCacheMutex);
+        return m_psCache.available ? m_psCache.runCal : std::nullopt;
+    }
+    int run = 0;
+    if (::GetPSRunCal(m_channelId, &run) == 0) return std::nullopt;
+    return run != 0;
+#else
+    return std::nullopt;
 #endif
 }
 
 void TxChannel::setPSMox(bool mox)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSMox(m_channelId, mox ? 1 : 0);
+    runOrdered([this, mox]() {
+        if (!psAvailable()) return;
+        ::SetPSMox(m_channelId, mox ? 1 : 0);
+        refreshPsCacheOnLane();
+    });
 #else
     Q_UNUSED(mox);
 #endif
@@ -4536,8 +5871,16 @@ void TxChannel::setPSMox(bool mox)
 
 void TxChannel::getPSInfo(int* info16)
 {
+    if (info16 == nullptr) return;
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    if (!readsWdspDirectly()) {
+        postRefresh(laneParameter("psStatus"), [this]() { refreshPsCacheOnLane(); });
+        std::lock_guard<std::mutex> lock(m_psCacheMutex);
+        if (!m_psCache.available) return;
+        std::copy(std::begin(m_psCache.info), std::end(m_psCache.info), info16);
+        return;
+    }
+    if (!psAvailable()) return;
     ::GetPSInfo(m_channelId, info16);
 #else
     Q_UNUSED(info16);
@@ -4547,8 +5890,11 @@ void TxChannel::getPSInfo(int* info16)
 void TxChannel::setPSReset(bool reset)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSReset(m_channelId, reset ? 1 : 0);
+    runOrdered([this, reset]() {
+        if (!psAvailable()) return;
+        ::SetPSReset(m_channelId, reset ? 1 : 0);
+        refreshPsCacheOnLane();
+    });
 #else
     Q_UNUSED(reset);
 #endif
@@ -4557,8 +5903,11 @@ void TxChannel::setPSReset(bool reset)
 void TxChannel::setPSMancal(bool mancal)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSMancal(m_channelId, mancal ? 1 : 0);
+    runOrdered([this, mancal]() {
+        if (!psAvailable()) return;
+        ::SetPSMancal(m_channelId, mancal ? 1 : 0);
+        refreshPsCacheOnLane();
+    });
 #else
     Q_UNUSED(mancal);
 #endif
@@ -4567,8 +5916,11 @@ void TxChannel::setPSMancal(bool mancal)
 void TxChannel::setPSAutomode(bool automode)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSAutomode(m_channelId, automode ? 1 : 0);
+    runOrdered([this, automode]() {
+        if (!psAvailable()) return;
+        ::SetPSAutomode(m_channelId, automode ? 1 : 0);
+        refreshPsCacheOnLane();
+    });
 #else
     Q_UNUSED(automode);
 #endif
@@ -4577,8 +5929,11 @@ void TxChannel::setPSAutomode(bool automode)
 void TxChannel::setPSTurnon(bool turnon)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSTurnon(m_channelId, turnon ? 1 : 0);
+    runOrdered([this, turnon]() {
+        if (!psAvailable()) return;
+        ::SetPSTurnon(m_channelId, turnon ? 1 : 0);
+        refreshPsCacheOnLane();
+    });
 #else
     Q_UNUSED(turnon);
 #endif
@@ -4587,8 +5942,11 @@ void TxChannel::setPSTurnon(bool turnon)
 void TxChannel::setPSControl(int reset, int mancal, int automode, int turnon)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSControl(m_channelId, reset, mancal, automode, turnon);
+    runOrdered([this, reset, mancal, automode, turnon]() {
+        if (!psAvailable()) return;
+        ::SetPSControl(m_channelId, reset, mancal, automode, turnon);
+        refreshPsCacheOnLane();
+    });
 #else
     Q_UNUSED(reset);
     Q_UNUSED(mancal);
@@ -4600,8 +5958,10 @@ void TxChannel::setPSControl(int reset, int mancal, int automode, int turnon)
 void TxChannel::setPSLoopDelay(double seconds)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSLoopDelay(m_channelId, seconds);
+    runOrdered([this, seconds]() {
+        if (!psAvailable()) return;
+        ::SetPSLoopDelay(m_channelId, seconds);
+    });
 #else
     Q_UNUSED(seconds);
 #endif
@@ -4610,8 +5970,10 @@ void TxChannel::setPSLoopDelay(double seconds)
 void TxChannel::setPSMoxDelay(double seconds)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSMoxDelay(m_channelId, seconds);
+    runOrdered([this, seconds]() {
+        if (!psAvailable()) return;
+        ::SetPSMoxDelay(m_channelId, seconds);
+    });
 #else
     Q_UNUSED(seconds);
 #endif
@@ -4620,7 +5982,13 @@ void TxChannel::setPSMoxDelay(double seconds)
 double TxChannel::setPSTXDelay(double seconds)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return 0.0;
+    // R-R3-39: with a lane the delay is applied there and reported through
+    // psTxDelayApplied; this returns 0.0 (use requestPSTXDelay).
+    if (!readsWdspDirectly()) {
+        requestPSTXDelay(seconds);
+        return 0.0;
+    }
+    if (!psAvailable()) return 0.0;
     return ::SetPSTXDelay(m_channelId, seconds);
 #else
     Q_UNUSED(seconds);
@@ -4628,11 +5996,29 @@ double TxChannel::setPSTXDelay(double seconds)
 #endif
 }
 
+void TxChannel::requestPSTXDelay(double seconds)
+{
+    runOrdered([this, seconds]() {
+        double actual = 0.0;
+#ifdef HAVE_WDSP
+        if (psAvailable()) {
+            actual = ::SetPSTXDelay(m_channelId, seconds);
+        }
+#else
+        Q_UNUSED(seconds);
+#endif
+        emit psTxDelayApplied(actual);
+    });
+}
+
 void TxChannel::setPSHWPeak(double peak)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSHWPeak(m_channelId, peak);
+    runOrdered([this, peak]() {
+        if (!psAvailable()) return;
+        ::SetPSHWPeak(m_channelId, peak);
+        refreshPsCacheOnLane();
+    });
 #else
     Q_UNUSED(peak);
 #endif
@@ -4641,7 +6027,12 @@ void TxChannel::setPSHWPeak(double peak)
 double TxChannel::getPSHWPeak()
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return 0.0;
+    if (!readsWdspDirectly()) {
+        postRefresh(laneParameter("psStatus"), [this]() { refreshPsCacheOnLane(); });
+        std::lock_guard<std::mutex> lock(m_psCacheMutex);
+        return m_psCache.available ? m_psCache.hwPeak : 0.0;
+    }
+    if (!psAvailable()) return 0.0;
     double peak = 0.0;
     ::GetPSHWPeak(m_channelId, &peak);
     return peak;
@@ -4653,7 +6044,12 @@ double TxChannel::getPSHWPeak()
 double TxChannel::getPSMaxTX()
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return 0.0;
+    if (!readsWdspDirectly()) {
+        postRefresh(laneParameter("psStatus"), [this]() { refreshPsCacheOnLane(); });
+        std::lock_guard<std::mutex> lock(m_psCacheMutex);
+        return m_psCache.available ? m_psCache.maxTx : 0.0;
+    }
+    if (!psAvailable()) return 0.0;
     double maxtx = 0.0;
     ::GetPSMaxTX(m_channelId, &maxtx);
     return maxtx;
@@ -4662,30 +6058,237 @@ double TxChannel::getPSMaxTX()
 #endif
 }
 
-void TxChannel::setPSPtol(double ptol)
+std::optional<Ps3Snapshot> TxChannel::getPs3DisplaySnapshot(
+    std::uint64_t sessionGeneration,
+    std::uint64_t sequence,
+    std::int64_t capturedAtUnixMilliseconds)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSPtol(m_channelId, ptol);
+    if (!readsWdspDirectly()) {
+        // R-R3-39: the lane captures with this request's stamps; the caller
+        // gets the newest capture the lane has made for its session (the
+        // previous request's), so sequences still rise call by call.
+        postRefresh(laneParameter("getPs3DisplaySnapshot"),
+                    [this, sessionGeneration, sequence, capturedAtUnixMilliseconds]() {
+            if (!psAvailable()) {
+                return;
+            }
+            auto snapshot = m_ps3DisplayAdapter.capture(
+                m_channelId, sessionGeneration, sequence, capturedAtUnixMilliseconds);
+            std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+            m_ps3DisplayCache = std::move(snapshot);
+        });
+        std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+        if (m_ps3DisplayCache
+            && m_ps3DisplayCache->sessionGeneration == sessionGeneration) {
+            return m_ps3DisplayCache;
+        }
+        return std::nullopt;
+    }
+    if (!psAvailable()) {
+        return std::nullopt;
+    }
+    return m_ps3DisplayAdapter.capture(m_channelId, sessionGeneration, sequence,
+                                       capturedAtUnixMilliseconds);
 #else
-    Q_UNUSED(ptol);
+    Q_UNUSED(sessionGeneration);
+    Q_UNUSED(sequence);
+    Q_UNUSED(capturedAtUnixMilliseconds);
+    return std::nullopt;
 #endif
 }
 
-void TxChannel::getPSDisp(double* x, double* ym, double* yc, double* ys,
-                          double* cm, double* cc, double* cs)
+std::optional<Ps3CorrectionState> TxChannel::psCorrectionState() const
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::GetPSDisp(m_channelId, x, ym, yc, ys, cm, cc, cs);
+    if (!readsWdspDirectly()) {
+        postRefresh(laneParameter("psStatus"), [this]() { refreshPsCacheOnLane(); });
+        std::lock_guard<std::mutex> lock(m_psCacheMutex);
+        return m_psCache.available ? m_psCache.correction : std::nullopt;
+    }
+    if (!psAvailable()) {
+        return std::nullopt;
+    }
+    int run = 0;
+    int busy = 0;
+    if (::GetPSCorrectionState(m_channelId, &run, &busy) == 0) {
+        return std::nullopt;
+    }
+    return Ps3CorrectionState{run != 0, busy != 0};
 #else
-    Q_UNUSED(x);
-    Q_UNUSED(ym);
-    Q_UNUSED(yc);
-    Q_UNUSED(ys);
-    Q_UNUSED(cm);
-    Q_UNUSED(cc);
-    Q_UNUSED(cs);
+    return std::nullopt;
+#endif
+}
+
+std::optional<bool> TxChannel::psCorrectionAvailable() const
+{
+#ifdef HAVE_WDSP
+    if (!readsWdspDirectly()) {
+        postRefresh(laneParameter("psStatus"), [this]() { refreshPsCacheOnLane(); });
+        std::lock_guard<std::mutex> lock(m_psCacheMutex);
+        return m_psCache.available ? m_psCache.correctionAvailable : std::nullopt;
+    }
+    if (!psAvailable()) {
+        return std::nullopt;
+    }
+    int available = 0;
+    if (::GetPSCorrectionAvailable(m_channelId, &available) == 0) {
+        return std::nullopt;
+    }
+    return available != 0;
+#else
+    return std::nullopt;
+#endif
+}
+
+bool TxChannel::stopPsCorrectionQuiescent()
+{
+#ifdef HAVE_WDSP
+    if (!readsWdspDirectly()) {
+        runOrdered([this]() {
+            if (psAvailable()) {
+                ::StopPSCorrectionQuiescent(m_channelId);
+            }
+            refreshPsCacheOnLane();
+        });
+        return psAvailable();
+    }
+    return psAvailable() && ::StopPSCorrectionQuiescent(m_channelId) != 0;
+#else
+    return false;
+#endif
+}
+
+bool TxChannel::requestPsCorrectionStop()
+{
+#ifdef HAVE_WDSP
+    if (!readsWdspDirectly()) {
+        runOrdered([this]() {
+            if (psAvailable()) {
+                ::RequestPSCorrectionStop(m_channelId);
+            }
+            refreshPsCacheOnLane();
+        });
+        return psAvailable();
+    }
+    return psAvailable() && ::RequestPSCorrectionStop(m_channelId) != 0;
+#else
+    return false;
+#endif
+}
+
+void TxChannel::stopPsCorrection()
+{
+    // R-R3-39: PureSignal::requestNativeCorrectionStop's choice, made on the
+    // lane from the RF gate as the preceding keying calls left it. With TXA
+    // quiescent no audio or PSCC block can finish the normal END/reset
+    // transitions, so the quiescent helper acknowledges synchronously;
+    // otherwise the active-stream IQC END is requested directly.
+    runOrdered([this]() {
+#ifdef HAVE_WDSP
+        if (psAvailable()) {
+            if (!m_running.load(std::memory_order_acquire)) {
+                ::StopPSCorrectionQuiescent(m_channelId);
+            } else {
+                ::RequestPSCorrectionStop(m_channelId);
+            }
+        }
+        refreshPsCacheOnLane();
+#endif
+    });
+}
+
+bool TxChannel::applyPsCorrection()
+{
+#ifdef HAVE_WDSP
+    if (!readsWdspDirectly()) {
+        // The availability the lane last read decides at once; the lane
+        // applies the curves in order behind every earlier call.
+        std::optional<bool> available;
+        {
+            std::lock_guard<std::mutex> lock(m_psCacheMutex);
+            if (m_psCache.available) {
+                available = m_psCache.correctionAvailable;
+            }
+        }
+        if (!available || !*available) {
+            return false;
+        }
+        runOrdered([this]() {
+            if (psAvailable()) {
+                ::ApplyPSCorrection(m_channelId);
+            }
+            refreshPsCacheOnLane();
+        });
+        return true;
+    }
+    return psAvailable() && ::ApplyPSCorrection(m_channelId) != 0;
+#else
+    return false;
+#endif
+}
+
+std::optional<Ps3FileOperationStatus> TxChannel::psFileOperationStatus(
+    Ps3FileOperationKind kind) const
+{
+#ifdef HAVE_WDSP
+    if (!readsWdspDirectly()) {
+        postRefresh(laneParameter("psStatus"), [this]() { refreshPsCacheOnLane(); });
+        std::lock_guard<std::mutex> lock(m_psCacheMutex);
+        if (!m_psCache.available) {
+            return std::nullopt;
+        }
+        return kind == Ps3FileOperationKind::Save ? m_psCache.save : m_psCache.restore;
+    }
+    return psFileOperationStatusNow(kind);
+#else
+    Q_UNUSED(kind);
+    return std::nullopt;
+#endif
+}
+
+std::optional<Ps3FileOperationStatus> TxChannel::psFileOperationStatusNow(
+    Ps3FileOperationKind kind) const
+{
+#ifdef HAVE_WDSP
+    int run = 0;
+    if (::GetPSRunCal(m_channelId, &run) == 0) return std::nullopt;
+    ::PSFileOperationStatus native{};
+    if (::GetPSFileOperationStatus(m_channelId, static_cast<int>(kind),
+                                   &native) == 0) {
+        return std::nullopt;
+    }
+    if (native.result < static_cast<int>(Ps3FileOperationResult::Success)
+        || native.result > static_cast<int>(Ps3FileOperationResult::Cancelled)) {
+        return std::nullopt;
+    }
+    return Ps3FileOperationStatus{
+        native.generation,
+        native.pending != 0,
+        static_cast<Ps3FileOperationResult>(native.result)};
+#else
+    Q_UNUSED(kind);
+    return std::nullopt;
+#endif
+}
+
+bool TxChannel::cancelPsFileOperation(Ps3FileOperationKind kind)
+{
+#ifdef HAVE_WDSP
+    if (!readsWdspDirectly()) {
+        runOrdered([this, kind]() {
+            if (psAvailable()) {
+                ::CancelPSFileOperation(m_channelId, static_cast<int>(kind));
+            }
+            refreshPsCacheOnLane();
+        });
+        return psAvailable();
+    }
+    return psAvailable()
+        && ::CancelPSFileOperation(m_channelId, static_cast<int>(kind)) != 0;
+#else
+    Q_UNUSED(kind);
+    return false;
 #endif
 }
 
@@ -4696,59 +6299,52 @@ void TxChannel::setPSFeedbackRate(int rate)
     // observe what PureSignal::applyBoardCapabilities pushed through.
     m_lastPSFeedbackRate = rate;
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSFeedbackRate(m_channelId, rate);
+    runOrdered([this, rate]() {
+        if (!psAvailable()) return;
+        ::SetPSFeedbackRate(m_channelId, rate);
+    });
 #else
     Q_UNUSED(rate);
 #endif
 }
 
-void TxChannel::setPSPinMode(bool pin)
+void TxChannel::pumpPscc(int samplesPerStream, std::vector<double> tx, std::vector<double> rx)
 {
+    if (samplesPerStream <= 0) {
+        return;
+    }
+    // From Thetis ChannelMaster/sync.c:53-58 InboundBlock(id=1)
+    // [v2.10.3.15]: pscc (chid (inid (1, 0), 0), nsamples, data[ps_tx_idx],
+    // data[ps_rx_idx]).  R-R3-39: every block, in arrival order, on the lane
+    // (a plain post: no keyed call ever replaces a feedback block).
+    auto job = [this, samplesPerStream, tx = std::move(tx), rx = std::move(rx)]() mutable {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSPinMode(m_channelId, pin ? 1 : 0);
+        // pscc internally locks calcc.cs_update (calcc.c:621 [v2.10.3.13]).
+        if (!txaOpenLive()) {
+            return;
+        }
+        pscc(m_channelId, samplesPerStream, tx.data(), rx.data());
+        if (m_lane != nullptr) {
+            const std::int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (now - m_lastPsccRefreshNs >= kPsccCacheRefreshNs) {
+                m_lastPsccRefreshNs = now;
+                refreshPsCacheOnLane();
+            }
+        }
 #else
-    Q_UNUSED(pin);
+        Q_UNUSED(samplesPerStream);
 #endif
-}
-
-void TxChannel::setPSMapMode(bool map)
-{
-#ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSMapMode(m_channelId, map ? 1 : 0);
-#else
-    Q_UNUSED(map);
-#endif
-}
-
-void TxChannel::setPSStabilize(bool stbl)
-{
-#ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSStabilize(m_channelId, stbl ? 1 : 0);
-#else
-    Q_UNUSED(stbl);
-#endif
-}
-
-void TxChannel::setPSIntsAndSpi(int ints, int spi)
-{
-    // Codex Fix F: cache the (ints, spi) pair last forwarded so the
-    // tst_puresignal_coordinator test seams (lastPSIntsForTest /
-    // lastPSSpiForTest) can verify PureSignal::setTintIndex(idx) routes
-    // through to WDSP.  Caching is unconditional regardless of WDSP
-    // build mode (matches m_lastPSFeedbackRate pattern at line 3833).
-    m_lastPSInts = ints;
-    m_lastPSSpi  = spi;
-#ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    ::SetPSIntsAndSpi(m_channelId, ints, spi);
-#else
-    Q_UNUSED(ints);
-    Q_UNUSED(spi);
-#endif
+    };
+    if (readsWdspDirectly()) {
+        job();
+        return;
+    }
+    m_lane->post([alive = m_alive, job = std::move(job)]() mutable {
+        if (alive->load(std::memory_order_acquire)) {
+            job();
+        }
+    });
 }
 
 // Save / restore correction tables (Phase 3M-4 Task 7 follow-up — missed in
@@ -4759,28 +6355,136 @@ void TxChannel::setPSIntsAndSpi(int ints, int spi)
 // thread start.  Empty filename short-circuits — calcc's PSSaveCorrection /
 // PSRestoreCorrection thread bodies fopen() the path verbatim and treat
 // failure as a silent no-op.
+//
+// R-R3-39: with a lane the request is checked against the status the lane
+// last read and answered at once with the generation that will complete
+// it; the lane then starts it. If the lane finds it can no longer start
+// (the status moved on meanwhile), that generation never completes and
+// PureSignal retires the operation, as it does for any mismatch.
 
-void TxChannel::psSaveCorr(const QString& filename)
+std::optional<std::uint64_t> TxChannel::psSaveCorr(const QString& filename)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    if (filename.isEmpty()) return;
+    if (filename.isEmpty() || filename.contains(QChar::Null)) {
+        return std::nullopt;
+    }
     QByteArray utf8 = filename.toUtf8();
-    ::PSSaveCorr(m_channelId, utf8.data());
+    if (utf8.isEmpty() || utf8.size() >= 256) return std::nullopt;
+    if (readsWdspDirectly()) {
+        if (!psAvailable()) return std::nullopt;
+        return psSaveCorrNow(utf8);
+    }
+    std::uint64_t completion = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_psCacheMutex);
+        const PsCache& c = m_psCache;
+        if (!c.available || !c.save || !c.restore || c.save->pending
+            || c.restore->pending || c.saveAwaiting || c.restoreAwaiting) {
+            return std::nullopt;
+        }
+        completion = c.save->generation + 1;
+        m_psCache.save->pending = true;
+        m_psCache.saveAwaiting = true;
+    }
+    runOrdered([this, utf8]() {
+        if (psAvailable()) {
+            (void)psSaveCorrNow(utf8);
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_psCacheMutex);
+            m_psCache.saveAwaiting = false;
+        }
+        refreshPsCacheOnLane();
+    });
+    return completion;
 #else
     Q_UNUSED(filename);
+    return std::nullopt;
 #endif
 }
 
-void TxChannel::psRestoreCorr(const QString& filename)
+std::optional<std::uint64_t> TxChannel::psSaveCorrNow(const QByteArray& utf8In)
 {
 #ifdef HAVE_WDSP
-    if (txa[m_channelId].rsmpin.p == nullptr) return;
-    if (filename.isEmpty()) return;
+    QByteArray utf8 = utf8In;
+    const auto before = psFileOperationStatusNow(Ps3FileOperationKind::Save);
+    const auto other = psFileOperationStatusNow(Ps3FileOperationKind::Restore);
+    if (!before || !other || before->pending || other->pending) return std::nullopt;
+    ::PSSaveCorr(m_channelId, utf8.data());
+    const auto after = psFileOperationStatusNow(Ps3FileOperationKind::Save);
+    if (!after) return std::nullopt;
+    const std::uint64_t completion = before->generation + 1;
+    if (after->pending && after->generation != before->generation) {
+        return std::nullopt;
+    }
+    if (!after->pending && after->generation != completion) return std::nullopt;
+    return completion;
+#else
+    Q_UNUSED(utf8In);
+    return std::nullopt;
+#endif
+}
+
+std::optional<std::uint64_t> TxChannel::psRestoreCorr(const QString& filename)
+{
+#ifdef HAVE_WDSP
+    if (filename.isEmpty() || filename.contains(QChar::Null)) {
+        return std::nullopt;
+    }
     QByteArray utf8 = filename.toUtf8();
-    ::PSRestoreCorr(m_channelId, utf8.data());
+    if (utf8.isEmpty() || utf8.size() >= 256) return std::nullopt;
+    if (readsWdspDirectly()) {
+        if (!psAvailable()) return std::nullopt;
+        return psRestoreCorrNow(utf8);
+    }
+    std::uint64_t completion = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_psCacheMutex);
+        const PsCache& c = m_psCache;
+        if (!c.available || !c.save || !c.restore || c.save->pending
+            || c.restore->pending || c.saveAwaiting || c.restoreAwaiting) {
+            return std::nullopt;
+        }
+        completion = c.restore->generation + 1;
+        m_psCache.restore->pending = true;
+        m_psCache.restoreAwaiting = true;
+    }
+    runOrdered([this, utf8]() {
+        if (psAvailable()) {
+            (void)psRestoreCorrNow(utf8);
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_psCacheMutex);
+            m_psCache.restoreAwaiting = false;
+        }
+        refreshPsCacheOnLane();
+    });
+    return completion;
 #else
     Q_UNUSED(filename);
+    return std::nullopt;
+#endif
+}
+
+std::optional<std::uint64_t> TxChannel::psRestoreCorrNow(const QByteArray& utf8In)
+{
+#ifdef HAVE_WDSP
+    QByteArray utf8 = utf8In;
+    const auto before = psFileOperationStatusNow(Ps3FileOperationKind::Restore);
+    const auto other = psFileOperationStatusNow(Ps3FileOperationKind::Save);
+    if (!before || !other || before->pending || other->pending) return std::nullopt;
+    ::PSRestoreCorr(m_channelId, utf8.data());
+    const auto after = psFileOperationStatusNow(Ps3FileOperationKind::Restore);
+    if (!after) return std::nullopt;
+    const std::uint64_t completion = before->generation + 1;
+    if (after->pending && after->generation != before->generation) {
+        return std::nullopt;
+    }
+    if (!after->pending && after->generation != completion) return std::nullopt;
+    return completion;
+#else
+    Q_UNUSED(utf8In);
+    return std::nullopt;
 #endif
 }
 

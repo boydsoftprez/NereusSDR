@@ -7,6 +7,10 @@
 // (see https://github.com/ten9876/AetherSDR/blob/main/LICENSE).
 //
 // Modification history (NereusSDR):
+//   2026-09-26  J.J. Boyd / KG4VCF  Parity Task 19 (R-IOS-25): mintIndex()
+//                                    for spots a remote window shows from
+//                                    the Core, outside the dedup cache.
+//                                    AI tooling: Anthropic Claude Code.
 //   2026-05-17  J.J. Boyd / KG4VCF  Issue #263 fix.  dedupIndexFor
 //                                    no longer uses a fixed 60 s window
 //                                    (which expired long before the
@@ -42,6 +46,7 @@
 
 #include "SpotModel.h"
 #include <QDateTime>
+#include <QTimeZone>
 #include <cmath>
 
 namespace NereusSDR {
@@ -109,7 +114,7 @@ void SpotModel::applySpotStatus(int index, const QMap<QString, QString>& kvs)
             bool ok;
             qint64 ts = val.toLongLong(&ok);
             if (ok)
-                spot.timestamp = QDateTime::fromSecsSinceEpoch(ts, Qt::UTC);
+                spot.timestamp = QDateTime::fromSecsSinceEpoch(ts, QTimeZone::UTC);
         }
         else if (key == "lifetime_seconds")
             spot.lifetimeSeconds = val.toInt();
@@ -147,6 +152,13 @@ void SpotModel::clear()
     m_spots.clear();
     m_dedupCache.clear();  // Issue #263: cache must shed with the map.
     emit spotsCleared();
+}
+
+// Parity Task 19 (R-IOS-25), NereusSDR-original: a fresh index from the
+// same counter dedupIndexFor uses, never entered in the dedup cache.
+int SpotModel::mintIndex()
+{
+    return ++m_nextDedupIndex;
 }
 
 // From AetherSDR src/models/SpotModel.cpp:66-69 [@0cd4559]

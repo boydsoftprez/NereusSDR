@@ -14,6 +14,10 @@
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-09-28 - Parity ruling C12: setFollowsBandGrid and
+//                 applyStationGridSetting, so a remote window's pan takes
+//                 the Core's per-band dB max and min. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -89,6 +93,16 @@ struct BandGridSettings {
     // Last-seen noise-floor estimate for this band, persisted across sessions.
     // NaN until at least one 2s settle window has been observed on this band.
     float bandNFEstimate = std::numeric_limits<float>::quiet_NaN();
+    // NereusSDR-original: no Thetis equivalent (3D Stacked-Trace Spectrum
+    // Plan Task 14; upstream AetherSDR groups 3D settings in a JSON object,
+    // not per band). 3D Floor depth (0-24 dB) is anchored to the measured
+    // noise floor, which is strongly a per-band property, so it is stored
+    // here alongside the grid ceiling/floor rather than per panadapter like
+    // the other five 3D controls (SpectrumWidget). Default 6 matches
+    // SpectrumWidget's m_dssFloorDepth ship default: a real usable value,
+    // not a "no data yet" sentinel, so unlike clarityFloor/bandNFEstimate
+    // it does not use NaN.
+    int   dss3DFloorDepth = 6;
 };
 
 // Represents a single panadapter display.
@@ -159,10 +173,35 @@ public:
     float bandNFEstimate(Band b) const;
     void setBandNFEstimate(Band b, float nf);
 
+    // NereusSDR-original: no Thetis equivalent (3D Stacked-Trace Spectrum
+    // Plan Task 14). Per-band 3D Floor depth (0-24 dB), keyed exactly like
+    // the grid slot above (Display3DFloorDepth_<bandKeyName>, no pan
+    // index). Reading an unset band returns the ship default (6). Writes
+    // persist immediately and independently of dbMax/dbMin/clarityFloor;
+    // touching only the grid range for a band must never write this key.
+    int  dss3DFloorDepthForBand(Band b) const;
+    void setDss3DFloorDepthForBand(Band b, int depth);
+
     // Grid step (single global value, matches Thetis). Persisted under
     // the "DisplayGridStep" key.
     int gridStep() const { return m_gridStep; }
     void setGridStep(int step);
+
+    // Parity ruling C12: whether a band crossing pushes this pan's per-band
+    // dB max and min into dBmCeiling/dBmFloor (true, the default). A remote
+    // window's pan sets false: the Core's pan applies its own per-band
+    // values on the crossing and they reach the window through the pan's
+    // mirrored range, so the Core's values win.
+    void setFollowsBandGrid(bool follows) { m_followsBandGrid = follows; }
+    bool followsBandGrid() const { return m_followsBandGrid; }
+
+    // Parity ruling C12: a per-band dB max or min setting changed under
+    // this pan (a remote window's edit arriving at the Core, or the Core's
+    // value arriving at a remote window). Re-reads that band's pair; an
+    // empty key (a whole settings snapshot) re-reads every band. When the
+    // band is this pan's and it follows the band grid, the new range
+    // applies at once. Any other key is ignored.
+    void applyStationGridSetting(const QString& key);
 
 signals:
     void centerFrequencyChanged(double freq);
@@ -191,6 +230,7 @@ private:
     Band m_band{Band::Band20m};    // Matches default center freq 14.225 MHz.
     QHash<Band, BandGridSettings> m_perBandGrid;
     int m_gridStep{10};            // NereusSDR divergence from Thetis 2.
+    bool m_followsBandGrid{true};  // Parity ruling C12.
 };
 
 } // namespace NereusSDR

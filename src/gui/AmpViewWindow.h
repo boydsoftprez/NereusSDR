@@ -26,6 +26,8 @@
 //                 of the upstream System.Windows.Forms.DataVisuali-
 //                 zation chart (no QtCharts dependency added — design
 //                 decision per phase3m-4-puresignal-design.md §15 #14).
+//   2026-09-21 — Migrated the data feed to bounded owning PS3 snapshots;
+//                 widgets no longer receive raw WDSP display buffers.
 // =================================================================
 
 /*  AmpView.cs
@@ -69,12 +71,18 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+
 #pragma once
 
 #include <QDialog>
+#include <QPointer>
+
+#include <cstdint>
 
 class QCheckBox;
 class QCloseEvent;
+class QHideEvent;
+class QLabel;
 class QShowEvent;
 class QTimer;
 class QWidget;
@@ -83,110 +91,66 @@ namespace NereusSDR {
 
 class AmpViewChart;
 class PureSignal;
+class PureSignalSessionFacade;
 class RadioModel;
+struct Ps3Snapshot;
 
-// AmpViewWindow — modeless Qt6 dialog opened from PsForm m_btnAmpView.
-//
-// Inline-tag preservation (CLAUDE.md §"Inline comment preservation"):
-//   AmpView.cs:89   // [2.10.3.5]MW0LGE  #292   (Common.RestoreForm tweak)
-//   AmpView.cs:122  // MW0LGE [2.9.0.8]  re-factored to use fixed set of
-//                      chart points, which get adjusted
-//   AmpView.cs:259  // MW0LGE [2.9.0.8]  kept for code record  (dead path
-//                      retained as upstream reference)
-//   AmpView.cs:397  // MW0LGE [2.9.0.8]  changed to an add once, update
-//                      points method  (refactor inside timer1_Tick)
-// All four refactor MW0LGE tags concern the same chart-points-init pattern;
-// NereusSDR follows the post-refactor structure verbatim.
-//
-// Layout (mirrors Thetis AmpView.Designer.cs:209-229 [v2.10.3.13]):
-//
-//   ┌──────────────────────────────────────────────────────────────────┐
-//   │                                                                  │
-//   │             AmpViewChart (QPainter custom widget)                │
-//   │           5 series: Ref / MagAmp / PhsAmp / MagCorr / PhsCorr    │
-//   │                                                                  │
-//   │                                                                  │
-//   │                                                                  │
-//   │                                                                  │
-//   ├──────────────────────────────────────────────────────────────────┤
-//   │ ☐ Show Gain      ☐ Phase Zoom      ☑ Low Res      ☐ On Top      │
-//   └──────────────────────────────────────────────────────────────────┘
-//   ↑ chkAVShowGain   ↑ chkAVPhaseZoom   ↑ chkAVLowRes   ↑ chkStayOnTop
-//   x=7,y=378         x=242,y=378        x=404,y=378     x=490,y=378
-//
-// Lifecycle: lazily constructed by PsForm on first AmpView click; persists
-// across show/hide cycles.  PsForm calls setStayOnTopFromParent when its own
-// Always-On-Top toggle changes, so this dialog tracks the parent.
-class AmpViewWindow : public QDialog {
+// Modeless PS3 display.  It consumes the session-neutral facade and never
+// holds a TxChannel or calls WDSP.  The legacy constructor shape remains for
+// PsForm and standalone coordinator tests.
+class AmpViewWindow final : public QDialog {
     Q_OBJECT
 
 public:
-    // PureSignal pointer is optional (test seam — pass nullptr to construct
-    // without wiring the data feed).  When non-null, the poll timer pulls
-    // GetPSDisp buffers via PureSignal and pushes them to the chart.
     explicit AmpViewWindow(RadioModel* radioModel = nullptr,
                            PureSignal* pureSignal = nullptr,
                            QWidget* parent = nullptr);
     ~AmpViewWindow() override;
 
-    // Mirror of PsForm Always-On-Top → AmpView (Thetis FixOnTop pattern,
-    // AmpView.cs:501-519 [v2.10.3.13]).  Called by PsForm when its own
-    // chkPSOnTop toggles.
+    // AmpView.cs:501-519 [v2.10.3.13] FixOnTop behavior.
     void setStayOnTopFromParent(bool on);
 
 protected:
-    // Persist geometry on close; hide instead of destroying so the lazy
-    // singleton survives subsequent open clicks (matches the TxEqDialog +
-    // PsForm hide-on-close pattern).
     void closeEvent(QCloseEvent* event) override;
-
-    // Restore Always-On-Top window flag on first show.  AmpView.cs:521-525
-    // OnShown [v2.10.3.13] calls FixOnTop().
+    void hideEvent(QHideEvent* event) override;
     void showEvent(QShowEvent* event) override;
 
 private slots:
-    // From AmpView.cs:435-455 chkAVShowGain_CheckedChanged [v2.10.3.13]:
-    // toggles chart magnitude axis between [0,1.0] (Magnitude) and [0,2.0]
-    // (Gain).  Persisted to AppSettings under "ampview/showGain".
     void onShowGainToggled(bool on);
-
-    // From AmpView.cs:470-482 chkAVPhaseZoom_CheckedChanged [v2.10.3.13]:
-    // toggles secondary phase axis between [-180, +180] and [-45, +45].
-    // Persisted under "ampview/phaseZoom".
     void onPhaseZoomToggled(bool on);
-
-    // From AmpView.cs:457-463 chkAVLowRes_CheckedChanged [v2.10.3.13]:
-    // toggles render-stride between 1 and 4.  Default Checked.
-    // Persisted under "ampview/lowRes".
     void onLowResToggled(bool on);
-
-    // From AmpView.cs:329-333 chkStayOnTop_CheckedChanged [v2.10.3.13]:
-    // calls FixOnTop() which sets Qt::WindowStaysOnTopHint.
-    // Persisted under "ampview/onTop".
     void onStayOnTopToggled(bool on);
-
-    // Poll PureSignal for the latest GetPSDisp buffers and push to the chart.
-    // Matches the AmpView.cs:355-433 timer1_Tick pattern [v2.10.3.13].
-    void pollChartUpdate();
+    void updateFreshnessLabel();
 
 private:
     void buildUi();
-    void restoreToggleStates();
+    void restorePreferences();
+    void connectUi();
+    void restoreAndRepairGeometry();
+    void repairOffscreenPosition();
     void persistGeometry() const;
+    void setSubscribed(bool subscribed);
+    void acceptSnapshot(const Ps3Snapshot& snapshot);
+    void invalidateDisplay();
+    void refreshAvailability();
 
-    // Non-owning model handles (may be null in tests).
-    RadioModel* m_radioModel{nullptr};
-    PureSignal* m_pureSignal{nullptr};
-
-    // UI.
+    QPointer<PureSignalSessionFacade> m_facade;
     AmpViewChart* m_chart{nullptr};
-    QCheckBox*    m_chkShowGain{nullptr};
-    QCheckBox*    m_chkPhaseZoom{nullptr};
-    QCheckBox*    m_chkLowRes{nullptr};
-    QCheckBox*    m_chkStayOnTop{nullptr};
-
-    // 100 ms QTimer mirroring AmpView.cs timer1 [v2.10.3.13].
-    QTimer* m_pollTimer{nullptr};
+    QLabel* m_displayStatus{nullptr};
+    QCheckBox* m_chkShowGain{nullptr};
+    QCheckBox* m_chkPhaseZoom{nullptr};
+    QCheckBox* m_chkLowRes{nullptr};
+    QCheckBox* m_chkStayOnTop{nullptr};
+    QCheckBox* m_chkReference{nullptr};
+    QCheckBox* m_chkMeasuredMagnitude{nullptr};
+    QCheckBox* m_chkMeasuredPhase{nullptr};
+    QCheckBox* m_chkCorrectionMagnitude{nullptr};
+    QCheckBox* m_chkCorrectionPhase{nullptr};
+    QTimer* m_presentationTimer{nullptr};
+    std::uint64_t m_displayGeneration{0};
+    std::uint64_t m_lastSequence{0};
+    qint64 m_lastCaptureMs{0};
+    bool m_subscribed{false};
 };
 
 } // namespace NereusSDR

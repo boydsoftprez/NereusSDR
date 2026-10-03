@@ -114,46 +114,46 @@ typedef struct _rmatch
 	double fvar;
 } rmatch, *RMATCH;
 
-extern void* create_rmatchV(int in_size, int out_size, int nom_inrate, int nom_outrate, int ringsize, double var);
+extern __declspec (dllexport) void* create_rmatchV(int in_size, int out_size, int nom_inrate, int nom_outrate, int ringsize, double var);
 
-extern void destroy_rmatchV (void* ptr);
+extern __declspec (dllexport) void destroy_rmatchV (void* ptr);
 
-extern void xrmatchOUT (void* b, double* out);
+extern __declspec (dllexport) void xrmatchOUT (void* b, double* out);
 
-extern void xrmatchIN (void* b, double* in);
+extern __declspec (dllexport) void xrmatchIN (void* b, double* in);
 
-extern void setRMatchInsize (void* ptr, int insize);
+extern __declspec (dllexport) void setRMatchInsize (void* ptr, int insize);
 
-extern void setRMatchOutsize (void* ptr, int outsize);
+extern __declspec (dllexport) void setRMatchOutsize (void* ptr, int outsize);
 
-extern void setRMatchNomInrate (void* ptr, int nom_inrate);
+extern __declspec (dllexport) void setRMatchNomInrate (void* ptr, int nom_inrate);
 
-extern void setRMatchNomOutrate (void* ptr, int nom_outrate);
+extern __declspec (dllexport) void setRMatchNomOutrate (void* ptr, int nom_outrate);
 
-extern void setRMatchRingsize (void* ptr, int ringsize);
+extern __declspec (dllexport) void setRMatchRingsize (void* ptr, int ringsize);
 
-extern void getRMatchDiags (void* b, int* underflows, int* overflows, double* var, int* ringsize, int* nring);
+extern __declspec (dllexport) void getRMatchDiags (void* b, int* underflows, int* overflows, double* var, int* ringsize, int* nring);
 
-extern void resetRMatchDiags (void* b);
+extern __declspec (dllexport) void resetRMatchDiags (void* b);
 
-extern void forceRMatchVar (void* b, int force, double fvar);
+extern __declspec (dllexport) void forceRMatchVar (void* b, int force, double fvar);
 
-extern void setRMatchFeedbackGain(void* b, double feedback_gain);
+extern __declspec (dllexport) void setRMatchFeedbackGain(void* b, double feedback_gain);
 
-extern void setRMatchSlewTime(void* b, double slew_time);
+extern __declspec (dllexport) void setRMatchSlewTime(void* b, double slew_time);
 
-extern void setRMatchSlewTime1(void* b, double slew_time);
+extern __declspec (dllexport) void setRMatchSlewTime1(void* b, double slew_time);
 
-extern void setRMatchPropRingMin(void* ptr, int prop_min);
+extern __declspec (dllexport) void setRMatchPropRingMin(void* ptr, int prop_min);
 
-extern void setRMatchPropRingMax(void* ptr, int prop_max);
+extern __declspec (dllexport) void setRMatchPropRingMax(void* ptr, int prop_max);
 
-extern void setRMatchFFRingMin(void* ptr, int ff_ringmin);
+extern __declspec (dllexport) void setRMatchFFRingMin(void* ptr, int ff_ringmin);
 
-extern void setRMatchFFRingMax(void* ptr, int ff_ringmax);
+extern __declspec (dllexport) void setRMatchFFRingMax(void* ptr, int ff_ringmax);
 
-extern void setRMatchFFAlpha(void* ptr, double ff_alpha);
+extern __declspec (dllexport) void setRMatchFFAlpha(void* ptr, double ff_alpha);
 
-extern void getControlFlag(void* ptr, int* control_flag);
+extern __declspec (dllexport) void getControlFlag(void* ptr, int* control_flag);
 
 #endif

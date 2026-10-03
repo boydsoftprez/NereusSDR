@@ -14,6 +14,16 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-24 - R-R3-21: the receiver source names slices A to D (saved
+//                 1..4, so a saved RX1 / RX2 reads as slice A / B), and an
+//                 unavailable button's reason is relayed. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49 / R-R3-21 fix wave: kFirstRxSource / kLastRxSource
+//                 (slices A to D). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-28 - vfoFilterContextRequested: the VFO display's filter
+//                 right-click, apart from a filter button's. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -186,8 +196,16 @@ public:
     // --- Identity ---
     QString id() const { return m_id; }
     void setId(const QString& id);
+    // R-R3-21: the slice this container's controls act on, saved as 1..4
+    // for slices A to D (Thetis's RX 1 / RX 2 field, so a layout saved as
+    // RX1 / RX2 reads as slice A / B). The slice id is rxSource() - 1.
     int rxSource() const { return m_rxSource; }
     void setRxSource(int rx);
+    static int sliceIdForRxSource(int rx) { return rx - 1; }
+    static QString sliceNameForRxSource(int rx);
+    // The receiver sources a container offers: slices A (1) to D (4).
+    static constexpr int kFirstRxSource = 1;
+    static constexpr int kLastRxSource = 4;
 
     // --- Dock Mode ---
     DockMode dockMode() const { return m_dockMode; }
@@ -301,12 +319,16 @@ signals:
     void modeClicked(int modeIndex);
     void filterClicked(int filterIndex);
     void filterContextRequested(int filterIndex);
+    /// The VFO display's filter right-click (it names no filter button).
+    void vfoFilterContextRequested();
     void antennaSelected(int index);
     void tuneStepSelected(int stepIndex);
     void otherButtonClicked(int buttonId);
     void macroTriggered(int macroIndex);
+    // R-R3-21: a click on an unavailable button; nothing changed.
+    void unavailableButtonClicked(const QString& reason);
+    void rxSourceChanged(int rx);
     void voiceAction(int action);
-    void discordAction(int action);
     void frequencyChangeRequested(int64_t deltaHz);
 
 public:

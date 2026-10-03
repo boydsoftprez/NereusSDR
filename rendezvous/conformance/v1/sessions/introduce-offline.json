@@ -1,0 +1,46 @@
+{
+  "runs": [
+    "service",
+    "app"
+  ],
+  "serverSetup": {},
+  "steps": [
+    {
+      "connect": "client"
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:clientNonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "from": "client",
+      "role": "behaviour",
+      "message": {
+        "type": "introduce",
+        "id": "$key:a:id",
+        "device": "$device:d:id",
+        "deviceSignature": "$introduce:d:a:clientNonce:signed",
+        "offer": "$sdp:offer:offer"
+      }
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "error",
+        "code": "offline",
+        "reason": "The Core is not reachable right now. Check that it is running and connected to the internet.",
+        "retryAfterMs": 0
+      }
+    }
+  ]
+}

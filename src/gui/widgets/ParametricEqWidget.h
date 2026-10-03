@@ -26,6 +26,9 @@
 //                 public API + point-edit (B5).  Widget is feature-
 //                 complete; Tasks 8 + 9 wire it into TxCfcDialog and
 //                 TxEqDialog.
+//   2026-09-27 - R-R3-49 (parity Task 33): barChartData(), the bars as
+//                 drawn, for the remote CFC chart's test. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  ucParametricEq.cs
@@ -301,6 +304,11 @@ public:
 public slots:
     // From Thetis ucParametricEq.cs:1048-1105 [v2.10.3.13] -- public DrawBarChart slot.
     void drawBarChartData(const QVector<double>& data);
+
+public:
+    // NereusSDR (parity Task 33): the bars as last drawn (after the dB
+    // clamp), so a test can compare two charts.
+    QVector<double> barChartData() const { return m_barChartData; }
 
 signals:
     void editStarted();

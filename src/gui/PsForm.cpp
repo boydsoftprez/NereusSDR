@@ -15,6 +15,14 @@
 //   2026-05-06 — Phase 3M-4 Task 8: created by J.J. Boyd (KG4VCF),
 //                 with AI-assisted transformation via Anthropic Claude
 //                 Code.
+//   2026-09-21 — Removed obsolete PS2-only controls for the PS3 ABI migration.
+//   2026-09-25 - R-R3-49 (parity Task 7): Single Cal, Start Auto and Apply
+//                 Current follow the facade's canArm (a remote window arms
+//                 PureSignal on a Core at transmitSettingsVersion 7 off the
+//                 air); Two-tone stays on canActuate; while the Core's
+//                 radio is on the air the arming buttons and the settings
+//                 grey with the reason. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  PSForm.cs
@@ -62,26 +70,33 @@ mw0lge@grange-lane.co.uk
 
 #include <QCheckBox>
 #include <QCloseEvent>
-#include <QComboBox>
-#include <QDir>
 #include <QDoubleSpinBox>
-#include <QFileDialog>
 #include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
+#include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMessageBox>
 #include <QPushButton>
+#include <QSignalBlocker>
+#include <QScreen>
 #include <QSpinBox>
-#include <QStandardPaths>
 #include <QTimer>
 #include <QVBoxLayout>
 
 #include "AmpViewWindow.h"
+#include "DspAssetDialog.h"
+#include "OperatorReasonText.h"
+#include "StyleConstants.h"
 #include "core/AppSettings.h"
 #include "core/PureSignal.h"
+#include "core/session/PureSignalSessionFacade.h"
+#include "models/PureSignalSettings.h"
+#include "models/RadioModel.h"
+
+#include <algorithm>
 
 namespace NereusSDR {
 
@@ -96,6 +111,41 @@ static const char* const kAdvancedCollapsedSettingsKey =
     "puresignal/advancedCollapsed";
 static const char* const kGeometrySettingsKey =
     "puresignal/geometry";
+static const char* const kAlwaysOnTopSettingsKey = "puresignal/alwaysOnTop";
+static const char* const kLoopbackSettingsKey = "puresignal/displayLoopback";
+static const char* const kShowTwoToneSettingsKey = "puresignal/showTwoToneMeasurements";
+
+namespace {
+
+// R-R3-49 (parity Task 7): grey `control` with `reason` as its tooltip,
+// remembering its own tooltip and state, or put them back and apply
+// `enabled`. An empty reason means no gate.
+void gateWithReason(QWidget* control, bool enabled, const QString& reason)
+{
+    if (!control) {
+        return;
+    }
+    static constexpr auto kSavedTooltip = "PsFormSavedTooltip";
+    static constexpr auto kSavedEnabled = "PsFormSavedEnabled";
+    if (!reason.isEmpty()) {
+        if (!control->property(kSavedTooltip).isValid()) {
+            control->setProperty(kSavedTooltip, control->toolTip());
+            control->setProperty(kSavedEnabled, control->isEnabled());
+        }
+        control->setEnabled(false);
+        control->setToolTip(reason);
+        return;
+    }
+    if (control->property(kSavedTooltip).isValid()) {
+        control->setToolTip(control->property(kSavedTooltip).toString());
+        enabled = enabled && control->property(kSavedEnabled).toBool();
+        control->setProperty(kSavedTooltip, QVariant());
+        control->setProperty(kSavedEnabled, QVariant());
+    }
+    control->setEnabled(enabled);
+}
+
+} // namespace
 
 // Bisque #FFE4C4 — colour Thetis uses for read-only data labels in the
 // Calibration Information grid (PSForm.designer.cs:484-688 [v2.10.3.13]).
@@ -125,18 +175,72 @@ PsForm::PsForm(RadioModel* radioModel, PureSignal* pureSignal, QWidget* parent)
     , m_pureSignal(pureSignal)
 {
     // From Thetis PSForm.designer.cs:898 [v2.10.3.13]:
-    //   this.Text = "PureSignal 2.0";
-    setWindowTitle(QStringLiteral("PureSignal 2.0"));
+    // PS3-native diagnostics and correction lifecycle.
+    setWindowTitle(QStringLiteral("PureSignal 3.0"));
     setObjectName(QStringLiteral("PsForm"));
+    Style::applyDarkPageStyle(this);
     // Modeless — don't block other interaction.
     setModal(false);
     // Singleton lifecycle (matches TxEqDialog) — survive close/hide cycles.
     setAttribute(Qt::WA_DeleteOnClose, false);
 
     buildUi();
+    if (m_radioModel) {
+        m_facade = m_radioModel->pureSignalFacade();
+    } else if (m_pureSignal) {
+        // Standalone coordinator tests retain the historical constructor
+        // shape while consuming the same session-neutral action boundary.
+        m_facade = new PureSignalSessionFacade(nullptr, m_pureSignal, this);
+    }
+    m_settings = m_facade ? m_facade->settings()
+                          : m_pureSignal ? m_pureSignal->settings() : nullptr;
     wireToPureSignal();
     syncFromPureSignal();
     restoreAdvancedMode();
+
+    const QByteArray savedGeometry = QByteArray::fromBase64(
+        AppSettings::instance().value(QLatin1String(kGeometrySettingsKey))
+            .toString().toLatin1());
+    if (!savedGeometry.isEmpty()) {
+        restoreGeometry(savedGeometry);
+    }
+    QScreen* destination = nullptr;
+    qint64 largestIntersection = 0;
+    for (QScreen* screen : QGuiApplication::screens()) {
+        if (!screen) {
+            continue;
+        }
+        const QRect intersection = screen->availableGeometry().intersected(frameGeometry());
+        const qint64 area = qint64(intersection.width()) * intersection.height();
+        if (area > largestIntersection) {
+            destination = screen;
+            largestIntersection = area;
+        }
+    }
+    if (!destination) {
+        destination = parentWidget() && parentWidget()->screen()
+            ? parentWidget()->screen() : QGuiApplication::primaryScreen();
+    }
+    if (destination) {
+        const QRect available = destination->availableGeometry();
+        const int safeWidth = qMin(qMax(minimumWidth(), width()), available.width());
+        const int safeHeight = qMin(qMax(minimumHeight(), height()), available.height());
+        resize(safeWidth, safeHeight);
+        const int x = qBound(available.left(), frameGeometry().left(),
+            qMax(available.left(), available.right() - frameGeometry().width() + 1));
+        const int y = qBound(available.top(), frameGeometry().top(),
+            qMax(available.top(), available.bottom() - frameGeometry().height() + 1));
+        move(x + geometry().left() - frameGeometry().left(),
+             y + geometry().top() - frameGeometry().top());
+    }
+
+    const bool stayOnTop = AppSettings::instance()
+        .value(QLatin1String(kAlwaysOnTopSettingsKey), false).toBool();
+    {
+        const QSignalBlocker blocker(m_chkOnTop);
+        m_chkOnTop->setChecked(stayOnTop);
+    }
+    setWindowFlag(Qt::WindowStaysOnTopHint, stayOnTop);
 }
 
 PsForm::~PsForm() = default;
@@ -176,6 +280,16 @@ void PsForm::buildUi()
     m_btnSingleCal->setToolTip(
         tr("Perform a singal calibration. This will happen up to 5 times in a row"));
     topRow->addWidget(m_btnSingleCal);
+
+    m_btnAutomatic = new QPushButton(tr("Start Auto"), this);
+    m_btnAutomatic->setObjectName(QStringLiteral("btnPSAutomatic"));
+    m_btnAutomatic->setToolTip(tr("Start automatic PureSignal calibration."));
+    topRow->addWidget(m_btnAutomatic);
+
+    m_btnApplyCurrent = new QPushButton(tr("Apply Current"), this);
+    m_btnApplyCurrent->setObjectName(QStringLiteral("btnPSApplyCurrent"));
+    m_btnApplyCurrent->setToolTip(tr("Apply the correction currently held by PureSignal."));
+    topRow->addWidget(m_btnApplyCurrent);
 
     m_btnAmpView = new QPushButton(tr("AmpView"), this);
     m_btnAmpView->setObjectName(QStringLiteral("btnPSAmpView"));
@@ -266,32 +380,48 @@ void PsForm::buildUi()
 
     outer->addLayout(statusRow);
 
+    m_lblActionStatus = new QLabel(tr("No PureSignal action pending."), this);
+    m_lblActionStatus->setObjectName(QStringLiteral("lblPSActionStatus"));
+    m_lblActionStatus->setWordWrap(true);
+    outer->addWidget(m_lblActionStatus);
+
+    m_lblNativeStatus = new QLabel(this);
+    m_lblNativeStatus->setObjectName(QStringLiteral("lblPSNativeStatus"));
+    m_lblNativeStatus->setWordWrap(true);
+    outer->addWidget(m_lblNativeStatus);
+
+    m_lblRoutingStatus = new QLabel(this);
+    m_lblRoutingStatus->setObjectName(QStringLiteral("lblPSRoutingStatus"));
+    m_lblRoutingStatus->setWordWrap(true);
+    outer->addWidget(m_lblRoutingStatus);
+
     // ── Body: 3-column grid ───────────────────────────────────────────────
     //
     // Column 0: timing labels       (MOX Wait / CAL Wait / AMP Delay)
     // Column 1: timing spinboxes
-    // Column 2: cal options column 1 (Auto-Attenuate / Relax Tol / Quick)
-    // Column 3: cal options column 2 (PIN / MAP / STBL / TINT)
+    // Column 2: retained calibration options (Auto-Attenuate / Quick)
     auto* body = new QGridLayout();
     body->setContentsMargins(0, 0, 0, 0);
     body->setHorizontalSpacing(8);
     body->setVerticalSpacing(4);
 
-    // Row 0: MOX Wait + Auto-Attenuate + PIN
+    // Row 0: MOX Wait + Auto-Attenuate
     auto* lblMox = new QLabel(tr("MOX Wait (sec)"), this);
     lblMox->setObjectName(QStringLiteral("labelTS4"));
     body->addWidget(lblMox, 0, 0);
 
     m_spinMoxDelay = new QDoubleSpinBox(this);
     m_spinMoxDelay->setObjectName(QStringLiteral("udPSMoxDelay"));
-    // From PSForm.designer.cs:347-372 [v2.10.3.13]:
-    //   DecimalPlaces=1, Increment=0.1, Minimum=0.1, Maximum=10.0,
-    //   Value=2.0.  (Decimal arrays {1,0,0,65536} = 1 / 10^1 = 0.1.)
+    // From Thetis PSForm.Designer.cs:346-372 [v2.10.3.15]:
+    //   DecimalPlaces=1, Increment=0.1, Maximum=1.0, Minimum=0.1,
+    //   Value=0.2.  (Decimal arrays {N,0,0,65536} = N / 10^1, so
+    //   Maximum {10,..} is 1.0 and Value {2,..} is 0.2.)
+    // Fix wave RD-I7: the earlier port read them as 10.0 and 2.0.
     m_spinMoxDelay->setDecimals(1);
     m_spinMoxDelay->setSingleStep(0.1);
     m_spinMoxDelay->setMinimum(0.1);
-    m_spinMoxDelay->setMaximum(10.0);
-    m_spinMoxDelay->setValue(2.0);
+    m_spinMoxDelay->setMaximum(1.0);
+    m_spinMoxDelay->setValue(0.2);
     m_spinMoxDelay->setToolTip(
         tr("Settling time between assertion of MOX and collection of feedback"));
     body->addWidget(m_spinMoxDelay, 0, 1);
@@ -303,15 +433,13 @@ void PsForm::buildUi()
         tr("Automatically adjust attenuator for optimum feedback level. (Recommended)"));
     body->addWidget(m_chkAutoAttenuate, 0, 2);
 
-    m_chkPin = new QCheckBox(tr("PIN"), this);
-    m_chkPin->setObjectName(QStringLiteral("chkPSPin"));
-    m_chkPin->setChecked(true);  // Designer default Checked
-    m_chkPin->setToolTip(tr(
-        "Manually 'pin' the upper-end of the gain curve; compensates for "
-        "overshoots, etc. (Recommended)"));
-    body->addWidget(m_chkPin, 0, 3);
+    m_chkAutoCalEnabled = new QCheckBox(tr("Automatic desired"), this);
+    m_chkAutoCalEnabled->setObjectName(QStringLiteral("chkPSAutoCalEnabled"));
+    m_chkAutoCalEnabled->setToolTip(
+        tr("Remember whether automatic calibration should resume when the station is ready."));
+    body->addWidget(m_chkAutoCalEnabled, 0, 3);
 
-    // Row 1: CAL Wait + Relax Tolerance + MAP
+    // Row 1: CAL Wait
     auto* lblCal = new QLabel(tr("CAL Wait (sec)"), this);
     lblCal->setObjectName(QStringLiteral("labelTS140"));
     body->addWidget(lblCal, 1, 0);
@@ -330,21 +458,12 @@ void PsForm::buildUi()
         "fastest response.)"));
     body->addWidget(m_spinCalDelay, 1, 1);
 
-    m_chkRelaxPtol = new QCheckBox(tr("Relax Tolerance"), this);
-    m_chkRelaxPtol->setObjectName(QStringLiteral("chkPSRelaxPtol"));
-    m_chkRelaxPtol->setToolTip(
-        tr("Allow for more dynamic variation in feedback; e.g., for memory-effects"));
-    body->addWidget(m_chkRelaxPtol, 1, 2);
+    m_chkRunCalibrationProcessing = new QCheckBox(tr("Run calibration processing"), this);
+    m_chkRunCalibrationProcessing->setObjectName(
+        QStringLiteral("chkPSRunCalibrationProcessing"));
+    body->addWidget(m_chkRunCalibrationProcessing, 1, 2, 1, 2);
 
-    m_chkMap = new QCheckBox(tr("MAP"), this);
-    m_chkMap->setObjectName(QStringLiteral("chkPSMap"));
-    m_chkMap->setChecked(true);  // Designer default Checked
-    m_chkMap->setToolTip(tr(
-        "Optimally re-map the sample collection intervals based upon amplifier "
-        "characteristic.  (Recommended)"));
-    body->addWidget(m_chkMap, 1, 3);
-
-    // Row 2: AMP Delay + Quick Attenuate Response + STBL
+    // Row 2: AMP Delay + Quick Attenuate Response
     auto* lblAmp = new QLabel(tr("AMP Delay (ns)"), this);
     lblAmp->setObjectName(QStringLiteral("labelTS2"));
     body->addWidget(lblAmp, 2, 0);
@@ -366,26 +485,10 @@ void PsForm::buildUi()
         tr("Apply auto attenuation changes at a faster interval"));
     body->addWidget(m_chkQuickAttenuate, 2, 2);
 
-    m_chkStbl = new QCheckBox(tr("STBL"), this);
-    m_chkStbl->setObjectName(QStringLiteral("chkPSStbl"));
-    m_chkStbl->setToolTip(tr("Averages multiple collections of calibration samples."));
-    body->addWidget(m_chkStbl, 2, 3);
-
-    // Row 3: TINT (label + combo span the right two columns)
-    m_lblTint = new QLabel(tr("TINT (dB)"), this);
-    m_lblTint->setObjectName(QStringLiteral("lblPSTint"));
-    body->addWidget(m_lblTint, 3, 2);
-
-    m_comboTint = new QComboBox(this);
-    m_comboTint->setObjectName(QStringLiteral("comboPSTint"));
-    // From PSForm.designer.cs:164-173 [v2.10.3.13]:
-    //   Items: "0.5", "1.1", "2.5"; Text="0.5"
-    m_comboTint->addItem(QStringLiteral("0.5"));
-    m_comboTint->addItem(QStringLiteral("1.1"));
-    m_comboTint->addItem(QStringLiteral("2.5"));
-    m_comboTint->setCurrentIndex(0);
-    m_comboTint->setToolTip(tr("FOR EXPERIMENTATION. - LEAVE AT 0.5dB."));
-    body->addWidget(m_comboTint, 3, 3);
+    m_chkHardwarePeakOverride = new QCheckBox(tr("Override hardware peak"), this);
+    m_chkHardwarePeakOverride->setObjectName(
+        QStringLiteral("chkPSHardwarePeakOverride"));
+    body->addWidget(m_chkHardwarePeakOverride, 2, 3);
 
     outer->addLayout(body);
 
@@ -398,7 +501,9 @@ void PsForm::buildUi()
         new QCheckBox(tr("Display PS-RX and PS-TX spectra"), this);
     m_chkLoopback->setObjectName(QStringLiteral("checkLoopback"));
     m_chkLoopback->setToolTip(
-        tr("Use top and bottom panadapters to display the two feedback streams."));
+        tr("Separate feedback spectra are unavailable in this build; "
+           "use AmpView for PS3 diagnostics."));
+    m_chkLoopback->setEnabled(false);
     bottomRow->addWidget(m_chkLoopback);
 
     bottomRow->addStretch();
@@ -426,21 +531,21 @@ void PsForm::buildUi()
     m_advancedSectionWidgets.append(m_lblCo);
     m_advancedSectionWidgets.append(lblCoText);
     m_advancedSectionWidgets.append(m_lblWarningSetPk);
+    m_advancedSectionWidgets.append(m_lblActionStatus);
+    m_advancedSectionWidgets.append(m_lblNativeStatus);
+    m_advancedSectionWidgets.append(m_lblRoutingStatus);
     m_advancedSectionWidgets.append(m_chkShow2ToneMeasurements);
     m_advancedSectionWidgets.append(lblMox);
     m_advancedSectionWidgets.append(m_spinMoxDelay);
     m_advancedSectionWidgets.append(m_chkAutoAttenuate);
-    m_advancedSectionWidgets.append(m_chkPin);
+    m_advancedSectionWidgets.append(m_chkAutoCalEnabled);
     m_advancedSectionWidgets.append(lblCal);
     m_advancedSectionWidgets.append(m_spinCalDelay);
-    m_advancedSectionWidgets.append(m_chkRelaxPtol);
-    m_advancedSectionWidgets.append(m_chkMap);
+    m_advancedSectionWidgets.append(m_chkRunCalibrationProcessing);
     m_advancedSectionWidgets.append(lblAmp);
     m_advancedSectionWidgets.append(m_spinAmpDelay);
     m_advancedSectionWidgets.append(m_chkQuickAttenuate);
-    m_advancedSectionWidgets.append(m_chkStbl);
-    m_advancedSectionWidgets.append(m_lblTint);
-    m_advancedSectionWidgets.append(m_comboTint);
+    m_advancedSectionWidgets.append(m_chkHardwarePeakOverride);
     m_advancedSectionWidgets.append(m_chkLoopback);
     m_advancedSectionWidgets.append(m_chkOnTop);
     m_advancedSectionWidgets.append(m_grpCalInfo);
@@ -448,6 +553,10 @@ void PsForm::buildUi()
     // ── Wire button signals to slots ──────────────────────────────────────
     connect(m_btnSingleCal,    &QPushButton::clicked,
             this, &PsForm::onSingleCalibrate);
+    connect(m_btnAutomatic,    &QPushButton::clicked,
+            this, &PsForm::onAutomaticCalibrate);
+    connect(m_btnApplyCurrent, &QPushButton::clicked,
+            this, &PsForm::onApplyCurrentCorrection);
     connect(m_btnAdvanced,     &QPushButton::clicked,
             this, &PsForm::onAdvancedClicked);
     connect(m_btnSave,         &QPushButton::clicked,
@@ -472,18 +581,16 @@ void PsForm::buildUi()
     // ── Wire toggle signals ───────────────────────────────────────────────
     connect(m_chkOnTop,                &QCheckBox::toggled,
             this, &PsForm::onAlwaysOnTopToggled);
-    connect(m_chkPin,                  &QCheckBox::toggled,
-            this, &PsForm::onPinToggled);
-    connect(m_chkMap,                  &QCheckBox::toggled,
-            this, &PsForm::onMapToggled);
-    connect(m_chkStbl,                 &QCheckBox::toggled,
-            this, &PsForm::onStblToggled);
     connect(m_chkAutoAttenuate,        &QCheckBox::toggled,
             this, &PsForm::onAutoAttenuateToggled);
-    connect(m_chkRelaxPtol,            &QCheckBox::toggled,
-            this, &PsForm::onRelaxPtolToggled);
     connect(m_chkQuickAttenuate,       &QCheckBox::toggled,
             this, &PsForm::onQuickAttenuateToggled);
+    connect(m_chkAutoCalEnabled,       &QCheckBox::toggled,
+            this, &PsForm::onAutoCalEnabledToggled);
+    connect(m_chkRunCalibrationProcessing, &QCheckBox::toggled,
+            this, &PsForm::onRunCalibrationProcessingToggled);
+    connect(m_chkHardwarePeakOverride, &QCheckBox::toggled,
+            this, &PsForm::onHardwarePeakOverrideToggled);
     connect(m_chkLoopback,             &QCheckBox::toggled,
             this, &PsForm::onLoopbackToggled);
     connect(m_chkShow2ToneMeasurements, &QCheckBox::toggled,
@@ -499,9 +606,6 @@ void PsForm::buildUi()
     connect(m_spinAmpDelay,
             QOverload<int>::of(&QSpinBox::valueChanged),
             this, &PsForm::onAmpDelayChanged);
-    connect(m_comboTint,
-            QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &PsForm::onTintIndexChanged);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -660,6 +764,29 @@ QGroupBox* PsForm::buildCalibrationInfoGroup(QWidget* parent)
         "current hardware"));
     g->addWidget(m_btnDefaultPeaks, 4, 5);
 
+    // PS3 exposes sixteen native status words. Keep the source-era named
+    // indicators above and add the complete bounded readback for diagnosis.
+    m_rawInfoLabels[0] = m_lblInfo0;
+    m_rawInfoLabels[1] = m_lblInfo1;
+    m_rawInfoLabels[2] = m_lblInfo2;
+    m_rawInfoLabels[3] = m_lblInfo3;
+    m_rawInfoLabels[5] = m_lblInfo5;
+    m_rawInfoLabels[6] = m_lblInfo6;
+    m_rawInfoLabels[13] = m_lblInfo13;
+    m_rawInfoLabels[15] = m_lblInfo15;
+    for (int i = 0; i < 16; ++i) {
+        if (m_rawInfoLabels[static_cast<std::size_t>(i)]) {
+            continue;
+        }
+        const int row = 5 + (i / 4);
+        const int column = (i % 4) * 2;
+        auto* name = new QLabel(tr("raw[%1]").arg(i), grp);
+        m_rawInfoLabels[static_cast<std::size_t>(i)] =
+            makeIndicatorLabel(QStringLiteral("lblPSInfo%1").arg(i));
+        g->addWidget(name, row, column);
+        g->addWidget(m_rawInfoLabels[static_cast<std::size_t>(i)], row, column + 1);
+    }
+
     return grp;
 }
 
@@ -669,78 +796,233 @@ QGroupBox* PsForm::buildCalibrationInfoGroup(QWidget* parent)
 
 void PsForm::wireToPureSignal()
 {
-    if (!m_pureSignal) {
-        return;
+    if (m_facade) {
+        connect(m_facade, &PureSignalSessionFacade::statusChanged,
+                this, &PsForm::refreshFacadeStatus);
+        connect(m_facade, &PureSignalSessionFacade::actionResult,
+                this, &PsForm::onActionResult);
+        connect(m_facade, &PureSignalSessionFacade::displayInvalidated,
+                this, &PsForm::onSessionInvalidated);
     }
-    // Save / Restore button enabled state.  Two gates per Thetis:
-    //   1. PSForm.cs:574-590 [v2.10.3.13] — Save tracks CorrectionsBeingApplied.
-    //   2. PSForm.cs:865/871/877/883 [v2.10.3.13] — both Save+Restore gated by
-    //      TINT combo index (only idx 0 / default keeps the file format
-    //      compatible).
-    // Codex Fix D: route from correctionsBeingAppliedChanged (info[14]==1
-    // predicate), NOT correctingChanged (FeedbackLevel > 90 predicate).
-    // Codex Fix F: combine both gates via refreshSaveRestoreButtons slot so
-    // a flip in EITHER signal reruns the AND.
-    connect(m_pureSignal, &PureSignal::correctionsBeingAppliedChanged,
-            this, &PsForm::refreshSaveRestoreButtons);
-    connect(m_pureSignal, &PureSignal::saveRestoreEnabledChanged,
-            this, &PsForm::refreshSaveRestoreButtons);
-
-    // PureSignal -> UI label updates
-    connect(m_pureSignal, &PureSignal::feedbackLevelChanged,
-            this, &PsForm::onFeedbackLevelChanged);
-    // Codex Fix D: CO badge depends on BOTH predicates (Lime when both,
-    // Yellow when applied-but-not-correcting, Black when neither).  Wire to
-    // both signals so a flip in either retriggers the slot.
-    connect(m_pureSignal, &PureSignal::correctingChanged,
-            this, &PsForm::refreshCoBadge);
-    connect(m_pureSignal, &PureSignal::correctionsBeingAppliedChanged,
-            this, &PsForm::refreshCoBadge);
-    connect(m_pureSignal, &PureSignal::calibrationCountChanged,
-            this, &PsForm::onCalibrationCountChanged);
-    connect(m_pureSignal, &PureSignal::feedbackColourChanged,
-            this, &PsForm::onFeedbackColourChanged);
+    if (m_settings) {
+        const auto sync = [this]() { syncAcceptedSettings(); };
+        connect(m_settings, &PureSignalSettings::autoCalEnabledChanged, this, sync);
+        connect(m_settings, &PureSignalSettings::runCalibrationProcessingChanged, this, sync);
+        connect(m_settings, &PureSignalSettings::autoAttenuateChanged, this, sync);
+        connect(m_settings, &PureSignalSettings::quickAttenuateChanged, this, sync);
+        connect(m_settings, &PureSignalSettings::moxDelaySecondsChanged, this, sync);
+        connect(m_settings, &PureSignalSettings::loopDelaySecondsChanged, this, sync);
+        connect(m_settings, &PureSignalSettings::requestedTxDelayNsChanged, this, sync);
+        connect(m_settings, &PureSignalSettings::hardwarePeakOverrideEnabledChanged, this, sync);
+        connect(m_settings, &PureSignalSettings::hardwarePeakOverrideChanged, this, sync);
+        connect(m_settings, &PureSignalSettings::editRejected, this,
+                [this](const QString& reason) {
+            syncAcceptedSettings();
+            if (m_lblActionStatus) {
+                m_lblActionStatus->setText(tr("Setting rejected: %1")
+                                                .arg(OperatorReasonText::forDisplay(reason)));
+            }
+        });
+    }
 }
 
 void PsForm::syncFromPureSignal()
 {
-    if (!m_pureSignal) {
+    syncAcceptedSettings();
+    if (m_pureSignal && !m_radioModel) {
+        const QSignalBlocker loopbackBlocker(m_chkLoopback);
+        const QSignalBlocker measurementsBlocker(m_chkShow2ToneMeasurements);
+        m_chkLoopback->setChecked(m_pureSignal->loopback());
+        m_chkShow2ToneMeasurements->setChecked(m_pureSignal->show2ToneMeasurements());
+    } else {
+        const QSignalBlocker loopbackBlocker(m_chkLoopback);
+        const QSignalBlocker measurementsBlocker(m_chkShow2ToneMeasurements);
+        m_chkLoopback->setChecked(AppSettings::instance()
+            .value(QLatin1String(kLoopbackSettingsKey), false).toBool());
+        m_chkShow2ToneMeasurements->setChecked(AppSettings::instance()
+            .value(QLatin1String(kShowTwoToneSettingsKey), false).toBool());
+    }
+    refreshFacadeStatus();
+}
+
+void PsForm::syncAcceptedSettings()
+{
+    if (!m_settings) {
         return;
     }
     m_updatingFromModel = true;
-
-    m_chkPin->setChecked(m_pureSignal->pinMode());
-    m_chkMap->setChecked(m_pureSignal->mapMode());
-    m_chkStbl->setChecked(m_pureSignal->stabilize());
-    m_chkAutoAttenuate->setChecked(m_pureSignal->autoAttenuate());
-    m_chkRelaxPtol->setChecked(m_pureSignal->relaxTolerance());
-    m_chkQuickAttenuate->setChecked(m_pureSignal->quickAttenuate());
-    m_spinMoxDelay->setValue(m_pureSignal->moxDelay());
-    m_spinCalDelay->setValue(m_pureSignal->calDelay());
-    m_spinAmpDelay->setValue(m_pureSignal->ampDelay());
-    m_chkLoopback->setChecked(m_pureSignal->loopback());
-    m_chkShow2ToneMeasurements->setChecked(
-        m_pureSignal->show2ToneMeasurements());
-
-    // TINT combo: read directly from the tintIndex() accessor (Codex Fix F
-    // post-fix API).  Mirrors PSForm.designer.cs:172 [v2.10.3.13]
-    // initial Text="0.5" when tintIndex()==0.
-    m_comboTint->setCurrentIndex(m_pureSignal->tintIndex());
-
-    // SetPk readout (editable QLineEdit; user can override per-bench)
-    m_txtPSpeak->setText(QString::number(m_pureSignal->hwPeak(), 'f', 4));
-
-    // Save button initial gating: PSForm.cs:574-590 [v2.10.3.13] sets
-    // btnPSSave.Enabled to CorrectionsBeingApplied, AND PSForm.cs:865/871/
-    // 877 sets it false unconditionally for TINT indexes 1+2 (regardless
-    // of corrections-applied state).  Mirror both gates here.
-    m_btnSave->setEnabled(m_pureSignal->correctionsBeingApplied()
-                          && m_pureSignal->saveRestoreEnabled());
-    // Restore button gating: PSForm.cs:865/871/877/883 [v2.10.3.13] —
-    // tracks the same Save/Restore enabled state.
-    m_btnRestore->setEnabled(m_pureSignal->saveRestoreEnabled());
-
+    m_chkAutoCalEnabled->setChecked(m_settings->autoCalEnabled());
+    m_chkRunCalibrationProcessing->setChecked(m_settings->runCalibrationProcessing());
+    m_chkAutoAttenuate->setChecked(m_settings->autoAttenuate());
+    m_chkQuickAttenuate->setChecked(m_settings->quickAttenuate());
+    m_spinMoxDelay->setValue(m_settings->moxDelaySeconds());
+    m_spinCalDelay->setValue(m_settings->loopDelaySeconds());
+    m_spinAmpDelay->setValue(static_cast<int>(m_settings->requestedTxDelayNs()));
+    m_chkHardwarePeakOverride->setChecked(m_settings->hardwarePeakOverrideEnabled());
+    m_txtPSpeak->setText(QString::number(m_settings->hardwarePeakOverride(), 'f', 4));
+    m_txtPSpeak->setEnabled(true);
     m_updatingFromModel = false;
+}
+
+quint32 PsForm::requestAction(Ps3Action action, const QVariantMap& arguments)
+{
+    if (!m_facade) {
+        m_lblActionStatus->setText(tr("PureSignal is unavailable."));
+        return 0;
+    }
+    const quint32 operationId = m_facade->requestAction(action, arguments);
+    if (!operationId) {
+        const QString reason = m_facade->lastActionError();
+        m_lblActionStatus->setText(reason.isEmpty()
+            ? tr("PureSignal refused the action.") : OperatorReasonText::forDisplay(reason));
+        syncFromPureSignal();
+        return 0;
+    }
+    m_pendingActions.insert(operationId);
+    m_lblActionStatus->setText(tr("Action %1 accepted.").arg(operationId));
+    return operationId;
+}
+
+void PsForm::onActionResult(quint32 operationId, Ps3ActionPhase phase,
+                            const QString& reason, const QVariantMap& values)
+{
+    if (!m_pendingActions.contains(operationId)) {
+        return;
+    }
+    QString phaseText;
+    switch (phase) {
+    case Ps3ActionPhase::Accepted: phaseText = tr("accepted"); break;
+    case Ps3ActionPhase::Pending: phaseText = tr("pending"); break;
+    case Ps3ActionPhase::Completed: phaseText = tr("completed"); break;
+    case Ps3ActionPhase::Failed: phaseText = tr("failed"); break;
+    }
+    QString text = tr("Action %1 %2.").arg(operationId).arg(phaseText);
+    if (!reason.isEmpty()) {
+        // The Core's reason, in user words; the raw text is logged.
+        text += QStringLiteral(" ") + OperatorReasonText::forDisplay(reason);
+    }
+    const QString assetId = values.value(QStringLiteral("assetId")).toString();
+    if (!assetId.isEmpty()) {
+        text += tr(" Saved as asset %1.").arg(assetId);
+    }
+    m_lblActionStatus->setText(text);
+    if (phase == Ps3ActionPhase::Completed || phase == Ps3ActionPhase::Failed) {
+        m_pendingActions.remove(operationId);
+    }
+    refreshFacadeStatus();
+}
+
+void PsForm::onSessionInvalidated()
+{
+    m_pendingActions.clear();
+    if (m_lblActionStatus) {
+        m_lblActionStatus->setText(tr("The connection to the Core changed; actions still waiting were canceled."));
+    }
+    refreshFacadeStatus();
+}
+
+void PsForm::refreshFacadeStatus()
+{
+    const Ps3StatusSnapshot status = m_facade
+        ? m_facade->statusSnapshot() : Ps3StatusSnapshot{};
+    for (std::size_t i = 0; i < m_rawInfoLabels.size(); ++i) {
+        if (m_rawInfoLabels[i]) {
+            m_rawInfoLabels[i]->setText(QString::number(status.raw[i]));
+        }
+    }
+    if (m_lblFb2) {
+        m_lblFb2->setText(QString::number(status.feedbackLevel));
+    }
+    if (m_lblGetPSpeak) {
+        m_lblGetPSpeak->setText(QString::number(status.hardwarePeak, 'f', 4));
+    }
+    if (m_lblNativeStatus) {
+        m_lblNativeStatus->setText(tr(
+            "PS %1, MOX %2; RunCal %3; correction run/busy %4/%5; "
+            "delay requested/applied %6/%7 ns; peak/maxTX %8/%9; feedback %10 Hz; "
+            "save gen %11 pending %12 result %13; restore gen %14 pending %15 result %16")
+            .arg(status.psEnabled ? tr("on") : tr("off"))
+            .arg(status.mox ? tr("on") : tr("off"))
+            .arg(status.runCalibrationProcessing ? tr("on") : tr("off"))
+            .arg(status.correctionRun).arg(status.correctionBusy)
+            .arg(status.requestedTxDelayNs, 0, 'f', 1)
+            .arg(status.appliedTxDelayNs, 0, 'f', 1)
+            .arg(status.hardwarePeak, 0, 'f', 4)
+            .arg(status.maxTx, 0, 'f', 4)
+            .arg(status.feedbackRateHz)
+            .arg(static_cast<qulonglong>(status.saveGeneration))
+            .arg(status.savePending).arg(status.saveResult)
+            .arg(static_cast<qulonglong>(status.restoreGeneration))
+            .arg(status.restorePending).arg(status.restoreResult));
+    }
+    if (m_lblRoutingStatus) {
+        m_lblRoutingStatus->setText(tr(
+            "PSCC route TX monitor DDC %1, feedback DDC %2, feedback channel %3; "
+            "pump %4; paired blocks %5")
+            .arg(status.txMonitorDdc)
+            .arg(status.feedbackDdc)
+            .arg(status.feedbackChannelId)
+            .arg(status.pumpActive ? tr("active") : tr("inactive"))
+            .arg(static_cast<qulonglong>(status.pairedBlocks)));
+    }
+
+    const bool available = m_facade && m_facade->available();
+    const bool canActuate = m_facade && m_facade->canActuate();
+    // R-R3-49 (parity Task 7): arming keys nothing, so it follows canArm;
+    // the two-tone test below keys the radio and stays on canActuate.
+    const bool canArm = m_facade && m_facade->canArm();
+    const QString armingRefusal = m_facade ? m_facade->armingRefusal() : QString();
+    gateWithReason(m_btnSingleCal, canArm, armingRefusal);
+    gateWithReason(m_btnAutomatic, canArm, armingRefusal);
+    gateWithReason(m_btnApplyCurrent, canArm, armingRefusal);
+    // The settings a Core offering arming takes only off the air.
+    const QString settingsRefusal = m_facade ? m_facade->settingsRefusal() : QString();
+    for (QWidget* control : {static_cast<QWidget*>(m_chkAutoAttenuate),
+                             static_cast<QWidget*>(m_chkQuickAttenuate),
+                             static_cast<QWidget*>(m_chkAutoCalEnabled),
+                             static_cast<QWidget*>(m_chkRunCalibrationProcessing),
+                             static_cast<QWidget*>(m_chkHardwarePeakOverride),
+                             static_cast<QWidget*>(m_txtPSpeak),
+                             static_cast<QWidget*>(m_btnDefaultPeaks),
+                             static_cast<QWidget*>(m_spinMoxDelay),
+                             static_cast<QWidget*>(m_spinCalDelay),
+                             static_cast<QWidget*>(m_spinAmpDelay)}) {
+        if (control && (!settingsRefusal.isEmpty()
+                        || control->property("PsFormSavedTooltip").isValid())) {
+            gateWithReason(control, true, settingsRefusal);
+        }
+    }
+    if (m_btnTwoTone) {
+        const QSignalBlocker blocker(m_btnTwoTone);
+        m_btnTwoTone->setChecked(m_facade && m_facade->twoToneOn());
+        m_btnTwoTone->setEnabled(canActuate || m_btnTwoTone->isChecked());
+    }
+    if (m_btnSave) {
+        m_btnSave->setEnabled(available && status.correctionsApplied);
+    }
+    // The manager remains useful on a remote non-TX station for listing,
+    // import, and export. Restore selection itself crosses the facade and is
+    // rejected when the station cannot actuate.
+    if (m_btnRestore) {
+        m_btnRestore->setEnabled(available && m_radioModel);
+    }
+    if (m_btnAmpView) {
+        m_btnAmpView->setEnabled(available);
+    }
+    if (m_btnReset) {
+        m_btnReset->setEnabled(true);
+    }
+
+    const bool correcting = status.feedbackLevel > 90;
+    if (m_lblCo) {
+        const QString colour = status.correctionsApplied
+            ? correcting ? QStringLiteral("#00FF00") : QStringLiteral("#FFFF00")
+            : QStringLiteral("black");
+        m_lblCo->setStyleSheet(QStringLiteral(
+            "QLabel { background-color: %1; border: 1px inset; "
+            "min-width: 12px; min-height: 12px; }").arg(colour));
+    }
+    refreshSaveRestoreButtons();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -756,9 +1038,17 @@ void PsForm::onSingleCalibrate()
     // The PureSignal coordinator's singleCalibrate() also covers
     // PSForm.cs:481-484 SingleCalrun (//-W2PA Adds capability for CAT
     // control via console) — both routes share the same handler body.
-    if (m_pureSignal) {
-        m_pureSignal->singleCalibrate();
-    }
+    requestAction(Ps3Action::Single);
+}
+
+void PsForm::onAutomaticCalibrate()
+{
+    requestAction(Ps3Action::StartAutomatic);
+}
+
+void PsForm::onApplyCurrentCorrection()
+{
+    requestAction(Ps3Action::ApplyCurrentCorrection);
 }
 
 void PsForm::onAdvancedClicked()
@@ -776,67 +1066,43 @@ void PsForm::onAdvancedClicked()
 
 void PsForm::onSavePressed()
 {
-    // From Thetis PSForm.cs:524-532 btnPSSave_Click [v2.10.3.13]:
-    //   System.IO.Directory.CreateDirectory(console.AppDataPath + "PureSignal\\");
-    //   SaveFileDialog savefile1 = new SaveFileDialog();
-    //   ...
-    //   if (savefile1.ShowDialog() == DialogResult.OK)
-    //       puresignal.PSSaveCorr(_txachannel, savefile1.FileName);
-    const QString defaultDir =
-        QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
-        + QStringLiteral("/PureSignal/");
-    QDir().mkpath(defaultDir);
-
-    const QString filename = QFileDialog::getSaveFileName(
-        this,
-        tr("Save PureSignal corrections"),
-        defaultDir,
-        tr("PureSignal corrections (*.psk *.dat);;All files (*)"));
-    if (filename.isEmpty()) {
+    bool accepted = false;
+    const QString label = QInputDialog::getText(
+        this, tr("Save PureSignal correction"), tr("Correction label:"),
+        QLineEdit::Normal, {}, &accepted).trimmed();
+    if (!accepted || label.isEmpty()) {
         return;
     }
-    if (!m_pureSignal || !m_pureSignal->saveCorrections(filename)) {
-        QMessageBox::warning(this, tr("Save failed"),
-            tr("Could not save PureSignal corrections to %1").arg(filename));
-    }
+    requestAction(Ps3Action::SaveCorrection, {{QStringLiteral("label"), label}});
 }
 
 void PsForm::onRestorePressed()
 {
-    // From Thetis PSForm.cs:534-545 btnPSRestore_Click [v2.10.3.13]:
-    //   OpenFileDialog openfile1 = new OpenFileDialog();
-    //   ...
-    //   if (openfile1.ShowDialog() == DialogResult.OK) {
-    //       console.ForcePureSignalAutoCalDisable();
-    //       _OFF = false;
-    //       puresignal.PSRestoreCorr(_txachannel, openfile1.FileName);
-    //       _restoreON = true;
-    //   }
-    const QString defaultDir =
-        QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
-        + QStringLiteral("/PureSignal/");
-    QDir().mkpath(defaultDir);
-
-    const QString filename = QFileDialog::getOpenFileName(
-        this,
-        tr("Restore PureSignal corrections"),
-        defaultDir,
-        tr("PureSignal corrections (*.psk *.dat);;All files (*)"));
-    if (filename.isEmpty()) {
+    if (!m_radioModel || !m_facade) {
+        if (m_lblActionStatus) {
+            m_lblActionStatus->setText(tr("The correction manager is unavailable."));
+        }
         return;
     }
-    if (!m_pureSignal || !m_pureSignal->restoreCorrections(filename)) {
-        QMessageBox::warning(this, tr("Restore failed"),
-            tr("Could not restore PureSignal corrections from %1").arg(filename));
+    if (!m_assetDialog) {
+        m_assetDialog = new DspAssetDialog(
+            m_radioModel, DspAssetKind::Ps3Correction, this);
+        connect(m_assetDialog, &DspAssetDialog::restoreCorrectionRequested,
+                this, [this](const QString& assetId) {
+            requestAction(Ps3Action::RestoreCorrection,
+                          {{QStringLiteral("assetId"), assetId}});
+        });
     }
+    m_assetDialog->show();
+    m_assetDialog->raise();
+    m_assetDialog->activateWindow();
 }
 
 void PsForm::onTwoToneToggled(bool checked)
 {
     // From Thetis PSForm.cs:508-522 btnPSTwoToneGen_Click [v2.10.3.13].
-    if (m_pureSignal) {
-        m_pureSignal->setTwoToneOn(checked);
-    }
+    requestAction(Ps3Action::SetTwoTone,
+                  {{QStringLiteral("enabled"), checked}});
 }
 
 void PsForm::onResetClicked()
@@ -845,9 +1111,7 @@ void PsForm::onResetClicked()
     //   console.ForcePureSignalAutoCalDisable();
     //   if (!_OFF) _OFF = true;
     //   console.PSState = false;
-    if (m_pureSignal) {
-        m_pureSignal->reset();
-    }
+    requestAction(Ps3Action::OffReset);
     // Also force the [Two-tone] toggle off — Thetis PSForm.cs:519-522
     // [v2.10.3.13] sets SetupForm.TTgenrun = false; mirroring that
     // toggle keeps the UI consistent with the engine state.
@@ -888,10 +1152,9 @@ void PsForm::onDefaultPeaksClicked()
 {
     // From Thetis PSForm.cs:547-550 SetDefaultPeaks [v2.10.3.13]:
     //   psdefpeak(HardwareSpecific.PSDefaultPeak);
-    if (m_pureSignal) {
-        m_pureSignal->setDefaultPeaks();
-        // Mirror the new SetPk back into the editable field.
-        m_txtPSpeak->setText(QString::number(m_pureSignal->hwPeak(), 'f', 4));
+    if (m_settings) {
+        m_settings->setHardwarePeakOverrideEnabled(false);
+        syncAcceptedSettings();
     }
 }
 
@@ -915,15 +1178,14 @@ void PsForm::onDefaultPeaksClicked()
 // itself rebuilt from per-board defaults on connect).
 void PsForm::onPSpeakEditingFinished()
 {
-    if (m_updatingFromModel || !m_pureSignal || !m_txtPSpeak) {
+    if (m_updatingFromModel || !m_settings || !m_txtPSpeak) {
         return;
     }
     bool ok = false;
     const double value = m_txtPSpeak->text().toDouble(&ok);
     if (!ok) {
         // Reject invalid input; snap back to current model value.
-        m_txtPSpeak->setText(
-            QString::number(m_pureSignal->hwPeak(), 'f', 4));
+        syncAcceptedSettings();
         return;
     }
     // Sanity clamp: psHWPeak must be positive.  Thetis allows any double
@@ -932,11 +1194,8 @@ void PsForm::onPSpeakEditingFinished()
     // realistic HL2/ANAN/Saturn values (HL2 default 0.233, Saturn default
     // 0.6121, ANAN-G2 0.4072 — all in this range).
     const double clamped = std::clamp(value, 0.001, 2.0);
-    m_pureSignal->setHwPeak(clamped);
-    if (clamped != value) {
-        // Show the clamped value back to the user.
-        m_txtPSpeak->setText(QString::number(clamped, 'f', 4));
-    }
+    m_settings->setHardwarePeakOverride(clamped);
+    syncAcceptedSettings();
 }
 
 void PsForm::onAlwaysOnTopToggled(bool on)
@@ -955,6 +1214,8 @@ void PsForm::onAlwaysOnTopToggled(bool on)
     if (wasVisible) {
         show();
     }
+    AppSettings::instance().setValue(
+        QLatin1String(kAlwaysOnTopSettingsKey), on);
 
     // Propagate to AmpView (FixAmpViewOnTop equivalent — Thetis PSForm
     // helper that keeps the AmpView dialog tracking the parent's
@@ -965,80 +1226,79 @@ void PsForm::onAlwaysOnTopToggled(bool on)
     }
 }
 
-void PsForm::onPinToggled(bool on)
-{
-    if (m_updatingFromModel || !m_pureSignal) { return; }
-    m_pureSignal->setPinMode(on);
-}
-
-void PsForm::onMapToggled(bool on)
-{
-    if (m_updatingFromModel || !m_pureSignal) { return; }
-    m_pureSignal->setMapMode(on);
-}
-
-void PsForm::onStblToggled(bool on)
-{
-    if (m_updatingFromModel || !m_pureSignal) { return; }
-    m_pureSignal->setStabilize(on);
-}
-
 void PsForm::onAutoAttenuateToggled(bool on)
 {
-    if (m_updatingFromModel || !m_pureSignal) { return; }
-    m_pureSignal->setAutoAttenuate(on);
-}
-
-void PsForm::onRelaxPtolToggled(bool on)
-{
-    if (m_updatingFromModel || !m_pureSignal) { return; }
-    m_pureSignal->setRelaxTolerance(on);
+    if (m_updatingFromModel || !m_settings) { return; }
+    m_settings->setAutoAttenuate(on);
+    syncAcceptedSettings();
 }
 
 void PsForm::onQuickAttenuateToggled(bool on)
 {
-    if (m_updatingFromModel || !m_pureSignal) { return; }
-    m_pureSignal->setQuickAttenuate(on);
+    if (m_updatingFromModel || !m_settings) { return; }
+    m_settings->setQuickAttenuate(on);
+    syncAcceptedSettings();
+}
+
+void PsForm::onAutoCalEnabledToggled(bool on)
+{
+    if (m_updatingFromModel || !m_settings) { return; }
+    m_settings->setAutoCalEnabled(on);
+    syncAcceptedSettings();
+}
+
+void PsForm::onRunCalibrationProcessingToggled(bool on)
+{
+    if (m_updatingFromModel || !m_settings) { return; }
+    m_settings->setRunCalibrationProcessing(on);
+    syncAcceptedSettings();
+}
+
+void PsForm::onHardwarePeakOverrideToggled(bool on)
+{
+    if (m_updatingFromModel || !m_settings) { return; }
+    m_settings->setHardwarePeakOverrideEnabled(on);
+    syncAcceptedSettings();
 }
 
 void PsForm::onLoopbackToggled(bool on)
 {
-    if (m_updatingFromModel || !m_pureSignal) { return; }
-    m_pureSignal->setLoopback(on);
+    if (m_updatingFromModel) { return; }
+    AppSettings::instance().setValue(QLatin1String(kLoopbackSettingsKey), on);
+    if (m_pureSignal && !m_radioModel) {
+        m_pureSignal->setLoopback(on);
+    }
 }
 
 void PsForm::onShow2ToneMeasurementsToggled(bool on)
 {
-    if (m_updatingFromModel || !m_pureSignal) { return; }
-    m_pureSignal->setShow2ToneMeasurements(on);
+    if (m_updatingFromModel) { return; }
+    AppSettings::instance().setValue(QLatin1String(kShowTwoToneSettingsKey), on);
+    emit showTwoToneMeasurementsChanged(on);
+    if (m_pureSignal && !m_radioModel) {
+        m_pureSignal->setShow2ToneMeasurements(on);
+    }
 }
 
 void PsForm::onMoxDelayChanged(double v)
 {
-    if (m_updatingFromModel || !m_pureSignal) { return; }
-    m_pureSignal->setMoxDelay(v);
+    if (m_updatingFromModel || !m_settings) { return; }
+    m_settings->setMoxDelaySeconds(v);
+    syncAcceptedSettings();
 }
 
 void PsForm::onCalDelayChanged(double v)
 {
-    if (m_updatingFromModel || !m_pureSignal) { return; }
-    m_pureSignal->setCalDelay(v);
+    if (m_updatingFromModel || !m_settings) { return; }
+    m_settings->setLoopDelaySeconds(v);
+    syncAcceptedSettings();
 }
 
 void PsForm::onAmpDelayChanged(int v)
 {
-    if (m_updatingFromModel || !m_pureSignal) { return; }
-    m_pureSignal->setAmpDelay(v);
-}
-
-void PsForm::onTintIndexChanged(int idx)
-{
-    if (m_updatingFromModel || !m_pureSignal) { return; }
-    // Codex Fix F: route through the new setTintIndex post-fix API which
-    // pushes (ints, spi) to the calcc engine via TxChannel::setPSIntsAndSpi.
-    // Mirrors the comboPSTint handler at PSForm.cs:857-885 [v2.10.3.13]
-    // verbatim including the default-case fallback for out-of-range idx.
-    m_pureSignal->setTintIndex(idx);
+    if (m_updatingFromModel || !m_settings) { return; }
+    m_settings->setRequestedTxDelayNs(v);
+    syncAcceptedSettings();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1067,49 +1327,20 @@ void PsForm::refreshCoBadge()
     // Correcting (FeedbackLevel > 90), and the Yellow case was unreachable.
     // Now driven by both correctionsBeingAppliedChanged AND correctingChanged
     // signals; reads both predicates from the coordinator's atomic getters.
-    if (!m_lblCo || !m_pureSignal) {
-        return;
-    }
-    QString css;
-    if (m_pureSignal->correctionsBeingApplied()) {
-        if (m_pureSignal->isCorrecting()) {
-            css = QStringLiteral(
-                "QLabel { background-color: #00FF00; border: 1px inset; "
-                "min-width: 12px; min-height: 12px; }");
-        } else {
-            // Yellow — corrections applied but feedback level not yet > 90.
-            css = QStringLiteral(
-                "QLabel { background-color: #FFFF00; border: 1px inset; "
-                "min-width: 12px; min-height: 12px; }");
-        }
-    } else {
-        css = blackBadgeStyle();
-    }
-    m_lblCo->setStyleSheet(css);
+    refreshFacadeStatus();
 }
 
 void PsForm::refreshSaveRestoreButtons()
 {
-    // Codex Fix F: combined gate for Save / Restore button enabled-state.
-    //
-    // Save button: PSForm.cs:574-590 [v2.10.3.13] sets btnPSSave.Enabled to
-    // CorrectionsBeingApplied; PSForm.cs:865/871/877/883 [v2.10.3.13]
-    // additionally forces it false when TINT index is 1 or 2 (saveRestoreEnabled
-    // = false).  AND-combine both gates here.
-    //
-    // Restore button: PSForm.cs:865/871/877/883 [v2.10.3.13] gates it on
-    // saveRestoreEnabled alone — Restore is always available so long as the
-    // file format is compatible (idx 0 / default), regardless of whether
-    // calibration is currently producing corrections.
-    if (!m_pureSignal) {
-        return;
-    }
+    const Ps3StatusSnapshot status = m_facade
+        ? m_facade->statusSnapshot() : Ps3StatusSnapshot{};
     if (m_btnSave) {
-        m_btnSave->setEnabled(m_pureSignal->correctionsBeingApplied()
-                              && m_pureSignal->saveRestoreEnabled());
+        m_btnSave->setEnabled(m_facade && m_facade->available()
+                              && status.correctionsApplied);
     }
     if (m_btnRestore) {
-        m_btnRestore->setEnabled(m_pureSignal->saveRestoreEnabled());
+        m_btnRestore->setEnabled(m_facade && m_facade->available()
+                                 && m_radioModel);
     }
 }
 

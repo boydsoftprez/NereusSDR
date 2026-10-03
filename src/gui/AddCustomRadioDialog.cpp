@@ -19,6 +19,9 @@
 //                 showInlineInfo / showProbingOverlay / hideProbingOverlay
 //                 inline-feedback helpers. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-09-25 - Receiver and transmit gaps plan, Task 5: an offline save's
+//                 top sample rate is the chosen protocol's. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  frmAddCustomRadio.cs
@@ -869,7 +872,6 @@ RadioInfo AddCustomRadioDialog::result() const
     const BoardCapabilities& caps = BoardCapsTable::forBoard(hw);
     info.adcCount            = caps.adcCount;
     info.maxReceivers        = caps.maxReceivers;
-    info.maxSampleRate       = caps.maxSampleRate;
     info.hasDiversityReceiver = caps.hasDiversityReceiver;
     info.hasPureSignal        = caps.hasPureSignal;
 
@@ -881,6 +883,12 @@ RadioInfo AddCustomRadioDialog::result() const
         // Auto-detect sentinel: default to P1 for offline saves
         info.protocol = ProtocolVersion::Protocol1;
     }
+    // Plan Task 5: the top rate for the protocol chosen above, not the
+    // row's top, which spans both protocols on boards that run either.
+    info.maxSampleRate = BoardCapsTable::maxSampleRateFor(
+        caps, info.protocol,
+        info.modelOverride == HPSDRModel::FIRST ? HPSDRModel::HERMESLITE  // as for hw above
+                                                : info.modelOverride);
 
     info.firmwareVersion = 0;   // Unknown for manually added radios
     info.inUse           = false;

@@ -38,7 +38,8 @@ StatusBadge::StatusBadge(QWidget* parent) : QWidget(parent)
     hbox->addWidget(m_textLabel);
 
     setAttribute(Qt::WA_StyledBackground, true);
-    setCursor(Qt::PointingHandCursor);
+    // R-R3-21: the hand cursor only where a click does something
+    // (setClickable); every badge used to show it with nowhere to go.
 
     // Size policy: claim sizeHint() worth of horizontal space so a parent
     // QHBoxLayout under pressure can't squeeze the badge below its content.
@@ -176,6 +177,16 @@ void StatusBadge::renderSvgIcon()
     QPixmap pix = QPixmap::fromImage(img);
     pix.setDevicePixelRatio(dpr);
     m_iconLabel->setPixmap(pix);
+}
+
+void StatusBadge::setClickable(bool clickable)
+{
+    m_clickable = clickable;
+    if (clickable) {
+        setCursor(Qt::PointingHandCursor);
+    } else {
+        unsetCursor();
+    }
 }
 
 void StatusBadge::mousePressEvent(QMouseEvent* event)

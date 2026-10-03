@@ -11,15 +11,39 @@
 //   2026-05-19 - Implemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-24 - R-R3-22 / R-R3-47: on the Core, listens on the station
+//                 network only (setStationBind). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-01 - TGXL tune lane fix round: tuneRequested carries the
+//                 sender's address, so the Core takes transmit only for
+//                 the connected Tuner Genius. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-01 - TGXL tune lane round 2: tuneStateBroadcast, each tune
+//                 state change this listener broadcasts. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-01 - Round 3: tuneStateSent replaces it: every tune=1 frame
+//                 (the 1 Hz tick, a TX state resend, a new client's or a
+//                 sub's push) and each tune=0 a client can see change.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-01 - Round 4: tune=0 only on a change; a new client's or a
+//                 sub's idle tune=0 push is not emitted. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
+#include "core/StationNetwork.h"
+
 #include <QObject>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QHash>
+#include <QList>
 #include <QTimer>
 #include <QString>
+
+#include <memory>
+#include <optional>
+#include <vector>
 
 namespace NereusSDR {
 
@@ -50,9 +74,20 @@ class SmartSdrApiListener : public QObject {
 public:
     explicit SmartSdrApiListener(QObject* parent = nullptr);
 
-    // Production entry point: binds to AnyIPv4:4992. Equivalent to
-    // start(QHostAddress::AnyIPv4, 4992).
+    // Production entry point: binds to AnyIPv4:4992 (a desktop window), or,
+    // once setStationBind() has been called (the Core), to the station
+    // network's addresses (StationNetwork::StationBind::listenAddresses:
+    // the station address and 127.0.0.1) on port 4992.
     bool start();
+
+    // R-R3-22 / R-R3-47: the Core's rule for where station listeners accept
+    // connections. A running listener whose addresses change (the radio
+    // moved to another network, or it connected at last) restarts on the
+    // new ones; connected amplifiers reconnect. Never called by a desktop
+    // window, which keeps AnyIPv4.
+    void setStationBind(const StationNetwork::StationBind& bind);
+    // The addresses the listener listens on now (empty when stopped).
+    QList<QHostAddress> listenAddresses() const;
 
     // Test seam: bind to a caller-chosen address and port. Used by the
     // PTT-chain unit tests to drive a listener on loopback + ephemeral port
@@ -61,6 +96,10 @@ public:
     bool start(QHostAddress bindAddr, quint16 port);
     void stop();
     bool isListening() const;
+    QString lastListenError() const { return m_lastListenError; }
+    // Loopback/ephemeral fixture seam; production retains AnyIPv4:4992.
+    void setListenEndpointForTesting(QHostAddress address, quint16 port)
+    { m_listenAddress = address; m_listenPort = port; }
 
     // Test-only convenience: return the actual port the server bound to.
     // When start() picked an ephemeral port (port=0), this is the kernel-
@@ -127,6 +166,7 @@ public:
     QString localClientHandle() const { return m_localClientHandle; }
 
 signals:
+    void statusChanged();
     void clientConnected(const QString& peerHost, quint16 peerPort);
     void lineReceived(const QString& peerHost, quint16 peerPort,
                       const QString& line);
@@ -145,7 +185,24 @@ signals:
     // ends up actually engaging the carrier instead of being ACKed-and-
     // dropped. NereusSDR-native: AetherSDR has no equivalent because the
     // real FlexRadio handles this internally.
-    void tuneRequested(bool on);
+    //
+    // TGXL tune lane (2026-10-01): `peer` is the sender's address. Any
+    // SmartSDR-API client may send these lines; RadioModel treats one as
+    // the Tuner Genius's front-panel TUNE only when `peer` is the connected
+    // Tuner Genius.
+    void tuneRequested(bool on, const QHostAddress& peer);
+
+    // TGXL tune lane round 3 (2026-10-01): this listener wrote a
+    // `transmit ... tune=<tune>` frame the Tuner Genius may echo with its
+    // own `transmit tune on/off` (bench 2026-05-20, commit 01ca5b824 item
+    // 8), which RadioModel must not take for its front-panel TUNE. Emitted
+    // once per frame round for tune=1 (every broadcast, the 1 Hz tick, a new
+    // client's and a sub's push), and for tune=0 only on
+    // setTuneActive(false), the one tune=0 a client sees as a change. Round
+    // 4: not for the idle tick's tune=0, nor a new client's or a sub's
+    // tune=0 push while idle: the client already sees tune=0, so the tuner
+    // has nothing to echo.
+    void tuneStateSent(bool tune);
 
     // LAN PTT MOX request from a SmartSDR-API client. Same pattern as
     // tuneRequested but for regular `transmit mox on/off` (no tune
@@ -199,6 +256,16 @@ private slots:
     void onPeriodicTick();
 
 private:
+    QHostAddress m_listenAddress{QHostAddress::AnyIPv4};
+    quint16 m_listenPort{4992};
+    QString m_lastListenError;
+    // Set on the Core only (setStationBind); a desktop window keeps
+    // m_listenAddress.
+    std::optional<StationNetwork::StationBind> m_stationBind;
+    // Listens on a list of addresses: m_server takes the first, these the
+    // rest, all on the same port.
+    bool startOn(const QList<QHostAddress>& addresses, quint16 port);
+    void closeServers();
     // Per-socket session state.
     struct ClientState {
         QByteArray readBuffer;     // line accumulator (CR-terminated)
@@ -268,6 +335,10 @@ private:
     QString generateHandle() const;
 
     QTcpServer                       m_server;
+    // The station network's further addresses (127.0.0.1 beside the
+    // station address), same port as m_server.
+    std::vector<std::unique_ptr<QTcpServer>> m_extraServers;
+    QList<QHostAddress>              m_listening;
     QHash<QTcpSocket*, ClientState>  m_clients;
     QTimer                           m_periodicTimer;  // 1 Hz S-frame push
 
@@ -304,6 +375,21 @@ private:
     QTimer  m_pttAckTimeout;           // 500 ms per wiki spec
     void    advanceToTransmittingIfReady();
     void    onPttAckTimeout();
+
+    // G-20 (JJ's ruling, 2026-09-28): the FLEX sends its interlock state
+    // again 400 ms after it first sends it (captures: TRANSMITTING at
+    // 541.718 then 542.118, 547.503/547.903, 167.735/168.134; PTT_REQUESTED
+    // 216.788/217.188 while an amp had not acked). armInterlockRepeat()
+    // records a PTT_REQUESTED or TRANSMITTING frame just broadcast and
+    // sends it once more after kInterlockRepeatMs; a state change first
+    // (the advance to TRANSMITTING, the un-key, stop()) cancels it. Only
+    // the accessories' view changes, never the radio's transmitter.
+    static constexpr int kInterlockRepeatMs = 400;
+    QTimer     m_interlockRepeat;
+    QByteArray m_interlockRepeatFrame;
+    void armInterlockRepeat(const QByteArray& frame);
+    void cancelInterlockRepeat();
+    void onInterlockRepeat();
 
     // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C4: actual emission
     // of the canonical TRANSMITTING S-frame + RF-flow gate release.

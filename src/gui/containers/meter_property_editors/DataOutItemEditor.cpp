@@ -80,7 +80,7 @@ void DataOutItemEditor::buildTypeSpecific()
         static_cast<int>(DataOutItem::TransportMode::Serial));
     m_comboTransport->addItem(QStringLiteral("TCP Client"),
         static_cast<int>(DataOutItem::TransportMode::TcpClient));
-    addRow(QStringLiteral("Transport"), m_comboTransport);
+    addRow(QStringLiteral("Connection type"), m_comboTransport);
     connect(m_comboTransport, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int) {
         if (isProgrammaticUpdate()) { return; }
@@ -91,12 +91,12 @@ void DataOutItemEditor::buildTypeSpecific()
         notifyChanged();
     });
 
-    addHeader(QStringLiteral("MMIO binding"));
+    addHeader(QStringLiteral("Data source (MMIO)"));
 
     m_editGuid = new QLineEdit(this);
     m_editGuid->setStyleSheet(kLineStyle);
-    m_editGuid->setPlaceholderText(QStringLiteral("MMIO GUID"));
-    addRow(QStringLiteral("GUID"), m_editGuid);
+    m_editGuid->setPlaceholderText(QStringLiteral("Data source ID"));
+    addRow(QStringLiteral("Data source ID"), m_editGuid);
     connect(m_editGuid, &QLineEdit::editingFinished, this, [this]() {
         if (isProgrammaticUpdate()) { return; }
         DataOutItem* d = qobject_cast<DataOutItem*>(m_item);
@@ -107,8 +107,8 @@ void DataOutItemEditor::buildTypeSpecific()
 
     m_editVariable = new QLineEdit(this);
     m_editVariable->setStyleSheet(kLineStyle);
-    m_editVariable->setPlaceholderText(QStringLiteral("Variable name"));
-    addRow(QStringLiteral("Variable"), m_editVariable);
+    m_editVariable->setPlaceholderText(QStringLiteral("Value name"));
+    addRow(QStringLiteral("Value name"), m_editVariable);
     connect(m_editVariable, &QLineEdit::editingFinished, this, [this]() {
         if (isProgrammaticUpdate()) { return; }
         DataOutItem* d = qobject_cast<DataOutItem*>(m_item);

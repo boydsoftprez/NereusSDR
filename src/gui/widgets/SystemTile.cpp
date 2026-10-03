@@ -10,6 +10,7 @@
 
 #include <QLabel>
 #include <QMouseEvent>
+#include <QStringList>
 #include <QVBoxLayout>
 
 namespace NereusSDR {
@@ -66,6 +67,32 @@ void SystemTile::setCpuPercent(double percent)
     m_cpuRow->setValue(QString::asprintf("%.0f%%", percent));
 }
 
+void SystemTile::setCpuRow(const CpuRowCycler::Row& row)
+{
+    m_cpuRow->setLabel(row.label);
+    m_cpuRow->setValue(QString::asprintf("%.0f%%", row.percent));
+    m_cpuRow->setToolTip(row.toolTip);
+    if (m_cpuWarning != row.warning) {
+        m_cpuWarning = row.warning;
+        m_cpuRow->setWarning(row.warning);
+    }
+}
+
+QString SystemTile::cpuRowLabel() const
+{
+    return m_cpuRow->label();
+}
+
+QString SystemTile::cpuRowToolTip() const
+{
+    return m_cpuRow->toolTip();
+}
+
+QString SystemTile::cpuRowStyleSheet() const
+{
+    return m_cpuRow->valueStyleSheet();
+}
+
 void SystemTile::setPaLabel(const QString& label)
 {
     m_paRow->setLabel(label);
@@ -111,7 +138,23 @@ void SystemTile::refreshPaRow()
     m_paRow->setVisible(true);
 
     setCursor(m_hasTemp ? Qt::PointingHandCursor : Qt::ArrowCursor);
-    setToolTip(m_hasTemp ? tr("Click to toggle °C / °F") : QString());
+    QStringList tip;
+    if (!m_paSourceNote.isEmpty()) {
+        tip << m_paSourceNote;
+    }
+    if (m_hasTemp) {
+        tip << tr("Click to toggle °C / °F");
+    }
+    setToolTip(tip.join(QLatin1Char('\n')));
+}
+
+void SystemTile::setPaSourceNote(const QString& note)
+{
+    if (m_paSourceNote == note) {
+        return;
+    }
+    m_paSourceNote = note;
+    refreshPaRow();
 }
 
 void SystemTile::mousePressEvent(QMouseEvent* event)

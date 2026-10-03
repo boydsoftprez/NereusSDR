@@ -57,6 +57,11 @@ public:
     /// `nrecv != 1028` guard at network.c:559).
     void pushPacket(int sequenceNumber, const QByteArray& payload);
 
+    /// Retire an incomplete burst without publishing it. Capture enable
+    /// transitions and connection replacement require a fresh seq=0.
+    /// Runs on the accumulator's owning connection thread.
+    void discardPartialFrame();
+
 signals:
     /// Emitted when a full (or sequence-error padded) 16384-sample
     /// frame is ready.

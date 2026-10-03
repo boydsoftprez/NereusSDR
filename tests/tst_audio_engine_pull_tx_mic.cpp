@@ -12,6 +12,14 @@
 //
 // Pre-code review cite: §0.3 (PcMicSource arch — pullTxMic is the
 // foundational accessor PcMicSource will tap in Phase F.1).
+//
+// 2026-09-22: R-R3-36 prerequisite adds the source-intent/readiness
+// distinction used by TxWorkerThread. J.J. Boyd (KG4VCF), AI-assisted via
+// OpenAI Codex.
+//
+// 2026-09-22: R-R3-36 Task 5: with no injected bus the TX input is the
+// capture supervisor's reader, which yields nothing until capture is Ready.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -106,6 +114,34 @@ private:
 
 private slots:
 
+    void pcMicSelectionIntent_isIndependentOfCaptureReadiness()
+    {
+        AudioEngine engine;
+        QVERIFY(!engine.isPcMicSelected());
+        QVERIFY(!engine.isPcMicOverrideActive());
+
+        engine.onMicSourceChanged(/*selectedSourceIsPc=*/true);
+        QVERIFY(engine.isPcMicSelected());
+        QVERIFY(!engine.isPcMicOverrideActive());
+
+        AudioFormat fmt = float32StereoFmt();
+        auto fakeBus = std::make_unique<FakeAudioBus>(
+            QStringLiteral("ClosedFakeTxInput"));
+        FakeAudioBus* bus = fakeBus.get();
+        fakeBus->setNegotiatedFormat(fmt);
+        engine.setTxInputBusForTest(std::move(fakeBus));
+        QVERIFY(engine.isPcMicSelected());
+        QVERIFY(!engine.isPcMicOverrideActive());
+
+        QVERIFY(bus->open(fmt));
+        QVERIFY(engine.isPcMicSelected());
+        QVERIFY(engine.isPcMicOverrideActive());
+
+        engine.onMicSourceChanged(/*selectedSourceIsPc=*/false);
+        QVERIFY(!engine.isPcMicSelected());
+        QVERIFY(!engine.isPcMicOverrideActive());
+    }
+
     // ── 1. Null bus: returns 0 ─────────────────────────────────────────────
     // m_txInputBus is default-null — engine with no TX input configured.
 
@@ -114,6 +150,20 @@ private slots:
         AudioEngine engine;  // no bus injected
         std::array<float, 4> dst{};
         QCOMPARE(engine.pullTxMic(dst.data(), 4), 0);
+    }
+
+    // R-R3-36: PC mic selected but capture not Ready (no injected bus, no
+    // demand): not active, no samples, no level, and start() opens nothing.
+    void pcSelectedWithoutReadyCapture_isSilent()
+    {
+        AudioEngine engine;
+        engine.onMicSourceChanged(/*selectedSourceIsPc=*/true);
+        QVERIFY(engine.isPcMicSelected());
+        QVERIFY(!engine.isPcMicOverrideActive());
+        std::array<float, 64> dst{};
+        QCOMPARE(engine.pullTxMic(dst.data(), 64), 0);
+        QCOMPARE(engine.pcMicInputLevel(), 0.0f);
+        QCOMPARE(engine.captureStatus().state, CaptureSupervisor::Status::State::Closed);
     }
 
     // ── 2. n <= 0: returns 0 ──────────────────────────────────────────────

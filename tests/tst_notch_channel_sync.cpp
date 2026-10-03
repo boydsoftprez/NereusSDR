@@ -13,6 +13,8 @@
 //   section 5.5  restore order (model populated before any channel exists)
 //   section 8.1  RadioModel::notchModel() accessor
 //   section 11   tst_notch_channel_sync
+// R-R3-21 / R-R3-09: a remote window's notch.* commands, dispatched on the
+// Core, change the Core's list and every bound receiver's notches.
 //
 // Uses the WdspEngine NEREUS_BUILD_TESTS friend seam exactly as
 // tests/tst_stream_pool_binding.cpp does: priming m_initialized lets
@@ -25,16 +27,29 @@
 // =================================================================
 #include <QtTest/QtTest>
 
+#include "core/DspControlThread.h"
 #include "core/AppSettings.h"
 #include "core/RxChannel.h"
 #include "core/SampleRateCatalog.h"
 #include "core/WdspEngine.h"
 #include "core/dsp/Notch.h"
+#include "core/session/SessionCommandDispatcher.h"
+#include "core/session/SessionMessages.h"
 #include "models/NotchModel.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
 using namespace NereusSDR;
+
+namespace {
+// R-R3-39: a RadioModel runs its receive WDSP calls on the receive lane;
+// wait for the lane before reading WDSP back (no events are processed, so
+// a coalescing timer is not fired by the wait).
+bool laneIdle(RadioModel& model)
+{
+    return model.receiveLane() == nullptr || model.receiveLane()->waitIdleForTest(600000);
+}
+} // namespace
 
 namespace {
 
@@ -104,6 +119,7 @@ private slots:
         const int a = model.addSlice();
         model.sliceById(a)->setFrequency(kSliceAFreqHz);
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
 
         RxChannel* ch = engine->rxChannel(a);
         QVERIFY(ch != nullptr);
@@ -122,10 +138,19 @@ private slots:
         n.centerHz = 14074000.0;
         n.widthHz  = 250.0;
         n.active   = true;
+        // addNotch() calls WDSP on the caller's thread (the product only
+        // calls it from a receive-lane job, addNotchReconciled). The
+        // setters above are still queued on the lane: calling it now ran
+        // RXANBPAddNotch on this thread while RXANBPSetNotchesRun ran on
+        // the lane, both rebuilding and freeing nbp0's impulse (a double
+        // free under ThreadSanitizer, R-R3-49). Let the lane finish first.
+        QVERIFY(laneIdle(model));
         QVERIFY(ch->addNotch(0, n));
+        QVERIFY(laneIdle(model));
         QCOMPARE(ch->notchCount(), 1);
 
         Notch got;
+        QVERIFY(laneIdle(model));
         QVERIFY(ch->notchAt(0, got));
         QCOMPARE(got.centerHz, 14074000.0);
         QCOMPARE(got.widthHz,  250.0);
@@ -133,6 +158,7 @@ private slots:
 
         // Past the end: RXANBPGetNotch returns -1 and writes its sentinels
         // (nbp.c:406-411), so the wrapper must report failure, not garbage.
+        QVERIFY(laneIdle(model));
         QVERIFY(!ch->notchAt(1, got));
     }
 
@@ -162,9 +188,11 @@ private slots:
         // Everything above happened with zero WDSP channels open, so nothing
         // pushed anything. This call is the only writer.
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
 
         RxChannel* ch = engine->rxChannel(a);
         QVERIFY(ch != nullptr);
+        QVERIFY(laneIdle(model));
         QCOMPARE(ch->notchCount(), 2);
         QVERIFY(ch->notchesRun());
         QVERIFY(ch->notchAutoIncrease());
@@ -179,8 +207,10 @@ private slots:
 
         // List order is the WDSP index (section 5.2).
         Notch got;
+        QVERIFY(laneIdle(model));
         QVERIFY(ch->notchAt(0, got));
         QCOMPARE(got.centerHz, 14074000.0);
+        QVERIFY(laneIdle(model));
         QVERIFY(ch->notchAt(1, got));
         QCOMPARE(got.centerHz, 14100000.0);
     }
@@ -205,6 +235,7 @@ private slots:
         const int a = model.addSlice();
         model.sliceById(a)->setFrequency(7040500.0);
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
         QCOMPARE(engine->rxChannel(a)->notchCount(), 1);
 
         for (int ch = 0; ch < WdspEngine::kMaxSliceChannels; ++ch) {
@@ -213,9 +244,11 @@ private slots:
         QVERIFY(engine->rxChannel(a) == nullptr);
 
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
 
         RxChannel* ch = engine->rxChannel(a);
         QVERIFY(ch != nullptr);
+        QVERIFY(laneIdle(model));
         QCOMPARE(ch->notchCount(), 1);
         QVERIFY(ch->notchesRun());
         QCOMPARE(ch->notchTuneFrequencyHz(),
@@ -237,6 +270,7 @@ private slots:
         const int a = model.addSlice();
         model.sliceById(a)->setFrequency(kSliceAFreqHz);
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
 
         NotchModel* nm = model.notchModel();
         nm->setGlobalEnabled(true);
@@ -249,6 +283,7 @@ private slots:
 
         RxChannel* ch = engine->rxChannel(b);
         QVERIFY(ch != nullptr);
+        QVERIFY(laneIdle(model));
         QCOMPARE(ch->notchCount(), 1);
         QVERIFY(ch->notchesRun());
         QVERIFY(ch->notchAutoIncrease());
@@ -269,13 +304,17 @@ private slots:
         const int b = model.addSlice();
         model.sliceById(b)->setFrequency(kSliceBFreqHz);
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
 
         QVERIFY(model.notchModel()->addNotch(14074000.0, 200.0) >= 0);
 
+        QVERIFY(laneIdle(model));
         QCOMPARE(engine->rxChannel(a)->notchCount(), 1);
+        QVERIFY(laneIdle(model));
         QCOMPARE(engine->rxChannel(b)->notchCount(), 1);
 
         Notch got;
+        QVERIFY(laneIdle(model));
         QVERIFY(engine->rxChannel(b)->notchAt(0, got));
         QCOMPARE(got.centerHz, 14074000.0);
         QCOMPARE(got.widthHz,  200.0);
@@ -294,14 +333,17 @@ private slots:
         const int a = model.addSlice();
         model.sliceById(a)->setFrequency(kSliceAFreqHz);
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
 
         const int id = model.notchModel()->addNotch(14074000.0, 200.0);
         QVERIFY(id >= 0);
         QVERIFY(model.notchModel()->setWidth(id, 400.0));
 
         RxChannel* ch = engine->rxChannel(a);
+        QVERIFY(laneIdle(model));
         QCOMPARE(ch->notchCount(), 1);
         Notch got;
+        QVERIFY(laneIdle(model));
         QVERIFY(ch->notchAt(0, got));
         QCOMPARE(got.widthHz,  400.0);
         QCOMPARE(got.centerHz, 14074000.0);
@@ -319,19 +361,23 @@ private slots:
         const int a = model.addSlice();
         model.sliceById(a)->setFrequency(kSliceAFreqHz);
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
 
         NotchModel* nm = model.notchModel();
         const int first  = nm->addNotch(14074000.0, 200.0);
         const int second = nm->addNotch(14100000.0, 500.0);
         QVERIFY(first >= 0);
         QVERIFY(second >= 0);
+        QVERIFY(laneIdle(model));
         QCOMPARE(engine->rxChannel(a)->notchCount(), 2);
 
         QVERIFY(nm->removeNotch(first));
 
         RxChannel* ch = engine->rxChannel(a);
+        QVERIFY(laneIdle(model));
         QCOMPARE(ch->notchCount(), 1);
         Notch got;
+        QVERIFY(laneIdle(model));
         QVERIFY(ch->notchAt(0, got));
         QCOMPARE(got.centerHz, 14100000.0);
         QCOMPARE(got.widthHz,  500.0);
@@ -351,15 +397,19 @@ private slots:
         const int b = model.addSlice();
         model.sliceById(b)->setFrequency(kSliceBFreqHz);
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
 
         NotchModel* nm = model.notchModel();
         QVERIFY(nm->addNotch(14074000.0, 200.0) >= 0);
         QVERIFY(nm->addNotch(14100000.0, 500.0) >= 0);
+        QVERIFY(laneIdle(model));
         QCOMPARE(engine->rxChannel(a)->notchCount(), 2);
 
         nm->clear();
 
+        QVERIFY(laneIdle(model));
         QCOMPARE(engine->rxChannel(a)->notchCount(), 0);
+        QVERIFY(laneIdle(model));
         QCOMPARE(engine->rxChannel(b)->notchCount(), 0);
     }
 
@@ -376,6 +426,7 @@ private slots:
         const int b = model.addSlice();
         model.sliceById(b)->setFrequency(kSliceBFreqHz);
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
 
         // Both directions are load-bearing here: the model ships OFF
         // (maintainer decision D-a), so the pool reconcile pushed false and
@@ -407,6 +458,7 @@ private slots:
         const int b = model.addSlice();
         model.sliceById(b)->setFrequency(kSliceBFreqHz);
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
 
         model.notchModel()->setAutoIncrease(false);
         QVERIFY(!engine->rxChannel(a)->notchAutoIncrease());
@@ -446,6 +498,7 @@ private slots:
         // shape: the pool opens maxSlices channels and only slice 0 exists.
         model.configureStreamPool(/*userDdcCount*/ 2, /*maxSlices*/ 4, kRateHz);
         model.openRxChannelPool(4, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
 
         const int aId = model.addSlice();
         SliceModel* a = model.sliceById(aId);
@@ -454,11 +507,13 @@ private slots:
 
         RxChannel* bound = engine->rxChannel(aId);
         QVERIFY(bound != nullptr);
+        QVERIFY(laneIdle(model));
         QCOMPARE(bound->notchCount(), 1);          // the owner gets it
 
         for (int ch = 0; ch < 4; ++ch) {
             if (ch == aId) { continue; }
             if (RxChannel* idle = engine->rxChannel(ch)) {
+                QVERIFY(laneIdle(model));
                 QVERIFY2(idle->notchCount() == 0,
                          qPrintable(QStringLiteral(
                              "unbound pool channel %1 was handed %2 notch(es) "
@@ -476,6 +531,7 @@ private slots:
 
         RxChannel* claimed = engine->rxChannel(bId);
         QVERIFY(claimed != nullptr);
+        QVERIFY(laneIdle(model));
         QCOMPARE(claimed->notchCount(), 1);
         QVERIFY2(claimed->notchTuneFrequencyHz() > 0.0,
                  "a slice claiming a pool channel must get a resolved notch "
@@ -502,6 +558,7 @@ private slots:
 
         model.configureStreamPool(/*userDdcCount*/ 2, /*maxSlices*/ 2, kRateHz);
         model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
         const int aId = model.addSlice();
         SliceModel* a = model.sliceById(aId);
         QVERIFY(a != nullptr);
@@ -521,6 +578,7 @@ private slots:
         // The first edit of the gesture lands immediately (throttle, not
         // debounce), the other 19 are still pending.
         Notch back;
+        QVERIFY(laneIdle(model));
         QVERIFY(ch->notchAt(0, back));
         QVERIFY2(back.widthHz < 219.0,
                  "every edit reached WDSP synchronously; the drag was not "
@@ -528,6 +586,7 @@ private slots:
 
         // Ending the drag must commit the exact final value.
         model.commitPendingNotchEdits();
+        QVERIFY(laneIdle(model));
         QVERIFY(ch->notchAt(0, back));
         QCOMPARE(back.widthHz, 219.0);
     }
@@ -552,6 +611,7 @@ private slots:
 
         model.configureStreamPool(/*userDdcCount*/ 2, /*maxSlices*/ 2, kRateHz);
         model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
 
         const int aId = model.addSlice();
         SliceModel* a = model.sliceById(aId);
@@ -571,6 +631,7 @@ private slots:
         // Give the two slices different filter sizes, so clamping against the
         // wrong one is observable. nc 1024 -> 400 Hz minimum at 48 kHz.
         chB->setFilterSizeSamples(1024);
+        QVERIFY(laneIdle(model));
         const double minB = chB->minNotchWidthHz();
         QVERIFY2(minB > NotchModel::kDefaultNotchWidthHz,
                  qPrintable(QStringLiteral("fixture needs slice B's minimum "
@@ -584,6 +645,111 @@ private slots:
         const Notch* n = nm->notchById(id);
         QVERIFY(n != nullptr);
         QCOMPARE(n->widthHz, minB);
+    }
+
+    // -- R-R3-21 / R-R3-09: the Core's notch commands ----------------------
+    //
+    // A remote window changes the Core's list one notch at a time through
+    // notch.add / notch.move / notch.setActive / notch.delete. Each goes
+    // through the Core's NotchModel, so every bound receiver follows, and
+    // the add is clamped to the named receiver's real minimum width.
+    void remote_notch_commands_reach_every_bound_channel()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        model.configureStreamPool(5, 5, kRateHz);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(kSliceAFreqHz);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(kSliceBFreqHz);
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
+        RxChannel* chA = engine->rxChannel(a);
+        RxChannel* chB = engine->rxChannel(b);
+        QVERIFY(chA && chB);
+        chB->setFilterSizeSamples(1024);
+        QVERIFY(laneIdle(model));
+        const double minB = chB->minNotchWidthHz();
+        QVERIFY(minB > 250.0);
+
+        SessionCommandDispatcher dispatcher(&model);
+        QList<SessionMessage> results;
+        connect(&dispatcher, &SessionCommandDispatcher::commandResultReady, this,
+                [&results](const SessionMessage& m) { results.append(m); });
+        quint32 nextId = 1;
+        const auto invoke = [&](const QByteArray& verb, const QList<MirrorUpdate>& args) {
+            dispatcher.dispatch(SessionMessages::commandInvoke(verb, nextId++, args));
+            return results.isEmpty() ? SessionMessage{} : results.last();
+        };
+        const auto i64 = [](const QByteArray& name, qlonglong v) {
+            return MirrorUpdate{0, name, MirrorWireKind::Int64, v};
+        };
+        const auto f64 = [](const QByteArray& name, double v) {
+            return MirrorUpdate{0, name, MirrorWireKind::Float64, v};
+        };
+        const auto value = [](const SessionMessage& m, const QByteArray& name) {
+            for (const MirrorUpdate& u : m.updates) {
+                if (u.name == name) { return u.value; }
+            }
+            return QVariant();
+        };
+
+        SessionMessage r = invoke("notch.add",
+            {i64("sliceId", b), f64("centreHz", 14076500.0), f64("widthHz", 250.0)});
+        QVERIFY2(r.accepted, qPrintable(r.reason));
+        const int id = value(r, "id").toInt();
+        QVERIFY(id > 0);
+        QCOMPARE(value(r, "revision").toUInt(), model.notchModel()->revision());
+        QVERIFY(laneIdle(model));
+        QCOMPARE(chA->notchCount(), 1);
+        QVERIFY(laneIdle(model));
+        QCOMPARE(chB->notchCount(), 1);
+        QCOMPARE(model.notchModel()->notchById(id)->widthHz, minB);
+
+        r = invoke("notch.move",
+            {i64("id", id), f64("centreHz", 14076600.0), f64("widthHz", 600.0)});
+        QVERIFY2(r.accepted, qPrintable(r.reason));
+        r = invoke("notch.setActive",
+            {i64("id", id), MirrorUpdate{0, "active", MirrorWireKind::Bool, false}});
+        QVERIFY2(r.accepted, qPrintable(r.reason));
+        model.commitPendingNotchEdits();
+        for (RxChannel* ch : {chA, chB}) {
+            Notch got;
+            QVERIFY(laneIdle(model));
+            QVERIFY(ch->notchAt(0, got));
+            QCOMPARE(got.centerHz, 14076600.0);
+            QCOMPARE(got.widthHz, 600.0);
+            QVERIFY(!got.active);
+        }
+
+        // Refusals: a notch no longer on the Core, an unknown receiver, a
+        // move off the radio's range, and a wrong shape. None changes
+        // anything.
+        r = invoke("notch.move", {i64("id", id + 100), f64("centreHz", 1.4e7), f64("widthHz", 200.0)});
+        QVERIFY(!r.accepted);
+        QCOMPARE(r.reason, QStringLiteral("That notch is no longer on this Core."));
+        r = invoke("notch.add", {i64("sliceId", 99), f64("centreHz", 1.4e7), f64("widthHz", 200.0)});
+        QVERIFY(!r.accepted);
+        QCOMPARE(r.reason, QStringLiteral("That receiver is not on this Core"));
+        r = invoke("notch.move", {i64("id", id), f64("centreHz", 90000.0), f64("widthHz", 200.0)});
+        QVERIFY(!r.accepted);
+        QCOMPARE(r.reason,
+                 QStringLiteral("That notch would be outside the radio's tuning range."));
+        r = invoke("notch.delete", {i64("id", id), i64("extra", 1)});
+        QVERIFY(!r.accepted);
+        QCOMPARE(r.reason,
+                 QStringLiteral("This notch change is not one this Core understands."));
+        QCOMPARE(model.notchModel()->notchById(id)->centerHz, 14076600.0);
+
+        r = invoke("notch.delete", {i64("id", id)});
+        QVERIFY2(r.accepted, qPrintable(r.reason));
+        QVERIFY(laneIdle(model));
+        QCOMPARE(chA->notchCount(), 0);
+        QVERIFY(laneIdle(model));
+        QCOMPARE(chB->notchCount(), 0);
+        QVERIFY(model.notchModel()->notches().isEmpty());
     }
 };
 

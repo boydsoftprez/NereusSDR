@@ -62,7 +62,7 @@ typedef struct _anb
 	double *legacy;																										////////////  legacy interface - remove
 } anb, *ANB;
 
-ANB create_anb	(
+__declspec (dllexport) ANB create_anb	(
 	int run,
 	int buffsize,
 	double* in,
@@ -75,13 +75,13 @@ ANB create_anb	(
 	double threshold
 						);
 
-void destroy_anb (ANB a);
+__declspec (dllexport) void destroy_anb (ANB a);
 
-void flush_anb (ANB a);
+__declspec (dllexport) void flush_anb (ANB a);
 
-void xanb (ANB a);
+__declspec (dllexport) void xanb (ANB a);
 
-extern void create_anbEXT	(
+extern __declspec (dllexport) void create_anbEXT	(
 	int id,
 	int run,
 	int buffsize,
@@ -93,11 +93,11 @@ extern void create_anbEXT	(
 	double threshold
 					);
 
-extern void destroy_anbEXT (int id);
+extern __declspec (dllexport) void destroy_anbEXT (int id);
 
-extern void flush_anbEXT (int id);
+extern __declspec (dllexport) void flush_anbEXT (int id);
 
-extern void xanbEXT (int id, double* in, double* out);
+extern __declspec (dllexport) void xanbEXT (int id, double* in, double* out);
 
 extern void setBuffers_anb (ANB a, double* in, double* out);
 
@@ -106,20 +106,20 @@ extern void setSamplerate_anb (ANB a, int rate);
 extern void setSize_anb (ANB a, int size);
 
 
-extern void pSetRCVRANBRun (ANB a, int run);
+extern __declspec (dllexport) void pSetRCVRANBRun (ANB a, int run);
 
-extern void pSetRCVRANBBuffsize (ANB a, int size);
+extern __declspec (dllexport) void pSetRCVRANBBuffsize (ANB a, int size);
 
-extern void pSetRCVRANBSamplerate (ANB a, int rate);
+extern __declspec (dllexport) void pSetRCVRANBSamplerate (ANB a, int rate);
 
-extern void pSetRCVRANBTau (ANB a, double tau);
+extern __declspec (dllexport) void pSetRCVRANBTau (ANB a, double tau);
 
-extern void pSetRCVRANBHangtime (ANB a, double time);
+extern __declspec (dllexport) void pSetRCVRANBHangtime (ANB a, double time);
 
-extern void pSetRCVRANBAdvtime (ANB a, double time);
+extern __declspec (dllexport) void pSetRCVRANBAdvtime (ANB a, double time);
 
-extern void pSetRCVRANBBacktau (ANB a, double tau);
+extern __declspec (dllexport) void pSetRCVRANBBacktau (ANB a, double tau);
 
-extern void pSetRCVRANBThreshold (ANB a, double thresh);
+extern __declspec (dllexport) void pSetRCVRANBThreshold (ANB a, double thresh);
 
 #endif

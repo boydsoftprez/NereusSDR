@@ -10,6 +10,20 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-24 - R-R3-21: the receiver source names slices A to D (saved
+//                 1..4, so a saved RX1 / RX2 reads as slice A / B), and an
+//                 unavailable button's reason is relayed. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49 / R-R3-21 fix wave: a saved receiver value is
+//                 clamped to slices A to D on load. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-26 - R-R3-49: the title bar uses the native open / closed hand
+//                 cursors instead of Qt's drawn four-way move cursor, which
+//                 crashed Qt 6.11.0 on macOS. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-28 - The VFO display's filter right-click goes out as
+//                 vfoFilterContextRequested. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -64,7 +78,6 @@ mw0lge@grange-lane.co.uk
 #include "gui/meters/TuneStepButtonItem.h"
 #include "gui/meters/OtherButtonItem.h"
 #include "gui/meters/VoiceRecordPlayItem.h"
-#include "gui/meters/DiscordButtonItem.h"
 #include "gui/meters/VfoDisplayItem.h"
 
 #include <QUuid>
@@ -128,7 +141,15 @@ void ContainerWidget::buildUI()
     m_titleLabel = new QLabel(QStringLiteral("RX1"), m_titleBar);
     m_titleLabel->setStyleSheet(QStringLiteral(
         "color: #c8d8e8; font-size: 11px; font-weight: bold; background: transparent;"));
-    m_titleLabel->setCursor(Qt::SizeAllCursor);
+    // Native hand cursors only. Qt 6.11.0 on macOS draws SizeAllCursor (and
+    // WaitCursor / BusyCursor) from its own ICC-tagged PNGs, and
+    // QImage::toCGImage() frees the colour space before CGImageCreate uses
+    // it: EXC_BREAKPOINT under QCocoaCursor::createCursorData, reached from
+    // this title bar on hover (operator's Mac, 2026-09-25 and 2026-09-26).
+    // Native NSCursor shapes never take that path. Open hand on hover,
+    // closed hand while dragging (beginDrag / endDrag).
+    // Guarded by scripts/verify-no-image-cursors.py and tst_native_cursors.
+    m_titleLabel->setCursor(Qt::OpenHandCursor);
     barLayout->addWidget(m_titleLabel, 1);
 
     const QString btnStyle = QStringLiteral(
@@ -263,10 +284,10 @@ void ContainerWidget::updateTitleBar()
 
 void ContainerWidget::updateTitle()
 {
-    // Thetis ucMeter.cs:625-639
-    QString prefix = QStringLiteral("RX");
+    // Thetis ucMeter.cs:625-639 ("RX" + the receiver number); NereusSDR
+    // names the container's slice.
     QString firstLine = m_notes.section(QLatin1Char('\n'), 0, 0);
-    QString title = prefix + QString::number(m_rxSource);
+    QString title = sliceNameForRxSource(m_rxSource);
     if (!firstLine.isEmpty()) {
         title += QStringLiteral(" ") + firstLine;
     }
@@ -293,7 +314,19 @@ void ContainerWidget::setupBorder()
 // --- Property setters ---
 
 void ContainerWidget::setId(const QString& id) { m_id = id; m_id.remove(QLatin1Char('|')); }
-void ContainerWidget::setRxSource(int rx) { m_rxSource = rx; updateTitle(); }
+void ContainerWidget::setRxSource(int rx)
+{
+    const bool changed = (m_rxSource != rx);
+    m_rxSource = rx;
+    updateTitle();
+    if (changed) { emit rxSourceChanged(rx); }
+}
+
+QString ContainerWidget::sliceNameForRxSource(int rx)
+{
+    if (rx < 1 || rx > 26) { return QStringLiteral("Slice"); }
+    return QStringLiteral("Slice %1").arg(QChar(QLatin1Char(static_cast<char>('A' + rx - 1))));
+}
 
 void ContainerWidget::setDockMode(DockMode mode)
 {
@@ -593,6 +626,11 @@ void ContainerWidget::beginDrag(const QPoint& globalPos)
 {
     // From Thetis ucMeter.cs:281-294
     m_dragging = true;
+    // Closed hand while the drag runs (native shape; see the Qt 6.11 macOS
+    // cursor crash note at the title label). Set on the bar too, since the
+    // press can land on the bar beside the label.
+    m_titleBar->setCursor(Qt::ClosedHandCursor);
+    m_titleLabel->setCursor(Qt::ClosedHandCursor);
     if (isFloating()) {
         m_dragStartPos = globalPos - parentWidget()->pos();
     } else {
@@ -641,6 +679,8 @@ void ContainerWidget::endDrag()
 {
     m_dragging = false;
     m_dragStartPos = QPoint();
+    m_titleBar->unsetCursor();
+    m_titleLabel->setCursor(Qt::OpenHandCursor);
     if (isOverlayDocked()) {
         m_dockedLocation = pos();
         emit dockedMoved();
@@ -719,6 +759,12 @@ void ContainerWidget::doResize(int w, int h)
 
 void ContainerWidget::wireInteractiveItem(MeterItem* item)
 {
+    if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
+        connect(box, &ButtonBoxItem::unavailableButtonClicked, this,
+                [this](int, const QString& reason) {
+            emit unavailableButtonClicked(reason);
+        });
+    }
     if (auto* band = qobject_cast<BandButtonItem*>(item)) {
         connect(band, &BandButtonItem::bandClicked,
                 this, &ContainerWidget::bandClicked);
@@ -750,16 +796,13 @@ void ContainerWidget::wireInteractiveItem(MeterItem* item)
     } else if (auto* voice = qobject_cast<VoiceRecordPlayItem*>(item)) {
         connect(voice, &VoiceRecordPlayItem::voiceAction,
                 this, &ContainerWidget::voiceAction);
-    } else if (auto* discord = qobject_cast<DiscordButtonItem*>(item)) {
-        connect(discord, &DiscordButtonItem::discordAction,
-                this, &ContainerWidget::discordAction);
     } else if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
         connect(vfo, &VfoDisplayItem::frequencyChangeRequested,
                 this, &ContainerWidget::frequencyChangeRequested);
         connect(vfo, &VfoDisplayItem::bandStackRequested,
                 this, &ContainerWidget::bandStackRequested);
         connect(vfo, &VfoDisplayItem::filterContextRequested,
-                this, &ContainerWidget::filterContextRequested);
+                this, [this](int) { emit vfoFilterContextRequested(); });
     }
 }
 
@@ -864,7 +907,10 @@ bool ContainerWidget::deserialize(const QString& data)
     bool ok = false;
     int rx = p[1].toInt(&ok);
     if (!ok) { return false; }
-    setRxSource(rx);
+    // R-R3-49 / R-R3-21 (fix wave M5): slices A to D are 1..4. A value
+    // outside them (a hand-edited or damaged layout) loads as the nearest
+    // slice, so the title and the buttons' reasons always name one.
+    setRxSource(std::clamp(rx, kFirstRxSource, kLastRxSource));
 
     int x = p[2].toInt(&ok); if (!ok) { return false; }
     int y = p[3].toInt(&ok); if (!ok) { return false; }

@@ -23,11 +23,16 @@
 //                   - relayChanged() signal added (plan addition over upstream)
 //                   - fwd/swr parsed in applyStatus as raw floats (upstream parses
 //                     them only via stateUpdated/statusUpdated direct-conn lambdas)
+//   2026-09-24 - R-R3-47 / R-R3-48: BandFollow, the band-follow
+//                state the `amplifier` and `rfkit` objects share. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 #include <QObject>
+#include <QByteArray>
 #include <QMap>
 #include <QString>
+#include <QVariant>
 
 namespace NereusSDR {
 
@@ -46,6 +51,14 @@ class TgxlConnection;
 // From AetherSDR src/models/TunerModel.h [@0cd4559]
 class TunerModel : public QObject {
     Q_OBJECT
+    Q_PROPERTY(ConnectionPhase connectionPhase READ connectionPhase NOTIFY stationConnectionChanged)
+    Q_PROPERTY(QString configuredHost READ configuredHost NOTIFY stationConnectionChanged)
+    Q_PROPERTY(int configuredPort READ configuredPort NOTIFY stationConnectionChanged)
+    Q_PROPERTY(QString connectionError READ connectionError NOTIFY stationConnectionChanged)
+    Q_PROPERTY(QString deviceModel READ deviceModel NOTIFY stationConnectionChanged)
+    Q_PROPERTY(QString deviceSerial READ deviceSerial NOTIFY stationConnectionChanged)
+    Q_PROPERTY(QString deviceVersion READ deviceVersion NOTIFY stationConnectionChanged)
+    Q_PROPERTY(QString deviceNickname READ deviceNickname NOTIFY stationConnectionChanged)
     Q_PROPERTY(int  relayC1 READ relayC1 NOTIFY relayChanged)
     Q_PROPERTY(int  relayL  READ relayL  NOTIFY relayChanged)
     Q_PROPERTY(int  relayC2 READ relayC2 NOTIFY relayChanged)
@@ -61,6 +74,37 @@ class TunerModel : public QObject {
     Q_PROPERTY(float swr      READ swr      NOTIFY metersChanged)
 
 public:
+    enum class ConnectionPhase {
+        Disabled, Disconnected, Discovering, Connecting, Identifying,
+        Retrying, Connected, Error,
+    };
+    Q_ENUM(ConnectionPhase)
+
+    /// R-R3-47: whether an amplifier follows the radio's band, shared by
+    /// the `amplifier` (Power Genius XL) and `rfkit` (RF2K-S) objects. Wire
+    /// values are fixed; new ones are only appended.
+    enum class BandFollow {
+        Off = 0,              ///< the amp is not connected, or nothing to follow
+        Waiting = 1,          ///< connected, not following yet (PGXL: not paired;
+                              ///< RF2K-S: not connected to the TCI server)
+        Following = 2,        ///< the amp follows the radio's band
+        ThisComputerOnly = 3, ///< RF2K-S: the TCI server accepts only apps on
+                              ///< its own computer, so the amp cannot reach it
+    };
+    Q_ENUM(BandFollow)
+
+    struct StationConnectionState {
+        QString configuredHost;
+        quint16 configuredPort{0};
+        ConnectionPhase phase{ConnectionPhase::Disconnected};
+        QString error;
+        QString deviceModel;
+        QString deviceSerial;
+        QString deviceVersion;
+        QString deviceNickname;
+        QString peerAddress;
+    };
+
     explicit TunerModel(QObject* parent = nullptr);
 
     int  relayC1() const { return m_relayC1; }
@@ -76,6 +120,18 @@ public:
     QString tgxlIp() const { return m_ip; }
     float fwdPower() const { return m_fwd; }
     float swr()      const { return m_swr; }
+    ConnectionPhase connectionPhase() const { return m_connectionPhase; }
+    QString configuredHost() const { return m_configuredHost; }
+    int configuredPort() const { return m_configuredPort; }
+    QString connectionError() const { return m_connectionError; }
+    QString deviceModel() const { return m_deviceModel; }
+    QString deviceSerial() const { return m_deviceSerial; }
+    QString deviceVersion() const { return m_deviceVersion; }
+    QString deviceNickname() const { return m_deviceNickname; }
+
+    // Core-owned TGXL lifecycle snapshots are applied atomically. This path
+    // is observational: it never creates a local socket or emits a command.
+    void setStationConnectionState(const StationConnectionState& state);
 
     // Wire TgxlConnection signals to applyStatus and track connection state.
     void bindConnection(TgxlConnection* conn);
@@ -83,6 +139,32 @@ public:
     // Apply key=value pairs from a TGXL status message.
     // From AetherSDR src/models/TunerModel.cpp:applyStatus [@0cd4559]
     void applyStatus(const QMap<QString, QString>& kvs);
+
+    // Remote Daemon R2 Task 8: StateMirror::applyInbound()'s hook for the
+    // 13 TunerModel properties above, none of which carries a Q_PROPERTY
+    // WRITE (applyStatus() is the only writer; they reflect what the
+    // hardware itself reports back). Called by name through
+    // QMetaObject::invokeMethod, so `propertyName` is one of the 13.
+    // `value` has already been decoded to the property's native type.
+    //
+    // isOperate/isBypass/antennaA translate the intent into the SAME
+    // command slot the local TunerApplet already drives (setOperate,
+    // setBypass, setAntennaA below) -- without this, the whole ATU is
+    // unreachable from a remote GUI, not just displayed stale. Every other
+    // property is hardware telemetry with no legitimate remote-write path
+    // and is refused.
+    //
+    // Returns an empty string when applied; otherwise a reason, leaving
+    // TunerModel's own state untouched (the command slots below no-op
+    // safely with no bound connection; this hook never assigns m_operate /
+    // m_bypass / m_antA directly -- applyStatus() is the only writer of
+    // those, exactly as it is for a local operator's command).
+    Q_INVOKABLE QString applyMirroredValue(const QByteArray& propertyName,
+                                           const QVariant& value);
+
+    // Client-side station telemetry adapter. Unlike applyMirroredValue(),
+    // this never translates values into commands for TgxlConnection.
+    bool applyStationValue(const QByteArray& propertyName, const QVariant& value);
 
 public slots:
     void autoTune();
@@ -99,6 +181,7 @@ signals:
     void presenceChanged(bool present);
     void directConnectionChanged();
     void metersChanged(float fwd, float swr);
+    void stationConnectionChanged();
 
 private:
     TgxlConnection* m_conn{nullptr};
@@ -107,10 +190,23 @@ private:
     int  m_antA{0};
     bool m_oneByThree{false};
     bool m_present{false};
+    // A remote GUI has no TGXL socket of its own. Once Core projects this
+    // property, it becomes the authoritative answer for the client model;
+    // local-direct models continue to derive it from m_conn.
+    bool m_stationDirectConnectionValid{false};
+    bool m_stationDirectConnection{false};
     QString m_ip;
     QString m_serial;
     QString m_model;
     float m_fwd{0.0f}, m_swr{1.0f};
+    ConnectionPhase m_connectionPhase{ConnectionPhase::Disconnected};
+    QString m_configuredHost;
+    int m_configuredPort{0};
+    QString m_connectionError;
+    QString m_deviceModel;
+    QString m_deviceSerial;
+    QString m_deviceVersion;
+    QString m_deviceNickname;
 };
 
 }  // namespace NereusSDR

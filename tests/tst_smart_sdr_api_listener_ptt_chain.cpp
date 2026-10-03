@@ -17,6 +17,7 @@
 #include <QHostAddress>
 
 #include "core/SmartSdrApiListener.h"
+#include "models/RadioModel.h"
 
 using NereusSDR::SmartSdrApiListener;
 
@@ -97,6 +98,61 @@ QStringList findS0InterlockFrames(const QByteArray& bytes,
     return out;
 }
 
+// One captured line with the time it was read, in ms from the start of
+// the capture.
+struct TimedLine {
+    qint64 ms;
+    QString line;
+};
+
+// Drain `a` and `b` together for `timeoutMs`, so neither socket's bytes
+// wait behind the other's drain window. Returns each socket's bytes.
+QPair<QByteArray, QByteArray> drainBoth(QTcpSocket* a, QTcpSocket* b, int timeoutMs = 200)
+{
+    QByteArray outA;
+    QByteArray outB;
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+        outA.append(a->readAll());
+        outB.append(b->readAll());
+    }
+    return {outA, outB};
+}
+
+// Drain `sock` for `timeoutMs`, stamping each complete line with when it
+// was read (G-20: the 400 ms interlock repeat).
+QList<TimedLine> drainTimed(QTcpSocket* sock, int timeoutMs)
+{
+    QList<TimedLine> out;
+    QByteArray pending;
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        pending.append(sock->readAll());
+        int nl = -1;
+        while ((nl = pending.indexOf('\n')) >= 0) {
+            out.append({timer.elapsed(), QString::fromUtf8(pending.left(nl))});
+            pending.remove(0, nl + 1);
+        }
+    }
+    return out;
+}
+
+QList<TimedLine> interlockLinesIn(const QList<TimedLine>& lines, const QString& state)
+{
+    QList<TimedLine> out;
+    for (const TimedLine& t : lines) {
+        if (t.line.startsWith(QStringLiteral("S0|interlock "))
+            && t.line.contains(QStringLiteral(" state=") + state + QLatin1Char(' '))) {
+            out.append(t);
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 class SmartSdrApiListenerPttChainTest : public QObject
@@ -116,7 +172,59 @@ private slots:
     void c5_unkeyEmitsUnkeyRequestedThenTwoReadyFrames();
     void c5b_wireDrivenTuneOffPreservesAmpTgReason();
     void c6_pttAPushesAreReplacedWithAmplifierStateBroadcasts();
+    void receiveOnlyStationBlocksNativeAccessoryProxy_data();
+    void g20_transmittingIsRepeatedOnce400msLater();
+    void g20_pttRequestedIsRepeatedWhileAnAmpHasNotAcked();
+    void g20_unkeyCancelsTheRepeat();
+    void g20_noAmpTransmittingIsRepeatedToo();
+    void receiveOnlyStationBlocksNativeAccessoryProxy();
 };
+
+void SmartSdrApiListenerPttChainTest::receiveOnlyStationBlocksNativeAccessoryProxy_data()
+{
+    QTest::addColumn<QString>("product");
+    QTest::addColumn<bool>("receiveOnly");
+    QTest::newRow("tuner-local") << QStringLiteral("TunerGeniusXL") << false;
+    QTest::newRow("tuner-receive-only") << QStringLiteral("TunerGeniusXL") << true;
+    QTest::newRow("amplifier-local") << QStringLiteral("PowerGeniusXL") << false;
+    QTest::newRow("amplifier-receive-only") << QStringLiteral("PowerGeniusXL") << true;
+}
+
+void SmartSdrApiListenerPttChainTest::receiveOnlyStationBlocksNativeAccessoryProxy()
+{
+    QFETCH(QString, product); QFETCH(bool, receiveOnly);
+    NereusSDR::RadioModel model;
+    model.setReceiveOnlyStationPolicy(receiveOnly);
+    // Offline native-parser seams prove the proxy output without dialing a
+    // physical amp/tuner. Input traverses the real registered-handle TCP path.
+    model.tgxlConnection()->injectLineForTesting(QStringLiteral("V1.2.17"));
+    model.pgxlConnection()->injectLineForTesting(QStringLiteral("V3.8.8"));
+    QSignalSpy tgxlFrames(model.tgxlConnection(), &NereusSDR::TgxlConnection::testFrameWrittenForTesting);
+    QSignalSpy pgxlFrames(model.pgxlConnection(), &NereusSDR::PgxlConnection::testFrameWrittenForTesting);
+    auto* listener = model.smartSdrListener();
+    QVERIFY(listener->start(QHostAddress::LocalHost, 0));
+    QTcpSocket client;
+    client.connectToHost(QHostAddress::LocalHost, listener->serverPort());
+    QVERIFY(client.waitForConnected(1000));
+    const auto banner = QString::fromUtf8(drain(&client));
+    const auto handle = QRegularExpression(QStringLiteral("(?:^|\\n)H([A-Fa-f0-9]+)\\n")).match(banner);
+    QVERIFY(handle.hasMatch());
+    registerFakeAmp(&client, product, QStringLiteral("TEST"));
+    client.write(QStringLiteral("C3|amplifier set 0x%1 operate=1\n").arg(handle.captured(1)).toUtf8());
+    client.flush();
+    const auto reply = drain(&client);
+    QVERIFY(reply.contains("R3|0|"));
+    const auto countOperate = [](const QSignalSpy& frames) {
+        int count = 0;
+        for (const auto& args : frames) {
+            if (args.first().toString().endsWith(QStringLiteral("|operate=1"))) { ++count; }
+        }
+        return count;
+    };
+    const int actual = countOperate(tgxlFrames) + countOperate(pgxlFrames);
+    QCOMPARE(actual, receiveOnly ? 0 : 1);
+    listener->stop();
+}
 
 // Task 0 smoke test: prove the harness machinery works end-to-end.
 // Start the listener on loopback + ephemeral port, connect a QTcpSocket,
@@ -259,9 +367,10 @@ void SmartSdrApiListenerPttChainTest::c2_pttRequestedIsOneFrameWithCanonicalFiel
     // RadioModel side: setInterlockTransmitting(true, "TUNE").
     listener.setInterlockTransmitting(true, QStringLiteral("TUNE"));
 
-    // Both subscribers should see the same one PTT_REQUESTED frame.
-    const QByteArray tgxlBytes = drain(&tgxl);
-    const QByteArray pgxlBytes = drain(&pgxl);
+    // Both subscribers should see the same one PTT_REQUESTED frame. They
+    // are read together, well inside the 400 ms before the state is
+    // repeated (G-20).
+    const auto [tgxlBytes, pgxlBytes] = drainBoth(&tgxl, &pgxl);
     const QStringList tgxlFrames =
         findS0InterlockFrames(tgxlBytes, QStringLiteral("PTT_REQUESTED"));
     const QStringList pgxlFrames =
@@ -502,12 +611,20 @@ void SmartSdrApiListenerPttChainTest::c5_unkeyEmitsUnkeyRequestedThenTwoReadyFra
     const QByteArray bytes = drain(&tgxl, 100);
     const QStringList lines = QString::fromUtf8(bytes).split(QLatin1Char('\n'));
 
-    // Filter to the S0|interlock lines in arrival order.
+    // Filter to the S0|interlock lines in arrival order, from the
+    // UNKEY_REQUESTED on: the TRANSMITTING repeat 400 ms after the grant
+    // (G-20) may still be in the buffer from before the un-key, but none
+    // may follow it.
     QStringList interlockLines;
     for (const QString& line : lines) {
-        if (line.startsWith(QStringLiteral("S0|interlock"))) {
+        if (line.startsWith(QStringLiteral("S0|interlock"))
+            && (!interlockLines.isEmpty()
+                || line.contains(QStringLiteral("state=UNKEY_REQUESTED")))) {
             interlockLines << line;
         }
+    }
+    for (const QString& line : std::as_const(interlockLines)) {
+        QVERIFY2(!line.contains(QStringLiteral("state=TRANSMITTING")), qPrintable(line));
     }
     QVERIFY2(interlockLines.size() >= 3,
              qPrintable(QStringLiteral("expected at least 3 interlock lines, got: ")
@@ -647,6 +764,134 @@ void SmartSdrApiListenerPttChainTest::c5b_wireDrivenTuneOffPreservesAmpTgReason(
     QVERIFY2(unkeyLine.contains(QStringLiteral("reason=AMP:TG")),
              qPrintable(QStringLiteral("expected reason=AMP:TG (TGXL initiated TUNE), got: ")
                             + unkeyLine));
+}
+
+// G-20 (JJ's ruling, 2026-09-28): the FLEX repeats its interlock state
+// 400 ms after it first sends it (captures: TRANSMITTING at 541.718 and
+// again at 542.118, 547.503/547.903, 167.735/168.134; PTT_REQUESTED at
+// 216.788/217.188 while an amp had not acked). The Core does the same:
+// once per state change, cancelled if the state changes first. Only what
+// the Tuner Genius and Power Genius hear changes.
+void SmartSdrApiListenerPttChainTest::g20_transmittingIsRepeatedOnce400msLater()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    const quint16 port = listener.serverPort();
+
+    QTcpSocket tgxl, pgxl;
+    tgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(tgxl.waitForConnected(1000));
+    pgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(pgxl.waitForConnected(1000));
+    drain(&tgxl); drain(&pgxl);
+    registerFakeAmp(&tgxl, QStringLiteral("TunerGeniusXL"), QStringLiteral("TG"));
+    registerFakeAmp(&pgxl, QStringLiteral("PowerGeniusXL"), QStringLiteral("PG-XL"));
+    drain(&tgxl); drain(&pgxl);
+
+    listener.setInterlockTransmitting(true, QStringLiteral("TUNE"));
+    tgxl.write("C10|interlock ready 1\n"); tgxl.flush();
+    pgxl.write("C10|interlock ready 2\n"); pgxl.flush();
+
+    const QList<TimedLine> lines = drainTimed(&tgxl, 1300);
+    const QList<TimedLine> tx = interlockLinesIn(lines, QStringLiteral("TRANSMITTING"));
+    QCOMPARE(tx.size(), 2);
+    QCOMPARE(tx.at(1).line, tx.at(0).line);
+    const qint64 gapMs = tx.at(1).ms - tx.at(0).ms;
+    // Stamped when read, so the first line can be read up to one pump
+    // (25 ms) late: the gap may look that much short of 400 ms.
+    QVERIFY2(gapMs >= 370, qPrintable(QStringLiteral("repeat after %1 ms").arg(gapMs)));
+    // Every amp acked in time, so PTT_REQUESTED went out once.
+    QCOMPARE(interlockLinesIn(lines, QStringLiteral("PTT_REQUESTED")).size(), 1);
+}
+
+void SmartSdrApiListenerPttChainTest::g20_pttRequestedIsRepeatedWhileAnAmpHasNotAcked()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    const quint16 port = listener.serverPort();
+
+    QTcpSocket tgxl, pgxl;
+    tgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(tgxl.waitForConnected(1000));
+    pgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(pgxl.waitForConnected(1000));
+    drain(&tgxl); drain(&pgxl);
+    registerFakeAmp(&tgxl, QStringLiteral("TunerGeniusXL"), QStringLiteral("TG"));
+    registerFakeAmp(&pgxl, QStringLiteral("PowerGeniusXL"), QStringLiteral("PG-XL"));
+    drain(&tgxl); drain(&pgxl);
+
+    // Only the Power Genius acks; the Tuner Genius stays silent.
+    listener.setInterlockTransmitting(true, QStringLiteral("TUNE"));
+    pgxl.write("C10|interlock ready 2\n"); pgxl.flush();
+
+    const QList<TimedLine> lines = drainTimed(&tgxl, 1500);
+    const QList<TimedLine> ptt = interlockLinesIn(lines, QStringLiteral("PTT_REQUESTED"));
+    QCOMPARE(ptt.size(), 2);
+    QCOMPARE(ptt.at(1).line, ptt.at(0).line);
+    QVERIFY2(ptt.at(1).ms - ptt.at(0).ms >= 370,
+             qPrintable(QStringLiteral("repeat after %1 ms").arg(ptt.at(1).ms - ptt.at(0).ms)));
+    // The 500 ms ack timeout then advances to TRANSMITTING, which is
+    // itself repeated once.
+    const QList<TimedLine> tx = interlockLinesIn(lines, QStringLiteral("TRANSMITTING"));
+    QCOMPARE(tx.size(), 2);
+    QVERIFY(tx.at(0).ms > ptt.at(1).ms);
+}
+
+void SmartSdrApiListenerPttChainTest::g20_unkeyCancelsTheRepeat()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    const quint16 port = listener.serverPort();
+
+    QTcpSocket tgxl, pgxl;
+    tgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(tgxl.waitForConnected(1000));
+    pgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(pgxl.waitForConnected(1000));
+    drain(&tgxl); drain(&pgxl);
+    registerFakeAmp(&tgxl, QStringLiteral("TunerGeniusXL"), QStringLiteral("TG"));
+    registerFakeAmp(&pgxl, QStringLiteral("PowerGeniusXL"), QStringLiteral("PG-XL"));
+    drain(&tgxl); drain(&pgxl);
+
+    QSignalSpy grantSpy(&listener, &SmartSdrApiListener::interlockGranted);
+    listener.setInterlockTransmitting(true, QStringLiteral("TUNE"));
+    tgxl.write("C10|interlock ready 1\n"); tgxl.flush();
+    pgxl.write("C10|interlock ready 2\n"); pgxl.flush();
+    QVERIFY(grantSpy.wait(500));
+    // Un-key at once, well inside the 400 ms.
+    listener.setInterlockTransmitting(false, QStringLiteral("TUNE"));
+
+    const QList<TimedLine> lines = drainTimed(&tgxl, 900);
+    QCOMPARE(interlockLinesIn(lines, QStringLiteral("TRANSMITTING")).size(), 1);
+    const QList<TimedLine> unkey = interlockLinesIn(lines, QStringLiteral("UNKEY_REQUESTED"));
+    QCOMPARE(unkey.size(), 1);
+    // Nothing of the keyed state after the un-key, and the un-key itself
+    // is not repeated.
+    for (const TimedLine& t : lines) {
+        if (t.ms > unkey.first().ms) {
+            QVERIFY2(!t.line.contains(QStringLiteral("state=TRANSMITTING"))
+                         && !t.line.contains(QStringLiteral("state=PTT_REQUESTED")),
+                     qPrintable(t.line));
+        }
+    }
+}
+
+void SmartSdrApiListenerPttChainTest::g20_noAmpTransmittingIsRepeatedToo()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    QTcpSocket status;
+    status.connectToHost(QHostAddress::LocalHost, listener.serverPort());
+    QVERIFY(status.waitForConnected(1000));
+    drain(&status);
+
+    listener.setInterlockTransmitting(true, QStringLiteral("MOX"));
+    const QList<TimedLine> lines = drainTimed(&status, 900);
+    const QList<TimedLine> tx = interlockLinesIn(lines, QStringLiteral("TRANSMITTING"));
+    QCOMPARE(tx.size(), 2);
+    QCOMPARE(tx.at(1).line, tx.at(0).line);
+    QVERIFY2(tx.at(1).ms - tx.at(0).ms >= 370,
+             qPrintable(QStringLiteral("repeat after %1 ms").arg(tx.at(1).ms - tx.at(0).ms)));
 }
 
 QTEST_MAIN(SmartSdrApiListenerPttChainTest)

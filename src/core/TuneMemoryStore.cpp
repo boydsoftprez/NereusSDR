@@ -11,6 +11,7 @@
 #include "core/AppSettings.h"
 #include "models/Band.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -28,6 +29,14 @@ TuneMemoryStore::TuneMemoryStore(QObject* parent)
 
 std::optional<TuneMemory> TuneMemoryStore::recall(int antenna, Band band) const
 {
+    if (m_mirrored) {
+        for (const TuneMemory& mem : m_mirroredList) {
+            if (mem.antenna == antenna && mem.band == band) {
+                return mem;
+            }
+        }
+        return std::nullopt;
+    }
     auto& s = AppSettings::instance();
     const QString key = slotKey(antenna, band);
     const QString raw = s.value(key, "").toString();
@@ -83,6 +92,9 @@ void TuneMemoryStore::clearAll()
 
 QVector<TuneMemory> TuneMemoryStore::listAll() const
 {
+    if (m_mirrored) {
+        return m_mirroredList;
+    }
     QVector<TuneMemory> result;
     for (int b = 0; b < static_cast<int>(Band::Count); ++b) {
         const Band band = static_cast<Band>(b);
@@ -95,6 +107,66 @@ QVector<TuneMemory> TuneMemoryStore::listAll() const
     }
     // Already sorted: outer loop is ascending band enum, inner is ascending antenna.
     return result;
+}
+
+// static
+QString TuneMemoryStore::toJson(const QVector<TuneMemory>& memories)
+{
+    QJsonArray arr;
+    for (const TuneMemory& mem : memories) {
+        QJsonObject obj;
+        obj["antenna"]   = mem.antenna;
+        obj["band"]      = bandKeyName(mem.band);
+        obj["c1"]        = mem.c1;
+        obj["l"]         = mem.l;
+        obj["c2"]        = mem.c2;
+        obj["savedAtMs"] = QJsonValue(mem.savedAtMs);
+        arr.append(obj);
+    }
+    return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+}
+
+// static
+QVector<TuneMemory> TuneMemoryStore::fromJson(const QString& json)
+{
+    QVector<TuneMemory> result;
+    const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
+    if (!doc.isArray()) {
+        return result;
+    }
+    for (const QJsonValue& v : doc.array()) {
+        const QJsonObject obj = v.toObject();
+        const QString key = obj.value("band").toString();
+        bool known = false;
+        Band band = Band::GEN;
+        for (int b = 0; b < static_cast<int>(Band::Count); ++b) {
+            if (bandKeyName(static_cast<Band>(b)) == key) {
+                band = static_cast<Band>(b);
+                known = true;
+                break;
+            }
+        }
+        const int antenna = obj.value("antenna").toInt();
+        if (!known || antenna < kAntMin || antenna > kAntMax) {
+            continue;
+        }
+        TuneMemory mem;
+        mem.antenna   = antenna;
+        mem.band      = band;
+        mem.c1        = obj.value("c1").toInt();
+        mem.l         = obj.value("l").toInt();
+        mem.c2        = obj.value("c2").toInt();
+        mem.savedAtMs = obj.value("savedAtMs").toInteger();
+        result.append(mem);
+    }
+    return result;
+}
+
+void TuneMemoryStore::applyMirroredJson(const QString& json)
+{
+    m_mirrored = true;
+    m_mirroredList = fromJson(json);
+    emit changed();
 }
 
 QString TuneMemoryStore::slotKey(int antenna, Band band) const

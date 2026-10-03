@@ -1,0 +1,3025 @@
+{
+  "version": 23,
+  "category": {
+    "id": "hardware",
+    "title": "Hardware Config",
+    "where": "station",
+    "coverage": "partial"
+  },
+  "pages": [
+    {
+      "id": "hardware.radioInfo",
+      "title": "Radio Info",
+      "where": "mixed",
+      "coverage": "partial",
+      "sections": [
+        {
+          "title": "Board Identity",
+          "controls": [
+            {
+              "id": "hardware.radioInfo.board",
+              "label": "Board:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "radioInfo": "board"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 13,
+              "value": ""
+            },
+            {
+              "id": "hardware.radioInfo.protocol",
+              "label": "Protocol:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "radioInfo": "protocol"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 13,
+              "value": ""
+            },
+            {
+              "id": "hardware.radioInfo.adcCount",
+              "label": "ADC count:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "radioInfo": "adcCount"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 13,
+              "value": ""
+            },
+            {
+              "id": "hardware.radioInfo.maxRx",
+              "label": "Max RX:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "radioInfo": "maxRx"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 13,
+              "value": ""
+            },
+            {
+              "id": "hardware.radioInfo.firmware",
+              "label": "Firmware:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "radioInfo": "firmware"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 13,
+              "value": ""
+            },
+            {
+              "id": "hardware.radioInfo.mac",
+              "label": "MAC:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "radioInfo": "mac"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 13,
+              "value": ""
+            },
+            {
+              "id": "hardware.radioInfo.ip",
+              "label": "IP address:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "radioInfo": "ip"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 13,
+              "value": ""
+            }
+          ]
+        },
+        {
+          "title": "Operating Parameters",
+          "controls": [
+            {
+              "id": "hardware.radioInfo.sampleRate",
+              "label": "Sample rate (Hz):",
+              "tooltip": "",
+              "kind": "choice",
+              "binding": {
+                "command": {
+                  "verb": "setRadioSampleRate",
+                  "valueProperty": {
+                    "object": "slice:active",
+                    "name": "sampleRateHz"
+                  },
+                  "arguments": {
+                    "rateHz": {
+                      "$controlValue": true
+                    }
+                  }
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 9,
+                "offAir": true
+              },
+              "requiresDescriptionVersion": 13,
+              "options": []
+            }
+          ]
+        },
+        {
+          "title": "Support",
+          "controls": [
+            {
+              "id": "hardware.radioInfo.copySupportInfo",
+              "label": "Copy Support Info to Clipboard",
+              "tooltip": "Copies board identity and firmware version to the clipboard for bug reports.",
+              "kind": "button",
+              "binding": {
+                "phone": "copySupportInfo"
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 13,
+              "copyText": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hardware.antennaAlex",
+      "title": "Antenna / ALEX",
+      "where": "station",
+      "coverage": "partial",
+      "sections": [
+        {
+          "title": "Antenna Control",
+          "controls": [
+            {
+              "id": "hardware.antennaAlex.blockTxAnt2",
+              "label": "Block TX on Ant 2",
+              "tooltip": "Prevents transmit assignments to Antenna Port 2. Use when Ant 2 is wired for receive only.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "alexAntennas",
+                  "name": "blockTxAnt2"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 6,
+                "offAir": true
+              }
+            },
+            {
+              "id": "hardware.antennaAlex.blockTxAnt3",
+              "label": "Block TX on Ant 3",
+              "tooltip": "Prevents transmit assignments to Antenna Port 3. Use when Ant 3 is wired for receive only.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "alexAntennas",
+                  "name": "blockTxAnt3"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 6,
+                "offAir": true
+              }
+            },
+            {
+              "id": "hardware.antennaAlex.rxOutOnTx",
+              "label": "RX Bypass on TX",
+              "tooltip": "Enable RX Bypass Out relay on transmit.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "alexAntennas",
+                  "name": "rxOutOnTx"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 5,
+                "offAir": true
+              }
+            },
+            {
+              "id": "hardware.antennaAlex.ext1OutOnTx",
+              "label": "Ext 1 on Tx",
+              "tooltip": "Route Ext 1 to receive path during transmit.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "alexAntennas",
+                  "name": "ext1OutOnTx"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 6,
+                "offAir": true
+              }
+            },
+            {
+              "id": "hardware.antennaAlex.ext2OutOnTx",
+              "label": "Ext 2 on Tx",
+              "tooltip": "Enable RX 1 IN on Alex or Ext 2 on ANAN during transmit.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "alexAntennas",
+                  "name": "ext2OutOnTx"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 6,
+                "offAir": true
+              }
+            },
+            {
+              "id": "hardware.antennaAlex.rxOutOverride",
+              "label": "Disable RX Bypass relay",
+              "tooltip": "Disable the RX Bypass Out relay.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "alexAntennas",
+                  "name": "rxOutOverride"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 6,
+                "offAir": true
+              }
+            },
+            {
+              "id": "hardware.antennaAlex.useTxAntennaForRx",
+              "label": "Use TX antenna for RX",
+              "tooltip": "Use the TX antenna for RX instead of the RX antenna.",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "alexAntennas",
+                  "name": "useTxAntennaForRx"
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 2
+              }
+            },
+            {
+              "id": "hardware.antenna.txRows",
+              "label": "TX Antenna per Band",
+              "tooltip": "",
+              "kind": "table",
+              "binding": {
+                "antennaRows": {
+                  "object": "alexAntennas",
+                  "mode": "tx"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 6,
+              "gate": {
+                "capability": "radioAntennaRowsVersion",
+                "min": 1,
+                "offAir": true
+              },
+              "rows": [
+                {
+                  "band": 0,
+                  "label": "160m",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for 160m"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for 160m"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for 160m"
+                    }
+                  ]
+                },
+                {
+                  "band": 1,
+                  "label": "80m",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for 80m"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for 80m"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for 80m"
+                    }
+                  ]
+                },
+                {
+                  "band": 2,
+                  "label": "60m",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for 60m"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for 60m"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for 60m"
+                    }
+                  ]
+                },
+                {
+                  "band": 3,
+                  "label": "40m",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for 40m"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for 40m"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for 40m"
+                    }
+                  ]
+                },
+                {
+                  "band": 4,
+                  "label": "30m",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for 30m"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for 30m"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for 30m"
+                    }
+                  ]
+                },
+                {
+                  "band": 5,
+                  "label": "20m",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for 20m"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for 20m"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for 20m"
+                    }
+                  ]
+                },
+                {
+                  "band": 6,
+                  "label": "17m",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for 17m"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for 17m"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for 17m"
+                    }
+                  ]
+                },
+                {
+                  "band": 7,
+                  "label": "15m",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for 15m"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for 15m"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for 15m"
+                    }
+                  ]
+                },
+                {
+                  "band": 8,
+                  "label": "12m",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for 12m"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for 12m"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for 12m"
+                    }
+                  ]
+                },
+                {
+                  "band": 9,
+                  "label": "10m",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for 10m"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for 10m"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for 10m"
+                    }
+                  ]
+                },
+                {
+                  "band": 10,
+                  "label": "6m",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for 6m"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for 6m"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for 6m"
+                    }
+                  ]
+                },
+                {
+                  "band": 11,
+                  "label": "GEN",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for GEN"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for GEN"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for GEN"
+                    }
+                  ]
+                },
+                {
+                  "band": 12,
+                  "label": "WWV",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for WWV"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for WWV"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for WWV"
+                    }
+                  ]
+                },
+                {
+                  "band": 13,
+                  "label": "XVTR",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for XVTR"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for XVTR"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for XVTR"
+                    }
+                  ]
+                },
+                {
+                  "band": 27,
+                  "label": "2m",
+                  "cells": [
+                    {
+                      "column": "tx1",
+                      "tooltip": "TX Ant 1 for 2m"
+                    },
+                    {
+                      "column": "tx2",
+                      "tooltip": "TX Ant 2 for 2m"
+                    },
+                    {
+                      "column": "tx3",
+                      "tooltip": "TX Ant 3 for 2m"
+                    }
+                  ]
+                }
+              ],
+              "columns": [
+                {
+                  "id": "tx1",
+                  "field": "tx",
+                  "antenna": 1,
+                  "label": "Ant 1"
+                },
+                {
+                  "id": "tx2",
+                  "field": "tx",
+                  "antenna": 2,
+                  "label": "Ant 2"
+                },
+                {
+                  "id": "tx3",
+                  "field": "tx",
+                  "antenna": 3,
+                  "label": "Ant 3"
+                }
+              ]
+            },
+            {
+              "id": "hardware.antenna.rxRows",
+              "label": "RX1 / RX2 Antenna per Band",
+              "tooltip": "",
+              "kind": "table",
+              "binding": {
+                "antennaRows": {
+                  "object": "alexAntennas",
+                  "mode": "rx"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 6,
+              "gate": {
+                "capability": "radioAntennaRowsVersion",
+                "min": 1
+              },
+              "rows": [
+                {
+                  "band": 0,
+                  "label": "160m",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for 160m"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for 160m"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for 160m"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for 160m"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for 160m"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for 160m"
+                    }
+                  ]
+                },
+                {
+                  "band": 1,
+                  "label": "80m",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for 80m"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for 80m"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for 80m"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for 80m"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for 80m"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for 80m"
+                    }
+                  ]
+                },
+                {
+                  "band": 2,
+                  "label": "60m",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for 60m"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for 60m"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for 60m"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for 60m"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for 60m"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for 60m"
+                    }
+                  ]
+                },
+                {
+                  "band": 3,
+                  "label": "40m",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for 40m"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for 40m"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for 40m"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for 40m"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for 40m"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for 40m"
+                    }
+                  ]
+                },
+                {
+                  "band": 4,
+                  "label": "30m",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for 30m"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for 30m"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for 30m"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for 30m"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for 30m"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for 30m"
+                    }
+                  ]
+                },
+                {
+                  "band": 5,
+                  "label": "20m",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for 20m"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for 20m"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for 20m"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for 20m"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for 20m"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for 20m"
+                    }
+                  ]
+                },
+                {
+                  "band": 6,
+                  "label": "17m",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for 17m"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for 17m"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for 17m"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for 17m"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for 17m"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for 17m"
+                    }
+                  ]
+                },
+                {
+                  "band": 7,
+                  "label": "15m",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for 15m"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for 15m"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for 15m"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for 15m"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for 15m"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for 15m"
+                    }
+                  ]
+                },
+                {
+                  "band": 8,
+                  "label": "12m",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for 12m"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for 12m"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for 12m"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for 12m"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for 12m"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for 12m"
+                    }
+                  ]
+                },
+                {
+                  "band": 9,
+                  "label": "10m",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for 10m"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for 10m"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for 10m"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for 10m"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for 10m"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for 10m"
+                    }
+                  ]
+                },
+                {
+                  "band": 10,
+                  "label": "6m",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for 6m"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for 6m"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for 6m"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for 6m"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for 6m"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for 6m"
+                    }
+                  ]
+                },
+                {
+                  "band": 11,
+                  "label": "GEN",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for GEN"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for GEN"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for GEN"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for GEN"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for GEN"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for GEN"
+                    }
+                  ]
+                },
+                {
+                  "band": 12,
+                  "label": "WWV",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for WWV"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for WWV"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for WWV"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for WWV"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for WWV"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for WWV"
+                    }
+                  ]
+                },
+                {
+                  "band": 13,
+                  "label": "XVTR",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for XVTR"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for XVTR"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for XVTR"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for XVTR"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for XVTR"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for XVTR"
+                    }
+                  ]
+                },
+                {
+                  "band": 27,
+                  "label": "2m",
+                  "cells": [
+                    {
+                      "column": "rx1",
+                      "tooltip": "RX1 Ant 1 for 2m"
+                    },
+                    {
+                      "column": "rx2",
+                      "tooltip": "RX1 Ant 2 for 2m"
+                    },
+                    {
+                      "column": "rx3",
+                      "tooltip": "RX1 Ant 3 for 2m"
+                    },
+                    {
+                      "column": "rxOnly1",
+                      "tooltip": "RX-only RX1 for 2m"
+                    },
+                    {
+                      "column": "rxOnly2",
+                      "tooltip": "RX-only RX2 for 2m"
+                    },
+                    {
+                      "column": "rxOnly3",
+                      "tooltip": "RX-only XVTR for 2m"
+                    }
+                  ]
+                }
+              ],
+              "columns": [
+                {
+                  "id": "rx1",
+                  "field": "rx",
+                  "antenna": 1,
+                  "label": "1"
+                },
+                {
+                  "id": "rx2",
+                  "field": "rx",
+                  "antenna": 2,
+                  "label": "2"
+                },
+                {
+                  "id": "rx3",
+                  "field": "rx",
+                  "antenna": 3,
+                  "label": "3"
+                },
+                {
+                  "id": "rxOnly1",
+                  "field": "rxOnly",
+                  "antenna": 1,
+                  "label": "RX1"
+                },
+                {
+                  "id": "rxOnly2",
+                  "field": "rxOnly",
+                  "antenna": 2,
+                  "label": "RX2"
+                },
+                {
+                  "id": "rxOnly3",
+                  "field": "rxOnly",
+                  "antenna": 3,
+                  "label": "XVTR"
+                }
+              ],
+              "columnGroups": [
+                {
+                  "label": "RX1",
+                  "columns": [
+                    "rx1",
+                    "rx2",
+                    "rx3"
+                  ]
+                },
+                {
+                  "label": "RX-only",
+                  "columns": [
+                    "rxOnly1",
+                    "rxOnly2",
+                    "rxOnly3"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hardware.alex1Filters",
+      "title": "Alex-1 Filters",
+      "where": "station",
+      "coverage": "partial",
+      "sections": [
+        {
+          "title": "Alex HPF Bands",
+          "controls": [
+            {
+              "id": "hardware.alex1Filters.hpfBypass",
+              "label": "HPF Bypass (master)",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/master/hpfBypass"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.hpfBypassOnTx",
+              "label": "HPF Bypass on TX",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/master/hpfBypassOnTx"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.hpfBypassOnPs",
+              "label": "HPF Bypass on PureSignal feedback",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/master/hpfBypassOnPs"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 13,
+              "default": true,
+              "confirm": "Including the BPFs during a PureSignal transmission may produce passive Inter-Modulation Distortion in the inductors of the bandpass filters.\n\nYou will NOT be able to observe this degraded performance on the panadapter because PS is correcting to the distorted feedback and the panadapter is \"seeing\" that same distorted feedback. It can only be observed with an external spectrum analyzer.\n\nPlease ensure you understand the implications of including the BPFs when transmitting a PureSignal based signal. It is not recommended.",
+              "confirmWhen": false
+            },
+            {
+              "id": "hardware.alex1Filters.disable6mLnaOnTx",
+              "label": "Disable 6m LNA on TX",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/master/disable6mLnaOnTx"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 13,
+              "default": true
+            },
+            {
+              "id": "hardware.alex1Filters.disable6mLnaOnRx",
+              "label": "Disable 6m LNA on RX",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/master/disable6mLnaOnRx"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.1_5MHz.bypass",
+              "label": "1.5 MHz HPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/hpf/1_5MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.1_5MHz.start",
+              "label": "1.5 MHz HPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/hpf/1_5MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 1.8
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.1_5MHz.end",
+              "label": "1.5 MHz HPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/hpf/1_5MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 6.499999
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.6_5MHz.bypass",
+              "label": "6.5 MHz HPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/hpf/6_5MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.6_5MHz.start",
+              "label": "6.5 MHz HPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/hpf/6_5MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 6.5
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.6_5MHz.end",
+              "label": "6.5 MHz HPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/hpf/6_5MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 9.499999
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.9_5MHz.bypass",
+              "label": "9.5 MHz HPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/hpf/9_5MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.9_5MHz.start",
+              "label": "9.5 MHz HPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/hpf/9_5MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 9.5
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.9_5MHz.end",
+              "label": "9.5 MHz HPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/hpf/9_5MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 12.999999
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.13MHz.bypass",
+              "label": "13 MHz HPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/hpf/13MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.13MHz.start",
+              "label": "13 MHz HPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/hpf/13MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 13
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.13MHz.end",
+              "label": "13 MHz HPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/hpf/13MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 19.999999
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.20MHz.bypass",
+              "label": "20 MHz HPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/hpf/20MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.20MHz.start",
+              "label": "20 MHz HPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/hpf/20MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 20
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.20MHz.end",
+              "label": "20 MHz HPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/hpf/20MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 49.999999
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.6mBP.bypass",
+              "label": "6m Bypass Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/hpf/6mBP/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.6mBP.start",
+              "label": "6m Bypass Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/hpf/6mBP/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 50
+            },
+            {
+              "id": "hardware.alex1Filters.hpf.6mBP.end",
+              "label": "6m Bypass End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/hpf/6mBP/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 61.44
+            }
+          ]
+        },
+        {
+          "title": "Saturn BPF1 Bands",
+          "controls": [
+            {
+              "id": "hardware.alex1Filters.bpf1.1_5MHz.bypass",
+              "label": "160m BPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/bpf1/1_5MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.1_5MHz.start",
+              "label": "160m BPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/bpf1/1_5MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 1.5
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.1_5MHz.end",
+              "label": "160m BPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/bpf1/1_5MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 2.099999
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.6_5MHz.bypass",
+              "label": "80/60m BPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/bpf1/6_5MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.6_5MHz.start",
+              "label": "80/60m BPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/bpf1/6_5MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 2.1
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.6_5MHz.end",
+              "label": "80/60m BPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/bpf1/6_5MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 5.499999
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.9_5MHz.bypass",
+              "label": "40/30m BPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/bpf1/9_5MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.9_5MHz.start",
+              "label": "40/30m BPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/bpf1/9_5MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 5.5
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.9_5MHz.end",
+              "label": "40/30m BPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/bpf1/9_5MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 10.999999
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.13MHz.bypass",
+              "label": "20/17/15m BPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/bpf1/13MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.13MHz.start",
+              "label": "20/17/15m BPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/bpf1/13MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 11
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.13MHz.end",
+              "label": "20/17/15m BPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/bpf1/13MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 21.999999
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.20MHz.bypass",
+              "label": "12/10m BPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/bpf1/20MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.20MHz.start",
+              "label": "12/10m BPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/bpf1/20MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 22
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.20MHz.end",
+              "label": "12/10m BPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/bpf1/20MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 34.999999
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.6mBP.bypass",
+              "label": "6m BPF/LNA Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/bpf1/6mBP/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.6mBP.start",
+              "label": "6m BPF/LNA Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/bpf1/6mBP/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 35
+            },
+            {
+              "id": "hardware.alex1Filters.bpf1.6mBP.end",
+              "label": "6m BPF/LNA End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/bpf1/6mBP/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 61.44
+            }
+          ]
+        },
+        {
+          "title": "Alex LPF Bands",
+          "controls": [
+            {
+              "id": "hardware.alex1Filters.lpf.160m.start",
+              "label": "160m LPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/lpf/160m/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 17,
+              "min": 0,
+              "max": 1.999999,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 0
+            },
+            {
+              "id": "hardware.alex1Filters.lpf.160m.end",
+              "label": "160m LPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/lpf/160m/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 17,
+              "min": 1.5,
+              "max": 2.5,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 2.5
+            },
+            {
+              "id": "hardware.alex1Filters.lpf.80m.start",
+              "label": "80m LPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/lpf/80m/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 17,
+              "min": 1.8,
+              "max": 2.999999,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 2.500001
+            },
+            {
+              "id": "hardware.alex1Filters.lpf.80m.end",
+              "label": "80m LPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/lpf/80m/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 17,
+              "min": 3,
+              "max": 5,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 5
+            },
+            {
+              "id": "hardware.alex1Filters.lpf.40m.start",
+              "label": "60/40m LPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/lpf/40m/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 17,
+              "min": 4,
+              "max": 6.5,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 5.000001
+            },
+            {
+              "id": "hardware.alex1Filters.lpf.40m.end",
+              "label": "60/40m LPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/lpf/40m/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 17,
+              "min": 6.500001,
+              "max": 8,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 8
+            },
+            {
+              "id": "hardware.alex1Filters.lpf.20m.start",
+              "label": "30/20m LPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/lpf/20m/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 17,
+              "min": 7,
+              "max": 12,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 8.000001
+            },
+            {
+              "id": "hardware.alex1Filters.lpf.20m.end",
+              "label": "30/20m LPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/lpf/20m/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 17,
+              "min": 12.000001,
+              "max": 16.5,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 16.5
+            },
+            {
+              "id": "hardware.alex1Filters.lpf.15m.start",
+              "label": "17/15m LPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/lpf/15m/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 17,
+              "min": 15.5,
+              "max": 21,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 16.500001
+            },
+            {
+              "id": "hardware.alex1Filters.lpf.15m.end",
+              "label": "17/15m LPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/lpf/15m/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 17,
+              "min": 23.000001,
+              "max": 25,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 24
+            },
+            {
+              "id": "hardware.alex1Filters.lpf.10m.start",
+              "label": "12/10m LPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/lpf/10m/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 17,
+              "min": 24,
+              "max": 30,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 24.000001
+            },
+            {
+              "id": "hardware.alex1Filters.lpf.10m.end",
+              "label": "12/10m LPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/lpf/10m/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 17,
+              "min": 30.000001,
+              "max": 35.6,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 35.6
+            },
+            {
+              "id": "hardware.alex1Filters.lpf.6m.start",
+              "label": "6m LPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/lpf/6m/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 17,
+              "min": 34,
+              "max": 50,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 35.600001
+            },
+            {
+              "id": "hardware.alex1Filters.lpf.6m.end",
+              "label": "6m LPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex/lpf/6m/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 17,
+              "min": 50.000001,
+              "max": 61.44,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 61.44
+            },
+            {
+              "id": "hardware.alex1Filters.lpfBypass",
+              "label": "6m/ByPass on RX",
+              "tooltip": "Selects the 6m LPF during receive regardless of frequency.",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex/master/lpfBypass"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 10
+              },
+              "requiresDescriptionVersion": 17,
+              "default": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hardware.alex2Filters",
+      "title": "Alex-2 Filters",
+      "where": "station",
+      "coverage": "partial",
+      "sections": [
+        {
+          "title": "Alex-2 HPF Bands",
+          "controls": [
+            {
+              "id": "hardware.alex2Filters.bypass55MhzBpf",
+              "label": "ByPass / 55 MHz BPF (master)",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex2/master/bypass55MhzBpf"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.1_5MHz.bypass",
+              "label": "1.5 MHz HPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex2/hpf/1_5MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.1_5MHz.start",
+              "label": "1.5 MHz HPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex2/hpf/1_5MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 1.5
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.1_5MHz.end",
+              "label": "1.5 MHz HPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex2/hpf/1_5MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 2.099999
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.6_5MHz.bypass",
+              "label": "6.5 MHz HPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex2/hpf/6_5MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.6_5MHz.start",
+              "label": "6.5 MHz HPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex2/hpf/6_5MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 2.1
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.6_5MHz.end",
+              "label": "6.5 MHz HPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex2/hpf/6_5MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 5.499999
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.9_5MHz.bypass",
+              "label": "9.5 MHz HPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex2/hpf/9_5MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.9_5MHz.start",
+              "label": "9.5 MHz HPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex2/hpf/9_5MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 5.5
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.9_5MHz.end",
+              "label": "9.5 MHz HPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex2/hpf/9_5MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 10.999999
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.13MHz.bypass",
+              "label": "13 MHz HPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex2/hpf/13MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.13MHz.start",
+              "label": "13 MHz HPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex2/hpf/13MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 11
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.13MHz.end",
+              "label": "13 MHz HPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex2/hpf/13MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 21.999999
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.20MHz.bypass",
+              "label": "20 MHz HPF Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex2/hpf/20MHz/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.20MHz.start",
+              "label": "20 MHz HPF Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex2/hpf/20MHz/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 22
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.20MHz.end",
+              "label": "20 MHz HPF End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex2/hpf/20MHz/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 34.999999
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.6mBP.bypass",
+              "label": "6m Bypass Bypass",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "alex2/hpf/6mBP/enabled"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": false
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.6mBP.start",
+              "label": "6m Bypass Start",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex2/hpf/6mBP/start"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 35
+            },
+            {
+              "id": "hardware.alex2Filters.hpf.6mBP.end",
+              "label": "6m Bypass End",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "alex2/hpf/6mBP/end"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": 0,
+              "max": 200,
+              "step": 0.001,
+              "decimals": 6,
+              "unit": "MHz",
+              "default": 61.44
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hardware.calibration",
+      "title": "Calibration",
+      "where": "station",
+      "coverage": "partial",
+      "sections": [
+        {
+          "title": "Level Cal",
+          "controls": [
+            {
+              "id": "hardware.calibration.rx1_6mLna",
+              "label": "Rx1 6m LNA:",
+              "tooltip": "",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "cal/rx1_6mLna"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "radioHardwareVersion",
+                "min": 1
+              },
+              "requiresDescriptionVersion": 23,
+              "min": 0,
+              "max": 25,
+              "step": 1,
+              "decimals": 1,
+              "unit": "dB",
+              "default": 13
+            }
+          ]
+        },
+        {
+          "title": "TX Display Cal",
+          "controls": [
+            {
+              "id": "hardware.calibration.txDisplayOffset",
+              "label": "Offset:",
+              "tooltip": "TX display calibration offset in dB. Applied to TX spectrum display.",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "cal/txDisplayOffset"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "min": -100,
+              "max": 100,
+              "step": 0.1,
+              "decimals": 1,
+              "unit": "dB",
+              "default": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hardware.hl2Io",
+      "title": "HL2 I/O",
+      "where": "station",
+      "coverage": "partial",
+      "sections": [
+        {
+          "title": "Configuration",
+          "controls": [
+            {
+              "id": "hardware.hl2Io.n2adrFilter",
+              "label": "Enable N2ADR Filter board",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "hl2IoBoard/n2adrFilter"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 13,
+              "default": true
+            }
+          ]
+        },
+        {
+          "title": "Hermes Lite Options",
+          "controls": [
+            {
+              "id": "hardware.hl2Io.txLatency",
+              "label": "TX buffer latency:",
+              "tooltip": "",
+              "kind": "integer",
+              "binding": {
+                "radioSetting": "hl2/txLatencyMs"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 8,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 16,
+              "min": 0,
+              "max": 70,
+              "step": 1,
+              "unit": "ms",
+              "default": 20
+            },
+            {
+              "id": "hardware.hl2Io.pttHang",
+              "label": "PTT hang:",
+              "tooltip": "",
+              "kind": "integer",
+              "binding": {
+                "radioSetting": "hl2/pttHangMs"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 8,
+                "transmit": true
+              },
+              "requiresDescriptionVersion": 16,
+              "min": 0,
+              "max": 30,
+              "step": 1,
+              "unit": "ms",
+              "default": 12
+            },
+            {
+              "id": "hardware.hl2Io.cl2Enable",
+              "label": "Enable CL2",
+              "tooltip": "Enable frequency output on CL2",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "hl2/cl2Enable"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 18,
+              "default": false
+            },
+            {
+              "id": "hardware.hl2Io.cl2Freq",
+              "label": "CL2 frequency",
+              "tooltip": "Output frequency on CL2 output",
+              "kind": "decimal",
+              "binding": {
+                "radioSetting": "hl2/cl2FreqMHz"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 18,
+              "min": 1,
+              "max": 200,
+              "step": 0.1,
+              "decimals": 3,
+              "unit": "MHz",
+              "enabledWhen": {
+                "radioSetting": "hl2/cl2Enable",
+                "oneOf": [
+                  true
+                ]
+              },
+              "default": 116
+            },
+            {
+              "id": "hardware.hl2Io.ext10MHz",
+              "label": "External 10 MHz reference",
+              "tooltip": "Enable external 10 MHz input on CL1",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "hl2/ext10MHz"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 18,
+              "default": false
+            },
+            {
+              "id": "hardware.hl2Io.disconnectReset",
+              "label": "Reset on Ethernet disconnect",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "hl2/disconnectReset"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 16,
+              "default": false
+            },
+            {
+              "id": "hardware.hl2Io.psSync",
+              "label": "Disable power supply sync",
+              "tooltip": "Stops the radio synchronizing its power supply clock.",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "hl2/psSync"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 16,
+              "default": false
+            },
+            {
+              "id": "hardware.hl2Io.bandVolts",
+              "label": "Band Volts (PWM out 0–3.3 V)",
+              "tooltip": "",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "hl2/bandVolts"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 16,
+              "default": false
+            },
+            {
+              "id": "hardware.hl2Io.swapAudioChannels",
+              "label": "Swap audio channels",
+              "tooltip": "Swap the audio channels sent to the HL2",
+              "kind": "toggle",
+              "binding": {
+                "radioSetting": "hl2/swapAudioChannels"
+              },
+              "valueEncoding": {
+                "true": "True",
+                "false": "False"
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "transmitSettingsVersion",
+                "min": 8
+              },
+              "requiresDescriptionVersion": 16,
+              "default": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -20,7 +20,7 @@ private slots:
 };
 
 // Plan adaptation: added a.setConnectedState(true) so action[2] reads
-// "Disconnect" (the connected branch) rather than "Reconnect" (the
+// "Disconnect" (the connected branch) rather than "Connect" (the
 // disconnected branch). The disconnectEmitsConnectionToggle test also
 // sets connected=true for the same reason.  The plan text was
 // self-inconsistent on this point; option (b) from the task notes

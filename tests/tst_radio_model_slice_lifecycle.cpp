@@ -68,12 +68,14 @@ private slots:
 
     void addSliceOnPan_exists_and_is_callable()
     {
-        // Disconnected RadioModel: maxSlices() == 1 (safe default) and
-        // m_slices starts empty.  First addSliceOnPan should SUCCEED
-        // (creates slice 0, total = 1 = cap).  A second call should be
-        // REJECTED (cap exceeded).  The test exists primarily to verify
-        // the API compiles and the cap-enforcement contract holds.
+        // A stream pool sized for one slice, and m_slices starts empty.
+        // First addSliceOnPan should SUCCEED (creates slice 0, total = 1 =
+        // cap).  A second call should be REJECTED (cap exceeded).  The test
+        // exists primarily to verify the API compiles and the
+        // cap-enforcement contract holds.  (Fix wave 1, I1: the cap is the
+        // pool's, sliceChannelLimit(), not maxSlices()'s disconnected 1.)
         RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 1, 192000);
         QSignalSpy added(&radio, &RadioModel::sliceAdded);
         QSignalSpy rejected(&radio, &RadioModel::sliceAddRejected);
 
@@ -81,7 +83,7 @@ private slots:
         QCOMPARE(added.count(), 1);
         QCOMPARE(rejected.count(), 0);
 
-        // Cap is 1 when disconnected; a second add must be rejected.
+        // The cap is 1; a second add must be rejected.
         radio.addSliceOnPan(QStringLiteral("pan-1"));
         QCOMPARE(added.count(), 1);
         QCOMPARE(rejected.count(), 1);
@@ -92,7 +94,7 @@ private slots:
         RadioModel radio;
         QSignalSpy removed(&radio, &RadioModel::sliceRemoved);
 
-        // Create one slice (succeeds, cap = 1 when disconnected).
+        // Create one slice.
         radio.addSliceOnPan(QStringLiteral("pan-0"));
 
         // Attempting to remove the only remaining slice must be a silent
@@ -108,8 +110,7 @@ private slots:
     // mid-list removal and ids could be handed out twice.
     //
     // addSlice now takes the lowest free id and sliceById resolves by id
-    // rather than by position. addSliceOnPan is capped at maxSlices() (1
-    // while disconnected), so these use addSlice directly.
+    // rather than by position. These use addSlice directly.
 
     void survivorsKeepTheirIdsAcrossAMiddleRemoval()
     {

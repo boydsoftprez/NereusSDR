@@ -1,0 +1,8 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "prove",
+    "signature": "VprRjHqlrM-_fpzu1zxVgKU6yZFidw7uI8MyZrNk8EAAC2YoGzQIQRjTk-H1LSFRnfkMw33bbPiWjBw8W4kYiA"
+  },
+  "decodes": true
+}

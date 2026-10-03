@@ -1,0 +1,10 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "auth.result",
+    "accepted": true,
+    "reason": "",
+    "retryable": false
+  },
+  "decodes": true
+}

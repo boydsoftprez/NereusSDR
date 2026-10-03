@@ -53,6 +53,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "BaseItemEditor.h"
+#include "gui/UnbuiltFeatures.h"
 
 #include "../../meters/MeterItem.h"
 #include "../../meters/MeterPoller.h"
@@ -147,9 +148,9 @@ void BaseItemEditor::buildBaseForm()
     m_comboBinding->setStyleSheet(kComboStyle);
     m_comboBinding->setMinimumWidth(kDefaultFieldWidth);
     m_comboBinding->setToolTip(QStringLiteral(
-        "Built-in meter source: WDSP RX/TX channels, PA hardware "
-        "(volts/amps/temp), and rotator readings. For external MMIO "
-        "endpoint variables use the MMIO Variable\u2026 button."));
+        "The built-in reading this item shows: receive and transmit meters, "
+        "the radio's volts, amps and temperature, and rotator readings. For a "
+        "value from one of your meter data sources, use Choose a value\u2026."));
     populateBindingCombo();
     connect(m_comboBinding, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int) {
@@ -166,10 +167,12 @@ void BaseItemEditor::buildBaseForm()
     bindingLay->setContentsMargins(0, 0, 0, 0);
     bindingLay->setSpacing(4);
     bindingLay->addWidget(m_comboBinding, 1);
-    auto* btnVariable = new QPushButton(QStringLiteral("MMIO Variable\u2026"), bindingRow);
+    // R-R3-21 (operator wording, 2026-09-24): the button opens the
+    // "Choose a value" window.
+    auto* btnVariable = new QPushButton(QStringLiteral("Choose a value\u2026"), bindingRow);
     btnVariable->setToolTip(QStringLiteral(
-        "Bind this item to an MMIO endpoint variable. For built-in "
-        "WDSP / PA / rotator meters use the dropdown to the left."));
+        "Show a value from one of your meter data sources (MMIO) on this item. "
+        "For the built-in meters, use the list to the left."));
     bindingLay->addWidget(btnVariable);
     connect(btnVariable, &QPushButton::clicked, this, [this, btnVariable]() {
         if (!m_item) { return; }
@@ -179,14 +182,14 @@ void BaseItemEditor::buildBaseForm()
         if (dlg.exec() != QDialog::Accepted) { return; }
         if (dlg.wasCleared()) {
             m_item->clearMmioBinding();
-            btnVariable->setText(QStringLiteral("Variable\u2026"));
+            btnVariable->setText(QStringLiteral("Choose a value\u2026"));
         } else {
             m_item->setMmioBinding(dlg.selectedGuid(), dlg.selectedVariable());
             btnVariable->setText(dlg.selectedVariable());
         }
         notifyChanged();
     });
-    addRow(QStringLiteral("Binding"), bindingRow);
+    addRow(QStringLiteral("Reading"), bindingRow);
 
     m_spinZ = makeIntRow(QStringLiteral("Z-order"), 0, 999);
 
@@ -283,6 +286,10 @@ void BaseItemEditor::populateBindingCombo()
     };
     m_comboBinding->addItem(QStringLiteral("(none)"), -1);
     for (const auto& b : kBindings) {
+        if (b.id == MeterBinding::PbSnr
+            && !UnbuiltFeatures::isBuilt(UnbuiltFeature::PbSnr)) {
+            continue;
+        }
         m_comboBinding->addItem(QString::fromLatin1(b.label), b.id);
     }
 }

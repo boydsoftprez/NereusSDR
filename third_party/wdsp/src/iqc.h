@@ -1,4 +1,16 @@
 // =================================================================
+// Historical PureSignal 2 provenance record retained by NereusSDR
+// =================================================================
+//
+// The block below describes the retired iqc.h predecessor imported from
+// Thetis v2.10.3.13 in May 2026.  On 2026-09-22 it was superseded by the
+// pinned TAPR OpenHPSDR WDSP 2.10 baseline at
+// b02d5bac675dd2f33ec2bab2b339f79a597c47dd.  The current implementation and
+// its Nereus compatibility/cancellation changes begin after this historical
+// record; the old provenance and notices remain here for attribution only.
+// =================================================================
+
+// =================================================================
 // third_party/wdsp/src/iqc.h  (NereusSDR)
 // =================================================================
 //
@@ -47,39 +59,69 @@ warren@wpratt.com
 //                "Ported from Thetis source" preamble added above the
 //                original NR0V license header, mirroring cfcomp.h.
 // =================================================================
+
+/*  iqc.h
+
+This file is part of a program that implements a Software-Defined Radio.
+
+Copyright (C) 2013, 2026 Warren Pratt, NR0V
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at  
+
+warren@pratt.one
+
+*/
+
+// NereusSDR modifications (2026-09-30 notice, J.J. Boyd KG4VCF, with Anthropic
+// Claude Code; changes made between 2026-09-22 and 2026-09-30 against the
+// pinned TAPR WDSP 2.10 tree at b02d5bac): adds the stopping field to the IQC
+// struct; SetTXAiqcSwap and SetTXAiqcStart return int; and declares
+// SetTXAiqcSwapChecked, SetTXAiqcStartChecked, SetTXAiqcStopping,
+// RequestTXAiqcEnd, StopTXAiqcQuiescent, ApplyTXAiqcRetained and
+// GetTXAiqcCorrectionAvailable.
+// The "No NereusSDR-level edits" line in the historical record above
+// describes the retired May 2026 Thetis vendor only, not this file.
+
 #ifndef _iqc_h
 #define _iqc_h
-
+#include "nurbs_spline.h"
 typedef struct _iqc
 {
+	NS_Spline   *m_spline[2], *c_spline[2], *s_spline[2];
+	CurveEMA    m_calavg[2], c_calavg[2], s_calavg[2];
+	double      m_prev_y[2], c_prev_y[2], s_prev_y[2];
+
 	volatile long run;
 	volatile long busy;
+	volatile long stopping;
 	int size;
 	double* in;
 	double* out;
 	double rate;
-	int ints;
-	double* t;
 	int cset;
-	double* cm[2];
-	double* cc[2];
-	double* cs[2];
 	double tup;
 	double* cup;
 	int count;
 	int ntup;
 	int state;
-	struct
-	{
-		int spi;
-		int* cpi;
-		int full_ints;
-		int count;
-		CRITICAL_SECTION cs;
-	} dog;
+	
 } iqc, *IQC;
 
-extern IQC create_iqc (int run, int size, double* in, double* out, double rate, int ints, double tup, int spi);
+extern IQC create_iqc(int run, int size, double* in, double* out, double rate, double tup);
 
 extern void destroy_iqc (IQC a);
 
@@ -93,24 +135,51 @@ extern void setSamplerate_iqc (IQC a, int rate);
 
 extern void setSize_iqc (IQC a, int size);
 
-extern void size_iqc (IQC a);
-
-extern void desize_iqc (IQC a);
-
 // TXA Properties
 
-extern __declspec (dllexport)  void GetTXAiqcValues (int channel, double* cm, double* cc, double* cs);
+extern void GetTXAiqcValues(int channel, 
+	NS_Spline** m_spline, CurveEMA* m_calavg, double* m_prev_y,
+	NS_Spline** c_spline, CurveEMA* c_calavg, double* c_prev_y,
+	NS_Spline** s_spline, CurveEMA* s_calavg, double* s_prev_y);
 
-extern __declspec (dllexport)  void SetTXAiqcValues (int channel, double* cm, double* cc, double* cs);
+extern int SetTXAiqcSwap(int channel, 
+	NS_Spline* m_spline, CurveEMA* m_calavg, double m_prev_y,
+	NS_Spline* c_spline, CurveEMA* c_calavg, double c_prev_y,
+	NS_Spline* s_spline, CurveEMA* s_calavg, double s_prev_y);
 
-extern __declspec (dllexport)  void SetTXAiqcSwap (int channel, double* cm, double* cc, double* cs);
+// Nereus session retirement: the cancellation flag is tested while csDSP is
+// held, immediately before the IQC transition is installed.  A null flag
+// preserves the upstream SetTXAiqcSwap behavior.
+extern int SetTXAiqcSwapChecked(int channel,
+	NS_Spline* m_spline, CurveEMA* m_calavg, double m_prev_y,
+	NS_Spline* c_spline, CurveEMA* c_calavg, double c_prev_y,
+	NS_Spline* s_spline, CurveEMA* s_calavg, double s_prev_y,
+	volatile LONG* cancelled);
 
-extern __declspec (dllexport)  void SetTXAiqcStart (int channel, double* cm, double* cc, double* cs);
+extern int SetTXAiqcStart(int channel, 
+	NS_Spline* m_spline, CurveEMA* m_calavg, double m_prev_y,
+	NS_Spline* c_spline, CurveEMA* c_calavg, double c_prev_y,
+	NS_Spline* s_spline, CurveEMA* s_calavg, double s_prev_y);
 
-extern __declspec (dllexport)  void SetTXAiqcEnd (int channel);
+extern int SetTXAiqcStartChecked(int channel,
+	NS_Spline* m_spline, CurveEMA* m_calavg, double m_prev_y,
+	NS_Spline* c_spline, CurveEMA* c_calavg, double c_prev_y,
+	NS_Spline* s_spline, CurveEMA* s_calavg, double s_prev_y,
+	volatile LONG* cancelled);
 
-void GetTXAiqcDogCount (int channel, int* count);
+extern void SetTXAiqcEnd (int channel);
 
-void SetTXAiqcDogCount (int channel, int  count);
+extern void SetTXAiqcStopping (int channel, int stopping);
+
+extern int RequestTXAiqcEnd (int channel);
+
+// Nereus quiescent correction control. The stop variant is used only after
+// the host has stopped TXA processing; apply retains the upstream BEGIN ramp
+// for the next processed block. Both calls are serialized by csDSP.
+extern int StopTXAiqcQuiescent (int channel);
+
+extern int ApplyTXAiqcRetained (int channel);
+
+extern int GetTXAiqcCorrectionAvailable (int channel, int* available);
 
 #endif

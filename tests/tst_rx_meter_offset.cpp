@@ -48,6 +48,12 @@ private slots:
     // Invariant: no SKU may return a value Thetis never defines.
     void factoryCalOffset_everyModelReturnsAThetisDefinedValue();
 
+    // Display calibration defaults (Thetis RXDisplayCalbrationOffsetDefauls).
+    void displayCalOffset_7000dGroup();
+    void displayCalOffset_g2Group();
+    void displayCalOffset_defaultGroup();
+    void displayCalOffset_everyModelReturnsAThetisDefinedValue();
+
     // Preamp-mode offsets — Thetis console.cs:1991-2001 [v2.10.3.13].
     void preampOffset_off();
     void preampOffset_on();
@@ -187,6 +193,57 @@ void TestRxMeterOffset::factoryCalOffset_everyModelReturnsAThetisDefinedValue()
                      "HPSDRModel %1 (%2) returned %3, which is not one of the "
                      "three Thetis RXMeterCalbrationOffsetDefaults values "
                      "(4.841644 / -4.476 / 0.98)")
+                     .arg(i)
+                     .arg(QString::fromLatin1(displayName(m)))
+                     .arg(static_cast<double>(offset))));
+    }
+}
+
+// 1b. Display calibration defaults.
+// From Thetis clsHardwareSpecific.cs:424-440 [v2.10.3.15]
+// (RXDisplayCalbrationOffsetDefauls): the same three groups as the meter
+// defaults, with REDPITAYA carrying //DH1KLM upstream.
+
+void TestRxMeterOffset::displayCalOffset_7000dGroup()
+{
+    QCOMPARE(rxDisplayCalOffsetDefaultFor(HPSDRModel::ANAN7000D), 5.259f);
+    QCOMPARE(rxDisplayCalOffsetDefaultFor(HPSDRModel::ANAN8000D), 5.259f);
+    QCOMPARE(rxDisplayCalOffsetDefaultFor(HPSDRModel::ORIONMKII), 5.259f);
+    QCOMPARE(rxDisplayCalOffsetDefaultFor(HPSDRModel::ANVELINAPRO3), 5.259f);
+    QCOMPARE(rxDisplayCalOffsetDefaultFor(HPSDRModel::REDPITAYA), 5.259f);  //DH1KLM
+}
+
+void TestRxMeterOffset::displayCalOffset_g2Group()
+{
+    QCOMPARE(rxDisplayCalOffsetDefaultFor(HPSDRModel::ANAN_G2), -4.4005f);
+    QCOMPARE(rxDisplayCalOffsetDefaultFor(HPSDRModel::ANAN_G2_1K), -4.4005f);
+}
+
+void TestRxMeterOffset::displayCalOffset_defaultGroup()
+{
+    // G2E has no case in the upstream switch, so it takes the default.
+    QCOMPARE(rxDisplayCalOffsetDefaultFor(HPSDRModel::ANAN_G2E), -2.1f);
+    QCOMPARE(rxDisplayCalOffsetDefaultFor(HPSDRModel::HPSDR), -2.1f);
+    QCOMPARE(rxDisplayCalOffsetDefaultFor(HPSDRModel::HERMES), -2.1f);
+    QCOMPARE(rxDisplayCalOffsetDefaultFor(HPSDRModel::HERMESLITE), -2.1f);
+    QCOMPARE(rxDisplayCalOffsetDefaultFor(HPSDRModel::ANAN100D), -2.1f);
+    QCOMPARE(rxDisplayCalOffsetDefaultFor(HPSDRModel::ANAN200D), -2.1f);
+}
+
+void TestRxMeterOffset::displayCalOffset_everyModelReturnsAThetisDefinedValue()
+{
+    for (int i = static_cast<int>(HPSDRModel::HPSDR);
+         i < static_cast<int>(HPSDRModel::LAST); ++i) {
+        const HPSDRModel m = static_cast<HPSDRModel>(i);
+        const float offset = rxDisplayCalOffsetDefaultFor(m);
+        const bool known = (offset == 5.259f)
+                        || (offset == -4.4005f)
+                        || (offset == -2.1f);
+        QVERIFY2(known,
+                 qPrintable(QStringLiteral(
+                     "HPSDRModel %1 (%2) returned %3, which is not one of the "
+                     "three Thetis RXDisplayCalbrationOffsetDefauls values "
+                     "(5.259 / -4.4005 / -2.1)")
                      .arg(i)
                      .arg(QString::fromLatin1(displayName(m)))
                      .arg(static_cast<double>(offset))));

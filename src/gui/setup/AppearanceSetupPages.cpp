@@ -1,7 +1,9 @@
 #include "AppearanceSetupPages.h"
 #include "gui/ColorSwatchButton.h"
+#include "gui/SMeterWidget.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/StyleConstants.h"
+#include "gui/UnbuiltFeatures.h"
 #include "core/AppSettings.h"
 #include "models/RadioModel.h"
 
@@ -16,6 +18,7 @@
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <QSignalBlocker>
 
 #include <functional>
 
@@ -62,11 +65,12 @@ void ColorsThemePage::buildUI()
         QColor(0x00, 0xe5, 0xff),
         [](SpectrumWidget* w){ return w->fillColor(); },
         &SpectrumWidget::setFillColor);
+    m_traceFillColorBtn->setProperty("nereusSetupId", "appearance.colorsTheme.traceFillColor");
     // Thetis: setup.designer.cs:3234 (clrbtnDataLine) / :3217 (clrbtnDataFill) — collapsed into
     // one picker because SpectrumWidget currently shares one colour for line and fill.
     m_traceFillColorBtn->setToolTip(QStringLiteral(
-        "Click to choose the spectrum trace line and fill colour. "
-        "QColorDialog lets you adjust alpha for the fill opacity."));
+        "Click to choose the spectrum trace line and fill color. "
+        "The color picker lets you adjust alpha for the fill opacity."));  // a QColorDialog
     specForm->addRow(QStringLiteral("Trace & Fill Color:"), m_traceFillColorBtn);
 
     // Grid Color — moved from Display → Grid & Scales "Colors" group (G9).
@@ -74,6 +78,7 @@ void ColorsThemePage::buildUI()
         QColor(255, 255, 255, 40),
         [](SpectrumWidget* w){ return w->gridColor(); },
         &SpectrumWidget::setGridColor);
+    m_gridColorBtn->setProperty("nereusSetupId", "appearance.colorsTheme.gridColor");
     // Thetis: setup.designer.cs:3202 (clrbtnGrid) — rewritten
     // Thetis original: (none)
     m_gridColorBtn->setToolTip(QStringLiteral("Color of the major vertical grid lines on the panadapter."));
@@ -84,6 +89,7 @@ void ColorsThemePage::buildUI()
         QColor(255, 255, 255, 20),
         [](SpectrumWidget* w){ return w->gridFineColor(); },
         &SpectrumWidget::setGridFineColor);
+    m_gridFineColorBtn->setProperty("nereusSetupId", "appearance.colorsTheme.gridFineColor");
     // Thetis: setup.designer.cs:3198 (clrbtnGridFine) — rewritten
     // Thetis original: (none)
     m_gridFineColorBtn->setToolTip(QStringLiteral("Color of the minor (fine) grid lines between major grid lines on the panadapter."));
@@ -94,6 +100,7 @@ void ColorsThemePage::buildUI()
         QColor(255, 255, 255, 40),
         [](SpectrumWidget* w){ return w->hGridColor(); },
         &SpectrumWidget::setHGridColor);
+    m_hGridColorBtn->setProperty("nereusSetupId", "appearance.colorsTheme.hGridColor");
     // Thetis: setup.designer.cs:3193 (clrbtnHGridColor) — rewritten
     // Thetis original: (none)
     m_hGridColorBtn->setToolTip(QStringLiteral("Color of the horizontal dB grid lines on the panadapter."));
@@ -104,6 +111,7 @@ void ColorsThemePage::buildUI()
         QColor(255, 255, 0),
         [](SpectrumWidget* w){ return w->gridTextColor(); },
         &SpectrumWidget::setGridTextColor);
+    m_gridTextColorBtn->setProperty("nereusSetupId", "appearance.colorsTheme.gridTextColor");
     // Thetis: setup.designer.cs:3206 (clrbtnText) — rewritten
     // Thetis original: (none)
     m_gridTextColorBtn->setToolTip(QStringLiteral("Color of the frequency and dB labels drawn on the panadapter grid."));
@@ -114,6 +122,7 @@ void ColorsThemePage::buildUI()
         QColor(255, 0, 0),
         [](SpectrumWidget* w){ return w->bandEdgeColor(); },
         &SpectrumWidget::setBandEdgeColor);
+    m_bandEdgeColorBtn->setProperty("nereusSetupId", "appearance.colorsTheme.bandEdgeColor");
     // Thetis: setup.designer.cs:3232 (clrbtnBandEdge) — rewritten
     // Thetis original: (none)
     m_bandEdgeColorBtn->setToolTip(QStringLiteral("Color of the band edge markers drawn at the amateur band boundaries on the panadapter."));
@@ -124,10 +133,11 @@ void ColorsThemePage::buildUI()
         QColor(255, 0, 0),
         [](SpectrumWidget* w){ return w->rxZeroLineColor(); },
         &SpectrumWidget::setRxZeroLineColor);
+    m_rxZeroLineColorBtn->setProperty("nereusSetupId", "appearance.colorsTheme.rxZeroLineColor");
     // Thetis: setup.designer.cs:3204 (clrbtnZeroLine) — rewritten; split per Plan 4 D9c-1
     // Thetis original: (none)
     m_rxZeroLineColorBtn->setToolTip(QStringLiteral(
-        "Colour of the RX zero line (0 dBm marker) drawn on the panadapter "
+        "Color of the RX zero line (0 dBm marker) drawn on the panadapter "
         "when Show zero line is checked."));
     specForm->addRow(QStringLiteral("RX Zero Line Color:"), m_rxZeroLineColorBtn);
 
@@ -136,10 +146,11 @@ void ColorsThemePage::buildUI()
         QColor(255, 184, 0),
         [](SpectrumWidget* w){ return w->txZeroLineColor(); },
         &SpectrumWidget::setTxZeroLineColor);
+    m_txZeroLineColorBtn->setProperty("nereusSetupId", "appearance.colorsTheme.txZeroLineColor");
     // NereusSDR Plan 4 D9c-1 — no Thetis equivalent (NereusSDR-original).
     m_txZeroLineColorBtn->setToolTip(QStringLiteral(
-        "Colour of the TX zero line drawn on the panadapter and waterfall "
-        "at the TX centre frequency when transmitting (MOX active)."));
+        "Color of the TX zero line drawn on the panadapter and waterfall "
+        "at the TX center frequency when transmitting (MOX active)."));
     specForm->addRow(QStringLiteral("TX Zero Line Color:"), m_txZeroLineColorBtn);
 
     // RX Passband Color — Plan 4 D9b, already lived here.
@@ -147,8 +158,9 @@ void ColorsThemePage::buildUI()
         QColor(0x00, 0xb4, 0xd8, 80),
         [](SpectrumWidget* w){ return w->rxFilterColor(); },
         &SpectrumWidget::setRxFilterColor);
+    m_rxFilterColorBtn->setProperty("nereusSetupId", "appearance.colorsTheme.rxFilterColor");
     m_rxFilterColorBtn->setToolTip(QStringLiteral(
-        "Click to choose the RX passband overlay colour and opacity. "
+        "Click to choose the RX passband overlay color and opacity. "
         "Shown on the panadapter and waterfall slice band during receive."));
     specForm->addRow(QStringLiteral("RX Passband Color:"), m_rxFilterColorBtn);
 
@@ -157,8 +169,9 @@ void ColorsThemePage::buildUI()
         QColor(255, 120, 60, 46),
         [](SpectrumWidget* w){ return w->txFilterColor(); },
         &SpectrumWidget::setTxFilterColor);
+    m_txFilterColorBtn->setProperty("nereusSetupId", "appearance.colorsTheme.txFilterColor");
     m_txFilterColorBtn->setToolTip(QStringLiteral(
-        "Click to choose the TX passband overlay colour and opacity. "
+        "Click to choose the TX passband overlay color and opacity. "
         "Shown on the panadapter and waterfall during MOX/TUNE."));
     specForm->addRow(QStringLiteral("TX Passband Color:"), m_txFilterColorBtn);
 
@@ -178,6 +191,8 @@ void ColorsThemePage::buildUI()
     connect(m_wfLowColorBtn, &ColorSwatchButton::colorChanged,
             this, [](const QColor&) { /* stored via AppSettings on save */ });
     wfForm->addRow(QStringLiteral("Low Level Color:"), m_wfLowColorBtn);
+    UnbuiltFeatures::hideRowUnlessBuilt(m_wfLowColorBtn,
+                                       UnbuiltFeature::WaterfallLowColor, wfForm);
 
     contentLayout()->addWidget(wfGroup);
 
@@ -186,16 +201,17 @@ void ColorsThemePage::buildUI()
     auto* resetRow = new QHBoxLayout;
     resetRow->addStretch(1);
     auto* resetBtn = new QPushButton(QStringLiteral("Reset all colors to defaults"), this);
+    resetBtn->setProperty("nereusSetupId", "appearance.colorsTheme.resetColors");
     resetBtn->setToolTip(QStringLiteral(
-        "Reset all spectrum and waterfall colours to factory defaults. "
+        "Reset all spectrum and waterfall colors to factory defaults. "
         "Other display settings (FPS, averaging, thresholds, etc.) are not affected."));
     connect(resetBtn, &QPushButton::clicked, this, [this]() {
         const auto res = QMessageBox::question(
             this,
             QStringLiteral("Reset all colors to defaults"),
             QStringLiteral(
-                "Reset all spectrum and waterfall colours to factory defaults?\n\n"
-                "Custom colours set here will be discarded. "
+                "Reset all spectrum and waterfall colors to factory defaults?\n\n"
+                "Custom colors set here will be discarded. "
                 "Other display settings are not affected."),
             QMessageBox::Yes | QMessageBox::Cancel,
             QMessageBox::Cancel);
@@ -233,6 +249,31 @@ MeterStylesPage::MeterStylesPage(RadioModel* model, QWidget* parent)
     buildUI();
 }
 
+void MeterStylesPage::reloadSMeterSettings()
+{
+    using Face = SMeterWidget::FaceStyle;
+    const auto& s = AppSettings::instance();
+    if (m_faceCombo) {
+        const Face face = SMeterWidget::faceStyleFromKey(
+            s.value(QStringLiteral("SMeter_FaceStyle"),
+                    SMeterWidget::faceStyleKey(Face::AgedCream)).toString());
+        QSignalBlocker block(m_faceCombo);
+        m_faceCombo->setCurrentIndex(m_faceCombo->findData(static_cast<int>(face)));
+    }
+    if (m_peakHoldToggle) {
+        QSignalBlocker block(m_peakHoldToggle);
+        m_peakHoldToggle->setChecked(
+            s.value(QStringLiteral("PeakHoldEnabled"), QStringLiteral("True")).toString()
+            == QStringLiteral("True"));
+    }
+    if (m_decayRateCombo) {
+        const int at = m_decayRateCombo->findData(
+            s.value(QStringLiteral("PeakDecayRate"), QStringLiteral("Medium")).toString());
+        QSignalBlocker block(m_decayRateCombo);
+        m_decayRateCombo->setCurrentIndex(at >= 0 ? at : 1);
+    }
+}
+
 void MeterStylesPage::buildUI()
 {
     NereusSDR::Style::applyDarkPageStyle(this);
@@ -242,29 +283,75 @@ void MeterStylesPage::buildUI()
     auto* smForm  = new QFormLayout(smGroup);
     smForm->setSpacing(6);
 
-    m_typeCombo = new QComboBox(smGroup);
-    m_typeCombo->addItems({QStringLiteral("Arc"), QStringLiteral("Bar"),
-                           QStringLiteral("Digital")});
-    m_typeCombo->setEnabled(false);  // NYI
-    m_typeCombo->setToolTip(QStringLiteral("S-Meter display type — not yet implemented"));
-    smForm->addRow(QStringLiteral("Type:"), m_typeCombo);
+    // R-R3-21: the analog S-meter settings, the ones its right-click
+    // menu holds (Meter Face, Peak Hold > Enabled, Peak Hold > Decay),
+    // saved under its keys. The group was three greyed placeholders; the
+    // S-meter has faces rather than the Arc / Bar / Digital types it
+    // listed, so the first row picks the face.
+    const auto& s0 = AppSettings::instance();
+    using Face = SMeterWidget::FaceStyle;
+
+    m_faceCombo = new QComboBox(smGroup);
+    m_faceCombo->setObjectName(QStringLiteral("sMeterFaceCombo"));
+    m_faceCombo->setProperty("nereusSetupId", "appearance.meterStyles.face");
+    for (int i = 0; i <= static_cast<int>(Face::Classic); ++i) {
+        m_faceCombo->addItem(SMeterWidget::faceStyleLabel(static_cast<Face>(i)), i);
+    }
+    const Face savedFace = SMeterWidget::faceStyleFromKey(
+        s0.value(QStringLiteral("SMeter_FaceStyle"),
+                 SMeterWidget::faceStyleKey(Face::AgedCream)).toString());
+    m_faceCombo->setCurrentIndex(m_faceCombo->findData(static_cast<int>(savedFace)));
+    m_faceCombo->setToolTip(QStringLiteral("The S-meter's face"));
+    smForm->addRow(QStringLiteral("Face:"), m_faceCombo);
 
     m_peakHoldToggle = new QCheckBox(QStringLiteral("Peak hold"), smGroup);
-    m_peakHoldToggle->setEnabled(false);  // NYI
-    m_peakHoldToggle->setToolTip(QStringLiteral("S-Meter peak hold — not yet implemented"));
+    m_peakHoldToggle->setObjectName(QStringLiteral("sMeterPeakHoldCheck"));
+    m_peakHoldToggle->setProperty("nereusSetupId", "appearance.meterStyles.peakHold");
+    m_peakHoldToggle->setChecked(
+        s0.value(QStringLiteral("PeakHoldEnabled"), QStringLiteral("True")).toString()
+        == QStringLiteral("True"));
+    m_peakHoldToggle->setToolTip(QStringLiteral("Hold the S-meter's peak reading"));
     smForm->addRow(QString(), m_peakHoldToggle);
 
-    m_decayRateSlider = new QSlider(Qt::Horizontal, smGroup);
-    m_decayRateSlider->setRange(1, 100);
-    m_decayRateSlider->setValue(20);
-    m_decayRateSlider->setEnabled(false);  // NYI
-    m_decayRateSlider->setToolTip(QStringLiteral("S-Meter peak decay rate — not yet implemented"));
-    smForm->addRow(QStringLiteral("Decay Rate:"), m_decayRateSlider);
+    m_decayRateCombo = new QComboBox(smGroup);
+    m_decayRateCombo->setObjectName(QStringLiteral("sMeterDecayCombo"));
+    m_decayRateCombo->setProperty("nereusSetupId", "appearance.meterStyles.peakDecay");
+    // SMeterWidget::setPeakDecayRate: 20 / 10 / 5 dB/s.
+    m_decayRateCombo->addItem(QStringLiteral("Fast (20 dB/s)"), QStringLiteral("Fast"));
+    m_decayRateCombo->addItem(QStringLiteral("Medium (10 dB/s)"), QStringLiteral("Medium"));
+    m_decayRateCombo->addItem(QStringLiteral("Slow (5 dB/s)"), QStringLiteral("Slow"));
+    {
+        const int at = m_decayRateCombo->findData(
+            s0.value(QStringLiteral("PeakDecayRate"), QStringLiteral("Medium")).toString());
+        m_decayRateCombo->setCurrentIndex(at >= 0 ? at : 1);
+    }
+    m_decayRateCombo->setToolTip(QStringLiteral("How fast the held peak falls back"));
+    smForm->addRow(QStringLiteral("Decay Rate:"), m_decayRateCombo);
+
+    connect(m_faceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int index) {
+        const int face = m_faceCombo->itemData(index).toInt();
+        AppSettings::instance().setValue(QStringLiteral("SMeter_FaceStyle"),
+                                         SMeterWidget::faceStyleKey(static_cast<Face>(face)));
+        emit sMeterFaceChanged(face);
+    });
+    connect(m_peakHoldToggle, &QCheckBox::toggled, this, [this](bool on) {
+        AppSettings::instance().setValue(QStringLiteral("PeakHoldEnabled"),
+                                         on ? QStringLiteral("True") : QStringLiteral("False"));
+        emit sMeterPeakHoldChanged(on);
+    });
+    connect(m_decayRateCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int index) {
+        const QString rate = m_decayRateCombo->itemData(index).toString();
+        AppSettings::instance().setValue(QStringLiteral("PeakDecayRate"), rate);
+        emit sMeterPeakDecayChanged(rate);
+    });
 
     contentLayout()->addWidget(smGroup);
 
     // --- Section: VFO Flag ---
     auto* vfoGroup = new QGroupBox(QStringLiteral("VFO Flag"), this);
+    vfoGroup->setObjectName(QStringLiteral("appearanceVfoFlagGroup"));
     auto* vfoLayout = new QVBoxLayout(vfoGroup);
 
     m_smallModeFilterToggle = new QCheckBox(
@@ -280,7 +367,7 @@ void MeterStylesPage::buildUI()
         s.value(QStringLiteral("AppearanceSmallModeFilterOnVfos"), QStringLiteral("False")).toString() == QStringLiteral("True"));
 
     connect(m_smallModeFilterToggle, &QCheckBox::toggled, this,
-        [this](bool v) {
+        [](bool v) {
             AppSettings::instance().setValue(
                 QStringLiteral("AppearanceSmallModeFilterOnVfos"),
                 v ? QStringLiteral("True") : QStringLiteral("False"));
@@ -289,48 +376,9 @@ void MeterStylesPage::buildUI()
         });
 
     contentLayout()->addWidget(vfoGroup);
-    contentLayout()->addStretch();
-}
-
-// ---------------------------------------------------------------------------
-// GradientsPage
-// ---------------------------------------------------------------------------
-
-GradientsPage::GradientsPage(RadioModel* model, QWidget* parent)
-    : SetupPage(QStringLiteral("Gradients"), model, parent)
-{
-    buildUI();
-}
-
-void GradientsPage::buildUI()
-{
-    NereusSDR::Style::applyDarkPageStyle(this);
-
-    // --- Section: Waterfall Gradient ---
-    auto* gradGroup = new QGroupBox(QStringLiteral("Waterfall Gradient"), this);
-    auto* gradForm  = new QFormLayout(gradGroup);
-    gradForm->setSpacing(6);
-
-    m_gradientEditorLabel = new QLabel(
-        QStringLiteral("(Gradient editor — not yet implemented)"), gradGroup);
-    m_gradientEditorLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #607080; font-style: italic;"
-        " background: #1a2a3a; border: 1px solid #203040;"
-        " border-radius: 3px; padding: 8px; }"));
-    m_gradientEditorLabel->setMinimumHeight(60);
-    m_gradientEditorLabel->setEnabled(false);
-    m_gradientEditorLabel->setAlignment(Qt::AlignCenter);
-    gradForm->addRow(QStringLiteral("Editor:"), m_gradientEditorLabel);
-
-    m_presetCombo = new QComboBox(gradGroup);
-    m_presetCombo->addItems({QStringLiteral("Enhanced"), QStringLiteral("Grayscale"),
-                             QStringLiteral("Spectrum"), QStringLiteral("Fire"),
-                             QStringLiteral("Ice")});
-    m_presetCombo->setEnabled(false);  // NYI
-    m_presetCombo->setToolTip(QStringLiteral("Waterfall gradient preset — not yet implemented"));
-    gradForm->addRow(QStringLiteral("Preset:"), m_presetCombo);
-
-    contentLayout()->addWidget(gradGroup);
+    // R-R3-49: the flag stores this setting but draws nothing with it yet,
+    // so the group (its only control) is hidden until that is built.
+    UnbuiltFeatures::hideUnlessBuilt(vfoGroup, UnbuiltFeature::SmallFilter);
     contentLayout()->addStretch();
 }
 
@@ -354,7 +402,7 @@ void SkinsPage::buildUI()
     skinLayout->setSpacing(6);
 
     m_skinListLabel = new QLabel(
-        QStringLiteral("(Skin list — not yet implemented. Phase 3H.)"), skinGroup);
+        QStringLiteral("No skins are loaded."), skinGroup);
     m_skinListLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: #607080; font-style: italic;"
         " background: #1a2a3a; border: 1px solid #203040;"
@@ -367,19 +415,19 @@ void SkinsPage::buildUI()
     auto* btnRow = new QHBoxLayout();
     m_loadBtn = new QPushButton(QStringLiteral("Load"), skinGroup);
     m_loadBtn->setEnabled(false);  // NYI
-    m_loadBtn->setToolTip(QStringLiteral("Load skin — not yet implemented (Phase 3H)"));
+    m_loadBtn->setToolTip(QStringLiteral("Load a skin"));
     m_loadBtn->setAutoDefault(false);
     btnRow->addWidget(m_loadBtn);
 
     m_saveBtn = new QPushButton(QStringLiteral("Save"), skinGroup);
     m_saveBtn->setEnabled(false);  // NYI
-    m_saveBtn->setToolTip(QStringLiteral("Save skin — not yet implemented (Phase 3H)"));
+    m_saveBtn->setToolTip(QStringLiteral("Save the current look as a skin"));
     m_saveBtn->setAutoDefault(false);
     btnRow->addWidget(m_saveBtn);
 
     m_importBtn = new QPushButton(QStringLiteral("Import..."), skinGroup);
     m_importBtn->setEnabled(false);  // NYI
-    m_importBtn->setToolTip(QStringLiteral("Import Thetis-format skin — not yet implemented (Phase 3H)"));
+    m_importBtn->setToolTip(QStringLiteral("Importing a skin made for Thetis is not available in this version."));
     m_importBtn->setAutoDefault(false);
     btnRow->addWidget(m_importBtn);
 
@@ -414,7 +462,7 @@ void CollapsibleDisplayPage::buildUI()
     m_widthSpin->setValue(400);
     m_widthSpin->setSuffix(QStringLiteral(" px"));
     m_widthSpin->setEnabled(false);  // NYI
-    m_widthSpin->setToolTip(QStringLiteral("Collapsible panel width — not yet implemented"));
+    m_widthSpin->setToolTip(QStringLiteral("Width of the collapsible panel"));
     colForm->addRow(QStringLiteral("Width:"), m_widthSpin);
 
     m_heightSpin = new QSpinBox(colGroup);
@@ -422,12 +470,12 @@ void CollapsibleDisplayPage::buildUI()
     m_heightSpin->setValue(200);
     m_heightSpin->setSuffix(QStringLiteral(" px"));
     m_heightSpin->setEnabled(false);  // NYI
-    m_heightSpin->setToolTip(QStringLiteral("Collapsible panel height — not yet implemented"));
+    m_heightSpin->setToolTip(QStringLiteral("Height of the collapsible panel"));
     colForm->addRow(QStringLiteral("Height:"), m_heightSpin);
 
     m_enableToggle = new QCheckBox(QStringLiteral("Enable collapsible display"), colGroup);
     m_enableToggle->setEnabled(false);  // NYI
-    m_enableToggle->setToolTip(QStringLiteral("Enable collapsible spectrum section — not yet implemented"));
+    m_enableToggle->setToolTip(QStringLiteral("Let the spectrum section collapse"));
     colForm->addRow(QString(), m_enableToggle);
 
     contentLayout()->addWidget(colGroup);

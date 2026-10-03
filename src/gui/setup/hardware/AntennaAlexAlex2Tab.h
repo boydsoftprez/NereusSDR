@@ -20,6 +20,11 @@
 //                PanadapterModel frequency.  Port of Thetis
 //                console.cs:setAlex2HPF / setAlex2LPF selection logic
 //                (range match on spinbox [start..end]).
+//   2026-09-28 - R-R3-46 / R-R3-49: the Alex Filters tabs' receive filter rows
+//                (per-row bypass and edges, Alex-2 master bypass) select the
+//                receive high-pass as Thetis's setAlexHPF /
+//                setBPF1ForOrionIISaturn / setAlex2HPF do (radioHardwareVersion
+//                8). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -132,7 +137,7 @@ public:
     void restoreSettings(const QString& macAddress);
 
     // Test seam — returns whether the "Active" status is showing (hasAlex2=true).
-    // Always compiled (NEREUS_BUILD_TESTS is set on NereusSDRObjs globally).
+    // Always compiled (NEREUS_BUILD_TESTS is set on NereusSDRLib globally).
     bool isAlex2Active() const;
 
     // Phase 3P-H Task 5a — LED test seams.
@@ -148,6 +153,11 @@ public:
     // and called internally on PanadapterModel::centerFrequencyChanged.
     // Source: Thetis console.cs:setAlex2HPF / setAlex2LPF range match [@501e3f5]
     void setCurrentFrequencyHz(double freqHz);
+
+    // radioHardwareVersion 8: the HPF rows (Bypass, Start, End) and the
+    // ByPass/55 MHz BPF master follow whether the Core takes them, disabled
+    // with `reason` when it does not. Always available locally.
+    void setHpfRowsAvailable(bool available, const QString& reason);
 
 signals:
     void settingChanged(const QString& key, const QVariant& value);

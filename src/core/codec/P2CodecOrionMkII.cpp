@@ -44,6 +44,19 @@
 //                disconnected after the 2 s connect watchdog because the
 //                G2-class branch placed RX1 on DDC2 instead of DDC0.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - R-R3-49 / R-R3-46: Setup > Transmit > Power's Disable HF PA
+//                applied (Thetis DisablePA and hf_tr_relay,
+//                transmitSettingsVersion 11). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
+//   2026-09-28 - R-R3-49: the corrected phase word is Thetis's to the count
+//                 (whole corrected Hz, then integer Freq2PhaseWord;
+//                 NetworkIO.cs [v2.10.3.15]). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-29 - Level Cal: the Alex receive attenuator (Thetis SetAlexAtten,
+//                netInterface.c:421-432 [v2.10.3.15]) on the wire, and the step
+//                attenuator range above 31 dB on Alex boards (value + 2,
+//                console.cs:11044-11056 [v2.10.3.15]). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis Console/console.cs header (lines 1-50) ===
@@ -102,6 +115,8 @@
 // =================================================================
 
 #include "P2CodecOrionMkII.h"
+
+#include <algorithm>
 #include "CodecContext.h"
 
 namespace NereusSDR {
@@ -125,10 +140,25 @@ void P2CodecOrionMkII::writeBE32(quint8* buf, int offset, quint32 value)
 // Freq2PhaseWord (HPSDR/NetworkIO.cs:251-254); we fold it in here so every
 // compose path — direct or via CodecContext — picks up live calibration.
 // factor == 1.0 is byte-identical to the pre-calibration formula.
+//
+// R-R3-49: Thetis's conversion to the count. The corrected frequency is
+// truncated to whole Hz first, then converted in integer arithmetic; the
+// earlier floating-point form differed by up to ~35 counts whenever the
+// factor was not 1.0.
+// From Thetis HPSDR/NetworkIO.cs:219-223 [v2.10.3.15] VFOfreq
+//   f_freq = (int)((f * 1e6) * _freq_correction_factor);
+//   if (f_freq >= 0)
+//       ... else SetVFOfreq(id, Freq2PhaseWord(f_freq), tx);   // sending phaseword to firmware
+// From Thetis HPSDR/NetworkIO.cs:249-253 [v2.10.3.15] Freq2PhaseWord
+//   long pw = (long)Math.Pow(2, 32) * freq / 122880000;
+// NereusSDR tunes in whole Hz, so f * 1e6 is the Hz value itself. A
+// negative corrected frequency (Thetis sends nothing) cannot arise from the
+// 0..2 factor range; it is held at 0.
 quint32 P2CodecOrionMkII::hzToPhaseWord(quint64 freqHz, double factor)
 {
-    const double correctedHz = static_cast<double>(freqHz) * factor;
-    return static_cast<quint32>((correctedHz * 4294967296.0) / 122880000.0);
+    const qint64 correctedHz = std::max<qint64>(
+        0, static_cast<qint64>(static_cast<double>(freqHz) * factor));
+    return static_cast<quint32>((qint64(1) << 32) * correctedHz / 122880000);
 }
 
 // --- CmdGeneral (60 bytes) ---
@@ -248,6 +278,16 @@ void P2CodecOrionMkII::composeCmdHighPriority(const CodecContext& ctx, quint8 bu
 
     // From Thetis network.c:1014 [@501e3f5]
     buf[345] = static_cast<quint8>(ctx.p2DriveLevel);
+
+    // Plan Task 14: the Open Collector outputs. No codec wrote this byte, so
+    // equipment switched by the OC pins got no band data on Protocol 2.
+    // From Thetis ChannelMaster/network.c:1030-1031 [v2.10.3.15]
+    //   // Open Collector Outputs
+    //   packetbuf[1401] = (prn->oc_output << 1) & 0xfe;
+    // (The byte before it, not ported here, carries its own tag:
+    //   packetbuf[1400] = xvtr_enable | (!audioamp_enable) << 1 | atu_tune << 2; //MW0LGE_22b  // user_dig_in was gettin overwritten by 1025 packet read
+    // network.c:1028 [v2.10.3.15].)
+    buf[1401] = static_cast<quint8>((ctx.ocByte << 1) & 0xfe);
 
     // From Thetis network.c:1037-1038 [@501e3f5] — Mercury Attenuator
     buf[1403] = static_cast<quint8>(ctx.p2Rx1Preamp << 1 | ctx.rxPreamp[0]);
@@ -388,7 +428,18 @@ quint32 P2CodecOrionMkII::buildAlex0(const CodecContext& ctx) const
     // because the MOX bit is the unambiguous transmit-keying signal — the
     // host-side relay state may lag (hardware-flip ack) but the radio's
     // antenna routing should track MOX directly.
-    if (ctx.mox) {
+    //
+    // "Disable HF PA" (ctx.txPaDisabled) leaves the relay open while keyed:
+    // Thetis's SetTRXrelay moves _TR_Relay only while the PA is enabled, and
+    // _trx_status follows _TR_Relay.
+    // From Thetis ChannelMaster/netInterface.c:374-383 [v2.10.3.15]
+    //   if (prbpfilter->_TR_Relay != bit)
+    //   {
+    //       if (!prn->tx[0].pa) // disable PA
+    //           prbpfilter->_TR_Relay = bit & 0x1;
+    //       prbpfilter->_trx_status = prbpfilter->_TR_Relay; // TXRX_STATUS
+    //       prbpfilter2->_trx_status = prbpfilter->_TR_Relay; // TXRX_STATUS for Alex1
+    if (ctx.mox && !ctx.txPaDisabled) {
         reg |= (1u << 27);  // _TR_Relay   (ALEX_TX_RELAY)
         reg |= (1u << 18);  // _trx_status (ALEX_PS_BIT)
     }
@@ -458,6 +509,16 @@ quint32 P2CodecOrionMkII::buildAlex0(const CodecContext& ctx) const
         }
     }
 
+    // Level Cal: the Alex attenuator (Thetis SetAlexAtten, which returns on
+    // a Mk II BPF board, where bit 14 is the RX master input select).
+    // From Thetis network.h:284-285 [v2.10.3.15]:
+    //   _20_dB_Atten : 1, // bit 13
+    //   _10_dB_Atten : 1, // bit 14 (RX MASTER IN SEL RL22)
+    if (!ctx.mkiiBpf) {
+        if (ctx.alexAttenBits & 0x2) { reg |= (1u << 13); }
+        if (ctx.alexAttenBits & 0x1) { reg |= (1u << 14); }
+    }
+
     // LPF bits — from Thetis netInterface.c:682-726 [@501e3f5]
     // Bits map: 30_20[20], 60_40[21], 80[22], 160[23], 6[29], 12_10[30], 17_15[31]
     if (ctx.alexLpfBits & 0x01) { reg |= (1u << 20); }  // 30/20m
@@ -512,7 +573,11 @@ quint32 P2CodecOrionMkII::buildAlex1(const CodecContext& ctx) const
     // feedback DDC to receive garbage data on the G2E (calcc never
     // reached LSTAYON regardless of every other fix we tried).
     if (ctx.mox) {
-        reg |= (1u << 18);  // _trx_status mirrors Alex0's _TR_Relay
+        // _trx_status mirrors Alex0's _TR_Relay, which "Disable HF PA" leaves
+        // open (see buildAlex0; netInterface.c:381 [v2.10.3.15]).
+        if (!ctx.txPaDisabled) {
+            reg |= (1u << 18);  // _trx_status mirrors Alex0's _TR_Relay
+        }
 
         // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): Alex1 bit 8 (_rx2_gnd)
         // on MOX-on per Thetis console.cs:29091 HdwMOXChanged [v2.10.3.13]:

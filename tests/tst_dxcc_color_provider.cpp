@@ -37,16 +37,16 @@
 
 using namespace NereusSDR;
 
-// Resolve both fixtures from CMake's source root rather than __FILE__,
-// which can be relative to a different working directory.
+// Qt's configured source-directory lookup survives relative __FILE__ paths
+// produced by compiler caching in an isolated worktree.
 static QString resolveCtyDatPath()
 {
-    return QString::fromUtf8(NEREUS_SOURCE_ROOT) + "/cty.dat";
+    return QFINDTESTDATA("../cty.dat");
 }
 
 static QString resolveAdifPath()
 {
-    return QString::fromUtf8(NEREUS_SOURCE_ROOT) + "/tests/fixtures/adif/sample.adi";
+    return QFINDTESTDATA("fixtures/adif/sample.adi");
 }
 
 class TestDxccColorProvider : public QObject {

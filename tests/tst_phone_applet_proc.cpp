@@ -30,7 +30,7 @@
 //   7. Model → UI: cpdrLevelDbChanged updates slider value.
 //   8. Numeric value label shows "X dB" matching the current slider value.
 //   9. NyiOverlay markers are absent (button + slider are enabled and the
-//      tooltip does NOT contain "Not Yet Implemented").
+//      tooltip does NOT contain "This control is not built").
 //
 // =================================================================
 
@@ -211,7 +211,7 @@ private slots:
     }
 
     // ── 9. NyiOverlay markers absent: PROC button + slider are enabled and
-    //      tooltip does NOT contain "Not Yet Implemented" (the marker
+    //      tooltip does NOT contain "This control is not built" (the marker
     //      signature applied by NyiOverlay::markNyi). ─────────────────────
     void procControls_haveNoNyiMarker()
     {
@@ -226,8 +226,8 @@ private slots:
         QVERIFY(btn->isEnabled());
         QVERIFY(sl->isEnabled());
 
-        QVERIFY(!btn->toolTip().contains(QStringLiteral("Not Yet Implemented")));
-        QVERIFY(!sl->toolTip().contains(QStringLiteral("Not Yet Implemented")));
+        QVERIFY(!btn->toolTip().contains(QStringLiteral("This control is not built")));
+        QVERIFY(!sl->toolTip().contains(QStringLiteral("This control is not built")));
     }
 };
 

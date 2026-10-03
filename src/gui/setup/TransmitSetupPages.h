@@ -32,6 +32,23 @@
 //                 NereusSDR's architecture; see TransmitSetupPages.cpp info
 //                 row tooltip for the rationale.  J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-09-23 - R-R3-21: Speech Processor's AM-SQ / DEXP button opens
+//                 Transmit > DEXP/VOX (it asked for a "VOX/DEXP" page that
+//                 does not exist). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 5): PowerPage, DexpVoxPage gate
+//                 their Core settings on transmitSettingsVersion 5 in a
+//                 remote window (Enable VOX keeps the transmit permission).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-26: Transmit group fix wave 2 (M8): VOX shows disabled with the
+//               plain reason while this computer has no microphone line to
+//               the Core; the Core's refusal stays the backstop. J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Anthropic
+//               Claude Code.
+//   2026-09-28 - R-R3-49 / R-R3-46: Setup > Transmit > Power's Disable HF PA
+//                applied (Thetis DisablePA and hf_tr_relay,
+//                transmitSettingsVersion 11). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -113,13 +130,33 @@ public:
     // Called from the constructor and from RadioModel::currentRadioChanged.
     void applyHpsdrModel(HPSDRModel m);
 
+    // R-R3-49 (parity Task 5): in a remote window every Core setting on the
+    // page (Max Power, ATT on TX and its value, Force ATT, the Tune group's
+    // drive source and fixed power, SWR Protection, External TX Inhibit)
+    // follows the transmit settings gate at version 5. The TX TUN Meter
+    // combo and Disable HF PA write nothing the Core reads and are left as
+    // they are.
+    void setTransmitSettingsPermittedAt(int version, bool permitted,
+                                        const QString& reason) override;
+
 private:
     void buildUI();
+    // R-R3-49 (parity Task 5): a remote window's copy of the Core's SWR
+    // Protection and External TX Inhibit keys changed (another window, the
+    // Core, a refusal) or a whole snapshot arrived (empty key): re-read them.
+    void refreshStationKeys(const QString& key);
+    // The fixed tune power spin box is live only for "Use Fixed Drive" and
+    // only while the settings gate is open.
+    void applyFixedTuneSpinGate();
     void buildPowerGroup();         // H.4: Max Power slider + ATT-on-TX + Force-ATT
     void buildTuneGroup();          // Issue #175 Task 8: grpPATune (Tune source + meter + fixed-mode pwr)
     void buildSwrProtectionGroup();
     void buildExternalTxInhibitGroup();
     void buildHfPaGroup();
+    // "Disable HF PA": open while the Core takes it (transmitSettingsVersion
+    // 11; always locally) on a radio that offers it
+    // (RadioModel::hfPaSwitchAvailable), otherwise disabled with the reason.
+    void applyHfPaGate();
 
     // Issue #175 Task 8 helper — flip enabled state on the Fixed-mode
     // spinbox so it tracks the active drive source.
@@ -188,6 +225,14 @@ private:
     // Section: PA Control (Task 11)
     // chkHFTRRelay per setup.designer.cs:5780-5791 [v2.10.3.13]
     QCheckBox* m_chkHFTRRelay{nullptr};
+
+    // R-R3-49 (parity Task 5): the version 5 gate (always open locally).
+    bool             m_settingsPermitted{true};
+    QString          m_settingsReason;
+    // The version 11 gate ("Disable HF PA"; always open locally).
+    bool             m_hfPaPermitted{true};
+    QString          m_hfPaReason;
+    DrivePowerSource m_tuneSource{DrivePowerSource::TuneSlider};
 };
 
 // ---------------------------------------------------------------------------
@@ -257,7 +302,8 @@ private:
                          const QString& buttonText,
                          const QString& buttonTooltip,
                          const QString& linkPage,           // empty → button is a placeholder
-                         const QString& futurePhaseTag);    // empty → no "(3M-3a-X)" suffix
+                         const QString& futurePhaseTag,     // empty → no "(3M-3a-X)" suffix
+                         const QString& linkCategory = QStringLiteral("DSP"));
 
     // Section: Active Profile
     QLabel*      m_activeProfileLabel{nullptr};
@@ -300,7 +346,24 @@ class DexpVoxPage : public SetupPage {
 public:
     explicit DexpVoxPage(RadioModel* model, QWidget* parent = nullptr);
 
+    // R-R3-49 (parity Task 5): Enable VOX arms the radio to key, so it
+    // follows the transmit permission; every other control is a setting on
+    // the Core's `transmit` and follows the transmit settings gate at
+    // version 5 in a remote window.
+    void setTransmitPermitted(bool permitted, const QString& reason) override;
+    // Fix wave 2 (M8): Enable VOX also needs this computer's microphone
+    // line to the Core, shown disabled with the reason while there is none.
+    void setVoxPermitted(bool permitted, const QString& reason) override;
+    void setTransmitSettingsPermittedAt(int version, bool permitted,
+                                        const QString& reason) override;
+
 private:
+    void gateVoxEnable();
+    bool m_transmitOk{true};
+    QString m_transmitWhy;
+    bool m_voxLineOk{true};
+    QString m_voxLineWhy;
+
     // ── grpDEXPVOX ───────────────────────────────────────────────────────────
     QCheckBox*      m_chkVOXEnable{nullptr};
     QCheckBox*      m_chkDEXPEnable{nullptr};

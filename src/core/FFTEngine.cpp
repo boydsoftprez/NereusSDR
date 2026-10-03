@@ -10,6 +10,19 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23: setTransformsFollowFrameRate, NereusSDR-original: while
+//               nereusd's Core is busy a transform advances a whole frame
+//               period, so a lower frame rate saves FFT work (R-R3-08,
+//               R-R3-40). J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
+//   2026-09-26: the constructor makes FFTW's single-precision planner
+//               thread-safe before replanFft() can plan: every pan's
+//               engine replans on its own spectrum thread (R-R3-39).
+//               NereusSDR-original. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
+//   2026-09-27: the decimation cite corrected: Thetis's range is 1 to 16;
+//               1 to 32 is NereusSDR's own (R-IOS-06). J.J. Boyd (KG4VCF),
+//               with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -58,13 +71,20 @@
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+// Modification history (NereusSDR):
+// 2026-09-27: Use the approved shared decimation bounds.
+// J.J. Boyd (KG4VCF), AI-assisted implementation via OpenAI Codex.
+
+#include "core/ControlRanges.h"
 #include "FFTEngine.h"
+#include "FftwPlanner.h"
 #include "LogCategories.h"
 #include "MemoryLock.h"
 #include "PerfMonitor.h"
 
 #include <QElapsedTimer>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -74,6 +94,12 @@ FFTEngine::FFTEngine(int receiverId, QObject* parent)
     : QObject(parent)
     , m_receiverId(receiverId)
 {
+    // R-R3-39: replanFft() plans with single-precision FFTW on this
+    // engine's spectrum thread while other engines, and WDSP in double
+    // precision, plan on theirs. FFTW's thread-safe switch is per
+    // precision library, so the float planner is made thread-safe here,
+    // before any plan, whether or not a WdspEngine exists.
+    makeFftwPlannersThreadSafe();
 }
 
 FFTEngine::~FFTEngine()
@@ -219,11 +245,22 @@ void FFTEngine::setOutputFps(int fps)
     m_targetFps.store(qBound(1, fps, 60));
 }
 
-// From Thetis setup.designer.cs:33732 udDisplayDecimation [v2.10.3.13].
-// Range 1..32; 1 = no decimation (every sample is used).
+void FFTEngine::setTransformsFollowFrameRate(bool on)
+{
+    m_transformsFollowFrameRate.store(on);
+}
+
+// The control is Thetis's udDisplayDecimation (setup.designer.cs:33732
+// [v2.10.3.13]), whose range is 1 to 16:
+// From Thetis Project Files/Source/Console/setup.designer.cs:33834-33843 [v2.10.3.15]
+//   this.udDisplayDecimation.Maximum = new decimal(new int[] { 16, 0, 0, 0});
+//   this.udDisplayDecimation.Minimum = new decimal(new int[] { 1, 0, 0, 0});
+// JJ approved matching Thetis on 2026-09-27. The shared control range
+// governs local engines and remote requests. 1 uses every sample.
 void FFTEngine::setDecimation(int factor)
 {
-    if (factor < 1 || factor > 32) { return; }
+    if (factor < ControlRanges::kDisplayDecimationMin
+        || factor > ControlRanges::kDisplayDecimationMax) { return; }
     m_decimation.store(factor);
     // Reset the counter so the new factor takes effect cleanly on the
     // next feedIQ call rather than mid-stride.
@@ -249,6 +286,11 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
     // only every Nth sample pair is passed to the FFT accumulator.
     const int dec = m_decimation.load();
     const int numPairs = interleavedIQ.size() / 2;
+    // R-R3-08/40: a skip left from a transform while transforms followed
+    // the frame rate ends as soon as they no longer do.
+    if (!m_transformsFollowFrameRate.load()) {
+        m_skipPending = 0;
+    }
     for (int i = 0; i < numPairs; ++i) {
         if (dec > 1) {
             if (m_decimationCounter != 0) {
@@ -256,6 +298,11 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
                 continue;
             }
             m_decimationCounter = (m_decimationCounter + 1) % dec;
+        }
+        if (m_skipPending > 0) {
+            // Between two transforms' windows: not analysed.
+            --m_skipPending;
+            continue;
         }
         if (m_iqWritePos >= m_currentFftSize) {
             // Buffer full -- process and shift overlap region back to head.
@@ -268,6 +315,14 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
             // m_iqRaw on the next sample write.
             if (m_iqWritePos >= m_currentFftSize) {
                 return;
+            }
+            // R-R3-08/40 (NereusSDR-original): this sample triggered the
+            // transform and is the first after its window. When the
+            // transform opened a gap, it belongs to the gap, not to
+            // position 0 of the next window.
+            if (m_skipPending > 0) {
+                --m_skipPending;
+                continue;
             }
         }
         // Swap I<->Q for spectrum display.  Matches Thetis analyzer.c:
@@ -282,6 +337,20 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
 #else
     Q_UNUSED(interleavedIQ);
 #endif
+}
+
+void FFTEngine::resetInputHistory()
+{
+    // This method runs on the engine's worker thread.  m_iqWritePos gates
+    // every read of m_iqRaw, so resetting it makes prior partial input and
+    // the overlap tail unreachable without an unnecessary memset of the
+    // FFTW buffer.  Restarting the rate limiter also lets the first wholly
+    // new-context frame through immediately.
+    m_iqWritePos = 0;
+    m_decimationCounter = 0;
+    m_skipPending = 0;
+    m_frameTimerStarted = false;
+    m_frameTimer.invalidate();
 }
 
 void FFTEngine::replanFft()
@@ -621,7 +690,15 @@ void FFTEngine::processFrame()
     int advance = (sr > 0.0)
         ? static_cast<int>(std::round(sr / static_cast<double>(fps)))
         : m_currentFftSize;
-    advance = qBound(1, advance, m_currentFftSize);
+    advance = std::max(1, advance);
+    // R-R3-08/40 (NereusSDR-original): while transforms follow the frame
+    // rate, an advance past the FFT size skips the gap between windows, so
+    // transforms per second equal the frame rate. Otherwise the advance is
+    // clamped to the FFT size as before.
+    if (advance > m_currentFftSize && m_transformsFollowFrameRate.load()) {
+        m_skipPending = advance - m_currentFftSize;
+    }
+    advance = std::min(advance, m_currentFftSize);
     const int overlap = m_currentFftSize - advance;
     if (overlap > 0) {
         std::memmove(m_iqRaw,

@@ -111,7 +111,9 @@ constexpr const char* kSectionHeaderStyle =
 MmioEndpointsDialog::MmioEndpointsDialog(QWidget* parent)
     : QDialog(parent)
 {
-    setWindowTitle(QStringLiteral("MMIO Endpoints"));
+    // R-R3-21 (operator wording, 2026-09-24): plain words, MMIO kept in
+    // brackets so Thetis users can find it.
+    setWindowTitle(QStringLiteral("Meter Data Sources (MMIO)"));
     setMinimumSize(900, 500);
     resize(1000, 560);
     setStyleSheet(QLatin1String(kDialogStyle));
@@ -130,7 +132,7 @@ MmioEndpointsDialog::MmioEndpointsDialog(QWidget* parent)
     leftLayout->setContentsMargins(0, 0, 0, 0);
     leftLayout->setSpacing(4);
 
-    auto* lblEndpoints = new QLabel(QStringLiteral("Endpoints"), leftWrap);
+    auto* lblEndpoints = new QLabel(QStringLiteral("Data sources"), leftWrap);
     lblEndpoints->setStyleSheet(QLatin1String(kSectionHeaderStyle));
     leftLayout->addWidget(lblEndpoints);
 
@@ -153,7 +155,7 @@ MmioEndpointsDialog::MmioEndpointsDialog(QWidget* parent)
     centerLayout->setContentsMargins(0, 0, 0, 0);
     centerLayout->setSpacing(4);
 
-    auto* lblEditor = new QLabel(QStringLiteral("Endpoint properties"), centerWrap);
+    auto* lblEditor = new QLabel(QStringLiteral("Data source settings"), centerWrap);
     lblEditor->setStyleSheet(QLatin1String(kSectionHeaderStyle));
     centerLayout->addWidget(lblEditor);
 
@@ -173,7 +175,7 @@ MmioEndpointsDialog::MmioEndpointsDialog(QWidget* parent)
         static_cast<int>(MmioEndpoint::Transport::TcpClient));
     m_comboTransport->addItem(QStringLiteral("Serial"),
         static_cast<int>(MmioEndpoint::Transport::Serial));
-    form->addRow(QStringLiteral("Transport"), m_comboTransport);
+    form->addRow(QStringLiteral("Connection type"), m_comboTransport);
 
     m_comboFormat = new QComboBox(centerWrap);
     m_comboFormat->addItem(QStringLiteral("JSON"),
@@ -205,7 +207,7 @@ MmioEndpointsDialog::MmioEndpointsDialog(QWidget* parent)
 
     auto* centerBtnRow = new QHBoxLayout();
     m_btnApply = new QPushButton(QStringLiteral("Apply changes"), centerWrap);
-    m_lblStatus = new QLabel(QStringLiteral("—"), centerWrap);
+    m_lblStatus = new QLabel(QStringLiteral("\u2013"), centerWrap);
     m_lblStatus->setStyleSheet(QStringLiteral("QLabel { color: #8090a0; }"));
     centerBtnRow->addWidget(m_btnApply);
     centerBtnRow->addStretch();
@@ -221,13 +223,13 @@ MmioEndpointsDialog::MmioEndpointsDialog(QWidget* parent)
     rightLayout->setContentsMargins(0, 0, 0, 0);
     rightLayout->setSpacing(4);
 
-    auto* lblVars = new QLabel(QStringLiteral("Discovered variables"), rightWrap);
+    auto* lblVars = new QLabel(QStringLiteral("Values received"), rightWrap);
     lblVars->setStyleSheet(QLatin1String(kSectionHeaderStyle));
     rightLayout->addWidget(lblVars);
 
     m_treeVariables = new QTreeWidget(rightWrap);
     m_treeVariables->setColumnCount(2);
-    m_treeVariables->setHeaderLabels({QStringLiteral("Variable"),
+    m_treeVariables->setHeaderLabels({QStringLiteral("Name"),
                                        QStringLiteral("Value")});
     m_treeVariables->setRootIsDecorated(false);
     m_treeVariables->setAlternatingRowColors(true);
@@ -310,7 +312,7 @@ void MmioEndpointsDialog::loadEditorFromEndpoint(MmioEndpoint* ep)
         m_spinPort->setValue(0);
         m_editDevice->clear();
         m_spinBaud->setValue(9600);
-        m_lblStatus->setText(QStringLiteral("—"));
+        m_lblStatus->setText(QStringLiteral("\u2013"));
         return;
     }
     m_editName->setText(ep->name());
@@ -322,7 +324,7 @@ void MmioEndpointsDialog::loadEditorFromEndpoint(MmioEndpoint* ep)
     m_spinPort->setValue(ep->port());
     m_editDevice->setText(ep->serialDevice());
     m_spinBaud->setValue(ep->serialBaud());
-    m_lblStatus->setText(QStringLiteral("guid %1")
+    m_lblStatus->setText(QStringLiteral("ID %1")
                           .arg(ep->guid().toString(QUuid::WithoutBraces).left(8)));
 }
 
@@ -351,7 +353,7 @@ void MmioEndpointsDialog::onAddEndpoint()
 {
     auto* ep = new MmioEndpoint();
     ep->setGuid(QUuid::createUuid());
-    ep->setName(QStringLiteral("New endpoint"));
+    ep->setName(QStringLiteral("New data source"));
     ep->setTransport(MmioEndpoint::Transport::UdpListener);
     ep->setFormat(MmioEndpoint::Format::Json);
     ep->setHost(QStringLiteral("0.0.0.0"));
@@ -391,7 +393,7 @@ void MmioEndpointsDialog::onApplyEdits()
     ep->setSerialBaud(m_spinBaud->value());
     ExternalVariableEngine::instance().updateEndpoint(ep);
     rebuildEndpointList();
-    m_lblStatus->setText(QStringLiteral("Applied. Worker restarted."));
+    m_lblStatus->setText(QStringLiteral("Applied. The data source restarted with the new settings."));
 }
 
 void MmioEndpointsDialog::onVariablesDiscovered()

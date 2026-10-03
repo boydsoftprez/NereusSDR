@@ -161,19 +161,21 @@ private slots:
         QVERIFY(!ctrl.isManualMox());
     }
 
-    void setTuneFalse_pttModeStaysManual()
+    void setTuneFalse_pttModeClearedByUnkey()
     {
-        // Per Thetis: _current_ptt_mode is NOT cleared in chkTUN's TUN-off
-        // path. It clears indirectly via chkMOX_CheckedChanged2 TX→RX branch
-        // (console.cs:29496 [v2.10.3.13]). In NereusSDR that belongs to F.1.
-        // So after setTune(false), m_pttMode must still be Manual.
+        // Per Thetis: chkTUN's TUN-off path does not touch _current_ptt_mode
+        // itself; its chkMOX.Checked = false runs chkMOX_CheckedChanged2's
+        // TX-to-RX branch, which sets PTTMode.NONE (console.cs:29547
+        // [v2.10.3.15]). NereusSDR's setMox(false) does the same (receiver
+        // and transmit gaps plan, Task 7), so after setTune(false) the mode
+        // is None.
         MoxController ctrl;
         ctrl.setTimerIntervals(0, 0, 0, 0, 0, 0);
         ctrl.setTune(true);
         QCoreApplication::processEvents();
         ctrl.setTune(false);
         drainTxToRxWalk();
-        QCOMPARE(ctrl.pttMode(), PttMode::Manual);
+        QCOMPARE(ctrl.pttMode(), PttMode::None);
     }
 
     void setTuneFalse_manualMoxChangedFires_once_withFalse()
@@ -262,25 +264,26 @@ private slots:
 
         // Expected order:
         //   setMox(false) is called synchronously from setTune(false) and emits
-        //   the two synchronous phase signals (txAboutToEnd, hardwareFlipped(false))
-        //   BEFORE returning. After setMox(false) returns, setTune(false) clears
-        //   m_manualMox and emits manualMoxChanged(false) synchronously.
-        //   The timer-driven signals (txaFlushed, rxReady) fire only on
-        //   drainTxToRxWalk(). So the actual order is:
-        //     txAboutToEnd → hardwareFlipped(false) → manualMoxChanged(false)
-        //     → txaFlushed → rxReady
+        //   txAboutToEnd (and txDrainRequested) BEFORE returning. After
+        //   setMox(false) returns, setTune(false) clears m_manualMox and emits
+        //   manualMoxChanged(false) synchronously. Task 33 (Thetis's unkey
+        //   order): the hardware is released after the TX drain and mox_delay,
+        //   so txaFlushed and hardwareFlipped(false) fire on drainTxToRxWalk(),
+        //   then rxReady. So the actual order is:
+        //     txAboutToEnd → manualMoxChanged(false) → txaFlushed
+        //     → hardwareFlipped(false) → rxReady
         //
         // This ordering confirms the §8 invariant: m_manualMox is still TRUE at
-        // txAboutToEnd / hardwareFlipped(false) time (synchronous, inside setMox),
-        // and is cleared to false immediately after setMox(false) returns (before
-        // any timer-driven signals). Phase-signal subscribers that need m_manualMox
-        // to distinguish a TUN-release from a raw MOX-release should check it in
-        // their txAboutToEnd or hardwareFlipped(false) slot — not in rxReady.
+        // txAboutToEnd time (synchronous, inside setMox), and is cleared to
+        // false immediately after setMox(false) returns. Phase-signal
+        // subscribers that need m_manualMox to distinguish a TUN-release from
+        // a raw MOX-release must check it in their txAboutToEnd slot; since
+        // Task 33 it already reads false in hardwareFlipped(false).
         QCOMPARE(log.size(), 5);
         QCOMPARE(log.at(0), QStringLiteral("txAboutToEnd"));
-        QCOMPARE(log.at(1), QStringLiteral("hardwareFlipped(false)"));
-        QCOMPARE(log.at(2), QStringLiteral("manualMoxChanged(false)"));
-        QCOMPARE(log.at(3), QStringLiteral("txaFlushed"));
+        QCOMPARE(log.at(1), QStringLiteral("manualMoxChanged(false)"));
+        QCOMPARE(log.at(2), QStringLiteral("txaFlushed"));
+        QCOMPARE(log.at(3), QStringLiteral("hardwareFlipped(false)"));
         QCOMPARE(log.at(4), QStringLiteral("rxReady"));
     }
 

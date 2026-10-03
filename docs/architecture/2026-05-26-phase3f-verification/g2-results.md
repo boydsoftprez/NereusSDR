@@ -310,8 +310,6 @@ rather than continuing, because later rows assume the earlier ones.
 - Slice B+ come up with default NR / SNB / APF / squelch.
 - A pan whose slice was removed keeps rendering its stream rather than going
   dark.
-- `Cannot create receiver: at maximum 4` at startup on a 5-stream pool: a fifth
-  slice would have no receiver behind it.
 
 ---
 
@@ -406,8 +404,13 @@ ones.
 - 38 one-shot `activeSpectrumWidget()->set...` pushes remain pan-0 only
   (spot markers, cal offset, TX filter range, clarity, noise-floor attack,
   step size, display FPS).
-- `Cannot create receiver: at maximum 4` at startup on a 5-stream pool: a fifth
-  slice would have no receiver behind it.
+- Fixed 2026-09-29: `Cannot create receiver: at maximum 4` at startup on a
+  5-stream pool. The stream pool now follows the receiver count the radio
+  reports in discovery (4 on this G2), so every stream has a receiver behind
+  it and a fifth pan is refused with a plain reason. Bench: confirm the
+  warning is gone and four pans each get a live receiver. Also confirm what
+  the G2's reported count covers: if it includes the PureSignal and
+  diversity streams, the usable count is lower than 4.
 - A pan whose slice was removed keeps rendering its stream rather than going
   dark.
 - A refused TX handoff is silent (`TxSliceArbiter::handoffBlocked` unconsumed).
@@ -600,6 +603,25 @@ Band to selection, as the log prints it (hex), from
   (`console.cs:7179-7184 [v2.10.3.15]`). NereusSDR has no such control, so the
   arm is unreachable rather than mis-ported. Noted so a future port of the
   Setup toggle does not rediscover it as a defect.
+
+---
+
+## Session 10 (2026-09-29): the unkey waits for the send ring
+
+An operator's release now waits for the transmit audio already queued in the
+send ring to reach the radio before the hardware unkeys, so the end of an over
+is not cut off. The wait is bounded by the ring's own length: 84 ms on
+Protocol 1 and 342 ms on Protocol 2 (65536 sample pairs at 192 kHz is
+341.3 ms, rounded up). The Core's own stops (Stop All TX, a revoked device,
+a dropped link or the same device connecting again, the amplifier stops) and
+a disconnect release at once and never wait. The
+342 ms ceiling is covered by `tst_unkey_send_ring_drain`; no radio has shown
+it yet.
+
+| # | Action | Expect |
+|---|---|---|
+| 36 | **Protocol 2 unkey ceiling.** Into a dummy load at low power, talk on SSB and release MOX mid-word. Then repeat with the network loaded (a large copy over the same link) so the ring holds a backlog. Then key again and press Stop All TX mid-word. | The release keeps transmitting for at most 342 ms past the normal release, and the last syllable goes out. If the ring has not drained by then the log reads `the transmit send ring did not drain within its length of 342 ms`, and the radio is unkeyed at that point regardless. Stop All TX unkeys at once: the log reads `transmit stopped; not waiting for the send ring` or shows no wait at all, and never the 342 ms line. A release held past 342 ms is a defect. |
+| 37 | **The G2's reported receiver count.** Connect to the G2 and read Setup > Hardware > Radio Info. Then run deskhpsdr against the same radio and read the receiver count its discovery shows. | Max RX reads the count the radio reports (4 on this G2 so far), the same number the stream pool uses, and a fifth pan is refused with a plain reason. deskhpsdr's server writes 6 in that discovery byte, as "6 DDC's for network client" (saturnserver.c:224-245 @f3d857c); if deskhpsdr shows a count other than 4 on this radio, the two disagree about what the byte counts, and the pool size needs another look. |
 
 ---
 

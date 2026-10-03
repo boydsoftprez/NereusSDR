@@ -260,8 +260,6 @@ private slots:
         testSettings().setValue("IsMemorySpotsEnabled", "True");
         testSettings().setValue("IsSpotsOverrideColorsEnabled", "True");
         testSettings().setValue("IsSpotsOverrideBackgroundColorsEnabled", "False");
-        testSettings().setValue("IsSpotsOverrideToAutoBackgroundColorEnabled",
-                                "False");
         QCOMPARE(testSettings().value("IsSpotsEnabled").toString(),
                  QString("True"));
         QCOMPARE(testSettings().value("IsMemorySpotsEnabled").toString(),
@@ -270,9 +268,6 @@ private slots:
                  QString("True"));
         QCOMPARE(testSettings().value(
                      "IsSpotsOverrideBackgroundColorsEnabled").toString(),
-                 QString("False"));
-        QCOMPARE(testSettings().value(
-                     "IsSpotsOverrideToAutoBackgroundColorEnabled").toString(),
                  QString("False"));
 
         // Sliders / spinboxes.
@@ -401,10 +396,6 @@ private slots:
                  QString("False"));
         QCOMPARE(testSettings().value("IsSpotsOverrideBackgroundColorsEnabled",
                                        "True").toString(),
-                 QString("True"));
-        QCOMPARE(testSettings().value(
-                     "IsSpotsOverrideToAutoBackgroundColorEnabled",
-                     "True").toString(),
                  QString("True"));
         QCOMPARE(testSettings().value("SpotsMaxLevel", 3).toInt(), 3);
         QCOMPARE(testSettings().value("SpotsStartingHeightPercentage",

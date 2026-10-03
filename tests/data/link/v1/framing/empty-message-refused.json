@@ -1,0 +1,16 @@
+{
+  "receiver": "station",
+  "message": [
+    {
+      "text": "{\"type\":\"notice\"}"
+    }
+  ],
+  "frames": [
+    {
+      "hex": ""
+    }
+  ],
+  "encodes": false,
+  "outcome": "refused",
+  "replies": []
+}

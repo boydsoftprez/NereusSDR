@@ -1,0 +1,8 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "nameplate.released"
+  },
+  "decodes": true
+}

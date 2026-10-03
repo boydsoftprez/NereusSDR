@@ -1,18 +1,23 @@
 // tests/tst_general_options_page_rx_only.cpp  (NereusSDR)
 //
-// Phase 3M-1a G.2 — Receive Only checkbox visibility wired from
+// Phase 3M-1a G.2: Receive Only checkbox wired from
 // BoardCapabilities::isRxOnlySku (NereusSDR-original).
 //
 // no-port-check: test fixture — no Thetis attribution required.
 //
-// Verifies:
-//   1. Default (null model): checkbox is hidden.
-//   2. Standard board (HermesLite, isRxOnlySku=false): checkbox is hidden.
-//   3. RX-only board (HermesLiteRxOnly, isRxOnlySku=true): checkbox is visible.
-//   4. setReceiveOnlyVisible(true/false) round-trip works independently of caps.
+// Task 16 (receiver and transmit gaps plan, 2026-09-25) replaced the
+// contract. The box used to be hidden except on the HL2 receive-only kit;
+// it is now shown on every radio (the operator, 2026-09-25: a control that
+// cannot run is shown disabled with its reason, never hidden), and on the
+// kit it is checked and disabled with the reason. tst_receive_only covers
+// the gate behind it.
 //
-// Setup note: HermesLiteRxOnly caps were added in Phase 3M-0 Task 1 and are
-// the only board in the caps table with isRxOnlySku=true.
+// Verifies:
+//   1. Default (null model): checkbox is shown and enabled.
+//   2. Standard board (isRxOnlySku=false): checkbox is shown and enabled.
+//   3. RX-only board (isRxOnlySku=true): checkbox is shown, checked and
+//      disabled with the reason.
+//   4. A reconnect to a different board updates it without reopening Setup.
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -39,44 +44,39 @@ private slots:
         AppSettings::instance().clear();
     }
 
-    // ── 1. null model: checkbox hidden ───────────────────────────────────────
+    // ── 1. null model: checkbox shown ────────────────────────────────────────
 
-    void nullModel_rxOnlyCheckbox_isHiddenByDefault()
+    void nullModel_rxOnlyCheckbox_isShown()
     {
-        // From Thetis setup.designer.cs:8535-8544 [v2.10.3.13] — Visible=false.
-        // Even without a RadioModel the checkbox must be hidden.
         GeneralOptionsPage page(/*model=*/nullptr);
 
         auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkGeneralRXOnly"));
         QVERIFY2(chk, "chkGeneralRXOnly not found");
-        // Use isHidden() — checks the explicit hidden flag regardless of parent
-        // widget show state.  isVisible() is always false for unshown top-levels.
-        QVERIFY2(chk->isHidden(), "checkbox must be hidden when model is null");
+        // isHidden() checks the explicit hidden flag regardless of parent
+        // widget show state (isVisible() is always false for unshown pages).
+        QVERIFY2(!chk->isHidden(), "checkbox must be shown when model is null");
+        QVERIFY(chk->isEnabled());
     }
 
-    // ── 2. isRxOnlySku=false: checkbox hidden ────────────────────────────────
+    // ── 2. isRxOnlySku=false: checkbox shown and enabled ─────────────────────
 
-    void standardCaps_rxOnlyCheckbox_isHidden()
+    void standardCaps_rxOnlyCheckbox_isShownAndEnabled()
     {
-        // boardCapabilities().isRxOnlySku == false → checkbox stays hidden.
         RadioModel model;
-        // Default RadioModel has no board set → boardCapabilities() returns
-        // Unknown caps which have isRxOnlySku=false.  No override needed.
         GeneralOptionsPage page(&model);
 
         auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkGeneralRXOnly"));
         QVERIFY2(chk, "chkGeneralRXOnly not found");
-        QVERIFY2(chk->isHidden(),
-                 "checkbox must be hidden when isRxOnlySku is false");
+        QVERIFY2(!chk->isHidden(), "checkbox must be shown when isRxOnlySku is false");
+        QVERIFY(chk->isEnabled());
+        QVERIFY(!chk->isChecked());
     }
 
-    // ── 3. isRxOnlySku=true: checkbox visible ────────────────────────────────
+    // ── 3. isRxOnlySku=true: checked and disabled with the reason ────────────
 
-    void rxOnlyCaps_rxOnlyCheckbox_isVisible()
+    void rxOnlyCaps_rxOnlyCheckbox_isCheckedAndDisabled()
     {
         // Inject isRxOnlySku=true via setCapsRxOnlyForTest (3M-1a G.2 test hook).
-        // HermesLiteRxOnly has no HPSDRModel entry so setBoardForTest cannot
-        // reach its caps; this hook is the correct seam.
         // Cite: BoardCapabilities::isRxOnlySku (NereusSDR-original, Phase 3M-0 Task 1).
         RadioModel model;
         model.setCapsRxOnlyForTest(true);
@@ -84,63 +84,40 @@ private slots:
 
         auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkGeneralRXOnly"));
         QVERIFY2(chk, "chkGeneralRXOnly not found");
-        QVERIFY2(!chk->isHidden(),
-                 "checkbox must not be hidden when isRxOnlySku is true");
+        QVERIFY2(!chk->isHidden(), "checkbox must be shown when isRxOnlySku is true");
+        QVERIFY(chk->isChecked());
+        QVERIFY(!chk->isEnabled());
+        QCOMPARE(chk->toolTip(), RadioModel::rxOnlyForcedReason());
     }
 
-    // ── 4. setReceiveOnlyVisible round-trip ───────────────────────────────────
+    // ── 4. reconnect simulation: currentRadioChanged drives the box ──────────
 
-    void setReceiveOnlyVisible_roundTrip()
+    void reconnectChange_rxOnlyCheckbox_follows()
     {
-        GeneralOptionsPage page(/*model=*/nullptr);
-
-        auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkGeneralRXOnly"));
-        QVERIFY2(chk, "chkGeneralRXOnly not found");
-
-        // Initially hidden (explicit setVisible(false) in buildHardwareConfigGroup).
-        QVERIFY(chk->isHidden());
-
-        // Show it.
-        page.setReceiveOnlyVisible(true);
-        QVERIFY2(!chk->isHidden(), "setReceiveOnlyVisible(true) must un-hide checkbox");
-
-        // Hide it again.
-        page.setReceiveOnlyVisible(false);
-        QVERIFY2(chk->isHidden(), "setReceiveOnlyVisible(false) must re-hide checkbox");
-    }
-
-    // ── 5. reconnect simulation: currentRadioChanged drives visibility ────────
-    // Spec reviewer gap (G.2 fixup): the named-slot connection must propagate
-    // live cap changes — i.e. a reconnect to a different board type (e.g.
-    // standard board → RX-only board) updates the checkbox without reopening Setup.
-
-    void reconnectChange_rxOnlyCheckbox_visibilityUpdates()
-    {
-        // Start with a non-RX-only board: checkbox must be hidden on construction.
         RadioModel model;
         model.setCapsRxOnlyForTest(false);
         GeneralOptionsPage page(&model);
 
         auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkGeneralRXOnly"));
         QVERIFY2(chk, "chkGeneralRXOnly not found");
-        QVERIFY2(chk->isHidden(),
-                 "checkbox must be hidden on construction when isRxOnlySku=false");
+        QVERIFY(!chk->isHidden());
+        QVERIFY(chk->isEnabled());
 
-        // Simulate reconnect to an RX-only board: update caps then emit the signal.
+        // Reconnect to an RX-only board.
         model.setCapsRxOnlyForTest(true);
         model.emitCurrentRadioChangedForTest();
         QApplication::processEvents();
+        QVERIFY(!chk->isHidden());
+        QVERIFY(chk->isChecked());
+        QVERIFY(!chk->isEnabled());
 
-        QVERIFY2(!chk->isHidden(),
-                 "checkbox must be visible after currentRadioChanged fires with isRxOnlySku=true");
-
-        // Reverse: simulate reconnect back to a full-TX board.
+        // Back to a full-TX board.
         model.setCapsRxOnlyForTest(false);
         model.emitCurrentRadioChangedForTest();
         QApplication::processEvents();
-
-        QVERIFY2(chk->isHidden(),
-                 "checkbox must be hidden after currentRadioChanged fires with isRxOnlySku=false");
+        QVERIFY(!chk->isHidden());
+        QVERIFY(!chk->isChecked());
+        QVERIFY(chk->isEnabled());
     }
 };
 

@@ -12,6 +12,8 @@
 //
 // Phase 3P-II Task 84.
 // AI tooling: Anthropic Claude Code.
+// 2026-09-24: R-R3-47 / R-R3-22: message(). J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 
 #include "PgxlSaveRebootDialog.h"
 
@@ -22,6 +24,15 @@
 
 namespace NereusSDR {
 
+QString PgxlSaveRebootDialog::message()
+{
+    return QStringLiteral("Sending `save` will persist your configuration to "
+                          "flash and reboot the PGXL. The amplifier will be "
+                          "offline for approximately 20 seconds. NereusSDR will "
+                          "auto-reconnect when it returns. Do not transmit "
+                          "during reboot.");
+}
+
 PgxlSaveRebootDialog::PgxlSaveRebootDialog(QWidget* parent)
     : QDialog(parent)
 {
@@ -31,13 +42,7 @@ PgxlSaveRebootDialog::PgxlSaveRebootDialog(QWidget* parent)
     auto* layout = new QVBoxLayout(this);
 
     // Explanatory text per design spec section 5.6 footer.
-    auto* msg = new QLabel(
-        QStringLiteral("Sending `save` will persist your configuration to "
-                       "flash and reboot the PGXL. The amplifier will be "
-                       "offline for approximately 20 seconds. NereusSDR will "
-                       "auto-reconnect when it returns. Do not transmit "
-                       "during reboot."),
-        this);
+    auto* msg = new QLabel(message(), this);
     msg->setWordWrap(true);
     layout->addWidget(msg);
 

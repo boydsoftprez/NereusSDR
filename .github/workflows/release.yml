@@ -7,10 +7,15 @@ on:
     inputs:
       tag:
         description: 'Tag to (re-)build, e.g. v0.2.0'
-        required: true
+        required: false
+      verify_only:
+        description: 'Build and inspect packages from the selected branch commit without publishing'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -22,25 +27,54 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
+      source_ref: ${{ steps.meta.outputs.source_ref }}
       is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ inputs.verify_only && github.sha || inputs.tag || github.ref }}
 
-      - name: Resolve tag and validate format
+      - name: Resolve source and release metadata
         id: meta
         shell: bash
+        env:
+          VERIFY_ONLY: ${{ inputs.verify_only }}
+          INPUT_TAG: ${{ inputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          SOURCE_REF=$(git rev-parse HEAD)
+          echo "source_ref=$SOURCE_REF" >> "$GITHUB_OUTPUT"
+          CMAKE_VER=$(grep -oE 'project\(NereusSDR VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | awk '{print $3}')
+          if ! [[ "$CMAKE_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Cannot derive a numeric CMakeLists.txt version"
+            exit 1
+          fi
+          if [[ "$VERIFY_ONLY" == "true" ]]; then
+            echo "Verification source: $SOURCE_REF; CMake version: $CMAKE_VER"
+            echo "version=$CMAKE_VER" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && -z "$INPUT_TAG" ]]; then
+            echo "::error::A tag is required when verify_only is false"
+            exit 1
+          fi
+          TAG="${INPUT_TAG:-$REF_NAME}"
           echo "Tag: $TAG"
           if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
             echo "::error::Tag '$TAG' does not match vMAJOR.MINOR.PATCH[-suffix]"
             exit 1
           fi
           VERSION="${TAG#v}"
+          BASE_VER="${VERSION%%-*}"
+          if [[ "$CMAKE_VER" != "$BASE_VER" ]]; then
+            echo "::error::CMakeLists.txt version ($CMAKE_VER) != tag version ($BASE_VER)"
+            exit 1
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           if [[ "$TAG" =~ -(alpha|beta|rc) ]]; then
@@ -49,20 +83,8 @@ jobs:
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Verify CMakeLists.txt version matches tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          CMAKE_VER=$(grep -oE 'project\(NereusSDR VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | awk '{print $3}')
-          TAG_VER="${{ steps.meta.outputs.version }}"
-          BASE_VER="${TAG_VER%%-*}"
-          if [[ "$CMAKE_VER" != "$BASE_VER" ]]; then
-            echo "::error::CMakeLists.txt version ($CMAKE_VER) != tag version ($BASE_VER)"
-            exit 1
-          fi
-          echo "Version match: $CMAKE_VER"
-
       - name: Extract release notes from CHANGELOG.md
+        if: ${{ !inputs.verify_only }}
         shell: bash
         run: |
           set -euo pipefail
@@ -81,6 +103,7 @@ jobs:
           echo "-------------------------"
 
       - name: Append release-notes template
+        if: ${{ !inputs.verify_only }}
         shell: bash
         run: |
           if [[ -f .github/release-notes-template.md ]]; then
@@ -89,6 +112,7 @@ jobs:
           fi
 
       - name: Upload release notes artifact
+        if: ${{ !inputs.verify_only }}
         uses: actions/upload-artifact@v4
         with:
           name: release-notes
@@ -111,7 +135,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - name: Install system dependencies
         run: |
@@ -126,7 +150,8 @@ jobs:
             libfuse2 file desktop-file-utils \
             libfftw3-dev imagemagick \
             libasound2-dev libjack-jackd2-dev \
-            libpipewire-0.3-dev
+            libpipewire-0.3-dev \
+            libssl-dev
 
       - name: Install system Qt (ARM only)
         if: matrix.use_aqt == false
@@ -190,6 +215,11 @@ jobs:
       - name: Install to AppDir
         run: |
           DESTDIR=${{ github.workspace }}/AppDir cmake --install build
+          # The daemon component also contains a system unit, which does not
+          # belong in an AppImage. Stage just its executable beside the GUI.
+          DESTDIR=${{ github.workspace }}/StationStage cmake --install build --component nereusd
+          cp StationStage/usr/bin/nereusd AppDir/usr/bin/nereusd
+          test -x AppDir/usr/bin/nereusd
 
       - name: Download linuxdeploy + Qt plugin
         run: |
@@ -280,17 +310,143 @@ jobs:
           echo "Adding $LIBRADE_DIR to LD_LIBRARY_PATH for linuxdeploy"
           export LD_LIBRARY_PATH="$PWD/$LIBRADE_DIR:$LD_LIBRARY_PATH"
 
+          # libNereusSDRLib.so is the application itself, built SHARED so the
+          # ~514 test executables stop each embedding a private 22 MB copy.
+          # Unlike librade it DOES have an install() rule, so cmake --install
+          # has already placed it in AppDir/usr/lib, and usr/bin/NereusSDR
+          # carries RPATH $ORIGIN/../lib. Belt and braces anyway: the librade
+          # experience above shows linuxdeploy's resolver is the fragile part
+          # of this step, and a missing application library is not a degraded
+          # AppImage, it is one that cannot start at all.
+          if [ ! -f AppDir/usr/lib/libNereusSDRLib.so ]; then
+            echo "ERROR: libNereusSDRLib.so missing from AppDir/usr/lib after cmake --install" >&2
+            find AppDir build -name 'libNereusSDRLib.so*' >&2
+            exit 1
+          fi
+          # R-R3-36: the microphone capture helper installs beside NereusSDR
+          # in the default component; linuxdeploy then resolves its libraries
+          # along with the rest of AppDir/usr/bin.
+          if [ ! -x AppDir/usr/bin/nereus-audio-capture ]; then
+            echo "ERROR: nereus-audio-capture missing from AppDir/usr/bin after cmake --install" >&2
+            exit 1
+          fi
+          export LD_LIBRARY_PATH="$PWD/AppDir/usr/lib:$LD_LIBRARY_PATH"
+
           ./linuxdeploy-${{ matrix.arch }}.AppImage \
             --appdir AppDir \
+            --executable AppDir/usr/bin/nereusd \
+            --custom-apprun packaging/linux/AppRun \
             --plugin qt \
             --desktop-file AppDir/usr/share/applications/NereusSDR.desktop \
             --output appimage
+
+          # v0.5.0 shipped a Windows artifact whose .exe could not launch
+          # because rade.dll was absent. Adding a second shared library
+          # doubles that surface, so assert rather than trust.
+          if [ ! -f AppDir/usr/lib/libNereusSDRLib.so ]; then
+            echo "ERROR: libNereusSDRLib.so vanished from AppDir during linuxdeploy" >&2
+            exit 1
+          fi
+          # R-R3-39: WDSP links libfftw3_threads (FFTW's thread-safe
+          # planner); linuxdeploy traces it from the NEEDED entries like
+          # libfftw3. Assert it, as above.
+          if ! ls AppDir/usr/lib/libfftw3_threads.so.3* >/dev/null 2>&1; then
+            echo "ERROR: libfftw3_threads.so.3 missing from AppDir/usr/lib" >&2
+            exit 1
+          fi
+          test -x AppDir/usr/bin/nereusd
+          chmod +x "$LDAI_OUTPUT"
+          "./$LDAI_OUTPUT" --appimage-extract >/dev/null
+          test -x squashfs-root/usr/bin/nereusd
+          cmp packaging/linux/AppRun squashfs-root/AppRun.wrapped
+          QT_QPA_PLATFORM=offscreen "./$LDAI_OUTPUT" --nereus-station --help > station-help.txt
+          grep -q 'NereusSDR headless daemon' station-help.txt
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}
           path: NereusSDR-*.AppImage
+          retention-days: 7
+
+  build-deb:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_ref }}
+      - name: Install daemon build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config qt6-base-dev \
+            qt6-multimedia-dev qt6-base-private-dev qt6-shadertools-dev \
+            qt6-svg-dev qt6-websockets-dev libfftw3-dev libssl-dev \
+            libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev \
+            libgl1-mesa-dev libxkbcommon-dev autoconf automake libtool wget
+      - name: Configure and build headless station
+        run: |
+          cmake -B build-deb -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr -DNEREUS_GPU_SPECTRUM=OFF
+          cmake --build build-deb --target nereusd -j$(nproc)
+          test -x build-deb/nereusd
+      - name: Build and inspect Debian package
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          DESTDIR="$PWD/debroot" cmake --install build-deb --component nereusd
+          test -x debroot/usr/bin/nereusd
+          UNIT=$(find debroot -path '*/systemd/system/nereusd.service' -type f -print -quit)
+          test -n "$UNIT"
+          test -f debroot/usr/share/nereusd/nereusd.conf.sample
+          grep -q '^DynamicUser=yes$' "$UNIT"
+          grep -q '^StateDirectory=nereusd$' "$UNIT"
+          CORE_LIB=$(find debroot/usr/lib -name 'libNereusCore.so' -type f -print -quit)
+          RADE_LIB=$(find debroot/usr/lib -name 'librade.so.0.1' -print -quit)
+          test -n "$CORE_LIB" && test -n "$RADE_LIB"
+          LIBDIR=$(dirname "$CORE_LIB")
+          mkdir -p debroot/DEBIAN
+          # Derive distro-specific Qt/t64 and other ELF dependencies from
+          # the release runner. Bundled Core/RADE libraries need no external
+          # package dependency; the installed tree is searched first.
+          mkdir -p package-work/debian
+          cd package-work
+          cp ../packaging/deb/source-control debian/control
+          DEPS=$(dpkg-shlibdeps -O --ignore-missing-info \
+            -l"$GITHUB_WORKSPACE/$LIBDIR" \
+            -e"$GITHUB_WORKSPACE/debroot/usr/bin/nereusd" \
+            -e"$GITHUB_WORKSPACE/$CORE_LIB" \
+            -e"$GITHUB_WORKSPACE/$RADE_LIB" \
+            | sed -n 's/^shlibs:Depends=//p')
+          test -n "$DEPS"
+          cd ..
+          LD_LIBRARY_PATH="$PWD/$LIBDIR" ldd debroot/usr/bin/nereusd > package-ldd.txt
+          ! grep -q 'not found' package-ldd.txt
+          sed -e "s/@VERSION@/$VERSION/g" -e "s/@ARCH@/$ARCH/g" \
+            -e "s/@DEPENDS@/$DEPS/g" \
+            packaging/deb/control.in > debroot/DEBIAN/control
+          install -m 0755 packaging/deb/postinst debroot/DEBIAN/postinst
+          install -m 0755 packaging/deb/postrm debroot/DEBIAN/postrm
+          dpkg-deb --build --root-owner-group debroot "nereusd_${VERSION}_${ARCH}.deb"
+          dpkg-deb --contents "nereusd_${VERSION}_${ARCH}.deb" > package-contents.txt
+          grep -q 'usr/bin/nereusd$' package-contents.txt
+          grep -q 'systemd/system/nereusd.service$' package-contents.txt
+          grep -q 'usr/share/nereusd/nereusd.conf.sample$' package-contents.txt
+          dpkg-deb --info "nereusd_${VERSION}_${ARCH}.deb"
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: nereusd_*.deb
           retention-days: 7
 
   build-macos:
@@ -321,18 +477,24 @@ jobs:
     # evaluated at workflow-parse time before secrets inject. Job-level
     # env is populated after secrets are available.
     env:
-      HAS_APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID != '' }}
+      HAS_APPLE_DEVELOPER_ID: ${{ !inputs.verify_only && secrets.APPLE_DEVELOPER_ID != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - name: Install dependencies (arm64 native)
         if: matrix.arch == 'arm64'
         # autoconf/automake/libtool/wget required by third_party/rade
         # vendored Opus (autotools + wget DRED model download). Not in
-        # default macOS runner image.
-        run: brew install qt@6 ninja create-dmg fftw ccache autoconf automake libtool wget
+        # default macOS runner image. openssl@3 named explicitly (fix
+        # round 4 cheap out-of-scope item): find_package(OpenSSL) is now
+        # REQUIRED, and this row was relying on whatever openssl@3
+        # happens to already be present transitively (the runner image,
+        # or a dependency of something else in this list) rather than
+        # declaring the dependency this build actually has, the same way
+        # fftw already is declared.
+        run: brew install qt@6 ninja create-dmg fftw openssl@3 ccache autoconf automake libtool wget
 
       - name: Install non-Qt brew packages (x86_64 cross-compile)
         if: matrix.arch == 'x86_64'
@@ -365,8 +527,10 @@ jobs:
           tar xzf fftw.tar.gz
           cd fftw-3.3.10
 
-          # Pass 1 — double precision (libfftw3)
-          ./configure --enable-shared --disable-doc \
+          # Pass 1 — double precision (libfftw3), with libfftw3_threads:
+          # WdspEngine makes FFTW's planner thread-safe (R-R3-39,
+          # fftw_make_planner_thread_safe), which lives in that library.
+          ./configure --enable-shared --enable-threads --disable-doc \
             --prefix="$PREFIX" CFLAGS="$CFLAGS" --host=x86_64-apple-darwin
           make -j$(sysctl -n hw.ncpu)
           make install
@@ -383,7 +547,56 @@ jobs:
           test -f "$PREFIX/lib/pkgconfig/fftw3.pc"     || { echo "::error::fftw3.pc not installed"; exit 1; }
           test -f "$PREFIX/lib/pkgconfig/fftw3f.pc"    || { echo "::error::fftw3f.pc not installed"; exit 1; }
           test -f "$PREFIX/lib/libfftw3.dylib"         || { echo "::error::libfftw3 (double) not installed"; exit 1; }
+          test -f "$PREFIX/lib/libfftw3_threads.dylib" || { echo "::error::libfftw3_threads (double) not installed"; exit 1; }
           test -f "$PREFIX/lib/libfftw3f.dylib"        || { echo "::error::libfftw3f (single) not installed"; exit 1; }
+
+      - name: Build OpenSSL from source for x86_64
+        if: matrix.arch == 'x86_64'
+        # Remote Daemon R2, Task 17 fix round 3, Important B: this row's
+        # Homebrew is the arm64 (Apple Silicon host) install, whose
+        # openssl@3 keg has no x86_64 slice -- under
+        # -DCMAKE_OSX_ARCHITECTURES=x86_64 that is either a REQUIRED
+        # configure failure or a link error mixing arm64 libcrypto into
+        # an x86_64 binary. Same story, same fix shape as FFTW immediately
+        # above on this exact row: source-build for the target arch rather
+        # than reach for a second (Rosetta-emulated) Homebrew install,
+        # keeping this row's one cross-compile story instead of adding a
+        # second, different one. This is the exact artifact-class bug the
+        # whole REQUIRED finding is modelled on (v0.5.0's Windows build
+        # shipped without rade.dll) -- caught here, before a release.
+        #
+        # darwin64-x86_64-cc bakes in "-arch x86_64" itself (verified
+        # 2026-08-08 against openssl/openssl's own INSTALL.md and the
+        # darwin64-x86_64-cc Configure target source); -mmacosx-version-min
+        # is passed as an extra Configure argument (Configure passes
+        # unrecognised options through to the compiler) rather than via
+        # CFLAGS, matching this row's deployment_target the same way
+        # FFTW's CFLAGS does above. shared (not no-shared) matches FFTW's
+        # --enable-shared choice on the same row, so packaging treats both
+        # non-Qt dylibs the same way. no-tests skips building the (large)
+        # test-binary tree -- verified 2026-08-08 as a real, current
+        # OpenSSL 3.x Configure option, not building the suite this step
+        # never runs anyway. install_sw (not install) skips man pages/HTML
+        # docs, unneeded in CI.
+        run: |
+          PREFIX="${{ github.workspace }}/openssl-x86_64"
+          curl -fsSL https://www.openssl.org/source/openssl-3.0.21.tar.gz -o openssl.tar.gz
+          tar xzf openssl.tar.gz
+          cd openssl-3.0.21
+
+          ./Configure darwin64-x86_64-cc shared no-tests \
+            -mmacosx-version-min=${{ matrix.deployment_target }} \
+            --prefix="$PREFIX" --openssldir="$PREFIX/ssl"
+          make -j$(sysctl -n hw.ncpu)
+          make install_sw
+
+          # Sanity-check the install, and that it is actually x86_64 --
+          # the one failure mode a plain file-exists check would miss:
+          # a misconfigured Configure call silently building for the
+          # HOST (arm64) instead of the intended TARGET (x86_64).
+          test -f "$PREFIX/include/openssl/evp.h" || { echo "::error::openssl/evp.h not installed"; exit 1; }
+          test -f "$PREFIX/lib/libcrypto.3.dylib"  || { echo "::error::libcrypto.3.dylib not installed"; exit 1; }
+          file "$PREFIX/lib/libcrypto.3.dylib" | grep -q x86_64 || { echo "::error::libcrypto.3.dylib was not built for x86_64 -- got: $(file "$PREFIX/lib/libcrypto.3.dylib")"; exit 1; }
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -463,11 +676,24 @@ jobs:
             export PKG_CONFIG_PATH="$FFTW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
             export LDFLAGS="-L$FFTW_PREFIX/lib $LDFLAGS"
             CMAKE_PREFIX_PATH_VAL="$FFTW_PREFIX"
+            # OpenSSL (fix round 3, Important B): same cross-compile-
+            # from-source story as FFTW above, for the same reason --
+            # this row's Homebrew (arm64) has no x86_64 openssl@3 slice.
+            # Explicit -DOPENSSL_ROOT_DIR, not just CMAKE_PREFIX_PATH, so
+            # the assertion in CMakeLists.txt's find_package(OpenSSL)
+            # block can confirm the resolved copy is actually this one
+            # (and not, say, a stale build/ cache from a previous
+            # native-arm64 configure of the same working directory).
+            EXTRA_CMAKE_ARGS="-DOPENSSL_ROOT_DIR=${{ github.workspace }}/openssl-x86_64"
           else
             # Native path: brew supplies both Qt and FFTW under the brew
             # prefix (/opt/homebrew on Apple Silicon). No env-var dance
-            # needed because brew's lib dir is in the default search path.
+            # needed because brew's lib dir is in the default search path,
+            # and openssl@3 is not keg-only (fix round 3 correction; see
+            # CMakeLists.txt's find_package(OpenSSL) comment) so it needs
+            # no OPENSSL_ROOT_DIR hint either.
             CMAKE_PREFIX_PATH_VAL="$(brew --prefix)"
+            EXTRA_CMAKE_ARGS=""
           fi
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -475,7 +701,8 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
             -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH_VAL" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            $EXTRA_CMAKE_ARGS
 
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)
@@ -494,7 +721,65 @@ jobs:
           else
             MACDEPLOYQT="$(brew --prefix qt@6)/bin/macdeployqt"
           fi
-          "$MACDEPLOYQT" build/NereusSDR.app -verbose=1 -always-overwrite
+          # R-R3-36: the microphone capture helper in Contents/Helpers links
+          # Qt directly, so macdeployqt must rewrite its references too.
+          HELPER="build/NereusSDR.app/Contents/Helpers/nereus-audio-capture"
+          STATION="build/NereusSDR.app/Contents/Helpers/NereusStation.app/Contents/MacOS/nereusd"
+          test -x "$STATION"
+          test -f "build/NereusSDR.app/Contents/Helpers/NereusStation.app/Contents/Info.plist"
+          if [ ! -f "$HELPER" ]; then
+            echo "::error::nereus-audio-capture missing from Contents/Helpers; PC microphone capture would not work" >&2
+            exit 1
+          fi
+          "$MACDEPLOYQT" build/NereusSDR.app -verbose=1 -always-overwrite \
+            "-executable=$HELPER" "-executable=$STATION"
+          if otool -L "$HELPER" | grep -qE '/(opt/homebrew|usr/local)/.*Qt|/Qt/6\.'; then
+            echo "::error::nereus-audio-capture still references Qt outside the bundle:" >&2
+            otool -L "$HELPER" | grep -E '/(opt/homebrew|usr/local)/.*Qt|/Qt/6\.' >&2
+            exit 1
+          fi
+          if otool -L "$STATION" | grep -qE '/(opt/homebrew|usr/local)/.*Qt|/Qt/6\.'; then
+            echo "::error::nereusd still references Qt outside the bundle" >&2
+            exit 1
+          fi
+
+          # libNereusSDRLib.dylib is the application itself, built SHARED so
+          # the ~514 test executables stop each embedding a private 22 MB
+          # copy. CMake's POST_BUILD stages it into Contents/Frameworks before
+          # this step runs, precisely so macdeployqt sees it in place and
+          # rewrites its Qt references along with everything else.
+          DYLIB="build/NereusSDR.app/Contents/Frameworks/libNereusSDRLib.dylib"
+          if [ ! -f "$DYLIB" ]; then
+            echo "::error::libNereusSDRLib.dylib missing from the app bundle; the .app cannot launch" >&2
+            exit 1
+          fi
+
+          # macdeployqt reaches the dylib by following an @rpath dependency of
+          # the executable. If that traversal ever silently fails, the dylib
+          # keeps build-machine-absolute Qt paths, the bundle still builds and
+          # signs cleanly, and the failure only shows up as a launch crash on
+          # a machine with no Qt installed. Catch it here instead.
+          if otool -L "$DYLIB" | grep -qE '/(opt/homebrew|usr/local)/.*Qt|/Qt/6\.'; then
+            echo "::error::libNereusSDRLib.dylib still references Qt outside the bundle:" >&2
+            otool -L "$DYLIB" | grep -E '/(opt/homebrew|usr/local)/.*Qt|/Qt/6\.' >&2
+            exit 1
+          fi
+
+          # R-R3-39: WDSP links libfftw3_threads (FFTW's thread-safe
+          # planner). macdeployqt copies it with libfftw3 as a dependency of
+          # the app's libraries; assert it arrived and that no bundled binary
+          # still points at the build machine's copy.
+          if ! ls build/NereusSDR.app/Contents/Frameworks/libfftw3_threads*.dylib >/dev/null 2>&1; then
+            echo "::error::libfftw3_threads is missing from Contents/Frameworks; the app cannot launch" >&2
+            exit 1
+          fi
+          for BIN in build/NereusSDR.app/Contents/MacOS/* build/NereusSDR.app/Contents/Frameworks/*.dylib; do
+            if otool -L "$BIN" | grep -qE '(/opt/homebrew|/usr/local|fftw-x86_64)/.*libfftw3'; then
+              echo "::error::$BIN still references an FFTW library outside the bundle:" >&2
+              otool -L "$BIN" | grep -E '(/opt/homebrew|/usr/local|fftw-x86_64)/.*libfftw3' >&2
+              exit 1
+            fi
+          done
 
       - name: Copy license notices into app bundle
         run: |
@@ -519,21 +804,69 @@ jobs:
           # DeepFilterNet3 ONNX tarball
           mkdir -p build/NereusSDR.app/Contents/Resources/models/dfnet3
           cp third_party/deepfilter/models/DeepFilterNet3_onnx.tar.gz build/NereusSDR.app/Contents/Resources/models/dfnet3/
+          # The nested background app resolves models relative to its own
+          # Contents/MacOS, so it needs its own Resources copy.
+          mkdir -p build/NereusSDR.app/Contents/Helpers/NereusStation.app/Contents/Resources/models/dfnet3
+          cp third_party/deepfilter/models/DeepFilterNet3_onnx.tar.gz \
+            build/NereusSDR.app/Contents/Helpers/NereusStation.app/Contents/Resources/models/dfnet3/
 
       # Sign the .app bundle. With APPLE_DEVELOPER_ID set we use Developer
       # ID + hardened runtime + entitlements (required for notarization).
       # Without secrets we fall back to ad-hoc so dev builds still work.
       - name: Codesign app
+        env:
+          APPLE_DEVELOPER_ID: ${{ !inputs.verify_only && secrets.APPLE_DEVELOPER_ID || '' }}
         run: |
+          # R-R3-36: sign the nested capture helper before its containing
+          # bundle, with the same identity, hardened runtime and entitlements
+          # (audio-input) as the app.
+          HELPER="build/NereusSDR.app/Contents/Helpers/nereus-audio-capture"
+          STATION="build/NereusSDR.app/Contents/Helpers/NereusStation.app"
+          if [ "$HAS_APPLE_DEVELOPER_ID" = "true" ]; then
+            codesign --force --options runtime --timestamp \
+              --entitlements packaging/macos/app-entitlements.plist \
+              --sign "$APPLE_DEVELOPER_ID" \
+              "$HELPER"
+            codesign --force --options runtime --timestamp \
+              --sign "$APPLE_DEVELOPER_ID" "$STATION"
+          else
+            # Ad hoc, no identity (R-R3-50): the same order the local CMake
+            # build uses. Nested code is signed first, inside-out, each item
+            # with its own options, and the bundle is sealed last WITHOUT
+            # --deep. --deep would re-sign the helper with the bundle's
+            # options, which carry no entitlements, and strip its
+            # disable-library-validation and audio-input entitlements.
+            APP="build/NereusSDR.app"
+            if [ -d "$APP/Contents/PlugIns" ]; then
+              find "$APP/Contents/PlugIns" -type f -name '*.dylib' -print0 \
+                | xargs -0 -n 1 codesign --force --sign -
+            fi
+            find "$APP/Contents/Frameworks" -type f -name '*.dylib' -print0 \
+              | xargs -0 -n 1 codesign --force --sign -
+            find "$APP/Contents/Frameworks" -maxdepth 1 -type d -name '*.framework' -print0 \
+              | xargs -0 -n 1 codesign --force --sign -
+            codesign --force --entitlements packaging/macos/app-entitlements.plist \
+              --sign - "$HELPER"
+            codesign --force --sign - "$STATION"
+          fi
+          codesign --verify --verbose=2 "$HELPER"
+          codesign --verify --strict --verbose=2 "$STATION"
           if [ "$HAS_APPLE_DEVELOPER_ID" = "true" ]; then
             codesign --force --deep --options runtime --timestamp \
               --entitlements packaging/macos/app-entitlements.plist \
-              --sign "${{ secrets.APPLE_DEVELOPER_ID }}" \
+              --sign "$APPLE_DEVELOPER_ID" \
               build/NereusSDR.app
           else
-            codesign --force --deep --sign - build/NereusSDR.app
+            codesign --force --sign - build/NereusSDR.app
+            codesign --verify --deep --strict --verbose=2 build/NereusSDR.app
+            HELPER_ENTS="$(codesign -d --entitlements - "$HELPER" 2>/dev/null)"
+            if ! grep -q 'com.apple.security.device.audio-input' <<<"$HELPER_ENTS"; then
+              echo "::error::nereus-audio-capture lost its entitlements in the ad hoc signature" >&2
+              exit 1
+            fi
           fi
           codesign --verify --verbose=2 build/NereusSDR.app
+          codesign --verify --strict --verbose=2 "$STATION"
 
       - name: Build HAL plugin
         run: |
@@ -546,15 +879,17 @@ jobs:
 
       - name: Sign HAL plugin
         if: env.HAS_APPLE_DEVELOPER_ID == 'true'
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
         run: |
           codesign --force --options runtime --timestamp \
             --entitlements packaging/macos/hal-entitlements.plist \
-            --sign "${{ secrets.APPLE_DEVELOPER_ID }}" \
+            --sign "$APPLE_DEVELOPER_ID" \
             build-hal/NereusSDRVAX.driver
 
       - name: Build .pkg
         env:
-          APPLE_INSTALLER_ID: ${{ secrets.APPLE_INSTALLER_ID }}
+          APPLE_INSTALLER_ID: ${{ !inputs.verify_only && secrets.APPLE_INSTALLER_ID || '' }}
           # Pass the FULL tag version (including any -rcN / -alpha / -beta
           # suffix) so productbuild writes the correctly-suffixed PKG at
           # the same path the notarize/staple/upload steps below expect.
@@ -606,10 +941,12 @@ jobs:
 
       - name: Codesign DMG
         if: env.HAS_APPLE_DEVELOPER_ID == 'true'
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
         run: |
           DMG_PATH=$(ls NereusSDR-*.dmg | head -1)
           codesign --force --timestamp \
-            --sign "${{ secrets.APPLE_DEVELOPER_ID }}" \
+            --sign "$APPLE_DEVELOPER_ID" \
             "$DMG_PATH"
 
       - name: Notarize DMG
@@ -627,6 +964,20 @@ jobs:
         run: |
           DMG_PATH=$(ls NereusSDR-*.dmg | head -1)
           xcrun stapler staple "$DMG_PATH"
+
+      - name: Inspect shipped macOS artifacts
+        run: |
+          set -euo pipefail
+          STATION_REL='NereusSDR.app/Contents/Helpers/NereusStation.app/Contents/MacOS/nereusd'
+          PKG_PATH="build/NereusSDR-${{ needs.prepare.outputs.version }}-${{ matrix.dmg_suffix }}.pkg"
+          pkgutil --payload-files "$PKG_PATH" | grep -Fq "$STATION_REL"
+          DMG_PATH=$(ls NereusSDR-*.dmg | head -1)
+          mkdir -p mounted-dmg
+          hdiutil attach -readonly -nobrowse -quiet -mountpoint "$PWD/mounted-dmg" "$DMG_PATH"
+          trap 'hdiutil detach -quiet "$PWD/mounted-dmg"' EXIT
+          test -x "mounted-dmg/$STATION_REL"
+          test -f "mounted-dmg/NereusSDR.app/Contents/Helpers/NereusStation.app/Contents/Resources/models/rnnoise/Default_large.bin"
+          codesign --verify --strict "mounted-dmg/NereusSDR.app/Contents/Helpers/NereusStation.app"
 
       - name: Upload .pkg artifact
         uses: actions/upload-artifact@v4
@@ -648,7 +999,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -703,9 +1054,45 @@ jobs:
           # ShaderTools or Gui private modules. v0.1.1 silently shipped
           # without GPU spectrum because this flag was implicit; never
           # again.
+          #
+          # vcpkg (Remote Daemon R2, Task 17 fix round 1, coordinator
+          # decision): windows-latest ships vcpkg with
+          # VCPKG_INSTALLATION_ROOT already set, so no separate install
+          # step is needed. The toolchain file below triggers vcpkg's
+          # manifest-mode install (reads vcpkg.json at the repo root) as
+          # part of THIS SAME configure run, before find_package(OpenSSL)
+          # in CMakeLists.txt executes, installing into
+          # build/vcpkg_installed/x64-windows-static-md. -static-md:
+          # static OpenSSL libraries against the dynamic CRT, matching
+          # what Qt itself links against here, and avoiding a runtime DLL
+          # to deploy (this project has already shipped a release broken
+          # by a missing runtime DLL: v0.5.0's Windows installer without
+          # rade.dll). vcpkg.json's builtin-baseline is pinned to a real
+          # vcpkg commit (fix round 2, coordinator-supplied: the commit
+          # vcpkg's annotated release tag 2026.07.29 dereferences to) --
+          # see that file's own note and the CMakeLists.txt
+          # find_package(OpenSSL) block for the full reasoning and how to
+          # bump it when taking a future OpenSSL update. Fix round 4:
+          # this comment previously (correctly, at the time) called that
+          # baseline a placeholder still needing a real SHA; stale after
+          # round 2 landed one, corrected here.
+          #
+          # OPENSSL_ROOT_DIR is passed explicitly, pointing at that same
+          # vcpkg install location, as a defensive belt-and-suspenders
+          # measure: windows-latest preinstalls Strawberry Perl, which
+          # bundles its own MinGW-built OpenSSL that is NOT link-
+          # compatible with this MSVC build. Naming the root rather than
+          # trusting the toolchain file's search order to win on its own
+          # is the point; the CMakeLists.txt find_package(OpenSSL) block
+          # asserts the resolved OPENSSL_INCLUDE_DIR is actually under
+          # this root and fails the configure loudly if not, rather than
+          # linking the wrong copy silently.
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DNEREUS_GPU_SPECTRUM=ON
+            -DNEREUS_GPU_SPECTRUM=ON \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md \
+            -DOPENSSL_ROOT_DIR="$(pwd)/build/vcpkg_installed/x64-windows-static-md"
 
       - name: Build
         shell: bash
@@ -760,6 +1147,44 @@ jobs:
             Write-Error "rade.dll missing from build\third_party\rade\src\ (Windows artifact would ship broken: NereusSDR.exe will fail to launch with 'rade.dll was not found')"
             exit 1
           }
+          # NereusSDRLib.dll is the application itself, built SHARED so the
+          # ~514 test executables stop each embedding a private 22 MB copy.
+          # windeployqt resolves only Qt DLLs, so like rade.dll it must be
+          # staged by hand. This is the single most load-bearing file in the
+          # artifact: without it NereusSDR.exe does not start at all.
+          $appDll = "build\NereusSDRLib.dll"
+          if (Test-Path $appDll) {
+            Copy-Item $appDll deploy\
+          } else {
+            Write-Error "NereusSDRLib.dll missing from build\ (Windows artifact would ship broken: NereusSDR.exe will fail to launch with 'NereusSDRLib.dll was not found')"
+            exit 1
+          }
+          $coreDll = "build\NereusCore.dll"
+          if (Test-Path $coreDll) {
+            Copy-Item $coreDll deploy\
+          } else {
+            Write-Error "NereusCore.dll missing from build\ (Windows artifact would ship broken)"
+            exit 1
+          }
+          # nereus-audio-capture.exe: the microphone capture helper (R-R3-36).
+          # NereusSDR.exe looks for it beside itself; without it the PC
+          # microphone reports the helper missing. windeployqt runs on
+          # NereusSDR.exe only, so it is staged by hand; it loads the Qt and
+          # app DLLs NereusSDR.exe already brought into deploy\.
+          $helperExe = "build\nereus-audio-capture.exe"
+          if (Test-Path $helperExe) {
+            Copy-Item $helperExe deploy\
+          } else {
+            Write-Error "nereus-audio-capture.exe missing from build\ (Windows artifact would ship broken: the PC microphone cannot be opened)"
+            exit 1
+          }
+          $stationExe = "build\nereusd.exe"
+          if (-not (Test-Path $stationExe)) {
+            Write-Error "nereusd.exe missing from build"
+            exit 1
+          }
+          Copy-Item $stationExe deploy\
+          if (-not (Test-Path "deploy\nereusd.exe")) { exit 1 }
           # Copy third-party license notices + both root license files
           # (LICENSE and LICENSE-DUAL-LICENSING) into the portable deploy
           # tree so both the ZIP and the NSIS installer pick them up.
@@ -787,6 +1212,12 @@ jobs:
         run: |
           $name = "NereusSDR-${{ needs.prepare.outputs.version }}-Windows-x64-portable.zip"
           Compress-Archive -Path deploy\* -DestinationPath $name
+          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $name).Path)
+          try {
+            if (-not ($archive.Entries | Where-Object { $_.FullName -eq 'nereusd.exe' })) {
+              throw 'nereusd.exe missing from portable ZIP'
+            }
+          } finally { $archive.Dispose() }
 
       - name: Build NSIS installer
         shell: pwsh
@@ -812,6 +1243,10 @@ jobs:
             exit 1
           }
           Get-Item $outfile
+          $entries = & "C:\Program Files\7-Zip\7z.exe" l $outfile
+          if ($LASTEXITCODE -ne 0 -or -not ($entries | Select-String 'nereusd\.exe')) {
+            throw 'nereusd.exe missing from NSIS installer payload'
+          }
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -823,13 +1258,16 @@ jobs:
           retention-days: 7
 
   sign-and-publish:
-    needs: [prepare, build-linux, build-macos, build-windows]
+    if: ${{ !inputs.verify_only }}
+    needs: [prepare, build-linux, build-deb, build-macos, build-windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
@@ -844,6 +1282,7 @@ jobs:
             -name '*.dmg' -o \
             -name '*.pkg' -o \
             -name '*.zip' -o \
+            -name '*.deb' -o \
             -name '*-setup.exe' -o \
             -name 'release_notes.md' \
           \) -exec cp {} artifacts/ \;
@@ -891,7 +1330,7 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         working-directory: artifacts
         run: |
-          for f in *.AppImage *.dmg *.pkg *.zip *.exe *.tar.gz SHA256SUMS.txt; do
+          for f in *.AppImage *.deb *.dmg *.pkg *.zip *.exe *.tar.gz SHA256SUMS.txt; do
             [ -f "$f" ] || continue
             gpg --batch --yes --pinentry-mode loopback \
               --passphrase "$GPG_PASSPHRASE" \
@@ -917,6 +1356,7 @@ jobs:
             --draft \
             $PRERELEASE_FLAG \
             artifacts/*.AppImage \
+            artifacts/*.deb \
             artifacts/*.dmg \
             artifacts/*.pkg \
             artifacts/*.zip \

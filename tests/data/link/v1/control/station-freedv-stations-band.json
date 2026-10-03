@@ -1,0 +1,112 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "record.batch",
+    "stream": "freedvStations",
+    "generation": 1,
+    "reset": false,
+    "upserts": [
+      {
+        "id": "sid-w1aw",
+        "fields": {
+          "callsign": "W1AW",
+          "gridSquare": "FN31",
+          "distanceKm": 0,
+          "headingDeg": 0,
+          "headingCardinal": "",
+          "version": "2.0.0",
+          "frequencyHz": 14236000,
+          "txMode": "RADEV1",
+          "status": "Active",
+          "userMessage": "",
+          "lastTxUtc": "",
+          "lastRxCallsign": "",
+          "lastRxMode": "",
+          "snrDb": -99,
+          "lastUpdateUtc": "2026-09-28T12:00:00Z",
+          "transmitting": false,
+          "receivingFrom": "",
+          "messageChangedAtMs": 0,
+          "lastRxUtc": "",
+          "band": 5
+        }
+      },
+      {
+        "id": "sid-vk5dgr",
+        "fields": {
+          "callsign": "VK5DGR",
+          "gridSquare": "PF95",
+          "distanceKm": 0,
+          "headingDeg": 0,
+          "headingCardinal": "",
+          "version": "2.0.0",
+          "frequencyHz": 7177000,
+          "txMode": "RADEV1",
+          "status": "Active",
+          "userMessage": "",
+          "lastTxUtc": "",
+          "lastRxCallsign": "",
+          "lastRxMode": "",
+          "snrDb": -99,
+          "lastUpdateUtc": "2026-09-28T12:00:00Z",
+          "transmitting": false,
+          "receivingFrom": "",
+          "messageChangedAtMs": 0,
+          "lastRxUtc": "",
+          "band": 3
+        }
+      },
+      {
+        "id": "sid-k6aq",
+        "fields": {
+          "callsign": "K6AQ",
+          "gridSquare": "CM87",
+          "distanceKm": 0,
+          "headingDeg": 0,
+          "headingCardinal": "",
+          "version": "2.0.0",
+          "frequencyHz": 144500000,
+          "txMode": "RADEV1",
+          "status": "Active",
+          "userMessage": "",
+          "lastTxUtc": "",
+          "lastRxCallsign": "",
+          "lastRxMode": "",
+          "snrDb": -99,
+          "lastUpdateUtc": "2026-09-28T12:00:00Z",
+          "transmitting": false,
+          "receivingFrom": "",
+          "messageChangedAtMs": 0,
+          "lastRxUtc": "",
+          "band": 11
+        }
+      },
+      {
+        "id": "sid-g4abc",
+        "fields": {
+          "callsign": "G4ABC",
+          "gridSquare": "IO91",
+          "distanceKm": 0,
+          "headingDeg": 0,
+          "headingCardinal": "",
+          "version": "2.0.0",
+          "frequencyHz": 0,
+          "txMode": "RADEV1",
+          "status": "Active",
+          "userMessage": "",
+          "lastTxUtc": "",
+          "lastRxCallsign": "",
+          "lastRxMode": "",
+          "snrDb": -99,
+          "lastUpdateUtc": "2026-09-28T12:00:00Z",
+          "transmitting": false,
+          "receivingFrom": "",
+          "messageChangedAtMs": 0,
+          "lastRxUtc": ""
+        }
+      }
+    ],
+    "removes": []
+  },
+  "decodes": true
+}

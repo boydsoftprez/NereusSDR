@@ -47,6 +47,7 @@
 #include "gui/SetupDialog.h"
 #include "gui/setup/DspSetupPages.h"
 #include "gui/setup/PaSetupPages.h"
+#include "gui/setup/TransmitSetupPages.h"
 #include "models/RadioModel.h"
 
 #ifdef HAVE_WEBSOCKETS
@@ -110,6 +111,7 @@ private slots:
     void selecting_a_leaf_realizes_only_that_page();
     void revisiting_a_leaf_reuses_the_cached_widget();
     void selectPage_realizes_the_target_for_external_findChild();
+    void speech_processor_dexp_button_opens_the_dexp_vox_page();
 
     // 3. A late-built page still sees live state.
     void lazily_realized_page_reads_live_controller_state();
@@ -225,6 +227,28 @@ void TstSetupDialogLazyPages::selectPage_realizes_the_target_for_external_findCh
              "selectPage() must realize the page and reparent it under the dialog");
 }
 
+// R-R3-21: Speech Processor's AM-SQ / DEXP button asked for a "VOX/DEXP"
+// leaf. The page is registered as Transmit > "DEXP/VOX", so selectPage()
+// found nothing and the click did nothing.
+void TstSetupDialogLazyPages::speech_processor_dexp_button_opens_the_dexp_vox_page()
+{
+    RadioModel model;
+    SetupDialog dialog(&model);
+
+    dialog.selectPage(QStringLiteral("Speech Processor"));
+    auto* speech = dialog.findChild<SpeechProcessorPage*>();
+    QVERIFY(speech != nullptr);
+    QVERIFY(!dialog.isPageRealizedForTest(QStringLiteral("DEXP/VOX")));
+
+    auto* button = speech->findChild<QPushButton*>(QStringLiteral("btn_AM-SQ / DEXP"));
+    QVERIFY(button != nullptr);
+    button->click();
+
+    QVERIFY2(dialog.isPageRealizedForTest(QStringLiteral("DEXP/VOX")),
+             "the button must open Transmit > DEXP/VOX");
+    QVERIFY(dialog.findChild<DexpVoxPage*>() != nullptr);
+}
+
 // ---------------------------------------------------------------------------
 // 3. A late-built page still sees live state
 // ---------------------------------------------------------------------------
@@ -314,6 +338,10 @@ void TstSetupDialogLazyPages::lazily_realized_page_persists_edits_to_appsettings
 void TstSetupDialogLazyPages::pa_reset_realizes_the_values_page_on_demand()
 {
     RadioModel model;
+    // A radio with power amplifier settings (an ANAN-G2): without one the
+    // PA pages are disabled with the reason (Task 16 fix wave 2) and the
+    // Reset button cannot be pressed.
+    model.setBoardForTest(HPSDRHW::Saturn);
     SetupDialog dialog(&model);
 
     QVERIFY(dialog.realizePageForTest(kWattMeter) != nullptr);
@@ -338,6 +366,10 @@ void TstSetupDialogLazyPages::pa_reset_realizes_the_values_page_on_demand()
 void TstSetupDialogLazyPages::pa_reset_still_works_when_values_page_visited_first()
 {
     RadioModel model;
+    // A radio with power amplifier settings (an ANAN-G2): without one the
+    // PA pages are disabled with the reason (Task 16 fix wave 2) and the
+    // Reset button cannot be pressed.
+    model.setBoardForTest(HPSDRHW::Saturn);
     SetupDialog dialog(&model);
 
     QVERIFY(dialog.realizePageForTest(kPaValues)  != nullptr);

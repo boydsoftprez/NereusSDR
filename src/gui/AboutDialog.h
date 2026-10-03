@@ -82,6 +82,7 @@ mw0lge@grange-lane.co.uk
 // =================================================================
 
 #include <QDialog>
+#include <QUrl>
 
 namespace NereusSDR {
 
@@ -90,6 +91,10 @@ class AboutDialog : public QDialog {
 
 public:
     explicit AboutDialog(QWidget* parent = nullptr);
+
+    /// The NereusSDR release notes: the About dialog's "NereusSDR releases"
+    /// link and Help > What's New open the same page (R-R3-21).
+    static QUrl releaseNotesUrl();
 
 private:
     void buildUI();

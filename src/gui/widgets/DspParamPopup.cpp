@@ -146,6 +146,13 @@ void DspParamPopup::addCheckbox(const QString& label, bool defaultVal,
     });
 }
 
+void DspParamPopup::addWidget(QWidget* widget)
+{
+    if (widget) {
+        m_layout->addWidget(widget);
+    }
+}
+
 void DspParamPopup::finalize(std::function<void()> onMore, std::function<void()> onReset)
 {
     m_layout->addSpacing(4);

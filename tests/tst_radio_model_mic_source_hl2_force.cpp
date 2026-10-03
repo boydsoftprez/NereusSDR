@@ -23,6 +23,12 @@
 //   6. Lock released on non-HL2 — setMicSource(Radio) succeeds.
 //   7. isMicSourceLocked() reflects hasMicJack.
 //   8. Reconnect from HL2 → non-HL2 — lock released and Radio allowed.
+//   9. Radio codec lane: the HL2's own capability row (the AK4951 audio
+//      add-on board, BoardCapabilities::radioMicNeedsAddOn) is not locked;
+//      a stored Radio loads as Radio, as mi0bot has no HL2 mic lock
+//      (mi0bot setup.cs:14566-14589 [@c26a8a4]). Cases 1, 2 and 5 inject
+//      hasMicJack false with no add-on, a board with neither (the HL2
+//      receive-only kit's row), and keep the lock.
 //
 // NEREUS_BUILD_TESTS is defined in CMakeLists.txt for this target,
 // enabling RadioModel test seams (setCapsHasMicJackForTest,
@@ -32,6 +38,9 @@
 // Modification history (NereusSDR):
 //   2026-04-28 — Original test for NereusSDR by J.J. Boyd (KG4VCF),
 //                 with AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-30 — Radio codec lane: case 9, the HL2 with its add-on board
+//                 is not locked. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -231,6 +240,24 @@ private slots:
 
         // Must now accept Radio.
         model.transmitModel().setMicSource(MicSource::Radio);
+        QCOMPARE(model.transmitModel().micSource(), MicSource::Radio);
+    }
+
+    // =========================================================================
+    // §9  Radio codec lane: the HL2's own row is not locked
+    // =========================================================================
+    void realHl2_notLockedAndStoredRadioLoads()
+    {
+        seedMicSource(kMacHl2, MicSource::Radio);
+
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::HERMESLITE);
+        QVERIFY(!model.boardCapabilities().hasMicJack);
+        QVERIFY(model.boardCapabilities().radioMicNeedsAddOn);
+        QVERIFY(model.boardCapabilities().radioMicSelectable());
+        model.simulateConnectLoadForTest(kMacHl2);
+
+        QVERIFY(!model.transmitModel().isMicSourceLocked());
         QCOMPARE(model.transmitModel().micSource(), MicSource::Radio);
     }
 };

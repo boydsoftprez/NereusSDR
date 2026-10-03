@@ -52,6 +52,9 @@ public:
     virtual QString appletTitle() const = 0;
     virtual QIcon appletIcon() const;
     virtual void syncFromModel() = 0;
+    /// True if the panel should offer a pop-out button so the applet can
+    /// float in its own window (AppletPanelWidget::floatApplet).
+    virtual bool canFloat() const { return false; }
 
 protected:
     // Call from subclass constructor to add the gradient title bar

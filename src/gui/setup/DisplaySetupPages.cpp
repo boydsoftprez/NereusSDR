@@ -10,6 +10,50 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23 - R-R3-21 / R-R3-10: Spectrum Defaults, Grid & Scales and
+//                 TX Display disable only their Core controls while a
+//                 remote window does not have the Core's settings.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-09-24 - The waterfall colour scheme names come from
+//                 core/spectrum/WaterfallPalettes (iPhone app Task 19,
+//                 R-IOS-06). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-26 - R-R3-01 / R-R3-11 / R-R3-41 (parity Task 17): in a remote
+//                 window Spectrum Defaults opens on the Core's stored FFT
+//                 size, window, Hz/bin target and FPS with readouts from
+//                 the Core's grant; Cal Offset and Display Thread Priority
+//                 are disabled with their reasons. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-26 - R-R3-01 (parity Task 17 follow-up): Rendering >
+//                 Decimation applies to every pan's engine. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-27 - R-IOS-18 / R-IOS-27 / R-R3-08: the FFT, Rendering and
+//                waterfall Display controls' keys, labels, items, ranges
+//                and defaults are read from core/ControlRanges.h, the
+//                table the Core's catalogue sends an app. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - R-IOS-18 / R-IOS-27 (Display V12): the rest of Spectrum
+//                Defaults, Waterfall Defaults, Grid & Scales, TX Display's
+//                waterfall and 3D View carry Setup description ids; tooltips
+//                that named source code, a task or an unset threshold gap
+//                say what the control does; Normalize is enabled only for
+//                the Average, Sample and RMS detectors, as Thetis. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-27 - R-R3-49 / R-R3-21 / A12 (parity Task 30): in a remote
+//                window TX Display's nine analyzer controls show the Core's
+//                keys and write them, and the Core applies each to its TX
+//                analyzer at once; below txDisplayVersion 2 they are
+//                disabled with a reason. The waterfall levels, palette, low
+//                colour and gradient stay the window's own. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - Parity ruling C12: Grid & Scales' per-band dB Max and
+//                dB Min show the Core's value as it arrives in a remote
+//                window. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-09-29 - R-IOS-18: 3D Floor says what it does (how far below the
+//                 noise floor the 3D surface starts; kept per band).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -59,17 +103,26 @@
 //============================================================================================//
 
 #include "DisplaySetupPages.h"
+#include "gui/UnbuiltFeatures.h"
 #include "SetupHelpers.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/StyleConstants.h"
 #include "core/FFTEngine.h"
+#include "core/spectrum/FftEnginePool.h"
+#include "core/spectrum/WaterfallPalettes.h"
 #include "core/ClarityController.h"
 #include "core/AppSettings.h"
+#include "core/ControlRanges.h"
+#include "core/TxAnalyzer.h"
+#include "core/WdspEngine.h"
+#include "core/settings/SettingsProxy.h"
 #include "models/Band.h"
 #include "models/PanadapterModel.h"
 #include "models/RadioModel.h"
 #include "core/NoiseFloorTracker.h"
 #include "gui/ColorSwatchButton.h"
+#include "gui/widgets/GradientPickerWidget.h"
+#include "models/DisplaySettingsModel.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -101,17 +154,18 @@ namespace NereusSDR {
 
 namespace {
 
-// Build a color swatch placeholder label (NYI — no color picker yet).
-QLabel* makeColorSwatch(const QString& label, const QString& hexColor, QWidget* parent)
+// Build a placeholder QGroupBox with a single dimmed label inside.
+// Used by TxDisplayPage for groups wired in later sub-phases.
+QGroupBox* makePlaceholderGroup(const QString& title, const QString& phText, QWidget* parent)
 {
-    auto* lbl = new QLabel(QStringLiteral("  %1  ").arg(label), parent);
-    lbl->setStyleSheet(QStringLiteral(
-        "QLabel { background: %1; color: #c8d8e8; border: 1px solid #203040;"
-        " border-radius: 3px; padding: 2px 6px; }").arg(hexColor));
-    lbl->setFixedHeight(24);
-    lbl->setEnabled(false);  // NYI
-    lbl->setToolTip(QStringLiteral("Color picker — not yet implemented"));
-    return lbl;
+    auto* group  = new QGroupBox(title, parent);
+    auto* layout = new QVBoxLayout(group);
+    layout->setSpacing(4);
+    auto* label  = new QLabel(phText, group);
+    label->setEnabled(false);
+    label->setStyleSheet(QStringLiteral("QLabel { color: #607080; font-style: italic; }"));
+    layout->addWidget(label);
+    return group;
 }
 
 } // anonymous namespace
@@ -121,7 +175,7 @@ QLabel* makeColorSwatch(const QString& label, const QString& hexColor, QWidget* 
 // ---------------------------------------------------------------------------
 
 SpectrumDefaultsPage::SpectrumDefaultsPage(RadioModel* model, QWidget* parent)
-    : SetupPage(QStringLiteral("Spectrum Defaults"), model, parent)
+    : SetupPage(QString::fromLatin1(ControlRanges::kDisplaySpectrumPageTitle), model, parent)
 {
     buildUI();
     loadFromRenderer();
@@ -139,7 +193,7 @@ void SpectrumDefaultsPage::pushFps(int fps)
         sw->setDisplayFps(fps);
     }
     AppSettings::instance().setValue(
-        QStringLiteral("DisplaySpectrumFps"), QString::number(fps));
+        QLatin1String(ControlRanges::kDisplaySpectrumFpsKey), QString::number(fps));
     // Defensive: explicitly mirror to the spin readout.  makeSliderRow
     // wires a bidirectional slider<->spin connect that should already do
     // this, but JJ reported the spin readout sticking at 30 even when the
@@ -149,6 +203,81 @@ void SpectrumDefaultsPage::pushFps(int fps)
     if (m_fpSpin && m_fpSpin->value() != fps) {
         QSignalBlocker block(m_fpSpin);
         m_fpSpin->setValue(fps);
+    }
+}
+
+void SpectrumDefaultsPage::setStationSettingsAvailable(bool available, const QString& reason)
+{
+    gateStationControls({m_fftSizeSlider, m_windowCombo, m_hzPerBinTargetSpin,
+                         m_fpSlider, m_fpSpin},
+                        available, reason);
+    // Parity Task 17: the Core's stored values arrive with its settings.
+    if (available && remoteWindow()) {
+        loadStationSpectrumSettings();
+    }
+}
+
+bool SpectrumDefaultsPage::remoteWindow()
+{
+    return model() && !model()->ownsLocalDsp();
+}
+
+void SpectrumDefaultsPage::loadStationSpectrumSettings()
+{
+    // The station keys (SettingsScope: DisplayFftSize, DisplayFftWindow,
+    // DisplayHzPerBinTarget, DisplaySpectrumFps) hold the Core's values in a
+    // remote window; this window's own FFT engine is idle there.
+    using namespace ControlRanges;
+    auto& settings = AppSettings::instance();
+    const int fftSize = settings.value(QLatin1String(kDisplayFftSizeKey),
+                                       QString::number(kDisplayFftSizeDefault)).toString().toInt();
+    const int sliderVal = displayFftSizePosition(fftSize);
+    const int window = qBound(0, settings.value(QLatin1String(kDisplayFftWindowKey),
+                                  QString::number(kDisplayFftWindowDefault))
+                                  .toString().toInt(), int(WindowFunction::Count) - 1);
+    const double hzPerBin = settings.value(QLatin1String(kDisplayHzPerBinTargetKey),
+                                           QString::number(kDisplayHzPerBinTargetDefault))
+                                .toString().toDouble();
+    const int fps = qBound(1, settings.value(QLatin1String(kDisplaySpectrumFpsKey),
+                                  QString::number(kDisplaySpectrumFpsDefault))
+                                  .toString().toInt(), 60);
+    {
+        QSignalBlocker b1(m_fftSizeSlider);
+        QSignalBlocker b2(m_windowCombo);
+        QSignalBlocker b3(m_hzPerBinTargetSpin);
+        QSignalBlocker b4(m_fpSlider);
+        QSignalBlocker b5(m_fpSpin);
+        m_fftSizeSlider->setValue(qBound(0, sliderVal, kDisplayFftSizePositionMax));
+        m_windowCombo->setCurrentIndex(window);
+        m_hzPerBinTargetSpin->setValue(std::isfinite(hzPerBin) ? hzPerBin : 0.0);
+        m_fpSlider->setValue(fps);
+        m_fpSpin->setValue(fps);
+    }
+    refreshGrantedReadouts();
+}
+
+void SpectrumDefaultsPage::refreshGrantedReadouts()
+{
+    // What the Core runs for the active pan: its granted FFT size and the
+    // bin width that gives (SpectrumWidget::binWidthHz). Before the first
+    // grant, the stored size.
+    auto* sw = model() ? model()->spectrumWidget() : nullptr;
+    const int granted = sw ? sw->remoteGrantedFftSize() : 0;
+    const int size = granted > 0 ? granted
+        : AppSettings::instance().value(QLatin1String(ControlRanges::kDisplayFftSizeKey),
+                                        QString::number(ControlRanges::kDisplayFftSizeDefault))
+              .toString().toInt();
+    if (m_fftSizeReadout) {
+        m_fftSizeReadout->setText(QString::number(size));
+    }
+    const double bw = (sw && granted > 0) ? sw->binWidthHz() : 0.0;
+    if (m_binWidthLabel) {
+        m_binWidthLabel->setText(bw > 0.0 ? QString::number(bw, 'f', 3)
+                                          : QStringLiteral("0.000"));
+    }
+    if (m_binWidthReadout) {
+        m_binWidthReadout->setText(bw > 0.0 ? QStringLiteral("%1 Hz/bin").arg(bw, 0, 'f', 3)
+                                            : QStringLiteral("- Hz/bin"));
     }
 }
 
@@ -177,12 +306,8 @@ void SpectrumDefaultsPage::loadFromRenderer()
     //   FFTSize = 4096 * Math.Pow(2, Math.Floor(slider.Value))
     // Inverse: slider = log2(FFTSize / 4096), clamped to [0, 6].
     const int fs = fe->fftSize();
-    int sliderVal = 0;
-    if (fs > 4096) {
-        int n = fs / 4096;
-        while (n > 1 && sliderVal < 6) { n >>= 1; ++sliderVal; }
-    }
-    sliderVal = qBound(0, sliderVal, 6);
+    const int sliderVal = qBound(0, ControlRanges::displayFftSizePosition(fs),
+                                 ControlRanges::kDisplayFftSizePositionMax);
     m_fftSizeSlider->setValue(sliderVal);
     if (m_fftSizeReadout) {
         m_fftSizeReadout->setText(QString::number(fs));
@@ -194,7 +319,8 @@ void SpectrumDefaultsPage::loadFromRenderer()
         const double sampleRate = fe->sampleRate();
         const double bw = (fs > 0) ? sampleRate / fs : 0.0;
         m_binWidthLabel->setText(
-            bw > 0.0 ? QString::number(bw, 'f', 3) : QStringLiteral("0.000"));
+            bw > 0.0 ? QString::number(bw, 'f', ControlRanges::kDisplayBinWidthDecimals)
+                     : QStringLiteral("0.000"));
     }
 
     // FFT window -- enum value matches combo index 1:1 (both follow WDSP
@@ -227,8 +353,12 @@ void SpectrumDefaultsPage::loadFromRenderer()
         QSignalBlocker bt(m_averagingTimeSpin);
         m_averagingTimeSpin->setValue(sw->spectrumAverageTimeMs());
     }
-    m_fillToggle->setChecked(sw->panFillEnabled());
-    m_fillAlphaSlider->setValue(static_cast<int>(sw->fillAlpha() * 100.0f));
+    // 3D Stacked-Trace Spectrum Plan Task 21: reads DisplaySettingsModel's
+    // getters (sw->panFillEnabled()/sw->fillAlpha() are still equal, since
+    // Task 18's binding keeps the widget and model in lockstep, but the
+    // model is the surface's canonical source from this task on).
+    m_fillToggle->setChecked(sw->displaySettings()->panFill());
+    m_fillAlphaSlider->setValue(static_cast<int>(sw->displaySettings()->fillAlpha() * 100.0f));
     m_lineWidthSlider->setValue(qBound(1, static_cast<int>(sw->lineWidth()), 3));
     m_gradientToggle->setChecked(sw->gradientEnabled());
     m_calOffsetSpin->setValue(static_cast<double>(sw->dbmCalOffset()));
@@ -288,6 +418,8 @@ void SpectrumDefaultsPage::loadFromRenderer()
     if (m_dispNormalizeToggle) {
         QSignalBlocker b(m_dispNormalizeToggle);
         m_dispNormalizeToggle->setChecked(sw->dispNormalize());
+        m_dispNormalizeToggle->setEnabled(
+            NereusSDR::normalizeAppliesToDetector(static_cast<int>(sw->spectrumDetector())));
     }
     if (m_showPeakValueOverlayToggle) {
         QSignalBlocker b(m_showPeakValueOverlayToggle);
@@ -306,6 +438,9 @@ void SpectrumDefaultsPage::loadFromRenderer()
         QSignalBlocker b(m_decimationSpin);
         m_decimationSpin->setValue(fe->decimation());
     }
+    if (remoteWindow()) {
+        loadStationSpectrumSettings();
+    }
 }
 
 void SpectrumDefaultsPage::buildUI()
@@ -316,13 +451,16 @@ void SpectrumDefaultsPage::buildUI()
     // a confirmation dialog before overwriting because it resets the
     // Spectrum / Waterfall display state.
     auto* resetBtn = new QPushButton(QStringLiteral("Reset to Smooth Defaults"), this);
+    resetBtn->setProperty("nereusSetupId", "display.spectrumDefaults.smoothDefaults");
+    // R-IOS-18: the tooltip names what RadioModel::applyClaritySmoothDefaults
+    // sets; it used to promise a "tight threshold gap" nothing sets.
     resetBtn->setToolTip(QStringLiteral(
-        "Overwrite the Spectrum and Waterfall display settings with the "
-        "NereusSDR smooth-default profile (Clarity Blue palette, "
-        "log-recursive averaging, tight threshold gap, waterfall AGC on). "
-        "Intended to recover the out-of-box look after experimentation. "
-        "FFT size, frequency, band stack, and per-band grid slots are "
-        "not affected."));
+        "Overwrite this panadapter's spectrum and waterfall look with the "
+        "NereusSDR smooth-default profile: Clarity Blue palette, "
+        "log-recursive averaging with a 650 ms averaging time, a white "
+        "trace without fill, waterfall AGC on and a 30 ms waterfall update "
+        "period. FFT size, frequency, band stack, and per-band grid ranges "
+        "are not affected."));
     connect(resetBtn, &QPushButton::clicked, this, [this]() {
         const auto rc = QMessageBox::question(
             this,
@@ -331,7 +469,7 @@ void SpectrumDefaultsPage::buildUI()
                 "This will overwrite your current Spectrum and Waterfall "
                 "display settings with the NereusSDR smooth-default profile.\n\n"
                 "Your FFT size, frequency, band stack, and per-band grid "
-                "slots are NOT affected.\n\n"
+                "ranges are NOT affected.\n\n"
                 "Continue?"),
             QMessageBox::Yes | QMessageBox::No,
             QMessageBox::No);
@@ -353,6 +491,7 @@ void SpectrumDefaultsPage::buildUI()
     // stay at whatever value they were last set to (no AGC fallback).
     auto* clarityToggle = new QCheckBox(
         QStringLiteral("Enable Clarity (adaptive waterfall tuning)"), this);
+    clarityToggle->setProperty("nereusSetupId", "display.spectrumDefaults.clarity");
     clarityToggle->setToolTip(QStringLiteral(
         "Clarity keeps the waterfall thresholds centered on the actual "
         "noise floor as band conditions and tuning change. Uses a 30th-"
@@ -397,7 +536,7 @@ void SpectrumDefaultsPage::buildUI()
     // express the 4-cell "prefix + value + prefix + value" pattern Thetis
     // uses for the bin-width / FFT-size readout row.
     auto* fftGroup = new QGroupBox(
-        QStringLiteral("Fast Fourier Transform"), this);
+        QString::fromLatin1(ControlRanges::kDisplayFftGroupTitle), this);
     auto* fftGrid = new QGridLayout(fftGroup);
     fftGrid->setSpacing(6);
     fftGrid->setColumnStretch(0, 0);
@@ -422,7 +561,7 @@ void SpectrumDefaultsPage::buildUI()
     // Row 0: centered "Size" header label.  Mirrors Thetis labelTS139
     // ("Size") at (118, 13) [v2.10.3.13] -- centered horizontally over
     // the slider's middle.
-    auto* sizeHeader = new QLabel(QStringLiteral("Size"), fftGroup);
+    auto* sizeHeader = new QLabel(QLatin1String(ControlRanges::kDisplayFftSizeLabel), fftGroup);
     sizeHeader->setAlignment(Qt::AlignHCenter);
     fftGrid->addWidget(sizeHeader, 0, 1, 1, 2);  // span cols 1-2 (centered)
 
@@ -439,12 +578,15 @@ void SpectrumDefaultsPage::buildUI()
     // (Maximum=6, Value=5, no tick marks).  Mapping per setup.cs:16148:
     //   FFTSize = 4096 * Math.Pow(2, Math.Floor(slider.Value))
     // i.e. slider 0..6 -> {4096, 8192, 16384, 32768, 65536, 131072, 262144}.
+    // The range, the positions' sizes and the start come from
+    // ControlRanges.h (the catalogue's `display` table).
     m_fftSizeSlider = new QSlider(Qt::Horizontal, fftGroup);
-    m_fftSizeSlider->setRange(0, 6);
+    m_fftSizeSlider->setProperty("nereusSetupId", "display.spectrumDefaults.fftSize");
+    m_fftSizeSlider->setRange(0, ControlRanges::kDisplayFftSizePositionMax);
     m_fftSizeSlider->setSingleStep(1);
     m_fftSizeSlider->setPageStep(1);
     m_fftSizeSlider->setTickPosition(QSlider::NoTicks);
-    m_fftSizeSlider->setValue(5);
+    m_fftSizeSlider->setValue(ControlRanges::kDisplayFftSizeSliderInitial);
     m_fftSizeSlider->setToolTip(QStringLiteral(
         "FFT size used for spectrum analysis. Range 4096 to 262144 in "
         "powers of two. Larger = finer frequency resolution and a smaller "
@@ -461,7 +603,7 @@ void SpectrumDefaultsPage::buildUI()
     // ("Bin Width (Hz)") at (6, 79) + lblDisplayBinWidth at (87, 79)
     // [v2.10.3.13].
     auto* binWidthPrefix =
-        new QLabel(QStringLiteral("Bin Width (Hz)"), fftGroup);
+        new QLabel(QLatin1String(ControlRanges::kDisplayBinWidthLabel), fftGroup);
     m_binWidthLabel = new QLabel(QStringLiteral("0.000"), fftGroup);
     m_binWidthLabel->setMinimumWidth(54);
     m_binWidthLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -486,26 +628,23 @@ void SpectrumDefaultsPage::buildUI()
 
     // Row 3: "Window" prefix + combo.  Thetis labelTS147 ("Window") at
     // (6, 101) + comboDispWinType at (83, 101) [v2.10.3.13].
-    auto* windowPrefix = new QLabel(QStringLiteral("Window"), fftGroup);
+    auto* windowPrefix = new QLabel(QLatin1String(ControlRanges::kDisplayFftWindowLabel), fftGroup);
     m_windowCombo = new QComboBox(fftGroup);
+    m_windowCombo->setProperty("nereusSetupId", "display.spectrumDefaults.window");
     // 7 items, ordering verbatim per Thetis comboDispWinType.Items at
     // setup.designer.cs:34966-34973 [v2.10.3.13].  Combo index maps 1:1
     // to WindowFunction enum integer (both follow WDSP analyzer.c case
     // ordering, so no remap needed).
-    m_windowCombo->addItems({
-        QStringLiteral("Rectangular"),         // WindowFunction::Rectangular     (0)
-        QStringLiteral("Blackman-Harris 4T"),  // WindowFunction::BlackmanHarris4 (1)
-        QStringLiteral("Hann"),                // WindowFunction::Hann            (2)
-        QStringLiteral("Flat-Top"),            // WindowFunction::FlatTop         (3)
-        QStringLiteral("Hamming"),             // WindowFunction::Hamming         (4)
-        QStringLiteral("Kaiser"),              // WindowFunction::Kaiser          (5)
-        QStringLiteral("Blackman-Harris 7T")   // WindowFunction::BlackmanHarris7 (6)
-    });
+    // The items (ControlRanges::kDisplayFftWindows) are in Thetis's order,
+    // each at its WindowFunction's index.
+    for (const ControlRanges::DisplayChoiceItem& item : ControlRanges::kDisplayFftWindows) {
+        m_windowCombo->addItem(QLatin1String(item.label));
+    }
     m_windowCombo->setToolTip(QStringLiteral(
         "FFT window function. Rectangular has the narrowest main lobe but "
         "the worst sidelobes. Blackman-Harris (4T or 7T) gives strong "
         "sidelobe rejection. Flat-Top is best for amplitude calibration. "
-        "Kaiser is parameterised (KaiserPi shape parameter)."));
+        "Kaiser is parameterized (Kaiser Pi shape parameter)."));
     fftGrid->addWidget(windowPrefix,  3, 0);
     fftGrid->addWidget(m_windowCombo, 3, 1, 1, 3);  // span cols 1-3
 
@@ -515,19 +654,24 @@ void SpectrumDefaultsPage::buildUI()
     // varies).  > 0 = lock Hz/bin at the given value regardless of zoom
     // (useful for hunting narrow CW/digital signals where you want the
     // same frequency resolution at any zoom).
-    auto* hzPerBinPrefix = new QLabel(QStringLiteral("Hz/bin Target"), fftGroup);
+    auto* hzPerBinPrefix = new QLabel(QLatin1String(ControlRanges::kDisplayHzPerBinTargetLabel),
+                                      fftGroup);
     m_hzPerBinTargetSpin = new QDoubleSpinBox(fftGroup);
-    m_hzPerBinTargetSpin->setRange(0.0, 200.0);
-    m_hzPerBinTargetSpin->setSingleStep(0.5);
-    m_hzPerBinTargetSpin->setDecimals(2);
-    m_hzPerBinTargetSpin->setSpecialValueText(QStringLiteral("Off"));
-    m_hzPerBinTargetSpin->setSuffix(QStringLiteral(" Hz/bin"));
+    m_hzPerBinTargetSpin->setProperty("nereusSetupId", "display.spectrumDefaults.hzPerBinTarget");
+    m_hzPerBinTargetSpin->setRange(ControlRanges::kDisplayHzPerBinTargetMin,
+                                   ControlRanges::kDisplayHzPerBinTargetMax);
+    m_hzPerBinTargetSpin->setSingleStep(ControlRanges::kDisplayHzPerBinTargetStep);
+    m_hzPerBinTargetSpin->setDecimals(ControlRanges::kDisplayHzPerBinTargetDecimals);
+    m_hzPerBinTargetSpin->setSpecialValueText(
+        QLatin1String(ControlRanges::kDisplayHzPerBinTargetOffLabel));
+    m_hzPerBinTargetSpin->setSuffix(
+        QStringLiteral(" ") + QString::fromLatin1(ControlRanges::kDisplayHzPerBinTargetUnit));
     m_hzPerBinTargetSpin->setToolTip(QStringLiteral(
         "Auto-zoom override: target a constant Hz/bin regardless of zoom. "
-        "Set to 0 (\"Off\") to use the default bins-in-window behaviour "
+        "Set to 0 (\"Off\") to use the default bins-in-window behavior "
         "(FFT replans on zoom). When > 0, the FFT size is fixed at "
-        "sampleRate / target so the trace delivers the requested resolution "
-        "at any zoom level — handy for hunting narrow signals (CW, digital). "
+        "sample rate / target so the trace delivers the requested resolution "
+        "at any zoom level, which is handy for hunting narrow signals (CW, digital). "
         "Floor at the FFT slider value still applies (slider sets the "
         "minimum FFT size)."));
     connect(m_hzPerBinTargetSpin, qOverload<double>(&QDoubleSpinBox::valueChanged),
@@ -536,7 +680,7 @@ void SpectrumDefaultsPage::buildUI()
             fe->setHzPerBinTarget(v);
         }
         AppSettings::instance().setValue(
-            QStringLiteral("DisplayHzPerBinTarget"),
+            QLatin1String(ControlRanges::kDisplayHzPerBinTargetKey),
             QString::number(v));
         // Trigger immediate replan so the new policy applies without
         // waiting for the next zoom action.
@@ -553,8 +697,8 @@ void SpectrumDefaultsPage::buildUI()
     // notes; everything else ported).
     connect(m_fftSizeSlider, &QSlider::valueChanged,
             this, [this](int v) {
-        v = qBound(0, v, 6);
-        const int newSize = 4096 << v;
+        v = qBound(0, v, ControlRanges::kDisplayFftSizePositionMax);
+        const int newSize = ControlRanges::displayFftSizeAt(v);
 
         // Size readout (mirrors lblRX1FFT_size update at setup.cs:16153
         // [v2.10.3.13]).
@@ -580,7 +724,7 @@ void SpectrumDefaultsPage::buildUI()
             // but never wrote to AppSettings, so launch always reverted
             // to the FFTEngine ctor default (typically 4096).
             AppSettings::instance().setValue(
-                QStringLiteral("DisplayFftSize"),
+                QLatin1String(ControlRanges::kDisplayFftSizeKey),
                 QString::number(newSize));
         }
 
@@ -590,7 +734,7 @@ void SpectrumDefaultsPage::buildUI()
             const double sampleRate = fe->sampleRate();
             const double bw = (newSize > 0) ? sampleRate / newSize : 0.0;
             m_binWidthLabel->setText(
-                bw > 0.0 ? QString::number(bw, 'f', 3)
+                bw > 0.0 ? QString::number(bw, 'f', ControlRanges::kDisplayBinWidthDecimals)
                          : QStringLiteral("0.000"));
         }
 
@@ -601,6 +745,11 @@ void SpectrumDefaultsPage::buildUI()
             m_binWidthReadout->setText(
                 bw > 0.0 ? QStringLiteral("%1 Hz/bin").arg(bw, 0, 'f', 3)
                          : QStringLiteral("- Hz/bin"));
+        }
+        // Parity Task 17: a remote window's readouts show what the Core
+        // runs; they move when its new grant arrives.
+        if (remoteWindow()) {
+            refreshGrantedReadouts();
         }
 
         // FFTSizeOffset = slider.Value * 2 dB.  Mirrors Thetis
@@ -631,26 +780,32 @@ void SpectrumDefaultsPage::buildUI()
         // never wrote to AppSettings, so launch always reverted to the
         // FFTEngine ctor default.
         AppSettings::instance().setValue(
-            QStringLiteral("DisplayFftWindow"),
+            QLatin1String(ControlRanges::kDisplayFftWindowKey),
             QString::number(clamped));
     });
 
     contentLayout()->addWidget(fftGroup);
 
     // --- Section: Rendering ---
-    auto* renderGroup = new QGroupBox(QStringLiteral("Rendering"), this);
+    auto* renderGroup = new QGroupBox(QString::fromLatin1(ControlRanges::kDisplayRenderingGroupTitle), this);
     auto* renderForm  = new QFormLayout(renderGroup);
     renderForm->setSpacing(6);
 
     {
-        auto row = makeSliderRow(10, 60, 30, QStringLiteral(" fps"), renderGroup);
+        auto row = makeSliderRow(ControlRanges::kDisplaySpectrumFpsMin,
+                                 ControlRanges::kDisplaySpectrumFpsMax,
+                                 ControlRanges::kDisplaySpectrumFpsDefault,
+                                 QStringLiteral(" ") + QString::fromLatin1(ControlRanges::kDisplaySpectrumFpsUnit),
+                                 renderGroup);
         m_fpSlider = row.slider;
+        m_fpSlider->setProperty("nereusSetupId", "display.spectrumDefaults.fps");
         m_fpSpin   = row.spin;
         // Thetis: setup.designer.cs:33856 (udDisplayFPS) — Thetis original: "Frames Per Second (approximate)" (placeholder); rewritten
         m_fpSlider->setToolTip(QStringLiteral("Spectrum/waterfall redraw rate. Higher = smoother animation at cost of CPU."));
         row.spin->setToolTip(QStringLiteral("Spectrum/waterfall redraw rate. Higher = smoother animation at cost of CPU."));
         connect(m_fpSlider, &QSlider::valueChanged, this, [this](int v) { pushFps(v); });
-        renderForm->addRow(QStringLiteral("FPS:"), row.container);
+        renderForm->addRow(QString::fromLatin1(ControlRanges::kDisplaySpectrumFpsLabel)
+                               + QLatin1Char(':'), row.container);
     }
 
     // Legacy "Averaging" combo (None / Weighted / Logarithmic / Time Window)
@@ -665,14 +820,12 @@ void SpectrumDefaultsPage::buildUI()
     // Ported from Thetis comboDispPanDetector [v2.10.3.13]
     // (setup.designer.cs:34876): Peak / Rosenfell / Average / Sample / RMS.
     // RX1 scope dropped — pan-agnostic per design Section 1B.
+    // Items from ControlRanges::kDisplaySpectrumDetectors.
     m_spectrumDetectorCombo = new QComboBox(renderGroup);
-    m_spectrumDetectorCombo->addItems({
-        QStringLiteral("Peak"),
-        QStringLiteral("Rosenfell"),
-        QStringLiteral("Average"),
-        QStringLiteral("Sample"),
-        QStringLiteral("RMS")
-    });
+    m_spectrumDetectorCombo->setProperty("nereusSetupId", "display.spectrumDefaults.detector");
+    for (const ControlRanges::DisplayChoiceItem& item : ControlRanges::kDisplaySpectrumDetectors) {
+        m_spectrumDetectorCombo->addItem(QLatin1String(item.label));
+    }
     // Thetis: setup.designer.cs:34876 (comboDispPanDetector) [v2.10.3.13] — no upstream tooltip; rewritten
     m_spectrumDetectorCombo->setToolTip(QStringLiteral(
         "Spectrum bin-reduction policy. Peak takes the maximum bin in each display pixel. "
@@ -683,18 +836,25 @@ void SpectrumDefaultsPage::buildUI()
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
             w->setSpectrumDetector(static_cast<SpectrumDetector>(i));
         }
+        // Normalize applies only to Average, Sample and RMS; Thetis
+        // disables its checkbox the same way (setup.cs:18081-18082
+        // [v2.10.3.15], under its //[2.10.3.5]MW0LGE note about
+        // updateNormalizePan).
+        if (m_dispNormalizeToggle) {
+            m_dispNormalizeToggle->setEnabled(NereusSDR::normalizeAppliesToDetector(i));
+        }
     });
-    renderForm->addRow(QStringLiteral("Spectrum Detector:"), m_spectrumDetectorCombo);
+    renderForm->addRow(QString::fromLatin1(ControlRanges::kDisplaySpectrumDetectorLabel)
+                           + QLatin1Char(':'), m_spectrumDetectorCombo);
 
     // Ported from Thetis comboDispPanAveraging [v2.10.3.13]
     // (setup.designer.cs:34835): None / Recursive / Time Window / Log Recursive.
+    // Items from ControlRanges::kDisplayAveragingModes.
     m_spectrumAveragingCombo = new QComboBox(renderGroup);
-    m_spectrumAveragingCombo->addItems({
-        QStringLiteral("None"),
-        QStringLiteral("Recursive"),
-        QStringLiteral("Time Window"),
-        QStringLiteral("Log Recursive")
-    });
+    m_spectrumAveragingCombo->setProperty("nereusSetupId", "display.spectrumDefaults.averaging");
+    for (const ControlRanges::DisplayChoiceItem& item : ControlRanges::kDisplayAveragingModes) {
+        m_spectrumAveragingCombo->addItem(QLatin1String(item.label));
+    }
     // Thetis: setup.designer.cs:34835 (comboDispPanAveraging) [v2.10.3.13] — no upstream tooltip; rewritten
     m_spectrumAveragingCombo->setToolTip(QStringLiteral(
         "Spectrum frame-averaging mode. None shows raw FFT output per frame. "
@@ -707,7 +867,8 @@ void SpectrumDefaultsPage::buildUI()
             w->setSpectrumAveraging(static_cast<SpectrumAveraging>(i));
         }
     });
-    renderForm->addRow(QStringLiteral("Spectrum Averaging:"), m_spectrumAveragingCombo);
+    renderForm->addRow(QString::fromLatin1(ControlRanges::kDisplaySpectrumAveragingLabel)
+                           + QLatin1Char(':'), m_spectrumAveragingCombo);
 
     // Spectrum (panadapter) averaging time constant.
     // From Thetis udDisplayAVGTime [v2.10.3.13] (setup.designer.cs:34902).
@@ -715,44 +876,62 @@ void SpectrumDefaultsPage::buildUI()
     // the lower bound was bumped to 10 ms to keep the UI step coherent).
     // Spec widget computes α = exp(-1/(fps×τ)) internally; no hand-rolled
     // ms→alpha math here.
+    // Range, step and default from ControlRanges.h.
     m_averagingTimeSpin = new QSpinBox(renderGroup);
-    m_averagingTimeSpin->setRange(10, 9999);
-    m_averagingTimeSpin->setSingleStep(10);
+    m_averagingTimeSpin->setProperty("nereusSetupId", "display.spectrumDefaults.averageTime");
+    m_averagingTimeSpin->setRange(ControlRanges::kDisplayAvgTimeMinMs,
+                                  ControlRanges::kDisplayAvgTimeMaxMs);
+    m_averagingTimeSpin->setSingleStep(ControlRanges::kDisplayAvgTimeStepMs);
     m_averagingTimeSpin->setSuffix(QStringLiteral(" ms"));
-    m_averagingTimeSpin->setValue(30);
+    m_averagingTimeSpin->setValue(ControlRanges::kDisplaySpectrumAvgTimeDefaultMs);
+    // The alpha formula is Thetis's.
     m_averagingTimeSpin->setToolTip(QStringLiteral(
         "Spectrum averaging time constant. Larger = heavier smoothing, "
         "slower response. Translates to a frame-by-frame alpha via "
-        "α = exp(−1 / (fps × τ)) per Thetis."));
+        "α = exp(−1 / (fps × τ))."));
     connect(m_averagingTimeSpin, qOverload<int>(&QSpinBox::valueChanged),
             this, [this](int ms) {
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
             w->setSpectrumAverageTimeMs(ms);
         }
     });
-    renderForm->addRow(QStringLiteral("Spectrum Avg Time:"), m_averagingTimeSpin);
+    renderForm->addRow(QString::fromLatin1(ControlRanges::kDisplaySpectrumAvgTimeLabel)
+                           + QLatin1Char(':'), m_averagingTimeSpin);
 
     m_decimationSpin = new QSpinBox(renderGroup);
-    m_decimationSpin->setRange(1, 32);
-    m_decimationSpin->setValue(1);
+    m_decimationSpin->setProperty("nereusSetupId", "display.spectrumDefaults.decimation");
+    m_decimationSpin->setRange(ControlRanges::kDisplayDecimationMin,
+                               ControlRanges::kDisplayDecimationMax);
+    m_decimationSpin->setSingleStep(ControlRanges::kDisplayDecimationStep);
+    m_decimationSpin->setValue(ControlRanges::kDisplayDecimationDefault);
     // Thetis: setup.designer.cs:33732 (udDisplayDecimation) [v2.10.3.13]
     // Thetis original: "Display decimation. Higher the number, the lower the resolution."
     m_decimationSpin->setToolTip(QStringLiteral("Display decimation. Higher the number, the lower the resolution."));
     // Task 2.3: wire to FFTEngine::setDecimation().
+    // Parity Task 17 follow-up (R-R3-01): every pan's engine, through the
+    // pool, as a remote window sends it for every pan.
     connect(m_decimationSpin, qOverload<int>(&QSpinBox::valueChanged),
             this, [this](int v) {
-        if (model() && model()->fftEngine()) {
+        if (!model()) { return; }
+        if (FftEnginePool* pool = model()->fftEnginePool()) {
+            pool->setDecimation(v);
+        } else if (model()->fftEngine()) {
             model()->fftEngine()->setDecimation(v);
         }
     });
-    renderForm->addRow(QStringLiteral("Decimation:"), m_decimationSpin);
+    renderForm->addRow(QString::fromLatin1(ControlRanges::kDisplayDecimationLabel)
+                           + QLatin1Char(':'), m_decimationSpin);
 
     m_fillToggle = new QCheckBox(QStringLiteral("Fill under trace"), renderGroup);
+    m_fillToggle->setProperty("nereusSetupId", "display.spectrumDefaults.panFill");
+    // 3D Stacked-Trace Spectrum Plan Task 21 test seam: see the matching
+    // comment on WaterfallDefaultsPage's m_colorSchemeCombo above.
+    m_fillToggle->setObjectName(QStringLiteral("specFillToggle"));
     // Thetis: setup.designer.cs:33749 (chkDisplayPanFill)
     m_fillToggle->setToolTip(QStringLiteral("Check to fill the panadapter display line below the data."));
     connect(m_fillToggle, &QCheckBox::toggled, this, [this](bool on) {
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
-            w->setPanFillEnabled(on);
+            w->displaySettings()->setPanFill(on);
         }
     });
     renderForm->addRow(QString(), m_fillToggle);
@@ -760,13 +939,18 @@ void SpectrumDefaultsPage::buildUI()
     {
         auto row = makeSliderRow(0, 100, 70, QStringLiteral("%"), renderGroup);
         m_fillAlphaSlider = row.slider;
+        m_fillAlphaSlider->setProperty("nereusSetupId", "display.spectrumDefaults.fillAlpha");
+        // 3D Stacked-Trace Spectrum Plan Task 21 test seam: see the
+        // matching comment on WaterfallDefaultsPage's m_colorSchemeCombo
+        // above.
+        m_fillAlphaSlider->setObjectName(QStringLiteral("specFillAlphaSlider"));
         // Thetis: setup.designer.cs:3215 (tbDataFillAlpha) — no upstream tooltip; rewritten
         // Thetis original: (none)
         m_fillAlphaSlider->setToolTip(QStringLiteral("Opacity of the fill area under the spectrum trace (0 = transparent, 100 = opaque)."));
         row.spin->setToolTip(QStringLiteral("Opacity of the fill area under the spectrum trace (0 = transparent, 100 = opaque)."));
         connect(m_fillAlphaSlider, &QSlider::valueChanged, this, [this](int v) {
             if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
-                w->setFillAlpha(v / 100.0f);
+                w->displaySettings()->setFillAlpha(v / 100.0f);
             }
         });
         renderForm->addRow(QStringLiteral("Fill Alpha:"), row.container);
@@ -788,6 +972,7 @@ void SpectrumDefaultsPage::buildUI()
     }
 
     m_gradientToggle = new QCheckBox(QStringLiteral("Trace gradient"), renderGroup);
+    m_gradientToggle->setProperty("nereusSetupId", "display.spectrumDefaults.gradient");
     // Thetis: setup.designer.cs:53918 (chkDataLineGradient) — rewritten (grammar fix)
     // Thetis original: "The data line is also uses the gradient if checked"
     m_gradientToggle->setToolTip(QStringLiteral("When checked, the spectrum trace line renders with the gradient color applied."));
@@ -820,8 +1005,18 @@ void SpectrumDefaultsPage::buildUI()
         }
     });
     calForm->addRow(QStringLiteral("Cal Offset:"), m_calOffsetSpin);
+    // Parity Task 17 (R-R3-11): a remote pan's levels already carry the
+    // Core's calibration for its radio; a second local offset would count
+    // it twice.
+    if (remoteWindow()) {
+        const QString reason = QStringLiteral("The Core calibrates the display for its radio.");
+        m_calOffsetSpin->setEnabled(false);
+        m_calOffsetSpin->setToolTip(reason);
+        m_calOffsetSpin->setAccessibleDescription(reason);
+    }
 
     m_peakHoldToggle = new QCheckBox(QStringLiteral("Peak hold"), calGroup);
+    m_peakHoldToggle->setProperty("nereusSetupId", "display.spectrumDefaults.peakHold");
     // NereusSDR extension — no Thetis equivalent
     m_peakHoldToggle->setToolTip(QStringLiteral("When enabled, the highest signal level seen at each frequency bin is held on the display."));
     connect(m_peakHoldToggle, &QCheckBox::toggled, this, [this](bool on) {
@@ -832,6 +1027,7 @@ void SpectrumDefaultsPage::buildUI()
     calForm->addRow(QString(), m_peakHoldToggle);
 
     m_peakHoldDelaySpin = new QSpinBox(calGroup);
+    m_peakHoldDelaySpin->setProperty("nereusSetupId", "display.spectrumDefaults.peakDelay");
     m_peakHoldDelaySpin->setRange(100, 10000);
     m_peakHoldDelaySpin->setSingleStep(100);
     m_peakHoldDelaySpin->setSuffix(QStringLiteral(" ms"));
@@ -870,6 +1066,7 @@ void SpectrumDefaultsPage::buildUI()
     // (m_showCursorFreq / DisplayShowCursorFreq) — single source of truth.
     m_showMHzOnCursorToggle = new QCheckBox(
         QStringLiteral("Show cursor frequency"), overlayGroup);
+    m_showMHzOnCursorToggle->setProperty("nereusSetupId", "display.spectrumDefaults.showCursorFreq");
     m_showMHzOnCursorToggle->setToolTip(QStringLiteral(
         "Display the frequency at the cursor position (always in MHz). "
         "Same toggle as the on-spectrum overlay-panel Cursor Freq button."));
@@ -887,6 +1084,7 @@ void SpectrumDefaultsPage::buildUI()
     // From Thetis setup.cs:7061 [v2.10.3.13] lblDisplayBinWidth.
     m_showBinWidthToggle = new QCheckBox(
         QStringLiteral("Show bin width"), overlayGroup);
+    m_showBinWidthToggle->setProperty("nereusSetupId", "display.spectrumDefaults.showBinWidth");
     m_showBinWidthToggle->setToolTip(QStringLiteral(
         "Display the current FFT bin width (sample rate / FFT size) in the spectrum corner."));
     m_binWidthReadout = new QLabel(QStringLiteral("— Hz/bin"), overlayGroup);
@@ -928,14 +1126,17 @@ void SpectrumDefaultsPage::buildUI()
     // — kept for settings round-trip but disabled in UI.
     m_showNoiseFloorToggle = new QCheckBox(
         QStringLiteral("Show noise floor"), overlayGroup);
+    m_showNoiseFloorToggle->setProperty("nereusSetupId", "display.spectrumDefaults.showNoiseFloor");
     m_showNoiseFloorToggle->setToolTip(QStringLiteral(
         "Display the noise floor as a horizontal dashed line + dBm box+text."));
     m_noiseFloorPositionCombo = makeOverlayPositionCombo(overlayGroup);
     m_noiseFloorPositionCombo->setCurrentIndex(2);  // Bottom Left default
     m_noiseFloorPositionCombo->setEnabled(false);
+    // Deprecated: the text anchors to the NF box as Thetis draws it
+    // (display.cs:5443). The source reference used to be in the tooltip.
     m_noiseFloorPositionCombo->setToolTip(QStringLiteral(
-        "Deprecated. Text now anchors to the NF box per Thetis "
-        "(display.cs:5443). Setting persists but has no visual effect."));
+        "Not used: the noise floor text sits beside its box. "
+        "The setting is kept but has no visual effect."));
     connect(m_showNoiseFloorToggle, &QCheckBox::toggled, this, [this](bool on) {
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
             w->setShowNoiseFloor(on);
@@ -972,9 +1173,11 @@ void SpectrumDefaultsPage::buildUI()
         m_nfShiftSpin->setSingleStep(0.5);
         m_nfShiftSpin->setDecimals(1);
         m_nfShiftSpin->setSuffix(QStringLiteral(" dB"));
+        m_nfShiftSpin->setProperty("nereusSetupId", "display.spectrumDefaults.noiseFloorShift");
+        // Thetis _fNFshiftDBM, clamped to [-12, +12] (was in the tooltip).
         m_nfShiftSpin->setToolTip(QStringLiteral(
-            "Operator-tunable offset added to the rendered NF level. "
-            "Thetis _fNFshiftDBM, clamped to [-12, +12]."));
+            "Operator-tunable offset added to the rendered NF level, "
+            "from -12 to +12 dB."));
         connect(m_nfShiftSpin, qOverload<double>(&QDoubleSpinBox::valueChanged),
                 this, [this](double v) {
             if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
@@ -990,9 +1193,10 @@ void SpectrumDefaultsPage::buildUI()
         m_nfLineWidthSpin->setSingleStep(0.5);
         m_nfLineWidthSpin->setDecimals(1);
         m_nfLineWidthSpin->setSuffix(QStringLiteral(" px"));
+        m_nfLineWidthSpin->setProperty("nereusSetupId", "display.spectrumDefaults.noiseFloorLineWidth");
+        // Thetis m_fNoiseFloorLineWidth, default 1.0 (was in the tooltip).
         m_nfLineWidthSpin->setToolTip(QStringLiteral(
-            "Width of the horizontal NF dashed line. "
-            "Thetis m_fNoiseFloorLineWidth, default 1.0."));
+            "Width of the horizontal NF dashed line."));
         connect(m_nfLineWidthSpin, qOverload<double>(&QDoubleSpinBox::valueChanged),
                 this, [this](double v) {
             if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
@@ -1017,9 +1221,12 @@ void SpectrumDefaultsPage::buildUI()
 
     // NF colour pickers — Thetis display.cs:2316/2329 + NereusSDR fast-attack.
     {
-        m_nfLineColorBtn = new ColorSwatchButton(Qt::red, overlayGroup);
+        // The renderer's default is magenta (SpectrumWidget m_noiseFloorColor);
+        // the swatch starts there, and the tooltip no longer says red.
+        m_nfLineColorBtn = new ColorSwatchButton(QColor(0xFF, 0x40, 0xFF), overlayGroup);
+        m_nfLineColorBtn->setProperty("nereusSetupId", "display.spectrumDefaults.noiseFloorColor");
         m_nfLineColorBtn->setToolTip(QStringLiteral(
-            "Colour for the NF line + 8x8 box. Thetis default red."));
+            "Color for the NF line + 8x8 box."));
         connect(m_nfLineColorBtn, &ColorSwatchButton::colorChanged,
                 this, [this](const QColor& c) {
             if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
@@ -1033,8 +1240,9 @@ void SpectrumDefaultsPage::buildUI()
         });
 
         m_nfTextColorBtn = new ColorSwatchButton(Qt::yellow, overlayGroup);
+        m_nfTextColorBtn->setProperty("nereusSetupId", "display.spectrumDefaults.noiseFloorTextColor");
         m_nfTextColorBtn->setToolTip(QStringLiteral(
-            "Colour for the NF dBm label text. Thetis default yellow."));
+            "Color for the NF dBm label text."));
         connect(m_nfTextColorBtn, &ColorSwatchButton::colorChanged,
                 this, [this](const QColor& c) {
             if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
@@ -1045,10 +1253,12 @@ void SpectrumDefaultsPage::buildUI()
                 c.name(QColor::HexArgb));
         });
 
-        m_nfFastColorBtn = new ColorSwatchButton(Qt::gray, overlayGroup);
+        // The renderer's default (SpectrumWidget m_noiseFloorFastColor).
+        m_nfFastColorBtn = new ColorSwatchButton(QColor(0xC8, 0xC8, 0xC8), overlayGroup);
+        m_nfFastColorBtn->setProperty("nereusSetupId", "display.spectrumDefaults.noiseFloorFastColor");
+        // Default gray, mirroring Thetis m_bDX2_Gray (was in the tooltip).
         m_nfFastColorBtn->setToolTip(QStringLiteral(
-            "Colour shown during fast-attack (band/freq/MOX change). "
-            "Default gray, mirroring Thetis m_bDX2_Gray."));
+            "Color shown during fast-attack (band/freq/MOX change)."));
         connect(m_nfFastColorBtn, &ColorSwatchButton::colorChanged,
                 this, [this](const QColor& c) {
             if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
@@ -1080,6 +1290,7 @@ void SpectrumDefaultsPage::buildUI()
     // Thetis original: "Normalize to 1 Hz"
     m_dispNormalizeToggle = new QCheckBox(
         QStringLiteral("Normalize trace"), overlayGroup);
+    m_dispNormalizeToggle->setProperty("nereusSetupId", "display.spectrumDefaults.normalize");
     m_dispNormalizeToggle->setToolTip(QStringLiteral(
         "Normalize the spectrum trace to a 1 Hz reference bandwidth. "
         "Only active for Average, Sample, or RMS detector modes."));
@@ -1099,10 +1310,15 @@ void SpectrumDefaultsPage::buildUI()
     // Color default DodgerBlue from console.cs:20278 [v2.10.3.13].
     m_showPeakValueOverlayToggle = new QCheckBox(
         QStringLiteral("Show peak value overlay"), overlayGroup);
+    m_showPeakValueOverlayToggle->setProperty("nereusSetupId", "display.spectrumDefaults.showPeakValue");
     m_showPeakValueOverlayToggle->setToolTip(QStringLiteral(
         "Display the peak signal level and frequency as a text overlay in the spectrum corner."));
     m_peakValuePositionCombo = makeOverlayPositionCombo(overlayGroup);
     m_peakValuePositionCombo->setCurrentIndex(1);  // Top Right default
+    m_peakValuePositionCombo->setProperty("nereusSetupId", "display.spectrumDefaults.peakValuePosition");
+    // The row has no visible label; the accessible name is the one the
+    // Setup description publishes.
+    m_peakValuePositionCombo->setAccessibleName(QStringLiteral("Peak value position:"));
     m_peakValuePositionCombo->setToolTip(QStringLiteral("Corner position for the peak value readout."));
     m_peakTextDelaySpin = new QSpinBox(overlayGroup);
     m_peakTextDelaySpin->setRange(50, 10000);
@@ -1111,6 +1327,8 @@ void SpectrumDefaultsPage::buildUI()
     // From Thetis console.cs:20073 [v2.10.3.13]: peak_text_delay = 500.
     // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     m_peakTextDelaySpin->setValue(500);
+    m_peakTextDelaySpin->setProperty("nereusSetupId", "display.spectrumDefaults.peakTextDelay");
+    m_peakTextDelaySpin->setAccessibleName(QStringLiteral("Peak value refresh:"));
     m_peakTextDelaySpin->setToolTip(QStringLiteral(
         "Refresh interval for the peak value overlay in milliseconds."));
     connect(m_showPeakValueOverlayToggle, &QCheckBox::toggled, this, [this](bool on) {
@@ -1158,6 +1376,7 @@ void SpectrumDefaultsPage::buildUI()
     // wired from setup.cs:32208 btnGetMonitorHz_Click → udDisplayFPS.Value = refreshRate.
     auto* monitorHzBtn = new QPushButton(
         QStringLiteral("Get Monitor Hz"), overlayGroup);
+    monitorHzBtn->setProperty("nereusSetupId", "display.spectrumDefaults.getMonitorHz");
     monitorHzBtn->setToolTip(QStringLiteral(
         "Query the primary screen refresh rate and snap the FPS slider to the nearest valid value."));
     connect(monitorHzBtn, &QPushButton::clicked, this, [this]() {
@@ -1206,13 +1425,29 @@ void SpectrumDefaultsPage::buildUI()
         }
     });
     threadForm->addRow(QStringLiteral("Display Thread Priority:"), m_threadPriorityCombo);
+    // Parity Task 17 (R-R3-41): a remote pan's spectrum is computed on the
+    // Core, which places its own threads.
+    if (remoteWindow()) {
+        const QString reason = QStringLiteral("The Core sets its own display thread priority.");
+        m_threadPriorityCombo->setEnabled(false);
+        m_threadPriorityCombo->setToolTip(reason);
+        m_threadPriorityCombo->setAccessibleDescription(reason);
+    }
+    // Parity Task 17 (R-R3-01, R-R3-08): the readouts follow the Core's
+    // grant for the active pan (a new FFT size from the slider or a zoom).
+    if (remoteWindow()) {
+        if (auto* grantSource = model()->spectrumWidget()) {
+            connect(grantSource, &SpectrumWidget::remoteSpectrumGrantChanged,
+                    this, &SpectrumDefaultsPage::refreshGrantedReadouts);
+        }
+    }
 
     contentLayout()->addWidget(threadGroup);
 
     // Colour pickers for trace, grid, passband, and zero lines have moved to
     // Setup → Appearance → Colors & Theme (consolidated in one place).
     auto* colorHint = new QLabel(QStringLiteral(
-        "Spectrum / waterfall colours: Setup → Appearance → Colors & Theme."), this);
+        "Spectrum / waterfall colors: Setup → Appearance → Colors & Theme."), this);
     colorHint->setStyleSheet(QStringLiteral(
         "QLabel { color: #607080; font-style: italic; padding: 6px; }"));
     contentLayout()->addWidget(colorHint);
@@ -1253,8 +1488,7 @@ void SpectrumDefaultsPage::buildUI()
     m_configureMultimeterBtn = new QPushButton(
         QStringLiteral("Configure multimeter →"), crossLinkRow);
     m_configureMultimeterBtn->setToolTip(QStringLiteral(
-        "Open Display → Multimeter to configure the on-screen level meter. "
-        "Available after Task 3.1."));
+        "Open Display → Multimeter to configure the on-screen level meter."));
     m_configureMultimeterBtn->setStyleSheet(crossLinkStyle);
     // Multimeter page lands in Task 3.1; signal is wired in SetupDialog at that time.
     // The button is defined here so SetupDialog can connect it without touching this file again.
@@ -1276,7 +1510,7 @@ void SpectrumDefaultsPage::buildUI()
 // ---------------------------------------------------------------------------
 
 WaterfallDefaultsPage::WaterfallDefaultsPage(RadioModel* model, QWidget* parent)
-    : SetupPage(QStringLiteral("Waterfall Defaults"), model, parent)
+    : SetupPage(QString::fromLatin1(ControlRanges::kDisplayWaterfallPageTitle), model, parent)
 {
     buildUI();
     loadFromRenderer();
@@ -1335,7 +1569,11 @@ void WaterfallDefaultsPage::loadFromRenderer()
         QSignalBlocker bs(m_wfStopOnTx);
         m_wfStopOnTx->setChecked(sw->waterfallStopOnTx());
     }
-    m_colorSchemeCombo->setCurrentIndex(static_cast<int>(sw->wfColorScheme()));
+    // 3D Stacked-Trace Spectrum Plan Task 21: reads DisplaySettingsModel's
+    // getter, which already returns a plain int (see the class header
+    // comment on DisplaySettingsModel::wfColorScheme()), unlike the
+    // widget's own strongly-typed WfColorScheme getter this used to read.
+    m_colorSchemeCombo->setCurrentIndex(sw->displaySettings()->wfColorScheme());
     // m_wfAveragingCombo legacy combo removed — sync via m_waterfallAveragingCombo below.
     // Task 2.1: sync new waterfall split combos.
     if (m_waterfallDetectorCombo) {
@@ -1431,6 +1669,7 @@ void WaterfallDefaultsPage::buildUI()
     {
         auto row = makeSliderRow(-200, 0, -40, QStringLiteral(" dBm"), levGroup);
         m_highThresholdSlider = row.slider;
+        m_highThresholdSlider->setProperty("nereusSetupId", "display.waterfallDefaults.highThreshold");
         // Thetis: setup.designer.cs:34259 (udDisplayWaterfallHighLevel)
         m_highThresholdSlider->setToolTip(QStringLiteral("Waterfall High Signal - Show High Color above this value (gradient in between)."));
         row.spin->setToolTip(QStringLiteral("Waterfall High Signal - Show High Color above this value (gradient in between)."));
@@ -1445,6 +1684,7 @@ void WaterfallDefaultsPage::buildUI()
     {
         auto row = makeSliderRow(-200, 0, -130, QStringLiteral(" dBm"), levGroup);
         m_lowThresholdSlider = row.slider;
+        m_lowThresholdSlider->setProperty("nereusSetupId", "display.waterfallDefaults.lowThreshold");
         // Thetis: setup.designer.cs:34219 (udDisplayWaterfallLowLevel)
         m_lowThresholdSlider->setToolTip(QStringLiteral("Waterfall Low Signal - Show Low Color below this value (gradient in between)."));
         row.spin->setToolTip(QStringLiteral("Waterfall Low Signal - Show Low Color below this value (gradient in between)."));
@@ -1457,6 +1697,7 @@ void WaterfallDefaultsPage::buildUI()
     }
 
     m_agcToggle = new QCheckBox(QStringLiteral("AGC"), levGroup);
+    m_agcToggle->setProperty("nereusSetupId", "display.waterfallDefaults.agc");
     // Thetis: setup.designer.cs:34069 (chkRX1WaterfallAGC)
     m_agcToggle->setToolTip(QStringLiteral("Automatically calculates Low Level Threshold for Waterfall."));
     connect(m_agcToggle, &QCheckBox::toggled, this, [this](bool on) {
@@ -1467,6 +1708,7 @@ void WaterfallDefaultsPage::buildUI()
     levForm->addRow(QString(), m_agcToggle);
 
     m_useSpectrumMinMaxToggle = new QCheckBox(QStringLiteral("Use spectrum min/max"), levGroup);
+    m_useSpectrumMinMaxToggle->setProperty("nereusSetupId", "display.waterfallDefaults.useSpectrumMinMax");
     // Thetis: setup.designer.cs:34054 (chkWaterfallUseRX1SpectrumMinMax)
     m_useSpectrumMinMaxToggle->setToolTip(QStringLiteral("Spectrum Grid min/max used for low and high level"));
     connect(m_useSpectrumMinMaxToggle, &QCheckBox::toggled, this, [this](bool on) {
@@ -1491,6 +1733,7 @@ void WaterfallDefaultsPage::buildUI()
     // Task 2.8: Copy spectrum min/max → waterfall thresholds button.
     m_copySpecMinMaxBtn = new QPushButton(
         QStringLiteral("Copy spectrum min/max → waterfall thresholds"), levGroup);
+    m_copySpecMinMaxBtn->setProperty("nereusSetupId", "display.waterfallDefaults.copySpectrumMinMax");
     m_copySpecMinMaxBtn->setToolTip(
         QStringLiteral("Copies the current spectrum display dB max and dB min values "
                        "into the waterfall High Threshold and Low Threshold above."));
@@ -1523,6 +1766,7 @@ void WaterfallDefaultsPage::buildUI()
     nfAgcForm->setSpacing(6);
 
     m_wfNfAgcEnable = new QCheckBox(QStringLiteral("Enable NF-AGC"), nfAgcGroup);
+    m_wfNfAgcEnable->setProperty("nereusSetupId", "display.waterfallDefaults.nfAgc");
     m_wfNfAgcEnable->setToolTip(
         QStringLiteral("When enabled, the waterfall low/high thresholds automatically "
                        "track the estimated noise floor. The offset below sets how far "
@@ -1535,6 +1779,7 @@ void WaterfallDefaultsPage::buildUI()
     nfAgcForm->addRow(QString(), m_wfNfAgcEnable);
 
     m_wfAgcOffsetDb = new QSpinBox(nfAgcGroup);
+    m_wfAgcOffsetDb->setProperty("nereusSetupId", "display.waterfallDefaults.nfAgcOffset");
     m_wfAgcOffsetDb->setRange(-60, 60);
     m_wfAgcOffsetDb->setSuffix(QStringLiteral(" dB"));
     m_wfAgcOffsetDb->setValue(0);
@@ -1552,13 +1797,14 @@ void WaterfallDefaultsPage::buildUI()
     contentLayout()->addWidget(nfAgcGroup);
 
     // --- Section: Display ---
-    auto* dispGroup = new QGroupBox(QStringLiteral("Display"), this);
+    auto* dispGroup = new QGroupBox(QString::fromLatin1(ControlRanges::kDisplayWaterfallGroupTitle), this);
     auto* dispForm  = new QFormLayout(dispGroup);
     dispForm->setSpacing(6);
 
     {
         auto row = makeSliderRow(10, 500, 50, QStringLiteral(" ms"), dispGroup);
         m_updatePeriodSlider = row.slider;
+        m_updatePeriodSlider->setProperty("nereusSetupId", "display.waterfallDefaults.updatePeriod");
         // Thetis: setup.designer.cs:34145 (udDisplayWaterfallUpdatePeriod)
         m_updatePeriodSlider->setToolTip(QStringLiteral("How often to update (scroll another pixel line) on the waterfall display.  Note that this is tamed by the FPS setting."));
         row.spin->setToolTip(QStringLiteral("How often to update (scroll another pixel line) on the waterfall display.  Note that this is tamed by the FPS setting."));
@@ -1584,6 +1830,7 @@ void WaterfallDefaultsPage::buildUI()
 
     // Task 2.8: Stop-on-TX.
     m_wfStopOnTx = new QCheckBox(QStringLiteral("Stop on TX"), dispGroup);
+    m_wfStopOnTx->setProperty("nereusSetupId", "display.waterfallDefaults.stopOnTx");
     m_wfStopOnTx->setToolTip(
         QStringLiteral("Pause the waterfall while transmitting. "
                        "Resumes automatically when TX ends."));
@@ -1597,6 +1844,7 @@ void WaterfallDefaultsPage::buildUI()
     {
         auto row = makeSliderRow(0, 100, 100, QStringLiteral("%"), dispGroup);
         m_opacitySlider = row.slider;
+        m_opacitySlider->setProperty("nereusSetupId", "display.waterfallDefaults.opacity");
         // Thetis: setup.designer.cs:2056 (tbRX1WaterfallOpacity) — rewritten
         // Thetis original: (none)
         m_opacitySlider->setToolTip(QStringLiteral("Waterfall opacity (0 = fully transparent, 100 = fully opaque). Blends the waterfall over the spectrum background."));
@@ -1610,21 +1858,33 @@ void WaterfallDefaultsPage::buildUI()
     }
 
     m_colorSchemeCombo = new QComboBox(dispGroup);
-    m_colorSchemeCombo->addItems({
-        QStringLiteral("Default"),   QStringLiteral("Enhanced"),
-        QStringLiteral("Spectran"),  QStringLiteral("BlackWhite"),
-        QStringLiteral("LinLog"),    QStringLiteral("LinRad"),
-        QStringLiteral("Custom"),
-        QStringLiteral("Clarity Blue")   // Phase 3G-9b
-    });
+    // 3D Stacked-Trace Spectrum Plan Task 21 test seam: no production code
+    // depends on this name, only tests/tst_display_setup_binding.cpp's
+    // findChild lookup (this page is RadioModel-backed, so unlike
+    // Display3DSetupPage's SpectrumWidget-first controls there is no
+    // simpler headless construction path to key off instead).
+    m_colorSchemeCombo->setObjectName(QStringLiteral("wfColorSchemeCombo"));
+    m_colorSchemeCombo->setProperty("nereusSetupId", "display.waterfallDefaults.colorScheme");
+    // Default, Enhanced, Spectran, BlackWhite, LinLog, LinRad, Custom and
+    // Clarity Blue (Phase 3G-9b), in WfColorScheme order; the names live in
+    // core/spectrum/WaterfallPalettes.cpp, which the Core's catalogue reads
+    // too (iPhone app Task 19).
+    for (int i = 0; i < static_cast<int>(WfColorScheme::Count); ++i) {
+        m_colorSchemeCombo->addItem(
+            QString::fromLatin1(wfSchemeName(static_cast<WfColorScheme>(i))));
+    }
     // Thetis: setup.designer.cs:34110 (comboColorPalette) — rewritten
     // Thetis original: "Sets the color scheme"
     m_colorSchemeCombo->setToolTip(QStringLiteral("Waterfall color palette. Each scheme maps signal level to a different color gradient from low (dark) to high (bright)."));
+    // 3D Stacked-Trace Spectrum Plan Task 21: reaches
+    // DisplaySettingsModel::setWfColorScheme() instead of the widget's own
+    // setWfColorScheme(), which clamps [0,7] itself (WfColorScheme::Count
+    // == 8) so the local qBound() the widget-direct call needed is no
+    // longer necessary here.
     connect(m_colorSchemeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int i) {
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
-            w->setWfColorScheme(static_cast<WfColorScheme>(
-                qBound(0, i, static_cast<int>(WfColorScheme::Count) - 1)));
+            w->displaySettings()->setWfColorScheme(i);
         }
     });
     dispForm->addRow(QStringLiteral("Color Scheme:"), m_colorSchemeCombo);
@@ -1641,13 +1901,12 @@ void WaterfallDefaultsPage::buildUI()
     // (setup.designer.cs:34461): Peak / Rosenfell / Average / Sample.
     // Note: WF detector has 4 items (no RMS); Pan detector has 5 (with RMS).
     // RX1 scope dropped — pan-agnostic per design Section 1B.
+    // Items from ControlRanges::kDisplayWaterfallDetectors.
     m_waterfallDetectorCombo = new QComboBox(dispGroup);
-    m_waterfallDetectorCombo->addItems({
-        QStringLiteral("Peak"),
-        QStringLiteral("Rosenfell"),
-        QStringLiteral("Average"),
-        QStringLiteral("Sample")
-    });
+    m_waterfallDetectorCombo->setProperty("nereusSetupId", "display.waterfallDefaults.detector");
+    for (const ControlRanges::DisplayChoiceItem& item : ControlRanges::kDisplayWaterfallDetectors) {
+        m_waterfallDetectorCombo->addItem(QLatin1String(item.label));
+    }
     // Thetis: setup.designer.cs:34461 (comboDispWFDetector) [v2.10.3.13] — no upstream tooltip; rewritten
     m_waterfallDetectorCombo->setToolTip(QStringLiteral(
         "Waterfall bin-reduction policy. Peak takes the maximum bin per pixel. "
@@ -1659,17 +1918,17 @@ void WaterfallDefaultsPage::buildUI()
             w->setWaterfallDetector(static_cast<SpectrumDetector>(i));
         }
     });
-    dispForm->addRow(QStringLiteral("WF Detector:"), m_waterfallDetectorCombo);
+    dispForm->addRow(QString::fromLatin1(ControlRanges::kDisplayWaterfallDetectorLabel)
+                         + QLatin1Char(':'), m_waterfallDetectorCombo);
 
     // Ported from Thetis comboDispWFAveraging [v2.10.3.13]
     // (setup.designer.cs:34436): None / Recursive / Time Window / Log Recursive.
+    // Items from ControlRanges::kDisplayAveragingModes.
     m_waterfallAveragingCombo = new QComboBox(dispGroup);
-    m_waterfallAveragingCombo->addItems({
-        QStringLiteral("None"),
-        QStringLiteral("Recursive"),
-        QStringLiteral("Time Window"),
-        QStringLiteral("Log Recursive")
-    });
+    m_waterfallAveragingCombo->setProperty("nereusSetupId", "display.waterfallDefaults.averaging");
+    for (const ControlRanges::DisplayChoiceItem& item : ControlRanges::kDisplayAveragingModes) {
+        m_waterfallAveragingCombo->addItem(QLatin1String(item.label));
+    }
     // Thetis: setup.designer.cs:34436 (comboDispWFAveraging) [v2.10.3.13] — no upstream tooltip; rewritten
     m_waterfallAveragingCombo->setToolTip(QStringLiteral(
         "Waterfall frame-averaging mode. None shows raw FFT output per row. "
@@ -1682,27 +1941,33 @@ void WaterfallDefaultsPage::buildUI()
             w->setWaterfallAveraging(static_cast<SpectrumAveraging>(i));
         }
     });
-    dispForm->addRow(QStringLiteral("WF Averaging:"), m_waterfallAveragingCombo);
+    dispForm->addRow(QString::fromLatin1(ControlRanges::kDisplayWaterfallAveragingLabel)
+                         + QLatin1Char(':'), m_waterfallAveragingCombo);
 
     // Waterfall averaging time constant — independent from spectrum.
     // From Thetis udDisplayAVTimeWF [v2.10.3.13] (setup.designer.cs:2086).
     // Default 120 ms matches Thetis. Range 10..9999 ms.
+    // Range, step and default from ControlRanges.h.
     m_waterfallAvgTimeSpin = new QSpinBox(dispGroup);
-    m_waterfallAvgTimeSpin->setRange(10, 9999);
-    m_waterfallAvgTimeSpin->setSingleStep(10);
+    m_waterfallAvgTimeSpin->setProperty("nereusSetupId", "display.waterfallDefaults.averageTime");
+    m_waterfallAvgTimeSpin->setRange(ControlRanges::kDisplayAvgTimeMinMs,
+                                     ControlRanges::kDisplayAvgTimeMaxMs);
+    m_waterfallAvgTimeSpin->setSingleStep(ControlRanges::kDisplayAvgTimeStepMs);
     m_waterfallAvgTimeSpin->setSuffix(QStringLiteral(" ms"));
-    m_waterfallAvgTimeSpin->setValue(120);
+    m_waterfallAvgTimeSpin->setValue(ControlRanges::kDisplayWaterfallAvgTimeDefaultMs);
+    // The alpha formula is Thetis's.
     m_waterfallAvgTimeSpin->setToolTip(QStringLiteral(
         "Waterfall averaging time constant. Independent from the spectrum "
         "averaging time. Larger = heavier smoothing. Translates to a "
-        "frame-by-frame alpha via α = exp(−1 / (fps × τ)) per Thetis."));
+        "frame-by-frame alpha via α = exp(−1 / (fps × τ))."));
     connect(m_waterfallAvgTimeSpin, qOverload<int>(&QSpinBox::valueChanged),
             this, [this](int ms) {
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
             w->setWaterfallAverageTimeMs(ms);
         }
     });
-    dispForm->addRow(QStringLiteral("WF Avg Time:"), m_waterfallAvgTimeSpin);
+    dispForm->addRow(QString::fromLatin1(ControlRanges::kDisplayWaterfallAvgTimeLabel)
+                         + QLatin1Char(':'), m_waterfallAvgTimeSpin);
 
     contentLayout()->addWidget(dispGroup);
 
@@ -1714,6 +1979,7 @@ void WaterfallDefaultsPage::buildUI()
     m_showRxFilterToggle = new QCheckBox(QStringLiteral("Show RX filter on waterfall"), ovGroup);
     // Thetis: setup.designer.cs:3189 (chkShowRXFilterOnWaterfall) — rewritten
     // Thetis original: (none)
+    m_showRxFilterToggle->setProperty("nereusSetupId", "display.waterfallDefaults.showRxFilter");
     m_showRxFilterToggle->setToolTip(QStringLiteral("Overlay the current RX passband filter boundaries on the waterfall display."));
     connect(m_showRxFilterToggle, &QCheckBox::toggled, this, [this](bool on) {
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
@@ -1725,6 +1991,7 @@ void WaterfallDefaultsPage::buildUI()
     m_showTxFilterToggle = new QCheckBox(QStringLiteral("Show TX filter on RX waterfall"), ovGroup);
     // Thetis: setup.designer.cs:3187 (chkShowTXFilterOnRXWaterfall) — rewritten
     // Thetis original: (none)
+    m_showTxFilterToggle->setProperty("nereusSetupId", "display.waterfallDefaults.showTxFilter");
     m_showTxFilterToggle->setToolTip(QStringLiteral("Overlay the TX passband filter boundaries on the RX waterfall display."));
     connect(m_showTxFilterToggle, &QCheckBox::toggled, this, [this](bool on) {
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
@@ -1736,7 +2003,8 @@ void WaterfallDefaultsPage::buildUI()
     m_showRxZeroLineToggle = new QCheckBox(QStringLiteral("Show RX zero line on waterfall"), ovGroup);
     // Thetis: setup.designer.cs:3188 (chkShowRXZeroLineOnWaterfall) — rewritten
     // Thetis original: (none)
-    m_showRxZeroLineToggle->setToolTip(QStringLiteral("Draw a line on the waterfall at the RX centre frequency (zero-beat reference)."));
+    m_showRxZeroLineToggle->setProperty("nereusSetupId", "display.waterfallDefaults.showRxZeroLine");
+    m_showRxZeroLineToggle->setToolTip(QStringLiteral("Draw a line on the waterfall at the RX center frequency (zero-beat reference)."));
     connect(m_showRxZeroLineToggle, &QCheckBox::toggled, this, [this](bool on) {
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
             w->setShowRxZeroLineOnWaterfall(on);
@@ -1747,7 +2015,8 @@ void WaterfallDefaultsPage::buildUI()
     m_showTxZeroLineToggle = new QCheckBox(QStringLiteral("Show TX zero line on waterfall"), ovGroup);
     // Thetis: setup.designer.cs:3242 (chkShowTXZeroLineOnWaterfall) — rewritten
     // Thetis original: (none)
-    m_showTxZeroLineToggle->setToolTip(QStringLiteral("Draw a line on the waterfall at the TX centre frequency (zero-beat reference)."));
+    m_showTxZeroLineToggle->setProperty("nereusSetupId", "display.waterfallDefaults.showTxZeroLine");
+    m_showTxZeroLineToggle->setToolTip(QStringLiteral("Draw a line on the waterfall at the TX center frequency (zero-beat reference)."));
     connect(m_showTxZeroLineToggle, &QCheckBox::toggled, this, [this](bool on) {
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
             w->setShowTxZeroLineOnWaterfall(on);
@@ -1763,13 +2032,14 @@ void WaterfallDefaultsPage::buildUI()
     histForm->setSpacing(6);
 
     m_historyDepthCombo = new QComboBox(histGroup);
+    m_historyDepthCombo->setProperty("nereusSetupId", "display.waterfallDefaults.historyDepth");
     m_historyDepthCombo->addItem(QStringLiteral("60 seconds"),      60LL * 1000);
     m_historyDepthCombo->addItem(QStringLiteral("5 minutes"),  5LL * 60 * 1000);
     m_historyDepthCombo->addItem(QStringLiteral("15 minutes"), 15LL * 60 * 1000);
     m_historyDepthCombo->addItem(QStringLiteral("20 minutes"), 20LL * 60 * 1000);
     m_historyDepthCombo->setToolTip(
         QStringLiteral("Maximum amount of waterfall history kept for rewind. "
-                       "Effective rewind is capped at %1 rows — slow the "
+                       "Effective rewind is capped at %1 rows; slow the "
                        "update period to extend depth at fast refresh rates.")
             .arg(SpectrumWidget::kMaxWaterfallHistoryRows));
     histForm->addRow(QStringLiteral("Depth:"), m_historyDepthCombo);
@@ -1795,6 +2065,7 @@ void WaterfallDefaultsPage::buildUI()
     timeForm->setSpacing(6);
 
     m_timestampPosCombo = new QComboBox(timeGroup);
+    m_timestampPosCombo->setProperty("nereusSetupId", "display.waterfallDefaults.timestampPosition");
     m_timestampPosCombo->addItems({QStringLiteral("None"), QStringLiteral("Left"),
                                    QStringLiteral("Right")});
     // NereusSDR extension — no Thetis equivalent
@@ -1810,6 +2081,7 @@ void WaterfallDefaultsPage::buildUI()
     timeForm->addRow(QStringLiteral("Timestamp Position:"), m_timestampPosCombo);
 
     m_timestampModeCombo = new QComboBox(timeGroup);
+    m_timestampModeCombo->setProperty("nereusSetupId", "display.waterfallDefaults.timestampMode");
     m_timestampModeCombo->addItems({QStringLiteral("UTC"), QStringLiteral("Local")});
     // NereusSDR extension — no Thetis equivalent
     m_timestampModeCombo->setToolTip(QStringLiteral("Time zone used for waterfall timestamps. UTC uses Coordinated Universal Time; Local uses the system clock time zone."));
@@ -1827,7 +2099,7 @@ void WaterfallDefaultsPage::buildUI()
 
     // Low Level Color (W10) has moved to Setup → Appearance → Colors & Theme.
     auto* wfColorHint = new QLabel(QStringLiteral(
-        "Spectrum / waterfall colours: Setup → Appearance → Colors & Theme."), this);
+        "Spectrum / waterfall colors: Setup → Appearance → Colors & Theme."), this);
     wfColorHint->setStyleSheet(QStringLiteral(
         "QLabel { color: #607080; font-style: italic; padding: 6px; }"));
     contentLayout()->addWidget(wfColorHint);
@@ -1876,6 +2148,11 @@ void GridScalesPage::applyBandSlot(PanadapterModel* pan)
     if (m_dbMinRowLabel) {
         m_dbMinRowLabel->setText(QStringLiteral("dB Min (%1):").arg(bandName));
     }
+}
+
+void GridScalesPage::setStationSettingsAvailable(bool available, const QString& reason)
+{
+    gateStationControls({m_dbMaxSpin, m_dbMinSpin, m_copyWfToSpecBtn}, available, reason);
 }
 
 void GridScalesPage::loadFromRenderer()
@@ -1940,6 +2217,7 @@ void GridScalesPage::buildUI()
     gridForm->setSpacing(6);
 
     m_gridToggle = new QCheckBox(QStringLiteral("Show grid"), gridGroup);
+    m_gridToggle->setProperty("nereusSetupId", "display.gridScales.showGrid");
     m_gridToggle->setChecked(true);
     // Thetis: setup.designer.cs:52824 (chkGridControl)
     m_gridToggle->setToolTip(QStringLiteral("Display the Major Grid on the Panadapter including the frequency numbers"));
@@ -1951,6 +2229,7 @@ void GridScalesPage::buildUI()
     gridForm->addRow(QString(), m_gridToggle);
 
     m_dbmScaleVisibleToggle = new QCheckBox(QStringLiteral("Show dBm scale strip (right edge)"), gridGroup);
+    m_dbmScaleVisibleToggle->setProperty("nereusSetupId", "display.gridScales.dbmScale");
     m_dbmScaleVisibleToggle->setChecked(true);
     m_dbmScaleVisibleToggle->setToolTip(QStringLiteral("Show the reference-level scale on the right edge of the spectrum. "
                                                         "Disable to give the spectrum trace the full widget width."));
@@ -1981,12 +2260,13 @@ void GridScalesPage::buildUI()
     gridForm->addRow(m_editingBandLabel);
 
     m_dbMaxSpin = new QSpinBox(gridGroup);
+    m_dbMaxSpin->setProperty("nereusSetupId", "display.gridScales.dbMax");
     m_dbMaxSpin->setRange(-200, 0);
     m_dbMaxSpin->setValue(-40);
     m_dbMaxSpin->setSuffix(QStringLiteral(" dB"));
     // Thetis: setup.designer.cs:34745 (udDisplayGridMax) — rewritten
     // Thetis original: "Signal level at top of display in dB."
-    m_dbMaxSpin->setToolTip(QStringLiteral("Signal level at the top of the display in dB. Edits the current band's grid slot — band shown in the row label and the section header above."));
+    m_dbMaxSpin->setToolTip(QStringLiteral("Signal level at the top of the display in dB, for the current band. Each band keeps its own value."));
     connect(m_dbMaxSpin, qOverload<int>(&QSpinBox::valueChanged),
             this, [this](int v) {
         if (auto* pan = firstPan(model())) {
@@ -1997,12 +2277,13 @@ void GridScalesPage::buildUI()
     gridForm->addRow(m_dbMaxRowLabel, m_dbMaxSpin);
 
     m_dbMinSpin = new QSpinBox(gridGroup);
+    m_dbMinSpin->setProperty("nereusSetupId", "display.gridScales.dbMin");
     m_dbMinSpin->setRange(-200, 0);
     m_dbMinSpin->setValue(-140);
     m_dbMinSpin->setSuffix(QStringLiteral(" dB"));
     // Thetis: setup.designer.cs:34714 (udDisplayGridMin) — rewritten
     // Thetis original: "Signal Level at bottom of display in dB."
-    m_dbMinSpin->setToolTip(QStringLiteral("Signal level at the bottom of the display in dB. Edits the current band's grid slot — band shown in the row label and the section header above."));
+    m_dbMinSpin->setToolTip(QStringLiteral("Signal level at the bottom of the display in dB, for the current band. Each band keeps its own value."));
     connect(m_dbMinSpin, qOverload<int>(&QSpinBox::valueChanged),
             this, [this](int v) {
         if (auto* pan = firstPan(model())) {
@@ -2013,6 +2294,7 @@ void GridScalesPage::buildUI()
     gridForm->addRow(m_dbMinRowLabel, m_dbMinSpin);
 
     m_dbStepSpin = new QSpinBox(gridGroup);
+    m_dbStepSpin->setProperty("nereusSetupId", "display.gridScales.dbStep");
     m_dbStepSpin->setRange(1, 40);
     m_dbStepSpin->setValue(10);
     m_dbStepSpin->setSuffix(QStringLiteral(" dB"));
@@ -2035,6 +2317,16 @@ void GridScalesPage::buildUI()
     if (auto* pan = firstPan(model())) {
         connect(pan, &PanadapterModel::bandChanged,
                 this, [this, pan](Band) { applyBandSlot(pan); });
+        // Parity ruling C12: in a remote window the per-band values are the
+        // Core's; when one arrives (or a whole snapshot) the spinboxes show
+        // it. The pan has re-read the band before this signal.
+        connect(model(), &RadioModel::stationSettingChanged, this,
+                [this, pan](const QString& key) {
+            if (key.isEmpty() || key.startsWith(QLatin1String("DisplayGridMax_"))
+                || key.startsWith(QLatin1String("DisplayGridMin_"))) {
+                applyBandSlot(pan);
+            }
+        });
     }
 
     // --- Section: Labels ---
@@ -2043,6 +2335,7 @@ void GridScalesPage::buildUI()
     lblForm->setSpacing(6);
 
     m_freqLabelAlignCombo = new QComboBox(lblGroup);
+    m_freqLabelAlignCombo->setProperty("nereusSetupId", "display.gridScales.freqLabelAlign");
     m_freqLabelAlignCombo->addItems({
         QStringLiteral("Left"),   QStringLiteral("Center"),
         QStringLiteral("Right"),  QStringLiteral("Auto"),
@@ -2061,6 +2354,7 @@ void GridScalesPage::buildUI()
     lblForm->addRow(QStringLiteral("Freq Label Align:"), m_freqLabelAlignCombo);
 
     m_zeroLineToggle = new QCheckBox(QStringLiteral("Show zero line"), lblGroup);
+    m_zeroLineToggle->setProperty("nereusSetupId", "display.gridScales.zeroLine");
     // Thetis: setup.designer.cs:3221 (chkShowZeroLine) — rewritten
     // Thetis original: (none)
     m_zeroLineToggle->setToolTip(QStringLiteral("Show a horizontal line at 0 dBm on the panadapter grid."));
@@ -2072,6 +2366,7 @@ void GridScalesPage::buildUI()
     lblForm->addRow(QString(), m_zeroLineToggle);
 
     m_showFpsToggle = new QCheckBox(QStringLiteral("Show FPS overlay"), lblGroup);
+    m_showFpsToggle->setProperty("nereusSetupId", "display.gridScales.showFps");
     // Thetis: setup.designer.cs:33177 (chkShowFPS)
     m_showFpsToggle->setToolTip(QStringLiteral("Show FPS reading in top left of spectrum area"));
     connect(m_showFpsToggle, &QCheckBox::toggled, this, [this](bool on) {
@@ -2086,7 +2381,7 @@ void GridScalesPage::buildUI()
     // Grid/zero-line/band-edge colour pickers (G6/G9–G13) moved to
     // Setup → Appearance → Colors & Theme (consolidated colour panel).
     auto* gridColorHint = new QLabel(QStringLiteral(
-        "Spectrum / waterfall colours: Setup → Appearance → Colors & Theme."), this);
+        "Spectrum / waterfall colors: Setup → Appearance → Colors & Theme."), this);
     gridColorHint->setStyleSheet(QStringLiteral(
         "QLabel { color: #607080; font-style: italic; padding: 6px; }"));
     contentLayout()->addWidget(gridColorHint);
@@ -2101,6 +2396,7 @@ void GridScalesPage::buildUI()
 
     m_adjustGridMinToNF = new QCheckBox(
         QStringLiteral("Adjust grid min to track noise floor"), nfGroup);
+    m_adjustGridMinToNF->setProperty("nereusSetupId", "display.gridScales.adjustGridMinToNoiseFloor");
     // From Thetis setup.cs:24202 [v2.10.3.13] chkAdjustGridMinToNFRX1
     m_adjustGridMinToNF->setToolTip(
         QStringLiteral("When enabled, the lower grid boundary automatically follows the "
@@ -2115,16 +2411,18 @@ void GridScalesPage::buildUI()
     nfForm->addRow(QString(), m_adjustGridMinToNF);
 
     m_nfOffsetGridFollow = new QSpinBox(nfGroup);
+    m_nfOffsetGridFollow->setProperty("nereusSetupId", "display.gridScales.noiseFloorOffset");
     m_nfOffsetGridFollow->setRange(-60, 60);
     m_nfOffsetGridFollow->setValue(0);
     m_nfOffsetGridFollow->setSuffix(QStringLiteral(" dB"));
     m_nfOffsetGridFollow->setEnabled(false);
     // From Thetis console.cs:46035-46040 [v2.10.3.13] _RX1NFoffsetGridFollow = 5f.
     // NereusSDR: range -60..+60, default 0. Offset is added to NF estimate.
+    // Thetis's default is 5 dB below the floor, offset -5 here; the
+    // tooltip used to say so (the default stays 0, a difference for JJ).
     m_nfOffsetGridFollow->setToolTip(
         QStringLiteral("Offset added to the noise floor estimate to compute the grid min. "
-                       "Use a negative value to place the grid min below the noise floor. "
-                       "(Thetis default is -5 dB below NF; equivalent here as offset -5.)"));
+                       "Use a negative value to place the grid min below the noise floor."));
     connect(m_nfOffsetGridFollow, qOverload<int>(&QSpinBox::valueChanged),
             this, [this](int db) {
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
@@ -2135,6 +2433,7 @@ void GridScalesPage::buildUI()
 
     m_maintainNFAdjustDelta = new QCheckBox(
         QStringLiteral("Maintain grid range (move max with min)"), nfGroup);
+    m_maintainNFAdjustDelta->setProperty("nereusSetupId", "display.gridScales.maintainGridRange");
     m_maintainNFAdjustDelta->setEnabled(false);
     // From Thetis console.cs:46085 [v2.10.3.13] _maintainNFAdjustDeltaRX1.
     // Range delta uses std::abs() guard: abs incase //MW0LGE [2.9.0.7] [original inline comment from console.cs:46081]
@@ -2158,6 +2457,7 @@ void GridScalesPage::buildUI()
 
     m_copyWfToSpecBtn = new QPushButton(
         QStringLiteral("Copy waterfall thresholds → spectrum min/max"), copyGroup);
+    m_copyWfToSpecBtn->setProperty("nereusSetupId", "display.gridScales.copyWaterfallThresholds");
     m_copyWfToSpecBtn->setToolTip(
         QStringLiteral("Copies the current waterfall High Threshold and Low Threshold "
                        "into the spectrum dB max and dB min for the current band."));
@@ -2205,73 +2505,6 @@ void GridScalesPage::buildUI()
 }
 
 // ---------------------------------------------------------------------------
-// Rx2DisplayPage
-// ---------------------------------------------------------------------------
-
-Rx2DisplayPage::Rx2DisplayPage(RadioModel* model, QWidget* parent)
-    : SetupPage(QStringLiteral("RX2 Display"), model, parent)
-{
-    buildUI();
-}
-
-void Rx2DisplayPage::buildUI()
-{
-    NereusSDR::Style::applyDarkPageStyle(this);
-
-    // --- Section: RX2 Spectrum ---
-    auto* specGroup = new QGroupBox(QStringLiteral("RX2 Spectrum"), this);
-    auto* specForm  = new QFormLayout(specGroup);
-    specForm->setSpacing(6);
-
-    m_dbMaxSpin = new QSpinBox(specGroup);
-    m_dbMaxSpin->setRange(-200, 0);
-    m_dbMaxSpin->setValue(-20);
-    m_dbMaxSpin->setSuffix(QStringLiteral(" dB"));
-    m_dbMaxSpin->setEnabled(false);  // NYI
-    m_dbMaxSpin->setToolTip(QStringLiteral("RX2 spectrum dB max — not yet implemented"));
-    specForm->addRow(QStringLiteral("dB Max:"), m_dbMaxSpin);
-
-    m_dbMinSpin = new QSpinBox(specGroup);
-    m_dbMinSpin->setRange(-200, 0);
-    m_dbMinSpin->setValue(-160);
-    m_dbMinSpin->setSuffix(QStringLiteral(" dB"));
-    m_dbMinSpin->setEnabled(false);  // NYI
-    m_dbMinSpin->setToolTip(QStringLiteral("RX2 spectrum dB min — not yet implemented"));
-    specForm->addRow(QStringLiteral("dB Min:"), m_dbMinSpin);
-
-    m_colorSchemeCombo = new QComboBox(specGroup);
-    m_colorSchemeCombo->addItems({QStringLiteral("Enhanced"), QStringLiteral("Grayscale"),
-                                  QStringLiteral("Spectrum")});
-    m_colorSchemeCombo->setEnabled(false);  // NYI
-    m_colorSchemeCombo->setToolTip(QStringLiteral("RX2 waterfall color scheme — not yet implemented"));
-    specForm->addRow(QStringLiteral("Color Scheme:"), m_colorSchemeCombo);
-
-    contentLayout()->addWidget(specGroup);
-
-    // --- Section: RX2 Waterfall ---
-    auto* wfGroup = new QGroupBox(QStringLiteral("RX2 Waterfall"), this);
-    auto* wfForm  = new QFormLayout(wfGroup);
-    wfForm->setSpacing(6);
-
-    m_highThresholdSlider = new QSlider(Qt::Horizontal, wfGroup);
-    m_highThresholdSlider->setRange(-200, 0);
-    m_highThresholdSlider->setValue(-40);
-    m_highThresholdSlider->setEnabled(false);  // NYI
-    m_highThresholdSlider->setToolTip(QStringLiteral("RX2 waterfall high threshold — not yet implemented"));
-    wfForm->addRow(QStringLiteral("High Threshold:"), m_highThresholdSlider);
-
-    m_lowThresholdSlider = new QSlider(Qt::Horizontal, wfGroup);
-    m_lowThresholdSlider->setRange(-200, 0);
-    m_lowThresholdSlider->setValue(-130);
-    m_lowThresholdSlider->setEnabled(false);  // NYI
-    m_lowThresholdSlider->setToolTip(QStringLiteral("RX2 waterfall low threshold — not yet implemented"));
-    wfForm->addRow(QStringLiteral("Low Threshold:"), m_lowThresholdSlider);
-
-    contentLayout()->addWidget(wfGroup);
-    contentLayout()->addStretch();
-}
-
-// ---------------------------------------------------------------------------
 // TxDisplayPage
 // ---------------------------------------------------------------------------
 
@@ -2281,43 +2514,1133 @@ TxDisplayPage::TxDisplayPage(RadioModel* model, QWidget* parent)
     buildUI();
 }
 
+void TxDisplayPage::setStationSettingsAvailable(bool available, const QString& reason)
+{
+    m_stationAvailable = available;
+    m_stationReason = reason;
+    refreshTxAnalyzerGate();
+}
+
+QList<QWidget*> TxDisplayPage::txAnalyzerControlsForTest() const
+{
+    return {m_txFftSizeSlider, m_txWindowCombo, m_txPanDetectorCombo, m_txPanAveragingCombo,
+            m_txPanAvTimeSpin, m_txPanNormalizeCheck, m_txWfDetectorCombo,
+            m_txWfAveragingCombo, m_txWfAvTimeSpin};
+}
+
+QString TxDisplayPage::coreDoesNotApplyReason()
+{
+    return QStringLiteral("This Core does not apply transmit display settings from this app. "
+                          "Updating the Core may help.");
+}
+
+bool TxDisplayPage::remoteWindow()
+{
+    return model() != nullptr && !model()->ownsLocalDsp();
+}
+
+void TxDisplayPage::refreshTxAnalyzerGate()
+{
+    const QList<QWidget*> controls{m_txFftSizeSlider, m_txWindowCombo, m_txPanDetectorCombo,
+                                   m_txPanAveragingCombo, m_txPanAvTimeSpin,
+                                   m_txPanNormalizeCheck, m_txWfDetectorCombo,
+                                   m_txWfAveragingCombo, m_txWfAvTimeSpin};
+    // Put back each control's own state first, so Normalize's detector
+    // gate below is what the gate saves and restores.
+    gateStationControls(controls, true, QString());
+    if (remoteWindow() && m_txPanNormalizeCheck && m_txPanDetectorCombo) {
+        // From Thetis setup.cs:18152-18153 [v2.10.3.15]
+        //   //[2.10.3.5]MW0LGE note: see updateNormalizePan() in specHPSDR as it only applies to pan detector type 2,3,4
+        //   chkDispTXNormalize.Enabled = console.specRX.GetSpecRX(cmaster.inid(1, 0)).DetTypePan >= 2;
+        m_txPanNormalizeCheck->setEnabled(m_txPanDetectorCombo->currentIndex() >= 2);
+    }
+    bool available = m_stationAvailable;
+    QString reason = m_stationReason;
+    if (available && remoteWindow() && model()->stationTxDisplayVersion() < 2) {
+        available = false;
+        reason = coreDoesNotApplyReason();
+    }
+    gateStationControls(controls, available, reason);
+}
+
+void TxDisplayPage::showTxFftReadouts(int fftSize, double binWidthHz)
+{
+    m_txFftSizeReadout->setText(QString::number(fftSize));
+    m_txBinWidthLabel->setText(binWidthHz > 0.0 ? QString::number(binWidthHz, 'f', 3)
+                                                : QStringLiteral("0.000"));
+}
+
+void TxDisplayPage::showCoreTxAnalyzerSettings()
+{
+    // The Core's nine keys as its TxAnalyzer::loadSettings reads them, and
+    // held to what each setter takes, so a control never shows a value
+    // the Core's analyzer does not run.
+    auto& s = AppSettings::instance();
+    const auto readInt = [&s](const char* key, int fallback) {
+        bool ok = false;
+        const int v = s.value(QLatin1String(key), fallback).toInt(&ok);
+        return ok ? v : fallback;
+    };
+    const int fftSize = readInt(TxAnalyzer::kFftSizeKey, TxAnalyzer::kDefaultFftSize);
+    const int position = TxAnalyzer::fftSizeSliderPositionFor(fftSize);
+    const int shownSize = 4096 << position;
+    {
+        QSignalBlocker bSlider(m_txFftSizeSlider);
+        QSignalBlocker bWin   (m_txWindowCombo);
+        QSignalBlocker bPanDet(m_txPanDetectorCombo);
+        QSignalBlocker bPanAvg(m_txPanAveragingCombo);
+        QSignalBlocker bPanT  (m_txPanAvTimeSpin);
+        QSignalBlocker bPanN  (m_txPanNormalizeCheck);
+        QSignalBlocker bWfDet (m_txWfDetectorCombo);
+        QSignalBlocker bWfAvg (m_txWfAveragingCombo);
+        QSignalBlocker bWfT   (m_txWfAvTimeSpin);
+        // Not while the operator is dragging it: the Core's echo of an
+        // earlier step would pull the handle back.
+        if (!m_txFftSizeSlider->isSliderDown()) {
+            m_txFftSizeSlider->setValue(position);
+            // The Core's analyzer runs at the TX DSP rate, 96 kHz.
+            showTxFftReadouts(shownSize, static_cast<double>(WdspEngine::kTxDspSampleRate)
+                                             / static_cast<double>(shownSize));
+        }
+        m_txWindowCombo->setCurrentIndex(
+            std::clamp(readInt(TxAnalyzer::kWindowTypeKey, TxAnalyzer::kDefaultWindowType), 0, 6));
+        m_txPanDetectorCombo->setCurrentIndex(std::clamp(
+            readInt(TxAnalyzer::kPanDetectorKey, TxAnalyzer::kDefaultPanDetector), 0, 4));
+        m_txPanAveragingCombo->setCurrentIndex(std::clamp(
+            readInt(TxAnalyzer::kPanAveragingKey, TxAnalyzer::kDefaultPanAveraging), 0, 3));
+        m_txPanAvTimeSpin->setValue(std::clamp(
+            readInt(TxAnalyzer::kPanAvTimeMsKey, TxAnalyzer::kDefaultPanAvTimeMs), 1, 9999));
+        m_txPanNormalizeCheck->setChecked(
+            s.value(QLatin1String(TxAnalyzer::kPanNormalizeKey),
+                    TxAnalyzer::kDefaultPanNormalize ? QStringLiteral("True")
+                                                     : QStringLiteral("False"))
+                .toString()
+                .compare(QStringLiteral("True"), Qt::CaseInsensitive)
+            == 0);
+        m_txWfDetectorCombo->setCurrentIndex(std::clamp(
+            readInt(TxAnalyzer::kWfDetectorKey, TxAnalyzer::kDefaultWfDetector), 0, 3));
+        m_txWfAveragingCombo->setCurrentIndex(std::clamp(
+            readInt(TxAnalyzer::kWfAveragingKey, TxAnalyzer::kDefaultWfAveraging), 0, 3));
+        m_txWfAvTimeSpin->setValue(std::clamp(
+            readInt(TxAnalyzer::kWfAvTimeMsKey, TxAnalyzer::kDefaultWfAvTimeMs), 1, 9999));
+    }
+    refreshTxAnalyzerGate();
+}
+
+void TxDisplayPage::showLocalTxAnalyzerSettings()
+{
+    auto* txa = model() ? model()->txAnalyzer() : nullptr;
+    if (!txa) {
+        return;
+    }
+    // QSignalBlocker so a setValue does not echo back into the analyzer.
+    {
+        QSignalBlocker bSlider(m_txFftSizeSlider);
+        QSignalBlocker bWin   (m_txWindowCombo);
+        QSignalBlocker bPanDet(m_txPanDetectorCombo);
+        QSignalBlocker bPanAvg(m_txPanAveragingCombo);
+        QSignalBlocker bPanT  (m_txPanAvTimeSpin);
+        QSignalBlocker bPanN  (m_txPanNormalizeCheck);
+        QSignalBlocker bWfDet (m_txWfDetectorCombo);
+        QSignalBlocker bWfAvg (m_txWfAveragingCombo);
+        QSignalBlocker bWfT   (m_txWfAvTimeSpin);
+
+        // Derive slider position from current fftSize.  Defensive:
+        // log2(fftSize / 4096), clamped to [0, 6].
+        const int fs = txa->fftSize();
+        int sliderPos = 0;
+        for (int p = 0; p <= 6; ++p) {
+            if ((4096 << p) >= fs) {
+                sliderPos = p;
+                break;
+            }
+        }
+        m_txFftSizeSlider->setValue(sliderPos);
+
+        m_txFftSizeReadout->setText(QString::number(txa->fftSize()));
+        const double bw = txa->binWidthHz();
+        m_txBinWidthLabel->setText(
+            bw > 0.0 ? QString::number(bw, 'f', 3)
+                     : QStringLiteral("0.000"));
+
+        m_txWindowCombo->setCurrentIndex(
+            std::clamp(txa->windowType(), 0, 6));
+        m_txPanDetectorCombo->setCurrentIndex(
+            std::clamp(txa->panDetector(), 0, 4));
+        m_txPanAveragingCombo->setCurrentIndex(
+            std::clamp(txa->panAveraging(), 0, 3));
+        m_txPanAvTimeSpin->setValue(txa->panAvTimeMs());
+        m_txPanNormalizeCheck->setChecked(txa->panNormalize());
+        m_txPanNormalizeCheck->setEnabled(txa->panNormalizeEnabled());
+        m_txWfDetectorCombo->setCurrentIndex(
+            std::clamp(txa->wfDetector(), 0, 3));
+        m_txWfAveragingCombo->setCurrentIndex(
+            std::clamp(txa->wfAveraging(), 0, 3));
+        m_txWfAvTimeSpin->setValue(txa->wfAvTimeMs());
+    }
+}
+
+void TxDisplayPage::writeCoreTxAnalyzerSetting(const char* key, const QString& value)
+{
+    // Station scope: the window's settings proxy sends it to the Core,
+    // which applies it to its TX analyzer (RadioModel::
+    // applyRemoteTxDisplaySetting).
+    AppSettings::instance().setValue(QLatin1String(key), value);
+}
+
+void TxDisplayPage::wireCoreTxAnalyzerControls()
+{
+    showCoreTxAnalyzerSettings();
+
+    // Each control writes its key, as the local page's calls the setter
+    // (setup.cs:18146-18210 [v2.10.3.15]).
+    connect(m_txFftSizeSlider, &QSlider::valueChanged, this, [this](int v) {
+        // From Thetis setup.cs:18179-18183 [v2.10.3.15]
+        //   FFTSize = (int)(4096 * Math.Pow(2, Math.Floor((double)(tbTXDisplayFFTSize.Value))));
+        //   double bin_width = (double)...SampleRate / (double)...FFTSize;
+        //   lblTXDispBinWidth.Text = bin_width.ToString("N3");
+        const int size = 4096 << std::clamp(v, 0, 6);
+        showTxFftReadouts(size, static_cast<double>(WdspEngine::kTxDspSampleRate)
+                                    / static_cast<double>(size));
+        writeCoreTxAnalyzerSetting(TxAnalyzer::kFftSizeKey, QString::number(size));
+    });
+    connect(m_txWindowCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int idx) {
+        writeCoreTxAnalyzerSetting(TxAnalyzer::kWindowTypeKey, QString::number(idx));
+    });
+    connect(m_txPanDetectorCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int idx) {
+        writeCoreTxAnalyzerSetting(TxAnalyzer::kPanDetectorKey, QString::number(idx));
+        refreshTxAnalyzerGate();
+    });
+    connect(m_txPanAveragingCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int idx) {
+        writeCoreTxAnalyzerSetting(TxAnalyzer::kPanAveragingKey, QString::number(idx));
+    });
+    connect(m_txPanAvTimeSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this](int ms) {
+        writeCoreTxAnalyzerSetting(TxAnalyzer::kPanAvTimeMsKey, QString::number(ms));
+    });
+    connect(m_txPanNormalizeCheck, &QCheckBox::toggled, this, [this](bool on) {
+        writeCoreTxAnalyzerSetting(TxAnalyzer::kPanNormalizeKey,
+                                   on ? QStringLiteral("True") : QStringLiteral("False"));
+    });
+    connect(m_txWfDetectorCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int idx) {
+        writeCoreTxAnalyzerSetting(TxAnalyzer::kWfDetectorKey, QString::number(idx));
+    });
+    connect(m_txWfAveragingCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int idx) {
+        writeCoreTxAnalyzerSetting(TxAnalyzer::kWfAveragingKey, QString::number(idx));
+    });
+    connect(m_txWfAvTimeSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this](int ms) {
+        writeCoreTxAnalyzerSetting(TxAnalyzer::kWfAvTimeMsKey, QString::number(ms));
+    });
+    // Once the slider is let go, show what the Core holds.
+    connect(m_txFftSizeSlider, &QSlider::sliderReleased, this,
+            &TxDisplayPage::showCoreTxAnalyzerSettings);
+
+    // Another window's change, the Core's own (its value held to what the
+    // analyzer takes), a refusal, and a new snapshot all bring the
+    // controls back to the Core's keys; the Core's version opens or closes
+    // them.
+    connect(model(), &RadioModel::stationSettingChanged, this, [this](const QString& key) {
+        if (key.isEmpty() || TxAnalyzer::isSettingsKey(key)) {
+            showCoreTxAnalyzerSettings();
+        }
+    });
+    if (auto* proxy = dynamic_cast<SettingsProxy*>(AppSettings::instance().remoteBackend())) {
+        connect(proxy, &SettingsProxy::valueRejected, this,
+                [this](const QString& key, const QVariant&) {
+            if (TxAnalyzer::isSettingsKey(key)) {
+                showCoreTxAnalyzerSettings();
+            }
+        });
+    }
+    connect(model(), &RadioModel::stationTxDisplayVersionChanged, this,
+            &TxDisplayPage::refreshTxAnalyzerGate);
+}
+
 void TxDisplayPage::buildUI()
+{
+    // From Thetis tpDisplayTransmit [setup.designer.cs:36232 v2.10.3.13+501e3f51].
+    // 5 groups matching Thetis layout order. Only group 4 (Waterfall Amplitude
+    // Scale) is functional in 3M-5b. Others carry placeholder labels naming the
+    // sub-phase that wires them.
+    NereusSDR::Style::applyDarkPageStyle(this);
+
+    // Sunken-readout stylesheet for the FFT size + bin width numeric cells.
+    // Matches the RX-side FFT readout style introduced in 3G-8 (recessed
+    // dark inset with cyan-accent text on the dark theme).
+    const QString readoutStyle = QStringLiteral(
+        "QLabel { background-color: #0a0a18; color: #00b4d8; "
+        "border: 1px solid #1e2e3e; padding: 1px 6px; "
+        "font-family: Menlo, Consolas, monospace; }");
+
+    // ── Group 1: Fast Fourier Transform ────────────────────────────────
+    // From Thetis groupBoxTS8 [setup.designer.cs:36509-36644 v2.10.3.13+501e3f51].
+    // Controls (Thetis -> NereusSDR):
+    //   tbTXDisplayFFTSize      QSlider, range 0..6, default 3 (Thetis ship)
+    //   lblTXFFT_size           QLabel,  readout "4096" .. "262144"
+    //   lblTXDispBinWidth       QLabel,  readout "0.000" .. "23.438"
+    //   comboTXDispWinType      QComboBox, 7 windows (Rectangular..BH7)
+    auto* fftGroup = new QGroupBox(
+        QStringLiteral("Fast Fourier Transform"), this);
+    auto* fftGrid = new QGridLayout(fftGroup);
+    fftGrid->setSpacing(6);
+    fftGrid->setColumnStretch(0, 0);
+    fftGrid->setColumnStretch(1, 1);
+    fftGrid->setColumnStretch(2, 0);
+    fftGrid->setColumnStretch(3, 1);
+
+    // Row 0: "Size" header centered.
+    auto* txSizeHeader = new QLabel(QStringLiteral("Size"), fftGroup);
+    txSizeHeader->setAlignment(Qt::AlignHCenter);
+    fftGrid->addWidget(txSizeHeader, 0, 1, 1, 2);
+
+    // Row 1: "Min" + slider + "Max".  Thetis trackbar Max=6.
+    // From setup.designer.cs:36638-36642 [v2.10.3.13+501e3f51] —
+    // tbTXDisplayFFTSize: Maximum=6, Value=3.  3M-5d binds slider position
+    // to TxAnalyzer::setFftSizeSliderPosition (4096 * 2^position).
+    auto* txMinLabel = new QLabel(QStringLiteral("Min"), fftGroup);
+    auto* txMaxLabel = new QLabel(QStringLiteral("Max"), fftGroup);
+    txMinLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    txMaxLabel->setAlignment(Qt::AlignLeft  | Qt::AlignVCenter);
+
+    m_txFftSizeSlider = new QSlider(Qt::Horizontal, fftGroup);
+    m_txFftSizeSlider->setProperty("nereusSetupId", "display.txDisplay.fftSize");
+    m_txFftSizeSlider->setRange(0, 6);
+    m_txFftSizeSlider->setSingleStep(1);
+    m_txFftSizeSlider->setPageStep(1);
+    m_txFftSizeSlider->setTickPosition(QSlider::NoTicks);
+    m_txFftSizeSlider->setToolTip(QStringLiteral(
+        "TX FFT size used during MOX. Range 4096 to 262144 in powers of "
+        "two. Larger gives finer frequency resolution and a smaller bin "
+        "width at higher CPU cost. RX FFT slider is independent."));
+    fftGrid->addWidget(txMinLabel,         1, 0);
+    fftGrid->addWidget(m_txFftSizeSlider,  1, 1, 1, 2);
+    fftGrid->addWidget(txMaxLabel,         1, 3);
+
+    // Row 2: bin-width readout + FFT-size readout, side by side.
+    auto* txBinWidthPrefix = new QLabel(
+        QStringLiteral("Bin Width (Hz)"), fftGroup);
+    m_txBinWidthLabel = new QLabel(QStringLiteral("0.000"), fftGroup);
+    m_txBinWidthLabel->setMinimumWidth(54);
+    m_txBinWidthLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_txBinWidthLabel->setStyleSheet(readoutStyle);
+    m_txBinWidthLabel->setToolTip(QStringLiteral(
+        "Live bin width in Hz (TX sample rate / FFT size)."));
+
+    auto* txFftSizePrefix = new QLabel(QStringLiteral("FFT Size"), fftGroup);
+    m_txFftSizeReadout = new QLabel(QStringLiteral("4096"), fftGroup);
+    m_txFftSizeReadout->setMinimumWidth(54);
+    m_txFftSizeReadout->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_txFftSizeReadout->setStyleSheet(readoutStyle);
+    m_txFftSizeReadout->setToolTip(QStringLiteral(
+        "Current TX FFT size in bins (4096 * 2^slider)."));
+
+    fftGrid->addWidget(txBinWidthPrefix,    2, 0);
+    fftGrid->addWidget(m_txBinWidthLabel,   2, 1);
+    fftGrid->addWidget(txFftSizePrefix,     2, 2);
+    fftGrid->addWidget(m_txFftSizeReadout,  2, 3);
+
+    // Row 3: "Window" prefix + 7-item combo.
+    // From setup.designer.cs:36555-36562 [v2.10.3.13+501e3f51] —
+    // comboTXDispWinType.Items.AddRange order: Rectangular, BH4, Hann,
+    // Flat-Top, Hamming, Kaiser, BH7.  Combo index 0..6 maps 1:1 to
+    // WDSP analyzer window_type per specHPSDR.cs:134 default = 4 (Hamming).
+    auto* txWindowPrefix = new QLabel(QStringLiteral("Window"), fftGroup);
+    m_txWindowCombo = new QComboBox(fftGroup);
+    m_txWindowCombo->setProperty("nereusSetupId", "display.txDisplay.window");
+    m_txWindowCombo->addItems({
+        QStringLiteral("Rectangular"),         // 0
+        QStringLiteral("Blackman-Harris 4T"),  // 1
+        QStringLiteral("Hann"),                // 2
+        QStringLiteral("Flat-Top"),            // 3
+        QStringLiteral("Hamming"),             // 4 (default)
+        QStringLiteral("Kaiser"),              // 5
+        QStringLiteral("Blackman-Harris 7T")   // 6
+    });
+    m_txWindowCombo->setToolTip(QStringLiteral(
+        "TX FFT window function. Hamming (default) trades a wide main "
+        "lobe for moderate sidelobe rejection. Blackman-Harris (4T or 7T) "
+        "gives strong sidelobe rejection for cleaner waterfall during TX. "
+        "Flat-Top is best for amplitude calibration. Kaiser is parameterized."));
+    fftGrid->addWidget(txWindowPrefix,  3, 0);
+    fftGrid->addWidget(m_txWindowCombo, 3, 1, 1, 3);
+
+    contentLayout()->addWidget(fftGroup);
+
+    // ── Group 2: Panadapter ────────────────────────────────────────────
+    // From Thetis groupBoxTS7 [setup.designer.cs:36645-36768 v2.10.3.13+501e3f51].
+    // Controls (Thetis -> NereusSDR):
+    //   comboTXDispPanDetector    QComboBox, 5 items (Peak..RMS)
+    //   comboTXDispPanAveraging   QComboBox, 4 items (None..Log Recursive)
+    //   udTXDisplayAVGTime        QSpinBox, 1..9999 ms, default 30
+    //   chkDispTXNormalize        QCheckBox, gated on DetTypePan >= 2
+    auto* panGroup = new QGroupBox(QStringLiteral("Panadapter"), this);
+    auto* panForm = new QFormLayout(panGroup);
+    panForm->setSpacing(6);
+
+    // Detector (Pan) — 5 items per setup.designer.cs:36718-36723.
+    m_txPanDetectorCombo = new QComboBox(panGroup);
+    m_txPanDetectorCombo->setProperty("nereusSetupId", "display.txDisplay.panDetector");
+    m_txPanDetectorCombo->addItems({
+        QStringLiteral("Peak"),       // 0
+        QStringLiteral("Rosenfell"),  // 1
+        QStringLiteral("Average"),    // 2
+        QStringLiteral("Sample"),     // 3
+        QStringLiteral("RMS")         // 4
+    });
+    m_txPanDetectorCombo->setToolTip(QStringLiteral(
+        "TX panadapter trace detector. Peak shows the maximum bin value "
+        "per pixel (transient-friendly). Average integrates across the "
+        "bins (smoother). Sample takes one bin per pixel. RMS is true "
+        "root-mean-square. Normalize is only available for Average / "
+        "Sample / RMS."));
+    panForm->addRow(QStringLiteral("Detector:"), m_txPanDetectorCombo);
+
+    // Averaging (Pan) — 4 items per setup.designer.cs:36693-36697.
+    m_txPanAveragingCombo = new QComboBox(panGroup);
+    m_txPanAveragingCombo->setProperty("nereusSetupId", "display.txDisplay.panAveraging");
+    m_txPanAveragingCombo->addItems({
+        QStringLiteral("None"),           // 0
+        QStringLiteral("Recursive"),      // 1
+        QStringLiteral("Time Window"),    // 2
+        QStringLiteral("Log Recursive")   // 3
+    });
+    m_txPanAveragingCombo->setToolTip(QStringLiteral(
+        "TX panadapter trace averaging policy. None = instantaneous. "
+        "Recursive = exponential smoothing with the time constant set "
+        "below. Time Window = fixed-window N-frame average. Log "
+        "Recursive = recursive in the log (dBm) domain."));
+    panForm->addRow(QStringLiteral("Averaging:"), m_txPanAveragingCombo);
+
+    // AvTime (Pan) — udTXDisplayAVGTime ms.
+    // Range 1..9999 per setup.designer.cs:36738-36746.  Default 30 ms
+    // per :36753 (NOT 120 — spec table was wrong; Thetis ships 30 for
+    // the pan plane and 120 for the waterfall plane).
+    m_txPanAvTimeSpin = new QSpinBox(panGroup);
+    m_txPanAvTimeSpin->setProperty("nereusSetupId", "display.txDisplay.panAvTime");
+    m_txPanAvTimeSpin->setRange(1, 9999);
+    m_txPanAvTimeSpin->setSingleStep(1);
+    m_txPanAvTimeSpin->setSuffix(QStringLiteral(" ms"));
+    // Internally divided by 1000 to drive the WDSP exponential
+    // back-multiplier.
+    m_txPanAvTimeSpin->setToolTip(QStringLiteral(
+        "TX panadapter averaging time constant in milliseconds. Larger "
+        "values give smoother traces at the cost of slower response to "
+        "transients."));
+    panForm->addRow(QStringLiteral("Time:"), m_txPanAvTimeSpin);
+
+    // Normalize (Pan) — chkDispTXNormalize.
+    // Per Thetis setup.cs:18111-18112 + setup.designer.cs:36661-36673
+    // [v2.10.3.13+501e3f51] the checkbox is enabled only when
+    // DetTypePan >= 2 (Average / Sample / RMS).
+    m_txPanNormalizeCheck = new QCheckBox(
+        QStringLiteral("1 Hz BW: Av / Sa"), panGroup);
+    m_txPanNormalizeCheck->setProperty("nereusSetupId", "display.txDisplay.panNormalize");
+    m_txPanNormalizeCheck->setToolTip(QStringLiteral(
+        "Normalize the TX panadapter trace to a 1 Hz reference "
+        "bandwidth. Only available for the Average, Sample, and RMS "
+        "detectors (the Peak and Rosenfell detectors are not power-like)."));
+    panForm->addRow(QStringLiteral(""), m_txPanNormalizeCheck);
+
+    contentLayout()->addWidget(panGroup);
+
+    // ── Group 3: Waterfall ─────────────────────────────────────────────
+    // From Thetis groupBoxTS9 [setup.designer.cs:36405-36508 v2.10.3.13+501e3f51].
+    // Controls (Thetis -> NereusSDR):
+    //   comboTXDispWFDetector    QComboBox, 4 items (Peak..Sample, no RMS)
+    //   comboTXDispWFAveraging   QComboBox, 4 items (None..Log Recursive)
+    //   udTXDisplayAVTime        QSpinBox, 1..9999 ms, default 120
+    auto* wfGroup = new QGroupBox(QStringLiteral("Waterfall"), this);
+    auto* wfForm = new QFormLayout(wfGroup);
+    wfForm->setSpacing(6);
+
+    // Detector (WF) — 4 items per setup.designer.cs:36459-36463.  No RMS.
+    m_txWfDetectorCombo = new QComboBox(wfGroup);
+    m_txWfDetectorCombo->setProperty("nereusSetupId", "display.txDisplay.wfDetector");
+    m_txWfDetectorCombo->addItems({
+        QStringLiteral("Peak"),       // 0
+        QStringLiteral("Rosenfell"),  // 1
+        QStringLiteral("Average"),    // 2
+        QStringLiteral("Sample")      // 3
+    });
+    m_txWfDetectorCombo->setToolTip(QStringLiteral(
+        "TX waterfall detector. Applied independently of the pan "
+        "detector. Peak suits transient visibility; Average gives a "
+        "smoother waterfall floor."));
+    wfForm->addRow(QStringLiteral("Detector:"), m_txWfDetectorCombo);
+
+    // Averaging (WF) — same 4-item list as Pan.
+    m_txWfAveragingCombo = new QComboBox(wfGroup);
+    m_txWfAveragingCombo->setProperty("nereusSetupId", "display.txDisplay.wfAveraging");
+    m_txWfAveragingCombo->addItems({
+        QStringLiteral("None"),
+        QStringLiteral("Recursive"),
+        QStringLiteral("Time Window"),
+        QStringLiteral("Log Recursive")
+    });
+    m_txWfAveragingCombo->setToolTip(QStringLiteral(
+        "TX waterfall averaging policy. Applied independently of the "
+        "pan averaging."));
+    wfForm->addRow(QStringLiteral("Averaging:"), m_txWfAveragingCombo);
+
+    // AvTime (WF) — udTXDisplayAVTime ms.
+    // Range 1..9999 per setup.designer.cs:36478-36486.  Default 120 ms
+    // per :36493.
+    m_txWfAvTimeSpin = new QSpinBox(wfGroup);
+    m_txWfAvTimeSpin->setProperty("nereusSetupId", "display.txDisplay.wfAvTime");
+    m_txWfAvTimeSpin->setRange(1, 9999);
+    m_txWfAvTimeSpin->setSingleStep(1);
+    m_txWfAvTimeSpin->setSuffix(QStringLiteral(" ms"));
+    m_txWfAvTimeSpin->setToolTip(QStringLiteral(
+        "TX waterfall averaging time constant in milliseconds. Defaults "
+        "to 120 ms (longer than the pan default of 30 ms) so the "
+        "waterfall preserves a longer time history."));
+    wfForm->addRow(QStringLiteral("Time:"), m_txWfAvTimeSpin);
+
+    contentLayout()->addWidget(wfGroup);
+
+    // Group 4: Waterfall Amplitude Scale (functional in 3M-5b).
+    // From Thetis grpTXWFAmpScale [setup.designer.cs:36246-36379 v2.10.3.13+501e3f51].
+    // Thetis label text: "Waterfall" (grpTXWFAmpScale.Text = "Waterfall").
+    // NereusSDR uses the more descriptive "Waterfall Amplitude Scale" to match
+    // the Thetis RX-side label wording and distinguish from Group 3.
+    auto* ampGroup = new QGroupBox(QStringLiteral("Waterfall Amplitude Scale"), this);
+    auto* ampForm  = new QFormLayout(ampGroup);
+    ampForm->setSpacing(6);
+
+    // Low Level: From Thetis udTXWFAmpMin
+    // [setup.designer.cs:36319-36348 v2.10.3.13+501e3f51].
+    // Range -200..200 step 5, default -70 dBm.
+    // Thetis tooltip: "Waterfall Low Signal - Show Low Color below this value (gradient in between)."
+    m_txWfLowLevelSpin = new QSpinBox(ampGroup);
+    m_txWfLowLevelSpin->setProperty("nereusSetupId", "display.txDisplay.wfLowLevel");
+    m_txWfLowLevelSpin->setRange(-200, 200);
+    m_txWfLowLevelSpin->setSingleStep(5);
+    m_txWfLowLevelSpin->setSuffix(QStringLiteral(" dBm"));
+    m_txWfLowLevelSpin->setToolTip(QStringLiteral(
+        "Waterfall Low Signal. Show Low Color below this value, with gradient in between."));
+    ampForm->addRow(QStringLiteral("Low Level:"), m_txWfLowLevelSpin);
+
+    // High Level: From Thetis udTXWFAmpMax
+    // [setup.designer.cs:36350-36379 v2.10.3.13+501e3f51].
+    // Range -200..200 step 5, default +30 dBm.
+    // Thetis tooltip: "Waterfall High Signal - Show High Color above this value (gradient in between)."
+    m_txWfHighLevelSpin = new QSpinBox(ampGroup);
+    m_txWfHighLevelSpin->setProperty("nereusSetupId", "display.txDisplay.wfHighLevel");
+    m_txWfHighLevelSpin->setRange(-200, 200);
+    m_txWfHighLevelSpin->setSingleStep(5);
+    m_txWfHighLevelSpin->setSuffix(QStringLiteral(" dBm"));
+    m_txWfHighLevelSpin->setToolTip(QStringLiteral(
+        "Waterfall High Signal. Show High Color above this value, with gradient in between."));
+    ampForm->addRow(QStringLiteral("High Level:"), m_txWfHighLevelSpin);
+
+    // Palette: From Thetis comboColorPalette_tx
+    // [setup.designer.cs:36290-36307 v2.10.3.13+501e3f51].
+    // Thetis 7-item list: Enhanced / Spectran / BlackWhite / LinLog / LinRad / LinAuto / Custom.
+    // NereusSDR WfColorScheme: Default(0)=AetherSDR, Enhanced(1), Spectran(2),
+    //   BlackWhite(3), LinLog(4), LinRad(5), Custom(6), ClarityBlue(7).
+    // Thetis "LinAuto" maps to NereusSDR "Default" (AetherSDR/SmartSDR style).
+    // Thetis tooltip: "Sets the color scheme"
+    m_txWfPaletteCombo = new QComboBox(ampGroup);
+    m_txWfPaletteCombo->setProperty("nereusSetupId", "display.txDisplay.wfPalette");
+    m_txWfPaletteCombo->addItem(QStringLiteral("Enhanced"),
+        QVariant::fromValue(static_cast<int>(WfColorScheme::Enhanced)));
+    m_txWfPaletteCombo->addItem(QStringLiteral("Spectran"),
+        QVariant::fromValue(static_cast<int>(WfColorScheme::Spectran)));
+    m_txWfPaletteCombo->addItem(QStringLiteral("BlackWhite"),
+        QVariant::fromValue(static_cast<int>(WfColorScheme::BlackWhite)));
+    m_txWfPaletteCombo->addItem(QStringLiteral("LinLog"),
+        QVariant::fromValue(static_cast<int>(WfColorScheme::LinLog)));
+    m_txWfPaletteCombo->addItem(QStringLiteral("LinRad"),
+        QVariant::fromValue(static_cast<int>(WfColorScheme::LinRad)));
+    // Thetis "LinAuto" maps to NereusSDR Default (AetherSDR/SmartSDR style palette).
+    m_txWfPaletteCombo->addItem(QStringLiteral("LinAuto"),
+        QVariant::fromValue(static_cast<int>(WfColorScheme::Default)));
+    m_txWfPaletteCombo->addItem(QStringLiteral("Custom"),
+        QVariant::fromValue(static_cast<int>(WfColorScheme::Custom)));
+    m_txWfPaletteCombo->setToolTip(QStringLiteral(
+        "Sets the color scheme for the TX waterfall."));
+    ampForm->addRow(QStringLiteral("Palette:"), m_txWfPaletteCombo);
+
+    // Low Color: From Thetis clrbtnWaterfallLow_tx
+    // [setup.designer.cs:36265-36279 v2.10.3.13+501e3f51].
+    // Default Color.Black. Thetis tooltip: "The Color to use when the signal level
+    // is at or below the low level set above."
+    m_txWfLowColorBtn = new ColorSwatchButton(QColor(Qt::black), ampGroup);
+    m_txWfLowColorBtn->setProperty("nereusSetupId", "display.txDisplay.wfLowColor");
+    m_txWfLowColorBtn->setToolTip(QStringLiteral(
+        "Color used when the signal level is at or below the Low Level set above."));
+    ampForm->addRow(QStringLiteral("Low Color:"), m_txWfLowColorBtn);
+
+    // Custom Gradient (3M-5c functional). Port of Thetis
+    // lgLinearGradientTX_waterfall instance at setup.designer.cs:3283 area
+    // [v2.10.3.13+501e3f51]. Visibility binds to palette = Custom; encoded
+    // text persists under DisplayTxWfGradient (already reserved by 3M-5b).
+    m_txWfGradientPicker = new GradientPickerWidget(ampGroup);
+    m_txWfGradientPicker->setToolTip(QStringLiteral(
+        "Multi-stop linear gradient editor. Click the strip body to add a "
+        "stop, drag a stop to move it, double-click to recolor, right-click "
+        "to delete (the two end-cap stops cannot be removed)."));
+    auto* gradRowLabel = new QLabel(QStringLiteral("Custom Gradient:"), ampGroup);
+    m_txWfGradientRowLabel = gradRowLabel;
+    ampForm->addRow(gradRowLabel, m_txWfGradientPicker);
+
+    contentLayout()->addWidget(ampGroup);
+
+    // Group 5: TX Grid Scale (3M-5e)
+    // From Thetis grpTXSpectrumGrid on tpDisplayTransmit
+    // [setup.designer.cs:36239 v2.10.3.13+501e3f51].
+    auto* txGridScale = makePlaceholderGroup(
+        QStringLiteral("TX Grid Scale"),
+        QStringLiteral("Max + Min + Step + Display Grid + Fill + Label Align (wired in 3M-5e)"),
+        this);
+    contentLayout()->addWidget(txGridScale);
+    UnbuiltFeatures::hideUnlessBuilt(txGridScale, UnbuiltFeature::TxGridScale);
+
+    contentLayout()->addStretch();
+
+    // Wire the 4 functional Waterfall Amplitude Scale controls to SpectrumWidget.
+    // Initial sync from current SpectrumWidget state.
+    auto applyGradientVisibility = [this](WfColorScheme s) {
+        const bool show = (s == WfColorScheme::Custom);
+        if (m_txWfGradientPicker) {
+            m_txWfGradientPicker->setVisible(show);
+        }
+        if (m_txWfGradientRowLabel) {
+            m_txWfGradientRowLabel->setVisible(show);
+        }
+    };
+
+    if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
+        QSignalBlocker bLow(m_txWfLowLevelSpin);
+        QSignalBlocker bHigh(m_txWfHighLevelSpin);
+        QSignalBlocker bPal(m_txWfPaletteCombo);
+        QSignalBlocker bColor(m_txWfLowColorBtn);
+
+        m_txWfLowLevelSpin->setValue(sw->txWfLowLevel());
+        m_txWfHighLevelSpin->setValue(sw->txWfHighLevel());
+
+        // Sync palette combo: find item whose data matches current scheme ordinal.
+        const int schemeVal = static_cast<int>(sw->txWfPalette());
+        for (int i = 0; i < m_txWfPaletteCombo->count(); ++i) {
+            if (m_txWfPaletteCombo->itemData(i).toInt() == schemeVal) {
+                m_txWfPaletteCombo->setCurrentIndex(i);
+                break;
+            }
+        }
+
+        m_txWfLowColorBtn->setColor(sw->txWfLowColor());
+
+        // Restore the gradient picker state from the persisted encoded
+        // text. setEncodedText is a silent no-op on empty/malformed
+        // input so a fresh install retains the GradientPickerWidget
+        // default-ctor state (Thetis-verbatim 8-stop grayscale).
+        if (m_txWfGradientPicker) {
+            const QString persisted = sw->txWfGradient();
+            if (!persisted.isEmpty()) {
+                QSignalBlocker bGrad(m_txWfGradientPicker);
+                m_txWfGradientPicker->setEncodedText(persisted);
+            }
+        }
+
+        // Initial visibility: only show the picker row when palette = Custom.
+        applyGradientVisibility(sw->txWfPalette());
+    } else if (m_txWfGradientPicker) {
+        // No model wired (test / preview construction) — hide the picker
+        // row by default; the palette change handler below will reveal it
+        // when the user picks Custom.
+        applyGradientVisibility(WfColorScheme::Default);
+    }
+
+    // Low Level: user edit propagates to SpectrumWidget.
+    connect(m_txWfLowLevelSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, [this](int v) {
+        if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
+            sw->setTxWfLowLevel(v);
+        }
+    });
+
+    // High Level: user edit propagates to SpectrumWidget.
+    connect(m_txWfHighLevelSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, [this](int v) {
+        if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
+            sw->setTxWfHighLevel(v);
+        }
+    });
+
+    // Palette: current item's data value is the WfColorScheme ordinal.
+    connect(m_txWfPaletteCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this, applyGradientVisibility](int i) {
+        const int val = m_txWfPaletteCombo->itemData(i).toInt();
+        const auto scheme = static_cast<WfColorScheme>(
+            qBound(0, val, static_cast<int>(WfColorScheme::Count) - 1));
+        if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
+            sw->setTxWfPalette(scheme);
+        }
+        applyGradientVisibility(scheme);
+    });
+
+    // Low Color: ColorSwatchButton emits colorChanged on user pick.
+    connect(m_txWfLowColorBtn, &ColorSwatchButton::colorChanged,
+            this, [this](const QColor& c) {
+        if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
+            sw->setTxWfLowColor(c);
+        }
+    });
+
+    // Custom Gradient picker: every mutation persists the encoded text on
+    // SpectrumWidget. SpectrumWidget caches the rebuilt 101-LUT from inside
+    // setTxWfGradient (Step 2.12), so the live MOX render path picks up the
+    // change on the next pushed waterfall row.
+    if (m_txWfGradientPicker) {
+        connect(m_txWfGradientPicker, &GradientPickerWidget::changed,
+                this, [this]() {
+            if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
+                sw->setTxWfGradient(m_txWfGradientPicker->encodedText());
+            }
+        });
+    }
+
+    // ── 3M-5d: Groups 1-3 wiring ──────────────────────────────────────
+    // Initial sync from TxAnalyzer's current state, then connect each
+    // control to the corresponding setter via a lambda.  All 9 controls
+    // route through model()->txAnalyzer() so the Setup page does not
+    // depend on MainWindow.
+    auto* txa = model() ? model()->txAnalyzer() : nullptr;
+    if (txa) {
+        showLocalTxAnalyzerSettings();
+        // Parity both ways (Task 30): a remote window's change to this
+        // Core's analyzer shows here too, signals blocked so it does not
+        // echo back into the analyzer.
+        connect(txa, &TxAnalyzer::settingReloaded, this,
+                [this](const QString&) { showLocalTxAnalyzerSettings(); });
+
+        // FFT size slider → setFftSizeSliderPosition + readout refresh.
+        // From Thetis setup.cs:18136-18143 [v2.10.3.13+501e3f51] —
+        // updates lblTXFFT_size + lblTXDispBinWidth on every scroll.
+        connect(m_txFftSizeSlider, &QSlider::valueChanged,
+                this, [this](int v) {
+            auto* a = model() ? model()->txAnalyzer() : nullptr;
+            if (!a) { return; }
+            a->setFftSizeSliderPosition(v);
+            m_txFftSizeReadout->setText(QString::number(a->fftSize()));
+            const double bw = a->binWidthHz();
+            m_txBinWidthLabel->setText(
+                bw > 0.0 ? QString::number(bw, 'f', 3)
+                         : QStringLiteral("0.000"));
+        });
+
+        // Window combo → setWindowType.
+        // From Thetis setup.cs:18145-18150 [v2.10.3.13+501e3f51].
+        connect(m_txWindowCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int idx) {
+            if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
+                a->setWindowType(idx);
+            }
+        });
+
+        // Pan detector → setPanDetector + Normalize enable refresh.
+        // From Thetis setup.cs:18105-18113 [v2.10.3.13+501e3f51].
+        //[2.10.3.5]MW0LGE note: see updateNormalizePan() in specHPSDR as it only applies to pan detector type 2,3,4
+        connect(m_txPanDetectorCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int idx) {
+            auto* a = model() ? model()->txAnalyzer() : nullptr;
+            if (!a) { return; }
+            a->setPanDetector(idx);
+            m_txPanNormalizeCheck->setEnabled(a->panNormalizeEnabled());
+        });
+
+        // Pan averaging → setPanAveraging.
+        // From Thetis setup.cs:18115-18120 [v2.10.3.13+501e3f51].
+        connect(m_txPanAveragingCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int idx) {
+            if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
+                a->setPanAveraging(idx);
+            }
+        });
+
+        // Pan AvTime spinbox → setPanAvTimeMs.
+        // From Thetis setup.cs:18122-18127 [v2.10.3.13+501e3f51] —
+        // AvTau = 0.001 * value (ms-to-seconds inside the setter).
+        connect(m_txPanAvTimeSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, [this](int ms) {
+            if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
+                a->setPanAvTimeMs(ms);
+            }
+        });
+
+        // Pan normalize checkbox → setPanNormalize.
+        // From Thetis setup.cs:18129-18134 [v2.10.3.13+501e3f51].
+        connect(m_txPanNormalizeCheck, &QCheckBox::toggled,
+                this, [this](bool on) {
+            if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
+                a->setPanNormalize(on);
+            }
+        });
+
+        // WF detector → setWfDetector.
+        // From Thetis setup.cs:18152-18157 [v2.10.3.13+501e3f51].
+        //[2.10.3.5]MW0LGE note: see updateNormalizePan() in specHPSDR as it only applies to pan detector type 2,3,4
+        //                                                 [setup.cs:18152]
+        connect(m_txWfDetectorCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int idx) {
+            if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
+                a->setWfDetector(idx);
+            }
+        });
+
+        // WF averaging → setWfAveraging.
+        // From Thetis setup.cs:18159-18164 [v2.10.3.13+501e3f51].
+        connect(m_txWfAveragingCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int idx) {
+            if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
+                a->setWfAveraging(idx);
+            }
+        });
+
+        // WF AvTime spinbox → setWfAvTimeMs.
+        // From Thetis setup.cs:18166-18171 [v2.10.3.13+501e3f51].
+        connect(m_txWfAvTimeSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, [this](int ms) {
+            if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
+                a->setWfAvTimeMs(ms);
+            }
+        });
+    } else if (remoteWindow()) {
+        // R-R3-49 (parity Task 30): a remote window has no analyzer of its
+        // own; the Core's is the one it drives.
+        wireCoreTxAnalyzerControls();
+    }
+    refreshTxAnalyzerGate();
+}
+
+// ---------------------------------------------------------------------------
+// Display3DSetupPage
+// ---------------------------------------------------------------------------
+// 3D Stacked-Trace Spectrum Plan Task 15. See the class-header comment in
+// DisplaySetupPages.h for the full attribution and two-way-sync rationale.
+
+Display3DSetupPage::Display3DSetupPage(SpectrumWidget* spectrumWidget, QWidget* parent)
+    : SetupPage(QStringLiteral("3D View"), parent)
+    , m_spectrumWidget(spectrumWidget)
+{
+    buildUI();
+    loadFromWidget();
+
+    if (!m_spectrumWidget) { return; }
+
+    // DisplaySettingsModel -> this page (3D Stacked-Trace Spectrum Plan
+    // Task 21). Each lambda reflects under QSignalBlocker only -- the
+    // model's own equality-guarded setter (DisplaySettingsModel.h) is what
+    // stops a push from echoing back out, so reflecting the change into
+    // this page's own widget cannot re-emit that widget's
+    // valueChanged/toggled/currentIndexChanged and walk back into the
+    // "push to model" connections buildUI() wires below.
+    DisplaySettingsModel* settings = m_spectrumWidget->displaySettings();
+    connect(settings, &DisplaySettingsModel::spectrumRenderModeChanged,
+            this, [this](int mode) {
+        if (!m_modeCombo) { return; }
+        QSignalBlocker block(m_modeCombo);
+        m_modeCombo->setCurrentIndex(qBound(0, mode, m_modeCombo->count() - 1));
+    });
+    connect(settings, &DisplaySettingsModel::dssFloorDepthChanged,
+            this, [this](int dB) {
+        if (!m_floorSlider) { return; }
+        QSignalBlocker block(m_floorSlider);
+        m_floorSlider->setValue(dB);
+    });
+    connect(settings, &DisplaySettingsModel::dssGainChanged,
+            this, [this](int pct) {
+        if (!m_gainSlider) { return; }
+        QSignalBlocker block(m_gainSlider);
+        m_gainSlider->setValue(pct);
+    });
+    connect(settings, &DisplaySettingsModel::dssRowSpanChanged,
+            this, [this](int pct) {
+        if (!m_spanSlider) { return; }
+        QSignalBlocker block(m_spanSlider);
+        m_spanSlider->setValue(pct);
+    });
+    connect(settings, &DisplaySettingsModel::dssAngleChanged,
+            this, [this](int pct) {
+        if (!m_angleSlider) { return; }
+        QSignalBlocker block(m_angleSlider);
+        m_angleSlider->setValue(pct);
+    });
+    connect(settings, &DisplaySettingsModel::dssRowDividerChanged,
+            this, [this](int n) {
+        if (!m_speedSlider) { return; }
+        QSignalBlocker block(m_speedSlider);
+        m_speedSlider->setValue(n);
+        if (m_speedValueLabel) {
+            m_speedValueLabel->setText(n == 0 ? QStringLiteral("Match")
+                                               : QStringLiteral("1:%1").arg(n));
+        }
+    });
+    connect(settings, &DisplaySettingsModel::threeDSliceDepthChanged,
+            this, [this](bool on) {
+        if (!m_sliceShadowCheck) { return; }
+        QSignalBlocker block(m_sliceShadowCheck);
+        m_sliceShadowCheck->setChecked(on);
+    });
+}
+
+void Display3DSetupPage::loadFromWidget()
+{
+    if (!m_spectrumWidget) { return; }
+
+    DisplaySettingsModel* settings = m_spectrumWidget->displaySettings();
+    if (m_modeCombo) {
+        QSignalBlocker block(m_modeCombo);
+        m_modeCombo->setCurrentIndex(
+            qBound(0, settings->spectrumRenderMode(), m_modeCombo->count() - 1));
+    }
+    if (m_floorSlider) {
+        QSignalBlocker block(m_floorSlider);
+        m_floorSlider->setValue(settings->dssFloorDepth());
+    }
+    if (m_gainSlider) {
+        QSignalBlocker block(m_gainSlider);
+        m_gainSlider->setValue(settings->dssGain());
+    }
+    if (m_spanSlider) {
+        QSignalBlocker block(m_spanSlider);
+        m_spanSlider->setValue(settings->dssRowSpan());
+    }
+    if (m_angleSlider) {
+        QSignalBlocker block(m_angleSlider);
+        m_angleSlider->setValue(settings->dssAngle());
+    }
+    if (m_speedSlider) {
+        QSignalBlocker block(m_speedSlider);
+        m_speedSlider->setValue(settings->dssRowDivider());
+    }
+    if (m_speedValueLabel) {
+        const int n = settings->dssRowDivider();
+        m_speedValueLabel->setText(n == 0 ? QStringLiteral("Match")
+                                           : QStringLiteral("1:%1").arg(n));
+    }
+    if (m_sliceShadowCheck) {
+        QSignalBlocker block(m_sliceShadowCheck);
+        m_sliceShadowCheck->setChecked(settings->threeDSliceDepth());
+    }
+}
+
+void Display3DSetupPage::buildUI()
 {
     NereusSDR::Style::applyDarkPageStyle(this);
 
-    // --- Section: TX Spectrum ---
-    auto* specGroup = new QGroupBox(QStringLiteral("TX Spectrum"), this);
-    auto* specForm  = new QFormLayout(specGroup);
-    specForm->setSpacing(6);
+    // 3D Stacked-Trace Spectrum Plan Task 21: every control below connects
+    // straight to DisplaySettingsModel's matching setter (direct
+    // member-function-pointer connect, no lambda touching a widget member
+    // -- the pattern Task 20 established for the right-click popup). Only
+    // wired when m_spectrumWidget is non-null: it is a construction-time
+    // pointer that never changes (see the class header comment), so a null
+    // check at connect time is equivalent to the old per-call
+    // "m_updatingFromModel || !m_spectrumWidget" guard for this half of the
+    // pair -- if the pointer is null now it is null forever, and skipping
+    // the connect entirely produces the same "nothing happens" outcome the
+    // old runtime guard did.
+    DisplaySettingsModel* settings =
+        m_spectrumWidget ? m_spectrumWidget->displaySettings() : nullptr;
 
-    m_bgColorLabel = makeColorSwatch(QStringLiteral("Background Color"), QStringLiteral("#0a0a14"), specGroup);
-    specForm->addRow(QStringLiteral("Background:"), m_bgColorLabel);
+    // Phase 3G-9b precedent (SpectrumDefaultsPage's "Reset to Smooth
+    // Defaults" button, above): a confirmation dialog gates the reset, and
+    // the actual apply logic is factored into a separate method
+    // (resetToDefaultsForTest here) so it is drivable without the modal
+    // QMessageBox in the loop.
+    auto* resetBtn = new QPushButton(QStringLiteral("Reset 3D to defaults"), this);
+    resetBtn->setProperty("nereusSetupId", "display.threeD.reset");
+    resetBtn->setToolTip(QStringLiteral(
+        "Restore Spectrum render mode, 3D Floor, 3D Gain, 3D Span, 3D Angle, "
+        "3D Speed and 3D Slice Shadow to their ship defaults (2D Waterfall / "
+        "6 dB / 70% / 100% / 50% / Match / off)."));
+    connect(resetBtn, &QPushButton::clicked, this, [this]() {
+        const auto rc = QMessageBox::question(
+            this,
+            QStringLiteral("Reset 3D to defaults"),
+            QStringLiteral(
+                "This will restore Spectrum render mode, 3D Floor, 3D Gain, "
+                "3D Span, 3D Angle, 3D Speed and 3D Slice Shadow to their "
+                "ship defaults.\n\nContinue?"),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (rc != QMessageBox::Yes) { return; }
+        resetToDefaultsForTest();
+    });
+    contentLayout()->addWidget(resetBtn);
 
-    m_gridColorLabel = makeColorSwatch(QStringLiteral("Grid Color"), QStringLiteral("#203040"), specGroup);
-    specForm->addRow(QStringLiteral("Grid Color:"), m_gridColorLabel);
+    auto* group = new QGroupBox(QStringLiteral("3D VIEW"), this);
+    auto* form  = new QFormLayout(group);
+    form->setSpacing(6);
 
-    m_lineWidthSlider = new QSlider(Qt::Horizontal, specGroup);
-    m_lineWidthSlider->setRange(1, 3);
-    m_lineWidthSlider->setValue(1);
-    m_lineWidthSlider->setEnabled(false);  // NYI
-    m_lineWidthSlider->setToolTip(QStringLiteral("TX trace line width (1–3 px) — not yet implemented"));
-    specForm->addRow(QStringLiteral("Line Width:"), m_lineWidthSlider);
+    // ── Spectrum render mode (2D waterfall vs 3DSS) ─────────────────────
+    // Labels/tooltip verbatim-matched to SpectrumOverlayMenu's "3D VIEW"
+    // section (Task 13; AetherSDR SpectrumOverlayMenu.cpp:1874-1943
+    // [@1872028c]) so an operator sees the same wording on both surfaces.
+    m_modeCombo = new QComboBox(group);
+    m_modeCombo->setObjectName(QStringLiteral("setup3DModeCombo"));
+    m_modeCombo->setProperty("nereusSetupId", "display.threeD.renderMode");
+    m_modeCombo->addItem(QStringLiteral("2D Waterfall"));       // SpectrumRenderMode::Mode2D
+    m_modeCombo->addItem(QStringLiteral("3D Stacked Trace"));   // SpectrumRenderMode::Mode3D
+    m_modeCombo->setToolTip(QStringLiteral(
+        "2D: FFT trace + waterfall.\n"
+        "3D: perspective stacked-trace spectrum stream."));
+    if (settings) {
+        connect(m_modeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+                settings, &DisplaySettingsModel::setSpectrumRenderMode);
+    }
+    form->addRow(QStringLiteral("Spectrum:"), m_modeCombo);
 
-    m_calOffsetSpin = new QDoubleSpinBox(specGroup);
-    m_calOffsetSpin->setRange(-30.0, 30.0);
-    m_calOffsetSpin->setSingleStep(0.5);
-    m_calOffsetSpin->setSuffix(QStringLiteral(" dBm"));
-    m_calOffsetSpin->setValue(0.0);
-    m_calOffsetSpin->setEnabled(false);  // NYI
-    m_calOffsetSpin->setToolTip(QStringLiteral("TX calibration offset — not yet implemented"));
-    specForm->addRow(QStringLiteral("Cal Offset:"), m_calOffsetSpin);
+    // ── 3D floor depth -- how far below the noise floor to surface (dB) ──
+    {
+        auto row = makeSliderRow(0, 24, 6, QStringLiteral(" dB"), group);
+        m_floorSlider = row.slider;
+        m_floorSlider->setObjectName(QStringLiteral("setup3DFloorSlider"));
+        m_floorSlider->setProperty("nereusSetupId", "display.threeD.floor");
+        // The surface starts at the pan's noise floor less this depth
+        // (SpectrumWidget::dssFloorDbm), and each band keeps its own value
+        // (PanadapterModel::dss3DFloorDepthForBand).
+        const QString floorTip = QStringLiteral(
+            "How far below the noise floor the surface starts. "
+            "Each band keeps its own value.");
+        m_floorSlider->setToolTip(floorTip);
+        row.spin->setToolTip(floorTip);
+        if (settings) {
+            connect(m_floorSlider, &QSlider::valueChanged,
+                    settings, &DisplaySettingsModel::setDssFloorDepth);
+        }
+        form->addRow(QStringLiteral("3D Floor:"), row.container);
+    }
 
-    contentLayout()->addWidget(specGroup);
+    // ── 3D gain -- how far down the strength range the colormap reaches ──
+    {
+        auto row = makeSliderRow(0, 100, 70, QStringLiteral("%"), group);
+        m_gainSlider = row.slider;
+        m_gainSlider->setObjectName(QStringLiteral("setup3DGainSlider"));
+        m_gainSlider->setProperty("nereusSetupId", "display.threeD.gain");
+        const QString gainTip = QStringLiteral(
+            "3D surface color gain: how far down the signal range the "
+            "colormap reaches.\nHigher = color down toward the noise "
+            "floor; lower = color only on the strongest signals.");
+        m_gainSlider->setToolTip(gainTip);
+        row.spin->setToolTip(gainTip);
+        if (settings) {
+            connect(m_gainSlider, &QSlider::valueChanged,
+                    settings, &DisplaySettingsModel::setDssGain);
+        }
+        form->addRow(QStringLiteral("3D Gain:"), row.container);
+    }
 
-    // TX passband overlay colour picker moved to Setup → Appearance →
-    // Colors & Theme alongside the RX passband picker (Plan 4 D9b follow-up).
+    // ── 3D span -- how far the near rows overhang the plot edges ────────
+    {
+        auto row = makeSliderRow(0, 100, 100, QStringLiteral("%"), group);
+        m_spanSlider = row.slider;
+        m_spanSlider->setObjectName(QStringLiteral("setup3DSpanSlider"));
+        m_spanSlider->setProperty("nereusSetupId", "display.threeD.span");
+        const QString spanTip = QStringLiteral(
+            "3D surface width: how far the nearest traces overhang the "
+            "plot edges, using spectrum the radio sends from outside the "
+            "panadapter.\nHigher = the empty wedges beside the surface "
+            "close from the front; 0 = the classic narrowing trapezoid.");
+        m_spanSlider->setToolTip(spanTip);
+        row.spin->setToolTip(spanTip);
+        if (settings) {
+            connect(m_spanSlider, &QSlider::valueChanged,
+                    settings, &DisplaySettingsModel::setDssRowSpan);
+        }
+        form->addRow(QStringLiteral("3D Span:"), row.container);
+    }
 
+    // ── 3D angle, viewing elevation ──────────────────────────────────────
+    {
+        auto row = makeSliderRow(0, 100, 50, QStringLiteral("%"), group);
+        m_angleSlider = row.slider;
+        m_angleSlider->setObjectName(QStringLiteral("setup3DAngleSlider"));
+        m_angleSlider->setProperty("nereusSetupId", "display.threeD.angle");
+        const QString angleTip = QStringLiteral(
+            "Viewing angle for the 3D surface: low looks along the traces "
+            "edge-on, high looks down on them.\n50 is the classic fixed "
+            "angle.");
+        m_angleSlider->setToolTip(angleTip);
+        row.spin->setToolTip(angleTip);
+        if (settings) {
+            connect(m_angleSlider, &QSlider::valueChanged,
+                    settings, &DisplaySettingsModel::setDssAngle);
+        }
+        form->addRow(QStringLiteral("3D Angle:"), row.container);
+    }
+
+    // ── 3D speed, row cadence divider (Task 24, NereusSDR-original) ─────
+    // Not a makeSliderRow() (QSpinBox) pair like its siblings above: the
+    // value text is "Match"/"1:N", not a plain number, so it uses the same
+    // slider+QLabel shape SpectrumOverlayMenu's row does, with the same
+    // tooltip verbatim on both widgets.
+    {
+        auto* container = new QWidget(group);
+        auto* hbox = new QHBoxLayout(container);
+        hbox->setContentsMargins(0, 0, 0, 0);
+        m_speedSlider = new QSlider(Qt::Horizontal, container);
+        m_speedSlider->setObjectName(QStringLiteral("setup3DSpeedSlider"));
+        m_speedSlider->setRange(0, 10);
+        m_speedSlider->setValue(0);
+        const QString speedTip = QStringLiteral(
+            "How many waterfall rows each 3D row covers. Match keeps the 3D "
+            "history the same length in time as the waterfall. 1:1 pushes "
+            "every row, the fastest look. Higher values fold more rows into "
+            "each 3D row, keeping peaks, so the surface recedes more slowly.");
+        m_speedSlider->setToolTip(speedTip);
+        m_speedValueLabel = new QLabel(QStringLiteral("Match"), container);
+        m_speedValueLabel->setObjectName(QStringLiteral("setup3DSpeedValueLabel"));
+        m_speedValueLabel->setToolTip(speedTip);
+        hbox->addWidget(m_speedSlider);
+        hbox->addWidget(m_speedValueLabel);
+        if (settings) {
+            connect(m_speedSlider, &QSlider::valueChanged,
+                    settings, &DisplaySettingsModel::setDssRowDivider);
+        }
+        connect(m_speedSlider, &QSlider::valueChanged, this, [this](int v) {
+            if (m_speedValueLabel) {
+                m_speedValueLabel->setText(v == 0 ? QStringLiteral("Match")
+                                                   : QStringLiteral("1:%1").arg(v));
+            }
+        });
+        form->addRow(QStringLiteral("3D Speed:"), container);
+    }
+
+    // ── 3D slice shadow, perspective decal for slice passbands ──────────
+    m_sliceShadowCheck = new QCheckBox(QStringLiteral("3D Slice Shadow"), group);
+    m_sliceShadowCheck->setObjectName(QStringLiteral("setup3DSliceShadowCheck"));
+    m_sliceShadowCheck->setProperty("nereusSetupId", "display.threeD.sliceShadow");
+    m_sliceShadowCheck->setToolTip(QStringLiteral(
+        "Darken each slice's passband onto the 3D surface so it leans back\n"
+        "with the perspective, instead of drawing flat on top of it."));
+    if (settings) {
+        connect(m_sliceShadowCheck, &QCheckBox::toggled,
+                settings, &DisplaySettingsModel::setThreeDSliceDepth);
+    }
+    form->addRow(QString(), m_sliceShadowCheck);
+
+    contentLayout()->addWidget(group);
     contentLayout()->addStretch();
+}
+
+void Display3DSetupPage::resetToDefaultsForTest()
+{
+    if (!m_spectrumWidget) { return; }
+    DisplaySettingsModel* settings = m_spectrumWidget->displaySettings();
+    settings->setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode2D));
+    settings->setDssFloorDepth(6);
+    settings->setDssGain(70);
+    settings->setDssRowSpan(100);
+    settings->setDssAngle(50);
+    settings->setDssRowDivider(0);
+    settings->setThreeDSliceDepth(false);
 }
 
 } // namespace NereusSDR

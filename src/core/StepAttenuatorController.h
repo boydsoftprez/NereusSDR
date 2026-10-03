@@ -3,7 +3,9 @@
 // =================================================================
 //
 // Ported from Thetis source:
-//   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/console.cs,
+//   Project Files/Source/Console/enums.cs [v2.10.3.15],
+//   original licences from Thetis source are included below
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -17,6 +19,54 @@
 //                 Thetis SetupForm.ATTOnTX (mi0bot setup.cs:3988-4017
 //                 [v2.10.3.13]); range clamped to [m_minAttDb, 31].
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-23: R-R3-46 / R-R3-11 / R-R3-13: a change signal for every
+//                 setting (auto-attenuate mode, undo, undo delay, hold, the
+//                 attenuator range, the RX1 preamp), settingsReloaded() after
+//                 loadSettings(), an opt-in debounced per-MAC save for the
+//                 Core, and the RX1 preamp held here so a remote window can
+//                 set it through the Core.  NereusSDR-original; no new
+//                 Thetis logic.  J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-25: R-R3-49 (parity Task 5): attOnTxEnabledChanged and
+//                 forceAttWhenPsOffChanged, so the Core's mirrored step
+//                 attenuator follows every change of either, PureSignal's
+//                 own included.  NereusSDR-original; no new Thetis logic.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25: R-R3-49 (group A fix wave, M6): ATT on TX, its value and
+//                 Force ATT schedule the Core's debounced save.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-27: A11 / R-R3-49 (parity Task 31): txAttenuatorOffsetDb(),
+//                 Thetis Display.TXAttenuatorOffset, set with every TX step
+//                 attenuation this controller applies. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28: R-R3-46 / R-R3-11: a step attenuator per receive ADC, as
+//                 Thetis keeps RX1's and RX2's (console.cs:11027-11063,
+//                 11213-11251 [v2.10.3.15]): slice A's value on slice A's
+//                 ADC, the other ADC's own value following the band of the
+//                 first slice on it, both equal while diversity links them.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - Level Cal: PreampMode carries all ten Thetis modes
+//                 (enums.cs:236-251 [v2.10.3.15], SA_MINUS10/20/30 added;
+//                 that file's header is now carried below) and
+//                 setBoardIdentity feeds the stored-mode move. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - Level Cal: each preamp mode drives the step attenuator,
+//                 the preamp bit and the Alex attenuator as Thetis does
+//                 (console.cs:19218-19330 [v2.10.3.15]), and above 31 dB an
+//                 Alex board switches in the Alex attenuator and sends the
+//                 value + 2 (console.cs:11027-11065). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - Level Cal fix wave: RX2's own preamp mode with its band
+//                memory and drive (console.cs:19413-19520 [v2.10.3.15]),
+//                and the HPSDR MOX path turns RX1's step attenuator off and
+//                holds RX2's mode (console.cs:29598-29608, 29688-29692).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - Level Cal 2 review: RX2's own attenuator is held to the
+//                second ADC's 0-31 dB field (kRx2StepAttMaxDb,
+//                rx2MaxAttenuation), so no RX2 value wraps on the wire.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -70,17 +120,63 @@
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
+// --- From enums.cs ---
+/*  enums.cs
+
+This file is part of a program that implements a Software-Defined Radio.
+
+This code/file can be found on GitHub : https://github.com/ramdor/Thetis
+
+Copyright (C) 2000-2025 Original authors
+Copyright (C) 2020-2026 Richard Samphire MW0LGE
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at
+
+mw0lge@grange-lane.co.uk
+*/
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
 #pragma once
 
 #include "models/Band.h"
 #include "core/WdspTypes.h"
+#include "core/HpsdrModel.h"
 
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
 
+#include <algorithm>
 #include <array>
+#include <optional>
 #include <unordered_map>
+#include <vector>
 
 namespace NereusSDR {
 
@@ -103,16 +199,40 @@ enum class AutoAttMode {
     Adaptive    // NereusSDR attack/hold/decay with per-band memory
 };
 
-// Preamp mode (Thetis PreampMode enum, console.cs:21574-21586).
-// Used by classic auto-att when step-att is disabled.
+// Preamp mode: the ten Thetis modes, in Thetis's order (the integer is
+// what a band's stored mode and the link carry).
+// From Thetis enums.cs:236-251 [v2.10.3.15]:
+//   public enum PreampMode
+//   {
+//       FIRST = -1,
+//       HPSDR_OFF,
+//       HPSDR_ON,
+//       HPSDR_MINUS10,
+//       HPSDR_MINUS20,
+//       HPSDR_MINUS30,
+//       HPSDR_MINUS40,
+//       HPSDR_MINUS50,
+//       SA_MINUS10,
+//       SA_MINUS20,  //MW0LGE_21d
+//       SA_MINUS30,
+//       // STEP_ATTEN,
+//       LAST,
+//   }
+// Off..Minus50 are the HPSDR modes (the preamp switch and the Alex
+// attenuator); SaMinus10..SaMinus30 put 10, 20 or 30 dB on the step
+// attenuator. Values stored before the SA modes existed are moved once by
+// loadSettings (BoardCapsTable::preampModeFromV1).
 enum class PreampMode {
-    Off,
-    On,
-    Minus10,
-    Minus20,    // MW0LGE_21d step atten [Thetis enums.cs:246]
-    Minus30,
-    Minus40,
-    Minus50
+    Off,        // HPSDR_OFF
+    On,         // HPSDR_ON
+    Minus10,    // HPSDR_MINUS10
+    Minus20,    // HPSDR_MINUS20
+    Minus30,    // HPSDR_MINUS30
+    Minus40,    // HPSDR_MINUS40
+    Minus50,    // HPSDR_MINUS50
+    SaMinus10,  // SA_MINUS10
+    SaMinus20,  // SA_MINUS20  //MW0LGE_21d
+    SaMinus30   // SA_MINUS30
 };
 
 // --- Controller ---
@@ -156,7 +276,134 @@ public:
     // setter pair setAutoAttHoldSeconds (Adaptive) / setAutoUndoDelaySec
     // (Classic) on the same spinbox.
     int adaptiveHoldSeconds() const noexcept { return m_adaptiveHoldMs / 1000; }
+    int adaptiveHoldMs() const noexcept { return m_adaptiveHoldMs; }
     int autoUndoDelaySec() const noexcept { return m_autoUndoDelaySec; }
+
+    // ADC-linked state (both RX share the same ADC).
+    bool adcLinked() const noexcept { return m_adcLinked; }
+
+    // RX1 (second ADC) preamp on dual-ADC P2 boards (OrionMKII family).
+    // Held here so the Core can apply it for a remote window; the local RX
+    // applet still drives P2RadioConnection::setRx1Preamp directly and
+    // never calls this.  Not persisted, like the local toggle.
+    bool rx1Preamp() const noexcept { return m_rx1Preamp; }
+    void setRx1Preamp(bool on);
+
+    // ── A step attenuator per receive ADC (R-R3-46 / R-R3-11) ─────────────
+    //
+    // Thetis keeps one step attenuator per receiver and sends each to the
+    // ADC that receiver is using, RX1's here and RX2's alike:
+    // From Thetis console.cs:11021-11028 [v2.10.3.15] (RX1AttenuatorData),
+    // after the range check that ends
+    //   HardwareSpecific.Model != HPSDRModel.REDPITAYA) //DH1KLM
+    //   _rx1_attenuator_data = validateRX1StepAttData(_rx1_attenuator_data); //[2.10.3.9]MW0LGE validated
+    //
+    //   //MW0LGE_22b step atten
+    //   int nRX1DDCinUse = -1, nRX2DDCinUse = -1, sync1 = -1, sync2 = -1, psrx = -1, pstx = -1;
+    //   GetDDC(out nRX1DDCinUse, out nRX2DDCinUse, out sync1, out sync2, out psrx, out pstx);
+    //
+    //   int nRX1ADCinUse = GetADCInUse(nRX1DDCinUse); // (rx1)
+    //   int nRX2ADCinUse = GetADCInUse(nRX2DDCinUse); // (rx2)
+    // then NetworkIO.SetADC1/2/3StepAttenData(_rx1_attenuator_data) for
+    // nRX1ADCinUse 0/1/2 (console.cs 11062-11064), and RX2AttenuatorData
+    // the same with rx2_attenuator_data (console.cs 11228-11230). Two
+    // receivers on one ADC, or in linked diversity, keep one value:
+    // From Thetis console.cs:11080-11081 [v2.10.3.15]:
+    //   bool bRX1RX2diversity = m_bDiversityAttLinkForRX1andRX2 && (diversityForm != null && Diversity2 && diversityForm.EXTDIVOutput == 2); // if using diversity, and both rx's are linked, then we need to attenuate both
+    //   if (((nRX1ADCinUse == nRX2ADCinUse) || bRX1RX2diversity) && RX2AttenuatorData != _rx1_attenuator_data)
+    //
+    // NereusSDR has up to five slices on two receive ADCs. attenuatorDb()
+    // is Thetis's RX1 value: slice A's, sent to slice A's ADC. The other
+    // ADC in use has its own value, Thetis's RX2 value, with its own band
+    // memory (rx2_step_attenuator_by_band) following the band of the
+    // controlling slice on that ADC (RadioModel picks the lowest-numbered
+    // slice there; Thetis has only two receivers and no rule for more).
+    // Slices on one ADC share its value. While diversity links the two
+    // ADCs (Thetis's link is on unless "No ATT link" is ticked; NereusSDR's
+    // diversity always mixes both, EXTDIVOutput 2) both take RX1's value.
+    //
+    // rx1Adc: slice A's ADC. rx2Adc: the other ADC in use, or -1 when every
+    // slice is on slice A's ADC (the same ADC as rx1Adc reads as -1).
+    // rx2Band: the band the other ADC's attenuator follows (kept as it was
+    // while rx2Adc is -1: nothing controls it then). linked: the
+    // two ADCs share RX1's value (diversity). rx2SliceMask: bit n set when
+    // slice n is on the other ADC (so reads rx2AttenuatorDb); 0 while linked.
+    void setAdcRouting(int rx1Adc, int rx2Adc, Band rx2Band, bool linked,
+                       quint32 rx2SliceMask = 0);
+    quint32 rx2SliceMask() const noexcept { return m_rx2SliceMask; }
+    int rx1Adc() const noexcept { return m_rx1Adc; }
+    int rx2Adc() const noexcept { return m_rx2Adc; }
+    Band rx2Band() const noexcept { return m_rx2Band; }
+    bool adcAttenuatorsLinked() const noexcept { return m_adcAttLinked; }
+    // Thetis RX2AttenuatorData: the other ADC's own value (RX1's while
+    // linked). Its own value is clamped to rx2MaxAttenuation().
+    int rx2AttenuatorDb() const noexcept { return m_rx2AttDb; }
+    void setRx2Attenuation(int dB);
+    // Deliberate divergence (operator decision 2026-09-30): RX2's own step
+    // attenuator is the second ADC's 5-bit field, 0-31 dB:
+    // TAPR-OpenHPSDR-Firmware @e7c6584 Angelia.v:2319 (C1[4:0] input
+    // attenuator 2), Orion.v:2295 ("0-31 dB") and :2419. Thetis lets RX2
+    // reach 61 on an Alex board (console.cs:11176-11189 [v2.10.3.15],
+    // udRX2StepAttData.Maximum = 61) and sends the value + 2 above 31
+    // (console.cs:11211-11222), but RX2's setter never switches the Alex
+    // attenuator in (SetAlexAtten is only in RX1's, console.cs:11044-11056),
+    // so the gateware keeps the low 5 bits and 40 dB lands as 10. NereusSDR
+    // holds RX2's own value to the field instead, so nothing wraps.
+    static constexpr int kRx2StepAttMaxDb = 31;
+    // The top of RX2's own range: the radio's, no higher than the field's.
+    int rx2MaxAttenuation() const noexcept { return std::min(m_maxAttDb, kRx2StepAttMaxDb); }
+    // True when `adc` reads and is set through attenuatorDb() (slice A's
+    // ADC, an ADC not in use, or any ADC while linked); false for the other
+    // ADC in use, which reads rx2AttenuatorDb().
+    bool adcUsesRx1Attenuator(int adc) const noexcept;
+    // The receive attenuation on `adc`'s input.
+    int attenuatorDbForAdc(int adc) const noexcept;
+    // Set the attenuation of `adc`: RX1's or the other ADC's, as above.
+    void setAttenuationForAdc(int adc, int dB);
+
+    // RX2's own step attenuator enable and auto-attenuate settings, as
+    // Thetis keeps them apart from RX1's (_rx2_step_att_enabled,
+    // _auto_att_rx2, _auto_att_undo_rx2, _auto_att_hold_delay_rx2), saved
+    // for the radio. On one ADC (or linked) the two enables are one, as
+    // Thetis's Setup mirrors them. RX2's step attenuator off: its slices
+    // read the second preamp's offset and RX2 auto-attenuate does nothing.
+    bool rx2StepAttEnabled() const noexcept { return m_rx2StepAttEnabled; }
+    void setRx2StepAttEnabled(bool on);
+    bool rx2AutoAttEnabled() const noexcept { return m_rx2AutoAttEnabled; }
+    void setRx2AutoAttEnabled(bool on);
+    bool rx2AutoAttUndo() const noexcept { return m_rx2AutoUndoEnabled; }
+    void setRx2AutoAttUndo(bool on);
+    int rx2AutoUndoDelaySec() const noexcept { return m_rx2AutoUndoDelaySec; }
+    void setRx2AutoUndoDelaySec(int sec);
+
+    // Level Cal: RX2's own preamp mode (Thetis RX2PreampMode,
+    // console.cs:19413-19520 [v2.10.3.15]) with its band memory
+    // (rx2_preamp_by_band), saved for the radio. With RX2's step attenuator
+    // off it puts the mode's attenuation on the other ADC on the boards in
+    // Thetis's list; on the HPSDR it sends the second preamp bit
+    // (NetworkIO.SetRX2Preamp). While RX2 shares slice A's ADC, or diversity
+    // links them, the two modes are one, as Thetis links them.
+    PreampMode rx2PreampMode() const noexcept { return m_rx2PreampMode; }
+    void setRx2PreampMode(PreampMode mode);
+
+    // R-R3-46 / R-R3-11: save this radio's settings a short while after an
+    // operator change, not only at teardown.  Off by default; the Core
+    // (DaemonApp) turns it on so a change made from a remote window is on
+    // disk without waiting for the Core to stop.  Auto-attenuate's own
+    // moves never schedule a save.
+    void setDebouncedSaveEnabled(bool on);
+
+    // R-R3-46: on a band change, send the band's restored attenuation and
+    // preamp to the radio, as Thetis does (console.cs:17325 [v2.10.3.15],
+    // see setBand).  Off by default: a local window keeps today's behaviour
+    // (the restored value is shown, not sent); the Core turns it on so the
+    // radio runs what every window shows.
+    void setBandRestoreToRadio(bool on) noexcept { m_bandRestoreToRadio = on; }
+    bool bandRestoreToRadio() const noexcept { return m_bandRestoreToRadio; }
+    bool debouncedSaveEnabled() const noexcept { return m_debouncedSave; }
+    bool savePending() const { return m_saveTimer.isActive(); }
+    // Run a pending debounced save now (no-op when none is pending).
+    void flushPendingSave();
 
     // --- Configuration setters ---
 
@@ -196,7 +443,18 @@ public:
     void setStepAttEnabled(bool on);
 
     // Current band — for per-band ATT/preamp storage.
+    // R-R3-46: the receive band (Thetis rx1_band); it also sets the transmit
+    // band below, which a caller with a separate transmit slice then moves
+    // with setTxBand.
     void setBand(Band band);
+    Band currentBand() const noexcept { return m_currentBand; }
+
+    // R-R3-46: the transmit band (Thetis _tx_band), whose per-band ATT-on-TX
+    // value is applied on MOX and edited by setAttOnTxValue. Thetis keeps it
+    // apart from rx1_band: console.cs:17325 [v2.10.3.15] restores the
+    // receive attenuator for rx1_band and ATTOnTX for _tx_band.
+    void setTxBand(Band band) noexcept { m_txBand = band; }
+    Band txBand() const noexcept { return m_txBand; }
 
     // Set ATT value (e.g. from UI or persistence restore).
     void setAttenuation(int dB, int rx = 0);
@@ -220,12 +478,22 @@ public:
     //
     // ATT-on-TX master enable (Thetis _m_bATTonTX, console.cs:19041 [v2.10.3.13]).
     // When false, TX ATT is cleared to 0 dB on MOX-on.
-    void setAttOnTxEnabled(bool on) { m_attOnTxEnabled = on; }
+    // R-R3-49 (parity Task 5): emits attOnTxEnabledChanged on a change.
+    // G-04: a change applies to the radio at once, keyed or not, as the
+    // Thetis ATTOnTX setter does (console.cs:19071-19094 [v2.10.3.15]).
+    void setAttOnTxEnabled(bool on);
     bool attOnTxEnabled() const noexcept { return m_attOnTxEnabled; }
 
     // Force-31-dB when PS-A is off (Thetis _forceATTwhenPSAoff,
     // console.cs:29285 [v2.10.3.13] //MW0LGE [2.9.0.7] added).
-    void setForceAttWhenPsOff(bool on) { m_forceAttWhenPsOff = on; }
+    // R-R3-49 (parity Task 5): emits forceAttWhenPsOffChanged on a change.
+    void setForceAttWhenPsOff(bool on)
+    {
+        if (m_forceAttWhenPsOff == on) { return; }
+        m_forceAttWhenPsOff = on;
+        emit forceAttWhenPsOffChanged(on);
+        scheduleSave();  // R-R3-49 (group A fix wave, M6): saved at once on the Core
+    }
     bool forceAttWhenPsOff() const noexcept { return m_forceAttWhenPsOff; }
 
     // PS-A active state: true when PureSignal auto-cal is ON.
@@ -278,6 +546,17 @@ public:
     void setAttOnTxValue(int dB);
     int  attOnTxValue() const;
 
+    /// Parity Task 31 (A11): Thetis Display.TXAttenuatorOffset
+    /// (display.cs:1365-1370 [v2.10.3.15]): the TX step attenuation last
+    /// applied to the radio, set beside each NetworkIO.SetTxAttenData call
+    /// (console.cs:10613-10622, 19078-19088, 29619 and 29706-29710
+    /// [v2.10.3.15], each //[2.10.3.6]MW0LGE att_fixes): the value when ATT
+    /// on TX is on, 0 when it is off or at the unkey. The display adds it to
+    /// the receive trace while keyed with display duplex on (RX1Offset,
+    /// display.cs:4836). Unchanged on the HPSDR board, whose transmit path
+    /// switches the preamp instead, as Thetis's is.
+    int txAttenuatorOffsetDb() const noexcept { return m_txAttOffsetDb; }
+
     // shouldForce31Db predicate.
     //
     // Returns true ⟺ the TX attenuator must be forced to 31 dB.
@@ -302,7 +581,19 @@ public:
     // previously-loaded different radio.
     void saveSettings(const QString& mac);
     void loadSettings(const QString& mac);
-    void markSettingsUnloaded() { m_loadedMac.clear(); }
+
+    // The connected board, its Thetis model and Alex presence. Set before
+    // loadSettings: the preamp modes stored before the SA modes existed
+    // are moved to the new numbering only once the board is known.
+    void setBoardIdentity(HPSDRHW board, HPSDRModel model, bool alexPresent);
+    // R-R3-46: also drops the band memory, which is the unloaded radio's.
+    void markSettingsUnloaded()
+    {
+        m_loadedMac.clear();
+        m_bandState.clear();
+        m_rx2BandAttDb.clear();
+        m_rx2BandPreamp.clear();
+    }
     bool settingsLoaded() const { return !m_loadedMac.isEmpty(); }
 
     // --- Tick (public for testability) ---
@@ -370,6 +661,22 @@ signals:
     // Emitted when ADC-linked state changes (both RX share same ADC).
     void adcLinkedChanged(bool linked);
 
+    // R-R3-46: the remaining settings' change signals, so a mirrored
+    // object can follow every one of them.
+    void autoAttModeChanged(NereusSDR::AutoAttMode mode);
+    void autoAttUndoChanged(bool on);
+    void autoUndoDelayChanged(int seconds);
+    void autoAttHoldChanged(int ms);
+    void attenuationRangeChanged(int minDb, int maxDb);
+    void rx1PreampChanged(bool on);
+    // Parity Task 31: txAttenuatorOffsetDb() changed.
+    void txAttenuatorOffsetChanged(int dB);
+
+    // Emitted at the end of loadSettings(): every setting may have changed
+    // without its own signal (loadSettings stays silent so local widgets
+    // keep today's behaviour).
+    void settingsReloaded();
+
     // Emitted when the per-band ATT-on-TX dB value changes (either via
     // setAttOnTxValue user-side, or via PureSignal::autoAttentionTick
     // writing the new value back).  Bound by the Setup → Transmit → Power
@@ -377,6 +684,22 @@ signals:
     // bench-fix 2026-05-23 (JJ Boyd): added so the new spinbox can mirror
     // AutoAtt's adjustments without a polling timer.
     void attOnTxValueChanged(int dB);
+
+    // R-R3-49 (parity Task 5): ATT on TX and Force ATT changed (by Setup,
+    // by the Core's mirrored step attenuator, or by PureSignal).
+    void attOnTxEnabledChanged(bool on);
+    void forceAttWhenPsOffChanged(bool on);
+
+    // R-R3-46 / R-R3-11: the other ADC's own attenuation changed, or which
+    // ADC each value is on (setAdcRouting, the slice mask included) moved.
+    void rx2AttenuationChanged(int dB);
+    void adcRoutingChanged();
+    void rx2StepAttEnabledChanged(bool on);
+    void rx2AutoAttEnabledChanged(bool on);
+    void rx2AutoAttUndoChanged(bool on);
+    void rx2AutoUndoDelayChanged(int seconds);
+    // Level Cal: rx2PreampMode() changed.
+    void rx2PreampModeChanged(NereusSDR::PreampMode mode);
 
 private:
     static constexpr int kMaxAdcs = 3;
@@ -390,6 +713,13 @@ private:
     // Tick interval (ms) — Thetis pollOverloadSyncSeqErr ~400ms,
     // NereusSDR uses 100ms for snappier response.
     static constexpr int kTickIntervalMs = 100;
+
+    // Debounce for the opt-in save.  NereusSDR-native value.
+    static constexpr int kSaveDebounceMs = 500;
+
+    // Start (or restart) the debounced save when it is enabled, a radio's
+    // settings are loaded, and the radio is not transmitting.
+    void scheduleSave();
 
     // Push a new ATT value to hardware + emit signal.  Used by auto-att
     // paths that bypass setAttenuation() (which also stores per-band state).
@@ -408,6 +738,9 @@ private:
     PreampMode m_preampMode = PreampMode::Off;
     bool m_stepAttEnabled = true;
     int m_maxAttDb = kDefaultMaxAttDb;
+    // The range the caller set; m_maxAttDb is it, held at 31 on a known
+    // board outside Thetis's Alex list (recomputeMaxAtt).
+    int m_rawMaxAttDb = kDefaultMaxAttDb;
     int m_minAttDb = kDefaultMinAttDb;
 
     // Issue #259 — guards saveSettings against pre-load clobber.
@@ -426,6 +759,12 @@ private:
     // markSettingsUnloaded() so a different-MAC connect doesn't reuse
     // a stale load tag from a prior radio.)
     QString m_loadedMac;
+
+    // setBoardIdentity(); m_boardKnown stays false until it is called.
+    HPSDRHW m_board{HPSDRHW::Unknown};
+    HPSDRModel m_hpsdrModel{HPSDRModel::FIRST};
+    bool m_alexPresent{false};
+    bool m_boardKnown{false};
 
     // Auto-att configuration.
     bool m_autoAttEnabled = false;
@@ -456,6 +795,8 @@ private:
 
     // Per-band RX ATT/preamp storage.
     Band m_currentBand = Band::GEN;
+    // R-R3-46: the transmit band for the per-band ATT-on-TX value.
+    Band m_txBand = Band::GEN;
     struct BandAttState {
         int attDb = 0;
         PreampMode preamp = PreampMode::Off;
@@ -467,6 +808,9 @@ private:
     // ATT-on-TX master enable. From Thetis console.cs:19041 [v2.10.3.13]
     //   private bool m_bATTonTX = true;
     bool m_attOnTxEnabled{true};
+    // Parity Task 31: Display.TXAttenuatorOffset (setTxAttenuatorOffset).
+    int m_txAttOffsetDb{0};
+    void setTxAttenuatorOffset(int dB);
 
     // Force-31-dB when PS-A off. From Thetis console.cs:29285 [v2.10.3.13]
     //   private bool _forceATTwhenPSAoff = true; //MW0LGE [2.9.0.7] added
@@ -490,11 +834,12 @@ private:
     // Thetis default: 31 dB per band (console.cs:1810 [v2.10.3.13]):
     //   setTXstepAttenuatorForBand((Band)i, 31);
     // NereusSDR default: 0 (no TX ATT until user configures it).
-    // Per-band TX ATT spans HF amateur + GEN/WWV/XVTR only.  SWL bands
+    // Per-band TX ATT spans HF amateur + GEN/WWV/XVTR and 2 m.  SWL bands
     // (Band::SwlFirst..SwlLast, Phase 3L extension) inherit ham-band
     // values — the HL2 ATT chip is a single hardware register regardless
-    // of the SWL slice you tune to.  Sized at Band::SwlFirst (=14).
-    std::array<int, static_cast<size_t>(Band::SwlFirst)> m_txAttByBand{};
+    // of the SWL slice you tune to.  Sized by the per-band state slots
+    // (15: 160m .. XVTR and 2 m, Band.h).
+    std::array<int, static_cast<size_t>(kPerBandStateCount)> m_txAttByBand{};  // per-band state slots, 2 m at 14
 
     // MOX state mirror — set by onMoxHardwareFlipped().  Auto-att (Classic +
     // Adaptive) reads this to skip overload-driven ATT bumps during TX, since
@@ -540,6 +885,15 @@ private:
     // Internal tick timer.
     QTimer m_tickTimer;
 
+    // RX1 (second ADC) preamp; see rx1Preamp().
+    bool m_rx1Preamp{false};
+
+    // Opt-in debounced save; see setDebouncedSaveEnabled().
+    bool m_debouncedSave{false};
+    // Opt-in band-restore push; see setBandRestoreToRadio().
+    bool m_bandRestoreToRadio{false};
+    QTimer m_saveTimer;
+
     // RadioConnection for adcOverflow wiring.
     QPointer<RadioConnection> m_connection;
     QMetaObject::Connection m_adcOverflowConn;
@@ -549,6 +903,99 @@ private:
 
     // ADC-linked state (both RX0 and RX1 share the same ADC).
     bool m_adcLinked{false};
+
+    // R-R3-46 / R-R3-11: the per-ADC receive attenuators (setAdcRouting).
+    int m_rx1Adc{0};
+    int m_rx2Adc{-1};
+    bool m_adcAttLinked{false};
+    quint32 m_rx2SliceMask{0};
+    Band m_rx2Band{Band::GEN};
+    int m_rx2AttDb{0};
+    // A routing or band change while keyed, sent on the fall.
+    bool m_adcSendsHeldForMox{false};
+    // Thetis rx2_step_attenuator_by_band: the other ADC's band memory.
+    std::unordered_map<int, int> m_rx2BandAttDb;
+    // What each receive ADC holds: in use, and its attenuation.
+    struct AdcAttSnapshot {
+        std::array<bool, kMaxAdcs> inUse{};
+        std::array<int, kMaxAdcs> dB{};
+    };
+    AdcAttSnapshot adcAttSnapshot() const;
+    // Send each ADC in use whose value or use differs from `before`.
+    void sendAdcAttenuatorChanges(const AdcAttSnapshot& before);
+    // Send RX1's value to slice A's ADC, and to the other ADC while linked.
+    // On a known board: nothing while the step attenuator is off, and the
+    // Alex attenuator plus the value + 2 above 31 dB on an Alex board.
+    void sendRx1Attenuation(int dB);
+    // Level Cal: what one preamp mode sends (Thetis RX1PreampMode setter).
+    struct PreampDrive {
+        int attDb{0};
+        bool mercPreamp{false};
+        int alexAtten{0};
+    };
+    static PreampDrive preampDriveFor(PreampMode mode) noexcept;
+    bool isHpsdrModel() const noexcept;
+    // Thetis's Alex list for the step attenuator above 31 dB.
+    bool stepAttAlexEligible() const noexcept;
+    // Alex settings become Off on a known board without Alex.
+    PreampMode clampPreampForBoard(PreampMode mode) const noexcept;
+    void recomputeMaxAtt();
+    // The step attenuator value RX1's ADC receives for dB.
+    int rx1WireAttDbFor(int dB) const noexcept;
+    // attenuatorDbForAdc as it goes on the wire.
+    int wireAttDbForAdc(int adc) const noexcept;
+    // Send the current preamp mode's drive.
+    void applyPreampDrive();
+    void sendAlexAtten(int bits);
+    // Send the other ADC's own value to it (nothing while linked or unused).
+    void sendRx2Attenuation();
+    void sendAttenuatorToAdc(int adc, int dB);
+    // The other ADC's band follows its controlling slice (setAdcRouting).
+    void setRx2Band(Band band);
+    // Thetis's RX2 auto-attenuate on the other ADC in use (tick()).
+    void runRx2AutoAtt(bool overloaded);
+    // Drop the other ADC's auto-attenuate state, restoring its value.
+    // RX2's auto-attenuate history (Thetis _historic_attenuator_readings_rx2):
+    // the value before each raise, unwound one per undo. Thetis's
+    // HistoricAttenuatorReading: stepAttenuator -1 and preampMode FIRST
+    // (empty here) when not taken.
+    struct Rx2AttReading {
+        int stepAttenuator{-1};
+        std::optional<PreampMode> preampMode;
+    };
+    std::vector<Rx2AttReading> m_rx2AutoAttHistory;
+    qint64 m_rx2LastAutoAttTimeMs{0};
+    // RX2's own enable and auto-attenuate settings (Thetis
+    // _rx2_step_att_enabled, _auto_att_rx2, _auto_att_undo_rx2,
+    // _auto_att_hold_delay_rx2).
+    bool m_rx2StepAttEnabled{false};  // Thetis console.cs:11109
+    bool m_rx2AutoAttEnabled{false};
+    bool m_rx2AutoUndoEnabled{false};
+    int m_rx2AutoUndoDelaySec{5};
+    // Whether RX2 is on an ADC of its own (not slice A's, not linked).
+    bool rx2OnItsOwnAdc() const noexcept;
+
+    // Level Cal: RX2's preamp mode (Thetis rx2_preamp_mode) and its band
+    // memory (rx2_preamp_by_band, HPSDR_ON on every band at start,
+    // console.cs:1814 [v2.10.3.15]).
+    PreampMode m_rx2PreampMode{PreampMode::On};
+    std::unordered_map<int, PreampMode> m_rx2BandPreamp;
+    // Thetis temp_mode2: RX2's mode held over an HPSDR transmit.
+    PreampMode m_savedRx2PreampMode{PreampMode::On};
+    // Thetis _setFromOtherAttenuator: one mode setting the other.
+    bool m_setFromOtherPreamp{false};
+    // What one RX2 preamp mode sends (the RX2PreampMode setter's switch).
+    struct Rx2PreampDrive {
+        int attDb{0};
+        bool preamp{false};
+    };
+    static Rx2PreampDrive rx2PreampDriveFor(PreampMode mode) noexcept;
+    // The models whose RX2 mode drives the other ADC's step attenuator.
+    bool rx2PreampDrivesAdc() const noexcept;
+    // Thetis _rx2_preamp_present for the connected model.
+    bool rx2PreampPresent() const noexcept;
+    // Send RX2's mode drive (the RX2PreampMode setter's sends).
+    void applyRx2PreampDrive();
 
     // --- Helpers ---
     void applyClassicAutoAtt(int adc);
@@ -580,6 +1027,7 @@ private slots:
 public:
     // Test seams — expose internal TX-path state for white-box unit tests.
     PreampMode savedPreampModeForTest() const noexcept { return m_savedPreampMode; }
+    PreampMode savedRx2PreampModeForTest() const noexcept { return m_savedRx2PreampMode; }
     int txAttByBandForTest(Band band) const { return applyTxAttenuationForBand(band); }
     // Expose the last TX ATT value pushed to hardware (via m_lastTxStepAttDb).
     int lastTxStepAttForTest() const noexcept { return m_lastTxStepAttDb; }

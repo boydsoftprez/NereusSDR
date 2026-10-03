@@ -4,10 +4,10 @@
 // tests/tst_tx_channel_ps_setters.cpp  (NereusSDR)
 // =================================================================
 //
-// Unit tests for the 22 TxChannel PureSignal API wrappers added in Phase
-// 3M-4 Task 3:
+// Unit tests for the retained TxChannel PureSignal API after the PS3 ABI
+// migration.
 //
-//   Per-channel state setters (15):
+//   Per-channel state setters (12):
 //     setPSRunCal(int)
 //     setPSMox(bool)
 //     setPSReset(bool)
@@ -19,19 +19,13 @@
 //     setPSMoxDelay(double seconds)
 //     setPSTXDelay(double seconds)  → returns double (snapped applied delay)
 //     setPSHWPeak(double peak)
-//     setPSPtol(double ptol)
 //     setPSFeedbackRate(int rate)
-//     setPSPinMode(bool)
-//     setPSMapMode(bool)
-//     setPSStabilize(bool)
-//     setPSIntsAndSpi(int ints, int spi)
 //
 //   Per-channel readers (4):
 //     getPSInfo(int* info16)
 //     getPSHWPeak() → double
 //     getPSMaxTX() → double
-//     getPSDisp(double* x, double* ym, double* yc, double* ys,
-//               double* cm, double* cc, double* cs)
+//     getPs3DisplaySnapshot(...) -> optional owning bounded value
 //
 //   Static channel routing (2):
 //     setPSRxIdx(int txid, int idx)
@@ -39,11 +33,11 @@
 //
 // Test strategy: pure smoke / does-not-crash, matching the convention from
 // tst_tx_channel_cfc_cpdr_cessb_setters.cpp / tst_tx_channel_eq_setters.cpp.
-// Wrappers null-guard on `txa[m_channelId].rsmpin.p == nullptr`, so calling
+// Wrappers use the opaque GetPSRunCal validity readback, so calling
 // them on a bare `TxChannel ch(kTxChannelId)` (without WdspEngine init) is
 // safe in HAVE_WDSP-linked builds; HAVE_WDSP-undefined builds exercise the
 // stub path.  Tests cover argument shapes (signed delay for setPSTXDelay,
-// 16-int output for getPSInfo, 7 buffers for getPSDisp) and verify that
+// 16-int output for getPSInfo, owning PS3 display snapshots) and verify that
 // methods do not throw, crash, or alias.
 //
 // Source: Thetis wdsp/calcc.c:891-1132 [v2.10.3.13] +
@@ -54,6 +48,7 @@
 //   2026-05-06 — New test file for Phase 3M-4 Task 3: 22 TX PureSignal API
 //                 wrapper smoke tests.  J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-09-21 — Updated for the bounded PS3 ABI and removed PS2 controls.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -131,6 +126,12 @@ private slots:
         QCOMPARE(info[17], -42);
         QCOMPARE(info[18], -42);
         QCOMPARE(info[19], -42);
+    }
+
+    void getPSInfo_nullBufferIsRejected()
+    {
+        TxChannel ch(kTxChannelId);
+        ch.getPSInfo(nullptr);
     }
 
     // ── setPSReset ─────────────────────────────────────────────────────────
@@ -334,52 +335,12 @@ private slots:
         Q_UNUSED(maxtx);
     }
 
-    // ── setPSPtol ──────────────────────────────────────────────────────────
-    //
-    // Wraps SetPSPtol.  From Thetis wdsp/calcc.c:1050 [v2.10.3.13].
+    // ── PS3 display snapshot ───────────────────────────────────────────────
 
-    void setPSPtol_typical_doesNotCrash()
+    void getPs3DisplaySnapshot_uninitializedChannelReturnsNoValue()
     {
         TxChannel ch(kTxChannelId);
-        ch.setPSPtol(0.8);
-    }
-
-    void setPSPtol_loose_doesNotCrash()
-    {
-        TxChannel ch(kTxChannelId);
-        ch.setPSPtol(0.95);
-    }
-
-    // ── getPSDisp ──────────────────────────────────────────────────────────
-    //
-    // Wraps GetPSDisp — writes seven AmpView display arrays.  From Thetis
-    // wdsp/calcc.c:1058 [v2.10.3.13].  On a bare channel (no calcc),
-    // wrapper returns immediately via the rsmpin null-guard; buffers
-    // remain untouched.
-
-    void getPSDisp_sevenBuffers_doesNotCrash()
-    {
-        TxChannel ch(kTxChannelId);
-        // Generously oversized; the bare-channel rsmpin guard returns
-        // before any memcpy.  64 doubles per buffer is enough for a real
-        // call (production sizing nsamps + ints*4 ≪ 64 in normal AmpView).
-        constexpr int kBufLen = 64;
-        double x[kBufLen]   = {};
-        double ym[kBufLen]  = {};
-        double yc[kBufLen]  = {};
-        double ys[kBufLen]  = {};
-        double cm[kBufLen]  = {};
-        double cc[kBufLen]  = {};
-        double cs[kBufLen]  = {};
-        ch.getPSDisp(x, ym, yc, ys, cm, cc, cs);
-        // Pre-fill sentinel: zeros stay zeros (no calcc allocated; guard fires).
-        QCOMPARE(x[0], 0.0);
-        QCOMPARE(ym[0], 0.0);
-        QCOMPARE(yc[0], 0.0);
-        QCOMPARE(ys[0], 0.0);
-        QCOMPARE(cm[0], 0.0);
-        QCOMPARE(cc[0], 0.0);
-        QCOMPARE(cs[0], 0.0);
+        QVERIFY(!ch.getPs3DisplaySnapshot(7, 11, 1234).has_value());
     }
 
     // ── setPSFeedbackRate ──────────────────────────────────────────────────
@@ -399,64 +360,6 @@ private slots:
         TxChannel ch(kTxChannelId);
         // HL2 mi0bot uses rx1_rate; smaller boards may run lower.
         ch.setPSFeedbackRate(48000);
-    }
-
-    // ── setPSPinMode ───────────────────────────────────────────────────────
-    //
-    // Wraps SetPSPinMode.  From Thetis wdsp/calcc.c:1102 [v2.10.3.13].
-
-    void setPSPinMode_true_doesNotCrash()
-    {
-        TxChannel ch(kTxChannelId);
-        ch.setPSPinMode(true);
-    }
-
-    void setPSPinMode_false_doesNotCrash()
-    {
-        TxChannel ch(kTxChannelId);
-        ch.setPSPinMode(false);
-    }
-
-    // ── setPSMapMode ───────────────────────────────────────────────────────
-    //
-    // Wraps SetPSMapMode.  From Thetis wdsp/calcc.c:1110 [v2.10.3.13].
-
-    void setPSMapMode_true_doesNotCrash()
-    {
-        TxChannel ch(kTxChannelId);
-        ch.setPSMapMode(true);
-    }
-
-    void setPSMapMode_false_doesNotCrash()
-    {
-        TxChannel ch(kTxChannelId);
-        ch.setPSMapMode(false);
-    }
-
-    // ── setPSStabilize ─────────────────────────────────────────────────────
-    //
-    // Wraps SetPSStabilize.  From Thetis wdsp/calcc.c:1118 [v2.10.3.13].
-
-    void setPSStabilize_true_doesNotCrash()
-    {
-        TxChannel ch(kTxChannelId);
-        ch.setPSStabilize(true);
-    }
-
-    void setPSStabilize_false_doesNotCrash()
-    {
-        TxChannel ch(kTxChannelId);
-        ch.setPSStabilize(false);
-    }
-
-    // ── setPSIntsAndSpi ────────────────────────────────────────────────────
-    //
-    // Wraps SetPSIntsAndSpi.  From Thetis wdsp/calcc.c:1140 [v2.10.3.13].
-
-    void setPSIntsAndSpi_typical_doesNotCrash()
-    {
-        TxChannel ch(kTxChannelId);
-        ch.setPSIntsAndSpi(/*ints=*/16, /*spi=*/256);
     }
 
     // ── setPSRxIdx / setPSTxIdx (static channel routing) ───────────────────
@@ -480,7 +383,7 @@ private slots:
 
     // ── Compile-time signature checks (linkage smoke) ───────────────────────
     //
-    // Compile-time check that all 22 methods exist with the expected
+    // Compile-time check that the retained methods exist with the expected
     // signatures.  If any wrapper is missing or its signature drifts, this
     // test will fail to compile.
 
@@ -500,13 +403,8 @@ private slots:
         auto hwPeakSet    = &TxChannel::setPSHWPeak;        // void(double)
         auto hwPeakGet    = &TxChannel::getPSHWPeak;        // double()
         auto maxTx        = &TxChannel::getPSMaxTX;         // double()
-        auto ptol         = &TxChannel::setPSPtol;          // void(double)
-        auto disp         = &TxChannel::getPSDisp;          // void(7×double*)
+        auto disp         = &TxChannel::getPs3DisplaySnapshot;
         auto fbRate       = &TxChannel::setPSFeedbackRate;  // void(int)
-        auto pinMode      = &TxChannel::setPSPinMode;       // void(bool)
-        auto mapMode      = &TxChannel::setPSMapMode;       // void(bool)
-        auto stabilize    = &TxChannel::setPSStabilize;     // void(bool)
-        auto intsAndSpi   = &TxChannel::setPSIntsAndSpi;    // void(int,int)
         auto rxIdx        = &TxChannel::setPSRxIdx;         // void(int,int) static
         auto txIdx        = &TxChannel::setPSTxIdx;         // void(int,int) static
 
@@ -514,9 +412,8 @@ private slots:
         Q_UNUSED(reset);     Q_UNUSED(mancal);     Q_UNUSED(automode);
         Q_UNUSED(turnon);    Q_UNUSED(control);    Q_UNUSED(loopDelay);
         Q_UNUSED(moxDelay);  Q_UNUSED(txDelay);    Q_UNUSED(hwPeakSet);
-        Q_UNUSED(hwPeakGet); Q_UNUSED(maxTx);      Q_UNUSED(ptol);
-        Q_UNUSED(disp);      Q_UNUSED(fbRate);     Q_UNUSED(pinMode);
-        Q_UNUSED(mapMode);   Q_UNUSED(stabilize);  Q_UNUSED(intsAndSpi);
+        Q_UNUSED(hwPeakGet); Q_UNUSED(maxTx);      Q_UNUSED(disp);
+        Q_UNUSED(fbRate);
         Q_UNUSED(rxIdx);     Q_UNUSED(txIdx);
         QVERIFY(true);
     }
@@ -538,10 +435,6 @@ private slots:
         // Step 3: configure the engine.
         ch.setPSFeedbackRate(192000);
         ch.setPSHWPeak(0.2899);
-        ch.setPSPtol(0.8);
-        ch.setPSStabilize(false);
-        ch.setPSPinMode(false);
-        ch.setPSMapMode(false);
         // Step 4: enable automode + turnon for adaptive cal.
         ch.setPSControl(0, 0, 1, 1);
     }

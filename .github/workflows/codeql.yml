@@ -31,13 +31,24 @@ jobs:
         # QRhiWidget and used to force -DNEREUS_GPU_SPECTRUM=OFF here;
         # aligning Qt versions across all three workflows removes that
         # workaround and stops CodeQL drifting from CI behavior.
+        #
+        # libssl-dev added fix round 3 minor C (Remote Daemon R2, Task
+        # 17): the one Linux configure site the reviewer found still
+        # missing it after fix round 1's Important 1 point 2 pass over
+        # CLAUDE.md, ci.yml, release.yml and the CI Dockerfile. Benign
+        # today only because ubuntu-24.04 happens to preinstall OpenSSL
+        # 3.0.13; CLAUDE.md records that the ORIGINAL Qt6::WebSockets
+        # REQUIRED flip this whole finding is modelled on needed two
+        # follow-up PRs specifically to keep this exact workflow green,
+        # so closing the gap now rather than waiting for it to bite.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             cmake ninja-build pkg-config g++ \
             libgl1-mesa-dev libfftw3-dev \
             libasound2-dev libjack-jackd2-dev \
-            libpipewire-0.3-dev
+            libpipewire-0.3-dev \
+            libssl-dev
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4

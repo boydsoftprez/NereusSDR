@@ -31,6 +31,7 @@
 
 #include "AppletWidget.h"
 
+#include <QPointer>
 #include <memory>
 
 class QCheckBox;
@@ -44,6 +45,7 @@ namespace NereusSDR {
 
 struct TciClientSession;
 class TciServer;
+class RadioModel;
 
 // ClientChainApplet — per-client TCI connection detail applet.
 //
@@ -71,6 +73,7 @@ public:
     QString appletId()    const override { return QStringLiteral("tci_clients"); }
     QString appletTitle() const override { return QStringLiteral("TCI Clients"); }
     void    syncFromModel() override;
+    void setStationModel(RadioModel* model);
 
 protected:
     void showEvent(QShowEvent* ev) override;
@@ -87,6 +90,7 @@ private:
     // Tear down current client rows and reconstruct from m_server->clients()
     // snapshot.  Full rebuild per tick is acceptable for 1-3 clients.
     void rebuildRows();
+    void rebuildCoreRows();
 
     // Build the empty-state panel (server stopped or no clients).
     void buildEmptyState();
@@ -102,6 +106,9 @@ private:
     QString formatLastCommandAge(qint64 lastCommandAtMs) const;
 
     TciServer*   m_server{nullptr};
+    QPointer<RadioModel> m_stationModel;
+    QWidget* m_corePanel{nullptr};
+    QVBoxLayout* m_coreRows{nullptr};
     QTimer*      m_refreshTimer{nullptr};
 
     // Top bar

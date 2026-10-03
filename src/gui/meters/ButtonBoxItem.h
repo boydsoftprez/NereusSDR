@@ -12,6 +12,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-24 - R-R3-49 / R-R3-21: a button hidden until its feature is
+//                 built (the saved visibility untouched), and an unavailable
+//                 button whose click says why. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -116,8 +120,14 @@ public:
         IndicatorType indicatorType{IndicatorType::Ring};
         float indicatorWidth{0.005f};
         bool on{false};
-        bool visible{true};
+        bool visible{true};   // the saved choice (visibleBits)
         bool enabled{true};
+        // R-R3-49: not drawn while its feature is not built. Separate from
+        // `visible` so a hidden button never changes the saved visibility.
+        bool hiddenUntilBuilt{false};
+        // R-R3-21: why an unavailable button (enabled false) does nothing,
+        // in plain words; shown when it is clicked.
+        QString unavailableReason;
     };
 
     void setButtonCount(int count);
@@ -127,6 +137,19 @@ public:
     // Visibility bitmask (from Thetis clsButtonBox _visible_bits)
     void setVisibleBits(uint32_t bits);
     uint32_t visibleBits() const { return m_visibleBits; }
+
+    // R-R3-49: hide a button whose feature is not built, at layout time.
+    // The saved visibility (visibleBits) is untouched.
+    void setButtonHiddenUntilBuilt(int index, bool hidden);
+    // Drawn and clickable: saved visible and not hidden until built.
+    bool isButtonShown(int index) const;
+
+    // R-R3-21: an unavailable button is dimmed, a click on it changes
+    // nothing and emits unavailableButtonClicked with the reason.
+    void setButtonAvailable(int index, bool available, const QString& reason = QString());
+    void setAllButtonsAvailable(bool available, const QString& reason = QString());
+    bool isButtonAvailable(int index) const;
+    QString buttonUnavailableReason(int index) const;
 
     // FadeOnRx/FadeOnTx (from Thetis clsButtonBox)
     void setFadeOnRx(bool v) { m_fadeOnRx = v; }
@@ -151,6 +174,8 @@ public:
 signals:
     // Emitted when any button is clicked. Subclasses connect or override.
     void buttonClicked(int index, Qt::MouseButton button);
+    // A click on an unavailable button: nothing changed; `reason` says why.
+    void unavailableButtonClicked(int index, const QString& reason);
 
 protected:
     // Returns the button index at the given widget-pixel position, or -1.
@@ -181,6 +206,7 @@ private:
     // Click highlight (from Thetis 100ms timer pattern)
     int m_hoveredIndex{-1};
     int m_clickedIndex{-1};
+    int m_unavailablePressedIndex{-1};
     QTimer m_clickTimer;
 };
 

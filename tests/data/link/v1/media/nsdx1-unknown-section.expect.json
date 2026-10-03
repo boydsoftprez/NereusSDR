@@ -1,0 +1,14 @@
+{
+    "codec": "nsdx1",
+    "expect": {
+        "accepted": false,
+        "context": {
+            "contextGeneration": 1,
+            "endpointId": 1,
+            "maxDbm": -40,
+            "minDbm": -140,
+            "traceSamples": 32
+        },
+        "reason": "unknownSections"
+    }
+}

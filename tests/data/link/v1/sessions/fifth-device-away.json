@@ -1,0 +1,145 @@
+{
+    "runs": [
+        "station"
+    ],
+    "stationSetup": {
+        "radio": "static",
+        "slices": 1,
+        "otherPairedDevices": 4,
+        "otherClients": [
+            {
+                "name": "o",
+                "device": 1,
+                "features": {
+                    "deviceAuth": 1
+                }
+            },
+            {
+                "name": "a",
+                "device": 2,
+                "features": {
+                    "deviceAuth": 1,
+                    "sessionHolder": 1
+                }
+            },
+            {
+                "name": "b",
+                "device": 3,
+                "features": {
+                    "deviceAuth": 1,
+                    "sessionHolder": 1
+                }
+            },
+            {
+                "name": "c",
+                "device": 4,
+                "features": {
+                    "deviceAuth": 1,
+                    "sessionHolder": 1
+                }
+            }
+        ],
+        "token": "none",
+        "pairedDevice": true
+    },
+    "steps": [
+        {
+            "from": "station",
+            "message": {
+                "challenge": "$capture:challenge",
+                "features": {
+                    "deviceAuth": 1,
+                    "pairing": 1,
+                    "sessionHolder": 1
+                },
+                "identity": {
+                    "certBinding": "$string",
+                    "publicKey": "$string"
+                },
+                "major": 1,
+                "majors": [
+                    1
+                ],
+                "minor": 11,
+                "peer": "nereusd",
+                "settingsSchema": 0,
+                "type": "hello"
+            }
+        },
+        {
+            "connect": "o"
+        },
+        {
+            "connect": "a"
+        },
+        {
+            "from": "station",
+            "to": "o",
+            "message": {
+                "key": "devices",
+                "properties": "$any",
+                "type": "delta"
+            }
+        },
+        {
+            "connect": "b"
+        },
+        {
+            "from": "station",
+            "to": "o",
+            "message": {
+                "key": "devices",
+                "properties": "$any",
+                "type": "delta"
+            }
+        },
+        {
+            "connect": "c"
+        },
+        {
+            "close": "c"
+        },
+        {
+            "from": "client",
+            "role": "behaviour",
+            "message": {
+                "type": "hello",
+                "major": 1,
+                "minor": 11,
+                "settingsSchema": "$int",
+                "peer": "$string",
+                "majors": "$majors",
+                "features": {
+                    "deviceAuth": 1,
+                    "sessionHolder": 1
+                }
+            }
+        },
+        {
+            "from": "client",
+            "role": "behaviour",
+            "message": {
+                "type": "auth.request",
+                "token": "",
+                "device": "$device:signed"
+            }
+        },
+        {
+            "from": "station",
+            "message": {
+                "accepted": true,
+                "reason": "",
+                "retryable": false,
+                "type": "auth.result"
+            }
+        },
+        {
+            "from": "station",
+            "message": {
+                "type": "session.held",
+                "devices": "$any",
+                "revision": "$int"
+            }
+        }
+    ]
+}

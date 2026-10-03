@@ -10,6 +10,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-28 - 2 m as its own band (Band2m, number 27), per-band state
+//                 slots (R-IOS-26, R-R3-49). J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -68,6 +71,8 @@
 #include <QMetaType>
 #include <QString>
 
+#include <array>
+
 namespace NereusSDR {
 
 /// Ham + SWL band identity used by the per-band display grid (Phase 3G-8),
@@ -91,6 +96,14 @@ namespace NereusSDR {
 /// require renumbering values 14+ and breaking persisted AppSettings
 /// keys + StepAttenuator per-band arrays).  Existing values 0-13
 /// preserved verbatim.
+///
+/// 2 m (Band2m) is Thetis's B2M (enums.cs:292 [v2.10.3.15]), 144.0 to
+/// 148.0 MHz in every region (clsBandStackManager.cs:1330-1729), labelled
+/// "2m" (console.cs:17364). JJ ruled it its own band on 2026-09-28; before
+/// that 2 m frequencies fell into GEN. It is appended after the SWL block
+/// as number 27 so that no existing band's number moves: per-band arrays,
+/// numbered settings keys and the station link's band numbers keep their
+/// meaning.
 ///
 /// XVTR is never returned by `bandFromFrequency` — it represents
 /// transverter mode and is set explicitly by UI when a transverter is
@@ -126,7 +139,9 @@ enum class Band : int {
     Band14m,
     Band13m,
     Band11m,
-    Count = 27,
+    // Thetis enums.cs:292 [v2.10.3.15] B2M; appended, never renumber.
+    Band2m,
+    Count = 28,
 
     // Iteration aliases for SWL-only loops (e.g. OcOutputsSwlTab matrix
     // build, HERCULES SWL pin-7 auto-fill).
@@ -138,6 +153,46 @@ enum class Band : int {
 constexpr int kSwlBandCount =
     static_cast<int>(Band::SwlLast) - static_cast<int>(Band::SwlFirst) + 1;
 
+/// The bands that keep per-band state of their own (TX power and tune
+/// power, step attenuator, Alex antennas, the band button grid, the
+/// display grid): 160m .. XVTR and 2 m. Thetis sizes these stores by
+/// (int)Band.LAST, which includes B2M (console.cs:1793-1827 [v2.10.3.15]).
+/// The SWL bands have none (they inherit ham-band values).
+///
+/// A store keeps them in slot order: slot 0-13 is the band's own number
+/// (160m .. XVTR), slot 14 is 2 m. The band button grid's index is the
+/// slot too.
+inline constexpr int kPerBandStateCount = 15;
+
+inline constexpr std::array<Band, kPerBandStateCount> kPerBandStateBands{
+    Band::Band160m, Band::Band80m, Band::Band60m, Band::Band40m, Band::Band30m,
+    Band::Band20m,  Band::Band17m, Band::Band15m, Band::Band12m, Band::Band10m,
+    Band::Band6m,   Band::GEN,     Band::WWV,     Band::XVTR,    Band::Band2m,
+};
+
+/// `b`'s slot in a per-band store, or -1 for a band without state of its
+/// own (the SWL bands, Count).
+constexpr int perBandStateSlot(Band b) noexcept
+{
+    const int n = static_cast<int>(b);
+    if (n >= 0 && n < static_cast<int>(Band::SwlFirst)) {
+        return n;
+    }
+    return b == Band::Band2m ? kPerBandStateCount - 1 : -1;
+}
+
+/// The band in per-band store slot `slot` (0 .. kPerBandStateCount - 1);
+/// GEN for any other slot.
+constexpr Band bandFromPerBandStateSlot(int slot) noexcept
+{
+    return (slot >= 0 && slot < kPerBandStateCount)
+        ? kPerBandStateBands[static_cast<std::size_t>(slot)]
+        : Band::GEN;
+}
+
+/// True when `b` keeps per-band state of its own.
+constexpr bool hasPerBandState(Band b) noexcept { return perBandStateSlot(b) >= 0; }
+
 /// Human-readable label used in UI (e.g. "160m", "WWV").
 QString bandLabel(Band b);
 
@@ -147,8 +202,8 @@ QString bandLabel(Band b);
 /// without breaking persistence compatibility.
 QString bandKeyName(Band b);
 
-/// Maps a frequency in Hz to the enclosing ham band, or GEN if outside
-/// all ham bands. Never returns XVTR. WWV is detected at the six
+/// Maps a frequency in Hz to the enclosing ham band (2 m included), or GEN
+/// if outside all ham bands. Never returns XVTR. WWV is detected at the six
 /// standard time-signal center frequencies (2.5/5/10/15/20/25 MHz)
 /// within a ±5 kHz window.
 ///
@@ -161,15 +216,17 @@ Band bandFromFrequency(double hz);
 
 /// Maps a 0-based `BandButtonItem` UI index to the corresponding Band.
 /// Button order: 160m, 80m, 60m, 40m, 30m, 20m, 17m, 15m, 12m, 10m, 6m,
-/// GEN, WWV, XVTR. Returns Band::GEN for out-of-range indices.
+/// GEN, WWV, XVTR, 2m (the per-band state slot). Returns Band::GEN for
+/// out-of-range indices.
 Band bandFromUiIndex(int idx);
 
-/// Inverse of bandFromUiIndex.
+/// Inverse of bandFromUiIndex; -1 for a band with no button (SWL).
 int uiIndexFromBand(Band b);
 
 /// Maps a string band name to the corresponding Band enum. Accepts both
 /// short-name form ("160", "80", "WWV") used by SpectrumOverlayPanel and
-/// label form ("160m", "80m") used by bandKeyName(). Returns Band::GEN
+/// label form ("160m", "80m") used by bandKeyName(); "2" and "2m" are 2 m.
+/// Returns Band::GEN
 /// for unknown strings. Case-sensitive for special names ("GEN", "WWV",
 /// "XVTR" — uppercase).
 ///

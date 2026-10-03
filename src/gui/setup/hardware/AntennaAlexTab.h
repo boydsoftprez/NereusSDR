@@ -18,6 +18,21 @@
 //                 Alex-2 Filters (placeholder for Task 9). J.J. Boyd (KG4VCF).
 //   2026-04-20 — Replaced Alex-2 Filters placeholder with real AntennaAlexAlex2Tab
 //                 (Task 9). J.J. Boyd (KG4VCF).
+//   2026-09-23 - R-R3-46: forwards the transmit permission to Antenna
+//                 Control. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-09-26 - R-R3-46 / R-R3-49 (parity Task 14): forwards the Alex-1
+//                high-pass switches' availability. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - R-R3-46 / R-R3-49: the Alex Filters tabs' receive filter rows
+//                (per-row bypass and edges, Alex-2 master bypass) select the
+//                receive high-pass as Thetis's setAlexHPF /
+//                setBPF1ForOrionIISaturn / setAlex2HPF do (radioHardwareVersion
+//                8). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - R-R3-46 / R-R3-49: the Alex-1 Filters tab's low-pass rows
+//                and 6m/ByPass on RX select the low-pass as Thetis's
+//                setAlexLPF does (radioHardwareVersion 10). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -94,6 +109,21 @@ public:
     explicit AntennaAlexTab(RadioModel* model, QWidget* parent = nullptr);
     void populate(const RadioInfo& info, const BoardCapabilities& caps);
     void restoreSettings(const QMap<QString, QVariant>& settings);
+
+    // R-R3-46: the Alex-1 Filters tab's transmit fields follow the transmit
+    // permission with its reason. Always permitted locally. (Antenna
+    // Control's transmit half follows the Alex facade, parity Task 12.)
+    void setTransmitPermitted(bool permitted, const QString& reason);
+    // R-R3-46 / R-R3-49 (parity Task 14): see
+    // AntennaAlexAlex1Tab::setHpfSwitchesAvailable.
+    void setHpfSwitchesAvailable(bool available, const QString& reason);
+    // radioHardwareVersion 8: the Alex-1 and Alex-2 Filters tabs' receive
+    // filter rows (each row's Bypass, Start and End, and Alex-2's master
+    // bypass) follow whether the Core takes them, disabled with `reason`
+    // when it does not. Always available locally.
+    void setHpfRowsAvailable(bool available, const QString& reason);
+    // radioHardwareVersion 10: see AntennaAlexAlex1Tab::setLpfRowsAvailable.
+    void setLpfRowsAvailable(bool available, const QString& reason);
 
 signals:
     void settingChanged(const QString& key, const QVariant& value);

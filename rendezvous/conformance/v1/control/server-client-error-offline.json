@@ -1,0 +1,11 @@
+{
+  "from": "server",
+  "to": "client",
+  "wire": {
+    "type": "error",
+    "code": "offline",
+    "reason": "The Core is not reachable right now. Check that it is running and connected to the internet.",
+    "retryAfterMs": 0
+  },
+  "decodes": true
+}

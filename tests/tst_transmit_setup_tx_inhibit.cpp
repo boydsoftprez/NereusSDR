@@ -32,7 +32,10 @@ void TestTransmitSetupTxInhibit::groupBoxBuilt_bothControlsPresent()
     auto* chkInhibit = group->findChild<QCheckBox*>("chkTXInhibit");
     QVERIFY(chkInhibit);
     QCOMPARE(chkInhibit->isChecked(), false);
-    QCOMPARE(chkInhibit->toolTip(), QString("Thetis will update on TX inhibit state change"));
+    // Reworded from Thetis's "Thetis will update on TX inhibit state change"
+    // (R-R3-49 group A fix wave, M8).
+    QCOMPARE(chkInhibit->toolTip(),
+             QString("NereusSDR follows the radio's TX inhibit input when it changes."));
 
     auto* chkReverse = group->findChild<QCheckBox*>("chkTXInhibitReverse");
     QVERIFY(chkReverse);

@@ -1,3 +1,5 @@
+// 2026-10-02 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+// merge native EQ/CFC transactions with latest Core/remote profile ownership.
 // =================================================================
 // src/models/TransmitModel.cpp  (NereusSDR)
 // =================================================================
@@ -41,6 +43,10 @@
 //                 pcMicBufferSamples transient properties (I.2, Phase 3M-1b)
 //                 NereusSDR-native, J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-09-22 : R-R3-36 Task 6: the three PC Mic properties become
+//                 projections of the audio/TxInput config (RadioModel
+//                 wiring). NereusSDR-native, J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-04-28 — AppSettings per-MAC persistence for 15 mic/VOX/MON properties
 //                 (L.2, Phase 3M-1b): loadFromSettings(mac) / persistToSettings(mac)
 //                 + auto-persist on each setter via persistOne().
@@ -68,6 +74,38 @@
 //                 chkAntiVoxSource at setup.designer.cs:44646-44657
 //                 [v2.10.3.13]; see commit message for rationale.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-23 - R-R3-46 fix wave: the stored tune power stays within the
+//                 model's range; follow-up 2026-09-24: clamped and saved at
+//                 loadFromSettings for the radio loaded, never at
+//                 setHpsdrModel (which ran before the load and saved under
+//                 the previous radio). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-24 - R-R3-49 (parity Task 2): tunePowerForTxBand (the
+//                 transmit band's tune power) with setTuneTxBand,
+//                 setTunePowerForTxBand and a window's applyStationValue;
+//                 settingRangeRefusal() for the mirrored transmit settings.
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 3): the Core's TX profiles
+//                 (setStationTxProfiles, txProfileNamesFromJson, a
+//                 window's applyStationValue) and the Line In gain range
+//                 in settingRangeRefusal(). NereusSDR-original. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 4): txEqUseLegacy (Thetis
+//                 EQUseLegacy, setup.cs:3615 and 9318 [v2.10.3.15]) with a
+//                 one-time seed from the old per-computer key, the band
+//                 arrays as JSON for the link, and the EQ, CFC, phase
+//                 rotator, leveler and ALC ranges in settingRangeRefusal().
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 5): the per-band power and tune
+//                 power as JSON objects for the link, and the DEXP,
+//                 anti-VOX, two-tone and per-band power ranges in
+//                 settingRangeRefusal(). NereusSDR-original. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (group A fix wave, M4): settingRangeRefusal()
+//                 refuses a txEqParaEqData or cfcParaEqData value the curve
+//                 loader cannot read. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // --- From console.cs (Thetis v2.10.3.13) ---
@@ -233,17 +271,73 @@
 //                 header below complete the GPL attribution.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-09-28 - R-IOS-13 / R-R3-49: txEqCurve, the read-only curve
+//                 derived from txEqParaEqData (ParaEqCurve::txEqCurveJson)
+//                 whenever the blob changes. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - R-R3-49 (transmitSettingsVersion 15): cfcProfile,
+//                 refreshed from every CFC change (refreshCfcProfile).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-09-29 - PA on-air gate review: the per-band FM TX offset store
+//                 (setter and load) keeps only finite values in 0..50 MHz,
+//                 else the band's default. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-29 - PA on-air gate re-review: the first transmit band
+//                 repaints the tune power (tunePowerForTxBandChanged) even
+//                 when unchanged; clearTuneTxBand() forgets it at a
+//                 disconnect. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-29 - PA on-air gate re-review: an out-of-range per-band FM TX
+//                 offset set keeps the previous value (console.cs:20896
+//                 [v2.10.3.15]); the load still falls back to the band's
+//                 default. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-29 - Two-tone PA wiring: setPowerUsingTargetDbm skips the PWR
+//                 slider limit while powerSliderLimitEnabled is off
+//                 (PrettyTrackBar.ConstrainAValue [v2.10.3.15]). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - Radio codec: lineInGain follows lineInBoost through
+//                 lineInGainIndexForBoost (Thetis SetMicGain /
+//                 MakeLineInList); its default is the index for 0.0 dB.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - Radio codec review: setLineInBoost holds the value on
+//                 the 1.5 dB grid, the entry the radio is sent. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - CFC echo: a paired-curve ten-band or scalar write the
+//                 curve already holds keeps the curve unchanged, so a late
+//                 Core answer cannot overwrite a newer unsent curve.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - CFC echo fix round 1: that write goes on to the setter's
+//                 own equal-value check, so an integer mirror a restore
+//                 held apart from the curve still follows it. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "TransmitModel.h"
 #include "core/AppSettings.h"
+#include "core/ParaEqCurve.h"
+#include "core/CfcProfile.h"
 #include "core/PaProfile.h"
 #include "core/PureSignal.h"
 #include "core/StepAttenuatorController.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
+#include <QScopedValueRollback>
+
 #include <algorithm>
+#include <array>
+#include <functional>
+#include <limits>
+#include <optional>
+#include <utility>
+#include <vector>
 #include <cmath>
-#include <QScopeGuard>
 
 namespace NereusSDR {
 
@@ -256,7 +350,11 @@ namespace {
 // (Band::SwlFirst..SwlLast) for HL2 N2ADR Filter pin assignments — but TX
 // tune power is HF amateur only.  SWL bands inherit the closest ham-band
 // value implicitly (no separate per-SWL persistence).
-constexpr int kBandCount = static_cast<int>(Band::SwlFirst);  // 14
+//
+// 2 m (R-IOS-26, R-R3-49) keeps its own value, as Thetis's arrays sized by
+// (int)Band.LAST do for B2M: the arrays hold the per-band state slots
+// (Band.h, perBandStateSlot), 2 m at slot 14.
+constexpr int kBandCount = kPerBandStateCount;  // 15
 } // namespace
 
 QString vaxSlotToString(VaxSlot s)
@@ -303,26 +401,81 @@ DrivePowerSource drivePowerSourceFromString(const QString& s)
     return DrivePowerSource::DriveSlider;  // unknown-string fallback
 }
 
+// R-R3-49: Thetis's default FM TX offset for a band
+// (console.cs:1833-1841 [v2.10.3.15]): 1 MHz on 6 m, 0.1 MHz elsewhere.
+static double defaultFmTxOffsetMhz(Band band)
+{
+    switch (band) {
+        case Band::Band6m:  return 1.0;  // 1MHz
+        case Band::Band10m: return 0.1;  // 100kHz
+        default:            return 0.1;  // 100kHz
+    }
+}
+
+// The per-band store keeps only what udFMOffset can hold (0..50 MHz, the
+// FMTXOffsetMHz setter's check, console.cs:20891-20902 [v2.10.3.15]:
+//   if (value < (double)udFMOffset.Minimum || value > (double)udFMOffset.Maximum) return; //MW0LGE_21k9
+// ). NaN and infinities are outside it. A set outside it keeps the value it
+// had (the setter's return); a bad stored value loads as the band's default.
+static bool fmTxOffsetInRange(double mhz)
+{
+    return std::isfinite(mhz) && mhz >= 0.0 && mhz <= 50.0;
+}
+
+static double validFmTxOffsetMhz(Band band, double mhz)
+{
+    return fmTxOffsetInRange(mhz) ? mhz : defaultFmTxOffsetMhz(band);
+}
+
 TransmitModel::TransmitModel(QObject* parent)
     : QObject(parent)
 {
-    qRegisterMetaType<CfcProfile>();
     // Initialise per-band tune power to 50W.
     // From Thetis console.cs:1819-1820 [v2.10.3.13]:
     //   tunePower_by_band = new int[(int)Band.LAST];
     //   for (int i = 0; i < (int)Band.LAST; i++) tunePower_by_band[i] = 50;
     m_tunePowerByBand.fill(50);
 
+    // R-IOS-13 / R-R3-49: txEqCurve for the empty blob a new model starts
+    // with (the flat curve Thetis applies in its place).
+    m_txEqCurve = ParaEqCurve::txEqCurveJson(m_txEqParaEqData);
+
+    // R-R3-49 (transmitSettingsVersion 15): cfcProfile follows every CFC
+    // value, once a profile restore has put them all back.
+    qRegisterMetaType<CfcEditProfile>();
+    refreshCfcProfile();
+    for (auto signal : {&TransmitModel::cfcParaEqDataChanged,
+                        &TransmitModel::cfcEqFreqJsonChanged,
+                        &TransmitModel::cfcCompressionJsonChanged,
+                        &TransmitModel::cfcPostEqBandGainJsonChanged}) {
+        connect(this, signal, this, [this](const QString&) { refreshCfcProfile(); });
+    }
+    connect(this, &TransmitModel::cfcPrecompDbChanged, this, [this](int) { refreshCfcProfile(); });
+    connect(this, &TransmitModel::cfcPostEqGainDbChanged, this, [this](int) { refreshCfcProfile(); });
+    connect(this, &TransmitModel::cfcProfileRestored, this, &TransmitModel::refreshCfcProfile);
+    connect(this, &TransmitModel::cfcSettingsReloaded, this, &TransmitModel::refreshCfcProfile);
+
     // Initialise per-band normal-mode power to 50W (#167 Phase 3A).
     // From Thetis console.cs:1813-1814 [v2.10.3.13]:
     //   power_by_band = new int[(int)Band.LAST];
     //   for (int i = 0; i < (int)Band.LAST; i++) power_by_band[i] = 50;
-    // (Thetis safety-first default; users dial up from 50 per band.
-    //  limitPower_by_band[14] (console.cs:1816-1817 [v2.10.3.13]) is a
-    //  separate band-max ceiling array we do NOT port here — Phase 3C's
-    //  setPowerUsingTargetDbm math kernel sources its slider value from
-    //  this powerByBand array, the ceiling check is independent.)
+    // (Thetis safety-first default; users dial up from 50 per band.)
     m_powerByBand.fill(50);
+
+    // R-R3-49: per-band slider limits and FM TX offsets.
+    // From Thetis console.cs:1824-1841 [v2.10.3.15]:
+    //   for (int i = 0; i < (int)Band.LAST; i++) limitPower_by_band[i] = 100;
+    //   for (int i = 0; i < (int)Band.LAST; i++) limitTunePower_by_band[i] = 100;
+    //   for (int i = 0; i < (int)Band.LAST; i++) // setup default FM offsets
+    //       case Band.B6M: fm_tx_offset_by_band_mhz[i] = 1; break; // 1MHz
+    //       case Band.B10M: fm_tx_offset_by_band_mhz[i] = 0.1; break; // 100kHz
+    //       default: fm_tx_offset_by_band_mhz[i] = 0.1; break; // 100kHz
+    m_limitPowerByBand.fill(100);
+    m_limitTunePowerByBand.fill(100);
+    for (int i = 0; i < kBandCount; ++i) {
+        m_fmTxOffsetByBandMhz[static_cast<std::size_t>(i)] =
+            defaultFmTxOffsetMhz(bandFromPerBandStateSlot(i));
+    }
 }
 
 TransmitModel::~TransmitModel() = default;
@@ -407,6 +560,35 @@ void TransmitModel::loadFromSettings()
 
 // ── Mic gain (3M-1b C.1) ──────────────────────────────────────────────────
 
+// iPhone app plan Task 40: the whole of Thetis's setAudioMicGain, so the mic
+// mute silences the mic whichever window or device sets it.
+// From Thetis console.cs:28856-28868 [v2.10.3.15]:
+//   private void setAudioMicGain(double gain_db)
+//   {
+//       if (chkMicMute.Checked) // although it is called chkMicMute, checked = mic in use
+//       {
+//           Audio.MicPreamp = Math.Pow(10.0, gain_db / 20.0); // convert to scalar
+//           _mic_muted = false;
+//       }
+//       else
+//       {
+//           Audio.MicPreamp = 0.0;
+//           _mic_muted = true;
+//       }
+//   }
+namespace {
+
+// The mic preamp setAudioMicGain sets: 10^(gainDb/20) with the mic in use,
+// 0.0 while it is muted.
+double micPreampFor(bool micInUse, int gainDb)
+{
+    // although it is called chkMicMute, checked = mic in use  [original inline comment from console.cs:28858]
+    return micInUse ? std::pow(10.0, gainDb / 20.0) // convert to scalar
+                    : 0.0;
+}
+
+} // namespace
+
 void TransmitModel::setMicGainDb(int dB)
 {
     // Clamp to range per Thetis console.cs:19151-19171 [v2.10.3.13].
@@ -416,15 +598,14 @@ void TransmitModel::setMicGainDb(int dB)
     if (clamped == m_micGainDb) { return; }  // idempotent guard
 
     m_micGainDb = clamped;
-    // Porting from Thetis console.cs:28805-28817 [v2.10.3.13]:
-    //   Audio.MicPreamp = Math.Pow(10.0, gain_db / 20.0); // convert to scalar
-    m_micPreampLinear = std::pow(10.0, clamped / 20.0);
+    m_micPreampLinear = micPreampFor(m_micMute, m_micGainDb);
 
     persistOne(QStringLiteral("MicGain"), QString::number(m_micGainDb));  // L.2 auto-persist
 
     emit micGainDbChanged(m_micGainDb);
     emit micPreampChanged(m_micPreampLinear);
 }
+
 
 // ── Mic-jack flag properties (3M-1b C.2) ─────────────────────────────────────
 //
@@ -445,6 +626,21 @@ void TransmitModel::setMicMute(bool on)
     if (on == m_micMute) { return; }  // idempotent guard
     m_micMute = on;
     emit micMuteChanged(on);
+    // Thetis chkMicMute_CheckedChanged runs ptbMic_Scroll, which sets the
+    // preamp through setAudioMicGain.
+    // From Thetis console.cs:28845-28846 [v2.10.3.15] (ptbMic_Scroll):
+    //   //[2.10.3.9]MW0LGE fix for when mic is disabled
+    //   setAudioMicGain((double)ptbMic.Value);
+    const double preamp = micPreampFor(m_micMute, m_micGainDb);
+    if (preamp != m_micPreampLinear) {
+        m_micPreampLinear = preamp;
+        emit micPreampChanged(m_micPreampLinear);
+    }
+}
+
+void TransmitModel::setMicMuted(bool muted)
+{
+    setMicMute(!muted);
 }
 
 void TransmitModel::setMicBoost(bool on)
@@ -483,13 +679,42 @@ void TransmitModel::setLineInBoost(double dB)
 {
     // Clamp to Thetis range per setup.designer.cs:46898-46907 [v2.10.3.13]:
     //   udLineInBoost.Minimum = -34.5, udLineInBoost.Maximum = 12.0
+    // Radio codec lane (2026-09-30): the value is then held on the 1.5 dB
+    // grid of Thetis's udLineInBoost (setup.designer.cs:47006-47034
+    // [v2.10.3.15], Increment 1.5 from -34.5, ReadOnly), taking the entry
+    // lineInGainIndexForBoost sends, so an older whole-dB setting or a
+    // pre-24 peer's write shows the value the radio gets (5.0 -> 4.5).
     const double clamped = std::clamp(dB, kLineInBoostMin, kLineInBoostMax);
-    if (clamped == m_lineInBoost) { return; }  // idempotent guard
+    const double onGrid = kLineInBoostMin
+        + kLineInBoostStep * static_cast<double>(lineInGainIndexForBoost(clamped));
+    if (onGrid == m_lineInBoost) { return; }  // idempotent guard
     // Porting from Thetis console.cs:13225-13234 [v2.10.3.13]:
     //   line_in_boost = value; ptbMic_Scroll(); SetMicGain();
-    m_lineInBoost = clamped;
+    m_lineInBoost = onGrid;
     persistOne(QStringLiteral("Line_Input_Level"), QString::number(m_lineInBoost));  // L.2 auto-persist
-    emit lineInBoostChanged(clamped);
+    emit lineInBoostChanged(onGrid);
+    // Thetis SetMicGain sends the line-in gain as the index of line_in_boost
+    // in its 1.5 dB table, so the wire index follows the dB value here.
+    // From Thetis console.cs:40928-40932 [v2.10.3.15]:
+    //   if (!lineinarrayfill) MakeLineInList();
+    //   var lineboost = Array.IndexOf(lineinboost, line_in_boost.ToString());
+    //   NetworkIO.SetLineBoost(lineboost);
+    setLineInGain(lineInGainIndexForBoost(m_lineInBoost));
+}
+
+int TransmitModel::lineInGainIndexForBoost(double dB) noexcept
+{
+    // From Thetis console.cs:40900-40912 [v2.10.3.15] (MakeLineInList):
+    //   for (double i = -34.5; i <= 12; i += 1.5) { lineinboost[k] = s; ++k; }
+    // Entry k is -34.5 + 1.5 * k, k = 0..31. Thetis's control steps 1.5 dB
+    // from -34.5 (setup.designer.cs udLineInBoost Increment 1.5, ReadOnly),
+    // so its IndexOf always finds the value. A value between steps (an
+    // older NereusSDR setting saved in whole dB) takes the nearest entry
+    // here rather than Thetis's -1, which no Thetis control can produce.
+    const double clamped = std::clamp(dB, kLineInBoostMin, kLineInBoostMax);
+    const int index = static_cast<int>(
+        std::lround((clamped - kLineInBoostMin) / kLineInBoostStep));
+    return std::clamp(index, 0, kLineInGainIndexMax);
 }
 
 void TransmitModel::setMicTipRing(bool tipIsMic)
@@ -557,7 +782,7 @@ void TransmitModel::setUserDigOut(int dig)
 
 int TransmitModel::tunePowerForBand(Band band) const
 {
-    const int idx = static_cast<int>(band);
+    const int idx = perBandStateSlot(band);
     if (idx < 0 || idx >= kBandCount) {
         return 50;  // safe fallback for out-of-range band
     }
@@ -577,7 +802,7 @@ void TransmitModel::setTunePowerForBand(Band band, int watts)
     //   HERMESLITE: [0, 99]  (mi0bot Tune slider scale, 33 sub-steps;
     //     mi0bot console.cs:47616-47666 [v2.10.3.13-beta2])
     //   others:     [0, 100] (canonical Thetis 0-100 watts target)
-    const int idx = static_cast<int>(band);
+    const int idx = perBandStateSlot(band);
     if (idx < 0 || idx >= kBandCount) {
         return;
     }
@@ -588,13 +813,545 @@ void TransmitModel::setTunePowerForBand(Band band, int watts)
     }
     m_tunePowerByBand[static_cast<std::size_t>(idx)] = clamped;
     emit tunePowerByBandChanged(band, clamped);
+    emit tunePowerByBandJsonChanged(tunePowerByBandJson());  // R-R3-49 (parity Task 5)
+    if (m_tuneTxBandKnown && band == m_tuneTxBand) {
+        refreshTunePowerForTxBand();
+    }
+}
+
+// ── R-R3-49 (parity Task 2): tune power for the transmit band ─────────────
+//
+// NereusSDR-original. The TX applet's Tune Power slider sets the per-band
+// tune power and the tune drive source to TuneSlider (TxApplet.cpp); a
+// remote window reaches the same two through setTunePowerForTxBand on the
+// Core, for the band the Core transmits on.
+
+int TransmitModel::tunePowerMax() const noexcept
+{
+    return (m_hpsdrModel == HPSDRModel::HERMESLITE) ? 99 : 100;
+}
+
+void TransmitModel::refreshTunePowerForTxBand()
+{
+    if (!m_tuneTxBandKnown) { return; }
+    const int watts = tunePowerForBand(m_tuneTxBand);
+    if (watts == m_tunePowerForTxBand) { return; }
+    m_tunePowerForTxBand = watts;
+    emit tunePowerForTxBandChanged(watts);
+}
+
+void TransmitModel::setTuneTxBand(Band band)
+{
+    const bool firstKnown = !m_tuneTxBandKnown;
+    m_tuneTxBand = band;
+    m_tuneTxBandKnown = true;
+    if (firstKnown) {
+        // PA on-air gate re-review: until now the slider showed its own
+        // band's tune power, so the first transmit band repaints it even
+        // when its value equals the cached one.
+        m_tunePowerForTxBand = tunePowerForBand(band);
+        emit tunePowerForTxBandChanged(m_tunePowerForTxBand);
+        return;
+    }
+    refreshTunePowerForTxBand();
+}
+
+void TransmitModel::clearTuneTxBand()
+{
+    // PA on-air gate re-review: the transmit band belonged to the radio
+    // that went away (RadioModel teardown).
+    m_tuneTxBandKnown = false;
+}
+
+bool TransmitModel::setTunePowerForTxBand(int watts)
+{
+    if (!m_tuneTxBandKnown) { return false; }
+    setTunePowerForBand(m_tuneTxBand, watts);
+    setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
+    return true;
+}
+
+bool TransmitModel::applyStationValue(const QByteArray& propertyName, const QVariant& value)
+{
+    if (propertyName == "tunePowerForTxBand") {
+        bool ok = false;
+        const int watts = value.toInt(&ok);
+        if (!ok) { return false; }
+        if (watts != m_tunePowerForTxBand) {
+            m_tunePowerForTxBand = watts;
+            emit tunePowerForTxBandChanged(watts);
+        }
+        return true;
+    }
+    // R-R3-49 (parity Task 3): the Core's TX profiles, plain state.
+    if (propertyName == "activeTxProfile") {
+        const QString name = value.toString();
+        if (name != m_activeTxProfile) {
+            m_activeTxProfile = name;
+            emit activeTxProfileChanged(name);
+        }
+        return true;
+    }
+    if (propertyName == "txProfilesJson") {
+        const QString json = value.toString();
+        if (json != m_txProfilesJson) {
+            m_txProfilesJson = json;
+            emit txProfilesJsonChanged(json);
+        }
+        return true;
+    }
+    if (propertyName == "tuneDrivePowerSource") {
+        if (!value.canConvert<DrivePowerSource>()) { return false; }
+        const DrivePowerSource source = value.value<DrivePowerSource>();
+        if (source != m_tuneDrivePowerSource) {
+            // The Core's report, not this window's choice: not saved here.
+            m_tuneDrivePowerSource = source;
+            emit tuneDrivePowerSourceChanged(source);
+        }
+        return true;
+    }
+    return false;
+}
+
+void TransmitModel::reportTunePowerForTxBandRefused()
+{
+    emit tunePowerForTxBandChanged(m_tunePowerForTxBand);
+}
+
+// ── R-R3-49 (parity Task 3): the Core's TX profiles on the link ──────────
+//
+// NereusSDR-original. The list goes out as a JSON array of the names, in
+// the Core's MicProfileManager order, so a name holding a comma (an older
+// profile saved before the comma rule) stays one name.
+
+void TransmitModel::setStationTxProfiles(const QString& active, const QStringList& names)
+{
+    const QString json = QString::fromUtf8(
+        QJsonDocument(QJsonArray::fromStringList(names)).toJson(QJsonDocument::Compact));
+    if (json != m_txProfilesJson) {
+        m_txProfilesJson = json;
+        emit txProfilesJsonChanged(json);
+    }
+    if (active != m_activeTxProfile) {
+        m_activeTxProfile = active;
+        emit activeTxProfileChanged(active);
+    }
+}
+
+QStringList TransmitModel::txProfileNamesFromJson(const QString& json)
+{
+    const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
+    if (!doc.isArray()) {
+        return {};
+    }
+    QStringList names;
+    for (const QJsonValue& value : doc.array()) {
+        if (!value.isString()) {
+            return {};
+        }
+        names.append(value.toString());
+    }
+    return names;
+}
+
+// R-R3-49 (parity Task 4): the link's ten-value band arrays.
+namespace {
+
+// NereusSDR-original: ten whole numbers as the link's compact JSON array.
+QString tenValuesJson(const std::function<int(int)>& value)
+{
+    QJsonArray array;
+    for (int i = 0; i < 10; ++i) {
+        array.append(value(i));
+    }
+    return QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact));
+}
+
+// The ten whole numbers in `json`, or false when it is not a JSON array of
+// exactly ten whole numbers. Range is the caller's.
+bool tenValuesFromJson(const QString& json, std::array<int, 10>& out)
+{
+    const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
+    if (!doc.isArray()) { return false; }
+    const QJsonArray array = doc.array();
+    if (array.size() != 10) { return false; }
+    for (int i = 0; i < 10; ++i) {
+        const QJsonValue v = array.at(i);
+        if (!v.isDouble()) { return false; }
+        const double d = v.toDouble();
+        if (!std::isfinite(d) || d != std::floor(d)
+            || d < static_cast<double>(std::numeric_limits<int>::min())
+            || d > static_cast<double>(std::numeric_limits<int>::max())) {
+            return false;
+        }
+        out[static_cast<std::size_t>(i)] = static_cast<int>(d);
+    }
+    return true;
+}
+
+bool tenValuesInRange(const QString& json, int lo, int hi)
+{
+    std::array<int, 10> values{};
+    if (!tenValuesFromJson(json, values)) { return false; }
+    return std::all_of(values.begin(), values.end(),
+                       [lo, hi](int v) { return v >= lo && v <= hi; });
+}
+
+// R-R3-49 (parity Task 5): the link's per-band watts, a JSON object keyed by
+// bandKeyName for the 15 bands 160m .. XVTR and 2m. NereusSDR-original.
+// A peer built before 2 m (R-IOS-26) reads and writes the 14 without "2m"
+// (BandLinkFit.h); a map without "2m" keeps 2 m's value.
+constexpr int kLinkBandCount = kPerBandStateCount;  // 15
+
+QString bandWattsJson(const std::function<int(Band)>& value)
+{
+    QJsonObject object;
+    for (const Band band : kPerBandStateBands) {
+        object.insert(bandKeyName(band), value(band));
+    }
+    return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
+}
+
+// The bands' watts in `json`, or false when it is not a JSON object
+// holding exactly the 15 band keys (or the 14 without "2m", from a peer
+// built before 2 m), each a whole number from lo to hi. The whole map,
+// like the ten-value arrays: a window always sends every band it knows.
+bool bandWattsFromJson(const QString& json, int lo, int hi,
+                       std::vector<std::pair<Band, int>>& out)
+{
+    const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
+    if (!doc.isObject()) { return false; }
+    const QJsonObject object = doc.object();
+    const bool without2m = !object.contains(bandKeyName(Band::Band2m));
+    if (object.size() != (without2m ? kLinkBandCount - 1 : kLinkBandCount)) { return false; }
+    out.clear();
+    for (auto it = object.constBegin(); it != object.constEnd(); ++it) {
+        Band found = Band::Count;
+        for (const Band band : kPerBandStateBands) {
+            if (bandKeyName(band) == it.key()) {
+                found = band;
+                break;
+            }
+        }
+        if (found == Band::Count || !it.value().isDouble()) { return false; }
+        const double d = it.value().toDouble();
+        if (!std::isfinite(d) || d != std::floor(d)
+            || d < static_cast<double>(lo) || d > static_cast<double>(hi)) {
+            return false;
+        }
+        out.emplace_back(found, static_cast<int>(d));
+    }
+    return true;
+}
+
+} // namespace
+
+QString TransmitModel::settingRangeRefusal(const QByteArray& propertyName,
+                                           const QVariant& value) const
+{
+    const auto outside = [&value](qlonglong lo, qlonglong hi) {
+        bool ok = false;
+        const qlonglong v = value.toLongLong(&ok);
+        return !ok || v < lo || v > hi;
+    };
+    // R-R3-49 (group A fix wave, M4): a parametric EQ curve the Core could
+    // not load would leave its TX channel on the flat default curve. An
+    // empty value is the saved "no curve" and loads the default, as the
+    // TX profile's blank value does. The curves share the gzip envelope,
+    // but CFC contains two widget JSON objects; each has its own loader.
+    if (propertyName == "cfcParaEqData") {
+        CfcProfile::Profile points;
+        if (value.toString().isEmpty() || CfcProfile::decode(value.toString(), points)) {
+            return {};
+        }
+        return QStringLiteral("The Core could not read that equalizer curve. Save the curve again and retry.");
+    }
+    if (propertyName == "txEqParaEqData") {
+        const QString data = value.toString();
+        ParaEqCurve::TxEqPoints points;
+        if (data.isEmpty() || ParaEqCurve::loadTxEqPoints(data, points)) {
+            return {};
+        }
+        return QStringLiteral("The Core could not read that equalizer curve. Save the curve again and retry.");
+    }
+    if (propertyName == "tunePower" || propertyName == "tunePowerForTxBand") {
+        const int hi = tunePowerMax();
+        if (!outside(0, hi)) { return {}; }
+        return m_hpsdrModel == HPSDRModel::HERMESLITE
+            ? QStringLiteral("Choose a tune power from 0 to %1.").arg(hi)
+            : QStringLiteral("Choose a tune power from 0 to %1 W.").arg(hi);
+    }
+    if (propertyName == "voxThresholdDb") {
+        return outside(kVoxThresholdDbMin, kVoxThresholdDbMax)
+            ? QStringLiteral("Choose a VOX level from %1 to %2 dB.")
+                  .arg(kVoxThresholdDbMin).arg(kVoxThresholdDbMax)
+            : QString();
+    }
+    if (propertyName == "voxHangTimeMs") {
+        return outside(kVoxHangTimeMsMin, kVoxHangTimeMsMax)
+            ? QStringLiteral("Choose a VOX delay from %1 to %2 ms.")
+                  .arg(kVoxHangTimeMsMin).arg(kVoxHangTimeMsMax)
+            : QString();
+    }
+    if (propertyName == "cpdrLevelDb") {
+        return outside(kCpdrLevelDbMin, kCpdrLevelDbMax)
+            ? QStringLiteral("Choose a PROC level from %1 to %2 dB.")
+                  .arg(kCpdrLevelDbMin).arg(kCpdrLevelDbMax)
+            : QString();
+    }
+    if (propertyName == "amCarrierLevel") {
+        return outside(kAmCarrierLevelMin, kAmCarrierLevelMax)
+            ? QStringLiteral("Choose an AM carrier level from %1 to %2 percent.")
+                  .arg(kAmCarrierLevelMin).arg(kAmCarrierLevelMax)
+            : QString();
+    }
+    if (propertyName == "micGainDb") {
+        return outside(kMicGainDbMin, kMicGainDbMax)
+            ? QStringLiteral("Choose a mic level from %1 to %2 dB.")
+                  .arg(kMicGainDbMin).arg(kMicGainDbMax)
+            : QString();
+    }
+    // R-R3-49 (parity Task 3): Setup > Audio > TX Input's Line In gain.
+    if (propertyName == "lineInBoost") {
+        bool ok = false;
+        const double v = value.toDouble(&ok);
+        const bool inRange = ok && std::isfinite(v)
+            && v >= kLineInBoostMin && v <= kLineInBoostMax;
+        // The words carry kLineInBoostMin and kLineInBoostMax (-34.5, 12.0).
+        return inRange ? QString()
+                       : QStringLiteral("Choose a Line In gain from -34.5 to 12.0 dB.");
+    }
+    if (propertyName == "monitorVolume") {
+        bool ok = false;
+        const double v = value.toDouble(&ok);
+        const bool inRange = ok && std::isfinite(v)
+            && v >= static_cast<double>(kMonitorVolumeMin)
+            && v <= static_cast<double>(kMonitorVolumeMax);
+        return inRange ? QString()
+                       : QStringLiteral("Choose a monitor level from 0.0 to 1.0.");
+    }
+    // R-R3-49 (parity Task 4): the TX EQ, CFC, phase rotator, leveler and
+    // ALC settings, each with its setter's own range; a band array is
+    // refused whole unless it holds ten whole numbers, each in range.
+    const auto scalar = [&outside](qlonglong lo, qlonglong hi, const QString& words) {
+        return outside(lo, hi) ? words : QString();
+    };
+    if (propertyName == "txEqPreamp") {
+        return scalar(kTxEqPreampDbMin, kTxEqPreampDbMax,
+            QStringLiteral("Choose a TX EQ preamp from %1 to %2 dB.")
+                .arg(kTxEqPreampDbMin).arg(kTxEqPreampDbMax));
+    }
+    if (propertyName == "txEqNc") {
+        return scalar(kTxEqNcMin, kTxEqNcMax,
+            QStringLiteral("Choose a TX EQ Nc from %1 to %2.")
+                .arg(kTxEqNcMin).arg(kTxEqNcMax));
+    }
+    if (propertyName == "txEqCtfmode") {
+        return scalar(0, kTxEqCtfmodeMax,
+            QStringLiteral("Choose a TX EQ cutoff of 0 (peaking) or 1 (notch)."));
+    }
+    if (propertyName == "txEqWintype") {
+        return scalar(0, kTxEqWintypeMax,
+            QStringLiteral("Choose a TX EQ window of 0 (Blackman-Harris) or 1 (Hann)."));
+    }
+    if (propertyName == "cfcPrecompDb") {
+        return scalar(kCfcPrecompDbMin, kCfcPrecompDbMax,
+            QStringLiteral("Choose a CFC pre-compression from %1 to %2 dB.")
+                .arg(kCfcPrecompDbMin).arg(kCfcPrecompDbMax));
+    }
+    if (propertyName == "cfcPostEqGainDb") {
+        return scalar(kCfcPostEqGainDbMin, kCfcPostEqGainDbMax,
+            QStringLiteral("Choose a CFC post-EQ gain from %1 to %2 dB.")
+                .arg(kCfcPostEqGainDbMin).arg(kCfcPostEqGainDbMax));
+    }
+    if (propertyName == "phaseRotatorFreqHz") {
+        return scalar(kPhaseRotatorFreqHzMin, kPhaseRotatorFreqHzMax,
+            QStringLiteral("Choose a phase rotator frequency from %1 to %2 Hz.")
+                .arg(kPhaseRotatorFreqHzMin).arg(kPhaseRotatorFreqHzMax));
+    }
+    if (propertyName == "phaseRotatorStages") {
+        return scalar(kPhaseRotatorStagesMin, kPhaseRotatorStagesMax,
+            QStringLiteral("Choose from %1 to %2 phase rotator stages.")
+                .arg(kPhaseRotatorStagesMin).arg(kPhaseRotatorStagesMax));
+    }
+    if (propertyName == "txLevelerMaxGain") {
+        return scalar(kTxLevelerMaxGainDbMin, kTxLevelerMaxGainDbMax,
+            QStringLiteral("Choose a leveler maximum gain from %1 to %2 dB.")
+                .arg(kTxLevelerMaxGainDbMin).arg(kTxLevelerMaxGainDbMax));
+    }
+    if (propertyName == "txLevelerDecay") {
+        return scalar(kTxLevelerDecayMsMin, kTxLevelerDecayMsMax,
+            QStringLiteral("Choose a leveler decay from %1 to %2 ms.")
+                .arg(kTxLevelerDecayMsMin).arg(kTxLevelerDecayMsMax));
+    }
+    if (propertyName == "txAlcMaxGain") {
+        return scalar(kTxAlcMaxGainDbMin, kTxAlcMaxGainDbMax,
+            QStringLiteral("Choose an ALC maximum gain from %1 to %2 dB.")
+                .arg(kTxAlcMaxGainDbMin).arg(kTxAlcMaxGainDbMax));
+    }
+    if (propertyName == "txAlcDecay") {
+        return scalar(kTxAlcDecayMsMin, kTxAlcDecayMsMax,
+            QStringLiteral("Choose an ALC decay from %1 to %2 ms.")
+                .arg(kTxAlcDecayMsMin).arg(kTxAlcDecayMsMax));
+    }
+    const auto bands = [&value](int lo, int hi, const QString& words) {
+        return tenValuesInRange(value.toString(), lo, hi) ? QString() : words;
+    };
+    if (propertyName == "txEqBandsJson") {
+        return bands(kTxEqBandDbMin, kTxEqBandDbMax,
+            QStringLiteral("Choose ten TX EQ band levels, each from %1 to %2 dB.")
+                .arg(kTxEqBandDbMin).arg(kTxEqBandDbMax));
+    }
+    if (propertyName == "txEqFreqsJson") {
+        return bands(kTxEqFreqHzMin, kTxEqFreqHzMax,
+            QStringLiteral("Choose ten TX EQ band centers, each from %1 to %2 Hz.")
+                .arg(kTxEqFreqHzMin).arg(kTxEqFreqHzMax));
+    }
+    if (propertyName == "cfcCompressionJson") {
+        const QString base = bands(kCfcCompressionDbMin, kCfcCompressionDbMax,
+            QStringLiteral("Choose ten CFC compression levels, each from %1 to %2 dB.")
+                .arg(kCfcCompressionDbMin).arg(kCfcCompressionDbMax));
+        if (!base.isEmpty()) { return base; }
+        CfcProfile::Profile p;
+        if (!CfcProfile::decode(m_cfcParaEqData, p)) { return {}; }
+        if (p.f.size() != 10) {
+            return QStringLiteral("This CFC curve has five or eighteen bands. Update the app or use the full CFC controls.");
+        }
+        std::array<int, 10> values{};
+        tenValuesFromJson(value.toString(), values);
+        for (int i = 0; i < 10; ++i) { p.g[static_cast<std::size_t>(i)] = values[static_cast<std::size_t>(i)]; }
+        return CfcProfile::encode(p).isEmpty()
+            ? QStringLiteral("Those CFC values cannot form a complete curve.") : QString();
+    }
+    if (propertyName == "cfcEqFreqJson") {
+        const QString base = bands(kCfcEqFreqHzMin, kCfcEqFreqHzMax,
+            QStringLiteral("Choose ten CFC band centers, each from %1 to %2 Hz.")
+                .arg(kCfcEqFreqHzMin).arg(kCfcEqFreqHzMax));
+        if (!base.isEmpty()) { return base; }
+        CfcProfile::Profile p;
+        if (!CfcProfile::decode(m_cfcParaEqData, p)) { return {}; }
+        if (p.f.size() != 10) {
+            return QStringLiteral("This CFC curve has five or eighteen bands. Update the app or use the full CFC controls.");
+        }
+        std::array<int, 10> values{};
+        tenValuesFromJson(value.toString(), values);
+        for (int i = 0; i < 10; ++i) {
+            p.f[static_cast<std::size_t>(i)] = values[static_cast<std::size_t>(i)];
+            p.postF[static_cast<std::size_t>(i)] = values[static_cast<std::size_t>(i)];
+        }
+        p.minHz = p.f.front(); p.maxHz = p.f.back();
+        p.postMinHz = p.postF.front(); p.postMaxHz = p.postF.back();
+        return CfcProfile::encode(p).isEmpty()
+            ? QStringLiteral("Choose CFC band centers in increasing order within the curve range.") : QString();
+    }
+    if (propertyName == "cfcPostEqBandGainJson") {
+        const QString base = bands(kCfcPostEqBandGainDbMin, kCfcPostEqBandGainDbMax,
+            QStringLiteral("Choose ten CFC post-EQ band levels, each from %1 to %2 dB.")
+                .arg(kCfcPostEqBandGainDbMin).arg(kCfcPostEqBandGainDbMax));
+        if (!base.isEmpty()) { return base; }
+        CfcProfile::Profile p;
+        if (!CfcProfile::decode(m_cfcParaEqData, p)) { return {}; }
+        if (p.f.size() != 10) {
+            return QStringLiteral("This CFC curve has five or eighteen bands. Update the app or use the full CFC controls.");
+        }
+        std::array<int, 10> values{};
+        tenValuesFromJson(value.toString(), values);
+        for (int i = 0; i < 10; ++i) { p.e[static_cast<std::size_t>(i)] = values[static_cast<std::size_t>(i)]; }
+        return CfcProfile::encode(p).isEmpty()
+            ? QStringLiteral("Those CFC values cannot form a complete curve.") : QString();
+    }
+    // R-R3-49 (parity Task 5): the per-band power and tune power, each band
+    // with its per-band setter's range (setPowerForBand 0 to 100 W;
+    // setTunePowerForBand 0 to 100 W, 0 to 99 on the HL2), refused whole.
+    if (propertyName == "powerByBandJson" || propertyName == "tunePowerByBandJson") {
+        const bool tune = propertyName == "tunePowerByBandJson";
+        const int hi = tune ? tunePowerMax() : 100;
+        std::vector<std::pair<Band, int>> named;
+        if (bandWattsFromJson(value.toString(), 0, hi, named)) {
+            return {};
+        }
+        if (!tune) {
+            return QStringLiteral("Choose a power from 0 to 100 W for each band.");
+        }
+        return m_hpsdrModel == HPSDRModel::HERMESLITE
+            ? QStringLiteral("Choose a tune power from 0 to %1 for each band.").arg(hi)
+            : QStringLiteral("Choose a tune power from 0 to %1 W for each band.").arg(hi);
+    }
+    // The DEXP / VOX page's timings and filter, each with its setter's own
+    // clamp range (setup.Designer.cs, cited at each constant).
+    const auto real = [&value](double lo, double hi) {
+        bool ok = false;
+        const double v = value.toDouble(&ok);
+        return ok && std::isfinite(v) && v >= lo && v <= hi;
+    };
+    if (propertyName == "dexpAttackTimeMs") {
+        // The words carry kDexpAttackTimeMsMin and kDexpAttackTimeMsMax.
+        return real(kDexpAttackTimeMsMin, kDexpAttackTimeMsMax) ? QString()
+            : QStringLiteral("Choose a DEXP attack time from 2 to 100 ms.");
+    }
+    if (propertyName == "dexpDetectorTauMs") {
+        return real(kDexpDetectorTauMsMin, kDexpDetectorTauMsMax) ? QString()
+            : QStringLiteral("Choose a DEXP detector time from 1 to 100 ms.");
+    }
+    if (propertyName == "dexpReleaseTimeMs") {
+        return real(kDexpReleaseTimeMsMin, kDexpReleaseTimeMsMax) ? QString()
+            : QStringLiteral("Choose a DEXP release time from 2 to 1000 ms.");
+    }
+    if (propertyName == "dexpExpansionRatioDb") {
+        return real(kDexpExpansionRatioDbMin, kDexpExpansionRatioDbMax) ? QString()
+            : QStringLiteral("Choose a DEXP expansion ratio from 0.0 to 30.0 dB.");
+    }
+    if (propertyName == "dexpHysteresisRatioDb") {
+        return real(kDexpHysteresisRatioDbMin, kDexpHysteresisRatioDbMax) ? QString()
+            : QStringLiteral("Choose a DEXP hysteresis ratio from 0.0 to 10.0 dB.");
+    }
+    if (propertyName == "dexpLookAheadMs") {
+        return real(kDexpLookAheadMsMin, kDexpLookAheadMsMax) ? QString()
+            : QStringLiteral("Choose a look-ahead time from 10 to 999 ms.");
+    }
+    if (propertyName == "dexpLowCutHz" || propertyName == "dexpHighCutHz") {
+        return real(kDexpFilterCutHzMin, kDexpFilterCutHzMax) ? QString()
+            : QStringLiteral("Choose a VOX trigger filter cut from 100 to 10000 Hz.");
+    }
+    if (propertyName == "antiVoxGainDb") {
+        return scalar(kAntiVoxGainDbMin, kAntiVoxGainDbMax,
+            QStringLiteral("Choose an anti-VOX gain from %1 to %2 dB.")
+                .arg(kAntiVoxGainDbMin).arg(kAntiVoxGainDbMax));
+    }
+    // The Two-Tone IMD page's settings (setup.Designer.cs ranges, cited at
+    // each constant).
+    if (propertyName == "twoToneFreq1") {
+        return scalar(kTwoToneFreq1HzMin, kTwoToneFreq1HzMax,
+            QStringLiteral("Choose a tone frequency from %1 to %2 Hz.")
+                .arg(kTwoToneFreq1HzMin).arg(kTwoToneFreq1HzMax));
+    }
+    if (propertyName == "twoToneFreq2") {
+        return scalar(kTwoToneFreq2HzMin, kTwoToneFreq2HzMax,
+            QStringLiteral("Choose a tone frequency from %1 to %2 Hz.")
+                .arg(kTwoToneFreq2HzMin).arg(kTwoToneFreq2HzMax));
+    }
+    if (propertyName == "twoToneLevel") {
+        return real(kTwoToneLevelDbMin, kTwoToneLevelDbMax) ? QString()
+            : QStringLiteral("Choose a two-tone level from -96 to 0 dB.");
+    }
+    if (propertyName == "twoTonePower") {
+        return scalar(kTwoTonePowerMin, kTwoTonePowerMax,
+            QStringLiteral("Choose a two-tone power from %1 to %2 percent.")
+                .arg(kTwoTonePowerMin).arg(kTwoTonePowerMax));
+    }
+    if (propertyName == "twoToneFreq2Delay") {
+        return scalar(kTwoToneFreq2DelayMsMin, kTwoToneFreq2DelayMsMax,
+            QStringLiteral("Choose a second tone delay from %1 to %2 ms.")
+                .arg(kTwoToneFreq2DelayMsMin).arg(kTwoToneFreq2DelayMsMax));
+    }
+    return {};
 }
 
 // ── Per-band normal-mode power (#167 Phase 3A) ──────────────────────────────
 
 int TransmitModel::powerForBand(Band band) const
 {
-    const int idx = static_cast<int>(band);
+    const int idx = perBandStateSlot(band);
     if (idx < 0 || idx >= kBandCount) {
         return 100;  // safe fallback for out-of-range band
     }
@@ -610,7 +1367,7 @@ void TransmitModel::setPowerForBand(Band band, int watts)
     // back into m_powerByBand[band] via setPower side-effect (matches
     // Thetis console.cs:46676 [v2.10.3.13] power_by_band[(int)_tx_band] =
     // new_pwr).
-    const int idx = static_cast<int>(band);
+    const int idx = perBandStateSlot(band);
     if (idx < 0 || idx >= kBandCount) {
         return;
     }
@@ -627,6 +1384,120 @@ void TransmitModel::setPowerForBand(Band band, int watts)
             QString::number(clamped));
     }
     emit powerByBandChanged(band, clamped);
+    emit powerByBandJsonChanged(powerByBandJson());  // R-R3-49 (parity Task 5)
+}
+
+// ── Per-band slider limits and FM TX offset (R-R3-49) ───────────────────────
+//
+// Thetis stores these per band (console.cs:1824-1841 [v2.10.3.15]) and the
+// TXBand setter assigns them to the sliders and the FM offset on a band
+// change (console.cs:17539-17550 [v2.10.3.15]).  The limit is only changed
+// in Thetis by a right-drag on the slider (ptbPWR_Scroll, console.cs:28690
+// [v2.10.3.15]: limitPower_by_band[(int)_tx_band] = lc.LimitValue; // store
+// the adjusted limit level), which NereusSDR does not have.
+
+int TransmitModel::limitPowerForBand(Band band) const
+{
+    const int idx = perBandStateSlot(band);
+    if (idx < 0 || idx >= kBandCount) {
+        return 100;
+    }
+    return m_limitPowerByBand[static_cast<std::size_t>(idx)];
+}
+
+void TransmitModel::setLimitPowerForBand(Band band, int watts)
+{
+    const int idx = perBandStateSlot(band);
+    if (idx < 0 || idx >= kBandCount) {
+        return;
+    }
+    const int clamped = std::clamp(watts, 0, 100);
+    m_limitPowerByBand[static_cast<std::size_t>(idx)] = clamped;
+    if (!m_persistMac.isEmpty()) {
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/%1/limitPowerByBand/%2")
+                .arg(m_persistMac, bandKeyName(band)),
+            QString::number(clamped));
+    }
+}
+
+int TransmitModel::limitTunePowerForBand(Band band) const
+{
+    const int idx = perBandStateSlot(band);
+    if (idx < 0 || idx >= kBandCount) {
+        return 100;
+    }
+    return m_limitTunePowerByBand[static_cast<std::size_t>(idx)];
+}
+
+void TransmitModel::setLimitTunePowerForBand(Band band, int watts)
+{
+    const int idx = perBandStateSlot(band);
+    if (idx < 0 || idx >= kBandCount) {
+        return;
+    }
+    const int clamped = std::clamp(watts, 0, 100);
+    m_limitTunePowerByBand[static_cast<std::size_t>(idx)] = clamped;
+    if (!m_persistMac.isEmpty()) {
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/%1/limitTunePowerByBand/%2")
+                .arg(m_persistMac, bandKeyName(band)),
+            QString::number(clamped));
+    }
+}
+
+// PrettyTrackBar LimitValue setter (PrettyTrackBar.cs [v2.10.3.15]) clamps
+// the limit to the slider's Min/Max; ptbPWR and ptbTune are 0..100
+// (console.Designer.cs:3686-3689, 3942-3945 [v2.10.3.15]).
+void TransmitModel::setPowerLimit(int watts)
+{
+    m_powerLimit = std::clamp(watts, 0, 100);
+}
+
+void TransmitModel::setTunePowerLimit(int watts)
+{
+    m_tunePowerLimit = std::clamp(watts, 0, 100);
+}
+
+void TransmitModel::setFmTxOffsetMhz(double mhz)
+{
+    // From Thetis console.cs:20891-20902 [v2.10.3.15] (FMTXOffsetMHz setter):
+    //   if (value < (double)udFMOffset.Minimum || value > (double)udFMOffset.Maximum) return; //MW0LGE_21k9
+    // udFMOffset is 0..50 MHz.
+    if (!(mhz >= 0.0 && mhz <= 50.0)) {
+        return;
+    }
+    m_fmTxOffsetMhz = mhz;
+}
+
+double TransmitModel::fmTxOffsetForBandMhz(Band band) const
+{
+    const int idx = perBandStateSlot(band);
+    if (idx < 0 || idx >= kBandCount) {
+        return defaultFmTxOffsetMhz(band);
+    }
+    return m_fmTxOffsetByBandMhz[static_cast<std::size_t>(idx)];
+}
+
+void TransmitModel::setFmTxOffsetForBandMhz(Band band, double mhz)
+{
+    const int idx = perBandStateSlot(band);
+    if (idx < 0 || idx >= kBandCount) {
+        return;
+    }
+    // From Thetis console.cs:20896 [v2.10.3.15]: out of range keeps the
+    // previous value.
+    //   if (value < (double)udFMOffset.Minimum || value > (double)udFMOffset.Maximum) return; //MW0LGE_21k9
+    if (!fmTxOffsetInRange(mhz)) {
+        return;
+    }
+    m_fmTxOffsetByBandMhz[static_cast<std::size_t>(idx)] = mhz;
+    if (!m_persistMac.isEmpty()) {
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/%1/fmTxOffsetByBandMhz/%2")
+                .arg(m_persistMac, bandKeyName(band)),
+            QString::number(mhz, 'g', 17));
+    }
 }
 
 // ── ATT-on-TX-on-power-change safety setters (#167 Phase 3A) ────────────────
@@ -897,6 +1768,17 @@ void TransmitModel::setTunePower(int watts)
     emit tunePowerChanged(clamped);
 }
 
+void TransmitModel::setHpsdrModel(HPSDRModel m)
+{
+    // R-R3-46 follow-up: only the model. A connect sets it before the new
+    // radio's settings load, while this object still saves under the
+    // previous radio, so clamping here saved the new model's clamp under
+    // the old MAC. loadFromSettings() and load() clamp the new radio's
+    // values to this model (setTunePower, setTunePowerForBand's range) and
+    // save them for that radio.
+    m_hpsdrModel = m;
+}
+
 void TransmitModel::setTxPostGenToneMag(double mag)
 {
     // From mi0bot-Thetis console.cs:47666 [v2.10.3.13-beta2]:
@@ -959,6 +1841,9 @@ TransmitModel::TxPowerResult TransmitModel::setPowerUsingTargetDbm(
     TxPowerResult result;
     result.bConstrain = true;
     int new_pwr = 0;
+    // Thetis: PrettyTrackBar slider = ptbPWR; set to ptbTune on the
+    // TUNE_SLIDER source (console.cs:46724+ [v2.10.3.15]).
+    bool sliderIsTune = false;
 
     // From Thetis console.cs:46651-46669 [v2.10.3.13] — txMode determination.
     //   int txMode = 0; // 0 normal, 1 tune, 2 2tone
@@ -1014,13 +1899,17 @@ TransmitModel::TxPowerResult TransmitModel::setPowerUsingTargetDbm(
                     new_pwr = m_power;
                     break;
                 case DrivePowerSource::TuneSlider:
+                    sliderIsTune = true;  // slider = ptbTune;
                     new_pwr = tunePowerForBand(currentBand);
                     // From mi0bot-Thetis console.cs:47660-47673 [v2.10.3.13-beta2]
                     // MI0BOT: As HL2 only has 15 step output attenuator,
                     //         reduce the level further
                     if (model == HPSDRModel::HERMESLITE) {
+                        // if (bConstrain) new_pwr = slider.ConstrainAValue(ptbTune.Value);
+                        // (the HL2 tune slider is 0..99, then its limit)
                         if (result.bConstrain) {
-                            new_pwr = std::clamp(new_pwr, 0, 99);
+                            new_pwr = std::min(std::clamp(new_pwr, 0, 99),
+                                               m_tunePowerLimit);
                         }
                         if (new_pwr <= 51) {
                             setTxPostGenToneMag((new_pwr + 40) / 100.0);
@@ -1052,6 +1941,7 @@ TransmitModel::TxPowerResult TransmitModel::setPowerUsingTargetDbm(
                     new_pwr = m_power;
                     break;
                 case DrivePowerSource::TuneSlider:
+                    sliderIsTune = true;  // slider = ptbTune;
                     new_pwr = tunePowerForBand(currentBand);
                     break;
                 case DrivePowerSource::Fixed:
@@ -1066,14 +1956,28 @@ TransmitModel::TxPowerResult TransmitModel::setPowerUsingTargetDbm(
     // computeAudioVolume catches Band::XVTR via PaProfile::getGainForBand
     // returning 1000.  See header comment + plan §"Open follow-ups".
 
-    // From Thetis console.cs:46719 [v2.10.3.13]:
+    // From Thetis console.cs:46797-46798 [v2.10.3.15]:
+    //     //constrain power
     //     if(bConstrain) new_pwr = slider.ConstrainAValue(new_pwr);
-    // Thetis's PrettyTrackBar.ConstrainAValue clamps to slider Min/Max
-    // (PWR/TUN are 0..100).  bConstrain==false is the FIXED-drive path
-    // — the setup-page fixed value bypasses the slider clamp (matches
-    // Thetis behaviour).
+    // PrettyTrackBar.ConstrainAValue [v2.10.3.15]:
+    //     if (!_bLimitEnabled || (value <= _nLimitValue)) return value;
+    //     else return _nLimitValue;
+    // The slider is ptbTune on the TUNE_SLIDER source, else ptbPWR; both
+    // have LimitEnabled = true (console.Designer.cs:3686, 3942
+    // [v2.10.3.15]).  The two-tone start turns ptbPWR's off
+    // (PWRSliderLimitEnabled = false, setup.cs:11154-11158 [v2.10.3.15])
+    // around its FIXED source, so the PWR set to the two-tone power and
+    // its txMode 0 scroll run past the band's limit; the stop turns it
+    // back on.  The 0..100 clamp stands for the slider's own Min/Max.
+    // bConstrain==false is the FIXED-drive path: the setup-page value
+    // bypasses the slider.
     if (result.bConstrain) {
         new_pwr = std::clamp(new_pwr, 0, 100);
+        const bool limitEnabled = sliderIsTune || m_powerSliderLimitEnabled;
+        const int limit = sliderIsTune ? m_tunePowerLimit : m_powerLimit;
+        if (limitEnabled && new_pwr > limit) {
+            new_pwr = limit;
+        }
     }
 
     result.newPower = new_pwr;
@@ -1196,10 +2100,16 @@ void TransmitModel::load()
     // setHpsdrModel(m_hardwareProfile.model) before invoking load().
     const int hi = (m_hpsdrModel == HPSDRModel::HERMESLITE) ? 99 : 100;
     for (int i = 0; i < kBandCount; ++i) {
-        const QString key = prefix + QString::number(i);
+        // Keyed by the band's number (2 m is 27), as before for 0-13.
+        const QString key =
+            prefix + QString::number(static_cast<int>(bandFromPerBandStateSlot(i)));
         const int v = s.value(key, QStringLiteral("50")).toInt();
         m_tunePowerByBand[static_cast<std::size_t>(i)] = std::clamp(v, 0, hi);
     }
+    refreshTunePowerForTxBand();
+    // R-R3-49 (parity Task 5): the restore bypasses the per-band setter, so
+    // the link's copy is told here.
+    emit tunePowerByBandJsonChanged(tunePowerByBandJson());
 }
 
 void TransmitModel::save()
@@ -1221,7 +2131,7 @@ void TransmitModel::save()
     const QString prefix =
         QStringLiteral("hardware/%1/tunePowerByBand/").arg(m_mac);
     for (int i = 0; i < kBandCount; ++i) {
-        s.setValue(prefix + QString::number(i),
+        s.setValue(prefix + QString::number(static_cast<int>(bandFromPerBandStateSlot(i))),
                    QString::number(m_tunePowerByBand[static_cast<std::size_t>(i)]));
     }
 }
@@ -1300,9 +2210,10 @@ void TransmitModel::loadFromSettings(const QString& mac)
     // Defaults from Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13]:
     //   line_in_gain default 0 (no line-in attenuation),
     //   user_dig_out default 0 (all 4 user digital pins low).
-    const int lineInGain = s.value(pfx + QLatin1String("LineInGain"),
-                                     QStringLiteral("0")).toInt();
-    setLineInGain(lineInGain);
+    // Radio codec lane (2026-09-30): the line-in gain index is derived
+    // from lineInBoost, as Thetis SetMicGain derives it (console.cs:40928-40932
+    // [v2.10.3.15]), so a stored LineInGain no longer overrides the dB value.
+    setLineInGain(lineInGainIndexForBoost(m_lineInBoost));
     const int userDigOut = s.value(pfx + QLatin1String("UserDigOut"),
                                      QStringLiteral("0")).toInt();
     setUserDigOut(userDigOut);
@@ -1548,6 +2459,22 @@ void TransmitModel::loadFromSettings(const QString& mac)
     setTxEqParaEqData(s.value(pfx + QLatin1String("TXParaEQData"),
                                 QStringLiteral("")).toString());
 
+    // R-R3-49 (parity Task 4): the Legacy EQ box, default true (Thetis
+    // eqform.cs:988 [v2.10.3.15]). It used to be this computer's setting
+    // (TxEqDialog/UsingLegacyEQ); a radio with no value of its own takes
+    // that one once, so a user who chose the parametric EQ keeps it.
+    {
+        const QString key = pfx + QLatin1String("EQUseLegacy");
+        const QString computerKey = QStringLiteral("TxEqDialog/UsingLegacyEQ");
+        QString stored = s.value(key).toString();
+        if (!s.contains(key) && s.contains(computerKey)) {
+            stored = s.value(computerKey).toString();
+            s.setValue(key, stored == QLatin1String("False")
+                                ? QStringLiteral("False") : QStringLiteral("True"));
+        }
+        setTxEqUseLegacy(stored != QLatin1String("False"));
+    }
+
     // ── Phase Rotator (3M-3a-ii Batch 2) ──────────────────────────────────
     // Defaults from Thetis database.cs:4726-4730 [v2.10.3.13].
     setPhaseRotatorEnabled(s.value(pfx + QLatin1String("CFCPhaseRotatorEnabled"),
@@ -1559,45 +2486,44 @@ void TransmitModel::loadFromSettings(const QString& mac)
     setPhaseRotatorStages(s.value(pfx + QLatin1String("CFCPhaseRotatorStages"),
                                    QStringLiteral("8")).toInt());
 
-    {
-        beginCfcProfileUpdate();
-        const auto cfcBatch = qScopeGuard([this] { endCfcProfileUpdate(); });
-        // ── CFC scalars (3M-3a-ii Batch 2) ────────────────────────────────────
-        // Defaults from Thetis database.cs:4724-4733 [v2.10.3.13].
-        setCfcEnabled(s.value(pfx + QLatin1String("CFCEnabled"),
-                               QStringLiteral("False")).toString() == QLatin1String("True"));
-        setCfcPostEqEnabled(s.value(pfx + QLatin1String("CFCPostEqEnabled"),
-                                     QStringLiteral("False")).toString() == QLatin1String("True"));
-        setCfcPrecompDb(s.value(pfx + QLatin1String("CFCPreComp"),
-                                 QStringLiteral("0")).toInt());
-        setCfcPostEqGainDb(s.value(pfx + QLatin1String("CFCPostEqGain"),
-                                    QStringLiteral("0")).toInt());
+    // ── CFC scalars (3M-3a-ii Batch 2) ────────────────────────────────────
+    // Defaults from Thetis database.cs:4724-4733 [v2.10.3.13].
+    beginCfcProfileRestore();
+    setCfcEnabled(s.value(pfx + QLatin1String("CFCEnabled"),
+                           QStringLiteral("False")).toString() == QLatin1String("True"));
+    setCfcPostEqEnabled(s.value(pfx + QLatin1String("CFCPostEqEnabled"),
+                                 QStringLiteral("False")).toString() == QLatin1String("True"));
+    setCfcPrecompDb(s.value(pfx + QLatin1String("CFCPreComp"),
+                             QStringLiteral("0")).toInt());
+    setCfcPostEqGainDb(s.value(pfx + QLatin1String("CFCPostEqGain"),
+                                QStringLiteral("0")).toInt());
 
-        // ── CFC per-band arrays (3M-3a-ii Batch 2) ────────────────────────────
-        // Defaults from Thetis database.cs:4735-4766 [v2.10.3.13]:
-        //   CFCEqFreq0..9       = {0, 125, 250, 500, 1000, 2000, 3000, 4000, 5000, 10000}
-        //   CFCPreComp0..9      = all 5 (per-band G[] compression amounts)
-        //   CFCPostEqGain0..9   = all 0 (per-band E[] post-EQ gains)
-        static constexpr int kDefaultCfcFreq[10] =
-            {0, 125, 250, 500, 1000, 2000, 3000, 4000, 5000, 10000};
-        for (int i = 0; i < 10; ++i) {
-            const QString fKey = QStringLiteral("CFCEqFreq%1").arg(i);
-            const int f = s.value(pfx + fKey, QString::number(kDefaultCfcFreq[i])).toInt();
-            setCfcEqFreq(i, f);
+    // ── CFC per-band arrays (3M-3a-ii Batch 2) ────────────────────────────
+    // Defaults from Thetis database.cs:4735-4766 [v2.10.3.13]:
+    //   CFCEqFreq0..9       = {0, 125, 250, 500, 1000, 2000, 3000, 4000, 5000, 10000}
+    //   CFCPreComp0..9      = all 5 (per-band G[] compression amounts)
+    //   CFCPostEqGain0..9   = all 0 (per-band E[] post-EQ gains)
+    static constexpr int kDefaultCfcFreq[10] =
+        {0, 125, 250, 500, 1000, 2000, 3000, 4000, 5000, 10000};
+    for (int i = 0; i < 10; ++i) {
+        const QString fKey = QStringLiteral("CFCEqFreq%1").arg(i);
+        const int f = s.value(pfx + fKey, QString::number(kDefaultCfcFreq[i])).toInt();
+        setCfcEqFreq(i, f);
 
-            const QString cKey = QStringLiteral("CFCPreComp%1").arg(i);
-            const int c = s.value(pfx + cKey, QStringLiteral("5")).toInt();
-            setCfcCompression(i, c);
+        const QString cKey = QStringLiteral("CFCPreComp%1").arg(i);
+        const int c = s.value(pfx + cKey, QStringLiteral("5")).toInt();
+        setCfcCompression(i, c);
 
-            const QString gKey = QStringLiteral("CFCPostEqGain%1").arg(i);
-            const int g = s.value(pfx + gKey, QStringLiteral("0")).toInt();
-            setCfcPostEqBandGain(i, g);
-        }
-
-        // CFC parametric-EQ blob — opaque string round-trip.
-        setCfcParaEqData(s.value(pfx + QLatin1String("CFCParaEQData"),
-                                  QStringLiteral("")).toString());
+        const QString gKey = QStringLiteral("CFCPostEqGain%1").arg(i);
+        const int g = s.value(pfx + gKey, QStringLiteral("0")).toInt();
+        setCfcPostEqBandGain(i, g);
     }
+
+    // CFC parametric-EQ blob — opaque string round-trip.
+    setCfcParaEqData(s.value(pfx + QLatin1String("CFCParaEQData"),
+                              QStringLiteral("")).toString());
+    endCfcProfileRestore();
+    emit cfcSettingsReloaded();
 
     // ── CPDR (3M-3a-ii Batch 2) ───────────────────────────────────────────
     // cpdrOn lives at hardware/<mac>/tx/cpdr/on — outside the per-profile
@@ -1607,6 +2533,9 @@ void TransmitModel::loadFromSettings(const QString& mac)
     // CompanderLevel from database.cs:4580 [v2.10.3.13]: default 2 dB.
     setCpdrLevelDb(s.value(pfx + QLatin1String("CompanderLevel"),
                             QStringLiteral("2")).toInt());
+    // AM_Carrier_Level from Thetis database.cs AddTXProfileTable: default 100 %.
+    setAmCarrierLevel(s.value(pfx + QLatin1String("AM_Carrier_Level"),
+                              QStringLiteral("100")).toInt());
 
     // ── CESSB (3M-3a-ii Batch 2) ──────────────────────────────────────────
     // Default from Thetis database.cs:4689 [v2.10.3.13]: dr["CESSB_On"] = false.
@@ -1631,7 +2560,7 @@ void TransmitModel::loadFromSettings(const QString& mac)
         const QString powerPfx =
             QStringLiteral("hardware/%1/powerByBand/").arg(mac);
         for (int i = 0; i < kBandCount; ++i) {
-            const Band band = static_cast<Band>(i);
+            const Band band = bandFromPerBandStateSlot(i);
             const QString key = powerPfx + bandKeyName(band);
             const int v = s.value(key, QStringLiteral("50")).toInt();
             // Direct assignment (bypass setPowerForBand) — load is the
@@ -1639,6 +2568,37 @@ void TransmitModel::loadFromSettings(const QString& mac)
             // clamp.  We clamp here ourselves to keep AppSettings tampering
             // safe.
             m_powerByBand[static_cast<std::size_t>(i)] = std::clamp(v, 0, 100);
+        }
+        // R-R3-49 (parity Task 5): as for tunePowerByBand in load().
+        emit powerByBandJsonChanged(powerByBandJson());
+    }
+
+    // R-R3-49: per-band slider limits and FM TX offsets, same scope.
+    // From Thetis console.cs:4921-4944 [v2.10.3.15] (the pipe-delimited
+    // restore; NereusSDR uses per-band scalar keys, so a missing key falls
+    // back to the default per band rather than skipping the whole list):
+    //   if (list.Length != (int)Band.LAST) continue; //[2.10.3.5]MW0LGE
+    {
+        const QString limitPfx =
+            QStringLiteral("hardware/%1/limitPowerByBand/").arg(mac);
+        const QString limitTunePfx =
+            QStringLiteral("hardware/%1/limitTunePowerByBand/").arg(mac);
+        const QString fmPfx =
+            QStringLiteral("hardware/%1/fmTxOffsetByBandMhz/").arg(mac);
+        for (int i = 0; i < kBandCount; ++i) {
+            const Band band = bandFromPerBandStateSlot(i);
+            const auto slot = static_cast<std::size_t>(i);
+            m_limitPowerByBand[slot] = std::clamp(
+                s.value(limitPfx + bandKeyName(band), QStringLiteral("100"))
+                    .toInt(), 0, 100);
+            m_limitTunePowerByBand[slot] = std::clamp(
+                s.value(limitTunePfx + bandKeyName(band), QStringLiteral("100"))
+                    .toInt(), 0, 100);
+            bool ok = false;
+            const double fm =
+                s.value(fmPfx + bandKeyName(band)).toString().toDouble(&ok);
+            m_fmTxOffsetByBandMhz[slot] =
+                ok ? validFmTxOffsetMhz(band, fm) : defaultFmTxOffsetMhz(band);
         }
     }
 
@@ -1678,8 +2638,17 @@ void TransmitModel::loadFromSettings(const QString& mac)
                 QStringLiteral("DriveSlider")).toString()));
     // m_tunePower: persisted per-MAC under FixedTunePower.
     // Default 10 W (NereusSDR-original safer; Thetis Designer ships 0).
-    setTunePower(s.value(pfx + QLatin1String("FixedTunePower"),
-                          QStringLiteral("10")).toInt());
+    // R-R3-46: clamped to the connected model (setHpsdrModel runs first on
+    // connect), and a stored value out of this model's range is saved back
+    // clamped for this radio even when the value in memory already equals
+    // the clamp (setTunePower's idempotent guard would skip the save).
+    const QString storedTune = s.value(pfx + QLatin1String("FixedTunePower"),
+                                       QStringLiteral("10")).toString();
+    setTunePower(storedTune.toInt());
+    if (storedTune != QString::number(m_tunePower)
+        && s.contains(pfx + QLatin1String("FixedTunePower"))) {
+        persistOne(QStringLiteral("FixedTunePower"), QString::number(m_tunePower));
+    }
 }
 
 void TransmitModel::persistToSettings(const QString& mac) const
@@ -1798,6 +2767,8 @@ void TransmitModel::persistToSettings(const QString& mac) const
 
     // TX EQ parametric blob (3M-3a-ii follow-up Batch 6).
     s.setValue(pfx + QLatin1String("TXParaEQData"), m_txEqParaEqData);
+    s.setValue(pfx + QLatin1String("EQUseLegacy"),
+               m_txEqUseLegacy ? QStringLiteral("True") : QStringLiteral("False"));
 
     // ── Phase Rotator / CFC / CPDR / CESSB (3M-3a-ii Batch 2) ────────────
     s.setValue(pfx + QLatin1String("CFCPhaseRotatorEnabled"),
@@ -1828,6 +2799,7 @@ void TransmitModel::persistToSettings(const QString& mac) const
     s.setValue(pfx + QLatin1String("cpdr/on"),
                m_cpdrOn ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(pfx + QLatin1String("CompanderLevel"), QString::number(m_cpdrLevelDb));
+    s.setValue(pfx + QLatin1String("AM_Carrier_Level"), QString::number(m_amCarrierLevel));
 
     // CESSB.
     s.setValue(pfx + QLatin1String("CESSB_On"),
@@ -1843,10 +2815,30 @@ void TransmitModel::persistToSettings(const QString& mac) const
         const QString powerPfx =
             QStringLiteral("hardware/%1/powerByBand/").arg(mac);
         for (int i = 0; i < kBandCount; ++i) {
-            const Band band = static_cast<Band>(i);
+            const Band band = bandFromPerBandStateSlot(i);
             s.setValue(powerPfx + bandKeyName(band),
                        QString::number(
                            m_powerByBand[static_cast<std::size_t>(i)]));
+        }
+    }
+    // R-R3-49: per-band slider limits and FM TX offsets
+    // (console.cs:3101-3115 [v2.10.3.15] save).
+    {
+        const QString limitPfx =
+            QStringLiteral("hardware/%1/limitPowerByBand/").arg(mac);
+        const QString limitTunePfx =
+            QStringLiteral("hardware/%1/limitTunePowerByBand/").arg(mac);
+        const QString fmPfx =
+            QStringLiteral("hardware/%1/fmTxOffsetByBandMhz/").arg(mac);
+        for (int i = 0; i < kBandCount; ++i) {
+            const Band band = bandFromPerBandStateSlot(i);
+            const auto slot = static_cast<std::size_t>(i);
+            s.setValue(limitPfx + bandKeyName(band),
+                       QString::number(m_limitPowerByBand[slot]));
+            s.setValue(limitTunePfx + bandKeyName(band),
+                       QString::number(m_limitTunePowerByBand[slot]));
+            s.setValue(fmPfx + bandKeyName(band),
+                       QString::number(m_fmTxOffsetByBandMhz[slot], 'g', 17));
         }
     }
     // 3 ATT-on-TX safety properties (under tx/ namespace).
@@ -2308,6 +3300,24 @@ void TransmitModel::setTwoToneFreq2(int hz)
     emit twoToneFreq2Changed(clamped);
 }
 
+void TransmitModel::setTwoToneFrequencies(int freq1Hz, int freq2Hz)
+{
+    const int first = std::clamp(freq1Hz, kTwoToneFreq1HzMin, kTwoToneFreq1HzMax);
+    const int second = std::clamp(freq2Hz, kTwoToneFreq2HzMin, kTwoToneFreq2HzMax);
+    const bool firstChanged = first != m_twoToneFreq1;
+    const bool secondChanged = second != m_twoToneFreq2;
+    if (!firstChanged && !secondChanged) { return; }
+    m_twoToneFreq1 = first;
+    m_twoToneFreq2 = second;
+    if (firstChanged) { persistOne(QStringLiteral("TwoToneFreq1"), QString::number(first)); }
+    if (secondChanged) { persistOne(QStringLiteral("TwoToneFreq2"), QString::number(second)); }
+    // The combined signal pushes both DSP parameters first. Observers of
+    // either ordinary property signal then see the complete new pair.
+    emit twoToneFrequenciesChanged(first, second);
+    if (firstChanged) { emit twoToneFreq1Changed(first); }
+    if (secondChanged) { emit twoToneFreq2Changed(second); }
+}
+
 void TransmitModel::setTwoToneLevel(double db)
 {
     // Clamp to Thetis Designer range per setup.Designer.cs:61994-62003 [v2.10.3.13].
@@ -2476,9 +3486,10 @@ void TransmitModel::setMicSourceLocked(bool lock)
 // configuration group (Setup → Audio → TX Input → PC Mic group box).
 //
 // All three setters are idempotent (no signal emitted on unchanged value).
-// None of these persist across app restarts — AppSettings persistence is
-// deferred to Phase L.2.  The properties survive Setup dialog close/reopen
-// within the same session, stored on TransmitModel (Option B from plan §2.5).
+// R-R3-36 (2026-09-22): they are projections of the AudioEngine TX input
+// config (audio/TxInput). RadioModel mirrors that config into them and
+// forwards a setter's change signal to AudioEngine::setTxInputConfig; this
+// class itself persists nothing for them.
 
 void TransmitModel::setPcMicHostApiIndex(int index)
 {
@@ -2537,35 +3548,6 @@ void TransmitModel::setTxEqEnabled(bool on)
     emit txEqEnabledChanged(on);
 }
 
-// NereusSDR-original transaction over the existing integer legacy EQ state.
-void TransmitModel::beginTxEqProfileUpdate()
-{
-    if (m_txEqProfileUpdateDepth++ == 0) {
-        m_txEqProfileStartPreamp = m_txEqPreamp;
-        m_txEqProfileStartBands = m_txEqBand;
-        m_txEqProfileStartFreqs = m_txEqFreq;
-    }
-}
-
-void TransmitModel::endTxEqProfileUpdate()
-{
-    Q_ASSERT(m_txEqProfileUpdateDepth > 0);
-    if (--m_txEqProfileUpdateDepth == 0 &&
-        (m_txEqPreamp != m_txEqProfileStartPreamp || m_txEqBand != m_txEqProfileStartBands ||
-         m_txEqFreq != m_txEqProfileStartFreqs)) {
-        publishTxEqProfile();
-    }
-}
-
-void TransmitModel::publishTxEqProfile()
-{
-    if (m_txEqProfileUpdateDepth > 0) { return; }
-    QList<int> frequencies(m_txEqFreq.begin(), m_txEqFreq.end());
-    QList<int> gains{m_txEqPreamp};
-    for (int gain : m_txEqBand) { gains.append(gain); }
-    emit txEqProfileChanged(frequencies, gains);
-}
-
 void TransmitModel::setTxEqPreamp(int dB)
 {
     // NereusSDR clamp [-12, 15] dB (Thetis EQ preamp slider precedent).
@@ -2586,6 +3568,7 @@ void TransmitModel::setTxEqBand(int index, int dB)
     // Thetis TXProfile keys: TXEQ1..TXEQ10 (1-indexed, per database.cs:4316-4325 [v2.10.3.13]).
     persistOne(QStringLiteral("TXEQ%1").arg(index + 1), QString::number(clamped));
     emit txEqBandChanged(index, clamped);
+    emit txEqBandsJsonChanged(txEqBandsJson());  // R-R3-49 (parity Task 4)
     publishTxEqProfile();
 }
 
@@ -2598,6 +3581,7 @@ void TransmitModel::setTxEqFreq(int index, int hz)
     // Thetis TXProfile keys: TxEqFreq1..TxEqFreq10 (mixed-case per database.cs:4326-4335 [v2.10.3.13]).
     persistOne(QStringLiteral("TxEqFreq%1").arg(index + 1), QString::number(clamped));
     emit txEqFreqChanged(index, clamped);
+    emit txEqFreqsJsonChanged(txEqFreqsJson());  // R-R3-49 (parity Task 4)
     publishTxEqProfile();
 }
 
@@ -2712,6 +3696,258 @@ void TransmitModel::setTxEqParaEqData(const QString& data)
     m_txEqParaEqData = data;
     persistOne(QStringLiteral("TXParaEQData"), data);
     emit txEqParaEqDataChanged(data);
+    // R-IOS-13 / R-R3-49: the read-only curve follows the blob.
+    const QString curve = ParaEqCurve::txEqCurveJson(data);
+    if (curve != m_txEqCurve) {
+        m_txEqCurve = curve;
+        emit txEqCurveChanged(m_txEqCurve);
+    }
+}
+
+// ── R-R3-49 (parity Task 4): the Legacy EQ box and the link's arrays ─────
+
+void TransmitModel::setTxEqUseLegacy(bool on)
+{
+    if (on == m_txEqUseLegacy) { return; }
+    // From Thetis setup.cs:9318 [v2.10.3.15]:
+    //   console.EQForm.UsingLegacyEQ = (bool)dr["EQUseLegacy"];
+    // (Above it in the same restore, on the VAC lines it disables first:
+    //   // diable the vacs, so we can make changes without them trying to re-init etc MW0LGE_21dk5
+    //  [original inline comment from setup.cs:9313].)
+    // and setup.cs:3615: dr["EQUseLegacy"] = console.EQForm.UsingLegacyEQ;
+    // Thetis keeps it with the TX profile; so does NereusSDR.
+    m_txEqUseLegacy = on;
+    persistOne(QStringLiteral("EQUseLegacy"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit txEqUseLegacyChanged(on);
+}
+
+
+QString TransmitModel::txEqBandsJson() const
+{
+    return tenValuesJson([this](int i) { return txEqBand(i); });
+}
+
+QString TransmitModel::txEqFreqsJson() const
+{
+    return tenValuesJson([this](int i) { return txEqFreq(i); });
+}
+
+QString TransmitModel::cfcCompressionJson() const
+{
+    return tenValuesJson([this](int i) { return cfcCompression(i); });
+}
+
+QString TransmitModel::cfcEqFreqJson() const
+{
+    return tenValuesJson([this](int i) { return cfcEqFreq(i); });
+}
+
+QString TransmitModel::cfcPostEqBandGainJson() const
+{
+    return tenValuesJson([this](int i) { return cfcPostEqBandGain(i); });
+}
+
+void TransmitModel::setTxEqBandsJson(const QString& json)
+{
+    std::array<int, 10> values{};
+    if (!tenValuesFromJson(json, values)) { return; }
+    for (int i = 0; i < 10; ++i) { setTxEqBand(i, values[static_cast<std::size_t>(i)]); }
+}
+
+void TransmitModel::setTxEqFreqsJson(const QString& json)
+{
+    std::array<int, 10> values{};
+    if (!tenValuesFromJson(json, values)) { return; }
+    for (int i = 0; i < 10; ++i) { setTxEqFreq(i, values[static_cast<std::size_t>(i)]); }
+}
+
+void TransmitModel::setCfcCompressionJson(const QString& json)
+{
+    std::array<int, 10> values{};
+    if (!tenValuesFromJson(json, values)) { return; }
+    if (!cfcProfileRestoreInProgress() && !m_projectingPairedCfc
+        && updatePairedCfcArray(CfcField::Compression, values)) { return; }
+    // Coalesce only real fallback changes; an ordinary array edit is not an
+    // authoritative restore and must not invalidate a cached exact profile.
+    ++m_cfcProfileUpdateDepth;
+    const auto batch = qScopeGuard([this] { endCfcProfileUpdate(); });
+    for (int i = 0; i < 10; ++i) { setCfcCompression(i, values[static_cast<std::size_t>(i)]); }
+}
+
+void TransmitModel::setCfcEqFreqJson(const QString& json)
+{
+    std::array<int, 10> values{};
+    if (!tenValuesFromJson(json, values)) { return; }
+    if (!cfcProfileRestoreInProgress() && !m_projectingPairedCfc
+        && updatePairedCfcArray(CfcField::Frequency, values)) { return; }
+    // Coalesce only real fallback changes; an ordinary array edit is not an
+    // authoritative restore and must not invalidate a cached exact profile.
+    ++m_cfcProfileUpdateDepth;
+    const auto batch = qScopeGuard([this] { endCfcProfileUpdate(); });
+    for (int i = 0; i < 10; ++i) { setCfcEqFreq(i, values[static_cast<std::size_t>(i)]); }
+}
+
+void TransmitModel::setCfcPostEqBandGainJson(const QString& json)
+{
+    std::array<int, 10> values{};
+    if (!tenValuesFromJson(json, values)) { return; }
+    if (!cfcProfileRestoreInProgress() && !m_projectingPairedCfc
+        && updatePairedCfcArray(CfcField::PostEqBandGain, values)) { return; }
+    // Coalesce only real fallback changes; an ordinary array edit is not an
+    // authoritative restore and must not invalidate a cached exact profile.
+    ++m_cfcProfileUpdateDepth;
+    const auto batch = qScopeGuard([this] { endCfcProfileUpdate(); });
+    for (int i = 0; i < 10; ++i) { setCfcPostEqBandGain(i, values[static_cast<std::size_t>(i)]); }
+}
+
+namespace {
+CfcProfile::Profile pairedCfcEditState(const CfcEditProfile& state)
+{
+    CfcProfile::Profile p;
+    const auto vector = [](const QVector<double>& v) { return std::vector<double>(v.begin(), v.end()); };
+    p.f = vector(state.compression.frequenciesHz); p.postF = vector(state.postEq.frequenciesHz);
+    p.g = vector(state.compression.gainsDb); p.e = vector(state.postEq.gainsDb);
+    p.qg = vector(state.compression.q); p.qe = vector(state.postEq.q);
+    p.minHz = state.compression.frequencyMinHz; p.maxHz = state.compression.frequencyMaxHz;
+    p.postMinHz = state.postEq.frequencyMinHz; p.postMaxHz = state.postEq.frequencyMaxHz;
+    p.precompDb = state.compression.globalGainDb; p.postEqGainDb = state.postEq.globalGainDb;
+    p.compParametric = state.compression.useQ; p.eqParametric = state.postEq.useQ;
+    return p;
+}
+CfcEditProfile nativeCfcEditState(const CfcProfile::Profile& p)
+{
+    CfcEditProfile state;
+    const auto vector = [](const std::vector<double>& v) { return QVector<double>(v.begin(), v.end()); };
+    state.compression.frequenciesHz = vector(p.f); state.postEq.frequenciesHz = vector(p.postF);
+    state.compression.gainsDb = vector(p.g); state.postEq.gainsDb = vector(p.e);
+    state.compression.q = vector(p.qg); state.postEq.q = vector(p.qe);
+    state.compression.frequencyMinHz = p.minHz; state.compression.frequencyMaxHz = p.maxHz;
+    state.postEq.frequencyMinHz = p.postMinHz; state.postEq.frequencyMaxHz = p.postMaxHz;
+    state.compression.globalGainDb = p.precompDb; state.postEq.globalGainDb = p.postEqGainDb;
+    state.compression.useQ = p.compParametric; state.postEq.useQ = p.eqParametric;
+    return state;
+}
+} // namespace
+
+bool TransmitModel::updatePairedCfcArray(CfcField field, const std::array<int, 10>& values)
+{
+    CfcProfile::Profile p;
+    if (!CfcProfile::decode(m_cfcParaEqData, p)) { return false; }
+    if (m_activeCfcProfile) { p = pairedCfcEditState(*m_activeCfcProfile); }
+    if (p.f.size() != 10) { return true; }
+    // The curve already holds these values (rounded, as its ten-band
+    // mirrors read them): no change to the curve, which is kept as it is.
+    // Re-encoding it would change a curve nobody edited, and a late answer
+    // from the Core that repeats a value would then overwrite a newer
+    // curve still waiting to be sent (the cfcPhaseRotatorAndCessbRoundTrip
+    // load failure). False, not true: the per-band setters then run, each
+    // finds its band unchanged in the curve too, and its own equal-value
+    // check decides the integer mirror, which a restored Thetis profile
+    // can hold apart from the curve.
+    bool unchanged = true;
+    for (int i = 0; i < 10 && unchanged; ++i) {
+        const auto k = static_cast<std::size_t>(i);
+        const double held = field == CfcField::Frequency ? p.f[k]
+            : field == CfcField::Compression             ? p.g[k]
+                                                          : p.e[k];
+        unchanged = std::lround(held) == values[k];
+    }
+    if (unchanged) { return false; }
+    for (int i = 0; i < 10; ++i) {
+        const double value = values[static_cast<std::size_t>(i)];
+        if (field == CfcField::Frequency) {
+            p.f[static_cast<std::size_t>(i)] = value;
+            p.postF[static_cast<std::size_t>(i)] = value;
+        }
+        if (field == CfcField::Compression) { p.g[static_cast<std::size_t>(i)] = value; }
+        if (field == CfcField::PostEqBandGain) { p.e[static_cast<std::size_t>(i)] = value; }
+    }
+    if (field == CfcField::Frequency) {
+        p.minHz = p.f.front();
+        p.maxHz = p.f.back();
+        p.postMinHz = p.postF.front();
+        p.postMaxHz = p.postF.back();
+    }
+    const QString encoded = CfcProfile::encode(p);
+    if (!encoded.isEmpty()) {
+        if (m_activeCfcProfile) { setCfcProfile(nativeCfcEditState(p)); }
+        else { setCfcParaEqData(encoded); }
+    }
+    return true;
+}
+
+bool TransmitModel::updatePairedCfc(CfcField field, int index, double value)
+{
+    CfcProfile::Profile p;
+    if (!CfcProfile::decode(m_cfcParaEqData, p)) { return false; }
+    if (m_activeCfcProfile) { p = pairedCfcEditState(*m_activeCfcProfile); }
+    // As updatePairedCfcArray: a value the curve already holds (rounded,
+    // as its integer mirror reads it) is no change to the curve, which is
+    // kept. False hands the write to the setter's own mirror path and its
+    // equal-value check: the mirror can differ from the curve after a
+    // restore, and must still follow a real write.
+    const auto held = [&p, field, index]() -> std::optional<double> {
+        if (field == CfcField::Precomp) { return p.precompDb; }
+        if (field == CfcField::PostEqGlobal) { return p.postEqGainDb; }
+        if (p.f.size() != 10 || index < 0 || index >= 10) { return std::nullopt; }
+        const auto k = static_cast<std::size_t>(index);
+        if (field == CfcField::Frequency) { return p.f[k]; }
+        if (field == CfcField::Compression) { return p.g[k]; }
+        return p.e[k];
+    }();
+    if (held && std::lround(*held) == std::lround(value)) { return false; }
+    if (field == CfcField::Precomp) { p.precompDb = value; }
+    else if (field == CfcField::PostEqGlobal) { p.postEqGainDb = value; }
+    else {
+        if (p.f.size() != 10 || index < 0 || index >= 10) { return true; }
+        const auto k = static_cast<std::size_t>(index);
+        if (field == CfcField::Frequency) {
+            p.f[k] = value;
+            p.postF[k] = value;
+            if (index == 0) { p.minHz = value; p.postMinHz = value; }
+            if (index == 9) { p.maxHz = value; p.postMaxHz = value; }
+        } else if (field == CfcField::Compression) { p.g[k] = value; }
+        else if (field == CfcField::PostEqBandGain) { p.e[k] = value; }
+    }
+    const QString encoded = CfcProfile::encode(p);
+    if (!encoded.isEmpty()) {
+        if (m_activeCfcProfile) { setCfcProfile(nativeCfcEditState(p)); }
+        else { setCfcParaEqData(encoded); }
+    }
+    return true;
+}
+
+// ── R-R3-49 (parity Task 5): the per-band power and tune power ────────────
+
+QString TransmitModel::powerByBandJson() const
+{
+    return bandWattsJson([this](Band band) { return powerForBand(band); });
+}
+
+QString TransmitModel::tunePowerByBandJson() const
+{
+    return bandWattsJson([this](Band band) { return tunePowerForBand(band); });
+}
+
+void TransmitModel::setPowerByBandJson(const QString& json)
+{
+    std::vector<std::pair<Band, int>> named;
+    if (!bandWattsFromJson(json, std::numeric_limits<int>::min(),
+                           std::numeric_limits<int>::max(), named)) {
+        return;
+    }
+    for (const auto& [band, watts] : named) { setPowerForBand(band, watts); }
+}
+
+void TransmitModel::setTunePowerByBandJson(const QString& json)
+{
+    std::vector<std::pair<Band, int>> named;
+    if (!bandWattsFromJson(json, std::numeric_limits<int>::min(),
+                           std::numeric_limits<int>::max(), named)) {
+        return;
+    }
+    for (const auto& [band, watts] : named) { setTunePowerForBand(band, watts); }
 }
 
 // ── CFC / CPDR / CESSB / Phase Rotator (3M-3a-ii Batch 2) ─────────────────
@@ -2795,14 +4031,13 @@ void TransmitModel::setCfcPrecompDb(int dB)
     // Clamp to Thetis Designer range per frmCFCConfig.Designer.cs:408-422
     // [v2.10.3.13]:  nudCFC_precomp.Maximum = 16, .Minimum = 0.
     const int clamped = std::clamp(dB, kCfcPrecompDbMin, kCfcPrecompDbMax);
-    if (clamped == m_cfcPrecompDb) {
-        updateCfcLegacyValue(CfcLegacyField::Precomp, -1, clamped, false);
-        return;
-    }
+    if (!cfcProfileRestoreInProgress() && !m_projectingPairedCfc
+        && updatePairedCfc(CfcField::Precomp, -1, clamped)) { return; }
+    if (clamped == m_cfcPrecompDb) { return; }
     m_cfcPrecompDb = clamped;
     persistOne(QStringLiteral("CFCPreComp"), QString::number(clamped));
     emit cfcPrecompDbChanged(clamped);
-    updateCfcLegacyValue(CfcLegacyField::Precomp, -1, clamped, true);
+    if (!m_projectingPairedCfc) { notifyCfcProfileChange(); }
 }
 
 void TransmitModel::setCfcPostEqGainDb(int dB)
@@ -2811,14 +4046,13 @@ void TransmitModel::setCfcPostEqGainDb(int dB)
     // [v2.10.3.13]:  nudCFC_posteqgain.Maximum = 24, .Minimum = -24
     // (encoded via decimal sign bit in the 4th int).
     const int clamped = std::clamp(dB, kCfcPostEqGainDbMin, kCfcPostEqGainDbMax);
-    if (clamped == m_cfcPostEqGainDb) {
-        updateCfcLegacyValue(CfcLegacyField::PostEqGlobal, -1, clamped, false);
-        return;
-    }
+    if (!cfcProfileRestoreInProgress() && !m_projectingPairedCfc
+        && updatePairedCfc(CfcField::PostEqGlobal, -1, clamped)) { return; }
+    if (clamped == m_cfcPostEqGainDb) { return; }
     m_cfcPostEqGainDb = clamped;
     persistOne(QStringLiteral("CFCPostEqGain"), QString::number(clamped));
     emit cfcPostEqGainDbChanged(clamped);
-    updateCfcLegacyValue(CfcLegacyField::PostEqGlobal, -1, clamped, true);
+    if (!m_projectingPairedCfc) { notifyCfcProfileChange(); }
 }
 
 // ── CFC per-band arrays ───────────────────────────────────────────────────
@@ -2847,15 +4081,15 @@ void TransmitModel::setCfcEqFreq(int index, int hz)
     // Clamp to Thetis Designer range per frmCFCConfig.Designer.cs:267-286
     // [v2.10.3.13]:  nudCFC_f.Maximum = 20000, .Minimum = 0.
     const int clamped = std::clamp(hz, kCfcEqFreqHzMin, kCfcEqFreqHzMax);
-    if (clamped == m_cfcEqFreqHz[static_cast<std::size_t>(index)]) {
-        updateCfcLegacyValue(CfcLegacyField::Frequency, index, clamped, false);
-        return;
-    }
+    if (!cfcProfileRestoreInProgress() && !m_projectingPairedCfc
+        && updatePairedCfc(CfcField::Frequency, index, clamped)) { return; }
+    if (clamped == m_cfcEqFreqHz[static_cast<std::size_t>(index)]) { return; }
     m_cfcEqFreqHz[static_cast<std::size_t>(index)] = clamped;
     // Thetis TXProfile keys: CFCEqFreq0..CFCEqFreq9 (database.cs:4757-4766 [v2.10.3.13]).
     persistOne(QStringLiteral("CFCEqFreq%1").arg(index), QString::number(clamped));
     emit cfcEqFreqChanged(index, clamped);
-    updateCfcLegacyValue(CfcLegacyField::Frequency, index, clamped, true);
+    emit cfcEqFreqJsonChanged(cfcEqFreqJson());  // R-R3-49 (parity Task 4)
+    if (!m_projectingPairedCfc) { notifyCfcProfileChange(); }
 }
 
 void TransmitModel::setCfcCompression(int index, int dB)
@@ -2864,17 +4098,17 @@ void TransmitModel::setCfcCompression(int index, int dB)
     // Clamp to Thetis Designer range per frmCFCConfig.Designer.cs:217-236
     // [v2.10.3.13]:  nudCFC_c.Maximum = 16, .Minimum = 0.
     const int clamped = std::clamp(dB, kCfcCompressionDbMin, kCfcCompressionDbMax);
-    if (clamped == m_cfcCompressionDb[static_cast<std::size_t>(index)]) {
-        updateCfcLegacyValue(CfcLegacyField::Compression, index, clamped, false);
-        return;
-    }
+    if (!cfcProfileRestoreInProgress() && !m_projectingPairedCfc
+        && updatePairedCfc(CfcField::Compression, index, clamped)) { return; }
+    if (clamped == m_cfcCompressionDb[static_cast<std::size_t>(index)]) { return; }
     m_cfcCompressionDb[static_cast<std::size_t>(index)] = clamped;
     // Thetis TXProfile keys: CFCPreComp0..CFCPreComp9 (database.cs:4735-4744
     // [v2.10.3.13]) — note the column name says "PreComp" but these are
     // the per-band G[] compression amounts.
     persistOne(QStringLiteral("CFCPreComp%1").arg(index), QString::number(clamped));
     emit cfcCompressionChanged(index, clamped);
-    updateCfcLegacyValue(CfcLegacyField::Compression, index, clamped, true);
+    emit cfcCompressionJsonChanged(cfcCompressionJson());  // R-R3-49 (parity Task 4)
+    if (!m_projectingPairedCfc) { notifyCfcProfileChange(); }
 }
 
 void TransmitModel::setCfcPostEqBandGain(int index, int dB)
@@ -2883,127 +4117,87 @@ void TransmitModel::setCfcPostEqBandGain(int index, int dB)
     // Clamp to Thetis Designer range per frmCFCConfig.Designer.cs:564-583
     // [v2.10.3.13]:  nudCFC_gain.Maximum = 24, .Minimum = -24.
     const int clamped = std::clamp(dB, kCfcPostEqBandGainDbMin, kCfcPostEqBandGainDbMax);
-    if (clamped == m_cfcPostEqBandGainDb[static_cast<std::size_t>(index)]) {
-        updateCfcLegacyValue(CfcLegacyField::PostEqBand, index, clamped, false);
-        return;
-    }
+    if (!cfcProfileRestoreInProgress() && !m_projectingPairedCfc
+        && updatePairedCfc(CfcField::PostEqBandGain, index, clamped)) { return; }
+    if (clamped == m_cfcPostEqBandGainDb[static_cast<std::size_t>(index)]) { return; }
     m_cfcPostEqBandGainDb[static_cast<std::size_t>(index)] = clamped;
     // Thetis TXProfile keys: CFCPostEqGain0..CFCPostEqGain9 (database.cs:4746-4755 [v2.10.3.13]).
     persistOne(QStringLiteral("CFCPostEqGain%1").arg(index), QString::number(clamped));
     emit cfcPostEqBandGainChanged(index, clamped);
-    updateCfcLegacyValue(CfcLegacyField::PostEqBand, index, clamped, true);
+    emit cfcPostEqBandGainJsonChanged(cfcPostEqBandGainJson());  // R-R3-49 (parity Task 4)
+    if (!m_projectingPairedCfc) { notifyCfcProfileChange(); }
 }
 
 void TransmitModel::setCfcParaEqData(const QString& data)
 {
     const bool cacheChanged = m_activeCfcProfile.has_value();
     m_activeCfcProfile.reset();
-    if (data == m_cfcParaEqData) {
-        if (cacheChanged) { notifyCfcProfileChange(); }
-        return;
-    }
+    if (data == m_cfcParaEqData) { if (cacheChanged) { notifyCfcProfileChange(); } return; }
+    const bool nestedProjection = m_projectingPairedCfc;
     // From Thetis database.cs:4768 [v2.10.3.13]: dr["CFCParaEQData"] = "".
-    // Keep unsupported blobs opaque until an explicit edit replaces them.
+    // Stored as opaque string for forward-compat round-trip with imported
+    // Thetis profiles.  No validation.
     m_cfcParaEqData = data;
+    const quint64 generation = ++m_cfcProfileGeneration;
     persistOne(QStringLiteral("CFCParaEQData"), data);
-    emit cfcParaEqDataChanged(data);
-    notifyCfcProfileChange();
+    CfcProfile::Profile paired;
+    if (!cfcProfileRestoreInProgress() && CfcProfile::decode(data, paired)) {
+        // The paired blob is authoritative. Keep the older integer mirrors
+        // useful to ten-band clients without writing back into the curve.
+        QScopedValueRollback<bool> projecting(m_projectingPairedCfc, true);
+        [&]() {
+            setCfcPrecompDb(static_cast<int>(std::lround(paired.precompDb)));
+            if (generation != m_cfcProfileGeneration) { return; }
+            setCfcPostEqGainDb(static_cast<int>(std::lround(paired.postEqGainDb)));
+            if (generation != m_cfcProfileGeneration) { return; }
+            if (paired.f.size() == 10) {
+                for (int i = 0; i < 10; ++i) {
+                    const auto k = static_cast<std::size_t>(i);
+                    setCfcEqFreq(i, static_cast<int>(std::lround(paired.f[k])));
+                    if (generation != m_cfcProfileGeneration) { return; }
+                    setCfcCompression(i, static_cast<int>(std::lround(paired.g[k])));
+                    if (generation != m_cfcProfileGeneration) { return; }
+                    setCfcPostEqBandGain(i, static_cast<int>(std::lround(paired.e[k])));
+                    if (generation != m_cfcProfileGeneration) { return; }
+                }
+            }
+        }();
+    }
+    // Nested writes notify only when the outer projection has released its
+    // guard, so DSP and mirrors see the final curve once.
+    if (!nestedProjection) { emit cfcParaEqDataChanged(m_cfcParaEqData); notifyCfcProfileChange(); }
 }
 
-CfcProfile TransmitModel::effectiveCfcProfile() const
+// NereusSDR-original (R-R3-49, transmitSettingsVersion 15): what the CFC
+// dialog shows, published. The paired blob is authoritative when the Core
+// reads it (setCfcParaEqData); otherwise the ten-band values.
+void TransmitModel::refreshCfcProfile()
 {
-    if (m_activeCfcProfile) { return *m_activeCfcProfile; }
-    if (const std::optional<CfcProfile> decoded = decodeCfcProfile(m_cfcParaEqData)) {
-        return *decoded;
-    }
-    CfcProfile fallback;
-    fallback.compression.globalGainDb = m_cfcPrecompDb;
-    fallback.postEq.globalGainDb = m_cfcPostEqGainDb;
-    for (std::size_t i = 0; i < 10; ++i) {
-        fallback.compression.frequenciesHz.append(m_cfcEqFreqHz[i]);
-        fallback.compression.gainsDb.append(m_cfcCompressionDb[i]);
-        fallback.compression.q.append(4.0);
-        fallback.postEq.gainsDb.append(m_cfcPostEqBandGainDb[i]);
-        fallback.postEq.q.append(4.0);
-    }
-    fallback.postEq.frequenciesHz = fallback.compression.frequenciesHz;
-    // Retain the existing dialog seed bounds, widening for legacy endpoints.
-    fallback.compression.frequencyMaxHz = std::max(fallback.compression.frequencyMaxHz,
-        static_cast<double>(*std::max_element(m_cfcEqFreqHz.begin(), m_cfcEqFreqHz.end())));
-    fallback.postEq.frequencyMinHz = fallback.compression.frequencyMinHz;
-    fallback.postEq.frequencyMaxHz = fallback.compression.frequencyMaxHz;
-    return fallback;
+    if (cfcProfileMutationInProgress()) { return; }
+    CfcProfile::Profile paired;
+    const QString profile = CfcProfile::decode(m_cfcParaEqData, paired)
+        ? CfcProfile::publishedJson(paired, QStringLiteral("saved"))
+        : CfcProfile::publishedJson(
+              CfcProfile::legacyProfile(m_cfcEqFreqHz, m_cfcCompressionDb, m_cfcPostEqBandGainDb,
+                                        m_cfcPrecompDb, m_cfcPostEqGainDb),
+              QStringLiteral("legacy"));
+    if (profile == m_cfcProfile) { return; }
+    m_cfcProfile = profile;
+    emit cfcProfileChanged(m_cfcProfile);
 }
 
-void TransmitModel::beginCfcProfileUpdate()
+void TransmitModel::beginCfcProfileRestore() noexcept
 {
-    if (m_cfcProfileUpdateDepth++ == 0) {
-        // An authoritative load must restore saved precision even for the same blob.
-        m_activeCfcProfile.reset();
-        m_cfcProfileDirty = true;
-    }
-}
-void TransmitModel::endCfcProfileUpdate()
-{
-    Q_ASSERT(m_cfcProfileUpdateDepth > 0);
-    if (--m_cfcProfileUpdateDepth == 0 && m_cfcProfileDirty) {
-        m_cfcProfileDirty = false;
-        emit cfcProfileChanged(effectiveCfcProfile());
-    }
-}
-void TransmitModel::notifyCfcProfileChange()
-{
-    if (m_cfcProfileUpdateDepth > 0) { m_cfcProfileDirty = true; }
-    else { emit cfcProfileChanged(effectiveCfcProfile()); }
-}
-
-bool TransmitModel::setCfcProfile(const CfcProfile& profile)
-{
-    if (!isValidCfcProfile(profile)) { return false; }
-    if (m_activeCfcProfile && *m_activeCfcProfile == profile) { return true; }
+    ++m_cfcProfileRestoreDepth;
     beginCfcProfileUpdate();
-    const auto batch = qScopeGuard([this] { endCfcProfileUpdate(); });
-    setCfcPrecompDb(qRound(profile.compression.globalGainDb));
-    setCfcPostEqGainDb(qRound(profile.postEq.globalGainDb));
-    if (profile.compression.frequenciesHz.size() == 10) {
-        for (int i = 0; i < 10; ++i) {
-            setCfcEqFreq(i, qRound(profile.compression.frequenciesHz[i]));
-            setCfcCompression(i, qRound(profile.compression.gainsDb[i]));
-            setCfcPostEqBandGain(i, qRound(profile.postEq.gainsDb[i]));
-        }
-    }
-    setCfcParaEqData(encodeCfcProfile(profile));
-    m_activeCfcProfile = profile;
-    return true;
 }
 
-void TransmitModel::updateCfcLegacyValue(CfcLegacyField field, int index, int value, bool changed)
+void TransmitModel::endCfcProfileRestore() noexcept
 {
-    if (m_cfcProfileUpdateDepth > 0) { return; }
-    std::optional<CfcProfile> profile = m_activeCfcProfile;
-    if (!profile) { profile = decodeCfcProfile(m_cfcParaEqData); }
-    if (!profile) {
-        if (changed) { notifyCfcProfileChange(); }
-        return;
-    }
-    if (field >= CfcLegacyField::Frequency && profile->compression.frequenciesHz.size() != 10) {
-        setCfcParaEqData(QString());
-        return;
-    }
-    CfcProfile edited = *profile;
-    switch (field) {
-    case CfcLegacyField::Precomp: edited.compression.globalGainDb = value; break;
-    case CfcLegacyField::PostEqGlobal: edited.postEq.globalGainDb = value; break;
-    case CfcLegacyField::Frequency:
-        edited.compression.frequenciesHz[index] = value;
-        edited.postEq.frequenciesHz[index] = value;
-        break;
-    case CfcLegacyField::Compression: edited.compression.gainsDb[index] = value; break;
-    case CfcLegacyField::PostEqBand: edited.postEq.gainsDb[index] = value; break;
-    default: return;
-    }
-    if (edited == *profile) { return; }
-    if (!setCfcProfile(edited)) { setCfcParaEqData(QString()); }
+    if (m_cfcProfileRestoreDepth == 0) { return; }
+    --m_cfcProfileRestoreDepth;
+    endCfcProfileUpdate();
+    if (m_cfcProfileRestoreDepth == 0) { emit cfcProfileRestored(); }
 }
 
 // ── CPDR ──────────────────────────────────────────────────────────────────
@@ -3033,6 +4227,19 @@ void TransmitModel::setCpdrLevelDb(int dB)
     m_cpdrLevelDb = clamped;
     persistOne(QStringLiteral("CompanderLevel"), QString::number(clamped));
     emit cpdrLevelDbChanged(clamped);
+}
+
+// ── AM carrier level ──────────────────────────────────────────────────────
+void TransmitModel::setAmCarrierLevel(int percent)
+{
+    // Clamp to Thetis udTXAMCarrierLevel range (0..100 %).
+    const int clamped = std::clamp(percent, kAmCarrierLevelMin, kAmCarrierLevelMax);
+    if (clamped == m_amCarrierLevel) { return; }
+    // From Thetis setup.cs:9628 [v2.10.3.15]:
+    //   udTXAMCarrierLevel.Value = (int)dr["AM_Carrier_Level"];
+    m_amCarrierLevel = clamped;
+    persistOne(QStringLiteral("AM_Carrier_Level"), QString::number(clamped));
+    emit amCarrierLevelChanged(clamped);
 }
 
 // ── CESSB ─────────────────────────────────────────────────────────────────
@@ -3113,6 +4320,106 @@ QString TransmitModel::filterDisplayText(DSPMode mode) const
         .arg(m_filterLow)
         .arg(m_filterHigh)
         .arg(bwKhz, 0, 'f', 1);
+}
+
+void TransmitModel::beginTxEqProfileUpdate()
+{
+    if (m_txEqProfileUpdateDepth++ == 0) {
+        m_txEqProfileStartPreamp = m_txEqPreamp;
+        m_txEqProfileStartBands = m_txEqBand;
+        m_txEqProfileStartFreqs = m_txEqFreq;
+    }
+}
+
+void TransmitModel::endTxEqProfileUpdate()
+{
+    Q_ASSERT(m_txEqProfileUpdateDepth > 0);
+    if (--m_txEqProfileUpdateDepth == 0 &&
+        (m_txEqPreamp != m_txEqProfileStartPreamp || m_txEqBand != m_txEqProfileStartBands ||
+         m_txEqFreq != m_txEqProfileStartFreqs)) {
+        publishTxEqProfile();
+    }
+}
+
+void TransmitModel::publishTxEqProfile()
+{
+    if (m_txEqProfileUpdateDepth > 0) { return; }
+    QList<int> frequencies(m_txEqFreq.begin(), m_txEqFreq.end());
+    QList<int> gains{m_txEqPreamp};
+    for (int gain : m_txEqBand) { gains.append(gain); }
+    emit txEqProfileChanged(frequencies, gains);
+}
+
+CfcEditProfile TransmitModel::effectiveCfcProfile() const
+{
+    if (m_activeCfcProfile) { return *m_activeCfcProfile; }
+    if (const std::optional<CfcEditProfile> decoded = decodeCfcEditProfile(m_cfcParaEqData)) {
+        return *decoded;
+    }
+    CfcProfile::Profile mainProfile;
+    if (CfcProfile::decode(m_cfcParaEqData, mainProfile)) { return nativeCfcEditState(mainProfile); }
+    CfcEditProfile fallback;
+    fallback.compression.globalGainDb = m_cfcPrecompDb;
+    fallback.postEq.globalGainDb = m_cfcPostEqGainDb;
+    for (std::size_t i = 0; i < 10; ++i) {
+        fallback.compression.frequenciesHz.append(m_cfcEqFreqHz[i]);
+        fallback.compression.gainsDb.append(m_cfcCompressionDb[i]);
+        fallback.compression.q.append(4.0);
+        fallback.postEq.gainsDb.append(m_cfcPostEqBandGainDb[i]);
+        fallback.postEq.q.append(4.0);
+    }
+    fallback.postEq.frequenciesHz = fallback.compression.frequenciesHz;
+    // Retain the existing dialog seed bounds, widening for legacy endpoints.
+    fallback.compression.frequencyMaxHz = std::max(fallback.compression.frequencyMaxHz,
+        static_cast<double>(*std::max_element(m_cfcEqFreqHz.begin(), m_cfcEqFreqHz.end())));
+    fallback.postEq.frequencyMinHz = fallback.compression.frequencyMinHz;
+    fallback.postEq.frequencyMaxHz = fallback.compression.frequencyMaxHz;
+    return fallback;
+}
+
+void TransmitModel::beginCfcProfileUpdate()
+{
+    if (m_cfcProfileUpdateDepth++ == 0) {
+        // An authoritative load must restore saved precision even for the same blob.
+        m_activeCfcProfile.reset();
+        m_cfcProfileDirty = true;
+    }
+}
+
+void TransmitModel::endCfcProfileUpdate()
+{
+    Q_ASSERT(m_cfcProfileUpdateDepth > 0);
+    if (--m_cfcProfileUpdateDepth == 0 && m_cfcProfileDirty) {
+        m_cfcProfileDirty = false;
+        emit cfcEditProfileChanged(effectiveCfcProfile());
+        refreshCfcProfile();
+    }
+}
+
+void TransmitModel::notifyCfcProfileChange()
+{
+    if (m_cfcProfileUpdateDepth > 0) { m_cfcProfileDirty = true; }
+    else { emit cfcEditProfileChanged(effectiveCfcProfile()); }
+}
+
+bool TransmitModel::setCfcProfile(const CfcEditProfile& profile)
+{
+    if (!isValidCfcEditProfile(profile)) { return false; }
+    if (m_activeCfcProfile && *m_activeCfcProfile == profile) { return true; }
+    beginCfcProfileRestore();
+    const auto batch = qScopeGuard([this] { endCfcProfileRestore(); });
+    setCfcPrecompDb(qRound(profile.compression.globalGainDb));
+    setCfcPostEqGainDb(qRound(profile.postEq.globalGainDb));
+    if (profile.compression.frequenciesHz.size() == 10) {
+        for (int i = 0; i < 10; ++i) {
+            setCfcEqFreq(i, qRound(profile.compression.frequenciesHz[i]));
+            setCfcCompression(i, qRound(profile.compression.gainsDb[i]));
+            setCfcPostEqBandGain(i, qRound(profile.postEq.gainsDb[i]));
+        }
+    }
+    setCfcParaEqData(encodeCfcEditProfile(profile));
+    m_activeCfcProfile = profile;
+    return true;
 }
 
 } // namespace NereusSDR

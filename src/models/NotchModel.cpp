@@ -44,6 +44,18 @@
 //                 (console.cs:40228) and the XVTR min/max override
 //                 (console.cs:40051-40077, :40232-40254) are deliberately
 //                 NOT ported; see design sections 1.2 and 5.4.
+//   2026-09-23  J.J. Boyd / KG4VCF  R-R3-21 / R-R3-09: listJson and
+//                 revision for the mirrored `notches` object, and the
+//                 remote window's mirror mode (no Notch* settings, list
+//                 replaced from the Core, edits sent as requests, drags
+//                 limited to one move per 100 ms plus a final one).
+//                 NereusSDR-original session code, no Thetis logic added.
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-25  J.J. Boyd / KG4VCF  R-R3-21, R-IOS-27: requestAddAtSlice
+//                 (notch.addAtSlice) for a Core at notchControlVersion 2;
+//                 its refusal reaches notchAddRejected as notch.add's does.
+//                 NereusSDR-original session code. AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // --- From radio.cs ---
@@ -148,10 +160,17 @@
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLatin1String>
+#include <QSet>
+#include <QTimer>
 #include <QVariant>
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace NereusSDR {
 
@@ -324,6 +343,13 @@ double NotchModel::tnfAddCenterHz(double effectiveRxFrequencyHz,
 // see design sections 1.2 and 5.4.
 int NotchModel::addNotch(double centerHz, double widthHz)
 {
+    // R-R3-21: a window's add names the receiver it was made on, which only
+    // RadioModel::addNotchForSlice knows. It is the only production caller.
+    if (m_mirrorMode) {
+        emit notchAddRejected(QStringLiteral("Add notches from a receiver"));
+        return -1;
+    }
+
     // From Thetis console.cs:40224 [v2.10.3.15]
     if (m_adminBusy) { // dont add if using add/edit on the setup form
         emit notchAddRejected(
@@ -374,7 +400,9 @@ int NotchModel::addNotch(double centerHz, double widthHz)
     m_notches.append(n);
 
     persist();
+    bumpRevision();
     emit notchAdded(n.id);
+    emit listChanged();
     return n.id;
 }
 
@@ -413,8 +441,16 @@ bool NotchModel::setCenter(int id, double centerHz)
         return true;
     }
     m_notches[index].centerHz = centerHz;
+    if (m_mirrorMode) {
+        pendingEditFor(id).value = m_notches.at(index);
+        queueMove(id);
+        emit notchChanged(id);
+        return true;
+    }
     persist();
+    bumpRevision();
     emit notchChanged(id);
+    emit listChanged();
     return true;
 }
 
@@ -461,8 +497,54 @@ bool NotchModel::setWidth(int id, double widthHz)
         return true;
     }
     m_notches[index].widthHz = widthHz;
+    if (m_mirrorMode) {
+        pendingEditFor(id).value = m_notches.at(index);
+        queueMove(id);
+        emit notchChanged(id);
+        return true;
+    }
     persist();
+    bumpRevision();
     emit notchChanged(id);
+    emit listChanged();
+    return true;
+}
+
+// R-R3-21 fix wave (NereusSDR-original composition): a remote window's
+// notch.move changes centre and width together. The checks are exactly
+// setCenter()'s (range, admin-busy, then rounding) and setWidth()'s (clamp,
+// then the edge limits), all made before either value changes, so a refused
+// move leaves the notch as it was and an accepted one is a single change.
+bool NotchModel::move(int id, double centerHz, double widthHz)
+{
+    if (m_mirrorMode) {
+        return false;
+    }
+    if (centerHz < kMinNotchCentreHz || centerHz > kMaxNotchCentreHz) {
+        return false;
+    }
+    if (m_adminBusy) {
+        return false;
+    }
+    centerHz = std::nearbyint(centerHz);
+    const int index = indexOfId(id);
+    if (index < 0) {
+        return false;
+    }
+    widthHz = std::clamp(widthHz, 0.0, kMaxNotchWidthHz);
+    if (centerHz - (widthHz / 2) < 0 || centerHz + (widthHz / 2) > kMaxNotchCentreHz) {
+        return false;
+    }
+    Notch& n = m_notches[index];
+    if (n.centerHz == centerHz && n.widthHz == widthHz) {
+        return true;
+    }
+    n.centerHz = centerHz;
+    n.widthHz = widthHz;
+    persist();
+    bumpRevision();
+    emit notchChanged(id);
+    emit listChanged();
     return true;
 }
 
@@ -483,9 +565,23 @@ bool NotchModel::setActive(int id, bool active)
     if (m_notches.at(index).active == active) {
         return true;
     }
+    if (m_mirrorMode) {
+        const quint32 request = sendRequest(
+            "notch.setActive",
+            {{QStringLiteral("id"), id}, {QStringLiteral("active"), active}}, id);
+        if (request == 0) {
+            return false;
+        }
+        m_notches[index].active = active;
+        pendingEditFor(id).value = m_notches.at(index);
+        emit notchChanged(id);
+        return true;
+    }
     m_notches[index].active = active;
     persist();
+    bumpRevision();
     emit notchChanged(id);
+    emit listChanged();
     return true;
 }
 
@@ -504,9 +600,25 @@ bool NotchModel::removeNotch(int id)
         return false;
     }
 
+    if (m_mirrorMode) {
+        const quint32 request =
+            sendRequest("notch.delete", {{QStringLiteral("id"), id}}, id);
+        if (request == 0) {
+            return false;
+        }
+        PendingEdit& edit = pendingEditFor(id);
+        edit.deleted = true;
+        edit.unsent = false;
+        m_notches.removeAt(index);
+        emit notchRemoved(id, index);
+        return true;
+    }
+
     m_notches.removeAt(index);
     persist();
+    bumpRevision();
     emit notchRemoved(id, index);
+    emit listChanged();
     return true;
 }
 
@@ -530,6 +642,8 @@ void NotchModel::setGlobalEnabled(bool on)
         return;
     }
     m_globalEnabled = on;
+    // Mirror mode: the change travels to the Core as a property write, and
+    // the Core's own setter persists it. persist() writes nothing here.
     persist();
     emit globalEnabledChanged(on);
 }
@@ -556,14 +670,30 @@ void NotchModel::setVisualEnabled(bool on)
         return;
     }
     m_visualEnabled = on;
-    persist();
+    if (m_mirrorMode) {
+        if (!m_restoring) {
+            saveToSettings();
+        }
+    } else {
+        persist();
+    }
     emit visualEnabledChanged(on);
 }
 
 void NotchModel::clear()
 {
+    if (m_mirrorMode) {
+        // The Core owns the list: ask it to delete each notch.
+        const QList<Notch> current = m_notches;
+        for (const Notch& n : current) {
+            removeNotch(n.id);
+        }
+        return;
+    }
     m_notches.clear();
     persist();
+    bumpRevision();
+    emit listChanged();
     // Design section 5.3 clear() contract: the RadioModel fan-out is purely
     // signal-driven, so a silent clear() would leave every channel's notch
     // set installed while the model showed none. Emitted unconditionally,
@@ -578,7 +708,10 @@ void NotchModel::clear()
 
 void NotchModel::persist()
 {
-    if (m_restoring) {
+    // Mirror mode: the Core persists its own list and flags.
+    // NotchVisualEnabled (Core-wide, through the settings proxy) is written
+    // by setVisualEnabled itself.
+    if (m_restoring || m_mirrorMode) {
         return;
     }
     saveToSettings();
@@ -587,6 +720,14 @@ void NotchModel::persist()
 void NotchModel::saveToSettings() const
 {
     auto& s = AppSettings::instance();
+
+    // R-R3-21: a remote window never writes the Core's notch list or its two
+    // flags. Its one notch write is NotchVisualEnabled, a Station key the
+    // settings proxy carries to the Core, so the value is Core-wide.
+    if (m_mirrorMode) {
+        s.setValue(QStringLiteral("NotchVisualEnabled"), boolStr(m_visualEnabled));
+        return;
+    }
 
     // Prune the tail left by a previously longer list before writing the new
     // count, otherwise a shrink leaves orphan Notch<i>* entries behind and a
@@ -627,6 +768,17 @@ void NotchModel::restoreFromSettings()
     // otherwise write the half-restored list straight back over the keys
     // still being read out of it.
     m_restoring = true;
+
+    // R-R3-21: a remote window's list and flags come from the Core's mirror,
+    // never from settings. Only NotchVisualEnabled is read here: the Core's
+    // one Core-wide value, through the settings proxy.
+    if (m_mirrorMode) {
+        if (s.contains(QStringLiteral("NotchVisualEnabled"))) {
+            setVisualEnabled(boolFrom(s.value(QStringLiteral("NotchVisualEnabled"))));
+        }
+        m_restoring = false;
+        return;
+    }
 
     // Each key: if absent, leave the current default unchanged. Restores go
     // through the public setters so observers see the change.
@@ -686,9 +838,458 @@ void NotchModel::restoreFromSettings()
         return;
     }
 
+    bumpRevision();
     // Whole-list replacement (design section 5.3): RadioModel reconciles
     // every open channel off this signal.
     emit notchesReset();
+    emit listChanged();
+}
+
+// ---------------------------------------------------------------------------
+// The Core's list on the wire, and the remote window's mirror mode
+// (R-R3-21 / R-R3-09). NereusSDR-original: no Thetis logic below.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Serial-number comparison, so a revision that wraps past 2^32 still reads
+// as newer.
+bool revisionReached(quint32 have, quint32 want)
+{
+    return static_cast<qint32>(have - want) >= 0;
+}
+
+}  // namespace
+
+void NotchModel::bumpRevision()
+{
+    ++m_revision;
+}
+
+QString NotchModel::listJson() const
+{
+    QJsonArray array;
+    for (const Notch& n : m_notches) {
+        QJsonObject entry;
+        entry.insert(QStringLiteral("id"), n.id);
+        entry.insert(QStringLiteral("centreHz"), n.centerHz);
+        entry.insert(QStringLiteral("widthHz"), n.widthHz);
+        entry.insert(QStringLiteral("active"), n.active);
+        array.append(entry);
+    }
+    return QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact));
+}
+
+bool NotchModel::listFromJson(const QString& json, QList<Notch>* out) const
+{
+    QJsonParseError error;
+    const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &error);
+    if (error.error != QJsonParseError::NoError || !doc.isArray()) {
+        return false;
+    }
+    const QJsonArray array = doc.array();
+    if (array.size() > kMaxNotches) {
+        return false;
+    }
+    QList<Notch> parsed;
+    parsed.reserve(array.size());
+    QSet<int> ids;
+    for (const QJsonValue& value : array) {
+        if (!value.isObject()) {
+            return false;
+        }
+        const QJsonObject entry = value.toObject();
+        const QJsonValue id = entry.value(QStringLiteral("id"));
+        const QJsonValue centre = entry.value(QStringLiteral("centreHz"));
+        const QJsonValue width = entry.value(QStringLiteral("widthHz"));
+        const QJsonValue active = entry.value(QStringLiteral("active"));
+        if (!id.isDouble() || !centre.isDouble() || !width.isDouble() || !active.isBool()) {
+            return false;
+        }
+        const double rawId = id.toDouble();
+        if (rawId < 1.0 || rawId > 2147483647.0 || rawId != std::floor(rawId)) {
+            return false;
+        }
+        Notch n;
+        n.id = static_cast<int>(rawId);
+        n.centerHz = centre.toDouble();
+        n.widthHz = width.toDouble();
+        n.active = active.toBool();
+        if (!std::isfinite(n.centerHz) || !std::isfinite(n.widthHz) || n.widthHz < 0.0
+            || ids.contains(n.id)) {
+            return false;
+        }
+        ids.insert(n.id);
+        parsed.append(n);
+    }
+    *out = parsed;
+    return true;
+}
+
+void NotchModel::setMirrorMode(bool on)
+{
+    if (m_mirrorMode == on) {
+        return;
+    }
+    resetSession();
+    m_mirrorMode = on;
+    m_haveMirrorList = false;
+    m_mirrorList.clear();
+    m_mirrorRevision = 0;
+    if (on) {
+        return;
+    }
+    // Fix wave minor 1: leaving mirror mode, the Core's list is not this
+    // window's. Drop it and go back to the window's own saved notches and
+    // flags, which mirror mode never wrote.
+    m_notches.clear();
+    // Follow-up item 6: the two switches start from this window's defaults,
+    // not the Core's mirrored values; a saved switch then replaces its
+    // default below. Nothing is written while they are reset.
+    m_restoring = true;
+    setGlobalEnabled(kDefaultGlobalEnabled);
+    setAutoIncrease(kDefaultAutoIncrease);
+    m_restoring = false;
+    if (AppSettings::instance().contains(QStringLiteral("NotchCount"))) {
+        restoreFromSettings(); // emits notchesReset and listChanged
+    } else {
+        if (AppSettings::instance().contains(QStringLiteral("NotchGlobalEnabled"))
+            || AppSettings::instance().contains(QStringLiteral("NotchAutoIncrease"))) {
+            restoreFromSettings();
+        }
+        bumpRevision();
+        emit notchesReset();
+        emit listChanged();
+    }
+}
+
+void NotchModel::setRemoteRequestHandler(RemoteRequestHandler handler)
+{
+    m_remoteRequest = std::move(handler);
+}
+
+quint32 NotchModel::sendRequest(const QByteArray& verb, const QVariantMap& arguments,
+                                int notchId)
+{
+    if (!m_mirrorMode || !m_remoteRequest) {
+        return 0;
+    }
+    const quint32 request = m_remoteRequest(verb, arguments);
+    if (request == 0) {
+        return 0;
+    }
+    m_requests.insert(request, notchId);
+    if (notchId > 0) {
+        ++pendingEditFor(notchId).inFlight;
+    }
+    return request;
+}
+
+NotchModel::PendingEdit& NotchModel::pendingEditFor(int id)
+{
+    auto it = m_pendingEdits.find(id);
+    if (it == m_pendingEdits.end()) {
+        PendingEdit edit;
+        if (const Notch* n = notchById(id)) {
+            edit.value = *n;
+        }
+        edit.value.id = id;
+        it = m_pendingEdits.insert(id, edit);
+    }
+    return it.value();
+}
+
+quint32 NotchModel::requestAdd(int sliceId, double centreHz, double widthHz)
+{
+    return sendAddRequest("notch.add",
+                          {{QStringLiteral("sliceId"), sliceId},
+                           {QStringLiteral("centreHz"), centreHz},
+                           {QStringLiteral("widthHz"), widthHz}});
+}
+
+quint32 NotchModel::requestAddAtSlice(int sliceId)
+{
+    if (m_remoteControlVersion < 2) {
+        return 0;
+    }
+    return sendAddRequest("notch.addAtSlice", {{QStringLiteral("sliceId"), sliceId}});
+}
+
+void NotchModel::setRemoteControlVersion(int version)
+{
+    m_remoteControlVersion = version;
+}
+
+quint32 NotchModel::sendAddRequest(const QByteArray& verb, const QVariantMap& arguments)
+{
+    if (!m_mirrorMode) {
+        return 0;
+    }
+    // The same local edit lock the Core's own addNotch honours
+    // (console.cs:40224 [v2.10.3.15]); here it is this window's TNF page.
+    if (m_adminBusy) { // dont add if using add/edit on the setup form
+        emit notchAddRejected(QStringLiteral("The TNF settings page is mid-edit"));
+        return 0;
+    }
+    const quint32 request = sendRequest(verb, arguments, 0);
+    if (request == 0) {
+        emit notchAddRejected(QStringLiteral("This window cannot reach the Core right now"));
+    }
+    return request;
+}
+
+void NotchModel::queueMove(int id)
+{
+    pendingEditFor(id).unsent = true;
+    if (m_moveTimer == nullptr) {
+        m_moveTimer = new QTimer(this);
+        m_moveTimer->setSingleShot(true);
+        connect(m_moveTimer, &QTimer::timeout, this, &NotchModel::onMoveTimer);
+    }
+    // Leading edge on the next event-loop turn, so a centre and a width set
+    // together (the TNF page's commit) travel as one move. While a window is
+    // open, edits wait for its end: at most one move per interval.
+    if (!m_moveTimer->isActive()) {
+        m_moveTimer->start(0);
+    }
+}
+
+void NotchModel::sendMove(int id)
+{
+    auto it = m_pendingEdits.find(id);
+    if (it == m_pendingEdits.end() || !it->unsent) {
+        return;
+    }
+    it->unsent = false;
+    if (it->deleted) {
+        return;
+    }
+    const Notch value = it->value;
+    const quint32 request = sendRequest(
+        "notch.move",
+        {{QStringLiteral("id"), id},
+         {QStringLiteral("centreHz"), value.centerHz},
+         {QStringLiteral("widthHz"), value.widthHz}},
+        id);
+    if (request == 0) {
+        // Nothing was sent: show the Core's list again.
+        rebuildFromMirror();
+    }
+}
+
+void NotchModel::onMoveTimer()
+{
+    QList<int> due;
+    for (auto it = m_pendingEdits.cbegin(); it != m_pendingEdits.cend(); ++it) {
+        if (it->unsent) {
+            due.append(it.key());
+        }
+    }
+    if (due.isEmpty()) {
+        return;
+    }
+    for (int id : due) {
+        sendMove(id);
+    }
+    if (m_moveTimer != nullptr) {
+        m_moveTimer->start(kRemoteMoveIntervalMs);
+    }
+}
+
+void NotchModel::flushPendingMoves()
+{
+    if (!m_mirrorMode) {
+        return;
+    }
+    bool sent = false;
+    const QList<int> ids = m_pendingEdits.keys();
+    for (int id : ids) {
+        if (m_pendingEdits.value(id).unsent) {
+            sendMove(id);
+            sent = true;
+        }
+    }
+    if (sent && m_moveTimer != nullptr) {
+        m_moveTimer->start(kRemoteMoveIntervalMs);
+    }
+}
+
+bool NotchModel::applyRemoteProperty(const QByteArray& name, const QVariant& value)
+{
+    if (!m_mirrorMode) {
+        return false;
+    }
+    if (name == "listJson") {
+        QList<Notch> parsed;
+        if (!listFromJson(value.toString(), &parsed)) {
+            qCWarning(lcDsp) << "NotchModel: ignoring a malformed notch list from the Core";
+            return false;
+        }
+        m_mirrorList = parsed;
+        m_haveMirrorList = true;
+        rebuildFromMirror();
+        return true;
+    }
+    if (name == "revision") {
+        bool ok = false;
+        const qulonglong raw = value.toULongLong(&ok);
+        if (!ok || raw > 0xffffffffULL) {
+            return false;
+        }
+        m_mirrorRevision = static_cast<quint32>(raw);
+        rebuildFromMirror();
+        return true;
+    }
+    return false;
+}
+
+void NotchModel::receiveRemoteResult(quint32 requestId, const QByteArray& verb,
+                                     bool accepted, const QString& reason,
+                                     const QVariantMap& values)
+{
+    const auto request = m_requests.constFind(requestId);
+    if (request == m_requests.cend()) {
+        return;
+    }
+    const int notchId = request.value();
+    m_requests.erase(request);
+
+    if (notchId > 0) {
+        auto edit = m_pendingEdits.find(notchId);
+        if (edit != m_pendingEdits.end()) {
+            edit->inFlight = std::max(0, edit->inFlight - 1);
+            bool ok = false;
+            const qulonglong raw = values.value(QStringLiteral("revision")).toULongLong(&ok);
+            if (accepted && ok && raw <= 0xffffffffULL) {
+                const auto revision = static_cast<quint32>(raw);
+                if (!edit->haveSettleRevision
+                    || revisionReached(revision, edit->settleRevision)) {
+                    edit->settleRevision = revision;
+                    edit->haveSettleRevision = true;
+                }
+            }
+        }
+    }
+
+    if (!accepted) {
+        if (verb == "notch.add" || verb == "notch.addAtSlice") {
+            emit notchAddRejected(reason.isEmpty() ? QStringLiteral("The Core refused it")
+                                                   : reason);
+        } else {
+            emit notchRequestRefused(reason.isEmpty()
+                ? QStringLiteral("The Core refused the notch change.")
+                : reason);
+        }
+    }
+    rebuildFromMirror();
+}
+
+void NotchModel::resetSession()
+{
+    m_requests.clear();
+    m_pendingEdits.clear();
+    if (m_moveTimer != nullptr) {
+        m_moveTimer->stop();
+    }
+    rebuildFromMirror();
+}
+
+void NotchModel::pruneSettledEdits()
+{
+    for (auto it = m_pendingEdits.begin(); it != m_pendingEdits.end();) {
+        const PendingEdit& edit = it.value();
+        const bool settled = edit.inFlight == 0 && !edit.unsent
+            && (!edit.haveSettleRevision
+                || revisionReached(m_mirrorRevision, edit.settleRevision));
+        if (settled) {
+            it = m_pendingEdits.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void NotchModel::rebuildFromMirror()
+{
+    if (!m_mirrorMode || !m_haveMirrorList) {
+        return;
+    }
+    pruneSettledEdits();
+    QList<Notch> next;
+    next.reserve(m_mirrorList.size());
+    for (Notch n : std::as_const(m_mirrorList)) {
+        const auto edit = m_pendingEdits.constFind(n.id);
+        if (edit != m_pendingEdits.cend()) {
+            if (edit->deleted) {
+                continue;
+            }
+            n.centerHz = edit->value.centerHz;
+            n.widthHz = edit->value.widthHz;
+            n.active = edit->value.active;
+        }
+        next.append(n);
+    }
+    replaceList(next);
+}
+
+void NotchModel::replaceList(const QList<Notch>& next)
+{
+    bool changed = false;
+    // Fix wave minor 1: ids this model mints later (a local add after
+    // leaving mirror mode, a restore) stay above every id it has held.
+    for (const Notch& n : next) {
+        if (n.id >= m_nextId && n.id < std::numeric_limits<int>::max()) {
+            m_nextId = n.id + 1;
+        }
+    }
+
+    // Removals first, each announced with the position it held, as a local
+    // remove would.
+    QSet<int> nextIds;
+    for (const Notch& n : next) {
+        nextIds.insert(n.id);
+    }
+    for (int i = 0; i < m_notches.size();) {
+        const int id = m_notches.at(i).id;
+        if (nextIds.contains(id)) {
+            ++i;
+            continue;
+        }
+        m_notches.removeAt(i);
+        changed = true;
+        emit notchRemoved(id, i);
+    }
+
+    // The Core appends adds and keeps order, so the surviving list is almost
+    // always a prefix of the new one: update in place and append the rest.
+    bool prefix = m_notches.size() <= next.size();
+    for (int i = 0; prefix && i < m_notches.size(); ++i) {
+        prefix = m_notches.at(i).id == next.at(i).id;
+    }
+    if (!prefix) {
+        m_notches = next;
+        emit notchesReset();
+        emit listChanged();
+        return;
+    }
+    for (int i = 0; i < m_notches.size(); ++i) {
+        const Notch& to = next.at(i);
+        Notch& have = m_notches[i];
+        if (have.centerHz != to.centerHz || have.widthHz != to.widthHz
+            || have.active != to.active) {
+            have = to;
+            changed = true;
+            emit notchChanged(to.id);
+        }
+    }
+    for (int i = m_notches.size(); i < next.size(); ++i) {
+        m_notches.append(next.at(i));
+        changed = true;
+        emit notchAdded(next.at(i).id);
+    }
+    if (changed) {
+        emit listChanged();
+    }
 }
 
 }  // namespace NereusSDR

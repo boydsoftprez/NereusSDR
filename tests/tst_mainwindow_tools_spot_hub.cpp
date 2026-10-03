@@ -18,7 +18,7 @@
 //   2. FreeDVReporterDialog is constructible from
 //      freeDvStationModel() + freeDvReporter() alone. Same drift gate.
 //   3. SpotModel::clear() empties every row, which is what
-//      Ctrl+Shift+K invokes via MainWindow::buildMenuBar's QShortcut.
+//      Ctrl+Shift+X invokes via MainWindow::buildMenuBar's QShortcut.
 //   4. SpotHubDialog::spotsClearedAll() routes into SpotModel::clear()
 //      when wired by MainWindow::openSpotHub (the same wiring the
 //      slot body performs at lazy-construction time).
@@ -128,9 +128,9 @@ private slots:
         Q_UNUSED(dlg);
     }
 
-    // ── Contract 3: SpotModel::clear empties rows (Ctrl+Shift+K body) ─────
+    // ── Contract 3: SpotModel::clear empties rows (Ctrl+Shift+X body) ─────
     //
-    // The Ctrl+Shift+K QShortcut wired in buildMenuBar's tail calls
+    // The Ctrl+Shift+X QShortcut wired in buildMenuBar's tail calls
     // m_radioModel->spotModel()->clear(). This test pins that the call
     // does in fact drop every row + emits spotsCleared exactly once.
 

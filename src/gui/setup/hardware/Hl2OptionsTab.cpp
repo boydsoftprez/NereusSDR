@@ -16,6 +16,59 @@
 //                Hermes Lite Options + I2C Control + I/O Pin State.
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                via Anthropic Claude Code.
+//   2026-09-23 - R-R3-46: the TX buffer latency and PTT hang follow the
+//                transmit permission. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: the second I2C bus choice (bus 0) is hidden until
+//                 it is built (UnbuiltFeatures).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (remote-window parity Task 13, plan C6): the TX
+//                 buffer latency and PTT hang rows are hidden until built
+//                 (UnbuiltFeatures). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-26 - R-R3-46 (remote-window parity Task 14): Read, Write and
+//                 Pin Control go through RadioModel (requestIoBoardI2c,
+//                 setIoBoardOutput), so a remote window reaches the Core's
+//                 radio; the output strip shows the output register read
+//                 back; a write and Pin Control close while the radio is on
+//                 the air. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-26 - Parity Task 14 follow-up (R-R3-46): the four read-response
+//                 boxes follow mi0bot's txtI2CByte3..txtI2CByte0 (C1 at the
+//                 register + 3 on the left, C4 at the register on the right)
+//                 with its per-box tooltips. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-29 - Swap audio channels, Enable CL2, CL2 frequency and
+//                 External 10 MHz are stored but not sent to the radio, so
+//                 they show disabled with a plain reason; the "wire
+//                 emission" warnings are gone. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - HL2 port part 1: the TX buffer latency and PTT hang
+//                 reach the radio (bank 17), so their rows are shown again.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - HL2 port part 1: the power supply sync box says what a
+//                 tick does, "Disable power supply sync" (mi0bot's "Disable
+//                 PS Sync"), not "PureSignal sync". J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - HL2 port part 2: the input strip shows the input pins
+//                 register (6) as each poll reads it, lit pins red while
+//                 on the air, in a local window and a remote one alike.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - The Hermes Lite Options boxes carry the ids of the rows
+//                 the Setup description gives them (version 16), so a
+//                 test holds the two alike. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - HL2 clock options: Enable CL2, CL2 frequency and External
+//                 10 MHz reach the radio (mi0bot setup.cs:21694-21756
+//                 [@c26a8a4]), so they are enabled with mi0bot's tooltips;
+//                 the frequency box follows Enable CL2, and a remote window
+//                 needs a Core that sends them (setClockControlAvailable).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - Radio codec lane: Swap audio channels reaches the radio
+//                 (P1RadioConnection::setHl2SwapAudioChannels), so it is
+//                 enabled with mi0bot's tooltip; a remote window needs a
+//                 Core at radioHardwareVersion 13 (setSwapAudioAvailable).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -57,6 +110,8 @@
 //============================================================================================//
 
 #include "Hl2OptionsTab.h"
+#include "HardwareTransmitGate.h"
+#include "gui/UnbuiltFeatures.h"
 
 #include "core/BoardCapabilities.h"
 #include "core/Hl2OptionsModel.h"
@@ -71,10 +126,14 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLoggingCategory>
+#include <QPointer>
 #include <QPushButton>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QVBoxLayout>
+
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -138,14 +197,41 @@ Hl2OptionsTab::Hl2OptionsTab(RadioModel* model, QWidget* parent)
         syncFromModel();
     }
 
-    // ── Wire I/O Board live OC byte → output strip indicator ──────────────
-    // The output strip on this tab mirrors the same OC bank-0 byte the
-    // status-bar strip on Hl2IoBoardTab shows.  No new signal — reuse
-    // IoBoardHl2::currentOcByteChanged (added during Phase 3L carry-forward).
+    // ── Output register → output strip ────────────────────────────────────
+    // R-R3-46 (remote-window parity Task 14): the strip shows the I/O
+    // board's output register (169) as last read back, as mi0bot's
+    // ucOutPinsLedStripHF shows read_data[3] of that read
+    // (setup.cs:30006-30036 [@c26a8a4]). In a remote window the Core's
+    // `ioBoard` outputs are written into this model's board
+    // (IoBoardHl2Facade). The HL2 I/O tab's OC strip still shows the band
+    // output byte the radio is sent.
     if (m_ioBoard) {
-        connect(m_ioBoard, &IoBoardHl2::currentOcByteChanged,
-                this, &Hl2OptionsTab::onIoBoardOcByteChanged);
+        connect(m_ioBoard, &IoBoardHl2::registerChanged, this,
+                [this](IoBoardHl2::Register reg, quint8) {
+                    if (reg == IoBoardHl2::Register::REG_OUT_PINS) {
+                        onOutputsChanged();
+                    } else if (reg == IoBoardHl2::Register::REG_INPUT_PINS) {
+                        // From mi0bot console.cs:25887 [@c26a8a4]: each read of
+                        // REG_INPUT_PINS calls UpdateIOLedStrip(MOX, registers[6]).
+                        m_inputStrip->setBits(
+                            m_ioBoard->registerValue(IoBoardHl2::Register::REG_INPUT_PINS));
+                    }
+                });
+        onOutputsChanged();
+        m_inputStrip->setBits(m_ioBoard->registerValue(IoBoardHl2::Register::REG_INPUT_PINS));
     }
+    // A write and Pin Control close while the radio is on the air, in a
+    // local window and a remote one alike. The input strip lights its pins
+    // in the transmit color on the air: from mi0bot setup.cs:22606-22610
+    // UpdateIOLedStrip [@c26a8a4], ucIOPinsLedStripHF.TX = tx.
+    if (m_model) {
+        connect(m_model, &RadioModel::coreOnAirChanged, this, [this](bool onAir) {
+            m_inputStrip->setTx(onAir);
+            applyIoGates();
+        });
+        m_inputStrip->setTx(m_model->isCoreOnAir());
+    }
+    applyIoGates();
 }
 
 Hl2OptionsTab::~Hl2OptionsTab() = default;
@@ -188,6 +274,8 @@ void Hl2OptionsTab::buildHermesLiteOptions(QWidget* parent)
     m_udTxLatency->setRange(Hl2OptionsModel::kTxLatencyMinMs,
                             Hl2OptionsModel::kTxLatencyMaxMs);
     m_udTxLatency->setSuffix(tr(" ms"));
+    m_udTxLatency->setObjectName(QStringLiteral("hl2TxBufferLatency"));
+    m_udTxLatency->setProperty("nereusSetupId", "hardware.hl2Io.txLatency");
     grid->addWidget(m_udTxLatency, row, 1);
     ++row;
 
@@ -198,43 +286,93 @@ void Hl2OptionsTab::buildHermesLiteOptions(QWidget* parent)
     m_udPttHang->setRange(Hl2OptionsModel::kPttHangMinMs,
                           Hl2OptionsModel::kPttHangMaxMs);
     m_udPttHang->setSuffix(tr(" ms"));
+    m_udPttHang->setObjectName(QStringLiteral("hl2PttHang"));
+    m_udPttHang->setProperty("nereusSetupId", "hardware.hl2Io.pttHang");
     grid->addWidget(m_udPttHang, row, 1);
     ++row;
 
     // From mi0bot setup.designer.cs:11166-11176 chkCl2Enable +
-    // :11142-11164 udCl2Freq [v2.10.3.13-beta2] — range 1..200 MHz,
-    // default 116.
+    // :11133-11163 udCl2Freq [@c26a8a4] - range 1..200 MHz, three decimal
+    // places, step 0.1, default 116. The box applies on commit (Enter or
+    // leaving it), as a NumericUpDown does, so typing does not reprogram
+    // the CL2 output at every keystroke.
+    //
+    // The clock options reach the radio's clock chip over I2C
+    // (P1RadioConnection::setHl2Clock, mi0bot setup.cs:21694-21756
+    // [@c26a8a4]). In a remote window they wait for a Core that sends them
+    // (setClockControlAvailable).
+    // From mi0bot setup.designer.cs:11174 [@c26a8a4]:
+    //   this.toolTip1.SetToolTip(this.chkCl2Enable, "Enable frequency output on CL2");
     m_chkCl2Enable = new QCheckBox(tr("Enable CL2"), parent);
+    m_chkCl2Enable->setObjectName(QStringLiteral("hl2Cl2Enable"));
+    m_chkCl2Enable->setProperty("nereusSetupId", "hardware.hl2Io.cl2Enable");
+    m_chkCl2Enable->setToolTip(tr("Enable frequency output on CL2"));
     grid->addWidget(m_chkCl2Enable, row, 0);
-    m_udCl2Freq = new QSpinBox(parent);
-    m_udCl2Freq->setRange(Hl2OptionsModel::kCl2FreqMinMHz,
-                          Hl2OptionsModel::kCl2FreqMaxMHz);
+    m_udCl2Freq = new QDoubleSpinBox(parent);
+    m_udCl2Freq->setDecimals(3);
+    m_udCl2Freq->setSingleStep(0.1);
+    m_udCl2Freq->setRange(Hl2OptionsModel::kCl2FreqMinKHz / 1000.0,
+                          Hl2OptionsModel::kCl2FreqMaxKHz / 1000.0);
+    m_udCl2Freq->setKeyboardTracking(false);
     m_udCl2Freq->setSuffix(tr(" MHz"));
+    m_udCl2Freq->setObjectName(QStringLiteral("hl2Cl2Freq"));
+    m_udCl2Freq->setProperty("nereusSetupId", "hardware.hl2Io.cl2Freq");
+    // The row label the Setup description gives the box beside Enable CL2.
+    m_udCl2Freq->setAccessibleName(tr("CL2 frequency"));
+    // From mi0bot setup.designer.cs:11158 [@c26a8a4]:
+    //   this.toolTip1.SetToolTip(this.udCl2Freq, "Output frequency on CL2 output");
+    m_udCl2Freq->setToolTip(tr("Output frequency on CL2 output"));
     grid->addWidget(m_udCl2Freq, row, 1);
     ++row;
 
-    // From mi0bot setup.designer.cs:11178+ chkExt10MHz [v2.10.3.13-beta2]
+    // From mi0bot setup.designer.cs:11178-11189 chkExt10MHz [@c26a8a4]:
+    //   this.chkExt10MHz.Text = "Ext 10MHz (CL1 Input)";
+    //   this.toolTip1.SetToolTip(this.chkExt10MHz, "Enable external 10MHz input on CL1");
     m_chkExt10MHz = new QCheckBox(tr("External 10 MHz reference"), parent);
+    m_chkExt10MHz->setObjectName(QStringLiteral("hl2Ext10MHz"));
+    m_chkExt10MHz->setProperty("nereusSetupId", "hardware.hl2Io.ext10MHz");
+    m_chkExt10MHz->setToolTip(tr("Enable external 10 MHz input on CL1"));
     grid->addWidget(m_chkExt10MHz, row, 0, 1, 2);
     ++row;
 
     // From mi0bot setup.designer.cs:11258 chkDisconnectReset
     m_chkDisconnectReset = new QCheckBox(tr("Reset on Ethernet disconnect"), parent);
+    m_chkDisconnectReset->setObjectName(QStringLiteral("hl2DisconnectReset"));
+    m_chkDisconnectReset->setProperty("nereusSetupId", "hardware.hl2Io.disconnectReset");
     grid->addWidget(m_chkDisconnectReset, row, 0, 1, 2);
     ++row;
 
-    // From mi0bot setup.designer.cs:11293+ chkHL2PsSync
-    m_chkPsSync = new QCheckBox(tr("PureSignal sync"), parent);
+    // From mi0bot setup.designer.cs:11293-11301 chkHL2PsSync [@c26a8a4]:
+    //   this.chkHL2PsSync.Text = "Disable PS Sync";
+    //   this.toolTip1.SetToolTip(this.chkHL2PsSync, "Disables the FPGA synchronisation of the power supply clock");
+    // PS is the power supply, not PureSignal: a tick disables the power
+    // supply clock sync (setup.cs:13384-13390, // MI0BOT: Control power
+    // supply sync for the HL2). Spelled out so it cannot read as PureSignal.
+    m_chkPsSync = new QCheckBox(tr("Disable power supply sync"), parent);
+    m_chkPsSync->setObjectName(QStringLiteral("hl2DisablePsSync"));
+    m_chkPsSync->setProperty("nereusSetupId", "hardware.hl2Io.psSync");
+    m_chkPsSync->setToolTip(tr("Stops the radio synchronizing its power supply clock."));
     grid->addWidget(m_chkPsSync, row, 0, 1, 2);
     ++row;
 
     // From mi0bot setup.designer.cs:11305-11313 chkHL2BandVolts
     m_chkBandVolts = new QCheckBox(tr("Band Volts (PWM out 0–3.3 V)"), parent);
+    m_chkBandVolts->setObjectName(QStringLiteral("hl2BandVolts"));
+    m_chkBandVolts->setProperty("nereusSetupId", "hardware.hl2Io.bandVolts");
     grid->addWidget(m_chkBandVolts, row, 0, 1, 2);
     ++row;
 
     // From mi0bot setup.designer.cs:11343 chkSwapAudioChannels
+    // mi0bot swaps the left and right audio it sends the radio over P1
+    // (networkproto1.c:1231-1239 [@c26a8a4]). NereusSDR now sends the
+    // receive audio in each TX frame's L/R bytes, and RadioModel's
+    // applyHl2Options hands this option to P1RadioConnection, so it is live.
+    // Tooltip from mi0bot setup.designer.cs:11119 [@c26a8a4], with its
+    // "ot" typo read as "to".
     m_chkSwapAudio = new QCheckBox(tr("Swap audio channels"), parent);
+    m_chkSwapAudio->setObjectName(QStringLiteral("hl2SwapAudioChannels"));
+    m_chkSwapAudio->setProperty("nereusSetupId", "hardware.hl2Io.swapAudioChannels");
+    m_chkSwapAudio->setToolTip(tr("Swap the audio channels sent to the HL2"));
     grid->addWidget(m_chkSwapAudio, row, 0, 1, 2);
     ++row;
 
@@ -247,9 +385,6 @@ void Hl2OptionsTab::buildHermesLiteOptions(QWidget* parent)
                     if (m_syncing) { return; }
                     if (m_options) {
                         (m_options->*setter)(on);
-                        qCWarning(lcHl2Options).nospace()
-                            << "wire emission TBD Phase 3L follow-up "
-                               "(toggle " << (on ? "ON" : "OFF") << ")";
                     }
                 });
     };
@@ -259,21 +394,32 @@ void Hl2OptionsTab::buildHermesLiteOptions(QWidget* parent)
                     if (m_syncing) { return; }
                     if (m_options) {
                         (m_options->*setter)(v);
-                        qCWarning(lcHl2Options).nospace()
-                            << "wire emission TBD Phase 3L follow-up (value=" << v << ")";
                     }
                 });
     };
 
     bindBool(m_chkSwapAudio,        &Hl2OptionsModel::setSwapAudioChannels);
     bindBool(m_chkCl2Enable,        &Hl2OptionsModel::setCl2Enabled);
-    bindInt (m_udCl2Freq,           &Hl2OptionsModel::setCl2FreqMHz);
+    connect(m_udCl2Freq, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+            [this](double mhz) {
+                if (m_syncing) { return; }
+                if (m_options) {
+                    m_options->setCl2FreqKHz(static_cast<int>(std::lround(mhz * 1000.0)));
+                }
+            });
     bindBool(m_chkExt10MHz,         &Hl2OptionsModel::setExt10MHz);
     bindBool(m_chkDisconnectReset,  &Hl2OptionsModel::setDisconnectReset);
     bindInt (m_udPttHang,           &Hl2OptionsModel::setPttHangMs);
     bindInt (m_udTxLatency,         &Hl2OptionsModel::setTxLatencyMs);
     bindBool(m_chkPsSync,           &Hl2OptionsModel::setPsSync);
     bindBool(m_chkBandVolts,        &Hl2OptionsModel::setBandVolts);
+
+    // From mi0bot setup.cs:21694-21729 ControlCl2 [@c26a8a4]:
+    //   // MI0BOT: Support for HL2 Cl2 clock output
+    //   udCl2Freq.Enabled = enable;
+    // The frequency box follows Enable CL2.
+    connect(m_chkCl2Enable, &QCheckBox::toggled, this, [this](bool) { applyClockGates(); });
+    applyClockGates();
 }
 
 // ── buildI2cControl ─────────────────────────────────────────────────────────
@@ -297,13 +443,13 @@ void Hl2OptionsTab::buildI2cControl(QWidget* parent)
     // Bus radio — bus 0 deferred per design §4 (no NereusSDR I2cTxn path
     // for bus 0 today), so render as disabled with explanatory tooltip.
     grid->addWidget(new QLabel(tr("Bus:"), parent), row, 0);
-    auto* bus0 = new QCheckBox(tr("0 (deferred)"), parent);
+    auto* bus0 = new QCheckBox(tr("0"), parent);
     bus0->setEnabled(false);
-    bus0->setToolTip(tr(
-        "Bus 0 surface deferred to a Phase 3L follow-up — NereusSDR's "
-        "I2cTxn pipeline currently emits bus 1 only.  See "
-        "docs/architecture/phase3l-hl2-visibility-design.md §4."));
+    bus0->setToolTip(tr("I2C bus 0 on the HL2. NereusSDR reads and writes bus 1 only."));
     grid->addWidget(bus0, row, 1);
+    // R-R3-49: the second bus is hidden until it is built; bus 1 stays.
+    bus0->setObjectName(QStringLiteral("hl2I2cBus0"));
+    UnbuiltFeatures::hideUnlessBuilt(bus0, UnbuiltFeature::Hl2SecondI2cBus);
     auto* bus1 = new QCheckBox(tr("1 (HL2 daughterboard)"), parent);
     bus1->setChecked(true);
     bus1->setEnabled(false); // single supported value
@@ -337,26 +483,35 @@ void Hl2OptionsTab::buildI2cControl(QWidget* parent)
     grid->addWidget(m_chkI2cWriteEnable, row, 2, 1, 2);
     ++row;
 
-    // Read response display — 4 hex bytes.
+    // Read response display: 4 hex bytes, laid out as mi0bot lays them out.
+    // From mi0bot setup.designer.cs [@c26a8a4] (txtI2CByte0..3 Location and
+    // toolTip1.SetToolTip): left to right txtI2CByte3 (x 153, "Data at
+    // address+3"), txtI2CByte2 (x 184, +2), txtI2CByte1 (x 215, +1) and
+    // txtI2CByte0 (x 246, "Data at address"). btnI2CRead_MouseDown
+    // (setup.cs:21486-21489) fills byte0 from read_data[3] (C4) through
+    // byte3 from read_data[0] (C1), so the boxes read C1..C4 left to right,
+    // the register itself on the right. "address" in mi0bot's tooltips is
+    // the register chosen in Reg/Ctrl, so the tooltips name that control.
     grid->addWidget(new QLabel(tr("Read response:"), parent), row, 0);
     auto* respRow = new QHBoxLayout();
-    auto makeByteLbl = [parent]() {
+    auto makeByteLbl = [parent](const QString& tip) {
         auto* lbl = new QLabel(QStringLiteral("--"), parent);
         lbl->setFixedWidth(28);
         lbl->setAlignment(Qt::AlignCenter);
         lbl->setStyleSheet(QStringLiteral(
             "QLabel { background: white; color: black; "
             "font-family: monospace; border: 1px solid #555; padding: 2px; }"));
+        lbl->setToolTip(tip);
         return lbl;
     };
-    m_byte0Label = makeByteLbl();
-    m_byte1Label = makeByteLbl();
-    m_byte2Label = makeByteLbl();
-    m_byte3Label = makeByteLbl();
-    respRow->addWidget(m_byte0Label);
-    respRow->addWidget(m_byte1Label);
-    respRow->addWidget(m_byte2Label);
+    m_byte3Label = makeByteLbl(tr("Data at Reg/Ctrl + 3"));
+    m_byte2Label = makeByteLbl(tr("Data at Reg/Ctrl + 2"));
+    m_byte1Label = makeByteLbl(tr("Data at Reg/Ctrl + 1"));
+    m_byte0Label = makeByteLbl(tr("Data at Reg/Ctrl"));
     respRow->addWidget(m_byte3Label);
+    respRow->addWidget(m_byte2Label);
+    respRow->addWidget(m_byte1Label);
+    respRow->addWidget(m_byte0Label);
     respRow->addStretch();
     auto* respWrap = new QWidget(parent);
     respWrap->setLayout(respRow);
@@ -368,6 +523,14 @@ void Hl2OptionsTab::buildI2cControl(QWidget* parent)
     m_btnWrite = new QPushButton(tr("Write"), parent);
     grid->addWidget(m_btnRead,  row, 1);
     grid->addWidget(m_btnWrite, row, 2);
+    ++row;
+
+    // R-R3-46 (parity Task 14): why the last request was not done.
+    m_i2cStatusLabel = new QLabel(parent);
+    m_i2cStatusLabel->setObjectName(QStringLiteral("hl2I2cStatus"));
+    m_i2cStatusLabel->setWordWrap(true);
+    m_i2cStatusLabel->hide();
+    grid->addWidget(m_i2cStatusLabel, row, 0, 1, 4);
     ++row;
 
     grid->setRowStretch(row, 1);
@@ -389,21 +552,8 @@ void Hl2OptionsTab::buildI2cControl(QWidget* parent)
     connect(m_chkI2cWriteEnable, &QCheckBox::toggled,
             this, &Hl2OptionsTab::syncI2cWriteButtonEnabled);
 
-    // Push read responses into the byte labels as they arrive.
-    if (m_ioBoard) {
-        connect(m_ioBoard, &IoBoardHl2::i2cReadResponseReceived, this,
-                [this](quint8 /*retAddr*/, quint8 /*retSubAddr*/,
-                       quint8 b0, quint8 b1, quint8 b2, quint8 b3) {
-                    auto fmt = [](quint8 v) {
-                        return QStringLiteral("%1").arg(v, 2, 16, QLatin1Char('0'))
-                                                   .toUpper();
-                    };
-                    if (m_byte0Label) { m_byte0Label->setText(fmt(b0)); }
-                    if (m_byte1Label) { m_byte1Label->setText(fmt(b1)); }
-                    if (m_byte2Label) { m_byte2Label->setText(fmt(b2)); }
-                    if (m_byte3Label) { m_byte3Label->setText(fmt(b3)); }
-                });
-    }
+    // The byte labels show this tool's own read's answer (onI2cReadClicked),
+    // from this window's radio or, in a remote window, the Core's.
 
     onI2cEnableToggled(false);  // start disabled
 }
@@ -424,7 +574,7 @@ void Hl2OptionsTab::buildIoPinState(QWidget* parent)
     m_inputStrip->setInteractive(false);   // input port is read-only
     m_inputStrip->setToolTip(tr(
         "HL2 I/O Board input pins (6 bits, polled while board detected).  "
-        "Read-only."));
+        "Read-only. Lit pins show red while transmitting."));
     col->addWidget(m_inputStrip);
 
     // From mi0bot setup.designer.cs:11684-11695 ucOutPinsLedStripHF
@@ -447,9 +597,7 @@ void Hl2OptionsTab::buildIoPinState(QWidget* parent)
 
     col->addStretch();
 
-    connect(m_chkPinControl, &QCheckBox::toggled, this, [this](bool on) {
-        if (m_outputStrip) { m_outputStrip->setInteractive(on); }
-    });
+    connect(m_chkPinControl, &QCheckBox::toggled, this, [this](bool) { applyIoGates(); });
     connect(m_outputStrip, &OcLedStripWidget::pinClicked,
             this, &Hl2OptionsTab::onOutputPinClicked);
 }
@@ -466,7 +614,7 @@ void Hl2OptionsTab::syncFromModel()
     if (m_chkCl2Enable)       { QSignalBlocker b(m_chkCl2Enable);
         m_chkCl2Enable->setChecked(m_options->cl2Enabled()); }
     if (m_udCl2Freq)          { QSignalBlocker b(m_udCl2Freq);
-        m_udCl2Freq->setValue(m_options->cl2FreqMHz()); }
+        m_udCl2Freq->setValue(m_options->cl2FreqKHz() / 1000.0); }
     if (m_chkExt10MHz)        { QSignalBlocker b(m_chkExt10MHz);
         m_chkExt10MHz->setChecked(m_options->ext10MHz()); }
     if (m_chkDisconnectReset) { QSignalBlocker b(m_chkDisconnectReset);
@@ -481,92 +629,182 @@ void Hl2OptionsTab::syncFromModel()
         m_chkBandVolts->setChecked(m_options->bandVolts()); }
 
     m_syncing = false;
+    applyClockGates();
 }
 
 // ── I2C Control slots ──────────────────────────────────────────────────────
 
-void Hl2OptionsTab::onI2cEnableToggled(bool on)
+void Hl2OptionsTab::onI2cEnableToggled(bool /*on*/)
 {
-    if (m_udI2cAddress)    { m_udI2cAddress->setEnabled(on); }
-    if (m_udI2cRegister)   { m_udI2cRegister->setEnabled(on); }
-    if (m_udI2cWriteData)  { m_udI2cWriteData->setEnabled(on); }
-    if (m_chkI2cWriteEnable) { m_chkI2cWriteEnable->setEnabled(on); }
-    if (m_btnRead)         { m_btnRead->setEnabled(on); }
-    // Write button is gated by both checkboxes — route through the helper
-    // so the build-time chkI2cWriteEnable toggle wire and this enable
-    // toggle both end up at the same place.
-    syncI2cWriteButtonEnabled();
+    applyIoGates();
 }
 
 void Hl2OptionsTab::syncI2cWriteButtonEnabled()
 {
-    if (!m_btnWrite) { return; }
+    applyIoGates();
+}
+
+void Hl2OptionsTab::setIoBoardControlAvailable(bool available, const QString& reason)
+{
+    m_ioAvailable = available;
+    m_ioUnavailableReason = available ? QString() : reason;
+    applyIoGates();
+}
+
+void Hl2OptionsTab::setClockControlAvailable(bool available, const QString& reason)
+{
+    m_clockAvailable = available;
+    m_clockUnavailableReason = available ? QString() : reason;
+    applyClockGates();
+}
+
+void Hl2OptionsTab::setSwapAudioAvailable(bool available, const QString& reason)
+{
+    m_swapAudioAvailable = available;
+    m_swapAudioUnavailableReason = available ? QString() : reason;
+    // No on-air rule: mi0bot's chkSwapAudioChannels_CheckedChanged sets
+    // NetworkIO.SwapAudioChannels with no MOX check (setup.cs:38065
+    // [@c26a8a4]).
+    HardwareTransmitGate::apply(m_chkSwapAudio, m_swapAudioAvailable,
+                                m_swapAudioUnavailableReason);
+}
+
+void Hl2OptionsTab::applyClockGates()
+{
+    // Enable CL2 and External 10 MHz follow the Core's offer (a remote
+    // window); the frequency box also follows Enable CL2, as mi0bot's
+    // ControlCl2 sets udCl2Freq.Enabled. No on-air rule: mi0bot writes the
+    // clock chip with no MOX check.
+    HardwareTransmitGate::apply(m_chkCl2Enable, m_clockAvailable, m_clockUnavailableReason);
+    HardwareTransmitGate::apply(m_chkExt10MHz, m_clockAvailable, m_clockUnavailableReason);
+    HardwareTransmitGate::apply(m_udCl2Freq, m_clockAvailable, m_clockUnavailableReason);
+    if (m_udCl2Freq) {
+        m_udCl2Freq->setEnabled(m_clockAvailable && m_chkCl2Enable
+                                && m_chkCl2Enable->isChecked());
+    }
+}
+
+void Hl2OptionsTab::applyIoGates()
+{
+    // The tool's own gates: I2C Enable opens the group, Write enable the
+    // Write button. On top: the Core's offer (a remote window), then the
+    // on-air rule for what writes to the board (parity Task 14).
     const bool i2cOn = m_chkI2cEnable && m_chkI2cEnable->isChecked();
     const bool writeOn = m_chkI2cWriteEnable && m_chkI2cWriteEnable->isChecked();
-    m_btnWrite->setEnabled(i2cOn && writeOn);
+    const bool onAir = m_model != nullptr && m_model->isCoreOnAir();
+    const QString writeReason = !m_ioAvailable ? m_ioUnavailableReason
+                                               : RadioModel::onAirReason();
+    const bool writesOpen = m_ioAvailable && !onAir;
+    for (QWidget* w : std::initializer_list<QWidget*>{
+             m_udI2cAddress, m_udI2cRegister, m_udI2cWriteData, m_chkI2cWriteEnable}) {
+        if (w) { w->setEnabled(i2cOn && m_ioAvailable); }
+    }
+    if (m_btnRead) {
+        HardwareTransmitGate::apply(m_btnRead, m_ioAvailable, m_ioUnavailableReason);
+        m_btnRead->setEnabled(i2cOn && m_ioAvailable);
+    }
+    if (m_btnWrite) {
+        HardwareTransmitGate::apply(m_btnWrite, writesOpen, writeReason);
+        m_btnWrite->setEnabled(i2cOn && writeOn && writesOpen);
+    }
+    HardwareTransmitGate::apply(m_chkPinControl, writesOpen, writeReason);
+    if (m_outputStrip) {
+        m_outputStrip->setInteractive(writesOpen && m_chkPinControl
+                                      && m_chkPinControl->isChecked());
+    }
+}
+
+void Hl2OptionsTab::showI2cStatus(const QString& text)
+{
+    if (!m_i2cStatusLabel) { return; }
+    m_i2cStatusLabel->setText(text);
+    m_i2cStatusLabel->setVisible(!text.isEmpty());
 }
 
 void Hl2OptionsTab::onI2cReadClicked()
 {
-    if (!m_ioBoard) { return; }
-    IoBoardHl2::I2cTxn txn{};
-    txn.bus           = 1;
-    txn.address       = static_cast<quint8>(m_udI2cAddress->value());
-    txn.control       = static_cast<quint8>(m_udI2cRegister->value());
-    txn.writeData     = 0;
-    txn.isRead        = true;
-    txn.needsResponse = true;
-    if (!m_ioBoard->enqueueI2c(txn)) {
-        qCWarning(lcHl2Options) << "I2C read enqueue failed (queue full)";
-    }
+    if (!m_model) { return; }
+    RadioModel::IoBoardI2cRequest request;
+    request.bus = IoBoardHl2::kI2cBusIndex;
+    request.address = m_udI2cAddress->value();
+    request.reg = m_udI2cRegister->value();
+    request.write = false;
+    showI2cStatus({});
+    const QPointer<Hl2OptionsTab> self(this);
+    m_model->requestIoBoardI2c(request, [self](bool ok, qint64 value, const QString& reason) {
+        if (!self) { return; }
+        if (!ok) {
+            self->showI2cStatus(reason);
+            return;
+        }
+        // From mi0bot setup.cs:21486-21489 [@c26a8a4]: byte0 = read_data[3]
+        // (C4, the register itself) .. byte3 = read_data[0] (C1). `value`
+        // packs C1 in its top byte and C4 in its low byte.
+        auto fmt = [value](int shift) {
+            return QStringLiteral("%1").arg((value >> shift) & 0xFF, 2, 16, QLatin1Char('0'))
+                                       .toUpper();
+        };
+        if (self->m_byte0Label) { self->m_byte0Label->setText(fmt(0)); }
+        if (self->m_byte1Label) { self->m_byte1Label->setText(fmt(8)); }
+        if (self->m_byte2Label) { self->m_byte2Label->setText(fmt(16)); }
+        if (self->m_byte3Label) { self->m_byte3Label->setText(fmt(24)); }
+    });
 }
 
 void Hl2OptionsTab::onI2cWriteClicked()
 {
-    if (!m_ioBoard) { return; }
+    if (!m_model) { return; }
     if (!m_chkI2cWriteEnable || !m_chkI2cWriteEnable->isChecked()) {
         qCWarning(lcHl2Options) << "Write blocked — write-enable not set";
         return;
     }
-    IoBoardHl2::I2cTxn txn{};
-    txn.bus           = 1;
-    txn.address       = static_cast<quint8>(m_udI2cAddress->value());
-    txn.control       = static_cast<quint8>(m_udI2cRegister->value());
-    txn.writeData     = static_cast<quint8>(m_udI2cWriteData->value());
-    txn.isRead        = false;
-    txn.needsResponse = false;
-    if (!m_ioBoard->enqueueI2c(txn)) {
-        qCWarning(lcHl2Options) << "I2C write enqueue failed (queue full)";
-    }
+    RadioModel::IoBoardI2cRequest request;
+    request.bus = IoBoardHl2::kI2cBusIndex;
+    request.address = m_udI2cAddress->value();
+    request.reg = m_udI2cRegister->value();
+    request.write = true;
+    request.value = m_udI2cWriteData->value();
+    showI2cStatus({});
+    const QPointer<Hl2OptionsTab> self(this);
+    m_model->requestIoBoardI2c(request, [self](bool ok, qint64, const QString& reason) {
+        if (self && !ok) { self->showI2cStatus(reason); }
+    });
 }
 
 void Hl2OptionsTab::onOutputPinClicked(int idx)
 {
-    if (!m_ioBoard || !m_outputStrip) { return; }
+    if (!m_model || !m_outputStrip) { return; }
     if (idx < 0 || idx > 7) { return; }
-    const quint8 newMask = m_outputStrip->bits() ^ static_cast<quint8>(1u << idx);
-    // Local visual feedback first; wire write follows.
-    m_outputStrip->setBits(newMask);
+    // From mi0bot setup.cs:30039-30056 [@c26a8a4] ucOutPinsLedStripHF_MouseDown:
+    // the clicked pin toggled against the strip, then the register read
+    // back (RadioModel::setIoBoardOutput). The strip changes only when the
+    // read-back arrives.
+    const bool on = (m_outputStrip->bits() & (1u << idx)) == 0;
+    showI2cStatus({});
+    const QPointer<Hl2OptionsTab> self(this);
+    m_model->setIoBoardOutput(idx, on, [self](bool ok, qint64, const QString& reason) {
+        if (self && !ok) { self->showI2cStatus(reason); }
+    });
+}
 
-    // Compose the I2C write that sets the OC output register.  Per the
-    // design doc §3.2 row 3 the target is bus 1, addr 0x1D, register 169
-    // (OC output).  No-op if no IoBoard or no HL2 connected — the txn
-    // queues but won't drain until probe/init completes.
-    IoBoardHl2::I2cTxn txn{};
-    txn.bus           = 1;
-    txn.address       = IoBoardHl2::kI2cAddrGeneral;  // 0x1D
-    txn.control       = 169;                          // OC output register
-    txn.writeData     = newMask;
-    txn.isRead        = false;
-    txn.needsResponse = false;
-    if (!m_ioBoard->enqueueI2c(txn)) {
-        qCWarning(lcHl2Options) << "Output pin toggle enqueue failed (queue full)";
+void Hl2OptionsTab::onOutputsChanged()
+{
+    if (!m_outputStrip || !m_ioBoard) { return; }
+    m_outputStrip->setBits(m_ioBoard->registerValue(IoBoardHl2::Register::REG_OUT_PINS));
+}
+
+void Hl2OptionsTab::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    if (m_model) {
+        m_model->refreshIoBoardOutputs();
     }
 }
 
-void Hl2OptionsTab::onIoBoardOcByteChanged(quint8 ocByte, int /*bandIdx*/, bool /*mox*/)
+void Hl2OptionsTab::setTransmitPermitted(bool permitted, const QString& reason)
 {
-    if (m_outputStrip) { m_outputStrip->setBits(ocByte); }
+    HardwareTransmitGate::apply(m_udTxLatency, permitted, reason);
+    HardwareTransmitGate::apply(m_udPttHang, permitted, reason);
 }
 
 #ifdef NEREUS_BUILD_TESTS
@@ -574,6 +812,12 @@ bool Hl2OptionsTab::swapAudioChannelsCheckedForTest() const
 {
     return m_chkSwapAudio && m_chkSwapAudio->isChecked();
 }
+bool Hl2OptionsTab::transmitTimingsEnabledForTest() const
+{
+    return m_udPttHang && m_udTxLatency && m_udPttHang->isEnabled()
+        && m_udTxLatency->isEnabled();
+}
+
 int Hl2OptionsTab::pttHangMsForTest() const
 {
     return m_udPttHang ? m_udPttHang->value() : -1;
@@ -590,9 +834,71 @@ quint8 Hl2OptionsTab::inputBitsForTest() const
 {
     return m_inputStrip ? m_inputStrip->bits() : 0;
 }
+bool Hl2OptionsTab::inputStripTxForTest() const
+{
+    return m_inputStrip && m_inputStrip->tx();
+}
 bool Hl2OptionsTab::isI2cWriteEnabledForTest() const
 {
     return m_btnWrite && m_btnWrite->isEnabled();
+}
+bool Hl2OptionsTab::isI2cReadEnabledForTest() const
+{
+    return m_btnRead && m_btnRead->isEnabled();
+}
+bool Hl2OptionsTab::isPinControlEnabledForTest() const
+{
+    return m_chkPinControl && m_chkPinControl->isEnabled();
+}
+QString Hl2OptionsTab::i2cWriteToolTipForTest() const
+{
+    return m_btnWrite ? m_btnWrite->toolTip() : QString();
+}
+QString Hl2OptionsTab::pinControlToolTipForTest() const
+{
+    return m_chkPinControl ? m_chkPinControl->toolTip() : QString();
+}
+QString Hl2OptionsTab::i2cResponseTextForTest() const
+{
+    QStringList bytes;
+    for (const QLabel* label : {m_byte3Label, m_byte2Label, m_byte1Label, m_byte0Label}) {
+        bytes << (label ? label->text() : QString());
+    }
+    return bytes.join(QLatin1Char(' '));
+}
+QStringList Hl2OptionsTab::i2cByteToolTipsForTest() const
+{
+    QStringList tips;
+    for (const QLabel* label : {m_byte3Label, m_byte2Label, m_byte1Label, m_byte0Label}) {
+        tips << (label ? label->toolTip() : QString());
+    }
+    return tips;
+}
+QString Hl2OptionsTab::i2cStatusTextForTest() const
+{
+    return m_i2cStatusLabel && !m_i2cStatusLabel->isHidden() ? m_i2cStatusLabel->text()
+                                                             : QString();
+}
+void Hl2OptionsTab::readI2cForTest(int address, int reg)
+{
+    m_chkI2cEnable->setChecked(true);
+    m_udI2cAddress->setValue(address);
+    m_udI2cRegister->setValue(reg);
+    if (m_btnRead->isEnabled()) { m_btnRead->click(); }
+}
+void Hl2OptionsTab::writeI2cForTest(int address, int reg, int data)
+{
+    m_chkI2cEnable->setChecked(true);
+    m_chkI2cWriteEnable->setChecked(true);
+    m_udI2cAddress->setValue(address);
+    m_udI2cRegister->setValue(reg);
+    m_udI2cWriteData->setValue(data);
+    if (m_btnWrite->isEnabled()) { m_btnWrite->click(); }
+}
+void Hl2OptionsTab::clickOutputPinForTest(int pin)
+{
+    m_chkPinControl->setChecked(true);
+    if (m_outputStrip->isInteractive()) { onOutputPinClicked(pin); }
 }
 #endif
 

@@ -26,9 +26,11 @@
 
 #include <QtTest/QtTest>
 
+#include "core/AppSettings.h"
 #include "core/AudioEngine.h"
 #include "core/audio/MasterMixer.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
 
 #include <array>
 #include <cmath>
@@ -176,6 +178,8 @@ private slots:
 
         const int a = radio.addSlice();
         QCOMPARE(a, 0);
+        // AF is the mixer level now; these tests measure unity gain.
+        radio.sliceById(a)->setAfGain(100);
 
         int   emits      = 0;
         int   gotFrames  = 0;
@@ -224,6 +228,9 @@ private slots:
         const int a = radio.addSlice();
         const int b = radio.addSlice();
         QVERIFY(a >= 0 && b >= 0 && a != b);
+        // AF is the mixer level now; these tests measure unity gain.
+        radio.sliceById(a)->setAfGain(100);
+        radio.sliceById(b)->setAfGain(100);
 
         int emits     = 0;
         int gotFrames = 0;
@@ -242,6 +249,60 @@ private slots:
 
         QCOMPARE(emits, 1);
         QCOMPARE(gotFrames, 2);   // not 4: summed, not concatenated
+    }
+
+    // ── R-R3-45: a receiver on the headphones is not in the room. ─────────
+    //
+    // Its audio never reaches the speakers, so the microphone cannot pick
+    // it up, and the reference must leave it out, as it leaves out a muted
+    // receiver. It still keeps its barrier place: one block per period.
+
+    void aReceiverOnTheHeadphonesAddsNothingToTheReference()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(/*userDdcCount*/ 5, /*maxSlices*/ 5, 192000);
+        AudioEngine* engine = radio.audioEngine();
+        QVERIFY(engine != nullptr);
+        engine->antiVoxMixForTest().setRampFrames(1);
+
+        const int a = radio.addSlice();
+        const int b = radio.addSlice();
+        QVERIFY(a >= 0 && b >= 0 && a != b);
+        // AF is the mixer level now; these tests measure unity gain.
+        radio.sliceById(a)->setAfGain(100);
+        radio.sliceById(b)->setAfGain(100);
+        const auto restore = qScopeGuard([&] {
+            radio.sliceById(b)->setOutputRoute(SliceModel::OutputRoute::Speakers);
+            AppSettings::instance().remove(QStringLiteral("Slice%1/OutputRoute").arg(b));
+        });
+        radio.sliceById(b)->setOutputRoute(SliceModel::OutputRoute::Headphones);
+
+        int emits = 0;
+        float lastLeft = 0.0f;
+        QObject::connect(engine, &AudioEngine::antiVoxBlockReady, engine,
+                         [&](const float* s, int) {
+                             ++emits;
+                             lastLeft = s[0];
+                         },
+                         Qt::DirectConnection);
+
+        const std::array<float, 4> onSpeakers = {0.10f, 0.10f, 0.10f, 0.10f};
+        const std::array<float, 4> onHeadphones = {0.40f, 0.40f, 0.40f, 0.40f};
+        for (int period = 0; period < 8; ++period) {
+            engine->rxBlockReady(a, onSpeakers.data(), 2);
+            engine->rxBlockReady(b, onHeadphones.data(), 2);
+        }
+        QCOMPARE(emits, 8);
+        // A alone (0.10), not A + B (0.50).
+        QVERIFY2(std::abs(lastLeft - 0.10f) < 1.0e-4f, qPrintable(QString::number(lastLeft)));
+
+        // Back on the speakers, B is in the room again.
+        radio.sliceById(b)->setOutputRoute(SliceModel::OutputRoute::Speakers);
+        for (int period = 0; period < 8; ++period) {
+            engine->rxBlockReady(a, onSpeakers.data(), 2);
+            engine->rxBlockReady(b, onHeadphones.data(), 2);
+        }
+        QVERIFY2(std::abs(lastLeft - 0.50f) < 1.0e-4f, qPrintable(QString::number(lastLeft)));
     }
 };
 

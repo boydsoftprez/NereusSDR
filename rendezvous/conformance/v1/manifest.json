@@ -1,0 +1,832 @@
+{
+  "rendezvousVersions": [
+    1
+  ],
+  "fixtures": [
+    {
+      "id": "base64url",
+      "file": "crypto/base64url.json",
+      "kind": "crypto"
+    },
+    {
+      "id": "introduce-signature",
+      "file": "crypto/introduce-signature.json",
+      "kind": "crypto"
+    },
+    {
+      "id": "p256-spki",
+      "file": "crypto/p256-spki.json",
+      "kind": "crypto"
+    },
+    {
+      "id": "register-proof",
+      "file": "crypto/register-proof.json",
+      "kind": "crypto"
+    },
+    {
+      "id": "rendezvous-id",
+      "file": "crypto/rendezvous-id.json",
+      "kind": "crypto"
+    },
+    {
+      "id": "turn-credentials",
+      "file": "crypto/turn-credentials.json",
+      "kind": "crypto"
+    },
+    {
+      "id": "client-candidate-end",
+      "file": "control/client-candidate-end.json",
+      "kind": "control"
+    },
+    {
+      "id": "client-candidate",
+      "file": "control/client-candidate.json",
+      "kind": "control"
+    },
+    {
+      "id": "client-introduce",
+      "file": "control/client-introduce.json",
+      "kind": "control"
+    },
+    {
+      "id": "client-mailbox-close",
+      "file": "control/client-mailbox-close.json",
+      "kind": "control"
+    },
+    {
+      "id": "client-mailbox-open",
+      "file": "control/client-mailbox-open.json",
+      "kind": "control"
+    },
+    {
+      "id": "client-mailbox",
+      "file": "control/client-mailbox.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-candidate-null",
+      "file": "control/refuse-client-candidate-null.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-candidate-oversize",
+      "file": "control/refuse-client-candidate-oversize.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-introduce-device-key",
+      "file": "control/refuse-client-introduce-device-key.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-introduce-missing-offer",
+      "file": "control/refuse-client-introduce-missing-offer.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-introduce-oversize",
+      "file": "control/refuse-client-introduce-oversize.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-introduce-signature-padded",
+      "file": "control/refuse-client-introduce-signature-padded.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-mailbox-open-bool",
+      "file": "control/refuse-client-mailbox-open-bool.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-mailbox-open-fraction",
+      "file": "control/refuse-client-mailbox-open-fraction.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-mailbox-open-string",
+      "file": "control/refuse-client-mailbox-open-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-mailbox-open-too-large",
+      "file": "control/refuse-client-mailbox-open-too-large.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-mailbox-open-zero",
+      "file": "control/refuse-client-mailbox-open-zero.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-mailbox-oversize",
+      "file": "control/refuse-client-mailbox-oversize.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-nameplate-claim",
+      "file": "control/refuse-client-nameplate-claim.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-type-not-string",
+      "file": "control/refuse-client-type-not-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-unknown-kind",
+      "file": "control/refuse-client-unknown-kind.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-client-answer-turn-missing-password",
+      "file": "control/refuse-server-client-answer-turn-missing-password.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-client-answer-turn-string",
+      "file": "control/refuse-server-client-answer-turn-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-client-credentials",
+      "file": "control/refuse-server-client-credentials.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-client-error-retry-negative",
+      "file": "control/refuse-server-client-error-retry-negative.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-hello-version-string",
+      "file": "control/refuse-server-station-hello-version-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-introduction-missing-nonce",
+      "file": "control/refuse-server-station-introduction-missing-nonce.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-unknown-kind",
+      "file": "control/refuse-server-station-unknown-kind.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-answer-bad-to",
+      "file": "control/refuse-station-answer-bad-to.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-answer-empty",
+      "file": "control/refuse-station-answer-empty.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-answer-oversize",
+      "file": "control/refuse-station-answer-oversize.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-answer-turn-not-bool",
+      "file": "control/refuse-station-answer-turn-not-bool.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-candidate-missing-to",
+      "file": "control/refuse-station-candidate-missing-to.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-candidate-oversize",
+      "file": "control/refuse-station-candidate-oversize.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-introduce",
+      "file": "control/refuse-station-introduce.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-mailbox-body-object",
+      "file": "control/refuse-station-mailbox-body-object.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-mailbox-oversize",
+      "file": "control/refuse-station-mailbox-oversize.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-prove-short",
+      "file": "control/refuse-station-prove-short.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-register-id-short",
+      "file": "control/refuse-station-register-id-short.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-register-id-uppercase",
+      "file": "control/refuse-station-register-id-uppercase.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-register-key-not-string",
+      "file": "control/refuse-station-register-key-not-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-register-key-padded",
+      "file": "control/refuse-station-register-key-padded.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-register-missing-key",
+      "file": "control/refuse-station-register-missing-key.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-unknown-kind",
+      "file": "control/refuse-station-unknown-kind.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-answer-direct",
+      "file": "control/server-client-answer-direct.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-answer-relay",
+      "file": "control/server-client-answer-relay.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-candidate-end",
+      "file": "control/server-client-candidate-end.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-candidate",
+      "file": "control/server-client-candidate.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-error-offline",
+      "file": "control/server-client-error-offline.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-error-rate-limited",
+      "file": "control/server-client-error-rate-limited.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-error-unknown-code",
+      "file": "control/server-client-error-unknown-code.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-hello",
+      "file": "control/server-client-hello.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-introduction-end-unknown-code",
+      "file": "control/server-client-introduction-end-unknown-code.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-introduction-end",
+      "file": "control/server-client-introduction-end.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-mailbox-closed",
+      "file": "control/server-client-mailbox-closed.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-mailbox-opened",
+      "file": "control/server-client-mailbox-opened.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-mailbox",
+      "file": "control/server-client-mailbox.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-candidate",
+      "file": "control/server-station-candidate.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-challenge",
+      "file": "control/server-station-challenge.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-credentials-none",
+      "file": "control/server-station-credentials-none.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-credentials",
+      "file": "control/server-station-credentials.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-error",
+      "file": "control/server-station-error.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-hello",
+      "file": "control/server-station-hello.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-introduction-end",
+      "file": "control/server-station-introduction-end.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-introduction",
+      "file": "control/server-station-introduction.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-mailbox-closed",
+      "file": "control/server-station-mailbox-closed.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-mailbox-opened",
+      "file": "control/server-station-mailbox-opened.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-mailbox",
+      "file": "control/server-station-mailbox.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-nameplate-released",
+      "file": "control/server-station-nameplate-released.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-nameplate",
+      "file": "control/server-station-nameplate.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-registered",
+      "file": "control/server-station-registered.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-answer-direct",
+      "file": "control/station-answer-direct.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-answer-relay",
+      "file": "control/station-answer-relay.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-candidate-end",
+      "file": "control/station-candidate-end.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-candidate",
+      "file": "control/station-candidate.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-mailbox-close",
+      "file": "control/station-mailbox-close.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-mailbox",
+      "file": "control/station-mailbox.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-nameplate-claim",
+      "file": "control/station-nameplate-claim.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-nameplate-release",
+      "file": "control/station-nameplate-release.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-prove",
+      "file": "control/station-prove.json",
+      "kind": "control"
+    },
+    {
+      "id": "station-register",
+      "file": "control/station-register.json",
+      "kind": "control"
+    },
+    {
+      "id": "register",
+      "file": "sessions/register.json",
+      "kind": "session"
+    },
+    {
+      "id": "register-other-nonce",
+      "file": "sessions/register-other-nonce.json",
+      "kind": "session"
+    },
+    {
+      "id": "register-flipped-bit",
+      "file": "sessions/register-flipped-bit.json",
+      "kind": "session"
+    },
+    {
+      "id": "register-other-key",
+      "file": "sessions/register-other-key.json",
+      "kind": "session"
+    },
+    {
+      "id": "register-id-mismatch",
+      "file": "sessions/register-id-mismatch.json",
+      "kind": "session"
+    },
+    {
+      "id": "register-key-not-p256",
+      "file": "sessions/register-key-not-p256.json",
+      "kind": "session"
+    },
+    {
+      "id": "register-prove-first",
+      "file": "sessions/register-prove-first.json",
+      "kind": "session"
+    },
+    {
+      "id": "register-twice",
+      "file": "sessions/register-twice.json",
+      "kind": "session"
+    },
+    {
+      "id": "register-replaced",
+      "file": "sessions/register-replaced.json",
+      "kind": "session"
+    },
+    {
+      "id": "register-timeout",
+      "file": "sessions/register-timeout.json",
+      "kind": "session"
+    },
+    {
+      "id": "handshake-timeout",
+      "file": "sessions/handshake-timeout.json",
+      "kind": "session"
+    },
+    {
+      "id": "station-verbs-before-register",
+      "file": "sessions/station-verbs-before-register.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-answer-relay",
+      "file": "sessions/introduce-answer-relay.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-answer-direct",
+      "file": "sessions/introduce-answer-direct.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-relay-off",
+      "file": "sessions/introduce-relay-off.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-unpaired-device",
+      "file": "sessions/introduce-unpaired-device.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-signature-other-nonce",
+      "file": "sessions/introduce-signature-other-nonce.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-signature-flipped-bit",
+      "file": "sessions/introduce-signature-flipped-bit.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-candidates",
+      "file": "sessions/introduce-candidates.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-station-candidate-before-answer",
+      "file": "sessions/introduce-station-candidate-before-answer.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-answer-twice",
+      "file": "sessions/introduce-answer-twice.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-answer-unknown",
+      "file": "sessions/introduce-answer-unknown.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-offline",
+      "file": "sessions/introduce-offline.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-unknown-equals-offline",
+      "file": "sessions/introduce-unknown-equals-offline.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-only-own-id",
+      "file": "sessions/introduce-only-own-id.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-twice",
+      "file": "sessions/introduce-twice.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-client-leaves",
+      "file": "sessions/introduce-client-leaves.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-station-leaves",
+      "file": "sessions/introduce-station-leaves.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduction-expires",
+      "file": "sessions/introduction-expires.json",
+      "kind": "session"
+    },
+    {
+      "id": "client-candidate-without-introduction",
+      "file": "sessions/client-candidate-without-introduction.json",
+      "kind": "session"
+    },
+    {
+      "id": "client-idle",
+      "file": "sessions/client-idle.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-rate-limit-address",
+      "file": "sessions/introduce-rate-limit-address.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-rate-limit-station",
+      "file": "sessions/introduce-rate-limit-station.json",
+      "kind": "session"
+    },
+    {
+      "id": "nameplate-claim",
+      "file": "sessions/nameplate-claim.json",
+      "kind": "session"
+    },
+    {
+      "id": "nameplate-lowest-free",
+      "file": "sessions/nameplate-lowest-free.json",
+      "kind": "session"
+    },
+    {
+      "id": "mailbox-exchange",
+      "file": "sessions/mailbox-exchange.json",
+      "kind": "session"
+    },
+    {
+      "id": "mailbox-station-closes",
+      "file": "sessions/mailbox-station-closes.json",
+      "kind": "session"
+    },
+    {
+      "id": "mailbox-busy",
+      "file": "sessions/mailbox-busy.json",
+      "kind": "session"
+    },
+    {
+      "id": "mailbox-unknown",
+      "file": "sessions/mailbox-unknown.json",
+      "kind": "session"
+    },
+    {
+      "id": "mailbox-station-leaves",
+      "file": "sessions/mailbox-station-leaves.json",
+      "kind": "session"
+    },
+    {
+      "id": "mailbox-client-leaves",
+      "file": "sessions/mailbox-client-leaves.json",
+      "kind": "session"
+    },
+    {
+      "id": "mailbox-release",
+      "file": "sessions/mailbox-release.json",
+      "kind": "session"
+    },
+    {
+      "id": "mailbox-expires",
+      "file": "sessions/mailbox-expires.json",
+      "kind": "session"
+    },
+    {
+      "id": "mailbox-without-open",
+      "file": "sessions/mailbox-without-open.json",
+      "kind": "session"
+    },
+    {
+      "id": "mailbox-message-cap",
+      "file": "sessions/mailbox-message-cap.json",
+      "kind": "session"
+    },
+    {
+      "id": "mailbox-rate-limit",
+      "file": "sessions/mailbox-rate-limit.json",
+      "kind": "session"
+    },
+    {
+      "id": "unknown-kind",
+      "file": "sessions/unknown-kind.json",
+      "kind": "session"
+    },
+    {
+      "id": "client-claims-nameplate",
+      "file": "sessions/client-claims-nameplate.json",
+      "kind": "session"
+    },
+    {
+      "id": "station-introduces",
+      "file": "sessions/station-introduces.json",
+      "kind": "session"
+    },
+    {
+      "id": "connections-per-address",
+      "file": "sessions/connections-per-address.json",
+      "kind": "session"
+    },
+    {
+      "id": "connections-per-ipv6-prefix",
+      "file": "sessions/connections-per-ipv6-prefix.json",
+      "kind": "session"
+    },
+    {
+      "id": "client-idle-after-refusals",
+      "file": "sessions/client-idle-after-refusals.json",
+      "kind": "session"
+    },
+    {
+      "id": "connection-pools",
+      "file": "sessions/connection-pools.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-answer-other-station",
+      "file": "sessions/introduce-answer-other-station.json",
+      "kind": "session"
+    },
+    {
+      "id": "stations-in-total",
+      "file": "sessions/stations-in-total.json",
+      "kind": "session"
+    },
+    {
+      "id": "stations-per-address",
+      "file": "sessions/stations-per-address.json",
+      "kind": "session"
+    },
+    {
+      "id": "server-station-introduction-extra-keys",
+      "file": "control/server-station-introduction-extra-keys.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-answer-extra-keys",
+      "file": "control/server-client-answer-extra-keys.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-candidate-a-prefix",
+      "file": "control/refuse-client-candidate-a-prefix.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-candidate-a-prefix",
+      "file": "control/refuse-station-candidate-a-prefix.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-client-candidate-a-prefix",
+      "file": "control/refuse-server-client-candidate-a-prefix.json",
+      "kind": "control"
+    },
+    {
+      "id": "relay-grant",
+      "file": "crypto/relay-grant.json",
+      "kind": "crypto"
+    },
+    {
+      "id": "server-client-relay-grant",
+      "file": "control/server-client-relay-grant.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-station-relay-grant",
+      "file": "control/server-station-relay-grant.json",
+      "kind": "control"
+    },
+    {
+      "id": "server-client-relay-grant-extra-keys",
+      "file": "control/server-client-relay-grant-extra-keys.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-client-relay-grant-token-number",
+      "file": "control/refuse-server-client-relay-grant-token-number.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-client-relay-grant-token-padded",
+      "file": "control/refuse-server-client-relay-grant-token-padded.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-client-relay-grant-https-url",
+      "file": "control/refuse-server-client-relay-grant-https-url.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-client-relay-grant-missing-url",
+      "file": "control/refuse-server-client-relay-grant-missing-url.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-relay-grant-missing-from",
+      "file": "control/refuse-server-station-relay-grant-missing-from.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-server-station-relay-grant-expires-string",
+      "file": "control/refuse-server-station-relay-grant-expires-string.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-station-relay-grant",
+      "file": "control/refuse-station-relay-grant.json",
+      "kind": "control"
+    },
+    {
+      "id": "refuse-client-relay-grant",
+      "file": "control/refuse-client-relay-grant.json",
+      "kind": "control"
+    },
+    {
+      "id": "introduce-relay-grant",
+      "file": "sessions/introduce-relay-grant.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-relay-grant-without-turn",
+      "file": "sessions/introduce-relay-grant-without-turn.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-relay-grant-direct",
+      "file": "sessions/introduce-relay-grant-direct.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-relay-grant-unaccepted",
+      "file": "sessions/introduce-relay-grant-unaccepted.json",
+      "kind": "session"
+    },
+    {
+      "id": "introduce-relay-grant-per-introduction",
+      "file": "sessions/introduce-relay-grant-per-introduction.json",
+      "kind": "session"
+    }
+  ]
+}

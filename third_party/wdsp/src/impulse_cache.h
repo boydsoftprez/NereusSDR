@@ -74,11 +74,11 @@ mw0lge@grange-lane.co.uk
 double* get_impulse_cache_entry(size_t bucket, HASH_T hash, int N);
 void add_impulse_to_cache(size_t bucket, HASH_T hash, int N, double* impulse);
 
-int save_impulse_cache(const char* path);
-int read_impulse_cache(const char* path);
-void use_impulse_cache(int use);
+__declspec (dllexport) int save_impulse_cache(const char* path);
+__declspec (dllexport) int read_impulse_cache(const char* path);
+__declspec (dllexport) void use_impulse_cache(int use);
 
-void init_impulse_cache(int use);
-void destroy_impulse_cache(void);
+__declspec (dllexport) void init_impulse_cache(int use);
+__declspec (dllexport) void destroy_impulse_cache(void);
 
 #endif

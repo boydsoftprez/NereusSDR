@@ -13,6 +13,11 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23: R-R3-13: no reading (isNoMeterReading) shows "--" with the
+//                 unit and drops the smoothed value and peak to the -140 dBm
+//                 floor; valueText() / peakValueText() read-only accessors.
+//                 J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -173,6 +178,11 @@ public:
 
     void setValue(double v) override;
 
+    // The main and peak text paint() draws; "--" with the unit when there
+    // is no reading (R-R3-13).
+    QString valueText() const;
+    QString peakValueText() const;
+
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
     QString serialize() const override;
@@ -184,6 +194,7 @@ private:
     QString formatSUnits(float dbm) const;
     QString formatUv(float dbm) const;
     QString formatValue(float dbm) const;
+    QString noReadingLabel() const;
 
     // From Thetis Common.UVfromDBM
     static double uvFromDbm(double dbm);

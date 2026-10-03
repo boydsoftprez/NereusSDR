@@ -90,18 +90,18 @@ extern void setSize_anr (ANR a, int size);
 
 // RXA Properties
 
-extern void SetRXAANRRun (int channel, int setit);
+extern __declspec (dllexport) void SetRXAANRRun (int channel, int setit);
 
-extern void SetRXAANRVals (int channel, int taps, int delay, double gain, double leakage);
+extern __declspec (dllexport) void SetRXAANRVals (int channel, int taps, int delay, double gain, double leakage);
 
-extern void SetRXAANRTaps (int channel, int taps);
+extern __declspec (dllexport) void SetRXAANRTaps (int channel, int taps);
 
-extern void SetRXAANRDelay (int channel, int delay);
+extern __declspec (dllexport) void SetRXAANRDelay (int channel, int delay);
 
-extern void SetRXAANRGain (int channel, double gain);
+extern __declspec (dllexport) void SetRXAANRGain (int channel, double gain);
 
-extern void SetRXAANRLeakage (int channel, double leakage);
+extern __declspec (dllexport) void SetRXAANRLeakage (int channel, double leakage);
 
-extern void SetRXAANRPosition (int channel, int position);
+extern __declspec (dllexport) void SetRXAANRPosition (int channel, int position);
 
 #endif

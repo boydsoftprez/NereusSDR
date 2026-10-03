@@ -4,35 +4,33 @@
 
 ### Linux
 
-**x86_64:** download `NereusSDR-X.Y.Z-x86_64.AppImage`
-**aarch64:** download `NereusSDR-X.Y.Z-aarch64.AppImage`
+**x86_64:** download `NereusSDR-vX.Y.Z-x86_64.AppImage`
+**aarch64:** download `NereusSDR-vX.Y.Z-aarch64.AppImage`
 
 ```bash
-chmod +x NereusSDR-X.Y.Z-*.AppImage
-./NereusSDR-X.Y.Z-*.AppImage
+chmod +x NereusSDR-vX.Y.Z-*.AppImage
+./NereusSDR-vX.Y.Z-*.AppImage
 ```
 
 ### macOS
 
-**Apple Silicon (M1/M2/M3/M4):** `NereusSDR-X.Y.Z-macOS-apple-silicon.dmg`
-**Intel:** `NereusSDR-X.Y.Z-macOS-intel.dmg`
+**Apple Silicon (M1/M2/M3/M4):** `NereusSDR-vX.Y.Z-macOS-apple-silicon.dmg`
 
-Both architectures are built and published. The Intel build is cross-compiled on
-an Apple Silicon runner (`macos-15`), because the native Intel runner label is no
-longer available; ctest runs under Rosetta on that host.
+Intel Macs are not currently built on CI (GitHub Actions has retired the
+`macos-13` runner label). Intel Mac users should build from source for now.
 
-These builds are **signed with an Apple Developer ID and notarized**, so they
-open normally on first launch. No Gatekeeper override is needed. If a download
-was interrupted or its signature fails to verify, re-download it and check it
-against the published per-asset `.asc` signature.
+This build is **ad-hoc signed** (no Apple Developer ID yet). On first launch:
+1. Open the DMG, drag NereusSDR to Applications.
+2. **Right-click** NereusSDR.app → **Open** → **Open** in the dialog.
+3. After the first launch, double-clicking works normally.
 
 ### Windows
 
 Two options — pick one:
 
-- **Installer (recommended):** `NereusSDR-X.Y.Z-Windows-x64-setup.exe` — installs
+- **Installer (recommended):** `NereusSDR-vX.Y.Z-Windows-x64-setup.exe` — installs
   to `Program Files`, adds Start Menu shortcut, registers an uninstaller.
-- **Portable:** `NereusSDR-X.Y.Z-Windows-x64-portable.zip` — extract and run
+- **Portable:** `NereusSDR-vX.Y.Z-Windows-x64-portable.zip` — extract and run
   `NereusSDR.exe`. No install footprint.
 
 Both are unsigned at the moment. SmartScreen may flag the binary on first run
@@ -74,7 +72,7 @@ page) and §6(b) (fallback: 3-year offer via email).
 Corresponding source for every binary on this release page is provided
 on the same medium:
 
-- **NereusSDR** itself — `NereusSDR-X.Y.Z-source.tar.gz` (this release).
+- **NereusSDR** itself — `NereusSDR-vX.Y.Z-source.tar.gz` (this release).
   Equivalent to a `git archive` of the tag commit. This archive also
   contains the vendored WDSP sources (`third_party/wdsp/`) and the
   FFTW3 Windows binary-plus-header tree (`third_party/fftw3/`).
@@ -91,7 +89,7 @@ on the same medium:
   <https://download.qt.io/archive/qt/>.
 - **WDSP** (GPLv2-or-later) — statically aggregated; corresponding source
   is in NereusSDR's `third_party/wdsp/` (included in
-  `NereusSDR-X.Y.Z-source.tar.gz`). Provenance:
+  `NereusSDR-vX.Y.Z-source.tar.gz`). Provenance:
   `docs/attribution/WDSP-PROVENANCE.md` in the source archive.
 
 A written 3-year source offer applies independently per

@@ -27,6 +27,9 @@
 //                 Task 5: polar QPainter widget with mouse-drag to
 //                 emit phaseAdjusted; consumer (Sub-Epic G Task 12)
 //                 wires the signal to SliceModel::diversityPhaseDeg.
+//   2026-09-28 - The lobe math moved to core/DiversityPattern.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 //=================================================================
@@ -74,6 +77,8 @@
 
 #include <QWidget>
 
+#include "core/DiversityPattern.h"
+
 class QMouseEvent;
 class QPaintEvent;
 
@@ -111,13 +116,13 @@ private:
     double m_phase {0.0};
     double m_gain {1.0};
     bool   m_crossFire {false};
-    double m_vfoMhz {14.225};
-    double m_antSpacingM {5.5};
+    double m_vfoMhz {DiversityPattern::kDefaultVfoMhz};
+    double m_antSpacingM {DiversityPattern::kDefaultSpacingMeters};
     bool   m_dragging {false};
 
-    // Sensitivity (relative power) at the given azimuth angle (radians).
-    // Ported from Thetis DiversityForm.CalcVrms.
-    double sensitivityAtAngle(double angleRad) const;
+    // The radar's inputs to Thetis DiversityForm.CalcVrms, now
+    // DiversityPattern::sensitivity (the Core sends the same samples).
+    DiversityPattern::Inputs patternInputs() const;
 };
 
 } // namespace NereusSDR

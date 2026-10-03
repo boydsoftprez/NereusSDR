@@ -153,8 +153,7 @@ struct _txa
 	} calcc;
 	struct
 	{
-		IQC p0, p1;
-		// p0 for dsp-synchronized reference, p1 for other
+		IQC p;
 	} iqc;
 	struct
 	{
@@ -184,7 +183,7 @@ extern void setDSPBuffsize_txa (int channel);
 
 // TXA Properties
 
-extern void SetTXAMode (int channel, int mode);
+extern __declspec (dllexport) void SetTXAMode (int channel, int mode);
 
 extern void TXAResCheck (int channel);
 

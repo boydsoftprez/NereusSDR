@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-26
 **Author:** J.J. Boyd ~KG4VCF, co-authored with Claude Sonnet 4.6
-**Status:** Design (brainstorm complete, awaiting spec review)
+**Status:** Sub-epics A-G shipped (see "Phase 3F shipping note" below); Sub-epic H (bench verification) pending.
 **Scope:** Phase 3F (multi-panadapter), 3F-DIV (full Thetis Diversity port), wideband extended-pan
 **Supersedes:** `docs/architecture/phase3f-multi-panadapter-plan.md` (2026-04-09), `docs/architecture/multi-panadapter.md` (Phase 2B design)
 
@@ -62,13 +62,13 @@ Existing fields used as inputs: `adcCount`, `supportedSampleRates`, `defaultSamp
 
 | SKU | ADCs | DDCs | User DDCs | maxSlices | Sample-rate ladder (kHz) | hasDiversity | widebandAdcs |
 |---|---|---|---|---|---|---|---|
-| HermesLite2 (HL2) | 1 | 4 | DDC0-1 | **5** | 48, 96, 192, 384 | false | 0 (defer, P1 mechanism) |
-| HermesLite2 RX-only | 1 | 4 | DDC0-1 | **5** | 48, 96, 192, 384 | false | 0 |
-| Metis | 1 | 3 | DDC0-2 | **3** | 48, 96, 192 | false | 0 |
-| Hermes (ANAN-10/100) | 1 | 4 | DDC0-3 | **4** | 48, 96, 192 | false | 0 |
-| HermesII (ANAN-10E/100B) | 1 | 2 | DDC0-1 | **2** | 48, 96, 192 | false | 0 |
-| Angelia (ANAN-100D) | 2 | 7 | DDC2-6 | **5** | 48, 96, 192 | true | 2 |
-| Orion (ANAN-200D) | 2 | 7 | DDC2-6 | **5** | 48, 96, 192 | true | 2 |
+| HermesLite2 (HL2) (see note) | 1 | 4 | DDC0-1 | **5** | P1: 48, 96, 192, 384; P2: 48, 96, 192, 384, 768, 1536 | false | 0 (defer, P1 mechanism) |
+| HermesLite2 RX-only (model HERMESLITE, see note) | 1 | 4 | DDC0-1 | **5** | P1: 48, 96, 192, 384; P2: 48, 96, 192, 384, 768, 1536 | false | 0 |
+| Metis (see note) | 1 | 3 | DDC0-2 | **3** | P1: 48, 96, 192; P2: 48, 96, 192, 384, 768, 1536 | false | 0 |
+| Hermes (ANAN-10/100) (see note) | 1 | 4 | DDC0-3 | **4** | P1: 48, 96, 192; P2: 48, 96, 192, 384, 768, 1536 | false | 0 |
+| HermesII (ANAN-10E/100B) (see note) | 1 | 2 | DDC0-1 | **2** | P1: 48, 96, 192; P2: 48, 96, 192, 384, 768, 1536 | false | 0 |
+| Angelia (ANAN-100D) (see note) | 2 | 7 | DDC2-6 | **5** | P1: 48, 96, 192; P2: 48, 96, 192, 384, 768, 1536 | true | P1: 0; P2: 1 (ADC0) |
+| Orion (ANAN-200D) (see note) | 2 | 7 | DDC2-6 | **5** | P1: 48, 96, 192; P2: 48, 96, 192, 384, 768, 1536 | true | P1: 0; P2: 1 (ADC0) |
 | OrionMkII / 7000DLE / 8000DLE | 2 | 7 | DDC2-6 | **5** | 48, 96, 192, 384, 768, 1536 | true | 2 |
 | Saturn / ANAN-G2 / G2_1K | 2 | 7 | DDC2-6 | **5** | 48, 96, 192, 384, 768, 1536 | true | 2 |
 | HermesC10 / ANAN-G2E (see note) | 1 | 4 | DDC0-3 | **5** | 48, 96, 192, 384, 768, 1536 | false | 1 |
@@ -78,9 +78,25 @@ Existing fields used as inputs: `adcCount`, `supportedSampleRates`, `defaultSamp
 | RedPitaya (P2 mode) | 2 | 7 | DDC2-6 | **5** | 48, 96, 192, 384, 768, 1536 | true | 2 |
 
 Source cites:
-- Sample rate ladders: Thetis `setup.cs:849-850 [v2.10.3.15]` (P1 base + P2 array), mi0bot `setup.cs:850-851 [v2.10.3.13]` (HL2 384k extension via `include_extra_p1_rate`)
+- Sample rate ladders: Thetis `setup.cs:847-850 [v2.10.3.15]` (P1 base, the RedPitaya's extra 384k tagged `//DH1KLM`, P2 array), mi0bot `setup.cs:849-851 [v2.10.3.13-beta2]` (HL2 384k extension via `include_extra_p1_rate`; mi0bot's P2 array at `setup.cs:854` is Thetis's, with no HL2 case). A row whose ladder is written without a protocol serves Protocol 2 boards only; on Protocol 1 it offers 48, 96, 192 (384 for the RedPitaya). The list is chosen by the protocol the radio is running (`NetworkIO.CurrentRadioProtocol`), not by the board; in code, `BoardCapsTable::sampleRatesFor(caps, protocol, model)`.
+- Wideband: none on Protocol 1 for any board (Thetis `ChannelMaster/networkproto1.c:181-201 [v2.10.3.15]` takes EP6 only); on Protocol 2, Thetis enables ADC0 only, for every model, with no menu gate (`console.cs:43552-43558 [v2.10.3.15]`, `NetworkIO.SetWBEnable(0, 1)`). In code, `BoardCapsTable::widebandAdcsFor(caps, protocol)`, which gives 0 on Protocol 1 for every row.
 - DDC reservations: Thetis `console.cs:8186-8538 [v2.10.3.15]` (UpdateDDCs state machine)
 - HL2-specific PS rate carveout: mi0bot `console.cs:8409-8488 [v2.10.3.13]`
+
+#### Note: the ANAN-100D and ANAN-200D run either protocol
+
+Corrected 2026-09-25 (receiver and transmit gaps plan, Task 5; the operator's ruling of 2026-09-24, "follow thetis"). These rows read `48, 96, 192 | 2` here while the code carried 48 to 384 kHz and 0 wideband ADCs. Neither matched Thetis, because Thetis answers by protocol and one `BoardCapabilities` row serves both: Protocol 1 discovery maps board bytes 4 and 5 to Angelia and Orion, and Protocol 2 discovery reads byte 11 straight into `HPSDRHW` (3 and 4), so an ANAN-100D or ANAN-200D on Protocol 2 firmware lands on the same row.
+
+- **Protocol 1:** 48, 96 and 192 kHz (`setup.cs:848 [v2.10.3.15]`, only the RedPitaya and, in mi0bot, the HL2 add 384 kHz), and no wideband (`networkproto1.c:181-201`).
+- **Protocol 2:** 48 to 1536 kHz (`setup.cs:850`), and wideband on ADC0, as Thetis gives every Protocol 2 radio (`console.cs:43552-43558`). The row's `widebandAdcs` is 1 for that reason, not 2: Thetis never enables ADC1's wideband stream on any board.
+
+The row carries the union (`sampleRates` to 1536 kHz, `maxSampleRate` 1536000, `widebandAdcs` 1) and `sampleRatesFor` / `widebandAdcsFor` trim it to the protocol in use. The Radio Info tab shows the top rate for the protocol in use, and a Protocol 1 discovery reply now carries 192 kHz for every board except the HL2 (384 kHz), where it carried 384 kHz for all. The pinned gateware (`Orion.v`, `board_type = 8'h05`) is an OrionMKII-class build and says nothing about these two boards. Hardware verification is pending: no ANAN-100D or ANAN-200D on the bench.
+
+#### Note: the Metis, Hermes, HermesII and HL2 rows on Protocol 2, and the HL2 receive-only kit
+
+Corrected 2026-09-25 (receiver and transmit gaps plan, Task 15; the operator's ruling of 2026-09-25, "1 follow thetis"). These rows read `48, 96, 192` (Metis, Hermes, HermesII) and `48, 96, 192, 384` (both HL2 rows) for every protocol, and Task 5 pinned them below Thetis on Protocol 2 while the ANAN-100D and ANAN-200D moved. Thetis chooses the list by the protocol the radio runs, not by the board (`setup.cs:847-850 [v2.10.3.15]`), so on Protocol 2 these rows now offer 48 to 1536 kHz like every other row. mi0bot, authoritative for the HL2, gives the HL2 the same Protocol 2 array (`setup.cs:854 [v2.10.3.13-beta2]`); its only HL2 rate case is the Protocol 1 384 kHz (`setup.cs:849-851`). Protocol 1 lists are unchanged. The rows carry the union (`maxSampleRate` 1536000) and `sampleRatesFor` trims to the protocol in use.
+
+The receive-only kit (`HPSDRHW::HermesLiteRxOnly`, a NereusSDR-only board with no Thetis value) had no `HPSDRModel`, so `defaultModelForBoard` fell through to HERMES, and the connect then built a Hermes profile: the Hermes capability row (losing `isRxOnlySku`, the kit's transmit block), the standard Protocol 1 codec, and no 384 kHz. mi0bot has one HL2 board (`HPSDRHW.HermesLite`, `enums.cs:396`) and one HL2 model (HERMESLITE), and treats receive-only as the operator's RXOnly toggle (`console.cs:15374-15395`), so the kit now resolves to HERMESLITE: the HL2 codec, the HL2's rates (384 kHz on Protocol 1), its receiver count (4, mi0bot `console.cs:8409`), and every HERMESLITE-keyed path. `profileForRadio(board, model)` keeps the kit's own row under that model for local connects and, through `profileForStation`, for remote windows. The P1 stream count on connect is the HL2 codec's (2 with PureSignal off) rather than the standard codec's 4; see [2026-07-31-hl2-slice-cap-design.md](2026-07-31-hl2-slice-cap-design.md) §6. Hardware verification is pending: no receive-only kit on the bench, and none of these boards on the bench running Protocol 2.
 
 #### Note: the ANAN-G2E is the one 1-ADC Protocol 2 SKU
 
@@ -301,6 +317,33 @@ Decision tree (computed by `AlexController::recomputeBpf(int adc)`):
    - 0 slices: `Filtered` to last band, reason "idle".
    - 1 unique band among slices: `Filtered` to that band, reason "<band>".
    - 2+ unique bands: `Bypass`, reason "BYPASS (multi-band: <bands>)".
+
+**Hermes Lite 2 in Auto (JJ's ruling of 2026-09-30).** The HL2's receive filter is the N2ADR
+board: bits 0-5 of the OC pins select its low-pass filters (160, 80, 60/40, 30/20, 17/15,
+12/10 m), and bit 6 (pin 7) switches in a 3 MHz receive high-pass that rejects AM broadcast,
+meant for every band except 160 m (N2ADR's page for the board,
+https://james.ahlstrom.name/hl2filter/). When the counted slices on its input need different pin
+masks, Auto no longer bypasses (which sent the pins as `0x00`, the board off). Unkeyed, the pins
+are the receive mask of the counted slice with the highest frequency, mi0bot's way (mi0bot-Thetis
+`Penny.cs:183-189 [@c26a8a4]`, ordered by frequency rather than mi0bot's band enum), with bit 6
+cleared unless every counted slice's own receive mask has it
+(`SharedInputLowPass::hl2ReceivePins`, one helper read by the connection and by the low-pass
+reason). A slice on 160 m in the N2ADR preset, on GEN, or on any band the operator set without
+pin 7 turns the high-pass off for the input; no band is named in the rule. mi0bot takes the higher
+band's mask whole, with no bit-6 handling. `RadioModel::republishAlexAdcSlices` hands
+AlexController the one band the pins follow, so the chain reports `Filtered`, and WIDE never
+shows for a band difference. WIDE shows when `0x00` is actually sent: ForceBypass,
+WidebandLocked, or pins that come to `0x00` because the band of the slice they follow has no pins
+set (WWV under the N2ADR preset, or a band the operator left empty) on a board with receive pins
+configured. Then the chain reports bypassed (`SwitchBypass::NoFilterPins`, from the same
+`hl2ReceivePins` result the connection sends), the WIDE reason names that slice ("Slice B on WWV
+has no filter pins set, so the filter board is off."), and there is no low-pass sentence
+(`lowPassSlice` -1). With no receive pins set on any band nothing is reported off, as before. The slices below the highest are held behind its filter; the
+low-pass reason names the slice the pins follow and, when bit 6 is cleared, adds a line naming
+the slice that needs the high-pass off (the top slice itself when its own mask lacks bit 6 and
+another's has it). 6m/ByPass on RX is an Alex switch; it changes neither the HL2's pins nor its
+reason. ForceBypass and WidebandLocked still force `0x00` (the 2026-08-01 maintainer note); keyed, the transmitting band's TX pins go out as before; the Alex
+boards are unchanged.
 
 Recompute triggers (16-row event matrix in §10).
 
@@ -1231,7 +1274,7 @@ Phase 3F multi-pan + multi-slice landed across 8 sub-epics (A-G shipped, H bench
 
 The headline operator-visible deliverables:
 
-1. **Multi-pan layout** with 5 templates (Single, Stacked, Side-by-Side, Wide+2, Grid 2x2). Pan layout persists across launches. Float any pan to a second monitor via Float Active Pan action.
+1. **Multi-pan layout** with 9 layouts of up to 5 pans: "1" (Single), "2v" (Stacked), "2h" (Side-by-Side), "12h" (Wide+2), "2h1", "3v", "2x2" (Grid), "4v", "3h2". The last four grew the original 5-template plan per the 2026-08-02 bottom-banner-and-pan-menu design §8.3 (`src/gui/PanadapterStack.h`, `MainWindow::panIdsForLayout`). Pan layout persists across launches. Float any pan to a second monitor via Float Active Pan action.
 2. **Multi-slice (up to maxSlices per SKU)** with TxSliceArbiter enforcing the single-TX invariant. RF-safe handoff (MOX drop before TX-slice flip). Slice add/remove via +PAN dropdown or Ctrl+R.
 3. **Per-pan badges** showing slice letter, freq, mode, CH N, plus optional TX/WIDE/DIV/PS HOLD pills. Right-click VFO flag for context menu (TX/Antenna/Rate/Diversity/Filter/Remove).
 4. **Alex per-ADC BPF state machine** with operator override via FilterPolicyDialog (Auto / Force band / Force bypass). Bottom-bar CH 0 / CH 1 indicators reflect live BPF state.
@@ -1508,12 +1551,25 @@ OpenHPSDR radio, it is scoped **per band**, and it is shared by both chains:
 a chain cannot serve a *different* antenna from the other chain. Rule 3 is restated in §16.2.3
 step 0.
 
-On the 7000D / 8000D / G2 / G2-1K / Anvelina Pro 3 the single selected antenna necessarily reaches
-both filter banks: there is no RX 2 jack (the RX-only inputs are BYPS / EXT1 / XVTR), no second
-selector, yet ADC1 has a complete BPF2 bank with its own step attenuator and its own 6 m LNA
-offset, and diversity works. **This is strong convergent inference, not a cited hardware fact.**
-No schematic or upstream comment states the split in words. It is therefore a bench row
-(§16.7 Q9), and the router's ADC-distribution step is gated on it.
+**Corrected 2026-09-30 (§16.7 Q9, answered by JJ on the G2).** An earlier version of this
+paragraph inferred that on the 7000D / 8000D / G2 / G2-1K / Anvelina Pro 3 the single selected
+antenna necessarily reaches both filter banks. That is wrong for the G2. On the G2, ADC1 is fed
+from the RX2 jack and is not on the antenna switch; ANT1, for both TX and RX, feeds ADC0 only. The one antenna selector above still holds (it is one selector, and it selects
+for ADC0); what it selects does not reach ADC1. This matches the codec's own comment,
+"on an ANAN-G2 the block diagram shows ADC1 fed from the RX2 ant jack while the Ant/TR switch
+feeds ADC0 only" (`P2CodecOrionMkII.cpp:1246-1249`), and the G2 bench results
+(`2026-05-26-phase3f-verification/g2-results.md` row 15: ADC1 needs a real feed on the RX2 jack
+to hear anything). The 7000D / 8000D / G2-1K / Anvelina Pro 3 were not benched; treat them as
+the G2 until a bench row says otherwise.
+
+Consequence for the router: distributing a slice on another band to ADC1 (the multi-slice
+filter options' option (a)) only helps when something is plugged into the RX2 jack. On a
+single-antenna station ADC1 hears nothing, so it would turn a bypassed chain into a silent
+slice. It is not the fix for two slices on two bands sharing ADC0. The fix is option (c): both
+Alex filters on ADC0 follow the slices counted on that input (the band-pass bypasses across
+their ranges, and the receive low-pass is set for the highest one, as Thetis does for RX1 and
+RX2), and the operator is told which slice the low-pass is set for. Option (a) stays a later,
+opt-in step for stations with a second antenna on the RX2 jack.
 
 On ANAN-100D / 200D the opposite holds: ADC1 is drawn hardwired to connector C2, labelled "RX 2"
 (`Path_Illustrator.cs:4380, 5009-5014, 5695 [v2.10.3.15]`), and deskhpsdr's own preset text says
@@ -1840,6 +1896,12 @@ The design therefore splits the two decisions, because they are not the same ris
 
 #### 16.2.6 Interaction with `SliceStreamAllocator`
 
+**Status: not built.** The `FilterChainRouter` class described in this section (§16.2.1-§16.2.7)
+does not exist in `src` or `tests`. The stream-to-chain assignment that shipped lives in
+`RadioModel::chainForStream` (`src/models/RadioModel.cpp:14680`), not in a standalone router
+class. §16.2 stays in this document as the design record; treat it as not-yet-implemented rather
+than as a description of the shipping code.
+
 Clean separation of ownership, no negotiation:
 
 | Layer | Owns | Never does |
@@ -1993,6 +2055,76 @@ work, is not named in §9 at all.
   fix inside the PS branch. `P1CodecStandard::applyDdcAssignment` has the same shape
   (`src/core/codec/P1CodecStandard.cpp:900-921`).
 
+**Update (2026-09-24, receiver-and-transmit-gaps Task 3).** The P1 Hermes / HermesC10 (G2E) row
+above is corrected: stream 1 (rx2) now stays on DDC1 under PureSignal TX, matching Thetis `GetDDC`
+cases 5 and 7 (`console.cs:8704-8743 [v2.10.3.15]`), which give `rx2 = 1` in both the plain and the
+diversity PS-MOX shapes. `P1CodecStandard::applyDdcAssignment` no longer leaves `streamDdc[1]` at
+-1 in that branch, so slice B no longer reads as PS HOLD while a P1 Hermes-class radio transmits
+with PureSignal on.
+
+That mapping is keyed on the model and covers only the four `nddc == 4` models of Thetis's
+`UpdateDDCs` Hermes case: HERMES, ANAN10, ANAN100 and ANAN_G2E (`console.cs:8387-8392
+[v2.10.3.15]`). Every other Protocol 1 model `P1CodecStandard` serves keeps slice B unassigned
+(`streamDdc[1] = -1`) under PureSignal transmit, as before Task 3. That covers ANAN10E and
+ANAN100B, where DDC1 carries the TX monitor (HermesII `GetDDC` cases 5 and 7: `psrx = 0; pstx =
+1`, `console.cs:8746-8779 [v2.10.3.15]`), and the Orion/G2-class models on Protocol 1, whose read
+loop routes RX2 from DDC2 (`networkproto1.c:385-388 [v2.10.3.15]`). Their own receiver layouts are
+ported separately; until then slice B reads as PS HOLD on them while PureSignal transmits.
+
+**Update (2026-09-24, receiver-and-transmit-gaps Task 11).** Every Protocol 1 model now gets its
+own Thetis layout. `P1CodecStandard::applyDdcAssignment` dispatches on the model; AnvelinaPro3 and
+RedPitaya call the same Orion-class helper. The layout comes from three places, all
+`[v2.10.3.15]`: `UpdateDDCs` (the configuration fields), `GetDDC`'s Protocol 1 half (which frame
+slot each receiver reads) and `cmaster.cs` `CMLoadRouterAll`'s Protocol 1 half with the read loop
+(which slots actually reach RX1, RX2 and PureSignal). On Protocol 1 the stream values and the
+PureSignal pair are **frame slots**, the index of the receiver inside the EP6 frame, not
+`UpdateDDCs`'s Protocol 2-style DDC numbers. `tst_p1_ddc_layout_per_model` pins every row below
+for all sixteen PureSignal / diversity / MOX / RX2 states and checks that `psDdcConfig` agrees.
+
+| Model (Protocol 1) | nddc, P1_rxcount | Slice A | Slice B | PureSignal pair | Under PS transmit | Source |
+| --- | --- | --- | --- | --- | --- | --- |
+| ANAN-10E, ANAN-100B (HermesII) | 2, 2 | slot 0 | slot 1 | slots 0 + 1 | A and B suspended; P1_DDCConfig 5 | `console.cs:8461-8531`, `8746-8779` |
+| HERMES, ANAN-10, ANAN-100, ANAN-G2E (Hermes) | 4, 4 | slot 0 | slot 1 | slots 2 + 3 | A and B keep their slots; P1_DDCConfig 6 | `console.cs:8387-8458`, `8704-8745` |
+| ANAN-100D, ANAN-200D, ORIONMKII, ANAN-7000D, ANAN-8000D, ANAN-G2, ANAN-G2-1K, ANVELINAPRO3 (Orion) | 5, 5 | slot 0 | slot 2 | slots 3 + 4 | A and B keep their slots; P1_DDCConfig 3 | `console.cs:8220-8303`, `8651-8702` |
+| REDPITAYA (Orion, `//DH1KLM`) | 5, 5 | slot 0 | slot 2 | slots 3 + 4 | as Orion, plus the `// REDPITAYA PAVEL` rates | `console.cs:8305-8385` |
+
+- Diversity keeps slice B on its slot on every model (GetDDC `rx2 = 1`, or 2 on the Orion class);
+  it used to be unassigned under diversity.
+- HermesII under PureSignal transmit is a deliberate divergence: Thetis's router also hands slots 0
+  and 1 to RX1 and RX2 there for the panadapter (`cmaster.cs:664-682`, `//MW0LGE_21d DUP on top
+  panadaptor`). In NereusSDR that would demodulate the PureSignal feedback, so both slices suspend,
+  as on Protocol 2 Hermes.
+- ANAN-G2 and ANAN-G2-1K follow `UpdateDDCs`'s Orion case, as Thetis's `UpdateDDCs` does, although
+  Thetis has no Protocol 1 router for them and `GetDDC` says Saturn runs Protocol 2 only
+  (`console.cs:8653-8654`).
+- `P1_DDCConfig`, `DDCEnable`, `SyncEnable` and the per-DDC rates never reach the Protocol 1 wire
+  (`Protocol1DDCConfig` stores the configuration and nothing reads it, `netInterface.c:1249-1255`).
+- The Atlas (HPSDR) keeps the Hermes layout: `UpdateDDCs` gives it nothing at all.
+
+**Four streams and routing by slot (same day, the operator's ruling, option A).** On Protocol 1
+slices C and D take the PureSignal pair's slots in plain receive (slots 2 + 3 on the Hermes
+class, 3 + 4 on the Orion class) and suspend while PureSignal transmits or diversity is on. Those
+slots carry the TX frequency while PureSignal transmits and slices C and D's frequencies
+otherwise; Thetis sends the TX frequency there always, so plain receive diverges from it, as the
+Hermes class already did on banks 5 and 6. `BoardCapsTable::userDdcCountFor` gives four streams
+on Protocol 1 (the row's count on Protocol 2) and `RadioModel::userStreamCount()` is the one
+reader, so a fifth slice shares a stream, as on the HL2. `RadioModel::publishDdcAssignment` now
+routes Protocol 1 by the codec's frame slots too; issue #263 cannot return because every
+Protocol 1 codec publishes slot 0 for slice A.
+
+| Model (Protocol 1) | Streams before | Streams after | Slices (maxSlices) |
+| --- | --- | --- | --- |
+| HL2 | 2 | 2 | 5 |
+| ANAN-10E, ANAN-100B | 2 | 2 | 2 |
+| HERMES, ANAN-10, ANAN-100 | 4 | 4 | 4 |
+| ANAN-G2E | 4 | 4 | 5 |
+| ANAN-100D, ANAN-200D, ORIONMKII, ANAN-7000D, ANAN-8000D, ANVELINAPRO3, REDPITAYA, ANAN-G2, ANAN-G2-1K | 5 (slice B on slice A's frequency; D, E on the pair's slots by position) | 4 | 5 |
+
+The HL2 is left as documented above: `P1CodecHl2::applyDdcAssignment` still suppresses stream 1
+(`streamDdc[1] = -1`) under PS-MOX, even though mi0bot's `GetDDC` (`console.cs:8733-8762
+[@c26a8a4]`) shows the same `rx2 = 1` shape for cases 5 and 7. This is pending a careful mi0bot
+reading and an HL2 bench check before it is changed to match.
+
 #### 16.3.3 TX
 
 - **TX1. The router does not touch the LPF, ever.** The RX band-pass decision and the TX low-pass
@@ -2076,7 +2208,7 @@ bypasses the preselector. §16.7 Q3.
 Badge text: `WIDE`. Existing colours are already correct
 (`src/gui/widgets/SpectrumStatusOverlay.cpp:171-176`: amber on dark amber, `#ffb800` on `#604000`).
 
-Tooltip, one of these five, selected by cause. No source citations in user-visible strings, per
+Tooltip, one of these nine, selected by cause. No source citations in user-visible strings, per
 project convention:
 
 | Cause | Tooltip |
@@ -2086,6 +2218,10 @@ project convention:
 | operator override | `Preselector bypassed by your Filter Policy setting for this chain. Click to change it.` |
 | PureSignal TX | `Preselector bypassed while PureSignal is transmitting, so the feedback path sees an unfiltered coupler signal. Filtering returns when transmit ends.` |
 | diversity range mismatch | `Preselector bypassed because diversity has pinned both receiver chains to one filter range and this slice is outside it. Click to change the filter policy for this chain.` |
+| HPF Bypass (master) setting | `Preselector bypassed by the HPF Bypass (master) setting on the Antenna / ALEX page of the hardware setup. Turn it off there to restore filtering.` |
+| Disable 6m LNA on RX setting, on 6 m | `Preselector bypassed on 6 m by the Disable 6m LNA on RX setting on the Antenna / ALEX page of the hardware setup. Turn it off there to restore filtering.` |
+| HPF Bypass on TX setting, while keyed | `Preselector bypassed while transmitting by the HPF Bypass on TX setting on the Antenna / ALEX page of the hardware setup. Filtering returns when transmit ends.` |
+| Disable 6m LNA on TX setting, keyed on 6 m | `Preselector bypassed on 6 m while transmitting by the Disable 6m LNA on TX setting on the Antenna / ALEX page of the hardware setup. Filtering returns when transmit ends.` |
 
 Clicking the badge opens the Filter Policy dialog for that chain
 (`wideBadgeClicked` already exists, `src/gui/widgets/SpectrumStatusOverlay.cpp:211-216`).
@@ -2197,6 +2333,14 @@ depend on this answer.
 G2-1K / Anvelina Pro 3. Test: tune two slices to the same band on ANT1, force them onto different
 chains, confirm both hear signal. If this fails, Q2 must be answered "opt-in" and the ANAN-G2
 column of §16.6 loses its "no WIDE" outcomes.
+
+**Q9 closed 2026-09-30 (JJ, on the G2): no.** On the G2 the RX2 input (ADC1) is not on the
+antenna switch; ANT1, for both TX and RX, feeds ADC0 only, and ADC1 hears only what is plugged
+into the RX2 jack. §16.1.6 is corrected. So Q2 cannot be answered "auto": a second chain helps
+only a station with an antenna on the RX2 jack (how to offer it is still Q2's to decide), and
+the ANAN-G2 column of §16.6 loses its "no WIDE" outcomes for a
+single-antenna station. Moving a slice to ADC1 (option (a)) is not the fix for a shared input;
+option (c), both filters following the counted slices with the low-pass reason shown, is.
 
 **Q10. Thetis's ORIONMKII inconsistency.** Upstream writes Alex2 HPF bits for a board whose Alex2
 settings the operator can never see (`console.cs:15435` in the driver list,

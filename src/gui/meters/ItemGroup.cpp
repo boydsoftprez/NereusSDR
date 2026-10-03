@@ -10,6 +10,14 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23: R-R3-13: CompactHBar readout drops its below-range idle
+//                 text; no reading now shows "-- dBm" through the shared
+//                 isNoMeterReading rule and a real reading below the bar's
+//                 range stays a number. J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: the Discord control was removed; a saved one in a
+//                 group is dropped on load with one log line. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -76,11 +84,12 @@ mw0lge@grange-lane.co.uk
 #include "TuneStepButtonItem.h"
 #include "OtherButtonItem.h"
 #include "VoiceRecordPlayItem.h"
-#include "DiscordButtonItem.h"
 #include "VfoDisplayItem.h"
 #include "ClockItem.h"
 #include "ClickBoxItem.h"
 #include "DataOutItem.h"
+
+#include "core/LogCategories.h"
 
 #include <QStringList>
 #include <QtAlgorithms>
@@ -345,8 +354,9 @@ ItemGroup* ItemGroup::deserialize(const QString& data, QObject* parent)
             auto* item = new VoiceRecordPlayItem(group);
             if (item->deserialize(itemData)) { group->addItem(item); } else { delete item; }
         } else if (typeTag == QLatin1String("DISCORDBTNS")) {
-            auto* item = new DiscordButtonItem(group);
-            if (item->deserialize(itemData)) { group->addItem(item); } else { delete item; }
+            // R-R3-49: the Discord control was removed; a saved one is dropped.
+            qCInfo(lcMeter) << "Dropped a saved Discord control from a meter group:"
+                               " that control has been removed";
         } else if (typeTag == QLatin1String("VFO")) {
             auto* item = new VfoDisplayItem(group);
             if (item->deserialize(itemData)) { group->addItem(item); } else { delete item; }
@@ -493,8 +503,9 @@ ItemGroup* ItemGroup::createCompactHBarPreset(int bindingId, double minVal, doub
     readout->setBold(true);
     readout->setSuffix(QStringLiteral(" dBm"));
     readout->setDecimals(1);
-    readout->setIdleText(QStringLiteral("\u2014 dBm"));
-    readout->setMinValidValue(minVal);
+    // NereusSDR (R-R3-13): no idle threshold.  No reading (the -400 dBm
+    // sentinel) shows "-- dBm" through TextItem's shared no-reading rule;
+    // a real reading below minVal is still a reading and shows its number.
     readout->setZOrder(10);
     group->addItem(readout);
 

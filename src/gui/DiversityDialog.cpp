@@ -35,6 +35,14 @@
 //                client area when MOX + Slice A diversity + PS are
 //                all engaged.  Operator visual cue only -- actual
 //                DSP pause integration with PsccPump deferred.
+//   2026-10-01 - Diversity lane: sliceA() is RadioModel's diversity owner
+//                (diversityTargetSlice, slice A by id) instead of the first
+//                slice in the list, which with slice A closed was B, an
+//                edit RadioModel ignored. bindSlice follows the owner as
+//                slices open and close; with none the controls are
+//                disabled (not hidden) and the status line says why.
+//                J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include "gui/DiversityDialog.h"
@@ -47,6 +55,7 @@
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
+#include <QAbstractButton>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QGroupBox>
@@ -160,29 +169,6 @@ DiversityDialog::DiversityDialog(RadioModel* radioModel, QWidget* parent)
     footer->addWidget(closeBtn);
     main->addLayout(footer);
 
-    // Initial state from Slice A.
-    refreshFromSlice();
-
-    // React to external SliceModel changes (e.g. AppSettings load,
-    // RadioModel T13 round-trip, future RadarWidget edits).
-    if (auto* s = sliceA()) {
-        connect(s, &SliceModel::diversityEnabledChanged,
-                this, &DiversityDialog::refreshFromSlice);
-        connect(s, &SliceModel::diversityPhaseDegChanged,
-                this, &DiversityDialog::refreshFromSlice);
-        connect(s, &SliceModel::diversityGainDbChanged,
-                this, &DiversityDialog::refreshFromSlice);
-        connect(s, &SliceModel::frequencyChanged,
-                this, &DiversityDialog::refreshFromSlice);
-        // When the operator tunes across a band boundary, swap the
-        // memory bank to the new band.
-        connect(s, &SliceModel::bandChanged, this,
-                [this](Band) { loadMemoryFromSettings(); });
-    }
-
-    // Hydrate memory slots from AppSettings for the current band.
-    loadMemoryFromSettings();
-
     // Phase 3F Sub-Epic G Task 21: PS HOLD overlay.  Hidden until MOX
     // engages while Slice A diversity is on AND PureSignal is enabled.
     // The overlay is a translucent child widget sized to the dialog
@@ -212,20 +198,77 @@ DiversityDialog::DiversityDialog(RadioModel* radioModel, QWidget* parent)
                     [this](bool) { refreshPauseState(); });
         }
     }
-    if (auto* s = sliceA()) {
-        connect(s, &SliceModel::diversityEnabledChanged, this,
-                [this](bool) { refreshPauseState(); });
+
+    // Slice A's state, connections and memory bank (bindSlice), now and
+    // whenever a slice opens or closes, since either can create or remove
+    // slice A.
+    if (m_radioModel) {
+        connect(m_radioModel, &RadioModel::sliceAdded, this,
+                [this](int) { bindSlice(); });
+        connect(m_radioModel, &RadioModel::sliceRemoved, this,
+                [this](int) { bindSlice(); });
     }
-    refreshPauseState();
+    bindSlice();
 }
 
 DiversityDialog::~DiversityDialog() = default;
 
 SliceModel* DiversityDialog::sliceA() const
 {
-    if (!m_radioModel) { return nullptr; }
-    const auto slices = m_radioModel->slices();
-    return slices.isEmpty() ? nullptr : slices.first();
+    // The slice RadioModel runs diversity for, found by its stable id. The
+    // first slice in the list is a different slice once slice A is closed,
+    // and RadioModel ignores diversity on any other.
+    return m_radioModel ? m_radioModel->diversityTargetSlice() : nullptr;
+}
+
+void DiversityDialog::bindSlice()
+{
+    SliceModel* s = sliceA();
+    if (s != m_boundSlice) {
+        if (m_boundSlice) {
+            disconnect(m_boundSlice, nullptr, this, nullptr);
+        }
+        m_boundSlice = s;
+        // React to external SliceModel changes (e.g. AppSettings load,
+        // RadioModel T13 round-trip, future RadarWidget edits).
+        if (s) {
+            connect(s, &SliceModel::diversityEnabledChanged,
+                    this, &DiversityDialog::refreshFromSlice);
+            connect(s, &SliceModel::diversityPhaseDegChanged,
+                    this, &DiversityDialog::refreshFromSlice);
+            connect(s, &SliceModel::diversityGainDbChanged,
+                    this, &DiversityDialog::refreshFromSlice);
+            connect(s, &SliceModel::frequencyChanged,
+                    this, &DiversityDialog::refreshFromSlice);
+            // When the operator tunes across a band boundary, swap the
+            // memory bank to the new band.
+            connect(s, &SliceModel::bandChanged, this,
+                    [this](Band) { loadMemoryFromSettings(); });
+            connect(s, &SliceModel::diversityEnabledChanged, this,
+                    [this](bool) { refreshPauseState(); });
+        }
+        // Hydrate memory slots from AppSettings for the current band.
+        loadMemoryFromSettings();
+    }
+    applyOwnerPresence();
+    refreshFromSlice();
+    refreshPauseState();
+}
+
+void DiversityDialog::applyOwnerPresence()
+{
+    const bool present = sliceA() != nullptr;
+    m_enableBox->setEnabled(present);
+    m_phaseSlider->setEnabled(present);
+    m_gainSlider->setEnabled(present);
+    m_radar->setEnabled(present);
+    for (QAbstractButton* btn : m_memButtons->buttons()) {
+        btn->setEnabled(present);
+    }
+    if (!present) {
+        m_statusLabel->setText(QStringLiteral(
+            "Status: Slice A is closed. Open Slice A to use diversity."));
+    }
 }
 
 void DiversityDialog::onEnableToggled(bool on)

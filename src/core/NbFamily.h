@@ -17,6 +17,11 @@
 //                in third_party/wdsp/src/*.c headers.
 //                Authored by J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Anthropic Claude Code.
+//   2026-09-24 - R-R3-39: every WDSP call goes through a dispatcher the
+//                owning RxChannel sets, so it runs on the receive lane;
+//                the anb/nob objects can be made and destroyed there.
+//                NereusSDR-original, by J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 // --- From cmaster.c ---
@@ -149,7 +154,10 @@ warren@wpratt.com
 
 #pragma once
 
+#include <QtGlobal>
+
 #include <atomic>
+#include <functional>
 
 #include "WdspTypes.h"
 
@@ -207,8 +215,25 @@ public:
     // sampleRate is the input sample rate handed to create_anbEXT/nobEXT.
     // bufferSize is the number of COMPLEX samples per xanbEXTF/xnobEXTF call
     // (matches fexchange2 input buffer size).
-    NbFamily(int channelId, int sampleRate, int bufferSize);
+    //
+    // R-R3-39: with createWdspObjects false the anb/nob objects are not made
+    // here; the owner calls createWdspObjects() later (on the receive lane,
+    // after OpenChannel).
+    NbFamily(int channelId, int sampleRate, int bufferSize,
+             bool createWdspNow = true);
     ~NbFamily();
+
+    // R-R3-39: how this family's WDSP calls run. `parameter` is 0 for a call
+    // whose order matters, otherwise the key of the one parameter it writes
+    // (a newer call with the same key may replace a queued one). Empty (the
+    // default) runs each call at once on the caller's thread.
+    using Dispatcher = std::function<void(quint64 parameter, std::function<void()> job)>;
+    void setDispatcher(Dispatcher dispatcher);
+
+    // The anb/nob objects' lifetime, for an owner that runs WDSP calls on a
+    // lane. Both are idempotent; the destructor destroys what is left.
+    void createWdspObjects();
+    void destroyWdspObjects();
 
     NbFamily(const NbFamily&)            = delete;
     NbFamily& operator=(const NbFamily&)  = delete;
@@ -261,10 +286,26 @@ public:
     // → metallic ringing artifacts at higher rates.
     void setSampleRate(int newRateHz, int newBufferSize);
 
+    // R-R3-39: setSampleRate in two halves. The carry changes at once on the
+    // owner's thread; applySampleRateWdsp is the WDSP half, run where the
+    // owner runs WDSP calls (it skips values already applied).
+    void setSampleRateCarry(int newRateHz, int newBufferSize);
+    void applySampleRateWdsp(int newRateHz, int newBufferSize);
+
 private:
     const int m_channelId;
-    int m_sampleRate;
-    int m_bufferSize;
+    // Atomic: set on the owner's thread, read by createWdspObjects on the
+    // lane (R-R3-39).
+    std::atomic<int> m_sampleRate;
+    std::atomic<int> m_bufferSize;
+    // The rate and size WDSP's objects were last given; lane only.
+    int m_wdspSampleRate{0};
+    int m_wdspBufferSize{0};
+    bool m_wdspCreated{false};
+    Dispatcher m_dispatcher;
+
+    // Runs `job` at once, or through the dispatcher.
+    void dispatch(quint64 parameter, std::function<void()> job);
 
     // 2026-05-13 (Linux CI #238): true when m_channelId is outside
     // WDSP's [0, MAX_CHANNELS) range so all WDSP calls (in ctor, dtor,
@@ -277,12 +318,16 @@ private:
     std::atomic<NbMode> m_mode{NbMode::Off};
     std::atomic<bool>   m_snbEnabled{false};
     NbTuning            m_tuning{};
+    // The tuning the anb/nob objects are created with (R-R3-39).
+    NbTuning            m_createTuning{};
 
     // Pushes all tuning fields through WDSP post-create setters for both
     // NB1 and NB2. Called only from setTuning() — the ctor passes initial
     // values directly to create_anbEXT / create_nobEXT, so a post-create
     // push during construction would be redundant.
     void pushAllTuning();
+    // The WDSP half of pushAllTuning, with the tuning it was posted with.
+    void pushTuningWdsp(const NbTuning& t);
 };
 
 } // namespace NereusSDR

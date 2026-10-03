@@ -7,6 +7,11 @@
 //
 // Sub-Phase 12 Task 12.2 (2026-04-20): Written by J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
+// 2026-09-22 (R-R3-36 fix wave): a configured device that is not present
+// stays selected as "<name> (not available)", and a configured buffer
+// size the list lacks is added, so an unrelated edit never rewrites them.
+// The input card offers 4096 and 8192 samples like the TX Input page.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "DeviceCard.h"
@@ -14,6 +19,7 @@
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/audio/PortAudioBus.h"
+#include "gui/UnbuiltFeatures.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -119,6 +125,22 @@ static const QStringList kChannels = {
 
 // Buffer sizes in samples. Derived ms shown next to the combo.
 static const QList<int> kBufferSizes = { 64, 128, 256, 512, 1024, 2048 };
+// The input card matches the TX Input page's buffer range.
+static const QList<int> kInputBufferSizes = { 64, 128, 256, 512, 1024, 2048, 4096, 8192 };
+
+// R-R3-36: an item the card adds to keep a configured value that the list
+// lacks (a device that is not present, a buffer size not offered) carries
+// this role, so the next load removes it before adding its own.
+static constexpr int kKeptEntryRole = Qt::UserRole + 1;
+
+static void removeKeptEntries(QComboBox* combo)
+{
+    for (int i = combo->count() - 1; i >= 0; --i) {
+        if (combo->itemData(i, kKeptEntryRole).toBool()) {
+            combo->removeItem(i);
+        }
+    }
+}
 
 // Compute derived milliseconds label from samples + sample rate.
 static QString bufferMs(int samples, int sampleRate)
@@ -236,6 +258,7 @@ void DeviceCard::buildLayout()
         srRow->addWidget(m_autoMatchSampleRate);
         srRow->addStretch();
         form->addRow(makeLabel(QStringLiteral("Sample rate:")), srRow);
+        UnbuiltFeatures::hideUnlessBuilt(m_autoMatchSampleRate, UnbuiltFeature::AudioAutoMatch);
     }
 
     // ── Row 4: Bit depth ─────────────────────────────────────────────────
@@ -245,6 +268,7 @@ void DeviceCard::buildLayout()
         m_bitDepthCombo->addItem(d + QStringLiteral(" bit"), d.toInt());
     }
     form->addRow(makeLabel(QStringLiteral("Bit depth:")), m_bitDepthCombo);
+    UnbuiltFeatures::hideRowUnlessBuilt(m_bitDepthCombo, UnbuiltFeature::AudioBitDepth, form);
 
     // ── Row 5: Channels ──────────────────────────────────────────────────
     m_channelsCombo = new QComboBox;
@@ -263,7 +287,7 @@ void DeviceCard::buildLayout()
         bufRow->setSpacing(6);
         m_bufferSizeCombo = new QComboBox;
         m_bufferSizeCombo->setStyleSheet(QLatin1String(kComboStyle));
-        for (int sz : kBufferSizes) {
+        for (int sz : (m_role == Role::Input ? kInputBufferSizes : kBufferSizes)) {
             m_bufferSizeCombo->addItem(QStringLiteral("%1 samples").arg(sz),
                                        QVariant::fromValue(sz));
         }
@@ -308,6 +332,10 @@ void DeviceCard::buildLayout()
 
         form->addRow(makeLabel(QString()), m_monitorDuringTxChk);
         form->addRow(makeLabel(QString()), m_toneCheckChk);
+        UnbuiltFeatures::hideRowUnlessBuilt(m_monitorDuringTxChk,
+                                           UnbuiltFeature::AudioMonitorTxInput, form);
+        UnbuiltFeatures::hideRowUnlessBuilt(m_toneCheckChk,
+                                           UnbuiltFeature::AudioToneCheck, form);
     }
 
     outer->addLayout(form);
@@ -318,7 +346,7 @@ void DeviceCard::buildLayout()
         pillRow->setSpacing(4);
         auto* pillLbl = new QLabel(QStringLiteral("Negotiated:"));
         pillLbl->setStyleSheet(QLatin1String(kDimLabelStyle));
-        m_negotiatedPill = new QLabel(QStringLiteral("(not yet applied)"));
+        m_negotiatedPill = new QLabel(QStringLiteral("(not applied)"));
         m_negotiatedPill->setStyleSheet(QLatin1String(kPillStyleApplying));
         pillRow->addWidget(pillLbl);
         pillRow->addWidget(m_negotiatedPill);
@@ -427,15 +455,35 @@ void DeviceCard::populateDeviceCombo()
         }
     }
 
-    int restoreIdx = 0;
     for (int i = 0; i < devices.size(); ++i) {
         m_deviceCombo->addItem(devices[i].name,
                                QVariant::fromValue(devices[i].name));
-        if (devices[i].name == prevName) {
-            restoreIdx = i + 1;  // +1 for the "(platform default)" entry
+    }
+    selectDeviceName(prevName);
+}
+
+// ---------------------------------------------------------------------------
+// selectDeviceName — select a configured device, never a substitute
+// ---------------------------------------------------------------------------
+// R-R3-36: a named device that is not present is kept as
+// "<name> (not available)" with the name as its data, so the card shows it
+// and currentConfig() saves the same name back. Falling to
+// "(platform default)" would silently switch the device on the next edit.
+void DeviceCard::selectDeviceName(const QString& name)
+{
+    removeKeptEntries(m_deviceCombo);
+    int idx = 0;
+    if (!name.isEmpty()) {
+        idx = m_deviceCombo->findData(QVariant::fromValue(name));
+        if (idx < 0) {
+            m_deviceCombo->addItem(
+                QStringLiteral("%1 (not available)").arg(name),
+                QVariant::fromValue(name));
+            idx = m_deviceCombo->count() - 1;
+            m_deviceCombo->setItemData(idx, true, kKeptEntryRole);
         }
     }
-    m_deviceCombo->setCurrentIndex(restoreIdx);
+    m_deviceCombo->setCurrentIndex(idx);
 }
 
 // ---------------------------------------------------------------------------
@@ -545,11 +593,10 @@ void DeviceCard::loadFromSettings()
 
     m_suppressSignals = true;
 
-    // Device name.
+    // Device name. A configured device that is not present stays selected.
     {
-        const int idx = m_deviceCombo->findData(
-            QVariant::fromValue(cfg.deviceName));
-        m_deviceCombo->setCurrentIndex(idx >= 0 ? idx : 0);
+        QSignalBlocker blocker(m_deviceCombo);
+        selectDeviceName(cfg.deviceName);
     }
 
     // Driver API — look up by display text (api.name is the item text, set in
@@ -589,8 +636,26 @@ void DeviceCard::loadFromSettings()
 
     // Buffer size.
     if (m_bufferSizeCombo) {
-        const int idx = m_bufferSizeCombo->findData(
+        {
+            QSignalBlocker blocker(m_bufferSizeCombo);
+            removeKeptEntries(m_bufferSizeCombo);
+        }
+        int idx = m_bufferSizeCombo->findData(
             QVariant::fromValue(cfg.bufferSamples));
+        if (idx < 0 && cfg.bufferSamples > 0) {
+            // R-R3-36: keep a configured size the list lacks, in order,
+            // rather than falling to 256 and saving that on the next edit.
+            int insertAt = 0;
+            while (insertAt < m_bufferSizeCombo->count()
+                   && m_bufferSizeCombo->itemData(insertAt).toInt() < cfg.bufferSamples) {
+                ++insertAt;
+            }
+            m_bufferSizeCombo->insertItem(
+                insertAt, QStringLiteral("%1 samples").arg(cfg.bufferSamples),
+                QVariant::fromValue(cfg.bufferSamples));
+            m_bufferSizeCombo->setItemData(insertAt, true, kKeptEntryRole);
+            idx = insertAt;
+        }
         m_bufferSizeCombo->setCurrentIndex(idx >= 0 ? idx : 2); // default 256
         // Update the derived-ms label.
         if (m_bufferMsLabel) {

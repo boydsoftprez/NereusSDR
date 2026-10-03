@@ -6,16 +6,38 @@
 // Phase 3F Sub-Epic I Tasks 5-6: stream pool + slice binding.
 // Phase 3F Sub-Epic I Task 7b: per-stream DDC assignment + routing.
 // Phase 3F Sub-Epic I closeout, defect F1: bindings reach a late worker.
+// 2026-09-27: R-R3-49: a Protocol 2 slice comes back at the rate saved for
+// its band after a restart, and a rate change saves it. J.J. Boyd (KG4VCF),
+// with AI-assisted implementation via Anthropic Claude Code.
+// 2026-09-28: a stream rate change never makes the event loop wait on a busy
+// DSP worker, and the new drain size still lands before the next batch.
+// J.J. Boyd (KG4VCF), with AI-assisted implementation via Anthropic Claude
+// Code.
 // =================================================================
 #include <QtTest/QtTest>
+#include <QRegularExpression>
+#include <QSemaphore>
 #include <QSignalSpy>
+#include <QThread>
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <memory>
+#include <numbers>
+#include <vector>
+#include "core/AppSettings.h"
 #include "core/DdcAssignment.h"
+#include "core/RadioDiscovery.h"
 #include "core/P1RadioConnection.h"
 #include "core/ReceiverManager.h"
 #include "core/RxChannel.h"
 #include "core/SampleRateCatalog.h"
 #include "core/WdspEngine.h"
+#include "core/codec/P1CodecAnvelinaPro3.h"
+#include "core/codec/P1CodecHl2.h"
 #include "core/codec/P1CodecRedPitaya.h"
+#include "core/codec/P1CodecStandard.h"
 #include "core/codec/P2CodecHermes.h"
 #include "core/codec/P2CodecSaturn.h"
 #include "models/RadioModel.h"
@@ -63,10 +85,84 @@ struct DetachConnection {
     ~DetachConnection() { if (model) { model->injectConnectionForTest(nullptr); } }
 };
 
+// The loudest output sample a running channel produces from a steady tone,
+// fed straight to RxChannel::processIq (the call RxDspWorker makes) at
+// `rateHz`: `settleBlocks` input blocks first, then the peak over the next
+// `measureBlocks`. Only the settled blocks count, because a channel WDSP is
+// about to silence still plays out its slew-down first. fexchange2 leaves the
+// output untouched when the channel's exchange flag is clear, so each block
+// starts from zeros: a channel WDSP has silenced reads 0.
+double settledPeakFromATone(RxChannel* rx, int rateHz,
+                            int settleBlocks = 100, int measureBlocks = 50)
+{
+    const int inSize = bufferSizeForRate(rateHz);
+    const int outSize = inSize * 48000 / rateHz;
+    std::vector<float> inI(inSize), inQ(inSize, 0.0f), outI(inSize), outQ(inSize);
+    double peak = 0.0;
+    long n = 0;
+    for (int block = 0; block < settleBlocks + measureBlocks; ++block) {
+        for (int i = 0; i < inSize; ++i, ++n) {
+            // A real-valued 1 kHz tone lands in both sidebands, so the test
+            // does not depend on the slice's mode.
+            inI[i] = static_cast<float>(
+                0.01 * std::cos(2.0 * std::numbers::pi * 1000.0
+                                * static_cast<double>(n) / rateHz));
+        }
+        std::fill(outI.begin(), outI.end(), 0.0f);
+        std::fill(outQ.begin(), outQ.end(), 0.0f);
+        rx->processIq(inI.data(), inQ.data(), outI.data(), outQ.data(), inSize, outSize);
+        if (block < settleBlocks) {
+            continue;
+        }
+        for (int i = 0; i < outSize; ++i) {
+            peak = std::max(peak, std::abs(static_cast<double>(outI[i])));
+        }
+    }
+    return peak;
+}
+
+} // namespace
+
+namespace {
+
+QString savedRateKey(int sliceId)
+{
+    return QStringLiteral("Slice%1/Band20m/SampleRate").arg(sliceId);
+}
+
+// The codec is declared first so it outlives the model that points at it.
+struct RestartedP2 {
+    P2CodecSaturn codec;
+    RadioModel model;
+    WdspEngine* engine {nullptr};
+    int id {-1};
+};
+
 } // namespace
 
 class TestStreamPoolBinding : public QObject {
     Q_OBJECT
+private:
+    static void restartOnP2(RestartedP2& r, int savedRateHz)
+    {
+        r.model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        r.model.receiverManager()->setP2Codec(&r.codec);
+        r.engine = r.model.wdspEngine();
+        r.engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+        r.model.configureStreamPool(4, 4, 192000);
+        for (int st = 0; st < 4; ++st) {
+            r.model.receiverManager()->createReceiver();
+        }
+        r.model.openRxChannelPool(4, bufferSizeForRate(192000), 192000);
+        r.id = r.model.addSlice();
+        r.model.sliceById(r.id)->setFrequency(14200000.0);
+        QVERIFY(r.model.waitForReceiveLaneForTest());
+        AppSettings::instance().remove(savedRateKey(r.id));
+        if (savedRateHz > 0) {
+            AppSettings::instance().setValue(savedRateKey(r.id), savedRateHz);
+        }
+    }
+
 private slots:
     void pool_sizes_to_the_sku()
     {
@@ -306,32 +402,181 @@ private slots:
         QCOMPARE(model.receiverManager()->receiverConfig(streamC).adcIndex, 0);
     }
 
-    void protocol1_leaves_receiver_routing_auto_assigned()
+    // Plan Task 11: one stream count, from the board row and the protocol
+    // in use (BoardCapsTable::userDdcCountFor). Four on Protocol 1, the row
+    // on Protocol 2; before a radio is chosen, the row's own protocol.
+    void user_stream_count_follows_the_protocol()
     {
         RadioModel model;
-        // Plain-RX RedPitaya puts stream 0 on DDC2, so a P1 board that
-        // wrongly routed by DDC number would look for frame slot 2.
-        P1CodecRedPitaya codec;
-        model.receiverManager()->setP1Codec(&codec);
-        model.configureStreamPool(5, 5, 192000);
-        for (int st = 0; st < 5; ++st) {
+        model.setBoardForTest(HPSDRHW::OrionMKII);
+        QCOMPARE(model.userStreamCount(), 5);  // row protocol: Protocol 2
+
+        RadioInfo info;
+        info.macAddress = QStringLiteral("00:1c:c0:a2:13:dd");
+        info.boardType  = HPSDRHW::OrionMKII;
+        info.protocol   = ProtocolVersion::Protocol1;
+        model.setLastRadioInfoForTest(info);
+        QCOMPARE(model.userStreamCount(), 4);
+
+        info.protocol = ProtocolVersion::Protocol2;
+        model.setLastRadioInfoForTest(info);
+        QCOMPARE(model.userStreamCount(), 5);
+
+        RadioModel hl2;
+        hl2.setBoardForTest(HPSDRHW::HermesLite);
+        info.boardType = HPSDRHW::HermesLite;
+        info.protocol  = ProtocolVersion::Protocol1;
+        hl2.setLastRadioInfoForTest(info);
+        QCOMPARE(hl2.userStreamCount(), 2);
+    }
+
+    // Plan Task 11: Protocol 1 routes each stream by the codec's FRAME SLOT
+    // (RadioModel::publishDdcAssignment no longer excludes Protocol 1).
+    //
+    // Issue #263 guard: AnvelinaPro3 and RedPitaya used to publish stream 0
+    // on "DDC2", and routing by that dropped every EP6 packet. They now
+    // publish slot 0 for slice A and slot 2 for slice B (Thetis GetDDC,
+    // Protocol 1 OrionMKII: rx1 = 0; rx2 = 2), and each slice gets the
+    // packets of its own slot. Slot 1 carries slice A's frequency on these
+    // boards (bank 3, nddc 5) and must reach no receiver.
+    void protocol1_routes_by_frame_slot_data()
+    {
+        QTest::addColumn<QString>("codecName");
+        QTest::addColumn<int>("streams");
+        QTest::addColumn<int>("slotA");
+        QTest::addColumn<int>("slotB");
+        QTest::addColumn<int>("deadSlot");
+        QTest::newRow("AnvelinaPro3") << QStringLiteral("ap3")  << 4 << 0 << 2 << 1;
+        QTest::newRow("RedPitaya")    << QStringLiteral("rp")   << 4 << 0 << 2 << 1;
+        QTest::newRow("Hermes")       << QStringLiteral("std")  << 4 << 0 << 1 << 2;
+        QTest::newRow("HL2")          << QStringLiteral("hl2")  << 2 << 0 << 1 << 2;
+    }
+
+    void protocol1_routes_by_frame_slot()
+    {
+        QFETCH(QString, codecName);
+        QFETCH(int, streams);
+        QFETCH(int, slotA);
+        QFETCH(int, slotB);
+        QFETCH(int, deadSlot);
+
+        std::unique_ptr<IP1Codec> codec;
+        if (codecName == QLatin1String("ap3"))      { codec = std::make_unique<P1CodecAnvelinaPro3>(); }
+        else if (codecName == QLatin1String("rp"))  { codec = std::make_unique<P1CodecRedPitaya>(); }
+        else if (codecName == QLatin1String("hl2")) { codec = std::make_unique<P1CodecHl2>(); }
+        else                                        { codec = std::make_unique<P1CodecStandard>(); }
+
+        RadioModel model;
+        model.receiverManager()->setP1Codec(codec.get());
+        model.configureStreamPool(streams, 5, 192000);
+        for (int st = 0; st < streams; ++st) {
             model.receiverManager()->createReceiver();
         }
 
         const int a = model.addSlice();
         model.slices().at(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(7100000.0);  // outside A's window: own stream
+        const int streamA = model.slices().at(a)->streamIndex();
+        const int streamB = model.slices().at(b)->streamIndex();
+        QCOMPARE(streamA, 0);
+        QCOMPARE(streamB, 1);
 
-        // The codec's DDC number reaches the slice: that is wire truth, and
-        // the P1 C&C bytes really do enable DDC2.
-        QCOMPARE(model.ddcForStream(0), 2);
-        QCOMPARE(model.slices().at(a)->ddcIndex(), 2);
+        QCOMPARE(model.ddcForStream(streamA), slotA);
+        QCOMPARE(model.ddcForStream(streamB), slotB);
+        ReceiverManager* rm = model.receiverManager();
+        QCOMPARE(rm->receiverConfig(streamA).hardwareRx, slotA);
+        QCOMPARE(rm->receiverConfig(streamB).hardwareRx, slotB);
 
-        // But Protocol 1 packs ACTIVE receivers sequentially into the EP6
-        // frame and emits the frame-slot index, not the DDC number
-        // (P1RadioConnection.cpp:2999-3007), so routing must stay on
-        // rebuildHardwareMapping's sequential auto-assign. Routing by DDC
-        // here would drop every EP6 packet (issue #263).
-        QCOMPARE(model.receiverManager()->ddcIndex(0), 0);
+        QSignalSpy spy(rm, &ReceiverManager::iqDataForReceiver);
+        const QVector<float> iq(64, 0.25f);
+        rm->feedIqData(slotA, iq);
+        rm->feedIqData(slotB, iq);
+        rm->feedIqData(deadSlot, iq);
+        QCOMPARE(spy.count(), 2);
+        QCOMPARE(spy.at(0).at(0).toInt(), streamA);
+        QCOMPARE(spy.at(1).at(0).toInt(), streamB);
+    }
+
+    // The HL2 keeps today's routing in every state it supports (plan Task 11,
+    // operator's condition): each active stream's slot equals what the old
+    // sequential auto-assign gave (nth active receiver -> slot n), for
+    // PureSignal off / armed / transmitting, with and without MOX, and with
+    // one to five slices sharing its two streams. The one accepted
+    // difference: slice B alone after slice A is removed keeps slot 1.
+    void hl2_routing_matches_today_in_every_state()
+    {
+        P1CodecHl2 codec;
+        RadioModel model;
+        model.receiverManager()->setP1Codec(&codec);
+        model.configureStreamPool(2, 5, 192000);
+        model.receiverManager()->createReceiver();
+        model.receiverManager()->createReceiver();
+
+        // Five slices sharing the HL2's two streams: A, C, E on 20 m, B, D on 40 m.
+        const double freqs[5] = {14200000.0, 7100000.0, 14210000.0, 7110000.0, 14220000.0};
+        QVector<int> ids;
+        for (double f : freqs) {
+            const int id = model.addSlice();
+            QVERIFY(id >= 0);
+            model.slices().at(id)->setFrequency(f);
+            ids.append(id);
+        }
+        for (int i = 0; i < 5; ++i) {
+            QCOMPARE(model.slices().at(ids[i])->streamIndex(), (i % 2 == 0) ? 0 : 1);
+        }
+
+        ReceiverManager* rm = model.receiverManager();
+        struct State { bool mox; bool ps; };
+        const State states[] = {{false, false}, {true, false}, {false, true}, {true, true}};
+        for (const State& st : states) {
+            CodecContext ctx{};
+            ctx.model = HPSDRModel::HERMESLITE;
+            ctx.mox = st.mox;
+            ctx.puresignalRun = st.ps;
+            std::array<SliceConfig, 5> streams{};
+            streams[0].live = true;
+            streams[0].sampleRateHz = 192000;
+            streams[1].live = true;
+            streams[1].sampleRateHz = 192000;
+            const DdcAssignment asg = codec.applyDdcAssignment(ctx, streams);
+            model.publishDdcAssignmentForTest(asg);
+
+            // Today's sequential answer: slot = position among active streams.
+            int nth = 0;
+            for (int s = 0; s < 2; ++s) {
+                if (asg.streamDdc[s] < 0) {
+                    QCOMPARE(rm->receiverConfig(s).active, false);
+                    continue;
+                }
+                QVERIFY2(rm->receiverConfig(s).active,
+                         qPrintable(QStringLiteral("mox %1 ps %2 stream %3").arg(st.mox).arg(st.ps).arg(s)));
+                QCOMPARE(rm->receiverConfig(s).hardwareRx, nth);
+                ++nth;
+            }
+            // PureSignal transmitting: slice B's stream is suspended, A stays
+            // on slot 0 (mi0bot GetDDC rx1 = 0; the pair rides slots 2 + 3).
+            if (st.mox && st.ps) {
+                QCOMPARE(asg.streamDdc[1], -1);
+                QCOMPARE(asg.psFwdDdc, 2);
+                QCOMPARE(asg.psRevDdc, 3);
+            }
+        }
+
+        // The accepted difference: A's slices removed, B's stream alone keeps
+        // slot 1 (sequential would have moved it to slot 0).
+        model.removeSlice(ids[0]);
+        model.removeSlice(ids[2]);
+        model.removeSlice(ids[4]);
+        CodecContext ctx{};
+        ctx.model = HPSDRModel::HERMESLITE;
+        std::array<SliceConfig, 5> streams{};
+        streams[1].live = true;
+        streams[1].sampleRateHz = 192000;
+        model.publishDdcAssignmentForTest(codec.applyDdcAssignment(ctx, streams));
+        QCOMPARE(rm->receiverConfig(0).active, false);
+        QCOMPARE(rm->receiverConfig(1).active, true);
+        QCOMPARE(rm->receiverConfig(1).hardwareRx, 1);
     }
 
     void widening_a_stream_rate_admits_a_previously_excluded_slice()
@@ -345,6 +590,8 @@ private slots:
         // 14.400 sits outside +-96 kHz but inside +-384 kHz, so it only
         // fits once the window is widened.
         model.setStreamSampleRate(0, 768000);
+        // R-R3-39: the WDSP and worker sides of the change run on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         const int b = model.addSlice();
         model.slices().at(b)->setFrequency(14400000.0);
@@ -366,6 +613,8 @@ private slots:
         QSignalSpy assignments(&model, &RadioModel::ddcAssignmentRequested);
 
         QVERIFY(model.setStreamSampleRate(0, 768000));
+        // R-R3-39: the WDSP and worker sides of the change run on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         QCOMPARE(model.streamSampleRateHzForTest(0), 768000);
         QCOMPARE(model.sliceById(a)->sampleRateHz(), 768000);
@@ -387,6 +636,8 @@ private slots:
         QSignalSpy assignments(&model, &RadioModel::ddcAssignmentRequested);
 
         QVERIFY(!model.setStreamSampleRate(0, 0));
+        // R-R3-39: the WDSP and worker sides of the change run on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         QCOMPARE(model.streamSampleRateHzForTest(0), 192000);
         QCOMPARE(model.sliceById(a)->sampleRateHz(), 192000);
@@ -403,6 +654,8 @@ private slots:
         const int a = model.addSlice();
         model.slices().at(a)->setFrequency(14200000.0);
         model.setStreamSampleRate(0, 768000);
+        // R-R3-39: the WDSP and worker sides of the change run on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         const int b = model.addSlice();
         model.slices().at(b)->setFrequency(14400000.0);
@@ -412,6 +665,8 @@ private slots:
         // its own DDC, not be left silently aliased on a window that no
         // longer contains it.
         QVERIFY(model.setStreamSampleRate(0, 192000));
+        // R-R3-39: the WDSP and worker sides of the change run on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         QVERIFY(model.slices().at(b)->streamIndex() != 0);
         QCOMPARE(model.activeStreamCount(), 2);
@@ -431,6 +686,8 @@ private slots:
         const int a = model.addSlice();
         model.sliceById(a)->setFrequency(14200000.0);
         model.setStreamSampleRate(0, 768000);
+        // R-R3-39: the WDSP and worker sides of the change run on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         const int b = model.addSlice();
         model.sliceById(b)->setFrequency(14400000.0);
@@ -487,6 +744,8 @@ private slots:
         QSignalSpy assignments(&model, &RadioModel::ddcAssignmentRequested);
 
         QVERIFY(!model.setStreamSampleRate(0, 192000));
+        // R-R3-39: the WDSP and worker sides of the change run on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         for (int st = 0; st < 2; ++st) {
             QCOMPARE(model.streamActiveForTest(st), streamsBefore[st].active);
@@ -832,6 +1091,10 @@ private slots:
         // The message must talk about staying put, not about adding a slice.
         const QString reason = spy.at(0).at(1).toString();
         QVERIFY(reason.contains(QLatin1String("stayed on")));
+        // R-R3-34: the frequency and its unit stay on one line.
+        QVERIFY2(reason.contains(QRegularExpression(
+                     QStringLiteral("stayed on [0-9.]+\u00A0MHz\\."))),
+                 qPrintable(reason));
 
         // The invariant that actually matters: whatever the VFO reads, the
         // DSP must be demodulating it. Reconstruct the demodulated frequency
@@ -1038,6 +1301,8 @@ private slots:
         QVERIFY(engine->rxChannel(b) != nullptr);
 
         model.setStreamSampleRate(streamA, 768000);
+        // R-R3-39: the WDSP and worker sides of the change run on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         // A's channel follows its stream, input rate AND input buffsize.
         QCOMPARE(engine->rxChannel(a)->sampleRate(), 768000);
@@ -1073,6 +1338,8 @@ private slots:
         QCoreApplication::processEvents();
 
         model.setStreamSampleRate(streamA, 768000);
+        // R-R3-39: the WDSP and worker sides of the change run on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
         QCoreApplication::processEvents();
 
         QSignalSpy spy(&worker, &RxDspWorker::chunkDrainedForStream);
@@ -1090,6 +1357,90 @@ private slots:
         QCOMPARE(spy.at(1).at(1).toInt(), bufferSizeForRate(192000));
 
         model.attachDspWorkerForTest(nullptr);
+    }
+
+    // The stream geometry change quiesces a running DSP worker (disconnect
+    // the feed, reset its accumulator on its own thread, publish the drain
+    // size, re-rate the channels, reconnect). That wait belongs to the
+    // receive lane, never the event loop: with the worker's thread busy in a
+    // long block, setStreamSampleRate still returns at once, and the first
+    // batch after the worker frees up drains at the new stream's size.
+    void a_stream_rate_change_never_waits_on_a_busy_dsp_worker()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(7150000.0);
+        const int streamA = model.sliceById(a)->streamIndex();
+        QVERIFY(streamA >= 0);
+        QVERIFY(model.sliceById(b)->streamIndex() != streamA);
+
+        QThread dspThread;
+        dspThread.setObjectName(QStringLiteral("TestDspThread"));
+        auto worker = std::make_unique<RxDspWorker>();
+        worker->setBufferSizes(bufferSizeForRate(192000), 64);
+        worker->moveToThread(&dspThread);
+        dspThread.start();
+        struct Teardown {
+            RadioModel* model;
+            QThread* thread;
+            ~Teardown()
+            {
+                model->attachDspWorkerOnThreadForTest(nullptr, nullptr);
+                thread->quit();
+                thread->wait();
+            }
+        } teardown{&model, &dspThread};
+
+        model.attachDspWorkerOnThreadForTest(worker.get(), &dspThread);
+        ReceiverManager* receivers = model.receiverManager();
+        QVERIFY(receivers != nullptr);
+        connect(receivers, &ReceiverManager::iqDataForReceiverStamped,
+                worker.get(), &RxDspWorker::processStampedIqBatch,
+                Qt::QueuedConnection);
+        model.republishAllStreamBindings();
+
+        // Drains observed on this thread, in the order the worker made them.
+        QObject sink;
+        QVector<QPair<int, int>> drained;
+        connect(worker.get(), &RxDspWorker::chunkDrainedForStream, &sink,
+                [&drained](int stream, int samples) {
+            drained.append({stream, samples});
+        }, Qt::QueuedConnection);
+
+        // Hold the worker's thread in one long block. It lets go when the
+        // test releases it, or after a bound if the event loop were ever made
+        // to wait on it (then workerBusy reads false below and the test fails
+        // instead of hanging).
+        QSemaphore entered;
+        QSemaphore release;
+        std::atomic<bool> workerBusy{false};
+        QMetaObject::invokeMethod(worker.get(), [&entered, &release, &workerBusy]() {
+            workerBusy.store(true);
+            entered.release();
+            release.tryAcquire(1, 10000);
+            workerBusy.store(false);
+        }, Qt::QueuedConnection);
+        QVERIFY(entered.tryAcquire(1, 10000));
+
+        model.setStreamSampleRate(streamA, 768000);
+        QVERIFY2(workerBusy.load(),
+                 "setStreamSampleRate waited on the busy DSP worker");
+
+        release.release();
+        QVERIFY(model.waitForReceiveLaneForTest(10000));
+
+        // The next batch on stream A drains once, at the new 768 kHz size. At
+        // the old 192 kHz threshold the same samples drain as four chunks.
+        emit receivers->iqDataForReceiverStamped(
+            streamA, oneChunk(bufferSizeForRate(768000)),
+            ReceiverManager::enqueueClockNs());
+        QTRY_COMPARE_WITH_TIMEOUT(drained.size(), 1, 10000);
+        QCOMPARE(drained.at(0).first, streamA);
+        QCOMPARE(drained.at(0).second, bufferSizeForRate(768000));
     }
 
     // Protocol 1 carries one rate for the whole radio (composeCcBank0 takes a
@@ -1126,6 +1477,8 @@ private slots:
                                 192000, 48000, 48000);
 
         model.setStreamSampleRate(streamA, 384000);
+        // R-R3-39: the WDSP and worker sides of the change run on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         QCOMPARE(engine->rxChannel(a)->sampleRate(), 384000);
         QCOMPARE(engine->rxChannel(b)->sampleRate(), 384000);
@@ -1169,6 +1522,8 @@ private slots:
 
         QVERIFY(model.sampleRateIsRadioWide());
         model.setStreamSampleRate(streamA, 384000);
+        // R-R3-39: the WDSP and worker sides of the change run on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         // setSampleRateLive marshals the wire write to the connection with a
         // queued invocation; in production the connection thread's event loop
@@ -1203,6 +1558,8 @@ private slots:
 
         QSignalSpy spy(&model, &RadioModel::streamCentreChanged);
         model.setStreamSampleRate(streamA, 384000);
+        // R-R3-39: the WDSP and worker sides of the change run on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
 
         QCOMPARE(spy.count(), 0);
         QCOMPARE(model.sliceById(a)->sampleRateHz(), 192000);
@@ -1402,6 +1759,303 @@ private slots:
         const int c = model.addSlice();
         QCOMPARE(c, a);   // lowest free id
         QVERIFY(engine->rxChannel(c)->isActive());
+    }
+
+    // ── A radio-wide live rate change quiesces every slice's channel ─────
+    //
+    // setSampleRateLive used to switch off channel 0 alone before moving the
+    // rate on every slice's channel, and switched on channel 0 alone after.
+    // Every other slice's channel was re-rated while still running.  Thetis
+    // switches off every receiver channel first (subs, then the main channel
+    // last with a drain), changes the rate, then switches the main channel
+    // back on first and the others only if they had been running:
+    //   From Thetis setup.cs:7112-7115 and 7175-7179 [v2.10.3.15]
+    //
+    // Each activeChanged is recorded with the channel's input rate at that
+    // moment. A channel whose off event carries the old rate and whose on
+    // event carries the new one was re-rated only while it was stopped.
+    // This records the order only; whether each restarted channel actually
+    // plays is a_live_rate_change_leaves_every_running_channel_audible's
+    // job (fix wave 1, C1).
+    void a_live_rate_change_stops_and_restarts_every_slices_channel()
+    {
+        RadioModel model;
+        P1RadioConnection conn;
+        model.injectConnectionForTest(&conn);
+        DetachConnection detach{&model};
+
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        model.configureStreamPool(5, 5, 192000);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(7150000.0);
+        const int c = model.addSlice();
+        model.sliceById(c)->setFrequency(3700000.0);
+        const int d = model.addSlice();
+        QVERIFY(d >= 0);
+        model.sliceById(d)->setFrequency(21200000.0);
+        model.openRxChannelPool(5, bufferSizeForRate(192000), 192000);
+
+        const int chA = model.sliceById(a)->sliceIndex();
+        const int chB = model.sliceById(b)->sliceIndex();
+        const int chC = model.sliceById(c)->sliceIndex();
+        const int chD = model.sliceById(d)->sliceIndex();
+        QCOMPARE(chA, 0);
+        QCOMPARE(chB, 1);
+        QCOMPARE(chC, 2);
+        QCOMPARE(chD, 3);
+
+        QVERIFY(engine->rxChannel(chA)->isActive());
+        QVERIFY(engine->rxChannel(chB)->isActive());
+        QVERIFY(engine->rxChannel(chC)->isActive());
+        // Slice D's channel is stopped before the change and must stay so.
+        engine->rxChannel(chD)->setActive(false);
+
+        struct Event { int ch; bool active; int rate; };
+        QVector<Event> events;
+        // Declared after `events` so it dies first and takes the recording
+        // connections with it before the model's teardown can emit.
+        QObject recorder;
+        for (int ch : {chA, chB, chC, chD}) {
+            RxChannel* rx = engine->rxChannel(ch);
+            // R-R3-39: the change stops and restarts the channels on the
+            // receive lane; record there, as it happens (the model's wait
+            // for the change keeps the event loop off `events`).
+            connect(rx, &RxChannel::activeChanged, &recorder,
+                    [&events, rx, ch](bool on) {
+                        events.append({ch, on, rx->sampleRate()});
+                    }, Qt::DirectConnection);
+        }
+
+        QVERIFY(model.setSampleRateLive(384000, false) >= 0);
+
+        const QVector<Event> expected{
+            // Off: highest channel first, channel 0 last and drained (the
+            // others stop without a drain, Task 8).
+            {chC, false, 192000},
+            {chB, false, 192000},
+            {chA, false, 192000},
+            // On: channel 0 first, then the others that were running.
+            {chA, true, 384000},
+            {chB, true, 384000},
+            {chC, true, 384000},
+        };
+        QCOMPARE(events.size(), expected.size());
+        for (int i = 0; i < expected.size(); ++i) {
+            QVERIFY2(events[i].ch == expected[i].ch
+                         && events[i].active == expected[i].active
+                         && events[i].rate == expected[i].rate,
+                     qPrintable(QStringLiteral("event %1: got ch%2 %3 @%4, "
+                                               "want ch%5 %6 @%7")
+                                    .arg(i)
+                                    .arg(events[i].ch)
+                                    .arg(events[i].active ? "on" : "off")
+                                    .arg(events[i].rate)
+                                    .arg(expected[i].ch)
+                                    .arg(expected[i].active ? "on" : "off")
+                                    .arg(expected[i].rate)));
+        }
+
+        QVERIFY(engine->rxChannel(chA)->isActive());
+        QVERIFY(engine->rxChannel(chB)->isActive());
+        QVERIFY(engine->rxChannel(chC)->isActive());
+        QVERIFY(!engine->rxChannel(chD)->isActive());
+        QCOMPARE(engine->rxChannel(chD)->sampleRate(), 384000);
+    }
+
+    // One slice: channel 0 goes off at the old rate and back on at the new
+    // one, exactly as before the change above.
+    void a_live_rate_change_with_one_slice_cycles_channel_zero_only()
+    {
+        RadioModel model;
+        P1RadioConnection conn;
+        model.injectConnectionForTest(&conn);
+        DetachConnection detach{&model};
+
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        model.configureStreamPool(5, 5, 192000);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        model.openRxChannelPool(5, bufferSizeForRate(192000), 192000);
+        QCOMPARE(model.sliceById(a)->sliceIndex(), 0);
+
+        QVector<QPair<bool, int>> events;
+        QObject recorder;   // dies before `events`; see the test above
+        RxChannel* rx0 = engine->rxChannel(0);
+        QVERIFY(rx0->isActive());
+        // R-R3-39: recorded on the receive lane, as it happens.
+        connect(rx0, &RxChannel::activeChanged, &recorder,
+                [&events, rx0](bool on) { events.append({on, rx0->sampleRate()}); },
+                Qt::DirectConnection);
+        for (int ch = 1; ch < 5; ++ch) {
+            connect(engine->rxChannel(ch), &RxChannel::activeChanged, &recorder,
+                    [ch](bool) { QFAIL(qPrintable(
+                        QStringLiteral("unbound channel %1 toggled").arg(ch))); });
+        }
+
+        QVERIFY(model.setSampleRateLive(384000, false) >= 0);
+
+        QCOMPARE(events.size(), 2);
+        QCOMPARE(events[0], qMakePair(false, 192000));
+        QCOMPARE(events[1], qMakePair(true, 384000));
+        QVERIFY(rx0->isActive());
+    }
+
+    // ── A live rate change leaves every running channel audible ─────────
+    //
+    // Fix wave 1, C1. A channel stopped without a drain keeps WDSP's
+    // slew-down and flush flags set (channel.c:288-290) until the channel's
+    // next exchange clears them, and NereusSDR never exchanges on a stopped
+    // channel (RxChannel::processIq returns early on !m_active). A channel
+    // already at the new rate is skipped by setRxChannelRate, so nothing
+    // rebuilds it; on restart its first block slews down and clears
+    // exchange (iobuffs.c:553-560) and it is silent while isActive() says
+    // true. On Protocol 2 that is a slice whose own rate (the per-slice rate
+    // menu, setStreamSampleRate) already equals the new radio-wide rate.
+    // Both channels here must produce audio after the change: slice B's,
+    // already at the target rate, and slice A's, which is re-rated.
+    void a_live_rate_change_leaves_every_running_channel_audible()
+    {
+        RadioModel model;
+        P1RadioConnection conn;
+        model.injectConnectionForTest(&conn);
+        DetachConnection detach{&model};
+
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        model.configureStreamPool(5, 5, 192000);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(7150000.0);
+        model.openRxChannelPool(5, bufferSizeForRate(192000), 192000);
+
+        RxChannel* rxA = engine->rxChannel(model.sliceById(a)->sliceIndex());
+        RxChannel* rxB = engine->rxChannel(model.sliceById(b)->sliceIndex());
+        QVERIFY(rxA && rxA->isActive());
+        QVERIFY(rxB && rxB->isActive());
+
+        // Slice B's channel already runs at the rate the change moves to,
+        // as the per-slice rate menu leaves it on Protocol 2.
+        QVERIFY(engine->setRxChannelRate(rxB->channelId(), 384000));
+        // R-R3-39: the channels open, start and re-rate on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
+        QVERIFY2(settledPeakFromATone(rxA, 192000) > 0.0, "slice A silent before the change");
+        QVERIFY2(settledPeakFromATone(rxB, 384000) > 0.0, "slice B silent before the change");
+
+        QVERIFY(model.setSampleRateLive(384000, false) >= 0);
+
+        QCOMPARE(rxA->sampleRate(), 384000);
+        QCOMPARE(rxB->sampleRate(), 384000);
+        QVERIFY(rxA->isActive());
+        QVERIFY(rxB->isActive());
+        QVERIFY2(settledPeakFromATone(rxB, 384000) > 0.0,
+                 "slice B, already at the new rate, is silent after the change");
+        QVERIFY2(settledPeakFromATone(rxA, 384000) > 0.0,
+                 "slice A, re-rated, is silent after the change");
+    }
+
+    // ── R-R3-49: a Protocol 2 slice's saved rate survives a restart ─────
+    //
+    // A window's rate change on Protocol 2 is per DDC and is recorded only
+    // as the slice's per-band SampleRate. connectToRadio opens every stream
+    // at the radio-wide rate and binds the slices there; it then reads each
+    // slice's saved rate (savedSliceSampleRates, before the bind) and puts
+    // it back (applySavedSliceSampleRates). This stands up the same state a
+    // restart leaves: a P2 codec, WDSP channels, a slice bound at 192 kHz
+    // with 768 kHz saved for its band.
+    void a_p2_slice_comes_back_at_its_saved_rate()
+    {
+        RestartedP2 r;
+        restartOnP2(r, 768000);
+        const auto forget = qScopeGuard([&r] { AppSettings::instance().remove(savedRateKey(r.id)); });
+        SliceModel* slice = r.model.sliceById(r.id);
+        const int stream = slice->streamIndex();
+        QVERIFY(stream >= 0);
+        QCOMPARE(r.model.streamSampleRateHzForTest(stream), 192000);
+
+        const QHash<int, int> saved = r.model.savedSliceSampleRates();
+        QCOMPARE(saved.value(r.id), 768000);
+        r.model.applySavedSliceSampleRates(saved, ProtocolVersion::Protocol2);
+        QVERIFY(r.model.waitForReceiveLaneForTest());
+
+        QCOMPARE(r.model.streamSampleRateHzForTest(slice->streamIndex()), 768000);
+        QCOMPARE(slice->sampleRateHz(), 768000);
+        // The WDSP channel, through the live-apply path.
+        RxChannel* channel = r.engine->rxChannel(r.id);
+        QVERIFY(channel);
+        QCOMPARE(channel->sampleRate(), 768000);
+        QCOMPARE(channel->bufferSize(), bufferSizeForRate(768000));
+        // The wire: the DDC assignment carries it for the slice's DDC.
+        const std::optional<DdcAssignment> assignment = r.model.computeDdcAssignment();
+        QVERIFY(assignment.has_value());
+        QVERIFY(slice->ddcIndex() >= 0);
+        QCOMPARE(assignment->rate[static_cast<size_t>(slice->ddcIndex())], 768000);
+    }
+
+    void a_band_with_no_saved_rate_stays_at_the_connect_rate()
+    {
+        RestartedP2 r;
+        restartOnP2(r, 0);
+        SliceModel* slice = r.model.sliceById(r.id);
+        const QHash<int, int> saved = r.model.savedSliceSampleRates();
+        QVERIFY(!saved.contains(r.id));
+        r.model.applySavedSliceSampleRates(saved, ProtocolVersion::Protocol2);
+        QVERIFY(r.model.waitForReceiveLaneForTest());
+        QCOMPARE(r.model.streamSampleRateHzForTest(slice->streamIndex()), 192000);
+        QCOMPARE(r.engine->rxChannel(r.id)->sampleRate(), 192000);
+    }
+
+    void an_unsupported_saved_rate_stays_at_the_connect_rate()
+    {
+        RestartedP2 r;
+        restartOnP2(r, 200000);   // not a rate any board runs
+        const auto forget = qScopeGuard([&r] { AppSettings::instance().remove(savedRateKey(r.id)); });
+        SliceModel* slice = r.model.sliceById(r.id);
+        QSignalSpy rejected(&r.model, &RadioModel::sliceRetuneRejected);
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(
+            QStringLiteral("saved sample rate 200000 is not supported by this radio")));
+        r.model.applySavedSliceSampleRates(r.model.savedSliceSampleRates(),
+                                          ProtocolVersion::Protocol2);
+        QVERIFY(r.model.waitForReceiveLaneForTest());
+        QCOMPARE(r.model.streamSampleRateHzForTest(slice->streamIndex()), 192000);
+        QCOMPARE(r.engine->rxChannel(r.id)->sampleRate(), 192000);
+        QCOMPARE(rejected.count(), 0);
+    }
+
+    // Protocol 1 has one rate for the whole radio, from the radio-wide key;
+    // a slice's per-band rate does not move it at connect.
+    void protocol_1_keeps_the_radio_wide_rate()
+    {
+        RestartedP2 r;
+        restartOnP2(r, 768000);
+        const auto forget = qScopeGuard([&r] { AppSettings::instance().remove(savedRateKey(r.id)); });
+        SliceModel* slice = r.model.sliceById(r.id);
+        r.model.applySavedSliceSampleRates(r.model.savedSliceSampleRates(),
+                                          ProtocolVersion::Protocol1);
+        QVERIFY(r.model.waitForReceiveLaneForTest());
+        QCOMPARE(r.model.streamSampleRateHzForTest(slice->streamIndex()), 192000);
+    }
+
+    // A rate change is saved for the slice's band, so there is something to
+    // come back to: before this nothing saved it unless some other slice
+    // setting changed too.
+    void a_rate_change_saves_the_slices_band_rate()
+    {
+        RestartedP2 r;
+        restartOnP2(r, 0);
+        const auto forget = qScopeGuard([&r] { AppSettings::instance().remove(savedRateKey(r.id)); });
+        r.model.requestSliceSampleRate(r.id, 768000);
+        QVERIFY(r.model.waitForReceiveLaneForTest());
+        QCOMPARE(r.model.sliceById(r.id)->sampleRateHz(), 768000);
+        r.model.flushPendingSettingsSave();
+        QCOMPARE(r.model.sliceById(r.id)->savedSampleRateHz(Band::Band20m), 768000);
     }
 };
 

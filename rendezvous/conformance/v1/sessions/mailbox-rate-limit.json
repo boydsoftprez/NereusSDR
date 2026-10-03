@@ -1,0 +1,62 @@
+{
+  "runs": [
+    "service"
+  ],
+  "serverSetup": {
+    "mailboxOpensPerAddressPerMinute": 1
+  },
+  "steps": [
+    {
+      "connect": "client"
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:clientNonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "from": "client",
+      "role": "behaviour",
+      "message": {
+        "type": "mailbox.open",
+        "nameplate": 1
+      }
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "error",
+        "code": "nameplateUnknown",
+        "reason": "No Core is showing that pairing code right now. Check the code and try again.",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "from": "client",
+      "role": "behaviour",
+      "message": {
+        "type": "mailbox.open",
+        "nameplate": 2
+      }
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "error",
+        "code": "rateLimited",
+        "reason": "Too many attempts. Try again in a minute.",
+        "retryAfterMs": 60000
+      }
+    }
+  ]
+}

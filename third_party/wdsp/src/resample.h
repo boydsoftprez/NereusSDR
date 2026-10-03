@@ -30,6 +30,11 @@ warren@wpratt.com
 *																								*
 ************************************************************************************************/
 
+// NereusSDR modifications (2026-09-30 notice, J.J. Boyd KG4VCF, with Anthropic
+// Claude Code; changes made between 2026-09-22 and 2026-09-30 against the
+// pinned TAPR WDSP 2.10 tree at b02d5bac): removes __declspec(dllexport) from four
+// declarations, since WDSP is linked here as a static library.
+
 #ifndef _resample_h
 #define _resample_h
 
@@ -57,15 +62,11 @@ typedef struct _resample
 	int phnum;			// phase number
 } resample, *RESAMPLE;
 
-
 RESAMPLE create_resample (int run, int size, double* in, double* out, int in_rate, int out_rate, double fc, int ncoef, double gain);
-
 
 void destroy_resample (RESAMPLE a);
 
-
 void flush_resample (RESAMPLE a);
-
 
 int xresample (RESAMPLE a);
 

@@ -1,474 +1,325 @@
-// no-port-check: NereusSDR-original unit-test file.  Thetis cite comments
-// document upstream sources; no Thetis logic ported in this test file.
+// no-port-check: NereusSDR-original PS3 applet/session-facade wiring tests.
 // =================================================================
 // tests/tst_applet_ps_wiring.cpp  (NereusSDR)
 // =================================================================
 //
-// Phase 3M-4 Task 13 — applet wiring tests for PureSignalApplet and the
-// TxApplet [PS-A] toggle.  Verifies the live wiring that replaces the prior
-// NyiOverlay::markNyi scaffolding:
-//
-//   PureSignalApplet:
-//     1. Calibrate button → PureSignal::singleCalibrate
-//     2. Auto toggle      ↔ PureSignal::setAutoCalEnabled (+ echo back)
-//     3. 2-Tone toggle    → PureSignal::setTwoToneOn (forwarded via TT controller)
-//     4. Save button      → has correctingChanged-driven enable gating
-//     5. Restore button   → exists and wired (file-dialog opens are not
-//                            exercised in unit tests)
-//     6. Right-click on every control → openPureSignalDialogRequested
-//     7. FB level gauge   ← PureSignal::feedbackLevelChanged 0..255 → 0..100
-//     8. Iterations label ← PureSignal::calibrationCountChanged
-//     9. Correction gauge ← PureSignal::correctionPeakChanged
-//    10. Cal/Run LEDs     ← PureSignal::calStateChanged
-//    11. Fbk LED          ← PureSignal::feedbackActiveChanged
-//
-//   TxApplet [PS-A]:
-//    12. Hidden by default until setBoardCapabilities(hasPureSignal=true).
-//    13. Visible when setBoardCapabilities(hasPureSignal=true) is called.
-//    14. Left-click toggle → PureSignal::setAutoCalEnabled.
-//    15. Right-click → openPureSignalDialogRequested signal.
-//    16. autoCalEnabledChanged echo back → button checked state.
-//
-// Test scaffold mirrors tst_puresignal_coordinator.cpp's late-bound
-// dependency pattern: PureSignal is constructed with all-null deps but a
-// real TxChannel (so getPSInfo / setPSControl no-ops are safe).  The
-// coordinator pointer is injected into the applets via setPureSignal().
-//
-// Source: NereusSDR-original.  See PureSignalApplet.h + TxApplet.h for
-// Thetis cite map.
-//
-// =================================================================
 // Modification history (NereusSDR):
-//   2026-05-06 — New test file for Phase 3M-4 Task 13: applet wiring.
-//                 J.J. Boyd (KG4VCF), with AI-assisted implementation
-//                 via Anthropic Claude Code.
+//   2026-05-06 — Added Phase 3M-4 PureSignal applet wiring coverage.
+//   2026-09-22 — Migrated coverage to the shared local/remote PS3 session
+//                 facade and station-owned correction assets.
 // =================================================================
 
 #include <QtTest/QtTest>
+
 #include <QApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalSpy>
 
+#include <functional>
+
 #include "core/AppSettings.h"
 #include "core/PureSignal.h"
 #include "core/TxChannel.h"
+#include "core/session/PureSignalSessionFacade.h"
+#include "gui/DspAssetDialog.h"
 #include "gui/HGauge.h"
 #include "gui/applets/PureSignalApplet.h"
 #include "gui/applets/TxApplet.h"
+#include "models/PureSignalSettings.h"
 #include "models/RadioModel.h"
 
 using namespace NereusSDR;
 
-// WDSP TX channel id — from Thetis cmaster.c:177-190 [v2.10.3.13].
-static constexpr int kTxChannelId = 1;
+namespace {
+
+struct CapturedRequest {
+    quint32 id{0};
+    Ps3Action action{Ps3Action::OffReset};
+    QVariantMap arguments;
+};
+
+struct RemotePs3Harness {
+    RadioModel radio{RadioModel::Role::Remote};
+    PureSignalSessionFacade* facade{radio.pureSignalFacade()};
+    QList<CapturedRequest> requests;
+    quint32 nextId{40};
+
+    RemotePs3Harness()
+    {
+        facade->setRemoteRequestHandler(
+            [this](Ps3Action action, const QVariantMap& arguments) {
+                const quint32 id = nextId++;
+                requests.append({id, action, arguments});
+                return id;
+            });
+        facade->setRemoteCapabilities(true, true);
+        facade->applyRemoteProperty("available", true);
+        facade->applyRemoteProperty("canActuate", true);
+    }
+};
+
+QString statusJson(const std::function<void(QJsonObject&)>& edit)
+{
+    RadioModel source;
+    source.installPureSignalForTest(nullptr);
+    QJsonObject status = QJsonDocument::fromJson(
+        source.pureSignalFacade()->statusJson().toUtf8()).object();
+    edit(status);
+    return QString::fromUtf8(
+        QJsonDocument(status).toJson(QJsonDocument::Compact));
+}
+
+QPushButton* button(QWidget& parent, const char* objectName)
+{
+    return parent.findChild<QPushButton*>(QString::fromLatin1(objectName));
+}
+
+} // namespace
 
 class TstAppletPsWiring : public QObject {
     Q_OBJECT
 
 private slots:
-
-    void initTestCase()
-    {
-        if (!qApp) {
-            static int argc = 0;
-            new QApplication(argc, nullptr);
-        }
-        AppSettings::instance().clear();
-    }
-
-    void cleanup()
+    void init()
     {
         AppSettings::instance().clear();
     }
 
-    // =====================================================================
-    // PureSignalApplet — control wiring
-    // =====================================================================
-
-    // ── Test 1: applet construction with a RadioModel does not crash ───────
-    void pureSignalApplet_constructsWithRadioModel()
+    void pureSignalApplet_constructsWithExpectedControls()
     {
-        RadioModel rm;
-        PureSignalApplet applet(&rm);
-        QVERIFY(applet.findChild<QPushButton*>(
-            QStringLiteral("PsAppletCalibrateBtn")) != nullptr);
-        QVERIFY(applet.findChild<QPushButton*>(
-            QStringLiteral("PsAppletAutoCalBtn")) != nullptr);
-        QVERIFY(applet.findChild<QPushButton*>(
-            QStringLiteral("PsAppletSaveBtn")) != nullptr);
-        QVERIFY(applet.findChild<QPushButton*>(
-            QStringLiteral("PsAppletRestoreBtn")) != nullptr);
-        QVERIFY(applet.findChild<QPushButton*>(
-            QStringLiteral("PsAppletTwoToneBtn")) != nullptr);
+        RadioModel radio;
+        PureSignalApplet applet(&radio);
+        QVERIFY(button(applet, "PsAppletCalibrateBtn"));
+        QVERIFY(button(applet, "PsAppletAutoCalBtn"));
+        QVERIFY(button(applet, "PsAppletSaveBtn"));
+        QVERIFY(button(applet, "PsAppletRestoreBtn"));
+        QVERIFY(button(applet, "PsAppletTwoToneBtn"));
     }
 
-    // ── Test 2: Calibrate button invokes PureSignal::singleCalibrate ───────
-    //
-    // PureSignal::singleCalibrate emits calibrationStarted on the first call
-    // (per PSForm.cs:466-478 [v2.10.3.13] — _singleCalON flips false→true,
-    // calibrationStarted fires).  The applet's left-click on Calibrate must
-    // forward to the coordinator.
-    void calibrateButton_invokesPureSignalSingleCalibrate()
+    void pureSignalApplet_routesActionsThroughSharedFacade()
     {
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
+        RemotePs3Harness harness;
+        PureSignalApplet applet(&harness.radio);
 
-        RadioModel rm;
-        PureSignalApplet applet(&rm);
-        applet.setPureSignal(&ps);
+        button(applet, "PsAppletCalibrateBtn")->click();
+        QCOMPARE(harness.requests.size(), 1);
+        QCOMPARE(harness.requests.last().action, Ps3Action::Single);
 
-        QSignalSpy startedSpy(&ps, &PureSignal::calibrationStarted);
-        auto* btn = applet.findChild<QPushButton*>(
-            QStringLiteral("PsAppletCalibrateBtn"));
-        QVERIFY(btn != nullptr);
+        auto* automatic = button(applet, "PsAppletAutoCalBtn");
+        automatic->click();
+        QCOMPARE(harness.requests.size(), 2);
+        QCOMPARE(harness.requests.last().action, Ps3Action::StartAutomatic);
 
-        btn->click();
-        QCOMPARE(startedSpy.count(), 1);
+        auto* twoTone = button(applet, "PsAppletTwoToneBtn");
+        twoTone->click();
+        QCOMPARE(harness.requests.size(), 3);
+        QCOMPARE(harness.requests.last().action, Ps3Action::SetTwoTone);
+        QCOMPARE(harness.requests.last().arguments.value("enabled").toBool(), true);
+
+        // Accepted work stays pending until the station replies. Pending and
+        // terminal replies update presentation without replaying the action.
+        const CapturedRequest automaticRequest = harness.requests[1];
+        harness.facade->receiveRemoteActionResult(
+            automaticRequest.id, "ps3.automatic", Ps3ActionPhase::Pending, {}, {});
+        QCOMPARE(harness.requests.size(), 3);
+        harness.radio.pureSignalSettings()->initializeAutoCalPreference(true);
+        harness.facade->receiveRemoteActionResult(
+            automaticRequest.id, "ps3.automatic", Ps3ActionPhase::Completed, {}, {});
+        QCOMPARE(harness.requests.size(), 3);
+        QVERIFY(automatic->isChecked());
     }
 
-    // ── Test 3: Auto toggle forwards to PureSignal::setAutoCalEnabled ──────
-    void autoCalToggle_forwardsToPureSignal()
+    void pureSignalApplet_consumesPs3StatusSemantics()
     {
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
+        RemotePs3Harness harness;
+        PureSignalApplet applet(&harness.radio);
+        const QString status = statusJson([](QJsonObject& object) {
+            object["feedbackLevel"] = 150;              // info[4]
+            object["successfulCalibrations"] = 7;      // info[5]
+            object["correctionsApplied"] = true;        // info[14]
+            object["engineState"] = 4;                  // info[15], LCOLLECT
+            object["psEnabled"] = true;
+            object["mox"] = true;
+        });
+        QVERIFY(harness.facade->applyRemoteProperty("statusJson", status));
 
-        RadioModel rm;
-        PureSignalApplet applet(&rm);
-        applet.setPureSignal(&ps);
-        QCOMPARE(ps.isAutoCalEnabled(), false);
-
-        auto* btn = applet.findChild<QPushButton*>(
-            QStringLiteral("PsAppletAutoCalBtn"));
-        QVERIFY(btn != nullptr);
-        QVERIFY(btn->isCheckable());
-
-        // UI → Model
-        btn->click();
-        QCOMPARE(ps.isAutoCalEnabled(), true);
-        QCOMPARE(btn->isChecked(), true);
-
-        btn->click();
-        QCOMPARE(ps.isAutoCalEnabled(), false);
-        QCOMPARE(btn->isChecked(), false);
-
-        // Model → UI (echo back via autoCalEnabledChanged)
-        ps.setAutoCalEnabled(true);
-        QCOMPARE(btn->isChecked(), true);
-    }
-
-    // ── Test 4: 2-Tone toggle button checkable (action wiring is no-op
-    //   when no TwoToneController is bound; coordinator forwards setActive
-    //   when one is wired — out of scope here). ─────────────────────────────
-    void twoToneToggle_drivesButtonState()
-    {
-        RadioModel rm;
-        PureSignalApplet applet(&rm);
-
-        auto* btn = applet.findChild<QPushButton*>(
-            QStringLiteral("PsAppletTwoToneBtn"));
-        QVERIFY(btn != nullptr);
-        QVERIFY(btn->isCheckable());
-        QCOMPARE(btn->isChecked(), false);
-
-        btn->click();
-        QCOMPARE(btn->isChecked(), true);
-
-        btn->click();
-        QCOMPARE(btn->isChecked(), false);
-    }
-
-    // ── Test 5: Save button is gated on correctionsBeingAppliedChanged ─────
-    //
-    // Mirrors PSForm.cs:574-590 btnPSSave gating [v2.10.3.13]:
-    //   if (puresignal.CorrectionsBeingApplied) btnPSSave.Enabled = true;
-    //
-    // Codex Fix D (PR #212 commit b7fafaa): the gating signal split into
-    // correctionsBeingAppliedChanged (info[14]==1, gates Save) vs
-    // correctingChanged (FeedbackLevel > 90, gates Lime/Yellow badge).
-    // The Save button connects to correctionsBeingAppliedChanged in
-    // PureSignalApplet.cpp:431.  Pre-split this test emitted
-    // correctingChanged; post-split that signal no longer carries the
-    // Save semantic.
-    void saveButton_gatedOnCorrectionsBeingApplied()
-    {
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
-
-        RadioModel rm;
-        PureSignalApplet applet(&rm);
-        applet.setPureSignal(&ps);
-
-        auto* btn = applet.findChild<QPushButton*>(
-            QStringLiteral("PsAppletSaveBtn"));
-        QVERIFY(btn != nullptr);
-
-        // Default: not applying corrections → Save disabled.
-        QCOMPARE(btn->isEnabled(), false);
-
-        // Emit correctionsBeingAppliedChanged(true) → Save enabled.
-        emit ps.correctionsBeingAppliedChanged(true);
-        QCOMPARE(btn->isEnabled(), true);
-
-        emit ps.correctionsBeingAppliedChanged(false);
-        QCOMPARE(btn->isEnabled(), false);
-    }
-
-    // ── Test 6: Restore button exists ──────────────────────────────────────
-    void restoreButton_exists()
-    {
-        RadioModel rm;
-        PureSignalApplet applet(&rm);
-
-        auto* btn = applet.findChild<QPushButton*>(
-            QStringLiteral("PsAppletRestoreBtn"));
-        QVERIFY(btn != nullptr);
-    }
-
-    // ── Test 7: Right-click on Calibrate emits openPureSignalDialogRequested ──
-    void rightClickOnCalibrate_emitsOpenPureSignalDialogRequested()
-    {
-        RadioModel rm;
-        PureSignalApplet applet(&rm);
-
-        auto* btn = applet.findChild<QPushButton*>(
-            QStringLiteral("PsAppletCalibrateBtn"));
-        QVERIFY(btn != nullptr);
-        QCOMPARE(btn->contextMenuPolicy(), Qt::CustomContextMenu);
-
-        QSignalSpy spy(&applet,
-                       &PureSignalApplet::openPureSignalDialogRequested);
-        QVERIFY(spy.isValid());
-
-        emit btn->customContextMenuRequested(QPoint(0, 0));
-        QCOMPARE(spy.count(), 1);
-    }
-
-    // ── Test 8: Right-click on Auto / Save / Restore / 2-Tone all emit ─────
-    void rightClickOnAllControls_emitsOpenPureSignalDialogRequested()
-    {
-        RadioModel rm;
-        PureSignalApplet applet(&rm);
-
-        QSignalSpy spy(&applet,
-                       &PureSignalApplet::openPureSignalDialogRequested);
-        QVERIFY(spy.isValid());
-
-        const QStringList objectNames = {
-            QStringLiteral("PsAppletAutoCalBtn"),
-            QStringLiteral("PsAppletSaveBtn"),
-            QStringLiteral("PsAppletRestoreBtn"),
-            QStringLiteral("PsAppletTwoToneBtn"),
-        };
-        for (const QString& name : objectNames) {
-            auto* btn = applet.findChild<QPushButton*>(name);
-            QVERIFY2(btn != nullptr,
-                     qPrintable(QStringLiteral("missing: ") + name));
-            QCOMPARE(btn->contextMenuPolicy(), Qt::CustomContextMenu);
-            emit btn->customContextMenuRequested(QPoint(0, 0));
-        }
-
-        // Also right-click on the gauges (per design doc §8.4.2).
-        auto* fbGauge = applet.findChild<HGauge*>(
+        auto* feedback = applet.findChild<HGauge*>(
             QStringLiteral("PsAppletFeedbackGauge"));
-        auto* corrGauge = applet.findChild<HGauge*>(
+        auto* correction = applet.findChild<HGauge*>(
             QStringLiteral("PsAppletCorrectionGauge"));
-        QVERIFY(fbGauge != nullptr);
-        QVERIFY(corrGauge != nullptr);
-        QCOMPARE(fbGauge->contextMenuPolicy(), Qt::CustomContextMenu);
-        QCOMPARE(corrGauge->contextMenuPolicy(), Qt::CustomContextMenu);
-        emit fbGauge->customContextMenuRequested(QPoint(0, 0));
-        emit corrGauge->customContextMenuRequested(QPoint(0, 0));
-
-        // 4 buttons + 2 gauges = 6 total emits.
-        QCOMPARE(spy.count(), 6);
-    }
-
-    // ── Test 9: Feedback gauge updates on feedbackLevelChanged signal ──────
-    //
-    // Maps raw 0..255 to 0..100 per design doc §8.4.2 (level * 100.0/255.0).
-    void feedbackGauge_updatesOnFeedbackLevelSignal()
-    {
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
-
-        RadioModel rm;
-        PureSignalApplet applet(&rm);
-        applet.setPureSignal(&ps);
-
-        auto* gauge = applet.findChild<HGauge*>(
-            QStringLiteral("PsAppletFeedbackGauge"));
-        QVERIFY(gauge != nullptr);
-
-        // Level 128 (mid-range) → 50.196
-        emit ps.feedbackLevelChanged(128);
-        QVERIFY(qAbs(gauge->value() - (128.0 * 100.0 / 255.0)) < 0.1);
-
-        // Level 255 (max) → 100.0
-        emit ps.feedbackLevelChanged(255);
-        QVERIFY(qAbs(gauge->value() - 100.0) < 0.1);
-    }
-
-    // ── Test 10: Iterations label updates on calibrationCountChanged ───────
-    void iterationsLabel_updatesOnCalibrationCountSignal()
-    {
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
-
-        RadioModel rm;
-        PureSignalApplet applet(&rm);
-        applet.setPureSignal(&ps);
-
-        auto* lbl = applet.findChild<QLabel*>(
+        auto* iterations = applet.findChild<QLabel*>(
             QStringLiteral("PsAppletIterationsLabel"));
-        QVERIFY(lbl != nullptr);
+        auto* feedbackLabel = applet.findChild<QLabel*>(
+            QStringLiteral("PsAppletFeedbackDbLabel"));
+        QVERIFY(feedback && correction && iterations && feedbackLabel);
+        QVERIFY(qAbs(feedback->value() - 150.0 * 100.0 / 255.0) < 0.1);
+        QCOMPARE(correction->value(), 100.0);
+        QCOMPARE(iterations->text(), QStringLiteral("Iterations: 7"));
+        QCOMPARE(feedbackLabel->text(), QStringLiteral("Feedback: 150"));
+        QVERIFY(button(applet, "PsAppletSaveBtn")->isEnabled());
 
-        emit ps.calibrationCountChanged(42);
-        QCOMPARE(lbl->text(), QStringLiteral("Iterations: 42"));
-
-        emit ps.calibrationCountChanged(0);
-        QCOMPARE(lbl->text(), QStringLiteral("Iterations: 0"));
+        for (const char* name : {"PsAppletCalLed", "PsAppletRunLed", "PsAppletFbkLed"}) {
+            auto* led = applet.findChild<QLabel*>(QString::fromLatin1(name));
+            QVERIFY(led);
+            QVERIFY(led->styleSheet().contains(QStringLiteral("#20c060")));
+        }
     }
 
-    // ── Test 11: Correction gauge updates on correctionPeakChanged ─────────
-    void correctionGauge_updatesOnCorrectionPeakSignal()
+    void pureSignalApplet_isReadOnlyWithoutRemoteActuationPermission()
     {
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
+        RemotePs3Harness harness;
+        harness.facade->setRemoteCapabilities(true, false);
+        PureSignalApplet applet(&harness.radio);
+        harness.radio.pureSignalSettings()->initializeAutoCalPreference(true);
 
-        RadioModel rm;
-        PureSignalApplet applet(&rm);
-        applet.setPureSignal(&ps);
-
-        auto* gauge = applet.findChild<HGauge*>(
-            QStringLiteral("PsAppletCorrectionGauge"));
-        QVERIFY(gauge != nullptr);
-
-        emit ps.correctionPeakChanged(0.5);
-        QVERIFY(qAbs(gauge->value() - 50.0) < 0.1);
-
-        emit ps.correctionPeakChanged(1.0);
-        QVERIFY(qAbs(gauge->value() - 100.0) < 0.1);
-
-        // Out-of-range value: gauge clamps internally via HGauge or our cap.
-        emit ps.correctionPeakChanged(1.5);
-        QVERIFY(gauge->value() <= 100.0);
+        auto* automatic = button(applet, "PsAppletAutoCalBtn");
+        QVERIFY(automatic->isChecked());
+        QVERIFY(!automatic->isEnabled());
+        QVERIFY(!button(applet, "PsAppletCalibrateBtn")->isEnabled());
+        QVERIFY(!button(applet, "PsAppletTwoToneBtn")->isEnabled());
+        QVERIFY(button(applet, "PsAppletRestoreBtn")->isEnabled());
+        QCOMPARE(harness.requests.size(), 0);
     }
 
-    // =====================================================================
-    // TxApplet [PS-A] toggle wiring
-    // =====================================================================
-
-    // ── Test 12: PS-A button hidden by default (no caps pushed yet) ───────
-    void psaButton_hiddenByDefault()
+    void pureSignalApplet_restoreUsesStationAssetId()
     {
-        RadioModel rm;
-        TxApplet applet(&rm);
+        RemotePs3Harness harness;
+        PureSignalApplet applet(&harness.radio);
+        button(applet, "PsAppletRestoreBtn")->click();
+        auto* dialog = applet.findChild<DspAssetDialog*>();
+        QVERIFY(dialog);
 
-        auto* btn = applet.findChild<QPushButton*>(
-            QStringLiteral("TxAppletPsaBtn"));
-        QVERIFY(btn != nullptr);
-        QCOMPARE(btn->isVisible(), false);
+        emit dialog->restoreCorrectionRequested(QStringLiteral("ps3-asset-42"));
+        QCOMPARE(harness.requests.size(), 1);
+        QCOMPARE(harness.requests.last().action, Ps3Action::RestoreCorrection);
+        QVariantMap expected;
+        expected.insert(QStringLiteral("assetId"), QStringLiteral("ps3-asset-42"));
+        QCOMPARE(harness.requests.last().arguments, expected);
+        dialog->close();
     }
 
-    // ── Test 13: PS-A button visible when caps.hasPureSignal == true ──────
-    void psaButton_visibleWhenPureSignalCapable()
+    void contextMenusOpenDialogWithoutActuating()
     {
-        RadioModel rm;
-        TxApplet applet(&rm);
-        applet.show();  // need top-level show for child visibility queries
+        RemotePs3Harness harness;
+        PureSignalApplet pureSignal(&harness.radio);
+        TxApplet tx(&harness.radio);
 
-        auto* btn = applet.findChild<QPushButton*>(
-            QStringLiteral("TxAppletPsaBtn"));
-        QVERIFY(btn != nullptr);
-
-        BoardCapabilities caps{};
-        caps.hasPureSignal = true;
-        applet.setBoardCapabilities(caps);
-        QCOMPARE(btn->isVisible(), true);
-
-        caps.hasPureSignal = false;
-        applet.setBoardCapabilities(caps);
-        QCOMPARE(btn->isVisible(), false);
+        QSignalSpy pureSignalOpen(
+            &pureSignal, &PureSignalApplet::openPureSignalDialogRequested);
+        QSignalSpy txOpen(&tx, &TxApplet::openPureSignalDialogRequested);
+        auto* calibrate = button(pureSignal, "PsAppletCalibrateBtn");
+        auto* psa = button(tx, "TxAppletPsaBtn");
+        emit calibrate->customContextMenuRequested(QPoint{});
+        emit psa->customContextMenuRequested(QPoint{});
+        QCOMPARE(pureSignalOpen.size(), 1);
+        QCOMPARE(txOpen.size(), 1);
+        QCOMPARE(harness.requests.size(), 0);
     }
 
-    // ── Test 14: PS-A left-click drives PureSignal::setAutoCalEnabled ─────
-    //
-    // Mirrors Thetis chkFWCATUBypass_Click (console.cs:36762 [v2.10.3.13]):
-    //   The handler eventually calls puresignal.AutoCalEnabled = checked.
-    void psaLeftClick_togglesAutoCalEnabled()
+    void txApplet_psaVisibilityAndFacadeActions()
     {
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
+        RemotePs3Harness harness;
+        TxApplet applet(&harness.radio);
+        auto* psa = button(applet, "TxAppletPsaBtn");
+        QVERIFY(psa);
 
-        RadioModel rm;
-        TxApplet applet(&rm);
-        applet.setPureSignal(&ps);
-        QCOMPARE(ps.isAutoCalEnabled(), false);
+        BoardCapabilities capabilities{};
+        // Fix round 1 (minor 5): a known board without PureSignal hides it.
+        capabilities.board = HPSDRHW::Atlas;
+        capabilities.hasPureSignal = false;
+        applet.setBoardCapabilities(capabilities);
+        QVERIFY(psa->isHidden());
 
-        // Make the button visible so the click works through.
-        BoardCapabilities caps{};
-        caps.hasPureSignal = true;
-        applet.setBoardCapabilities(caps);
+        capabilities.hasPureSignal = true;
+        applet.setBoardCapabilities(capabilities);
+        QVERIFY(!psa->isHidden());
+        applet.setTransmitPermitted(true);
+        QVERIFY(psa->isEnabled());
 
-        auto* btn = applet.findChild<QPushButton*>(
-            QStringLiteral("TxAppletPsaBtn"));
-        QVERIFY(btn != nullptr);
-        QVERIFY(btn->isCheckable());
+        psa->click();
+        QCOMPARE(harness.requests.size(), 1);
+        QCOMPARE(harness.requests.last().action, Ps3Action::StartAutomatic);
+        harness.radio.pureSignalSettings()->initializeAutoCalPreference(true);
+        QVERIFY(psa->isChecked());
 
-        btn->click();
-        QCOMPARE(ps.isAutoCalEnabled(), true);
-        QCOMPARE(btn->isChecked(), true);
-
-        btn->click();
-        QCOMPARE(ps.isAutoCalEnabled(), false);
-        QCOMPARE(btn->isChecked(), false);
+        psa->click();
+        QCOMPARE(harness.requests.size(), 2);
+        QCOMPARE(harness.requests.last().action, Ps3Action::OffReset);
     }
 
-    // ── Test 15: PS-A right-click emits openPureSignalDialogRequested ─────
-    //
-    // Mirrors Thetis chkFWCATUBypass_MouseDown (console.cs:46149-46152
-    // [v2.10.3.13]):
-    //   if (IsRightButton(e)) linearityToolStripMenuItem_Click(null,
-    //                                                           EventArgs.Empty);
-    void psaRightClick_emitsOpenPureSignalDialogRequested()
+    // Fix round 1 (minor 5): with no radio connected the board is not
+    // known (the caps fall back to Unknown): PS-A shows, disabled, with
+    // the reason, until the board is known. Only a known board without
+    // PureSignal hides it.
+    void txApplet_psaShowsDisabledUntilTheBoardIsKnown()
     {
-        RadioModel rm;
-        TxApplet applet(&rm);
+        RemotePs3Harness harness;
+        TxApplet applet(&harness.radio);
+        applet.setTransmitPermitted(true);
+        auto* psa = button(applet, "TxAppletPsaBtn");
+        QVERIFY(psa);
+        const QString ownTip = psa->toolTip();
 
-        auto* btn = applet.findChild<QPushButton*>(
-            QStringLiteral("TxAppletPsaBtn"));
-        QVERIFY(btn != nullptr);
-        QCOMPARE(btn->contextMenuPolicy(), Qt::CustomContextMenu);
+        BoardCapabilities capabilities{};
+        QCOMPARE(capabilities.board, HPSDRHW::Unknown);
+        QVERIFY(!capabilities.hasPureSignal);
+        applet.setBoardCapabilities(capabilities);
+        QVERIFY(!psa->isHidden());
+        QVERIFY(!psa->isEnabled());
+        QCOMPARE(psa->toolTip(),
+                 QStringLiteral("PureSignal needs a connected radio that supports it."));
+        QCOMPARE(psa->accessibleDescription(),
+                 QStringLiteral("PureSignal needs a connected radio that supports it."));
+        psa->click();
+        QCOMPARE(harness.requests.size(), 0);
 
-        QSignalSpy spy(&applet, &TxApplet::openPureSignalDialogRequested);
-        QVERIFY(spy.isValid());
+        capabilities.board = HPSDRHW::Atlas;
+        applet.setBoardCapabilities(capabilities);
+        QVERIFY(psa->isHidden());
 
-        emit btn->customContextMenuRequested(QPoint(0, 0));
-        QCOMPARE(spy.count(), 1);
+        capabilities.board = HPSDRHW::OrionMKII;
+        capabilities.hasPureSignal = true;
+        applet.setBoardCapabilities(capabilities);
+        QVERIFY(!psa->isHidden());
+        QVERIFY(psa->isEnabled());
+        QCOMPARE(psa->toolTip(), ownTip);
     }
 
-    // ── Test 16: PS-A button reflects autoCalEnabledChanged echo ──────────
-    void psaButton_reflectsAutoCalEnabledChange()
+    void txApplet_psaShowsReadbackButRefusesRemoteActuation()
     {
-        TxChannel tx(kTxChannelId);
-        PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
+        RemotePs3Harness harness;
+        harness.facade->setRemoteCapabilities(true, false);
+        harness.radio.pureSignalSettings()->initializeAutoCalPreference(true);
+        TxApplet applet(&harness.radio);
+        applet.setTransmitPermitted(true);
 
-        RadioModel rm;
-        TxApplet applet(&rm);
-        applet.setPureSignal(&ps);
+        auto* psa = button(applet, "TxAppletPsaBtn");
+        QVERIFY(psa->isChecked());
+        QVERIFY(!psa->isEnabled());
+        QCOMPARE(harness.requests.size(), 0);
+    }
 
-        auto* btn = applet.findChild<QPushButton*>(
-            QStringLiteral("TxAppletPsaBtn"));
-        QVERIFY(btn != nullptr);
-        QCOMPARE(btn->isChecked(), false);
+    void setPureSignal_reusesRadioModelsFacade()
+    {
+        RadioModel radio;
+        PureSignalSessionFacade* const shared = radio.pureSignalFacade();
+        TxChannel tx(1);
+        PureSignal coordinator(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
+        coordinator.setSettings(radio.pureSignalSettings());
 
-        // Model → UI
-        ps.setAutoCalEnabled(true);
-        QCOMPARE(btn->isChecked(), true);
+        PureSignalApplet pureSignal(&radio);
+        TxApplet txApplet(&radio);
+        pureSignal.setPureSignal(&coordinator);
+        txApplet.setPureSignal(&coordinator);
 
-        ps.setAutoCalEnabled(false);
-        QCOMPARE(btn->isChecked(), false);
+        QCOMPARE(radio.pureSignalFacade(), shared);
+        QVERIFY(shared->available());
+        radio.pureSignalSettings()->initializeAutoCalPreference(true);
+        QVERIFY(button(pureSignal, "PsAppletAutoCalBtn")->isChecked());
+        QVERIFY(button(txApplet, "TxAppletPsaBtn")->isChecked());
     }
 };
 

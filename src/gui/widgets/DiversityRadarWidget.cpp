@@ -17,6 +17,10 @@
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.  Phase 3F Sub-Epic G
 //                 Task 5.
+//   2026-09-28 - The lobe math and its sampling moved to
+//                 core/DiversityPattern, which the Core also sends to the
+//                 phone; the radar draws from it. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -80,9 +84,8 @@ namespace NereusSDR {
 
 namespace {
 
-constexpr double kSpeedOfLight = 299792458.0;          // m/s
 constexpr double kTwoPi        = 2.0 * M_PI;
-constexpr int    kLobeSamples  = 120;                  // 360 / 3 degrees
+constexpr int    kLobeSamples  = DiversityPattern::kSamples;  // 360 / 3 degrees
 
 } // namespace
 
@@ -129,42 +132,17 @@ void DiversityRadarWidget::setAntennaSpacingMeters(double m)
     update();
 }
 
-// From Thetis DiversityForm.cs:2398-2440 [v2.10.3.15] (CalcVrms)
-//
-// Upstream signature: double CalcVrms(double a, double b) where
-//   a = theta (azimuth angle, radians)
-//   b = steering_angle (radians; this is the user-set phase)
-//
-// We expose theta as the only argument and consume the member m_phase
-// internally for the steering angle, since the steering angle is a
-// per-paint constant rather than a per-sample input.  cross_fire,
-// d_lambda, gain follow the same trick.
-double DiversityRadarWidget::sensitivityAtAngle(double angleRad) const
+// From Thetis DiversityForm.cs:2398-2440 [v2.10.3.15] (CalcVrms), now in
+// DiversityPattern so the Core sends the pattern this radar draws.
+DiversityPattern::Inputs DiversityRadarWidget::patternInputs() const
 {
-    const double freq         = 1.0e6 * m_vfoMhz;       // Hz
-    const double lambda       = kSpeedOfLight / freq;   // m
-    const double d_lambda     = m_antSpacingM / lambda; // dimensionless
-    const double dt           = 1.0 / (20.0 * freq);    // 1/20 cycle
-    const double angular_freq = kTwoPi * freq * dt;
-    const double cross_fire   = m_crossFire ? M_PI : 0.0;
-    const double steering     = m_phase;
-
-    // phi = cross_fire + cos(theta + steering_angle)
-    //
-    // Upstream picks between radioButtonMerc1 / Merc2 branches but both
-    // branches contain the same expression, so we collapse.
-    const double phi = cross_fire + std::cos(angleRad + steering);
-
-    double rms = 0.0;
-    for (int i = 0; i < 20; ++i) {
-        const double v1  = std::sin(static_cast<double>(i) * angular_freq);
-        const double v2  = std::sin(static_cast<double>(i) * angular_freq
-                                    + phi - kTwoPi * d_lambda) * m_gain;
-        const double sum = v1 + v2;
-        rms += sum * sum;
-    }
-    // (rms / 20) * 5.5 normalises to ~1.0 max upstream.
-    return (rms / 20.0) * 5.5;
+    DiversityPattern::Inputs in;
+    in.vfoMhz = m_vfoMhz;
+    in.phaseRad = m_phase;
+    in.gainLinear = m_gain;
+    in.crossFire = m_crossFire;
+    in.spacingMeters = m_antSpacingM;
+    return in;
 }
 
 void DiversityRadarWidget::paintEvent(QPaintEvent* /*event*/)
@@ -215,27 +193,17 @@ void DiversityRadarWidget::paintEvent(QPaintEvent* /*event*/)
         p.drawText(offsets[i], labels[i]);
     }
 
-    // Compute the sensitivity lobe polygon.  We sample 360/3 = 120
-    // angles, build a polygon in (x, y) screen space, then fill with a
-    // translucent cyan and outline with a brighter cyan.
+    // The sensitivity lobe: DiversityPattern's samples (bearing 0 = N,
+    // clockwise, each divided by the peak), drawn at 0.85 * r so a peak
+    // never blows out the radar window. The Core sends these samples
+    // (SliceModel::diversityPattern), so the phone draws the same lobe.
+    const QList<double> samples = DiversityPattern::normalizedSamples(patternInputs());
     QPolygonF lobe;
     lobe.reserve(kLobeSamples + 1);
-
-    // Find the peak so we can normalise the polygon to fit within
-    // ~0.85 * r without blowing out the radar window.  Upstream
-    // multiplies by 5.5 to "normalise to 1.0 max" but with gain and
-    // wide phase swings the result can exceed unity, so we rescale
-    // defensively.
-    double peak = 0.0;
-    for (int i = 0; i < kLobeSamples; ++i) {
-        const double theta = (kTwoPi * i) / static_cast<double>(kLobeSamples);
-        peak = std::max(peak, sensitivityAtAngle(theta));
-    }
-    const double scale = (peak > 1.0e-9) ? (0.85 * r / peak) : (0.85 * r);
-
+    const double scale = 0.85 * r;
     for (int i = 0; i <= kLobeSamples; ++i) {
         const double theta = (kTwoPi * i) / static_cast<double>(kLobeSamples);
-        const double rho   = sensitivityAtAngle(theta) * scale;
+        const double rho   = samples.at(i % kLobeSamples) * scale;
         // Map azimuth 0 = N (up).  Convert to screen-space.
         const double sx = c.x() + rho * std::sin(theta);
         const double sy = c.y() - rho * std::cos(theta);

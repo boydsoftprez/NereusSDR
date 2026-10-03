@@ -12,6 +12,8 @@
 #include <QComboBox>
 #include <QLabel>
 #include "gui/setup/GeneralOptionsPage.h"
+#include "core/AppSettings.h"
+#include "OperatorWording.h"
 
 using namespace NereusSDR;
 
@@ -21,8 +23,9 @@ class TestGeneralSetupHardwareConfig : public QObject
 private slots:
     void regionCombo_24Entries_defaultUnitedStates();
     void chkExtended_present_withWarningLabel();
-    void chkGeneralRXOnly_hiddenByDefault();
+    void chkGeneralRXOnly_shownOnEveryRadio();
     void chkNetworkWDT_present_defaultChecked();
+    void disabledTxPolicyShowsEnforcedValuesWithoutChangingSavedKeys();
 };
 
 void TestGeneralSetupHardwareConfig::regionCombo_24Entries_defaultUnitedStates()
@@ -36,7 +39,8 @@ void TestGeneralSetupHardwareConfig::regionCombo_24Entries_defaultUnitedStates()
     QVERIFY2(combo, "comboFRSRegion not found");
     QCOMPARE(combo->count(), 24);
     QCOMPARE(combo->currentText(), QString("United States"));
-    QCOMPARE(combo->toolTip(), QString("Select Region for your location"));
+    QCOMPARE(combo->toolTip(), QString("Region selection is not available for transmit on this Core."));
+    QVERIFY(!combo->isEnabled());
 
     // Spot-check: Australia/Japan/Germany are findable
     QVERIFY(combo->findText("Australia") >= 0);
@@ -55,21 +59,53 @@ void TestGeneralSetupHardwareConfig::chkExtended_present_withWarningLabel()
     auto* chk = group->findChild<QCheckBox*>("chkExtended");
     QVERIFY2(chk, "chkExtended not found");
     QCOMPARE(chk->text(), QString("Extended"));
-    QCOMPARE(chk->toolTip(), QString("Enable extended TX (out of band)"));
+    QCOMPARE(chk->toolTip(), QString("Extended transmit is not available on this Core."));
+    QVERIFY(!chk->isEnabled());
     QCOMPARE(chk->isChecked(), false);
 
     auto* lbl = group->findChild<QLabel*>("lblWarningRegionExtended");
     QVERIFY2(lbl, "lblWarningRegionExtended not found");
     QCOMPARE(lbl->text(), QString("Changing this setting will reset your band stack entries"));
+    QVERIFY(lbl->isHidden());
     // Verify red bold styling is applied (stylesheet contains "red" or "bold")
     QString ss = lbl->styleSheet();
     QVERIFY2(ss.contains("red", Qt::CaseInsensitive) || ss.contains("bold", Qt::CaseInsensitive),
              "Warning label must have red/bold styling");
 }
 
-void TestGeneralSetupHardwareConfig::chkGeneralRXOnly_hiddenByDefault()
+void TestGeneralSetupHardwareConfig::disabledTxPolicyShowsEnforcedValuesWithoutChangingSavedKeys()
 {
-    // From Thetis setup.designer.cs:8535-8544 [v2.10.3.13] — Visible=false by default.
+    auto& settings = AppSettings::instance();
+    const QVariant oldRegion = settings.value(QStringLiteral("Region"));
+    const QVariant oldBandPlan = settings.value(QStringLiteral("BandPlanRegion"));
+    const QVariant oldExtended = settings.value(QStringLiteral("ExtendedTxAllowed"));
+    settings.setValue(QStringLiteral("Region"), QStringLiteral("Italy"));
+    settings.setValue(QStringLiteral("BandPlanRegion"), QStringLiteral("5"));
+    settings.setValue(QStringLiteral("ExtendedTxAllowed"), QStringLiteral("True"));
+    {
+        GeneralOptionsPage page(/*model=*/nullptr);
+        auto* region = page.findChild<QComboBox*>(QStringLiteral("comboFRSRegion"));
+        auto* extended = page.findChild<QCheckBox*>(QStringLiteral("chkExtended"));
+        QVERIFY(region && extended);
+        QCOMPARE(region->currentText(), QStringLiteral("Japan"));
+        QVERIFY(!region->isEnabled());
+        QVERIFY(!extended->isChecked());
+        QVERIFY(!extended->isEnabled());
+        QCOMPARE(settings.value(QStringLiteral("Region")).toString(), QStringLiteral("Italy"));
+        QCOMPARE(settings.value(QStringLiteral("ExtendedTxAllowed")).toString(),
+                 QStringLiteral("True"));
+    }
+    settings.setValue(QStringLiteral("Region"), oldRegion);
+    settings.setValue(QStringLiteral("BandPlanRegion"), oldBandPlan);
+    settings.setValue(QStringLiteral("ExtendedTxAllowed"), oldExtended);
+}
+
+void TestGeneralSetupHardwareConfig::chkGeneralRXOnly_shownOnEveryRadio()
+{
+    // From Thetis setup.designer.cs:8535-8544 [v2.10.3.13] (text and
+    // tooltip). The designer hides it (Visible=false) and Thetis shows it
+    // for every model (setup.cs:19878 and on [v2.10.3.15]); NereusSDR shows
+    // it on every radio (Task 16, receiver and transmit gaps plan).
     GeneralOptionsPage page(/*model=*/nullptr);
     auto* group = page.findChild<QGroupBox*>("grpHardwareConfig");
     QVERIFY2(group, "grpHardwareConfig not found");
@@ -78,7 +114,7 @@ void TestGeneralSetupHardwareConfig::chkGeneralRXOnly_hiddenByDefault()
     QVERIFY2(chk, "chkGeneralRXOnly not found");
     QCOMPARE(chk->text(), QString("Receive Only"));
     QCOMPARE(chk->toolTip(), QString("Check to disable transmit functionality."));
-    QVERIFY2(!chk->isVisible(), "chkGeneralRXOnly must be hidden by default");
+    QVERIFY2(!chk->isHidden(), "chkGeneralRXOnly must be shown");
 }
 
 void TestGeneralSetupHardwareConfig::chkNetworkWDT_present_defaultChecked()
@@ -91,7 +127,15 @@ void TestGeneralSetupHardwareConfig::chkNetworkWDT_present_defaultChecked()
     auto* chk = group->findChild<QCheckBox*>("chkNetworkWDT");
     QVERIFY2(chk, "chkNetworkWDT not found");
     QCOMPARE(chk->text(), QString("Network Watchdog"));
-    QCOMPARE(chk->toolTip(), QString("Resets software/firmware if network becomes inactive."));
+    // R-R3-49: the tooltip says what the box does in NereusSDR (the wait
+    // before the radio is treated as lost), not Thetis's wording, and claims
+    // the safety timer only where it is established (P2 radios and HL2).
+    QCOMPARE(chk->toolTip(),
+             QString("How long NereusSDR waits for data from the radio before it treats "
+                     "the radio as lost. On: three seconds. Off: it keeps waiting. On a "
+                     "Hermes Lite 2, or a radio on the newer network link, the radio's "
+                     "own safety timer stays on either way."));
+    QVERIFY(OperatorWording::isPlain(chk->toolTip()));
     QVERIFY2(chk->isChecked(), "chkNetworkWDT must default to checked");
 }
 

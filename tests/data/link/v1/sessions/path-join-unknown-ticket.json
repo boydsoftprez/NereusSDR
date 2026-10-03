@@ -1,0 +1,11 @@
+{
+    "runs": ["station"],
+    "stationSetup": {"radio": "static", "slices": 1},
+    "steps": [
+        {"from": "station", "message": {"challenge": "$string", "features": {"deviceAuth": 1, "pairing": 1, "sessionHolder": 1}, "identity": {"certBinding": "$string", "publicKey": "$string"}, "major": 1, "majors": [1], "minor": 11, "peer": "nereusd", "settingsSchema": 0, "type": "hello"}},
+        {"from": "client", "role": "scripted", "message": {"type": "hello", "major": 1, "minor": 11, "settingsSchema": 0, "peer": "NereusSDR iPhone"}},
+        {"from": "client", "role": "scripted", "message": {"type": "path.join", "ticket": "not-a-path-ticket"}},
+        {"from": "station", "message": {"code": "protocolError", "reason": "The Core did not move the connection here.", "retryable": false, "type": "session.end"}},
+        {"expectClosed": {"retryable": false}}
+    ]
+}

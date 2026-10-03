@@ -89,17 +89,18 @@ private slots:
     }
 
     // ── 5. No spillover into other C2 bits (bits 7, 5..2 stay 0) ─────────
-    // Only bit 1 (line_in) and bit 6 (Apollo default) should be set.
-    // Bits 7, 5, 4, 3, 2 and 0 (mic_boost) are all 0 in default state.
+    // Only bit 1 (line_in), bit 6 (Apollo default) and bit 0 (mic_boost,
+    // default on as Thetis console.cs:13259 mic_boost = true) may be set.
+    // Bits 7, 5, 4, 3 and 2 are all 0 in default state.
     // Source: Thetis networkproto1.c:581 [v2.10.3.13]
     void setLineInTrue_otherC2BitsUnchanged() {
         P1RadioConnection conn;
         conn.setLineIn(true);
 
         const QByteArray bank10 = conn.captureBank10ForTest();
-        // Bits 7, 5..2, 0 must all be 0.  Only bits 1 and 6 may be set.
-        // Mask = 0xFF & ~0x42 = 0xBD → all other bits must be zero.
-        QCOMPARE(int(quint8(bank10[2]) & 0xBD), 0);
+        // Bits 7, 5..2 must all be 0.  Only bits 0, 1 and 6 may be set.
+        // Mask = 0xFF & ~0x43 = 0xBC → all other bits must be zero.
+        QCOMPARE(int(quint8(bank10[2]) & 0xBC), 0);
     }
 
     // ── 6. Bank 10 C0 address must be 0x12 ───────────────────────────────
@@ -206,14 +207,15 @@ private slots:
     //   C2 = ((prn->mic.mic_boost & 1) | ((prn->mic.line_in & 1) << 1) | ...)
     void setLineInTrue_doesNotTouchMicBoostBit() {
         P1RadioConnection conn;
-        // Only set line_in — mic_boost must remain 0.
+        // Only set line_in — mic_boost must keep its default.
         conn.setLineIn(true);
 
         const QByteArray bank10 = conn.captureBank10ForTest();
         // Bit 1 (line_in) must be 1.
         QCOMPARE(int(quint8(bank10[2]) & 0x02), 0x02);
-        // Bit 0 (mic_boost) must be 0 — not set by setLineIn.
-        QCOMPARE(int(quint8(bank10[2]) & 0x01), 0);
+        // Bit 0 (mic_boost) must keep its default — not changed by setLineIn.
+        // mic_boost stays at its default, on (Thetis console.cs:13259 mic_boost = true).
+        QCOMPARE(int(quint8(bank10[2]) & 0x01), 0x01);
     }
 };
 

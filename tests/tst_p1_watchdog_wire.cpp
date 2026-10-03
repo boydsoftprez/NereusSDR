@@ -1,239 +1,158 @@
-// no-port-check: test-only -- HL2 firmware file names and deskhpsdr source
+// no-port-check: test-only -- HL2 firmware file names and Thetis source
 // paths appear only in source-cite comments that document which upstream line
 // each assertion verifies.  No Thetis or deskhpsdr logic is ported here;
 // this file is NereusSDR-original.
 //
-// Wire-byte snapshot tests for the RUNSTOP packet watchdog bit (3M-1a Task E.5).
+// Wire-byte snapshot tests for the RUNSTOP packet byte 3 (3M-1a Task E.5,
+// rewritten for R-R3-49).
 //
-// Watchdog bit position: RUNSTOP packet byte 3 (pkt[3]), bit 7 (0x80).
-// Semantic INVERTED vs the boolean flag:
-//   m_watchdogEnabled == true  -> pkt[3] bit 7 = 0  (watchdog NOT disabled)
-//   m_watchdogEnabled == false -> pkt[3] bit 7 = 1  (watchdog disabled)
+// R-R3-49: the Network Watchdog setting is NOT sent on Protocol 1. Thetis
+// and mi0bot-Thetis send the same start and stop commands whatever the
+// setting; on P1 the setting only sets how long the read loop waits for data
+// (tst_network_watchdog covers that).
+//   Thetis networkproto1.c:50 [v2.10.3.15]:  outpacket.packetbuf[3] = 0x01;
+//   Thetis networkproto1.c:85 [v2.10.3.15]:  outpacket.packetbuf[3] = 0x00;
+//   mi0bot-Thetis networkproto1.c:50, 85 [@c26a8a4]: the same.
 //
-// Primary source cite (HL2 firmware -- the receiver of this packet):
-//   Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:200-203
-//     RUNSTOP: begin
-//       run_next = eth_data[0];
-//       wide_spectrum_next = eth_data[1];
-//       runstop_watchdog_valid = 1'b1;
-//     end
-//
-//   Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:399-400
-//     end else if (runstop_watchdog_valid) begin
-//       watchdog_disable <= eth_data[7]; // Bit 7 can be used to disable watchdog
-//     end
-//
-// deskhpsdr reference (deskhpsdr/src/old_protocol.c:3811 [@120188f]):
-//   buffer[3] = command;  // 0x01 start or 0x00 stop -- bit 7 never set
-//   deskhpsdr has no user-configurable watchdog disable.  It implicitly keeps
-//   bit 7 = 0 (watchdog enabled) on every RUNSTOP packet.  NereusSDR matches
-//   this as the default (m_watchdogEnabled{true} -> bit 7 = 0).
-//
-// Thetis call-site (setup.cs:17986 [v2.10.3.13]):
-//   NetworkIO.SetWatchdogTimer(Convert.ToInt32(chkNetworkWDT.Checked));
-//   chkNetworkWDT.Checked == true (enabled) -> passes 1 -> bit 7 = 0 (not disabled).
+// Bit 7 of byte 3 is the HL2 gateware's watchdog_disable
+// (Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:399-400). NereusSDR used to set
+// it when the watchdog was off; it now stays 0, so the HL2's own watchdog
+// stays on as it does under Thetis.
 //
 // RUNSTOP packet layout (64 bytes):
-//   pkt[0] = 0xEF  (Metis magic byte 0)
-//   pkt[1] = 0xFE  (Metis magic byte 1)
-//   pkt[2] = 0x04  (RUNSTOP command type)
-//   pkt[3] = run_bits | watchdog_disable_bit
-//     run_bits: 0x01 = start IQ only; 0x02 = start IQ+mic; 0x00 = stop
-//     watchdog_disable_bit: 0x80 if watchdog disabled, 0x00 if enabled
+//   pkt[0] = 0xEF, pkt[1] = 0xFE, pkt[2] = 0x04
+//   pkt[3] = 0x01 start IQ only, 0x02 start IQ + mic, 0x00 stop
 //   pkt[4..63] = 0x00 (padding)
 //
-// Note on co-existence of bits in pkt[3]:
-//   eth_data[0] = run (bit 0), eth_data[1] = wide_spectrum (bit 1),
-//   eth_data[7] = watchdog_disable (bit 7).  These are independent and OR'd
-//   together.  Bits 2..6 are unused.
+// The checks read the datagrams a loopback P1FakeRadio receives from a
+// connected P1RadioConnection, not a copy of the packet composed for the
+// test, so they see what actually goes on the wire.
+//
+// Modification history (NereusSDR):
+//   2026-09-24: R-R3-49, the setting no longer changes byte 3 (Thetis
+//               parity), by J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
+//   2026-09-24: R-R3-49 fix wave: assert on the datagrams received by the
+//               loopback fake, by J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
 #include <QtTest/QtTest>
+
+#include <QElapsedTimer>
+
+#include <memory>
+
+#include "core/HpsdrModel.h"
 #include "core/P1RadioConnection.h"
+#include "fakes/P1FakeRadio.h"
 
 using namespace NereusSDR;
+using NereusSDR::Test::P1FakeRadio;
+
+namespace {
+
+RadioInfo p1Info(const P1FakeRadio& fake)
+{
+    RadioInfo info;
+    info.address = fake.localAddress();
+    info.port = fake.localPort();
+    info.boardType = HPSDRHW::HermesLite;
+    info.protocol = ProtocolVersion::Protocol1;
+    info.firmwareVersion = 72;
+    info.macAddress = QStringLiteral("aa:bb:cc:49:00:02");
+    return info;
+}
+
+// Bring a P1 link up against the fake, retrying if the connect deadline
+// tears an attempt down on a loaded machine (as tst_network_watchdog does).
+std::unique_ptr<P1RadioConnection> bringUp(const P1FakeRadio& fake, bool watchdogOn)
+{
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        auto conn = std::make_unique<P1RadioConnection>();
+        conn->init();
+        conn->setWatchdogEnabled(watchdogOn);
+        conn->connectToRadio(p1Info(fake));
+        QElapsedTimer waited;
+        waited.start();
+        while (waited.elapsed() < 3000) {
+            if (conn->state() == ConnectionState::Connected) {
+                return conn;
+            }
+            if (conn->state() == ConnectionState::Disconnected) {
+                break;
+            }
+            QTest::qWait(10);
+        }
+    }
+    return nullptr;
+}
+
+// The exact 64-byte RUNSTOP packet: EF FE 04 <cmd>, then zeros
+// (networkproto1.c:45 memset, 47-50 [v2.10.3.15]).
+QByteArray runStop(quint8 cmd)
+{
+    QByteArray pkt(64, '\0');
+    pkt[0] = char(0xEF);
+    pkt[1] = char(0xFE);
+    pkt[2] = char(0x04);
+    pkt[3] = char(cmd);
+    return pkt;
+}
+
+// Connect with the setting given, change it while connected, disconnect,
+// and return every start/stop datagram the fake received (none when the
+// link did not come up or no stop arrived).
+QList<QByteArray> runStopDatagrams(bool watchdogOn)
+{
+    P1FakeRadio fake;
+    fake.start();
+    std::unique_ptr<P1RadioConnection> conn = bringUp(fake, watchdogOn);
+    if (!conn || !QTest::qWaitFor([&fake] { return fake.isRunning(); }, 2000)) {
+        return {};
+    }
+    conn->setWatchdogEnabled(!watchdogOn);
+    conn->disconnect();
+    if (!QTest::qWaitFor([&fake] { return fake.metisStopCount() >= 1; }, 2000)) {
+        return {};
+    }
+    return fake.metisCommandsReceived();
+}
+
+} // namespace
 
 class TestP1WatchdogWire : public QObject {
     Q_OBJECT
 private slots:
 
-    // ── 1. Default state: watchdog bit is CLEAR on start packet ──────────────
-    // A freshly constructed P1RadioConnection has m_watchdogEnabled = true
-    // (3M-1a E.5 default -- see RadioConnection.h comment for rationale).
-    // Therefore pkt[3] bit 7 must be 0 (watchdog NOT disabled).
-    //
-    // Source: Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:399-400
-    //   watchdog_disable <= eth_data[7]; // 0 = watchdog active (not disabled)
-    // deskhpsdr: buffer[3] = command -- bit 7 = 0 implicitly.
-    void defaultState_watchdogBitIsClear_startPacket() {
-        P1RadioConnection conn;
-        // Default: m_watchdogEnabled = true -> bit 7 = 0
-        const QByteArray pkt = conn.metisStartPacketForTest(false);
-        QCOMPARE(pkt.size(), 64);
-        // pkt[3] bit 7 must be 0 (watchdog enabled = bit NOT set).
-        // Source: Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:399-400
-        QCOMPARE(int(quint8(pkt[3]) & 0x80), 0);
+    // The start datagram is EF FE 04 01 and 60 zeros, and the stop datagram
+    // EF FE 04 00 and 60 zeros, with the watchdog on or off and when it is
+    // changed while connected (networkproto1.c:50, 85 [v2.10.3.15]). Bit 7
+    // of byte 3 (the HL2 gateware's watchdog_disable) is never set.
+    void runStopDatagramsIgnoreTheSetting_data()
+    {
+        QTest::addColumn<bool>("watchdogOn");
+        QTest::newRow("on at connect") << true;
+        QTest::newRow("off at connect") << false;
     }
 
-    // ── 2. Default state: watchdog bit is CLEAR on stop packet ───────────────
-    // Same default state assertion for the stop packet.
-    // deskhpsdr/src/old_protocol.c:3811 [@120188f]:
-    //   buffer[3] = command; // 0x00 stop -- bit 7 = 0 implicitly
-    void defaultState_watchdogBitIsClear_stopPacket() {
-        P1RadioConnection conn;
-        const QByteArray pkt = conn.metisStopPacketForTest();
-        QCOMPARE(pkt.size(), 64);
-        QCOMPARE(int(quint8(pkt[3]) & 0x80), 0);
-    }
-
-    // ── 3. setWatchdogEnabled(false) -> pkt[3] bit 7 = 1 (disabled) ──────────
-    // When the watchdog is disabled, bit 7 must be 1.
-    // Source: Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:400
-    //   watchdog_disable <= eth_data[7]; // 1 = watchdog disabled
-    void setWatchdogDisabled_startPacket_bit7IsSet() {
-        P1RadioConnection conn;
-        conn.setWatchdogEnabled(false);
-
-        const QByteArray pkt = conn.metisStartPacketForTest(false);
-        QCOMPARE(int(quint8(pkt[3]) & 0x80), 0x80);
-    }
-
-    // ── 4. setWatchdogEnabled(false) -> stop packet bit 7 = 1 ────────────────
-    void setWatchdogDisabled_stopPacket_bit7IsSet() {
-        P1RadioConnection conn;
-        conn.setWatchdogEnabled(false);
-
-        const QByteArray pkt = conn.metisStopPacketForTest();
-        QCOMPARE(int(quint8(pkt[3]) & 0x80), 0x80);
-    }
-
-    // ── 5. setWatchdogEnabled(true) after false -> bit 7 cleared ─────────────
-    // Round-trip: disable then re-enable; bit 7 must return to 0.
-    void setWatchdogEnabled_afterDisable_bit7Cleared() {
-        P1RadioConnection conn;
-        conn.setWatchdogEnabled(false);
-        conn.setWatchdogEnabled(true);
-
-        const QByteArray pkt = conn.metisStartPacketForTest(false);
-        QCOMPARE(int(quint8(pkt[3]) & 0x80), 0);
-    }
-
-    // ── 6. Round-trip: true -> false -> true ─────────────────────────────────
-    void roundTrip_enabledToDisabledToEnabled() {
-        P1RadioConnection conn;
-        // Default true: bit 7 = 0
-        QCOMPARE(int(quint8(conn.metisStartPacketForTest(false)[3]) & 0x80), 0);
-
-        conn.setWatchdogEnabled(false);
-        // Disabled: bit 7 = 1
-        QCOMPARE(int(quint8(conn.metisStartPacketForTest(false)[3]) & 0x80), 0x80);
-
-        conn.setWatchdogEnabled(true);
-        // Re-enabled: bit 7 = 0
-        QCOMPARE(int(quint8(conn.metisStartPacketForTest(false)[3]) & 0x80), 0);
-    }
-
-    // ── 7. Idempotency: repeated same-value call doesn't crash ────────────────
-    void idempotent_disabledTwice_doesNotCrash() {
-        P1RadioConnection conn;
-        conn.setWatchdogEnabled(false);
-        conn.setWatchdogEnabled(false);  // second call -- no-op via guard
-        QCOMPARE(int(quint8(conn.metisStartPacketForTest(false)[3]) & 0x80), 0x80);
-    }
-
-    // ── 8. HL2 cross-check: run bit (eth_data[0]) and watchdog bit
-    //       (eth_data[7]) co-exist independently in pkt[3] ─────────────────────
-    //
-    // Source: Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:200-203
-    //   run_next = eth_data[0];          // bit 0
-    //   wide_spectrum_next = eth_data[1]; // bit 1
-    //   watchdog_disable <= eth_data[7]; // bit 7 -- separate from run
-    //
-    // With watchdog disabled: pkt[3] has both bit 0 (run=1) and bit 7 (0x80).
-    // These bits are independent. Verify both are set simultaneously.
-    void hl2FirmwareCrossCheck_runAndWatchdogBitsCoexist() {
-        P1RadioConnection conn;
-        conn.setWatchdogEnabled(false);  // watchdog disabled -> bit 7 = 1
-
-        // Start IQ-only packet: run bit 0 = 1 (from 0x01), bit 7 = 1 (from 0x80)
-        const QByteArray pkt = conn.metisStartPacketForTest(false);
-
-        // bit 0 (run) must be set
-        // Source: dsopenhpsdr1.v:201 -- run_next = eth_data[0]
-        QCOMPARE(int(quint8(pkt[3]) & 0x01), 0x01);
-
-        // bit 7 (watchdog_disable) must also be set
-        // Source: dsopenhpsdr1.v:400 -- watchdog_disable <= eth_data[7]
-        QCOMPARE(int(quint8(pkt[3]) & 0x80), 0x80);
-
-        // Combined: pkt[3] = 0x81 (run=1, watchdog disabled)
-        QCOMPARE(int(quint8(pkt[3])), 0x81);
-    }
-
-    // ── 9. sendMetisStart(true) + watchdog disabled -> pkt[3] = 0x82 ──────────
-    // IQ+mic mode (iqAndMic=true): run bits = 0x02 (bit 1 set for wide_spectrum).
-    // Watchdog disabled: bit 7 = 0x80.
-    // Expected: pkt[3] = 0x82 | 0x80 = ... wait: 0x02 | 0x80 = 0x82.
-    //
-    // Source: Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:202
-    //   wide_spectrum_next = eth_data[1]; // bit 1 -- set when iqAndMic=true (0x02)
-    void startIqMic_watchdogDisabled_pkt3Is0x82() {
-        P1RadioConnection conn;
-        conn.setWatchdogEnabled(false);
-
-        const QByteArray pkt = conn.metisStartPacketForTest(true);  // IQ+mic
-        // 0x02 (IQ+mic run) | 0x80 (watchdog disabled) = 0x82
-        QCOMPARE(int(quint8(pkt[3])), 0x82);
-    }
-
-    // ── 10. sendMetisStop() + watchdog disabled -> pkt[3] = 0x80 ─────────────
-    // Stop packet (run = 0x00), watchdog disabled (bit 7 = 0x80).
-    // Expected: pkt[3] = 0x00 | 0x80 = 0x80.
-    //
-    // Source: Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:200-203
-    //   run_next = eth_data[0]; // 0 = stop
-    // deskhpsdr/src/old_protocol.c:3811 [@120188f]:
-    //   buffer[3] = command; // 0x00 stop
-    void stopPacket_watchdogDisabled_pkt3Is0x80() {
-        P1RadioConnection conn;
-        conn.setWatchdogEnabled(false);
-
-        const QByteArray pkt = conn.metisStopPacketForTest();
-        // 0x00 (stop) | 0x80 (watchdog disabled) = 0x80
-        QCOMPARE(int(quint8(pkt[3])), 0x80);
-    }
-
-    // ── 11. Packet header bytes are always correct (regression guard) ─────────
-    // pkt[0..2] must always be 0xEF 0xFE 0x04 regardless of watchdog state.
-    // Source: deskhpsdr/src/old_protocol.c:3808-3810 [@120188f]:
-    //   buffer[0] = 0xEF; buffer[1] = 0xFE; buffer[2] = 0x04;
-    void packetHeader_isAlwaysCorrect() {
-        P1RadioConnection conn;
-        conn.setWatchdogEnabled(false);
-
-        const QByteArray startPkt = conn.metisStartPacketForTest(false);
-        QCOMPARE(quint8(startPkt[0]), quint8(0xEF));
-        QCOMPARE(quint8(startPkt[1]), quint8(0xFE));
-        QCOMPARE(quint8(startPkt[2]), quint8(0x04));
-
-        const QByteArray stopPkt = conn.metisStopPacketForTest();
-        QCOMPARE(quint8(stopPkt[0]), quint8(0xEF));
-        QCOMPARE(quint8(stopPkt[1]), quint8(0xFE));
-        QCOMPARE(quint8(stopPkt[2]), quint8(0x04));
-    }
-
-    // ── 12. Packet padding bytes 4..63 are always zero ───────────────────────
-    // Source: deskhpsdr/src/old_protocol.c:3814-3817 [@120188f]:
-    //   for (i = 4; i < 64; i++) { buffer[i] = 0x00; }
-    void paddingBytes_areAllZero() {
-        P1RadioConnection conn;
-        conn.setWatchdogEnabled(false);
-
-        const QByteArray pkt = conn.metisStartPacketForTest(false);
-        QCOMPARE(pkt.size(), 64);
-        for (int i = 4; i < 64; ++i) {
-            QCOMPARE(int(quint8(pkt[i])), 0);
+    void runStopDatagramsIgnoreTheSetting()
+    {
+        QFETCH(bool, watchdogOn);
+        const QList<QByteArray> received = runStopDatagrams(watchdogOn);
+        QVERIFY2(!received.isEmpty(), "the link did not come up against the fake, or no stop arrived");
+        const QByteArray start = runStop(0x01);
+        const QByteArray stop = runStop(0x00);
+        int starts = 0;
+        for (const QByteArray& datagram : received) {
+            QCOMPARE(datagram.size(), 64);
+            QCOMPARE(int(quint8(datagram[3])) & 0x80, 0);
+            QVERIFY2(datagram == start || datagram == stop,
+                     qPrintable(QString::fromLatin1(datagram.toHex(' '))));
+            starts += datagram == start ? 1 : 0;
         }
+        QVERIFY(starts >= 1);
+        QCOMPARE(received.last(), stop);
     }
 };
 
-QTEST_APPLESS_MAIN(TestP1WatchdogWire)
+QTEST_GUILESS_MAIN(TestP1WatchdogWire)
 #include "tst_p1_watchdog_wire.moc"

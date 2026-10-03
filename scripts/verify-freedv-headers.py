@@ -38,6 +38,9 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from header_block import header_text  # noqa: E402
+
 REPO = Path(__file__).resolve().parent.parent
 PROVENANCE = REPO / "docs" / "attribution" / "FREEDV-GUI-PROVENANCE.md"
 FREEDV_DIR = Path(os.environ.get(
@@ -53,8 +56,8 @@ MARKERS = [
     "Modification history (NereusSDR)",
 ]
 
-# Header must appear within this many lines of top of file
-HEADER_WINDOW = 160
+# Header must appear in the leading comment block (scripts/header_block.py:
+# the whole block, never less than 160 lines).
 
 # Opt-out marker for sibling files that intentionally carry no port header
 # (e.g. pure Qt scaffolding whose semantics don't derive from the cited
@@ -108,8 +111,7 @@ def parse_provenance(text: str):
 
 
 def check_required_markers(path: Path, markers):
-    head = "\n".join(
-        path.read_text(errors="replace").splitlines()[:HEADER_WINDOW])
+    head = header_text(path.read_text(errors="replace"), path.suffix)
     return [m for m in markers if m not in head]
 
 
@@ -130,9 +132,7 @@ def check_orphan_pair(rel: str, listed) -> Optional[str]:
             return None  # sibling also cited - OK
         # Check for opt-out marker in the sibling
         try:
-            head = "\n".join(
-                sib_path.read_text(errors="replace").splitlines()[:HEADER_WINDOW]
-            )
+            head = header_text(sib_path.read_text(errors="replace"), sib_path.suffix)
         except Exception:
             head = ""
         if OPT_OUT_MARKER in head:

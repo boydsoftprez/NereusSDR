@@ -1,0 +1,51 @@
+{
+  "actualReceivedEncodedBytes": 533982,
+  "audio": {
+    "actualReceivedBytes": 15327,
+    "bandwidth": 1103,
+    "channels": 2,
+    "contextAccepted": true,
+    "contextDiscontinuities": 0,
+    "contextGeneration": 5,
+    "decodeStatuses": {
+      "accepted": 117
+    },
+    "decodedPackets": 117,
+    "leftRms": 0.09138277014724897,
+    "packetCount": 117,
+    "pcmFinite": true,
+    "pcmFrames": 224640,
+    "preContextPackets": 0,
+    "rejectedPackets": 0,
+    "rightRms": 0.09138197150219877,
+    "sequenceDiscontinuities": 0,
+    "timestampDiscontinuities": 0
+  },
+  "codecDispositions": {
+    "accepted": 218,
+    "needKeyframe": 1,
+    "rejected": 1
+  },
+  "codecReasons": {
+    "envelope": 1,
+    "noHistory": 1,
+    "none": 218
+  },
+  "context": {
+    "centreHz": 14255123.4375,
+    "contextGeneration": 6,
+    "sampleRateHz": 192000,
+    "sourceCentreHz": 14255100,
+    "spanHz": 48046.875,
+    "traceSamples": 1024,
+    "waterfallSamples": 1024,
+    "wideSamples": 768
+  },
+  "distinctFrames": 218,
+  "durationSeconds": 20,
+  "failure": "",
+  "receivedFrames": 220,
+  "status": "ok",
+  "waterfallAdvances": 218,
+  "wideFrames": 218
+}

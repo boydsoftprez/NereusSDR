@@ -22,6 +22,21 @@
 // Design reference: docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-design.md §4.9
 //
 // AI tooling: Anthropic Claude Code.
+//
+// Modification history (NereusSDR):
+//   2026-09-24  J.J. Boyd / KG4VCF  R-R3-47 / R-R3-22: the Core reloads the
+//                                    policy when a window changes its
+//                                    settings, applies the setTxInterlockPolicy
+//                                    command through the setters, and a
+//                                    remote window holds the Core's policy
+//                                    (applyMirrored, never saved). The
+//                                    ranges the page and the command share.
+//                                    Enforcement is unchanged. AI-assisted
+//                                    via Anthropic Claude Code.
+//   2026-09-25  J.J. Boyd / KG4VCF  iPhone app plan Task 34 (R-IOS-13):
+//                                    lastDenial(), the kind of the last
+//                                    refusal (amplifier in standby or SWR).
+//                                    AI-assisted via Anthropic Claude Code.
 
 #pragma once
 
@@ -41,7 +56,23 @@ public:
     Q_PROPERTY(bool  swrGateEnabled READ swrGateEnabled WRITE setSwrGateEnabled NOTIFY changed)
     Q_PROPERTY(float swrGateMax     READ swrGateMax     WRITE setSwrGateMax     NOTIFY changed)
 
+    // R-R3-47: the ranges the Setup page offers and the Core accepts.
+    static constexpr int    kGraceMsMin    = 0;
+    static constexpr int    kGraceMsMax    = 30000;
+    static constexpr double kSwrGateMaxMin = 1.0;
+    static constexpr double kSwrGateMaxMax = 10.0;
+
     explicit TxInterlockPolicy(QObject* parent = nullptr);
+
+    /// R-R3-47: re-read the four settings (PGXL_TxInterlockMode,
+    /// PGXL_TxInterlockGraceMs, PGXL_TxSwrGate, PGXL_TxSwrGateMax). The Core
+    /// calls it when a window writes one of them; emits changed() when a
+    /// value moved.
+    void reloadFromSettings();
+
+    /// R-R3-47: a remote window. The Core's policy arriving: taken as is,
+    /// changed() emitted when a value moved, nothing saved.
+    void applyMirrored(Mode mode, int graceMs, bool swrGateEnabled, float swrGateMax);
 
     Mode  mode()           const { return m_mode; }
     int   graceMs()        const { return m_graceMs; }
@@ -63,6 +94,13 @@ public:
     ///   4. Otherwise        -> returns true.
     bool evaluateTxRequest(bool ampPresent, bool ampInOperate, float currentSwr);
 
+    /// iPhone app plan Task 34 (R-IOS-13): why the last evaluateTxRequest
+    /// refused (Block mode), so MoxController can name the refusal the link
+    /// carries: the amplifier in standby (fix operateAmp) or the SWR over
+    /// its limit. None after an allowed request.
+    enum class Denial { None, AmpStandby, Swr };
+    Denial lastDenial() const { return m_lastDenial; }
+
 public slots:
     void setMode(Mode m);
     void setGraceMs(int ms);
@@ -82,6 +120,8 @@ signals:
     void changed();
 
 private:
+    void load();
+
     Mode  m_mode{Disabled};
     int   m_graceMs{3000};
     bool  m_swrGateEnabled{false};
@@ -93,6 +133,8 @@ private:
     qint64 m_ampLastOperateMs{0};
     // Previous operate state tracked to detect rising edge only.
     bool   m_prevAmpInOperate{false};
+    // Task 34: the last refusal's kind.
+    Denial m_lastDenial{Denial::None};
 };
 
 }  // namespace NereusSDR

@@ -16,6 +16,10 @@
 //                Adds 13 SWL bands × pin-7 RX entries previously missing.
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                Anthropic Claude Code.
+//   2026-09-24 - R-R3-46: applyN2adrPresetReceiveOnly, the preset's
+//                receive half for a station that may not change transmit
+//                settings. NereusSDR-original. J.J. Boyd (KG4VCF), AI-
+//                assisted via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -128,6 +132,23 @@ void applyN2adrPreset(OcMatrix& oc, bool enabled)
     for (int idx = static_cast<int>(Band::SwlFirst);
          idx <= static_cast<int>(Band::SwlLast); ++idx) {
         oc.setPin(static_cast<Band>(idx), /*pin=*/6, /*tx=*/false, true);
+    }
+}
+
+// R-R3-46: NereusSDR-original. Keep every transmit pin, apply the rest.
+void applyN2adrPresetReceiveOnly(OcMatrix& oc, bool enabled)
+{
+    bool tx[int(Band::Count)][7] = {};
+    for (int b = 0; b < int(Band::Count); ++b) {
+        for (int pin = 0; pin < 7; ++pin) {
+            tx[b][pin] = oc.pinEnabled(static_cast<Band>(b), pin, /*tx=*/true);
+        }
+    }
+    applyN2adrPreset(oc, enabled);
+    for (int b = 0; b < int(Band::Count); ++b) {
+        for (int pin = 0; pin < 7; ++pin) {
+            oc.setPin(static_cast<Band>(b), pin, /*tx=*/true, tx[b][pin]);
+        }
     }
 }
 

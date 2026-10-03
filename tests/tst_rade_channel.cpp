@@ -13,8 +13,8 @@
 // I2 RX-path contracts:
 //
 //   4. startInitializesRade              start("dummy") opens librade and isActive() flips true
-//   5. processIqEmitsSyncFalseOnNoise    feeding random I/Q noise emits syncChanged(false)
-//                                        and no rxSpeechReady chunks
+//   5. processIqEmitsSyncFalseOnNoise    feeding random I/Q noise preserves
+//                                        one quiet speech chunk per input
 //   6. processIqAccumulatesAcrossChunks  small chunks accumulate; rade_rx fires only
 //                                        once a rade_nin()-sized buffer is ready
 //   7. stopReleasesResources             start("dummy") then stop() tears down cleanly
@@ -50,6 +50,11 @@
 #include <cmath>
 #include <cstdint>
 #include <random>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+#include <chrono>
+#include <atomic>
 
 #include "core/RadeChannel.h"
 
@@ -65,6 +70,7 @@ private slots:
 
     // I2 RX-path tests
     void startInitializesRade();
+    void shortInputEmitsSameSizedQuietPadding();
     void processIqEmitsSyncFalseOnNoise();
     void processIqAccumulatesAcrossMultipleChunks();
     void stopReleasesResources();
@@ -77,6 +83,13 @@ private slots:
 
     // v0.5.0 RADE U/L sideband-split fix-up.
     void sidebandRoundTripsViaSetter();
+
+    // RADE end-of-over callsigns.
+    void endOfOverQueuesFrameAndSilence();
+    void noSpeechAfterEndOfOverUntilReset();
+    void endOfOverWhileInactiveSendsNothing();
+    void endOfOverCallsignReachesAnotherChannel();
+    void endOfOverEncodesHeldSpeechFirstWithoutWaiting();
 };
 
 void TestRadeChannel::initialState()
@@ -230,9 +243,16 @@ void TestRadeChannel::processIqEmitsSyncFalseOnNoise()
                  "syncChanged emitted true on pure-noise input");
     }
 
-    // No rxSpeechReady chunks should be emitted because the codec
-    // never synced and so never produced decoded features.
-    QCOMPARE(speechSpy.count(), 0);
+    // AetherSDR's source contract emits one same-sized quiet block whenever
+    // decoder output is short. NereusSDR's MasterMixer has no timeout, so
+    // preserving this input cadence is what lets ordinary co-hosted slices
+    // continue while RADE is unsynchronised.
+    QCOMPARE(speechSpy.count(), kNumChunks);
+    for (const auto& args : speechSpy) {
+        const QByteArray pcm = args.value(0).toByteArray();
+        QCOMPARE(pcm.size(),
+                 kChunkSamples * 2 * static_cast<int>(sizeof(float)));
+    }
 
     // At least one rade_rx() must have been called given the input
     // volume; otherwise the accumulator is broken.
@@ -241,6 +261,21 @@ void TestRadeChannel::processIqEmitsSyncFalseOnNoise()
                             .arg(kNumChunks)));
 
     ch.stop();
+}
+
+void TestRadeChannel::shortInputEmitsSameSizedQuietPadding()
+{
+    RadeChannel ch;
+    QVERIFY(ch.start("dummy"));
+    QSignalSpy speechSpy(&ch, &RadeChannel::rxSpeechReady);
+    constexpr int kFrames = 64;
+    ch.processIq(makeSyntheticIq(kFrames));
+    QCOMPARE(speechSpy.count(), 1);
+    const QByteArray pcm = speechSpy.first().first().toByteArray();
+    QCOMPARE(pcm.size(), kFrames * 2 * static_cast<int>(sizeof(float)));
+    for (char byte : pcm) {
+        QCOMPARE(byte, '\0');
+    }
 }
 
 void TestRadeChannel::processIqAccumulatesAcrossMultipleChunks()
@@ -440,6 +475,208 @@ void TestRadeChannel::sidebandRoundTripsViaSetter()
 
     ch.setSideband(true);
     QVERIFY(ch.sidebandUpper());
+}
+
+// RADE end-of-over callsigns: queueEndOfOver emits the EOO frame and FreeDV's
+// 200 ms of silence once, as txModemReady, and reports its length.
+void TestRadeChannel::endOfOverQueuesFrameAndSilence()
+{
+    RadeChannel ch;
+    QVERIFY(ch.start("dummy"));
+    // rade_n_tx_eoo_out (1152 for RADE V1) + NUM_SAMPLES_SILENCE (1600) +
+    // the 8 -> 24 kHz resampler's latency in zeros.
+    const int samples8k = ch.endOfOverSamples8k();
+    QVERIFY2(samples8k > 1152 + 1600, qPrintable(QString::number(samples8k)));
+
+    QSignalSpy modemSpy(&ch, &RadeChannel::txModemReady);
+    QVERIFY(ch.queueEndOfOver(QStringLiteral("KG4VCF")));
+    QVERIFY(ch.endOfOverQueued());
+    QCOMPARE(modemSpy.count(), 1);
+    // From a fresh resampler the output at 24 kHz is exactly the EOO and
+    // the 200 ms of silence: (1152 + 1600) x 3 stereo float frames.
+    const int bytes = modemSpy.first().value(0).toByteArray().size();
+    const int frames = bytes / (2 * static_cast<int>(sizeof(float)));
+    QVERIFY2(std::abs(frames - (1152 + 1600) * 3) <= 3,
+             qPrintable(QStringLiteral("%1 frames").arg(frames)));
+    ch.stop();
+    QCOMPARE(ch.endOfOverSamples8k(), 0);
+}
+
+// After the end-of-over frame nothing more is encoded (FreeDV stops taking
+// microphone audio once the over is ending) until resetTx starts a new over.
+void TestRadeChannel::noSpeechAfterEndOfOverUntilReset()
+{
+    RadeChannel ch;
+    QVERIFY(ch.start("dummy"));
+    QVERIFY(ch.queueEndOfOver(QString()));
+
+    QSignalSpy modemSpy(&ch, &RadeChannel::txModemReady);
+    ch.txEncode(makeSyntheticSpeech16k(16000));
+    QCOMPARE(ch.radeTxCallCountForTest(), 0);
+    QCOMPARE(modemSpy.count(), 0);
+
+    ch.resetTx();
+    QVERIFY(!ch.endOfOverQueued());
+    ch.txEncode(makeSyntheticSpeech16k(16000));
+    QVERIFY(ch.radeTxCallCountForTest() > 0);
+    ch.stop();
+}
+
+void TestRadeChannel::endOfOverWhileInactiveSendsNothing()
+{
+    RadeChannel ch;
+    QSignalSpy modemSpy(&ch, &RadeChannel::txModemReady);
+    QVERIFY(!ch.queueEndOfOver(QStringLiteral("KG4VCF")));
+    QVERIFY(!ch.endOfOverQueued());
+    QCOMPARE(modemSpy.count(), 0);
+}
+
+// One channel transmits an over (speech, then the end-of-over frame with
+// KG4VCF); its modem audio, the real leg as a radio's SSB receiver hands it
+// back (I = audio, Q = 0), goes into a second channel, which reports the
+// callsign once with no grid.
+void TestRadeChannel::endOfOverCallsignReachesAnotherChannel()
+{
+    RadeChannel tx;
+    RadeChannel rx;
+    QVERIFY(tx.start("dummy"));
+    QVERIFY(rx.start("dummy"));
+
+    QByteArray air;  // 24 kHz stereo float
+    connect(&tx, &RadeChannel::txModemReady, this,
+            [&air](const QByteArray& pcm) { air.append(pcm); });
+
+    // 1.5 s of speech-like audio, then the end-of-over frame.
+    for (int i = 0; i < 12; ++i) {
+        tx.txEncode(makeSyntheticSpeech16k(2000));
+    }
+    QVERIFY(tx.queueEndOfOver(QStringLiteral("KG4VCF")));
+    // Silence behind it: the receiver's 24 -> 8 kHz resampler holds back
+    // about 300 ms.
+    air.append(QByteArray(24000 * 2 * 2 * static_cast<int>(sizeof(float)), '\0'));
+
+    QSignalSpy textSpy(&rx, &RadeChannel::rxTextDecoded);
+    const auto* stereo = reinterpret_cast<const float*>(air.constData());
+    const int frames = air.size() / (2 * static_cast<int>(sizeof(float)));
+    constexpr int kChunk = 2048;
+    for (int off = 0; off < frames; off += kChunk) {
+        const int n = std::min(kChunk, frames - off);
+        QByteArray iq(n * 2 * static_cast<int>(sizeof(float)), Qt::Uninitialized);
+        auto* out = reinterpret_cast<float*>(iq.data());
+        for (int i = 0; i < n; ++i) {
+            out[2 * i] = stereo[2 * (off + i)];
+            out[2 * i + 1] = 0.0f;
+        }
+        rx.processIq(iq);
+    }
+
+    QCOMPARE(textSpy.count(), 1);
+    QCOMPARE(textSpy.first().value(0).toString(), QStringLiteral("KG4VCF"));
+    QVERIFY(textSpy.first().value(1).toString().isEmpty());
+    tx.stop();
+    rx.stop();
+}
+
+// Fix wave (RADE EOO): FreeDV keeps encoding the microphone audio recorded
+// before the release, then sends the end-of-over frame (freedv-gui
+// src/pipeline/TxRxThread.cpp:808-847 [@a4ae053]). Speech held while the
+// decoder had the codec goes out ahead of the EOO, and queueing the EOO
+// never waits for the decoder on the main thread.
+void TestRadeChannel::endOfOverEncodesHeldSpeechFirstWithoutWaiting()
+{
+    RadeChannel ch;
+    QVERIFY(ch.start("dummy"));
+
+    // A decode on another thread holds the codec until released.
+    std::mutex gateMutex;
+    std::condition_variable gateCv;
+    bool released = false;
+    std::atomic<int> entered{0};
+    auto release = [&] {
+        {
+            std::lock_guard<std::mutex> l(gateMutex);
+            released = true;
+        }
+        gateCv.notify_all();
+    };
+    ch.setRxDecodeLockedHookForTest([&] {
+        entered.fetch_add(1);
+        std::unique_lock<std::mutex> l(gateMutex);
+        gateCv.wait(l, [&] { return released; });
+    });
+    const QByteArray iq(2048 * 2 * static_cast<int>(sizeof(float)), '\0');
+    std::thread decoder([&] { ch.processIq(iq); });
+
+    // A watchdog frees the decoder after 5 s, so a call that waited for it
+    // returns only then.
+    std::atomic<bool> watchdogFired{false};
+    std::atomic<bool> done{false};
+    std::thread watchdog([&] {
+        for (int i = 0; i < 500 && !done.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (!done.load()) {
+            watchdogFired.store(true);
+            release();
+        }
+    });
+    struct JoinOnExit {
+        std::function<void()> release;
+        std::atomic<bool>& done;
+        std::thread& a;
+        std::thread& b;
+        ~JoinOnExit()
+        {
+            done.store(true);
+            release();
+            if (a.joinable()) {
+                a.join();
+            }
+            if (b.joinable()) {
+                b.join();
+            }
+        }
+    } joinOnExit{release, done, watchdog, decoder};
+
+    QTRY_VERIFY_WITH_TIMEOUT(entered.load() == 1, 5000);
+
+    QSignalSpy modemSpy(&ch, &RadeChannel::txModemReady);
+    ch.txEncode(makeSyntheticSpeech16k(16000));
+    QVERIFY(ch.txHeldBytesForTest() > 0);
+    QCOMPARE(ch.radeTxCallCountForTest(), 0);
+
+    bool sent = false;
+    QVERIFY(ch.queueEndOfOver(QStringLiteral("KG4VCF"), [&sent] { sent = true; }));
+    const bool waited = watchdogFired.load();
+    QVERIFY(ch.endOfOverQueued());
+    QVERIFY2(!waited, "queueEndOfOver waited for the decoder");
+    QCOMPARE(modemSpy.count(), 0);
+    QVERIFY(!sent);
+
+    // The decode ends; the held speech, then the EOO, go out.
+    ch.setRxDecodeLockedHookForTest({});
+    release();
+    decoder.join();
+    QTRY_VERIFY_WITH_TIMEOUT(sent, 5000);
+    QCOMPARE(ch.txHeldBytesForTest(), 0);
+    QVERIFY2(ch.radeTxCallCountForTest() > 0,
+             qPrintable(QStringLiteral("radeTx=%1").arg(ch.radeTxCallCountForTest())));
+    QVERIFY2(modemSpy.count() == ch.radeTxCallCountForTest() + 1,
+             qPrintable(QStringLiteral("chunks=%1 radeTx=%2")
+                            .arg(modemSpy.count()).arg(ch.radeTxCallCountForTest())));
+    // The last chunk carries the EOO and the silence: at least
+    // (1152 + 1600) x 3 stereo float frames at 24 kHz.
+    const int lastFrames = modemSpy.last().value(0).toByteArray().size()
+        / (2 * static_cast<int>(sizeof(float)));
+    QVERIFY2(lastFrames >= (1152 + 1600) * 3 - 3,
+             qPrintable(QStringLiteral("%1 frames").arg(lastFrames)));
+
+    // Sent once; a dropped over sends no second one.
+    sent = false;
+    ch.dropTxAudio();
+    QCoreApplication::processEvents();
+    QVERIFY(!sent);
+    ch.stop();
 }
 
 QTEST_GUILESS_MAIN(TestRadeChannel)

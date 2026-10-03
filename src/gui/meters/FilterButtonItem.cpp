@@ -53,6 +53,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "FilterButtonItem.h"
+#include "gui/UnbuiltFeatures.h"
 
 namespace NereusSDR {
 
@@ -72,6 +73,11 @@ FilterButtonItem::FilterButtonItem(QObject* parent)
         setupButton(i, QString::fromLatin1(kFilterLabels[i]));
         button(i).onColour = QColor(0x00, 0x70, 0xc0);
     }
+    // R-R3-49: Var1 and Var2 have no NereusSDR filter behind them; not
+    // drawn until they do (the saved visibility is untouched).
+    const bool varBuilt = UnbuiltFeatures::isBuilt(UnbuiltFeature::VariableFilters);
+    setButtonHiddenUntilBuilt(10, !varBuilt);
+    setButtonHiddenUntilBuilt(11, !varBuilt);
 
     connect(this, &ButtonBoxItem::buttonClicked,
             this, &FilterButtonItem::onButtonClicked);

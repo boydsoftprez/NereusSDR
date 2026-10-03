@@ -1,0 +1,52 @@
+{
+  "description": "A public key is accepted only as a canonical 91-byte P-256 SubjectPublicKeyInfo DER with its point uncompressed (link document section 3.4): it must load as a P-256 key and encode back to the same bytes.",
+  "cases": [
+    {
+      "name": "valid",
+      "spkiHex": "3059301306072a8648ce3d020106082a8648ce3d0301070342000483f9ec272a848745d76afe551ff9a4cdbc04cc8b28e59d12042b8c3eb58167b8afe68384152d7a6c7ea7f5d5919134b5f02670a6b9a0dbfa66faa84a0e71de8f",
+      "valid": true
+    },
+    {
+      "name": "compressedPoint",
+      "spkiHex": "3039301306072a8648ce3d020106082a8648ce3d0301070322000383f9ec272a848745d76afe551ff9a4cdbc04cc8b28e59d12042b8c3eb58167b8",
+      "valid": false,
+      "why": "59 bytes: a compressed point is not the canonical form"
+    },
+    {
+      "name": "p384",
+      "spkiHex": "3076301006072a8648ce3d020106052b810400220362000485abbccb56a84219c2e6b12bf15bfca993ea35ea74af2e1d1cc93e57b15f45e62285e99049e95b7651564139f8842071f300d860060d120f9b433029050b3bbd022b9b5294fa18578c68189bb80543b6b71fe05521200aa01009bafdd46d8fdc",
+      "valid": false,
+      "why": "another curve (P-384), 120 bytes"
+    },
+    {
+      "name": "secp256k1",
+      "spkiHex": "3056301006072a8648ce3d020106052b8104000a03420004f470d7790a876fd90da706a1c160fe624ed50e27eb028ae0450646c16d0be59db4775d2a0f52f5ce0f250dfe322124c087064ca22b0fb78adf13b652f5d29c2e",
+      "valid": false,
+      "why": "another curve (secp256k1)"
+    },
+    {
+      "name": "pointNotOnCurve",
+      "spkiHex": "3059301306072a8648ce3d020106082a8648ce3d0301070342000483f9ec272a848745d76afe551ff9a4cdbc04cc8b28e59d12042b8c3eb58167b8afe68384152d7a6c7ea7f5d5919134b5f02670a6b9a0dbfa66faa84a0e71de8e",
+      "valid": false,
+      "why": "91 bytes, but the point is not on P-256"
+    },
+    {
+      "name": "bitStringUnusedBits",
+      "spkiHex": "3059301306072a8648ce3d020106082a8648ce3d0301070342010483f9ec272a848745d76afe551ff9a4cdbc04cc8b28e59d12042b8c3eb58167b8afe68384152d7a6c7ea7f5d5919134b5f02670a6b9a0dbfa66faa84a0e71de8f",
+      "valid": false,
+      "why": "91 bytes, but the BIT STRING claims unused bits"
+    },
+    {
+      "name": "trailingByte",
+      "spkiHex": "3059301306072a8648ce3d020106082a8648ce3d0301070342000483f9ec272a848745d76afe551ff9a4cdbc04cc8b28e59d12042b8c3eb58167b8afe68384152d7a6c7ea7f5d5919134b5f02670a6b9a0dbfa66faa84a0e71de8f00",
+      "valid": false,
+      "why": "92 bytes: a trailing byte after the DER"
+    },
+    {
+      "name": "truncated",
+      "spkiHex": "3059301306072a8648ce3d020106082a8648ce3d0301070342000483f9ec272a848745d76afe551ff9a4cdbc04cc8b28e59d12042b8c3eb58167b8afe68384152d7a6c7ea7f5d5919134b5f02670a6b9a0dbfa66faa84a0e71de",
+      "valid": false,
+      "why": "90 bytes"
+    }
+  ]
+}

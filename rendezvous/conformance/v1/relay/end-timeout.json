@@ -1,0 +1,30 @@
+{
+  "runs": [
+    "relay"
+  ],
+  "steps": [
+    {
+      "connect": "core"
+    },
+    {
+      "advanceMs": 9999
+    },
+    {
+      "expectSilent": "core"
+    },
+    {
+      "advanceMs": 1
+    },
+    {
+      "to": "core",
+      "binary": [
+        "83",
+        "74696d656f7574"
+      ]
+    },
+    {
+      "expectClosed": "core",
+      "code": 1000
+    }
+  ]
+}

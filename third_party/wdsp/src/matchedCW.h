@@ -69,10 +69,10 @@ extern void setGain_matched (MATCHED a, double gain);
 
 extern void CalcMatchedFilter(MATCHED a, double f_center, double bandwidth, double gain);
 
-extern void SetRXAMatchedRun (int channel, int run);
+extern __declspec (dllexport) void SetRXAMatchedRun (int channel, int run);
 
-extern void SetRXAMatchedFreqs (int channel, double f_center, double bandwidth);
+extern __declspec (dllexport) void SetRXAMatchedFreqs (int channel, double f_center, double bandwidth);
 
-extern void SetRXAMatchedGain (int channel, double gain);
+extern __declspec (dllexport) void SetRXAMatchedGain (int channel, double gain);
 
 #endif

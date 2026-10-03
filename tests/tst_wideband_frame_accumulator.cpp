@@ -59,6 +59,36 @@ private slots:
         const auto frame = spy.first().first().value<QVector<float>>();
         QCOMPARE(frame.size(), 32 * 512);  // full-size frame, tail zero-padded
     }
+
+    void direct_frame_observer_can_begin_the_next_burst()
+    {
+        WidebandFrameAccumulator acc;
+        QSignalSpy spy(&acc, &WidebandFrameAccumulator::frameReady);
+        const QByteArray oldPayload(1024, char(0x10));
+        const QByteArray newPayload(1024, char(0x20));
+        bool firstFrame = true;
+        connect(&acc, &WidebandFrameAccumulator::frameReady, &acc,
+                [&acc, &firstFrame, &newPayload](const QVector<float>&) {
+            if (firstFrame) {
+                firstFrame = false;
+                acc.pushPacket(0, newPayload);
+            }
+        });
+        for (int seq = 0; seq < 32; ++seq) {
+            acc.pushPacket(seq, oldPayload);
+        }
+        QCOMPARE(spy.count(), 1);
+        for (int seq = 1; seq < 32; ++seq) {
+            acc.pushPacket(seq, newPayload);
+        }
+        QCOMPARE(spy.count(), 2);
+        const QVector<float> first = spy.first().first().value<QVector<float>>();
+        const QVector<float> second = spy.last().first().value<QVector<float>>();
+        QCOMPARE(first.first(), float(0x1010) / 32768.0f);
+        QCOMPARE(first.last(), first.first());
+        QCOMPARE(second.first(), float(0x2020) / 32768.0f);
+        QCOMPARE(second.last(), second.first());
+    }
 };
 
 QTEST_MAIN(TestWidebandFrameAccumulator)

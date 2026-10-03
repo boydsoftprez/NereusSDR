@@ -1,0 +1,7 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "nameplate.claim"
+  },
+  "decodes": true
+}

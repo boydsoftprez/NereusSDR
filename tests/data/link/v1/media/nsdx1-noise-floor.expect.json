@@ -1,0 +1,21 @@
+{
+    "codec": "nsdx1",
+    "expect": {
+        "accepted": true,
+        "context": {
+            "contextGeneration": 1,
+            "endpointId": 1,
+            "maxDbm": -40,
+            "minDbm": -140,
+            "traceSamples": 32
+        },
+        "contextGeneration": 1,
+        "encoderSequence": 2,
+        "endpointId": 1,
+        "noiseFloorDbm": -126.75,
+        "reason": "none",
+        "tolerance": {
+            "dbm": 0.01
+        }
+    }
+}

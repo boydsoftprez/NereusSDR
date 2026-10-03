@@ -61,6 +61,9 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from header_block import HEADER_WINDOW, header_text  # noqa: E402
+
 REPO = Path(__file__).resolve().parent.parent
 PROVENANCE = REPO / "docs" / "attribution" / "THETIS-PROVENANCE.md"
 AETHERSDR_RECONCILIATION = REPO / "docs" / "attribution" / "aethersdr-reconciliation.md"
@@ -85,8 +88,9 @@ MARKERS_BY_KIND = {
     ],
 }
 
-# Header must appear within this many lines of top of file
-HEADER_WINDOW = 160
+# Header must appear in the file's leading comment block, read whole
+# however long it grows, and never less than HEADER_WINDOW lines
+# (scripts/header_block.py).
 
 # Opt-out marker for sibling files that intentionally carry no port header
 # (e.g. pure Qt scaffolding whose semantics don't derive from the cited
@@ -130,21 +134,16 @@ SAMPHIRE_AUTHORED_SOURCES = {
 # added upstream fails the check until a human confirms the exemption is
 # intentional.
 #
-# Documented in docs/attribution/WDSP-PROVENANCE.md under "10 files have
-# no license headers (non-copyrightable or build infrastructure)".
+# Documented in docs/attribution/WDSP-PROVENANCE.md under "License census".
+# Pinned WDSP 2.10 gives calculus.c/.h full headers; FDnoiseIQ and fastmath
+# are no longer in this tree. New Nereus ABI headers carry their own grants.
 WDSP_HEADER_EXEMPTIONS = {
-    # Data tables (lookup arrays, not copyrightable expression)
-    "calculus.c",
-    "calculus.h",
-    "FDnoiseIQ.c",
-    "FDnoiseIQ.h",
     # MSVC IDE artifacts (generated, no human authorship)
     "resource.h",
     "resource1.h",
     # Minimal wrappers (version stubs, empty headers)
     "version.c",
     "version.h",
-    "fastmath.h",
     # FFTW3 third-party header vendored into WDSP (GPLv2-or-later; the
     # full GPLv2 text lives at third_party/fftw3/COPYING, and the
     # standalone FFTW3 provenance doc is
@@ -236,8 +235,21 @@ def list_wdsp_sources():
 
 
 def check_required_markers(path: Path, markers):
-    head = "\n".join(path.read_text(errors="replace").splitlines()[:HEADER_WINDOW])
+    head = attribution_header_text(path)
     return [m for m in markers if m not in head]
+
+
+def attribution_header_text(path: Path) -> str:
+    """JSON Setup resources share a verbatim upstream header in HEADERS.md."""
+    if (path.suffix == ".json" and path.parent.name == "setup"
+            and path.parent.parent.name == "resources"):
+        headers = path.parent / "HEADERS.md"
+        if not headers.is_file():
+            return ""
+        text = headers.read_text(errors="replace")
+        # A shared header only covers resources explicitly named in it.
+        return text if f"`{path.name}`" in text else ""
+    return header_text(path.read_text(errors="replace"), path.suffix)
 
 
 def check_orphan_pair(rel: str, listed) -> Optional[str]:
@@ -257,9 +269,7 @@ def check_orphan_pair(rel: str, listed) -> Optional[str]:
             return None  # sibling also cited — OK
         # Check for opt-out marker in the sibling
         try:
-            head = "\n".join(
-                sib_path.read_text(errors="replace").splitlines()[:HEADER_WINDOW]
-            )
+            head = header_text(sib_path.read_text(errors="replace"), sib_path.suffix)
         except Exception:
             head = ""
         if OPT_OUT_MARKER in head:
@@ -281,7 +291,7 @@ def check_samphire_marker(path: Path, source_cell: str) -> Optional[str]:
     cited = [s for s in SAMPHIRE_AUTHORED_SOURCES if s in source_cell]
     if not cited:
         return None
-    head = "\n".join(path.read_text(errors="replace").splitlines()[:HEADER_WINDOW])
+    head = attribution_header_text(path)
     if "MW0LGE" in head:
         return None
     return (
@@ -350,6 +360,14 @@ def verify_aethersdr_kind():
 
 def verify_wdsp_kind():
     paths = list_wdsp_sources()
+    # Pinned 2.10 also has source-derived C++ boundary adapters. Keep their
+    # grants under the WDSP gate rather than inventing Thetis attribution.
+    adapters = [
+        "src/core/dsp/DspAssetValidation.cpp",
+        "src/core/dsp/Ps3DisplayAdapter.cpp",
+        "src/core/dsp/Ps3DisplayAdapter.h",
+    ]
+    paths.extend(adapters)
     if not paths:
         print(f"ERROR: no sources found under {WDSP_SRC_DIR}", file=sys.stderr)
         return None
@@ -357,7 +375,9 @@ def verify_wdsp_kind():
     failures = 0
     for rel in paths:
         path = REPO / rel
-        missing = check_required_markers(path, markers)
+        required = markers + (["Ported from TAPR", "Modification history (NereusSDR)"]
+                              if rel in adapters else [])
+        missing = check_required_markers(path, required)
         if missing:
             failures += 1
             print(f"FAIL [wdsp] {rel} — missing-markers: {', '.join(missing)}")

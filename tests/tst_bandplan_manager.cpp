@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <QtTest>
+#include <QDir>
+#include <QFile>
+#include <QLoggingCategory>
 #include <QSignalSpy>
 
 #include "models/BandPlan.h"
@@ -19,6 +22,12 @@ private slots:
     void segment_defaultIsEmpty();
     void spot_defaultIsEmpty();
 
+    // R-IOS-27, R-IOS-11: the lowest licence class, one rule for the
+    // band-plan strip and the station catalogue
+    void lowestLicenceClass_data();
+    void lowestLicenceClass();
+    void lowestLicenceClass_stripLabelsUnchanged();
+
     // Loader: bundled resources
     void loadPlans_findsAllFiveRegions();
     void loadPlans_arrlUsHasSegmentsAndSpots();
@@ -31,11 +40,18 @@ private slots:
 
     // Default selection
     void loadPlans_defaultsToArrlUs();
+
+    // R-R3-10 / R-R3-21: a Core-only program loads the full set
+    void coreOnlyLink_hasNoGuiResources();
+    void coreOnlyLink_bandPlansMatchSourceFiles();
 };
 
 void TestBandPlanManager::initTestCase()
 {
     // Resource init runs at static-init time; nothing to do here.
+    // loadPlans() logs its count once per call (the nereusd start-up
+    // proof, R-R3-10); keep that line out of the per-case output.
+    QLoggingCategory::setFilterRules(QStringLiteral("nereussdr.bandplan.info=false"));
 }
 
 void TestBandPlanManager::segment_defaultIsEmpty()
@@ -52,6 +68,58 @@ void TestBandPlanManager::spot_defaultIsEmpty()
     BandSpot s;
     QCOMPARE(s.freqMhz, 0.0);
     QVERIFY(s.label.isEmpty());
+}
+
+void TestBandPlanManager::lowestLicenceClass_data()
+{
+    QTest::addColumn<QString>("licence");
+    QTest::addColumn<QString>("expected");
+    QTest::newRow("T,G,E") << QStringLiteral("T,G,E") << QStringLiteral("Tech");
+    QTest::newRow("E,G,T") << QStringLiteral("E,G,T") << QStringLiteral("Tech");
+    QTest::newRow("E,G")   << QStringLiteral("E,G")   << QStringLiteral("General");
+    QTest::newRow("E")     << QStringLiteral("E")     << QStringLiteral("Extra");
+    QTest::newRow("empty") << QString()               << QString();
+    QTest::newRow("unknown code") << QStringLiteral("A") << QString();
+}
+
+void TestBandPlanManager::lowestLicenceClass()
+{
+    QFETCH(QString, licence);
+    QFETCH(QString, expected);
+    QCOMPARE(NereusSDR::lowestLicenceClass(licence), expected);
+}
+
+// The strip's label for every segment of every bundled plan is what the
+// rule SpectrumWidget held inline before the move gave: "<label> <class>"
+// when there is room and a class, the bare label otherwise.
+void TestBandPlanManager::lowestLicenceClass_stripLabelsUnchanged()
+{
+    const auto inlineRule = [](const QString& lic) {
+        QString lowestClass;
+        if      (lic.contains(QLatin1Char('T'))) { lowestClass = QStringLiteral("Tech"); }
+        else if (lic.contains(QLatin1Char('G'))) { lowestClass = QStringLiteral("General"); }
+        else if (lic == QLatin1String("E"))      { lowestClass = QStringLiteral("Extra"); }
+        return lowestClass;
+    };
+    const auto stripLabel = [](const QString& label, const QString& lowestClass) {
+        return lowestClass.isEmpty() ? label : QStringLiteral("%1 %2").arg(label, lowestClass);
+    };
+
+    BandPlanManager mgr;
+    mgr.loadPlans();
+    int checked = 0;
+    for (const BandPlanManager::PlanData& plan : mgr.plans()) {
+        for (const BandSegment& seg : plan.segments) {
+            QCOMPARE(stripLabel(seg.label, NereusSDR::lowestLicenceClass(seg.license)),
+                     stripLabel(seg.label, inlineRule(seg.license)));
+            ++checked;
+        }
+    }
+    QVERIFY(checked > 0);
+
+    // The label the phone asked for, as the desktop draws it.
+    QCOMPARE(stripLabel(QStringLiteral("PHONE"), NereusSDR::lowestLicenceClass(QStringLiteral("E,G"))),
+             QStringLiteral("PHONE General"));
 }
 
 void TestBandPlanManager::loadPlans_findsAllFiveRegions()
@@ -136,6 +204,43 @@ void TestBandPlanManager::loadPlans_defaultsToArrlUs()
     mgr.loadPlans();
     QVERIFY(!mgr.activePlanName().isEmpty());
     QVERIFY(!mgr.segments().isEmpty());
+}
+
+// This binary links NereusCore alone (CORE_ONLY in tests/CMakeLists.txt),
+// like nereusd. The GUI library's resources must therefore be absent: if
+// they were present, a passing band-plan load could still be coming from
+// NereusSDRLib, which a Linux --as-needed link drops.
+void TestBandPlanManager::coreOnlyLink_hasNoGuiResources()
+{
+    QVERIFY(!QFile::exists(QStringLiteral(":/icons/NereusSDR.png")));
+    QVERIFY(!QFile::exists(QStringLiteral(":/meters/ananMM.png")));
+}
+
+// The Core carries exactly the band plans the app always shipped: every
+// file in resources/bandplans, under the same name, with the same bytes,
+// and nothing else.
+void TestBandPlanManager::coreOnlyLink_bandPlansMatchSourceFiles()
+{
+    const QDir srcDir(QStringLiteral(NEREUS_SOURCE_DIR "/resources/bandplans"));
+    const QStringList srcFiles =
+        srcDir.entryList({QStringLiteral("*.json")}, QDir::Files, QDir::Name);
+    const QStringList resFiles = QDir(QStringLiteral(":/bandplans"))
+        .entryList({QStringLiteral("*.json")}, QDir::Files, QDir::Name);
+
+    QCOMPARE(srcFiles.size(), 5);
+    QCOMPARE(resFiles, srcFiles);
+
+    for (const QString& name : srcFiles) {
+        QFile src(srcDir.filePath(name));
+        QFile res(QStringLiteral(":/bandplans/") + name);
+        QVERIFY2(src.open(QIODevice::ReadOnly), qPrintable(name));
+        QVERIFY2(res.open(QIODevice::ReadOnly), qPrintable(name));
+        QVERIFY2(res.readAll() == src.readAll(), qPrintable(name));
+    }
+
+    BandPlanManager mgr;
+    mgr.loadPlans();
+    QCOMPARE(mgr.availablePlans().size(), srcFiles.size());
 }
 
 QTEST_MAIN(TestBandPlanManager)

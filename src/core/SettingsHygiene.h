@@ -56,6 +56,11 @@ public:
     void validate(const QString& mac, const BoardCapabilities& caps);
 
     QVector<Issue> issues() const;
+    // Remote window: replace the local display copy only after a bounded,
+    // current-session Core reply has been validated by StationClient.
+    void replaceRemoteIssues(const QVector<Issue>& issues);
+    void setRemoteUnavailable(const QString& reason);
+    QString remoteUnavailableReason() const { return m_remoteUnavailableReason; }
     int  issueCount() const;
     bool hasIssues() const;
 
@@ -74,6 +79,7 @@ signals:
 
 private:
     QVector<Issue> m_issues;
+    QString m_remoteUnavailableReason;
 
     // ── Individual validation rules ────────────────────────────────────────
 

@@ -3,6 +3,7 @@
 #include "core/LogCategories.h"
 #include "core/SupportBundle.h"
 #include "models/RadioModel.h"
+#include "core/session/IStationLink.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -16,6 +17,8 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QMessageBox>
+#include <QHideEvent>
+#include <QShowEvent>
 
 namespace NereusSDR {
 
@@ -29,9 +32,134 @@ SupportDialog::SupportDialog(RadioModel* model, QWidget* parent)
 
     buildUI();
     refreshLogViewer();
+
+    m_coreBundleTimeout.setSingleShot(true);
+    m_coreBundleTimeout.setInterval(kCoreBundleWaitMs);
+    connect(&m_coreBundleTimeout, &QTimer::timeout, this, [this]() {
+        if (!m_waitingForCore) {
+            return;
+        }
+        m_waitingForCore = false;
+        writeBundle(true, {}, QStringLiteral("The Core did not send its support bundle in time."));
+    });
+    if (m_radioModel != nullptr && isRemote()) {
+        connect(m_radioModel, &RadioModel::logCategoriesChanged, this,
+                [this](const QString&) { syncCoreCategories(); });
+        connect(m_radioModel, &RadioModel::stationSupportAvailabilityChanged, this,
+                [this]() { syncCoreCategories(); refreshCoreLogViewer(); });
+        connect(m_radioModel, &RadioModel::stationCoreLogChanged, this,
+                &SupportDialog::refreshCoreLogViewer);
+        connect(m_radioModel, &RadioModel::stationLogCategoriesRefused, this,
+                [this](const QString& reason) {
+            m_statusLabel->setText(reason);
+            syncCoreCategories();
+        });
+        connect(m_radioModel, &RadioModel::stationSupportBundleFinished, this,
+                [this](quint32 commandId, bool accepted, const QString& reason,
+                       const QByteArray& bundle) {
+            if (!m_waitingForCore || commandId != m_coreBundleCommand) {
+                return;
+            }
+            m_waitingForCore = false;
+            m_coreBundleTimeout.stop();
+            writeBundle(true, accepted ? bundle : QByteArray(),
+                        accepted ? QString()
+                                 : (reason.isEmpty()
+                                        ? QStringLiteral("The Core did not send its support "
+                                                         "bundle.")
+                                        : reason));
+        });
+        syncCoreCategories();
+    }
 }
 
-SupportDialog::~SupportDialog() = default;
+bool SupportDialog::isRemote() const
+{
+    return m_radioModel != nullptr && m_radioModel->role() == RadioModel::Role::Remote;
+}
+
+void SupportDialog::showEvent(QShowEvent* event)
+{
+    QDialog::showEvent(event);
+    if (isRemote() && !m_holdingCoreLog) {
+        m_holdingCoreLog = true;
+        m_radioModel->addStationCoreLogViewer();
+        refreshCoreLogViewer();
+    }
+}
+
+void SupportDialog::hideEvent(QHideEvent* event)
+{
+    QDialog::hideEvent(event);
+    if (m_holdingCoreLog) {
+        m_holdingCoreLog = false;
+        m_radioModel->removeStationCoreLogViewer();
+    }
+}
+
+void SupportDialog::syncCoreCategories()
+{
+    if (!isRemote()) {
+        return;
+    }
+    const QString reason = m_radioModel->stationSupportUnavailableReason();
+    const QStringList on = m_radioModel->logCategories().split(QLatin1Char(','),
+                                                              Qt::SkipEmptyParts);
+    for (auto it = m_categoryChecks.begin(); it != m_categoryChecks.end(); ++it) {
+        it.value()->blockSignals(true);
+        it.value()->setChecked(on.contains(it.key()));
+        it.value()->blockSignals(false);
+        it.value()->setEnabled(reason.isEmpty());
+    }
+    m_enableAllBtn->setEnabled(reason.isEmpty());
+    m_disableAllBtn->setEnabled(reason.isEmpty());
+    m_categoryReason->setText(reason);
+    m_categoryReason->setVisible(!reason.isEmpty());
+}
+
+void SupportDialog::sendCoreCategories()
+{
+    QStringList on;
+    for (auto it = m_categoryChecks.cbegin(); it != m_categoryChecks.cend(); ++it) {
+        if (it.value()->isChecked()) {
+            on.append(it.key());
+        }
+    }
+    IStationLink* link = m_radioModel->stationLink();
+    const IStationLink::CommandOutcome outcome = link != nullptr
+        ? link->requestLogCategories(on.join(QLatin1Char(',')))
+        : IStationLink::CommandOutcome{false, QStringLiteral("Connect to the Core to change its "
+                                                             "logging.")};
+    if (!outcome.sent) {
+        m_statusLabel->setText(outcome.reason);
+        syncCoreCategories();
+    }
+}
+
+void SupportDialog::refreshCoreLogViewer()
+{
+    if (m_coreLogViewer == nullptr) {
+        return;
+    }
+    const QString reason = m_radioModel->stationSupportUnavailableReason();
+    if (!reason.isEmpty()) {
+        m_coreLogViewer->setPlainText(reason);
+        return;
+    }
+    const QStringList lines = m_radioModel->stationCoreLog();
+    m_coreLogViewer->setPlainText(lines.isEmpty()
+                                      ? QStringLiteral("Reading the Core's log...")
+                                      : lines.join(QLatin1Char('\n')));
+    m_coreLogViewer->moveCursor(QTextCursor::End);
+}
+
+SupportDialog::~SupportDialog()
+{
+    // A dialog closed with its window still holds the Core's log.
+    if (m_holdingCoreLog && m_radioModel != nullptr) {
+        m_radioModel->removeStationCoreLogViewer();
+    }
+}
 
 void SupportDialog::buildUI()
 {
@@ -39,7 +167,9 @@ void SupportDialog::buildUI()
     mainLayout->setSpacing(10);
 
     // --- Diagnostic Logging Categories ---
-    auto* catGroup = new QGroupBox(QStringLiteral("Diagnostic Logging"), this);
+    auto* catGroup = new QGroupBox(isRemote() ? QStringLiteral("The Core's Diagnostic Logging")
+                                              : QStringLiteral("Diagnostic Logging"),
+                                   this);
     auto* catGrid = new QGridLayout(catGroup);
     catGrid->setSpacing(6);
 
@@ -71,18 +201,24 @@ void SupportDialog::buildUI()
     auto* catBtnLayout = new QHBoxLayout();
     catBtnLayout->addStretch();
 
-    auto* enableAllBtn = new QPushButton(QStringLiteral("Enable All"), catGroup);
-    enableAllBtn->setAutoDefault(false);
-    connect(enableAllBtn, &QPushButton::clicked, this, &SupportDialog::onEnableAll);
-    catBtnLayout->addWidget(enableAllBtn);
+    m_enableAllBtn = new QPushButton(QStringLiteral("Enable All"), catGroup);
+    m_enableAllBtn->setAutoDefault(false);
+    connect(m_enableAllBtn, &QPushButton::clicked, this, &SupportDialog::onEnableAll);
+    catBtnLayout->addWidget(m_enableAllBtn);
 
-    auto* disableAllBtn = new QPushButton(QStringLiteral("Disable All"), catGroup);
-    disableAllBtn->setAutoDefault(false);
-    connect(disableAllBtn, &QPushButton::clicked, this, &SupportDialog::onDisableAll);
-    catBtnLayout->addWidget(disableAllBtn);
+    m_disableAllBtn = new QPushButton(QStringLiteral("Disable All"), catGroup);
+    m_disableAllBtn->setAutoDefault(false);
+    connect(m_disableAllBtn, &QPushButton::clicked, this, &SupportDialog::onDisableAll);
+    catBtnLayout->addWidget(m_disableAllBtn);
 
     catBtnLayout->addStretch();
     catGrid->addLayout(catBtnLayout, row + 1, 0, 1, 3);
+    // Remote window: why the Core's categories cannot change now.
+    m_categoryReason = new QLabel(catGroup);
+    m_categoryReason->setObjectName(QStringLiteral("supportCategoryReason"));
+    m_categoryReason->setWordWrap(true);
+    m_categoryReason->setVisible(false);
+    catGrid->addWidget(m_categoryReason, row + 2, 0, 1, 3);
     mainLayout->addWidget(catGroup);
 
     // --- Log File Info ---
@@ -118,6 +254,21 @@ void SupportDialog::buildUI()
         .arg(Style::kStatusBarBg, Style::kBorderSubtle, Style::kAccent));
     mainLayout->addWidget(m_logViewer, 1);  // stretch factor 1
 
+    // Remote window: the Core's recent log below this computer's.
+    if (isRemote()) {
+        m_coreLogLabel = new QLabel(QStringLiteral("The Core's recent log"), this);
+        m_coreLogLabel->setStyleSheet(
+            QStringLiteral("QLabel { color: %1; font-size: 11px; }").arg(Style::kTextScale));
+        mainLayout->addWidget(m_coreLogLabel);
+        m_coreLogViewer = new QPlainTextEdit(this);
+        m_coreLogViewer->setObjectName(QStringLiteral("supportCoreLogViewer"));
+        m_coreLogViewer->setReadOnly(true);
+        m_coreLogViewer->setMaximumBlockCount(kMaxLogViewLines);
+        m_coreLogViewer->setFont(QFont(QStringLiteral("Consolas"), 9));
+        m_coreLogViewer->setStyleSheet(m_logViewer->styleSheet());
+        mainLayout->addWidget(m_coreLogViewer, 1);
+    }
+
     // --- Action Buttons ---
     auto* btnLayout = new QHBoxLayout();
 
@@ -139,6 +290,8 @@ void SupportDialog::buildUI()
     btnLayout->addStretch();
 
     auto* bundleBtn = new QPushButton(QStringLiteral("Create Support Bundle"), this);
+    m_bundleBtn = bundleBtn;
+    bundleBtn->setObjectName(QStringLiteral("supportCreateBundle"));
     bundleBtn->setAutoDefault(false);
     // §D: bg = Style::kAccent. Hover #0096b7 = accent-dark; no canonical match.
     bundleBtn->setStyleSheet(
@@ -195,20 +348,16 @@ void SupportDialog::buildUI()
              Style::kOverlayBorder, Style::kTextPrimary));
 }
 
-void SupportDialog::refreshLogViewer()
+QString SupportDialog::logTailText()
 {
-    updateLogInfo();
-
     QString path = LogManager::instance().logFilePath();
     if (path.isEmpty()) {
-        m_logViewer->setPlainText(QStringLiteral("No log file found."));
-        return;
+        return QStringLiteral("No log file found.");
     }
 
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        m_logViewer->setPlainText(QStringLiteral("Could not open log file."));
-        return;
+        return QStringLiteral("Could not open log file.");
     }
 
     // Read tail if file is large
@@ -218,8 +367,14 @@ void SupportDialog::refreshLogViewer()
         f.readLine();  // Skip partial first line
     }
 
-    QString content = QString::fromUtf8(f.readAll());
-    m_logViewer->setPlainText(content);
+    return QString::fromUtf8(f.readAll());
+}
+
+void SupportDialog::refreshLogViewer()
+{
+    updateLogInfo();
+
+    m_logViewer->setPlainText(logTailText());
 
     // Scroll to bottom
     auto cursor = m_logViewer->textCursor();
@@ -237,7 +392,9 @@ void SupportDialog::updateLogInfo()
         m_logSizeLabel->setText(QString());
     } else {
         // Show just the filename, not full path
-        m_logPathLabel->setText(QStringLiteral("Log: %1").arg(QFileInfo(path).fileName()));
+        m_logPathLabel->setText(
+            (isRemote() ? QStringLiteral("This computer's log: %1") : QStringLiteral("Log: %1"))
+                .arg(QFileInfo(path).fileName()));
 
         qint64 size = mgr.logFileSize();
         if (size < 1024) {
@@ -255,6 +412,9 @@ void SupportDialog::updateLogInfo()
 void SupportDialog::onRefresh()
 {
     refreshLogViewer();
+    if (isRemote()) {
+        m_radioModel->refreshStationCoreLog();
+    }
     m_statusLabel->setText(QStringLiteral("Log refreshed."));
 }
 
@@ -273,6 +433,16 @@ void SupportDialog::onOpenLogFolder()
 
 void SupportDialog::onEnableAll()
 {
+    if (isRemote()) {
+        for (QCheckBox* box : std::as_const(m_categoryChecks)) {
+            box->blockSignals(true);
+            box->setChecked(true);
+            box->blockSignals(false);
+        }
+        sendCoreCategories();
+        m_statusLabel->setText(QStringLiteral("All of the Core's diagnostic logging enabled."));
+        return;
+    }
     LogManager::instance().setAllEnabled(true);
     for (auto it = m_categoryChecks.begin(); it != m_categoryChecks.end(); ++it) {
         it.value()->blockSignals(true);
@@ -284,6 +454,16 @@ void SupportDialog::onEnableAll()
 
 void SupportDialog::onDisableAll()
 {
+    if (isRemote()) {
+        for (QCheckBox* box : std::as_const(m_categoryChecks)) {
+            box->blockSignals(true);
+            box->setChecked(false);
+            box->blockSignals(false);
+        }
+        sendCoreCategories();
+        m_statusLabel->setText(QStringLiteral("All of the Core's diagnostic logging disabled."));
+        return;
+    }
     LogManager::instance().setAllEnabled(false);
     for (auto it = m_categoryChecks.begin(); it != m_categoryChecks.end(); ++it) {
         it.value()->blockSignals(true);
@@ -295,11 +475,48 @@ void SupportDialog::onDisableAll()
 
 void SupportDialog::onCreateBundle()
 {
+    if (m_waitingForCore || !m_bundleBtn->isEnabled()) {
+        return;
+    }
+    m_bundleBtn->setEnabled(false);
+    if (!isRemote()) {
+        m_statusLabel->setText(QStringLiteral("Creating support bundle..."));
+        writeBundle(false, {}, {});
+        return;
+    }
+    // A remote window: the Core's bundle first, then this computer's with
+    // it under core/.
+    IStationLink* link = m_radioModel->stationLink();
+    const IStationLink::CommandOutcome outcome = link != nullptr
+        ? link->requestSupportBundle()
+        : IStationLink::CommandOutcome{false, QStringLiteral("This window was not connected to "
+                                                             "the Core.")};
+    if (!outcome.sent) {
+        m_statusLabel->setText(QStringLiteral("Creating support bundle..."));
+        writeBundle(true, {}, outcome.reason);
+        return;
+    }
+    m_coreBundleCommand = outcome.commandId;
+    m_waitingForCore = true;
+    m_coreBundleTimeout.start();
+    m_statusLabel->setText(QStringLiteral("Asking the Core for its support bundle..."));
+}
+
+void SupportDialog::writeBundle(bool withCore, const QByteArray& coreBundle,
+                                const QString& coreReason)
+{
     m_statusLabel->setText(QStringLiteral("Creating support bundle..."));
-    QApplication::processEvents();
+    SupportBundle::CoreAttachment core;
+    core.wanted = withCore;
+    core.bundle = coreBundle;
+    core.reason = coreReason;
+    SupportBundle::writeBundleAsync(this, SupportBundle::gatherInputs(m_radioModel), core,
+                                    [this](const QString& path) { bundleWritten(path); });
+}
 
-    QString path = SupportBundle::createBundle(m_radioModel);
-
+void SupportDialog::bundleWritten(const QString& path)
+{
+    m_bundleBtn->setEnabled(true);
     if (path.isEmpty()) {
         m_statusLabel->setText(QStringLiteral("Failed to create support bundle."));
         return;
@@ -340,6 +557,12 @@ void SupportDialog::onCreateBundle()
 
 void SupportDialog::onCategoryToggled(const QString& id, bool on)
 {
+    if (isRemote()) {
+        sendCoreCategories();
+        m_statusLabel->setText(QStringLiteral("The Core's %1 logging %2.")
+            .arg(id, on ? QStringLiteral("enabled") : QStringLiteral("disabled")));
+        return;
+    }
     LogManager::instance().setEnabled(id, on);
     m_statusLabel->setText(QStringLiteral("%1 logging %2.")
         .arg(id, on ? QStringLiteral("enabled") : QStringLiteral("disabled")));

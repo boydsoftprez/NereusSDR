@@ -43,6 +43,7 @@
 #include <QtTest/QtTest>
 
 #include "core/AppSettings.h"
+#include "core/CfcProfile.h"
 #include "models/TransmitModel.h"
 
 using namespace NereusSDR;
@@ -302,6 +303,78 @@ private slots:
         QSignalSpy spy(&t, &TransmitModel::cfcParaEqDataChanged);
         t.setCfcParaEqData(QString());  // already empty
         QCOMPARE(spy.count(), 0);
+    }
+
+    // ── A paired curve: a write it already holds is no change to it ──
+
+    // A ten-band paired curve with fractional pre-comp and compression, so
+    // a write of the rounded value would snap them if it re-encoded.
+    static QString fractionalPairedCurve()
+    {
+        CfcProfile::Profile p;
+        for (int i = 0; i < 10; ++i) {
+            p.f.push_back(200.0 * (i + 1));
+            p.postF.push_back(200.0 * (i + 1));
+            p.g.push_back(3.4 + i);
+            p.e.push_back(-2.0);
+            p.qg.push_back(2.0);
+            p.qe.push_back(2.0);
+        }
+        p.minHz = p.postMinHz = 200.0;
+        p.maxHz = p.postMaxHz = 2000.0;
+        p.precompDb = 6.4;
+        p.postEqGainDb = -3.0;
+        return CfcProfile::encode(p);
+    }
+
+    void pairedCurve_precompOfItsRoundedValue_keepsTheCurve()
+    {
+        TransmitModel t;
+        const QString curve = fractionalPairedCurve();
+        QVERIFY(!curve.isEmpty());
+        t.setCfcParaEqData(curve);
+        QCOMPARE(t.cfcPrecompDb(), 6);
+        QSignalSpy blobSpy(&t, &TransmitModel::cfcParaEqDataChanged);
+        t.setCfcPrecompDb(6);
+        QCOMPARE(t.cfcParaEqData(), curve);
+        QCOMPARE(blobSpy.count(), 0);
+    }
+
+    void pairedCurve_compressionJsonOfItsRoundedValues_keepsTheCurve()
+    {
+        TransmitModel t;
+        const QString curve = fractionalPairedCurve();
+        QVERIFY(!curve.isEmpty());
+        t.setCfcParaEqData(curve);
+        const QString rounded = t.cfcCompressionJson();
+        QCOMPARE(t.cfcCompression(0), 3);
+        QSignalSpy blobSpy(&t, &TransmitModel::cfcParaEqDataChanged);
+        t.setCfcCompressionJson(rounded);
+        QCOMPARE(t.cfcParaEqData(), curve);
+        QCOMPARE(blobSpy.count(), 0);
+    }
+
+    // A restored Thetis profile can hold its integer pre-comp apart from
+    // the curve (the legacy panel and frmCFCConfig are independent). A
+    // write of the curve's rounded value is a real change to the integer:
+    // it follows, and the curve stays byte for byte.
+    void restoredMirrorApartFromTheCurve_followsAWriteOfTheCurvesValue()
+    {
+        TransmitModel t;
+        const QString curve = fractionalPairedCurve();
+        QVERIFY(!curve.isEmpty());
+        t.beginCfcProfileRestore();
+        t.setCfcParaEqData(curve);
+        t.setCfcPrecompDb(3);
+        t.endCfcProfileRestore();
+        QCOMPARE(t.cfcPrecompDb(), 3);
+        QCOMPARE(t.cfcParaEqData(), curve);
+
+        QSignalSpy precompSpy(&t, &TransmitModel::cfcPrecompDbChanged);
+        t.setCfcPrecompDb(6);
+        QCOMPARE(t.cfcPrecompDb(), 6);
+        QCOMPARE(precompSpy.count(), 1);
+        QCOMPARE(t.cfcParaEqData(), curve);
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

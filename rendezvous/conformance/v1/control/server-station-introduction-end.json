@@ -1,0 +1,10 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "introduction.end",
+    "from": "AAECAwQFBgcICQoLDA0ODw",
+    "code": "clientLeft"
+  },
+  "decodes": true
+}

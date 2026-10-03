@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+# DynamicUser=yes in the packaged unit provisions the service identity at
+# start. Do not create an account or enable/start a radio service on install.
+if [ "${1:-}" = configure ] && [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+fi
+exit 0

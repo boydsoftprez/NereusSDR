@@ -43,6 +43,42 @@
 //                 audio_volume through TransmitModel::audioVolumeChanged
 //                 to RadioModel's TX path.  J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-22 : R-R3-36 Task 7 by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. isActivationInFlight() getter for
+//                 the PC-microphone MOX admission check. NereusSDR-original;
+//                 no Thetis logic. Fix wave: isKeyingMox(), true only
+//                 around the walk's own setMox(true) call.
+//   2026-09-24 : Receiver and transmit gaps plan, Task 7 fix wave (M9),
+//                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. setTuneOffPendingFn: a start waits out a TUN-off
+//                 still completing (console.cs:44805-44813 [v2.10.3.15]).
+//                 A refused start keeps the manual key through the 200 ms
+//                 settle (M2, setup.cs:11190-11193 [v2.10.3.15]).
+//   2026-09-24 : Receiver and transmit gaps plan, Task 7 follow-up, by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. setTuneActiveFn: the refused start's settle leaves
+//                 a manual key TUN or the MOX button holds (N1).
+//                 setTuneOffFn: a start with TUN on turns TUN off through
+//                 its own path first (item 6, console.cs:44805-44813
+//                 [v2.10.3.15]).
+//   2026-09-25 : iPhone app plan Task 35 (R-IOS-13), by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 setActive(bool, const KeyerIdentity&): a remote device's
+//                 two-tone asks and keys as that device. NereusSDR-original.
+//   2026-09-29 : PA on-air gate re-review, item 5, by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code. setTxBandFn:
+//                 the PA-gain drive reads the held transmit band, as Thetis's
+//                 GainByBand(TXBand, ...) does (console.cs:46808 [v2.10.3.15]).
+//   2026-09-29 : Two-tone PA wiring, by J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code. restoreSavedPower: the FIXED
+//                 source's stop turns the PWR slider limit back on before
+//                 restoring PWR (setup.cs:11196-11201 [v2.10.3.15]).
+//   2026-09-29 : PA on-air gate branch review, Important 1, by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code. stopNow:
+//                 power off ends the test at once, with no settle wait, so
+//                 the FIXED restore lands before the connection's saves and
+//                 before the held transmit band is cleared (console.cs:27473,
+//                 27492 [v2.10.3.15]).
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived activation
@@ -54,6 +90,9 @@
 #include <QPointer>
 #include <QTimer>
 
+#include <functional>
+
+#include "core/MoxController.h"    // KeyerIdentity (Task 35)
 #include "core/WdspTypes.h"
 #include "models/TransmitModel.h"  // for DrivePowerSource enum
 
@@ -214,6 +253,33 @@ public:
     // in Phase L.  Default true so unit tests don't have to flip it.
     void setPowerOn(bool on);
 
+    // setTuneOffPendingFn: Task 7 fix wave, M9. RadioModel supplies "a
+    // TUN-off has started and not completed" (the tune tone may still run).
+    // setActive(true) then waits kTuneReleaseSettleMs, and again until it
+    // has completed, before keying, as Thetis chk2TONE_CheckedChanged waits
+    // 300 ms after turning TUN off (console.cs:44805-44813 [v2.10.3.15]).
+    // Unset: no wait.
+    void setTuneOffPendingFn(std::function<bool()> fn);
+
+    // setTuneActiveFn: Task 7 follow-up. RadioModel supplies "TUN is on"
+    // (from setTune(true) until its TUN-off completes). A refused start's
+    // settle does not clear a manual key while TUN holds it (N1). Unset:
+    // TUN is taken as off.
+    void setTuneActiveFn(std::function<bool()> fn);
+
+    // setTuneOffFn: Task 7 follow-up, item 6. RadioModel supplies TUN's own
+    // off path (setTune(false)). setActive(true) with TUN on calls it, waits
+    // kTuneReleaseSettleMs and until the TUN-off completes, then keys, as
+    // Thetis chk2TONE_CheckedChanged does (console.cs:44805-44813
+    // [v2.10.3.15]). Unset: TUN is not turned off (a bare MOX release).
+    void setTuneOffFn(std::function<void()> fn);
+
+    // setTxBandFn: RadioModel supplies the transmit band the drive math
+    // reads (Thetis TXBand, held while keyed). The start's
+    // SetPowerUsingTargetDBM uses GainByBand(TXBand, new_pwr)
+    // (console.cs:46808 [v2.10.3.15]). Unset: the slice's band.
+    void setTxBandFn(std::function<Band()> fn);
+
     // ── Test seam ──────────────────────────────────────────────────────────
     // Override the default settle / Freq2-delay timer durations.  FOR
     // TESTING ONLY — production code must use the kXxx defaults.
@@ -222,6 +288,18 @@ public:
 
     // ── Getters ────────────────────────────────────────────────────────────
     bool isActive() const noexcept { return m_active; }
+    // R-R3-36: true from setActive(true) until the activation walk commits
+    // m_active or is abandoned. isActive() is still false while the walk's
+    // own setMox(true) runs the MOX pre-check, so the PC-microphone
+    // admission check reads this to recognise two-tone keying.
+    bool isActivationInFlight() const noexcept { return m_activationInFlight; }
+    // R-R3-36: true only while the activation walk's own setMox(true) call
+    // runs, so the MOX pre-check can tell two-tone's key from any other
+    // press. Unlike isActivationInFlight() it is false through the MOX
+    // release settle, when a voice press may arrive.
+    bool isKeyingMox() const noexcept { return m_keyingMox; }
+    // Task 35: whose two-tone this is (valid while active or starting).
+    const KeyerIdentity& keyer() const noexcept { return m_keyer; }
 
 public slots:
     // setActive — canonical entry point.  Drives the full activation /
@@ -230,6 +308,17 @@ public slots:
     // Idempotent: setActive(true) when already active is a no-op.  Same
     // for setActive(false) when already inactive.
     void setActive(bool on);
+    // iPhone app plan Task 35 (R-IOS-13): the same start, asked and keyed
+    // for `keyer` (a remote device's two-tone). setActive(true) alone is
+    // the station device's. Off ends it as setActive(false).
+    void setActive(bool on, const NereusSDR::KeyerIdentity& keyer);
+    // Power off: end the test now, without the settle waits. A start still
+    // waiting on a release settle is dropped; a running test, or a stop
+    // waiting on its settle, is ended through the same stop steps (manual
+    // key off, TwoTone off, the FIXED power restore, generator off) before
+    // this returns. For the connection teardown, where no timer fires
+    // again before the saves run. No-op when nothing is running.
+    void stopNow();
 
 signals:
     // Emitted when m_active actually changes.  Subscribers should mirror
@@ -259,11 +348,32 @@ private slots:
     // when setActive(false) is called.  Stops the gen + restores PWR.
     void onDeactivationSettleElapsed();
 
+    // Task 7 fix wave, M2: the manual key after a refused start is cleared
+    // when kMoxReleaseSettleMs has passed, as Thetis's stop branch clears
+    // console.ManualMox after its await Task.Delay(200)
+    // (setup.cs:11190-11193 [v2.10.3.15]).
+    void onRejectSettleElapsed();
+
     // Hooked to MoxController::moxRejected so we can clean up our state
     // when the BandPlanGuard rejects the setMox(true) call we just made.
+    // R-R3-36: ignores every rejection that is not of that call
+    // (m_keyingMox), so a refused unrelated press leaves two-tone alone.
     void onMoxRejected(const QString& reason);
 
 private:
+    // The FIXED source's stop: PWR slider limit on, PWR restored.
+    void restoreSavedPower();
+
+    // Fix wave RD-I4: the start's key keyed nothing (refused aloud, or
+    // taken or refused without a word). Thetis setup.cs:11165-11170
+    // [v2.10.3.15]: if (!console.MOX) { chkTestIMD.Checked = false; return; }
+    void abandonUnkeyedStart();
+
+    // Fix wave RD-I4: the stop's console.MOX = false, for this two-tone's
+    // keyer only (MoxController::setMox(false, keyer)); another device's
+    // key is never released by it.
+    void releaseOwnKey();
+
     // Continue the activation flow after any pending settle delay.
     // Reads parameters, applies TXPostGen* setters, computes magnitude,
     // engages MOX.
@@ -305,6 +415,13 @@ private:
     // Prevents re-entrant setActive(true) calls from double-engaging.
     bool m_activationInFlight{false};
 
+    // True only across the activation walk's own setMox(true) call.
+    bool m_keyingMox{false};
+    // Task 35: whose two-tone this is (the station device unless a remote
+    // device started it); its key is that keyer's.
+    KeyerIdentity m_keyer{KeyerIdentity::station(PttMode::None)};
+    bool m_keyerFromCaller{false};
+
     // Freq2Delay sub-state — true if pulsed at the time we deferred Mag2.
     bool m_pulsedAtMag2Defer{false};
     // The Mag2 value we deferred — applied by applyMag2Now().
@@ -320,6 +437,17 @@ private:
     QTimer m_tuneReleaseSettleTimer;
     QTimer m_freq2DelayTimer;
     QTimer m_deactivationSettleTimer;
+    QTimer m_rejectSettleTimer;   // Task 7 fix wave, M2
+
+    // Task 7 fix wave, M9: see setTuneOffPendingFn.
+    std::function<bool()> m_tuneOffPending;
+    // Task 7 follow-up: see setTuneActiveFn.
+    std::function<bool()> m_tuneActive;
+    // Task 7 follow-up, item 6: see setTuneOffFn.
+    std::function<void()> m_tuneOff;
+    std::function<Band()> m_txBand;
+    // Stage 2 of activation (release MOX, then continueActivation).
+    void releaseMoxThenContinue();
 };
 
 } // namespace NereusSDR

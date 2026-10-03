@@ -161,6 +161,16 @@
 //                                        [@77e793a]). H2 routes this
 //                                        signal externally.
 //                                    AI tooling: Anthropic Claude Code.
+//   2026-09-27  J.J. Boyd / KG4VCF  iPhone plan Task 22 / parity Task 20
+//                                    (R-IOS-26): setCoreRequestsAvailable.
+//                                    In a remote window the list is the
+//                                    Core's (its freedvStations stream
+//                                    feeds the window's FreeDVStationModel)
+//                                    and Send QSY, Send and Clear ask the
+//                                    Core; with a Core that does not run
+//                                    FreeDV Reporter they are disabled
+//                                    with the reason. AI tooling:
+//                                    Anthropic Claude Code.
 
 #pragma once
 
@@ -264,6 +274,11 @@ public:
     //   (Neither set — combo is "All"): no automatic filter.
     // Called from RadioModel when slice.frequencyChanged fires.
     void setActiveFrequency(quint64 freqHz);
+
+    // iPhone plan Task 22 / parity Task 20: whether Send QSY, Send and
+    // Clear can reach FreeDV Reporter (a remote window's Core). While false
+    // they are disabled with `reason` as their tooltip.
+    void setCoreRequestsAvailable(bool available, const QString& reason);
 
     // Test seam: read back the row highlight color for a given sid.
     // Returns an invalid QColor when no highlight is active. Mirrors
@@ -409,6 +424,9 @@ private:
     QPushButton*  m_msgSendButton{nullptr};
     QPushButton*  m_msgSaveButton{nullptr};
     QPushButton*  m_msgClearButton{nullptr};
+    // iPhone plan Task 22: whether the requests reach FreeDV Reporter.
+    bool          m_coreRequestsAvailable{true};
+    QString       m_coreRequestsReason;
 
     // Per-sid clear timers. Each fires once m_highlightClearMs ms
     // after the TX / RX event, clearing the row tint. Replaces

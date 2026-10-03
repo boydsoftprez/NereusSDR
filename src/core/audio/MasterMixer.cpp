@@ -8,6 +8,8 @@
 // translation -- the architecture is upstream's, the semantics are ours):
 //   Project Files/Source/ChannelMaster/aamix.c [v2.10.3.15]
 //     (per-producer ring + readiness barrier + one summed output)
+//   Project Files/Source/ChannelMaster/cmaster.c [v2.10.3.15]
+//     (RX and anti-VOX minimum ring capacity)
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -22,6 +24,32 @@
 //                 upstream structure are argued in MasterMixer.h.
 //                 Authored by J.J. Boyd (KG4VCF), with AI-assisted
 //                 transformation via Anthropic Claude Code.
+//   2026-09-21 -- Preserve queued RADE/ordinary receiver sample pairs with
+//                 the upstream 4096-frame minimum ring, independent of the
+//                 small DSP block size. No prefill or barrier-policy change.
+//                 Authored by J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via OpenAI Codex.
+//   2026-09-23 -- R-R3-45: speakers and headphones sums from one drain.
+//                 NereusSDR-original. Authored by J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-25 -- iPhone app Task 76 (R-IOS-31): one mix per owner from
+//                 the same drain, and a local mask for the local sums.
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-27 -- Remote-window parity Task 32 (R-IOS-13, R-R3-49): an
+//                 owner's monitor route takes the transmit monitor into its
+//                 speakers or headphones sum; the local sums may leave it
+//                 out. NereusSDR-original. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-29 -- Slice control plan Task 6: the AF level scales a slice
+//                 in its controller's sums only, and every sum may listen
+//                 to other slices at its own level with a continuous
+//                 hand-off. NereusSDR-original. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-30 -- Radio codec (JJ's ruling): tryDrain's radioOut, the
+//                 radio's own speaker out, every receiving slice as
+//                 Thetis's mixer 0. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // --- From aamix.c ---
@@ -52,9 +80,37 @@ warren@wpratt.com
 */
 
 
+// --- From cmaster.c ---
+/*  cmaster.c
+
+This file is part of a program that implements a Software-Defined Radio.
+
+Copyright (C) 2014-2019 Warren Pratt, NR0V
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at  
+
+warren@wpratt.com
+
+*/
+
 #include "MasterMixer.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <vector>
 #include <limits>
@@ -163,7 +219,7 @@ int MasterMixer::producingSliceCount() const {
 }
 
 void MasterMixer::ensureRing(SliceState& st, int frames) {
-    const int want = frames * kRingBlocks;
+    const int want = std::max(kMinimumRingFrames, frames * kRingBlocks);
     if (st.capFrames >= want) { return; }
     // Growing discards whatever was queued. This only happens on the
     // first block, or on a block-size change, and both are already
@@ -176,7 +232,7 @@ void MasterMixer::ensureRing(SliceState& st, int frames) {
 }
 
 void MasterMixer::accumulate(int sliceId, const float* samples, int frames,
-                             bool muted) {
+                             bool muted, bool headphones, float level) {
     // Audio-thread hot path. No lock; rely on startup/connect-time
     // invariant that the map is stable while audio is streaming.
     auto it = m_slices.find(sliceId);
@@ -213,6 +269,8 @@ void MasterMixer::accumulate(int sliceId, const float* samples, int frames,
     // Audio-thread write to the same atomic the UI-side setSliceMuted()
     // writes; the store is lock-free either way.
     st.muted.store(muted, std::memory_order_release);
+    st.headphones.store(headphones, std::memory_order_release);
+    st.level.store(std::clamp(level, 0.0f, 1.0f), std::memory_order_release);
     ensureRing(st, frames);
     if (st.capFrames <= 0) { return; }
 
@@ -254,7 +312,22 @@ void MasterMixer::accumulate(int sliceId, const float* samples, int frames,
 }
 
 int MasterMixer::tryDrain(float* out, int maxFrames) {
-    if (out == nullptr || maxFrames <= 0) { return 0; }
+    if (out == nullptr) { return 0; }
+    return tryDrain(out, nullptr, maxFrames);
+}
+
+int MasterMixer::tryDrain(float* out, float* hpOut, int maxFrames) {
+    return tryDrain(out, hpOut, maxFrames, 0xFFFFFFFFu, nullptr, 0);
+}
+
+int MasterMixer::tryDrain(float* out, float* hpOut, int maxFrames,
+                          std::uint32_t localMask, OwnerOutput* owners, int ownerCount,
+                          bool localOutOfMask, bool onlyWithoutMembers,
+                          std::uint32_t localListenMask, const float* localListenLevels,
+                          float* radioOut) {
+    // `out` is the speakers sum, `hpOut` the headphones sum (R-R3-45).
+    if ((out == nullptr && hpOut == nullptr) || maxFrames <= 0) { return 0; }
+    if (owners == nullptr) { ownerCount = 0; }
     const std::uint64_t admittedEpoch =
         m_membershipEpoch.load(std::memory_order_acquire);
 
@@ -291,6 +364,9 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
         // Only opportunistic contributors (the TX monitor slot). Nothing
         // to wait for, so drain whatever is queued.
         n = maxAvail;
+    } else if (onlyWithoutMembers) {
+        // Task 32: a member's own call drains this period.
+        return 0;
     }
 
     // A member with nothing queued is LATE, not gone, and the barrier
@@ -322,7 +398,27 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
     }
 
     // ── Sum ──────────────────────────────────────────────────────────
-    std::fill(out, out + static_cast<size_t>(n) * 2, 0.0f);
+    if (out != nullptr) {
+        std::fill(out, out + static_cast<size_t>(n) * 2, 0.0f);
+    }
+    if (hpOut != nullptr) {
+        std::fill(hpOut, hpOut + static_cast<size_t>(n) * 2, 0.0f);
+    }
+    if (radioOut != nullptr) {
+        std::fill(radioOut, radioOut + static_cast<size_t>(n) * 2, 0.0f);
+    }
+    // Task 76: each owner's sums start silent too. Slice control plan
+    // Task 6: every owner's, since a listening owner may control nothing
+    // (a skipped one handed its tap whatever the buffer last held).
+    for (int k = 0; k < ownerCount; ++k) {
+        OwnerOutput& owner = owners[k];
+        if (owner.speakers != nullptr) {
+            std::fill(owner.speakers, owner.speakers + static_cast<size_t>(n) * 2, 0.0f);
+        }
+        if (owner.headphones != nullptr) {
+            std::fill(owner.headphones, owner.headphones + static_cast<size_t>(n) * 2, 0.0f);
+        }
+    }
 
     const float step = 1.0f / static_cast<float>(std::max(1, m_rampFrames));
 
@@ -340,37 +436,185 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
         }
         const int take = std::min(n, st.avail);
         if (take <= 0) { continue; }
+        // Task 76: which sums this slice reaches. Slot ids outside 0..31
+        // (the transmit monitor's) are local only.
+        const int id = kv.first;
+        const bool inMask = id >= 0 && id < 32;
+        const std::uint32_t bit = inMask ? (std::uint32_t{1} << id) : 0u;
+        // Task 32: the transmit monitor's slot plays locally unless the
+        // caller leaves it out (a remote device holds transmit).
+        const bool local = inMask ? (localMask & bit) != 0 : localOutOfMask;
+        float* const sliceOut = local ? out : nullptr;
+        float* const sliceHpOut = local ? hpOut : nullptr;
+        // Radio codec (JJ's ruling 2026-09-30): the radio's speaker out
+        // takes every receiving slice, as Thetis's mixer 0 takes RX1, RX1S
+        // and RX2 whoever listens (console.cs:27650-27664 [v2.10.3.15]),
+        // and the monitor slot (MON, the same mixer, audio.cs:417-418) as
+        // the local sums take it.
+        float* const sliceRadioOut = (inMask || localOutOfMask) ? radioOut : nullptr;
 
         // Target gains. Mute is a ramp target, not a hard gate, so a
         // muted slice fades out over m_rampFrames instead of clicking.
         // Linear pan law, unchanged: at pan=0 both channels pass at
         // unity, at -1 only left, at +1 only right.
+        //
+        // Slice control plan Task 6: the AF level too, the controller's
+        // own (JJ's ruling: AF is applied here, not in WDSP).
         const float g    = st.muted.load(std::memory_order_acquire)
                                ? 0.0f
-                               : st.gain.load(std::memory_order_acquire);
+                               : st.gain.load(std::memory_order_acquire)
+                                     * st.level.load(std::memory_order_acquire);
         const float pan  = st.pan.load(std::memory_order_acquire);
         const float tgtL = g * (pan <= 0.0f ? 1.0f : 1.0f - pan);
         const float tgtR = g * (pan >= 0.0f ? 1.0f : 1.0f + pan);
 
+        // R-R3-45: the route picks which sum gets the targets; the other
+        // ramps to silence, so a route change crossfades over the ramp
+        // instead of stepping from one output to the other.
+        const bool toHeadphones =
+            st.headphones.load(std::memory_order_acquire);
+        const float spkTgtL = toHeadphones ? 0.0f : tgtL;
+        const float spkTgtR = toHeadphones ? 0.0f : tgtR;
+        const float hpTgtL  = toHeadphones ? tgtL : 0.0f;
+        const float hpTgtR  = toHeadphones ? tgtR : 0.0f;
+
+        // Slice control plan Task 6: the sums listening to this slice. A
+        // sum the slice's controller reaches takes the controller's part
+        // above and no listen part; any other sum ramps its listen level
+        // toward the level it asked for (0 when it stopped or is muted),
+        // unpanned, into its speakers. A sum whose control just passed to
+        // listening starts from the controller's gain there, so the
+        // hand-off is continuous.
+        struct ListenLane {
+            float* dest;
+            float cur;
+            float target;
+            int lane;
+        };
+        std::array<ListenLane, kListenLanes> lanes{};
+        int laneCount = 0;
+        std::array<bool, kListenLanes> controlled{};
+        st.stagedListenCur = st.listenCur;
+        st.stagedCtlSeed = st.ctlSeed;
+        const auto planLane = [&](int lane, bool ctl, bool listen, float wanted, float* dest) {
+            if (ctl) {
+                controlled[static_cast<size_t>(lane)] = true;
+                st.stagedListenCur[static_cast<size_t>(lane)] = 0.0f;
+                return;
+            }
+            float start = st.listenCur[static_cast<size_t>(lane)];
+            if (listen && st.ctlSeed[static_cast<size_t>(lane)] >= 0.0f) {
+                start = st.ctlSeed[static_cast<size_t>(lane)];
+            }
+            st.stagedCtlSeed[static_cast<size_t>(lane)] = -1.0f;
+            const float target = listen ? std::clamp(wanted, 0.0f, 1.0f) : 0.0f;
+            if (start <= 0.0f && target <= 0.0f) {
+                st.stagedListenCur[static_cast<size_t>(lane)] = 0.0f;
+                return;
+            }
+            lanes[static_cast<size_t>(laneCount++)] = ListenLane{dest, start, target, lane};
+        };
+        if (inMask) {
+            planLane(0, local, (localListenMask & bit) != 0,
+                     localListenLevels != nullptr ? localListenLevels[id] : 0.0f, out);
+            for (int k = 0; k < ownerCount; ++k) {
+                const OwnerOutput& owner = owners[k];
+                if (owner.listenSlot < 0 || owner.listenSlot >= kMaxListenSlots) {
+                    continue;
+                }
+                planLane(1 + owner.listenSlot, (owner.sliceMask & bit) != 0,
+                         (owner.listenMask & bit) != 0,
+                         owner.listenLevels != nullptr ? owner.listenLevels[id] : 0.0f,
+                         owner.speakers);
+            }
+        }
+
         int stagedRd = st.rd;
         float stagedCurL = st.curL;
         float stagedCurR = st.curR;
+        float stagedHpCurL = st.hpCurL;
+        float stagedHpCurR = st.hpCurR;
         for (int i = 0; i < take; ++i) {
             stagedCurL +=
-                std::clamp(tgtL - stagedCurL, -step, step);
+                std::clamp(spkTgtL - stagedCurL, -step, step);
             stagedCurR +=
-                std::clamp(tgtR - stagedCurR, -step, step);
+                std::clamp(spkTgtR - stagedCurR, -step, step);
+            stagedHpCurL +=
+                std::clamp(hpTgtL - stagedHpCurL, -step, step);
+            stagedHpCurR +=
+                std::clamp(hpTgtR - stagedHpCurR, -step, step);
             const size_t r = static_cast<size_t>(stagedRd) * 2;
-            out[static_cast<size_t>(i) * 2 + 0] +=
-                st.ring[r + 0] * stagedCurL;
-            out[static_cast<size_t>(i) * 2 + 1] +=
-                st.ring[r + 1] * stagedCurR;
+            const size_t o = static_cast<size_t>(i) * 2;
+            const float spkL = st.ring[r + 0] * stagedCurL;
+            const float spkR = st.ring[r + 1] * stagedCurR;
+            const float hpL = st.ring[r + 0] * stagedHpCurL;
+            const float hpR = st.ring[r + 1] * stagedHpCurR;
+            if (sliceOut != nullptr) {
+                sliceOut[o + 0] += spkL;
+                sliceOut[o + 1] += spkR;
+            }
+            if (sliceHpOut != nullptr) {
+                sliceHpOut[o + 0] += hpL;
+                sliceHpOut[o + 1] += hpR;
+            }
+            if (sliceRadioOut != nullptr) {
+                sliceRadioOut[o + 0] += spkL + hpL;
+                sliceRadioOut[o + 1] += spkR + hpR;
+            }
+            for (int k = 0; k < ownerCount; ++k) {
+                OwnerOutput& owner = owners[k];
+                if (!inMask) {
+                    // Task 32: the transmit monitor, to the owner's chosen
+                    // sum at the slot's own gain. The slot is in exactly one
+                    // local sum (a route change crossfades), so the two
+                    // together are that gain whichever it is.
+                    float* const to = owner.monitor == OwnerMonitor::Speakers
+                        ? owner.speakers
+                        : owner.monitor == OwnerMonitor::Headphones ? owner.headphones
+                                                                     : nullptr;
+                    if (to != nullptr) {
+                        to[o + 0] += spkL + hpL;
+                        to[o + 1] += spkR + hpR;
+                    }
+                    continue;
+                }
+                if ((owner.sliceMask & bit) == 0) { continue; }
+                if (owner.speakers != nullptr) {
+                    owner.speakers[o + 0] += spkL;
+                    owner.speakers[o + 1] += spkR;
+                }
+                if (owner.headphones != nullptr) {
+                    owner.headphones[o + 0] += hpL;
+                    owner.headphones[o + 1] += hpR;
+                }
+            }
+            for (int l = 0; l < laneCount; ++l) {
+                ListenLane& lane = lanes[static_cast<size_t>(l)];
+                lane.cur += std::clamp(lane.target - lane.cur, -step, step);
+                if (lane.dest != nullptr) {
+                    lane.dest[o + 0] += st.ring[r + 0] * lane.cur;
+                    lane.dest[o + 1] += st.ring[r + 1] * lane.cur;
+                }
+            }
             stagedRd = (stagedRd + 1) % st.capFrames;
+        }
+        for (int l = 0; l < laneCount; ++l) {
+            const ListenLane& lane = lanes[static_cast<size_t>(l)];
+            st.stagedListenCur[static_cast<size_t>(lane.lane)] = lane.cur;
+        }
+        const float controllerGain =
+            std::max({stagedCurL, stagedCurR, stagedHpCurL, stagedHpCurR});
+        for (int lane = 0; lane < kListenLanes; ++lane) {
+            if (controlled[static_cast<size_t>(lane)]) {
+                st.stagedCtlSeed[static_cast<size_t>(lane)] = controllerGain;
+            }
         }
         st.stagedRd = stagedRd;
         st.stagedAvail = st.avail - take;
         st.stagedCurL = stagedCurL;
         st.stagedCurR = stagedCurR;
+        st.stagedHpCurL = stagedHpCurL;
+        st.stagedHpCurR = stagedHpCurR;
         st.drainStaged = true;
     }
 
@@ -396,8 +640,32 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
         const float* w = upSlewWindow();
         for (int i = 0; i < n && pos < slewLen; ++i, ++pos) {
             const float g = w[pos];
-            out[static_cast<size_t>(i) * 2 + 0] *= g;
-            out[static_cast<size_t>(i) * 2 + 1] *= g;
+            const size_t o = static_cast<size_t>(i) * 2;
+            if (out != nullptr) {
+                out[o + 0] *= g;
+                out[o + 1] *= g;
+            }
+            // The headphones sum resumes with the speakers (R-R3-45).
+            if (hpOut != nullptr) {
+                hpOut[o + 0] *= g;
+                hpOut[o + 1] *= g;
+            }
+            if (radioOut != nullptr) {
+                radioOut[o + 0] *= g;
+                radioOut[o + 1] *= g;
+            }
+            // And every owner's sums with them (Task 76).
+            for (int k = 0; k < ownerCount; ++k) {
+                OwnerOutput& owner = owners[k];
+                if (owner.speakers != nullptr) {
+                    owner.speakers[o + 0] *= g;
+                    owner.speakers[o + 1] *= g;
+                }
+                if (owner.headphones != nullptr) {
+                    owner.headphones[o + 0] *= g;
+                    owner.headphones[o + 1] *= g;
+                }
+            }
         }
     }
 
@@ -432,6 +700,10 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
         st.avail = st.stagedAvail;
         st.curL = st.stagedCurL;
         st.curR = st.stagedCurR;
+        st.hpCurL = st.stagedHpCurL;
+        st.hpCurR = st.stagedHpCurR;
+        st.listenCur = st.stagedListenCur;
+        st.ctlSeed = st.stagedCtlSeed;
     }
     if (slewLen > 0) {
         m_slewPos.store(pos, std::memory_order_release);

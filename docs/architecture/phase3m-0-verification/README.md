@@ -462,3 +462,26 @@ Rows 86-89 (bench tests, 4 rows): pending JJ + ANAN-G2 + dummy load + USB mic + 
 | Batch 4 G | `2b3219e` | MicProfileManager bundles 41 new CFC/CPDR/CESSB/PhRot keys (was 50 → now 91 keys) |
 | Batch 5 E | `f309661` | CfcSetupPage (Setup → DSP → CFC) — 3 group boxes (Phase Rotator / CFC / CESSB) + dashboard live status mirrors |
 | Batch 6 (this) | (TBD) | TxApplet PROC enable + CFC button + TxCfcDialog modeless 10-band editor + CfcSetupPage `[Configure CFC bands…]` wiring through SetupDialog → MainWindow → TxApplet::requestOpenCfcDialog |
+
+## Alex-1 transmit low-pass at default edges (added 2026-09-29)
+
+An extension of row 7 (Extended toggle bypass). The Alex-1 low-pass is now
+chosen as Thetis `setAlexLPF` chooses it (`console.cs:7177-7243
+[v2.10.3.15]`): inclusive row edges tested in the order 20m, 40m, 80m, 160m,
+6m, 10m, 15m, falling through to 6m. At the default row edges this changed
+the transmit low-pass in the ranges below; before, these frequencies fell to
+the next filter up. Run with Extended checked (row 7) so the out-of-band
+frequencies key, at low power into a dummy load, and read the filter in use
+from the Alex-1 Filters tab's lamps (Setup -> Hardware -> Antenna / ALEX ->
+Alex-1 Filters). Automated coverage: `ctest -R '^tst_alex_lpf_rows$' -V`
+(`selection_eachBandEdge`).
+
+| # | Test | Hardware | Procedure | Expected | Result |
+|---|---|---|---|---|---|
+| LPF-1 | 2.0 to 2.5 MHz `[bench]` | ANAN-G2 + 50 ohm dummy load | Extended on. TX a low-power carrier at 2.000, 2.250 and 2.500 MHz. | The 160m low-pass lamp lights (Alex1 bits 0x08). | |
+| LPF-2 | 4.0 to 5.0 MHz `[bench]` | as LPF-1 | TX at 4.000, 4.500 and 5.000 MHz. | The 80m low-pass (0x04). | |
+| LPF-3 | 7.3 to 8.0 MHz `[bench]` | as LPF-1 | TX at 7.300 (band top), 7.650 and 8.000 MHz. | The 40m low-pass (0x02). | |
+| LPF-4 | 14.35 to 16.5 MHz `[bench]` | as LPF-1 | TX at 14.350 (band top), 15.500 and 16.500 MHz. | The 20m low-pass (0x01). | |
+| LPF-5 | 21.45 to 24.0 MHz `[bench]` | as LPF-1 | TX at 21.450 (band top), 22.500 and 24.000 MHz. | The 15m low-pass (0x40). | |
+| LPF-6 | 29.7 to 35.6 MHz `[bench]` | as LPF-1 | TX at 29.700 (band top), 32.000 and 35.600 MHz. | The 10m low-pass (0x20). | |
+| LPF-7 | An edge outside its range is refused | any radio, and a remote window on its Core | In the Alex-1 Filters tab try to set the 160m End to 30 MHz (the box stops at 2.5). From a remote window, write the 160m End as 30 through the Core. | The local box holds 2.5; the Core refuses the remote write with "Choose the 160m low-pass end from 1.5 to 2.5 MHz." and a 25 MHz transmit still uses the 10m low-pass (0x20). | |

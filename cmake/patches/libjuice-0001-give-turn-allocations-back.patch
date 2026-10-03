@@ -1,0 +1,83 @@
+libjuice 3c40a354: give each TURN allocation back when an agent is destroyed
+
+NereusSDR for iOS patch, applied by ios/scripts/vendor-sources.sh libjuice after
+it copies the pinned archive's files. MPL-2.0, like the file it changes: the
+change becomes part of src/agent.c, a covered file, so it is available under
+MPL-2.0 (section 3.1), and the modified file is published with NereusSDR's
+source. iPhone app plan Task 28a (R-IOS-16), 2026-09-27.
+
+libjuice never gives a TURN allocation back: when a connection ends, the relay
+holds the allocation, and one place in the per-user quota of the Core's id
+(eight since 2026-09-26), for the rest of its lifetime, TURN_LIFETIME, ten
+minutes. A phone that reconnects through the relay after a network change
+could then find no place left for its new allocations. The link document
+("Control over a data channel") has each end give its allocations back at
+once when a connection ends, with a Refresh whose LIFETIME is 0 (RFC 8656
+section 7.2); the desktop and the Core make the same change to the same
+libjuice (cmake/NereusRemoteMedia.cmake).
+
+When an agent is destroyed, before its connection is, each relay entry the
+relay granted (succeeded, with a relayed address and the nonce of the relay's
+authentication) gets one Refresh with LIFETIME 0, signed with the entry's own
+credentials, sent once and not retransmitted: a lost one leaves the
+allocation to expire as before. Nothing else changes.
+
+--- a/src/agent.c
++++ b/src/agent.c
+@@ -157,6 +157,47 @@
+ 	return NULL;
+ }
+ 
++// NereusSDR (iPhone app plan Task 28a): gives each TURN allocation this agent holds back to its
++// relay with a Refresh whose LIFETIME is 0 (RFC 8656 section 7.2), so the relay's per-user quota
++// is free at once rather than for the rest of the allocation's lifetime. Sent once and not
++// retransmitted: an allocation whose release is lost expires as it did before.
++static void agent_give_back_turn_allocations(juice_agent_t *agent) {
++	if (!agent->conn_impl)
++		return;
++
++	conn_lock(agent);
++	for (int i = 0; i < agent->entries_count; ++i) {
++		const agent_stun_entry_t *entry = agent->entries + i;
++		if (entry->type != AGENT_STUN_ENTRY_TYPE_RELAY || !entry->turn)
++			continue;
++
++		// Only an allocation the relay granted, which has a relayed address and the nonce the
++		// relay's authentication gave
++		bool granted = entry->state == AGENT_STUN_ENTRY_STATE_SUCCEEDED ||
++		               entry->state == AGENT_STUN_ENTRY_STATE_SUCCEEDED_KEEPALIVE;
++		if (!granted || entry->relayed.len == 0 || *entry->turn->credentials.nonce == '\0')
++			continue;
++
++		stun_message_t msg;
++		memset(&msg, 0, sizeof(msg));
++		msg.msg_class = STUN_CLASS_REQUEST;
++		msg.msg_method = STUN_METHOD_REFRESH;
++		juice_random(msg.transaction_id, STUN_TRANSACTION_ID_SIZE);
++		msg.lifetime = 0;
++		msg.lifetime_set = true;
++		msg.credentials = entry->turn->credentials;
++
++		char buffer[BUFFER_SIZE];
++		int size = stun_write(buffer, BUFFER_SIZE, &msg, entry->turn->password);
++		if (size <= 0 || agent_direct_send(agent, &entry->record, buffer, size, 0) < 0) {
++			JLOG_WARN("Could not give a TURN allocation back");
++			continue;
++		}
++		JLOG_DEBUG("Gave a TURN allocation back");
++	}
++	conn_unlock(agent);
++}
++
+ void agent_destroy(juice_agent_t *agent) {
+ 	JLOG_DEBUG("Destroying agent");
+ 
+@@ -164,6 +205,8 @@
+ 		JLOG_VERBOSE("Waiting for resolver thread");
+ 		thread_join(agent->resolver_thread, NULL);
+ 	}
++
++	agent_give_back_turn_allocations(agent);
+ 
+ 	if (agent->conn_impl) {
+ 		conn_destroy(agent);

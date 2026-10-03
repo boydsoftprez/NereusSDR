@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/pairing">
+        <file alias="pairing-words-v1.txt">pairing-words-v1.txt</file>
+    </qresource>
+</RCC>

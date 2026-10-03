@@ -1,5 +1,6 @@
 // no-port-check: test fixture asserts OcMatrix model behavior + persistence round-trip
 #include <QtTest/QtTest>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include "core/OcMatrix.h"
 #include "models/Band.h"
@@ -180,6 +181,34 @@ private slots:
         m3.load();
         QVERIFY(!m3.pinEnabled(Band::Band20m, 0, /*tx=*/false));
         QCOMPARE(m3.pinAction(0), OcMatrix::TXPinAction::MoxTuneTwoTone);
+    }
+
+    // R-R3-46: save() writes only the keys whose saved value differs, so
+    // one pin click in a remote window is one write to the Core (not the
+    // whole matrix), and the result reads back the same.
+    void save_writes_only_the_keys_that_changed() {
+        const QString mac = QStringLiteral("44:55:66:77:88:99");
+        OcMatrix m;
+        m.setMacAddress(mac);
+        m.save();  // all defaults: nothing differs from an empty store
+        QStringList written;
+        AppSettings::instance().setChangeHook([&written](const QString& key) { written << key; });
+        const auto unhook = qScopeGuard([] { AppSettings::instance().setChangeHook(nullptr); });
+        m.setPin(Band::Band20m, 3, /*tx=*/false, true);  // setPin saves
+        QCOMPARE(written, QStringList{QStringLiteral("hardware/%1/oc/rx/20m/pin4").arg(mac)});
+        written.clear();
+        m.setPinAction(2, OcMatrix::TXPinAction::Tune);
+        QCOMPARE(written, QStringList{QStringLiteral("hardware/%1/oc/actions/pin3/action").arg(mac)});
+        written.clear();
+        m.save();
+        QVERIFY(written.isEmpty());
+
+        OcMatrix reread;
+        reread.setMacAddress(mac);
+        reread.load();
+        QVERIFY(reread.pinEnabled(Band::Band20m, 3, false));
+        QCOMPARE(reread.pinAction(2), OcMatrix::TXPinAction::Tune);
+        QCOMPARE(reread.pinAction(0), OcMatrix::TXPinAction::MoxTuneTwoTone);
     }
 };
 

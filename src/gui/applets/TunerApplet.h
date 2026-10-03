@@ -26,6 +26,19 @@
 //                 with RelayBar; 3-button mode group replaced with single
 //                 cycle button; constructor wired to TunerModel*.
 //                 From AetherSDR src/gui/TunerApplet.h [@0cd4559].
+//   2026-09-24  R-R3-49 / R-R3-47 by J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Anthropic Claude Code.
+//                 Remote ANT/OPERATE through the Core (see .cpp).
+//   2026-09-25  R-R3-49 (parity Task 8) by J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Anthropic Claude Code.
+//                 Remote relay nudges, tune memory recall, Open TGXL
+//                 Advanced and the Core's diagnostics (see .cpp).
+//   2026-09-25  transmitBlocked(): TUNE follows the transmit block (Task
+//                 16 fix wave M2), by J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-30: Fix wave GUI-I4: remoteWindow, remoteTuneControl and the
+//               three remote reasons. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -34,6 +47,7 @@
 #include "core/TuneMemoryStore.h"
 
 class QContextMenuEvent;
+class QLabel;
 class QPushButton;
 class QMenu;
 class QWidget;
@@ -66,7 +80,7 @@ class TunerModel;
 //   Recall tune memory for current (ant,band) -> apply stored relay positions
 //   Clear tune memory for current (ant,band)  -> m_tuneStore->clear(ant,band)
 //   (separator)
-//   Disconnect / Reconnect                    -> connectionToggleRequested()
+//   Disconnect / Connect                    -> connectionToggleRequested()
 //   Copy diagnostics to clipboard             -> diagnosticsCopyRequested()
 //
 // From AetherSDR src/gui/TunerApplet.h [@0cd4559]
@@ -110,6 +124,47 @@ public:
         m_lastL  = l;
         m_lastC2 = c2;
     }
+    QString tuneButtonTextForTesting() const;
+    bool carrierEngagedForTgxlTuneForTesting() const
+    {
+        return m_carrierEngagedForTgxlTune;
+    }
+    bool actuatingControlsEnabledForTesting() const;
+    // R-R3-49 / R-R3-47: the antenna and OPERATE buttons, for tests.
+    QPushButton* antennaButtonForTesting(int port) const;
+    QPushButton* operateButtonForTesting() const { return m_operateBtn; }
+    QPushButton* tuneButtonForTesting() const { return m_tuneBtn; }
+    // R-R3-49 (parity Task 8): the relay bars (0 C1, 1 L, 2 C2), for tests.
+    RelayBar* relayBarForTesting(int relay) const;
+
+    // R-R3-49 (parity Task 8): Copy diagnostics to clipboard in a remote
+    // window. The Core's connection to its Tuner Genius, from the mirrored
+    // `tuner` object and `accessoryData`'s tgxl counters, never this
+    // computer's idle connection.
+    static QString coreDiagnosticsText(RadioModel* model);
+
+    // R-R3-49 / R-R3-47: the Core's refusal while it transmits, and the
+    // tooltip on ANT and OPERATE in a remote window while the radio is on
+    // the air.
+    // Group B fix wave (M5): RadioModel's one sentence, shared by both
+    // windows.
+    static QString onAirReason();
+    // GUI-I4 (fix wave): the reasons a remote window that may transmit
+    // shows when its Core does not run that tuner control for this app.
+    static QString noRemoteTuneReason();
+    static QString noRemoteTunerReason();
+    static QString noRemoteRelayReason();
+    bool staleIndicatorVisibleForTesting() const;
+
+    // R3 remote sessions are receive-only. MainWindow applies the negotiated
+    // station capability here; telemetry remains visible while every TGXL
+    // command surface stays disabled and its handler refuses programmatic
+    // activation too.
+    void setTransmitPermitted(bool permitted, const QString& reason = QString());
+
+    // The remote model retains last-known telemetry across link loss. This
+    // controls an explicit stale-state presentation without erasing it.
+    void setStationConnected(bool connected);
 
     // Phase 3P-II Phase 4 Task 89: update TGXL connected flag for context menu.
     void setTgxlConnected(bool connected);
@@ -121,7 +176,7 @@ signals:
     // pageKey is "tgxlAdvanced"; MainWindow::openSetup() is the handler.
     void navigationRequested(const QString& pageKey);
 
-    // Emitted when "Disconnect" / "Reconnect" is triggered.
+    // Emitted when "Disconnect" / "Connect" is triggered.
     void connectionToggleRequested();
 
     // Emitted when "Copy diagnostics to clipboard" is triggered.
@@ -170,6 +225,36 @@ private:
 
     // Build a TuneMemory from the applet's current state.
     TuneMemory currentMem() const;
+    void updateActuatingControls();
+    // Task 16 fix wave (M2): receive only, TX inhibit or a PA trip holds
+    // (MoxController::transmitBlockReason).
+    bool transmitBlocked() const;
+    void updateStationAvailability();
+    // R-R3-49 / R-R3-47: a remote window on a Core that switches its
+    // Tuner Genius for this app (remoteTgxlControlVersion 2). ANT and
+    // OPERATE then ask the Core and follow its transmit state; TUNE and the
+    // relay bars keep the transmit permission.
+    bool remoteTunerControl() const;
+    // R-R3-49 (parity Task 8): the same Core also moves the relays for this
+    // app (remoteTgxlControlVersion 4). The relay bars then ask the Core
+    // and wait while the radio is on the air.
+    bool remoteRelayControl() const;
+    void requestRelayMove(int relay, int direction);
+    // GUI-I4 (fix wave): a remote window. Its tuner controls act only
+    // through the Core; on a Core that does not offer one, that control
+    // is disabled with the reason and never falls back to this computer's
+    // own Tuner Genius.
+    bool remoteWindow() const;
+    // A remote window on a Core that runs a Tuner Genius tune for this app
+    // (IStationLink::tgxlAutotuneAvailable).
+    bool remoteTuneControl() const;
+    // The Core reports the radio on the air: MOX, TUNE or two-tone.
+    bool coreOnAir() const;
+    // Group B fix wave (M5): a local window's own switch, refused on the
+    // air; parity mini-round (ruling c): the refusal is shown with the
+    // remote window's reason (RadioModel::refuseLocalAccessorySwitchOnAir).
+    bool refuseLocalSwitchOnAir();
+    void requestAntenna(int port);
 
     TunerModel* m_tunerModel = nullptr;
 
@@ -177,6 +262,7 @@ private:
     HGauge* m_fwdPowerGauge = nullptr;
     // Control 2 -- SWR gauge (1.0-3.0, red@2.5)
     HGauge* m_swrGauge       = nullptr;
+    QLabel* m_staleLabel     = nullptr;
 
     // Control 3 -- Relay position bars (C1 / L / C2)
     // From AetherSDR src/gui/TunerApplet.h:m_c1Bar [@0cd4559]
@@ -241,8 +327,11 @@ private:
     int  m_lastC1{0};
     int  m_lastL{0};
     int  m_lastC2{0};
-    // TGXL connected state for Disconnect/Reconnect label.
+    // TGXL connected state for Disconnect/Connect label.
     bool m_tgxlConnected{false};
+    bool m_transmitPermitted{true};
+    QString m_transmitPermissionReason;
+    bool m_stationConnected{true};
 };
 
 } // namespace NereusSDR

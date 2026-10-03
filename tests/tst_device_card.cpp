@@ -17,6 +17,9 @@
 //   9. AppSettings round-trip: DeviceCard saves on control change;
 //      a second loadFromSettings reads the same values back.
 //  10. Headphones card: enabledChanged fires when checkable toggled.
+//  12. R-R3-36: a configured device that is not present and a configured
+//      buffer size the list lacks survive an unrelated edit on the card.
+//  13. R-R3-36: reloading replaces those kept entries instead of adding more.
 //
 // Design spec:
 //   docs/architecture/2026-04-20-phase3o-subphase12-addendum.md §2.1
@@ -253,6 +256,141 @@ private slots:
         QTest::qWait(300);
 
         QCOMPARE(spy.count(), 0);
+    }
+
+    // ── 12. A missing device and an unlisted buffer survive an edit ───────
+    //
+    // R-R3-36: the card must not fall back to "(platform default)" or 256
+    // samples and then save that on the next unrelated edit. That would
+    // silently switch the configured microphone.
+
+    void unrelatedEditKeepsMissingDeviceAndBuffer_data() {
+        QTest::addColumn<QString>("prefix");
+        QTest::addColumn<int>("role");
+        QTest::addColumn<int>("buffer");
+        QTest::newRow("input/4096")  << "audio/TxInput"  << int(DeviceCard::Role::Input)  << 4096;
+        QTest::newRow("input/8192")  << "audio/TxInput"  << int(DeviceCard::Role::Input)  << 8192;
+        QTest::newRow("input/3000")  << "audio/TxInput"  << int(DeviceCard::Role::Input)  << 3000;
+        QTest::newRow("output/4096") << "audio/Speakers" << int(DeviceCard::Role::Output) << 4096;
+    }
+    void unrelatedEditKeepsMissingDeviceAndBuffer() {
+        QFETCH(QString, prefix);
+        QFETCH(int, role);
+        QFETCH(int, buffer);
+        const QString missing = QStringLiteral("NereusSDR Test Device Not Present");
+        auto& s = AppSettings::instance();
+        s.setValue(prefix + QStringLiteral("/DeviceName"), missing);
+        s.setValue(prefix + QStringLiteral("/BufferSamples"), QString::number(buffer));
+
+        DeviceCard card(prefix, static_cast<DeviceCard::Role>(role), false);
+
+        // The card shows the configured device as not available.
+        bool shown = false;
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
+            if (combo->currentText() == QStringLiteral("%1 (not available)").arg(missing)) {
+                QCOMPARE(combo->currentData().toString(), missing);
+                shown = true;
+            }
+        }
+        QVERIFY(shown);
+        QCOMPARE(card.currentConfig().deviceName, missing);
+        QCOMPARE(card.currentConfig().bufferSamples, buffer);
+
+        // An unrelated edit (a WASAPI option) saves the same device and buffer.
+        QCheckBox* exclusive = nullptr;
+        for (QCheckBox* c : card.findChildren<QCheckBox*>()) {
+            if (c->text() == QStringLiteral("Exclusive")) {
+                exclusive = c;
+            }
+        }
+        QVERIFY(exclusive != nullptr);
+        QSignalSpy spy(&card, &DeviceCard::configChanged);
+        exclusive->setChecked(!exclusive->isChecked());
+        QTRY_VERIFY(spy.count() >= 1);
+        const auto cfg = spy.last().at(0).value<AudioDeviceConfig>();
+        QCOMPARE(cfg.deviceName, missing);
+        QCOMPARE(cfg.bufferSamples, buffer);
+        const AudioDeviceConfig saved = AudioDeviceConfig::loadFromSettings(prefix);
+        QCOMPARE(saved.deviceName, missing);
+        QCOMPARE(saved.bufferSamples, buffer);
+    }
+
+    // ── 13. Reloading does not pile up kept entries ───────────────────────
+    //
+    // R-R3-36: each load removes the "(not available)" device and the
+    // unlisted buffer size the previous load added before adding its own.
+
+    void reloadDropsStaleKeptEntries() {
+        const QString prefix = QStringLiteral("audio/TxInput");
+        const QString first  = QStringLiteral("NereusSDR Test Device One");
+        const QString second = QStringLiteral("NereusSDR Test Device Two");
+        auto& s = AppSettings::instance();
+        s.setValue(prefix + QStringLiteral("/DeviceName"), first);
+        s.setValue(prefix + QStringLiteral("/BufferSamples"), QStringLiteral("3000"));
+
+        DeviceCard card(prefix, DeviceCard::Role::Input, false);
+
+        QComboBox* deviceCombo = nullptr;
+        QComboBox* bufferCombo = nullptr;
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
+            if (combo->findText(QStringLiteral("(platform default)")) >= 0) {
+                deviceCombo = combo;
+            }
+            if (combo->findText(QStringLiteral("256 samples")) >= 0) {
+                bufferCombo = combo;
+            }
+        }
+        QVERIFY(deviceCombo != nullptr);
+        QVERIFY(bufferCombo != nullptr);
+        const QString firstText  = QStringLiteral("%1 (not available)").arg(first);
+        const QString secondText = QStringLiteral("%1 (not available)").arg(second);
+        QVERIFY(deviceCombo->findText(firstText) >= 0);
+        QVERIFY(bufferCombo->findData(QVariant::fromValue(3000)) >= 0);
+        const int listedBuffers = bufferCombo->count() - 1;
+
+        // A second missing device and another unlisted size replace the first.
+        s.setValue(prefix + QStringLiteral("/DeviceName"), second);
+        s.setValue(prefix + QStringLiteral("/BufferSamples"), QStringLiteral("5000"));
+        card.loadFromSettings();
+        QCOMPARE(deviceCombo->findText(firstText), -1);
+        QCOMPARE(deviceCombo->currentText(), secondText);
+        QCOMPARE(bufferCombo->findData(QVariant::fromValue(3000)), -1);
+        QCOMPARE(bufferCombo->currentData().toInt(), 5000);
+        QCOMPARE(bufferCombo->count(), listedBuffers + 1);
+
+        // The same config again adds nothing.
+        card.loadFromSettings();
+        int unavailable = 0;
+        for (int i = 0; i < deviceCombo->count(); ++i) {
+            if (deviceCombo->itemText(i).endsWith(QStringLiteral(" (not available)"))) {
+                ++unavailable;
+            }
+        }
+        QCOMPARE(unavailable, 1);
+        QCOMPARE(bufferCombo->count(), listedBuffers + 1);
+
+        // A config the lists hold leaves no kept entry behind.
+        s.setValue(prefix + QStringLiteral("/DeviceName"), QString());
+        s.setValue(prefix + QStringLiteral("/BufferSamples"), QStringLiteral("256"));
+        card.loadFromSettings();
+        QCOMPARE(deviceCombo->findText(secondText), -1);
+        QCOMPARE(deviceCombo->currentText(), QStringLiteral("(platform default)"));
+        QCOMPARE(bufferCombo->findData(QVariant::fromValue(5000)), -1);
+        QCOMPARE(bufferCombo->count(), listedBuffers);
+        QCOMPARE(bufferCombo->currentData().toInt(), 256);
+    }
+
+    // The input card offers the TX Input page's larger buffers.
+    void inputCardOffersLargeBuffers() {
+        DeviceCard card(QStringLiteral("audio/TxInput"), DeviceCard::Role::Input, false);
+        bool has4096 = false;
+        bool has8192 = false;
+        for (QComboBox* combo : card.findChildren<QComboBox*>()) {
+            has4096 = has4096 || combo->findData(QVariant::fromValue(4096)) >= 0;
+            has8192 = has8192 || combo->findData(QVariant::fromValue(8192)) >= 0;
+        }
+        QVERIFY(has4096);
+        QVERIFY(has8192);
     }
 };
 

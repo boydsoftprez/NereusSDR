@@ -4,11 +4,52 @@
 //
 // Ported from Thetis source:
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
+//   Project Files/Source/ChannelMaster/cmaster.c, original licence from Thetis source is included below
+//   Project Files/Source/ChannelMaster/sync.c, original licence from Thetis source is included below
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
+//   2026-09-21 — Slice-owned, generation-guarded RADE RX routing by J.J.
+//                 Boyd (KG4VCF), with AI-assisted implementation via
+//                 OpenAI Codex.
+//   2026-09-23 - Receive input delay bound (processStampedIqBatch,
+//                 inputDelayStats, R-R3-40) by J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//                 NereusSDR-original; no Thetis counterpart. Later the same
+//                 day: the external-diversity legs are stamped and bounded
+//                 too (processStampedExternalDiversityIqBatch).
+//   2026-09-30 - RADE threads: every RADE slice has its own route
+//                 (setRadeRxRoute) to its channel's decoder thread through
+//                 lock-free rings; the DSP thread feeds each block and plays
+//                 each slice's decoded block exactly radeLateBoundBlocks()
+//                 later, or silence when it is not back, so a late decoder
+//                 never holds the mixer. Replaces the single RADE binding and
+//                 its main-thread hop (radeIqReady, routeRadeSpeech).
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-30 - RADE gaps: a slice in RADE mode that has no route on this
+//                 worker yet (the blocks before the queued route lands, a
+//                 new worker before the replay, a decoder that could not be
+//                 made) plays silence, not its WDSP sideband. RadioModel
+//                 publishes the RADE-mode slices as one atomic bit mask
+//                 (setRadeModeSlices); the DSP thread only loads it.
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-30 - Fix wave (DSP-thread allocations): a RADE route's
+//                 resamplers and the RADE scratch are made when the route
+//                 is set, and each block resamples into them
+//                 (Resampler::processInto), so the DSP thread's per-block
+//                 RADE path allocates nothing. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-01 - Diversity lane: every slice on the diversity target's
+//                 stream is fed from the mixed buffer, as every sub-receiver
+//                 of Thetis's stream 0 reads it (cmaster.c xcmaster, sync.c
+//                 InboundBlock); the per-slice drain body moves into
+//                 processSliceChunk so both paths share it. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
 // =================================================================
 
@@ -61,17 +102,75 @@
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+// --- From cmaster.c ---
+/*  cmaster.c
+
+This file is part of a program that implements a Software-Defined Radio.
+
+Copyright (C) 2014-2019 Warren Pratt, NR0V
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at  
+
+warren@wpratt.com
+
+*/
+
+// --- From sync.c ---
+/*  sync.c
+
+This file is part of a program that implements a Software-Defined Radio.
+
+Copyright (C) 2014 Warren Pratt, NR0V
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at  
+
+warren@wpratt.com
+
+*/
+
 #include "RxDspWorker.h"
 
 #include "core/AudioEngine.h"
 #include "core/LogCategories.h"
+#include "core/ReceiverManager.h"
 #include "core/RxChannel.h"
 #include "core/WdspEngine.h"
-#include "core/RadeChannel.h"
 #include "core/Resampler.h"
+#include "core/RadeRxWorker.h"
 #include "core/audio/RealtimeAudioPriority.h"
+#include "core/platform/ThreadPlacement.h"
 
 #include <algorithm>
+#include <chrono>
+#include <thread>
 
 namespace NereusSDR {
 
@@ -103,6 +202,14 @@ void RxDspWorker::onThreadStarted()
     // pthread_set_qos_class_self_np and os_workgroup_join (macOS)
     // as well as pthread_setschedparam (Linux) and
     // AvSetMmThreadCharacteristics (Windows).
+    //
+    // R-R3-41: in nereusd on Linux, thread placement owns this thread's
+    // core and priority (nice, never a real-time policy); see
+    // ThreadPlacement.h.
+    if (ThreadPlacement::managesThreadPriority()) {
+        ThreadPlacement::instance().registerCurrentThread(ThreadRole::DspThread);
+        return;
+    }
     if (m_audioPrioToken != nullptr) {
         // Defensive: started() should fire only once per thread
         // lifecycle.  If it fires twice (e.g. a future requeue path),
@@ -114,6 +221,9 @@ void RxDspWorker::onThreadStarted()
 
 void RxDspWorker::onThreadFinished()
 {
+    if (ThreadPlacement::managesThreadPriority()) {
+        ThreadPlacement::instance().deregisterCurrentThread();
+    }
     // Released on the DSP thread before it exits.  Required for
     // os_workgroup_leave to match the join on the correct thread.
     leaveAudioThreadPriority(m_audioPrioToken);
@@ -196,6 +306,8 @@ void RxDspWorker::setExternalDiversityRoute(
         m_externalDiversityRoute = {};
         return;
     }
+    m_externalDiversityStatsSlice.store(route.targetSliceId,
+                                        std::memory_order_relaxed);
 
 #ifdef NEREUS_BUILD_TESTS
     if (m_externalDiversityRouteHookForTest) {
@@ -208,7 +320,10 @@ void RxDspWorker::setExternalDiversityRoute(
 
 void RxDspWorker::clearExternalDiversityRoute()
 {
+#ifdef NEREUS_BUILD_TESTS
+    // Only the test hook below reads the route being cleared.
     const ExternalDiversityRoute oldRoute = m_externalDiversityRoute;
+#endif
     m_externalDiversityPrimary.i.clear();
     m_externalDiversityPrimary.q.clear();
     m_externalDiversitySecondary.i.clear();
@@ -216,6 +331,13 @@ void RxDspWorker::clearExternalDiversityRoute()
     m_externalDiversityRoute = {};
     m_externalDiversityChunkSize = 0;
     m_externalDiversityMaxQueuedSamples = 0;
+    m_externalDiversityStatsSlice.store(-1, std::memory_order_relaxed);
+    // A new route starts aligned; an episode in progress ends with the
+    // route (its log line is not written: nothing resumed).
+    m_externalDiversityInputDelay.skipping = false;
+    m_externalDiversityInputDelay.episodeSkippedUs = 0;
+    m_externalDiversityEpisodeAdvance[0] = m_externalDiversityEpisodeAdvance[1] = 0;
+    m_externalDiversityDropPending[0] = m_externalDiversityDropPending[1] = 0;
 
 #ifdef NEREUS_BUILD_TESTS
     if (oldRoute.active() && m_externalDiversityRouteHookForTest) {
@@ -233,11 +355,17 @@ bool RxDspWorker::isExternalDiversityTarget(int sliceId) const noexcept
 }
 
 void RxDspWorker::appendExternalDiversitySamples(
-    StreamAccum& destination, const QVector<float>& interleavedIQ)
+    StreamAccum& destination, const QVector<float>& interleavedIQ,
+    int skipLeading)
 {
-    const int samples = interleavedIQ.size() / 2;
-    if (samples <= 0 || samples > kMaxSaneSamplesPerBatch
+    const int batchSamples = interleavedIQ.size() / 2;
+    if (batchSamples <= 0 || batchSamples > kMaxSaneSamplesPerBatch
         || m_externalDiversityMaxQueuedSamples <= 0) {
+        return;
+    }
+    const int first = qBound(0, skipLeading, batchSamples);
+    const int samples = batchSamples - first;
+    if (samples <= 0) {
         return;
     }
 
@@ -251,7 +379,7 @@ void RxDspWorker::appendExternalDiversitySamples(
         destination.q.remove(0, drop);
     }
 
-    for (int sample = 0; sample < samples; ++sample) {
+    for (int sample = first; sample < batchSamples; ++sample) {
         destination.i.append(interleavedIQ[2 * sample]);
         destination.q.append(interleavedIQ[2 * sample + 1]);
     }
@@ -274,6 +402,95 @@ void RxDspWorker::processExternalDiversityIqBatch(
         return;
     }
 
+    drainExternalDiversity();
+}
+
+// R-R3-40. Runs on the DSP thread. Per batch: one clock read and one relaxed
+// atomic store, as on the ordinary stream path; the only log line is written
+// once per episode, when it ends.
+// The primary leg's lost input is the route's skipped input. The episode
+// total is kept in samples and converted as a whole, so rounding each batch
+// never loses time.
+void RxDspWorker::countDiversityPrimaryLoss(qint64 drainSize, qint64 samples)
+{
+    InputDelayState& state = m_externalDiversityInputDelay;
+    const qint64 beforeUs =
+        spanUsForDrainSize(drainSize, m_externalDiversityEpisodeAdvance[0]);
+    m_externalDiversityEpisodeAdvance[0] += samples;
+    const qint64 afterUs =
+        spanUsForDrainSize(drainSize, m_externalDiversityEpisodeAdvance[0]);
+    state.episodeSkippedUs = afterUs;
+    state.droppedUs.fetch_add(afterUs - beforeUs, std::memory_order_relaxed);
+}
+
+void RxDspWorker::processStampedExternalDiversityIqBatch(
+    int sourceStream, const QVector<float>& interleavedIQ, qint64 enqueuedNs)
+{
+    if (!m_externalDiversityRoute.active()) {
+        return;
+    }
+    int leg = -1;
+    if (sourceStream == m_externalDiversityRoute.primaryStream) {
+        leg = 0;
+    } else if (sourceStream == m_externalDiversityRoute.secondaryStream) {
+        leg = 1;
+    } else {
+        return;
+    }
+    StreamAccum& primary = m_externalDiversityPrimary;
+    StreamAccum& secondary = m_externalDiversitySecondary;
+
+    InputDelayState& state = m_externalDiversityInputDelay;
+    const qint64 delayUs =
+        std::max<qint64>(0, (ReceiverManager::enqueueClockNs() - enqueuedNs) / 1000);
+    state.delayUs.store(delayUs, std::memory_order_relaxed);
+
+    const qint64 drainSize = m_externalDiversityChunkSize;
+    if (!state.skipping && delayUs > kDspInputDelayLimitMs * 1000) {
+        // Episode start: the queued samples of both legs are older than this
+        // batch and go with the skipped input. The legs' heads were aligned,
+        // so each leg's input position now moves on by what it lost.
+        state.skipping = true;
+        state.episodeSkippedUs = 0;
+        m_externalDiversityEpisodeAdvance[0] = 0;
+        m_externalDiversityEpisodeAdvance[1] = secondary.i.size();
+        m_externalDiversityDropPending[0] = m_externalDiversityDropPending[1] = 0;
+        countDiversityPrimaryLoss(drainSize, primary.i.size());
+        primary.i.clear();
+        primary.q.clear();
+        secondary.i.clear();
+        secondary.q.clear();
+    }
+
+    const qint64 batchSamples = interleavedIQ.size() / 2;
+    if (state.skipping) {
+        if (delayUs >= kDspInputDelayResumeMs * 1000) {
+            if (leg == 0) {
+                countDiversityPrimaryLoss(drainSize, batchSamples);
+            } else {
+                m_externalDiversityEpisodeAdvance[1] += batchSamples;
+            }
+            return;
+        }
+        // Resume: the leg that lost less input is behind the other by the
+        // difference; it drops that many leading samples from what arrives
+        // next, so both accumulators start at the same input position.
+        state.skipping = false;
+        const qint64 lead =
+            m_externalDiversityEpisodeAdvance[0] - m_externalDiversityEpisodeAdvance[1];
+        m_externalDiversityDropPending[0] = lead < 0 ? -lead : 0;
+        m_externalDiversityDropPending[1] = lead > 0 ? lead : 0;
+        qCWarning(lcDsp).noquote()
+            << QStringLiteral("Receive processing fell behind; skipped %1 ms "
+                              "of input to catch up.")
+                   .arg(state.episodeSkippedUs / 1000);
+        state.episodeSkippedUs = 0;
+    }
+
+    const qint64 drop = std::min(m_externalDiversityDropPending[leg], batchSamples);
+    m_externalDiversityDropPending[leg] -= drop;
+    appendExternalDiversitySamples(leg == 0 ? primary : secondary, interleavedIQ,
+                                   static_cast<int>(drop));
     drainExternalDiversity();
 }
 
@@ -346,6 +563,34 @@ void RxDspWorker::feedExternalDiversityTarget(int samples)
     if (target || !m_audioEngine) {
         emit sliceProcessed(
             m_externalDiversityRoute.targetSliceId, samples);
+    }
+
+    // The other slices on the target's stream are sub-receivers of the same
+    // receiver, and they read the same mixed buffer. ChannelMaster runs every
+    // sub-receiver of a stream on that stream's one input, which for stream 0
+    // is the diversity output (sync.c:49-51, quoted in processIqBatch):
+    //   From Thetis ChannelMaster/cmaster.c:365-366 [v2.10.3.15]
+    //     for (j = 0; j < pcm->cmSubRCVR; j++)
+    //         fexchange0 (chid (stream, j), pcm->in[stream], pcm->rcvr[rx].audio[j], &error);		// dsp
+    // One blanking pass per stream (cmaster.c:351-352 runs xanb / xnob once,
+    // before that loop): the target above blanked the mixed legs in place,
+    // so the slices after it are bypassed.
+    const QVector<int> streamSlices = externalDiversityStreamSlices();
+    bool blankerClaimed = target && m_audioEngine;
+    for (int sliceIdx : streamSlices) {
+        if (sliceIdx == m_externalDiversityRoute.targetSliceId) {
+            continue;
+        }
+        if (m_audioEngine) {
+            if (processSliceChunk(sliceIdx,
+                                  m_externalDiversityOutputI.data(),
+                                  m_externalDiversityOutputQ.data(),
+                                  samples, outSize, blankerClaimed)) {
+                blankerClaimed = true;
+            }
+        } else {
+            emit sliceProcessed(sliceIdx, samples);
+        }
     }
 }
 
@@ -432,46 +677,276 @@ void RxDspWorker::setSampleRate(double rate)
     m_sampleRate = rate;
 }
 
-void RxDspWorker::setRadeChannel(RadeChannel* channel)
+// RADE threads (2026-09-30), NereusSDR-original.
+void RxDspWorker::setRadeRxRoute(int sliceId,
+                                 std::shared_ptr<RadeRxBridge> bridge)
 {
-    // Disconnect the previous receiver before swapping the pointer.
-    // Qt's queued-connection delivery is safe across QObject
-    // destruction on its own (~QObject + removePostedEvents handle
-    // pending calls under the connection-list lock), but an explicit
-    // disconnect tightens the contract and avoids stale slot calls
-    // if the previous channel outlives this swap.
-    if (auto* prev = m_radeChannel.load(std::memory_order_acquire)) {
-        disconnect(this, &RxDspWorker::radeIqReady,
-                   prev, &RadeChannel::processIq);
+    if (!bridge) {
+        m_radeRxRoutes.erase(sliceId);
+    } else {
+        auto it = m_radeRxRoutes.find(sliceId);
+        if (it == m_radeRxRoutes.end() || it->second.bridge != bridge) {
+            RadeRxRoute route;
+            route.bridge = std::move(bridge);
+            route.epoch = route.bridge->nextEpoch();
+            // Made here, once per route, not on the block path.
+            route.down = std::make_unique<Resampler>(48000.0, 24000.0, kRadeRxMaxBlockFrames);
+            route.upL = std::make_unique<Resampler>(24000.0, 48000.0, kRadeRxMaxBlockFrames);
+            route.upR = std::make_unique<Resampler>(24000.0, 48000.0, kRadeRxMaxBlockFrames);
+            route.play.reserve(kRadeRxPlayReserveFloats);
+            m_radeRxRoutes[sliceId] = std::move(route);
+            reserveRadeRxScratch();
+        }
+    }
+    m_radeRxRouteCount.store(int(m_radeRxRoutes.size()),
+                             std::memory_order_release);
+    qCDebug(lcDsp).noquote()
+        << QString("RxDspWorker::setRadeRxRoute(slice=%1, routed=%2, routes=%3)")
+               .arg(sliceId)
+               .arg(m_radeRxRoutes.count(sliceId) != 0)
+               .arg(m_radeRxRoutes.size());
+}
+
+void RxDspWorker::reserveRadeRxScratch()
+{
+    // Sized once: the block path only resizes within these capacities.
+    const auto atLeast = [](std::vector<float>& v, size_t floats) {
+        if (v.size() < floats) {
+            v.resize(floats);
+        }
+    };
+    m_radeRxIqScratch.reserve(size_t(kRadeRxMaxBlockFrames) * 2);
+    m_radeRxDueScratch.reserve(size_t(RadeRxBridge::kMaxRecordFrames) * 2);
+    m_radeRxLegL.reserve(size_t(RadeRxBridge::kMaxRecordFrames));
+    m_radeRxLegR.reserve(size_t(RadeRxBridge::kMaxRecordFrames));
+    m_radeRxOutScratch.reserve(size_t(kRadeRxMaxBlockFrames) * 2);
+    atLeast(m_radeRxDown, size_t(kRadeRxMaxBlockFrames));
+    // 24 -> 48 kHz doubles a record of up to kMaxRecordFrames, with room
+    // for r8brain's uneven output per call.
+    atLeast(m_radeRxUpL, size_t(kRadeRxMaxBlockFrames) * 2);
+    atLeast(m_radeRxUpR, size_t(kRadeRxMaxBlockFrames) * 2);
+}
+
+void RxDspWorker::clearRadeRxRoutes()
+{
+    m_radeRxRoutes.clear();
+    m_radeRxRouteCount.store(0, std::memory_order_release);
+}
+
+bool RxDspWorker::processRadeRxBlock(int sliceIdx, const float* audio48k,
+                                     int outSize)
+{
+    auto it = m_radeRxRoutes.find(sliceIdx);
+    if (it == m_radeRxRoutes.end() || outSize <= 0) {
+        return it != m_radeRxRoutes.end();
+    }
+    RadeRxRoute& route = it->second;
+    RadeRxBridge& bridge = *route.bridge;
+
+    // ── Feed ────────────────────────────────────────────────────────────
+    // [original comments from the single-binding fork, kept with it:]
+    // Lazy-build 48→24 audio downsampler. Single resampler
+    // (real audio); no Q-leg needed since RADE expects
+    // imag=0.
+    // (Fix wave: built in setRadeRxRoute now, with the route.)
+    // Downsample WDSP's outI (48 kHz mono real audio)
+    // to 24 kHz.
+    const int inFrames = route.down->processInto(audio48k, outSize, m_radeRxDown.data(),
+                                                 int(m_radeRxDown.size()));
+    const quint32 seq = route.seq++;
+    if (inFrames > 0) {
+        // Build interleaved stereo float32 with audio in
+        // the I (real) leg and zero in the Q (imag) leg
+        // at 24 kHz. This matches AetherSDR's
+        // RADEEngine.cpp:222-227 pattern (DAX 24 kHz
+        // stereo PCM → average to mono → set imag=0)
+        // and freedv-gui's RADEReceiveStep:201 pattern
+        // (input short[] → RADE_COMP{re=sample, im=0}).
+        m_radeRxIqScratch.resize(size_t(inFrames) * 2);
+        const float* srcAudio = m_radeRxDown.data();
+        for (int i = 0; i < inFrames; ++i) {
+            m_radeRxIqScratch[size_t(2 * i) + 0] = srcAudio[i];  // real = audio
+            m_radeRxIqScratch[size_t(2 * i) + 1] = 0.0f;         // imag = 0
+        }
+        if (bridge.pushInput(route.epoch, seq, m_radeRxIqScratch.data(), inFrames)) {
+            RadeRxWorker::wake(bridge);
+        }
     }
 
-    m_radeChannel.store(channel, std::memory_order_release);
-
-    if (channel != nullptr) {
-        // Cross-thread queued connection: RxDspWorker lives on the
-        // DSP thread, RadeChannel lives on the main thread (created
-        // by WdspEngine, parent owned by RadioModel).  Replacing the
-        // earlier QMetaObject::invokeMethod(raw_ptr, ...,
-        // Qt::QueuedConnection) with a Qt-native signal/slot
-        // connection closes the UAF gap PR #238 review P1 #3
-        // flagged: queued events for a destroyed receiver are
-        // dropped under Qt's connection-list lock, instead of
-        // calling into freed memory.
-        connect(this, &RxDspWorker::radeIqReady,
-                channel, &RadeChannel::processIq,
-                Qt::QueuedConnection);
+    // ── Play ────────────────────────────────────────────────────────────
+    // The block fed radeLateBoundBlocks() ago is due now. If its speech is
+    // back it plays; if not, this slot is silence and the speech is dropped
+    // when it does arrive. Never waits (JJ's ruling 2).
+    const int lateBound = radeLateBoundBlocks(outSize);
+    int dueFrames = 0;
+    if (route.fedBlocks >= lateBound) {
+        // Sequence numbers wrap; the bridge compares them by distance.
+        const quint32 dueSeq = seq - quint32(lateBound);
+        dueFrames = bridge.takeDue(route.epoch, dueSeq, m_radeRxDueScratch);
+        bridge.countSlot(dueFrames > 0);
+    } else {
+        ++route.fedBlocks;  // the first lateBound slots of a route are silence
+    }
+    if (dueFrames > 0) {
+        // The speech is 24 kHz stereo; bring each leg to 48 kHz as
+        // RadioModel::onRadeSpeechReady did before this moved here.
+        m_radeRxLegL.resize(size_t(dueFrames));
+        m_radeRxLegR.resize(size_t(dueFrames));
+        for (int i = 0; i < dueFrames; ++i) {
+            m_radeRxLegL[size_t(i)] = m_radeRxDueScratch[size_t(2 * i)];
+            m_radeRxLegR[size_t(i)] = m_radeRxDueScratch[size_t(2 * i) + 1];
+        }
+        const int upL = route.upL->processInto(m_radeRxLegL.data(), dueFrames,
+                                               m_radeRxUpL.data(), int(m_radeRxUpL.size()));
+        const int upR = route.upR->processInto(m_radeRxLegR.data(), dueFrames,
+                                               m_radeRxUpR.data(), int(m_radeRxUpR.size()));
+        const int frames48k = std::min(upL, upR);
+        const float* left = m_radeRxUpL.data();
+        const float* right = m_radeRxUpR.data();
+        const size_t base = route.play.size();
+        route.play.resize(base + size_t(frames48k) * 2);
+        for (int i = 0; i < frames48k; ++i) {
+            route.play[base + size_t(2 * i)] = left[i];
+            route.play[base + size_t(2 * i) + 1] = right[i];
+        }
     }
 
-    // Lifecycle tracer (off by default; enable with
-    // QT_LOGGING_RULES="nereus.dsp.debug=true").
-    qCDebug(lcDsp).noquote() << QString("RxDspWorker::setRadeChannel(%1)")
-                                    .arg(reinterpret_cast<quintptr>(channel),
-                                         0, 16);
+    // Exactly outSize frames every block, like every other slice, so this
+    // slice keeps the mixer's pace whatever its decoder does. Short: the
+    // rest is silence. Long (resampler jitter, a slot of silence ahead of
+    // speech that then arrived whole): keep at most four blocks queued.
+    const size_t want = size_t(outSize) * 2;
+    const size_t keepMax = want * 4;
+    if (route.play.size() > keepMax) {
+        route.play.erase(route.play.begin(),
+                         route.play.begin() + std::ptrdiff_t(route.play.size() - keepMax));
+    }
+    m_radeRxOutScratch.assign(want, 0.0f);
+    const size_t take = std::min(want, route.play.size());
+    std::copy(route.play.begin(), route.play.begin() + std::ptrdiff_t(take),
+              m_radeRxOutScratch.begin());
+    route.play.erase(route.play.begin(), route.play.begin() + std::ptrdiff_t(take));
+    if (m_audioEngine != nullptr) {
+        m_audioEngine->rxBlockReady(sliceIdx, m_radeRxOutScratch.data(), outSize);
+    }
+    return true;
+}
+
+RxDspWorker::InputDelayStats RxDspWorker::inputDelayStats(int receiverIndex) const
+{
+    InputDelayStats stats;
+    if (receiverIndex < 0 || receiverIndex >= kMaxInputDelayReceivers) {
+        return stats;
+    }
+    const InputDelayState& state = m_inputDelay[receiverIndex];
+    stats.inputDelayMs   = state.delayUs.load(std::memory_order_relaxed) / 1000;
+    stats.droppedInputMs = state.droppedUs.load(std::memory_order_relaxed) / 1000;
+    return stats;
+}
+
+RxDspWorker::InputDelayStats RxDspWorker::externalDiversityInputDelayStats() const
+{
+    InputDelayStats stats;
+    stats.inputDelayMs =
+        m_externalDiversityInputDelay.delayUs.load(std::memory_order_relaxed) / 1000;
+    stats.droppedInputMs =
+        m_externalDiversityInputDelay.droppedUs.load(std::memory_order_relaxed) / 1000;
+    return stats;
+}
+
+RxDspWorker::InputDelayStats RxDspWorker::inputDelayStatsForSlice(int sliceId,
+                                                                  int streamIndex) const
+{
+    if (sliceId >= 0
+        && m_externalDiversityStatsSlice.load(std::memory_order_relaxed) == sliceId) {
+        return externalDiversityInputDelayStats();
+    }
+    return streamIndex >= 0 ? inputDelayStats(streamIndex) : InputDelayStats{};
+}
+
+qint64 RxDspWorker::spanUsForDrainSize(qint64 inSize, qint64 samples)
+{
+    if (inSize <= 0 || samples <= 0) {
+        return 0;
+    }
+    // rate = inSize * 48000 / 64, inverting the drain-size rule documented
+    // on setStreamInputChunk; span = samples / rate.
+    return samples * 64 * 1000000 / (inSize * 48000);
+}
+
+qint64 RxDspWorker::inputSpanUs(int receiverIndex, qint64 samples) const
+{
+    const auto sizeIt = m_streamInSize.find(receiverIndex);
+    const qint64 inSize = (sizeIt != m_streamInSize.end() && sizeIt->second > 0)
+                              ? sizeIt->second
+                              : m_inSize.load(std::memory_order_relaxed);
+    return spanUsForDrainSize(inSize, samples);
+}
+
+// R-R3-40. Runs on the DSP thread. Per batch this adds one clock read and one
+// relaxed atomic store; a skipped batch also adds one relaxed fetch_add. The
+// only log line is written once per episode, when it ends.
+void RxDspWorker::processStampedIqBatch(int receiverIndex,
+                                        const QVector<float>& interleavedIQ,
+                                        qint64 enqueuedNs)
+{
+    if (receiverIndex < 0 || receiverIndex >= kMaxInputDelayReceivers) {
+        processIqBatch(receiverIndex, interleavedIQ);
+        return;
+    }
+
+    InputDelayState& state = m_inputDelay[receiverIndex];
+    const qint64 delayUs =
+        std::max<qint64>(0, (ReceiverManager::enqueueClockNs() - enqueuedNs) / 1000);
+    state.delayUs.store(delayUs, std::memory_order_relaxed);
+
+    if (!state.skipping && delayUs > kDspInputDelayLimitMs * 1000) {
+        state.skipping = true;
+        state.episodeSkippedUs = 0;
+        // The stream's partial chunk is older than this batch; it goes with
+        // the skipped input rather than being joined to newer samples.
+        auto accIt = m_accums.find(receiverIndex);
+        if (accIt != m_accums.end() && !accIt->second.i.isEmpty()) {
+            const qint64 partialUs =
+                inputSpanUs(receiverIndex, accIt->second.i.size());
+            state.episodeSkippedUs += partialUs;
+            state.droppedUs.fetch_add(partialUs, std::memory_order_relaxed);
+            accIt->second.i.clear();
+            accIt->second.q.clear();
+        }
+    }
+
+    if (state.skipping) {
+        if (delayUs >= kDspInputDelayResumeMs * 1000) {
+            const qint64 spanUs =
+                inputSpanUs(receiverIndex, interleavedIQ.size() / 2);
+            state.episodeSkippedUs += spanUs;
+            state.droppedUs.fetch_add(spanUs, std::memory_order_relaxed);
+            emit batchProcessed();
+            return;
+        }
+        state.skipping = false;
+        qCWarning(lcDsp).noquote()
+            << QStringLiteral("Receive processing fell behind; skipped %1 ms "
+                              "of input to catch up.")
+                   .arg(state.episodeSkippedUs / 1000);
+        state.episodeSkippedUs = 0;
+    }
+
+    processIqBatch(receiverIndex, interleavedIQ);
 }
 
 void RxDspWorker::processIqBatch(int receiverIndex,
                                  const QVector<float>& interleavedIQ)
 {
+#ifdef NEREUS_BUILD_TESTS
+    if (const int delayUs =
+            m_processingDelayUsForTest.load(std::memory_order_relaxed);
+        delayUs > 0) {
+        std::this_thread::sleep_for(std::chrono::microseconds(delayUs));
+    }
+#endif
+
     // Snapshot the sizing for this batch so a concurrent
     // setBufferSizes() (e.g. mid-batch reconfigure) can't split a
     // single drain across two values. The fields are std::atomic<int>
@@ -544,14 +1019,25 @@ void RxDspWorker::processIqBatch(int receiverIndex,
                                     ? sliceIt->second
                                     : QVector<int>{};
 
+    // External diversity: the stream hosting the diversity target is the
+    // one receiver whose input is the mix. Every slice on it, the target
+    // and any slice sharing its stream alike, is fed from the mixed buffer
+    // (feedExternalDiversityTarget), so none takes this raw primary-leg
+    // chunk. Thetis's sub-receivers of stream 0 all read Inbound(0), which
+    // is the xdivEXT output while diversity runs:
+    //   From Thetis ChannelMaster/sync.c:49-51 [v2.10.3.15]
+    //     case 0: // diversity receivers
+    //         xdivEXT (0, nsamples, data, psyn->divbuff);
+    //         Inbound (0, nsamples, psyn->divbuff);
+    const bool diversityStream = m_externalDiversityRoute.active()
+        && slices.contains(m_externalDiversityRoute.targetSliceId);
+    const auto fedFromDiversityMix = [this, diversityStream](int sliceId) {
+        return diversityStream || isExternalDiversityTarget(sliceId);
+    };
+
     // (Phase 3F Sub-Epic I closeout defect G1 computed a hostsSliceZero flag
     //  here to elect one stream to raise the anti-VOX fork. Sub-Epic J Task 9
     //  retired that fork; see the note at the bottom of the drain loop.)
-
-    // RxChannel::processIq writes sampleCount floats on the inactive-channel
-    // memset path and outSampleCount via fexchange2, so the reusable output
-    // scratch must cover the larger of the two.
-    const int scratchLen = qMax(inSize, outSize);
 
     // Drain whole chunks of inSize through WDSP (or skip the WDSP/audio
     // calls when engines aren't wired — chunkDrained still fires so the
@@ -568,8 +1054,8 @@ void RxDspWorker::processIqBatch(int receiverIndex,
         // tests (same rule as chunkDrained / sliceProcessed).
         const bool hasOrdinarySlice =
             std::any_of(slices.cbegin(), slices.cend(),
-                        [this](int sliceId) {
-                            return !isExternalDiversityTarget(sliceId);
+                        [&fedFromDiversityMix](int sliceId) {
+                            return !fedFromDiversityMix(sliceId);
                         });
         if (hasOrdinarySlice) {
             emit streamNoiseBlankerApplied(receiverIndex);
@@ -597,194 +1083,21 @@ void RxDspWorker::processIqBatch(int receiverIndex,
             // so it is never bypassed).
             bool streamBlankerClaimed = false;
             for (int sliceIdx : slices) {
-                if (isExternalDiversityTarget(sliceIdx)) {
+                if (fedFromDiversityMix(sliceIdx)) {
                     continue;
                 }
 
-                // Invariant: WDSP channel id == slice index.
-                RxChannel* rxCh = m_wdspEngine->rxChannel(sliceIdx);
-                if (rxCh == nullptr) {
-                    // Defensive: WDSP RxChannel should always exist now
-                    // (RadioModel creates it unconditionally per Phase 3R
-                    // K-bench restructure). If absent, skip this slice;
-                    // the chunk still drains below.
-                    continue;
+                if (processSliceChunk(sliceIdx, acc.i.data(), acc.q.data(),
+                                      inSize, outSize, streamBlankerClaimed)) {
+                    streamBlankerClaimed = true;
                 }
-
-                // Claim the stream's single blanking pass for the first
-                // slice that actually reaches processIq. Anchored on the
-                // processIq call rather than on position in `slices` so a
-                // skipped slice above cannot consume the pass and leave the
-                // chunk unblanked.
-                rxCh->setNoiseBlankerBypassed(streamBlankerClaimed);
-                streamBlankerClaimed = true;
-
-                // ── WDSP always runs ──────────────────────────────────────
-                // S-meter, spectrum, AGC, ADC-overflow detector all live
-                // inside WDSP's RxChannel internals. They MUST update
-                // every tick regardless of audio routing, so processIq
-                // runs unconditionally. The decoded audio in outI/outQ
-                // is gated below depending on whether RADE owns the
-                // speaker path for this slice.
-                if (m_sliceOutI.size() < scratchLen) {
-                    m_sliceOutI.resize(scratchLen);
-                    m_sliceOutQ.resize(scratchLen);
-                }
-                // The scratch is reused across slices and drains, so it must
-                // be zeroed exactly where the old per-drain
-                // `QVector<float> outI(inSize)` was value-initialised.
-                // fexchange2 returns without writing either output leg when
-                // the channel's exchange bit is clear (iobuffs.c:525, the
-                // whole body is inside that test), which happens across
-                // flush / restart transitions. Without the zero-fill that
-                // path would replay the previous chunk's audio instead of
-                // emitting silence. Cheaper than the allocation it replaces:
-                // the old code zero-filled the same span AND hit the heap.
-                m_sliceOutI.fill(0.0f);
-                m_sliceOutQ.fill(0.0f);
-                QVector<float>& outI = m_sliceOutI;
-                QVector<float>& outQ = m_sliceOutQ;
-                rxCh->processIq(acc.i.data(), acc.q.data(),
-                                outI.data(), outQ.data(), inSize, outSize);
-
-                // ── Phase 3R K-bench (source-first reframe): RADE RX fork
-                //
-                // freedv-gui (RADEReceiveStep.cpp:175-310 [@77e793a]) and
-                // AetherSDR (RADEEngine.cpp:200-303 [@0cd4559]) BOTH feed
-                // RADE post-SSB-demodulation REAL AUDIO (not raw DDC
-                // complex baseband). The codec internally builds RADE_COMP
-                // by setting real=audio, imag=0 — it's an audio-domain
-                // demodulator, not a baseband one.
-                //
-                // Earlier NereusSDR attempts fed the raw DDC I/Q directly
-                // and the codec never synced because the input format was
-                // wrong. This fork now uses outI (WDSP's decoded audio,
-                // 48 kHz dual-mono) → downsample to 24 kHz → interleave
-                // as I=audio, Q=0 for RadeChannel::processIq. RADE's
-                // internal 24→8 decimator + RADE_COMP assembly then
-                // matches the freedv-gui pipeline byte-for-byte.
-                //
-                // outI / outQ are dual-mono identical (RXA patch panel
-                // SetRXAPanelBinaural(channel, 0)), so we use outI as
-                // the mono audio source.
-                //
-                // Phase 3F Sub-Epic I Task 4: the fork is SLICE 0 ONLY.
-                // RADE owns exactly one channel and one speaker path, so
-                // multi-slice RADE stays a documented deferral (RADE on A
-                // while SSB on B, Phase 3F future). Without this gate a
-                // secondary slice would take the fork, discard its own WDSP
-                // audio below, and fall silent.
-                RadeChannel* radeCh =
-                    (sliceIdx == 0)
-                        ? m_radeChannel.load(std::memory_order_acquire)
-                        : nullptr;
-                // One-shot tracer (off by default; enable with
-                // QT_LOGGING_RULES="nereus.dsp.debug=true") to confirm
-                // the RADE RX fork is reaching the codec during bench
-                // shakedown.
-                static int s_rxRadeDiagCount = 0;
-                if (radeCh != nullptr && s_rxRadeDiagCount < 3) {
-                    qCDebug(lcDsp).noquote()
-                        << QString("RxDspWorker RADE fork #%1: radeCh=%2 "
-                                   "outSize=%3 (audio rate=48kHz)")
-                            .arg(s_rxRadeDiagCount + 1)
-                            .arg(reinterpret_cast<quintptr>(radeCh), 0, 16)
-                            .arg(outSize);
-                    ++s_rxRadeDiagCount;
-                }
-                if (radeCh != nullptr && outSize > 0) {
-                    // Lazy-build 48→24 audio downsampler. Single resampler
-                    // (real audio); no Q-leg needed since RADE expects
-                    // imag=0.
-                    if (!m_radeRxDownsamplerI
-                        || m_radeRxDownsamplerSrcRate != 48000.0) {
-                        m_radeRxDownsamplerI =
-                            std::make_unique<Resampler>(
-                                48000.0, 24000.0, 4096);
-                        // Q-leg downsampler unused in this path; keep it
-                        // null so any stale state from the old direct-
-                        // baseband path is discarded.
-                        m_radeRxDownsamplerQ.reset();
-                        m_radeRxDownsamplerSrcRate = 48000.0;
-                    }
-
-                    // Downsample WDSP's outI (48 kHz mono real audio)
-                    // to 24 kHz.
-                    QByteArray downAudio =
-                        m_radeRxDownsamplerI->process(outI.data(), outSize);
-                    const int outBytes = downAudio.size();
-                    const int outFrames =
-                        outBytes / static_cast<int>(sizeof(float));
-
-                    if (outFrames > 0) {
-                        // Build interleaved stereo float32 with audio in
-                        // the I (real) leg and zero in the Q (imag) leg
-                        // at 24 kHz. This matches AetherSDR's
-                        // RADEEngine.cpp:222-227 pattern (DAX 24 kHz
-                        // stereo PCM → average to mono → set imag=0)
-                        // and freedv-gui's RADEReceiveStep:201 pattern
-                        // (input short[] → RADE_COMP{re=sample, im=0}).
-                        m_radeRxIqScratch.resize(
-                            outFrames * 2 * static_cast<int>(sizeof(float)));
-                        float* dst = reinterpret_cast<float*>(
-                            m_radeRxIqScratch.data());
-                        const float* srcAudio =
-                            reinterpret_cast<const float*>(
-                                downAudio.constData());
-                        for (int i = 0; i < outFrames; ++i) {
-                            dst[2 * i + 0] = srcAudio[i];   // real = audio
-                            dst[2 * i + 1] = 0.0f;          // imag = 0
-                        }
-                        // Post to RadeChannel on the main thread via the
-                        // queued radeIqReady signal connection (set in
-                        // setRadeChannel).  Using signal/slot instead of
-                        // QMetaObject::invokeMethod(raw_ptr, ...) closes
-                        // the use-after-free gap PR #238 review P1 #3
-                        // flagged: Qt drops queued slot calls under the
-                        // connection-list lock when the receiver
-                        // QObject is destroyed.  radeCh is still loaded
-                        // above as a cheap gate so we skip the
-                        // downsample work when no channel is wired.
-                        emit radeIqReady(m_radeRxIqScratch);
-                    }
-                }
-
-                // ── Audio routing ───────────────────────────────────────
-                // In RADE mode, WDSP audio is discarded — RADE's
-                // rxSpeechReady signal (wired in J4 to AudioEngine)
-                // owns the speaker path. Otherwise route WDSP's decoded
-                // audio to AudioEngine as before.
-                if (radeCh == nullptr) {
-                    // Phase 3F Sub-Epic I Task 4: slice 0 keeps
-                    // m_interleavedOut to itself because the anti-VOX fork
-                    // below reads it as the cancellation reference; a
-                    // secondary slice writing there would hand the DEXP
-                    // detector the wrong slice's audio. rxBlockReady
-                    // consumes the pointer synchronously, so one scratch
-                    // per role is enough.
-                    QVector<float>& scratch =
-                        (sliceIdx == 0) ? m_interleavedOut : m_interleavedOutAux;
-                    if (scratch.size() < outSize * 2) {
-                        scratch.resize(outSize * 2);
-                    }
-                    float* interleaved = scratch.data();
-                    for (int i = 0; i < outSize; ++i) {
-                        interleaved[i * 2 + 0] = outI[i];
-                        interleaved[i * 2 + 1] = outQ[i];
-                    }
-                    // MasterMixer sums every registered slice into the one
-                    // global output, so each slice pushes under its own id.
-                    m_audioEngine->rxBlockReady(sliceIdx, interleaved, outSize);
-                }
-
-                emit sliceProcessed(sliceIdx, inSize);
             }
         } else {
             // No engines wired (unit tests): still honour the fan-out
             // contract so the signal sequence stays observable, exactly
             // as chunkDrained already fires without engines.
             for (int sliceIdx : slices) {
-                if (isExternalDiversityTarget(sliceIdx)) {
+                if (fedFromDiversityMix(sliceIdx)) {
                     continue;
                 }
                 emit sliceProcessed(sliceIdx, inSize);
@@ -871,6 +1184,165 @@ void RxDspWorker::processIqBatch(int receiverIndex,
     }
 
     emit batchProcessed();
+}
+
+bool RxDspWorker::processSliceChunk(int sliceIdx, float* inI, float* inQ,
+                                    int inSize, int outSize,
+                                    bool blankerClaimed)
+{
+    // RxChannel::processIq writes sampleCount floats on the inactive-channel
+    // memset path and outSampleCount via fexchange2, so the reusable output
+    // scratch must cover the larger of the two.
+    const int scratchLen = qMax(inSize, outSize);
+
+    // Invariant: WDSP channel id == slice index.
+    RxChannel* rxCh = m_wdspEngine->rxChannel(sliceIdx);
+    if (rxCh == nullptr) {
+        // Defensive: WDSP RxChannel should always exist now
+        // (RadioModel creates it unconditionally per Phase 3R
+        // K-bench restructure). If absent, skip this slice;
+        // the chunk still drains below.
+        return false;
+    }
+
+    // Claim the stream's single blanking pass for the first
+    // slice that actually reaches processIq. Anchored on the
+    // processIq call rather than on position in `slices` so a
+    // skipped slice above cannot consume the pass and leave the
+    // chunk unblanked.
+    // (The caller marks the pass claimed when this returns true.)
+    rxCh->setNoiseBlankerBypassed(blankerClaimed);
+
+    // ── WDSP always runs ──────────────────────────────────────
+    // S-meter, spectrum, AGC, ADC-overflow detector all live
+    // inside WDSP's RxChannel internals. They MUST update
+    // every tick regardless of audio routing, so processIq
+    // runs unconditionally. The decoded audio in outI/outQ
+    // is gated below depending on whether RADE owns the
+    // speaker path for this slice.
+    if (m_sliceOutI.size() < scratchLen) {
+        m_sliceOutI.resize(scratchLen);
+        m_sliceOutQ.resize(scratchLen);
+    }
+    // The scratch is reused across slices and drains, so it must
+    // be zeroed exactly where the old per-drain
+    // `QVector<float> outI(inSize)` was value-initialised.
+    // fexchange2 returns without writing either output leg when
+    // the channel's exchange bit is clear (iobuffs.c:525, the
+    // whole body is inside that test), which happens across
+    // flush / restart transitions. Without the zero-fill that
+    // path would replay the previous chunk's audio instead of
+    // emitting silence. Cheaper than the allocation it replaces:
+    // the old code zero-filled the same span AND hit the heap.
+    m_sliceOutI.fill(0.0f);
+    m_sliceOutQ.fill(0.0f);
+    QVector<float>& outI = m_sliceOutI;
+    QVector<float>& outQ = m_sliceOutQ;
+    rxCh->processIq(inI, inQ,
+                    outI.data(), outQ.data(), inSize, outSize);
+
+    // ── Phase 3R K-bench (source-first reframe): RADE RX fork
+    //
+    // freedv-gui (RADEReceiveStep.cpp:175-310 [@77e793a]) and
+    // AetherSDR (RADEEngine.cpp:200-303 [@0cd4559]) BOTH feed
+    // RADE post-SSB-demodulation REAL AUDIO (not raw DDC
+    // complex baseband). The codec internally builds RADE_COMP
+    // by setting real=audio, imag=0 — it's an audio-domain
+    // demodulator, not a baseband one.
+    //
+    // Earlier NereusSDR attempts fed the raw DDC I/Q directly
+    // and the codec never synced because the input format was
+    // wrong. This fork now uses outI (WDSP's decoded audio,
+    // 48 kHz dual-mono) → downsample to 24 kHz → interleave
+    // as I=audio, Q=0 for RadeChannel::processIq. RADE's
+    // internal 24→8 decimator + RADE_COMP assembly then
+    // matches the freedv-gui pipeline byte-for-byte.
+    //
+    // outI / outQ are dual-mono identical (RXA patch panel
+    // SetRXAPanelBinaural(channel, 0)), so we use outI as
+    // the mono audio source.
+    //
+    // RADE threads (2026-09-30): any number of slices route
+    // to RADE, each to its own decoder thread
+    // (processRadeRxBlock), which also delivers the slice's
+    // audio for this block.
+    const bool routesToRade =
+        processRadeRxBlock(sliceIdx, outI.data(), outSize);
+    // One-shot tracer (off by default; enable with
+    // QT_LOGGING_RULES="nereus.dsp.debug=true") to confirm
+    // the RADE RX fork is reaching the codec during bench
+    // shakedown.
+    static int s_rxRadeDiagCount = 0;
+    if (routesToRade && s_rxRadeDiagCount < 3) {
+        qCDebug(lcDsp).noquote()
+            << QString("RxDspWorker RADE fork #%1: "
+                       "slice=%2 outSize=%3 (audio rate=48kHz)")
+                .arg(s_rxRadeDiagCount + 1)
+                .arg(sliceIdx)
+                .arg(outSize);
+        ++s_rxRadeDiagCount;
+    }
+
+    // ── Audio routing ───────────────────────────────────────
+    // In RADE mode, WDSP audio is discarded — RADE's
+    // rxSpeechReady signal (wired in J4 to AudioEngine)
+    // owns the speaker path. Otherwise route WDSP's decoded
+    // audio to AudioEngine as before.
+    // [RADE threads: the decoded speech now reaches AudioEngine
+    // from processRadeRxBlock above, on this thread.]
+    if (!routesToRade) {
+        // RADE gaps (2026-09-30): a slice in RADE mode whose
+        // route is not here (yet) keeps its place in the mix
+        // with silence. Its WDSP audio is the sideband, which
+        // a RADE slice never plays (setRadeModeSlices).
+        static_assert(WdspEngine::kMaxSliceChannels <= kRadeModeMaskSlices,
+                      "every slice id needs a RADE mode bit");
+        const bool radeWithoutRoute = sliceIdx >= 0
+            && sliceIdx < kRadeModeMaskSlices
+            && ((m_radeModeSlices.load(std::memory_order_acquire)
+                 >> sliceIdx) & 1u) != 0;
+        // Phase 3F Sub-Epic I Task 4: slice 0 keeps
+        // m_interleavedOut to itself because the anti-VOX fork
+        // below reads it as the cancellation reference; a
+        // secondary slice writing there would hand the DEXP
+        // detector the wrong slice's audio. rxBlockReady
+        // consumes the pointer synchronously, so one scratch
+        // per role is enough.
+        QVector<float>& scratch =
+            (sliceIdx == 0) ? m_interleavedOut : m_interleavedOutAux;
+        if (scratch.size() < outSize * 2) {
+            scratch.resize(outSize * 2);
+        }
+        float* interleaved = scratch.data();
+        if (radeWithoutRoute) {
+            std::fill(interleaved, interleaved + outSize * 2, 0.0f);
+        } else {
+            for (int i = 0; i < outSize; ++i) {
+                interleaved[i * 2 + 0] = outI[i];
+                interleaved[i * 2 + 1] = outQ[i];
+            }
+        }
+        // MasterMixer sums every registered slice into the one
+        // global output, so each slice pushes under its own id.
+        m_audioEngine->rxBlockReady(sliceIdx, interleaved, outSize);
+    }
+
+    emit sliceProcessed(sliceIdx, inSize);
+    return true;
+}
+
+QVector<int> RxDspWorker::externalDiversityStreamSlices() const
+{
+    if (!m_externalDiversityRoute.active()) {
+        return {};
+    }
+    for (const auto& [stream, slices] : m_streamSlices) {
+        Q_UNUSED(stream);
+        if (slices.contains(m_externalDiversityRoute.targetSliceId)) {
+            return slices;
+        }
+    }
+    return {};
 }
 
 void RxDspWorker::setStreamSlices(int streamIndex,

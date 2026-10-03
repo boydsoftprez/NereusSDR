@@ -75,7 +75,7 @@ namespace NereusSDR {
 /// Three-column painted thumbnail grid, ported structurally from
 /// AetherSDR PanLayoutDialog. Shows every layout in `kPanLayouts` whose
 /// `panCount` fits the connected board's independent-pan ceiling
-/// (`qMin(BoardCapabilities::maxSlices, BoardCapabilities::userDdcCount)`);
+/// (`qMin(BoardCapabilities::maxSlices, RadioModel::userStreamCount())`);
 /// layouts that do not fit are hidden rather than greyed, with a footer
 /// line naming the board and how many were hidden (design doc §8.4).
 class PanLayoutDialog : public QDialog {
@@ -83,7 +83,7 @@ class PanLayoutDialog : public QDialog {
 
 public:
     /// maxPanCount is qMin(BoardCapabilities::maxSlices,
-    /// BoardCapabilities::userDdcCount) for the connected radio. Opening a
+    /// RadioModel::userStreamCount()) for the connected radio. Opening a
     /// NEW pan always claims its own DDC
     /// (SliceStreamAllocator::placeSlice, preferOwnStream=true), so the
     /// board's user-facing DDC count -- not its total slice count -- is

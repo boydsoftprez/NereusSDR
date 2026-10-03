@@ -1,0 +1,11 @@
+{
+  "from": "server",
+  "to": "client",
+  "wire": {
+    "type": "error",
+    "code": "offline",
+    "reason": "x",
+    "retryAfterMs": -1
+  },
+  "decodes": false
+}

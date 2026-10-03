@@ -1,0 +1,8 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "pair.confirm",
+    "box": "conformance-device-box"
+  },
+  "decodes": true
+}

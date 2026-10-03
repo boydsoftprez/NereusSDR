@@ -3,13 +3,32 @@
 // key names and default values were verified against the Thetis control
 // inventory (setup.designer.cs / TCIServer.cs). No Thetis code is
 // translated here; all AppSettings keys are attributed in TciProtocol.h.
+// 2026-09-27 - Parity Task 23 Core TCI options and read-only bind,
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-09-29 - R-R3-49 / R-IOS-18: Setup description version 15 ids on the
+//              Peripherals rows. J.J. Boyd (KG4VCF), AI-assisted via
+//              Anthropic Claude Code.
+// 2026-09-29 - The three RX2 VFO options work: captions and tooltips say
+//              what Thetis's options do, their defaults come from
+//              TciProtocol.h, and Forget follows Duplicate as in Thetis.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "CatNetworkSetupPages.h"
 #include "gui/StyleConstants.h"
 #include "gui/LanScanDialog.h"
+#include "gui/OperatorReasonText.h"
 #include "core/AppSettings.h"
+#include "core/session/IStationLink.h"
+#include "models/AmplifierModel.h"
+#include "models/StationTciModel.h"
+#include "core/TciProtocol.h"
+#include "core/TciSwitch.h"
+#include "core/TciUpdateGap.h"
 #include "models/RadioModel.h"
 
+#include <QHideEvent>
+#include <QSignalBlocker>
+#include <QTimer>
 #include <QNetworkInterface>
 #ifdef HAVE_WEBSOCKETS
 #include "core/TciServer.h"
@@ -70,7 +89,7 @@ void CatSerialPortsPage::buildUI()
         m_ports[i].portCombo->setStyleSheet(QString::fromLatin1(Style::kComboStyle));
         m_ports[i].portCombo->addItem(QStringLiteral("(none)"));
         m_ports[i].portCombo->setDisabled(true);
-        m_ports[i].portCombo->setToolTip(QStringLiteral("NYI — serial port selection"));
+        m_ports[i].portCombo->setToolTip(QStringLiteral("The serial port for this CAT connection"));
         grid->addWidget(m_ports[i].portCombo, 0, 1);
 
         // Column 2: Baud label + combo
@@ -84,14 +103,14 @@ void CatSerialPortsPage::buildUI()
             m_ports[i].baudCombo->addItem(QString::fromLatin1(kBaudRates[b]));
         }
         m_ports[i].baudCombo->setDisabled(true);
-        m_ports[i].baudCombo->setToolTip(QStringLiteral("NYI — baud rate selection"));
+        m_ports[i].baudCombo->setToolTip(QStringLiteral("The serial speed (baud rate)"));
         grid->addWidget(m_ports[i].baudCombo, 0, 3);
 
         // Row 1: enable + status
         m_ports[i].enableCheck = new QCheckBox(QStringLiteral("Enable"), group);
         m_ports[i].enableCheck->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle));
         m_ports[i].enableCheck->setDisabled(true);
-        m_ports[i].enableCheck->setToolTip(QStringLiteral("NYI — enable CAT port"));
+        m_ports[i].enableCheck->setToolTip(QStringLiteral("Turn this CAT port on"));
         grid->addWidget(m_ports[i].enableCheck, 1, 0, 1, 2);
 
         m_ports[i].statusLabel = new QLabel(QStringLiteral("Status: not connected"), group);
@@ -121,6 +140,7 @@ void CatTciServerPage::buildUI()
     NereusSDR::Style::applyDarkPageStyle(this);
 
     buildServerGroup();
+    buildCoreGroup();
     buildCompatibilityGroup();
     buildIqStreamGroup();
     buildAudioStreamGroup();
@@ -132,14 +152,14 @@ void CatTciServerPage::buildUI()
 
 // ---------------------------------------------------------------------------
 // Group 1: Server
-// Controls: Enable / Bind IP (read-only 127.0.0.1) / Port + Default button /
+// Controls: Enable / Listen on (address dropdown) / Port + Default button /
 //           Send initial state / Rate limit / Show Log button / Status line.
 // AppSettings: TciServerEnabled, TciServerPort, TciSendInitialFrequencyStateOnConnect,
-//              TciRateLimitMsgsPerSec.
+//              TciRateLimitMs.
 // ---------------------------------------------------------------------------
 void CatTciServerPage::buildServerGroup()
 {
-    auto* group = new QGroupBox(tr("Server"), this);
+    auto* group = new QGroupBox(tr("This window's server"), this);
     m_serverGroup = group;  // saved so refreshTciStatusDisplay() can update title
     group->setStyleSheet(QString::fromLatin1(Style::kGroupBoxStyle));
     auto* form = new QFormLayout(group);
@@ -151,7 +171,11 @@ void CatTciServerPage::buildServerGroup()
     // From Thetis setup.designer.cs:57979-57983 [v2.10.3.13] — chkTCIEnable
     m_enableCheck = new QCheckBox(tr("Enable TCI Server"), group);
     m_enableCheck->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle));
-    m_enableCheck->setToolTip(tr("Enable the built-in TCI (Transceiver Control Interface) WebSocket server."));
+    // R-R3-21 / R-R3-48 (operator wording, 2026-09-24): in a window on a
+    // Core the switch and port are the Core's; the station line below says
+    // so in that window.
+    m_enableCheck->setToolTip(tr("Turn on the TCI server so programs like WSJT-X or JTDX "
+                                 "can control this radio."));
     m_enableCheck->setChecked(
         s.value(QStringLiteral("TciServerEnabled"), QStringLiteral("False")).toString()
         == QStringLiteral("True"));
@@ -167,14 +191,14 @@ void CatTciServerPage::buildServerGroup()
     });
     form->addRow(QString(), m_enableCheck);
 
-    // ── Bind address dropdown ───────────────────────────────────────────────
+    // ── "Listen on:" address dropdown ───────────────────────────────────────
     //
     // Phase 3J-1 closeout Item 1 (2026-05-12): replaces the read-only
     // "127.0.0.1" label with an interface-aware dropdown.  Operator can
-    // pick:
-    //   - "Loopback only (127.0.0.1)" — default; safest
-    //   - "Any IPv4 interface (0.0.0.0)" — exposes server to LAN
-    //   - A specific detected NIC (e.g. "en0 — 192.168.1.50")
+    // pick (labels reworded 2026-09-24, R-R3-21):
+    //   - "This computer only (127.0.0.1)": default; safest
+    //   - "Any IPv4 address (0.0.0.0), open to your network"
+    //   - A specific detected NIC (e.g. "en0 (192.168.1.50)")
     //   - IPv6 equivalents
     //
     // Functional parity with Thetis Setup.cs:22410-22473 [v2.10.3.13]
@@ -184,13 +208,14 @@ void CatTciServerPage::buildServerGroup()
     // widgets are NereusSDR-native; a dropdown with validated, NIC-aware
     // choices is the better UX for our platform.
     m_bindAddressCombo = new QComboBox(group);
+    m_bindAddressCombo->setObjectName(QStringLiteral("tciListenOnCombo"));
     m_bindAddressCombo->setStyleSheet(QString::fromLatin1(Style::kComboStyle));
     m_bindAddressCombo->setToolTip(tr(
-        "Network interface the TCI server binds to. "
-        "Loopback (127.0.0.1) accepts connections only from this machine. "
-        "Any interface (0.0.0.0) accepts from anywhere on your LAN. "
-        "TCI has no authentication — choose a specific LAN IP or 0.0.0.0 "
-        "only if your network is trusted."));
+        "The IP address the TCI server listens on. "
+        "127.0.0.1 accepts programs on this computer only. "
+        "0.0.0.0 accepts them from anywhere on your network. "
+        "TCI has no password, so choose a network address or 0.0.0.0 "
+        "only on a network you trust."));
     populateBindAddressCombo();
     connect(m_bindAddressCombo,
             QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -203,14 +228,18 @@ void CatTciServerPage::buildServerGroup()
         emit tciServerBindOrPortChanged(addr,
             static_cast<quint16>(m_portSpin ? m_portSpin->value() : 50001));
     });
-    form->addRow(tr("Bind interface:"), m_bindAddressCombo);
+    form->addRow(tr("Listen on:"), m_bindAddressCombo);
 
     // Port spinbox + Default button
     // From Thetis setup.designer.cs:57991-57998 [v2.10.3.13] — udTCIPort (default 50001)
     m_portSpin = new QSpinBox(group);
     m_portSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
     m_portSpin->setRange(1024, 65535);
-    m_portSpin->setToolTip(tr("TCP port the TCI WebSocket server listens on (1024–65535). "
+    // Rework follow-up 5 (R-R3-48): the port is sent (to this window's
+    // server and the Core's) when editing finishes (Enter, focus leaving,
+    // the arrows), not for every keystroke.
+    m_portSpin->setKeyboardTracking(false);
+    m_portSpin->setToolTip(tr("The TCP port the TCI server listens on (1024–65535). "
                                "Default is 50001. Requires server restart to take effect."));
     m_portSpin->setValue(
         s.value(QStringLiteral("TciServerPort"), 50001).toInt());
@@ -251,19 +280,37 @@ void CatTciServerPage::buildServerGroup()
     });
     form->addRow(QString(), m_sendInitialStateCheck);
 
-    // Rate limit
-    // From Thetis TCIServer.cs [v2.10.3.13] — per-client outbound rate cap
+    // Rate limit: the gap between frequency updates sent to each app.
+    // Receiver and transmit gaps plan, Task 10 (R-R3-49). Thetis's
+    // udTCIRateLimit is not a limit on incoming messages: it is the shortest
+    // gap in ms between outgoing vfo, dds and tx_frequency updates to each
+    // app (TCIServer.cs:6421-6480 [v2.10.3.15], ported in TciUpdateGap).
+    // From Thetis setup.designer.cs:58629-58664 [v2.10.3.15]: label
+    // "Rate Limit (ms)", Minimum 0, Maximum 1000, Value 100, tooltip
+    // "The maximum rate VFO/IF/DDS messages can be sent to clients"
+    // (reworded in plain words below). Thetis applies a change when the
+    // server is next started (setup.cs:22563-22566 [v2.10.3.15] shows a
+    // "toggle to use" note); here it reaches the running server at once.
     m_rateLimitSpin = new QSpinBox(group);
+    m_rateLimitSpin->setObjectName(QStringLiteral("tciRateLimitSpin"));
     m_rateLimitSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
-    m_rateLimitSpin->setRange(0, 1000);
-    m_rateLimitSpin->setSuffix(tr(" msg/s"));
-    m_rateLimitSpin->setSpecialValueText(tr("Unlimited"));
-    m_rateLimitSpin->setToolTip(tr("Maximum outbound TCI messages per second per client (0 = unlimited). "
-                                    "Lower values reduce CPU load for slow TCI apps."));
+    m_rateLimitSpin->setRange(NereusSDR::TciUpdateGap::kMinGapMs,
+                              NereusSDR::TciUpdateGap::kMaxGapMs);
+    m_rateLimitSpin->setSuffix(tr(" ms"));
+    m_rateLimitSpin->setSpecialValueText(tr("Off"));
+    m_rateLimitSpin->setToolTip(tr("How long to wait between frequency updates sent to each TCI app. "
+                                    "Changes made faster than this reach the app as the latest "
+                                    "frequency once the time has passed. Off sends every change."));
     m_rateLimitSpin->setValue(
-        s.value(QStringLiteral("TciRateLimitMsgsPerSec"), 60).toInt());
-    connect(m_rateLimitSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [](int v) {
-        AppSettings::instance().setValue(QStringLiteral("TciRateLimitMsgsPerSec"), v);
+        s.value(QString::fromLatin1(NereusSDR::TciUpdateGap::kSettingKey),
+                NereusSDR::TciUpdateGap::kDefaultGapMs).toInt());
+    connect(m_rateLimitSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
+        AppSettings::instance().setValue(QString::fromLatin1(NereusSDR::TciUpdateGap::kSettingKey), v);
+#ifdef HAVE_WEBSOCKETS
+        if (m_tciServerRef) {
+            m_tciServerRef->setUpdateGapMs(v);
+        }
+#endif
     });
     form->addRow(tr("Rate limit:"), m_rateLimitSpin);
 
@@ -287,7 +334,328 @@ void CatTciServerPage::buildServerGroup()
     m_statusLabel->setObjectName(QStringLiteral("tciStatusLabel"));
     form->addRow(tr("Status:"), m_statusLabel);
 
+    // R-R3-48: in a remote window on a Core that runs its own TCI server,
+    // where devices at the station (the RF-Kit amplifier) reach it. The
+    // switch and port above drive both servers.
+    m_stationLine = new QLabel(group);
+    m_stationLine->setObjectName(QStringLiteral("tciStationLine"));
+    m_stationLine->setTextFormat(Qt::PlainText);
+    m_stationLine->setWordWrap(true);
+    m_stationLine->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
+    m_stationLine->setVisible(false);
+    form->addRow(QString(), m_stationLine);
+
     contentLayout()->addWidget(group);
+}
+
+void CatTciServerPage::setRadioModel(NereusSDR::RadioModel* model)
+{
+    if (m_radioModelRef) {
+        disconnect(m_radioModelRef, nullptr, this, nullptr);
+        if (auto* station = m_radioModelRef->stationTciModel()) {
+            disconnect(station, nullptr, this, nullptr);
+        }
+    }
+    m_radioModelRef = model;
+    if (model) {
+        connect(model, &NereusSDR::RadioModel::stationLinkStateChanged,
+                this, &CatTciServerPage::refreshStationLine);
+        connect(model, &NereusSDR::RadioModel::coreOnAirChanged,
+                this, &CatTciServerPage::refreshCoreGroup);
+        connect(model, &NereusSDR::RadioModel::infoChanged,
+                this, &CatTciServerPage::refreshIqStreamGroup);
+        if (auto* station = model->stationTciModel()) {
+            connect(station, &NereusSDR::StationTciModel::stateChanged,
+                    this, &CatTciServerPage::refreshStationLine);
+        }
+    }
+    refreshStationLine();
+    refreshCoreGroup();
+    refreshIqStreamGroup();
+}
+
+void CatTciServerPage::refreshIqStreamGroup()
+{
+    if (!m_iqSwapCheck || !m_alwaysStreamIqCheck) { return; }
+    const bool unavailable = m_radioModelRef
+        && m_radioModelRef->role() == NereusSDR::RadioModel::Role::Remote
+        && m_radioModelRef->stationRemoteIqVersion() < 1;
+    const QString reason = tr("The connected Core does not support remote TCI IQ streaming.");
+    m_iqSwapCheck->setEnabled(!unavailable);
+    m_alwaysStreamIqCheck->setEnabled(!unavailable);
+    if (unavailable) {
+        m_iqSwapCheck->setToolTip(reason);
+        m_alwaysStreamIqCheck->setToolTip(reason);
+    } else {
+        m_iqSwapCheck->setToolTip(
+            tr("Swap the I and Q samples in the TCI IQ data stream. "
+               "Enabled by default for compatibility with most TCI IQ consumers."));
+        m_alwaysStreamIqCheck->setToolTip(
+            tr("Stream IQ data to all connected TCI clients continuously, even if no client "
+               "has explicitly subscribed to the IQ stream. Increases CPU and network load."));
+    }
+}
+
+void CatTciServerPage::refreshStationLine()
+{
+    // Rework part 1 (R-R3-48, one switch and one port): the switch and port
+    // show the Core's, which TciSwitch writes to this computer's settings
+    // once the Core's whole change has arrived; read them after it.
+    QTimer::singleShot(0, this, &CatTciServerPage::reloadSwitchFromSettings);
+    if (!m_stationLine) {
+        return;
+    }
+    const QString line = NereusSDR::TciSwitch::stationLine(m_radioModelRef.data());
+    m_stationLine->setText(line);
+    m_stationLine->setVisible(!line.isEmpty());
+    refreshCoreGroup();
+}
+
+void CatTciServerPage::buildCoreGroup()
+{
+    m_coreGroup = new QGroupBox(tr("The Core's TCI server"), this);
+    m_coreGroup->setObjectName(QStringLiteral("coreTciOptions"));
+    m_coreGroup->setStyleSheet(QString::fromLatin1(Style::kGroupBoxStyle));
+    auto* form = new QFormLayout(m_coreGroup);
+    form->setSpacing(6);
+    m_coreBind = new QLabel(m_coreGroup);
+    m_coreBind->setObjectName(QStringLiteral("coreTciBind"));
+    m_coreBind->setTextFormat(Qt::PlainText);
+    form->addRow(tr("Listens on:"), m_coreBind);
+    m_coreExpert = new QCheckBox(tr("Emulate ExpertSDR3 protocol"), m_coreGroup);
+    m_coreSunSdr = new QCheckBox(tr("Emulate SunSDR2 PRO device"), m_coreGroup);
+    m_coreCwlu = new QCheckBox(tr("CWL/CWU becomes CW"), m_coreGroup);
+    m_coreInitial = new QCheckBox(tr("Send initial state on connect"), m_coreGroup);
+    m_coreExpert->setProperty("nereusSetupId", "catNetwork.tciServer.coreExpert");
+    m_coreSunSdr->setProperty("nereusSetupId", "catNetwork.tciServer.coreSunSdr");
+    m_coreCwlu->setProperty("nereusSetupId", "catNetwork.tciServer.coreCwlu");
+    m_coreInitial->setProperty("nereusSetupId", "catNetwork.tciServer.coreInitial");
+    for (QCheckBox* option : {m_coreExpert, m_coreSunSdr, m_coreCwlu, m_coreInitial}) {
+        option->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle));
+        connect(option, &QCheckBox::toggled, this, &CatTciServerPage::sendCoreOptions);
+        form->addRow(QString(), option);
+    }
+    // JJ's ruling of 2026-09-28 (stationTciSettingsVersion 1): the rest of
+    // this page's settings, for the Core's server. The captions, ranges and
+    // tooltips are this page's own (the groups below).
+    const auto addCheck = [this, form](const char* name, const QString& text,
+                                       const QString& tip) {
+        auto* box = new QCheckBox(text, m_coreGroup);
+        box->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle));
+        box->setProperty("nereusSetupId",
+                         QStringLiteral("catNetwork.tciServer.core.%1").arg(QLatin1String(name)));
+        box->setToolTip(tip);
+        m_coreSettingTips.insert(QByteArray(name), tip);
+        const QByteArray key(name);
+        connect(box, &QCheckBox::toggled, this,
+                [this, key](bool on) { sendCoreSetting(key, on); });
+        form->addRow(QString(), box);
+        m_coreSettings.insert(key, box);
+    };
+    const auto addSpin = [this, form](const char* name, const QString& label, int min, int max,
+                                      const QString& suffix, const QString& tip) {
+        auto* spin = new QSpinBox(m_coreGroup);
+        spin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
+        spin->setRange(min, max);
+        spin->setSuffix(suffix);
+        spin->setKeyboardTracking(false);
+        spin->setProperty("nereusSetupId",
+                          QStringLiteral("catNetwork.tciServer.core.%1").arg(QLatin1String(name)));
+        spin->setToolTip(tip);
+        m_coreSettingTips.insert(QByteArray(name), tip);
+        const QByteArray key(name);
+        connect(spin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+                [this, key](int value) { sendCoreSetting(key, value); });
+        form->addRow(label, spin);
+        m_coreSettings.insert(key, spin);
+        return spin;
+    };
+    addSpin("rateLimitMs", tr("Rate limit:"), NereusSDR::TciUpdateGap::kMinGapMs,
+            NereusSDR::TciUpdateGap::kMaxGapMs, tr(" ms"),
+            tr("How long to wait between frequency updates sent to each TCI app. Changes made "
+               "faster than this reach the app as the latest frequency once the time has "
+               "passed. Off sends every change."))->setSpecialValueText(tr("Off"));
+    addCheck("cwBecomesCwuAbove10mhz", tr("CW becomes CWU above 10 MHz"),
+             tr("On bands above 10 MHz, report mode as \"CWU\" instead of \"CW\" or \"CWL\". "
+                "Required by certain logging apps that follow the ARRL sideband convention."));
+    addCheck("iqSwap", tr("Swap I/Q channels"),
+             tr("Swap the I and Q samples in the TCI IQ data stream. "
+                "Enabled by default for compatibility with most TCI IQ consumers."));
+    addCheck("alwaysStreamIq", tr("Always stream IQ"),
+             tr("Stream IQ data to all connected TCI clients continuously, even if no client "
+                "has explicitly subscribed to the IQ stream. Increases CPU and network load."));
+    addSpin("audioBlockSamples", tr("Block size:"), 100, 2048, tr(" samples"),
+            tr("Number of audio samples per TCI audio stream block (100 to 2048). "
+               "Larger blocks reduce overhead but increase latency."));
+    {
+        auto* combo = new QComboBox(m_coreGroup);
+        combo->setStyleSheet(QString::fromLatin1(Style::kComboStyle));
+        combo->addItems({QStringLiteral("Left"), QStringLiteral("Right"), QStringLiteral("Both")});
+        combo->setProperty("nereusSetupId", QStringLiteral("catNetwork.tciServer.core.txChannel"));
+        const QString channelTip =
+            tr("Which audio channel carries the TX audio in the TCI audio stream. "
+               "\"Both\" sends the same mono signal to both left and right channels.");
+        combo->setToolTip(channelTip);
+        m_coreSettingTips.insert(QByteArrayLiteral("txChannel"), channelTip);
+        connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                [this](int index) { sendCoreSetting(QByteArrayLiteral("txChannel"), index); });
+        form->addRow(tr("TX channel:"), combo);
+        m_coreSettings.insert(QByteArrayLiteral("txChannel"), combo);
+    }
+    addSpin("rxSensorIntervalMs", tr("RX interval:"), 30, 1000, tr(" ms"),
+            tr("How often RX sensor data (signal level, AGC gain, etc.) is pushed to TCI clients "
+               "that subscribe to sensors (30 to 1000 ms)."));
+    addSpin("txSensorIntervalMs", tr("TX interval:"), 30, 1000, tr(" ms"),
+            tr("How often TX sensor data (forward power, SWR, ALC, etc.) is pushed to TCI "
+               "clients that subscribe to sensors (30 to 1000 ms)."));
+    // The three RX2 VFO options (TciProtocol.cpp applies them).
+    addCheck("forgetRx2VfoBOnDisconnect", rx2VfoForgetLabel(), rx2VfoForgetTip());
+    addCheck("useRx1VfoaForRx2Vfoa", rx2VfoUseRx1Label(), rx2VfoUseRx1Tip());
+    addCheck("copyRx2VfobToVfoa", rx2VfoCopyLabel(), rx2VfoCopyTip());
+    // Forget works only with Duplicate, so it is enabled only while
+    // Duplicate is on, as on Thetis's page.
+    // From Thetis setup.cs:22568-22572 [v2.10.3.15] (chkCopyRX2VFObToVFOa_CheckedChanged)
+    auto* coreCopy = qobject_cast<QCheckBox*>(m_coreSettings.value("copyRx2VfobToVfoa"));
+    QWidget* coreForget = m_coreSettings.value("forgetRx2VfoBOnDisconnect");
+    connect(coreCopy, &QCheckBox::toggled, coreForget,
+            [coreCopy, coreForget](bool on) { coreForget->setEnabled(on && coreCopy->isEnabled()); });
+    m_coreReason = new QLabel(m_coreGroup);
+    m_coreReason->setObjectName(QStringLiteral("coreTciReason"));
+    m_coreReason->setWordWrap(true);
+    m_coreReason->setTextFormat(Qt::PlainText);
+    form->addRow(QString(), m_coreReason);
+    m_coreGroup->hide();
+    contentLayout()->addWidget(m_coreGroup);
+}
+
+void CatTciServerPage::refreshCoreGroup()
+{
+    if (!m_coreGroup) {
+        return;
+    }
+    const bool remote = m_radioModelRef && m_radioModelRef->role() == RadioModel::Role::Remote;
+    m_coreGroup->setVisible(remote);
+    if (!remote) {
+        return;
+    }
+    IStationLink* link = m_radioModelRef->stationLink();
+    const StationTciModel* station = m_radioModelRef->stationTciModel();
+    const bool available = link && link->stationTciServerAvailable() && station;
+    const bool onAir = m_radioModelRef->isCoreOnAir();
+    const QString reason = !link || !link->stationLinkReady()
+        ? tr("Connect to the Core to change its TCI server settings.")
+        : !available ? IStationLink::stationTciServerUnavailableReason()
+                     : onAir ? tr("The radio is on the air. Try again when it stops.") : QString();
+    m_coreReason->setText(reason);
+    m_coreBind->setText(station && link && link->stationTciAvailable()
+        ? QStringLiteral("%1, port %2 (set on the Core)")
+              .arg(station->stationAddress().isEmpty() ? QStringLiteral("the Core's computer")
+                                                       : station->stationAddress())
+              .arg(station->port())
+        : QStringLiteral("--"));
+    if (station && available) {
+        const QSignalBlocker b1(m_coreExpert);
+        const QSignalBlocker b2(m_coreSunSdr);
+        const QSignalBlocker b3(m_coreCwlu);
+        const QSignalBlocker b4(m_coreInitial);
+        m_coreExpert->setChecked(station->emulateExpertSdr3());
+        m_coreSunSdr->setChecked(station->emulateSunSdr2Pro());
+        m_coreCwlu->setChecked(station->cwluBecomesCw());
+        m_coreInitial->setChecked(station->sendInitialState());
+    }
+    for (QCheckBox* option : {m_coreExpert, m_coreSunSdr, m_coreCwlu, m_coreInitial}) {
+        option->setEnabled(available && !onAir);
+        option->setToolTip(reason);
+    }
+    // JJ's ruling of 2026-09-28: the rest of the server's settings, from a
+    // Core that shares them (stationTciSettingsVersion 1); otherwise shown
+    // disabled with the reason.
+    const bool settingsAvailable = available && link->stationTciSettingsAvailable();
+    const QString settingsReason = !reason.isEmpty() ? reason
+        : !settingsAvailable ? IStationLink::stationTciServerUnavailableReason() : QString();
+    for (auto it = m_coreSettings.cbegin(); it != m_coreSettings.cend(); ++it) {
+        QWidget* control = it.value();
+        if (station && settingsAvailable) {
+            const StationTciModel::Setting* setting = StationTciModel::setting(it.key());
+            const QVariant value = setting ? StationTciModel::valueIn(station->state(), *setting)
+                                           : QVariant();
+            const QSignalBlocker block(control);
+            if (auto* box = qobject_cast<QCheckBox*>(control)) {
+                box->setChecked(value.toBool());
+            } else if (auto* spin = qobject_cast<QSpinBox*>(control)) {
+                spin->setValue(value.toInt());
+            } else if (auto* combo = qobject_cast<QComboBox*>(control)) {
+                combo->setCurrentIndex(value.toInt());
+            }
+        }
+        control->setEnabled(settingsAvailable && !onAir);
+        control->setToolTip(settingsReason.isEmpty() ? m_coreSettingTips.value(it.key())
+                                                     : settingsReason);
+    }
+    // Forget RX2 VFO B works only with Duplicate: enabled only while
+    // Duplicate is on (Thetis setup.cs chkCopyRX2VFObToVFOa_CheckedChanged).
+    if (auto* copy = qobject_cast<QCheckBox*>(m_coreSettings.value("copyRx2VfobToVfoa"))) {
+        QWidget* forget = m_coreSettings.value("forgetRx2VfoBOnDisconnect");
+        forget->setEnabled(copy->isEnabled() && copy->isChecked());
+    }
+}
+
+void CatTciServerPage::sendCoreSetting(const QByteArray& name, const QVariant& value)
+{
+    IStationLink* link = m_radioModelRef ? m_radioModelRef->stationLink() : nullptr;
+    if (!link || !link->stationTciSettingsAvailable()) {
+        refreshCoreGroup();
+        return;
+    }
+    const auto outcome = link->requestStationTciSetting(name, value);
+    if (!outcome.sent) {
+        m_coreReason->setText(outcome.reason);
+    }
+}
+
+void CatTciServerPage::sendCoreOptions()
+{
+    IStationLink* link = m_radioModelRef ? m_radioModelRef->stationLink() : nullptr;
+    if (!link || !link->stationTciServerAvailable()) {
+        refreshCoreGroup();
+        return;
+    }
+    const auto outcome = link->requestStationTciOptions(
+        m_coreExpert->isChecked(), m_coreSunSdr->isChecked(), m_coreCwlu->isChecked(),
+        m_coreInitial->isChecked());
+    if (!outcome.sent) {
+        m_coreReason->setText(outcome.reason);
+    }
+}
+
+void CatTciServerPage::reloadSwitchFromSettings()
+{
+    auto& s = AppSettings::instance();
+    if (m_enableCheck) {
+        const QSignalBlocker block(m_enableCheck);
+        m_enableCheck->setChecked(
+            s.value(QStringLiteral("TciServerEnabled"), QStringLiteral("False")).toString()
+            == QStringLiteral("True"));
+    }
+    if (m_portSpin && !m_portSpin->hasFocus()) {
+        const QSignalBlocker block(m_portSpin);
+        m_portSpin->setValue(s.value(QStringLiteral("TciServerPort"), 50001).toInt());
+    }
+}
+
+bool CatTciServerPage::switchOnForTesting() const
+{
+    return m_enableCheck && m_enableCheck->isChecked();
+}
+
+int CatTciServerPage::portForTesting() const
+{
+    return m_portSpin ? m_portSpin->value() : 0;
+}
+
+QString CatTciServerPage::stationLineForTesting() const
+{
+    return m_stationLine && !m_stationLine->isHidden() ? m_stationLine->text() : QString();
 }
 
 // ---------------------------------------------------------------------------
@@ -420,13 +788,15 @@ void CatTciServerPage::buildIqStreamGroup()
     m_alwaysStreamIqCheck->setChecked(
         s.value(QStringLiteral("TciAlwaysStreamIq"), QStringLiteral("False")).toString()
         == QStringLiteral("True"));
-    connect(m_alwaysStreamIqCheck, &QCheckBox::toggled, this, [](bool on) {
+    connect(m_alwaysStreamIqCheck, &QCheckBox::toggled, this, [this](bool on) {
         AppSettings::instance().setValue(QStringLiteral("TciAlwaysStreamIq"),
                                           on ? QStringLiteral("True") : QStringLiteral("False"));
+        if (m_tciServerRef) { m_tciServerRef->refreshRemoteIqDemand(); }
     });
     form->addRow(QString(), m_alwaysStreamIqCheck);
 
     contentLayout()->addWidget(group);
+    refreshIqStreamGroup();
 }
 
 // ---------------------------------------------------------------------------
@@ -476,8 +846,15 @@ void CatTciServerPage::buildAudioStreamGroup()
     const int txChIdx = m_txChannelCombo->findText(savedTxCh);
     m_txChannelCombo->setCurrentIndex(txChIdx >= 0 ? txChIdx
                                                     : m_txChannelCombo->findText(QStringLiteral("Both")));
-    connect(m_txChannelCombo, &QComboBox::currentTextChanged, this, [](const QString& text) {
+    connect(m_txChannelCombo, &QComboBox::currentTextChanged, this, [this](const QString& text) {
         AppSettings::instance().setValue(QStringLiteral("TciTxChannel"), text);
+        // Thetis setup.cs:37386-37394 [v2.10.3.15]: the running server
+        // takes the new TX channel at once.
+#ifdef HAVE_WEBSOCKETS
+        if (m_tciServerRef) {
+            m_tciServerRef->setTxStereoInputMode(TciServer::txStereoInputModeFromText(text));
+        }
+#endif
     });
     form->addRow(tr("TX channel:"), m_txChannelCombo);
 
@@ -540,15 +917,50 @@ void CatTciServerPage::buildSensorsGroup()
     form->addRow(noteLabel);
 
     contentLayout()->addWidget(group);
+    // R-R3-49: the sensor intervals are not applied yet; hidden until they are.
 }
 
 // ---------------------------------------------------------------------------
 // Group 6: VFO Quirks
-// Controls: Forget RX2 VFOB on disconnect / Use RX1 VFOA for RX2 VFOA /
-//           Copy RX2 VFOB to VFOA.
+// Controls: Forget RX2 VFO B / Use RX1 VFO A for RX2 VFO A /
+//           Duplicate RX2 VFO B to RX2 VFO A.
 // AppSettings: TciForgetRx2VfoBOnDisconnect, TciUseRx1VfoaForRx2Vfoa,
-//              TciCopyRx2VfobToVfoa.
+//              TciCopyRx2VfobToVfoa (the key names predate the port; kept).
+// Defaults: TciProtocol.h kTci...Default. TciProtocol.cpp applies them.
 // ---------------------------------------------------------------------------
+QString CatTciServerPage::rx2VfoForgetLabel()
+{
+    return tr("Forget RX2 VFO B");
+}
+
+QString CatTciServerPage::rx2VfoForgetTip()
+{
+    return tr("While Duplicate RX2 VFO B to RX2 VFO A is on, send RX2's frequency to TCI "
+              "apps only as RX2 VFO A, without its VFO B messages.");
+}
+
+QString CatTciServerPage::rx2VfoUseRx1Label()
+{
+    return tr("Use RX1 VFO A for RX2 VFO A");
+}
+
+QString CatTciServerPage::rx2VfoUseRx1Tip()
+{
+    return tr("While RX2 is on, TCI apps see RX1's frequency as RX2 VFO A, and an app "
+              "that sets RX2 VFO A tunes RX1.");
+}
+
+QString CatTciServerPage::rx2VfoCopyLabel()
+{
+    return tr("Duplicate RX2 VFO B to RX2 VFO A");
+}
+
+QString CatTciServerPage::rx2VfoCopyTip()
+{
+    return tr("RX2 has one frequency, which TCI apps get as RX2 VFO B. This also sends "
+              "it as RX2 VFO A, for apps that follow VFO A.");
+}
+
 void CatTciServerPage::buildVfoQuirksGroup()
 {
     auto* group = new QGroupBox(tr("VFO Quirks"), this);
@@ -557,52 +969,58 @@ void CatTciServerPage::buildVfoQuirksGroup()
     form->setSpacing(6);
 
     auto& s = AppSettings::instance();
+    const auto boolText = [](bool on) {
+        return on ? QStringLiteral("True") : QStringLiteral("False");
+    };
 
-    // Forget RX2 VFOB on disconnect
-    // From Thetis TCIServer.cs [v2.10.3.13] — RX2 VFOB forget-on-disconnect
-    m_forgetRx2VfoBCheck = new QCheckBox(tr("Forget RX2 VFOB on disconnect"), group);
+    // Forget RX2 VFO B
+    // From Thetis setup.designer.cs [v2.10.3.15] (chkForgetRX2VfoBVFOinfo)
+    m_forgetRx2VfoBCheck = new QCheckBox(rx2VfoForgetLabel(), group);
     m_forgetRx2VfoBCheck->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle));
-    m_forgetRx2VfoBCheck->setToolTip(
-        tr("When a TCI client disconnects, reset RX2 VFOB to its default frequency "
-           "instead of keeping the last value set by the client."));
+    m_forgetRx2VfoBCheck->setObjectName(QStringLiteral("tciForgetRx2VfoBCheck"));
+    m_forgetRx2VfoBCheck->setToolTip(rx2VfoForgetTip());
     m_forgetRx2VfoBCheck->setChecked(
-        s.value(QStringLiteral("TciForgetRx2VfoBOnDisconnect"), QStringLiteral("False")).toString()
+        s.value(QStringLiteral("TciForgetRx2VfoBOnDisconnect"),
+                boolText(kTciForgetRx2VfobDefault)).toString()
         == QStringLiteral("True"));
-    connect(m_forgetRx2VfoBCheck, &QCheckBox::toggled, this, [](bool on) {
+    connect(m_forgetRx2VfoBCheck, &QCheckBox::toggled, this, [boolText](bool on) {
         AppSettings::instance().setValue(QStringLiteral("TciForgetRx2VfoBOnDisconnect"),
-                                          on ? QStringLiteral("True") : QStringLiteral("False"));
+                                          boolText(on));
     });
     form->addRow(QString(), m_forgetRx2VfoBCheck);
 
-    // Use RX1 VFOA for RX2 VFOA
-    // From Thetis TCIServer.cs [v2.10.3.13] — shared-VFOA quirk
-    m_useRx1VfoaForRx2Check = new QCheckBox(tr("Use RX1 VFOA for RX2 VFOA"), group);
+    // Use RX1 VFO A for RX2 VFO A
+    // From Thetis setup.designer.cs [v2.10.3.15] (chkUseRX1vfoaForRX2vfoa)
+    m_useRx1VfoaForRx2Check = new QCheckBox(rx2VfoUseRx1Label(), group);
     m_useRx1VfoaForRx2Check->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle));
-    m_useRx1VfoaForRx2Check->setToolTip(
-        tr("Report the RX1 VFOA frequency when a TCI client queries RX2 VFOA. "
-           "Required by clients that do not maintain independent per-receiver VFO state."));
+    m_useRx1VfoaForRx2Check->setObjectName(QStringLiteral("tciUseRx1VfoaForRx2VfoaCheck"));
+    m_useRx1VfoaForRx2Check->setToolTip(rx2VfoUseRx1Tip());
     m_useRx1VfoaForRx2Check->setChecked(
-        s.value(QStringLiteral("TciUseRx1VfoaForRx2Vfoa"), QStringLiteral("False")).toString()
+        s.value(QStringLiteral("TciUseRx1VfoaForRx2Vfoa"),
+                boolText(kTciUseRx1VfoaForRx2VfoaDefault)).toString()
         == QStringLiteral("True"));
-    connect(m_useRx1VfoaForRx2Check, &QCheckBox::toggled, this, [](bool on) {
+    connect(m_useRx1VfoaForRx2Check, &QCheckBox::toggled, this, [boolText](bool on) {
         AppSettings::instance().setValue(QStringLiteral("TciUseRx1VfoaForRx2Vfoa"),
-                                          on ? QStringLiteral("True") : QStringLiteral("False"));
+                                          boolText(on));
     });
     form->addRow(QString(), m_useRx1VfoaForRx2Check);
 
-    // Copy RX2 VFOB to VFOA
-    // From Thetis TCIServer.cs [v2.10.3.13] — VFOB→VFOA copy quirk
-    m_copyRx2VfobToVfoaCheck = new QCheckBox(tr("Copy RX2 VFOB to VFOA"), group);
+    // Duplicate RX2 VFO B to RX2 VFO A
+    // From Thetis setup.designer.cs [v2.10.3.15] (chkCopyRX2VFObToVFOa)
+    m_copyRx2VfobToVfoaCheck = new QCheckBox(rx2VfoCopyLabel(), group);
     m_copyRx2VfobToVfoaCheck->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle));
-    m_copyRx2VfobToVfoaCheck->setToolTip(
-        tr("Automatically copy RX2 VFOB into RX2 VFOA whenever VFOB changes. "
-           "Required by apps that drive split mode via VFOB but read back VFOA."));
+    m_copyRx2VfobToVfoaCheck->setObjectName(QStringLiteral("tciCopyRx2VfobToVfoaCheck"));
+    m_copyRx2VfobToVfoaCheck->setToolTip(rx2VfoCopyTip());
     m_copyRx2VfobToVfoaCheck->setChecked(
-        s.value(QStringLiteral("TciCopyRx2VfobToVfoa"), QStringLiteral("False")).toString()
+        s.value(QStringLiteral("TciCopyRx2VfobToVfoa"),
+                boolText(kTciCopyRx2VfobToVfoaDefault)).toString()
         == QStringLiteral("True"));
-    connect(m_copyRx2VfobToVfoaCheck, &QCheckBox::toggled, this, [](bool on) {
-        AppSettings::instance().setValue(QStringLiteral("TciCopyRx2VfobToVfoa"),
-                                          on ? QStringLiteral("True") : QStringLiteral("False"));
+    // Forget works only with Duplicate: enabled only while Duplicate is on.
+    // From Thetis setup.cs:22568-22572 [v2.10.3.15] (chkCopyRX2VFObToVFOa_CheckedChanged)
+    m_forgetRx2VfoBCheck->setEnabled(m_copyRx2VfobToVfoaCheck->isChecked());
+    connect(m_copyRx2VfobToVfoaCheck, &QCheckBox::toggled, this, [this, boolText](bool on) {
+        AppSettings::instance().setValue(QStringLiteral("TciCopyRx2VfobToVfoa"), boolText(on));
+        m_forgetRx2VfoBCheck->setEnabled(on);
     });
     form->addRow(QString(), m_copyRx2VfobToVfoaCheck);
 
@@ -630,11 +1048,11 @@ void CatTciServerPage::buildVfoQuirksGroup()
 // Phase 3J-1 closeout Item 1 (2026-05-12): enumerate bindable interfaces
 // via QNetworkInterface::allInterfaces() and add one combo entry per
 // detected non-loopback IPv4 (and IPv6) NIC, plus the well-known options:
-//   - Loopback only (127.0.0.1)         ← default
-//   - Any IPv4 interface (0.0.0.0)
+//   - This computer only (127.0.0.1)                     ← default
+//   - Any IPv4 address (0.0.0.0), open to your network
 //   - <detected non-loopback IPv4 NICs>
-//   - Loopback IPv6 (::1)
-//   - Any IPv6 interface (::)
+//   - This computer only, IPv6 (::1)
+//   - Any IPv6 address (::), open to your network
 //   - <detected non-loopback IPv6 NICs>
 //
 // Each entry's data() carries the bindable address string used by
@@ -654,10 +1072,10 @@ void CatTciServerPage::populateBindAddressCombo()
 
     // Well-known IPv4 options first.
     m_bindAddressCombo->addItem(
-        tr("Loopback only (127.0.0.1)"),
+        tr("This computer only (127.0.0.1)"),
         QStringLiteral("127.0.0.1"));
     m_bindAddressCombo->addItem(
-        tr("Any IPv4 interface (0.0.0.0) — exposes to LAN"),
+        tr("Any IPv4 address (0.0.0.0), open to your network"),
         QStringLiteral("0.0.0.0"));
 
     // Enumerate detected NICs.  Skip loopback (already in the well-known
@@ -672,7 +1090,7 @@ void CatTciServerPage::populateBindAddressCombo()
             const QHostAddress ip = entry.ip();
             if (ip.isNull()) { continue; }
             if (ip.protocol() == QAbstractSocket::IPv4Protocol) {
-                const QString label = QStringLiteral("%1 — %2")
+                const QString label = QStringLiteral("%1 (%2)")
                     .arg(iface.name(), ip.toString());
                 m_bindAddressCombo->addItem(label, ip.toString());
             }
@@ -681,10 +1099,10 @@ void CatTciServerPage::populateBindAddressCombo()
 
     // IPv6 well-known options.
     m_bindAddressCombo->addItem(
-        tr("Loopback IPv6 (::1)"),
+        tr("This computer only, IPv6 (::1)"),
         QStringLiteral("::1"));
     m_bindAddressCombo->addItem(
-        tr("Any IPv6 interface (::) — exposes to LAN"),
+        tr("Any IPv6 address (::), open to your network"),
         QStringLiteral("::"));
 
     // Enumerate non-link-local IPv6 NICs (link-local addresses include a
@@ -699,7 +1117,7 @@ void CatTciServerPage::populateBindAddressCombo()
             if (ip.isNull()) { continue; }
             if (ip.protocol() == QAbstractSocket::IPv6Protocol) {
                 if (ip.isLinkLocal()) { continue; }
-                const QString label = QStringLiteral("%1 — %2")
+                const QString label = QStringLiteral("%1 (%2)")
                     .arg(iface.name(), ip.toString());
                 m_bindAddressCombo->addItem(label, ip.toString());
             }
@@ -774,11 +1192,11 @@ void CatTciServerPage::refreshTciStatusDisplay()
     if (m_serverGroup) {
         if (m_tciServerRunning) {
             m_serverGroup->setTitle(
-                tr("Server (%1 %2)")
+                tr("This window's server (%1 %2)")
                     .arg(m_tciClientCount)
                     .arg(m_tciClientCount == 1 ? tr("client") : tr("clients")));
         } else {
-            m_serverGroup->setTitle(tr("Server"));
+            m_serverGroup->setTitle(tr("This window's server"));
         }
     }
 
@@ -831,18 +1249,18 @@ void CatTcpIpPage::buildUI()
     m_enableCheck = new QCheckBox(QStringLiteral("Enable TCP/IP CAT Server"), group);
     m_enableCheck->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle));
     m_enableCheck->setDisabled(true);
-    m_enableCheck->setToolTip(QStringLiteral("NYI — TCP CAT server enable"));
+    m_enableCheck->setToolTip(QStringLiteral("Turn on the network CAT server"));
     grid->addWidget(m_enableCheck, 0, 0, 1, 2);
 
-    // Bind IP
-    auto* ipLabel = new QLabel(QStringLiteral("Bind IP:"), group);
+    // Listen address (R-R3-21: "Listen on:", as on the TCI page)
+    auto* ipLabel = new QLabel(QStringLiteral("Listen on:"), group);
     ipLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
     grid->addWidget(ipLabel, 1, 0);
 
     m_bindIpEdit = new QLineEdit(QStringLiteral("0.0.0.0"), group);
     m_bindIpEdit->setStyleSheet(QString::fromLatin1(Style::kLineEditStyle));
     m_bindIpEdit->setDisabled(true);
-    m_bindIpEdit->setToolTip(QStringLiteral("NYI — bind IP address"));
+    m_bindIpEdit->setToolTip(QStringLiteral("The network address the CAT server listens on"));
     grid->addWidget(m_bindIpEdit, 1, 1);
 
     // Port
@@ -855,7 +1273,7 @@ void CatTcpIpPage::buildUI()
     m_portSpin->setRange(1024, 65535);
     m_portSpin->setValue(4532);
     m_portSpin->setDisabled(true);
-    m_portSpin->setToolTip(QStringLiteral("NYI — TCP CAT port (default 4532 / rigctld)"));
+    m_portSpin->setToolTip(QStringLiteral("The network port the CAT server listens on (4532 by default, as rigctld uses)"));
     grid->addWidget(m_portSpin, 2, 1);
 
     // Status
@@ -891,7 +1309,7 @@ void CatMidiControlPage::buildUI()
     m_enableCheck = new QCheckBox(QStringLiteral("Enable MIDI Control"), group);
     m_enableCheck->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle));
     m_enableCheck->setDisabled(true);
-    m_enableCheck->setToolTip(QStringLiteral("NYI — MIDI control enable"));
+    m_enableCheck->setToolTip(QStringLiteral("Turn on MIDI control"));
     grid->addWidget(m_enableCheck, 0, 0, 1, 2);
 
     // Device combo
@@ -903,12 +1321,12 @@ void CatMidiControlPage::buildUI()
     m_deviceCombo->setStyleSheet(QString::fromLatin1(Style::kComboStyle));
     m_deviceCombo->addItem(QStringLiteral("(no MIDI devices found)"));
     m_deviceCombo->setDisabled(true);
-    m_deviceCombo->setToolTip(QStringLiteral("NYI — MIDI device selection"));
+    m_deviceCombo->setToolTip(QStringLiteral("The MIDI device to use"));
     grid->addWidget(m_deviceCombo, 1, 1);
 
     // Mapping table placeholder label
     m_mappingLabel = new QLabel(
-        QStringLiteral("MIDI mapping table will appear here"), group);
+        QStringLiteral("The MIDI mapping table is not available in this version"), group);
     m_mappingLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
     m_mappingLabel->setAlignment(Qt::AlignCenter);
     m_mappingLabel->setMinimumHeight(80);
@@ -918,7 +1336,7 @@ void CatMidiControlPage::buildUI()
     m_learnButton = new QPushButton(QStringLiteral("Learn..."), group);
     m_learnButton->setStyleSheet(QString::fromLatin1(Style::kButtonStyle));
     m_learnButton->setDisabled(true);
-    m_learnButton->setToolTip(QStringLiteral("NYI — MIDI learn mode"));
+    m_learnButton->setToolTip(QStringLiteral("Learn a control: move it on the MIDI device to assign it"));
     grid->addWidget(m_learnButton, 3, 0, 1, 2);
 
     contentLayout()->addWidget(group);
@@ -1012,8 +1430,111 @@ PeripheralsPage::PeripheralsPage(RadioModel* model, QWidget* parent)
     wireStatusSignals();
 }
 
+PeripheralsPage::~PeripheralsPage()
+{
+    // R-R3-49 (parity Task 8): an edit still unsent when the page goes.
+    sendRemoteTgxlAddress();
+    // R-R3-49 (parity Task 9): and the Power Genius's.
+    sendRemotePgxlAddress();
+}
+
+void PeripheralsPage::hideEvent(QHideEvent* event)
+{
+    sendRemoteTgxlAddress();
+    sendRemotePgxlAddress();
+    QWidget::hideEvent(event);
+}
+
+// R-R3-49 (parity Task 9): the Power Genius row's Host and Port typed in a
+// remote window reach the Core's saved address without dialling
+// (setPgxlAddress). A Core below remotePgxlControlVersion 4 keeps only what
+// Connect sends, as before.
+void PeripheralsPage::sendRemotePgxlAddress()
+{
+    if (!m_pgxlAddressEdited || !isRemoteMode() || !m_grid || !m_model) {
+        return;
+    }
+    IStationLink* link = m_model->stationLink();
+    auto* amp = m_model->amplifierModel();
+    QLayoutItem* hostItem = m_grid->itemAtPosition(2, 1);
+    QLayoutItem* portItem = m_grid->itemAtPosition(2, 2);
+    auto* ipEdit = hostItem ? qobject_cast<QLineEdit*>(hostItem->widget()) : nullptr;
+    auto* portSpin = portItem ? qobject_cast<QSpinBox*>(portItem->widget()) : nullptr;
+    if (!link || !link->pgxlFullControlAvailable() || !amp || !ipEdit || !portSpin) {
+        return;
+    }
+    m_pgxlAddressEdited = false;
+    const QString host = ipEdit->text().trimmed();
+    const int port = portSpin->value();
+    if (host == amp->configuredHost() && port == amp->configuredPort()) {
+        return;
+    }
+    // A refusal arrives as the Core's notice (MainWindow's accessory route).
+    const IStationLink::CommandOutcome outcome = link->requestPgxlAddress(host, port);
+    if (!outcome.sent && m_statusLabels.size() > 1 && m_statusLabels[1]) {
+        m_statusLabels[1]->setText(OperatorReasonText::forDisplay(outcome.reason));
+    }
+}
+
+// R-R3-49 (parity Task 8): the Host and Port typed in a remote window reach
+// the Core's saved address without dialling (setTgxlAddress). A Core below
+// remoteTgxlControlVersion 4 keeps only what Connect sends, as before.
+void PeripheralsPage::sendRemoteTgxlAddress()
+{
+    if (!m_tgxlAddressEdited || !isRemoteMode() || !m_grid || !m_model) {
+        return;
+    }
+    IStationLink* link = m_model->stationLink();
+    auto* tuner = m_model->tunerModel();
+    QLayoutItem* hostItem = m_grid->itemAtPosition(1, 1);
+    QLayoutItem* portItem = m_grid->itemAtPosition(1, 2);
+    auto* ipEdit = hostItem ? qobject_cast<QLineEdit*>(hostItem->widget()) : nullptr;
+    auto* portSpin = portItem ? qobject_cast<QSpinBox*>(portItem->widget()) : nullptr;
+    if (!link || !link->tgxlFullControlAvailable() || !tuner || !ipEdit || !portSpin) {
+        return;
+    }
+    m_tgxlAddressEdited = false;
+    const QString host = ipEdit->text().trimmed();
+    const int port = portSpin->value();
+    if (host == tuner->configuredHost() && port == tuner->configuredPort()) {
+        return;
+    }
+    // A refusal arrives as the Core's notice (MainWindow's accessory route).
+    const IStationLink::CommandOutcome outcome = link->requestTgxlAddress(host, port);
+    if (!outcome.sent && m_statusLabels.size() > 0 && m_statusLabels[0]) {
+        m_statusLabels[0]->setText(OperatorReasonText::forDisplay(outcome.reason));
+    }
+}
+
 void PeripheralsPage::wireStatusSignals()
 {
+    if (isRemoteMode()) {
+        // Remote mode only projects Core-owned state. It must not subscribe
+        // to, scan for, or dial a Mac-local TGXL/PGXL socket.
+        auto* tuner = m_model ? m_model->tunerModel() : nullptr;
+        if (tuner) {
+            connect(tuner, &TunerModel::stationConnectionChanged,
+                    this, &PeripheralsPage::refreshRemoteTgxlRow);
+        }
+        auto* amp = m_model ? m_model->amplifierModel() : nullptr;
+        if (amp) {
+            connect(amp, &AmplifierModel::stationConnectionChanged,
+                    this, &PeripheralsPage::refreshRemotePgxlRow);
+        }
+        if (m_model) {
+            connect(m_model, &RadioModel::connectionStateChanged,
+                    this, &PeripheralsPage::refreshRemoteTgxlRow);
+            connect(m_model, &RadioModel::stationLinkStateChanged,
+                    this, &PeripheralsPage::refreshRemoteTgxlRow);
+            connect(m_model, &RadioModel::connectionStateChanged,
+                    this, &PeripheralsPage::refreshRemotePgxlRow);
+            connect(m_model, &RadioModel::stationLinkStateChanged,
+                    this, &PeripheralsPage::refreshRemotePgxlRow);
+        }
+        refreshRemoteTgxlRow();
+        refreshRemotePgxlRow();
+        return;
+    }
     // Row index map: 0 = TGXL, 1 = PGXL (matches buildRow call order above).
     // m_statusLabels and m_connectBtns are sized to 2 before this runs.
 
@@ -1116,16 +1637,51 @@ void PeripheralsPage::buildRow(int row, const QString& name,
     ipEdit->setPlaceholderText(QStringLiteral("192.168.1.42"));
     ipEdit->setToolTip(tr("IP address or hostname of the %1 on your LAN. "
                           "Leave blank to disable auto-connect.").arg(name));
-    const QString savedIp = model
+    const bool remote = model && model->role() == RadioModel::Role::Remote;
+    const bool remoteTgxl = remote && idx == 0;
+    const bool remotePgxl = remote && idx == 1;
+    const auto* tuner = model ? model->tunerModel() : nullptr;
+    const auto* amp = model ? model->amplifierModel() : nullptr;
+    const QString savedIp = remoteTgxl && tuner
+        ? tuner->configuredHost()
+        : remotePgxl && amp
+        ? amp->configuredHost()
+        : model
         ? model->peripheralValue(ipKey)
         : QString{};
     ipEdit->setText(savedIp);
+    ipEdit->setObjectName(idx == 0
+                              ? QStringLiteral("tgxlHostEdit")
+                              : QStringLiteral("pgxlHostEdit"));
+    if (remoteTgxl) {
+        m_lastDisplayedCoreTgxlHost = savedIp;
+    }
+    if (remotePgxl) {
+        m_lastDisplayedCorePgxlHost = savedIp;
+    }
     connect(ipEdit, &QLineEdit::textChanged, this,
             [model, ipKey](const QString& text) {
-                if (model) {
+                if (model && model->role() != RadioModel::Role::Remote) {
                     model->setPeripheralValue(ipKey, text);
                 }
             });
+    // R-R3-49 (parity Task 8): in a remote window a typed Host reaches the
+    // Core when editing finishes (or Setup closes), without dialling.
+    if (remoteTgxl) {
+        connect(ipEdit, &QLineEdit::textEdited, this, [this]() {
+            m_tgxlAddressEdited = true;
+        });
+        connect(ipEdit, &QLineEdit::editingFinished, this,
+                &PeripheralsPage::sendRemoteTgxlAddress);
+    }
+    // R-R3-49 (parity Task 9): the same for the Power Genius row.
+    if (remotePgxl) {
+        connect(ipEdit, &QLineEdit::textEdited, this, [this]() {
+            m_pgxlAddressEdited = true;
+        });
+        connect(ipEdit, &QLineEdit::editingFinished, this,
+                &PeripheralsPage::sendRemotePgxlAddress);
+    }
     m_grid->addWidget(ipEdit, row, 1);
 
     // Column 2: port spinbox.
@@ -1134,21 +1690,55 @@ void PeripheralsPage::buildRow(int row, const QString& name,
     portSpin->setRange(1, 65535);
     portSpin->setToolTip(tr("TCP port the %1 listens on (default %2).")
                              .arg(name).arg(defaultPort));
-    const int savedPort = model
+    const int savedPort = remoteTgxl && tuner && tuner->configuredPort() > 0
+        ? tuner->configuredPort()
+        : remotePgxl && amp && amp->configuredPort() > 0
+        ? amp->configuredPort()
+        : model
         ? model->peripheralValue(portKey,
                                  QString::number(static_cast<int>(defaultPort))).toInt()
         : static_cast<int>(defaultPort);
     portSpin->setValue(savedPort);
+    portSpin->setObjectName(idx == 0
+                                ? QStringLiteral("tgxlPortSpin")
+                                : QStringLiteral("pgxlPortSpin"));
+    if (remoteTgxl) {
+        m_lastDisplayedCoreTgxlPort = tuner ? tuner->configuredPort() : 0;
+    }
+    if (remotePgxl) {
+        m_lastDisplayedCorePgxlPort = amp ? static_cast<quint16>(amp->configuredPort()) : 0;
+    }
     connect(portSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
             [model, portKey](int v) {
-                if (model) {
+                if (model && model->role() != RadioModel::Role::Remote) {
                     model->setPeripheralValue(portKey, QString::number(v));
                 }
             });
+    if (remoteTgxl) {
+        connect(portSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this]() {
+            if (!m_fillingTgxlFromCore) {
+                m_tgxlAddressEdited = true;
+            }
+        });
+        connect(portSpin, &QSpinBox::editingFinished, this,
+                &PeripheralsPage::sendRemoteTgxlAddress);
+    }
+    if (remotePgxl) {
+        connect(portSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this]() {
+            if (!m_fillingPgxlFromCore) {
+                m_pgxlAddressEdited = true;
+            }
+        });
+        connect(portSpin, &QSpinBox::editingFinished, this,
+                &PeripheralsPage::sendRemotePgxlAddress);
+    }
     m_grid->addWidget(portSpin, row, 2);
 
     // Column 3: Scan LAN button.
     auto* scanBtn = new QPushButton(tr("Scan LAN"), this);
+    scanBtn->setObjectName(idx == 0
+                               ? QStringLiteral("tgxlScanButton")
+                               : QStringLiteral("pgxlScanButton"));
     scanBtn->setStyleSheet(QString::fromLatin1(Style::kButtonStyle));
     scanBtn->setToolTip(tr("Listen for %1 announcements on the LAN for 3 seconds.").arg(name));
     // Capture idx by value for the slot dispatch.
@@ -1159,6 +1749,9 @@ void PeripheralsPage::buildRow(int row, const QString& name,
 
     // Column 4: Connect / Disconnect button.
     auto* connectBtn = new QPushButton(tr("Connect"), this);
+    connectBtn->setObjectName(idx == 0
+                                  ? QStringLiteral("tgxlConnectButton")
+                                  : QStringLiteral("pgxlConnectButton"));
     connectBtn->setStyleSheet(QString::fromLatin1(Style::kButtonStyle));
     connectBtn->setToolTip(tr("Connect to or disconnect from the %1.").arg(name));
     m_connectBtns[idx] = connectBtn;
@@ -1169,13 +1762,247 @@ void PeripheralsPage::buildRow(int row, const QString& name,
 
     // Column 5: status label.
     auto* statusLabel = new QLabel(tr("Disconnected"), this);
+    statusLabel->setObjectName(idx == 0
+                                   ? QStringLiteral("tgxlStatusLabel")
+                                   : QStringLiteral("pgxlStatusLabel"));
     statusLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
     m_statusLabels[idx] = statusLabel;
     m_grid->addWidget(statusLabel, row, 5);
+
+    // Setup description version 15: this row's ids. The one button is
+    // described as Connect and Disconnect (its caption follows the phase).
+    const QString id = QStringLiteral("catNetwork.fourO3A.")
+        + (idx == 0 ? QStringLiteral("tgxl") : QStringLiteral("pgxl"));
+    ipEdit->setProperty("nereusSetupId", id + QStringLiteral("Host"));
+    portSpin->setProperty("nereusSetupId", id + QStringLiteral("Port"));
+    connectBtn->setProperty("nereusSetupIds", QStringList{id + QStringLiteral("Connect"),
+                                                          id + QStringLiteral("Disconnect")});
+    statusLabel->setProperty("nereusSetupId", id + QStringLiteral("Status"));
+}
+
+bool PeripheralsPage::isRemoteMode() const
+{
+    return m_model && m_model->role() == RadioModel::Role::Remote;
+}
+
+void PeripheralsPage::refreshRemoteTgxlRow()
+{
+    if (!isRemoteMode() || !m_grid || m_statusLabels.size() < 2) {
+        return;
+    }
+    auto* tuner = m_model->tunerModel();
+    auto* link = m_model->stationLink();
+    auto* ipEdit = qobject_cast<QLineEdit*>(m_grid->itemAtPosition(1, 1)->widget());
+    auto* portSpin = qobject_cast<QSpinBox*>(m_grid->itemAtPosition(1, 2)->widget());
+    auto* scanButton = qobject_cast<QPushButton*>(m_grid->itemAtPosition(1, 3)->widget());
+    auto* connectButton = m_connectBtns[0];
+    auto* status = m_statusLabels[0];
+    if (!tuner || !ipEdit || !portSpin || !scanButton || !connectButton || !status) {
+        return;
+    }
+    const bool available = link && link->remoteTgxlConfigAvailable();
+    // R-R3-49 (parity Task 8): on a Core at remoteTgxlControlVersion 4 the
+    // Core scans its own network for this window, and keeps a typed
+    // address. Parity mini-round (the operator's rulings a and b): both
+    // only listen or save, so neither waits on the air, as in a local
+    // window.
+    const bool full = link && link->tgxlFullControlAvailable();
+    scanButton->setEnabled(full);
+    scanButton->setToolTip(!full
+        ? tr("This Core does not scan for a Tuner Genius for this app. Updating the Core may help.")
+        : tr("The Core listens for Tuner Genius announcements on its network for 3 seconds."));
+    const QString coreHost = tuner->configuredHost();
+    const quint16 corePort = static_cast<quint16>(tuner->configuredPort());
+    if (coreHost != m_lastDisplayedCoreTgxlHost
+        || corePort != m_lastDisplayedCoreTgxlPort) {
+        m_fillingTgxlFromCore = true;
+        ipEdit->setText(coreHost);
+        if (corePort > 0) {
+            portSpin->setValue(corePort);
+        }
+        m_fillingTgxlFromCore = false;
+        m_tgxlAddressEdited = false;
+        m_lastDisplayedCoreTgxlHost = coreHost;
+        m_lastDisplayedCoreTgxlPort = corePort;
+    }
+    const auto phase = tuner->connectionPhase();
+    const bool active = phase == TunerModel::ConnectionPhase::Discovering
+        || phase == TunerModel::ConnectionPhase::Connecting
+        || phase == TunerModel::ConnectionPhase::Identifying
+        || phase == TunerModel::ConnectionPhase::Retrying;
+    const bool connected = phase == TunerModel::ConnectionPhase::Connected;
+    connectButton->setText(connected ? tr("Disconnect") : active ? tr("Cancel") : tr("Connect"));
+    connectButton->setEnabled(available);
+    ipEdit->setEnabled(available && !connected && !active);
+    portSpin->setEnabled(available && !connected && !active);
+    ipEdit->setToolTip(tr("IP address or hostname of the Tuner Genius XL on your LAN. "
+                          "Leave blank to disable auto-connect."));
+    portSpin->setToolTip(tr("TCP port the Tuner Genius XL listens on (default 9010)."));
+    if (!available) {
+        const QString reason = tr("This Core does not offer Tuner Genius XL control to this app.");
+        status->setText(reason);
+        connectButton->setToolTip(reason);
+        return;
+    }
+    // The Core's own reason, shown in user words; the raw reason is logged.
+    const QString error = tuner->connectionError().isEmpty()
+        ? QString() : OperatorReasonText::forDisplay(tuner->connectionError());
+    QString text;
+    switch (phase) {
+    case TunerModel::ConnectionPhase::Disabled: text = tr("Disabled at the Core"); break;
+    case TunerModel::ConnectionPhase::Disconnected: text = tr("Disconnected"); break;
+    case TunerModel::ConnectionPhase::Discovering: text = tr("Discovering at the Core"); break;
+    case TunerModel::ConnectionPhase::Connecting: text = tr("Connecting at the Core"); break;
+    case TunerModel::ConnectionPhase::Identifying: text = tr("Identifying device"); break;
+    case TunerModel::ConnectionPhase::Retrying:
+        text = error.isEmpty()
+            ? tr("Retrying at the Core")
+            : tr("Retrying at the Core: %1").arg(error);
+        break;
+    case TunerModel::ConnectionPhase::Connected:
+        text = tr("Connected: %1 %2").arg(tuner->deviceModel(), tuner->deviceSerial()); break;
+    case TunerModel::ConnectionPhase::Error:
+        text = tr("Error: %1").arg(OperatorReasonText::forDisplay(tuner->connectionError()));
+        break;
+    }
+    status->setText(text);
+    connectButton->setToolTip(QString());
+}
+
+void PeripheralsPage::refreshRemotePgxlRow()
+{
+    if (!isRemoteMode() || !m_grid || m_statusLabels.size() < 2) {
+        return;
+    }
+    auto* amp = m_model->amplifierModel();
+    auto* link = m_model->stationLink();
+    auto* ipEdit = qobject_cast<QLineEdit*>(m_grid->itemAtPosition(2, 1)->widget());
+    auto* portSpin = qobject_cast<QSpinBox*>(m_grid->itemAtPosition(2, 2)->widget());
+    auto* scanButton = qobject_cast<QPushButton*>(m_grid->itemAtPosition(2, 3)->widget());
+    auto* connectButton = m_connectBtns[1];
+    auto* status = m_statusLabels[1];
+    if (!amp || !ipEdit || !portSpin || !scanButton || !connectButton || !status) {
+        return;
+    }
+    const bool available = link && link->remotePgxlControlAvailable();
+    // R-R3-49 (parity Task 9): on a Core at remotePgxlControlVersion 4 the
+    // Core scans its own network for this window, and keeps a typed
+    // address. Parity mini-round (rulings a and b): neither waits on the
+    // air, as in a local window.
+    const bool full = link && link->pgxlFullControlAvailable();
+    scanButton->setEnabled(full);
+    scanButton->setToolTip(!full
+        ? tr("This Core does not scan for a Power Genius for this app. Updating the Core may help.")
+        : tr("The Core listens for Power Genius announcements on its network for 3 seconds."));
+    // The Core's address fills the fields only when it changes, so an
+    // unsent draft survives a phase or error update.
+    const QString coreHost = amp->configuredHost();
+    const quint16 corePort = static_cast<quint16>(amp->configuredPort());
+    if (coreHost != m_lastDisplayedCorePgxlHost || corePort != m_lastDisplayedCorePgxlPort) {
+        m_fillingPgxlFromCore = true;
+        ipEdit->setText(coreHost);
+        if (corePort > 0) {
+            portSpin->setValue(corePort);
+        }
+        m_fillingPgxlFromCore = false;
+        m_pgxlAddressEdited = false;
+        m_lastDisplayedCorePgxlHost = coreHost;
+        m_lastDisplayedCorePgxlPort = corePort;
+    }
+    using Phase = AmplifierModel::ConnectionPhase;
+    const auto phase = amp->connectionPhase();
+    const bool active = phase == Phase::Discovering || phase == Phase::Connecting
+        || phase == Phase::Identifying || phase == Phase::Retrying;
+    const bool connected = phase == Phase::Connected;
+    connectButton->setText(connected ? tr("Disconnect") : active ? tr("Cancel") : tr("Connect"));
+    connectButton->setEnabled(available);
+    ipEdit->setEnabled(available && !connected && !active);
+    portSpin->setEnabled(available && !connected && !active);
+    ipEdit->setToolTip(tr("IP address or hostname of the Power Genius XL on your LAN. "
+                          "Leave blank to disable auto-connect."));
+    portSpin->setToolTip(tr("TCP port the Power Genius XL listens on (default 9008)."));
+    if (!available) {
+        const QString reason = tr("This Core does not offer Power Genius XL control to this app.");
+        status->setText(reason);
+        connectButton->setToolTip(reason);
+        return;
+    }
+    // The Core's own reason, shown in user words; the raw reason is logged.
+    const QString error = amp->connectionError().isEmpty()
+        ? QString() : OperatorReasonText::forDisplay(amp->connectionError());
+    QString text;
+    switch (phase) {
+    case Phase::Disabled: text = tr("Disabled at the Core"); break;
+    case Phase::Disconnected: text = tr("Disconnected"); break;
+    case Phase::Discovering: text = tr("Discovering at the Core"); break;
+    case Phase::Connecting: text = tr("Connecting at the Core"); break;
+    case Phase::Identifying: text = tr("Identifying device"); break;
+    case Phase::Retrying:
+        text = error.isEmpty() ? tr("Retrying at the Core")
+                               : tr("Retrying at the Core: %1").arg(error);
+        break;
+    case Phase::Connected:
+        text = tr("Connected: %1 %2").arg(amp->deviceModel(), amp->deviceSerial()); break;
+    case Phase::Error:
+        text = tr("Error: %1").arg(OperatorReasonText::forDisplay(amp->connectionError()));
+        break;
+    }
+    status->setText(text);
+    connectButton->setToolTip(QString());
 }
 
 void PeripheralsPage::onScanLan(int rowIdx)
 {
+    if (isRemoteMode()) {
+        // R-R3-49 (parity Task 8): the Tuner Genius row asks the Core to
+        // listen on its own network; a pick fills Host and Port and is kept
+        // on the Core as a typed address is. R-R3-49 (parity Task 9): the
+        // Power Genius row does the same (scanPgxlLan, setPgxlAddress).
+        IStationLink* link = m_model ? m_model->stationLink() : nullptr;
+        if (rowIdx == 1) {
+            if (!link || !link->pgxlFullControlAvailable()) {
+                return;
+            }
+            auto* pgxlIp = qobject_cast<QLineEdit*>(m_grid->itemAtPosition(2, 1)->widget());
+            auto* pgxlPort = qobject_cast<QSpinBox*>(m_grid->itemAtPosition(2, 2)->widget());
+            if (!pgxlIp || !pgxlPort) {
+                return;
+            }
+            auto* pgxlDialog = new LanScanDialog(m_model, this,
+                                                 LanScanDialog::CoreDevice::PowerGenius);
+            pgxlDialog->setAttribute(Qt::WA_DeleteOnClose);
+            pgxlDialog->setObjectName(QStringLiteral("pgxlCoreScanDialog"));
+            connect(pgxlDialog, &LanScanDialog::deviceSelected,
+                    this, [this, pgxlIp, pgxlPort](const QString& ip, quint16 port) {
+                        pgxlIp->setText(ip);
+                        pgxlPort->setValue(static_cast<int>(port));
+                        m_pgxlAddressEdited = true;
+                        sendRemotePgxlAddress();
+                    });
+            pgxlDialog->show();
+            return;
+        }
+        if (rowIdx != 0 || !link || !link->tgxlFullControlAvailable()) {
+            return;
+        }
+        auto* ipEdit = qobject_cast<QLineEdit*>(m_grid->itemAtPosition(1, 1)->widget());
+        auto* portSpin = qobject_cast<QSpinBox*>(m_grid->itemAtPosition(1, 2)->widget());
+        if (!ipEdit || !portSpin) {
+            return;
+        }
+        auto* dialog = new LanScanDialog(m_model, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->setObjectName(QStringLiteral("tgxlCoreScanDialog"));
+        connect(dialog, &LanScanDialog::deviceSelected,
+                this, [this, ipEdit, portSpin](const QString& ip, quint16 port) {
+                    ipEdit->setText(ip);
+                    portSpin->setValue(static_cast<int>(port));
+                    m_tgxlAddressEdited = true;
+                    sendRemoteTgxlAddress();
+                });
+        dialog->show();
+        return;
+    }
     // rowIdx is 0-based (0 = TGXL, 1 = PGXL). Grid row = rowIdx + 1 because
     // row 0 is the header. Column 1 = IP edit, column 2 = port spin.
     const int gridRow = rowIdx + 1;
@@ -1214,20 +2041,57 @@ void PeripheralsPage::onConnect(int rowIdx)
     }
 
     const int gridRow = rowIdx + 1;
-
-    auto* ipEdit   = qobject_cast<QLineEdit*>(
-                         m_grid->itemAtPosition(gridRow, 1)->widget());
-    auto* portSpin = qobject_cast<QSpinBox*>(
-                         m_grid->itemAtPosition(gridRow, 2)->widget());
-
+    auto* ipEdit = qobject_cast<QLineEdit*>(m_grid->itemAtPosition(gridRow, 1)->widget());
+    auto* portSpin = qobject_cast<QSpinBox*>(m_grid->itemAtPosition(gridRow, 2)->widget());
     if (!ipEdit || !portSpin) {
-        qCWarning(lcPeripherals) << "onConnect: could not find row widgets for rowIdx"
-                                 << rowIdx;
+        qCWarning(lcPeripherals) << "onConnect: could not find row widgets for rowIdx" << rowIdx;
         return;
     }
-
     const QString host = ipEdit->text().trimmed();
     const quint16 port = static_cast<quint16>(portSpin->value());
+
+    if (isRemoteMode() && rowIdx == 1) {
+        // R-R3-47: the Core connects, identifies and pairs its Power
+        // Genius; this window only asks.
+        auto* link = m_model->stationLink();
+        if (!link || !link->remotePgxlControlAvailable()) {
+            refreshRemotePgxlRow();
+            return;
+        }
+        using Phase = AmplifierModel::ConnectionPhase;
+        const auto phase = m_model->amplifierModel()->connectionPhase();
+        const bool active = phase == Phase::Connected || phase == Phase::Discovering
+            || phase == Phase::Connecting || phase == Phase::Identifying
+            || phase == Phase::Retrying;
+        const auto outcome = active ? link->requestDisconnectPgxl()
+                                    : link->requestConfigurePgxl(host, port);
+        if (!outcome.sent && m_statusLabels.size() > 1) {
+            m_statusLabels[1]->setText(OperatorReasonText::forDisplay(outcome.reason));
+        }
+        return;
+    }
+    if (isRemoteMode()) {
+        if (rowIdx != 0) { return; }
+        auto* link = m_model->stationLink();
+        if (!link || !link->remoteTgxlConfigAvailable()) {
+            refreshRemoteTgxlRow();
+            return;
+        }
+        auto* tuner = m_model->tunerModel();
+        const bool active = tuner && (tuner->connectionPhase() == TunerModel::ConnectionPhase::Connected
+            || tuner->connectionPhase() == TunerModel::ConnectionPhase::Discovering
+            || tuner->connectionPhase() == TunerModel::ConnectionPhase::Connecting
+            || tuner->connectionPhase() == TunerModel::ConnectionPhase::Identifying
+            || tuner->connectionPhase() == TunerModel::ConnectionPhase::Retrying);
+        const auto outcome = active ? link->requestDisconnectTgxl()
+            : link->requestConfigureTgxl(host, port);
+        if (!outcome.sent && !m_statusLabels.isEmpty()) {
+            // The reason comes from the station link; shown in user words,
+            // logged raw (R-R3-21).
+            m_statusLabels[0]->setText(OperatorReasonText::forDisplay(outcome.reason));
+        }
+        return;
+    }
 
     if (rowIdx == 1) {
         // PGXL row.

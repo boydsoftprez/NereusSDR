@@ -6,10 +6,10 @@ compat_cw_becomes_cwu_above_10mhz_on,SETUP:TciCwBecomesCwuAbove10mhz=True;;noop;
 compat_iq_swap_off,SETUP:TciIqSwap=False;;noop;,,,TCIServer.cs:6111 [v2.10.3.13],placeholder; effect-site is binary IQ frame builder; Phase 11 confirmed via source-first audit that the effect-site is the binary IQ frame builder (Phase 18 wires; iq_swap toggles I/Q sample order in the wire payload); Phase 18 WIRED — verified by tst_tci_iq_roundtrip::iq_swap_flag_swaps_i_q_pairs
 compat_always_stream_iq_on,SETUP:TciAlwaysStreamIq=True;;noop;,,,TCIServer.cs:5401 [v2.10.3.13],placeholder; effect-site is wantsIQStream early-out; Phase 11 confirmed via source-first audit that the effect-site is wantsIQStream early-out (Phase 18 wires; flag forces IQ broadcast even with no subscriptions); Phase 18 WIRED — verified by tst_tci_iq_roundtrip::always_stream_iq_overrides_subscription
 compat_send_initial_freq_state_off,SETUP:TciSendInitialFrequencyStateOnConnect=False;;noop;,,,TCIServer.cs:6223 [v2.10.3.13],placeholder; init burst golden covers the gate (skips DDS/IF/VFO/tx_frequency when False)
-compat_rate_limit_set,SETUP:TciRateLimitMsgsPerSec=10;;noop;,,,TCIServer.cs:6108 [v2.10.3.13],placeholder; effect-site is per-client send loop; updated when Phase 14 lands priority send queues
-compat_forget_rx2_vfob_on_disconnect,SETUP:TciForgetRx2VfoBOnDisconnect=True;;noop;,,,TCIServer.cs:6230 [v2.10.3.13],placeholder; effect-site is per-client disconnect; not directly testable via matrix runner — Phase 24 (CatApplet/AudioTciPage) revisit
-compat_use_rx1_vfoa_for_rx2_vfoa,SETUP:TciUseRx1VfoaForRx2Vfoa=True;;noop;,,,TCIServer.cs:3732 [v2.10.3.13],placeholder; Phase 6 wired vfo handler but skipped this quirk (deferred to Phase 6+ refinement when RadioModel state arrives)
-compat_copy_rx2_vfob_to_vfoa,SETUP:TciCopyRx2VfobToVfoa=True;;noop;,,,TCIServer.cs:6240 [v2.10.3.13],placeholder; Phase 6 wired vfo handler but skipped this quirk (deferred to Phase 6+ refinement when RadioModel state arrives)
+compat_rate_limit_set,SETUP:TciRateLimitMs=10;;noop;,,,TCIServer.cs:6429 [v2.10.3.15],placeholder; effect-site is the per-app update gap in TciServer (TciUpdateGap; Task 10 R-R3-49); verified by tst_tci_update_gap
+compat_forget_rx2_vfob_on_disconnect,SETUP:TciForgetRx2VfoBOnDisconnect=True;;noop;,,,TCIServer.cs:6598-6602 [v2.10.3.15],placeholder; wired in TciProtocol (sends RX2's frequency only as VFO A while the duplicate option is on); covered by tst_tci_server_settings_real
+compat_use_rx1_vfoa_for_rx2_vfoa,SETUP:TciUseRx1VfoaForRx2Vfoa=True;;noop;,,,TCIServer.cs:6622-6626 [v2.10.3.15],placeholder; wired in TciProtocol (RX1 VFO A reported and set as RX2 VFO A while RX2 is on); NereusSDR default off: a deliberate divergence from Thetis's user-facing default on (setup.cs:381-382 [v2.10.3.15] MW0LGE_21k9d); covered by tst_tci_server_settings_real and tst_station_tci_server
+compat_copy_rx2_vfob_to_vfoa,SETUP:TciCopyRx2VfobToVfoa=True;;noop;,,,TCIServer.cs:6593-6596 [v2.10.3.15],placeholder; wired in TciProtocol (RX2 VFO B duplicated as RX2 VFO A while RX2 is on); default on as Thetis's user-facing default (setup.cs:381-382 [v2.10.3.15] MW0LGE_21k9d); covered by tst_tci_server_settings_real and tst_station_tci_server
 vfo_set_rx0_chan0,vfo:0\,0\,14250000;,,vfo:0\,0\,14250000;,TCIServer.cs:3753 [v2.10.3.13],set+broadcast — VFOAFreq write (rx=0 chan=0)
 vfo_query_after_set,vfo:0\,0\,14250000;;vfo:0\,0;,vfo:0\,0\,14250000;,,TCIServer.cs:3793 [v2.10.3.13],set then query returns same value — uses ;; chain (set dispatched first; query response asserted)
 vfo_set_rx0_chan1,vfo:0\,1\,7100000;,,vfo:0\,1\,7100000;,TCIServer.cs:3759 [v2.10.3.13],set RX0 chan1 (VFOBFreq) + broadcast
@@ -22,9 +22,9 @@ modulation_set_rx1_cwl,modulation:1\,cwl;,,modulation:1\,CWL;,TCIServer.cs:3897 
 modulation_set_rx0_nfm_alias_fm,modulation:0\,nfm;,,modulation:0\,FM;,TCIServer.cs:3865 [v2.10.3.13],nfm and fm both alias to DSPMode.FM
 rx_filter_band_set_rx0,rx_filter_band:0\,200\,2900;,,rx_filter_band:0\,200\,2900;,TCIServer.cs:4393 [v2.10.3.13],3-arg set filter band
 rx_filter_band_query_after_set,rx_filter_band:0\,200\,2900;;rx_filter_band:0;,rx_filter_band:0\,200\,2900;,,TCIServer.cs:4377 [v2.10.3.13],query returns current filter band (uses ;; chain)
-trx_set_rx0_on,trx:0\,true;,,trx:0\,true;,TCIServer.cs:3536 [v2.10.3.13],set MOX on; broadcast — Phase 8 simplified (TX mutex deferred to Phase 17)
+trx_set_rx0_on,trx:0\,true;,trx:0\,true;,,TCIServer.cs:3623-3672 [v2.10.3.15],set MOX on; no broadcast (handleTrxMessage broadcasts nothing); the asker hears the real state after the call
 trx_query_after_on,trx:0\,true;;trx:0;,trx:0\,true;,,TCIServer.cs:3557 [v2.10.3.13],query returns MOX state via sendMOX (without ;tci suffix)
-trx_set_rx0_off,trx:0\,false;,,trx:0\,false;,TCIServer.cs:3536 [v2.10.3.13],set MOX off; broadcast
+trx_set_rx0_off,trx:0\,false;,trx:0\,false;,,TCIServer.cs:3623-3672 [v2.10.3.15],set MOX off; no broadcast; the asker hears the real state after the call
 split_enable_set_rx0,split_enable:0\,true;,,split_enable:0\,true;,TCIServer.cs:3091 [v2.10.3.13],sendSplit format at TCIServer.cs:1878 [v2.10.3.13]
 mute_set_on,mute:true;,,mute:true;,TCIServer.cs:4051 [v2.10.3.13],global mute set (MUT+MUT2); sendMute format at TCIServer.cs:2160 [v2.10.3.13]
 mute_query_after_set,mute:true;;mute;,mute:true;,,TCIServer.cs:5145 [v2.10.3.13],first 1-arg query in branch — mute case in query switch
@@ -78,8 +78,8 @@ spot_clear_stub,spot_clear;,,,TCIServer.cs:5184 [v2.10.3.13],STUB; 1-arg query i
 cw_macros_speed_up_stub,cw_macros_speed_up:1;,,,TCIServer.cs:4989 [v2.10.3.13],STUB; Phase 3M-2 wires real keyer speed
 cw_macros_speed_down_stub,cw_macros_speed_down:1;,,,TCIServer.cs:4992 [v2.10.3.13],STUB; Phase 3M-2 wires real keyer speed
 cw_msg_stub,cw_msg:CQ DE KG4VCF;,,,TCIServer.cs:5001 [v2.10.3.13],STUB; Phase 3M-2 wires real CW message send
-rx_enable_set_rx0_off,rx_enable:0\,false;,,rx_enable:0\,false;,TCIServer.cs:5010 [v2.10.3.13],set rx0 disabled (stored; MOX-gating deferred to Phase 17); sendRXEnable at TCIServer.cs:2279 [v2.10.3.13]
-rx_enable_query_after_set,rx_enable:0\,false;;rx_enable:0;,rx_enable:0\,false;,,TCIServer.cs:4413 [v2.10.3.13],query returns rx0 stored enable state; uses ;; chain
+rx_enable_set_rx0_off,rx_enable:0\,false;,,,TCIServer.cs:4595-4616 [v2.10.3.15],set sends nothing and rx0 is always enabled (// rx0 is always enabled); only a real RX2 change sends rx_enable lines
+rx_enable_query_after_set,rx_enable:0\,false;;rx_enable:0;,rx_enable:0\,true;,,TCIServer.cs:4617-4623 [v2.10.3.15],query answers !MOX for rx0 whatever was set; uses ;; chain
 rx_ctun_ex_set_rx0,rx_ctun_ex:0\,true;,,rx_ctun_ex:0\,true;,TCIServer.cs:5118 [v2.10.3.13],set CTUN on rx0; handleCTUN at TCIServer.cs:4696 [v2.10.3.13]; sendCTUN at TCIServer.cs:4690 [v2.10.3.13]
 tx_profile_ex_set,tx_profile_ex:Default;,,tx_profile_ex:Default;,TCIServer.cs:5121 [v2.10.3.13],set TX profile by name; handleTXProfile at TCIServer.cs:4732 [v2.10.3.13]; sendTXProfile at TCIServer.cs:4715 [v2.10.3.13]
 tx_profile_ex_query,tx_profile_ex;,tx_profile_ex:Default;,,TCIServer.cs:5193 [v2.10.3.13],1-arg query in query switch returns active TX profile name; tmpArgs=string[0] path

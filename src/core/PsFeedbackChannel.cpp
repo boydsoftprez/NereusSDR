@@ -16,13 +16,21 @@
 //   2026-05-06 — Created by J.J. Boyd (KG4VCF) for Phase 3M-4 PureSignal
 //                 (Task 4), with AI-assisted source-first protocol via
 //                 Anthropic Claude Code.  NereusSDR-original wrapper.
+//   2026-09-24 - R-R3-39: setSampleRate on the receive lane. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PsFeedbackChannel.h"
 
+#include "DspControlThread.h"
 #include "wdsp_api.h"   // ::SetInputSamplerate (HAVE_WDSP-gated)
 
 namespace NereusSDR {
+
+namespace {
+// R-R3-39: the receive-lane key of this channel's input rate ("PSFBRATE").
+constexpr quint64 kSampleRateLaneKey = 0x5053464252415445ull;
+} // namespace
 
 PsFeedbackChannel::PsFeedbackChannel(int channelId, QObject* parent)
     : QObject(parent)
@@ -42,6 +50,14 @@ void PsFeedbackChannel::setSampleRate(int rate)
     // WDSP-side rate change.  Per wdsp_api.h:255 — declared in channel.h /
     // implemented in channel.c.  Idempotent on the WDSP side; no need to
     // guard against rate==current.
+    DspControlThread* lane = m_lane.load();
+    if (lane != nullptr && !lane->isCurrentThread()) {
+        // R-R3-39: keyed on the channel, so a burst leaves the newest rate.
+        const int channelId = m_channelId;
+        lane->postKeyed(kSampleRateLaneKey ^ static_cast<quint64>(channelId),
+                        [channelId, rate]() { ::SetInputSamplerate(channelId, rate); });
+        return;
+    }
     ::SetInputSamplerate(m_channelId, rate);
 #endif
 }

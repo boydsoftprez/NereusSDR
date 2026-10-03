@@ -16,6 +16,49 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-24 - Receiver and transmit gaps plan, Task 11: the Protocol 1
+//                 stream count per board row and protocol, by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
+//   2026-09-25 - Receiver and transmit gaps plan, Task 5: sample rates and
+//                 wideband ADCs per board row and protocol (Thetis
+//                 setup.cs:847-851, networkproto1.c:181-201,
+//                 console.cs:43552-43558 [v2.10.3.15]; mi0bot HL2 384 kHz);
+//                 ANAN-100D / ANAN-200D rows cover both protocols, by
+//                 J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                 Anthropic Claude Code.
+//   2026-09-29 - effectiveReceiverCount: the radio's reported receiver
+//                 count caps the row's maxReceivers on Protocol 2, the one
+//                 count the stream pool, Max RX and the live receiver count
+//                 clamp all read. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-24 — HL2 preamp items take mi0bot's HERMES/HERMESLITE branch
+//                 (console.cs:41709-41718 [v2.10.3.13-beta2]): on/off plus
+//                 the Alex items when Alex is present. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-28 — HL2 row reports PA current (mi0bot HasAmps,
+//                 clsHardwareSpecific.cs:258-270 [v2.10.3.13-beta2]).
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-09-29 - Preamp items carry the Thetis mode of their label
+//                 (comboPreamp_SelectedIndexChanged, console.cs:28401-28466
+//                 [v2.10.3.15]): "-10dB"/"-20dB"/"-30dB" are the SA step
+//                 attenuator modes off Atlas. preampModeForLabel ports that
+//                 map; preampModeFromV1 moves a mode stored before the SA
+//                 modes existed. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-29 - Level Cal: the Alex receive attenuator (Thetis SetAlexAtten,
+//                netInterface.c:421-432 [v2.10.3.15]) on the wire, and the step
+//                attenuator range above 31 dB on Alex boards (value + 2,
+//                console.cs:11044-11056 [v2.10.3.15]). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - Level Cal fix wave: rx2PreampItemsForBoard cites
+//                console.cs:40883-40889 [v2.10.3.15] and gives SaturnMKII the
+//                G2's list. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-09-30 — Radio codec lane: radioMicNeedsAddOn (HL2) and
+//                 radioMicSelectable(). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  clsHardwareSpecific.cs
@@ -268,6 +311,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 
 #include "BoardCapabilities.h"
+#include "SampleRateCatalog.h"
+
+#include <algorithm>
+#include <string_view>
 
 namespace NereusSDR {
 namespace {
@@ -276,10 +323,12 @@ namespace {
 // Source: network.h:448 (Atlas=0), clsHardwareSpecific.cs Model→Hardware map
 // Upstream tags preserved: //N1GP (from cited network.h:446) [v2.10.3.15]
 // ADC: single (clsHardwareSpecific.cs: no explicit SetRxADC for HPSDR model,
-//      defaults to 1). Metis/Atlas board is Protocol 1 only.
+//      defaults to 1). Metis/Atlas board is Protocol 1 hardware; the row's
+//      Protocol 2 rates follow Thetis's list all the same (plan Task 15).
 // No Alex port on bare Atlas kit; OC outputs via Penny board (not addressable
 //   the same way). Atlas max receivers = 7 (P1 hardware limit), though
-//   typically 3 in practice. maxSampleRate = 192k for P1 standard.
+//   typically 3 in practice. maxSampleRate spans both protocols (1536k);
+//   Protocol 1 tops out at 192k (sampleRatesFor).
 // Firmware floor: none. Thetis NetworkIO.cs has no Atlas firmware check.
 // NOTE: Changed from constexpr to const in Phase 3P-B Task 6 because
 // BoardCapabilities now contains QList<SaturnBpf1Edge> (p2SaturnBpf1Edges),
@@ -300,8 +349,15 @@ const BoardCapabilities kAtlas = {
     .maxSlices        = 3,   // Phase 3F: Atlas/Metis 3-slice cap (1-ADC, 3 DDCs, no PS support)
     .userDdcCount     = 3,   // Phase 3F Sub-Epic I: Metis user DDCs = DDC0-2 (design doc §2)
     .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
-    .sampleRates      = {48000, 96000, 192000, 0, 0, 0},
-    .maxSampleRate    = 192000,
+    // Every rate the board is offered on either protocol (plan Task 15, the
+    // operator's ruling of 2026-09-25: these rows follow Thetis on Protocol 2
+    // too). sampleRatesFor trims the row to the protocol in use: Protocol 1
+    // 48/96/192 kHz, Protocol 2 all six.
+    //   From Thetis setup.cs:847-850 [v2.10.3.15] (p1_rates / p2_rates)
+    //   bool include_extra_p1_rate = HardwareSpecific.Model == HPSDRModel.REDPITAYA; //DH1KLM
+    //   (not this board: the extra Protocol 1 rate is the RedPitaya's)
+    .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
+    .maxSampleRate    = 1536000,
     .attenuator       = {0, 0, 0, false, 0x1F, 0x20, false},
     .preamp           = {false, false},
     .ocOutputCount    = 0,
@@ -356,8 +412,15 @@ const BoardCapabilities kHermes = {
     .maxSlices        = 4,   // Phase 3F: Hermes 4-slice cap (1-ADC, 4 DDCs; PS reclaims DDC0+1 on TX)
     .userDdcCount     = 4,   // Phase 3F Sub-Epic I: Hermes user DDCs = DDC0-3 (design doc §2)
     .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
-    .sampleRates      = {48000, 96000, 192000, 0, 0, 0},
-    .maxSampleRate    = 192000,
+    // Every rate the board is offered on either protocol (plan Task 15, the
+    // operator's ruling of 2026-09-25: these rows follow Thetis on Protocol 2
+    // too). sampleRatesFor trims the row to the protocol in use: Protocol 1
+    // 48/96/192 kHz, Protocol 2 all six.
+    //   From Thetis setup.cs:847-850 [v2.10.3.15] (p1_rates / p2_rates)
+    //   bool include_extra_p1_rate = HardwareSpecific.Model == HPSDRModel.REDPITAYA; //DH1KLM
+    //   (not this board: the extra Protocol 1 rate is the RedPitaya's)
+    .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
+    .maxSampleRate    = 1536000,
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
     .preamp           = {true, false},
     .ocOutputCount    = 7,
@@ -418,8 +481,15 @@ const BoardCapabilities kHermesII = {
     .maxSlices        = 2,   // Phase 3F: HermesII 2-slice cap (1-ADC, 2 DDCs)
     .userDdcCount     = 2,   // Phase 3F Sub-Epic I: HermesII user DDCs = DDC0-1 (design doc §2)
     .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
-    .sampleRates      = {48000, 96000, 192000, 0, 0, 0},
-    .maxSampleRate    = 192000,
+    // Every rate the board is offered on either protocol (plan Task 15, the
+    // operator's ruling of 2026-09-25: these rows follow Thetis on Protocol 2
+    // too). sampleRatesFor trims the row to the protocol in use: Protocol 1
+    // 48/96/192 kHz, Protocol 2 all six.
+    //   From Thetis setup.cs:847-850 [v2.10.3.15] (p1_rates / p2_rates)
+    //   bool include_extra_p1_rate = HardwareSpecific.Model == HPSDRModel.REDPITAYA; //DH1KLM
+    //   (not this board: the extra Protocol 1 rate is the RedPitaya's)
+    .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
+    .maxSampleRate    = 1536000,
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
     .preamp           = {true, false},
     .ocOutputCount    = 7,
@@ -459,7 +529,7 @@ const BoardCapabilities kHermesII = {
 // ─── Angelia (ANAN-100D) ────────────────────────────────────────────────────
 // Source: network.h:451 (Angelia=3), clsHardwareSpecific.cs:129-134
 // Upstream tags preserved: //N1GP (from cited network.h:446) [v2.10.3.15]
-// ADC: SetRxADC(2) — dual ADC. Protocol 1.
+// ADC: SetRxADC(2), dual ADC. Protocol 1 or Protocol 2 firmware (plan Task 5).
 // Diversity + PureSignal: yes (2 ADCs, console.cs GetDDC P1 Angelia branch:8680)
 // maxReceivers: 7 (P1 dual-ADC limit, console.cs GetDDC Angelia branch)
 // TODO(3I-T2): verify firmware versions
@@ -479,14 +549,33 @@ const BoardCapabilities kAngelia = {
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: Angelia 5-slice cap (2-ADC, 7 DDCs; DDC0+1 reserved for PS+Div)
     .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Angelia user DDCs = DDC2-6 (design doc §2)
-    .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
-                             // Was 2, which contradicted every other Protocol1 row and this
-                             // row's own .protocol field. NereusSDR has no P1 wideband receive
-                             // path, so advertising ADCs for it let extended view bypass the
-                             // Alex preselector for a stream that never arrives, losing receive
-                             // filtering for nothing. (Codex review round 5, PR #293.)
-    .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
-    .maxSampleRate    = 384000,
+    // The board runs Protocol 1 or Protocol 2 firmware, and this row serves
+    // both (P2 discovery maps board byte 3 here). Plan Task 5, the
+    // operator's ruling of 2026-09-24 ("follow thetis"): each protocol gets
+    // Thetis's values, and BoardCapsTable::widebandAdcsFor /
+    // sampleRatesFor trim the row to the protocol in use.
+    //
+    // Wideband: none on Protocol 1 (widebandAdcsFor gives 0; Thetis
+    // networkproto1.c:181-201 [v2.10.3.15] drops every endpoint but EP6).
+    // On Protocol 2, ADC0 only, which is all Thetis ever enables, on every
+    // model, with no menu gate:
+    //   From Thetis console.cs:43552-43558 [v2.10.3.15] wBToolStripMenuItem_Click
+    //     NetworkIO.SetWBEnable(0, 1);
+    //   private bool _wb_caused_alex_hpf_bypass = false; //[2.10.3.7]MW0LGE fixes #529
+    //   [original inline comment from console.cs:43545, the flag the handler sets]
+    // (The row read 0 from 2026-07-30, Codex review round 5, PR #293, when
+    // it described Protocol 1 only. The protocol gate is
+    // BoardCapsTable::widebandAdcsFor, and RadioModel's two wideband readers,
+    // widebandDemandRoute and widebandAdcRateHz, go through it, so a
+    // Protocol 1 connection still gets none.)
+    .widebandAdcs     = 1,
+    // Every rate the board reaches on either protocol. Protocol 1 trims to
+    // 48/96/192 kHz, Protocol 2 keeps all six:
+    //   From Thetis setup.cs:848-850 [v2.10.3.15] (p1_rates / p2_rates)
+    //   bool include_extra_p1_rate = HardwareSpecific.Model == HPSDRModel.REDPITAYA; //DH1KLM
+    //   (not this board: the extra Protocol 1 rate is the RedPitaya's)
+    .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
+    .maxSampleRate    = 1536000,
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
     .preamp           = {true, false},
     .ocOutputCount    = 7,
@@ -520,7 +609,7 @@ const BoardCapabilities kAngelia = {
 
 // ─── Orion (ANAN-200D) ──────────────────────────────────────────────────────
 // Source: network.h:452 (Orion=4), clsHardwareSpecific.cs:136-141
-// ADC: SetRxADC(2) — dual ADC. Protocol 1 (P1 board).
+// ADC: SetRxADC(2), dual ADC. Protocol 1 or Protocol 2 firmware (plan Task 5).
 // Diversity + PureSignal: yes (2 ADCs, console.cs GetDDC P1 Orion branch:8681)
 // Preamp: hasBypassAndPreamp=true (50V supply vs 33V for Hermes/Angelia,
 //   clsHardwareSpecific.cs:139 SetADCSupply(0,50))
@@ -540,14 +629,33 @@ const BoardCapabilities kOrion = {
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: Orion 5-slice cap (2-ADC, 7 DDCs; DDC0+1 reserved for PS+Div)
     .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Orion user DDCs = DDC2-6 (design doc §2)
-    .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
-                             // Was 2, which contradicted every other Protocol1 row and this
-                             // row's own .protocol field. NereusSDR has no P1 wideband receive
-                             // path, so advertising ADCs for it let extended view bypass the
-                             // Alex preselector for a stream that never arrives, losing receive
-                             // filtering for nothing. (Codex review round 5, PR #293.)
-    .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
-    .maxSampleRate    = 384000,
+    // The board runs Protocol 1 or Protocol 2 firmware, and this row serves
+    // both (P2 discovery maps board byte 4 here). Plan Task 5, the
+    // operator's ruling of 2026-09-24 ("follow thetis"): each protocol gets
+    // Thetis's values, and BoardCapsTable::widebandAdcsFor /
+    // sampleRatesFor trim the row to the protocol in use.
+    //
+    // Wideband: none on Protocol 1 (widebandAdcsFor gives 0; Thetis
+    // networkproto1.c:181-201 [v2.10.3.15] drops every endpoint but EP6).
+    // On Protocol 2, ADC0 only, which is all Thetis ever enables, on every
+    // model, with no menu gate:
+    //   From Thetis console.cs:43552-43558 [v2.10.3.15] wBToolStripMenuItem_Click
+    //     NetworkIO.SetWBEnable(0, 1);
+    //   private bool _wb_caused_alex_hpf_bypass = false; //[2.10.3.7]MW0LGE fixes #529
+    //   [original inline comment from console.cs:43545, the flag the handler sets]
+    // (The row read 0 from 2026-07-30, Codex review round 5, PR #293, when
+    // it described Protocol 1 only. The protocol gate is
+    // BoardCapsTable::widebandAdcsFor, and RadioModel's two wideband readers,
+    // widebandDemandRoute and widebandAdcRateHz, go through it, so a
+    // Protocol 1 connection still gets none.)
+    .widebandAdcs     = 1,
+    // Every rate the board reaches on either protocol. Protocol 1 trims to
+    // 48/96/192 kHz, Protocol 2 keeps all six:
+    //   From Thetis setup.cs:848-850 [v2.10.3.15] (p1_rates / p2_rates)
+    //   bool include_extra_p1_rate = HardwareSpecific.Model == HPSDRModel.REDPITAYA; //DH1KLM
+    //   (not this board: the extra Protocol 1 rate is the RedPitaya's)
+    .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
+    .maxSampleRate    = 1536000,
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
     .preamp           = {true, true},
     .ocOutputCount    = 7,
@@ -842,8 +950,19 @@ const BoardCapabilities kHermesLite = {
     .maxSlices        = 5,
     .userDdcCount     = 2,
     .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
-    .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
-    .maxSampleRate    = 384000,
+    // Every rate the board is offered on either protocol (plan Task 15, the
+    // operator's ruling of 2026-09-25). sampleRatesFor trims the row to the
+    // protocol in use: Protocol 1 48/96/192/384 kHz, Protocol 2 all six.
+    // mi0bot is authoritative for the HL2 and gives it Thetis's Protocol 2
+    // list unchanged; its only HL2 case is the Protocol 1 384 kHz:
+    //   From mi0bot-Thetis setup.cs:847-854 [v2.10.3.13-beta2]
+    //   bool include_extra_p1_rate = HardwareSpecific.Model == HPSDRModel.REDPITAYA; //DH1KLM
+    //   // The HL supports 384K
+    //   if (HardwareSpecific.Model == HPSDRModel.HERMESLITE)
+    //       include_extra_p1_rate = true;
+    //   int[] p2_rates = { 48000, 96000, 192000, 384000, 768000, 1536000 };
+    .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
+    .maxSampleRate    = 1536000,
     // HL2: signed user-facing range −28..+31 dB.  mi0bot widens to +32 at
     // console.cs:11043 [v2.10.3.13-beta2] (RadioModelChanged HL2 branch) but
     // that is an off-by-one upstream bug: wire encoding `31 - userDb`
@@ -924,9 +1043,17 @@ const BoardCapabilities kHermesLite = {
     .hasIoBoardHl2    = true,
     .hasSidetoneGenerator = true,
     .hasMicJack       = false,  // HL2 has no radio-side mic input (3M-1b §11)
+    .radioMicNeedsAddOn = true, // the AK4951 audio add-on board (radio codec lane)
     .hasApollo        = false,  // HL2 has no Apollo port; not in RadioModelChanged() switch
     .hasAlex          = false,  // HL2 has no Alex board slot (ocOutputCount=0, hasAlexFilters=false)
     .hasPennyLane     = false,  // HL2 has no OC ext-ctrl; uses IoBoardHl2 for I2C accessories
+    // From mi0bot clsHardwareSpecific.cs:258-270 [v2.10.3.13-beta2] HasAmps:
+    //   ... _model == HPSDRModel.REDPITAYA ||
+    //       _model == HPSDRModel.HERMESLITE;
+    // The HL2 reports its PA current on user ADC0 (convertToAmps' HL2
+    // branch). Its HasVolts entry is left off: mi0bot's poll never fills
+    // the volts queue for the HL2, so its PA volts read 0.
+    .hasPaAmpsTelemetry = true,
     .minFirmwareVersion = 0,   // floor check removed; see file header
     .knownGoodFirmware  = 0,
     .displayName      = "Hermes Lite 2",
@@ -951,8 +1078,14 @@ const BoardCapabilities kHermesLiteRxOnly = {
     .maxSlices        = 5,
     .userDdcCount     = 2,
     .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
-    .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
-    .maxSampleRate    = 384000,
+    // The kit is an HL2 (it resolves to HPSDRModel::HERMESLITE on connect,
+    // defaultModelForBoard), so it has the HL2's rates on each protocol;
+    // see kHermesLite for the mi0bot cite (setup.cs:847-854
+    // [v2.10.3.13-beta2]; the Protocol 1 flag reads, verbatim,
+    //   bool include_extra_p1_rate = HardwareSpecific.Model == HPSDRModel.REDPITAYA; //DH1KLM
+    // before the HL2 case sets it).
+    .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
+    .maxSampleRate    = 1536000,
     // HL2 RX-only inherits the standard HL2 signed −28..+31 dB ATT range.
     // See kHermesLite for the maintainer-approved deviation from mi0bot's
     // off-by-one upstream bug at console.cs:11043 (issue #175 follow-up).
@@ -1268,45 +1401,155 @@ const BoardCapabilities& forModel(HPSDRModel m) noexcept {
     return forBoard(boardForModel(m));
 }
 
+int userDdcCountFor(const BoardCapabilities& caps, ProtocolVersion protocol) noexcept {
+    // Plan Task 11: the Protocol 1 slot plan has room for four user streams
+    // on every board (see the declaration).
+    constexpr int kProtocol1UserStreams = 4;
+    if (protocol == ProtocolVersion::Protocol1) {
+        return std::min(caps.userDdcCount, kProtocol1UserStreams);
+    }
+    return caps.userDdcCount;
+}
+
+int userDdcCountFor(const BoardCapabilities& caps, ProtocolVersion protocol,
+                    int reportedReceivers) noexcept {
+    const int fromRow = userDdcCountFor(caps, protocol);
+    // Thetis reads the count (clsRadioDiscovery.cs:1194 [v2.10.3.15],
+    // r.NumRxs = data[20]) but sizes its DDCs from the model alone
+    // (console.cs:8228-8229 [v2.10.3.15], P1_rxcount = 5; nddc = 5; for
+    // the ANAN-G2). NereusSDR follows the radio's number instead
+    // (Radio-Authoritative Settings Policy), on Protocol 2 only.
+    // The cap is the one effective receiver count every reader shares.
+    if (protocol == ProtocolVersion::Protocol2 && reportedReceivers > 0) {
+        return std::min(fromRow,
+                        effectiveReceiverCount(caps, protocol, reportedReceivers));
+    }
+    return fromRow;
+}
+
+int effectiveReceiverCount(const BoardCapabilities& caps, ProtocolVersion protocol,
+                           int reportedReceivers) noexcept {
+    // The report is the radio's own number (Radio-Authoritative Settings
+    // Policy), read at clsRadioDiscovery.cs:1194 [v2.10.3.15]; see
+    // userDdcCountFor below. Protocol 1 keeps the row, as its stream pool
+    // does.
+    if (protocol == ProtocolVersion::Protocol2 && reportedReceivers > 0) {
+        return std::min(caps.maxReceivers, reportedReceivers);
+    }
+    return caps.maxReceivers;
+}
+
+std::vector<int> sampleRatesFor(const BoardCapabilities& caps,
+                                ProtocolVersion protocol,
+                                HPSDRModel model)
+{
+    // Plan Task 5: the protocol's list, then the row. See the declaration.
+    std::span<const int> master{kP2Rates, std::size(kP2Rates)};
+    if (protocol == ProtocolVersion::Protocol1) {
+        // From Thetis setup.cs:847-849 [v2.10.3.15]
+        //   bool include_extra_p1_rate = HardwareSpecific.Model == HPSDRModel.REDPITAYA; //DH1KLM
+        //   int[] p1_rates = include_extra_p1_rate ? { .., 384000 } : { 48000, 96000, 192000 };
+        // From mi0bot-Thetis setup.cs:849-851 [v2.10.3.13-beta2]
+        //   // The HL supports 384K
+        //   if (HardwareSpecific.Model == HPSDRModel.HERMESLITE)
+        //       include_extra_p1_rate = true;
+        const bool includeExtraP1Rate = model == HPSDRModel::REDPITAYA
+                                     || model == HPSDRModel::HERMESLITE;
+        master = includeExtraP1Rate
+            ? std::span<const int>{kP1RatesWithExtra384k, std::size(kP1RatesWithExtra384k)}
+            : std::span<const int>{kP1RatesBase, std::size(kP1RatesBase)};
+    }
+    std::vector<int> out;
+    out.reserve(master.size());
+    for (int rate : master) {
+        // The row's zero-padded slots never match a real rate.
+        if (std::find(caps.sampleRates.begin(), caps.sampleRates.end(), rate)
+                != caps.sampleRates.end()) {
+            out.push_back(rate);
+        }
+    }
+    return out;
+}
+
+int maxSampleRateFor(const BoardCapabilities& caps,
+                     ProtocolVersion protocol,
+                     HPSDRModel model)
+{
+    const std::vector<int> rates = sampleRatesFor(caps, protocol, model);
+    return rates.empty() ? 0 : rates.back();
+}
+
+int widebandAdcsFor(const BoardCapabilities& caps, ProtocolVersion protocol) noexcept {
+    // Plan Task 5: no board carries wideband over Protocol 1 (Thetis
+    // networkproto1.c:181-201 [v2.10.3.15], see the declaration).
+    if (protocol == ProtocolVersion::Protocol1) {
+        return 0;
+    }
+    return caps.widebandAdcs;
+}
+
 std::span<const BoardCapabilities> all() noexcept {
     return std::span<const BoardCapabilities>(kTable.data(), kTable.size());
 }
 
 // --- Per-model preamp item tables ---
 // From Thetis console.cs:40755-40825 SetComboPreampForHPSDR().
-// PreampMode mapping: 0=Off(-20dB HPSDR), 1=On(0dB), 2=Minus10, 3=Minus20,
-//                     4=Minus30, 5=Minus40, 6=Minus50.
+// Each item carries the PreampMode Thetis picks for its label when the
+// operator selects it (preampModeForLabel below):
+//   0=HPSDR_OFF, 1=HPSDR_ON, 2..6=HPSDR_MINUS10..50 (the lowercase "db"
+//   Alex items), 7..9=SA_MINUS10..30 (the step attenuator).
+// "-20dB" is HPSDR_OFF only on Model == HPSDR (the Atlas board) and
+// SA_MINUS20 everywhere else, so on/off lists come in two forms.
 // Upstream inline attribution preserved verbatim:
 //   :40790  case HPSDRModel.REDPITAYA: // DH1KLM: changed to enable on_off_preamp_settings for OpenHPSDR compat. DIY PA/Filter boards
 //   :40805  // case HPSDRModel.REDPITAYA: // DH1KLM: removed for compatibility reasons
 //   :40813  ... HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+// From Thetis console.cs:40823-40825 [v2.10.3.15]:
+//   private String[] on_off_preamp_settings = { "0dB", "-20dB" };
+//   private String[] anan100d_preamp_settings = { "0dB", "-10dB", "-20dB", "-30dB" };
+//   private String[] alex_preamp_settings = { "-10db", "-20db", "-30db", "-40db", "-50db" };
 
-// on_off_preamp_settings = { "0dB", "-20dB" }
+// on_off_preamp_settings on Model == HPSDR (Atlas).
+static constexpr PreampItem kOnOffHpsdr[] = {
+    {"0dB",   1},  // HPSDR_ON
+    {"-20dB", 0},  // HPSDR_OFF  //MW0LGE_21d step atten
+};
+
+// on_off_preamp_settings on every other model.
 static constexpr PreampItem kOnOff[] = {
-    {"0dB",   1},  // PreampMode::On
-    {"-20dB", 0},  // PreampMode::Off
+    {"0dB",   1},  // HPSDR_ON
+    {"-20dB", 8},  // SA_MINUS20
 };
 
-// anan100d_preamp_settings = { "0dB", "-10dB", "-20dB", "-30dB" }
+// anan100d_preamp_settings (never on Model == HPSDR).
 static constexpr PreampItem kAnan100d[] = {
-    {"0dB",   1},  // PreampMode::On
-    {"-10dB", 2},  // PreampMode::Minus10
-    {"-20dB", 3},  // PreampMode::Minus20
-    {"-30dB", 4},  // PreampMode::Minus30
+    {"0dB",   1},  // HPSDR_ON
+    {"-10dB", 7},  // SA_MINUS10
+    {"-20dB", 8},  // SA_MINUS20
+    {"-30dB", 9},  // SA_MINUS30
 };
 
-// alex_preamp_settings = { "-10db", "-20db", "-30db", "-40db", "-50db" }
-// (lowercase "db" distinguishes ALEX modes from SA modes in Thetis)
+// on_off + alex_preamp_settings on Model == HPSDR (Atlas with Alex).
+// (lowercase "db" distinguishes the Alex modes from the SA modes in Thetis)
+static constexpr PreampItem kOnOffPlusAlexHpsdr[] = {
+    {"0dB",   1},  // HPSDR_ON
+    {"-20dB", 0},  // HPSDR_OFF
+    {"-10db", 2},  // HPSDR_MINUS10 (Alex)
+    {"-20db", 3},  // HPSDR_MINUS20 (Alex)
+    {"-30db", 4},  // HPSDR_MINUS30 (Alex)
+    {"-40db", 5},  // HPSDR_MINUS40 (Alex)
+    {"-50db", 6},  // HPSDR_MINUS50 (Alex)
+};
 
-// Combined: on_off + alex (for HPSDR/Hermes/ANAN100/etc with ALEX)
+// on_off + alex_preamp_settings on every other model (Hermes/ANAN-100 etc.).
 static constexpr PreampItem kOnOffPlusAlex[] = {
-    {"0dB",   1},  // PreampMode::On
-    {"-20dB", 0},  // PreampMode::Off
-    {"-10db", 2},  // PreampMode::Minus10 (ALEX)
-    {"-20db", 3},  // PreampMode::Minus20 (ALEX)
-    {"-30db", 4},  // PreampMode::Minus30 (ALEX)
-    {"-40db", 5},  // PreampMode::Minus40 (ALEX)
-    {"-50db", 6},  // PreampMode::Minus50 (ALEX)
+    {"0dB",   1},  // HPSDR_ON
+    {"-20dB", 8},  // SA_MINUS20
+    {"-10db", 2},  // HPSDR_MINUS10 (Alex)
+    {"-20db", 3},  // HPSDR_MINUS20 (Alex)
+    {"-30db", 4},  // HPSDR_MINUS30 (Alex)
+    {"-40db", 5},  // HPSDR_MINUS40 (Alex)
+    {"-50db", 6},  // HPSDR_MINUS50 (Alex)
 };
 
 // Hermes Lite 2: uses anan100d 4-step set (Off / -10 / -20 / -30 dB).
@@ -1321,13 +1564,120 @@ static constexpr std::span<const PreampItem> items(const PreampItem (&a)[N]) noe
     return {a, N};
 }
 
+int preampModeForLabel(const char* label, bool hpsdrModel) noexcept
+{
+    // From Thetis console.cs:28405-28450 [v2.10.3.15]
+    // (comboPreamp_SelectedIndexChanged; comboRX2Preamp_SelectedIndexChanged
+    // at 28468 maps the upper-case labels the same way):
+    //   switch (comboPreamp.Text)
+    //   {
+    //       case "-20dB":
+    //           if (HardwareSpecific.Model == HPSDRModel.HPSDR) //MW0LGE_21d step atten
+    //           {
+    //               mode = PreampMode.HPSDR_OFF;
+    //           }
+    //           else
+    //           {
+    //               mode = PreampMode.SA_MINUS20;
+    //           }
+    //           break;
+    //       case "0dB":
+    //           mode = PreampMode.HPSDR_ON;
+    //           break;
+    //       case "-10dB":
+    //           mode = PreampMode.SA_MINUS10;
+    //           break;
+    //       case "-30dB":
+    //           mode = PreampMode.SA_MINUS30;
+    //           break;
+    //       // NOTE: lower case db !!! not a very nice implemention //MW0LGE_22b commented
+    //       case "-10db":
+    //           mode = PreampMode.HPSDR_MINUS10;
+    //       ...
+    //       case "-50db":
+    //           mode = PreampMode.HPSDR_MINUS50;
+    //           break;
+    //       default:
+    //           exit = true;
+    const std::string_view text = label ? std::string_view(label) : std::string_view();
+    if (text == "-20dB") {
+        return hpsdrModel ? 0 : 8;  //MW0LGE_21d step atten
+    }
+    if (text == "0dB")   { return 1; }
+    if (text == "-10dB") { return 7; }
+    if (text == "-30dB") { return 9; }
+    // NOTE: lower case db !!! not a very nice implemention //MW0LGE_22b commented
+    if (text == "-10db") { return 2; }
+    if (text == "-20db") { return 3; }
+    if (text == "-30db") { return 4; }
+    if (text == "-40db") { return 5; }
+    if (text == "-50db") { return 6; }
+    return -1;  // PreampMode.FIRST: Thetis leaves the mode unchanged
+}
+
+namespace {
+
+// The items as NereusSDR stored them before the SA modes (settings saved
+// up to 2026-09-29). Frozen: preampModeFromV1 reads a stored value's label
+// from here. 0=Off 1=On 2..6=Minus10..Minus50.
+constexpr PreampItem kV1OnOff[] = {{"0dB", 1}, {"-20dB", 0}};
+constexpr PreampItem kV1Anan100d[] = {
+    {"0dB", 1}, {"-10dB", 2}, {"-20dB", 3}, {"-30dB", 4}};
+constexpr PreampItem kV1OnOffPlusAlex[] = {
+    {"0dB", 1}, {"-20dB", 0}, {"-10db", 2}, {"-20db", 3},
+    {"-30db", 4}, {"-40db", 5}, {"-50db", 6}};
+
+std::span<const PreampItem> v1PreampItemsForBoard(HPSDRHW hw, bool alexPresent) noexcept
+{
+    switch (hw) {
+    case HPSDRHW::Atlas:
+        return alexPresent ? items(kV1OnOffPlusAlex) : items(kV1OnOff);
+    case HPSDRHW::Hermes:
+    case HPSDRHW::HermesII:
+    case HPSDRHW::Angelia:
+    case HPSDRHW::Orion:
+    case HPSDRHW::HermesLite:
+        return alexPresent ? items(kV1OnOffPlusAlex) : items(kV1Anan100d);
+    default:
+        return items(kV1Anan100d);
+    }
+}
+
+} // namespace
+
+int preampModeFromV1(HPSDRHW hw, bool alexPresent, int stored) noexcept
+{
+    // Atlas (Model == HPSDR) numbered its modes as Thetis does already.
+    if (hw == HPSDRHW::Atlas) {
+        return stored;
+    }
+    // Off switched the preamp out: 20 dB less gain. Off Atlas Thetis
+    // reaches that through SA_MINUS20 (20 dB on the step attenuator), the
+    // mode its "-20dB" item picks there.
+    if (stored == 0) {
+        return 8;
+    }
+    // Any other value keeps the label it showed on this board.
+    for (const PreampItem& old : v1PreampItemsForBoard(hw, alexPresent)) {
+        if (old.modeInt == stored) {
+            for (const PreampItem& now : preampItemsForBoard(hw, alexPresent)) {
+                if (std::string_view(now.label) == std::string_view(old.label)) {
+                    return now.modeInt;
+                }
+            }
+        }
+    }
+    return stored;
+}
+
 std::span<const PreampItem> preampItemsForBoard(HPSDRHW hw, bool alexPresent) noexcept
 {
     // From Thetis console.cs:40755 SetComboPreampForHPSDR — per-model switch.
     switch (hw) {
     case HPSDRHW::Atlas:
-        return alexPresent ? items(kOnOffPlusAlex)
-                           : items(kOnOff);
+        // Model == HPSDR: "-20dB" is HPSDR_OFF (console.cs:28407 [v2.10.3.15]).
+        return alexPresent ? items(kOnOffPlusAlexHpsdr)
+                           : items(kOnOffHpsdr);
 
     case HPSDRHW::Hermes:
         // Hermes: with ALEX → on_off + alex; without → anan100d (4-step).
@@ -1365,10 +1715,22 @@ std::span<const PreampItem> preampItemsForBoard(HPSDRHW hw, bool alexPresent) no
         return items(kAnan100d);
 
     case HPSDRHW::HermesLite:
-        // HL2: anan100d 4-step set (Off / -10 / -20 / -30 dB). Not in Thetis
-        // SetComboPreampForHPSDR switch (HL2 postdates it); uses anan100d set
-        // per spec §8 and mi0bot HL2 LNA design [@c26a8a4]. Phase 3P-C Step 2.
-        return items(kAnan100d);
+        // HL2 shares HERMES's branch in mi0bot's SetComboPreampForHPSDR:
+        // with Alex, on/off plus the Alex items; without, the anan100d
+        // 4-step set (0 / -10 / -20 / -30 dB).
+        // From mi0bot console.cs:41709-41718 [v2.10.3.13-beta2]
+        //   case HPSDRModel.HERMES:
+        //   case HPSDRModel.HERMESLITE:         // MI0BOT: HL2
+        //       if (alexpresent)
+        //       {
+        //           comboPreamp.Items.AddRange(on_off_preamp_settings);
+        //           comboPreamp.Items.AddRange(alex_preamp_settings);
+        //       }
+        //       else
+        //           comboPreamp.Items.AddRange(anan100d_preamp_settings);
+        //       break;
+        return alexPresent ? items(kOnOffPlusAlex)
+                           : items(kAnan100d);
 
     default:
         return items(kAnan100d);
@@ -1377,18 +1739,43 @@ std::span<const PreampItem> preampItemsForBoard(HPSDRHW hw, bool alexPresent) no
 
 std::span<const PreampItem> rx2PreampItemsForBoard(HPSDRHW hw) noexcept
 {
-    // From Thetis console.cs:40815 — RX2 always uses either on_off or anan100d.
-    // Upstream inline attribution preserved verbatim (console.cs:40813):
-    //   ... HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    // RX2 always uses either on_off or anan100d.
+    // From Thetis console.cs:40883-40889 [v2.10.3.15]:
+    //   comboRX2Preamp.Items.Clear();
+    //   if (HardwareSpecific.Model == HPSDRModel.ANAN100D || HardwareSpecific.Model == HPSDRModel.ANAN200D || HardwareSpecific.Model == HPSDRModel.ANAN7000D ||
+    //       HardwareSpecific.Model == HPSDRModel.ANAN8000D || HardwareSpecific.Model == HPSDRModel.ORIONMKII || HardwareSpecific.Model == HPSDRModel.ANVELINAPRO3 ||
+    //       HardwareSpecific.Model == HPSDRModel.ANAN_G2 || HardwareSpecific.Model == HPSDRModel.ANAN_G2_1K || HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    //       comboRX2Preamp.Items.AddRange(anan100d_preamp_settings);
+    //   else
+    //       comboRX2Preamp.Items.AddRange(on_off_preamp_settings);
+    // By board: Angelia is the ANAN-100D, Orion the ANAN-200D, OrionMKII the
+    // 7000D, 8000D, OrionMKII, AnvelinaPro3 and Red Pitaya, Saturn the G2
+    // and G2 1K. HermesC10 (the G2E) is not in the list.
+    // SaturnMKII is a NereusSDR mapping, not Thetis's: no Thetis model
+    // resolves to HPSDRHW.SaturnMKII, so Thetis never reaches this list for
+    // it. It is the G2's later board revision with the same two ADCs, so
+    // NereusSDR gives it the G2's list rather than on_off.
     switch (hw) {
     case HPSDRHW::Angelia:
     case HPSDRHW::Orion:
     case HPSDRHW::OrionMKII:
     case HPSDRHW::Saturn:
+    case HPSDRHW::SaturnMKII:
         return items(kAnan100d);
+    case HPSDRHW::Atlas:
+        // Model == HPSDR: "-20dB" is HPSDR_OFF on RX2 as well
+        // (comboRX2Preamp_SelectedIndexChanged, console.cs:28468 [v2.10.3.15]).
+        return items(kOnOffHpsdr);
     default:
         return items(kOnOff);
     }
+}
+
+int stepAttWireMaxDb(const BoardCapabilities& caps) noexcept
+{
+    const int boardMax = caps.attenuator.maxDb;
+    const int stepMax = stepAttMaxDb(caps.board, caps.hasAlexFilters);
+    return stepMax > boardMax ? stepMax + 2 : boardMax;
 }
 
 int stepAttMaxDb(HPSDRHW hw, bool alexPresent) noexcept

@@ -422,6 +422,179 @@ private slots:
         model.injectConnectionForTest(nullptr);
         delete mock;
     }
+
+    // Group B fix wave: a TX antenna change while the radio transmits, as
+    // Thetis applies it: setup.cs ProcessAlexAntRadioButton sets the band's
+    // TX antenna and console.AlexAntCtrlEnabled re-runs
+    // UpdateAlexAntSelection(RX1Band, _mox, ...) at once, so the relays
+    // take the new antenna on the TX routing (tx = true), never the
+    // receive routing mid-transmission. The out-on-TX flags only set
+    // Alex's statics there (chkRxOutOnTx / chkEXT1OutOnTx /
+    // chkEXT2OutOnTx), so they reach the relays at the next MOX edge.
+    void txAntennaChangedWhileTransmittingKeepsTheTxRouting() {
+        RadioModel model;
+        model.setCapsForTest(/*hasAlex=*/true);
+        model.addSlice(QStringLiteral("pan-0"));
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        const Band band = model.lastBand();
+
+        model.onMoxHardwareFlipped(true);
+        QVERIFY(!mock->calls.isEmpty());
+        QVERIFY(mock->calls.last().tx);
+        mock->calls.clear();
+
+        model.alexControllerMutable().setTxAnt(band, 2);
+        QVERIFY(!mock->calls.isEmpty());
+        QVERIFY(mock->calls.last().tx);
+        QCOMPARE(mock->calls.last().txAnt, 2);
+        QCOMPARE(mock->calls.last().trxAnt, 2);
+
+        // A flag while transmitting waits for the next MOX edge.
+        mock->calls.clear();
+        model.alexControllerMutable().setRxOutOnTx(true);
+        QVERIFY(mock->calls.isEmpty());
+
+        // Back on receive: the receive routing, with the new TX antenna kept
+        // for the next transmission.
+        model.onMoxHardwareFlipped(false);
+        QVERIFY(!mock->calls.isEmpty());
+        QVERIFY(!mock->calls.last().tx);
+        mock->calls.clear();
+        model.onMoxHardwareFlipped(true);
+        QVERIFY(mock->calls.last().tx);
+        QCOMPARE(mock->calls.last().txAnt, 2);
+        QVERIFY(mock->calls.last().rxOut);
+
+        // Off the air a TX antenna change keeps the receive routing.
+        model.onMoxHardwareFlipped(false);
+        mock->calls.clear();
+        model.alexControllerMutable().setTxAnt(band, 3);
+        QVERIFY(!mock->calls.isEmpty());
+        QVERIFY(!mock->calls.last().tx);
+
+        model.injectConnectionForTest(nullptr);
+        delete mock;
+    }
+
+    // Parity Task 12 (group B fix wave re-review, Minor 2): a radio that
+    // goes away while transmitting leaves no TX routing behind. After the
+    // next connect an antenna change goes out as the receive routing and a
+    // relay flag is applied at once, not held for a MOX edge.
+    void disconnectWhileTransmittingLeavesTheReceiveRouting() {
+        RadioModel model;
+        model.setCapsForTest(/*hasAlex=*/true);
+        model.addSlice(QStringLiteral("pan-0"));
+        auto* first = new MockConnection();
+        model.injectConnectionForTest(first);
+        const Band band = model.lastBand();
+        model.onMoxHardwareFlipped(true);
+        QVERIFY(!first->calls.isEmpty());
+        QVERIFY(first->calls.last().tx);
+
+        model.disconnectFromRadio();
+        delete first;
+
+        auto* second = new MockConnection();
+        model.injectConnectionForTest(second);
+        model.alexControllerMutable().setTxAnt(band, 2);
+        QVERIFY(!second->calls.isEmpty());
+        QVERIFY(!second->calls.last().tx);
+        second->calls.clear();
+        model.alexControllerMutable().setRxOutOverride(true);
+        QVERIFY(!second->calls.isEmpty());
+        QVERIFY(!second->calls.last().tx);
+
+        model.injectConnectionForTest(nullptr);
+        delete second;
+    }
+
+    // Band crossing while keyed keeps the TX routing. Thetis re-runs the
+    // antenna selection on a VFO A change with tx = _mox
+    // (console.cs:31713-31717 [v2.10.3.15] txtVFOAFreq_LostFocus:
+    //   Alex.getAlex().UpdateAlexAntSelection(RX1Band, _mox, alex_ant_ctrl_enabled, false);
+    // ), so the relays take the new band's transmit antenna at once and
+    // never the receive routing mid-transmission.
+    void keyedBandCrossingOfTheTxSliceKeepsTheTxRouting() {
+        RadioModel model;
+        model.setCapsForTest(/*hasAlex=*/true);
+        model.addSlice(QStringLiteral("pan-0"));
+        SliceModel* slice = model.sliceById(0);
+        QVERIFY(slice);
+        QCOMPARE(model.txBoundSlice(), slice);
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        model.alexControllerMutable().setTxAnt(Band::Band40m, 2);
+        model.alexControllerMutable().setRxAnt(Band::Band40m, 3);
+        model.enableBandTrackingForTest();
+        slice->setFrequency(14074000.0);
+        QCOMPARE(model.lastBand(), Band::Band20m);
+
+        model.onMoxHardwareFlipped(true);
+        QVERIFY(mock->calls.last().tx);
+        mock->calls.clear();
+
+        slice->setFrequency(7074000.0);
+        QCOMPARE(model.lastBand(), Band::Band40m);
+        QVERIFY(!mock->calls.isEmpty());
+        for (const AntennaRouting& r : std::as_const(mock->calls)) {
+            QVERIFY2(r.tx, "a receive routing went out while keyed");
+        }
+        QCOMPARE(mock->calls.last().txAnt, 2);
+        QCOMPARE(mock->calls.last().trxAnt, 2);
+
+        // Back on receive: the new band's receive antenna.
+        mock->calls.clear();
+        model.onMoxHardwareFlipped(false);
+        QVERIFY(!mock->calls.isEmpty());
+        QVERIFY(!mock->calls.last().tx);
+        QCOMPARE(mock->calls.last().trxAnt, 3);
+
+        model.injectConnectionForTest(nullptr);
+        delete mock;
+    }
+
+    // A receive slice crossing a band edge while another slice transmits
+    // sends no receive routing mid-transmission; its routing goes out when
+    // the radio returns to receive (the NereusSDR slice rule the antenna
+    // change handler already follows while keyed).
+    void keyedBandCrossingOfAReceiveSliceSendsNoReceiveRouting() {
+        RadioModel model;
+        model.setCapsForTest(/*hasAlex=*/true);
+        model.addSlice(QStringLiteral("pan-0"));
+        model.addSlice(QStringLiteral("pan-1"));
+        SliceModel* tx = model.txBoundSlice();
+        QVERIFY(tx);
+        SliceModel* rx = (tx == model.sliceById(0)) ? model.sliceById(1) : model.sliceById(0);
+        QVERIFY(rx && rx != tx);
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        model.alexControllerMutable().setRxAnt(Band::Band40m, 3);
+        model.enableBandTrackingForTest();
+        tx->setFrequency(14074000.0);
+        rx->setFrequency(14200000.0);
+
+        model.onMoxHardwareFlipped(true);
+        mock->calls.clear();
+
+        rx->setFrequency(7074000.0);
+        for (const AntennaRouting& r : std::as_const(mock->calls)) {
+            QVERIFY2(r.tx, "a receive routing went out while keyed");
+        }
+
+        // Unkey: the receive band's routing, the band the receive slice
+        // crossed to (40 m, ANT3), not the transmit slice's 20 m. Thetis
+        // HdwMOXChanged routes the transmit band at key-down and rx1_band
+        // on return to receive (console.cs:29161-29169 [v2.10.3.15]).
+        mock->calls.clear();
+        model.onMoxHardwareFlipped(false);
+        QVERIFY(!mock->calls.isEmpty());
+        QVERIFY(!mock->calls.last().tx);
+        QCOMPARE(mock->calls.last().trxAnt, 3);
+
+        model.injectConnectionForTest(nullptr);
+        delete mock;
+    }
 };
 
 QTEST_MAIN(TestAntennaRoutingModel)

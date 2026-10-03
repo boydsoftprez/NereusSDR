@@ -1,0 +1,104 @@
+# Caddy v2 configuration for the NereusSDR rendezvous service's own server.
+#
+# Installed as /etc/caddy/Caddyfile by rendezvous/deploy/setup-server.sh,
+# which runs caddy validate on it first and writes the service's host name
+# (RV_HOST) in place of rv.nereussdr.com below. Caddy terminates TLS for the
+# service, with a certificate from Let's Encrypt that it obtains and renews
+# by itself once DNS points the name at the server. It forwards
+# /v1/relay and everything under it to the WebSocket relay (nereus-relay,
+# on its Unix socket /run/nereus-relay/relay.sock, which Caddy's group may
+# open; rendezvous document section 12) and every other request to the
+# service (loopback port 8710 on 127.0.0.1 and ::1). The TURN relay
+# (coturn, UDP 3478 and 443) does not pass through Caddy.
+#
+# No ACME email is set on purpose: Caddy obtains certificates without one,
+# and no personal address belongs in the repository.
+#
+# No access log is configured on purpose. Caddy still writes its own errors
+# to the systemd journal (journalctl -u caddy).
+{
+	# HTTP/3 is switched off. It runs over QUIC on UDP 443, which is
+	# coturn's on this server. Serving HTTP/1.1 and HTTP/2 only keeps Caddy
+	# on TCP 80 and TCP 443 and leaves every UDP port alone.
+	servers {
+		protocols h1 h2
+	}
+}
+
+# Response headers for the service's answers. Deleting the Server and Via
+# headers makes Caddy apply the whole block when the response is written,
+# and error responses are written by handle_errors, so it is imported there
+# as well.
+(rv_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+		-Server
+		-Via
+	}
+}
+
+rv.nereussdr.com {
+	import rv_headers
+
+	# Every request goes to the relay or the service, WebSocket or not, and
+	# it decides: it upgrades a WebSocket and answers anything else with
+	# 426, a short plain text and "Upgrade: websocket". No matcher here
+	# picks out WebSockets, because Caddy's header matcher compares values
+	# exactly: Apple's Network.framework sends "Upgrade: WebSocket", which
+	# "header Upgrade websocket" does not match (rendezvous/tests/
+	# caddy-check.sh shows both forms upgrading).
+	#
+	# The relay has a process of its own (nereus-relay), so relay traffic
+	# never starves registrations nor takes the service's memory ceiling
+	# (rendezvous document sections 9.1 and 12.5). It is reached over a
+	# Unix socket, whose buffer is the relay's own, so what waits between
+	# the relay and Caddy is what the relay allows (section 12.5).
+	handle /v1/relay* {
+		reverse_proxy unix//run/nereus-relay/relay.sock {
+			# X-Forwarded-For holds the client's own address only, as for
+			# the service below. A Unix socket has no peer address, so the
+			# relay takes this one and refuses a request without it.
+			# A reload keeps open relay legs for up to 5 minutes too.
+			stream_close_delay 5m
+		}
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8710 [::1]:8710 {
+			lb_policy first
+			# X-Forwarded-For holds exactly one address: the client's as
+			# Caddy sees it. Caddy does this by itself: with no
+			# trusted_proxies set it trusts no client's own header and
+			# replaces it, so no header_up is needed (caddy-check.sh
+			# shows the one entry at both upstreams). The service
+			# believes the last address in X-Forwarded-For only from a
+			# loopback peer (rendezvous document section 9.1), so
+			# whatever a client sends in its own header never counts.
+			# A Caddy reload (setup-server.sh runs one after a Caddyfile
+			# change) keeps open WebSockets for up to 5 minutes instead of
+			# cutting every registered Core off at once.
+			stream_close_delay 5m
+		}
+	}
+
+	# The service's 426 carries "Upgrade: websocket" and "Connection:
+	# upgrade" (RFC 9110 sections 15.5.22 and 7.8), but the proxy drops
+	# both as hop-by-hop headers, so they are put back on HTTP/1.1 answers
+	# that lack them (a 101 keeps its own). HTTP/2 has neither header:
+	# none is added there.
+	@http1 protocol http/1.1
+	header @http1 {
+		?Upgrade websocket
+		?Connection upgrade
+	}
+
+	handle_errors {
+		import rv_headers
+		respond "{err.status_code}
+" {err.status_code}
+	}
+}

@@ -1,0 +1,211 @@
+# NereusSDR headless daemon (nereusd) configuration.
+#
+# Format: key = value, one per line. '#' starts a comment, whether it is
+# the whole line (like this one) or trails a value on the same line.
+# Leading and trailing whitespace around both the key and the value is
+# trimmed. Blank lines are ignored. Unknown keys are logged as a warning
+# but do not stop the daemon, so a config file written for a newer nereusd
+# still starts an older one.
+#
+# Default location: /etc/nereusd.conf. Override with nereusd --config <path>.
+# See src/core/daemon/DaemonConfig.{h,cpp} for the parser this file feeds.
+#
+# Running more than one nereusd against different radios on the same
+# machine (or testing nereusd on a workstation that also runs the GUI
+# client) needs its own settings/log directory per instance: pass
+# nereusd --profile <name> (name must match [A-Za-z0-9_-]+) to keep this
+# instance's AppSettings store and log files out of the shared default
+# directory. See nereusd --help for the full option list.
+
+# MAC address of the radio to connect to, colon-separated hex
+# (e.g. 00:1C:2D:05:37:2A). A radio chosen from an app (This Core >
+# Change radio) comes first and is kept across restarts. Leave this unset
+# and nereusd runs the one radio it can see on the network; with more than
+# one in sight it waits until one is chosen, and never picks one itself.
+# Default: (unset -- the chosen radio, else the only radio in sight)
+radio_mac =
+
+# Hardware I/Q sample rate in Hz: a starting value only. nereusd uses it
+# for a radio that has no saved rate yet (the first run with that radio).
+# Once a rate is saved, whether chosen from a window or seeded from this
+# line, the saved rate wins on every later start and after an update, and
+# this line is ignored for that radio. Leave it unset and a new radio
+# starts at 192000. It must be a rate the connected board actually
+# supports; one it cannot run falls back to the board's default. On a
+# Protocol 2 radio (ANAN-G2, ANAN-7000 and the like) each receiver then
+# comes back at the rate it last used on its band, where one was chosen.
+# See docs/protocols/openhpsdr-protocol2.md.
+# sample_rate_hz = <rate in Hz, e.g. 192000>
+
+# Number of receive slices to bring up. Must be at least 1; further
+# clamped to the connected board's own maximum (2 to 5 depending on SKU)
+# once a radio is discovered.
+# Default: 1
+slice_count = 1
+
+# Local audio output device name, for monitoring on a Pi with a sound
+# card attached. Leave unset to use the platform default output device.
+# A headless Pi with no sound card is a supported configuration: opening
+# the device fails harmlessly, is logged, and the daemon keeps running
+# and demodulating with no local monitoring.
+# This is a starting value: it applies only while no speaker choice is
+# saved. Once a speaker device is picked from a window, that choice wins
+# across restarts and this line is ignored (the log says which applied).
+# Default: (unset -- platform default)
+audio_device =
+
+# TCP port for the remote-control (wss) listener that NereusSDR windows and
+# the iPhone app connect to. With neither this key nor remote_bind in this
+# file, the Core listens on 47910 on every interface, IPv4 and IPv6, and
+# announces itself on the local network: only devices paired with this Core
+# can sign in, so it is safe to reach. Set it to 0 to turn the listener (and
+# the announcement) off.
+#
+# The first time the Core starts, it creates its identity key and prints the
+# key file's location and the TLS certificate fingerprint, once, to its
+# standard output (not to its log). Back that file up: it is this Core's
+# identity, and if it is lost every paired device has to pair again. It is
+# kept under the Core's own profile directory with the settings file.
+#
+# A file that sets remote_port or remote_bind keeps the meaning it had
+# before the listener was on by default: whichever of the two it leaves out
+# is 0 (off) or 127.0.0.1 (this machine only).
+# Default: 47910
+# remote_port = <port>
+
+# Address the remote-control listener binds. Empty (the default) is every
+# interface, IPv4 and IPv6. :: is also every IPv4 and IPv6 address, 0.0.0.0
+# every IPv4 address only, and 127.0.0.1 only this machine; one address of
+# this machine accepts only that network. On a host with a global IPv6
+# address, every interface also makes the listener reachable from the
+# internet unless a firewall says otherwise; only paired devices can sign
+# in.
+# Default: empty (every interface)
+# remote_bind = <address>
+
+# Whether a device on this Core's own network may pair with one tap while
+# the Core has no paired device yet: allow (default) or deny. With deny,
+# every device pairs with the code the Core shows instead. Any other value
+# is ignored with a warning.
+# "This Core's own network" means every network this computer is on: its
+# LAN, and also any VPN or overlay it has joined (ZeroTier, Tailscale,
+# WireGuard, a Docker bridge), and this computer itself, so a local proxy
+# or SSH tunnel counts too. Anyone on any of those can claim an unclaimed
+# Core with one tap. If this computer shares such a network with people you
+# do not trust, set deny.
+pairing_lan_click = allow
+
+# The remote access service this Core registers with, so a paired device can
+# reach it from anywhere and a new device can pair with its code from
+# anywhere: an ordered list, separated by spaces or commas, your own server
+# first and the default behind it. Each is a host name, host:port, or a
+# wss:// address. The service only introduces the two ends and never carries
+# the radio's traffic itself. An empty value uses no service at all; then
+# devices reach this Core only on its own network or at an address you type.
+rendezvous_servers = rv.nereussdr.com
+
+# Whether this Core may use the service's relay when the two ends cannot
+# reach each other directly: allow (default) or deny. With deny every
+# connection is direct or nothing. Any other value is treated as allow, with
+# a warning.
+relay = allow
+
+# Whether paired devices may transmit through this Core: allow (default) or
+# deny. With allow, a paired device whose app can transmit may key once it
+# has connected and while no other device has the transmitter; the Core's
+# own protections (the band plan, the transmit interlock, the amplifier and
+# SWR protection, the time-out) stay in charge. With deny the Core only
+# receives, and no device can transmit through it. Any other value is
+# treated as deny, with a warning.
+remote_transmit = allow
+
+# The Core's status page: a small read-only web page on this port showing
+# the Core's name, its radio, whether a device has paired with it, and,
+# only until the first device pairs, the pairing code. It answers only
+# browsers on this computer's own networks and binds where the remote
+# listener binds; it runs only while the remote listener is on. on (the
+# default) or off; any other value is ignored with a warning.
+status_page = on
+status_port = 47911
+
+# Where the console commands (nereusd status, nereusd pairing show, ...)
+# reach the running Core. Empty uses the profile's own directory. The
+# packaged service keeps its state in /var/lib/nereusd; run the commands
+# with sudo and nothing else, for example `sudo nereusd status` (they read
+# this file by default, and without this line they still look in the
+# packaged service's home, /var/lib/nereusd). The Core's key and paired
+# devices stay where they are; only the command socket lives here.
+state_directory = /var/lib/nereusd
+
+# The station network: where this Core accepts connections from the
+# devices at the station. It covers the amplifier and tuner connection
+# (TCP 4992), the Power Genius and Tuner Genius announcements (UDP 9008 and
+# 9010) and the station TCI server (the RF-Kit RF2K-S follows this Core's
+# radio through it). Empty uses this machine's address on the radio's
+# network, found once the radio connects; until then only this machine is
+# accepted, and if the radio moves to another network they all move with
+# it. Set an address of this machine to choose another network, 0.0.0.0
+# to accept every IPv4 network, or :: to accept every IPv4 and IPv6
+# network. This machine itself is always accepted.
+# The older name station_tci_bind is still read when this one is empty.
+# The TCI server runs only while the TCI switch in a connected app is on,
+# and transmits for no app.
+# Default: empty
+station_bind =
+
+# Name shown under LAN Cores in the GUI Connections window. Empty uses this
+# machine's hostname. At most 128 UTF-8 bytes, without control characters.
+# An available non-loopback remote listener announces its certificate
+# fingerprint, name and radio availability on local-link multicast UDP 47910
+# every 5 seconds. It never announces a secret; a device still has to be
+# paired with this Core to sign in.
+core_name =
+
+# Opus audio target for the speakers in remote windows, bit/s: 48000 (default) or 24000; any other value is ignored with a warning.
+# 48000 carries sound up to 20 kHz; 24000 carries sound up to 8 kHz and uses half the network.
+# Receiver audio for apps (VAX and TCI) always uses 48000 when it is compressed, whatever this says.
+audio_bitrate = 48000
+
+# Where signal processing threads run, on Linux. auto (the default) gives
+# each busy receiver and the transmitter a fast processor core of its own,
+# chosen from the kernel's core capacity data, and keeps networking, display
+# and everything else on the other cores. off lets every thread run on any
+# core. Either way signal processing gets raised priority where the system
+# permits it. Any other value is ignored with a warning.
+thread_placement = auto
+
+# Whether the Core lowers spectrum quality when its computer is busy, so
+# audio and receivers keep priority. on (the default) slows, then coarsens,
+# background pans first and the active pan last, tells each app why, and
+# restores quality when there is room again. off leaves spectrum quality to
+# the display limits below. Any other value is ignored with a warning.
+display_adaptive = on
+
+# Lossless audio for digital modes: allow (default) or deny. With allow, a GUI
+# may ask for uncompressed 16-bit stereo audio instead of Opus, about
+# 1.54 Mbit/s of audio (about 1.65 Mbit/s on the network) for as long as it
+# is on. With deny, such a request is refused and Opus keeps playing. Any
+# other value is ignored with a warning.
+audio_lossless = allow
+
+# Optional measured display limits. Set BOTH keys to positive integers after
+# measuring this Core host and link; no universal capacity is assumed here.
+# Application bytes include spectrum and PureSignal display messages, but not
+# Opus audio, control, encryption or network overhead. Spectrum sample units
+# count the independent trace, waterfall and optional wide plane; not FFT CPU.
+# Omitting both with display_adaptive = off preserves legacy display behavior;
+# with it on, the Core uses its own ceiling. A partial/invalid pair is
+# a startup error. Examples use placeholders deliberately, not suggested rates:
+# display_application_bytes_per_second = <measured bytes per second>
+# spectrum_sample_units_per_second = <measured spectrum samples per second>
+
+# Logging verbosity is NOT set here. Use Qt's own QT_LOGGING_RULES
+# environment variable, which takes precedence over the filter rules
+# NereusSDR installs at startup, and which systemd can set for you:
+#
+#   [Service]
+#   Environment=QT_LOGGING_RULES=nereus.*.debug=true
+#
+# Category names are the nereus.* ids in src/core/LogCategories.cpp
+# (nereus.connection, nereus.audio, nereus.dsp, ...); nereus.* matches
+# all of them.

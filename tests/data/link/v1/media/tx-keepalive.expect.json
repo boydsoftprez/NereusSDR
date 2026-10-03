@@ -1,0 +1,7 @@
+{
+    "codec": "tx-keepalive",
+    "expect": {
+        "epoch": 4294967295,
+        "sequence": 4097
+    }
+}

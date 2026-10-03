@@ -15,6 +15,19 @@
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-09-23: R-R3-13: isNoMeterReading() shared no-reading predicate
+//                 (-400 dBm sentinel or non-finite); TextItem, BarItem and
+//                 NeedleItem show "--" and rest at the scale minimum, with
+//                 read-only text accessors for tests. J.J. Boyd (KG4VCF),
+//                 with AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-23: R-R3-13 fix wave: no reading applies only to
+//                 receive-signal bindings (isReceiveSignalBinding); a TX
+//                 meter keeps WDSP's -400 zero-power floor as a number.
+//                 J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                 Anthropic Claude Code.
+//   2026-09-25 - R-R3-32 (remote-window parity Task 6):
+//                 isHardwareTelemetryBinding, isNoReadingBinding. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -117,6 +130,7 @@ mw0lge@grange-lane.co.uk
 #include <QPointF>
 #include <QString>
 #include <QUuid>
+#include <cmath>
 #include <limits>
 
 class QPainter;
@@ -130,6 +144,37 @@ namespace NereusSDR {
 // Thetis MeterManager.cs:2258-2318 ReadingName(). Returns an empty
 // QString for unmapped binding IDs (ScaleItem skips empty titles).
 QString readingName(int bindingId);
+
+// No reading (R-R3-13, NereusSDR-native).  The same rule the analog
+// SMeterWidget and the slice flag VfoLevelBar use: a value at or below the
+// -400 dBm sentinel, or a non-finite one, is not a signal.  Every numeric
+// meter item consults this before formatting or plotting a value, so a
+// poller can feed the sentinel when there is nothing to show and the item
+// shows "--" instead of a floor number or a frozen last value.
+inline constexpr double kNoMeterReadingDbm = -400.0;
+inline bool isNoMeterReading(double dbm)
+{
+    return !std::isfinite(dbm) || dbm <= kNoMeterReadingDbm;
+}
+
+// Receive-signal bindings (SignalPeak..AgcAvg and SignalMaxBin): exactly the
+// bindings MeterPoller feeds the sentinel to (local poll() and remote
+// pollRemoteRxMeters()).  Only these treat -400 as no reading.  A transmit
+// meter at true zero reads exactly -400 from WDSP (meter.c floors with
+// 10 * log10(x + 1.0e-40)), which is a real reading and keeps its number.
+bool isReceiveSignalBinding(int bindingId);
+
+// R-R3-32 (remote-window parity Task 6): the hardware telemetry bindings
+// (HwVolts, HwAmps, HwTemperature), which MeterPoller feeds the sentinel to
+// while RadioModel::paReadings() has no such reading. No volts, amps or
+// temperature reading can be at or below -400.
+bool isHardwareTelemetryBinding(int bindingId);
+// The bindings whose items treat the sentinel as no reading: receive signal
+// and hardware telemetry.
+inline bool isNoReadingBinding(int bindingId)
+{
+    return isReceiveSignalBinding(bindingId) || isHardwareTelemetryBinding(bindingId);
+}
 
 
 class MeterItem : public QObject {
@@ -152,7 +197,11 @@ public:
     // S: IARU S-meter scale — S9 = -73 dBm at HF, 6 dB per S unit.
     // dBm: plain numeric string (with or without decimal).
     // uV: microvolts at 50Ω derived from dBm.
+    // Always a number: whether a value is no reading is the item's call
+    // (isNoReading(), from its binding); noReadingText() is what it shows.
     static QString formatValue(float dBm, MeterUnit unit, bool decimal = true);
+    // No reading in the requested unit: "--" for dBm and S, "-- µV" for uV.
+    static QString noReadingText(MeterUnit unit);
 
     virtual void setUnitMode(MeterUnit u)   { m_unitMode = u; }
     MeterUnit unitMode() const              { return m_unitMode; }
@@ -175,6 +224,12 @@ public:
     void setBindingId(int id) { m_bindingId = id; }
     double value() const { return m_value; }
     virtual void setValue(double v) { m_value = v; }
+    // NereusSDR (R-R3-13): v is no reading for this item: its binding is a
+    // receive-signal binding and v is the sentinel (isNoMeterReading).
+    bool isNoReading(double v) const
+    {
+        return isNoReadingBinding(m_bindingId) && isNoMeterReading(v);
+    }
 
     int zOrder() const { return m_zOrder; }
     void setZOrder(int z) { m_zOrder = z; }
@@ -456,6 +511,13 @@ public:
     // Rolling high-water-mark of all values seen via setValue(). Consumed
     // by ShowPeakValue text render and (in A3) the peak-hold marker.
     double peakValue() const { return m_peakValue; }
+
+    // Smoothed value the bar draws, and the ShowValue / ShowPeakValue text
+    // it draws (R-R3-13: "--" with no reading).  Read-only; paint() uses
+    // the same text.
+    double smoothedValue() const { return m_smoothedValue; }
+    QString valueText() const;
+    QString peakValueText() const;
 
     /// Snap the smoothed value + peak-hold marker to the supplied target
     /// value, bypassing the attack/decay smoothing that setValue() applies.
@@ -744,6 +806,10 @@ public:
     void setMinValidValue(double v) { m_minValidValue = v; }
     double minValidValue() const { return m_minValidValue; }
 
+    // The text paint() draws: the label, the idle text, the formatted
+    // value, or "--" with the unit when there is no reading (R-R3-13).
+    QString displayText() const;
+
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
     QString serialize() const override;
@@ -861,6 +927,12 @@ public:
     // post-smoothing value without round-tripping through paint
     // geometry.
     float smoothedValue() const { return m_smoothedDbm; }
+
+    // The two readouts paintOverlayDynamic() draws for an uncalibrated
+    // needle: S-units (left) and the value in the selected unit (right).
+    // Both show "--" with no reading (R-R3-13).
+    QString sUnitsReadout() const;
+    QString valueReadout() const;
 
     // Multi-layer: participates in all 4 pipeline layers
     bool participatesIn(Layer layer) const override;

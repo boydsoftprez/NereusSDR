@@ -1,326 +1,243 @@
-// no-port-check: NereusSDR-original unit-test file.  Thetis cite comments
-// document upstream sources; no Thetis logic ported in this test file.
-// =================================================================
-// tests/tst_ampview_window.cpp  (NereusSDR)
-// =================================================================
-//
-// Unit tests for the Phase 3M-4 Task 9 AmpViewWindow modeless dialog.
-//
-// AmpViewWindow ports Thetis AmpView.cs (528 LOC) [v2.10.3.13] verbatim
-// — title "AmpView 1.0", ClientSize 564x401, MinimumSize 440x380, 4
-// toolbar checkboxes at the exact Thetis x positions
-// (chkAVShowGain @ 7,378 / chkAVPhaseZoom @ 242,378 / chkAVLowRes @
-// 404,378 / chkStayOnTop @ 490,378), 5 named chart series rendered by
-// AmpViewChart custom QPainter widget (Ref / MagAmp / PhsAmp /
-// MagCorr / PhsCorr).
-//
-// This test file exercises:
-//
-//   1. The dialog constructs with a null RadioModel pointer
-//      (test-friendly seam).
-//
-//   2. Title, default geometry, and minimum size match Thetis verbatim.
-//
-//   3. The chart contains exactly 5 named series with the canonical
-//      Thetis names from AmpView.Designer.cs:85-129 [v2.10.3.13].
-//
-//   4. All 4 toolbar checkboxes exist by objectName
-//      (chkAVShowGain / chkAVPhaseZoom / chkAVLowRes / chkStayOnTop).
-//
-//   5. chkAVLowRes defaults to Checked per
-//      AmpView.Designer.cs:182-183 [v2.10.3.13].
-//
-//   6. chkAVPhaseZoom defaults unchecked (designer default).
-//
-//   7. chkAVShowGain defaults unchecked (designer default).
-//
-//   8. Toggling chkAVShowGain forwards setShowGain() to the chart.
-//
-//   9. Toggling chkAVPhaseZoom forwards setPhaseZoom() to the chart.
-//
-//   10. Toggling chkAVLowRes forwards setLowRes() to the chart and the
-//       low-res stride is 4 per AmpView.cs:457-463 [v2.10.3.13].
-//
-//   11. Toggling chkStayOnTop applies Qt::WindowStaysOnTopHint.
-//
-//   12. setSeriesData() updates the chart's stored data buffers
-//       without crashing on empty / mismatched / valid input.
-//
-//   13. Geometry persists via AppSettings under "ampview/geometry"
-//       and toggle states under "ampview/showGain", "ampview/phaseZoom",
-//       "ampview/lowRes", "ampview/onTop".
-//
-// Source: NereusSDR-original.  See AmpViewWindow.h for the Thetis cite map.
-//
-// =================================================================
-// Modification history (NereusSDR):
-//   2026-05-06 — New test file for Phase 3M-4 Task 9: AmpViewWindow
-//                 dialog unit tests.  J.J. Boyd (KG4VCF), with AI-
-//                 assisted implementation via Anthropic Claude Code.
-// =================================================================
+// no-port-check: NereusSDR-original tests for the Qt AmpView presentation.
 
 #include <QtTest/QtTest>
 
 #include <QCheckBox>
+#include <QDateTime>
+#include <QDir>
+#include <QGuiApplication>
+#include <QLabel>
+#include <QScreen>
 #include <QSignalSpy>
-#include <vector>
 
 #include "core/AppSettings.h"
+#include "core/session/PureSignalSessionFacade.h"
 #include "gui/AmpViewChart.h"
 #include "gui/AmpViewWindow.h"
+#include "models/RadioModel.h"
 
 using namespace NereusSDR;
+
+namespace {
+
+Ps3Snapshot displaySnapshot(quint64 generation, quint64 sequence)
+{
+    Ps3Snapshot snapshot;
+    snapshot.channelId = 0;
+    snapshot.sessionGeneration = generation;
+    snapshot.sequence = sequence;
+    snapshot.capturedAtUnixMilliseconds = QDateTime::currentMSecsSinceEpoch();
+    snapshot.sampleCount = 2;
+    snapshot.correctionCount = 2;
+    snapshot.x = {0.25, 0.75};
+    snapshot.ym = {0.5, 0.8};
+    snapshot.yc = {1.0, 0.0};
+    snapshot.ys = {0.0, 1.0};
+    snapshot.xmCorrection = {0.2, 0.7};
+    snapshot.ymCorrection = {1.1, 1.2};
+    snapshot.xaCorrection = {0.3, 0.9};
+    snapshot.yaCorrection = {-12.0, 18.0};
+    return snapshot;
+}
+
+bool intersectsAvailableScreen(const QRect& geometry)
+{
+    for (QScreen* screen : QGuiApplication::screens()) {
+        if (screen && screen->availableGeometry().intersects(geometry)) {
+            return true;
+        }
+    }
+    return QGuiApplication::screens().isEmpty();
+}
+
+bool captureIfRequested(QWidget& widget, const QString& stem)
+{
+    const QString directory = qEnvironmentVariable("NEREUS_DSP_UI_CAPTURE_DIR");
+    if (directory.isEmpty()) {
+        return true;
+    }
+    if (!QDir().mkpath(directory)) {
+        return false;
+    }
+    QString scale = qEnvironmentVariable("QT_SCALE_FACTOR", QStringLiteral("1"));
+    scale.replace(QLatin1Char('.'), QLatin1Char('_'));
+    return widget.grab().save(
+        QDir(directory).filePath(stem + QStringLiteral("-scale-") + scale
+                                 + QStringLiteral(".png")), "PNG");
+}
+
+} // namespace
 
 class TstAmpViewWindow : public QObject {
     Q_OBJECT
 
 private slots:
+    void init() { AppSettings::instance().clear(); }
 
-    // ── Test 1: construct + destruct without any wiring ─────────────────────
-
-    void constructAndDestruct_withNullRadioModel_doesNotCrash()
+    void preservesLegacyWindowContract()
     {
-        AmpViewWindow win(/*radioModel=*/nullptr);
-        QCOMPARE(win.windowTitle(), QStringLiteral("AmpView 1.0"));
-        QCOMPARE(win.isModal(), false);
+        AmpViewWindow window;
+        QCOMPARE(window.windowTitle(), QStringLiteral("AmpView 1.0"));
+        QCOMPARE(window.minimumSize(), QSize(440, 380));
+        QVERIFY(!window.isModal());
+
+        QVERIFY(window.findChild<QCheckBox*>(QStringLiteral("chkAVShowGain")));
+        QVERIFY(window.findChild<QCheckBox*>(QStringLiteral("chkAVPhaseZoom")));
+        QVERIFY(window.findChild<QCheckBox*>(QStringLiteral("chkAVLowRes")));
+        QVERIFY(window.findChild<QCheckBox*>(QStringLiteral("chkStayOnTop")));
+
+        auto* chart = window.findChild<AmpViewChart*>(QStringLiteral("ampViewChart"));
+        QVERIFY(chart);
+        QCOMPARE(chart->seriesCount(), 5);
+        QCOMPARE(chart->seriesNames(),
+                 QStringList({QStringLiteral("Reference"),
+                              QStringLiteral("Measured magnitude"),
+                              QStringLiteral("Measured phase"),
+                              QStringLiteral("Correction magnitude"),
+                              QStringLiteral("Correction phase")}));
     }
 
-    // ── Test 2: client size + min size match Thetis ─────────────────────────
-    //
-    // From AmpView.Designer.cs:214 [v2.10.3.13]:
-    //   this.ClientSize = new System.Drawing.Size(564, 401);
-    //   this.MinimumSize = new System.Drawing.Size(440, 380);
-
-    void defaultGeometryMatchesThetis()
+    void legacyAndSeriesPreferencesRoundTrip()
     {
-        AmpViewWindow win(nullptr);
-        // The dialog should default to 564x401 client size; minimum is 440x380.
-        QCOMPARE(win.minimumSize(), QSize(440, 380));
-        // The default size should be at least the client size 564x401.
-        win.show();
-        QVERIFY(win.width() >= 440);
-        QVERIFY(win.height() >= 380);
+        {
+            AmpViewWindow window;
+            window.findChild<QCheckBox*>(QStringLiteral("chkAVShowGain"))->setChecked(true);
+            window.findChild<QCheckBox*>(QStringLiteral("chkAVPhaseZoom"))->setChecked(true);
+            window.findChild<QCheckBox*>(QStringLiteral("chkAVLowRes"))->setChecked(false);
+            window.findChild<QCheckBox*>(QStringLiteral("chkStayOnTop"))->setChecked(true);
+            window.findChild<QCheckBox*>(QStringLiteral("chkAVMeasuredPhase"))->setChecked(false);
+            window.findChild<QCheckBox*>(QStringLiteral("chkAVCorrectionMagnitude"))->setChecked(false);
+        }
+
+        AmpViewWindow restored;
+        QVERIFY(restored.findChild<QCheckBox*>(QStringLiteral("chkAVShowGain"))->isChecked());
+        QVERIFY(restored.findChild<QCheckBox*>(QStringLiteral("chkAVPhaseZoom"))->isChecked());
+        QVERIFY(!restored.findChild<QCheckBox*>(QStringLiteral("chkAVLowRes"))->isChecked());
+        QVERIFY(restored.findChild<QCheckBox*>(QStringLiteral("chkStayOnTop"))->isChecked());
+        QVERIFY(!restored.findChild<QCheckBox*>(QStringLiteral("chkAVMeasuredPhase"))->isChecked());
+        QVERIFY(!restored.findChild<QCheckBox*>(QStringLiteral("chkAVCorrectionMagnitude"))->isChecked());
+
+        auto* chart = restored.findChild<AmpViewChart*>(QStringLiteral("ampViewChart"));
+        QVERIFY(chart->showGain());
+        QVERIFY(chart->phaseZoom());
+        QVERIFY(!chart->lowRes());
+        QVERIFY(!chart->seriesVisible(AmpViewChart::Series::MeasuredPhase));
+        QVERIFY(!chart->seriesVisible(AmpViewChart::Series::CorrectionMagnitude));
     }
 
-    // ── Test 3: chart has exactly 5 named series ────────────────────────────
-    //
-    // The 5 user-visible series with points populated per AmpView.cs:125-153
-    // init_data() [v2.10.3.13] are: Ref, MagCorr, PhsCorr, MagAmp, PhsAmp.
-
-    void chartHasFiveNamedSeries()
+    void visibilityControlsFacadeSubscription()
     {
-        AmpViewChart chart;
-        QCOMPARE(chart.seriesCount(), 5);
+        RadioModel radio(RadioModel::Role::Remote);
+        auto* facade = radio.pureSignalFacade();
+        QVERIFY(facade);
+        AmpViewWindow window(&radio, nullptr);
+
+        QVERIFY(!facade->ampViewSubscribed());
+        window.show();
+        QCoreApplication::processEvents();
+        QVERIFY(facade->ampViewSubscribed());
+
+        window.hide();
+        QCoreApplication::processEvents();
+        QVERIFY(!facade->ampViewSubscribed());
+
+        window.show();
+        QCoreApplication::processEvents();
+        QVERIFY(facade->ampViewSubscribed());
+        window.close();
+        QCoreApplication::processEvents();
+        QVERIFY(!facade->ampViewSubscribed());
     }
 
-    void chartSeriesNamesMatchThetis()
+    void snapshotUsesFacadeAndDoesNotActuate()
     {
-        AmpViewChart chart;
-        const QStringList expected = {QStringLiteral("Ref"),
-                                      QStringLiteral("MagAmp"),
-                                      QStringLiteral("PhsAmp"),
-                                      QStringLiteral("MagCorr"),
-                                      QStringLiteral("PhsCorr")};
-        QCOMPARE(chart.seriesNames(), expected);
+        RadioModel radio(RadioModel::Role::Remote);
+        auto* facade = radio.pureSignalFacade();
+        QVERIFY(facade);
+        facade->setRemoteCapabilities(true, false);
+        QVERIFY(facade->applyRemoteProperty("available", true));
+        QSignalSpy actions(facade, &PureSignalSessionFacade::actionResult);
+
+        // The RadioModel-owned facade always wins when both legacy arguments
+        // are present; a second facade would compete for subscriptions.
+        AmpViewWindow window(&radio, radio.pureSignal());
+        window.resize(520, 400);
+        window.show();
+        QCoreApplication::processEvents();
+
+        const Ps3Snapshot snapshot = displaySnapshot(facade->displayGeneration(), 1);
+        facade->receiveDisplaySnapshot(snapshot);
+        QCoreApplication::processEvents();
+
+        auto* chart = window.findChild<AmpViewChart*>(QStringLiteral("ampViewChart"));
+        QVERIFY(chart);
+        QCOMPARE(chart->plotData().measuredMagnitude.size(), std::size_t{2});
+        QCOMPARE(chart->plotData().correctionMagnitude.at(0).x, 0.2);
+        QCOMPARE(chart->plotData().correctionPhase.at(0).x, 0.3);
+        QCOMPARE(actions.count(), 0);
+        QVERIFY(window.findChild<QLabel*>(QStringLiteral("ampViewDisplayStatus"))
+                    ->text().contains(QStringLiteral("Live")));
+        QVERIFY(captureIfRequested(window, QStringLiteral("ampview-populated")));
     }
 
-    // ── Test 4: 4 toolbar checkboxes exist by objectName ────────────────────
-
-    void allFourToolbarCheckboxesExistByObjectName()
+    void sessionInvalidationClearsOldPlot()
     {
-        AmpViewWindow win(nullptr);
+        RadioModel radio(RadioModel::Role::Remote);
+        auto* facade = radio.pureSignalFacade();
+        facade->setRemoteCapabilities(true, false);
+        AmpViewWindow window(&radio);
+        window.show();
+        QCoreApplication::processEvents();
 
-        QVERIFY(win.findChild<QCheckBox*>(QStringLiteral("chkAVShowGain")));
-        QVERIFY(win.findChild<QCheckBox*>(QStringLiteral("chkAVPhaseZoom")));
-        QVERIFY(win.findChild<QCheckBox*>(QStringLiteral("chkAVLowRes")));
-        QVERIFY(win.findChild<QCheckBox*>(QStringLiteral("chkStayOnTop")));
+        facade->receiveDisplaySnapshot(displaySnapshot(facade->displayGeneration(), 5));
+        QCoreApplication::processEvents();
+        auto* chart = window.findChild<AmpViewChart*>(QStringLiteral("ampViewChart"));
+        QVERIFY(!chart->plotData().measuredMagnitude.empty());
+
+        facade->resetSession();
+        QCoreApplication::processEvents();
+        QVERIFY(chart->plotData().measuredMagnitude.empty());
+        QVERIFY(window.findChild<QLabel*>(QStringLiteral("ampViewDisplayStatus"))
+                    ->text().contains(QStringLiteral("unavailable")));
+
+        // A queued frame from the retired identity cannot repopulate the plot.
+        facade->receiveDisplaySnapshot(displaySnapshot(facade->displayGeneration() - 1, 99));
+        QCoreApplication::processEvents();
+        QVERIFY(chart->plotData().measuredMagnitude.empty());
     }
 
-    // ── Test 5: defaults match Thetis designer values ───────────────────────
-    //
-    // From AmpView.Designer.cs:182-183 [v2.10.3.13]:
-    //   this.chkAVLowRes.Checked = true;
-    //   this.chkAVLowRes.CheckState = System.Windows.Forms.CheckState.Checked;
-    //
-    // chkAVShowGain / chkAVPhaseZoom / chkStayOnTop default unchecked.
-
-    void chkAVLowResDefaultsChecked()
-    {
-        // Use a fresh settings sandbox to avoid carry-over from prior tests.
-        AppSettings::instance().clear();
-        AmpViewWindow win(nullptr);
-        QCOMPARE(win.findChild<QCheckBox*>(QStringLiteral("chkAVLowRes"))
-                     ->isChecked(),
-                 true);
-    }
-
-    void otherToolbarCheckboxesDefaultUnchecked()
-    {
-        AppSettings::instance().clear();
-        AmpViewWindow win(nullptr);
-        QCOMPARE(win.findChild<QCheckBox*>(QStringLiteral("chkAVShowGain"))
-                     ->isChecked(),
-                 false);
-        QCOMPARE(win.findChild<QCheckBox*>(QStringLiteral("chkAVPhaseZoom"))
-                     ->isChecked(),
-                 false);
-        QCOMPARE(win.findChild<QCheckBox*>(QStringLiteral("chkStayOnTop"))
-                     ->isChecked(),
-                 false);
-    }
-
-    // ── Test 6: chart toggle forwarding ─────────────────────────────────────
-    //
-    // Toggling each checkbox should call the matching setter on AmpViewChart
-    // and persist the state to AppSettings.
-
-    void toggleShowGainPersistsAndForwardsToChart()
-    {
-        AppSettings::instance().clear();
-        AmpViewWindow win(nullptr);
-        auto* chk = win.findChild<QCheckBox*>(QStringLiteral("chkAVShowGain"));
-        QVERIFY(chk);
-
-        chk->setChecked(true);
-        QCOMPARE(AppSettings::instance()
-                     .value(QStringLiteral("ampview/showGain"),
-                            QStringLiteral("False"))
-                     .toString(),
-                 QStringLiteral("True"));
-    }
-
-    void togglePhaseZoomPersistsAndForwardsToChart()
-    {
-        AppSettings::instance().clear();
-        AmpViewWindow win(nullptr);
-        auto* chk = win.findChild<QCheckBox*>(QStringLiteral("chkAVPhaseZoom"));
-        QVERIFY(chk);
-
-        chk->setChecked(true);
-        QCOMPARE(AppSettings::instance()
-                     .value(QStringLiteral("ampview/phaseZoom"),
-                            QStringLiteral("False"))
-                     .toString(),
-                 QStringLiteral("True"));
-    }
-
-    void toggleLowResPersistsAndForwardsToChart()
-    {
-        AppSettings::instance().clear();
-        AmpViewWindow win(nullptr);
-        auto* chk = win.findChild<QCheckBox*>(QStringLiteral("chkAVLowRes"));
-        QVERIFY(chk);
-
-        // It defaults ON; flip to OFF and verify persistence.
-        chk->setChecked(false);
-        QCOMPARE(AppSettings::instance()
-                     .value(QStringLiteral("ampview/lowRes"),
-                            QStringLiteral("True"))
-                     .toString(),
-                 QStringLiteral("False"));
-    }
-
-    // ── Test 7: stay-on-top toggles Qt::WindowStaysOnTopHint ────────────────
-
-    void toggleStayOnTopAppliesWindowFlag()
-    {
-        AppSettings::instance().clear();
-        AmpViewWindow win(nullptr);
-        auto* chk = win.findChild<QCheckBox*>(QStringLiteral("chkStayOnTop"));
-        QVERIFY(chk);
-
-        chk->setChecked(true);
-        QVERIFY((win.windowFlags() & Qt::WindowStaysOnTopHint)
-                == Qt::WindowStaysOnTopHint);
-
-        chk->setChecked(false);
-        QVERIFY((win.windowFlags() & Qt::WindowStaysOnTopHint)
-                != Qt::WindowStaysOnTopHint);
-    }
-
-    // ── Test 8: setSeriesData() updates chart without crashing ──────────────
-
-    void setSeriesDataUpdatesChart()
-    {
-        AmpViewChart chart;
-        std::vector<double> x{0.1, 0.2, 0.3, 0.4, 0.5};
-        std::vector<double> magAmp{0.1, 0.18, 0.28, 0.36, 0.45};
-        std::vector<double> phsAmp{0.0, 1.0, 2.0, 3.0, 4.0};
-        std::vector<double> magCorr{0.05, 0.10, 0.15, 0.20, 0.25};
-        std::vector<double> phsCorr{0.0, 0.5, 1.0, 1.5, 2.0};
-
-        // Should not crash.
-        chart.setSeriesData(x, magAmp, phsAmp, magCorr, phsCorr);
-        QCOMPARE(chart.pointCount(), static_cast<int>(x.size()));
-
-        // Empty buffers should also not crash.
-        chart.setSeriesData({}, {}, {}, {}, {});
-        QCOMPARE(chart.pointCount(), 0);
-    }
-
-    // ── Test 9: setStayOnTopFromParent() drives the checkbox + flag ─────────
-    //
-    // PsForm calls this when its own Always-On-Top toggle changes, so AmpView
-    // tracks the parent.
-
-    void setStayOnTopFromParentDrivesCheckbox()
-    {
-        AppSettings::instance().clear();
-        AmpViewWindow win(nullptr);
-        auto* chk = win.findChild<QCheckBox*>(QStringLiteral("chkStayOnTop"));
-        QVERIFY(chk);
-
-        win.setStayOnTopFromParent(true);
-        QCOMPARE(chk->isChecked(), true);
-
-        win.setStayOnTopFromParent(false);
-        QCOMPARE(chk->isChecked(), false);
-    }
-
-    // ── Test 10: chart Show Gain mode swaps Y axis range ────────────────────
-    //
-    // From AmpView.cs:435-455 [v2.10.3.13]:
-    //   chkAVShowGain checked → AxisY.Maximum = 2.0, "Gain"
-    //   chkAVShowGain unchecked → AxisY.Maximum = 1.0, "Magnitude"
-
-    void chartShowGainTogglesYMax()
+    void chartModesAndIndependentSeriesVisibility()
     {
         AmpViewChart chart;
         QCOMPARE(chart.magYMax(), 1.0);
         chart.setShowGain(true);
         QCOMPARE(chart.magYMax(), 2.0);
-        chart.setShowGain(false);
-        QCOMPARE(chart.magYMax(), 1.0);
-    }
-
-    // ── Test 11: chart Phase Zoom toggles secondary axis range ──────────────
-    //
-    // From AmpView.cs:470-482 [v2.10.3.13]:
-    //   chkAVPhaseZoom checked → AxisY2 = -45..+45
-    //   chkAVPhaseZoom unchecked → AxisY2 = -180..+180
-
-    void chartPhaseZoomTogglesPhaseAxisRange()
-    {
-        AmpViewChart chart;
-        QCOMPARE(chart.phaseYMax(), 180.0);
         chart.setPhaseZoom(true);
+        QCOMPARE(chart.phaseYMin(), -45.0);
         QCOMPARE(chart.phaseYMax(), 45.0);
-        chart.setPhaseZoom(false);
-        QCOMPARE(chart.phaseYMax(), 180.0);
-    }
-
-    // ── Test 12: chart Low Res sets stride 4 ────────────────────────────────
-    //
-    // From AmpView.cs:457-463 [v2.10.3.13]:
-    //   chkAVLowRes checked → skip = 4 ; else skip = 1.
-
-    void chartLowResStrideMatchesThetis()
-    {
-        AmpViewChart chart;
         chart.setLowRes(false);
         QCOMPARE(chart.lowResStride(), 1);
-        chart.setLowRes(true);
-        QCOMPARE(chart.lowResStride(), 4);
+
+        for (int index = 0; index < chart.seriesCount(); ++index) {
+            const auto series = static_cast<AmpViewChart::Series>(index);
+            QVERIFY(chart.seriesVisible(series));
+            chart.setSeriesVisible(series, false);
+            QVERIFY(!chart.seriesVisible(series));
+        }
+    }
+
+    void offscreenGeometryIsRecovered()
+    {
+        {
+            AmpViewWindow window;
+            window.setGeometry(-100000, -100000, 564, 401);
+            window.close();
+        }
+
+        AmpViewWindow restored;
+        QVERIFY(intersectsAvailableScreen(restored.frameGeometry()));
+        QVERIFY(restored.width() >= 440);
+        QVERIFY(restored.height() >= 380);
     }
 };
 

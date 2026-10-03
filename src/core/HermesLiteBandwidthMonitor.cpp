@@ -15,6 +15,9 @@
 //                Detects HL2 LAN PHY throttling via ep6 ingress byte-rate
 //                analysis, faithfully porting upstream compute_bps() using
 //                std::atomic<int64_t> in place of Windows InterlockedAdd64.
+//   2026-09-23 - R-R3-21: EP6 sequence error counter (NereusSDR addition)
+//                for Diagnostics > Connection Quality. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From bandwidth_monitor.h ---
@@ -277,6 +280,20 @@ void HermesLiteBandwidthMonitor::tick()
 }
 
 // ---------------------------------------------------------------------------
+// R-R3-21: EP6 sequence error counter (NereusSDR addition; the counting
+// rule lives in P1RadioConnection::onReadyRead()).
+// ---------------------------------------------------------------------------
+void HermesLiteBandwidthMonitor::recordEp6SequenceError()
+{
+    m_ep6SequenceErrors.fetch_add(1, std::memory_order_relaxed);
+}
+
+int HermesLiteBandwidthMonitor::ep6SequenceErrorCount() const
+{
+    return m_ep6SequenceErrors.load(std::memory_order_relaxed);
+}
+
+// ---------------------------------------------------------------------------
 // reset — mirror of bandwidth_monitor_reset().
 // Source: mi0bot bandwidth_monitor.c:59-72 [@c26a8a4]
 // Original:
@@ -299,6 +316,8 @@ void HermesLiteBandwidthMonitor::reset()
     // NereusSDR throttle state (no upstream equivalent).
     m_silentTicks       = 0;
     m_throttleEventCount = 0;
+    // R-R3-21: NereusSDR EP6 sequence error counter.
+    m_ep6SequenceErrors.store(0, std::memory_order_relaxed);
     if (m_throttled) {
         m_throttled = false;
         emit throttledChanged(false);

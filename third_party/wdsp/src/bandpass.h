@@ -71,15 +71,15 @@ extern void setFreqs_bps (BPS a, double f_low, double f_high);
 
 // RXA Prototypes
 
-extern void SetRXABPSRun (int channel, int run);
+// extern __declspec (dllexport) void SetRXABPSRun (int channel, int run);
 
-extern void SetRXABPSFreqs (int channel, double low, double high);
+// extern __declspec (dllexport) void SetRXABPSFreqs (int channel, double low, double high);
 
 // TXA Prototypes
 
-extern void SetTXABPSRun (int channel, int run);
+// extern __declspec (dllexport) void SetTXABPSRun (int channel, int run);
 
-extern void SetTXABPSFreqs (int channel, double low, double high);
+// extern __declspec (dllexport) void SetTXABPSFreqs (int channel, double low, double high);
 
 #endif
 
@@ -130,14 +130,14 @@ extern void setGain_bandpass (BANDPASS a, double gain, int update);
 
 extern void CalcBandpassFilter (BANDPASS a, double f_low, double f_high, double gain);
 
-extern void SetRXABandpassFreqs (int channel, double f_low, double f_high);
+extern __declspec (dllexport) void SetRXABandpassFreqs (int channel, double f_low, double f_high);
 
-extern void SetRXABandpassNC (int channel, int nc);
+extern __declspec (dllexport) void SetRXABandpassNC (int channel, int nc);
 
-extern void SetRXABandpassMP (int channel, int mp);
+extern __declspec (dllexport) void SetRXABandpassMP (int channel, int mp);
 
-extern void SetTXABandpassNC (int channel, int nc);
+extern __declspec (dllexport) void SetTXABandpassNC (int channel, int nc);
 
-extern void SetTXABandpassMP (int channel, int mp);
+extern __declspec (dllexport) void SetTXABandpassMP (int channel, int mp);
 
 #endif

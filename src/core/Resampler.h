@@ -29,6 +29,15 @@
 //                 Replaces the 17-line I1 stub. Namespace renamed
 //                 AetherSDR -> NereusSDR; otherwise byte-for-byte.
 //                 AI tooling: Anthropic Claude Code.
+//   2026-09-28  J.J. Boyd / KG4VCF  RADE end-of-over callsigns:
+//                 latencyInputSamples(), so a caller can push its last
+//                 samples out (r8brain getInLenBeforeOutPos(0)).
+//                 NereusSDR-original. AI tooling: Anthropic Claude Code.
+//   2026-09-28  J.J. Boyd / KG4VCF  Every process variant feeds r8brain at
+//                 most maxBlockSamples per call (r8brain writes past its
+//                 buffers otherwise); largestInputBlock / maxBlockSamples
+//                 record it. NereusSDR-original. AI tooling: Anthropic
+//                 Claude Code.
 // =================================================================
 
 #pragma once
@@ -79,6 +88,21 @@ public:
     // Convenience: stereo float32 -> downmix to mono -> resample -> duplicate to stereo float32
     QByteArray processStereoToStereo(const float* stereoIn, int numStereoFrames);
 
+    // NereusSDR: the input samples this resampler holds back before its
+    // first output sample (r8brain getInLenBeforeOutPos(0)). Pushing this
+    // many zeros after a signal brings all of the signal out.
+    int latencyInputSamples() const;
+
+    // NereusSDR: the most samples any single r8brain process() call has been
+    // given. r8brain sizes its buffers for maxBlockSamples at construction,
+    // so this must never exceed maxBlockSamples().
+    int largestInputBlock() const { return m_largestInputBlock; }
+
+    // NereusSDR: drop everything the resampler holds (r8brain clear()), as a
+    // freshly built one.
+    void clear();
+    int maxBlockSamples() const { return m_maxBlockSamples; }
+
     double srcRate() const { return m_srcRate; }
     double dstRate() const { return m_dstRate; }
 
@@ -87,6 +111,13 @@ private:
     double m_dstRate;
     std::unique_ptr<r8b::CDSPResampler24> m_resampler;
     std::vector<double> m_inBuf;   // float32 -> double conversion buffer
+    int m_maxBlockSamples{0};
+    int m_largestInputBlock{0};
+
+    std::vector<double> m_chunk;   // one r8brain block (maxBlockSamples)
+
+    int r8bProcess(double* in, int numSamples, double*& out);
+    QByteArray resampleChunked(const double* mono, int numSamples, bool stereoOut);
 };
 
 } // namespace NereusSDR

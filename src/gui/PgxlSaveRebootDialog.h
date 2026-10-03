@@ -12,6 +12,9 @@
 //
 // Phase 3P-II Task 84.
 // AI tooling: Anthropic Claude Code.
+// 2026-09-24: R-R3-47 / R-R3-22: message(), so a remote window's
+// confirmation (and its test) uses the same words. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 
 #pragma once
 
@@ -25,6 +28,9 @@ class PgxlSaveRebootDialog : public QDialog {
     Q_OBJECT
 public:
     explicit PgxlSaveRebootDialog(QWidget* parent = nullptr);
+
+    /// The dialog's question, word for word.
+    static QString message();
 
 private:
     QPushButton* m_cancelBtn{nullptr};

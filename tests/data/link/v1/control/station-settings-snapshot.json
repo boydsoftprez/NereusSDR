@@ -1,0 +1,15 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "settings.snapshot",
+    "properties": [
+      {
+        "ordinal": 0,
+        "name": "StationCallsign",
+        "kind": "utf8",
+        "value": "KG4VCF"
+      }
+    ]
+  },
+  "decodes": true
+}

@@ -1,0 +1,41 @@
+{
+  "runs": [
+    "relay",
+    "app"
+  ],
+  "steps": [
+    {
+      "connect": "device"
+    },
+    {
+      "from": "device",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:device:s:a"
+      ]
+    },
+    {
+      "to": "device",
+      "binary": [
+        "81",
+        "01",
+        "00"
+      ]
+    },
+    {
+      "shutdown": true
+    },
+    {
+      "to": "device",
+      "binary": [
+        "83",
+        "7368757474696e67446f776e"
+      ]
+    },
+    {
+      "expectClosed": "device",
+      "code": 1001
+    }
+  ]
+}

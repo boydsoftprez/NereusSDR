@@ -394,6 +394,136 @@ private slots:
         dst.restoreFromSettings();
         QVERIFY(dst.notches().isEmpty());
     }
+
+    // Fix wave minor 1 (R-R3-21): a window that leaves mirror mode (a new
+    // session with an older Core, or none) drops the Core's list and goes
+    // back to its own saved notches and flags. Its saved settings were
+    // never written while mirrored.
+    void leaving_mirror_mode_restores_this_windows_saved_list()
+    {
+        {
+            NotchModel src;
+            src.addNotch(14074000.0);
+            src.addNotch(14075000.0);
+            src.setGlobalEnabled(true);
+        }
+        NotchModel m;
+        m.restoreFromSettings();
+        QCOMPARE(m.notches().size(), 2);
+        m.setMirrorMode(true);
+        QVERIFY(m.applyRemoteProperty("listJson", QStringLiteral(
+            "[{\"id\":7,\"centreHz\":7074000,\"widthHz\":100,\"active\":true},"
+            "{\"id\":900,\"centreHz\":7075000,\"widthHz\":200,\"active\":false},"
+            "{\"id\":901,\"centreHz\":7076000,\"widthHz\":300,\"active\":true}]")));
+        QCOMPARE(m.notches().size(), 3);
+        QCOMPARE(m.notches().at(0).centerHz, 7074000.0);
+        m.setGlobalEnabled(false); // the Core's flag, mirrored
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("NotchCount")).toString(),
+                 QStringLiteral("2"));
+
+        QSignalSpy reset(&m, &NotchModel::notchesReset);
+        m.setMirrorMode(false);
+        QVERIFY(!m.mirrorMode());
+        QCOMPARE(m.notches().size(), 2);
+        QCOMPARE(m.notches().at(0).centerHz, 14074000.0);
+        QCOMPARE(m.notches().at(1).centerHz, 14075000.0);
+        QVERIFY(m.globalEnabled());
+        QVERIFY(reset.count() >= 1);
+        // New local ids stay above every id the window held from the Core.
+        for (const Notch& n : m.notches()) {
+            QVERIFY2(n.id > 901, qPrintable(QString::number(n.id)));
+        }
+        QVERIFY(m.addNotch(14076000.0) > 901);
+    }
+
+    // With nothing saved, leaving mirror mode leaves an empty list, and says
+    // so, rather than keeping the Core's notches as if they were local.
+    void leaving_mirror_mode_with_nothing_saved_empties_the_list()
+    {
+        NotchModel m;
+        m.setMirrorMode(true);
+        QVERIFY(m.applyRemoteProperty("listJson", QStringLiteral(
+            "[{\"id\":3,\"centreHz\":7074000,\"widthHz\":100,\"active\":true}]")));
+        QCOMPARE(m.notches().size(), 1);
+        QSignalSpy reset(&m, &NotchModel::notchesReset);
+        QSignalSpy changed(&m, &NotchModel::listChanged);
+        m.setMirrorMode(false);
+        QVERIFY(m.notches().isEmpty());
+        QCOMPARE(reset.count(), 1);
+        QCOMPARE(changed.count(), 1);
+        QVERIFY(!AppSettings::instance().contains(QStringLiteral("NotchCount")));
+        QVERIFY(m.addNotch(14074000.0) > 3);
+    }
+
+    // Follow-up item 6 (R-R3-21): leaving mirror mode with nothing saved,
+    // the two switches go back to this window's defaults (master off, auto
+    // increase on), not the values the Core last mirrored, and nothing is
+    // written. A saved switch still wins over its default.
+    void leaving_mirror_mode_with_nothing_saved_resets_both_switches()
+    {
+        NotchModel m;
+        QVERIFY(!m.globalEnabled());
+        QVERIFY(m.autoIncrease());
+        m.setMirrorMode(true);
+        // What the mirror delivers from the Core (a property write).
+        m.setGlobalEnabled(true);
+        m.setAutoIncrease(false);
+        QVERIFY(m.globalEnabled());
+        QVERIFY(!m.autoIncrease());
+        QSignalSpy enabled(&m, &NotchModel::globalEnabledChanged);
+        QSignalSpy autoInc(&m, &NotchModel::autoIncreaseChanged);
+        m.setMirrorMode(false);
+        QVERIFY(!m.globalEnabled());
+        QVERIFY(m.autoIncrease());
+        QCOMPARE(enabled.count(), 1);
+        QCOMPARE(autoInc.count(), 1);
+        QVERIFY(!AppSettings::instance().contains(QStringLiteral("NotchGlobalEnabled")));
+        QVERIFY(!AppSettings::instance().contains(QStringLiteral("NotchAutoIncrease")));
+
+        AppSettings::instance().setValue(QStringLiteral("NotchAutoIncrease"),
+                                         QStringLiteral("False"));
+        m.setMirrorMode(true);
+        m.setGlobalEnabled(true);
+        m.setMirrorMode(false);
+        QVERIFY(!m.globalEnabled());
+        QVERIFY(!m.autoIncrease());
+    }
+
+    // Fix wave minor 5 (R-R3-21): the Core's notch.move is one change: one
+    // revision, one notchChanged, one listChanged, both values at once; a
+    // refused move changes nothing.
+    void move_changes_centre_and_width_as_one_edit()
+    {
+        NotchModel m;
+        const int id = m.addNotch(14074000.0);
+        const quint32 before = m.revision();
+        QSignalSpy changed(&m, &NotchModel::notchChanged);
+        QSignalSpy list(&m, &NotchModel::listChanged);
+        QVERIFY(m.move(id, 14080000.4, 450.0));
+        QCOMPARE(m.notchById(id)->centerHz, 14080000.0);
+        QCOMPARE(m.notchById(id)->widthHz, 450.0);
+        QCOMPARE(m.revision(), before + 1);
+        QCOMPARE(changed.count(), 1);
+        QCOMPARE(list.count(), 1);
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("Notch0Width")).toDouble(), 450.0);
+
+        // Width clamped as setWidth clamps it; out of range refused whole.
+        QVERIFY(m.move(id, 14081000.0, 1.0e9));
+        QCOMPARE(m.notchById(id)->widthHz, NotchModel::kMaxNotchWidthHz);
+        const Notch held = *m.notchById(id);
+        QVERIFY(!m.move(id, NotchModel::kMaxNotchCentreHz + 1.0, 100.0));
+        QVERIFY(!m.move(id, NotchModel::kMaxNotchCentreHz, 400.0));
+        QVERIFY(!m.move(id + 1000, 14074000.0, 100.0));
+        QCOMPARE(m.notchById(id)->centerHz, held.centerHz);
+        QCOMPARE(m.notchById(id)->widthHz, held.widthHz);
+        m.setAdminBusy(true);
+        QVERIFY(!m.move(id, 14074000.0, 100.0));
+        m.setAdminBusy(false);
+        // Unchanged values: accepted, nothing announced.
+        changed.clear();
+        QVERIFY(m.move(id, held.centerHz, held.widthHz));
+        QCOMPARE(changed.count(), 0);
+    }
 };
 
 QTEST_MAIN(TestNotchPersistence)

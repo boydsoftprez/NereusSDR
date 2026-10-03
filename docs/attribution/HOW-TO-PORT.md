@@ -1,5 +1,7 @@
 # How to Port a File from Thetis / mi0bot-Thetis / any GPL Upstream
 
+This guide covers code NereusSDR ports: code translated from an upstream file, or constants, tables or algorithms taken from one. Upstreams include Thetis, mi0bot-Thetis, piHPSDR, deskHPSDR, AetherSDR, freedv-gui and WDSP. Designs that only study an upstream need no header, but cite the facts they rely on.
+
 When you (or an AI agent) port code from a GPL-licensed upstream into
 NereusSDR, the file's license header is handled this way:
 
@@ -232,6 +234,8 @@ committed corpus.
 └── wdsp/             WDSP C source: channel.c, RXA.c, TXA.c, ...
 ```
 
+piHPSDR: `../pihpsdr/`. deskHPSDR: `../deskhpsdr/`. TAPR firmware: `../TAPR-OpenHPSDR-Firmware/`.
+
 freedv-gui: `../freedv-gui/src/reporting/` (FreeDVReporter, pskreporter),
 `src/pipeline/` (RADE RX/TX steps, rade_text, EQ, AGC). Full tree in
 `docs/development/project-status.md`.
@@ -256,3 +260,38 @@ correctness:
 * `NR` is a compile-time constant that changed between firmware releases
   (2, 4, 7, 8 on the same board). No static per-board DDC count is correct
   across firmware versions.
+
+## Which Thetis features are ported
+
+Moved from CLAUDE.md (the Thetis entry in its reference-repository list).
+
+Feature source: when NereusSDR ports a Thetis feature, Thetis defines how it behaves.
+Not every Thetis capability is ported: NereusSDR keeps its own design (slices, VAX,
+the remote Core), and a Thetis feature comes in when it fits that design and serves
+operators. Features built around Thetis's VFO A/B or RX1/RX2 structure are not forced in.
+
+## piHPSDR and deskHPSDR
+
+These are references like Thetis: study them, then port what fits as written
+or design for NereusSDR with them as the basis.
+
+* **piHPSDR (dl1ycf)**, `https://github.com/dl1ycf/pihpsdr`, cloned to
+  `../pihpsdr/`, pinned at `4aa95c5` (2026-08-06). A C/GTK OpenHPSDR console
+  with its own client/server remote mode.
+* **deskHPSDR (dl1bz)**, `https://github.com/dl1bz/deskhpsdr`, a piHPSDR
+  desktop fork, cloned to `../deskhpsdr/`, pinned at `f3d857c`.
+* Do not `git pull` either one. Re-pinning is deliberate: bump the SHA and
+  re-verify every cite.
+
+**Facts.** A timeout, packet layout, bitrate or quantiser step is cited, not
+ported: `// From piHPSDR src/server_thread.c:930 [@4aa95c5]`, with a PROVENANCE
+row of kind `reference`. Hardware and protocol facts still need a cite.
+
+**Ports.** Code translated from either repo uses the normal `port` kind and
+all the rules above. Read the repo's `COPYING` and the header of each upstream
+file, and copy that header byte-for-byte; do not assume the header form, since
+files differ. Keep every `Copyright (C)` line and author tag, add the
+Modification history block, and carry inline comments verbatim. Add the row to
+`DESKHPSDR-PROVENANCE.md` for deskHPSDR; piHPSDR has no provenance file yet, so
+create one in the same commit as the first port. Both repos are
+GPLv3-or-later, the licence NereusSDR ships under.

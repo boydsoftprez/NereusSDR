@@ -1,0 +1,115 @@
+{
+  "runs": [
+    "service"
+  ],
+  "serverSetup": {
+    "connectionsPerAddress": 1
+  },
+  "steps": [
+    {
+      "connect": "client",
+      "address": "2001:db8:1:2::10"
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:clientNonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "connect": "client2",
+      "address": "2001:db8:1:2:ffff::1"
+    },
+    {
+      "from": "server",
+      "to": "client2",
+      "message": {
+        "type": "error",
+        "code": "tooManyConnections",
+        "reason": "Too many connections are open from this network. Try again shortly.",
+        "retryAfterMs": 5000
+      }
+    },
+    {
+      "expectClosed": "client2",
+      "code": 1000
+    },
+    {
+      "connect": "client3",
+      "address": "2001:db8:1:3::10"
+    },
+    {
+      "from": "server",
+      "to": "client3",
+      "message": {
+        "type": "error",
+        "code": "tooManyConnections",
+        "reason": "Too many connections are open from this network. Try again shortly.",
+        "retryAfterMs": 5000
+      }
+    },
+    {
+      "expectClosed": "client3",
+      "code": 1000
+    },
+    {
+      "connect": "client4",
+      "address": "2001:db8:1:100::10"
+    },
+    {
+      "from": "server",
+      "to": "client4",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:client4Nonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "connect": "client5",
+      "address": "::ffff:192.0.2.77"
+    },
+    {
+      "from": "server",
+      "to": "client5",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:client5Nonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "connect": "client6",
+      "address": "192.0.2.77"
+    },
+    {
+      "from": "server",
+      "to": "client6",
+      "message": {
+        "type": "error",
+        "code": "tooManyConnections",
+        "reason": "Too many connections are open from this network. Try again shortly.",
+        "retryAfterMs": 5000
+      }
+    },
+    {
+      "expectClosed": "client6",
+      "code": 1000
+    }
+  ]
+}

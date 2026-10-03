@@ -23,6 +23,9 @@
 //                1 Hz refresh with auto-refresh checkbox at top.
 //                TciServer accessors clients() + activeTxAudioClient()
 //                added in same commit (Phase 22).
+//   2026-09-27 - Parity Task 23 control UI by J.J. Boyd (KG4VCF);
+//                AI-assisted implementation via OpenAI Codex. The Core's
+//                client stream has a labelled list and Disconnect control.
 // =================================================================
 
 #ifdef HAVE_WEBSOCKETS
@@ -31,7 +34,10 @@
 
 #include "core/TciClientSession.h"
 #include "core/TciServer.h"
+#include "core/session/IStationLink.h"
 #include "gui/StyleConstants.h"
+#include "models/RadioModel.h"
+#include "models/StationTciModel.h"
 
 #include <QCheckBox>
 #include <QDateTime>
@@ -155,6 +161,14 @@ ClientChainApplet::ClientChainApplet(TciServer* server, QWidget* parent)
     m_rowsLayout->setSpacing(0);
     root->addWidget(rowsContainer, 1);
 
+    m_corePanel = new QWidget(this);
+    m_corePanel->setObjectName(QStringLiteral("tciCoreClients"));
+    m_coreRows = new QVBoxLayout(m_corePanel);
+    m_coreRows->setContentsMargins(4, 4, 4, 4);
+    m_coreRows->setSpacing(3);
+    root->addWidget(m_corePanel);
+    m_corePanel->hide();
+
     // Empty state (built once, toggled by rebuildRows()).
     m_emptyStatePanel = new QWidget(rowsContainer);
     {
@@ -184,6 +198,85 @@ ClientChainApplet::ClientChainApplet(TciServer* server, QWidget* parent)
 
     // Initial paint.
     refresh();
+}
+
+void ClientChainApplet::setStationModel(RadioModel* model)
+{
+    m_stationModel = model;
+    if (model && model->stationTciModel()) {
+        connect(model->stationTciModel(), &StationTciModel::clientsChanged,
+                this, &ClientChainApplet::rebuildCoreRows);
+        connect(model, &RadioModel::stationLinkStateChanged,
+                this, &ClientChainApplet::rebuildCoreRows);
+        connect(model, &RadioModel::coreOnAirChanged,
+                this, &ClientChainApplet::rebuildCoreRows);
+    }
+    rebuildCoreRows();
+}
+
+void ClientChainApplet::rebuildCoreRows()
+{
+    if (!m_coreRows) {
+        return;
+    }
+    while (QLayoutItem* item = m_coreRows->takeAt(0)) {
+        if (QWidget* widget = item->widget()) {
+            widget->hide();
+            widget->deleteLater();
+        }
+        delete item;
+    }
+    IStationLink* link = m_stationModel ? m_stationModel->stationLink() : nullptr;
+    if (!link || !link->stationTciAvailable()) {
+        m_corePanel->hide();
+        return;
+    }
+    m_corePanel->show();
+    auto* heading = makeSecondaryLabel(QStringLiteral("The Core's TCI server"), m_corePanel);
+    m_coreRows->addWidget(heading);
+    if (!link->stationTciServerAvailable()) {
+        auto* reason = makeTertiaryLabel(IStationLink::stationTciServerUnavailableReason(),
+                                        m_corePanel);
+        reason->setWordWrap(true);
+        m_coreRows->addWidget(reason);
+        return;
+    }
+    const QList<StationTciClient> clients = m_stationModel->stationTciModel()->clients();
+    if (clients.isEmpty()) {
+        m_coreRows->addWidget(makeTertiaryLabel(
+            QStringLiteral("No apps connected to the Core's TCI server."), m_corePanel));
+    }
+    for (const StationTciClient& client : clients) {
+        auto* row = new QWidget(m_corePanel);
+        auto* line = new QHBoxLayout(row);
+        line->setContentsMargins(0, 0, 0, 0);
+        const QString name = client.name.isEmpty() ? QStringLiteral("App") : client.name;
+        auto* label = makeSecondaryLabel(
+            QStringLiteral("%1 (%2)%3: %4; %5")
+                .arg(name, client.address,
+                     client.transmitting ? QStringLiteral(" TX") : QString(),
+                     client.subscriptions.isEmpty() ? QStringLiteral("no subscriptions")
+                                                     : client.subscriptions.join(QStringLiteral(", ")),
+                     client.lastCommand.isEmpty() ? QStringLiteral("no command")
+                                                   : client.lastCommand.left(40)), row);
+        label->setWordWrap(true);
+        line->addWidget(label, 1);
+        auto* disconnect = new QPushButton(QStringLiteral("Disconnect"), row);
+        disconnect->setObjectName(QStringLiteral("disconnectCoreTciClient"));
+        const bool onAir = m_stationModel->isCoreOnAir();
+        disconnect->setEnabled(!onAir);
+        if (onAir) {
+            disconnect->setToolTip(QStringLiteral("The radio is on the air. Try again when it stops."));
+        }
+        connect(disconnect, &QPushButton::clicked, this, [this, id = client.id] {
+            IStationLink* current = m_stationModel ? m_stationModel->stationLink() : nullptr;
+            if (current) {
+                current->requestDisconnectStationTciClient(id);
+            }
+        });
+        line->addWidget(disconnect);
+        m_coreRows->addWidget(row);
+    }
 }
 
 // ── Empty state ───────────────────────────────────────────────────────────────
@@ -320,7 +413,7 @@ QWidget* ClientChainApplet::buildClientRow(
 
         // Last command in monospace, truncated to 40 chars.
         const QString cmdSnippet = session->lastCommand.isEmpty()
-                                       ? QStringLiteral("(no command yet)")
+                                       ? QStringLiteral("(no command)")
                                        : session->lastCommand.left(40);
         auto* cmdLbl = new QLabel(cmdSnippet, row);
         const QFont monoFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
@@ -500,6 +593,7 @@ void ClientChainApplet::hideEvent(QHideEvent* ev)
 void ClientChainApplet::refresh()
 {
     rebuildRows();
+    rebuildCoreRows();
 }
 
 void ClientChainApplet::onAutoRefreshToggled(bool on)

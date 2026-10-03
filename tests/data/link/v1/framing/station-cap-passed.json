@@ -1,0 +1,110 @@
+{
+  "receiver": "station",
+  "message": [
+    {
+      "text": "{\"x\":\""
+    },
+    {
+      "repeat": "d",
+      "times": 1048569
+    },
+    {
+      "text": "\"}"
+    }
+  ],
+  "frames": [
+    {
+      "chunk": "more",
+      "from": 0,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 61439,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 122878,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 184317,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 245756,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 307195,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 368634,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 430073,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 491512,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 552951,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 614390,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 675829,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 737268,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 798707,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 860146,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 921585,
+      "length": 61439
+    },
+    {
+      "chunk": "more",
+      "from": 983024,
+      "length": 61439
+    },
+    {
+      "chunk": "last",
+      "from": 1044463,
+      "length": 4114
+    }
+  ],
+  "encodes": true,
+  "outcome": "refused",
+  "replies": []
+}

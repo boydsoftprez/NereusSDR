@@ -61,9 +61,9 @@ public:
     void incAudioUnderrun();
     void incUdpDrop();
 
-    // TX I/Q ring-underrun telemetry.  Called from the connection-thread
-    // drain path (P1 fillTxZone return-false branch; P2 m_txIqTimer inner
-    // loop) when the ring is short and we must zero-pad the wire payload.
+    // TX I/Q ring-underrun telemetry.  Called from the drain path (P1
+    // fillTxZone return-false branch on the connection thread; P2
+    // serviceTxIqSend on its send thread) when the ring is short and we must zero-pad the wire payload.
     // The unit is INDIVIDUAL SAMPLES that would have carried mic-derived
     // I/Q but were silently filled with zeros (deskhpsdr-faithful
     // underrun behaviour at P1 old_protocol.c:545-549 [@120188f] and

@@ -1,0 +1,268 @@
+{
+  "runs": [
+    "service"
+  ],
+  "serverSetup": {
+    "candidatesPerSide": 2
+  },
+  "pairedDevices": [
+    "d"
+  ],
+  "steps": [
+    {
+      "connect": "station"
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:stationNonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "register",
+        "id": "$key:a:id",
+        "publicKey": "$key:a:publicKey"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge"
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "prove",
+        "signature": "$register:a:challenge:signed"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "registered",
+        "id": "$key:a:id"
+      }
+    },
+    {
+      "connect": "client"
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:clientNonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "from": "client",
+      "role": "behaviour",
+      "message": {
+        "type": "introduce",
+        "id": "$key:a:id",
+        "device": "$device:d:id",
+        "deviceSignature": "$introduce:d:a:clientNonce:signed",
+        "offer": "$sdp:offer:offer"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "introduction",
+        "from": "$b64:16:intro",
+        "device": "$device:d:id",
+        "deviceSignature": "$introduce:d:a:clientNonce:signed",
+        "offer": "$ref:offer",
+        "nonce": "$ref:clientNonce"
+      }
+    },
+    {
+      "from": "client",
+      "role": "behaviour",
+      "message": {
+        "type": "candidate",
+        "candidate": "$candidate:c1"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "candidate",
+        "from": "$ref:intro",
+        "candidate": "$ref:c1"
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "answer",
+        "to": "$ref:intro",
+        "answer": "$sdp:answer:answer",
+        "turn": true
+      }
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "answer",
+        "answer": "$ref:answer",
+        "turn": "$turn:a:relay"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "credentials",
+        "from": "$ref:intro",
+        "turn": "$ref:relay"
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "candidate",
+        "to": "$ref:intro",
+        "candidate": "$candidate:s1"
+      }
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "candidate",
+        "candidate": "$ref:s1"
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "candidate",
+        "to": "$ref:intro",
+        "candidate": "$candidate:s2"
+      }
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "candidate",
+        "candidate": "$ref:s2"
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "candidate",
+        "to": "$ref:intro",
+        "candidate": "$candidate:s3"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "error",
+        "code": "tooManyCandidates",
+        "reason": "Too many network addresses were offered for one connection attempt.",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "candidate",
+        "to": "$ref:intro",
+        "candidate": ""
+      }
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "candidate",
+        "candidate": ""
+      }
+    },
+    {
+      "from": "client",
+      "role": "behaviour",
+      "message": {
+        "type": "candidate",
+        "candidate": "$candidate:c2"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "candidate",
+        "from": "$ref:intro",
+        "candidate": "$ref:c2"
+      }
+    },
+    {
+      "from": "client",
+      "role": "scripted",
+      "message": {
+        "type": "candidate",
+        "candidate": "$candidate:c3"
+      }
+    },
+    {
+      "from": "server",
+      "to": "client",
+      "message": {
+        "type": "error",
+        "code": "tooManyCandidates",
+        "reason": "Too many network addresses were offered for one connection attempt.",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "from": "client",
+      "role": "behaviour",
+      "message": {
+        "type": "candidate",
+        "candidate": ""
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "candidate",
+        "from": "$ref:intro",
+        "candidate": ""
+      }
+    }
+  ]
+}

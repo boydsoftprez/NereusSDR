@@ -144,9 +144,9 @@ Public API mirrors AetherSDR's seam at `TciProtocol.cpp:1-17 [@0cd4559]`:
 | `AlwaysStreamIQ` | `TciAlwaysStreamIq` | False | Forces IQ stream regardless of subscription per `TCIServer.cs:5401, 7506` |
 | `SendInitialFrequencyStateOnConnect` | `TciSendInitialFrequencyStateOnConnect` | True | Gates VFO/IF/DDS sends in init burst per `TCIServer.cs:2365` |
 | `RateLimit` | `TciRateLimitMsgsPerSec` | 60 | Per-client message rate cap |
-| `ForgetRX2VfoBVFOinfo` | `TciForgetRx2VfoBOnDisconnect` | False | VFO state cleanup quirk |
-| `UseRX1vfoaForRX2vfoa` | `TciUseRx1VfoaForRx2Vfoa` | False | VFO mirror quirk |
-| `CopyRX2VFObToVFOa` | `TciCopyRx2VfobToVfoa` | False | VFO mirror quirk |
+| `ForgetRX2VfoBVFOinfo` | `TciForgetRx2VfoBOnDisconnect` | False | Sends RX2's frequency only as VFO A while Copy is on (Thetis `replace_if_duplicated`; the key name predates the port) |
+| `UseRX1vfoaForRX2vfoa` | `TciUseRx1VfoaForRx2Vfoa` | False | Reports RX1 VFO A as RX2 VFO A while RX2 is on. Thetis defaults this on (setup.cs:381-382 [v2.10.3.15], MW0LGE_21k9d); NereusSDR keeps it off, a deliberate divergence per JJ's ruling (2026-09-29), so existing TCI client output is unchanged |
+| `CopyRX2VFObToVFOa` | `TciCopyRx2VfobToVfoa` | True | Duplicates RX2 VFO B as RX2 VFO A while RX2 is on (Thetis default, setup.cs:381-382 [v2.10.3.15], MW0LGE_21k9d) |
 | (per-client) `m_seenModernTxAudioNegotiation` | n/a (runtime) | n/a | Modern vs legacy TX audio header detection |
 
 Estimated size: 2,400 to 2,800 LOC (revised upward from 2,000-2,400 estimate after Sweep D enumerated 12 flags + 49 per-client fields).
@@ -198,7 +198,7 @@ Existing `CatTciServerPage` (currently a placeholder) becomes the full-fat Theti
 3. **IQ Stream**: Swap I/Q (default on), Always stream IQ (force-on)
 4. **Audio Stream**: Block size [100..2048] default 2048, TX channel L/R/Both selector
 5. **Sensors**: RX/TX intervals [30..1000] default 200, with `MinimumRequiredRxSensorInterval` aggregation note
-6. **VFO Quirks**: 3 Thetis chk* checkboxes (Forget RX2 VFO B, Use RX1 VFO A for RX2, Copy RX2 VFO B to VFO A)
+6. **VFO Quirks**: 3 Thetis chk* checkboxes (Forget RX2 VFO B, Use RX1 VFO A for RX2 VFO A, Duplicate RX2 VFO B to RX2 VFO A; Forget is enabled only while Duplicate is on)
 
 Plus a placeholder noting Spots controls deferred to Phase 3J-2.
 
@@ -547,9 +547,9 @@ All keys persisted to `~/.config/NereusSDR/NereusSDR.settings` via `AppSettings`
 | `TciCwBecomesCwuAbove10mhz` | bool | False | Compat flag (W2PA fix for issue #559) |
 | `TciIqSwap` | bool | True | Compat flag |
 | `TciAlwaysStreamIq` | bool | False | Compat flag |
-| `TciForgetRx2VfoBOnDisconnect` | bool | False | VFO quirk |
-| `TciUseRx1VfoaForRx2Vfoa` | bool | False | VFO quirk |
-| `TciCopyRx2VfobToVfoa` | bool | False | VFO quirk |
+| `TciForgetRx2VfoBOnDisconnect` | bool | False | VFO quirk (see above) |
+| `TciUseRx1VfoaForRx2Vfoa` | bool | False | VFO quirk (Thetis default True; see above) |
+| `TciCopyRx2VfobToVfoa` | bool | True | VFO quirk |
 
 ---
 

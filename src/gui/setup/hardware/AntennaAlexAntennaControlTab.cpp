@@ -13,6 +13,27 @@
 //                Claude Code. Sub-sub-tab under Hardware → Antenna/ALEX.
 //                Per-band antenna assignment + Block-TX safety; backed
 //                by AlexController model (Phase 3P-F Task 1).
+//   2026-09-23 - R-R3-46: a remote window reads and writes the Core's
+//                 receive antennas through the `alexAntennas` object; the transmit
+//                 half follows the transmit permission. J.J. Boyd (KG4VCF), AI-
+//                 assisted via Anthropic Claude Code.
+//   2026-09-23 - R-R3-46 fix wave: re-reads the Core's antennas when a band
+//                 edit does not take. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: the Conflict policy group is hidden until the
+//                 policy is read (UnbuiltFeatures).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 / R-R3-46 (parity Task 12): a remote window's TX
+//                 antenna grid, Block-TX switches and TX relay switches write
+//                 the Core's `alexAntennas` object and follow whether the
+//                 Core takes them; no on-air rule in either window, as in
+//                 Thetis. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-28 - Named native table groups, headers, rows and cells for
+//                 closed version-6 Setup description parity. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -81,8 +102,11 @@
 // =================================================================
 
 #include "AntennaAlexAntennaControlTab.h"
+#include "HardwareTransmitGate.h"
+#include "gui/UnbuiltFeatures.h"
 
 #include "core/accessories/AlexController.h"
+#include "core/accessories/AlexAntennaFacade.h"
 #include "core/AppSettings.h"
 #include "core/SkuUiProfile.h"
 #include "core/HardwareProfile.h"
@@ -104,12 +128,26 @@
 
 namespace NereusSDR {
 
+namespace {
+// The rows, top to bottom: 160m .. 6m, 2m, GEN, WWV, XVTR. 2 m keeps its
+// own antennas, as in Thetis (Alex.cs:56-58, B160M .. B2M [v2.10.3.15];
+// setup.cs:13679 ProcessAlexAntCheckBox(sender, Band.B2M)), and sits after
+// 6 m as Thetis orders its bands (R-IOS-26). The button arrays are indexed
+// by the per-band state slot (Band.h).
+constexpr std::array<Band, kPerBandStateCount> kRowOrder{
+    Band::Band160m, Band::Band80m, Band::Band60m, Band::Band40m, Band::Band30m,
+    Band::Band20m,  Band::Band17m, Band::Band15m, Band::Band12m, Band::Band10m,
+    Band::Band6m,   Band::Band2m,  Band::GEN,     Band::WWV,     Band::XVTR,
+};
+} // namespace
+
 // ── Constructor ───────────────────────────────────────────────────────────────
 
 AntennaAlexAntennaControlTab::AntennaAlexAntennaControlTab(RadioModel* model, QWidget* parent)
     : QWidget(parent)
     , m_model(model)
     , m_alex(&model->alexControllerMutable())
+    , m_remoteAlex(model->ownsLocalDsp() ? nullptr : model->alexAntennaFacade())
 {
     auto* outerLayout = new QVBoxLayout(this);
     outerLayout->setContentsMargins(8, 8, 8, 8);
@@ -149,10 +187,29 @@ AntennaAlexAntennaControlTab::AntennaAlexAntennaControlTab(RadioModel* model, QW
     applySkuProfile();
 
     // ── Connect model → UI ────────────────────────────────────────────────────
-    connect(m_alex, &AlexController::antennaChanged,
-            this, &AntennaAlexAntennaControlTab::onAntennaChanged);
-    connect(m_alex, &AlexController::blockTxChanged,
-            this, &AntennaAlexAntennaControlTab::onBlockTxChanged);
+    if (m_remoteAlex) {
+        // R-R3-46: a remote window shows the Core's antennas.
+        const auto resync = [this]() { syncAllFromSource(); };
+        connect(m_remoteAlex, &AlexAntennaFacade::rxAntennasChanged, this, resync);
+        connect(m_remoteAlex, &AlexAntennaFacade::rxOnlyAntennasChanged, this, resync);
+        connect(m_remoteAlex, &AlexAntennaFacade::txAntennasChanged, this, resync);
+        // A band edit that did not take leaves the Core's values: re-read
+        // them over the click.
+        connect(m_remoteAlex, &AlexAntennaFacade::bandEditRefused, this, resync);
+        connect(m_remoteAlex, &AlexAntennaFacade::blockTxAnt2Changed, this,
+                &AntennaAlexAntennaControlTab::onBlockTxChanged);
+        connect(m_remoteAlex, &AlexAntennaFacade::blockTxAnt3Changed, this,
+                &AntennaAlexAntennaControlTab::onBlockTxChanged);
+        // Parity Task 12: the transmit half is live while the Core takes it.
+        connect(m_remoteAlex, &AlexAntennaFacade::transmitEditAvailabilityChanged, this,
+                &AntennaAlexAntennaControlTab::applyTransmitEditAvailability);
+        applyTransmitEditAvailability();
+    } else {
+        connect(m_alex, &AlexController::antennaChanged,
+                this, &AntennaAlexAntennaControlTab::onAntennaChanged);
+        connect(m_alex, &AlexController::blockTxChanged,
+                this, &AntennaAlexAntennaControlTab::onBlockTxChanged);
+    }
 
     // Re-sync when the connected radio changes (may switch HPSDRModel).
     connect(m_model, &RadioModel::currentRadioChanged,
@@ -170,6 +227,7 @@ AntennaAlexAntennaControlTab::AntennaAlexAntennaControlTab(RadioModel* model, QW
 void AntennaAlexAntennaControlTab::buildBlockTxStrip(QVBoxLayout* outerLayout)
 {
     auto* frame = new QFrame(this);
+    m_blockTxFrame = frame;
     frame->setFrameShape(QFrame::StyledPanel);
     frame->setStyleSheet(QStringLiteral(
         "QFrame { background-color: rgba(200,50,50,0.08); border: 1px solid rgba(200,50,50,0.4); border-radius: 4px; }"));
@@ -179,13 +237,15 @@ void AntennaAlexAntennaControlTab::buildBlockTxStrip(QVBoxLayout* outerLayout)
     row->setSpacing(16);
 
     m_blockTxAnt2 = new QCheckBox(tr("Block TX on Ant 2"), frame);
-    m_blockTxAnt2->setChecked(m_alex->blockTxAnt2());
+    m_blockTxAnt2->setProperty("nereusSetupId", "hardware.antennaAlex.blockTxAnt2");
+    m_blockTxAnt2->setChecked(blockTxAnt2Now());
     m_blockTxAnt2->setToolTip(tr("Prevents transmit assignments to Antenna Port 2. "
                                   "Use when Ant 2 is wired for receive only."));
     row->addWidget(m_blockTxAnt2);
 
     m_blockTxAnt3 = new QCheckBox(tr("Block TX on Ant 3"), frame);
-    m_blockTxAnt3->setChecked(m_alex->blockTxAnt3());
+    m_blockTxAnt3->setProperty("nereusSetupId", "hardware.antennaAlex.blockTxAnt3");
+    m_blockTxAnt3->setChecked(blockTxAnt3Now());
     m_blockTxAnt3->setToolTip(tr("Prevents transmit assignments to Antenna Port 3. "
                                   "Use when Ant 3 is wired for receive only."));
     row->addWidget(m_blockTxAnt3);
@@ -198,10 +258,22 @@ void AntennaAlexAntennaControlTab::buildBlockTxStrip(QVBoxLayout* outerLayout)
     outerLayout->addWidget(frame);
 
     // ── Wire Block-TX checkboxes → controller ─────────────────────────────────
+    // Parity Task 12: in a remote window these go to the Core's controller
+    // (radioHardwareVersion 6); the boxes then show the Core's values.
     connect(m_blockTxAnt2, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_remoteAlex) {
+            m_remoteAlex->setBlockTxAnt2(checked);
+            onBlockTxChanged();
+            return;
+        }
         m_alex->setBlockTxAnt2(checked);
     });
     connect(m_blockTxAnt3, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_remoteAlex) {
+            m_remoteAlex->setBlockTxAnt3(checked);
+            onBlockTxChanged();
+            return;
+        }
         m_alex->setBlockTxAnt3(checked);
     });
 }
@@ -214,6 +286,8 @@ void AntennaAlexAntennaControlTab::buildBlockTxStrip(QVBoxLayout* outerLayout)
 void AntennaAlexAntennaControlTab::buildTxGrid(QBoxLayout* outerLayout)
 {
     auto* grp = new QGroupBox(tr("TX Antenna per Band"), this);
+    grp->setProperty("nereusSetupId", "hardware.antenna.txRows");
+    m_txGridGroup = grp;
     auto* layout = new QVBoxLayout(grp);
     layout->setContentsMargins(6, 6, 6, 6);
     layout->setSpacing(2);
@@ -224,31 +298,37 @@ void AntennaAlexAntennaControlTab::buildTxGrid(QBoxLayout* outerLayout)
     auto* hdrBand = new QLabel(tr("Band"), grp);
     hdrBand->setFixedWidth(48);
     hdrRow->addWidget(hdrBand);
+    int txColumn = 0;
     for (const char* lbl : {"Ant 1", "Ant 2", "Ant 3"}) {
         auto* h = new QLabel(tr(lbl), grp);
+        h->setProperty("nereusAntennaColumn", QStringLiteral("tx%1").arg(++txColumn));
         h->setAlignment(Qt::AlignCenter);
         hdrRow->addWidget(h, 1);
     }
     layout->addLayout(hdrRow);
 
     // Band rows
-    for (int b = 0; b < kBandCount; ++b) {
-        auto band = static_cast<Band>(b);
+    for (const Band band : kRowOrder) {
+        const int b = perBandStateSlot(band);
         auto* rowLayout = new QHBoxLayout();
         rowLayout->setContentsMargins(0, 0, 0, 0);
         rowLayout->setSpacing(4);
 
         auto* bandLbl = new QLabel(bandLabel(band), grp);
+        bandLbl->setProperty("nereusAntennaBand", static_cast<int>(band));
+        bandLbl->setProperty("nereusAntennaRowLabel", true);
         bandLbl->setFixedWidth(48);
         rowLayout->addWidget(bandLbl);
 
         auto* grpBtn = new QButtonGroup(this);
         m_txGroups[b] = grpBtn;
 
-        const int currentAnt = m_alex->txAnt(band);  // 1-based
+        const int currentAnt = txAntOf(band);  // 1-based
 
         for (int a = 0; a < 3; ++a) {
             auto* rb = new QRadioButton(grp);
+            rb->setProperty("nereusAntennaBand", static_cast<int>(band));
+            rb->setProperty("nereusAntennaColumn", QStringLiteral("tx%1").arg(a + 1));
             rb->setChecked((a + 1) == currentAnt);
             rb->setToolTip(tr("TX Ant %1 for %2").arg(a + 1).arg(bandLabel(band)));
             grpBtn->addButton(rb, a + 1);  // button id = 1-based ant number
@@ -258,6 +338,13 @@ void AntennaAlexAntennaControlTab::buildTxGrid(QBoxLayout* outerLayout)
             // Wire to controller
             connect(rb, &QRadioButton::toggled, this, [this, band, antNum = a + 1](bool checked) {
                 if (!checked) { return; }
+                if (m_remoteAlex) {
+                    // Parity Task 12: the Core applies it; the row shows
+                    // what the Core keeps.
+                    m_remoteAlex->setTxAnt(band, antNum);
+                    syncTxRow(perBandStateSlot(band));
+                    return;
+                }
                 m_alex->setTxAnt(band, antNum);
             });
         }
@@ -279,6 +366,7 @@ void AntennaAlexAntennaControlTab::buildTxGrid(QBoxLayout* outerLayout)
 void AntennaAlexAntennaControlTab::buildRxGrid(QBoxLayout* outerLayout)
 {
     auto* grp = new QGroupBox(tr("RX1 / RX2 Antenna per Band"), this);
+    grp->setProperty("nereusSetupId", "hardware.antenna.rxRows");
     auto* layout = new QVBoxLayout(grp);
     layout->setContentsMargins(6, 6, 6, 6);
     layout->setSpacing(2);
@@ -291,6 +379,7 @@ void AntennaAlexAntennaControlTab::buildRxGrid(QBoxLayout* outerLayout)
     hdrRow->addWidget(hdrBand);
     // RX1 sub-header
     auto* rx1Hdr = new QLabel(tr("RX1"), grp);
+    rx1Hdr->setProperty("nereusAntennaColumnGroup", "RX1");
     rx1Hdr->setAlignment(Qt::AlignCenter);
     hdrRow->addWidget(rx1Hdr, 3);
     // separator
@@ -300,6 +389,7 @@ void AntennaAlexAntennaControlTab::buildRxGrid(QBoxLayout* outerLayout)
     hdrRow->addWidget(sep);
     // RX-only sub-header
     auto* rxOnlyHdr = new QLabel(tr("RX-only"), grp);
+    rxOnlyHdr->setProperty("nereusAntennaColumnGroup", "RX-only");
     rxOnlyHdr->setAlignment(Qt::AlignCenter);
     hdrRow->addWidget(rxOnlyHdr, 3);
     layout->addLayout(hdrRow);
@@ -310,8 +400,10 @@ void AntennaAlexAntennaControlTab::buildRxGrid(QBoxLayout* outerLayout)
     hdrRow2->setContentsMargins(0, 0, 0, 0);
     hdrRow2->addSpacing(48);  // band label space
     // RX1 column: always "1" / "2" / "3" — these stay generic.
+    int rxColumn = 0;
     for (const char* lbl : {"1", "2", "3"}) {
         auto* h = new QLabel(tr(lbl), grp);
+        h->setProperty("nereusAntennaColumn", QStringLiteral("rx%1").arg(++rxColumn));
         h->setAlignment(Qt::AlignCenter);
         hdrRow2->addWidget(h, 1);
     }
@@ -322,6 +414,7 @@ void AntennaAlexAntennaControlTab::buildRxGrid(QBoxLayout* outerLayout)
     // RX-only column: SKU-specific. applySkuProfile() fills these.
     for (int i = 0; i < 3; ++i) {
         auto* h = new QLabel(grp);           // text set later by applySkuProfile()
+        h->setProperty("nereusAntennaColumn", QStringLiteral("rxOnly%1").arg(i + 1));
         h->setAlignment(Qt::AlignCenter);
         hdrRow2->addWidget(h, 1);
         m_rxOnlyColumnLabels[i] = h;
@@ -329,22 +422,26 @@ void AntennaAlexAntennaControlTab::buildRxGrid(QBoxLayout* outerLayout)
     layout->addLayout(hdrRow2);
 
     // Band rows
-    for (int b = 0; b < kBandCount; ++b) {
-        auto band = static_cast<Band>(b);
+    for (const Band band : kRowOrder) {
+        const int b = perBandStateSlot(band);
         auto* rowLayout = new QHBoxLayout();
         rowLayout->setContentsMargins(0, 0, 0, 0);
         rowLayout->setSpacing(4);
 
         auto* bandLbl = new QLabel(bandLabel(band), grp);
+        bandLbl->setProperty("nereusAntennaBand", static_cast<int>(band));
+        bandLbl->setProperty("nereusAntennaRowLabel", true);
         bandLbl->setFixedWidth(48);
         rowLayout->addWidget(bandLbl);
 
         // RX1 group
         auto* rx1Grp = new QButtonGroup(this);
         m_rx1Groups[b] = rx1Grp;
-        const int currentRx1 = m_alex->rxAnt(band);  // 1-based
+        const int currentRx1 = rxAntOf(band);  // 1-based
         for (int a = 0; a < 3; ++a) {
             auto* rb = new QRadioButton(grp);
+            rb->setProperty("nereusAntennaBand", static_cast<int>(band));
+            rb->setProperty("nereusAntennaColumn", QStringLiteral("rx%1").arg(a + 1));
             rb->setChecked((a + 1) == currentRx1);
             rb->setToolTip(tr("RX1 Ant %1 for %2").arg(a + 1).arg(bandLabel(band)));
             rx1Grp->addButton(rb, a + 1);
@@ -353,6 +450,13 @@ void AntennaAlexAntennaControlTab::buildRxGrid(QBoxLayout* outerLayout)
 
             connect(rb, &QRadioButton::toggled, this, [this, band, antNum = a + 1](bool checked) {
                 if (!checked) { return; }
+                if (m_remoteAlex) {
+                    // R-R3-46: the Core applies it; the row shows what the
+                    // Core keeps (or keeps its value when the edit is refused).
+                    m_remoteAlex->setRxAnt(band, antNum);
+                    syncRxRow(perBandStateSlot(band));
+                    return;
+                }
                 m_alex->setRxAnt(band, antNum);
             });
         }
@@ -366,9 +470,11 @@ void AntennaAlexAntennaControlTab::buildRxGrid(QBoxLayout* outerLayout)
         // RX-only group
         auto* rxOnlyGrp = new QButtonGroup(this);
         m_rxOnlyGroups[b] = rxOnlyGrp;
-        const int currentRxOnly = m_alex->rxOnlyAnt(band);  // 1-based
+        const int currentRxOnly = rxOnlyAntOf(band);  // 1-based
         for (int a = 0; a < 3; ++a) {
             auto* rb = new QRadioButton(grp);
+            rb->setProperty("nereusAntennaBand", static_cast<int>(band));
+            rb->setProperty("nereusAntennaColumn", QStringLiteral("rxOnly%1").arg(a + 1));
             rb->setChecked((a + 1) == currentRxOnly);
             // Tooltip will be set by applySkuProfile() with SKU-specific label.
             rxOnlyGrp->addButton(rb, a + 1);
@@ -377,6 +483,11 @@ void AntennaAlexAntennaControlTab::buildRxGrid(QBoxLayout* outerLayout)
 
             connect(rb, &QRadioButton::toggled, this, [this, band, antNum = a + 1](bool checked) {
                 if (!checked) { return; }
+                if (m_remoteAlex) {
+                    m_remoteAlex->setRxOnlyAnt(band, antNum);
+                    syncRxRow(perBandStateSlot(band));
+                    return;
+                }
                 m_alex->setRxOnlyAnt(band, antNum);
             });
         }
@@ -399,7 +510,7 @@ AlexController& AntennaAlexAntennaControlTab::controller()
 
 void AntennaAlexAntennaControlTab::onAntennaChanged(Band band)
 {
-    const int row = static_cast<int>(band);
+    const int row = perBandStateSlot(band);
     if (row < 0 || row >= kBandCount) { return; }
     syncTxRow(row);
     syncRxRow(row);
@@ -410,11 +521,11 @@ void AntennaAlexAntennaControlTab::onBlockTxChanged()
     // Sync Block-TX checkbox states from controller
     {
         QSignalBlocker b2(m_blockTxAnt2);
-        m_blockTxAnt2->setChecked(m_alex->blockTxAnt2());
+        m_blockTxAnt2->setChecked(blockTxAnt2Now());
     }
     {
         QSignalBlocker b3(m_blockTxAnt3);
-        m_blockTxAnt3->setChecked(m_alex->blockTxAnt3());
+        m_blockTxAnt3->setChecked(blockTxAnt3Now());
     }
     updateTxBlockedStates();
 }
@@ -423,8 +534,8 @@ void AntennaAlexAntennaControlTab::onBlockTxChanged()
 
 void AntennaAlexAntennaControlTab::syncTxRow(int row)
 {
-    auto band = static_cast<Band>(row);
-    const int currentAnt = m_alex->txAnt(band);  // 1-based
+    auto band = bandFromPerBandStateSlot(row);
+    const int currentAnt = txAntOf(band);  // 1-based
     for (int a = 0; a < 3; ++a) {
         if (auto* rb = m_txButtons[row][a]) {
             QSignalBlocker sb(rb);
@@ -435,9 +546,9 @@ void AntennaAlexAntennaControlTab::syncTxRow(int row)
 
 void AntennaAlexAntennaControlTab::syncRxRow(int row)
 {
-    auto band = static_cast<Band>(row);
-    const int currentRx1     = m_alex->rxAnt(band);
-    const int currentRxOnly  = m_alex->rxOnlyAnt(band);
+    auto band = bandFromPerBandStateSlot(row);
+    const int currentRx1     = rxAntOf(band);
+    const int currentRxOnly  = rxOnlyAntOf(band);
     for (int a = 0; a < 3; ++a) {
         if (auto* rb = m_rx1Buttons[row][a]) {
             QSignalBlocker sb(rb);
@@ -455,8 +566,8 @@ void AntennaAlexAntennaControlTab::updateTxBlockedStates()
     // When a TX port is blocked, grey out (disable) that column's radio buttons
     // for all bands so the user cannot select a blocked port.
     // Port columns: a == 0 → Ant 1, a == 1 → Ant 2, a == 2 → Ant 3.
-    const bool blk2 = m_alex->blockTxAnt2();
-    const bool blk3 = m_alex->blockTxAnt3();
+    const bool blk2 = blockTxAnt2Now();
+    const bool blk3 = blockTxAnt3Now();
 
     for (int b = 0; b < kBandCount; ++b) {
         if (auto* rb = m_txButtons[b][1]) { rb->setEnabled(!blk2); }  // Ant 2
@@ -487,20 +598,26 @@ void AntennaAlexAntennaControlTab::buildTxBypassStrip(QVBoxLayout* outerLayout)
     m_chkExt2OutOnTx   = new QCheckBox(tr("Ext 2 on TX"), frame);
     m_chkRxOutOverride = new QCheckBox(tr("Disable RX Bypass relay"), frame);
     m_chkUseTxAntForRx = new QCheckBox(tr("Use TX antenna for RX"), frame);
+    m_chkRxOutOnTx->setProperty("nereusSetupId", "hardware.antennaAlex.rxOutOnTx");
+    m_chkExt1OutOnTx->setProperty("nereusSetupId", "hardware.antennaAlex.ext1OutOnTx");
+    m_chkExt2OutOnTx->setProperty("nereusSetupId", "hardware.antennaAlex.ext2OutOnTx");
+    m_chkRxOutOverride->setProperty("nereusSetupId", "hardware.antennaAlex.rxOutOverride");
+    m_chkUseTxAntForRx->setProperty("nereusSetupId", "hardware.antennaAlex.useTxAntennaForRx");
 
     // Tooltips — From Thetis setup.cs:6178/6198 [v2.10.3.13 @501e3f5].
     // SKU-specific tooltip for chkEXT2OutOnTx is picked in applySkuProfile().
     m_chkRxOutOnTx->setToolTip(tr("Enable RX Bypass Out relay on transmit."));
     m_chkExt1OutOnTx->setToolTip(tr("Route Ext 1 to receive path during transmit."));
-    m_chkRxOutOverride->setToolTip(tr("Disable the RX Bypass Out relay (chkDisableRXOut in Thetis)."));
+    // The Thetis control for this relay is chkDisableRXOut.
+    m_chkRxOutOverride->setToolTip(tr("Disable the RX Bypass Out relay."));
     m_chkUseTxAntForRx->setToolTip(tr("Use the TX antenna for RX instead of the RX antenna."));
 
     // Initialize state from controller.
-    m_chkRxOutOnTx->setChecked(m_alex->rxOutOnTx());
-    m_chkExt1OutOnTx->setChecked(m_alex->ext1OutOnTx());
-    m_chkExt2OutOnTx->setChecked(m_alex->ext2OutOnTx());
-    m_chkRxOutOverride->setChecked(m_alex->rxOutOverride());
-    m_chkUseTxAntForRx->setChecked(m_alex->useTxAntForRx());
+    m_chkRxOutOnTx->setChecked(rxOutOnTxNow());
+    m_chkExt1OutOnTx->setChecked(ext1OutOnTxNow());
+    m_chkExt2OutOnTx->setChecked(ext2OutOnTxNow());
+    m_chkRxOutOverride->setChecked(rxOutOverrideNow());
+    m_chkUseTxAntForRx->setChecked(useTxAntForRxNow());
 
     row->addWidget(m_chkRxOutOnTx);
     row->addWidget(m_chkExt1OutOnTx);
@@ -510,6 +627,47 @@ void AntennaAlexAntennaControlTab::buildTxBypassStrip(QVBoxLayout* outerLayout)
     row->addStretch();
 
     outerLayout->addWidget(frame);
+
+    if (m_remoteAlex) {
+        // R-R3-46: in a remote window "Use TX antenna for RX" goes to the
+        // Core. Parity Task 12: so do the four TX relay switches (RX bypass
+        // on TX from radioHardwareVersion 5, the other three from 6); each
+        // box then shows the Core's values, so a switch the Core cleared
+        // (Ext 1 on TX clears the other two) or refused shows that too.
+        connect(m_chkUseTxAntForRx, &QCheckBox::toggled, this, [this](bool on) {
+            m_remoteAlex->setUseTxAntennaForRx(on);
+            QSignalBlocker b(m_chkUseTxAntForRx);
+            m_chkUseTxAntForRx->setChecked(m_remoteAlex->useTxAntennaForRx());
+        });
+        connect(m_chkRxOutOnTx, &QCheckBox::toggled, this, [this](bool on) {
+            m_remoteAlex->setRxOutOnTx(on);
+            syncTxRelaysFromSource();
+        });
+        connect(m_chkExt1OutOnTx, &QCheckBox::toggled, this, [this](bool on) {
+            m_remoteAlex->setExt1OutOnTx(on);
+            syncTxRelaysFromSource();
+        });
+        connect(m_chkExt2OutOnTx, &QCheckBox::toggled, this, [this](bool on) {
+            m_remoteAlex->setExt2OutOnTx(on);
+            syncTxRelaysFromSource();
+        });
+        connect(m_chkRxOutOverride, &QCheckBox::toggled, this, [this](bool on) {
+            m_remoteAlex->setRxOutOverride(on);
+            syncTxRelaysFromSource();
+        });
+        const auto follow = [this](auto signal, QCheckBox* box) {
+            connect(m_remoteAlex, signal, this, [box](bool on) {
+                QSignalBlocker b(box);
+                box->setChecked(on);
+            });
+        };
+        follow(&AlexAntennaFacade::rxOutOnTxChanged, m_chkRxOutOnTx);
+        follow(&AlexAntennaFacade::ext1OutOnTxChanged, m_chkExt1OutOnTx);
+        follow(&AlexAntennaFacade::ext2OutOnTxChanged, m_chkExt2OutOnTx);
+        follow(&AlexAntennaFacade::rxOutOverrideChanged, m_chkRxOutOverride);
+        follow(&AlexAntennaFacade::useTxAntennaForRxChanged, m_chkUseTxAntForRx);
+        return;
+    }
 
     // UI → model
     connect(m_chkRxOutOnTx,     &QCheckBox::toggled, m_alex, &AlexController::setRxOutOnTx);
@@ -554,6 +712,10 @@ void AntennaAlexAntennaControlTab::buildTxBypassStrip(QVBoxLayout* outerLayout)
 void AntennaAlexAntennaControlTab::buildConflictPolicyGroup(QVBoxLayout* outerLayout)
 {
     auto* group = new QGroupBox(tr("Conflict policy"), this);
+    group->setObjectName(QStringLiteral("antennaConflictPolicyGroup"));
+    // R-R3-49: nothing reads the policy yet; hidden until something does.
+    // The saved Antenna_ConflictPolicy value stays as it is.
+    UnbuiltFeatures::hideUnlessBuilt(group, UnbuiltFeature::AntennaConflict);
     auto* layout = new QVBoxLayout(group);
     layout->setContentsMargins(8, 4, 8, 4);
     layout->setSpacing(4);
@@ -566,9 +728,13 @@ void AntennaAlexAntennaControlTab::buildConflictPolicyGroup(QVBoxLayout* outerLa
     layout->addWidget(hint);
 
     auto* btnGroup = new QButtonGroup(this);
-    auto* autoBtn  = new QRadioButton(tr("Auto - resolve silently when safe, toast on RX-only switch"), group);
-    auto* warnBtn  = new QRadioButton(tr("Warn - show TxBoundConfirmDialog before TX-bound re-route"), group);
-    auto* blockBtn = new QRadioButton(tr("Block - refuse add-slice when chain conflict would occur"), group);
+    // R-R3-17 / R-R3-21: user words. Warn is TxBoundConfirmDialog before a
+    // TX-bound re-route; Block refuses add-slice on a chain conflict.
+    auto* autoBtn  = new QRadioButton(tr("Auto - resolve it when safe, and show a notice when "
+                                         "only a receive antenna changes"), group);
+    auto* warnBtn  = new QRadioButton(tr("Warn - ask before moving the transmit antenna"), group);
+    auto* blockBtn = new QRadioButton(tr("Block - do not add the slice while its antenna is "
+                                         "in use by another slice"), group);
     btnGroup->addButton(autoBtn,  0);
     btnGroup->addButton(warnBtn,  1);
     btnGroup->addButton(blockBtn, 2);
@@ -614,7 +780,7 @@ void AntennaAlexAntennaControlTab::applySkuProfile()
 
     // RX-only radio-button tooltips — re-bind to SKU label.
     for (int b = 0; b < kBandCount; ++b) {
-        const auto band = static_cast<Band>(b);
+        const auto band = bandFromPerBandStateSlot(b);
         for (int a = 0; a < 3; ++a) {
             if (auto* rb = m_rxOnlyButtons[b][a]) {
                 rb->setToolTip(tr("RX-only %1 for %2")
@@ -641,17 +807,133 @@ void AntennaAlexAntennaControlTab::applySkuProfile()
     // SKU-specific tooltip for Ext2OutOnTx — From Thetis setup.cs:6178/6198
     // [v2.10.3.13 @501e3f5].
     if (m_chkExt2OutOnTx) {
-        const bool isAnan7000Family =
-            (sku == HPSDRModel::ANAN7000D)      ||
-            (sku == HPSDRModel::ANAN8000D)      ||
-            (sku == HPSDRModel::ANAN_G2)        ||
-            (sku == HPSDRModel::ANAN_G2_1K)     ||
-            (sku == HPSDRModel::ANVELINAPRO3)   ||
-            (sku == HPSDRModel::REDPITAYA);
-        m_chkExt2OutOnTx->setToolTip(isAnan7000Family
-            ? tr("Enable RX Bypass during transmit.")
-            : tr("Enable RX 1 IN on Alex or Ext 2 on ANAN during transmit."));
+        m_chkExt2OutOnTx->setToolTip(profile.ext2OutOnTxTooltip);
     }
 }
+
+// ── R-R3-46: remote window source; parity Task 12: its transmit half ─────────
+
+int AntennaAlexAntennaControlTab::txAntOf(Band band) const
+{
+    return m_remoteAlex ? m_remoteAlex->txAnt(band) : m_alex->txAnt(band);
+}
+
+int AntennaAlexAntennaControlTab::rxAntOf(Band band) const
+{
+    return m_remoteAlex ? m_remoteAlex->rxAnt(band) : m_alex->rxAnt(band);
+}
+
+int AntennaAlexAntennaControlTab::rxOnlyAntOf(Band band) const
+{
+    return m_remoteAlex ? m_remoteAlex->rxOnlyAnt(band) : m_alex->rxOnlyAnt(band);
+}
+
+bool AntennaAlexAntennaControlTab::blockTxAnt2Now() const
+{
+    return m_remoteAlex ? m_remoteAlex->blockTxAnt2() : m_alex->blockTxAnt2();
+}
+
+bool AntennaAlexAntennaControlTab::blockTxAnt3Now() const
+{
+    return m_remoteAlex ? m_remoteAlex->blockTxAnt3() : m_alex->blockTxAnt3();
+}
+
+bool AntennaAlexAntennaControlTab::rxOutOnTxNow() const
+{
+    return m_remoteAlex ? m_remoteAlex->rxOutOnTx() : m_alex->rxOutOnTx();
+}
+
+bool AntennaAlexAntennaControlTab::ext1OutOnTxNow() const
+{
+    return m_remoteAlex ? m_remoteAlex->ext1OutOnTx() : m_alex->ext1OutOnTx();
+}
+
+bool AntennaAlexAntennaControlTab::ext2OutOnTxNow() const
+{
+    return m_remoteAlex ? m_remoteAlex->ext2OutOnTx() : m_alex->ext2OutOnTx();
+}
+
+bool AntennaAlexAntennaControlTab::rxOutOverrideNow() const
+{
+    return m_remoteAlex ? m_remoteAlex->rxOutOverride() : m_alex->rxOutOverride();
+}
+
+bool AntennaAlexAntennaControlTab::useTxAntForRxNow() const
+{
+    return m_remoteAlex ? m_remoteAlex->useTxAntennaForRx() : m_alex->useTxAntForRx();
+}
+
+void AntennaAlexAntennaControlTab::syncAllFromSource()
+{
+    for (int row = 0; row < kBandCount; ++row) {
+        syncTxRow(row);
+        syncRxRow(row);
+    }
+    onBlockTxChanged();
+}
+
+void AntennaAlexAntennaControlTab::syncTxRelaysFromSource()
+{
+    const auto show = [](QCheckBox* box, bool on) {
+        if (!box) { return; }
+        QSignalBlocker b(box);
+        box->setChecked(on);
+    };
+    show(m_chkRxOutOnTx, rxOutOnTxNow());
+    show(m_chkExt1OutOnTx, ext1OutOnTxNow());
+    show(m_chkExt2OutOnTx, ext2OutOnTxNow());
+    show(m_chkRxOutOverride, rxOutOverrideNow());
+}
+
+void AntennaAlexAntennaControlTab::applyTransmitEditAvailability()
+{
+    if (!m_remoteAlex) {
+        return;
+    }
+    // Parity Task 12: the TX antenna grid, the Block-TX strip, Ext 1 and
+    // Ext 2 on TX and the RX bypass relay override go to a Core at
+    // radioHardwareVersion 6; RX bypass on TX to one at 5. "Use TX antenna
+    // for RX" is a receive setting and follows the whole tab. No on-air
+    // rule: Thetis applies each at once while transmitting (see
+    // StationServer::radioHardwareVersion).
+    const QString fallback = m_remoteAlex->windowUnavailableReason().isEmpty()
+        ? tr("Connect to the Core to change the radio's hardware settings.")
+        : m_remoteAlex->windowUnavailableReason();
+    const bool txAntennas = m_remoteAlex->txAntennasEditable();
+    const QString txReason = m_remoteAlex->txAntennasUnavailableReason().isEmpty()
+        ? fallback : m_remoteAlex->txAntennasUnavailableReason();
+    for (QWidget* w : std::initializer_list<QWidget*>{
+             m_txGridGroup, m_blockTxFrame, m_chkExt1OutOnTx, m_chkExt2OutOnTx,
+             m_chkRxOutOverride}) {
+        HardwareTransmitGate::apply(w, txAntennas, txReason);
+    }
+    const bool rxBypass = m_remoteAlex->rxBypassEditable();
+    const QString bypassReason = m_remoteAlex->rxBypassUnavailableReason().isEmpty()
+        ? fallback : m_remoteAlex->rxBypassUnavailableReason();
+    HardwareTransmitGate::apply(m_chkRxOutOnTx, rxBypass, bypassReason);
+}
+
+#ifdef NEREUS_BUILD_TESTS
+QRadioButton* AntennaAlexAntennaControlTab::rxButtonForTest(Band band, int ant) const
+{
+    const int b = perBandStateSlot(band);
+    return (b >= 0 && b < kBandCount && ant >= 1 && ant <= 3)
+        ? m_rx1Buttons[static_cast<std::size_t>(b)][static_cast<std::size_t>(ant - 1)] : nullptr;
+}
+
+QRadioButton* AntennaAlexAntennaControlTab::rxOnlyButtonForTest(Band band, int ant) const
+{
+    const int b = perBandStateSlot(band);
+    return (b >= 0 && b < kBandCount && ant >= 1 && ant <= 3)
+        ? m_rxOnlyButtons[static_cast<std::size_t>(b)][static_cast<std::size_t>(ant - 1)] : nullptr;
+}
+
+QRadioButton* AntennaAlexAntennaControlTab::txButtonForTest(Band band, int ant) const
+{
+    const int b = perBandStateSlot(band);
+    return (b >= 0 && b < kBandCount && ant >= 1 && ant <= 3)
+        ? m_txButtons[static_cast<std::size_t>(b)][static_cast<std::size_t>(ant - 1)] : nullptr;
+}
+#endif
 
 } // namespace NereusSDR

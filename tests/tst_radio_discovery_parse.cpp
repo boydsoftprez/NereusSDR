@@ -15,6 +15,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-25 - Receiver and transmit gaps plan, Task 5: the top rate a
+//                 Protocol 1 reply carries. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  clsRadioDiscovery.cs
@@ -117,6 +120,8 @@ private slots:
         // MAC formatted by macToString() — upper-case hex with colons
         QCOMPARE(info.macAddress,      QStringLiteral("AA:BB:CC:11:22:33"));
         QCOMPARE(info.inUse,           false);
+        // Plan Task 5: the HL2 reaches 384 kHz on Protocol 1 (mi0bot).
+        QCOMPARE(info.maxSampleRate,   384000);
     }
 
     // --- P1: Angelia (ANAN-100D) ---
@@ -138,6 +143,8 @@ private slots:
         QCOMPARE(info.protocol,        ProtocolVersion::Protocol1);
         QCOMPARE(info.macAddress,      QStringLiteral("AA:BB:CC:44:55:66"));
         QCOMPARE(info.inUse,           false);
+        // Plan Task 5: an ANAN-100D on Protocol 1 tops out at 192 kHz.
+        QCOMPARE(info.maxSampleRate,   192000);
     }
 
     // --- P2: Saturn (ANAN-G2) ---
@@ -159,6 +166,8 @@ private slots:
         QCOMPARE(info.protocol,        ProtocolVersion::Protocol2);
         QCOMPARE(info.macAddress,      QStringLiteral("BB:CC:DD:77:88:99"));
         QCOMPARE(info.inUse,           false);
+        // Plan Task 5 leaves a Protocol 2 reply at 1536 kHz.
+        QCOMPARE(info.maxSampleRate,   1536000);
     }
 
     // --- Edge case: short packets rejected ---
@@ -210,6 +219,73 @@ private slots:
         RadioInfo info;
         QVERIFY(!RadioDiscovery::parseP1Reply(
             bytes, QHostAddress(QStringLiteral("192.168.1.1")), info));
+    }
+
+    // --- Plan Task 5: the top rate a Protocol 1 reply carries ---
+    // Was 384 kHz for every reply. On Protocol 1 only the RedPitaya (Thetis)
+    // and the HL2 (mi0bot) reach 384 kHz, and a reply names the board, not
+    // the model; the RedPitaya answers as a Hermes or OrionMKII board, so
+    // its 384 kHz comes from the model the operator picks, not from here.
+    void p1ReplyTopRateFollowsTheBoard_data()
+    {
+        QTest::addColumn<int>("boardByte");
+        QTest::addColumn<int>("expected");
+        QTest::newRow("Atlas")      << 0  << 192000;
+        QTest::newRow("Hermes")     << 1  << 192000;
+        QTest::newRow("HermesII")   << 2  << 192000;
+        QTest::newRow("Angelia")    << 4  << 192000;
+        QTest::newRow("Orion")      << 5  << 192000;
+        QTest::newRow("HermesLite") << 6  << 384000;
+        QTest::newRow("OrionMKII")  << 10 << 192000;
+        QTest::newRow("HermesC10")  << 20 << 192000;
+        // Plan Task 15: the HL2 receive-only kit (NereusSDR's board 12)
+        // resolves to the HL2 model, so its reply carries the HL2's 384 kHz
+        // (mi0bot-Thetis setup.cs:849-851 [v2.10.3.13-beta2]).
+        QTest::newRow("HermesLiteRxOnly") << 12 << 384000;
+    }
+
+    void p1ReplyTopRateFollowsTheBoard()
+    {
+        QFETCH(int, boardByte);
+        QFETCH(int, expected);
+        // EF FE 02 | MAC (6) | firmware | board, padded to a full reply.
+        QByteArray bytes(60, '\0');
+        bytes[0] = char(0xEF);
+        bytes[1] = char(0xFE);
+        bytes[2] = char(0x02);
+        for (int i = 3; i < 9; ++i) { bytes[i] = char(0x10 + i); }
+        bytes[9]  = char(30);
+        bytes[10] = char(boardByte);
+
+        RadioInfo info;
+        QVERIFY(RadioDiscovery::parseP1Reply(
+            bytes, QHostAddress(QStringLiteral("192.168.1.50")), info));
+        QCOMPARE(info.maxSampleRate, expected);
+    }
+
+    // Plan Task 15: the kit's receiver count is the HL2's. mi0bot sets
+    // P1_rxcount = 4 for HERMESLITE (console.cs:8409-8488 [v2.10.3.13-beta2]).
+    void p1HermesLiteRxOnlyReceiverCountIsTheHl2s()
+    {
+        auto reply = [](int boardByte) {
+            QByteArray bytes(60, '\0');
+            bytes[0] = char(0xEF);
+            bytes[1] = char(0xFE);
+            bytes[2] = char(0x02);
+            for (int i = 3; i < 9; ++i) { bytes[i] = char(0x10 + i); }
+            bytes[9]  = char(72);
+            bytes[10] = char(boardByte);
+            RadioInfo info;
+            RadioDiscovery::parseP1Reply(
+                bytes, QHostAddress(QStringLiteral("192.168.1.51")), info);
+            return info;
+        };
+        const RadioInfo kit = reply(12);
+        const RadioInfo hl2 = reply(6);
+        QCOMPARE(kit.boardType, HPSDRHW::HermesLiteRxOnly);
+        QCOMPARE(kit.maxReceivers, 4);
+        QCOMPARE(kit.maxReceivers, hl2.maxReceivers);
+        QCOMPARE(kit.adcCount, hl2.adcCount);
     }
 
     // --- P1: ANAN-G2E (HermesC10) ---

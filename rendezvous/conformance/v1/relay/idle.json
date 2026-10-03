@@ -1,0 +1,105 @@
+{
+  "runs": [
+    "relay",
+    "core",
+    "app"
+  ],
+  "steps": [
+    {
+      "connect": "core",
+      "address": "198.51.100.1"
+    },
+    {
+      "from": "core",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:core:s:a"
+      ]
+    },
+    {
+      "to": "core",
+      "binary": [
+        "81",
+        "01",
+        "00"
+      ]
+    },
+    {
+      "connect": "device",
+      "address": "203.0.113.1"
+    },
+    {
+      "from": "device",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:device:s:a"
+      ]
+    },
+    {
+      "to": "device",
+      "binary": [
+        "81",
+        "01",
+        "01"
+      ]
+    },
+    {
+      "to": "core",
+      "binary": [
+        "82",
+        "01"
+      ]
+    },
+    {
+      "from": "device",
+      "role": "behaviour",
+      "binary": [
+        "02",
+        "$bytes:10:m1"
+      ]
+    },
+    {
+      "to": "core",
+      "binary": [
+        "02",
+        "$ref:m1"
+      ]
+    },
+    {
+      "advanceMs": 29999
+    },
+    {
+      "expectSilent": "core"
+    },
+    {
+      "expectSilent": "device"
+    },
+    {
+      "advanceMs": 1
+    },
+    {
+      "to": "core",
+      "binary": [
+        "83",
+        "69646c65"
+      ]
+    },
+    {
+      "expectClosed": "core",
+      "code": 1000
+    },
+    {
+      "to": "device",
+      "binary": [
+        "83",
+        "69646c65"
+      ]
+    },
+    {
+      "expectClosed": "device",
+      "code": 1000
+    }
+  ]
+}

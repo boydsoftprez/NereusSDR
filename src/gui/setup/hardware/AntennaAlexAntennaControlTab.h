@@ -15,6 +15,15 @@
 //                Claude Code. Sub-sub-tab under Hardware → Antenna/ALEX.
 //                Per-band antenna assignment + Block-TX safety; backed
 //                by AlexController model (Phase 3P-F Task 1).
+//   2026-09-23 - R-R3-46: remote window source and transmit
+//                 permission. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-09-25 - R-R3-49 / R-R3-46 (parity Task 12): a remote window's
+//                 transmit half writes the Core and follows whether the Core
+//                 takes it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -99,6 +108,7 @@ namespace NereusSDR {
 
 class RadioModel;
 class AlexController;
+class AlexAntennaFacade;
 struct RadioInfo;
 
 // AntennaAlexAntennaControlTab — "Antenna Control" sub-sub-tab under Hardware → Antenna/ALEX.
@@ -126,6 +136,27 @@ public:
     // Expose a test accessor so unit tests can verify the controller reference.
     AlexController& controller();
 
+    // Parity Task 12 (R-R3-49 / R-R3-46): in a remote window the transmit
+    // half (TX antenna grid, Block-TX switches and the four TX relay
+    // switches) goes to the Core and follows whether the Core takes it (the
+    // Alex facade's transmit edit availability), disabled with its reason
+    // when not. It never waits for the radio to leave the air, as in
+    // Thetis. A local window's is always live.
+
+#ifdef NEREUS_BUILD_TESTS
+    QRadioButton* rxButtonForTest(Band band, int ant) const;
+    QRadioButton* rxOnlyButtonForTest(Band band, int ant) const;
+    QRadioButton* txButtonForTest(Band band, int ant) const;
+    QCheckBox* useTxAntForRxForTest() const { return m_chkUseTxAntForRx; }
+    QCheckBox* blockTxAnt2ForTest() const { return m_blockTxAnt2; }
+    QCheckBox* blockTxAnt3ForTest() const { return m_blockTxAnt3; }
+    QCheckBox* rxOutOnTxForTest() const { return m_chkRxOutOnTx; }
+    QCheckBox* ext1OutOnTxForTest() const { return m_chkExt1OutOnTx; }
+    QCheckBox* ext2OutOnTxForTest() const { return m_chkExt2OutOnTx; }
+    QCheckBox* rxOutOverrideForTest() const { return m_chkRxOutOverride; }
+    QWidget* txGridForTest() const { return m_txGridGroup; }
+#endif
+
 private slots:
     void onAntennaChanged(NereusSDR::Band band);
     void onBlockTxChanged();
@@ -145,9 +176,37 @@ private:
     void syncRxRow(int row);
     // Update TX radio button enabled states for blocked ports.
     void updateTxBlockedStates();
+    // R-R3-46: re-read every row and switch (a remote window's source is the
+    // Core's `alexAntennas` object).
+    void syncAllFromSource();
+    // Parity Task 12: a remote window's four TX relay switches show the
+    // Core's values again (after an edit, or its refusal).
+    void syncTxRelaysFromSource();
+    // Parity Task 12: a remote window's transmit half follows the Alex
+    // facade's transmit edit availability.
+    void applyTransmitEditAvailability();
+
+    // Where the tab reads its values: the window's own AlexController
+    // locally, the Core's `alexAntennas` object in a remote window.
+    int txAntOf(Band band) const;
+    int rxAntOf(Band band) const;
+    int rxOnlyAntOf(Band band) const;
+    bool blockTxAnt2Now() const;
+    bool blockTxAnt3Now() const;
+    bool rxOutOnTxNow() const;
+    bool ext1OutOnTxNow() const;
+    bool ext2OutOnTxNow() const;
+    bool rxOutOverrideNow() const;
+    bool useTxAntForRxNow() const;
 
     RadioModel*      m_model{nullptr};
     AlexController*  m_alex{nullptr};
+    // R-R3-46: a remote window's source and sink for the receive settings
+    // (nullptr locally).
+    AlexAntennaFacade* m_remoteAlex{nullptr};
+
+    QWidget* m_txGridGroup{nullptr};
+    QWidget* m_blockTxFrame{nullptr};
 
     // Block-TX safety strip
     QCheckBox* m_blockTxAnt2{nullptr};
@@ -156,7 +215,7 @@ private:
     // Per-band TX antenna: one QButtonGroup of 3 QRadioButton per row.
     // Indexed by band int (0..13).  HF amateur + GEN/WWV/XVTR only;
     // SWL bands (Phase 3L extension) inherit ham antenna routing.
-    static constexpr int kBandCount = static_cast<int>(Band::SwlFirst);  // 14
+    static constexpr int kBandCount = kPerBandStateCount;  // 15: per-band state slots, 2 m at 14
 
     std::array<QButtonGroup*, kBandCount> m_txGroups{};
     // [band][ant-1] where ant-1 in [0,2]

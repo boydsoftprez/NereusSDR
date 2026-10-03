@@ -1,0 +1,14 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "hello",
+    "version": 1,
+    "nonce": "IbDG1L9Qg81JTTMz2DHdow8ODOzkVCWcGsqirynSV5I",
+    "stun": [
+      "stun:rv4.nereussdr.com:3478",
+      "stun:rv6.nereussdr.com:3478"
+    ]
+  },
+  "decodes": true
+}

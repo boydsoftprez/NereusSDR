@@ -158,6 +158,91 @@
 //                 (nbp.h:96-100), the same situation as the existing
 //                 RXANBPSetShiftFrequency declaration.
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-23  WDSPSetTestBlockDelayUs declaration added by J.J. Boyd
+//                 (KG4VCF) for the R3 DSP lock turn-taking test (R-R3-39).
+//                 NereusSDR-original test seam exported from
+//                 third_party/wdsp/src/dsplock.c; no Thetis counterpart.
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-23  WDSPGetTestWorkerExitCount declaration added by J.J. Boyd
+//                 (KG4VCF) for the R3 channel shutdown test (R-R3-39).
+//                 NereusSDR-original test seam exported from
+//                 third_party/wdsp/src/dsplock.c; no Thetis counterpart.
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-23  WdspChannelLoad and GetChannelDspLoad declarations added
+//                 by J.J. Boyd (KG4VCF) for per-receiver DSP load
+//                 measurement (R-R3-40). NereusSDR-original reader exported
+//                 from third_party/wdsp/src/dsplock.c; no Thetis
+//                 counterpart. AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-09-23  WdspChannelLoad::currentBlockNs and
+//                 TakeChannelDspIntervalMaxBlockUs declarations added by
+//                 J.J. Boyd (KG4VCF) for the per-receiver load sampler
+//                 (R-R3-40). NereusSDR-original reader exported from
+//                 third_party/wdsp/src/dsplock.c; no Thetis counterpart.
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-23  WDSPGetTestLastWorkerExitWaitUs declaration added by J.J.
+//                 Boyd (KG4VCF) for the R3 channel shutdown test (R-R3-39).
+//                 NereusSDR-original test seam exported from
+//                 third_party/wdsp/src/dsplock.c; no Thetis counterpart.
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-23  WDSPSetTestProcessDelayUs declaration added by J.J. Boyd
+//                 (KG4VCF) for the R3 channel shutdown test (R-R3-39).
+//                 NereusSDR-original test seam exported from
+//                 third_party/wdsp/src/dsplock.c; no Thetis counterpart.
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-23  RequestRXANNRLimit declaration added by J.J. Boyd
+//                 (KG4VCF) for the NNR step-back under load (R-R3-40).
+//                 NereusSDR-original export from the NereusSDR-modified
+//                 third_party/wdsp/src/nnr.c; no Thetis counterpart.
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-23  WDSPSetThreadStartHook declaration and the thread kinds it
+//                 reports added by J.J. Boyd (KG4VCF) for placing DSP
+//                 threads on the fastest cores (R-R3-41). NereusSDR-original
+//                 export from third_party/wdsp/src/linux_port.c (not built
+//                 on Windows); no Thetis counterpart. AI-assisted
+//                 implementation via Anthropic Claude Code.
+//                 Later the same day: kWdspThreadWorkerExit, the hook's
+//                 report of a worker about to end, so a finished worker is
+//                 forgotten before its thread ID can be reused.
+//   2026-09-23  WdspChannelLoad::readNs and the WDSPSetTestPeriodicDelayUs
+//                 declaration added by J.J. Boyd (KG4VCF) so a receiver's
+//                 load reads busy time over wall time (R-R3-40, R-R3-37).
+//                 NereusSDR-original reader field and test seam exported
+//                 from third_party/wdsp/src/dsplock.c; no Thetis
+//                 counterpart. AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-09-23  GetChannelDspLoad's return 1 (a read that may be torn) and
+//                 the WDSPSetTestHoldLoadPair declaration added by J.J. Boyd
+//                 (KG4VCF) (R-R3-40). NereusSDR-original, exported from
+//                 third_party/wdsp/src/dsplock.c; no Thetis counterpart.
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-24  WDSPSetCallerCheckHook declaration and the kWdspCaller*
+//                 kinds it reports added by J.J. Boyd (KG4VCF) for the
+//                 check that counts WDSP calls made from the event loop
+//                 (R-R3-39). NereusSDR-original export from
+//                 third_party/wdsp/src/dsplock.c; no Thetis counterpart.
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-25  kWdspCallerResampleFv: the float resampler calls report to
+//                 the same check (R-R3-39), by J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-25  WDSPSetTestBlockHook declaration added by J.J. Boyd
+//                 (KG4VCF) so a load test measures the worker's busy share
+//                 the way the load counters do, without them (R-R3-40).
+//                 NereusSDR-original test seam exported from
+//                 third_party/wdsp/src/dsplock.c; no Thetis counterpart.
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-29  WDSPGetTestWorkerPauseNs declaration added by J.J. Boyd
+//                 (KG4VCF) so the turn-taking test times the worker's own
+//                 pause (R-R3-39). NereusSDR-original test seam exported
+//                 from third_party/wdsp/src/dsplock.c; no Thetis
+//                 counterpart. AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-10-01  WDSPSetTestExchangeHook declaration added by J.J. Boyd
+//                 (KG4VCF) so a test holds dexchange's worker after its
+//                 Sem_OutReady release while the caller runs ahead.
+//                 NereusSDR-original test seam exported from
+//                 third_party/wdsp/src/dsplock.c; no Thetis counterpart.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  wdsp.cs
@@ -263,6 +348,8 @@ warren@wpratt.com
 
 #pragma once
 
+#include "../../third_party/wdsp/src/ps3_abi.h"
+
 // NEREUS_STDCALL — calling-convention shim for WDSP function-pointer
 // callbacks.  Defined OUTSIDE the HAVE_WDSP guard so consumers (TxChannel's
 // pushvox bridge) can declare a portable callback signature in test builds
@@ -276,6 +363,22 @@ warren@wpratt.com
 #else
 #  define NEREUS_STDCALL
 #endif
+
+// Thread kinds WDSPSetThreadStartHook reports; the same values as the
+// WDSP_THREAD_* enum in third_party/wdsp/src/linux_port.h. Defined outside
+// the HAVE_WDSP guard so code that only receives them builds without WDSP.
+constexpr int kWdspThreadRxMain = 1;  // a receive channel's DSP worker
+constexpr int kWdspThreadTxMain = 2;  // a transmit channel's DSP worker
+constexpr int kWdspThreadFlush  = 3;  // a channel's flush thread
+constexpr int kWdspThreadWorkerExit = 4;  // a channel's worker, about to end
+
+// Kinds WDSPSetCallerCheckHook reports; the same values as the
+// WDSP_CALLER_* enum in third_party/wdsp/src/dsplock.h.
+constexpr int kWdspCallerEnterCs = 1;         // any WDSP lock entry (WdspEnterCS)
+constexpr int kWdspCallerWaitWorkerExit = 2;  // channel teardown waits for its worker
+constexpr int kWdspCallerOpenChannel = 3;     // OpenChannel
+constexpr int kWdspCallerSetChannelState = 4; // SetChannelState
+constexpr int kWdspCallerResampleFv = 5;      // create_resampleFV / xresampleFV / destroy_resampleFV
 
 #ifdef HAVE_WDSP
 
@@ -306,6 +409,105 @@ void SetInputSamplerate(int channel, int samplerate);
 void SetDSPSamplerate(int channel, int samplerate);
 
 void SetOutputSamplerate(int channel, int samplerate);
+
+// Test-only (NereusSDR dsplock.c): busy-wait this many microseconds inside
+// the channel worker's csDSP section on every block, simulating an
+// overloaded DSP chain. 0 (the default) turns it off. Never call it in
+// production code.
+void WDSPSetTestBlockDelayUs(int channel, int microseconds);
+
+// Test-only (NereusSDR dsplock.c): like WDSPSetTestBlockDelayUs, but the
+// busy-wait runs inside a block the worker processes (after its bypass check,
+// before its buffer exchange), so a teardown during the delay meets real DSP
+// work. 0 (the default) turns it off. Never call it in production code.
+void WDSPSetTestProcessDelayUs(int channel, int microseconds);
+
+// Test-only (NereusSDR dsplock.c): like WDSPSetTestProcessDelayUs, but the
+// busy-wait runs only in every everyBlocks-th processed block, like a stage
+// that works in frames longer than one block. 0 for either value turns it
+// off. Never call it in production code.
+void WDSPSetTestPeriodicDelayUs(int channel, int microseconds, int everyBlocks);
+
+// Test-only (NereusSDR dsplock.c): while hold is nonzero, every
+// GetChannelDspLoad read of the channel finds its load pair changing and
+// returns 1; hold 0 releases it. Never call it in production code.
+void WDSPSetTestHoldLoadPair(int channel, int hold);
+
+// Test-only (NereusSDR dsplock.c): install (or, with nullptr, remove) a
+// function every channel worker calls on itself at each block's start (endNs
+// 0) and end, with the block's start and end on the monotonic clock
+// GetChannelDspLoad's readNs uses. Never call it in production code.
+void WDSPSetTestBlockHook(void (*hook)(int channel, long long startNs, long long endNs));
+
+// Test-only (NereusSDR dsplock.c): install (or, with nullptr, remove) a
+// function iobuffs.c's dexchange calls on the channel worker right after it
+// releases Sem_OutReady. The hook must not call into WDSP. Never call it in
+// production code.
+void WDSPSetTestExchangeHook(void (*hook)(int channel));
+
+// Test-only (NereusSDR dsplock.c): how long, in microseconds, the channel's
+// latest teardown waited for its worker to leave its loop (that wait alone,
+// not the rest of the teardown); -1 for an invalid channel. Never call it in
+// production code.
+long long WDSPGetTestLastWorkerExitWaitUs(int channel);
+
+// Test-only (NereusSDR dsplock.c): how many times this channel's DSP worker
+// has left its loop in this process. Never call it in production code.
+int WDSPGetTestWorkerExitCount(int channel);
+
+// Test-only (NereusSDR dsplock.c): the pause, in nanoseconds, between the
+// DSP worker's waiter checks while it holds off. Never call it in
+// production code.
+long WDSPGetTestWorkerPauseNs();
+
+// NereusSDR dsplock.c: one channel's worker load since the process started,
+// read without the channel's DSP lock (it never waits for the worker). Same
+// layout as WdspChannelLoad in third_party/wdsp/src/dsplock.h. Every field
+// only grows except blockPeriodUs, the block period (dsp_size / dsp_rate) of
+// the worker's latest or current block, 0 before its first block, and
+// currentBlockNs, how long the block in progress has run (0 between blocks),
+// and readNs, when the read was taken (the clock read that gave
+// currentBlockNs). busyNs + currentBlockNs is the worker's time inside blocks
+// up to readNs, one instant's value. Returns 0 on success, -1 for an invalid
+// channel or a null out, and 1 when the worker kept that pair changing
+// through every attempt (the read may be torn; skip it). The guard lets a
+// file include both this header and dsplock.h.
+#ifndef NEREUS_WDSP_CHANNEL_LOAD_DEFINED
+#define NEREUS_WDSP_CHANNEL_LOAD_DEFINED
+typedef struct {
+    long long blocks;       // worker blocks completed
+    long long busyNs;       // total time the worker held the lock for them
+    long long lateBlocks;   // blocks longer than their block period
+    long long maxBlockUs;   // longest single block
+    int       blockPeriodUs;
+    long long currentBlockNs; // block in progress so far; 0 between blocks
+    long long readNs;         // when this read was taken (monotonic clock)
+} WdspChannelLoad;
+#endif
+
+int GetChannelDspLoad(int channel, WdspChannelLoad* out);
+
+// NereusSDR dsplock.c: the longest block (microseconds) the channel's worker
+// completed since the previous call, which starts the next interval (0 if
+// none completed; -1 for an invalid channel). One periodic reader owns it:
+// RadioModel's load sampler. Never waits for the worker.
+long long TakeChannelDspIntervalMaxBlockUs(int channel);
+
+// NereusSDR dsplock.c: install (or, with nullptr, remove) a function every
+// WDSP lock entry, channel teardown wait, OpenChannel and SetChannelState
+// call first, on the calling thread, with the channel (-1 for a lock that is
+// not a channel's DSP lock) and a kWdspCaller* kind. The hook must not
+// block or call into WDSP. With none installed each call pays one pointer
+// test. Used by WdspThreadCheck (R-R3-39) in debug and test builds only.
+void WDSPSetCallerCheckHook(void (*hook)(int channel, int kind));
+
+#if !defined(_WIN32) && !defined(Q_OS_WIN)
+// NereusSDR linux_port.c: install (or, with nullptr, remove) a function each
+// channel worker and flush thread calls once on itself as it starts, before
+// its start routine, with its kind (kWdspThread* above) and channel. Not
+// built on Windows, where WDSP starts threads with the platform _beginthread.
+void WDSPSetThreadStartHook(void (*hook)(int kind, int channel));
+#endif
 
 // ---------------------------------------------------------------------------
 // In-place filter-size / filter-type reconfigure (RXA.c / TXA.c)
@@ -601,6 +803,28 @@ void SetRXASBNRnoiseRescale(int channel, float factor);
 void SetRXASBNRpostFilterThreshold(int channel, float threshold);
 
 void SetRXASBNRnoiseScalingType(int channel, int noise_scaling_type);
+
+// NNR, pinned TAPR WDSP 2.10 nnr.c/nnet.c [b02d5bac]. Model paths are
+// process-wide and are set before channel creation. Application code uses
+// NnrAdapter's accepted configuration/status boundary for live tuning.
+void SetNNRModelPathSlot(int slot, const char* path);
+void SetNNRModelPath(const char* path);
+void SetRXANNRRun(int channel, int run);
+void SetRXANNRPosition(int channel, int position);
+void SetRXANNRMaskFloor(int channel, double floorDb);
+int SetRXANNRModel(int channel, int slot);
+int GetRXANNRModel(int channel);
+void SetRXANNRTestMode(int channel, int mode);
+void SetRXANNRcmode(int channel, int mode);
+void SetRXANNRAlpha(int channel, double alpha);
+void SetRXANNRAlphaKnee(int channel, double kneeDb);
+void SetRXANNRTau(int channel, double seconds);
+void SetRXANNRMaxGain(int channel, double gainDb);
+void SetRXANNRSmooth(int channel, double attackMs, double releaseMs);
+// NereusSDR nnr.c (R-R3-40): runtime NNR limit. limit: 0 none, 1 standard
+// model only, 2 off. Never takes the channel DSP lock; the channel's worker
+// applies it at its next block. Same declaration as nnr_compat.h.
+void RequestRXANNRLimit(int channel, int limit);
 
 // ---------------------------------------------------------------------------
 // Spectral noise blanker (snb.h) — From Thetis dsp.cs P/Invoke declarations
@@ -977,12 +1201,13 @@ void SetTXAEQRun(int channel, int run);
 void SetTXAEQNC(int channel, int nc);
 // From Thetis wdsp/eq.c:767-776 [v2.10.3.13] — SetTXAEQMP (minimum-phase flag).
 void SetTXAEQMP(int channel, int mp);
-// From Thetis wdsp/eq.c:779-804 [v2.10.3.13] — SetTXAEQProfile.
+// From Thetis wdsp/eq.c:780-806 [v2.10.3.15] and dsp.cs:787-788: SetTXAEQProfile.
 //   F[0..nfreqs] freqs Hz (F[0] unused / preamp pad)
 //   G[0..nfreqs] gains dB (G[0] = preamp)
-// (Graphic-EQ form — no Q vector. The parametric variant
-//  SetTXAGrphEQ10 / SetTXAGrphEQProfile takes Q separately.)
-void SetTXAEQProfile(int channel, int nfreqs, double* F, double* G);
+//   Q[0..nfreqs] Q factors (Q[0] unused), or nullptr: the legacy EQ and the
+//   parametric panel with Q factors off pass nullptr (eqform.cs:3041-3072).
+// R-R3-49 (group A fix wave): the vendored eq.c takes Q as Thetis's does.
+void SetTXAEQProfile(int channel, int nfreqs, double* F, double* G, double* Q);
 // From Thetis wdsp/eq.c:807-816 [v2.10.3.13] — SetTXAEQCtfmode.
 void SetTXAEQCtfmode(int channel, int mode);
 // From Thetis wdsp/eq.c:819-828 [v2.10.3.13] — SetTXAEQWintype.
@@ -1251,9 +1476,9 @@ void SendAntiVOXData(int id, int nsamples, double* data);
 //
 // xdexp() runs once per audio block from TxWorkerThread::dispatchOneBlock,
 // mirroring Thetis cmaster.c:388 [v2.10.3.13] (xdexp BEFORE fexchange0).
-// destroy_dexp() runs from WdspEngine::destroyTxChannel before
-// CloseChannel — mirrors cmaster.c:267 [v2.10.3.13] (destroy_dexp before
-// CloseChannel in destroy_xmtr).  SetDEXPIOBuffers re-points the in/out
+// destroy_dexp() runs from WdspEngine::destroyTxChannel after
+// CloseChannel, matching destroy_xmtr at cmaster.c:265-267 [v2.10.3.15].
+// SetDEXPIOBuffers re-points the in/out
 // buffer pair while the DEXP is live; NereusSDR's parallel-only buffer
 // architecture (see WdspEngine.cpp comment at the create_dexp callsite)
 // does not call SetDEXPIOBuffers per block, but the declaration is here
@@ -1268,13 +1493,13 @@ void SendAntiVOXData(int id, int nsamples, double* data);
 //
 // From Thetis wdsp/dexp.c [v2.10.3.13]:
 //   create_dexp:       dexp.c:187-227 — allocates DEXP struct, stores in pdexp[id]
-//   destroy_dexp:      dexp.c:230-239 — deallocates struct, clears pdexp[id]
+//   destroy_dexp:      dexp.c:230-239 — deallocates struct; owner must clear pdexp[id]
 //   xdexp:             dexp.c:266-396 — per-block driver (envelope + state machine)
 //   SetDEXPIOBuffers:  dexp.c:436-448 — re-point in/out buffers (heavy: rebuilds filter)
 // Cited from Thetis cmaster.c [v2.10.3.13]:
 //   create_dexp call:  cmaster.c:130-157 (default args verbatim from this site)
 //   xdexp call:        cmaster.c:388     (BEFORE fexchange0 at cmaster.c:389)
-//   destroy_dexp call: cmaster.c:267     (BEFORE CloseChannel at cmaster.c:265)
+//   destroy_dexp call: cmaster.c:267     (AFTER CloseChannel at cmaster.c:265)
 void create_dexp(int id, int run_dexp, int size, double* in, double* out, int rate,
                  double dettau, double tattack, double tdecay, double thold,
                  double exp_ratio, double hyst_ratio, double attack_thresh,
@@ -1338,30 +1563,22 @@ void GetDEXPPeakSignal(int id, double* peak);
 // ---------------------------------------------------------------------------
 // PureSignal API (calcc.c + cmaster.cs routing)
 //
-// Adaptive-predistortion calibration engine.  19 calcc entries control the
-// CALCC state machine (run, mox, reset, mancal, automode, turnon, loopdelay,
-// moxdelay, txdelay, hwpeak, ptol, feedbackrate, pinmode, mapmode, stabilize,
-// intsandspi) plus 4 readers (info[16], hwpeak, maxtx, disp×7).  2 routing
-// entries (SetPSRxIdx / SetPSTxIdx) wire the CMaster RX/TX feedback streams.
+// Adaptive-predistortion calibration engine from pinned TAPR WDSP 2.10.
+// CALCC is opaque.  GetPSRunCal is the narrow compatibility readback used
+// for availability/run-state checks; callers never dereference CALCC.
 //
-// All 19 calcc functions take a TXA channel id and operate on
-// txa[channel].calcc.p (pointer is created by create_calcc inside
-// create_txa() at TXA.c:405 [v2.10.3.13]).  Calls are csDSP-protected at
-// the WDSP boundary.  The routing functions take a "txid" (0 for primary
+// The routing functions take a "txid" (0 for primary
 // transmitter) and a stream index; per cmaster.cs:533-534 [v2.10.3.13]
 // "all current models use Stream0 for RX feedback / Stream1 for TX
 // feedback" — the values do not change across boards.
 //
 // SetPSTXDelay returns the actual delay applied (calcc.c:1001-1021
 // [v2.10.3.13] — the engine snaps to a fractional 20 ns delay step
-// derived from the feedback sample rate).  GetPSDisp takes seven output
-// buffers feeding the AmpView Ref / MagAmp / PhsAmp / MagCorr / PhsCorr /
-// MagCorrSmooth / PhsCorrSmooth series; sizing is `nsamps` doubles for
-// x/ym/yc/ys and `ints * 4` doubles for cm/cc/cs (calcc.c:1058-1070).
-// GetPSInfo writes 16 ints (calcc.c:927 — `memcpy(info, a->info,
-// 16 * sizeof(int))`).
+// derived from the feedback sample rate).  GetPSDisp takes four sample
+// arrays and four correction-curve arrays, then returns both counts and the
+// phase reference.  App code must allocate the pinned maxima before calling.
 //
-// From Thetis wdsp/calcc.c:891-1132 [v2.10.3.13]
+// From TAPR WDSP 2.10 calcc.c [@b02d5bac]
 // + Thetis cmaster.cs:143-147 [v2.10.3.13] (channel routing).
 // ---------------------------------------------------------------------------
 
@@ -1379,15 +1596,17 @@ double SetPSTXDelay(int channel, double delay);
 void SetPSHWPeak(int channel, double peak);
 void GetPSHWPeak(int channel, double* peak);
 void GetPSMaxTX(int channel, double* maxtx);
-void SetPSPtol(int channel, double ptol);
 void GetPSDisp(int channel, double* x, double* ym, double* yc, double* ys,
-               double* cm, double* cc, double* cs);
+               double* xmCorrection, double* ymCorrection,
+               double* xaCorrection, double* yaCorrection,
+               int* sampleCount, int* correctionCount,
+               double* phaseReferenceDegrees);
 void SetPSFeedbackRate(int channel, int rate);
-void SetPSPinMode(int channel, int pin);
-void SetPSMapMode(int channel, int map);
-void SetPSStabilize(int channel, int stbl);
-void SetPSIntsAndSpi(int channel, int ints, int spi);
 
+// WDSP 2.10 supersedes the historical PS2 implementation described below:
+// these entry points queue work on CALCC's owned worker and use the version-2
+// text correction format. Completion is read through ps3_abi.h generations.
+// Historical wiring/attribution context retained:
 // Save / restore the calcc correction tables to / from disk.  Both spawn a
 // detached thread inside calcc.c (PSSaveCorrection / PSRestoreCorrection at
 // calcc.c:567/600 [v2.10.3.13]) that writes / reads the binary `correctionsX`
@@ -1404,6 +1623,87 @@ void PSRestoreCorr(int channel, char* filename);
 void SetPSRxIdx(int id, int idx);
 void SetPSTxIdx(int id, int idx);
 
+// ---------------------------------------------------------------------------
+// Analyzer + siphon API — WDSP spectrum/waterfall infrastructure
+//
+// Used by TxAnalyzer (NereusSDR src/core/TxAnalyzer.cpp) to drive the TX
+// panadapter display from the pre-IQC siphon tap during MOX.  Mirrors
+// Thetis's panadapter source-switch (console.cs:24399-24462 [v2.10.3.13]):
+// MOX-on swaps the GetPixels source from RX disp → TX disp.
+//
+// From Thetis ChannelMaster/cmaster.cs:538-540 [v2.10.3.13]:
+//   WDSP.TXASetSipMode(txch, 1);            // 1=>call the appropriate analyzer
+//   WDSP.TXASetSipDisplay(txch, txinid);    // disp = txinid = tx stream
+//
+// Vendored sources: third_party/wdsp/src/analyzer.c, siphon.c, TXA.c [v2.10.3.13].
+// ---------------------------------------------------------------------------
+
+// analyzer.h:168 — XCreateAnalyzer (allocate analyzer instance for disp ID)
+//   m_LO = max number of LO positions per subspan
+//   m_stitch = max number of subspans
+//   app_data_path = char* (not const) per WDSP signature
+void XCreateAnalyzer(int disp, int* success, int m_size,
+                     int m_LO, int m_stitch, char* app_data_path);
+
+// analyzer.c:1425 — DestroyAnalyzer (free analyzer instance)
+void DestroyAnalyzer(int disp);
+
+// analyzer.c:1173 — SetAnalyzer (configure analyzer parameters)
+//   typ=1: complex I/Q input; typ=0: real input
+//   win_type=0..7: 0=rectangular, 1=Blackman-Harris 4-term, 4=Kaiser, etc.
+void SetAnalyzer(int disp, int n_pixout, int n_fft, int typ,
+                 int* flp, int sz, int bf_sz, int win_type, double pi,
+                 int ovrlp, int clp, double fscLin, double fscHin,
+                 int n_pix, int n_stch, int calset,
+                 double fmin, double fmax, int max_w);
+
+// analyzer.c:1505 — GetPixels (drain the next ready pixel frame)
+//   pix: float[n_pix] output buffer (dOUTREAL is float per comm.h:126)
+//   flag: out — 1 if frame written, 0 if no new frame ready
+void GetPixels(int disp, int pixout, float* pix, int* flag);
+// siphon.c:322, extra TX spectrum dispatch. Called on the transmit lane,
+// after the extra analyzer exists and before it is destroyed.
+void TXASetSipAllocDisps(int channel, int nAllocDisps, int* allocRun,
+                         int* allocDisp);
+
+// analyzer.c:1726 — Spectrum0 (push input samples; called from xsiphon mode 1)
+//   Not invoked directly by TxAnalyzer — the siphon dispatcher calls it
+//   from within fexchange0 when TXASetSipMode(ch, 1) has been set.
+void Spectrum0(int run, int disp, int ss, int LO, double* pbuff);
+
+// analyzer.c:1772 — SetDisplayDetectorMode (peak/avg/sample/min etc.)
+void SetDisplayDetectorMode(int disp, int pixout, int mode);
+
+// analyzer.c:1784 — SetDisplayAverageMode (avg type: TimeAvg / Log / Linear etc.)
+void SetDisplayAverageMode(int disp, int pixout, int mode);
+
+// analyzer.c:1816 — SetDisplayNumAverage (averaging window size)
+void SetDisplayNumAverage(int disp, int pixout, int num);
+
+// analyzer.c:1831 — SetDisplayAvBackmult (average back-multiplier)
+void SetDisplayAvBackmult(int disp, int pixout, double mult);
+
+// analyzer.c:1843 — SetDisplaySampleRate (input sample rate change)
+void SetDisplaySampleRate(int disp, int rate);
+
+// analyzer.c:1856 — SetDisplayNormOneHz (normalize trace to 1 Hz reference)
+// Thetis specHPSDR.cs:288-294 [v2.10.3.13] gates this on DetTypePan in
+// {2,3,4} via updateNormalizePan(); the WDSP call itself is unconditional.
+void SetDisplayNormOneHz(int disp, int pixout, int norm);
+
+// analyzer.c:1101 — ResetPixelBuffers (clear analyzer pixel buffers)
+void ResetPixelBuffers(int disp);
+
+// siphon.c:236 — TXASetSipMode (0 = buffer only, 1 = call analyzer/Spectrum0)
+void TXASetSipMode(int channel, int mode);
+
+// siphon.c:245 — TXASetSipDisplay (which analyzer disp ID to push to)
+void TXASetSipDisplay(int channel, int disp);
+
+// siphon.c:227 — TXASetSipPosition (where in TXA chain the siphon taps;
+// default is the existing TXA.c:586 position, BEFORE xiqc — pre-PS
+// correction = the clean intended signal Thetis displays)
+void TXASetSipPosition(int channel, int pos);
 // =====================================================================
 // External Diversity (WDSP div.c, Warren Pratt NR0V).
 // From Thetis Project Files/Source/Console/dsp.cs:609-619 [v2.10.3.15]

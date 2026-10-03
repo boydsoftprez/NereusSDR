@@ -25,6 +25,7 @@
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QSignalSpy>
 #include <cmath>
 #include "models/TransmitModel.h"
 
@@ -357,6 +358,47 @@ private slots:
         t.setMicMute(false);
         const bool micIsInUse = t.micMute();
         QVERIFY(!micIsInUse);  // false = mic muted (Thetis naming: checked=false → muted)
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MUTE SILENCES THE MIC (iPhone app plan Task 40)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    // console.cs:28856-28868 [v2.10.3.15] setAudioMicGain: with the mic
+    // muted the preamp is 0.0; in use it is 10^(gain/20).
+    void micMute_zeroesThePreampAndRestoresIt() {
+        TransmitModel t;
+        t.setMicGainDb(-12);
+        const double inUse = std::pow(10.0, -12.0 / 20.0);
+        QVERIFY(std::abs(t.micPreampLinear() - inUse) < 1e-12);
+        QSignalSpy preamp(&t, &TransmitModel::micPreampChanged);
+        t.setMicMute(false);
+        QCOMPARE(t.micPreampLinear(), 0.0);
+        QCOMPARE(preamp.count(), 1);
+        QCOMPARE(preamp.last().at(0).toDouble(), 0.0);
+        // A gain change while muted keeps the gain and the silence.
+        t.setMicGainDb(-3);
+        QCOMPARE(t.micGainDb(), -3);
+        QCOMPARE(t.micPreampLinear(), 0.0);
+        t.setMicMute(true);
+        QVERIFY(std::abs(t.micPreampLinear() - std::pow(10.0, -3.0 / 20.0)) < 1e-12);
+        QVERIFY(std::abs(preamp.last().at(0).toDouble() - std::pow(10.0, -3.0 / 20.0)) < 1e-12);
+    }
+
+    // micMuted is the link's name for the same state, true = muted.
+    void micMuted_isTheInverseOfMicMute() {
+        TransmitModel t;
+        QVERIFY(!t.micMuted());
+        QSignalSpy changed(&t, &TransmitModel::micMuteChanged);
+        QVERIFY(t.setProperty("micMuted", true));
+        QVERIFY(t.micMuted());
+        QVERIFY(!t.micMute());
+        QCOMPARE(t.property("micMuted").toBool(), true);
+        QCOMPARE(changed.count(), 1);
+        t.setMicMuted(true);   // idempotent
+        QCOMPARE(changed.count(), 1);
+        t.setMicMute(true);
+        QCOMPARE(t.property("micMuted").toBool(), false);
     }
 };
 

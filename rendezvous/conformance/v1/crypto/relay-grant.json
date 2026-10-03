@@ -1,0 +1,114 @@
+{
+  "description": "Relay grant tokens (rendezvous document section 12.2): station = the first 8 bytes of HMAC-SHA256(secret, \"NereusSDR relay station v1\\n\" || station id); payload = version (1) || leg (1 the Core, 2 the device) || session (16 bytes) || station (8 bytes) || expires (4 bytes big-endian, Unix seconds); mac = HMAC-SHA256(secret, \"NereusSDR relay grant v1\\n\" || payload); token = base64url(payload || mac), no padding, 83 characters. The secret is the UTF-8 bytes given. These secrets exist only for these vectors. Every station value and token here was computed with openssl dgst -sha256 -hmac, not with the service's code. The Core and the apps treat a token as opaque text; only the service and the relay read these vectors.",
+  "prefixHex": "4e65726575735344522072656c6179206772616e742076310a",
+  "stationPrefixHex": "4e65726575735344522072656c61792073746174696f6e2076310a",
+  "cases": [
+    {
+      "name": "core",
+      "secret": "conformance-relay-secret-not-for-use",
+      "leg": 1,
+      "sessionHex": "000102030405060708090a0b0c0d0e0f",
+      "stationId": "lwhu2kyjnrfdwvpxvdckao3lb7",
+      "stationHex": "f29bcf0af2b7f09a",
+      "expires": 1800000120,
+      "token": "AQEAAQIDBAUGBwgJCgsMDQ4P8pvPCvK38JprSdJ4pqn2imoBltp4JM7Y4jlm8z_CRueEVquUo2unUc8QLhE",
+      "valid": true
+    },
+    {
+      "name": "device",
+      "secret": "conformance-relay-secret-not-for-use",
+      "leg": 2,
+      "sessionHex": "000102030405060708090a0b0c0d0e0f",
+      "stationId": "lwhu2kyjnrfdwvpxvdckao3lb7",
+      "stationHex": "f29bcf0af2b7f09a",
+      "expires": 1800000120,
+      "token": "AQIAAQIDBAUGBwgJCgsMDQ4P8pvPCvK38JprSdJ4owlJqdQdFfk6rhCxyyJSkGlChqsG7n4s48iq69Pw1eU",
+      "valid": true
+    },
+    {
+      "name": "anotherSecret",
+      "secret": "another relay test secret, not for use",
+      "leg": 2,
+      "sessionHex": "ffeeddccbbaa99887766554433221100",
+      "stationId": "jlfwt34lkcasqjwlghkjqrbzsx",
+      "stationHex": "5835fd16bd12c01f",
+      "expires": 1700000000,
+      "token": "AQL_7t3Mu6qZiHdmVUQzIhEAWDX9Fr0SwB9lU_EAejVtfFG_l9cIzqfRLWYzy2MAGyKjHyyoedGYlGfVacI",
+      "valid": true
+    },
+    {
+      "name": "shortSecretExpiresZero",
+      "secret": "s",
+      "leg": 1,
+      "sessionHex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+      "stationId": "24bmtj37qd45o7ls6w3plkrilp",
+      "stationHex": "9a9c759aaa442378",
+      "expires": 0,
+      "token": "AQFaWlpaWlpaWlpaWlpaWlpampx1mqpEI3gAAAAA0NerFytfXiR6Y6S9bdN3MjFvpftY0IJkuBmcsQZfFi8",
+      "valid": true
+    },
+    {
+      "name": "flippedBit",
+      "secret": "conformance-relay-secret-not-for-use",
+      "token": "AQEAAQIDBAUGBwgJCgsMDQ4P8pvPCvK38JprSdJ4pqn2imoBltp4JM7Y4jlm8z_CRueEVquUo2unUc8QLBE",
+      "valid": false,
+      "why": "a bit of the MAC flipped"
+    },
+    {
+      "name": "otherSecret",
+      "secret": "not the secret that minted it",
+      "token": "AQEAAQIDBAUGBwgJCgsMDQ4P8pvPCvK38JprSdJ4pqn2imoBltp4JM7Y4jlm8z_CRueEVquUo2unUc8QLhE",
+      "valid": false,
+      "why": "minted with another secret"
+    },
+    {
+      "name": "version2",
+      "secret": "conformance-relay-secret-not-for-use",
+      "token": "AgEAAQIDBAUGBwgJCgsMDQ4P8pvPCvK38JprSdJ4eGGGZsOlYCxPmRi3Q3dMdOfiRVByV8HvJ7kGuUxFJ1k",
+      "valid": false,
+      "why": "version byte 2, with a MAC that verifies"
+    },
+    {
+      "name": "leg3",
+      "secret": "conformance-relay-secret-not-for-use",
+      "token": "AQMAAQIDBAUGBwgJCgsMDQ4P8pvPCvK38JprSdJ4vM4AoUhj7rnn7WPamcgwGBOHTXbMcsAa8s_ZUaCIPQo",
+      "valid": false,
+      "why": "leg byte 3, with a MAC that verifies"
+    },
+    {
+      "name": "leg0",
+      "secret": "conformance-relay-secret-not-for-use",
+      "token": "AQAAAQIDBAUGBwgJCgsMDQ4P8pvPCvK38JprSdJ4eRCtdnICGB17ltr_2Ahcvc7vrbWlqVzeZ-TgZcmRbEA",
+      "valid": false,
+      "why": "leg byte 0, with a MAC that verifies"
+    },
+    {
+      "name": "short",
+      "secret": "conformance-relay-secret-not-for-use",
+      "token": "AQEAAQIDBAUGBwgJCgsMDQ4P8pvPCvK38JprSdJ4pqn2imoBltp4JM7Y4jlm8z_CRueEVquUo2unUc8QLh",
+      "valid": false,
+      "why": "82 characters"
+    },
+    {
+      "name": "padded",
+      "secret": "conformance-relay-secret-not-for-use",
+      "token": "AQEAAQIDBAUGBwgJCgsMDQ4P8pvPCvK38JprSdJ4pqn2imoBltp4JM7Y4jlm8z_CRueEVquUo2unUc8QLhE=",
+      "valid": false,
+      "why": "base64url with padding"
+    },
+    {
+      "name": "standardAlphabet",
+      "secret": "conformance-relay-secret-not-for-use",
+      "token": "AQL/7t3Mu6qZiHdmVUQzIhEAWDX9Fr0SwB9lU/EAejVtfFG/l9cIzqfRLWYzy2MAGyKjHyyoedGYlGfVacI",
+      "valid": false,
+      "why": "standard base64, not base64url"
+    },
+    {
+      "name": "empty",
+      "secret": "conformance-relay-secret-not-for-use",
+      "token": "",
+      "valid": false,
+      "why": "empty"
+    }
+  ]
+}

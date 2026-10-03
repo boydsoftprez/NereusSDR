@@ -119,7 +119,7 @@ private slots:
     // That comparison reads message(), so it has to survive construction.
     void a_toast_reports_the_message_it_was_given()
     {
-        const QString msg = u"Hermes Lite 2 supports a maximum of 1 slices"_s;
+        const QString msg = u"Hermes Lite 2 supports a maximum of 1 slice"_s;
         std::unique_ptr<StatusToast> toast(
             new StatusToast(msg, ToastSeverity::Warning, 60000));
 

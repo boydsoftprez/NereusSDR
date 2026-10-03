@@ -49,6 +49,7 @@ public:
                    int factoryDefault = INT_MIN);  // INT_MIN → use defaultVal
     void addCheckbox(const QString& label, bool defaultVal,
                      std::function<void(bool)> onChange);
+    void addWidget(QWidget* widget);
 
     // Finalize layout (adds More Settings + Reset buttons)
     void finalize(std::function<void()> onMore, std::function<void()> onReset);

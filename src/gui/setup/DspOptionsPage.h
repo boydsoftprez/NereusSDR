@@ -16,6 +16,15 @@
 //                 Anthropic Claude Code.
 //                 Task 4.1: DspOptionsPage skeleton + 18 controls.
 //                 Mirrors Thetis DSP Options tab (design Section 4A).
+//   2026-09-23 - R-R3-21: static high-resolution filter fan-out helpers
+//                 for startup. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-24 - R-R3-49 (parity Task 1): the nine TX combos follow the
+//                 transmit settings gate. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-26 - R-R3-49 (parity Task 16): applyCoreFilterResponse, a
+//                 remote window's graphs drawing the Core's curve. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -75,6 +84,8 @@ class QGroupBox;
 
 namespace NereusSDR {
 
+class MeterItem;
+
 // Setup → DSP → Options page.
 //
 // Mirrors Thetis tpDSPOptions tab layout (design Section 4A).
@@ -114,8 +125,45 @@ public:
                                    QComboBox* c, QComboBox* d);
     static bool comboValuesDiffer3(QComboBox* a, QComboBox* b, QComboBox* c);
 
+    // R-R3-21: fan the high-resolution filter setting (and channel 0's
+    // RxChannel, or none) out to every FilterDisplayItem. The persisted
+    // form reads DspOptionsHighResFilterCharacteristics. Neither saves.
+    // MainWindow calls the persisted form at startup and when the receive
+    // channel is created or destroyed, so the setting survives a restart
+    // without opening Setup.
+    static void applyHighResFilter(RadioModel* model, bool highRes);
+    static void applyPersistedHighResFilter(RadioModel* model);
+    // The same for one meter item added while the window runs.
+    static void applyPersistedHighResFilterTo(RadioModel* model, MeterItem* item);
+    // R-R3-49 (parity Task 16): a remote window's graphs draw the Core's
+    // curve (RadioModel::coreFilterResponse). MainWindow calls it when the
+    // curve changes. Nothing on a local model.
+    static void applyCoreFilterResponse(RadioModel* model);
+
+    QCheckBox* highResolutionFilterCharacteristicsCheckBox() const noexcept
+    {
+        return m_highResFilterChars;
+    }
+
+    // R-R3-49 (parity Task 1): the TX combos (buffer size, filter size
+    // and filter type for SSB/AM, FM and Digital) follow the transmit
+    // settings gate: a Core at transmitSettingsVersion 1 takes them while
+    // its radio is off the air. The RX combos and the rest of the page do
+    // not follow it.
+    void setTransmitSettingsPermitted(bool permitted, const QString& reason) override;
+
 private:
     void buildUI();
+
+    // The TX combos' transmit settings gate and the Buffer Size (IQcomp)
+    // group's on-the-air lock, applied together: Thetis greys
+    // grpDSPBufferSize, RX and TX combos alike, while MOX is on
+    // (setup.cs:5159 [v2.10.3.15]). A remote window follows its Core's
+    // air state (RadioModel::coreOnAirChanged).
+    void refreshBufferAndTransmitGates();
+    bool    m_transmitSettingsPermitted{true};
+    QString m_transmitSettingsReason;
+    bool    m_onAir{false};
 
     // Wire a per-mode combo to persist to AppSettings AND trigger a WDSP
     // channel rebuild if the combo's mode matches the current slice mode

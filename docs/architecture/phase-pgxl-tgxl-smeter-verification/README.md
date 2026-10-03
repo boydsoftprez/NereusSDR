@@ -18,7 +18,7 @@ Section 10.2 (Bench verification matrix).
 
 ## Coverage
 
-36 rows across PGXL telemetry, TGXL relay control, LAN discovery, S-Meter
+38 rows across PGXL telemetry, TGXL relay control, LAN discovery, S-Meter
 scaling + peak hold, pairing, keepalive + ping, save and reboot, fault
 history, TX power cap, TX interlock policy, antenna labels, tune memory,
 and right-click navigation. Row 18 is gated on HL2 ATT/filter audit closure
@@ -92,6 +92,8 @@ Each row carries one of:
 | 34 | [ ] | TGXL tune memory auto-recall: enable `TGXL_AutoTuneMemoryRecall`; switch from 20 m to 40 m and back; observe the stored 20 m relay positions get restored (or a fresh tune triggers if absolute-write isn't supported). | |
 | 35 | [ ] | Right-click AmpApplet -> "Open PGXL Advanced..." navigates to the Setup dialog at the right page. Same for TunerApplet -> "Open TGXL Advanced...". | |
 | 36 | [ ] | Right-click on either applet -> "Copy diagnostics" puts a JSON blob on the clipboard with all the ConnectionDiagnostics fields. | |
+| 37 | [ ] | PGXL FAULT then recovery (iPhone app plan Task 77 fix round 4; hardware behaviour unknown): with the PGXL in FAULT, key the radio barefoot (the key goes out; the amp is not operating). Record whether the PGXL leaves FAULT for OPERATE or IDLE by itself, and after how long. If it does while the key is up, NereusSDR stops the key with "The amplifier switched to operate by itself while the radio was transmitting, so the Core stopped transmitting." and no RF goes through the amp while it switches. | |
+| 38 | [ ] | TGXL relayed operate during a tune (Task 77 fix round 4): press the TGXL's hardware TUNE with the PGXL in OPERATE and capture :4992 and :9008. Record the order of the TGXL's `amplifier set ... operate=0`, `transmit tune on`, and its end-of-sweep `operate=1`. The relayed `operate=1` must reach the PGXL only after the tune carrier has dropped (NereusSDR holds it while the radio transmits); note whether the hardware TUNE is ever refused "The amplifier is still switching." | |
 
 ---
 

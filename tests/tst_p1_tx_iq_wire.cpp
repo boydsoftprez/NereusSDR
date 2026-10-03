@@ -365,6 +365,97 @@ private slots:
         // 960 zero cushion samples + the 1 real sample just pushed.
         QCOMPARE(conn.txIqBufferedSamplesForTest(), 961);
     }
+
+    // G-07: a full ring drops the rest of the block cleanly (nothing unread
+    // is overwritten, the count never passes capacity) and the loss is
+    // counted where the transmit diagnostics read the send path's health
+    // (RadioConnection::txSendStats, the Core's "Transmit ended" line).
+    // The count runs per key, as on Protocol 2.
+    void overflowDropsCleanlyAndIsCounted() {
+        P1RadioConnection conn;
+        constexpr int kCapacity = 126 * 32;   // 4032 samples, ~84 ms at 48 kHz
+
+        QVERIFY(conn.txSendStats().valid);
+        QCOMPARE(conn.txSendStats().overflowSamples, quint64(0));
+
+        std::vector<float> quarter(static_cast<size_t>(kCapacity) * 2, 0.25f);
+        conn.sendTxIq(quarter.data(), kCapacity);
+        QCOMPARE(conn.txIqBufferedSamplesForTest(), kCapacity);
+        QCOMPARE(conn.txSendStats().overflowSamples, quint64(0));
+
+        // 100 more full-scale samples: none fits.
+        std::vector<float> full(100 * 2, 1.0f);
+        conn.sendTxIq(full.data(), 100);
+        QCOMPARE(conn.txIqBufferedSamplesForTest(), kCapacity);
+        QCOMPARE(conn.txSendStats().overflowSamples, quint64(100));
+
+        // The oldest unread sample is still the first 0.25 one:
+        // (long)(0.25 * 32767 + 0.5) = 8192 = 0x2000.
+        const QByteArray frame = conn.sendTxIqAndCapture(full.data(), 1);
+        QCOMPARE(conn.txSendStats().overflowSamples, quint64(101));
+        QCOMPARE(quint8(frame[20]), quint8(0x20));
+        QCOMPARE(quint8(frame[21]), quint8(0x00));
+
+        // A new key starts the count again.
+        conn.setMox(true);
+        QCOMPARE(conn.txSendStats().overflowSamples, quint64(0));
+    }
+
+    // G-05 follow-up: a remainder under one 63-sample zone is never sent on
+    // its own, so without a discard it stayed in the ring after an unkey
+    // and went out at the start of the next key. Thetis sends nothing of
+    // the transmit stream while not transmitting: sendProtocol1Samples
+    // zeroes the frame's I/Q when XmitBit is clear (networkproto1.c:723
+    // [v2.10.3.15]). The unkey discards whatever is queued.
+    void unkeyDiscardsTheSubZoneRemainder() {
+        P1RadioConnection conn;
+        conn.setMox(true);
+        // 960 cushion zeros + 70 samples at I = 0.5 = 1030 = 16 x 63 + 22.
+        std::vector<float> half(70 * 2, 0.0f);
+        for (int i = 0; i < 70; ++i) { half[static_cast<size_t>(i) * 2] = 0.5f; }
+        conn.sendTxIq(half.data(), 70);
+        QCOMPARE(conn.txIqBufferedSamplesForTest(), 1030);
+        for (int f = 0; f < 8; ++f) {
+            conn.sendTxIqAndCapture(nullptr, 0);
+        }
+        QCOMPARE(conn.txIqBufferedSamplesForTest(), 22);   // the remainder
+
+        conn.setMox(false);
+        QCOMPARE(conn.txIqBufferedSamplesForTest(), 0);
+
+        // The next key starts with its own cushion and nothing older.
+        conn.setMox(true);
+        float quarter[2] = {0.25f, 0.0f};
+        conn.sendTxIq(quarter, 1);
+        QCOMPARE(conn.txIqBufferedSamplesForTest(), 961);
+        // 0.5 encodes as I hi byte 0x40; no sample of the new key carries it.
+        for (int f = 0; f < 8; ++f) {
+            const QByteArray frame = conn.sendTxIqAndCapture(nullptr, 0);
+            for (int zone : {16, 528}) {
+                for (int i = 0; i < 63; ++i) {
+                    QVERIFY2(quint8(frame[zone + i * 8 + 4]) != 0x40,
+                             "a sample from the previous key went out");
+                }
+            }
+        }
+    }
+
+    // A repeated unkey, or one with nothing queued, discards nothing more.
+    void unkeyWithEmptyRingIsHarmless() {
+        P1RadioConnection conn;
+        conn.setMox(false);
+        QCOMPARE(conn.txIqBufferedSamplesForTest(), 0);
+        conn.setMox(true);
+        conn.setMox(false);
+        conn.setMox(false);
+        QCOMPARE(conn.txIqBufferedSamplesForTest(), 0);
+        // Unkeyed samples still go out as before (these tests' own path).
+        std::vector<float> iq(126 * 2, 0.1f);
+        conn.sendTxIq(iq.data(), 126);
+        QCOMPARE(conn.txIqBufferedSamplesForTest(), 126);
+        conn.sendTxIqAndCapture(nullptr, 0);
+        QCOMPARE(conn.txIqBufferedSamplesForTest(), 0);
+    }
 };
 
 QTEST_APPLESS_MAIN(TestP1TxIqWire)

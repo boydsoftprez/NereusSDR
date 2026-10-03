@@ -1,0 +1,452 @@
+{
+  "version": 15,
+  "category": {
+    "id": "diagnostics",
+    "title": "Diagnostics",
+    "where": "station",
+    "coverage": "partial"
+  },
+  "pages": [
+    {
+      "id": "diagnostics.radioStatus",
+      "title": "Radio Status",
+      "where": "station",
+      "coverage": "partial: the PTT source history and the Settings Hygiene card (described as Settings Validation) are not described here",
+      "sections": [
+        {
+          "title": "Status",
+          "controls": [
+            {
+              "id": "diagnostics.radioStatus.radio",
+              "label": "Connected radio",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "radio",
+                  "name": "name"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "format": "radioName"
+            },
+            {
+              "id": "diagnostics.radioStatus.uptime",
+              "label": "Uptime",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "telemetry": {
+                  "object": "radio",
+                  "name": "connectionAgeMs"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "stationTelemetryVersion",
+                "min": 6
+              },
+              "format": "uptime"
+            },
+            {
+              "id": "diagnostics.radioStatus.firmware",
+              "label": "Firmware",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "radio",
+                  "name": "version"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15
+            },
+            {
+              "id": "diagnostics.radioStatus.mode",
+              "label": "Mode",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "txState",
+                  "name": "keyed"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "txStateVersion",
+                "min": 1
+              },
+              "format": "txMode"
+            }
+          ]
+        },
+        {
+          "title": "PA Status",
+          "controls": [
+            {
+              "id": "diagnostics.radioStatus.paTemperature",
+              "label": "PA Temp",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "telemetry": {
+                  "object": "radio",
+                  "name": "paTemperatureCelsius"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "stationTelemetryVersion",
+                "min": 4
+              },
+              "format": "paTemperature"
+            },
+            {
+              "id": "diagnostics.radioStatus.paCurrent",
+              "label": "PA Current",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "telemetry": {
+                  "object": "radio",
+                  "name": "paCurrentAmps"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "stationTelemetryVersion",
+                "min": 4
+              },
+              "decimals": 1,
+              "unit": "A"
+            },
+            {
+              "id": "diagnostics.radioStatus.paVoltage",
+              "label": "PA Voltage",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "telemetry": {
+                  "object": "radio",
+                  "name": "paVolts"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "stationTelemetryVersion",
+                "min": 4
+              },
+              "decimals": 1,
+              "unit": "V",
+              "telemetryFor": "paRowVolts"
+            }
+          ]
+        },
+        {
+          "title": "Forward / Reflected / SWR",
+          "controls": [
+            {
+              "id": "diagnostics.radioStatus.forward",
+              "label": "Forward",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "txState",
+                  "name": "forwardPowerWatts"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "txReadingsVersion",
+                "min": 1
+              },
+              "format": "wattsWhileKeyed"
+            },
+            {
+              "id": "diagnostics.radioStatus.reflected",
+              "label": "Reflected",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "txState",
+                  "name": "reflectedPowerWatts"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "txReadingsVersion",
+                "min": 1
+              },
+              "format": "wattsWhileKeyed"
+            },
+            {
+              "id": "diagnostics.radioStatus.swr",
+              "label": "SWR",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "txState",
+                  "name": "swr"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "txReadingsVersion",
+                "min": 1
+              },
+              "format": "swrWhileKeyed"
+            }
+          ]
+        },
+        {
+          "title": "Connection Quality",
+          "controls": [
+            {
+              "id": "diagnostics.radioStatus.ep6",
+              "label": "EP6 ingress",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "telemetry": {
+                  "object": "radio",
+                  "name": "hl2RxBytesPerSecond"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "stationTelemetryVersion",
+                "min": 5
+              },
+              "format": "kilobytesPerSecond"
+            },
+            {
+              "id": "diagnostics.radioStatus.ep2",
+              "label": "EP2 egress",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "telemetry": {
+                  "object": "radio",
+                  "name": "hl2TxBytesPerSecond"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "stationTelemetryVersion",
+                "min": 5
+              },
+              "format": "kilobytesPerSecond"
+            },
+            {
+              "id": "diagnostics.radioStatus.throttle",
+              "label": "Throttle events",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "telemetry": {
+                  "object": "radio",
+                  "name": "hl2Throttled"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "stationTelemetryVersion",
+                "min": 5
+              },
+              "format": "throttleActive"
+            },
+            {
+              "id": "diagnostics.radioStatus.sequenceGaps",
+              "label": "Seq gaps (EP6)",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "telemetry": {
+                  "object": "radio",
+                  "name": "hl2SequenceGaps"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "stationTelemetryVersion",
+                "min": 5
+              },
+              "decimals": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "diagnostics.connectionQuality",
+      "title": "Connection Quality",
+      "where": "station",
+      "sections": [
+        {
+          "title": "Live Counters",
+          "controls": [
+            {
+              "id": "diagnostics.connectionQuality.ep6",
+              "label": "EP6 bytes received:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "telemetry": {
+                  "object": "radio",
+                  "name": "hl2RxBytesPerSecond"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "stationTelemetryVersion",
+                "min": 5
+              },
+              "decimals": 0,
+              "unit": "B/s"
+            },
+            {
+              "id": "diagnostics.connectionQuality.ep2",
+              "label": "EP2 bytes sent:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "telemetry": {
+                  "object": "radio",
+                  "name": "hl2TxBytesPerSecond"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "stationTelemetryVersion",
+                "min": 5
+              },
+              "decimals": 0,
+              "unit": "B/s"
+            },
+            {
+              "id": "diagnostics.connectionQuality.throttle",
+              "label": "LAN PHY throttle:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "telemetry": {
+                  "object": "radio",
+                  "name": "hl2Throttled"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "stationTelemetryVersion",
+                "min": 5
+              },
+              "format": "throttledOk"
+            },
+            {
+              "id": "diagnostics.connectionQuality.sequenceGaps",
+              "label": "EP6 sequence gaps:",
+              "tooltip": "",
+              "kind": "readout",
+              "binding": {
+                "telemetry": {
+                  "object": "radio",
+                  "name": "hl2SequenceGaps"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "stationTelemetryVersion",
+                "min": 5
+              },
+              "decimals": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "diagnostics.settingsValidation",
+      "title": "Settings Validation",
+      "where": "station",
+      "coverage": "partial",
+      "sections": [
+        {
+          "title": "Validation Issues",
+          "controls": [
+            {
+              "id": "diagnostics.settingsValidation.health",
+              "label": "Validation Issues",
+              "tooltip": "",
+              "kind": "settingsHygiene",
+              "requiresDescriptionVersion": 3,
+              "binding": {
+                "settingsHygiene": {
+                  "version": 1
+                }
+              },
+              "applies": "live",
+              "gate": {
+                "capability": "settingsHygieneVersion",
+                "min": 1
+              },
+              "actions": [
+                {
+                  "id": "validate",
+                  "label": "Re-validate"
+                },
+                {
+                  "id": "repair",
+                  "label": "Repair Invalid Settings",
+                  "paired": true,
+                  "offAir": true,
+                  "gate": {
+                    "capability": "settingsHygieneVersion",
+                    "min": 2
+                  },
+                  "reason": "Repair invalid settings is not available on this Core. Updating the Core may help.",
+                  "confirmation": {
+                    "title": "Repair Settings",
+                    "message": "Repair the settings that are invalid for this radio?",
+                    "default": "cancel"
+                  }
+                },
+                {
+                  "id": "forget",
+                  "label": "Forget This Radio",
+                  "paired": true,
+                  "offAir": true,
+                  "confirmation": {
+                    "title": "Forget Radio",
+                    "message": "Forget all settings for this radio?",
+                    "default": "cancel"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

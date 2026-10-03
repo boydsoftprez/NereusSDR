@@ -15,6 +15,11 @@
 //   2026-04-20 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-09-26 - R-R3-32 (remote-window parity Task 14): the Connection
+//                Quality figures from RadioModel::hl2LinkFigures(), the
+//                Core's HL2 link in a remote window and said so;
+//                unavailable, never 0, when absent. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -48,12 +53,19 @@ class RadioStatusPage : public SetupPage {
     Q_OBJECT
 
 public:
+    void setStationSettingsAvailable(bool available, const QString& reason) override;
     explicit RadioStatusPage(RadioModel* model = nullptr, QWidget* parent = nullptr);
 
 private slots:
     void onPaTemperatureChanged(double celsius);
     void onPaCurrentChanged(double amps);
+    // R-R3-32 / R-R3-46 (parity Task 6): the PA card from
+    // RadioModel::paReadings() (this window's radio, or the Core's), an
+    // absent reading shown as unavailable.
+    void refreshPaReadings();
     void onPowerChanged(double forward, double reflected, double swr);
+    // The power readouts from the model's RadioStatus as it stands now.
+    void refreshPower();
     void onPttChanged();
     void onIssuesChanged();
     void onUptimeTick();
@@ -82,6 +94,7 @@ private:
     QLabel*       m_paTemperatureLabel{nullptr};
     QLabel*       m_paCurrentLabel{nullptr};
     QLabel*       m_paVoltageLabel{nullptr};
+    QLabel*       m_paTitleLabel{nullptr};
     QProgressBar* m_paTempBar{nullptr};
     QProgressBar* m_paCurrentBar{nullptr};
 
@@ -109,16 +122,17 @@ private:
     QLabel* m_bwEp2Label{nullptr};
     QLabel* m_bwThrottleLabel{nullptr};
     QLabel* m_bwSeqGapLabel{nullptr};
+    // R-R3-32 (parity Task 14): says "from the Core" in a remote window.
+    QLabel* m_connTitleLabel{nullptr};
 
     // ── Settings hygiene card ─────────────────────────────────────────────
     QListWidget*  m_issueList{nullptr};
-    QPushButton*  m_resetBtn{nullptr};
+    QPushButton*  m_repairBtn{nullptr};
     QPushButton*  m_forgetBtn{nullptr};
 
     // ── Timers ────────────────────────────────────────────────────────────
     QTimer        m_uptimeTimer;
     QTimer        m_bwPollTimer;
-    QElapsedTimer m_connectClock;
 };
 
 } // namespace NereusSDR

@@ -1,0 +1,15 @@
+libspecbleach commit 41d3f58310391e05ecfb8b7c9efb62ea2ba8ef05 (tag v0.2.0)
+Copyright 2022 Luciano Dato <lucianodato@gmail.com>
+
+NereusSDR uses libspecbleach for NR4 spectral noise reduction. The pinned
+source is fetched from:
+
+  https://github.com/lucianodato/libspecbleach/tree/41d3f58310391e05ecfb8b7c9efb62ea2ba8ef05
+
+The libspecbleach README says it is free software that can be
+redistributed and/or modified under the terms of the GNU Lesser General
+Public License as published by the Free Software Foundation, either
+version 2.1 of the License or (at your option) any later version.
+
+The full LGPL version 2.1 text, copied byte for byte from the pinned
+source's LICENSE file, ships beside this notice as LGPLv2.1.txt.

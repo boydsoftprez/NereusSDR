@@ -12,6 +12,11 @@
 //                 started, so nothing could exercise a session ending
 //                 while a request is still in flight, or an amp that
 //                 stops answering mid-session.
+//   2026-09-24 -- R-R3-47: identity admission (only an amp whose /info
+//                 names an RF2K-S counts as connected, and another device
+//                 is refused and never retried), the local default
+//                 unchanged, and the retry and failure reports. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -87,9 +92,14 @@ private:
         return QString::fromUtf8(req.mid(sp, end - sp));
     }
 
-    static QByteArray bodyFor(const QString& path) {
+public:
+    // R-R3-47: what /info answers.
+    QByteArray infoBody =
+        R"({"device":"RF2K-S","software_version":{"GUI":200,"controller":267},"custom_device_name":"KG4VCF"})";
+private:
+    QByteArray bodyFor(const QString& path) const {
         if (path == "/info") {
-            return R"({"device":"RF2K-S","software_version":{"GUI":200,"controller":267},"custom_device_name":"KG4VCF"})";
+            return infoBody;
         }
         if (path == "/operate-mode") { return R"({"operate_mode":"OPERATE"})"; }
         return "{}";
@@ -106,6 +116,12 @@ private slots:
     void lateReplyAfterDisconnectDoesNotRevive();
     void lateReplyFromPreviousHostDoesNotApply();
     void pollingStopsWhenTheLinkIsDeclaredDown();
+    // R-R3-47: identity admission (the Core's), and the local default.
+    void identityAdmissionAdmitsAnRf2ks();
+    void identityAdmissionRefusesAnotherDevice();
+    void deviceChangingMidSessionIsRefused();
+    void localConnectionStillConnectsOnAnyInfo();
+    void unansweredProbeSaysWhyWhenRetryIsOff();
 };
 
 // Codex review [P1-adjacent P2] on PR #291: a GET still in flight when the
@@ -193,6 +209,100 @@ void Rf2ksConnectionLifecycleTest::pollingStopsWhenTheLinkIsDeclaredDown()
              "poll timer still running after the link was declared down; "
              "the poller keeps hammering a dead amp for the whole backoff "
              "window");
+}
+
+void Rf2ksConnectionLifecycleTest::identityAdmissionAdmitsAnRf2ks()
+{
+    ControllableAmpServer server;
+    Rf2ksConnection conn;
+    conn.setIdentityAdmissionRequired(true);
+    conn.setPollIntervalMs(5000);
+    QSignalSpy connSpy(&conn, &Rf2ksConnection::connected);
+    conn.connectToAmp("127.0.0.1", server.port());
+    QVERIFY(connSpy.wait(2000));
+    QVERIFY(conn.isConnected());
+    QCOMPARE(conn.reportedDevice(), QStringLiteral("RF2K-S"));
+}
+
+void Rf2ksConnectionLifecycleTest::identityAdmissionRefusesAnotherDevice()
+{
+    ControllableAmpServer server;
+    server.infoBody = R"({"device":"SPE Expert","software_version":{"GUI":1,"controller":1}})";
+    Rf2ksConnection conn;
+    conn.setIdentityAdmissionRequired(true);
+    conn.setPollIntervalMs(5000);
+    QSignalSpy connSpy(&conn, &Rf2ksConnection::connected);
+    QSignalSpy failSpy(&conn, &Rf2ksConnection::connectionFailed);
+    conn.connectToAmp("127.0.0.1", server.port());
+    QVERIFY(failSpy.wait(2000));
+    QCOMPARE(connSpy.count(), 0);
+    QVERIFY(!conn.isConnected());
+    QVERIFY(!conn.reconnectPending());
+    QVERIFY(!conn.testPollActive());
+    QCOMPARE(failSpy.first().at(0).toString(),
+             QStringLiteral("The device at this address is not an RF-Kit RF2K-S amplifier. "
+                            "It reports itself as SPE Expert."));
+    const int asked = server.requestCount();
+    QTest::qWait(300);
+    QCOMPARE(server.requestCount(), asked);
+}
+
+void Rf2ksConnectionLifecycleTest::deviceChangingMidSessionIsRefused()
+{
+    ControllableAmpServer server;
+    Rf2ksConnection conn;
+    conn.setIdentityAdmissionRequired(true);
+    conn.setPollIntervalMs(5000);
+    QSignalSpy connSpy(&conn, &Rf2ksConnection::connected);
+    conn.connectToAmp("127.0.0.1", server.port());
+    QVERIFY(connSpy.wait(2000));
+    QSignalSpy disSpy(&conn, &Rf2ksConnection::disconnected);
+    QSignalSpy failSpy(&conn, &Rf2ksConnection::connectionFailed);
+    // The /info refresh (every ten poll cycles) finds another product at
+    // the address. Ask for /info now rather than wait for the poller. (A
+    // reply naming no device is retried, not refused: M2, R-R3-47;
+    // tst_station_rfkit_controller answerThatNamesNoDeviceIsRetried.)
+    server.infoBody = R"({"device":"SPE Expert","custom_device_name":"not an amp"})";
+    QVERIFY(QMetaObject::invokeMethod(&conn, "onReconnectTimeout", Qt::DirectConnection));
+    QVERIFY(failSpy.wait(2000));
+    QCOMPARE(disSpy.count(), 1);
+    QVERIFY(!conn.isConnected());
+}
+
+void Rf2ksConnectionLifecycleTest::localConnectionStillConnectsOnAnyInfo()
+{
+    ControllableAmpServer server;
+    server.infoBody = R"({"custom_device_name":"KG4VCF"})";
+    Rf2ksConnection conn;   // a local window: identity admission off
+    conn.setPollIntervalMs(5000);
+    QSignalSpy connSpy(&conn, &Rf2ksConnection::connected);
+    conn.connectToAmp("127.0.0.1", server.port());
+    QVERIFY(connSpy.wait(2000));
+    QVERIFY(conn.isConnected());
+}
+
+void Rf2ksConnectionLifecycleTest::unansweredProbeSaysWhyWhenRetryIsOff()
+{
+    ControllableAmpServer server;
+    server.setAnswering(false);
+    Rf2ksConnection conn;
+    conn.setAutoReconnect(false);
+    QSignalSpy failSpy(&conn, &Rf2ksConnection::connectionFailed);
+    QSignalSpy retrySpy(&conn, &Rf2ksConnection::reconnectScheduled);
+    conn.connectToAmp("127.0.0.1", server.port());
+    QVERIFY(failSpy.wait(2000));
+    QCOMPARE(failSpy.first().at(0).toString(),
+             QStringLiteral("The RF-Kit amplifier did not answer at this address."));
+    QCOMPARE(retrySpy.count(), 0);
+
+    Rf2ksConnection retrying;
+    QSignalSpy retrying2(&retrying, &Rf2ksConnection::reconnectScheduled);
+    retrying.connectToAmp("127.0.0.1", server.port());
+    QVERIFY(retrying2.wait(2000));
+    QCOMPARE(retrying2.first().at(0).toInt(), 1);
+    QCOMPARE(retrying2.first().at(1).toInt(), 1000);
+    retrying.disconnect();
+    QVERIFY(!retrying.reconnectPending());
 }
 
 QTEST_MAIN(Rf2ksConnectionLifecycleTest)

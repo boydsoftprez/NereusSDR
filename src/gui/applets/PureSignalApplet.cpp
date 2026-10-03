@@ -18,6 +18,17 @@
 //                 control emits openPureSignalDialogRequested.  J.J. Boyd
 //                 (KG4VCF), with AI-assisted source-first protocol via
 //                 Anthropic Claude Code.
+//   2026-09-22 — Migrated actions, status, and correction assets to the
+//                 shared PureSignalSessionFacade boundary.
+//   2026-09-25 - R-R3-49 (parity Task 7): Calibrate and Auto-Cal follow the
+//                 facade's canArm (a remote window arms PureSignal on a Core
+//                 at transmitSettingsVersion 7 off the air), greyed with the
+//                 reason while the Core's radio is on the air; 2-Tone stays
+//                 on canActuate. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-30 - Fix wave GUI-I7: Calibrate, Auto-Cal and 2-Tone grey
+//                 with the facade's reason whenever they cannot run.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  PSForm.cs
@@ -63,21 +74,22 @@ mw0lge@grange-lane.co.uk
 
 #include "PureSignalApplet.h"
 
-#include "core/PureSignal.h"
+#include "core/session/PureSignalSessionFacade.h"
+#include "gui/DspAssetDialog.h"
 #include "gui/HGauge.h"
 #include "gui/StyleConstants.h"
+#include "models/PureSignalSettings.h"
 #include "models/RadioModel.h"
 
-#include <QDir>
-#include <QFileDialog>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QSignalBlocker>
-#include <QStandardPaths>
 #include <QVBoxLayout>
 
-#include <cmath>
+#include <algorithm>
 
 namespace NereusSDR {
 
@@ -100,6 +112,30 @@ constexpr const char* kLedInactiveStyle =
     "  padding: 0px 2px;"
     "}";
 
+// R-R3-49 (parity Task 7): grey `control` with `reason` as its tooltip,
+// remembering its own tooltip, or put it back and apply `enabled`. An empty
+// reason means no gate.
+void gateWithReason(QWidget* control, bool enabled, const QString& reason)
+{
+    if (!control) {
+        return;
+    }
+    static constexpr auto kSavedTooltip = "PureSignalAppletSavedTooltip";
+    if (!reason.isEmpty()) {
+        if (!control->property(kSavedTooltip).isValid()) {
+            control->setProperty(kSavedTooltip, control->toolTip());
+        }
+        control->setEnabled(false);
+        control->setToolTip(reason);
+        return;
+    }
+    if (control->property(kSavedTooltip).isValid()) {
+        control->setToolTip(control->property(kSavedTooltip).toString());
+        control->setProperty(kSavedTooltip, QVariant());
+    }
+    control->setEnabled(enabled);
+}
+
 } // namespace
 
 PureSignalApplet::PureSignalApplet(RadioModel* model, QWidget* parent)
@@ -108,44 +144,21 @@ PureSignalApplet::PureSignalApplet(RadioModel* model, QWidget* parent)
     buildUI();
     wireRightClicks();
 
-    // Wire the coordinator immediately if it already exists (test injection
-    // path may set m_ps via RadioModel::pureSignal() before construction).
-    // Otherwise wait for the late-bind signal.
     if (m_model) {
-        if (PureSignal* ps = m_model->pureSignal()) {
-            wireCoordinator(ps);
-        }
+        m_facade = m_model->pureSignalFacade();
+        wireFacade();
         connect(m_model, &RadioModel::pureSignalCoordinatorReady, this,
                 &PureSignalApplet::setPureSignal);
     }
+    refreshFromFacade();
 }
 
 void PureSignalApplet::setPureSignal(PureSignal* coordinator)
 {
-    if (m_ps == coordinator) {
-        return;
+    if (m_facade) {
+        m_facade->setCoordinator(coordinator);
     }
-    if (m_ps) {
-        disconnect(m_ps, nullptr, this, nullptr);
-    }
-    m_ps = coordinator;
-    if (m_ps) {
-        wireCoordinator(m_ps);
-    } else {
-        // Disconnected — reset displayed state to defaults so the applet
-        // doesn't show stale FB / iteration counters.
-        if (m_feedbackGauge)   { m_feedbackGauge->setValue(0.0); }
-        if (m_correctionGauge) { m_correctionGauge->setValue(0.0); }
-        if (m_iterations)      { m_iterations->setText(tr("Iterations: 0")); }
-        if (m_feedbackDb)      { m_feedbackDb->setText(tr("Feedback: — dB")); }
-        if (m_correctionDb)    { m_correctionDb->setText(tr("Correction: — dB")); }
-        if (m_saveBtn)         { m_saveBtn->setEnabled(false); }
-        for (QLabel* led : m_led) { setLedActive(led, false); }
-        if (m_autoCalBtn) {
-            QSignalBlocker blk(m_autoCalBtn);
-            m_autoCalBtn->setChecked(false);
-        }
-    }
+    refreshFromFacade();
 }
 
 void PureSignalApplet::buildUI()
@@ -317,12 +330,7 @@ void PureSignalApplet::setupRightClick(QWidget* widget)
 
 void PureSignalApplet::wireRightClicks()
 {
-    // Right-click pattern unification — every control routes to PsForm.
-    // Mirrors the Thetis right-click-to-associated-window pattern (e.g.
-    // chkFWCATUBypass_MouseDown at console.cs:46149-46152 [v2.10.3.13]).
-    // Wired unconditionally (not gated on coordinator) so the seam exists
-    // even when no coordinator is bound — critical for both the test
-    // harness and the pre-connect (no PureSignal yet) UX.
+    // Opening the full dialog is presentation-only and never submits an action.
     setupRightClick(m_calibrateBtn);
     setupRightClick(m_autoCalBtn);
     setupRightClick(m_saveBtn);
@@ -331,161 +339,138 @@ void PureSignalApplet::wireRightClicks()
     setupRightClick(m_feedbackGauge);
     setupRightClick(m_correctionGauge);
 
-    // Save / Restore left-click handlers — file-dialog opens are gated
-    // inside the lambda on m_ps presence so they're safe pre-coordinator.
-    connect(m_saveBtn, &QPushButton::clicked, this, [this]() {
-        if (!m_ps) { return; }
-        const QString defaultDir = QStandardPaths::writableLocation(
-                QStandardPaths::AppConfigLocation)
-            + QStringLiteral("/PureSignal/");
-        QDir().mkpath(defaultDir);
-        const QString filename = QFileDialog::getSaveFileName(
-            this, tr("Save PureSignal corrections"), defaultDir,
-            tr("PureSignal corrections (*.psk *.dat);;All files (*)"));
-        if (!filename.isEmpty()) {
-            m_ps->saveCorrections(filename);
-        }
-    });
-
-    connect(m_restoreBtn, &QPushButton::clicked, this, [this]() {
-        if (!m_ps) { return; }
-        const QString defaultDir = QStandardPaths::writableLocation(
-                QStandardPaths::AppConfigLocation)
-            + QStringLiteral("/PureSignal/");
-        const QString filename = QFileDialog::getOpenFileName(
-            this, tr("Restore PureSignal corrections"), defaultDir,
-            tr("PureSignal corrections (*.psk *.dat);;All files (*)"));
-        if (!filename.isEmpty()) {
-            m_ps->restoreCorrections(filename);
-        }
-    });
-
-    // Calibrate / Auto / Two-tone left-click handlers — guarded on m_ps
-    // for the same reason.
     connect(m_calibrateBtn, &QPushButton::clicked, this, [this]() {
-        if (m_ps) { m_ps->singleCalibrate(); }
+        requestAction(Ps3Action::Single);
     });
     connect(m_autoCalBtn, &QPushButton::toggled, this, [this](bool on) {
-        if (m_ps) { m_ps->setAutoCalEnabled(on); }
+        requestAction(on ? Ps3Action::StartAutomatic : Ps3Action::OffReset);
     });
     connect(m_twoToneBtn, &QPushButton::toggled, this, [this](bool on) {
-        if (m_ps) { m_ps->setTwoToneOn(on); }
+        requestAction(Ps3Action::SetTwoTone,
+                      {{QStringLiteral("enabled"), on}});
     });
+    connect(m_saveBtn, &QPushButton::clicked, this, [this]() {
+        if (!m_facade) {
+            return;
+        }
+        bool accepted = false;
+        const QString label = QInputDialog::getText(
+            this, tr("Save PureSignal correction"),
+            tr("Correction label:"), QLineEdit::Normal, {}, &accepted).trimmed();
+        if (accepted && !label.isEmpty()) {
+            requestAction(Ps3Action::SaveCorrection,
+                          {{QStringLiteral("label"), label}});
+        }
+    });
+    connect(m_restoreBtn, &QPushButton::clicked,
+            this, &PureSignalApplet::showRestoreDialog);
 }
 
-void PureSignalApplet::wireCoordinator(PureSignal* ps)
+void PureSignalApplet::wireFacade()
 {
-    if (!ps) { return; }
-
-    m_ps = ps;
-
-    // Auto echo back — model → UI only.  UI → model goes through the
-    // m_autoCalBtn::toggled lambda above.  Echo loops are prevented by
-    // the QSignalBlocker on the toggled→model side and by the
-    // setAutoCalEnabled idempotency check on the model→UI side.
-    connect(ps, &PureSignal::autoCalEnabledChanged, this, [this](bool on) {
-        if (!m_autoCalBtn) { return; }
-        QSignalBlocker block(m_autoCalBtn);
-        m_autoCalBtn->setChecked(on);
-    });
-
-    // Feedback gauge ← feedbackLevelChanged (info[4] mapped to 0..100 from
-    // raw 0..255 per PSForm.cs:1120-1122 [v2.10.3.13]).
-    connect(ps, &PureSignal::feedbackLevelChanged, this, [this](int level) {
-        if (m_feedbackGauge) {
-            m_feedbackGauge->setValue(level * 100.0 / 255.0);
-        }
-        // Info label: dB-converted FB level (informational; ratio of raw FB
-        // level to nominal max 255 mapped to dB).  Floor at -120 dB to
-        // avoid log10(0) → -inf in the printf path.
-        if (m_feedbackDb) {
-            const double db = level > 0
-                ? 20.0 * std::log10(static_cast<double>(level) / 255.0)
-                : -120.0;
-            m_feedbackDb->setText(tr("Feedback: %1 dB").arg(db, 0, 'f', 1));
-        }
-    });
-
-    // Correction gauge ← correctionPeakChanged (TxChannel HW peak, 0..1
-    // mapped to 0..100).  See PureSignal.cpp pollTimerTick [Task 13].
-    connect(ps, &PureSignal::correctionPeakChanged, this,
-            [this](double peak) {
-        if (m_correctionGauge) {
-            const double v = peak * 100.0;
-            const double clamped = (v < 0.0) ? 0.0 : (v > 100.0 ? 100.0 : v);
-            m_correctionGauge->setValue(clamped);
-        }
-        if (m_correctionDb) {
-            const double db = peak > 0.0
-                ? 20.0 * std::log10(peak)
-                : -120.0;
-            m_correctionDb->setText(tr("Correction: %1 dB").arg(db, 0, 'f', 1));
-        }
-    });
-
-    // Save enabled state ← correctionsBeingAppliedChanged.  Mirrors PSForm.cs:
-    // 574-590 btnPSSave gating [v2.10.3.13]:
-    //   if (puresignal.CorrectionsBeingApplied) btnPSSave.Enabled = true;
-    // Codex Fix D: route from correctionsBeingAppliedChanged (info[14]==1
-    // predicate), NOT correctingChanged (FeedbackLevel > 90 predicate).
-    connect(ps, &PureSignal::correctionsBeingAppliedChanged,
-            m_saveBtn, &QPushButton::setEnabled);
-    m_saveBtn->setEnabled(ps->correctionsBeingApplied());
-
-    // LEDs:
-    //   Cal LED ← calStateChanged: active during LSETUP(3)/LCOLLECT(4)/LCALC(6).
-    //   Run LED ← calStateChanged: active during LSTAYON(8).
-    //   Fbk LED ← feedbackActiveChanged.
-    // Engine state values match Thetis PSForm.cs:1140-1151 EngineState enum
-    // [v2.10.3.13].
-    connect(ps, &PureSignal::calStateChanged, this, [this](int state) {
-        const bool inCal = (state == 3 /*LSETUP*/)
-                        || (state == 4 /*LCOLLECT*/)
-                        || (state == 6 /*LCALC*/);
-        const bool inRun = (state == 8 /*LSTAYON*/);
-        setLedActive(m_led[0], inCal);
-        setLedActive(m_led[1], inRun);
-    });
-
-    connect(ps, &PureSignal::feedbackActiveChanged, this, [this](bool active) {
-        setLedActive(m_led[2], active);
-    });
-
-    // Iterations info label ← calibrationCountChanged (PSForm.cs:1103-1105
-    // CalibrationCount [v2.10.3.13]).
-    connect(ps, &PureSignal::calibrationCountChanged, this, [this](int n) {
-        if (m_iterations) {
-            m_iterations->setText(tr("Iterations: %1").arg(n));
-        }
-    });
-
-    // Initial sync from current coordinator state.
-    if (m_autoCalBtn) {
-        QSignalBlocker block(m_autoCalBtn);
-        m_autoCalBtn->setChecked(ps->isAutoCalEnabled());
+    if (!m_facade) {
+        return;
     }
-    if (m_iterations) {
-        m_iterations->setText(tr("Iterations: %1").arg(ps->calibrationCount()));
+    connect(m_facade, &PureSignalSessionFacade::statusChanged,
+            this, &PureSignalApplet::refreshFromFacade);
+    connect(m_facade, &PureSignalSessionFacade::actionResult, this,
+            [this](quint32, Ps3ActionPhase phase, const QString&, const QVariantMap&) {
+        if (phase == Ps3ActionPhase::Completed || phase == Ps3ActionPhase::Failed) {
+            refreshFromFacade();
+        }
+    });
+    if (PureSignalSettings* settings = m_facade->settings()) {
+        connect(settings, &PureSignalSettings::autoCalEnabledChanged,
+                this, &PureSignalApplet::refreshFromFacade);
     }
+}
+
+void PureSignalApplet::requestAction(Ps3Action action,
+                                     const QVariantMap& arguments)
+{
+    if (!m_facade || m_facade->requestAction(action, arguments) == 0) {
+        refreshFromFacade();
+    }
+}
+
+void PureSignalApplet::showRestoreDialog()
+{
+    if (!m_model || !m_facade) {
+        return;
+    }
+    if (!m_restoreDialog) {
+        m_restoreDialog = new DspAssetDialog(
+            m_model, DspAssetKind::Ps3Correction, this);
+        m_restoreDialog->setAttribute(Qt::WA_DeleteOnClose);
+        connect(m_restoreDialog, &DspAssetDialog::restoreCorrectionRequested,
+                this, [this](const QString& assetId) {
+            requestAction(Ps3Action::RestoreCorrection,
+                          {{QStringLiteral("assetId"), assetId}});
+        });
+    }
+    m_restoreDialog->show();
+    m_restoreDialog->raise();
+    m_restoreDialog->activateWindow();
+}
+
+void PureSignalApplet::refreshFromFacade()
+{
+    const bool available = m_facade && m_facade->available();
+    const bool canActuate = available && m_facade->canActuate();
+    const Ps3StatusSnapshot status = m_facade
+        ? m_facade->statusSnapshot() : Ps3StatusSnapshot{};
+    const bool automaticIntent = m_facade && m_facade->settings()
+        ? m_facade->settings()->autoCalEnabled() : false;
+
+    {
+        const QSignalBlocker blocker(m_autoCalBtn);
+        m_autoCalBtn->setChecked(automaticIntent);
+    }
+    {
+        const QSignalBlocker blocker(m_twoToneBtn);
+        m_twoToneBtn->setChecked(m_facade && m_facade->twoToneOn());
+    }
+
+    // R-R3-49 (parity Task 7): arming keys nothing and follows canArm; the
+    // two-tone test keys the radio and stays on canActuate.
+    const bool canArm = available && m_facade->canArm();
+    const QString armingRefusal = m_facade ? m_facade->armingRefusal()
+                                           : PureSignalSessionFacade::needsRadioReason();
+    gateWithReason(m_calibrateBtn, canArm, armingRefusal);
+    gateWithReason(m_autoCalBtn, canArm, armingRefusal);
+    // Fix wave GUI-I7: the two-tone test greys with its reason too.
+    gateWithReason(m_twoToneBtn, canActuate,
+                   m_facade ? m_facade->twoToneRefusal()
+                            : PureSignalSessionFacade::needsRadioReason());
+    // Opening the station asset manager is read-only. The dialog and facade
+    // gate the actual restore action on transmit permission.
+    m_restoreBtn->setEnabled(available && !status.restorePending && !status.savePending);
+    m_saveBtn->setEnabled(available && status.correctionsApplied
+                          && !status.savePending && !status.restorePending);
+
+    const double feedback = std::clamp(status.feedbackLevel * 100.0 / 255.0,
+                                       0.0, 100.0);
+    m_feedbackGauge->setValue(feedback);
+    m_correctionGauge->setValue(status.correctionsApplied ? 100.0 : 0.0);
+    m_iterations->setText(
+        tr("Iterations: %1").arg(status.successfulCalibrations));
+    m_feedbackDb->setText(
+        available ? tr("Feedback: %1").arg(status.feedbackLevel)
+                  : tr("Feedback: —"));
+    m_correctionDb->setText(
+        status.correctionsApplied ? tr("Correction: Applied")
+                                  : tr("Correction: Off"));
+
+    const bool calibrating = status.engineState == 3
+        || status.engineState == 4 || status.engineState == 6;
+    setLedActive(m_led[0], calibrating);
+    setLedActive(m_led[1], status.correctionsApplied);
+    setLedActive(m_led[2], status.mox && status.feedbackLevel > 0);
 }
 
 void PureSignalApplet::syncFromModel()
 {
-    // Coordinator drives state via signals connected in wireCoordinator();
-    // explicit sync is rarely needed.  Provided for AppletWidget's interface
-    // contract (called by the Container framework on visibility change).
-    if (!m_ps) { return; }
-    if (m_autoCalBtn) {
-        QSignalBlocker block(m_autoCalBtn);
-        m_autoCalBtn->setChecked(m_ps->isAutoCalEnabled());
-    }
-    if (m_saveBtn) {
-        m_saveBtn->setEnabled(m_ps->correctionsBeingApplied());
-    }
-    if (m_iterations) {
-        m_iterations->setText(
-            tr("Iterations: %1").arg(m_ps->calibrationCount()));
-    }
+    refreshFromFacade();
 }
 
 } // namespace NereusSDR

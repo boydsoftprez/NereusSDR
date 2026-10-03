@@ -25,6 +25,7 @@
 #include "core/accessories/N2adrPreset.h"
 #include "gui/setup/hardware/Hl2IoBoardTab.h"
 #include "models/RadioModel.h"
+#include "OperatorWording.h"
 
 using namespace NereusSDR;
 
@@ -254,6 +255,69 @@ private slots:
         tab.restoreSettings(settings);
 
         QCOMPARE(spy.count(), 0);
+    }
+
+    // R-R3-46: in a remote window the matrix is the Core's, which the Core
+    // reconciled at its own connect; restoring the saved switch sets the
+    // checkbox only and leaves the matrix (so nothing is written to the
+    // Core just for opening Setup). A toggle still emits the switch for
+    // HardwarePage to write through, and the Core applies the preset.
+    void remote_restore_sets_the_switch_and_leaves_the_matrix()
+    {
+        RadioModel remote(RadioModel::Role::Remote);
+#ifdef NEREUS_BUILD_TESTS
+        remote.setBoardForTest(HPSDRHW::HermesLite);
+#endif
+        Hl2IoBoardTab tab(&remote);
+        QVERIFY(!ocMatrixHasAnyPinSet(remote.ocMatrix()));
+        QSignalSpy spy(&tab, &Hl2IoBoardTab::settingChanged);
+        QSignalSpy matrix(&remote.ocMatrixMutable(), &OcMatrix::changed);
+
+        QMap<QString, QVariant> settings;
+        settings.insert(QStringLiteral("n2adrFilter"), QVariant(QStringLiteral("True")));
+        tab.restoreSettings(settings);
+        QCOMPARE(spy.count(), 0);
+        QCOMPARE(matrix.count(), 0);
+        QVERIFY(!ocMatrixHasAnyPinSet(remote.ocMatrix()));
+
+        // Local direct mode is unchanged: the restore reconciles.
+        RadioModel local;
+#ifdef NEREUS_BUILD_TESTS
+        local.setBoardForTest(HPSDRHW::HermesLite);
+#endif
+        Hl2IoBoardTab localTab(&local);
+        localTab.restoreSettings(settings);
+        QVERIFY(ocMatrixHasAnyPinSet(local.ocMatrix()));
+    }
+
+    // R-R3-46 follow-up item 1: in a remote window whose Core does not let
+    // it transmit, the N2ADR switch applies only the preset's receive half,
+    // so the window saves no transmit pin (the Core would refuse them) and
+    // its transmit pins stay the Core's.
+    void remoteWithoutTransmitAppliesOnlyTheReceiveHalf()
+    {
+        RadioModel model;
+#ifdef NEREUS_BUILD_TESTS
+        model.setBoardForTest(HPSDRHW::HermesLite);
+#endif
+        Hl2IoBoardTab tab(&model);
+        OcMatrix& oc = model.ocMatrixMutable();
+        oc.setPin(Band::Band20m, 0, /*tx=*/true, true);
+        tab.setTransmitPermitted(false, QStringLiteral("Transmit is not available here."));
+        // The switch says it moves the receive filters only.
+        QVERIFY(tab.n2adrToolTipForTest().contains(Hl2IoBoardTab::receiveOnlyN2adrNote()));
+        QVERIFY(OperatorWording::isPlain(Hl2IoBoardTab::receiveOnlyN2adrNote()));
+        tab.triggerN2adrToggleForTest(true);
+        QVERIFY(oc.pinEnabled(Band::Band40m, 2, /*tx=*/false));
+        QVERIFY(oc.pinEnabled(Band::Band20m, 0, /*tx=*/true));
+        QVERIFY(!oc.pinEnabled(Band::Band40m, 2, /*tx=*/true));
+
+        // Permitted again: the whole preset, as locally.
+        tab.setTransmitPermitted(true, {});
+        QVERIFY(!tab.n2adrToolTipForTest().contains(Hl2IoBoardTab::receiveOnlyN2adrNote()));
+        tab.triggerN2adrToggleForTest(true);
+        QVERIFY(oc.pinEnabled(Band::Band40m, 2, /*tx=*/true));
+        QVERIFY(!oc.pinEnabled(Band::Band20m, 0, /*tx=*/true));
     }
 };
 

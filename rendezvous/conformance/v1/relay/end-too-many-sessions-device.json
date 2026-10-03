@@ -1,0 +1,52 @@
+{
+  "runs": [
+    "relay",
+    "app"
+  ],
+  "relaySetup": {
+    "sessionsPerStation": 1
+  },
+  "steps": [
+    {
+      "connect": "core2"
+    },
+    {
+      "from": "core2",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:core:s0:a"
+      ]
+    },
+    {
+      "to": "core2",
+      "binary": [
+        "81",
+        "01",
+        "00"
+      ]
+    },
+    {
+      "connect": "device"
+    },
+    {
+      "from": "device",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:device:s:a"
+      ]
+    },
+    {
+      "to": "device",
+      "binary": [
+        "83",
+        "746f6f4d616e7953657373696f6e73"
+      ]
+    },
+    {
+      "expectClosed": "device",
+      "code": 1000
+    }
+  ]
+}

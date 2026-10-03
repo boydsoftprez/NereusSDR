@@ -248,6 +248,7 @@ private:
     bool m_invertRedBlue{false};
     bool m_hideFeedback{false};
     bool m_useSmallFonts{false};
+    int m_lastRemoteAttempts{0};
 };
 
 } // namespace NereusSDR

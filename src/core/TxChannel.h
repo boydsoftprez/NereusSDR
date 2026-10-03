@@ -1,3 +1,5 @@
+// 2026-09-27: shared TX filter geometry and validated band-edge admission.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 /*  TXA.c
 
 This file is part of a program that implements a Software-Defined Radio.
@@ -309,10 +311,59 @@ warren@wpratt.com
 //                 wdsp/calcc.c:891-1132 [v2.10.3.13] + Thetis
 //                 cmaster.cs:143-147 [v2.10.3.13].  AI-assisted
 //                 transformation via Anthropic Claude Code.
+//   2026-09-25 : R-R3-39 (station Task 32) by J.J. Boyd (KG4VCF): the
+//                 transmit lane.  Every WDSP call this wrapper makes runs on
+//                 a DspControlThread (setControlLane): a setter changes the
+//                 wrapper's state at once and posts its WDSP call; meters,
+//                 stage flags, PureSignal status and the CFC and PS3 display
+//                 reads come from caches the lane refreshes.
+//                 setRunningAsync keeps the keying order (on: channel, then
+//                 the RF gate; off: the gate, then the drain).  With no lane
+//                 every call runs on the caller's thread, as before.  No
+//                 Thetis logic changes.  AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-09-25 : R-R3-39 by J.J. Boyd (KG4VCF): TCI transmit audio at a
+//                 rate other than 48 kHz is resampled on the transmit lane
+//                 (the float resampler's create, run and destroy); 48 kHz
+//                 blocks are pushed at once while nothing is queued there, so
+//                 the ring keeps the order blocks arrive in.  AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-25 : D14 / R-R3-49 by J.J. Boyd (KG4VCF): txMeter(TxMeterType)
+//                 maps a NereusSDR meter to its WDSP index
+//                 (wdspTxaMeterIndex).  AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-09-25 : Task 33 (R-IOS-03) by J.J. Boyd (KG4VCF): closeRfGate,
+//                 isRfGateOpen and txDrained; setRunningAsync(false) drains
+//                 with the RF gate open (Thetis's unkey order) and returns
+//                 its sequence.  AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-09-25 : R-R3-39 by J.J. Boyd (KG4VCF): the TCI transmit
+//                 resampler is freed on the transmit lane at every teardown
+//                 (channel destroy and rebuild through
+//                 releaseTciResamplerOnLane; the destructor as a last
+//                 resort); liveTciResamplersForTest counts them.
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49 (parity Task 2): read-back test seams for the TX
+//                 chain settings a remote window changes (EQ run, leveler,
+//                 CFC, CPDR and its gain, AM carrier). NereusSDR-original.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49 (parity Task 4): read-back test seams for the TX
+//                 EQ profile and globals, the CFC profile and scalars, the
+//                 phase rotator, CESSB, leveler and ALC. NereusSDR-original.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-27 — R-IOS-13: txIqQueuedMs(), the connection's send ring fill
+//                 for the remote microphone's buffer; dexpTimingRunning(),
+//                 so the buffer never splices while DEXP's hold, decay or
+//                 VOX turn-off counts (dexp.c [v2.10.3.15]); the filter
+//                 type sends Thetis's MP (Low Latency = minimum phase,
+//                 enums.cs:404-408, radio.cs:2659 [v2.10.3.15]; it was
+//                 inverted). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #pragma once
 
+#include <utility>
 #include <QByteArray>
 #include <QObject>
 #include <QString>
@@ -321,17 +372,24 @@ warren@wpratt.com
 #include <array>    // std::array — TX EQ 10-band graphic vector (3M-3a-i B-1)
 #include <atomic>   // std::atomic<bool> — m_running cross-thread mirror (3M-1c TxWorkerThread)
 #include <cstddef>  // std::size_t — DEXP buffer size (3M-3a-iii Task 20)
+#include <cstdint>
+#include <functional>
 #include <limits>   // std::numeric_limits — quiet_NaN() initialiser (D.3)
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <vector>
 
 #include "WdspTypes.h"
 #include "audio/AudioRingSpsc.h"  // m_tciInputRing — TCI TX audio buffer (3J-1 bench fix)
 #include "dsp/ChannelConfig.h"
+#include "dsp/Ps3DisplayAdapter.h"
 #include "dsp/TxChannelState.h"
 #include "wdsp_api.h"  // NEREUS_STDCALL macro for s_pushVoxCallback (Task 17)
 
 namespace NereusSDR {
 
+class DspControlThread;
 class RadioConnection;
 class TxMicRouter;
 class WdspEngine;  // forward declaration for rebuild()
@@ -393,6 +451,14 @@ class WdspEngine;  // forward declaration for rebuild()
 //     section below).
 //   - stageRunning / isRunning / get*Meter: read-only introspection,
 //     safe from any thread (atomics + WDSP-internal locking).
+//   - Transmit lane (R-R3-39, setControlLane): with a lane set, the wrapper
+//     stays on the thread that made it (it is no longer moved to the
+//     worker). Every WDSP call other than the worker's per-block DEXP and
+//     fexchange0 runs on the lane: a setter changes the wrapper's state at
+//     once and posts its WDSP call, and the meters, stage flags, PureSignal
+//     status and the CFC and PS3 displays read caches the lane refreshes.
+//     With no lane (unit tests, a bare WdspEngine) every WDSP call runs on
+//     the caller's thread, as described above.
 //
 // Ported from Thetis wdsp/TXA.c:31-479 [v2.10.3.13] — create_txa() signal
 // flow order determines the Stage enum ordinal values.
@@ -534,9 +600,112 @@ public:
                        int inputBufferSize  = 256,
                        int outputBufferSize = 256,
                        QObject* parent = nullptr);
+    // R-R3-39: a wrapper whose WDSP calls run on `lane`. WdspEngine makes it
+    // before the WDSP channel is open (the open is the first job queued for
+    // it) and marks it ready from the lane once the channel is open; until
+    // then the worker's per-block calls do nothing.
+    TxChannel(int channelId, int inputBufferSize, int outputBufferSize,
+              DspControlThread* lane, QObject* parent);
     ~TxChannel() override;
 
     int channelId() const noexcept { return m_channelId; }
+
+    // ── R-R3-39: the transmit lane ───────────────────────────────────────────
+    //
+    // Every WDSP call this wrapper makes (setters, state, PureSignal, meters)
+    // runs on `lane`. A setter updates the wrapper's state at once and posts
+    // its WDSP call: a single-parameter setter keyed, so a burst of changes to
+    // one control costs the lane one call; run flags, channel state, tune and
+    // PureSignal control as barriers, so their order against every other
+    // call is kept. A call made on the lane itself runs at once. Null (the
+    // default) runs every WDSP call on the caller's thread. Set it before the
+    // channel is used, never while jobs of this channel are queued.
+    void setControlLane(DspControlThread* lane);
+    DspControlThread* controlLane() const noexcept { return m_lane; }
+
+    // True once the WDSP channel is open and the worker may run blocks
+    // through it (always true without a lane).
+    bool isWdspReady() const noexcept { return m_wdspReady.load(std::memory_order_seq_cst); }
+    // Only called from the TX DSP lane. A wrapper may exist before
+    // OpenChannel succeeds or after its close barrier has begun; the mini
+    // siphon must never attach in either state.
+    bool canAttachMiniAnalyzerOnLane() const noexcept;
+
+    // WdspEngine's lane-side lifecycle hooks (lane, or the caller's thread
+    // with no lane):
+    //   onWdspOpenedOnLane: after OpenChannel and create_dexp. Registers the
+    //     VOX callback and reads every cache.
+    //   admitWorkerOnLane: the worker may now run blocks through the channel.
+    //   quiesceWorkerOnLane: stops admitting the worker and waits until it is
+    //     outside its current block, before the channel closes.
+    //   unregisterVoxCallbackOnLane: the WDSP half of the destructor's
+    //     unregister, run before CloseChannel.
+    //   markRetired: every job of this wrapper still queued, and every job
+    //     posted from now on, does nothing (the rebuild generation check).
+    void onWdspOpenedOnLane();
+    void admitWorkerOnLane();
+    void quiesceWorkerOnLane();
+    void unregisterVoxCallbackOnLane();
+    void markRetired();
+    bool isRetired() const noexcept { return !m_alive->load(std::memory_order_acquire); }
+
+    // Keying (R-R3-39). on: the WDSP channel is switched on first (on the
+    // lane) and the RF gate (isRunning, the worker's fexchange0 and
+    // sendTxIq) opens after it. off (Task 33, Thetis order): the channel
+    // drains on the lane with the RF gate still open, so the worker keeps
+    // calling fexchange0 and WDSP's down-slew reaches the radio; the lane
+    // closes the gate when the drain returns and then emits txDrained with
+    // the sequence this call returns. Supersedes setRunning, which now
+    // forwards here.
+    quint64 setRunningAsync(bool on);
+
+    // Task 33 (R-IOS-03): the emergency stop's half. Closes the RF gate at
+    // once, from any thread, so no further TX I/Q block reaches the
+    // connection once it returns (it waits only for a block already inside
+    // sendTxIq, never for WDSP or the lane). A queued setRunningAsync(true)
+    // no longer opens the gate; a later setRunningAsync(true) does. Makes
+    // no WDSP call.
+    void closeRfGate() noexcept;
+    // The RF gate: TX I/Q reaches the connection only while it is open.
+    bool isRfGateOpen() const noexcept { return m_running.load(std::memory_order_acquire); }
+
+    // The last TXA meter reading for `meterType` (a WDSP txaMeterType index,
+    // 0..16). With a lane, the value the lane last read (-400, WDSP's idle
+    // value, before the first read), and a refresh is posted; without one,
+    // GetTXAMeter at once. MeterPoller and the TCI TX sensors read this.
+    double txMeter(int meterType) const;
+    // D14, R-R3-49: the same, for a NereusSDR meter, mapped to the WDSP
+    // index it names (wdspTxaMeterIndex). Callers holding a TxMeterType use
+    // this; its values are not WDSP indices.
+    double txMeter(TxMeterType meter) const { return txMeter(wdspTxaMeterIndex(meter)); }
+
+    // PureSignal on the lane. requestPSTXDelay posts SetPSTXDelay and reports
+    // the delay WDSP applied through psTxDelayApplied (emitted on the lane,
+    // or at once without one). stopPsCorrection picks the quiescent or the
+    // active-stream stop from the RF gate as it stands when the call runs on
+    // the lane. pumpPscc runs one paired feedback block through pscc() on
+    // the lane, in arrival order, and keeps the PureSignal status cache
+    // fresh while feedback flows.
+    void requestPSTXDelay(double seconds);
+    void stopPsCorrection();
+    void pumpPscc(int samplesPerStream, std::vector<double> tx, std::vector<double> rx);
+
+#ifdef NEREUS_BUILD_TESTS
+    // Called with the RF gate's new state each time it changes: on the lane
+    // when it opens, on the caller's thread when it closes.
+    void setRfGateObserverForTest(std::function<void(bool)> observer)
+    {
+        std::lock_guard<std::mutex> lock(m_rfGateObserverMutex);
+        m_rfGateObserverForTest = std::move(observer);
+    }
+    // Called on the lane with the time the unkey drain (SetChannelState
+    // with dmode=1) took, in milliseconds.
+    void setDrainObserverForTest(std::function<void(double)> observer)
+    {
+        std::lock_guard<std::mutex> lock(m_rfGateObserverMutex);
+        m_drainObserverForTest = std::move(observer);
+    }
+#endif
 
     // ── Stage introspection (3M-1a C.2) ─────────────────────────────────────
     //
@@ -599,6 +768,10 @@ public:
     //
     // Must be called before setRunning(true) to get samples on the wire.
     void setConnection(RadioConnection* conn);
+    /// R-IOS-13: what the connection's transmit I/Q send ring holds now, in
+    /// ms (RadioConnection::txIqQueuedMs); negative without a connection or
+    /// when it does not know. Called on the transmit pump.
+    double txIqQueuedMs() const;
 
     // Attach or detach the mic router used as fexchange2 input source.
     // Non-owning; the caller (RadioModel) owns the unique_ptr.
@@ -647,7 +820,7 @@ public:
     // From Thetis cmaster.cs:522-527 [v2.10.3.13] — cfir P2 activation.
     // From Thetis wdsp/channel.c:259-294 [v2.10.3.13] — SetChannelState impl.
     // From Thetis wdsp/cfir.c:233-238 [v2.10.3.13] — SetTXACFIRRun impl.
-    void setRunning(bool on);
+    void setRunning(bool on) { setRunningAsync(on); }
 
     /// Returns whether the WDSP TXA channel state is currently ON.
     ///
@@ -656,6 +829,11 @@ public:
     /// it mirrors the local m_running atomic, which is updated by setRunning
     /// on the worker thread (after Phase 3M-1c TxWorkerThread move) and read
     /// from any thread.
+    ///
+    /// R-R3-39: this is the RF gate. With a lane it opens once the lane has
+    /// switched the WDSP channel on, and closes once the lane's unkey drain
+    /// returns (Task 33) or at once on closeRfGate; without a lane it
+    /// follows setRunning at once.
     bool isRunning() const noexcept { return m_running.load(std::memory_order_acquire); }
 
     // ── VOX-listening pump gate (3M-3a-iii Task 18 — bench fix) ──────────────
@@ -727,6 +905,16 @@ public:
     /// From Thetis radio.cs:2730-2780 [v2.10.3.13] — SetTXFilter /
     /// TXFilterLow / TXFilterHigh setters.
     void setTxBandpass(int lowHz, int highHz);
+
+    /// Complex samples the TXA chain processes per mainstream DSP buffer,
+    /// read live from WDSP (`ch[id].dsp_size`, channel.h:40). 0 when the
+    /// channel is not open.
+    ///
+    /// The display siphon pushes exactly this many samples per call, and
+    /// Spectrum0() takes no length argument -- the analyzer reads however
+    /// many its `bf_sz` says. So this is the number SetAnalyzer must be
+    /// given, and it is not the FFT size.
+    int dspBlockFrames() const;
 
     /// Set the AM/SAM sub-mode dispatch (0=DSB, 1=AM_LSB, 2=AM_USB).
     ///
@@ -897,6 +1085,15 @@ public:
     /// thread (TciServer's TX_CHRONO start/stop hooks run there) because
     /// the worker stops pulling once m_tciAudioActive flips false.
     void clearTciAudio();
+
+    /// R-R3-39: frees the TCI transmit resampler. WdspEngine's destroy and
+    /// rebuild barriers call it on the transmit lane (the caller's thread
+    /// with no lane), so a channel torn down mid-cycle never leaks it.
+    void releaseTciResamplerOnLane();
+
+    /// R-R3-39: TCI transmit resamplers alive now, across every TxChannel.
+    /// For tests.
+    static int liveTciResamplersForTest();
 
     // ── Anti-VOX detector audio feed (3M-3a-iv Task 3) ──────────────────────
     //
@@ -1595,6 +1792,23 @@ public:
     void setTxEqProfile(const std::vector<double>& freqs10,
                         const std::vector<double>& gains11);
 
+    /// TX EQ: the profile exactly as Thetis hands it to WDSP.
+    ///
+    /// R-R3-49 (group A fix wave). Wraps SetTXAEQProfile(channel, nfreqs,
+    /// F, G, Q) with nfreqs = F.size() - 1: F[0] = 0, G[0] = the preamp,
+    /// F[1..nfreqs] / G[1..nfreqs] every point, Q[1..nfreqs] the points' Q
+    /// factors (Q[0] = 0), or Q empty for none (WDSP gets null). F and G
+    /// are the same size, Q empty or that size, and nfreqs 1 to 256
+    /// (WDSP's EQ_MAXIMUM_CONTROL_POINTS); anything else logs a warning and
+    /// changes nothing. The ten-band overload above builds F with its
+    /// pad slot and calls this with no Q.
+    ///
+    /// From Thetis eqform.cs:3041-3072 [v2.10.3.15] (sendTXDspUpdate),
+    /// eqform.cs:2777-2816 (setTXEQProfile), dsp.cs:787-788 and
+    /// wdsp/eq.c:780-806 (SetTXAEQProfile).
+    void setTxEqProfile(const std::vector<double>& F, const std::vector<double>& G,
+                        const std::vector<double>& Q);
+
     /// TX EQ — filter coefficient count.
     ///
     /// Wraps SetTXAEQNC(channel, nc).  Default 2048 per WDSP create_eqp
@@ -1815,6 +2029,17 @@ public:
     /// From Thetis wdsp/compress.c:111-117 [v2.10.3.13].
     void setTxCpdrGainDb(double dB);
 
+    /// AM / SAM / DSB carrier level, percent (0..100).  Thin wrapper over
+    /// WDSP SetTXAAMCarrierLevel using the Thetis mapping from setup.cs:9965
+    /// [v2.10.3.15]:  c_level = sqrt(0.01 * percent) * 0.5.
+    void setTxAmCarrierLevel(int percent);
+
+    /// AM modulation monitor tap.  When set, every TX I/Q block that is
+    /// handed to RadioConnection::sendTxIq is also pushed into the
+    /// analyzer (thread-safe; runs on the TX worker thread).  nullptr
+    /// detaches.  NereusSDR-original (AM Mod Monitor applet).
+    void setAmModulationTap(class AmModulationAnalyzer* tap);
+
     /// CESSB (osctrl) run gate.  Wraps SetTXAosctrlRun(channel, on ? 1 : 0).
     ///
     /// SIDE EFFECT 1: SetTXAosctrlRun calls TXASetupBPFilters(channel)
@@ -1934,9 +2159,10 @@ public:
     // ── In-place filter resize / filter type change ─────────────────────────
     //
     // Wraps the WDSP entry points that Thetis calls from its DSPTX property
-    // setters at radio.cs:2628 / 2647 [v2.10.3.13]:
+    // setters at radio.cs:2630 / 2649 [v2.10.3.15]:
     //   FilterSize → WDSP.TXASetNC
-    //   FilterType → WDSP.TXASetMP
+    //   FilterType → WDSP.TXASetMP (Low Latency = minimum phase, MP 1:
+    //   enums.cs:404-408, radio.cs:2659 [v2.10.3.15])
     //
     // These are SAFE to call from the main thread while the TxWorkerThread
     // is running — TXASetNC/TXASetMP internally quiesce via SetChannelState's
@@ -2056,13 +2282,9 @@ public:
     //
     // Adaptive-predistortion calibration engine wrappers.  Each instance
     // method delegates to the matching WDSP entry point with m_channelId as
-    // the channel arg.  All 19 instance setters/readers operate on the
-    // CALCC struct created by create_calcc inside create_txa() at
-    // wdsp/TXA.c:405 [v2.10.3.13]; calls are csDSP-protected at the WDSP
-    // boundary.  Each wrapper guards against an unopened TX channel via
-    // `txa[m_channelId].rsmpin.p == nullptr` (matches the existing CFC /
-    // DEXP wrapper convention; the calcc pointer is created together with
-    // rsmpin inside create_txa, so the rsmpin sentinel covers both).
+    // the channel arg.  CALCC is opaque in WDSP 2.10.  Each retained wrapper
+    // first uses GetPSRunCal as a narrow validity/readback guard so an unopened
+    // channel never reaches an entry point that dereferences calibration state.
     //
     // The 2 static routing helpers (setPSRxIdx / setPSTxIdx) wire the
     // CMaster RX/TX feedback streams; per Thetis cmaster.cs:533-534
@@ -2071,10 +2293,9 @@ public:
     //
     // setPSTXDelay returns the actual delay applied (calcc.c:1001-1021
     // [v2.10.3.13] — the engine snaps to a fractional 20 ns step derived
-    // from the feedback sample rate).  getPSDisp's seven output buffers
-    // feed AmpView's Ref / MagAmp / PhsAmp / MagCorr / PhsCorr /
-    // MagCorrSmooth / PhsCorrSmooth display series; sizing is `nsamps`
-    // doubles for x/ym/yc/ys and `ints * 4` doubles for cm/cc/cs.
+    // from the feedback sample rate).  getPs3DisplaySnapshot owns and bounds
+    // the new four-sample/four-correction-array display ABI before any data
+    // reaches AmpView.
     // getPSInfo writes 16 ints (calcc.c:927 [v2.10.3.13] — `memcpy(info,
     // a->info, 16 * sizeof(int))`).
     //
@@ -2084,6 +2305,7 @@ public:
     /// Set the calcc run flag.  Wraps SetPSRunCal(channelId, run).
     /// From Thetis wdsp/calcc.c:899 [v2.10.3.13].
     void setPSRunCal(int run);
+    std::optional<bool> psRunCal() const;
 
     /// Set the calcc MOX flag (engages PS calibration when MOX is up).
     /// Wraps SetPSMox(channelId, mox ? 1 : 0).
@@ -2150,17 +2372,43 @@ public:
     /// From Thetis wdsp/calcc.c:1042 [v2.10.3.13].
     double getPSMaxTX();
 
-    /// Set the calibration-tolerance threshold.  Wraps SetPSPtol.
-    /// From Thetis wdsp/calcc.c:1050 [v2.10.3.13].
-    void setPSPtol(double ptol);
+    /// Capture the PS3 display as an owning, bounded value.  The adapter
+    /// allocates every vendor output buffer at the pinned maximum before the
+    /// unbounded GetPSDisp call and publishes only validated finite counts.
+    /// From TAPR WDSP 2.10 calcc.c:GetPSDisp [@b02d5bac].
+    std::optional<Ps3Snapshot> getPs3DisplaySnapshot(
+        std::uint64_t sessionGeneration,
+        std::uint64_t sequence,
+        std::int64_t capturedAtUnixMilliseconds);
 
-    /// Read seven AmpView display arrays (Ref / MagAmp / PhsAmp / MagCorr /
-    /// PhsCorr / MagCorrSmooth / PhsCorrSmooth).  Each pointer must address
-    /// at least `nsamps` (x/ym/yc/ys) or `ints * 4` (cm/cc/cs) doubles.
-    /// Wraps GetPSDisp; csDSP-protected at the WDSP boundary.
-    /// From Thetis wdsp/calcc.c:1058 [v2.10.3.13] — 7 output buffers.
-    void getPSDisp(double* x, double* ym, double* yc, double* ys,
-                   double* cm, double* cc, double* cs);
+    /// Read the IQC run and transition-busy latches under WDSP's DSP lock.
+    /// A missing value means the TX/IQC instance is not available.
+    std::optional<Ps3CorrectionState> psCorrectionState() const;
+
+    /// Read whether the native IQC instance retains a complete current
+    /// correction set that can be applied without recalibration.
+    std::optional<bool> psCorrectionAvailable() const;
+
+    /// Durably stop CALCC and IQC without requiring another TX/audio or
+    /// paired-feedback block. Retained correction curves remain available.
+    bool stopPsCorrectionQuiescent();
+
+    /// Request an active-stream IQC END. Completion is acknowledged only
+    /// when psCorrectionState() reports run=false and busy=false.
+    bool requestPsCorrectionStop();
+
+    /// Apply the retained current correction. Returns false for a fresh or
+    /// incomplete IQC instance and leaves native state unchanged.
+    bool applyPsCorrection();
+
+    /// Read the asynchronous correction-file state for one operation kind.
+    std::optional<Ps3FileOperationStatus> psFileOperationStatus(
+        Ps3FileOperationKind kind) const;
+
+    /// Request nonblocking cancellation of one pending native file worker.
+    /// The operation remains pending until the worker acknowledges the
+    /// cancelled epoch and publishes its terminal generation.
+    bool cancelPsFileOperation(Ps3FileOperationKind kind);
 
     /// Set the feedback sample rate (Hz).  Recomputes loopdelay/moxdelay
     /// sample counts and rebuilds the TX/RX delay lines.  Cmaster.cs:535
@@ -2169,22 +2417,6 @@ public:
     /// From Thetis wdsp/calcc.c:1073 [v2.10.3.13].
     void setPSFeedbackRate(int rate);
 
-    /// Set the PIN-aware mode flag.  Wraps SetPSPinMode.
-    /// From Thetis wdsp/calcc.c:1102 [v2.10.3.13].
-    void setPSPinMode(bool pin);
-
-    /// Set the calcc map mode.  Wraps SetPSMapMode.
-    /// From Thetis wdsp/calcc.c:1110 [v2.10.3.13].
-    void setPSMapMode(bool map);
-
-    /// Set the calcc stabilization flag.  Wraps SetPSStabilize.
-    /// From Thetis wdsp/calcc.c:1118 [v2.10.3.13].
-    void setPSStabilize(bool stbl);
-
-    /// Set per-FFT-mask interval count and SPI flag together.  Wraps
-    /// SetPSIntsAndSpi.  From Thetis wdsp/calcc.c:1140 [v2.10.3.13].
-    void setPSIntsAndSpi(int ints, int spi);
-
     /// Save the active correction tables to a user-chosen file.  Wraps
     /// PSSaveCorr(channelId, filename).  Used by PsForm Save button and the
     /// PureSignalApplet Save button — see PSForm.cs btnPSSave_Click
@@ -2192,7 +2424,7 @@ public:
     /// (calcc.c:567 PSSaveCorrection [v2.10.3.13]); this wrapper returns
     /// after the thread is started, NOT after the file is fully written.
     /// From Thetis wdsp/calcc.c:888 [v2.10.3.13].
-    void psSaveCorr(const QString& filename);
+    std::optional<std::uint64_t> psSaveCorr(const QString& filename);
 
     /// Restore correction tables from a user-chosen file.  Wraps
     /// PSRestoreCorr(channelId, filename).  Used by PsForm Restore button
@@ -2204,7 +2436,7 @@ public:
     /// host coordinator's command-state machine routes the next pump cycle
     /// through eCMDState::IntiateRestoredCorrection.
     /// From Thetis wdsp/calcc.c:900 [v2.10.3.13].
-    void psRestoreCorr(const QString& filename);
+    std::optional<std::uint64_t> psRestoreCorr(const QString& filename);
 
     // Channel routing (STATIC — global, not per-channel).  Called once at
     // PS init.  Per Thetis cmaster.cs:533-534 [v2.10.3.13] "txid = 0, all
@@ -2226,6 +2458,11 @@ public:
     quint64 cfcProfileApplyCountForTest() const { return m_cfcProfileApplyCount; }
     double lastCfcPrecompDbForTest() const { return m_lastCfcPrecompDb; }
     double lastCfcPostEqGainDbForTest() const { return m_lastCfcPostEqGainDb; }
+    // R-IOS-13 (2026-09-27): WDSP's minimum-phase flag on the TX bandpass
+    // (txa[].bp0.p->mp, what TXASetMP sets first), or -1 when the channel
+    // is not open.
+    int bandpassMinimumPhaseForTest() const;
+
     // ── Test seam (Phase 3M-1b D.1, updated for 3M-1c E.1 push model) ─────
     //
     // Synchronously drive one fexchange2 cycle by pushing the given mic
@@ -2320,6 +2557,45 @@ public:
     //   (c) Idempotent guard fires on duplicate calls (value unchanged).
     double lastMicPreampForTest()             const noexcept { return m_micPreampLast; }
 
+    // ── Test seam (R-R3-49, parity Task 2): the TX chain settings a remote
+    // window changes, read back from the channel's own state (the carries
+    // below; EQ run from its own last value, the carry being snapshot-only).
+    bool   lastTxEqRunningForTest()           const noexcept { return m_txEqRunningLast; }
+    bool   lastTxLevelerOnForTest()           const noexcept { return m_levelerOn; }
+    bool   lastTxCfcRunningForTest()          const noexcept { return m_cfcOn; }
+    bool   lastTxCpdrOnForTest()              const noexcept { return m_cpdrOn; }
+    double lastTxCpdrGainDbForTest()          const noexcept { return m_cpdrLevelDb; }
+    int    lastTxAmCarrierLevelForTest()      const noexcept { return m_amCarrierPct; }
+    // R-R3-49 (parity Task 4): the TX EQ, CFC, phase rotator, CESSB,
+    // leveler and ALC settings, from the carries and the last values below.
+    // The F, G and Q of the last SetTXAEQProfile (Q empty for null).
+    const std::vector<double>& lastTxEqProfileFForTest() const noexcept { return m_txEqProfileFLast; }
+    const std::vector<double>& lastTxEqProfileGForTest() const noexcept { return m_txEqProfileGLast; }
+    const std::vector<double>& lastTxEqProfileQForTest() const noexcept { return m_txEqProfileQLast; }
+    int    txEqProfilePushCountForTest()      const noexcept { return m_txEqProfilePushCount; }
+    int    lastTxEqNcForTest()                const noexcept { return m_txEqNcLast; }
+    bool   lastTxEqMpForTest()                const noexcept { return m_txEqMpLast; }
+    int    lastTxEqCtfmodeForTest()           const noexcept { return m_txEqCtfmodeLast; }
+    int    lastTxEqWintypeForTest()           const noexcept { return m_txEqWintypeLast; }
+    const std::vector<double>& lastTxCfcProfileFForTest() const noexcept { return m_txCfcProfileFLast; }
+    const std::vector<double>& lastTxCfcProfileGForTest() const noexcept { return m_txCfcProfileGLast; }
+    const std::vector<double>& lastTxCfcProfileEForTest() const noexcept { return m_txCfcProfileELast; }
+    const std::vector<double>& lastTxCfcProfileQgForTest() const noexcept { return m_txCfcProfileQgLast; }
+    const std::vector<double>& lastTxCfcProfileQeForTest() const noexcept { return m_txCfcProfileQeLast; }
+    int txCfcProfilePushCountForTest() const noexcept { return m_txCfcProfilePushCount; }
+    bool   lastTxCfcPostEqRunningForTest()    const noexcept { return m_cfcPostEqOn; }
+    double lastTxCfcPrecompDbForTest()        const noexcept { return m_cfcPrecompDb; }
+    double lastTxCfcPrePeqDbForTest()         const noexcept { return m_cfcPostEqGainDb; }
+    bool   lastPhaseRotatorRunForTest()       const noexcept { return m_phaseRotatorRunLast; }
+    double lastTxPhrotCornerHzForTest()       const noexcept { return m_phaseRotatorFreqHz; }
+    int    lastTxPhrotNstagesForTest()        const noexcept { return m_phaseRotatorStages; }
+    bool   lastTxPhrotReverseForTest()        const noexcept { return m_phaseRotatorReverse; }
+    bool   lastTxCessbOnForTest()             const noexcept { return m_cessbOn; }
+    double lastTxLevelerTopDbForTest()        const noexcept { return m_levelerMaxGainDb; }
+    int    lastTxLevelerDecayMsForTest()      const noexcept { return m_levelerDecayMs; }
+    double lastTxAlcMaxGainDbForTest()        const noexcept { return m_alcMaxGainDb; }
+    int    lastTxAlcDecayMsForTest()          const noexcept { return m_alcDecayMs; }
+
     // ── Test seam (Phase 3M-3a-iii Task 17) — DEXP pushvox bridge ──────────
     //
     // Synchronously invoke the static pushvox bridge for the given channel
@@ -2365,14 +2641,12 @@ public:
     // Tests asserting non-zero rates use a 0/-1 guard if they care.
     int lastPSFeedbackRateForTest()           const noexcept { return m_lastPSFeedbackRate; }
 
-    // Codex Fix F seam: observe the (ints, spi) pair the wrapper last
-    // forwarded to WDSP via setPSIntsAndSpi.  Used by
-    // tst_puresignal_coordinator to verify PureSignal::setTintIndex(idx)
-    // routes through to the calcc engine.  Sentinels -1 distinguish
-    // "never called" from explicit zero.
-    int lastPSIntsForTest()                   const noexcept { return m_lastPSInts; }
-    int lastPSSpiForTest()                    const noexcept { return m_lastPSSpi; }
 #endif // NEREUS_BUILD_TESTS
+
+    /// Shared audio-to-IQ filter geometry, also used by the pre-key band guard.
+    /// This pure query uses the same mode mapping as the actual TX bandpass.
+    static std::pair<int, int> filterEdgesForMode(int audioLowHz, int audioHighHz,
+                                                 DSPMode mode);
 
 public slots:
     // ── Per-profile TX filter debounce (Plan 4 D8) ───────────────────────────
@@ -2483,6 +2757,23 @@ public slots:
     /// From Thetis wdsp/dexp.c:266-396 [v2.10.3.13] — xdexp impl.
     void pumpDexp(const double* interleavedIn);
 
+    /// R-IOS-13 (2026-09-27): whether DEXP's own timing is running now: the
+    /// expander or VOX is on and DEXP is past its low state (attack, open,
+    /// hold, decay) or VOX's turn-off countdown is still counting. DEXP
+    /// counts these times in the samples it processes (Thetis wdsp/dexp.c
+    /// :142-144, 312-381 [v2.10.3.15]), so the remote microphone buffer
+    /// splices nothing while this is true: a shed or inserted block would
+    /// move the hold, the hang or the VOX drop. False without DEXP. Read on
+    /// the transmit pump's thread, which is the thread that runs xdexp.
+    bool dexpTimingRunning() const;
+#ifdef NEREUS_BUILD_TESTS
+    /// Test-only: force dexpTimingRunning() (nullopt: read DEXP again).
+    void setDexpTimingRunningForTest(std::optional<bool> running)
+    {
+        m_dexpTimingForTest = running;
+    }
+#endif
+
 signals:
     // ── Per-profile TX filter applied (Plan 4 D8) ────────────────────────────
     //
@@ -2550,6 +2841,20 @@ signals:
     /// signal-driven MOX engagement instead of polling.
     void voxActiveChanged(bool active);
 
+    // R-R3-39: onModeChanged's WDSP work ran on the lane in this many
+    // milliseconds (emitted on the lane). Only with a lane; without one
+    // onModeChanged returns the time itself.
+    void dspOptionsApplied(qint64 elapsedMs);
+
+    // R-R3-39: the PureSignal TX delay WDSP applied, in seconds, for the
+    // last requestPSTXDelay (emitted on the lane, or at once without one).
+    void psTxDelayApplied(double actualSeconds);
+
+    // Task 33: the unkey drain setRunningAsync(false) returned `sequence`
+    // for has finished (or timed out in WDSP) and the RF gate is closed.
+    // Emitted on the lane, or at once without one.
+    void txDrained(quint64 sequence);
+
 private slots:
     // ── Per-profile TX filter (Plan 4 D8) — debounce fire slot ───────────────
 
@@ -2572,6 +2877,112 @@ private:
     ///   LSB family (LSB / DIGL / CWL):          IQ = [-high, -low]
     ///   Symmetric  (AM / SAM / DSB / FM / DRM): IQ = [-high, +high]
     void applyTxFilterForMode(int audioLowHz, int audioHighHz, DSPMode mode);
+
+    // ── R-R3-39: running WDSP calls on the transmit lane ─────────────────────
+    //
+    // runKeyed: at once with no lane (or on the lane itself); otherwise
+    // queued under the key of (channel, parameter), so a newer call for the
+    // same parameter replaces one still queued. runOrdered: the same, as a
+    // lane barrier, for calls whose order against every other call matters
+    // (channel state, run flags, tune, PureSignal control, sizes). Both drop
+    // the job once the wrapper is retired, and both refresh the stage-flag
+    // cache after the job.
+    void runKeyed(quint64 parameter, std::function<void()> job) const;
+    void runOrdered(std::function<void()> job) const;
+    // A keyed cache refresh: like runKeyed, without the stage-flag refresh.
+    void postRefresh(quint64 parameter, std::function<void()> job) const;
+    // True where a caller's own-thread WDSP read is the answer: no lane, or
+    // on the lane itself.
+    bool readsWdspDirectly() const noexcept;
+    // The TXA channel is open (txa[].rsmpin.p set), and so is its DEXP.
+    // Live reads: call only where readsWdspDirectly() holds.
+    bool txaOpenLive() const noexcept;
+    bool dexpOpenLive() const noexcept;
+    // The at-once guard the setters keep: the live read where it may be
+    // made, otherwise whether this wrapper's channel is open or queued to
+    // open on the lane (the lane re-checks before its WDSP call).
+    bool txaOpenAtOnce() const noexcept;
+    // The keying halves on the lane (or at once without one).
+    void applyRunningOnLane(bool on, int cfirRun, quint64 sequence);
+    void applyVoxListeningOnLane(bool on, int cfirRun);
+    void setRfGate(bool open);
+    // Closes the RF gate and waits for a worker already inside sendTxIq
+    // (see m_txIqSendersInFlight) to leave it.
+    void closeRfGateAndWaitForSender() noexcept;
+    // Worker admission: a block enters only while the channel is ready.
+    bool enterWorkerBlock() const noexcept;
+    void leaveWorkerBlock() const noexcept;
+    // Cache refreshes (lane, or at once without one).
+    void refreshStageCacheOnLane() const;
+    void refreshTxMeterOnLane(int meterType) const;
+    void refreshDexpPeakOnLane() const;
+    void refreshPsCacheOnLane() const;
+    void refreshCfcDisplayOnLane() const;
+    void refreshDspSizeOnLane() const;
+    void registerVoxCallbackOnLane();
+    // The synchronous bodies the lane (or a caller with no lane) runs.
+    std::optional<std::uint64_t> psSaveCorrNow(const QByteArray& utf8);
+    std::optional<std::uint64_t> psRestoreCorrNow(const QByteArray& utf8);
+    std::optional<Ps3FileOperationStatus> psFileOperationStatusNow(
+        Ps3FileOperationKind kind) const;
+    bool stageRunningNow(Stage s) const;
+
+    DspControlThread* m_lane{nullptr};
+    // Shared with every queued job: false once the wrapper is retired, so a
+    // job still queued never touches it.
+    std::shared_ptr<std::atomic<bool>> m_alive{std::make_shared<std::atomic<bool>>(true)};
+    // The WDSP channel is open (or queued to open) for this wrapper.
+    std::atomic<bool> m_channelOpen{false};
+    // The worker may run blocks through the channel (see isWdspReady).
+    std::atomic<bool> m_wdspReady{true};
+    // Worker calls inside a block (pumpDexp / driveOneTxBlockFromInterleaved).
+    mutable std::atomic<int> m_workerBlocksInFlight{0};
+    // Keying as the lane has applied it, in lane order (lane only, or the
+    // caller's thread with no lane).
+    bool m_laneRunning{false};
+    bool m_laneVoxListening{false};
+    // The newest setRunningAsync; an older on-job leaves the gate alone.
+    std::atomic<quint64> m_runSequence{0};
+    // Task 33: worker calls between the RF gate's re-check and the end of
+    // sendTxIq. closeRfGate waits for this to reach zero (Dekker pairing,
+    // both sides sequentially consistent), so no block reaches the
+    // connection after it returns.
+    mutable std::atomic<int> m_txIqSendersInFlight{0};
+
+    // Caches the lane refreshes. Without a lane they are unused.
+    mutable std::array<std::atomic<bool>, static_cast<std::size_t>(Stage::kStageCount)> m_stageRunCache{};
+    static constexpr int kTxMeterTypes = 17;   // TXA_METERTYPE_LAST [TXA.h]
+    mutable std::array<std::atomic<double>, kTxMeterTypes> m_txMeterCache{};
+    mutable std::atomic<double> m_dexpPeakCache{0.0};
+    mutable std::atomic<int> m_dspSizeCache{0};
+    struct PsCache {
+        bool available{false};
+        int info[16]{};
+        double hwPeak{0.0};
+        double maxTx{0.0};
+        std::optional<bool> runCal;
+        std::optional<Ps3CorrectionState> correction;
+        std::optional<bool> correctionAvailable;
+        std::optional<Ps3FileOperationStatus> save;
+        std::optional<Ps3FileOperationStatus> restore;
+        // A save or restore accepted at once and not yet run on the lane:
+        // a refresh leaves that kind's status alone until it has.
+        bool saveAwaiting{false};
+        bool restoreAwaiting{false};
+    };
+    mutable std::mutex m_psCacheMutex;
+    mutable PsCache m_psCache;
+    mutable std::int64_t m_lastPsccRefreshNs{0};   // lane only
+    mutable std::mutex m_displayCacheMutex;
+    mutable std::vector<double> m_cfcDisplayCache;
+    mutable bool m_cfcDisplayFresh{false};
+    mutable std::optional<Ps3Snapshot> m_ps3DisplayCache;
+
+#ifdef NEREUS_BUILD_TESTS
+    mutable std::mutex m_rfGateObserverMutex;
+    std::function<void(bool)> m_rfGateObserverForTest;
+    std::function<void(double)> m_drainObserverForTest;
+#endif
 
     // ── TX I/Q production loop internals ────────────────────────────────────
     //
@@ -2629,6 +3040,7 @@ private:
     // Convert from m_out (double) → m_outInterleavedFloat (float) before
     // calling sendTxIq.  Size: 2 * m_outputBufferSize floats.
     std::vector<float> m_outInterleavedFloat;
+    std::atomic<class AmModulationAnalyzer*> m_amModTap{nullptr};  // AM Mod Monitor tap
 
     // Float scratch for the post-fexchange0 MON siphon emit — the
     // sip1OutputReady signal carries `const float*`, but m_out is double,
@@ -2814,9 +3226,8 @@ private:
     // that was passed to create_dexp at TX-channel-create time (see
     // WdspEngine.cpp createTxChannel).  Set once by WdspEngine::
     // createTxChannel via setDexpBuffer right after construction; stays
-    // valid for the life of the wrapper because WdspEngine destroys the
-    // C++ wrapper (m_txChannels.erase) AFTER it tears down the DEXP
-    // module (destroy_dexp).
+    // valid for the life of the wrapper: WdspEngine retires the C++
+    // wrapper/callback before destroying DEXP, then releases the buffer.
     //
     // Initialised nullptr so pumpDexp degrades to a no-op in test builds
     // that construct TxChannel directly without going through
@@ -2957,11 +3368,15 @@ private:
     // doesn't have unit tests for PS feedback rate).
     int m_lastPSFeedbackRate = -1;
 
-    // Codex Fix F: per-call cache of the (ints, spi) pair last forwarded
-    // through setPSIntsAndSpi.  Read by lastPSInts/SpiForTest seams above.
-    // Sentinels -1 distinguish "never called" from explicit zero.
-    int m_lastPSInts = -1;
-    int m_lastPSSpi  = -1;
+    // Owning fixed-capacity buffers for the PS3 GetPSDisp boundary.  No
+    // caller or widget receives these mutable arrays or a WDSP pointer.
+#ifdef HAVE_WDSP
+    Ps3DisplayAdapter m_ps3DisplayAdapter{&::GetPSDisp};
+#else
+    Ps3DisplayAdapter m_ps3DisplayAdapter{nullptr};
+#endif
+
+    bool psAvailable() const noexcept;
 
     // ── TXA PostGen split-property cache (3M-1c E.3 / E.4) ──────────────────
     //
@@ -3047,6 +3462,27 @@ private:
     // CPDR carry (mirrors WDSP-wired setTxCpdrOn/GainDb)
     bool    m_cpdrOn       {false};
     double  m_cpdrLevelDb  {0.0};
+    int     m_amCarrierPct {100};   // carry; AM/SAM/DSB carrier level
+    // R-R3-49 (parity Task 2): the last setTxEqRunning value, for the test
+    // seam only (m_eqEnabled is the rebuild snapshot's carry).
+    bool    m_txEqRunningLast {false};
+    // R-R3-49 (parity Task 4): the last values of the setters that keep no
+    // carry of their own, for the test seam only.
+    std::vector<double> m_txEqProfileFLast;
+    std::vector<double> m_txEqProfileGLast;
+    std::vector<double> m_txEqProfileQLast;
+    int     m_txEqProfilePushCount {0};
+    int     m_txEqNcLast      {2048};
+    bool    m_txEqMpLast      {false};
+    int     m_txEqCtfmodeLast {0};
+    int     m_txEqWintypeLast {0};
+    std::vector<double> m_txCfcProfileFLast;
+    std::vector<double> m_txCfcProfileGLast;
+    std::vector<double> m_txCfcProfileELast;
+    std::vector<double> m_txCfcProfileQgLast;
+    std::vector<double> m_txCfcProfileQeLast;
+    int m_txCfcProfilePushCount = 0;
+    bool    m_phaseRotatorRunLast {false};
 
     // PureSignal carry — 3M-4 work
     bool    m_pureSignalEnabled {false};
@@ -3064,7 +3500,15 @@ private:
     // (RadioModel: createTxChannel(1, 64, ...)).
     // From WdspEngine.h kTxDspBufferSize = 2048 [NereusSDR-original].
     int m_txFilterSize{2048};
-    int m_txFilterType{0};   // 0 = LowLatency, 1 = LinearPhase
+#ifdef NEREUS_BUILD_TESTS
+    std::optional<bool> m_dexpTimingForTest;
+#endif
+    // 0 = LowLatency, 1 = LinearPhase. R-IOS-13: starts at LinearPhase,
+    // the state WDSP opens the channel in (TXA.c create_bandpass mp 0), so
+    // the first apply of "Low Latency" reaches TXASetMP. (Thetis's cache
+    // starts at Low_Latency, radio.cs:2647 [v2.10.3.15], and its first
+    // apply is forced.)
+    int m_txFilterType{1};
     // m_txDspBlockSize defaults to WdspEngine::kTxDspBufferSize (2048,
     // deskhpsdr-derived) — matches the dsp_size argument
     // WdspEngine::createTxChannel passes to OpenChannel (createTxChannel
@@ -3129,6 +3573,25 @@ private:
     void* m_tciTxResampler{nullptr};
     int   m_tciTxResamplerInputRate{0};  // last create_resampleFV in_rate
     std::vector<float> m_tciTxResampleOut;  // scratch output buffer
+
+    // R-R3-39: with a transmit lane the resampler above is made, run and
+    // destroyed only there. A block that needs it (srcRate other than
+    // 48 kHz) is resampled and pushed to the ring by a lane job; a 48 kHz
+    // block is pushed at once by the caller while no TCI job is queued on
+    // the lane, and queued behind them otherwise, so the ring keeps the
+    // order blocks arrive in. This counts TCI jobs queued or running on the
+    // lane that touch the ring or the scratch buffers; each job lowers it
+    // (release) after its push, which the caller reads (acquire) before
+    // pushing itself. Shared so a job outliving the wrapper can still
+    // lower it.
+    std::shared_ptr<std::atomic<int>> m_tciLaneJobs{
+        std::make_shared<std::atomic<int>>(0)};
+    // The body of feedTxAudioFromTci once the block is known valid: gain,
+    // peak, resample when needed, ring push.
+    void feedTciAudioBlock(const QByteArray& interleavedStereoBytes,
+                           int frames, int channels, int srcRate);
+    void drainTciInputRing();
+    void destroyTciResampler();
 };
 
 } // namespace NereusSDR

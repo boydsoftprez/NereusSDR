@@ -14,6 +14,18 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-25 - Receiver and transmit gaps plan, Task 5: sampleRatesFor,
+//                 maxSampleRateFor and widebandAdcsFor, per board row and
+//                 protocol, by J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Anthropic Claude Code.
+//   2026-09-29 - Level Cal: the Alex receive attenuator (Thetis SetAlexAtten,
+//                netInterface.c:421-432 [v2.10.3.15]) on the wire, and the step
+//                attenuator range above 31 dB on Alex boards (value + 2,
+//                console.cs:11044-11056 [v2.10.3.15]). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-30 — Radio codec lane: radioMicNeedsAddOn (HL2) and
+//                 radioMicSelectable(). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  clsHardwareSpecific.cs
@@ -204,6 +216,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QList>
 #include <array>
 #include <span>
+#include <vector>
 
 namespace NereusSDR {
 
@@ -366,10 +379,15 @@ struct BoardCapabilities {
     // legitimately exceed userDdcCount.
     int  userDdcCount {0};
 
-    // Phase 3F: number of ADCs that support the wideband (real-sample) stream.
-    // P2 boards: typically equals adcCount. P1 boards: 0 (different mechanism, deferred to 3F-W).
+    // Phase 3F: number of ADCs that support the wideband (real-sample) stream
+    // when the board runs Protocol 2. Read it through
+    // BoardCapsTable::widebandAdcsFor, which gives 0 on Protocol 1 for every
+    // row (plan Task 5). P1-only rows keep 0 here as well.
     int  widebandAdcs {0};
 
+    // Every rate the board reaches on any protocol it runs (zero-padded).
+    // What it offers on the protocol in use is BoardCapsTable::sampleRatesFor
+    // and maxSampleRateFor (plan Task 5); maxSampleRate is the row's top.
     std::array<int, 6> sampleRates;  // zero-pad unused slots; up to 6 for P2 boards
     int  maxSampleRate;
 
@@ -490,6 +508,21 @@ struct BoardCapabilities {
     // 3M-1b.
     bool hasMicJack {true};
 
+    // Radio codec lane (2026-09-30): the radio has a mic input only with an
+    // audio add-on board it cannot report. The HL2 gets its codec from the
+    // AK4951 add-on (Hermes-Lite2 gateware variants hl2b5up_ak4951v3/v4,
+    // BOARD 5 @7472bd1), and its discovery reply carries no field for it
+    // (usopenhpsdr1.v:254-314 @7472bd1). mi0bot has no HL2 mic lock: its
+    // Mic In / Line In / boost / line gain controls (setup.cs:14566-14589
+    // [@c26a8a4] radMicIn/radLineIn_CheckedChanged) work on every model, and
+    // the HL2 codec sends them (networkproto1.c bank 10 C2, bank 11 C2).
+    // hasMicJack stays false for such a board; the Radio Mic choice is
+    // offered with a note (radioMicSelectable).
+    bool radioMicNeedsAddOn {false};
+
+    // Whether the operator may pick the radio's own mic input.
+    bool radioMicSelectable() const noexcept { return hasMicJack || radioMicNeedsAddOn; }
+
     // Per-board mic gain slider range (Phase 3M-1b Task I.4).
     //
     // Porting from Thetis console.cs:19151-19171 [v2.10.3.13]:
@@ -585,14 +618,105 @@ namespace BoardCapsTable {
     const BoardCapabilities& forModel(HPSDRModel m) noexcept;
     std::span<const BoardCapabilities> all() noexcept;
 
+    // How many receive streams (independent DDCs) the board gives slices
+    // over the protocol it is running. This is the one stream count: the
+    // stream pool (and so the slice cap in SliceStreamAllocator), the pan
+    // layout ceiling and the count a Core advertises all read it, through
+    // RadioModel::userStreamCount(). maxSlices is a separate axis and is not
+    // touched here.
+    //
+    // Protocol 2 gives the row's userDdcCount. Protocol 1 gives at most four
+    // (plan Task 11, the operator's ruling of 2026-09-24): the frame carries
+    // RX1 and RX2 on the slots Thetis's GetDDC names, plus slices C and D on
+    // the PureSignal pair's slots in plain receive (slots 2 + 3 on the Hermes
+    // class, 3 + 4 on the Orion class; slot 1 is tied to RX1's frequency on
+    // the Orion class). The rows that serve both protocols (Angelia, Orion,
+    // OrionMKII, Saturn) carry their Protocol 2 count of five.
+    int userDdcCountFor(const BoardCapabilities& caps, ProtocolVersion protocol) noexcept;
+
+    // The same count, capped by the receiver count the radio reported in
+    // discovery (RadioInfo::reportedReceivers). On Protocol 2 a non-zero
+    // report caps the row's count: the radio is the authority, since the
+    // gateware's receiver count is a compile-time constant that changes
+    // between firmware releases (ANAN-G2 reports 4 against the row's five
+    // user streams). 0 means no report and keeps the row's count. Protocol 1
+    // is unchanged: its frame slot plan sets the count.
+    int userDdcCountFor(const BoardCapabilities& caps, ProtocolVersion protocol,
+                        int reportedReceivers) noexcept;
+
+    // The radio's effective receiver count: the one number every reader of
+    // "how many receivers does this radio have" uses (Max RX on the radio
+    // information tab, the live receiver count clamp, and, through
+    // userDdcCountFor, the stream pool). On Protocol 2 a non-zero report
+    // (RadioInfo::reportedReceivers) caps the row's maxReceivers; 0 means no
+    // report and keeps the row. Protocol 1 keeps the row, as the stream pool
+    // does. The Protocol 2 wire enable seed does not read this: Thetis keeps
+    // the reported count for its radio list only (see
+    // P2RadioConnection::setActiveReceiverCount).
+    int effectiveReceiverCount(const BoardCapabilities& caps, ProtocolVersion protocol,
+                               int reportedReceivers) noexcept;
+
+    // The sample rates the board offers over the protocol it is running
+    // (plan Task 5, the operator's ruling of 2026-09-24, "follow thetis").
+    // Thetis picks the list by protocol, not by board, and adds 384 kHz on
+    // Protocol 1 for one model:
+    //   From Thetis setup.cs:847-851 [v2.10.3.15] InitAudioTab
+    //     bool include_extra_p1_rate = HardwareSpecific.Model == HPSDRModel.REDPITAYA; //DH1KLM
+    //     int[] p1_rates = include_extra_p1_rate ? { 48000, 96000, 192000, 384000 } : { 48000, 96000, 192000 };
+    //     int[] p2_rates = { 48000, 96000, 192000, 384000, 768000, 1536000 };
+    //     int[] rates = NetworkIO.CurrentRadioProtocol == RadioProtocol.ETH ? p2_rates : p1_rates;
+    // and mi0bot adds the HL2 (HL2-authoritative):
+    //   From mi0bot-Thetis setup.cs:849-851 [v2.10.3.13-beta2]
+    //     // The HL supports 384K
+    //     if (HardwareSpecific.Model == HPSDRModel.HERMESLITE)
+    //         include_extra_p1_rate = true;
+    // The result is that list intersected with the row's sampleRates, so a
+    // row carries every rate the board reaches on any protocol it runs and
+    // this function trims it to the one in use. The model is a parameter
+    // because the RedPitaya shares the OrionMKII row and only the model
+    // tells them apart.
+    std::vector<int> sampleRatesFor(const BoardCapabilities& caps,
+                                    ProtocolVersion protocol,
+                                    HPSDRModel model);
+
+    // The top of sampleRatesFor, or 0 if the board offers nothing on that
+    // protocol. What the Radio Info tab shows and what a discovery reply
+    // carries.
+    int maxSampleRateFor(const BoardCapabilities& caps,
+                         ProtocolVersion protocol,
+                         HPSDRModel model);
+
+    // How many ADCs can carry a wideband stream over the protocol the board
+    // is running. Protocol 1 gives none on every board: Thetis's Protocol 1
+    // receive loop takes only EP6 and drops every other endpoint, the EP4
+    // wideband stream included:
+    //   From Thetis ChannelMaster/networkproto1.c:181-201 [v2.10.3.15]
+    //     if (endpoint == 6) { ... return 1024; }
+    //     else { printf("MRD: ignoring data for ep %d\n", endpoint); }
+    // Protocol 2 gives the row's widebandAdcs.
+    int widebandAdcsFor(const BoardCapabilities& caps, ProtocolVersion protocol) noexcept;
+
     // --- Per-model preamp/attenuator helpers ---
     // Porting from Thetis console.cs:40755-40825 SetComboPreampForHPSDR().
 
     // Preamp combo item: display text + underlying PreampMode-like index.
     struct PreampItem {
         const char* label;   // e.g. "0dB", "-10dB", "-20db" (case from Thetis)
-        int         modeInt; // index into NereusSDR PreampMode (0=Off..6=Minus50)
+        int         modeInt; // NereusSDR PreampMode value, numbered as Thetis
+                             // PreampMode (0=HPSDR_OFF .. 9=SA_MINUS30)
     };
+
+    // The PreampMode Thetis picks when the operator selects this label, or
+    // -1 for a label it does not know. hpsdrModel is Model == HPSDR, which
+    // NereusSDR reaches as the Atlas board.
+    // From Thetis console.cs:28401-28466 comboPreamp_SelectedIndexChanged [v2.10.3.15].
+    int preampModeForLabel(const char* label, bool hpsdrModel) noexcept;
+
+    // Moves a preamp mode stored before the SA modes existed (numbered
+    // 0=Off..6=Minus50 on every board) to the mode the same combo label
+    // now carries. Off becomes SA_MINUS20 away from Atlas, the 20 dB
+    // attenuation it stood for. Unknown values come back unchanged.
+    int preampModeFromV1(HPSDRHW hw, bool alexPresent, int stored) noexcept;
 
     // Returns the RX1 preamp combo items for a given board + ALEX presence.
     // From Thetis console.cs:40755 SetComboPreampForHPSDR.
@@ -610,6 +734,16 @@ namespace BoardCapsTable {
     // ALEX-equipped boards not in the exclusion list (OrionMKII/Saturn/HL2).
     // Exception: HL2 returns 63 (6-bit LNA range, mi0bot [@c26a8a4]).
     int stepAttMaxDb(HPSDRHW hw, bool alexPresent) noexcept;
+
+    // Level Cal: the highest step attenuator value a connection sends.
+    // Above 31 dB an Alex board's step attenuator carries the value + 2
+    // (the Alex attenuator taking 30 dB), so a board with the 61 dB range
+    // accepts up to 63; every other board keeps its own attenuator.maxDb.
+    // From Thetis console.cs:11044-11056 [v2.10.3.15] (the Alex list just
+    // above it ends //DH1KLM):
+    //   NetworkIO.SetAlexAtten(3); // -30dB Alex Attenuator
+    //   if (nRX1ADCinUse == 0) NetworkIO.SetADC1StepAttenData(_rx1_attenuator_data + 2);
+    int stepAttWireMaxDb(const BoardCapabilities& caps) noexcept;
 }
 
 } // namespace NereusSDR

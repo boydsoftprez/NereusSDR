@@ -57,7 +57,8 @@ void TestSpectrumWidgetHighSwrOverlay::setHighSwrOverlay_triggersUpdate()
     SpectrumWidget w;
     w.resize(800, 600);
     w.show();
-    QTest::qWaitForWindowExposed(&w);
+    // The widget cannot draw without an exposed window.
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
 
     // Calling setHighSwrOverlay when state changes must succeed and leave
     // the widget with correct state (the internal update() schedules a

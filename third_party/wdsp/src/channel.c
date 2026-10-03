@@ -24,6 +24,22 @@ warren@wpratt.com
 
 */
 
+// NereusSDR modifications (2026-09-23, J.J. Boyd KG4VCF, with Anthropic
+// Claude Code): pre_main_destroy waits for the channel's worker to leave its
+// loop (dsplock.c WdspWaitWorkerExit) instead of sleeping a fixed 25 ms, so
+// no buffer is freed while a slow block is still running. It clears run and
+// sets exec_bypass while holding csDSP, so a block already under way finishes
+// normally instead of ending its worker inside dexchange. start_thread
+// reports whether the worker started (dsplock.c WdspWorkerStarted), so a
+// teardown never waits for a worker that does not exist. Source DSP flow and
+// all upstream attribution are retained.
+//
+// NereusSDR modifications (2026-09-24, J.J. Boyd KG4VCF, with Anthropic
+// Claude Code, R-R3-39): OpenChannel and SetChannelState report each call to
+// the application's caller check (dsplock.h WdspCallerCheck) before any
+// of their work; with no check installed that is one pointer test. No DSP
+// flow changes.
+
 #include "comm.h"
 
 struct _ch ch[MAX_CHANNELS];
@@ -32,6 +48,9 @@ void start_thread (int channel)
 {
 	HANDLE handle = (HANDLE) _beginthread(wdspmain, 0, (void *)(uintptr_t)channel);
 	//SetThreadPriority(handle, THREAD_PRIORITY_HIGHEST);
+	// NereusSDR: _beginthread (and wdsp_beginthread) return -1 on failure;
+	// teardown must not wait for a worker that never started.
+	WdspWorkerStarted (channel, handle != (HANDLE)-1);
 }
 
 void pre_main_build (int channel)
@@ -76,6 +95,7 @@ PORT
 void OpenChannel (int channel, int in_size, int dsp_size, int input_samplerate, int dsp_rate, int output_samplerate, 
 	int type, int state, double tdelayup, double tslewup, double tdelaydown, double tslewdown, int bfo)
 {
+	WdspCallerCheck (channel, WDSP_CALLER_OPEN_CHANNEL);	// NereusSDR (R-R3-39)
 	ch[channel].in_size = in_size;
 	ch[channel].dsp_size = dsp_size;
 	ch[channel].in_rate = input_samplerate;
@@ -104,10 +124,15 @@ void pre_main_destroy (int channel)
 {
 	IOB a = ch[channel].iob.pc;
 	InterlockedBitTestAndReset (&ch[channel].exchange, 0);
+	// NereusSDR: clear run and set exec_bypass under csDSP, so a worker block
+	// that already passed its exec_bypass check finishes with run still set
+	// and never leaves through dexchange's _endthread holding csDSP.
+	EnterCriticalSection (&ch[channel].csDSP);
 	InterlockedBitTestAndReset (&ch[channel].run, 0);
 	InterlockedBitTestAndSet (&ch[channel].iob.pc->exec_bypass, 0);
+	LeaveCriticalSection (&ch[channel].csDSP);
 	ReleaseSemaphore (a->Sem_BuffReady, 1, 0);
-	Sleep (25);
+	WdspWaitWorkerExit (channel);
 }
 
 void post_main_destroy (int channel)
@@ -262,6 +287,7 @@ int SetChannelState (int channel, int state, int dmode)
 	int prior_state = ch[channel].state;
 	int count = 0;
 	const int timeout = 100;
+	WdspCallerCheck (channel, WDSP_CALLER_SET_CHANNEL_STATE);	// NereusSDR (R-R3-39)
 	if (ch[channel].state != state)
 	{
 		ch[channel].state = state;

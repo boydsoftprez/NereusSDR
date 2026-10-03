@@ -1,12 +1,15 @@
 // no-port-check: Phase 3P-H Task 5b — OC Outputs live pin-state LED row.
 //
-// Verifies OcOutputsHfTab::onLiveStateChanged() computes the displayed OC
-// byte as OcMatrix::maskFor(currentBand, isTx):
-//   - no pins set → byte 0, no LEDs lit.
-//   - RX matrix pin 0 set for 20m → byte 0x01, LED 0 lit.
-//   - RX matrix pin 3 set for 40m → byte 0x08, LED 3 lit (band change wiring).
-//   - TX matrix pin 1 set for 20m → byte 0x02, LED 1 lit only while MOX
-//     is on (RX matrix for same band is different).
+// Plan Task 14 fix wave (R-R3-49): the row shows the OC byte the connection
+// composed (RadioModel::bandOutputsByte), not a byte computed here from
+// OcMatrix::maskFor(pan 1's band, MOX), which in a cross-band split showed
+// the other slice's pins:
+//   - nothing composed yet → byte 0, no LEDs lit, whatever the matrix holds.
+//   - a reported byte lights its LEDs.
+//   - a band change, a MOX change or a matrix edit on its own changes
+//     nothing shown; only the next report does.
+// The wire-level cross-band split, locally and in a remote window, is
+// tst_band_outputs_display.
 #include <QtTest/QtTest>
 #include <QApplication>
 
@@ -32,21 +35,8 @@ private slots:
         }
     }
 
-    // Empty matrix + first-panadapter 20m + MOX=off → byte 0, no LEDs lit.
-    void empty_matrix_yields_zero_byte()
-    {
-        RadioModel model;
-        model.addPanadapter();
-        model.panadapters().first()->setCenterFrequency(14.200e6);
-        OcOutputsHfTab tab(&model, &model.ocMatrixMutable());
-        QCOMPARE(int(tab.currentOcByteForTest()), 0);
-        for (int pin = 0; pin < 7; ++pin) {
-            QVERIFY(!tab.livePinLitForTest(pin));
-        }
-    }
-
-    // RX pin 0 set for 20m → byte 0x01 while MOX is off.
-    void rx_pin_for_current_band_lights_led()
+    // Nothing composed yet: nothing lit, even with a pin set for pan 1's band.
+    void nothing_composed_yields_zero_byte()
     {
         RadioModel model;
         model.addPanadapter();
@@ -54,47 +44,46 @@ private slots:
         model.ocMatrixMutable().setPin(Band::Band20m, /*pin=*/0,
                                         /*tx=*/false, /*enabled=*/true);
         OcOutputsHfTab tab(&model, &model.ocMatrixMutable());
-        QCOMPARE(int(tab.currentOcByteForTest()), 0x01);
+        QCOMPARE(int(tab.currentOcByteForTest()), 0);
+        for (int pin = 0; pin < 7; ++pin) {
+            QVERIFY(!tab.livePinLitForTest(pin));
+        }
+    }
+
+    // A reported byte lights exactly its pins.
+    void reported_byte_lights_its_leds()
+    {
+        RadioModel model;
+        OcOutputsHfTab tab(&model, &model.ocMatrixMutable());
+        model.reportBandOutputsForTest(0x09, int(Band::Band40m), /*keyed=*/false);
+        QCOMPARE(int(tab.currentOcByteForTest()), 0x09);
         QVERIFY(tab.livePinLitForTest(0));
         QVERIFY(!tab.livePinLitForTest(1));
+        QVERIFY(tab.livePinLitForTest(3));
     }
 
-    // A band change from 20m to 40m shifts the LED to the 40m RX mask.
-    void band_change_switches_mask()
+    // A band change, a MOX change or a matrix edit on its own does not
+    // change what is shown: the connection's next report does.
+    void band_mox_and_matrix_do_not_recompute()
     {
         RadioModel model;
         model.addPanadapter();
         model.panadapters().first()->setCenterFrequency(14.200e6);
-
         OcMatrix& m = model.ocMatrixMutable();
         m.setPin(Band::Band20m, /*pin=*/0, /*tx=*/false, true);
-        m.setPin(Band::Band40m, /*pin=*/3, /*tx=*/false, true);
+        m.setPin(Band::Band20m, /*pin=*/1, /*tx=*/true,  true);
         OcOutputsHfTab tab(&model, &m);
-        QCOMPARE(int(tab.currentOcByteForTest()), 0x01);  // 20m pin 0
+        model.reportBandOutputsForTest(0x04, int(Band::Band40m), /*keyed=*/true);
+        QCOMPARE(int(tab.currentOcByteForTest()), 0x04);
 
-        // Setting to 40m RX freq crosses into Band40m.
         model.panadapters().first()->setCenterFrequency(7.150e6);
-        QCOMPARE(int(tab.currentOcByteForTest()), 0x08);  // 40m pin 3
-    }
-
-    // MOX flips from RX matrix to TX matrix for the current band.
-    void mox_toggles_rx_tx_matrix()
-    {
-        RadioModel model;
-        model.addPanadapter();
-        model.panadapters().first()->setCenterFrequency(14.200e6);
-
-        OcMatrix& m = model.ocMatrixMutable();
-        m.setPin(Band::Band20m, /*pin=*/0, /*tx=*/false, true);  // RX
-        m.setPin(Band::Band20m, /*pin=*/1, /*tx=*/true,  true);  // TX
-        OcOutputsHfTab tab(&model, &m);
-        QCOMPARE(int(tab.currentOcByteForTest()), 0x01);  // RX matrix
-
         model.transmitModel().setMox(true);
-        QCOMPARE(int(tab.currentOcByteForTest()), 0x02);  // TX matrix
+        m.setPin(Band::Band40m, /*pin=*/3, /*tx=*/false, true);
+        QCOMPARE(int(tab.currentOcByteForTest()), 0x04);
 
+        model.reportBandOutputsForTest(0x01, int(Band::Band20m), /*keyed=*/false);
+        QCOMPARE(int(tab.currentOcByteForTest()), 0x01);
         model.transmitModel().setMox(false);
-        QCOMPARE(int(tab.currentOcByteForTest()), 0x01);  // back to RX
     }
 
     // setCurrentOcByte direct test — repaints 7 LEDs.

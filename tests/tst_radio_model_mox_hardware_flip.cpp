@@ -161,6 +161,12 @@ private slots:
 
         model.setActiveSlice(1);
         model.onMoxHardwareFlipped(/*isTx=*/false);
+        // Task 33: the receiver stays off through the hardware flip; it
+        // comes back on rxReady, after ptt_out_delay (Thetis
+        // console.cs:29678-29680 [v2.10.3.15]).
+        QCOMPARE(rx0States.count(), 0);
+        QCOMPARE(rx2States.count(), 0);
+        model.onMoxRxReady();
         QCOMPARE(rx0States.count(), 0);
         QCOMPARE(rx2States.count(), 1);
         QCOMPARE(rx2States.takeFirst().at(0).toBool(), true);

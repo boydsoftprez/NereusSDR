@@ -1,0 +1,12 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "notice",
+    "id": 8,
+    "kind": "sliceMoved",
+    "reason": "iPhone moved their panadapter. Your slice B moved to another receiver.",
+    "secondsAgo": 0,
+    "takeBack": "no"
+  },
+  "decodes": false
+}

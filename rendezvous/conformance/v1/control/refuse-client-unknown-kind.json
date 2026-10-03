@@ -1,0 +1,8 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "hello",
+    "version": 1
+  },
+  "decodes": false
+}

@@ -1,0 +1,12 @@
+[Unit]
+Description=Set the Nereus station hostname on first boot
+After=systemd-hostnamed.service
+Before=nereusd.service
+ConditionPathExists=/var/lib/nereus-station/first-boot-pending
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/nereus-firstboot
+
+[Install]
+WantedBy=multi-user.target

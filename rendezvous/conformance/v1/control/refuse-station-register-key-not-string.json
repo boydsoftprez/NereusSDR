@@ -1,0 +1,9 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "register",
+    "id": "lwhu2kyjnrfdwvpxvdckao3lb7",
+    "publicKey": 7
+  },
+  "decodes": false
+}

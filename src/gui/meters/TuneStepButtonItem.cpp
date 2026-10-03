@@ -76,6 +76,15 @@ TuneStepButtonItem::TuneStepButtonItem(QObject* parent)
     connect(this, &ButtonBoxItem::buttonClicked, this, &TuneStepButtonItem::onButtonClicked);
 }
 
+int TuneStepButtonItem::stepHz(int index)
+{
+    // The values the kStepLabels above name.
+    static constexpr int kStepHz[] = { 1, 10, 100, 1000, 10000, 100000, 1000000 };
+    static_assert(sizeof(kStepHz) / sizeof(kStepHz[0]) == kStepCount);
+    if (index < 0 || index >= kStepCount) { return 0; }
+    return kStepHz[index];
+}
+
 void TuneStepButtonItem::setActiveStep(int index)
 {
     if (m_activeStep == index) { return; }

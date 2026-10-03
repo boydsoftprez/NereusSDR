@@ -99,6 +99,19 @@ protected:
     PsDdcConfig psDdcConfigHermesIIClass(
         bool psEnabled, bool diversityEnabled, bool moxState,
         int rx1Rate, int rx2Rate, bool rx2Enabled) const;
+
+    // Plan Task 11: Thetis's Protocol 1 receiver layout per model family
+    // (console.cs UpdateDDCs + GetDDC + cmaster.cs CMLoadRouterAll
+    // [v2.10.3.15]). applyDdcAssignment dispatches on CodecContext::model;
+    // AnvelinaPro3 and RedPitaya call the Orion-class helper directly.
+    // Stream values and the PureSignal pair are Protocol 1 frame slots.
+    DdcAssignment ddcAssignmentHermesClass(
+        const CodecContext& ctx, const std::array<SliceConfig, 5>& slices) const;
+    DdcAssignment ddcAssignmentHermesIIClass(
+        const CodecContext& ctx, const std::array<SliceConfig, 5>& slices) const;
+    DdcAssignment ddcAssignmentOrionClass(
+        const CodecContext& ctx, const std::array<SliceConfig, 5>& slices,
+        bool redPitaya) const;
 };
 
 } // namespace NereusSDR

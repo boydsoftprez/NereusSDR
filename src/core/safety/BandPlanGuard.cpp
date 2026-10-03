@@ -1,3 +1,5 @@
+// 2026-09-27: shared TX filter geometry and validated band-edge admission.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 // src/core/safety/BandPlanGuard.cpp  (NereusSDR)
 // =================================================================
@@ -13,6 +15,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-09-27: Completed the 24 country HF range tables from Thetis
+//                v2.10.3.15 @3759d096 with AI assistance via OpenAI Codex.
+//   2026-09-28: Addendum G-42 item 4: each band plan refusal says what is
+//                wrong in the operator's words, after Thetis's MOX messages
+//                (console.cs:29452-29530 [v2.10.3.15]). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-04-25 — Ported to C++20/Qt6 for NereusSDR by J.J. Boyd
 //                (KG4VCF), with AI-assisted transformation via
 //                Anthropic Claude Code.
@@ -115,6 +123,7 @@ mw0lge@grange-lane.co.uk
 
 #include "core/safety/BandPlanGuard.h"
 #include <array>
+#include <limits>
 
 namespace NereusSDR::safety {
 
@@ -181,105 +190,372 @@ constexpr std::array<ChannelEntry, 1> kJapanChannels60m{{
 
 // ---------------------------------------------------------------------------
 // Per-region HF band-edge tables
-// Verbatim from Thetis clsBandStackManager.cs:1287-1497 [v2.10.3.13].
-// Only HF-class bands are TX-allowed (IsOKToTX excludes BandType.VHF —
-// clsBandStackManager.cs:1072-1079 [v2.10.3.13]).
-// B60M rows are placeholders; 60m is handled via the channel tables above.
+// clsBandStackManager.cs:1334-1730 [v2.10.3.15 @3759d096].
+// IsOKToTX (lines 1063-1083) accepts HF, excluding WWV and BLMF;
+// VHF B2M and general-coverage rows are deliberately absent.
+// Italy selects the upstream Italy_Plus table (setup.cs:14209-14210).
+// UK/Japan 60m rows remain subject to the native channel gates below.
 // ---------------------------------------------------------------------------
 
-// US (clsBandStackManager.cs AddRegion2BandStack, Region2 = Region.US)
-// clsBandStackManager.cs:1088-1098 [v2.10.3.13].
+// US: clsBandStackManager.cs:1335-1345.
 constexpr std::array<BandRange, 11> kUsBandRanges{{
-    { Band::Band160m, 1'800'000,  2'000'000 },
-    { Band::Band80m,  3'500'000,  4'000'000 },
-    { Band::Band40m,  7'000'000,  7'300'000 },
-    { Band::Band30m, 10'100'000, 10'150'000 },
-    { Band::Band20m, 14'000'000, 14'350'000 },
-    { Band::Band17m, 18'068'000, 18'168'000 },
-    { Band::Band15m, 21'000'000, 21'450'000 },
-    { Band::Band12m, 24'890'000, 24'990'000 },
-    { Band::Band10m, 28'000'000, 29'700'000 },
-    { Band::Band6m,  50'000'000, 54'000'000 },
-    { Band::Band60m,  5'100'000,  5'500'000 },  // overlaid by kUsChannels60m
+    { Band::Band160m,   1'800'000,   2'000'000 },  // :1335
+    { Band::Band80m,   3'500'000,   4'000'000 },  // :1336
+    { Band::Band60m,   5'100'000,   5'500'000 },  // :1337
+    { Band::Band40m,   7'000'000,   7'300'000 },  // :1338
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1339
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1340
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1341
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1342
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1343
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1344
+    { Band::Band6m,  50'000'000,  54'000'000 },  // :1345
 }};
 
-// Europe / Region 1 (clsBandStackManager.cs AddRegion1BandStack)
-// clsBandStackManager.cs:1104-1116 [v2.10.3.13].
-constexpr std::array<BandRange, 11> kEuropeBandRanges{{
-    { Band::Band160m, 1'810'000,  2'000'000 },
-    { Band::Band80m,  3'500'000,  3'800'000 },
-    { Band::Band40m,  7'000'000,  7'200'000 },
-    { Band::Band30m, 10'100'000, 10'150'000 },
-    { Band::Band20m, 14'000'000, 14'350'000 },
-    { Band::Band17m, 18'068'000, 18'168'000 },
-    { Band::Band15m, 21'000'000, 21'450'000 },
-    { Band::Band12m, 24'890'000, 24'990'000 },
-    { Band::Band10m, 28'000'000, 29'700'000 },
-    { Band::Band6m,  50'000'000, 52'000'000 },
-    { Band::Band60m,  5'100'000,  5'500'000 },
+// India: clsBandStackManager.cs:1376-1386.
+constexpr std::array<BandRange, 11> kIndiaBandRanges{{
+    { Band::Band160m,   1'810'000,   2'000'000 },  // :1376
+    { Band::Band80m,   3'500'000,   3'900'000 },  // :1377
+    { Band::Band60m,   5'000'000,   7'000'000 },  // :1378
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1379
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1380
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1381
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1382
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1383
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1384
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1385
+    { Band::Band6m,  50'000'000,  54'000'000 },  // :1386
 }};
 
-// United Kingdom (clsBandStackManager.cs AddRegion1BandStack with UK edits)
-// clsBandStackManager.cs:1409-1435 [v2.10.3.13].
-constexpr std::array<BandRange, 11> kUkBandRanges{{
-    { Band::Band160m, 1'810'000,  2'000'000 },
-    { Band::Band80m,  3'500'000,  3'800'000 },
-    { Band::Band40m,  7'000'000,  7'200'000 },
-    { Band::Band30m, 10'100'000, 10'150'000 },
-    { Band::Band20m, 14'000'000, 14'350'000 },
-    { Band::Band17m, 18'068'000, 18'168'000 },
-    { Band::Band15m, 21'000'000, 21'450'000 },
-    { Band::Band12m, 24'890'000, 24'990'000 },
-    { Band::Band10m, 28'000'000, 29'700'000 },
-    { Band::Band6m,  50'030'000, 52'000'000 },
-    { Band::Band60m,  5'250'000,  5'410'000 },  // overlaid by kUkChannels60m
-}};
-
-// Japan (clsBandStackManager.cs:1467-1480 [v2.10.3.13]).
-constexpr std::array<BandRange, 11> kJapanBandRanges{{
-    { Band::Band160m, 1'830'000,  1'912'500 },
-    { Band::Band80m,  3'500'000,  3'805'000 },
-    { Band::Band60m,  4'629'995,  4'630'005 },  // overlaid by kJapanChannels60m
-    { Band::Band40m,  6'975'000,  7'200'000 },
-    { Band::Band30m, 10'100'000, 10'150'000 },
-    { Band::Band20m, 14'000'000, 14'350'000 },
-    { Band::Band17m, 18'068'000, 18'168'000 },
-    { Band::Band15m, 21'000'000, 21'450'000 },
-    { Band::Band12m, 24'890'000, 24'990'000 },
-    { Band::Band10m, 28'000'000, 29'700'000 },
-    { Band::Band6m,  50'000'000, 52'000'000 },
-}};
-
-// Australia (clsBandStackManager.cs:1483-1499 [v2.10.3.13]).
-constexpr std::array<BandRange, 11> kAustraliaBandRanges{{
-    { Band::Band160m, 1'810'000,  1'875'000 },
-    { Band::Band80m,  3'500'000,  3'800'000 },
-    { Band::Band60m,  5'000'000,  7'000'000 },  // wide allocation
-    { Band::Band40m,  7'000'000,  7'300'000 },
-    { Band::Band30m, 10'100'000, 10'150'000 },
-    { Band::Band20m, 14'000'000, 14'350'000 },
-    { Band::Band17m, 18'068'000, 18'168'000 },
-    { Band::Band15m, 21'000'000, 21'450'000 },
-    { Band::Band12m, 24'890'000, 24'990'000 },
-    { Band::Band10m, 28'000'000, 29'700'000 },
-    { Band::Band6m,  50'000'000, 54'000'000 },
-}};
-
-// Spain (clsBandStackManager.cs:1440-1465 [v2.10.3.13]).
+// Spain: clsBandStackManager.cs:1391-1401.
 constexpr std::array<BandRange, 11> kSpainBandRanges{{
-    { Band::Band160m, 1'810'000,  2'000'000 },
-    { Band::Band80m,  3'500'000,  3'800'000 },
-    { Band::Band60m,  5'100'000,  5'500'000 },
-    { Band::Band40m,  7'000'000,  7'200'000 },
-    { Band::Band30m, 10'100'000, 10'150'000 },
-    { Band::Band20m, 14'000'000, 14'350'000 },
-    { Band::Band17m, 18'068'000, 18'168'000 },
-    { Band::Band15m, 21'000'000, 21'450'000 },
-    { Band::Band12m, 24'890'000, 24'990'000 },
-    { Band::Band10m, 28'000'000, 29'700'000 },
-    { Band::Band6m,  50'000'000, 52'000'000 },
+    { Band::Band160m,   1'810'000,   2'000'000 },  // :1391
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1392
+    { Band::Band60m,   5'100'000,   5'500'000 },  // :1393
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1394
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1395
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1396
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1397
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1398
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1399
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1400
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1401
 }};
 
+// Europe: clsBandStackManager.cs:1406-1416.
+constexpr std::array<BandRange, 11> kEuropeBandRanges{{
+    { Band::Band160m,   1'810'000,   2'000'000 },  // :1406
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1407
+    { Band::Band60m,   5'100'000,   5'500'000 },  // :1408
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1409
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1410
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1411
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1412
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1413
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1414
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1415
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1416
+}};
+
+// Israel: clsBandStackManager.cs:1421-1431.
+constexpr std::array<BandRange, 11> kIsraelBandRanges{{
+    { Band::Band160m,   1'810'000,   2'000'000 },  // :1421
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1422
+    { Band::Band60m,   5'000'000,   5'500'000 },  // :1423
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1424
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1425
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1426
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1427
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1428
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1429
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1430
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1431
+}};
+
+// UK: clsBandStackManager.cs:1438-1448.
+constexpr std::array<BandRange, 11> kUkBandRanges{{
+    { Band::Band160m,   1'810'000,   2'000'000 },  // :1438
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1439
+    { Band::Band60m,   5'250'000,   5'410'000 },  // :1440
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1441
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1442
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1443
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1444
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1445
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1446
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1447
+    { Band::Band6m,  50'030'000,  52'000'000 },  // :1448
+}};
+
+// Italy_Plus: clsBandStackManager.cs:1453-1463.
+constexpr std::array<BandRange, 11> kItalyBandRanges{{
+    { Band::Band160m,   1'830'000,   1'850'000 },  // :1453
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1454
+    { Band::Band60m,   5'000'000,   6'975'000 },  // :1455
+    { Band::Band40m,   6'975'000,   7'200'000 },  // :1456
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1457
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1458
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1459
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1460
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1461
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1462
+    { Band::Band6m,  50'080'000,  51'000'000 },  // :1463
+}};
+
+// Japan: clsBandStackManager.cs:1469-1479.
+constexpr std::array<BandRange, 11> kJapanBandRanges{{
+    { Band::Band160m,   1'830'000,   1'912'500 },  // :1469
+    { Band::Band80m,   3'500'000,   3'805'000 },  // :1470
+    { Band::Band60m,   4'629'995,   4'630'005 },  // :1471
+    { Band::Band40m,   6'975'000,   7'200'000 },  // :1472
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1473
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1474
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1475
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1476
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1477
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1478
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1479
+}};
+
+// Australia: clsBandStackManager.cs:1486-1496.
+constexpr std::array<BandRange, 11> kAustraliaBandRanges{{
+    { Band::Band160m,   1'810'000,   1'875'000 },  // :1486
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1487
+    { Band::Band60m,   5'000'000,   7'000'000 },  // :1488
+    { Band::Band40m,   7'000'000,   7'300'000 },  // :1489
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1490
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1491
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1492
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1493
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1494
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1495
+    { Band::Band6m,  50'000'000,  54'000'000 },  // :1496
+}};
+
+// Norway: clsBandStackManager.cs:1501-1511.
+constexpr std::array<BandRange, 11> kNorwayBandRanges{{
+    { Band::Band160m,   1'800'000,   2'000'000 },  // :1501
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1502
+    { Band::Band60m,   5'250'000,   5'450'000 },  // :1503
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1504
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1505
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1506
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1507
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1508
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1509
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1510
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1511
+}};
+
+// Denmark: clsBandStackManager.cs:1516-1526.
+constexpr std::array<BandRange, 11> kDenmarkBandRanges{{
+    { Band::Band160m,   1'800'000,   2'000'000 },  // :1516
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1517
+    { Band::Band60m,   5'250'000,   5'450'000 },  // :1518
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1519
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1520
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1521
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1522
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1523
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1524
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1525
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1526
+}};
+
+// Latvia: clsBandStackManager.cs:1531-1541.
+constexpr std::array<BandRange, 11> kLatviaBandRanges{{
+    { Band::Band160m,   1'800'000,   2'000'000 },  // :1531
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1532
+    { Band::Band60m,   5'000'000,   7'000'000 },  // :1533
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1534
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1535
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1536
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1537
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1538
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1539
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1540
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1541
+}};
+
+// Slovakia: clsBandStackManager.cs:1546-1556.
+constexpr std::array<BandRange, 11> kSlovakiaBandRanges{{
+    { Band::Band160m,   1'800'000,   2'000'000 },  // :1546
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1547
+    { Band::Band60m,   5'000'000,   7'000'000 },  // :1548
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1549
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1550
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1551
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1552
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1553
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1554
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1555
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1556
+}};
+
+// Bulgaria: clsBandStackManager.cs:1561-1571.
+constexpr std::array<BandRange, 11> kBulgariaBandRanges{{
+    { Band::Band160m,   1'800'000,   2'000'000 },  // :1561
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1562
+    { Band::Band60m,   5'000'000,   7'000'000 },  // :1563
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1564
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1565
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1566
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1567
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1568
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1569
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1570
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1571
+}};
+
+// Greece: clsBandStackManager.cs:1576-1586.
+constexpr std::array<BandRange, 11> kGreeceBandRanges{{
+    { Band::Band160m,   1'800'000,   1'850'000 },  // :1576
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1577
+    { Band::Band60m,   5'000'000,   7'000'000 },  // :1578
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1579
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1580
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1581
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1582
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1583
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1584
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1585
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1586
+}};
+
+// Hungary: clsBandStackManager.cs:1591-1601.
+constexpr std::array<BandRange, 11> kHungaryBandRanges{{
+    { Band::Band160m,   1'800'000,   2'000'000 },  // :1591
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1592
+    { Band::Band60m,   5'000'000,   7'000'000 },  // :1593
+    { Band::Band40m,   7'000'000,   7'100'000 },  // :1594
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1595
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1596
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1597
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1598
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1599
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1600
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1601
+}};
+
+// Netherlands: clsBandStackManager.cs:1606-1616.
+constexpr std::array<BandRange, 11> kNetherlandsBandRanges{{
+    { Band::Band160m,   1'800'000,   1'880'000 },  // :1606
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1607
+    { Band::Band60m,   5'000'000,   7'000'000 },  // :1608
+    { Band::Band40m,   7'000'000,   7'100'000 },  // :1609
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1610
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1611
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1612
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1613
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1614
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1615
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1616
+}};
+
+// France: clsBandStackManager.cs:1621-1631.
+constexpr std::array<BandRange, 11> kFranceBandRanges{{
+    { Band::Band160m,   1'800'000,   2'000'000 },  // :1621
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1622
+    { Band::Band60m,   5'000'000,   7'000'000 },  // :1623
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1624
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1625
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1626
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1627
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1628
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1629
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1630
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1631
+}};
+
+// Russia: clsBandStackManager.cs:1636-1646.
+constexpr std::array<BandRange, 11> kRussiaBandRanges{{
+    { Band::Band160m,   1'800'000,   2'000'000 },  // :1636
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1637
+    { Band::Band60m,   5'000'000,   7'000'000 },  // :1638
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1639
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1640
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1641
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1642
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1643
+    { Band::Band12m,  24'890'000,  25'140'000 },  // :1644
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1645
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1646
+}};
+
+// Sweden: clsBandStackManager.cs:1651-1661.
+constexpr std::array<BandRange, 11> kSwedenBandRanges{{
+    { Band::Band160m,   1'800'000,   2'000'000 },  // :1651
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1652
+    { Band::Band60m,   5'310'000,   5'930'000 },  // :1653
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1654
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1655
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1656
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1657
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1658
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1659
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1660
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1661
+}};
+
+// Germany: clsBandStackManager.cs:1667-1677.
+constexpr std::array<BandRange, 11> kGermanyBandRanges{{
+    { Band::Band160m,   1'800'000,   2'000'000 },  // :1667
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1668
+    { Band::Band60m,   5'351'500,   5'366'500 },  // :1669
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1670
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1671
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1672
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1673
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1674
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1675
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1676
+    { Band::Band6m,  50'000'000,  51'000'000 },  // :1677
+}};
+
+// Region1: clsBandStackManager.cs:1684-1694.
+constexpr std::array<BandRange, 11> kRegion1BandRanges{{
+    { Band::Band160m,   1'810'000,   2'000'000 },  // :1684
+    { Band::Band80m,   3'500'000,   3'800'000 },  // :1685
+    { Band::Band60m,   5'351'500,   5'366'500 },  // :1686
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1687
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1688
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1689
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1690
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1691
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1692
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1693
+    { Band::Band6m,  50'000'000,  52'000'000 },  // :1694
+}};
+
+// Region2: clsBandStackManager.cs:1701-1711.
+constexpr std::array<BandRange, 11> kRegion2BandRanges{{
+    { Band::Band160m,   1'800'000,   2'000'000 },  // :1701
+    { Band::Band80m,   3'500'000,   4'000'000 },  // :1702
+    { Band::Band60m,   5'351'500,   5'366'500 },  // :1703
+    { Band::Band40m,   7'000'000,   7'300'000 },  // :1704
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1705
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1706
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1707
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1708
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1709
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1710
+    { Band::Band6m,  50'000'000,  54'000'000 },  // :1711
+}};
+
+// Region3: clsBandStackManager.cs:1718-1728.
+constexpr std::array<BandRange, 11> kRegion3BandRanges{{
+    { Band::Band160m,   1'800'000,   2'000'000 },  // :1718
+    { Band::Band80m,   3'500'000,   3'900'000 },  // :1719
+    { Band::Band60m,   5'351'500,   5'366'500 },  // :1720
+    { Band::Band40m,   7'000'000,   7'200'000 },  // :1721
+    { Band::Band30m,  10'100'000,  10'150'000 },  // :1722
+    { Band::Band20m,  14'000'000,  14'350'000 },  // :1723
+    { Band::Band17m,  18'068'000,  18'168'000 },  // :1724
+    { Band::Band15m,  21'000'000,  21'450'000 },  // :1725
+    { Band::Band12m,  24'890'000,  24'990'000 },  // :1726
+    { Band::Band10m,  28'000'000,  29'700'000 },  // :1727
+    { Band::Band6m,  50'000'000,  54'000'000 },  // :1728
+}};
 // ---------------------------------------------------------------------------
 // Helper: return 60m channels for region (empty span → no channelization)
 // ---------------------------------------------------------------------------
@@ -311,10 +587,6 @@ static ChannelSpan channels60mFor(Region region) noexcept
     // (issue #271, ANAN-10E on macOS, 2026-05-18). US returns {nullptr, 0}
     // so the broad-range branch in isValidTxFreq governs.
     //
-    // TODO(3M follow-up): Add per-region 60m channel arms for regions with
-    // discrete channelization (Italy, Slovakia, etc. — see Thetis source).
-    // Regions with NO channelization MUST NOT fall through to US channels —
-    // they must return { nullptr, 0 } so the band-range check governs.
     default:
         return { nullptr, 0 };
     }
@@ -332,31 +604,56 @@ struct RangeSpan {
 static RangeSpan bandRangesFor(Region region) noexcept
 {
     switch (region) {
+    case Region::UnitedStates:
+        return { kUsBandRanges.data(), kUsBandRanges.size() };
+    case Region::India:
+        return { kIndiaBandRanges.data(), kIndiaBandRanges.size() };
+    case Region::Spain:
+        return { kSpainBandRanges.data(), kSpainBandRanges.size() };
     case Region::Europe:
-    case Region::Region1:
         return { kEuropeBandRanges.data(), kEuropeBandRanges.size() };
+    case Region::Israel:
+        return { kIsraelBandRanges.data(), kIsraelBandRanges.size() };
     case Region::UnitedKingdom:
         return { kUkBandRanges.data(), kUkBandRanges.size() };
+    case Region::Italy:
+        return { kItalyBandRanges.data(), kItalyBandRanges.size() };
     case Region::Japan:
         return { kJapanBandRanges.data(), kJapanBandRanges.size() };
     case Region::Australia:
         return { kAustraliaBandRanges.data(), kAustraliaBandRanges.size() };
-    case Region::Spain:
-        return { kSpainBandRanges.data(), kSpainBandRanges.size() };
-    // TODO(3M follow-up): Add per-region band-range arms for the 18
-    // remaining regions (India, Italy, Israel, Norway, Denmark, Sweden,
-    // Latvia, Slovakia, Bulgaria, Greece, Hungary, Netherlands, France,
-    // Russia, Region3, Germany — Region1 already maps to Europe, Region2
-    // to UnitedStates). Each region needs ~12 lines of constexpr array
-    // transcribed verbatim from clsBandStackManager.cs:1287-1497
-    // [v2.10.3.13] plus 2 test cases.
-    //
-    // 3M-0 ships with US-fallback default — BandPlanGuard is inert
-    // until 3M-1a wires it into the MOX path. Safe to defer.
-    case Region::UnitedStates:
+    case Region::Norway:
+        return { kNorwayBandRanges.data(), kNorwayBandRanges.size() };
+    case Region::Denmark:
+        return { kDenmarkBandRanges.data(), kDenmarkBandRanges.size() };
+    case Region::Latvia:
+        return { kLatviaBandRanges.data(), kLatviaBandRanges.size() };
+    case Region::Slovakia:
+        return { kSlovakiaBandRanges.data(), kSlovakiaBandRanges.size() };
+    case Region::Bulgaria:
+        return { kBulgariaBandRanges.data(), kBulgariaBandRanges.size() };
+    case Region::Greece:
+        return { kGreeceBandRanges.data(), kGreeceBandRanges.size() };
+    case Region::Hungary:
+        return { kHungaryBandRanges.data(), kHungaryBandRanges.size() };
+    case Region::Netherlands:
+        return { kNetherlandsBandRanges.data(), kNetherlandsBandRanges.size() };
+    case Region::France:
+        return { kFranceBandRanges.data(), kFranceBandRanges.size() };
+    case Region::Russia:
+        return { kRussiaBandRanges.data(), kRussiaBandRanges.size() };
+    case Region::Sweden:
+        return { kSwedenBandRanges.data(), kSwedenBandRanges.size() };
+    case Region::Germany:
+        return { kGermanyBandRanges.data(), kGermanyBandRanges.size() };
+    case Region::Region1:
+        return { kRegion1BandRanges.data(), kRegion1BandRanges.size() };
     case Region::Region2:
+        return { kRegion2BandRanges.data(), kRegion2BandRanges.size() };
+    case Region::Region3:
+        return { kRegion3BandRanges.data(), kRegion3BandRanges.size() };
     default:
-        return { kUsBandRanges.data(), kUsBandRanges.size() };
+        return { nullptr, 0 };  // Unsupported enum: fail closed.
     }
 }
 
@@ -373,6 +670,75 @@ static bool isUs60mModeAllowed(DSPMode mode) noexcept
            mode == DSPMode::CWL  ||   // console.cs:29421
            mode == DSPMode::CWU  ||   // console.cs:29422
            mode == DSPMode::DIGU;     // console.cs:29423
+}
+
+// Addendum G-42 item 4: the region as the operator knows it, for a refusal
+// the operator reads: General Options' names (the comboFRSRegion list
+// above), with the three IARU regions spelled out.
+QString regionWords(Region region)
+{
+    switch (region) {
+    case Region::Australia:     return QStringLiteral("Australia");
+    case Region::Europe:        return QStringLiteral("Europe");
+    case Region::India:         return QStringLiteral("India");
+    case Region::Italy:         return QStringLiteral("Italy");
+    case Region::Israel:        return QStringLiteral("Israel");
+    case Region::Japan:         return QStringLiteral("Japan");
+    case Region::Spain:         return QStringLiteral("Spain");
+    case Region::UnitedKingdom: return QStringLiteral("United Kingdom");
+    case Region::UnitedStates:  return QStringLiteral("United States");
+    case Region::Norway:        return QStringLiteral("Norway");
+    case Region::Denmark:       return QStringLiteral("Denmark");
+    case Region::Sweden:        return QStringLiteral("Sweden");
+    case Region::Latvia:        return QStringLiteral("Latvia");
+    case Region::Slovakia:      return QStringLiteral("Slovakia");
+    case Region::Bulgaria:      return QStringLiteral("Bulgaria");
+    case Region::Greece:        return QStringLiteral("Greece");
+    case Region::Hungary:       return QStringLiteral("Hungary");
+    case Region::Netherlands:   return QStringLiteral("Netherlands");
+    case Region::France:        return QStringLiteral("France");
+    case Region::Russia:        return QStringLiteral("Russia");
+    // The combo keeps Thetis's Region1-3; a sentence names the IARU region.
+    case Region::Region1:       return QStringLiteral("IARU Region 1");
+    case Region::Region2:       return QStringLiteral("IARU Region 2");
+    case Region::Region3:       return QStringLiteral("IARU Region 3");
+    case Region::Germany:       return QStringLiteral("Germany");
+    }
+    return QStringLiteral("your region");
+}
+
+// The modes a US 60 m refusal can name: the transmit modes the mode list
+// admits other than USB and DIGU.
+QString modeWords(DSPMode mode)
+{
+    switch (mode) {
+    case DSPMode::LSB:    return QStringLiteral("LSB");
+    case DSPMode::DIGL:   return QStringLiteral("DIGL");
+    case DSPMode::AM:     return QStringLiteral("AM");
+    case DSPMode::SAM:    return QStringLiteral("SAM");
+    case DSPMode::DSB:    return QStringLiteral("DSB");
+    case DSPMode::RADE_U: return QStringLiteral("RADE-U");
+    case DSPMode::RADE_L: return QStringLiteral("RADE-L");
+    default:              return QStringLiteral("This mode");
+    }
+}
+
+// A band as a sentence names it: "40 m", "general coverage", "WWV".
+QString bandWords(Band band)
+{
+    if (band == Band::GEN) {
+        return QStringLiteral("general coverage");
+    }
+    const QString label = bandLabel(band);
+    if (!label.isEmpty() && label.front().isDigit() && label.endsWith(QLatin1Char('m'))) {
+        return label.left(label.size() - 1) + QStringLiteral(" m");
+    }
+    return label;
+}
+
+QString mhzWords(std::int64_t freqHz)
+{
+    return QString::number(static_cast<double>(freqHz) / 1e6, 'f', 6);
 }
 
 static bool isInChannel(std::int64_t freqHz, const ChannelEntry& ch) noexcept
@@ -451,10 +817,52 @@ bool BandPlanGuard::isValidTxFreq(Region region, std::int64_t freqHz,
     return false;
 }
 
+bool BandPlanGuard::isValidTxPassband(Region region, std::int64_t freqHz, DSPMode mode,
+                                      int filterLowHz, int filterHighHz, bool extended,
+                                      bool ignoreFilter) const noexcept
+{
+    // From Thetis console.cs:6778-6814 [v2.10.3.15], CheckValidTXFreq.
+    if (extended) { return true; }
+    //MW0LGE_21d filter outside band, ignore option
+    const std::int64_t low = ignoreFilter ? 0 : filterLowHz;
+    const std::int64_t high = ignoreFilter ? 0 : filterHighHz;
+    if (mode == DSPMode::CWL || mode == DSPMode::CWU) {
+        return isValidTxFreq(region, freqHz, mode, false);
+    }
+    // NereusSDR-native arithmetic guard: invalid wire/state values cannot wrap.
+    const auto inRange = [&](std::int64_t offset) {
+        if ((offset > 0 && freqHz > std::numeric_limits<std::int64_t>::max() - offset)
+            || (offset < 0 && freqHz < std::numeric_limits<std::int64_t>::min() - offset)) {
+            return false;
+        }
+        return isValidTxFreq(region, freqHz + offset, mode, false);
+    };
+    switch (mode) {
+    case DSPMode::LSB:
+    case DSPMode::DIGL:
+    case DSPMode::USB:
+    case DSPMode::DIGU:
+    case DSPMode::DSB:
+    case DSPMode::AM:
+    case DSPMode::SAM:
+    case DSPMode::FM:
+    case DSPMode::SPEC:
+    // NereusSDR-native RADE modes use the TX chain's USB/LSB geometry.
+    case DSPMode::RADE_U:
+    case DSPMode::RADE_L:
+        return low <= high && inRange(low) && inRange(high);
+    case DSPMode::DRM:
+        return low <= high && inRange(low - 12000) && inRange(high - 12000);
+    default:
+        return false;
+    }
+}
+
 bool BandPlanGuard::isValidTxBand(Band rxBand, Band txBand,
                                   bool preventDifferentBand) const noexcept
 {
-    // From console.cs:29401-29414 [2.9.0.7]MW0LGE
+    // From Thetis console.cs:29451-29465 [v2.10.3.15]
+    //MW0LGE [2.9.0.7]
     if (!preventDifferentBand) {
         return true;
     }
@@ -481,6 +889,14 @@ bool BandPlanGuard::isModeAllowedForTx(DSPMode mode) const noexcept
         case DSPMode::DIGU:
         case DSPMode::RADE_U:
         case DSPMode::RADE_L:
+        // AM / SAM / DSB TX: WDSP TXA ammod stage, run-gated by SetTXAMode
+        // (TXA.c:753-789 [v2.10.3.13]).  TxChannel::applyTxFilterForMode
+        // already maps these to a symmetric IQ bandpass and
+        // TransmitModel::amCarrierLevel drives SetTXAAMCarrierLevel, so the
+        // only gate that was still closed was this allow-list.
+        case DSPMode::AM:
+        case DSPMode::SAM:
+        case DSPMode::DSB:
             return true;
         default:
             return false;
@@ -491,38 +907,85 @@ BandPlanGuard::MoxCheckResult
 BandPlanGuard::checkMoxAllowed(Region region, std::int64_t freqHz,
                                 DSPMode mode, Band rxBand, Band txBand,
                                 bool preventDifferentBand,
-                                bool extended) const noexcept
+                                bool extended, int filterLowHz, int filterHighHz,
+                                bool ignoreFilter) const noexcept
 {
     // Mode check first — cheaper and more directly user-facing.
     if (!isModeAllowedForTx(mode)) {
         QString reason;
         switch (mode) {
+            // R-R3-17 / R-R3-21: user words. CW transmit is planned work
+            // (Phase 3M-2); FM transmit waits on pre-emphasis (Phase 3M-3b).
+            // DRM has its own sentence, so a DRM refusal names DRM.
             case DSPMode::CWL:
             case DSPMode::CWU:
-                reason = QStringLiteral("CW TX coming in Phase 3M-2");
+                reason = QStringLiteral("CW transmit is not available on this Core");
                 break;
-            case DSPMode::AM:
-            case DSPMode::SAM:
-            case DSPMode::DSB:
             case DSPMode::FM:
+                reason = QStringLiteral("FM transmit is not available on this Core");
+                break;
             case DSPMode::DRM:
-                reason = QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)");
+                reason = QStringLiteral("DRM transmit is not available on this Core");
                 break;
             default:
-                reason = QStringLiteral("Mode not supported for TX");
+                reason = QStringLiteral("This mode cannot transmit.");
                 break;
         }
         return {false, reason};
     }
 
-    // Frequency / band-edge check.
-    if (!isValidTxFreq(region, freqHz, mode, extended)) {
-        return {false, QStringLiteral("Frequency outside TX-allowed range")};
+    // Band-mismatch check. Thetis runs it before the US 60 m mode check and
+    // the band edges, so a key on another band refuses for that first.
+    // From Thetis console.cs:29451-29465 [v2.10.3.15]
+    //MW0LGE [2.9.0.7]
+    //   if (_preventTXonDifferentBandToRXband && ((!RX2Enabled && VFOBTX && RX1Band != TXBand) || ...
+    //   // note RX2 enabled with a TXvfoB will always TX
+    // Thetis compares the split TX band with the RX band; NereusSDR has no
+    // split, so rxBand is the band of the device's active slice when the
+    // transmitting slice is not it, else the TX band
+    // (RadioModel::installBandPlanMoxCheck picks it). The sentence names both.
+    if (!isValidTxBand(rxBand, txBand, preventDifferentBand)) {
+        return {false, QStringLiteral("Transmit would be on %1 while another slice you have open is on %2, and Setup "
+                                      "is set to prevent transmitting on a different band.")
+                           .arg(bandWords(txBand), bandWords(rxBand))};
     }
 
-    // Band-mismatch check.
-    if (!isValidTxBand(rxBand, txBand, preventDifferentBand)) {
-        return {false, QStringLiteral("RX/TX band mismatch — cross-band TX disabled")};
+    // Addendum G-42 item 4: each refusal below says what is wrong, after
+    // Thetis's MOX messages, in the operator's words.
+    // From Thetis console.cs:29467-29484 [v2.10.3.15]:
+    //   if (_tx_band == Band.B60M && current_region == FRSRegion.US && !extended)
+    //   ... default: MessageBox.Show(... + " mode is not allowed on 60M band." ...
+    if (!extended && region == Region::UnitedStates && txBand == Band::Band60m
+        && !isUs60mModeAllowed(mode)) {
+        return {false, QStringLiteral("%1 is not allowed on 60 m in the United States.")
+                           .arg(modeWords(mode))};
+    }
+
+    // Frequency / band-edge check.
+    if (!isValidTxPassband(region, freqHz, mode, filterLowHz, filterHighHz,
+                           extended, ignoreFilter)) {
+        // From Thetis console.cs:29486-29528 [v2.10.3.15]: the US 60 m
+        // filter limit when the carrier itself may transmit; the carrier for
+        // CW and TUNE; the carrier with the TX filter edges otherwise.
+        //   if (_tx_band == Band.B60M && current_region == FRSRegion.US &&
+        //       checkValidTXFreq_local(current_region, freq) && !extended)
+        if (region == Region::UnitedStates && txBand == Band::Band60m
+            && isValidTxFreq(region, freqHz, mode, false)) {
+            return {false, QStringLiteral("The transmit filter is wider than the 2.8 kHz "
+                                          "allowed on 60 m in the United States.")};
+        }
+        const bool carrierOnly = ignoreFilter || mode == DSPMode::CWL || mode == DSPMode::CWU
+            || (filterLowHz == 0 && filterHighHz == 0);
+        if (carrierOnly) {
+            return {false, QStringLiteral("%1 MHz is outside the transmit bands for your "
+                                          "region (%2).")
+                               .arg(mhzWords(freqHz), regionWords(region))};
+        }
+        return {false, QStringLiteral("%1 MHz with the transmit filter from %2 to %3 Hz "
+                                      "reaches outside the transmit bands for your region "
+                                      "(%4).")
+                           .arg(mhzWords(freqHz)).arg(filterLowHz).arg(filterHighHz)
+                           .arg(regionWords(region))};
     }
 
     return {true, QString()};

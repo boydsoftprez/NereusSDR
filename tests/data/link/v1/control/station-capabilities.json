@@ -1,0 +1,45 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "capabilities",
+    "properties": [
+      {
+        "ordinal": 0,
+        "name": "stationName",
+        "kind": "utf8",
+        "value": "Bench HL2"
+      },
+      {
+        "ordinal": 0,
+        "name": "radioConnected",
+        "kind": "bool",
+        "value": true
+      },
+      {
+        "ordinal": 0,
+        "name": "effectiveMaxSlices",
+        "kind": "i64",
+        "value": 5
+      },
+      {
+        "ordinal": 0,
+        "name": "txPermitted",
+        "kind": "bool",
+        "value": false
+      },
+      {
+        "ordinal": 0,
+        "name": "remoteCtunVersion",
+        "kind": "i64",
+        "value": 1
+      },
+      {
+        "ordinal": 0,
+        "name": "displayBudgetReason",
+        "kind": "utf8",
+        "value": "coreBusy"
+      }
+    ]
+  },
+  "decodes": true
+}

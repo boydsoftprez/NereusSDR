@@ -99,7 +99,7 @@ private slots:
     // ── 5. Cross-bit guard: setMicXlr(true) does NOT touch bits 0-4 ─────────
     // Bit 5 (0x20) must not collide with G.1-G.5 bits (0x1F).
     // All five lower bits must remain at their default state.
-    // G.1 (mic_boost=false → 0), G.2 (line_in=false → 0),
+    // G.1 (mic_boost=true → 1, the default), G.2 (line_in=false → 0),
     // G.5 (mic_ptt_disabled=false → bit 2 CLEAR — micControl{0x20} default
     //   post issue #182), G.3 (tip-ring=true → bit 3 CLEAR),
     // G.4 (mic_bias=false → bit 4 CLEAR).
@@ -111,7 +111,8 @@ private slots:
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
         QCOMPARE(int(buf[50] & 0x20), 0x20);
-        QCOMPARE(int(buf[50] & 0x02), 0);
+        // mic_boost stays at its default, on (Thetis console.cs:13259 mic_boost = true).
+        QCOMPARE(int(buf[50] & 0x02), 0x02);
         QCOMPARE(int(buf[50] & 0x01), 0);
         // Bit 2 (mic_ptt_disabled, default false → PTT enabled) must be clear.
         QCOMPARE(int(buf[50] & 0x04), 0);
@@ -129,7 +130,8 @@ private slots:
         // Bit 2 (mic_ptt_disabled, default false → PTT enabled) must be clear.
         QCOMPARE(int(buf[50] & 0x04), 0);
         QCOMPARE(int(buf[50] & 0x01), 0);
-        QCOMPARE(int(buf[50] & 0x02), 0);
+        // mic_boost stays at its default, on (Thetis console.cs:13259 mic_boost = true).
+        QCOMPARE(int(buf[50] & 0x02), 0x02);
         QCOMPARE(int(buf[50] & 0x08), 0);
         QCOMPARE(int(buf[50] & 0x10), 0);
     }

@@ -19,6 +19,15 @@
 //   Task 86 (line 2820), spec section 5.8.
 //
 // AI tooling: Anthropic Claude Code.
+//
+// Modification history (NereusSDR):
+//   2026-09-24  J.J. Boyd / KG4VCF  R-R3-47 / R-R3-22: in a remote window
+//                                    the page shows the Core's policy and
+//                                    changes it with setTxInterlockPolicy;
+//                                    the Core applies the change and every
+//                                    window shows it. Every window reloads
+//                                    when the policy changes. AI-assisted
+//                                    via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -41,6 +50,13 @@ class PgxlInterlockPage : public QWidget {
 public:
     explicit PgxlInterlockPage(RadioModel* model, QWidget* parent = nullptr);
 
+    // Test seams (R-R3-47).
+    QComboBox* modeComboForTesting() const { return m_modeCombo; }
+    QSpinBox* graceSpinboxForTesting() const { return m_graceSpinbox; }
+    QCheckBox* swrGateCheckboxForTesting() const { return m_swrGateCheckbox; }
+    QDoubleSpinBox* swrGateMaxSpinboxForTesting() const { return m_swrGateMaxSpinbox; }
+    QString remoteNoteForTesting() const;
+
 private slots:
     void onModeChanged(int idx);
     void onGraceChanged(int ms);
@@ -50,6 +66,10 @@ private slots:
 private:
     void buildUi();
     void loadFromPolicy();
+    // R-R3-47: a remote window asks the Core with the whole policy.
+    bool isRemote() const;
+    void refreshRemoteAvailability();
+    void sendRemotePolicy();
 
     RadioModel*         m_model{nullptr};
     TxInterlockPolicy*  m_policy{nullptr};  // non-owning
@@ -59,6 +79,7 @@ private:
     QCheckBox*        m_swrGateCheckbox{nullptr};
     QDoubleSpinBox*   m_swrGateMaxSpinbox{nullptr};
     QLabel*           m_helpText{nullptr};
+    QLabel*           m_remoteNote{nullptr};   // remote window only
 
     // Guard against feedback loops when populating controls from policy.
     bool m_loading{false};

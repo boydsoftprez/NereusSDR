@@ -1,0 +1,29 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "command.invoke",
+    "verb": "notch.add",
+    "id": 7,
+    "args": [
+      {
+        "ordinal": 0,
+        "name": "sliceId",
+        "kind": "i64",
+        "value": 0
+      },
+      {
+        "ordinal": 0,
+        "name": "centreHz",
+        "kind": "f64",
+        "value": 14074500.0
+      },
+      {
+        "ordinal": 0,
+        "name": "widthHz",
+        "kind": "f64",
+        "value": 100.0
+      }
+    ]
+  },
+  "decodes": true
+}

@@ -29,6 +29,17 @@ The `models/Default_large.bin` file (3.5MB) is loaded at runtime via
 loading the "Default (large)" model. See `third_party/rnnoise/README.md`
 for full technical rationale.
 
+## Downstream changes
+
+The fetched upstream tree is never edited. One upstream file is compiled
+from a patched copy that `third_party/rnnoise/CMakeLists.txt` writes into
+the build directory at configure time; the change does not alter its
+upstream attribution.
+
+| Upstream file | Build-directory copy | Change | Reason |
+|---------------|----------------------|--------|--------|
+| `src/denoise.c` @ `70f1d256` | `<build>/third_party/rnnoise/rnnoise_patched/denoise.c` | `rnnoise_model_from_buffer` (denoise.c:235-242) also sets `model->file = NULL;`, added after its only `model->blob = NULL;` line. Configure stops if that anchor line does not appear exactly once. | Upstream leaves `file` unset there, and `rnnoise_model_free` (denoise.c:271-275) calls `fclose` on it when it is not NULL. NereusSDR's NR3 model check loads from a buffer and frees at once; with glibc (which does not clear freed memory) that closed a stale pointer and crashed the Core at startup on Linux (R-R3-21, R-R3-10). Drop the patch when upstream fixes it. |
+
 ## GPL compatibility
 
 BSD 3-clause is compatible with GPLv2-or-later combined work. No
@@ -49,3 +60,4 @@ attribution requirements for the BSD 3-clause terms.
 | Date | Author | Note |
 |------|--------|------|
 | 2026-04-23 | JJ Boyd (KG4VCF) / Claude Sonnet 4.6 | Initial vendor (Task 5, Phase 3G-RX Epic C-1) |
+| 2026-09-23 | JJ Boyd (KG4VCF) / Claude Opus 5.5 | Compile `denoise.c` from a patched build-directory copy that clears `model->file` in `rnnoise_model_from_buffer` (see Downstream changes; R-R3-21, R-R3-10) |

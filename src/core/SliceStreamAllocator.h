@@ -15,6 +15,12 @@
 //                                    Slice-to-DDC-stream placement
 //                                    policy. AI-assisted transformation
 //                                    via Anthropic Claude Code.
+//   2026-09-24  J.J. Boyd / KG4VCF  Receiver and transmit gaps plan
+//                                    Task 1: the stored slice ceiling is
+//                                    now read (maxSlices()), so
+//                                    every path that adds a slice keeps
+//                                    to it. AI-assisted transformation
+//                                    via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -51,7 +57,17 @@ public:
     };
 
     /// Size the allocator to the connected SKU. Clears all stream state.
+    /// `maxSlices` is the slice ceiling: one WDSP channel is opened per
+    /// slice id below it, so a slice past it would have no demodulator.
     void configure(int userDdcCount, int maxSlices);
+
+    /// The slice ceiling handed to configure(). RadioModel checks it before
+    /// placement on every path that mints a slice (addSlice) and closes
+    /// slices past it at connect (closeSlicesPastChannelLimit): a slice
+    /// past the ceiling is refused no matter how well its frequency fits an
+    /// existing window, because sharing a window saves a DDC but never a
+    /// demodulator channel.
+    int  maxSlices() const { return m_maxSlices; }
 
     /// Mark a stream active at a centre frequency and sample rate.
     void activateStream(int streamIndex, double centreHz, int sampleRateHz);
@@ -82,6 +98,9 @@ public:
     /// a 2-DDC board "no third independent window" is the truth.
     Placement placeSlice(double frequencyHz,
                          bool preferOwnStream = false) const;
+    // Restore a later member of a known pan onto that pan's existing window.
+    // Refuse an out-of-window frequency without borrowing a different pan.
+    Placement joinStream(int streamIndex, double frequencyHz) const;
 
     /// Where should an existing slice go after retuning to `frequencyHz`?
     ///

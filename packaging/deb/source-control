@@ -1,0 +1,10 @@
+Source: nereusd
+Section: hamradio
+Priority: optional
+Maintainer: JJ Boyd <kg4vcf@gmail.com>
+
+Package: nereusd
+Architecture: any
+Depends: ${shlibs:Depends}
+Description: NereusSDR headless station daemon
+ Runs a radio station as a systemd service when configured by the operator.

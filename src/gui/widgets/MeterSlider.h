@@ -19,10 +19,19 @@
 //                 namespace; logic/visuals preserved verbatim from the
 //                 AetherSDR source. Dependency of VaxApplet (Phase 3O
 //                 Sub-Phase 9, Task 9.2).
+//   2026-09-28 - A disabled slider draws disabled: the style guide's
+//                 disabled trio, as the dark page style's disabled
+//                 QSlider rules use it (groove kDisabledBg, fill
+//                 kDisabledBorder, thumb kDisabledText), and the arrow
+//                 cursor. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
+#include "gui/StyleConstants.h"
+
+#include <QEvent>
 #include <QWidget>
 #include <QPainter>
 #include <QMouseEvent>
@@ -84,9 +93,19 @@ protected:
         const int barH = h - 2 * margin;
         const int barW = w - 2 * margin;
 
+        // A disabled slider takes the dark page style's disabled QSlider
+        // look (StyleConstants.h darkPageDisabledRules): groove
+        // kDisabledBg, fill kDisabledBorder, thumb kDisabledText. The level
+        // meter still reads; only the gain control looks unavailable.
+        const bool enabled = isEnabled();
+        const QColor thumbColor = enabled ? QColor(0x00, 0xb4, 0xd8)
+                                          : QColor(QLatin1StringView(Style::kDisabledText));
+
         // Background
-        p.fillRect(rect(), QColor(0x0a, 0x0a, 0x18));
-        p.setPen(QColor(0x1e, 0x2e, 0x3e));
+        p.fillRect(rect(), enabled ? QColor(0x0a, 0x0a, 0x18)
+                                   : QColor(QLatin1StringView(Style::kDisabledBg)));
+        p.setPen(enabled ? QColor(0x1e, 0x2e, 0x3e)
+                         : QColor(QLatin1StringView(Style::kDisabledBorder)));
         p.drawRect(rect().adjusted(0, 0, -1, -1));
 
         // Level meter fill (behind the slider)
@@ -105,11 +124,13 @@ protected:
         // Gain fill (solid, up to thumb)
         if (m_gain > 0.0f) {
             int gainW = static_cast<int>(m_gain * barW);
-            p.fillRect(margin, margin, gainW, barH, QColor(0x00, 0xb4, 0xd8, 60));
+            p.fillRect(margin, margin, gainW, barH,
+                       enabled ? QColor(0x00, 0xb4, 0xd8, 60)
+                               : QColor(QLatin1StringView(Style::kDisabledBorder)));
         }
 
         // Thumb line
-        p.setPen(QPen(QColor(0x00, 0xb4, 0xd8), 2));
+        p.setPen(QPen(thumbColor, 2));
         p.drawLine(thumbX, margin, thumbX, margin + barH);
 
         // Thumb triangle (top)
@@ -117,9 +138,18 @@ protected:
         tri << QPoint(thumbX - 3, margin)
             << QPoint(thumbX + 3, margin)
             << QPoint(thumbX, margin + 4);
-        p.setBrush(QColor(0x00, 0xb4, 0xd8));
+        p.setBrush(thumbColor);
         p.setPen(Qt::NoPen);
         p.drawPolygon(tri);
+    }
+
+    void changeEvent(QEvent* e) override {
+        if (e->type() == QEvent::EnabledChange) {
+            // No pointing hand over a control that cannot be dragged.
+            setCursor(isEnabled() ? Qt::PointingHandCursor : Qt::ArrowCursor);
+            update();
+        }
+        QWidget::changeEvent(e);
     }
 
     void mousePressEvent(QMouseEvent* e) override {

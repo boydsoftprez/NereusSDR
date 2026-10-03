@@ -44,6 +44,19 @@
 //                 (console.cs:40228) and the XVTR min/max override
 //                 (console.cs:40051-40077, :40232-40254) are deliberately
 //                 NOT ported; see design sections 1.2 and 5.4.
+//   2026-09-23  J.J. Boyd / KG4VCF  R-R3-21 / R-R3-09: the Core owns the
+//                 notch list. Mirrored as the `notches` object (listJson,
+//                 revision, globalEnabled, autoIncrease); a remote window's
+//                 model runs in mirror mode, never touches Notch* settings,
+//                 and turns its edits into notch.add / notch.move /
+//                 notch.setActive / notch.delete requests. NereusSDR-original
+//                 session code, no Thetis logic added. AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-25  J.J. Boyd / KG4VCF  R-R3-21, R-IOS-27: the Core's
+//                 notchControlVersion and requestAddAtSlice, so a remote
+//                 window's +TNF sends notch.addAtSlice to a version 2 Core.
+//                 NereusSDR-original session code. AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // --- From radio.cs ---
@@ -147,9 +160,15 @@
 
 #include "core/dsp/Notch.h"
 
+#include <QHash>
 #include <QList>
 #include <QObject>
 #include <QString>
+#include <QVariantMap>
+
+#include <functional>
+
+class QTimer;
 
 namespace NereusSDR {
 
@@ -165,6 +184,19 @@ namespace NereusSDR {
 /// section 5.
 class NotchModel : public QObject {
     Q_OBJECT
+
+    // R-R3-21 / R-R3-09: the mirrored `notches` object. The Core's list
+    // travels as one JSON array (id, centreHz, widthHz, active) because the
+    // mirror has no list type; revision moves with every list change. The
+    // two flags are two-way. visualEnabled is deliberately NOT a property:
+    // it is one Core-wide setting, NotchVisualEnabled, which every window
+    // reads and writes through the settings proxy.
+    Q_PROPERTY(QString listJson READ listJson NOTIFY listChanged)
+    Q_PROPERTY(quint32 revision READ revision NOTIFY listChanged)
+    Q_PROPERTY(bool globalEnabled READ globalEnabled WRITE setGlobalEnabled
+                   NOTIFY globalEnabledChanged)
+    Q_PROPERTY(bool autoIncrease READ autoIncrease WRITE setAutoIncrease
+                   NOTIFY autoIncreaseChanged)
 
 public:
     explicit NotchModel(QObject* parent = nullptr);
@@ -272,6 +304,10 @@ public:
     bool setWidth(int id, double widthHz);
     bool setActive(int id, bool active);
     bool removeNotch(int id);
+    // R-R3-21 fix wave: the Core's notch.move as one change. setCenter()'s
+    // and setWidth()'s checks, all made before anything applies; then one
+    // revision, one notchChanged and one listChanged. Local lists only.
+    bool move(int id, double centerHz, double widthHz);
 
     void setGlobalEnabled(bool on);
     void setAutoIncrease(bool on);
@@ -284,6 +320,62 @@ public:
     void setAdminBusy(bool busy);
 
     void clear();
+
+    // ── The Core's list on the wire (R-R3-21 / R-R3-09) ──────────────────
+    /// The list as a compact JSON array of {id, centreHz, widthHz, active}.
+    QString listJson() const;
+    /// Core: bumped by every list change. Window: the Core's last revision.
+    quint32 revision() const { return m_mirrorMode ? m_mirrorRevision : m_revision; }
+
+    // ── Remote window mirror mode (R-R3-21 / R-R3-09) ────────────────────
+    //
+    // Set by StationClient when the Core advertises notchControlVersion. In
+    // mirror mode the model never reads or writes Notch* settings (only
+    // NotchVisualEnabled, one Core-wide setting it reaches through the
+    // settings proxy); its list is
+    // replaced from the Core's mirrored listJson, keeping the Core's ids;
+    // and every mutator sends a request instead of deciding. Moves, width
+    // changes and active toggles show at once and are held over the
+    // mirrored list until the Core has answered them. Drags send at most
+    // one notch.move per kRemoteMoveIntervalMs, plus a final one on release
+    // (flushPendingMoves).
+    using RemoteRequestHandler =
+        std::function<quint32(const QByteArray& verb, const QVariantMap& arguments)>;
+    static constexpr int kRemoteMoveIntervalMs = 100;
+
+    void setMirrorMode(bool on);
+    bool mirrorMode() const { return m_mirrorMode; }
+    void setRemoteRequestHandler(RemoteRequestHandler handler);
+
+    /// Mirror mode: ask the Core to add a notch on this receiver. Returns
+    /// the request id, or 0 when nothing could be sent (notchAddRejected
+    /// carries the reason). The Core's id arrives with its list.
+    quint32 requestAdd(int sliceId, double centreHz, double widthHz);
+
+    /// Mirror mode, R-R3-21 / R-IOS-27: the Core's notchControlVersion, set
+    /// by StationClient with mirror mode (0 when there is none).
+    void setRemoteControlVersion(int version);
+    int remoteControlVersion() const { return m_remoteControlVersion; }
+
+    /// Mirror mode against a Core at notchControlVersion 2 or more: ask the
+    /// Core to add its +TNF notch on its own slice `sliceId`
+    /// (notch.addAtSlice), so the Core's slice decides the centre. Returns
+    /// the request id, or 0 when nothing could be sent (below version 2
+    /// nothing is sent and nothing is emitted; otherwise notchAddRejected
+    /// carries the reason). The Core's id arrives with its list.
+    quint32 requestAddAtSlice(int sliceId);
+
+    /// Send any held move now: the end of a drag or of a table edit.
+    void flushPendingMoves();
+
+    /// Mirror mode: the Core's listJson or revision arrived.
+    bool applyRemoteProperty(const QByteArray& name, const QVariant& value);
+    /// Mirror mode: the Core answered one of this model's requests.
+    void receiveRemoteResult(quint32 requestId, const QByteArray& verb, bool accepted,
+                             const QString& reason, const QVariantMap& values);
+    /// The session ended: forget unanswered requests and held edits, keep
+    /// the last list the Core sent.
+    void resetSession();
 
     // ── Persistence (AppSettings, global scope; design section 5.5) ──────
     // Every mutator above is save-on-mutate, so callers never have to
@@ -308,8 +400,38 @@ signals:
     // RadioModel handles it as syncNotches({}) / syncNotches(notches()) on
     // every channel (design section 5.3 clear() contract).
     void notchesReset();
+    // Any list change (add, move, width, active, remove, reset): the
+    // mirror's NOTIFY for listJson and revision.
+    void listChanged();
+    // Mirror mode: the Core refused a move, toggle or delete. The reason is
+    // a plain sentence ready to show.
+    void notchRequestRefused(const QString& reason);
 
 private:
+    // A window-side edit shown before the Core has answered it.
+    struct PendingEdit {
+        bool    deleted{false};
+        Notch   value;
+        int     inFlight{0};
+        bool    unsent{false};
+        quint32 settleRevision{0};
+        bool    haveSettleRevision{false};
+    };
+
+    void bumpRevision();
+    bool listFromJson(const QString& json, QList<Notch>* out) const;
+    void rebuildFromMirror();
+    void replaceList(const QList<Notch>& next);
+    void pruneSettledEdits();
+    PendingEdit& pendingEditFor(int id);
+    void queueMove(int id);
+    void sendMove(int id);
+    void onMoveTimer();
+    quint32 sendRequest(const QByteArray& verb, const QVariantMap& arguments, int notchId);
+    // notch.add and notch.addAtSlice: the window's own edit lock, then the
+    // request; either refusal reaches notchAddRejected.
+    quint32 sendAddRequest(const QByteArray& verb, const QVariantMap& arguments);
+
     // Persist the whole store. Called at the tail of every mutation that
     // actually changed something; suppressed while restoreFromSettings() is
     // repopulating so a restore cannot write back over its own source.
@@ -327,12 +449,14 @@ private:
     // (TnfModel.h:52 [@c6481cbf]) because its list mirrors radio state
     // rather than owning it; ours is the source of truth, so it follows
     // Thetis and WDSP instead (maintainer decision D-a, 2026-07-29).
-    bool m_globalEnabled{false};
+    static constexpr bool kDefaultGlobalEnabled = false;
+    bool m_globalEnabled{kDefaultGlobalEnabled};
 
     // WDSP creates nbp0 with autoincr = 1 (From WDSP RXA.c:105) and Thetis
     // ships chkMNFAutoIncrease checked, so the settings-page control starts
     // ON, not OFF.
-    bool m_autoIncrease{true};
+    static constexpr bool kDefaultAutoIncrease = true;
+    bool m_autoIncrease{kDefaultAutoIncrease};
 
     // Thetis chkVisualNotch carries no designer Checked assignment, so
     // WinForms leaves it unchecked.
@@ -342,6 +466,21 @@ private:
 
     // Re-entrancy guard for persist(); see restoreFromSettings().
     bool m_restoring{false};
+
+    // Core: the list revision the mirror carries.
+    quint32 m_revision{0};
+
+    // Window mirror mode state; see setMirrorMode().
+    bool                 m_mirrorMode{false};
+    RemoteRequestHandler m_remoteRequest;
+    int                  m_remoteControlVersion{0};
+    QList<Notch>         m_mirrorList;
+    bool                 m_haveMirrorList{false};
+    quint32              m_mirrorRevision{0};
+    QHash<int, PendingEdit> m_pendingEdits;
+    // request id -> notch id (0 for an add)
+    QHash<quint32, int>  m_requests;
+    QTimer*              m_moveTimer{nullptr};
 };
 
 }  // namespace NereusSDR

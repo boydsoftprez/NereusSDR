@@ -55,6 +55,6 @@ extern void setSize_ammod (AMMOD a, int size);
 
 // TXA Properties
 
-extern void SetTXAAMCarrierLevel (int channel, double c_level);
+extern __declspec (dllexport) void SetTXAAMCarrierLevel (int channel, double c_level);
 
 #endif

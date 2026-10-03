@@ -32,8 +32,10 @@
 
 #include "core/AudioEngine.h"
 #include "core/IAudioBus.h"
+#include "core/AppSettings.h"
 #include "core/audio/MasterMixer.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
 
 #include "fakes/FakeAudioBus.h"
 
@@ -41,6 +43,7 @@
 #include <atomic>
 #include <memory>
 #include <thread>
+#include <vector>
 
 using namespace NereusSDR;
 
@@ -65,6 +68,26 @@ bool bufferHasSignal(const QByteArray& bytes)
         if (f[i] != 0.0f) { return true; }
     }
     return false;
+}
+
+// R-R3-45: the sign of every sample in a pushed buffer. Slice A feeds +0.5
+// and slice B -0.5, so a buffer carrying only A has no negative sample and
+// one carrying only B no positive sample, whatever the fades do.
+struct SignCount {
+    int positive = 0;
+    int negative = 0;
+};
+
+SignCount signsIn(const QByteArray& bytes)
+{
+    SignCount c;
+    const int count = static_cast<int>(bytes.size() / sizeof(float));
+    const float* f = reinterpret_cast<const float*>(bytes.constData());
+    for (int i = 0; i < count; ++i) {
+        if (f[i] > 0.0f) { ++c.positive; }
+        if (f[i] < 0.0f) { ++c.negative; }
+    }
+    return c;
 }
 
 } // namespace
@@ -410,6 +433,148 @@ private slots:
         // asserting an exact 2x here would fight the production fade-in,
         // which deliberately holds frame 0 below full gain.
         QVERIFY(bufferHasSignal(h.speakers->buffer()));
+    }
+
+    // ── R-R3-45: speakers or headphones per receiver (VAX design 6.2) ────
+    //
+    // Slice A on the speakers, slice B on the headphones: the speakers
+    // output carries only A and the headphones output only B.
+    void speakersCarryOnlyASliceAndHeadphonesOnlyB()
+    {
+        AppSettings::instance().clear();
+        Harness h = makeHarness();
+        auto hpBus = std::make_unique<FakeAudioBus>(QStringLiteral("FakeHeadphones"));
+        AudioFormat fmt;
+        fmt.sampleRate = 48000;
+        fmt.channels = 2;
+        fmt.sample = AudioFormat::Sample::Float32;
+        hpBus->open(fmt);
+        FakeAudioBus* headphones = hpBus.get();
+        h.engine->setHeadphonesBusForTest(std::move(hpBus));
+        QVERIFY(h.engine->headphonesAvailable());
+
+        const int a = h.radio->addSlice();
+        const int b = h.radio->addSlice();
+        h.radio->sliceById(b)->setOutputRoute(SliceModel::OutputRoute::Headphones);
+
+        const std::array<float, 4> plus = {0.5f, 0.5f, 0.5f, 0.5f};
+        const std::array<float, 4> minus = {-0.5f, -0.5f, -0.5f, -0.5f};
+        for (int period = 0; period < 400; ++period) {
+            h.engine->rxBlockReady(a, plus.data(), 2);
+            h.engine->rxBlockReady(b, minus.data(), 2);
+        }
+
+        // One push per period on each output, from the one barrier.
+        QCOMPARE(h.speakers->pushCount(), headphones->pushCount());
+        const SignCount spk = signsIn(h.speakers->buffer());
+        const SignCount hp = signsIn(headphones->buffer());
+        QVERIFY(spk.positive > 0);
+        QCOMPARE(spk.negative, 0);
+        QVERIFY(hp.negative > 0);
+        QCOMPARE(hp.positive, 0);
+
+        // Muting B silences it on the headphones and leaves A playing.
+        h.radio->sliceById(b)->setMuted(true);
+        for (int period = 0; period < 400; ++period) {
+            h.engine->rxBlockReady(a, plus.data(), 2);
+            h.engine->rxBlockReady(b, minus.data(), 2);
+        }
+        const QByteArray hpTail = headphones->buffer().right(16);
+        QVERIFY(!bufferHasSignal(hpTail));
+        QVERIFY(bufferHasSignal(h.speakers->buffer().right(16)));
+
+        // Moving B back to the speakers brings it there.
+        h.radio->sliceById(b)->setMuted(false);
+        h.radio->sliceById(b)->setOutputRoute(SliceModel::OutputRoute::Speakers);
+        const int before = static_cast<int>(h.speakers->buffer().size());
+        for (int period = 0; period < 400; ++period) {
+            h.engine->rxBlockReady(a, plus.data(), 2);
+            h.engine->rxBlockReady(b, minus.data(), 2);
+        }
+        // A + B on the speakers sum to silence once the fades settle.
+        QVERIFY(!bufferHasSignal(h.speakers->buffer().right(16)));
+        QVERIFY(h.speakers->buffer().size() > before);
+        AppSettings::instance().clear();
+    }
+
+    // No headphones output: a slice routed there is silent, and it does not
+    // leak onto the speakers.
+    void headphonesSliceIsSilentWithNoHeadphonesOutput()
+    {
+        AppSettings::instance().clear();
+        Harness h = makeHarness();
+        QVERIFY(!h.engine->headphonesAvailable());
+
+        const int a = h.radio->addSlice();
+        const int b = h.radio->addSlice();
+        h.radio->sliceById(b)->setOutputRoute(SliceModel::OutputRoute::Headphones);
+
+        const std::array<float, 4> plus = {0.5f, 0.5f, 0.5f, 0.5f};
+        const std::array<float, 4> minus = {-0.5f, -0.5f, -0.5f, -0.5f};
+        for (int period = 0; period < 100; ++period) {
+            h.engine->rxBlockReady(a, plus.data(), 2);
+            h.engine->rxBlockReady(b, minus.data(), 2);
+        }
+        const SignCount spk = signsIn(h.speakers->buffer());
+        QVERIFY(spk.positive > 0);
+        QCOMPARE(spk.negative, 0);
+        AppSettings::instance().clear();
+    }
+
+    // The route is restored when a local slice is added (restart).
+    void addedSliceRestoresItsRoute()
+    {
+        AppSettings::instance().clear();
+        AppSettings::instance().setValue(QStringLiteral("Slice1/OutputRoute"),
+                                         QStringLiteral("Headphones"));
+        Harness h = makeHarness();
+        const int a = h.radio->addSlice();
+        const int b = h.radio->addSlice();
+        QCOMPARE(h.radio->sliceById(a)->outputRoute(), SliceModel::OutputRoute::Speakers);
+        QCOMPARE(h.radio->sliceById(b)->outputRoute(), SliceModel::OutputRoute::Headphones);
+        AppSettings::instance().clear();
+    }
+
+    // R-R3-45 fix wave: the mix scratch is the engine's, sized before any
+    // block (never grown on the DSP thread), and grown by setDspBlockSize
+    // so a block that size mixes in one push.
+    void mixScratchIsSizedOffTheDspThread()
+    {
+        AppSettings::instance().clear();
+        Harness h = makeHarness();
+        QCOMPARE(h.engine->mixScratchFrames(), AudioEngine::kMixScratchMinFrames);
+        const int a = h.radio->addSlice();
+
+        h.engine->setDspBlockSize(8192);
+        QCOMPARE(h.engine->mixScratchFrames(), 8192);
+        h.engine->setDspBlockSize(1024);          // never shrinks
+        QCOMPARE(h.engine->mixScratchFrames(), 8192);
+
+        const std::vector<float> block(6000 * 2, 0.25f);
+        const int before = h.speakers->pushCount();
+        const qsizetype bytesBefore = h.speakers->buffer().size();
+        h.engine->rxBlockReady(a, block.data(), 6000);
+        QCOMPARE(h.speakers->pushCount(), before + 1);
+        QCOMPARE(h.speakers->buffer().size() - bytesBefore,
+                 qsizetype(6000 * 2 * sizeof(float)));
+        AppSettings::instance().clear();
+    }
+
+    // R-R3-45 (carried from Task 1): each local slice's VAX channel is
+    // restored when it is added, as its output route is. Nothing called
+    // SliceModel::loadFromSettings(), so the saved channel was lost on
+    // every restart.
+    void addedSliceRestoresItsVaxChannel()
+    {
+        AppSettings::instance().clear();
+        AppSettings::instance().setValue(QStringLiteral("Slice1/VaxChannel"),
+                                         QStringLiteral("3"));
+        Harness h = makeHarness();
+        const int a = h.radio->addSlice();
+        const int b = h.radio->addSlice();
+        QCOMPARE(h.radio->sliceById(a)->vaxChannel(), 0);
+        QCOMPARE(h.radio->sliceById(b)->vaxChannel(), 3);
+        AppSettings::instance().clear();
     }
 };
 

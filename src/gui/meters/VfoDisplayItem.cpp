@@ -10,6 +10,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-24 : paint draws the unavailable text in place of the
+//                 frequency and labels (R-R3-49, R-R3-21). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -95,6 +98,20 @@ void VfoDisplayItem::paint(QPainter& p, int widgetW, int widgetH)
     // RX/TX indicator bar at left
     const QColor stateColour = m_transmitting ? m_txColour : m_rxColour;
     p.fillRect(QRect(rect.left(), rect.top(), 3, rect.height()), stateColour);
+
+    // R-R3-49 / R-R3-21: the container's slice is not open. Say so in
+    // place of the frequency and labels; a stale frequency would read as
+    // live.
+    if (!m_unavailableText.isEmpty()) {
+        const QRect textRect = rect.adjusted(6, 2, -6, -2);
+        QFont font = p.font();
+        font.setPixelSize(qMax(10, textRect.height() / 4));
+        font.setBold(false);
+        p.setFont(font);
+        p.setPen(m_modeColour);
+        p.drawText(textRect, Qt::AlignCenter | Qt::TextWordWrap, m_unavailableText);
+        return;
+    }
 
     // Frequency text (top 60%)
     const QRect freqRect(rect.left() + 6, rect.top() + 2, rect.width() - 12, rect.height() * 6 / 10);

@@ -10,6 +10,9 @@
 //   2026-04-22 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-28 - Share the per-SKU Ext 2 relay tooltip with the desktop and
+//                 Setup description. J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via OpenAI Codex.
 // =================================================================
 
 //=================================================================
@@ -147,6 +150,7 @@ SkuUiProfile skuUiProfileFor(HPSDRModel sku)
                             QStringLiteral("EXT1"),
                             QStringLiteral("XVTR")};
         p.antennaTabLabel = QStringLiteral("Ant/Filters");
+        p.ext2OutOnTxTooltip = QStringLiteral("Enable RX Bypass during transmit.");
         break;
 
     case HPSDRModel::ANAN_G2:
@@ -159,6 +163,7 @@ SkuUiProfile skuUiProfileFor(HPSDRModel sku)
                             QStringLiteral("EXT1"),
                             QStringLiteral("XVTR")};
         p.antennaTabLabel = QStringLiteral("Ant/Filters");
+        p.ext2OutOnTxTooltip = QStringLiteral("Enable RX Bypass during transmit.");
         break;
 
     case HPSDRModel::ANAN_G2E:
@@ -190,6 +195,7 @@ SkuUiProfile skuUiProfileFor(HPSDRModel sku)
                             QStringLiteral("EXT1"),
                             QStringLiteral("XVTR")};
         p.antennaTabLabel = QStringLiteral("Ant/Filters");
+        p.ext2OutOnTxTooltip = QStringLiteral("Enable RX Bypass during transmit.");
         break;
 
     case HPSDRModel::REDPITAYA:
@@ -203,6 +209,7 @@ SkuUiProfile skuUiProfileFor(HPSDRModel sku)
                             QStringLiteral("EXT1"),
                             QStringLiteral("XVTR")};
         p.antennaTabLabel = QStringLiteral("Ant/Filters");
+        p.ext2OutOnTxTooltip = QStringLiteral("Enable RX Bypass during transmit.");
         break;
 
     case HPSDRModel::HERMESLITE:

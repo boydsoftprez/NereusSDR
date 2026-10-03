@@ -15,8 +15,8 @@ human review, not automatic rejection. CLAUDE.md's "preserve verbatim"
 rule is the authoritative standard; this script is the smoke detector.
 
 The upstream Thetis checkout is read from ``../Thetis/`` relative to
-the NereusSDR repo root (matches CLAUDE.md SOURCE-FIRST PORTING
-PROTOCOL). Override with ``--thetis=PATH``.
+the NereusSDR repo root (matches CLAUDE.md "License rules for ported code" and
+"Inline comment preservation"). Override with ``--thetis=PATH``.
 
 Usage:
     python3 scripts/audit-inline-markers.py

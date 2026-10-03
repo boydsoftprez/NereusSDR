@@ -1,0 +1,16 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "delta",
+    "key": "slice:0",
+    "properties": [
+      {
+        "ordinal": 20,
+        "name": "snrDb",
+        "kind": "f64",
+        "value": "infinity"
+      }
+    ]
+  },
+  "decodes": false
+}

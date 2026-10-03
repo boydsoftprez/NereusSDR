@@ -1,0 +1,19 @@
+Pinned Opus: 940d4e5af64351ca8ba8390df3f555484c567fbb
+R-R3-23 product profile, 2026-09-23: 48kHz, 40ms, AUDIO/MUSIC, CVBR, complexity10, FEC off, DTX off.
+Coded bandwidth follows the bitrate: 24000 forces WIDEBAND (1103, 8 kHz), 48000 forces FULLBAND (1105, 20 kHz).
+Synthetic 1 kHz + 15 kHz sine fixture on every channel, 250 frames (10 s of audio).
+packet_bandwidth is the min..max TOC bandwidth over every packet.
+Host: Apple M5 Max (macOS), cc -O2 against the RADE-built libopus.a, load averages 18.37 29.51 32.57 during the run (another build active).
+CPU figures include tone generation; three runs agreed within 1 ms per audio second.
+This is Mac evidence only: not a Rock 5C performance or subjective audio quality measurement.
+input_channels=1 bitrate=24000 forced_bandwidth=1103 packet_bandwidth=1103..1103 output_channels=1..1 payload_bps=23800 encode_cpu_ms=33.3 audio_seconds=10 cpu_ms_per_audio_second=3.33
+input_channels=1 bitrate=48000 forced_bandwidth=1105 packet_bandwidth=1105..1105 output_channels=1..1 payload_bps=47800 encode_cpu_ms=36.4 audio_seconds=10 cpu_ms_per_audio_second=3.64
+input_channels=2 bitrate=24000 forced_bandwidth=1103 packet_bandwidth=1103..1103 output_channels=2..2 payload_bps=23800 encode_cpu_ms=47.4 audio_seconds=10 cpu_ms_per_audio_second=4.74
+input_channels=2 bitrate=48000 forced_bandwidth=1105 packet_bandwidth=1105..1105 output_channels=2..2 payload_bps=47800 encode_cpu_ms=50.9 audio_seconds=10 cpu_ms_per_audio_second=5.09
+
+Earlier run (previous revision of opus-profile-probe.c, in git history): MEDIUMBAND requested,
+700/1700 Hz fixture; libopus coded wideband (1103) at both bitrates.
+input_channels=1 bitrate=24000 output_channels=1..1 bandwidth=1103 payload_bps=23800 encode_cpu_ms=22.6 audio_seconds=10
+input_channels=1 bitrate=48000 output_channels=1..1 bandwidth=1103 payload_bps=47800 encode_cpu_ms=25.9 audio_seconds=10
+input_channels=2 bitrate=24000 output_channels=2..2 bandwidth=1103 payload_bps=23800 encode_cpu_ms=50.3 audio_seconds=10
+input_channels=2 bitrate=48000 output_channels=2..2 bandwidth=1103 payload_bps=47800 encode_cpu_ms=47.6 audio_seconds=10

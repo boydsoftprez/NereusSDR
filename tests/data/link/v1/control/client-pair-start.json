@@ -1,0 +1,13 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "pair.start",
+    "mode": "code",
+    "device": {
+      "publicKey": "conformance-device-key",
+      "name": "Shack iPhone",
+      "kind": "phone"
+    }
+  },
+  "decodes": true
+}

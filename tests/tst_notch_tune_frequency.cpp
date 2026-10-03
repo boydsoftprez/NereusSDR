@@ -29,6 +29,7 @@
 // =================================================================
 #include <QtTest/QtTest>
 #include <QSignalSpy>
+#include "core/DspControlThread.h"
 #include "core/P1RadioConnection.h"
 #include "core/ReceiverManager.h"
 #include "core/RxChannel.h"
@@ -38,6 +39,15 @@
 #include "models/SliceModel.h"
 
 using namespace NereusSDR;
+
+namespace {
+// R-R3-39: a RadioModel runs its receive WDSP calls on the receive lane
+// (the notch shift is written there); wait for it before reading back.
+bool laneIdle(RadioModel& model)
+{
+    return model.receiveLane() == nullptr || model.receiveLane()->waitIdleForTest(600000);
+}
+} // namespace
 
 namespace {
 
@@ -255,6 +265,7 @@ private slots:
 
         RxChannel* chB = engine->rxChannel(b);
         QVERIFY(chB != nullptr);
+        QVERIFY(laneIdle(model));
         QCOMPARE(chB->notchShiftHz(), 10000.0);
 
         // Pan out and back (4.3 at the model level). Slice A still holds the
@@ -263,6 +274,7 @@ private slots:
         sliceB->setFrequency(kSliceAFreqHz);
 
         QCOMPARE(chB->shiftOffsetHz(), 0.0);
+        QVERIFY(laneIdle(model));
         QCOMPARE(chB->notchShiftHz(), 0.0);
         QCOMPARE(chB->notchTuneFrequencyHz(), kSliceAFreqHz);
         QCOMPARE(chB->notchTuneFrequencyHz() + chB->shiftOffsetHz(),
@@ -405,6 +417,57 @@ private slots:
                  sliceB->effectiveRxFrequency());
     }
 
+    // -- R-R3-49: the local pan's tune path writes the model too ----------
+    //
+    // MainWindow's frequency hook (a band jump the pan follows, and a CTUN
+    // tune inside the pan) used to write RxChannel::setShiftFrequency from
+    // the widget's centre and leave SliceModel::shiftOffsetHz where the
+    // allocator had put it, so the model named one centre and the
+    // demodulator another. It now goes through applySliceStreamCentre.
+
+    void the_local_pan_centre_reaches_the_model_and_the_demodulator_together()
+    {
+        RadioModel model;
+        P1RadioConnection conn;
+        model.injectConnectionForTest(&conn);
+        DetachConnection detach{&model};
+
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(2, 2, kRateHz);
+        model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+
+        const int a = model.addSlice();
+        SliceModel* sliceA = model.sliceById(a);
+        sliceA->setFrequency(kSliceAFreqHz);
+        sliceA->setRitHz(300);
+        sliceA->setRitEnabled(true);
+        RxChannel* chA = engine->rxChannel(a);
+        QVERIFY(chA != nullptr);
+
+        // A CTUN tune inside a pan whose centre sits 20 kHz below the slice.
+        constexpr double kPanCentreHz = kSliceAFreqHz - 20000.0;
+        model.applySliceStreamCentre(sliceA, kPanCentreHz);
+
+        QCOMPARE(sliceA->shiftOffsetHz(), 20000.0);
+        // RIT survives: the old direct write pushed freq - centre alone.
+        QCOMPARE(chA->shiftOffsetHz(), 20300.0);
+        QCOMPARE(chA->notchTuneFrequencyHz(), kPanCentreHz);
+        // The model and the demodulator name the same centre.
+        QCOMPARE(sliceA->frequency() - sliceA->shiftOffsetHz(),
+                 chA->notchTuneFrequencyHz());
+
+        // A band jump the pan follows: the centre is the slice, offset zero
+        // in both halves.
+        model.applySliceStreamCentre(sliceA, kSliceAFreqHz);
+        QCOMPARE(sliceA->shiftOffsetHz(), 0.0);
+        QCOMPARE(chA->shiftOffsetHz(), 300.0);
+        QCOMPARE(chA->notchTuneFrequencyHz(), kSliceAFreqHz);
+
+        model.applySliceStreamCentre(nullptr, kSliceAFreqHz);  // no crash
+    }
+
     // -- 4.5: the connect-time DDC seed -----------------------------------
 
     void the_connect_seed_commands_the_stream_centre_not_the_slice_frequency()
@@ -491,6 +554,9 @@ private slots:
         QVERIFY(b->streamIndex() >= 0);
 
         const auto invariantHolds = [&](const char* whenLabel) {
+            if (!laneIdle(model)) {
+                return false;
+            }
             const double sum = ch->notchTuneFrequencyHz() + ch->notchShiftHz();
             const double want = b->frequency();
             if (std::abs(sum - want) > 1.0) {

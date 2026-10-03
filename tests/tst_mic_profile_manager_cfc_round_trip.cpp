@@ -29,6 +29,7 @@
 #include "core/AppSettings.h"
 #include "core/MicProfileManager.h"
 #include "core/CfcProfile.h"
+#include "core/CfcEditProfile.h"
 #include "models/TransmitModel.h"
 
 using namespace NereusSDR;
@@ -52,7 +53,7 @@ private slots:
         MicProfileManager mgr;
         mgr.setMacAddress(kMacA);
         mgr.load();
-        CfcProfile p;
+        CfcEditProfile p;
         p.compression.frequencyMaxHz = p.postEq.frequencyMaxHz = 17000;
         p.compression.globalGainDb = 3.54;
         p.postEq.globalGainDb = -2.54;
@@ -69,7 +70,7 @@ private slots:
         QVERIFY(mgr.saveProfile("Typed", &tx));
         const QString saved = AppSettings::instance().value(profileKey(kMacA, "Typed", "CFCParaEQData")).toString();
         QCOMPARE(saved, tx.cfcParaEqData());
-        const auto decoded = decodeCfcProfile(saved);
+        const auto decoded = decodeCfcEditProfile(saved);
         QVERIFY(decoded);
         QCOMPARE(decoded->compression.frequenciesHz.size(), 18);
         QCOMPARE(decoded->compression.frequenciesHz[1], 125.125);
@@ -146,7 +147,7 @@ private slots:
         // + 2 line_in_gain/user_dig_out (P1 full-parity Task 2.4)
         // + 11 DEXP envelope/ratios/look-ahead/SCF (3M-3a-iii Tasks 7-10)
         // = 106 keys.
-        QCOMPARE(defs.size(), 106);
+        QCOMPARE(defs.size(), 108);
     }
 
     // =========================================================================

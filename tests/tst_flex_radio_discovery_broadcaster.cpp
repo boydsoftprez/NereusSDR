@@ -5,8 +5,20 @@
 // against the FLEX-8600 discovery beacon wire format captured 2026-05-19
 // (captures/flex-pgxl-tgxl-capture_00001_20260519173452.pcapng).
 
+//
+// R-R3-22 / R-R3-47 (2026-09-24): the beacon follows the 4O3A switch, and
+// on the Core announces the station network address (where its 4992
+// listener listens). The RadioModel cases run the broadcaster in its
+// no-send mode: nothing is bound and no beacon leaves the machine.
+
 #include <QtTest/QtTest>
+#include <QNetworkAddressEntry>
+#include "core/AppSettings.h"
 #include "core/FlexRadioDiscoveryBroadcaster.h"
+#include "core/SmartSdrApiListener.h"
+#include "models/RadioModel.h"
+
+using NereusSDR::RadioModel;
 
 class FlexRadioDiscoveryBroadcasterTest : public QObject {
     Q_OBJECT
@@ -17,6 +29,12 @@ private slots:
     void packetCountRolls();         // builds with counts 0..15, byte1 changes
     void totalSizeIsMultipleOf4();
     void startSucceedsWithValidIp(); // start() binds and logs subnet broadcast
+    void sourceAddressIsAnnounced();
+    void beaconFollowsTheFourO3ASwitch();
+    void beaconStaysOffWithItsOwnSettingOff();
+    void beaconStaysOffUntilConfiguredForARadio();
+    void coreBeaconAnnouncesTheStationAddress();
+    void cleanup();
 };
 
 void FlexRadioDiscoveryBroadcasterTest::headerLayout()
@@ -157,6 +175,124 @@ void FlexRadioDiscoveryBroadcasterTest::startSucceedsWithValidIp()
     b.stop();
 
     QVERIFY(true); // Smoke test: start() did not fail
+}
+
+namespace {
+void prepareModel(RadioModel& model, const char* mac, const char* radioIp = "192.168.1.50")
+{
+    NereusSDR::AppSettings::instance().clear();
+    NereusSDR::AppSettings::instance().setValue(QStringLiteral("PeripheralsMigrationDone"),
+                                                QStringLiteral("True"));
+    // Loopback and an ephemeral port: never TCP 4992 on this machine.
+    model.smartSdrListener()->setListenEndpointForTesting(QHostAddress::LocalHost, 0);
+    NereusSDR::RadioInfo radio;
+    radio.macAddress = QString::fromLatin1(mac);
+    radio.address = QHostAddress(QString::fromLatin1(radioIp));
+    model.setLastRadioInfoForTest(radio);
+    model.setConnectionStateForTest(NereusSDR::ConnectionState::Connected);
+}
+} // namespace
+
+void FlexRadioDiscoveryBroadcasterTest::cleanup()
+{
+    NereusSDR::AppSettings::instance().clear();
+}
+
+void FlexRadioDiscoveryBroadcasterTest::sourceAddressIsAnnounced()
+{
+    NereusSDR::FlexRadioDiscoveryBroadcaster b;
+    b.setSourceAddress(QHostAddress(QStringLiteral("10.0.0.5")));
+    QCOMPARE(b.advertisedAddress(), QStringLiteral("10.0.0.5"));
+    b.setSourceAddress(QHostAddress());
+    QCOMPARE(b.advertisedAddress(), NereusSDR::FlexRadioDiscoveryBroadcaster().advertisedAddress());
+}
+
+// With the 4O3A switch off no beacon is sent; on, it runs; off again, it
+// stops. Reconnecting the radio re-checks the switch.
+void FlexRadioDiscoveryBroadcasterTest::beaconFollowsTheFourO3ASwitch()
+{
+    RadioModel model;
+    prepareModel(model, "aa:bb:cc:dd:ee:81");
+    model.configureFlexBeaconForTest();
+    QVERIFY(!model.flexBeaconRunningForTest());
+    model.applyPeripheralsForTest();
+    QVERIFY(!model.flexBeaconRunningForTest());
+
+    model.setFourO3AEnabled(true);
+    QVERIFY(model.flexBeaconRunningForTest());
+    model.setFourO3AEnabled(false);
+    QVERIFY(!model.flexBeaconRunningForTest());
+
+    // A radio whose saved switch is on starts it when its peripherals apply.
+    model.setPeripheralValue(QStringLiteral("FourO3A_Enabled"), QStringLiteral("True"));
+    model.applyPeripheralsForTest();
+    QVERIFY(model.flexBeaconRunningForTest());
+    model.setPeripheralValue(QStringLiteral("FourO3A_Enabled"), QStringLiteral("False"));
+    model.applyPeripheralsForTest();
+    QVERIFY(!model.flexBeaconRunningForTest());
+    model.teardownPeripheralsForTest();
+}
+
+// Its own setting still turns it off when 4O3A is on.
+void FlexRadioDiscoveryBroadcasterTest::beaconStaysOffWithItsOwnSettingOff()
+{
+    RadioModel model;
+    prepareModel(model, "aa:bb:cc:dd:ee:82");
+    NereusSDR::AppSettings::instance().setValue(QStringLiteral("PGXL_BroadcastDiscovery"),
+                                                QStringLiteral("False"));
+    model.configureFlexBeaconForTest();
+    model.setFourO3AEnabled(true);
+    QVERIFY(!model.flexBeaconRunningForTest());
+    model.setFourO3AEnabled(false);
+    model.teardownPeripheralsForTest();
+}
+
+// No radio connected through connectToRadio: nothing to announce.
+void FlexRadioDiscoveryBroadcasterTest::beaconStaysOffUntilConfiguredForARadio()
+{
+    RadioModel model;
+    prepareModel(model, "aa:bb:cc:dd:ee:83");
+    model.flexBroadcasterForTest()->setNoSendForTesting(true);
+    model.setFourO3AEnabled(true);
+    QVERIFY(!model.flexBeaconRunningForTest());
+    model.setFourO3AEnabled(false);
+    model.teardownPeripheralsForTest();
+}
+
+// On a Core with two networks the beacon announces the station address,
+// where the 4992 listener listens; a desktop window finds its own.
+void FlexRadioDiscoveryBroadcasterTest::coreBeaconAnnouncesTheStationAddress()
+{
+    auto entry = [](const char* ip, int prefix) {
+        QNetworkAddressEntry e;
+        e.setIp(QHostAddress(QString::fromLatin1(ip)));
+        e.setPrefixLength(prefix);
+        return e;
+    };
+    RadioModel core;
+    core.setStationBind(QString());
+    core.setStationInterfaceEntriesForTest({entry("10.0.0.5", 24), entry("192.168.1.20", 24)});
+    prepareModel(core, "aa:bb:cc:dd:ee:84", "10.0.0.77");
+    core.configureFlexBeaconForTest();
+    core.applyPeripheralsForTest();
+    QCOMPARE(core.flexBroadcasterForTest()->advertisedAddress(), QStringLiteral("10.0.0.5"));
+
+    // The override selects the other network.
+    core.setStationBind(QStringLiteral("192.168.1.20"));
+    QCOMPARE(core.flexBroadcasterForTest()->advertisedAddress(), QStringLiteral("192.168.1.20"));
+
+    // Every address: no single station address, so it finds its own, as
+    // a desktop window's beacon does.
+    const QString ownAddress = NereusSDR::FlexRadioDiscoveryBroadcaster().advertisedAddress();
+    core.setStationBind(QStringLiteral("0.0.0.0"));
+    QCOMPARE(core.flexBroadcasterForTest()->advertisedAddress(), ownAddress);
+    core.teardownPeripheralsForTest();
+
+    RadioModel desktop;
+    prepareModel(desktop, "aa:bb:cc:dd:ee:85", "10.0.0.77");
+    desktop.applyPeripheralsForTest();
+    QCOMPARE(desktop.flexBroadcasterForTest()->advertisedAddress(), ownAddress);
+    desktop.teardownPeripheralsForTest();
 }
 
 QTEST_GUILESS_MAIN(FlexRadioDiscoveryBroadcasterTest)

@@ -85,6 +85,7 @@ private slots:
     // true (init) to false (live) between the two frames.
     void live_vfo_broadcast_reads_rx2_enabled_live();
     void existing_slice_after_deletion_gap_uses_stable_receiver_id();
+    void a_client_joining_before_the_drain_does_not_hide_a_centre_change();
 };
 
 void TestTciInitBurstLiveState::pinAppSettingsToCaptureConditions()
@@ -115,11 +116,15 @@ void TestTciInitBurstLiveState::vfo_hz_drives_dds_and_vfo_lines()
     TciProtocol p(&mock);
     const QStringList burst = p.buildInitBurst();
 
-    // dds: per-slice 0/1 carries the seeded VFO-A frequency.
+    // dds: per-slice 0/1 carries the receiver's centre (Task 12, R-R3-49,
+    // as Thetis sendDDS reads CentreFrequency). This mock offers no centre,
+    // so it has no pan and its centre is its VFO, and each if is 0.
     QVERIFY2(burst.contains(QStringLiteral("dds:0,7150000;")),
-             "dds:0 should carry seeded RX1 VFO (40m)");
+             "dds:0 should carry RX1's centre, its VFO with no pan (40m)");
     QVERIFY2(burst.contains(QStringLiteral("dds:1,21250000;")),
-             "dds:1 should carry seeded RX2 VFO (15m)");
+             "dds:1 should carry RX2's centre, its VFO with no pan (15m)");
+    QVERIFY(burst.contains(QStringLiteral("if:0,0,0;")));
+    QVERIFY(burst.contains(QStringLiteral("if:1,1,0;")));
 
     // vfo: per-slice per-channel mirrors VFO A on both channels (NereusSDR
     // collapses VFO B onto the same slice; vfoHz(rx, chan) returns the slice
@@ -779,6 +784,63 @@ void TestTciInitBurstLiveState::
 
     client.close();
     server.stop();
+}
+
+// R-R3-49, whole-branch review M3. The drain drops a centre event whose dds
+// is the one last sent, and the init burst a new app receives also sends
+// dds. When both shared one record, an app connecting inside the 5 ms
+// window between a centre move and the next drain wrote the new centre into
+// it, the drain saw the move as already sent, and every app that was
+// already connected kept the old dds (and missed the if that goes with it)
+// until the next centre change. Thetis keeps this state per socket: each
+// TCPIPtciSocketListener (TCIServer.cs:684 [v2.10.3.15]) has its own
+// m_vfoDataList (TCIServer.cs:751 [v2.10.3.15]), so one app's connect never
+// touches another's queue.
+void TestTciInitBurstLiveState::
+    a_client_joining_before_the_drain_does_not_hide_a_centre_change()
+{
+    pinAppSettingsToCaptureConditions();
+    TestMockRadioModel mock;
+    TciProtocol p(&mock);
+
+    const auto drain = [&p]() {
+        p.drainCoalescedNotifications();
+        QStringList frames;
+        while (p.hasPendingNotification()) {
+            frames << p.takePendingNotification();
+        }
+        return frames;
+    };
+    const auto hasPrefix = [](const QStringList& frames, const QString& prefix) {
+        for (const QString& f : frames) {
+            if (f.startsWith(prefix)) { return true; }
+        }
+        return false;
+    };
+
+    // The centre moves; the drain has not run yet.
+    mock.setVfoHz(0, 0, 14074000LL);
+    p.enqueueLocalBroadcastCentre(0);
+
+    // A new app connects inside that window and gets its init burst, which
+    // carries the new centre.
+    const QStringList burst = p.buildInitBurst();
+    QVERIFY(burst.contains(QStringLiteral("dds:0,14074000;")));
+
+    // The drain still sends the move to every app.
+    const QStringList sent = drain();
+    QVERIFY2(sent.contains(QStringLiteral("dds:0,14074000;")),
+             qPrintable(QStringLiteral("drained: %1").arg(sent.join(QLatin1Char(' ')))));
+    QVERIFY2(hasPrefix(sent, QStringLiteral("if:0,0,")),
+             qPrintable(QStringLiteral("drained: %1").arg(sent.join(QLatin1Char(' ')))));
+
+    // A centre event that moved nothing since the drain still sends nothing,
+    // with or without another app joining in between.
+    p.enqueueLocalBroadcastCentre(0);
+    QVERIFY(!hasPrefix(drain(), QStringLiteral("dds:0,")));
+    p.enqueueLocalBroadcastCentre(0);
+    (void)p.buildInitBurst();
+    QVERIFY(!hasPrefix(drain(), QStringLiteral("dds:0,")));
 }
 
 QTEST_MAIN(TestTciInitBurstLiveState)

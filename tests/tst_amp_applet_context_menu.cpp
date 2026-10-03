@@ -12,7 +12,7 @@
 // Menu order (per design doc ss5.9):
 //   0 - "Open PGXL Advanced..." action -> navigationRequested("pgxlAdvanced")
 //   1 - separator
-//   2 - "Disconnect" / "Reconnect"     -> connectionToggleRequested()
+//   2 - "Disconnect" / "Connect"       -> connectionToggleRequested()
 //   3 - "Copy diagnostics to clipboard" -> diagnosticsCopyRequested()
 //
 // Three test slots:

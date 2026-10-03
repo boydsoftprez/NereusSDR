@@ -14,6 +14,14 @@
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-09-24 : FM repeater minus, simplex and plus hidden until FM
+//                 transmit is built; their tooltips say what they do
+//                 (R-R3-49, R-R3-21). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-24 : Offset and Rev hidden with FM transmit, the CTCSS tone
+//                 choices until tones are built (plan row fm-flag, R-R3-49,
+//                 R-R3-21). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -121,6 +129,7 @@
 #include "VfoStyles.h"
 #include "models/SliceModel.h"
 #include "core/WdspTypes.h"
+#include "gui/UnbuiltFeatures.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -193,6 +202,10 @@ void FmOptContainer::buildUi()
         row->addWidget(m_toneModeCmb, 1);
         row->addWidget(m_toneValueCmb, 1);
         vbox->addLayout(row);
+        // R-R3-49 (fm-flag, fm-tone): no tone encoder or tone squelch is
+        // built; the choices are hidden until one is. Saved values stay.
+        UnbuiltFeatures::hideUnlessBuilt(m_toneModeCmb, UnbuiltFeature::FmTones);
+        UnbuiltFeatures::hideUnlessBuilt(m_toneValueCmb, UnbuiltFeature::FmTones);
     }
 
     // ── Row 2: offset label + spinbox ─────────────────────────────────────
@@ -201,6 +214,7 @@ void FmOptContainer::buildUi()
         row->setSpacing(4);
 
         QLabel* offsetLbl = new QLabel(QStringLiteral("Offset:"), this);
+        offsetLbl->setObjectName(QStringLiteral("fmOffsetLabel"));
         offsetLbl->setStyleSheet(kLabelStyle.toString());
 
         m_offsetKhzSpin = new QSpinBox(this);
@@ -212,6 +226,10 @@ void FmOptContainer::buildUi()
         row->addWidget(offsetLbl);
         row->addWidget(m_offsetKhzSpin, 1);
         vbox->addLayout(row);
+        // R-R3-49 (fm-flag, under fm-tx): the offset is a transmit shift;
+        // hidden until FM transmit is built. Its saved value stays.
+        UnbuiltFeatures::hideUnlessBuilt(offsetLbl, UnbuiltFeature::FmTransmit);
+        UnbuiltFeatures::hideUnlessBuilt(m_offsetKhzSpin, UnbuiltFeature::FmTransmit);
     }
 
     // ── Row 3: TX direction buttons + Reverse toggle ──────────────────────
@@ -225,11 +243,11 @@ void FmOptContainer::buildUi()
         m_revBtn     = new QPushButton(QStringLiteral("Rev"), this);
 
         m_txLowBtn->setObjectName("txLowBtn");
-        m_txLowBtn->setToolTip(QStringLiteral("TX below RX (repeater Low offset) — Phase 3M-1"));
+        m_txLowBtn->setToolTip(QStringLiteral("Transmit below the receive frequency by the offset (repeater minus)"));
         m_simplexBtn->setObjectName("simplexBtn");
         m_simplexBtn->setToolTip(QStringLiteral("Simplex — TX on same frequency as RX"));
         m_txHighBtn->setObjectName("txHighBtn");
-        m_txHighBtn->setToolTip(QStringLiteral("TX above RX (repeater High offset) — Phase 3M-1"));
+        m_txHighBtn->setToolTip(QStringLiteral("Transmit above the receive frequency by the offset (repeater plus)"));
         m_revBtn->setObjectName("revBtn");
         m_revBtn->setToolTip(QStringLiteral("Reverse — listen on the repeater output frequency"));
 
@@ -243,6 +261,13 @@ void FmOptContainer::buildUi()
         row->addWidget(m_txHighBtn);
         row->addWidget(m_revBtn);
         vbox->addLayout(row);
+
+        // R-R3-49 (fm-repeater and fm-flag, under fm-tx): the repeater
+        // direction buttons store a transmit direction and Rev only changes
+        // the display; they are hidden until FM transmit is built.
+        for (QPushButton* btn : {m_txLowBtn, m_simplexBtn, m_txHighBtn, m_revBtn}) {
+            UnbuiltFeatures::hideUnlessBuilt(btn, UnbuiltFeature::FmTransmit);
+        }
     }
 
     // ── Signal connections ────────────────────────────────────────────────
@@ -308,6 +333,12 @@ void FmOptContainer::buildUi()
         if (!m_slice) { return; }
         m_slice->setFmReverse(checked);
     });
+}
+
+bool FmOptContainer::hasBuiltControls()
+{
+    return UnbuiltFeatures::isBuilt(UnbuiltFeature::FmTransmit)
+        || UnbuiltFeatures::isBuilt(UnbuiltFeature::FmTones);
 }
 
 void FmOptContainer::setSlice(SliceModel* s)

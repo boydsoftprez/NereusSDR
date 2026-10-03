@@ -1,0 +1,9 @@
+<RCC>
+    <qresource prefix="/bandplans">
+        <file alias="arrl-us.json">bandplans/arrl-us.json</file>
+        <file alias="iaru-region1.json">bandplans/iaru-region1.json</file>
+        <file alias="iaru-region2.json">bandplans/iaru-region2.json</file>
+        <file alias="iaru-region3.json">bandplans/iaru-region3.json</file>
+        <file alias="rac-canada.json">bandplans/rac-canada.json</file>
+    </qresource>
+</RCC>

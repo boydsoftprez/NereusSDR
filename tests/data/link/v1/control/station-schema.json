@@ -1,0 +1,20 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "schema",
+    "class": "NotchModel",
+    "fields": [
+      {
+        "ordinal": 0,
+        "name": "notches",
+        "kind": "utf8"
+      },
+      {
+        "ordinal": 1,
+        "name": "enabled",
+        "kind": "bool"
+      }
+    ]
+  },
+  "decodes": true
+}

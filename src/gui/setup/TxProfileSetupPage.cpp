@@ -8,6 +8,16 @@
 // Phase 3M-1c chunk J.3 + J.4.
 //
 // Written by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//
+// Modification history (NereusSDR):
+//   2026-09-25 - R-R3-49 (parity Task 3): the transmit settings gates for
+//                 a remote window, each control on the version that brought
+//                 it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-09-29 - R-R3-49 / R-IOS-18: Setup description version 15 ids on
+//                the profile choice, Save and Delete; Save's tooltip says
+//                "transmit settings". J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived semantics are
@@ -16,6 +26,7 @@
 #include "TxProfileSetupPage.h"
 
 #include "core/MicProfileManager.h"
+#include "core/session/IStationLink.h"
 #include "gui/StyleConstants.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
@@ -49,6 +60,14 @@ TxProfileSetupPage::TxProfileSetupPage(RadioModel* model,
     buildUi();
     rebuildCombo();
     wireDirtyTracking();
+
+    // R-R3-49 (parity Task 3): in a remote window the controls start closed
+    // until the Core says it takes them (SetupDialog pushes each version).
+    if (model && !model->ownsLocalDsp()) {
+        setTransmitSettingsPermitted(false, QString());
+        setTransmitSettingsPermittedAt(2, false, QString());
+        setTransmitSettingsPermittedAt(3, false, QString());
+    }
 
     if (m_profileMgr) {
         // Refresh on external add/remove (e.g. CAT-imported profile).
@@ -84,6 +103,7 @@ void TxProfileSetupPage::buildUi()
     // but the canonical "Save" path is via the Save button).
     m_combo = new QComboBox(group);
     m_combo->setEditable(false);  // restrict edits to Save button path
+    m_combo->setProperty("nereusSetupId", "audio.txProfile.activeProfile");
     m_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_combo->setToolTip(QStringLiteral(
         "Active TX Profile.  Switching prompts to save unsaved changes."));
@@ -92,9 +112,11 @@ void TxProfileSetupPage::buildUi()
     // Save / Delete buttons row.
     auto* btnRow = new QHBoxLayout();
     m_saveBtn = new QPushButton(QStringLiteral("Save..."), group);
+    m_saveBtn->setProperty("nereusSetupId", "audio.txProfile.save");
     m_saveBtn->setToolTip(QStringLiteral(
-        "Save the current TransmitModel state under a profile name."));
+        "Save the current transmit settings under a profile name."));
     m_deleteBtn = new QPushButton(QStringLiteral("Delete"), group);
+    m_deleteBtn->setProperty("nereusSetupId", "audio.txProfile.delete");
     m_deleteBtn->setToolTip(QStringLiteral(
         "Delete the currently-selected profile."));
     btnRow->addWidget(m_saveBtn);
@@ -124,6 +146,8 @@ void TxProfileSetupPage::buildUi()
         filterForm->setContentsMargins(0, 0, 0, 0);
 
         auto* lowSpin = new QSpinBox(filterGroup);
+        m_filterLowSpin = lowSpin;
+        lowSpin->setProperty("nereusSetupId", QStringLiteral("audio.txProfile.filterLow"));
         lowSpin->setRange(0, 5000);
         lowSpin->setSuffix(QStringLiteral(" Hz"));
         lowSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
@@ -133,6 +157,8 @@ void TxProfileSetupPage::buildUi()
         filterForm->addRow(QStringLiteral("Low cutoff:"), lowSpin);
 
         auto* highSpin = new QSpinBox(filterGroup);
+        m_filterHighSpin = highSpin;
+        highSpin->setProperty("nereusSetupId", QStringLiteral("audio.txProfile.filterHigh"));
         highSpin->setRange(200, 10000);
         highSpin->setSuffix(QStringLiteral(" Hz"));
         highSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
@@ -141,9 +167,32 @@ void TxProfileSetupPage::buildUi()
         highSpin->setValue(m_tx->filterHigh());
         filterForm->addRow(QStringLiteral("High cutoff:"), highSpin);
 
+        // AM / SAM / DSB carrier level (Thetis TXProfile AM_Carrier_Level).
+        auto* carrierSpin = new QSpinBox(filterGroup);
+        m_amCarrierSpin = carrierSpin;
+        carrierSpin->setProperty("nereusSetupId", QStringLiteral("audio.txProfile.amCarrierLevel"));
+        carrierSpin->setRange(TransmitModel::kAmCarrierLevelMin,
+                              TransmitModel::kAmCarrierLevelMax);
+        carrierSpin->setSuffix(QStringLiteral(" %"));
+        carrierSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
+        // 100 % = full carrier, as in Thetis.
+        carrierSpin->setToolTip(QStringLiteral(
+            "AM / SAM / DSB carrier level (%).  100 % = full carrier.  "
+            "In AM the TX filter is symmetric: +/- High cutoff around the carrier."));
+        carrierSpin->setValue(m_tx->amCarrierLevel());
+        filterForm->addRow(QStringLiteral("AM carrier level:"), carrierSpin);
+
         if (auto* vlay = qobject_cast<QVBoxLayout*>(filterGroup->layout())) {
             vlay->addLayout(filterForm);
         }
+
+        connect(carrierSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+                m_tx, &TransmitModel::setAmCarrierLevel);
+        connect(m_tx, &TransmitModel::amCarrierLevelChanged,
+                this, [carrierSpin](int pct) {
+            QSignalBlocker b(carrierSpin);
+            carrierSpin->setValue(pct);
+        });
 
         // UI → Model
         connect(lowSpin, QOverload<int>::of(&QSpinBox::valueChanged),
@@ -235,6 +284,7 @@ void TxProfileSetupPage::wireDirtyTracking()
     // wire dropped alongside the antiVoxSourceVax property.
     connect(m_tx, &TransmitModel::monitorVolumeChanged,     this, markDirty);
     connect(m_tx, &TransmitModel::micSourceChanged,         this, markDirty);
+    connect(m_tx, &TransmitModel::amCarrierLevelChanged,    this, markDirty);  // AM/SAM/DSB carrier
 
     // Two-tone (7 properties + 1 enum).
     connect(m_tx, &TransmitModel::twoToneFreq1Changed,           this, markDirty);
@@ -432,6 +482,30 @@ void TxProfileSetupPage::onDeleteClicked()
         } else {
             QMessageBox::information(this, tr("Cannot Delete Profile"), msg);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// R-R3-49 (parity Task 3): the transmit settings gates in a remote window.
+// SetupDialog pushes them; a local window never calls these.
+// ---------------------------------------------------------------------------
+void TxProfileSetupPage::setTransmitSettingsPermitted(bool permitted, const QString& reason)
+{
+    // The TX filter (filterLow / filterHigh), transmitSettingsVersion 1.
+    gateTransmitControls({m_filterLowSpin, m_filterHighSpin}, permitted,
+                         reason.isEmpty() ? IStationLink::transmitSettingsUnavailableReason()
+                                          : reason);
+}
+
+void TxProfileSetupPage::setTransmitSettingsPermittedAt(int version, bool permitted,
+                                                        const QString& reason)
+{
+    const QString shown = reason.isEmpty()
+        ? IStationLink::transmitSettingsUnavailableReason() : reason;
+    if (version == 2) {
+        gateTransmitControls({m_amCarrierSpin}, permitted, shown);
+    } else if (version == 3) {
+        gateTransmitControls({m_combo, m_saveBtn, m_deleteBtn}, permitted, shown);
     }
 }
 

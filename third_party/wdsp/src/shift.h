@@ -57,8 +57,8 @@ extern void setSize_shift (SHIFT a, int size);
 
 // RXA Properties
 
-extern void SetRXAShiftRun (int channel, int run);
+extern __declspec (dllexport) void SetRXAShiftRun (int channel, int run);
 
-extern void SetRXAShiftFreq (int channel, double fshift);
+extern __declspec (dllexport) void SetRXAShiftFreq (int channel, double fshift);
 
 #endif

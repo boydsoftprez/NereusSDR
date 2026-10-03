@@ -13,13 +13,28 @@
 // callback drains it to the device. Input: the audio callback captures
 // from the device into the ring, pull() drains it. Host-API / device
 // enumeration helpers are available statically (Task 3.3).
+//
+// Modification history (NereusSDR):
+//   2026-09-22: strict named-input resolution, open-failure stage and
+//               opened-device accessors for the nereus-audio-capture
+//               helper (R-R3-36). J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
+//   2026-09-22: strict resolution accepts exact names only
+//               (matchNamedDevice), R-R3-36 fix wave. J.J. Boyd (KG4VCF),
+//               with AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-23: R-R3-23 outputRingSamples(): an output stream's ring holds
+//               at least 100 ms at its own rate and channel count, so a
+//               remote window can play on a 176.4 to 384 kHz speaker.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #include "core/IAudioBus.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <memory>
 #include <vector>
 
@@ -33,6 +48,7 @@ namespace NereusSDR { class Resampler; }
 typedef void PaStream;
 struct PaDeviceInfo;
 struct PaStreamCallbackTimeInfo;
+class TstPortAudioBus;
 
 namespace NereusSDR {
 
@@ -63,6 +79,26 @@ public:
     // Call before open(). m_cfg is read on the main thread in open() only.
     void setConfig(const PortAudioConfig& cfg);
 
+    // When set before open(), a missing named input device fails open()
+    // with errorString() starting "device-not-found:" instead of falling
+    // back to a default device.  Only input opens are affected; an empty
+    // deviceName still resolves the platform default.  Off by default, so
+    // every existing caller keeps the fallback.  Used by the
+    // nereus-audio-capture helper (R-R3-36).
+    void setStrictInputDevice(bool strict) { m_strictInputDevice = strict; }
+
+    // Which step of the last open() failed; None after a successful open.
+    enum class OpenFailure { None, DeviceNotFound, OpenFailed, StartFailed };
+    OpenFailure lastOpenFailure() const { return m_openFailure; }
+
+    // Describe the stream the last successful open() actually opened:
+    // the resolved device's name, the rate the stream runs at on the
+    // device (before resampling) and its channel count.  Empty / 0 while
+    // closed.
+    QString openedDeviceName() const { return m_openedDeviceName; }
+    int     openedNativeRate() const { return m_stream ? m_nativeSampleRate : 0; }
+    int     openedStreamChannels() const;
+
     struct HostApiInfo {
         int     index;
         QString name;
@@ -77,10 +113,20 @@ public:
     };
 
     // Enumeration helpers require Pa_Initialize() to have been called
-    // (owned by the application lifecycle, not this class).
+    // (owned by the application lifecycle, not this class). In a test run
+    // (portAudioBarredForTestRun) they return empty lists and make no
+    // PortAudio call.
     static QVector<HostApiInfo> hostApis();
     static QVector<DeviceInfo>  outputDevicesFor(int hostApiIndex);
     static QVector<DeviceInfo>  inputDevicesFor(int hostApiIndex);
+
+    // R-R3-21: true in a test run (QStandardPaths test mode, which every
+    // test binary enables before main, the same decision AudioEngine's
+    // makeBus uses to open no real device). A test run then never
+    // initialises PortAudio: AudioEngine skips Pa_Initialize and
+    // Pa_Terminate, and the enumeration helpers above answer empty lists.
+    // Always false in a build without NEREUS_BUILD_TESTS.
+    static bool portAudioBarredForTestRun();
 
     bool open(const AudioFormat& format) override;
     void close() override;
@@ -89,6 +135,7 @@ public:
     qint64 push(const char* data, qint64 bytes) override;
     qint64 pull(char* data, qint64 maxBytes) override;
     void   flush() override;
+    std::optional<OutputPacing> outputPacing() const override;
 
     float rxLevel() const override { return m_rxLevel.load(std::memory_order_acquire); }
     float txLevel() const override { return m_txLevel.load(std::memory_order_acquire); }
@@ -151,12 +198,43 @@ public:
     static int downmixToMono(const float* interleaved, int frames,
                              int channels, float* out, int outCapacity);
 
+    /// Floats in an output stream's ring: kDefaultRingSamples (100 ms of
+    /// 48 kHz stereo, as every stream has had), or 100 ms at the stream's
+    /// own rate and channel count when that is more (R-R3-23: faster
+    /// speakers than 48 kHz stereo). An input stream keeps the default.
+    static constexpr std::size_t kDefaultRingSamples = 4800 * 2;
+    static std::size_t outputRingSamples(int sampleRate, int channels) {
+        const std::size_t perTenth = std::size_t(std::max(0, sampleRate) / 10)
+            * std::size_t(std::max(1, channels));
+        return std::max(kDefaultRingSamples, perTenth);
+    }
+
+    /// One direction-valid device offered to matchNamedDevice().
+    struct NamedDeviceCandidate {
+        QString name;
+        int     hostApi;
+    };
+
+    /// Which of `candidates` a configured device name resolves to, or -1.
+    /// Order: exact on the configured host API (any API when hostApiIndex
+    /// is negative), substring on it, exact on another API, substring on
+    /// another API; case-insensitive, `wanted` trimmed.  With `strict`
+    /// only the two exact steps apply: a missing "USB Mic" must not open
+    /// "USB Mic 2" (the capture helper's no-silent-switch rule, R-R3-36).
+    static int matchNamedDevice(const QVector<NamedDeviceCandidate>& candidates,
+                                const QString& wanted, int hostApiIndex, bool strict);
+
 private:
+    friend class ::TstPortAudioBus;
+
     PaStream*       m_stream{nullptr};
     PortAudioConfig m_cfg;
     AudioFormat     m_negFormat;
     QString         m_backendName;
     QString         m_err;
+    bool            m_strictInputDevice{false};
+    OpenFailure     m_openFailure{OpenFailure::None};
+    QString         m_openedDeviceName;
 
     // macOS mic-input quality fix (2026-05-26):
     // When the device's native sample rate differs from the requested
@@ -205,6 +283,16 @@ private:
     std::atomic<qint64> m_ringRead{0};
     std::atomic<qint64> m_ringWrite{0};
 
+    // Output flushes publish an absolute sample position below which audio
+    // is permanently discarded. Only the callback writes m_ringRead, so an
+    // in-flight callback cannot resurrect flushed audio with a stale store.
+    std::atomic<qint64> m_outputDiscardBefore{0};
+    std::atomic<quint64> m_outputConsumedFrames{0};
+    std::atomic<int> m_outputCallbackFrames{0};
+    // R-R3-35: the open output stream's latency as PortAudio reports it
+    // (Pa_GetStreamInfo outputLatency), in ns; -1 when unknown or closed.
+    std::atomic<qint64> m_outputLatencyNs{-1};
+
     std::atomic<float> m_rxLevel{0.0f};
     std::atomic<float> m_txLevel{0.0f};
 
@@ -240,6 +328,7 @@ private:
     float m_lastOutL{0.0f};
     float m_lastOutR{0.0f};
     int   m_crossfadeFramesRem{0};
+    bool  m_resumeAfterDiscard{false};
 
     static int paCallback(const void* in, void* out,
                           unsigned long frames,

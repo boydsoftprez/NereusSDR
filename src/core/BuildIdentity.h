@@ -13,13 +13,13 @@ namespace NereusSDR {
 // Why this is injected at startup rather than compiled in wherever it is
 // read: the tag is re-derived on every build from cmake/NereusBuildTag.cmake,
 // so whatever translation unit consumes the generated header recompiles each
-// time HEAD moves. MainWindow lives in NereusSDRObjs, which all ~450 test
-// executables link, so consuming it there would relink the entire test suite
-// on every commit. main.cpp is compiled into the application target alone,
-// so it takes the hit (one small TU, one link) and hands the value here.
+// time HEAD moves. MainWindow lives in a shared GUI library, so consuming
+// it there would relink GUI tests. main.cpp and server_main.cpp are compiled
+// directly into their executable targets; only those binaries consume the
+// generated header and hand its value here.
 //
-// Call setBuildTag() from main() BEFORE constructing MainWindow; the title is
-// composed once, in MainWindow::buildUI(). Anything that never calls it (test
+// Call setBuildTag() from each executable entry point before its consumers;
+// the GUI title is composed once, in MainWindow::buildUI(). Anything that never calls it (test
 // binaries, for instance) simply reads back an empty tag and gets the plain
 // untagged title, which is the correct answer for those.
 namespace BuildIdentity {

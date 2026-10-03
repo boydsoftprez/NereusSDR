@@ -1,0 +1,22 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "command.result",
+    "verb": "notch.add",
+    "id": 7,
+    "accepted": true,
+    "reason": "",
+    "affected": [
+      "notches"
+    ],
+    "values": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "kind": "i64",
+        "value": 1
+      }
+    ]
+  },
+  "decodes": true
+}

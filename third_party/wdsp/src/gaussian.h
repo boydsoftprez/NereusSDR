@@ -2,7 +2,7 @@
 
 This file is part of a program that implements a Software-Defined Radio.
 
-Copyright (C) 2025 Warren Pratt, NR0V
+Copyright (C) 2025-2026 Warren Pratt, NR0V
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -38,8 +38,8 @@ typedef struct _gaussian
 	int run;					// 0 - filter is OFF; 1 - filter is ON
 	int position;				// position in sequence in which to execute the filter
 	int size;					// input/output buffer size
-	int nc;						// number of filter coefficients; if'0', will be automatically calculated
-	int nc_var;					// '0' filter size will not be adjusted; '1' filter size adjusted per nsigma
+	int nc;						// number of filter coefficients; if set to '0', will be automatically calculated
+	int nc_default;				// value to which 'nc' was last set at instantiation or by a call to set 'nc'
 	double* in;					// pointer to input buffer
 	double* out;				// pointer to output buffer
 	double f_center;			// filter center frequency (Hz)
@@ -71,12 +71,12 @@ extern void setGain_gaussian(GAUSSIAN a, double gain);
 
 extern void CalcGaussianFilter(GAUSSIAN a, double f_center, double bandwidth, double gain);
 
-extern void SetRXAGaussianRun(int channel, int run);
+extern __declspec (dllexport) void SetRXAGaussianRun(int channel, int run);
 
-extern void SetRXAGaussianFreqs(int channel, double f_center, double bandwidth);
+extern __declspec (dllexport) void SetRXAGaussianFreqs(int channel, double f_center, double bandwidth);
 
-extern void SetRXAGaussianGain(int channel, double gain);
+extern __declspec (dllexport) void SetRXAGaussianGain(int channel, double gain);
 
-extern void SetRXAGaussianNC(int channel, int nc);
+extern __declspec (dllexport) void SetRXAGaussianNC(int channel, int nc);
 
 #endif

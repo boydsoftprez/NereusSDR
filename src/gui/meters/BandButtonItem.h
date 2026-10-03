@@ -12,6 +12,8 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -58,15 +60,18 @@ mw0lge@grange-lane.co.uk
 
 namespace NereusSDR {
 
-// Band selection grid: 160m-6m + GEN + WWV + XVTR.
+// Band selection grid: 160m-6m + GEN + WWV + XVTR + 2m.
 // Ported from Thetis clsBandButtonBox (MeterManager.cs:11482+).
 //
 // Button order matches NereusSDR::Band enum (src/models/Band.h): index 0 =
 // 160m ... index 11 = GEN, index 12 = WWV, index 13 = XVTR. WWV and XVTR
 // were added in Phase 3G-8 (commit 2) to match Thetis's 14-band set and
 // to provide a home for the per-band grid storage on PanadapterModel.
-// The bandClicked(int) signal carries the same enum index; consumers
-// should use Band::bandFromUiIndex() to convert.
+// 2 m (R-IOS-26) is index 14, after XVTR, so a saved layout's indices and
+// visibility bits keep their buttons; its Band number is 27, so the index
+// is the band's per-band state slot, not its number. The bandClicked(int)
+// signal carries that index; consumers use Band::bandFromUiIndex() to
+// convert.
 class BandButtonItem : public ButtonBoxItem {
     Q_OBJECT
 
@@ -88,7 +93,7 @@ signals:
 private:
     void onButtonClicked(int index, Qt::MouseButton button);
     int m_activeBand{-1};
-    static constexpr int kBandCount = 14;
+    static constexpr int kBandCount = 15;
 };
 
 } // namespace NereusSDR

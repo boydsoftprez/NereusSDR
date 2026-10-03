@@ -12,6 +12,12 @@
 //
 // Phase 3P-II Task 18.
 // AI tooling: Anthropic Claude Code.
+//
+// 2026-09-25: R-R3-49 (parity Task 8): a remote window's Scan LAN asks
+// the Core to listen (scanTgxlLan) and shows the Tuner Genius devices the
+// Core heard. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-09-25: R-R3-49 (parity Task 9): the same for the Power Genius
+// (scanPgxlLan). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #pragma once
 
@@ -24,6 +30,7 @@ class QLabel;
 namespace NereusSDR {
 
 class LanDiscovery;
+class RadioModel;
 
 // Modeless dialog that runs a 3-second LAN scan (via LanDiscovery) and
 // presents discovered devices in a 6-column table:
@@ -47,6 +54,21 @@ class LanScanDialog : public QDialog {
 
 public:
     explicit LanScanDialog(QWidget* parent = nullptr);
+    // R-R3-49 (parity Task 8): a remote window's scan. The Core listens for
+    // Tuner Genius announcements (RadioModel's station link,
+    // requestTgxlLanScan) and the table shows what it heard; this computer
+    // opens no socket. A refusal, or the link to the Core dropping, is
+    // shown in the dialog.
+    // R-R3-49 (parity Task 9): `device` says which accessory the Core
+    // listens for (scanTgxlLan or scanPgxlLan).
+    enum class CoreDevice { TunerGenius, PowerGenius };
+    LanScanDialog(RadioModel* coreModel, QWidget* parent,
+                  CoreDevice device = CoreDevice::TunerGenius);
+
+    int rowCountForTesting() const;
+    QString statusTextForTesting() const;
+    // Double-click the row, as the operator does.
+    void pickRowForTesting(int row) { onCellDoubleClicked(row, 0); }
 
 signals:
     // Emitted when the user double-clicks a device row. The dialog closes
@@ -68,7 +90,13 @@ private slots:
     void onCellDoubleClicked(int row, int column);
 
 private:
+    void buildUi(const QString& status);
+    void finishCoreScan(bool accepted, const QString& reason, const QString& devicesJson);
+
     LanDiscovery*   m_discovery{nullptr};
+    RadioModel*     m_coreModel{nullptr};
+    quint32         m_coreCommandId{0};
+    bool            m_coreScanPending{false};
     QTableWidget*   m_table{nullptr};
     QProgressBar*   m_progressBar{nullptr};
     QLabel*         m_statusLabel{nullptr};

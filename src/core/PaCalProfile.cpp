@@ -15,6 +15,9 @@
 //   2026-05-02 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-28 - paCalPointSpec: each calibration point's spin box range
+//                 from Thetis setup.designer.cs [v2.10.3.15] (R-R3-49).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From console.cs ---
@@ -118,6 +121,8 @@
 //============================================================================================//
 
 #include "PaCalProfile.h"
+
+#include <cstddef>
 
 namespace NereusSDR {
 
@@ -261,6 +266,52 @@ PaCalProfile PaCalProfile::defaults(PaCalBoardClass cls) noexcept {
             break;
     }
     return p;
+}
+
+// --- Per-point spin box range --------------------------------------------
+//
+// R-R3-49 (PA Setup publication): each Watt Meter calibration point's box
+// as Thetis builds it. Every ud{10|100|200}PA{N}W box has Minimum 0,
+// Increment 0.1 and DecimalPlaces 1; the maxima differ per point:
+// From Thetis setup.designer.cs:50705 [v2.10.3.15] ud10PA1W
+//   DecimalPlaces = 1; Increment = 0.1; Maximum = 10; Minimum = 0
+// From Thetis setup.designer.cs:50792 [v2.10.3.15] ud10PA9W  Maximum = 11
+// From Thetis setup.designer.cs:50741 [v2.10.3.15] ud10PA10W Maximum = 12
+// From Thetis setup.designer.cs:49481 [v2.10.3.15] ud100PA10W .. ud100PA80W
+//   DecimalPlaces = 1; Increment = 0.1; Maximum = 100
+// From Thetis setup.designer.cs:49568 [v2.10.3.15] ud100PA90W  Maximum = 110
+// From Thetis setup.designer.cs:49517 [v2.10.3.15] ud100PA100W Maximum = 120
+// From Thetis setup.designer.cs:50093 [v2.10.3.15] ud200PA20W .. ud200PA60W
+//   Maximum = 100
+// From Thetis setup.designer.cs:50592 [v2.10.3.15] ud200PA80W  Maximum = 120
+// From Thetis setup.designer.cs:50541 [v2.10.3.15] ud200PA100W Maximum = 140
+// From Thetis setup.designer.cs:50430 [v2.10.3.15] ud200PA120W .. ud200PA160W
+//   Maximum = 200
+// From Thetis setup.designer.cs:50173 [v2.10.3.15] ud200PA180W Maximum = 220
+// From Thetis setup.designer.cs:50122 [v2.10.3.15] ud200PA200W Maximum = 240
+// The HL2 shares the ud10PA boxes, with the same ranges:
+// From mi0bot setup.designer.cs:51307 [v2.10.3.13-beta2] ud10PA1W
+// From mi0bot setup.designer.cs:51343 [v2.10.3.13-beta2] ud10PA10W Maximum = 12
+
+PaCalPointSpec paCalPointSpec(PaCalBoardClass cls, int index) noexcept
+{
+    if (index < 1 || index > 10) {
+        return {};
+    }
+    static constexpr std::array<double, 10> kAnan10Max{
+        10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 11.0, 12.0};
+    static constexpr std::array<double, 10> kAnan100Max{
+        100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 110.0, 120.0};
+    static constexpr std::array<double, 10> kAnan8000Max{
+        100.0, 100.0, 100.0, 120.0, 140.0, 200.0, 200.0, 200.0, 220.0, 240.0};
+    const std::size_t i = static_cast<std::size_t>(index - 1);
+    switch (cls) {
+        case PaCalBoardClass::Anan10:   return {kAnan10Max[i], 0.1, 1};
+        case PaCalBoardClass::Anan100:  return {kAnan100Max[i], 0.1, 1};
+        case PaCalBoardClass::Anan8000: return {kAnan8000Max[i], 0.1, 1};
+        case PaCalBoardClass::None:     return {};
+    }
+    return {};
 }
 
 // --- Per-class interval --------------------------------------------------

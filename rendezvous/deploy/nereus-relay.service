@@ -1,0 +1,110 @@
+# systemd unit for the NereusSDR WebSocket relay.
+#
+# Installed as /etc/systemd/system/nereus-relay.service by
+# rendezvous/deploy/setup-server.sh. The code lives in /opt/nereus-rendezvous
+# beside the rendezvous service's (put there by rendezvous/deploy.sh), the
+# configuration in /etc/nereus-rendezvous/relay.conf and the relay secret in
+# /etc/nereus-rendezvous/relay-secret (both written by setup-server.sh).
+# The wire is docs/architecture/2026-09-23-rendezvous-v1.md, section 12.
+#
+# The relay is a process of its own, apart from the rendezvous service, so
+# relay traffic can never starve registrations or take the service's memory
+# ceiling (section 9.1). Caddy sends wss://<host>/v1/relay* here, over the
+# Unix socket /run/nereus-relay/relay.sock, and everything else to the
+# service.
+
+[Unit]
+Description=NereusSDR WebSocket relay
+Documentation=https://github.com/boydsoftprez/NereusSDR/tree/main/rendezvous
+After=network.target
+
+[Service]
+Type=exec
+# Ubuntu's own python3 with its python3-websockets; nothing from pip.
+ExecStart=/usr/bin/python3 -m nereus_relay --config /etc/nereus-rendezvous/relay.conf
+Environment=PYTHONPATH=/opt/nereus-rendezvous
+Environment=PYTHONDONTWRITEBYTECODE=1
+WorkingDirectory=/
+Restart=on-failure
+RestartSec=2
+# SIGTERM makes the relay tell every leg it is going (shuttingDown) and
+# close them, as the service does; the same stop timeout.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# --- The relay secret -----------------------------------------------------
+# systemd copies the root-only secret file to
+# /run/credentials/nereus-relay.service/relay-secret, readable by this relay
+# alone, and relay.conf's relay_secret_file points there. The rendezvous
+# service reads the same file through its own LoadCredential= line.
+LoadCredential=relay-secret:/etc/nereus-rendezvous/relay-secret
+
+# --- Identity and the socket -----------------------------------------------
+# A transient account made for each run; the relay owns no files but its
+# socket. systemd makes /run/nereus-relay (0755, the account's) at start and
+# removes it at stop; relay.conf puts the socket there with mode 0660 and
+# group caddy, which the relay may set because it is given that group
+# below: Caddy (user caddy) may connect, and no other account.
+DynamicUser=yes
+User=nereus-relay
+Group=nereus-relay
+SupplementaryGroups=caddy
+RuntimeDirectory=nereus-relay
+RuntimeDirectoryMode=0755
+
+# --- Network ------------------------------------------------------------
+# The relay listens on its Unix socket only; Caddy on the same host is its
+# only peer. It opens no IP socket at all.
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+
+# --- Memory and files -----------------------------------------------------
+# The ceiling (MemoryMax) comes from the relay's slots, in the drop-in
+# setup-server.sh writes beside this unit (nereus-relay.service.d/memory.conf;
+# the formula is in the script and the rendezvous document, section 12.5).
+# Past it the kernel ends the relay and systemd starts it again in 2 s; each
+# leg joins again with its grant while the grant has not expired. Under
+# memory pressure on the whole host the kernel ends the relay first: its
+# OOMScoreAdjust is above the service's (500), and Caddy's is -100, so
+# registrations and the front door outlast relay traffic. Socket buffers
+# are charged to this unit too (cgroup v2); their size per connection is set
+# by the relay itself (socket_buffer_bytes).
+MemorySwapMax=0
+OOMScoreAdjust=700
+TasksMax=32
+# One descriptor per connection: the default 16 slots (32 legs), 64
+# waiting connections, connections still closing after a refusal or an END
+# (each counted per address until it has closed, at most 2 s), the
+# listening sockets and a wide margin. Set outright rather than left to
+# systemd's default, so a burst of refused connections meets this bound and
+# not the process's other limits.
+LimitNOFILE=4096
+
+# --- Sandboxing ---------------------------------------------------------
+NoNewPrivileges=yes
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Not set, as for the service, until `systemd-analyze security nereus-relay`
+# and a full check have run on the server: MemoryDenyWriteExecute= and
+# SystemCallFilter=.
+
+[Install]
+WantedBy=multi-user.target

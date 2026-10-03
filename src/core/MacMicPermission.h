@@ -16,8 +16,29 @@
 // app launch deterministically engages TCC regardless of what audio hardware
 // is attached, so the user gets the prompt on first launch and the answer is
 // cached for every subsequent mic open. No-op on non-macOS platforms.
+//
+// microphonePermissionStatus / requestMicrophonePermissionAndWait (added
+// 2026-09-22 for the nereus-audio-capture helper, R-R3-36): the helper
+// reports a pending OS consent prompt as its own phase, so it needs the
+// current answer without prompting and a request that blocks the calling
+// thread until the user answers. Restricted maps to Denied. On other
+// platforms both return Granted without doing anything.
+#include <QtGlobal>
+
+namespace NereusSDR {
+enum class MicPermission { Granted, Denied, Undetermined };
+}
+
 #ifdef Q_OS_MAC
-namespace NereusSDR { void requestMicrophonePermission(); }
+namespace NereusSDR {
+void requestMicrophonePermission();
+MicPermission microphonePermissionStatus();
+MicPermission requestMicrophonePermissionAndWait(); // blocks the calling thread until the user answers
+}
 #else
-namespace NereusSDR { inline void requestMicrophonePermission() {} }
+namespace NereusSDR {
+inline void requestMicrophonePermission() {}
+inline MicPermission microphonePermissionStatus() { return MicPermission::Granted; }
+inline MicPermission requestMicrophonePermissionAndWait() { return MicPermission::Granted; }
+}
 #endif

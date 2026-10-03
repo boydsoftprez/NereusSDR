@@ -1,0 +1,23 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "property.result",
+    "key": "slice:0",
+    "writeId": 3,
+    "results": [
+      {
+        "property": "frequency",
+        "accepted": true,
+        "reason": "",
+        "hasValue": true,
+        "value": {
+          "ordinal": 1,
+          "name": "frequency",
+          "kind": "f64",
+          "value": 14074000.0
+        }
+      }
+    ]
+  },
+  "decodes": true
+}

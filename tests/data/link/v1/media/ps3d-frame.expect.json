@@ -1,0 +1,79 @@
+{
+    "codec": "ps3d",
+    "expect": {
+        "capturedAtUnixMilliseconds": 1790000000000,
+        "channelId": 5,
+        "correctionCount": 4,
+        "phaseReferenceDegrees": 12.5,
+        "sampleCount": 8,
+        "sequence": 3,
+        "sessionGeneration": 7,
+        "tolerance": {
+            "absolute": 0
+        },
+        "x": [
+            0,
+            0.125,
+            0.25,
+            0.375,
+            0.5,
+            0.625,
+            0.75,
+            0.875
+        ],
+        "xaCorrection": [
+            0,
+            0.25,
+            0.5,
+            0.75
+        ],
+        "xmCorrection": [
+            0,
+            0.25,
+            0.5,
+            0.75
+        ],
+        "yaCorrection": [
+            -2.5,
+            -2,
+            -1.5,
+            -1
+        ],
+        "yc": [
+            0,
+            -0.25,
+            -0.5,
+            -0.75,
+            -1,
+            -1.25,
+            -1.5,
+            -1.75
+        ],
+        "ym": [
+            0.5,
+            0.5625,
+            0.625,
+            0.6875,
+            0.75,
+            0.8125,
+            0.875,
+            0.9375
+        ],
+        "ymCorrection": [
+            1,
+            1.125,
+            1.25,
+            1.375
+        ],
+        "ys": [
+            1,
+            0.875,
+            0.75,
+            0.625,
+            0.5,
+            0.375,
+            0.25,
+            0.125
+        ]
+    }
+}

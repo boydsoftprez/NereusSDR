@@ -34,6 +34,49 @@
 //                                    Phase 3F design. AI-assisted
 //                                    transformation via Anthropic
 //                                    Claude Code.
+//   2026-08-02  J.J. Boyd / KG4VCF  R1 Task 7 fix round 1 (coordinator
+//                                    spec review finding 2): added
+//                                    panRetired(panId), emitted from
+//                                    removePanadapter(), so layout-driven
+//                                    pan retirement can be told apart from
+//                                    a pan that is merely re-parented.
+//                                    AI-assisted transformation via
+//                                    Anthropic Claude Code.
+//   2026-08-08  J.J. Boyd / KG4VCF  Three bench-reported defects.
+//                                    (1) Splitter handles were left at
+//                                    the style metric, so the drag
+//                                    target between two pans was a few
+//                                    logical px; every splitter now goes
+//                                    through makeSplitter() at
+//                                    kSplitterHandleWidth and is
+//                                    non-collapsible. (2) A floated pan
+//                                    stopped rendering: float / dock now
+//                                    tear the SpectrumWidget's render
+//                                    context down before the reparent
+//                                    and re-realize it after, ported
+//                                    from AetherSDR
+//                                    src/gui/PanadapterStack.cpp:22-43,
+//                                    785-860 [@1e0718ad]. (3) dockPanadapter
+//                                    becomes a named slot so the window
+//                                    close box and the pan's own Dock
+//                                    button share one path. AI-assisted
+//                                    transformation via Anthropic Claude
+//                                    Code.
+//   2026-09-22  J.J. Boyd / KG4VCF  Retire floating windows with their pans,
+//                                    following AetherSDR PanadapterStack.cpp
+//                                    removePanadapter() [@0dea0dd7]. Bind
+//                                    deferred render work to the original
+//                                    applet/window lifetime; adapt upstream
+//                                    prepareShutdown() so panes die before
+//                                    their graphics owners, including pending
+//                                    removals. AI-assisted adaptation via
+//                                    OpenAI Codex.
+//   2026-09-29  J.J. Boyd / KG4VCF  Slice control plan Task 16: isFloating()
+//                                    and raiseFloatingPan(), so selecting a
+//                                    slice shown in a floating pan brings
+//                                    that window forward (ruling U2).
+//                                    AI-assisted transformation via
+//                                    Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -41,6 +84,7 @@
 #include <QString>
 #include <QList>
 #include <QMap>
+#include <QPointer>
 
 class QSplitter;
 
@@ -61,6 +105,23 @@ class PanadapterStack : public QWidget {
 public:
     explicit PanadapterStack(QWidget* parent = nullptr);
     ~PanadapterStack() override;
+
+    /// Width of every splitter handle in the pan tree, in logical pixels.
+    ///
+    /// Bench report 2026-08-08: "the mouse over area for resizing the space
+    /// between two pans is so small it is hard to hit". A QSplitter's drag
+    /// target is exactly its handle rect -- there is no separate hit area to
+    /// widen -- and nothing here ever called setHandleWidth, so the handles
+    /// fell back to the style metric (a few logical px, i.e. a couple of
+    /// physical mm on a Retina panel).
+    ///
+    /// 8 rather than AetherSDR's 3 (PanadapterStack.cpp:86 [@1e0718ad])
+    /// because AetherSDR pairs its 3 px handle with a themed 2 px painted
+    /// line so the operator can at least SEE where to aim; ours was an
+    /// unpainted gap. PanSplitterHandle keeps the thin painted look at this
+    /// wider grab size, so the visual weight is unchanged and only the
+    /// target grows.
+    static constexpr int kSplitterHandleWidth = 8;
 
     PanadapterApplet* addPanadapter(const QString& panId);
     void removePanadapter(const QString& panId);
@@ -131,15 +192,50 @@ public:
 
     /// Detach a pan into a top-level PanFloatingWindow.
     void floatPanadapter(const QString& panId);
+
+    /// Bring a floated pan back into the splitter tree.
+    ///
+    /// A named slot rather than the lambda this used to be, because there are
+    /// now two ways back -- the window's close box and the Dock button on the
+    /// pan's floating title strip -- and both have to run the same
+    /// teardown-before-reparent sequence. Public so a test can drive the
+    /// round trip without a window manager.
+    void dockPanadapter(const QString& panId);
+
     PanFloatingWindow* floatingWindowForTest(const QString& panId) const
     {
         return m_floating.value(panId, nullptr);
     }
 
+    /// Slice control plan Task 16: whether this pan sits in its own
+    /// floating window.
+    bool isFloating(const QString& panId) const { return m_floating.contains(panId); }
+
+    /// Slice control plan Task 16 (ruling U2): bring a floating pan's window
+    /// forward, restored if it was minimized. Nothing moves. False when the
+    /// pan is not floating.
+    bool raiseFloatingPan(const QString& panId);
+
     /// Phase 3F Sub-Epic D Task 6: persist splitter geometry across launches.
     /// Keyed under AppSettings "PanSplitter0Sizes" + "PanLayoutId" (and per-row
     /// children for 12h / 2x2). Restore loads the layout AND the sizes.
     void saveSplitterState();
+
+    /// Write every still-floating pan's window geometry to AppSettings.
+    ///
+    /// Called from MainWindow::closeEvent, BEFORE its
+    /// AppSettings::instance().save(). ~PanadapterStack also saves on its way
+    /// through dockAllFloatingPans, but that runs after the flush and
+    /// AppSettings::setValue only touches an in-memory map with a defaulted
+    /// destructor, so the teardown save alone never reached the disk. The
+    /// teardown save stays for the non-quit paths (a layout change docks
+    /// everything the same way); this is the one that survives a quit. Codex,
+    /// PR #318.
+    void saveFloatingGeometry();
+
+    /// Destroy panes while their owning windows' graphics backends still live.
+    /// MainWindow calls this before its QWidget base destructor; idempotent.
+    void prepareShutdown();
     void restoreSplitterState();
 
     /// Phase 3F Sub-Epic D Task 6 test seam: read the root splitter's current
@@ -154,14 +250,45 @@ signals:
     void activePanChanged(const QString& panId);
     void countChanged(int count);
 
+    /// R1 Task 7 fix round 1 (coordinator spec review, finding 2): emitted
+    /// from removePanadapter() so a caller can drop any core-side state
+    /// keyed on panId (e.g. MainWindow's FftTopology) the moment the pan
+    /// itself goes away. applyLayout()'s orphan-retirement loop is the
+    /// call site that matters today: it is what actually destroys a pan on
+    /// a layout shrink, and it does so without going through
+    /// MainWindow::disconnectPanadapter -- that method currently has no
+    /// caller at all (see its own header comment).
+    void panRetired(const QString& panId);
+
 private:
     void rebuildSplitters(const QString& layoutId, const QStringList& panIds);
-    void dockAllFloatingPans();
+    /// Retains guarded identities of the panes whose top-level changed.
+    /// A deferred refresh must never resolve a retired pane's reused ID.
+    QList<QPointer<PanadapterApplet>> dockAllFloatingPans();
     void clearSplitters();
+
+    /// Single construction point for every splitter in the pan tree.
+    ///
+    /// A factory rather than setHandleWidth at each of the 11 call sites: the
+    /// grab-area defect was one forgotten setter, and the multi-row layouts
+    /// (12h / 2x2 / 2h1 / 3h2) each build their own nested row splitters, so
+    /// per-site setup is a defect waiting for the tenth layout. Routing every
+    /// construction through here means a new layout cannot be born
+    /// ungrabbable.
+    QSplitter* makeSplitter(Qt::Orientation orientation, QWidget* parent);
+
+    /// Re-realize the render contexts of the named pans, which have just
+    /// returned from a floating window. Deliberately not "every docked pan":
+    /// a widget whose top-level never changed must not be touched.
+    void refreshReturnedFromFloat(const QList<QPointer<PanadapterApplet>>& applets);
+    void retireFloatingWindow(PanFloatingWindow* window, PanadapterApplet* applet);
 
     QSplitter*                                 m_rootSplitter {nullptr};
     QMap<QString, PanadapterApplet*>           m_pans;
     QMap<QString, PanFloatingWindow*>          m_floating;
+    QList<QPointer<PanadapterApplet>>          m_retiringPans;
+    QList<QPointer<PanFloatingWindow>>         m_retiringWindows;
+    bool                                       m_shutdownPrepared {false};
     QString                                    m_currentLayoutId {"1"};
     QString                                    m_activePanId;
 };

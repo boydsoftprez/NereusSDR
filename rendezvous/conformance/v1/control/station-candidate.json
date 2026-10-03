@@ -1,0 +1,9 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "candidate",
+    "to": "AAECAwQFBgcICQoLDA0ODw",
+    "candidate": "candidate:1 1 UDP 2122317823 2001:db8::7 50123 typ host"
+  },
+  "decodes": true
+}

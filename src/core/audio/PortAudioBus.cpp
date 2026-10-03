@@ -9,6 +9,24 @@
 // PHILOSOPHICAL context only (Thetis uses paWinWasapiExclusive on
 // Windows for OS-side SRC bypass; we use device-native-rate open on
 // macOS for the same end), not as a port.  No Thetis bytes ported.
+//
+// Modification history (NereusSDR):
+//   2026-09-23: R-R3-23 an output stream sizes its ring by
+//               outputRingSamples() before it starts, so a speaker faster
+//               than 48 kHz stereo still holds 100 ms. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-09-23: R-R3-35 outputPacing() reports the stream's output latency
+//               (Pa_GetStreamInfo) so remote audio delay can include the
+//               device. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-09-22: R-R3-36 fix wave: strict resolution accepts exact names
+//               only (matchNamedDevice). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-09-22: strict named-input resolution (setStrictInputDevice),
+//               lastOpenFailure() and opened-device accessors for the
+//               nereus-audio-capture helper (R-R3-36). J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "PortAudioBus.h"
@@ -18,6 +36,8 @@
 #include "../Resampler.h"
 
 #include <portaudio.h>
+
+#include <QStandardPaths>
 
 #include <algorithm>
 #include <cmath>
@@ -47,9 +67,16 @@ namespace {
 //      This is the critical fallback for the #112 scenario — even when
 //      there is no ALSA default, PortAudio typically still enumerates
 //      "hw:0,0" etc., which at least lets audio reach the user.
+//
+// strictNamed: when true and deviceName is non-empty, step 1 is the only
+// step and accepts exact names only (no substring match); a name that
+// matches nothing returns paNoDevice instead of falling
+// through to the defaults (the capture helper's "never silently switch
+// microphones" rule, R-R3-36).
 PaDeviceIndex resolveDevice(const PortAudioConfig& inCfg,
                             bool wantOutput,
-                            int requestedChannels)
+                            int requestedChannels,
+                            bool strictNamed = false)
 {
     const int deviceCount = Pa_GetDeviceCount();
     if (deviceCount <= 0) {
@@ -131,35 +158,22 @@ PaDeviceIndex resolveDevice(const PortAudioConfig& inCfg,
 
     // 1. Named-device match.
     if (!cfg.deviceName.isEmpty()) {
-        const QString wanted = cfg.deviceName.trimmed();
-        PaDeviceIndex exactMatch     = paNoDevice;
-        PaDeviceIndex substringMatch = paNoDevice;
-        PaDeviceIndex crossApiExact  = paNoDevice;
-        PaDeviceIndex crossApiSub    = paNoDevice;
-
+        QVector<PortAudioBus::NamedDeviceCandidate> candidates;
+        QVector<PaDeviceIndex> candidateIndex;
         for (int i = 0; i < deviceCount; ++i) {
             const PaDeviceInfo* di = Pa_GetDeviceInfo(i);
             if (!directionOk(di)) { continue; }
-            const QString name = QString::fromUtf8(di->name);
-            const bool sameApi = (cfg.hostApiIndex < 0)
-                                 || (di->hostApi == cfg.hostApiIndex);
-            const bool exact = (name.compare(wanted, Qt::CaseInsensitive) == 0);
-            const bool sub   = name.contains(wanted, Qt::CaseInsensitive);
-
-            if (sameApi && exact && exactMatch == paNoDevice) {
-                exactMatch = i;
-            } else if (sameApi && sub && substringMatch == paNoDevice) {
-                substringMatch = i;
-            } else if (!sameApi && exact && crossApiExact == paNoDevice) {
-                crossApiExact = i;
-            } else if (!sameApi && sub && crossApiSub == paNoDevice) {
-                crossApiSub = i;
-            }
+            candidates.push_back({QString::fromUtf8(di->name), di->hostApi});
+            candidateIndex.push_back(i);
         }
-        if (exactMatch     != paNoDevice) { return exactMatch; }
-        if (substringMatch != paNoDevice) { return substringMatch; }
-        if (crossApiExact  != paNoDevice) { return crossApiExact; }
-        if (crossApiSub    != paNoDevice) { return crossApiSub; }
+        const int match = PortAudioBus::matchNamedDevice(
+            candidates, cfg.deviceName, cfg.hostApiIndex, strictNamed);
+        if (match >= 0) {
+            return candidateIndex[match];
+        }
+        if (strictNamed) {
+            return paNoDevice;
+        }
         // Named device not found: fall through to defaults rather than
         // erroring out — better silent fallback than no audio at all.
     }
@@ -241,7 +255,7 @@ PortAudioBus::PortAudioBus() {
     // ring was 48000 * 2 (1 second) with no overrun handling, which
     // made the display drift up to a full second ahead of audio and
     // produced the "audio replays" symptom on stall recovery.
-    m_ring.resize(4800 * 2);
+    m_ring.resize(kDefaultRingSamples);
 
     // 2026-05-26 KG4VCF: pin the audio ring so heavy memory pressure
     // (parallel builds, Spotlight indexing) can not compress / page
@@ -270,21 +284,45 @@ bool PortAudioBus::open(const AudioFormat& format) {
         close();
     }
 
+    // No callback can run until Pa_StartStream below. A fresh open starts
+    // with no queued audio or stale device-clock/discard state.
+    m_ringRead.store(0, std::memory_order_relaxed);
+    m_ringWrite.store(0, std::memory_order_relaxed);
+    m_outputDiscardBefore.store(0, std::memory_order_relaxed);
+    m_outputConsumedFrames.store(0, std::memory_order_relaxed);
+    m_outputCallbackFrames.store(0, std::memory_order_relaxed);
+    m_outputLatencyNs.store(-1, std::memory_order_relaxed);
+    m_lastOutL = 0.0f;
+    m_lastOutR = 0.0f;
+    m_crossfadeFramesRem = 0;
+    m_resumeAfterDiscard = false;
+
     const bool wantOutput = (m_cfg.direction == AudioDirection::Output);
+    m_openFailure = OpenFailure::None;
+    m_openedDeviceName.clear();
 
     PaStreamParameters params;
     PaError err = paNoError;
     const PaDeviceInfo* di = nullptr;
 
-    params.device = resolveDevice(m_cfg, wantOutput, format.channels);
+    // Strict resolution applies only to a named input device (R-R3-36).
+    const bool strictNamed = !wantOutput && m_strictInputDevice
+                             && !m_cfg.deviceName.trimmed().isEmpty();
+    params.device = resolveDevice(m_cfg, wantOutput, format.channels, strictNamed);
     if (params.device == paNoDevice) {
-        m_err = wantOutput
-            ? QStringLiteral("No output device found")
-            : QStringLiteral("No input device found");
+        m_openFailure = OpenFailure::DeviceNotFound;
+        if (strictNamed) {
+            m_err = QStringLiteral("device-not-found: ") + m_cfg.deviceName.trimmed();
+        } else {
+            m_err = wantOutput
+                ? QStringLiteral("No output device found")
+                : QStringLiteral("No input device found");
+        }
         return false;
     }
     di = Pa_GetDeviceInfo(params.device);
     if (di == nullptr) {
+        m_openFailure = OpenFailure::OpenFailed;
         m_err = QStringLiteral("Pa_GetDeviceInfo returned null for resolved device");
         return false;
     }
@@ -344,6 +382,7 @@ bool PortAudioBus::open(const AudioFormat& format) {
         paClipOff, &PortAudioBus::paCallback, this);
 
     if (err != paNoError) {
+        m_openFailure = OpenFailure::OpenFailed;
         m_err = QString::fromUtf8(Pa_GetErrorText(err));
         m_stream = nullptr;
         m_negFormat = {};
@@ -370,6 +409,20 @@ bool PortAudioBus::open(const AudioFormat& format) {
                                                    !wantOutput && needResample);
     m_nativeSampleRate = openRate;
     m_inputStreamChannels = wantOutput ? 0 : effectiveChannels;
+
+    // R-R3-23: an output ring keeps 100 ms at the stream's own rate and
+    // channel count (never less than the default). No callback runs yet,
+    // and open() reset both cursors above, so the ring may be replaced.
+    if (wantOutput) {
+        const std::size_t ringSamples =
+            outputRingSamples(m_negFormat.sampleRate, m_negFormat.channels);
+        if (ringSamples != m_ring.size()) {
+            NereusSDR::unlockMemory(m_ring.data(), m_ring.size() * sizeof(float));
+            m_ring.assign(ringSamples, 0.0f);
+            NereusSDR::lockMemory(m_ring.data(), m_ring.size() * sizeof(float),
+                                  "PortAudioBus::m_ring");
+        }
+    }
 
     if (needResample) {
         // Worst-case per-callback input frames at the native rate:
@@ -422,6 +475,7 @@ bool PortAudioBus::open(const AudioFormat& format) {
     // Callback-visible state is now fully published; safe to start.
     err = Pa_StartStream(m_stream);
     if (err != paNoError) {
+        m_openFailure = OpenFailure::StartFailed;
         m_err = QString::fromUtf8(Pa_GetErrorText(err));
         Pa_CloseStream(m_stream);
         m_stream = nullptr;
@@ -438,28 +492,59 @@ bool PortAudioBus::open(const AudioFormat& format) {
     // Defensive null-check on host-API lookup. With a device handed back
     // by Pa_GetDefault{Output,Input}Device this should never be null, but
     // keep the backend name well-defined if it ever is.
+    // R-R3-35: the output latency PortAudio reports for this stream, from a
+    // buffer the callback fills to the device output. A zero or missing
+    // value is treated as unknown rather than as no delay.
+    if (wantOutput) {
+        const PaStreamInfo* streamInfo = Pa_GetStreamInfo(m_stream);
+        const double latencySeconds = streamInfo != nullptr ? streamInfo->outputLatency : 0.0;
+        m_outputLatencyNs.store(std::isfinite(latencySeconds) && latencySeconds > 0.0
+                                    ? static_cast<qint64>(std::llround(latencySeconds * 1e9))
+                                    : qint64{-1},
+                                std::memory_order_release);
+    }
+
     const PaHostApiInfo* hai = Pa_GetHostApiInfo(di->hostApi);
     if (hai != nullptr && hai->name != nullptr) {
         m_backendName = QString::fromUtf8(hai->name);
     } else {
         m_backendName.clear();
     }
+    m_openedDeviceName = (di->name != nullptr) ? QString::fromUtf8(di->name) : QString();
     return true;
 }
 
-void PortAudioBus::close() {
+int PortAudioBus::openedStreamChannels() const {
     if (!m_stream) {
-        return;
+        return 0;
     }
-    Pa_StopStream(m_stream);
-    Pa_CloseStream(m_stream);
-    m_stream = nullptr;
+    return (m_inputStreamChannels > 0) ? m_inputStreamChannels : m_negFormat.channels;
+}
+
+void PortAudioBus::close() {
+    if (m_stream) {
+        Pa_StopStream(m_stream);
+        Pa_CloseStream(m_stream);
+        m_stream = nullptr;
+    }
     // Release the input resampler + its scratch buffer.  Safe here
     // because Pa_StopStream above has joined the audio thread, so no
     // more paCallback invocations can be in flight.
     m_inputResampler.reset();
     m_resampleScratch.clear();
     m_nativeSampleRate = 0;
+    m_openedDeviceName.clear();
+    // Pa_StopStream joins the callback before this reset. Reopening must not
+    // inherit queued output, a prior discard floor, or device consumption.
+    m_ringRead.store(0, std::memory_order_relaxed);
+    m_ringWrite.store(0, std::memory_order_relaxed);
+    m_outputDiscardBefore.store(0, std::memory_order_relaxed);
+    m_outputConsumedFrames.store(0, std::memory_order_relaxed);
+    m_outputCallbackFrames.store(0, std::memory_order_relaxed);
+    m_lastOutL = 0.0f;
+    m_lastOutR = 0.0f;
+    m_crossfadeFramesRem = 0;
+    m_resumeAfterDiscard = false;
     // Cumulative drop / underrun / PA-flag counters remain queryable
     // via ringOverrunEvents() / ringOverrunSamples() /
     // ringUnderrunEvents() and the m_paOutputUnderflowEvents /
@@ -483,7 +568,9 @@ qint64 PortAudioBus::push(const char* data, qint64 bytes) {
     // paCallback detects the same condition on its next entry and skips
     // forward to the oldest still-valid sample.  Counting the event here
     // gives diagnostics a single producer-side perspective.
-    const qint64 readPos = m_ringRead.load(std::memory_order_acquire);
+    const qint64 publishedRead = m_ringRead.load(std::memory_order_acquire);
+    const qint64 discardBefore = m_outputDiscardBefore.load(std::memory_order_acquire);
+    const qint64 readPos = std::max(publishedRead, discardBefore);
     const qint64 afterWrite = w + floatCount;
     if (afterWrite - readPos > ringSize) {
         m_dropEvents.fetch_add(1, std::memory_order_relaxed);
@@ -515,27 +602,56 @@ void PortAudioBus::flush() {
     // path) want unread captured samples dropped.  In both modes the
     // operation is the same: equalize read/write cursors atomically.
     //
-    // Race with the audio thread:
-    //  - Output mode: paCallback advances m_ringRead; push() advances
-    //    m_ringWrite.  If we set ringRead := ringWrite atomically, the
-    //    callback may have JUST advanced ringRead one tick before our
-    //    store; the store still leaves r ≤ w, so the next callback
-    //    iteration reads `r < w` as false and outputs silence.  No
-    //    torn-read window.
-    //  - Input mode: paCallback advances m_ringWrite; pull() advances
-    //    m_ringRead.  Symmetric reasoning applies.
-    //
-    // No mutex needed — the cursors are std::atomic<qint64> and the
-    // single store is sequenced after the load by acquire/release
-    // ordering.  The PortAudio device's own internal output buffer
-    // (~5–20 ms latency on Core Audio / WASAPI) still plays its
-    // already-handed-off samples; that's below the threshold of
-    // perception and outside this layer's reach.
-    if (!m_stream) {
+    // Output mode cannot write m_ringRead here: an in-flight callback owns
+    // that cursor and could later publish an older value. Instead publish a
+    // monotonic absolute floor. Every callback and pacing observation clamps
+    // its read position to this floor, including after a stale publication.
+    // Input retains the established equalize-cursors behavior.
+    if (m_ring.empty()) {
         return;
     }
     const qint64 w = m_ringWrite.load(std::memory_order_acquire);
+    if (m_cfg.direction == AudioDirection::Output) {
+        qint64 floor = m_outputDiscardBefore.load(std::memory_order_acquire);
+        while (floor < w
+               && !m_outputDiscardBefore.compare_exchange_weak(
+                   floor, w, std::memory_order_release, std::memory_order_acquire)) {
+        }
+        return;
+    }
+    if (!m_stream) {
+        return;
+    }
     m_ringRead.store(w, std::memory_order_release);
+}
+
+std::optional<IAudioBus::OutputPacing> PortAudioBus::outputPacing() const
+{
+    if (m_cfg.direction != AudioDirection::Output || m_ring.empty()
+        || m_negFormat.channels <= 0) {
+        return std::nullopt;
+    }
+
+    const qint64 ringSamples = static_cast<qint64>(m_ring.size());
+    const int channels = m_negFormat.channels;
+    const qint64 publishedRead = m_ringRead.load(std::memory_order_acquire);
+    const qint64 discardBefore = m_outputDiscardBefore.load(std::memory_order_acquire);
+    const qint64 effectiveRead = std::max(publishedRead, discardBefore);
+    const qint64 write = m_ringWrite.load(std::memory_order_acquire);
+    const qint64 unreadSamples = std::clamp(write - effectiveRead,
+                                             qint64{0}, ringSamples);
+
+    OutputPacing pacing;
+    pacing.consumedFrames = m_outputConsumedFrames.load(std::memory_order_acquire);
+    pacing.queuedFrames = static_cast<int>(unreadSamples / channels);
+    pacing.capacityFrames = static_cast<int>(ringSamples / channels);
+    pacing.callbackFrames = std::max(m_cfg.bufferSamples,
+        m_outputCallbackFrames.load(std::memory_order_acquire));
+    if (const qint64 latencyNs = m_outputLatencyNs.load(std::memory_order_acquire);
+        latencyNs > 0) {
+        pacing.deviceLatencyNs = latencyNs;
+    }
+    return pacing;
 }
 
 qint64 PortAudioBus::pull(char* data, qint64 maxBytes) {
@@ -592,6 +708,19 @@ int PortAudioBus::paCallback(const void* in, void* out,
 
         qint64 r = self->m_ringRead.load(std::memory_order_relaxed);
         const qint64 w = self->m_ringWrite.load(std::memory_order_acquire);
+        const qint64 discardBefore = self->m_outputDiscardBefore.load(
+            std::memory_order_acquire);
+        bool discarded = false;
+        if (r < discardBefore) {
+            r = discardBefore;
+            discarded = true;
+        }
+        const int previousQuantum = self->m_outputCallbackFrames.load(std::memory_order_relaxed);
+        if (frames > static_cast<unsigned long>(previousQuantum)) {
+            self->m_outputCallbackFrames.store(static_cast<int>(frames), std::memory_order_release);
+        }
+        self->m_outputConsumedFrames.fetch_add(
+            static_cast<quint64>(frames), std::memory_order_relaxed);
 
         // 2026-05-26 KG4VCF perf instrumentation: report the ring fill
         // level (ms of unread audio still in the producer->consumer
@@ -602,7 +731,7 @@ int PortAudioBus::paCallback(const void* in, void* out,
         // toward 0 we are about to underrun even when paOutputUnderflow
         // is still 0.
         {
-            const qint64 fillSamples = w - r;  // total samples (interleaved)
+            const qint64 fillSamples = std::clamp(w - r, qint64{0}, ringSize);
             const int    rateHz      = self->m_negFormat.sampleRate;
             const int    fillChans   = self->m_negFormat.channels;
             if (rateHz > 0 && fillChans > 0) {
@@ -639,6 +768,15 @@ int PortAudioBus::paCallback(const void* in, void* out,
         float lastL = self->m_lastOutL;
         float lastR = self->m_lastOutR;
         int crossfadeRem = self->m_crossfadeFramesRem;
+        bool resumeAfterDiscard = self->m_resumeAfterDiscard;
+        if (discarded) {
+            // Never crossfade flushed samples back out. A later first fresh
+            // sample receives the normal zero-to-signal ramp below.
+            lastL = 0.0f;
+            lastR = 0.0f;
+            crossfadeRem = 0;
+            resumeAfterDiscard = true;
+        }
         if (startCrossfade && crossfadeRem == 0) {
             crossfadeRem = kCrossfadeFrames;
         }
@@ -661,9 +799,10 @@ int PortAudioBus::paCallback(const void* in, void* out,
                 // Underrun-to-resume edge: start a fresh crossfade to
                 // bring the listener gently from silence (or stale
                 // last-sample) up to the live signal.
-                if (wasUnderrun && crossfadeRem == 0) {
+                if ((wasUnderrun || resumeAfterDiscard) && crossfadeRem == 0) {
                     crossfadeRem = kCrossfadeFrames;
                 }
+                resumeAfterDiscard = false;
                 wasUnderrun = false;
             } else {
                 target = 0.0f;  // underrun -> silence (with crossfade below)
@@ -691,10 +830,23 @@ int PortAudioBus::paCallback(const void* in, void* out,
             }
             last = o[i];
         }
+        // A flush may have raced this callback after its initial floor
+        // observation. Clamp again before publication so this callback never
+        // makes the logical read position precede the discard boundary.
+        const qint64 finalDiscardBefore = self->m_outputDiscardBefore.load(
+            std::memory_order_acquire);
+        if (r < finalDiscardBefore) {
+            r = finalDiscardBefore;
+            lastL = 0.0f;
+            lastR = 0.0f;
+            crossfadeRem = 0;
+            resumeAfterDiscard = true;
+        }
         self->m_ringRead.store(r, std::memory_order_release);
         self->m_lastOutL = lastL;
         self->m_lastOutR = lastR;
         self->m_crossfadeFramesRem = crossfadeRem;
+        self->m_resumeAfterDiscard = resumeAfterDiscard;
     } else {
         // Input mode: read captured samples from `in`, write to ring,
         // update m_txLevel (the audio here is destined for transmit).
@@ -784,6 +936,46 @@ int PortAudioBus::paCallback(const void* in, void* out,
     return paContinue;
 }
 
+int PortAudioBus::matchNamedDevice(const QVector<NamedDeviceCandidate>& candidates,
+                                   const QString& wanted, int hostApiIndex, bool strict)
+{
+    const QString name = wanted.trimmed();
+    int exactMatch = -1;
+    int substringMatch = -1;
+    int crossApiExact = -1;
+    int crossApiSub = -1;
+    for (int i = 0; i < candidates.size(); ++i) {
+        const NamedDeviceCandidate& c = candidates[i];
+        const bool sameApi = hostApiIndex < 0 || c.hostApi == hostApiIndex;
+        const bool exact = c.name.compare(name, Qt::CaseInsensitive) == 0;
+        const bool sub = c.name.contains(name, Qt::CaseInsensitive);
+        if (sameApi && exact && exactMatch < 0) {
+            exactMatch = i;
+        } else if (sameApi && sub && substringMatch < 0) {
+            substringMatch = i;
+        } else if (!sameApi && exact && crossApiExact < 0) {
+            crossApiExact = i;
+        } else if (!sameApi && sub && crossApiSub < 0) {
+            crossApiSub = i;
+        }
+    }
+    if (exactMatch >= 0) {
+        return exactMatch;
+    }
+    // R-R3-36: strict resolution never substitutes a device whose name
+    // merely contains the configured one ("USB Mic 2" for "USB Mic").
+    if (!strict && substringMatch >= 0) {
+        return substringMatch;
+    }
+    if (crossApiExact >= 0) {
+        return crossApiExact;
+    }
+    if (!strict && crossApiSub >= 0) {
+        return crossApiSub;
+    }
+    return -1;
+}
+
 int PortAudioBus::downmixToMono(const float* interleaved, int frames,
                                 int channels, float* out, int outCapacity)
 {
@@ -808,8 +1000,18 @@ int PortAudioBus::downmixToMono(const float* interleaved, int frames,
     return n;
 }
 
+bool PortAudioBus::portAudioBarredForTestRun()
+{
+#ifdef NEREUS_BUILD_TESTS
+    return QStandardPaths::isTestModeEnabled();
+#else
+    return false;
+#endif
+}
+
 QVector<PortAudioBus::HostApiInfo> PortAudioBus::hostApis() {
     QVector<HostApiInfo> out;
+    if (portAudioBarredForTestRun()) { return out; }
     const int n = Pa_GetHostApiCount();
     for (int i = 0; i < n; ++i) {
         const PaHostApiInfo* h = Pa_GetHostApiInfo(i);
@@ -820,6 +1022,7 @@ QVector<PortAudioBus::HostApiInfo> PortAudioBus::hostApis() {
 
 QVector<PortAudioBus::DeviceInfo> PortAudioBus::outputDevicesFor(int hostApiIndex) {
     QVector<DeviceInfo> out;
+    if (portAudioBarredForTestRun()) { return out; }
     const int n = Pa_GetDeviceCount();
     for (int i = 0; i < n; ++i) {
         const PaDeviceInfo* d = Pa_GetDeviceInfo(i);
@@ -836,6 +1039,7 @@ QVector<PortAudioBus::DeviceInfo> PortAudioBus::outputDevicesFor(int hostApiInde
 
 QVector<PortAudioBus::DeviceInfo> PortAudioBus::inputDevicesFor(int hostApiIndex) {
     QVector<DeviceInfo> out;
+    if (portAudioBarredForTestRun()) { return out; }
     const int n = Pa_GetDeviceCount();
     for (int i = 0; i < n; ++i) {
         const PaDeviceInfo* d = Pa_GetDeviceInfo(i);

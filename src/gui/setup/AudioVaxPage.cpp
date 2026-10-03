@@ -12,9 +12,33 @@
 // exposed to the system — not a device the user picks. DeviceCard 7-row
 // form removed from visible layout; replaced with PipeWire-era info rows.
 // DeviceCard retained hidden for API compatibility.
+//
+// 2026-09-23 (R-R3-44): J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// Claude Code. The engine comes from RadioModel::localAudioDevices(): the
+// VAX channels are this computer's in a remote window as in a local one,
+// so the page works there. The "Consumers:" row shows whether an app is
+// reading each channel where the platform reports it.
+//
+// 2026-09-24 (R-R3-49, R-R3-21): J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code. The channel cards follow
+// AudioEngine::vaxBusOpenChanged (open state and "On" switch), so the page
+// matches a container's VAX toggle.
+//
+// 2026-09-24 (R-R3-43, R-R3-44, R-R3-21): J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code. In a remote window whose receiver streams are
+// Opus, a plain note says the weakest digital-mode signals may not decode
+// and that Lossless avoids it; it follows the quality choice and its
+// fallback live (setReceiverAudioNote; with Lossless chosen but not running
+// it says the connection cannot carry it right now instead).
+//
+// 2026-09-24 (R-R3-43, R-R3-44, R-R3-23): J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code. The note says "a few of the weakest" signals:
+// receiver streams now run Opus at 48 kbit/s when compressed, and the
+// wording holds for that and for an older Core's 24 kbit/s.
 // =================================================================
 
 #include "AudioVaxPage.h"
+#include "gui/RemoteAudioStatus.h"
 
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
@@ -33,9 +57,16 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWheelEvent>
+#include <QShowEvent>
+#include <QHideEvent>
+#include <QTimer>
+
+#include <algorithm>
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -188,7 +219,7 @@ VaxChannelCard::VaxChannelCard(int channel, QWidget* parent)
     m_statusLabel->setTextFormat(Qt::PlainText);
     m_statusLabel->setVisible(false);
 
-    m_badgeLabel = new QLabel(QStringLiteral("override — no consumer"), this);
+    m_badgeLabel = new QLabel(QStringLiteral("No program is using this device"), this);
     m_badgeLabel->setStyleSheet(QLatin1String(kBadgeStyle));
     m_badgeLabel->setVisible(false);
 
@@ -266,13 +297,14 @@ VaxChannelCard::VaxChannelCard(int channel, QWidget* parent)
         auto* consumersLbl = new QLabel(tr("Consumers:"), this);
         consumersLbl->setStyleSheet(
             QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
-        m_consumerLabel = new QLabel(
-            // TODO(later-task): wire live consumer count from engine's
-            // owned PipeWireBus collection via Task 24+ accessor.
-            QStringLiteral("—"), this);
+        // R-R3-44: whether an app is reading this channel, where the
+        // platform reports it (AudioVaxPage::refreshReaders).
+        m_consumerLabel = new QLabel(this);
+        m_consumerLabel->setObjectName(QStringLiteral("vaxConsumerLabel"));
         m_consumerLabel->setStyleSheet(QLatin1String(kSpecRowPlaceholderStyle));
-        m_consumerLabel->setToolTip(tr("Live consumer count not yet wired "
-                                       "(deferred to Task 24+)."));
+        m_consumerLabel->setToolTip(tr("Whether an app such as WSJT-X has this "
+                                       "VAX channel open."));
+        setReaderState(std::nullopt);
         form->addRow(consumersLbl, m_consumerLabel);
 
         // "Level:" HGauge row.
@@ -283,11 +315,10 @@ VaxChannelCard::VaxChannelCard(int channel, QWidget* parent)
         m_levelGauge->setRange(-60.0, 0.0);
         m_levelGauge->setYellowStart(-12.0);
         m_levelGauge->setRedStart(-3.0);
-        m_levelGauge->setValue(-60.0);  // quiescent; telemetry wiring deferred
-        m_levelGauge->setToolTip(tr("Audio level — telemetry wiring deferred "
-                                    "to follow-up task."));
-        // TODO(later-task): wire telemetry from engine's owned VAX buses
-        // once AudioEngine exposes a vaxBus(int) accessor (Task 22+).
+        m_levelGauge->setValue(-60.0);  // quiet until AudioVaxPage polls it
+        m_levelGauge->setObjectName(QStringLiteral("vaxLevelGauge"));
+        // R-R3-21: AudioVaxPage feeds it from AudioEngine::vaxRxLevel.
+        m_levelGauge->setToolTip(tr("Audio level of this VAX channel"));
         form->addRow(levelLbl, m_levelGauge);
 
         outerLayout->addLayout(form);
@@ -344,16 +375,7 @@ void VaxChannelCard::loadFromSettings()
     // Load the DeviceCard's 10 fields + hidden enable checkbox.
     m_deviceCard->loadFromSettings();
 
-    // Sync visible enable toggle from AppSettings (same key the hidden
-    // DeviceCard uses: audio/VaxN/Enabled).
-    if (m_enableChk) {
-        const bool on = AppSettings::instance()
-                            .value(m_prefix + QStringLiteral("/Enabled"),
-                                   QStringLiteral("False"))
-                            .toString() == QStringLiteral("True");
-        QSignalBlocker blk(m_enableChk);
-        m_enableChk->setChecked(on);
-    }
+    syncEnabledFromSettings();
 
     // Refresh node description label from persisted NodeDescription key.
     updateNodeDescLabel();
@@ -377,6 +399,20 @@ QString VaxChannelCard::currentDeviceName() const
     return AppSettings::instance()
                .value(m_prefix + QStringLiteral("/DeviceName"), QString())
                .toString();
+}
+
+void VaxChannelCard::syncEnabledFromSettings()
+{
+    // Sync visible enable toggle from AppSettings (same key the hidden
+    // DeviceCard uses: audio/VaxN/Enabled).
+    if (m_enableChk) {
+        const bool on = AppSettings::instance()
+                            .value(m_prefix + QStringLiteral("/Enabled"),
+                                   QStringLiteral("False"))
+                            .toString() == QStringLiteral("True");
+        QSignalBlocker blk(m_enableChk);
+        m_enableChk->setChecked(on);
+    }
 }
 
 bool VaxChannelCard::isChannelEnabled() const
@@ -448,6 +484,25 @@ void VaxChannelCard::onInnerEnabledChanged(bool on)
     }
     updateBadge();
     emit enabledChanged(m_channel, on);
+}
+
+void VaxChannelCard::setReaderState(std::optional<bool> reading)
+{
+    if (!m_consumerLabel) {
+        return;
+    }
+    if (!reading) {
+        m_consumerLabel->setText(tr("Not reported on this computer"));
+    } else if (*reading) {
+        m_consumerLabel->setText(tr("An app is reading this channel"));
+    } else {
+        m_consumerLabel->setText(tr("No app is reading this channel"));
+    }
+}
+
+QString VaxChannelCard::readerText() const
+{
+    return m_consumerLabel ? m_consumerLabel->text() : QString();
 }
 
 void VaxChannelCard::setBusOpen(bool open)
@@ -525,7 +580,7 @@ void VaxChannelCard::updateBadge()
         if (!enabled) {
             m_statusLabel->setStyleSheet(QLatin1String(kStatusUnboundStyle));
             m_statusLabel->setText(QStringLiteral(
-                "⚠  Disabled — enable to route audio"));
+                "⚠  Disabled. Enable it to route audio"));
             m_statusLabel->setToolTip(QStringLiteral(
                 "The VAX channel's Enabled checkbox is off. Check it to "
                 "open the audio bus and route receiver audio through this "
@@ -567,7 +622,7 @@ void VaxChannelCard::updateBadge()
                         QLatin1String(kStatusUnboundStyle));
 #  if defined(Q_OS_MAC)
                     m_statusLabel->setText(QStringLiteral(
-                        "⚠  Native HAL unavailable — reinstall "
+                        "⚠  Native HAL unavailable. Reinstall "
                         "NereusSDR"));
                     m_statusLabel->setToolTip(QStringLiteral(
                         "NereusSDR could not open the bundled CoreAudio "
@@ -636,7 +691,7 @@ void VaxChannelCard::updateBadge()
                 m_statusLabel->setStyleSheet(
                     QLatin1String(kStatusUnboundStyle));
                 m_statusLabel->setText(QStringLiteral(
-                    "⚠  Not bound — pick a virtual cable"));
+                    "⚠  Not bound. Pick a virtual cable"));
                 m_statusLabel->setToolTip(QStringLiteral(
                     "Windows has no built-in virtual audio cable. "
                     "Install VB-CABLE, Voicemeeter, or VAC and pick it "
@@ -836,10 +891,100 @@ void VaxChannelCard::onAutoDetectClicked()
 // ---------------------------------------------------------------------------
 AudioVaxPage::AudioVaxPage(RadioModel* model, QWidget* parent)
     : SetupPage(QStringLiteral("VAX"), model, parent)
-    , m_engine(model ? model->audioEngine() : nullptr)
+    // R-R3-44: this computer's VAX outputs, live in a remote window too.
+    , m_engine(model ? model->localAudioDevices() : nullptr)
 {
     buildPage();
     wirePillFeedback();
+    m_levelTimer = new QTimer(this);
+    m_levelTimer->setInterval(50);  // 20 Hz, as VaxApplet polls
+    connect(m_levelTimer, &QTimer::timeout, this, &AudioVaxPage::pollLevels);
+    refreshReaders();
+    auto* readerTimer = new QTimer(this);
+    readerTimer->setInterval(1000);
+    connect(readerTimer, &QTimer::timeout, this, &AudioVaxPage::refreshReaders);
+    readerTimer->start();
+}
+
+void AudioVaxPage::setReceiverAudioNote(RemoteReceiverAudioNote note)
+{
+    if (!m_compressedNote) {
+        return;
+    }
+    switch (note) {
+    case RemoteReceiverAudioNote::None:
+        break;
+    case RemoteReceiverAudioNote::OpusChosen:
+        m_compressedNote->setText(QStringLiteral(
+            "Receiver audio from the Core is compressed (Opus), so a few of the weakest "
+            "digital-mode signals may not decode. Set Audio quality to Lossless "
+            "in Core connection if your network can carry it."));
+        break;
+    case RemoteReceiverAudioNote::LosslessUnavailable:
+        // The operator already chose Lossless; pointing them at it again
+        // would be wrong. Say the connection cannot carry it right now.
+        m_compressedNote->setText(QStringLiteral(
+            "Receiver audio from the Core is compressed (Opus): Lossless is chosen, "
+            "but this connection cannot carry it right now. A few of the weakest "
+            "digital-mode signals may not decode."));
+        break;
+    }
+    m_compressedNote->setVisible(note != RemoteReceiverAudioNote::None);
+}
+
+bool AudioVaxPage::compressedAudioNoteShown() const
+{
+    return m_compressedNote && !m_compressedNote->isHidden();
+}
+
+QString AudioVaxPage::compressedAudioNoteText() const
+{
+    return m_compressedNote ? m_compressedNote->text() : QString();
+}
+
+void AudioVaxPage::refreshReaders()
+{
+    for (int i = 0; i < m_channelCards.size(); ++i) {
+        m_channelCards[i]->setReaderState(
+            m_engine ? m_engine->vaxOutputHasReader(i + 1) : std::nullopt);
+    }
+}
+
+void AudioVaxPage::showEvent(QShowEvent* event)
+{
+    SetupPage::showEvent(event);
+    pollLevels();
+    m_levelTimer->start();
+}
+
+void AudioVaxPage::hideEvent(QHideEvent* event)
+{
+    m_levelTimer->stop();
+    SetupPage::hideEvent(event);
+}
+
+void AudioVaxPage::pollLevels()
+{
+    if (!m_engine) { return; }
+    for (VaxChannelCard* card : std::as_const(m_channelCards)) {
+        card->setLevel(m_engine->vaxRxLevel(card->channelIndex()));
+    }
+}
+
+void VaxChannelCard::setLevel(float linear)
+{
+    if (!m_levelGauge) { return; }
+    // Linear 0..1 to dBFS, floored at the gauge floor, -60 dB.
+    double dB = -60.0;
+    if (std::isfinite(linear) && linear > 0.001f) {
+        dB = 20.0 * std::log10(static_cast<double>(linear));
+    }
+    m_levelGauge->setValue(std::clamp(dB, -60.0, 0.0));
+}
+
+double VaxChannelCard::levelDbForTest() const
+{
+    return m_levelGauge ? m_levelGauge->value() : -60.0;
 }
 
 void AudioVaxPage::buildPage()
@@ -854,7 +999,7 @@ void AudioVaxPage::buildPage()
 
     // Section header.
     auto* headerLabel = new QLabel(
-        QStringLiteral("Virtual Audio eXchange — PipeWire sources"), this);
+        QStringLiteral("Virtual Audio eXchange: PipeWire sources"), this);
     headerLabel->setStyleSheet(
         QStringLiteral("QLabel { color: #8aa8c0; font-size: 12px; }"));
     insertBeforeStretch(headerLabel);
@@ -864,12 +1009,35 @@ void AudioVaxPage::buildPage()
         QStringLiteral(
             "Each VAX channel is exposed to the system as a PipeWire virtual "
             "source (node). Consumer applications (WSJT-X, FLDIGI, etc.) "
-            "select it as an audio input device — no virtual cable needed."),
+            "select it as an audio input device; no virtual cable needed."),
         this);
     subHeader->setStyleSheet(
         QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
     subHeader->setWordWrap(true);
     insertBeforeStretch(subHeader);
+
+    // R-R3-43 / R-R3-44: in a remote window whose receiver streams are Opus,
+    // say what that costs digital modes and what avoids it. Receiver streams
+    // run Opus at 48 kbit/s when compressed: in the confirming FT8 run it
+    // decoded 175 files in all, 173 of the 177 the untouched audio decoded
+    // plus 2 it missed (24 kbit/s, an older Core's rate: 164 in all, 162 of
+    // the 177 plus 2); lossless decoded exactly the untouched audio's 177.
+    // "A few of the weakest" holds for both rates
+    // (docs/architecture/2026-09-20-remote-daemon-r3-verification/
+    // digital-modes-over-opus.md, "Confirming run"). Hidden until MainWindow
+    // says so.
+    m_compressedNote = new QLabel(
+        QStringLiteral(
+            "Receiver audio from the Core is compressed (Opus), so a few of the weakest "
+            "digital-mode signals may not decode. Set Audio quality to Lossless "
+            "in Core connection if your network can carry it."),
+        this);
+    m_compressedNote->setObjectName(QStringLiteral("vaxCompressedAudioNote"));
+    m_compressedNote->setStyleSheet(
+        QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
+    m_compressedNote->setWordWrap(true);
+    m_compressedNote->setVisible(false);
+    insertBeforeStretch(m_compressedNote);
 
     // Four VAX channel cards (1–4).
     m_channelCards.reserve(4);
@@ -900,19 +1068,9 @@ void AudioVaxPage::buildPage()
         }
     }
 
-    // TX row — informational.
-    auto* txGroup = new QGroupBox(QStringLiteral("TX Monitor"), this);
-    txGroup->setStyleSheet(QLatin1String(kGroupStyle));
-    auto* txLayout = new QVBoxLayout(txGroup);
-    auto* txLabel = new QLabel(
-        QStringLiteral("TX → VAX routing is configured in the Transmit section. "
-                       "Phase 3M (SendIqToVax / TxMonitorToVax) will add "
-                       "per-band override here."),
-        txGroup);
-    txLabel->setStyleSheet(QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
-    txLabel->setWordWrap(true);
-    txLayout->addWidget(txLabel);
-    insertBeforeStretch(txGroup);
+    // R-R3-49 fix wave I2: the informational "TX Monitor" group is gone. Its
+    // only text promised a later per-band override and pointed at Send IQ to
+    // VAX and TX Monitor to VAX, which are hidden until built (iq-to-vax).
 }
 
 void AudioVaxPage::wirePillFeedback()
@@ -920,6 +1078,16 @@ void AudioVaxPage::wirePillFeedback()
     if (!m_engine) {
         return;
     }
+
+    // R-R3-21: the open state and the "On" switch follow every change to a
+    // VAX output, including a container's VAX toggle and a remote window
+    // opening its outputs.
+    connect(m_engine, &AudioEngine::vaxBusOpenChanged, this, [this](int channel) {
+        if (auto* card = channelCard(channel)) {
+            card->setBusOpen(m_engine->isVaxBusOpen(channel));
+            card->syncEnabledFromSettings();
+        }
+    });
 
     connect(m_engine, &AudioEngine::vaxConfigChanged, this,
             [this](int channel, AudioDeviceConfig cfg) {

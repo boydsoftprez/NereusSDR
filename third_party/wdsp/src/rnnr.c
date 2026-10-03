@@ -67,6 +67,13 @@ It uses a non modified version of rmnoise and implements a ringbuffer to handle 
 //                review via Anthropic Claude Code. GPLv2+ upstream upgraded
 //                to GPLv3 combined work under NereusSDR's GPLv3 umbrella
 //                (per-file dual-license clause by MW0LGE unaffected).
+//   2026-09-22 — WDSP 2.10 re-merge (pinned TAPR tree b02d5bac): the
+//                SetRXARNNRRun setter calls RXAbp1Check (channel), the
+//                pinned one-argument form, in place of the Thetis call
+//                that passed every module's run flag. Recorded 2026-09-30.
+//                J.J. Boyd (KG4VCF), with AI-assisted review via
+//                Anthropic Claude Code. The 2026-04-23 line describes the
+//                retired Thetis vendor only.
 // =============================================================================
 
 #define _CRT_SECURE_NO_WARNINGS
@@ -188,12 +195,9 @@ void SetRXARNNRRun (int channel, int run)
 	RNNR a = rxa[channel].rnnr.p;
 	if (a->run != run)
 	{
-		RXAbp1Check (channel, rxa[channel].amd.p->run, rxa[channel].snba.p->run, 
-                             rxa[channel].emnr.p->run, rxa[channel].anf.p->run, rxa[channel].anr.p->run,
-                             run, rxa[channel].sbnr.p->run); // NR3 + NR4 support
-
 		EnterCriticalSection (&ch[channel].csDSP);
 		a->run = run;
+		RXAbp1Check (channel); // NR3 + NR4 support [original inline comment from rnnr.c:169]
 		RXAbp1Set (channel);
 		LeaveCriticalSection (&ch[channel].csDSP);
 	}

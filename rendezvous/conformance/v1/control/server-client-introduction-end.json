@@ -1,0 +1,9 @@
+{
+  "from": "server",
+  "to": "client",
+  "wire": {
+    "type": "introduction.end",
+    "code": "stationLeft"
+  },
+  "decodes": true
+}

@@ -10,6 +10,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-24 - R-R3-49 / R-R3-21: a button hidden until its feature is
+//                 built (the saved visibility untouched), and an unavailable
+//                 button whose click says why. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -97,6 +101,44 @@ void ButtonBoxItem::setVisibleBits(uint32_t bits)
     }
 }
 
+void ButtonBoxItem::setButtonHiddenUntilBuilt(int index, bool hidden)
+{
+    if (index < 0 || index >= m_buttonCount) { return; }
+    m_buttons[index].hiddenUntilBuilt = hidden;
+}
+
+bool ButtonBoxItem::isButtonShown(int index) const
+{
+    if (index < 0 || index >= m_buttonCount || index >= m_buttons.size()) { return false; }
+    return m_buttons[index].visible && !m_buttons[index].hiddenUntilBuilt;
+}
+
+void ButtonBoxItem::setButtonAvailable(int index, bool available, const QString& reason)
+{
+    if (index < 0 || index >= m_buttonCount) { return; }
+    m_buttons[index].enabled = available;
+    m_buttons[index].unavailableReason = available ? QString() : reason;
+}
+
+void ButtonBoxItem::setAllButtonsAvailable(bool available, const QString& reason)
+{
+    for (int i = 0; i < m_buttonCount; ++i) {
+        setButtonAvailable(i, available, reason);
+    }
+}
+
+bool ButtonBoxItem::isButtonAvailable(int index) const
+{
+    if (index < 0 || index >= m_buttonCount) { return false; }
+    return m_buttons[index].enabled;
+}
+
+QString ButtonBoxItem::buttonUnavailableReason(int index) const
+{
+    if (index < 0 || index >= m_buttonCount) { return QString(); }
+    return m_buttons[index].unavailableReason;
+}
+
 void ButtonBoxItem::setupButton(int index, const QString& text, const QColor& onColour)
 {
     if (index < 0 || index >= m_buttonCount) { return; }
@@ -117,7 +159,7 @@ QRectF ButtonBoxItem::buttonRect(int index, const QRectF& area) const
     // Count visible buttons up to this index to determine grid position
     int visIndex = 0;
     for (int i = 0; i < index; ++i) {
-        if (i < m_buttons.size() && m_buttons[i].visible) {
+        if (isButtonShown(i)) {
             ++visIndex;
         }
     }
@@ -146,7 +188,7 @@ int ButtonBoxItem::buttonAt(const QPointF& pos, int widgetW, int widgetH) const
 {
     const QRectF area = pixelRect(widgetW, widgetH);
     for (int i = 0; i < m_buttonCount; ++i) {
-        if (i < m_buttons.size() && m_buttons[i].visible) {
+        if (isButtonShown(i)) {
             if (buttonRect(i, area).contains(pos)) {
                 return i;
             }
@@ -169,7 +211,7 @@ void ButtonBoxItem::paint(QPainter& p, int widgetW, int widgetH)
     p.setRenderHint(QPainter::Antialiasing, true);
 
     for (int i = 0; i < m_buttonCount; ++i) {
-        if (i >= m_buttons.size() || !m_buttons[i].visible) { continue; }
+        if (!isButtonShown(i)) { continue; }
         const QRectF rect = buttonRect(i, area);
         paintButton(p, i, rect);
     }
@@ -283,7 +325,13 @@ bool ButtonBoxItem::handleMousePress(QMouseEvent* event, int widgetW, int widget
     if (m_fadeOnRx && !m_transmitting) { return false; }
 
     const int idx = buttonAt(event->position(), widgetW, widgetH);
-    if (idx < 0 || !m_buttons[idx].enabled) { return false; }
+    if (idx < 0) { return false; }
+    if (!m_buttons[idx].enabled) {
+        // R-R3-21: an unavailable button takes the click (so nothing
+        // beneath it acts) and says why on release; it changes nothing.
+        m_unavailablePressedIndex = idx;
+        return true;
+    }
 
     // From Thetis: setupClick(false) — immediate click highlight
     m_clickedIndex = idx;
@@ -292,6 +340,15 @@ bool ButtonBoxItem::handleMousePress(QMouseEvent* event, int widgetW, int widget
 
 bool ButtonBoxItem::handleMouseRelease(QMouseEvent* event, int widgetW, int widgetH)
 {
+    if (m_unavailablePressedIndex >= 0) {
+        const int pressed = m_unavailablePressedIndex;
+        m_unavailablePressedIndex = -1;
+        if (buttonAt(event->position(), widgetW, widgetH) == pressed
+            && pressed < m_buttons.size() && !m_buttons[pressed].enabled) {
+            emit unavailableButtonClicked(pressed, m_buttons[pressed].unavailableReason);
+        }
+        return true;
+    }
     if (m_clickedIndex < 0) { return false; }
 
     const int idx = buttonAt(event->position(), widgetW, widgetH);

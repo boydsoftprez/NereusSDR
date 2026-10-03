@@ -1,0 +1,33 @@
+{
+  "runs": [
+    "app"
+  ],
+  "steps": [
+    {
+      "connect": "device"
+    },
+    {
+      "from": "device",
+      "role": "behaviour",
+      "binary": [
+        "80",
+        "$token:device:s:a"
+      ]
+    },
+    {
+      "to": "device",
+      "binary": [
+        "81",
+        "02",
+        "01"
+      ]
+    },
+    {
+      "to": "device",
+      "binary": [
+        "02",
+        "$bytes:30:m1"
+      ]
+    }
+  ]
+}

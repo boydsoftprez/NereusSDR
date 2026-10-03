@@ -1,0 +1,17 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "settings.write",
+    "key": "StationCallsign",
+    "origin": "client-session-1",
+    "properties": [
+      {
+        "ordinal": 0,
+        "name": "StationCallsign",
+        "kind": "utf8",
+        "value": "KG4VCF"
+      }
+    ]
+  },
+  "decodes": true
+}

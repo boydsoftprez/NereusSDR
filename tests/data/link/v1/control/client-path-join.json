@@ -1,0 +1,8 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "path.join",
+    "ticket": "not-a-path-ticket"
+  },
+  "decodes": true
+}

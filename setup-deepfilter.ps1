@@ -131,6 +131,26 @@ try {
         Write-Host "  Model: $OutDir\models\$ModelName" -ForegroundColor Green
     }
 
+    # Crate notices: the licence and notice files of every Rust crate
+    # compiled into the library, written into the licence folder every
+    # package ships (R-R3-50). --offline in the script: it reads only what
+    # cargo cbuild fetched. A failure here warns and never stops the
+    # library build.
+    $NoticeFile = "packaging\third-party-licenses\deepfilternet-crates.txt"
+    try {
+        & python scripts\collect-crate-notices.py `
+            --manifest-path "$TempDir\DeepFilterNet\Cargo.toml" `
+            --package deep_filter --features deep_filter/capi `
+            --commit $DfnrCommit `
+            --output $NoticeFile
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "DeepFilterNet crate notices were not written (exit $LASTEXITCODE); $NoticeFile is unchanged. The library build goes on."
+        }
+    }
+    catch {
+        Write-Warning "DeepFilterNet crate notices were not written ($($_.Exception.Message)); $NoticeFile is unchanged. The library build goes on."
+    }
+
     # Commit hash
     $DfnrCommit | Out-File -Encoding ascii -NoNewline "$OutDir\COMMIT"
 

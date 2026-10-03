@@ -21,6 +21,10 @@
 //                Hl2IoBoardTab status bar (Hl2IoBoardTab.cpp:321-330).
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                via Anthropic Claude Code.
+//   2026-09-29 - The TX property (ucOCLedStrip.TX): a lit LED is drawn
+//                orange-red while the radio transmits, for the HL2 input
+//                strip (UpdateIOLedStrip). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -92,6 +96,11 @@ public:
     bool isInteractive() const { return m_interactive; }
     void setInteractive(bool on);
 
+    // From mi0bot ucOCLedStrip.cs:60-68 TX [@c26a8a4]: while true, a lit
+    // LED is drawn orange-red instead of green. Default = false.
+    bool tx() const { return m_tx; }
+    void setTx(bool on);
+
     // Per-LED tooltip override (default: "OC pin <idx+1>").
     void setLedTooltip(int idx, const QString& tooltip);
 
@@ -113,6 +122,7 @@ private:
     quint8                 m_bits{0};
     int                    m_displayBits{8};
     bool                   m_interactive{false};
+    bool                   m_tx{false};
 };
 
 } // namespace NereusSDR

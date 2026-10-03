@@ -52,6 +52,20 @@
 //   2026-08-02 — Task A7 (bottom-banner cleanup): single-row UTC clock,
 //                 inserted after MasterOutputWidget and before the 💡
 //                 feature-request button. See TitleBar.h for rationale.
+//   2026-09-30 — Fix wave round 2 (maintainer decision 2026-09-30): the
+//                 gap after the UTC clock is kUtcToMasterGap, 18 px instead
+//                 of 24, so the connection segment keeps all four remote
+//                 groups at a 1440 px window when the header font is
+//                 monospace. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-30 — Fix wave round 3: the kUtcToMasterGap comment states
+//                 what was measured instead of naming fonts that were not.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-01 — Maintainer decision 2026-10-01: the radio-offline audio
+//                 group reads "Radio offline" instead of "Audio radio
+//                 offline", and the kUtcToMasterGap comment records that
+//                 18 px now covers every audio group in the measured fonts.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "TitleBar.h"
@@ -61,6 +75,8 @@
 
 #include <QDateTime>
 #include <QHBoxLayout>
+#include <QFrame>
+#include <QKeyEvent>
 #include <QIcon>
 #include <QLabel>
 #include <QMenuBar>
@@ -73,6 +89,8 @@
 #include <QSize>
 #include <QSizePolicy>
 #include <QTimer>
+#include <QVBoxLayout>
+#include <QHostAddress>
 
 namespace NereusSDR {
 
@@ -85,6 +103,16 @@ constexpr int kMarginTop    = 2;
 constexpr int kMarginRight  = 8;
 constexpr int kMarginBottom = 2;
 constexpr int kSpacing      = 6;
+
+// Gap between the UTC clock and the master output slider. It keeps the
+// clock from reading as part of the slider (a mis-drag there changes the
+// audio level). 18 px rather than 24 gives the connection segment 6 px
+// more at a 1440 px window. Measured offscreen with the header font
+// substituted by monospace fonts (Menlo, Monaco, Courier New, Andale Mono,
+// PT Mono): the fault wording, the longest audio group, needed 4 px more
+// than a 24 px gap allowed, and 18 covers it with 2 px (Menlo) or 3 px
+// (the others) to spare.
+constexpr int kUtcToMasterGap = 18;
 
 // Fixed strip height. From AetherSDR TitleBar.cpp:30.
 constexpr int kStripHeight = 32;
@@ -101,6 +129,7 @@ ConnectionSegment::ConnectionSegment(QWidget* parent)
     setFixedHeight(30);
     setMinimumWidth(200);
     setCursor(Qt::PointingHandCursor);
+    setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
     setAttribute(Qt::WA_StyledBackground, true);
 
@@ -112,6 +141,37 @@ ConnectionSegment::ConnectionSegment(QWidget* parent)
         update();
     });
     m_pulseTimer.start();
+
+    m_routePopup = new QFrame(this, Qt::Popup);
+    m_routePopup->setObjectName(QStringLiteral("connectionRoutePopup"));
+    m_routePopup->setFocusPolicy(Qt::StrongFocus);
+    m_routePopup->setStyleSheet(QStringLiteral(
+        "QFrame#connectionRoutePopup { background: #101b2a; border: 1px solid #36506a; border-radius: 5px; }"
+        "QLabel { color: #c8d8e8; border: none; }"
+        "QPushButton { color: #66cce6; background: #1b3044; border: 1px solid #36506a; padding: 5px; }"));
+    auto* popupLayout = new QVBoxLayout(m_routePopup);
+    popupLayout->setContentsMargins(14, 12, 14, 12);
+    popupLayout->setSpacing(6);
+    auto* controlsHeading = new QLabel(tr("Controls"), m_routePopup);
+    popupLayout->addWidget(controlsHeading);
+    m_controlsRoute = new QLabel(m_routePopup);
+    m_controlsRoute->setObjectName(QStringLiteral("controlsRoute"));
+    m_controlsRoute->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    popupLayout->addWidget(m_controlsRoute);
+    auto* mediaHeading = new QLabel(tr("Audio/display"), m_routePopup);
+    popupLayout->addWidget(mediaHeading);
+    m_mediaRoute = new QLabel(m_routePopup);
+    m_mediaRoute->setObjectName(QStringLiteral("mediaRoute"));
+    m_mediaRoute->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    popupLayout->addWidget(m_mediaRoute);
+    auto* details = new QPushButton(tr("Open network diagnostics"), m_routePopup);
+    details->setObjectName(QStringLiteral("networkDiagnosticsButton"));
+    popupLayout->addWidget(details);
+    connect(details, &QPushButton::clicked, this, [this] {
+        m_routePopup->hide();
+        emit diagnosticsRequested();
+    });
+    updateRoutePopup();
 }
 
 void ConnectionSegment::setState(ConnectionState s)
@@ -120,6 +180,12 @@ void ConnectionSegment::setState(ConnectionState s)
         return;
     }
     m_state = s;
+    if (s != ConnectionState::Connected) {
+        m_controlPath.reset();
+        m_mediaPath.reset();
+        updateRoutePopup();
+        m_routePopup->hide();
+    }
 
     // Pulse while there is interesting transient state to show.
     if (s == ConnectionState::Connected   ||
@@ -143,6 +209,184 @@ void ConnectionSegment::setRates(double rxMbps, double txMbps)
     m_rxMbps = rxMbps;
     m_txMbps = txMbps;
     update();
+}
+
+void ConnectionSegment::setRemoteStatusText(const QString& text)
+{
+    if (m_remoteStatusText == text) { return; }
+    m_remoteStatusText = text;
+    setAccessibleName(remotePresentationText());
+    updateGeometry();
+    update();
+}
+
+void ConnectionSegment::setRemoteTelemetryText(const QString& text)
+{
+    if (m_remoteTelemetryText == text) { return; }
+    m_remoteTelemetryText = text;
+    setAccessibleName(remotePresentationText());
+    setAccessibleDescription(text);
+    updateGeometry();
+    update();
+}
+
+void ConnectionSegment::setRemoteMetrics(const QStringList& groups)
+{
+    if (m_remoteMetrics == groups) { return; }
+    m_remoteMetrics = groups;
+    setAccessibleName(remotePresentationText());
+    updateGeometry();
+    update();
+}
+
+namespace {
+QString endpointText(const QString& address, quint16 port)
+{
+    if (address.isEmpty() || port == 0) { return QObject::tr("unavailable"); }
+    QHostAddress numeric;
+    if (!numeric.setAddress(address)) { return QObject::tr("unavailable"); }
+    const QString ip = numeric.toString();
+    return numeric.protocol() == QAbstractSocket::IPv6Protocol
+        ? QStringLiteral("[%1]:%2").arg(ip).arg(port)
+        : QStringLiteral("%1:%2").arg(ip).arg(port);
+}
+}
+
+QString ConnectionSegment::routeText(const std::optional<NetworkPathSnapshot>& path)
+{
+    if (!path) { return tr("Path unavailable"); }
+    QString kind = tr("Path unavailable");
+    if (path->kind == NetworkPathSnapshot::Kind::Direct) { kind = tr("Direct"); }
+    if (path->kind == NetworkPathSnapshot::Kind::Relayed) { kind = tr("Via relay"); }
+    QString carrier;
+    switch (path->carrier) {
+    case NetworkPathSnapshot::Carrier::WebSocket: carrier = tr("WSS"); break;
+    case NetworkPathSnapshot::Carrier::WebRelay: carrier = tr("web relay"); break;
+    case NetworkPathSnapshot::Carrier::Ice: carrier = tr("ICE"); break;
+    }
+    const bool ice = path->endpoints == NetworkPathSnapshot::Endpoints::IceCandidates;
+    const QString endpoints = ice ? tr("ICE candidates") : tr("socket endpoints (may be a proxy hop)");
+    QString text = tr("%1 · %2 · %3\nLocal %4\nRemote %5")
+        .arg(kind, carrier, endpoints,
+             endpointText(path->localAddress, path->localPort),
+             endpointText(path->remoteAddress, path->remotePort));
+    if (ice && (!path->localCandidateType.isEmpty() || !path->remoteCandidateType.isEmpty())) {
+        text += tr("\nCandidate types: local %1, remote %2")
+            .arg(path->localCandidateType.isEmpty() ? tr("unavailable") : path->localCandidateType,
+                 path->remoteCandidateType.isEmpty() ? tr("unavailable") : path->remoteCandidateType);
+    }
+    if (path->mediaRidesControl) { text += tr("\nUses the control connection"); }
+    return text;
+}
+
+QString ConnectionSegment::audioMetricText(std::optional<double> kbps,
+                                           RemoteAudioStatus::State state)
+{
+    using State = RemoteAudioStatus::State;
+    if (state == State::MutedHere) { return tr("Audio muted"); }
+    if (state == State::RadioOffline) { return tr("Radio offline"); }
+    if (state == State::CoreCouldNotStart || state == State::PlaybackProblem) {
+        return tr("Audio unavailable");
+    }
+    QString status;
+    switch (state) {
+    case State::Playing: status = QStringLiteral("▶"); break;
+    case State::WaitingForAudio:
+    case State::Starting:
+    case State::Reconnecting: status = QStringLiteral("…"); break;
+    case State::NotConnected: status = QStringLiteral("■"); break;
+    case State::MutedHere:
+    case State::RadioOffline:
+    case State::CoreCouldNotStart:
+    case State::PlaybackProblem: break;
+    }
+    return tr("Audio %1 kbps %2")
+        .arg(kbps ? QString::number(*kbps, 'f', 1) : QStringLiteral("—"), status);
+}
+
+void ConnectionSegment::setRemotePaths(std::optional<NetworkPathSnapshot> controls,
+                                       std::optional<NetworkPathSnapshot> media)
+{
+    if (m_state != ConnectionState::Connected) {
+        controls.reset();
+        media.reset();
+    }
+    m_controlPath = std::move(controls);
+    m_mediaPath = std::move(media);
+    updateRoutePopup();
+}
+
+void ConnectionSegment::updateRoutePopup()
+{
+    m_controlsRoute->setText(routeText(m_controlPath));
+    m_mediaRoute->setText(routeText(m_mediaPath));
+    m_routePopup->adjustSize();
+}
+
+void ConnectionSegment::showRoutePopup()
+{
+    if (m_state != ConnectionState::Connected) { return; }
+    emit pathsRefreshRequested();
+    updateRoutePopup();
+    m_routePopup->move(mapToGlobal(QPoint(0, height() + 2)));
+    m_routePopup->show();
+    m_routePopup->setFocus();
+}
+
+QWidget* ConnectionSegment::routePopup() const
+{
+    return m_routePopup;
+}
+
+QSize ConnectionSegment::sizeHint() const
+{
+    QFont metricFont(QStringLiteral("SF Mono"), 10, QFont::DemiBold);
+    const QFontMetrics metrics(metricFont);
+    const QString text = remotePresentationText();
+    if (!text.isEmpty()) {
+        // Dot + its gap + text + trailing breathing room. Reserve enough
+        // width for the title bar's layout compression so a persistent audio
+        // status remains visible alongside the other three groups at 1440px.
+        return {8 + 10 + 8 + metrics.horizontalAdvance(text) + 22, 30};
+    }
+    return {200, 30};
+}
+
+QString ConnectionSegment::remotePresentationText() const
+{
+    if (!m_remoteMetrics.isEmpty() && m_state == ConnectionState::Connected) {
+        return m_remoteMetrics.join(QStringLiteral(" · "));
+    }
+    if (m_remoteStatusText.isEmpty()) {
+        return m_remoteTelemetryText;
+    }
+    if (m_remoteTelemetryText.isEmpty()) {
+        return m_remoteStatusText;
+    }
+    return m_remoteStatusText + QStringLiteral("  ·  ") + m_remoteTelemetryText;
+}
+
+QString ConnectionSegment::remoteTextForWidth(int pixels) const
+{
+    const QString full = remotePresentationText();
+    if (m_remoteMetrics.size() != 4 || m_state != ConnectionState::Connected) {
+        return full;
+    }
+    const QFontMetrics metrics(QFont(QStringLiteral("SF Mono"), 10, QFont::DemiBold));
+    if (metrics.horizontalAdvance(full) <= pixels) { return full; }
+    QStringList visible;
+    // Traffic and Core RTT identify the live link first; audio and Core-radio
+    // readings join when there is room. The full four groups remain in the
+    // accessible name even when a narrow window clips the row.
+    for (int index : {0, 3, 1, 2}) {
+        QStringList proposed = visible;
+        proposed << m_remoteMetrics.at(index);
+        if (metrics.horizontalAdvance(proposed.join(QStringLiteral(" · "))) <= pixels) {
+            visible = proposed;
+        }
+    }
+    return visible.isEmpty() ? metrics.elidedText(m_remoteMetrics.first(), Qt::ElideRight, pixels)
+                             : visible.join(QStringLiteral(" · "));
 }
 
 void ConnectionSegment::setRttMs(int ms)
@@ -285,6 +529,17 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
     int x = dotRect.right() + 8;
     const int textY = height() / 2 + 4;
 
+    const QString remoteText = remoteTextForWidth(width() - x - 6);
+    if (!remoteText.isEmpty()) {
+        p.setPen(QColor("#c8d8e8"));
+        p.drawText(x, textY, p.fontMetrics().elidedText(
+            remoteText, Qt::ElideRight, width() - x - 6));
+        m_lastRttX1 = x;
+        m_lastRttX2 = width();
+        m_lastPipX1 = m_lastPipX2 = 0;
+        return;
+    }
+
     if (m_state == ConnectionState::Disconnected) {
         p.setPen(QColor("#607080"));
         p.drawText(x, textY, tr("Disconnected — click to connect"));
@@ -360,6 +615,10 @@ void ConnectionSegment::mousePressEvent(QMouseEvent* event)
         return;
     }
     if (event->button() == Qt::LeftButton) {
+        if (!remotePresentationText().isEmpty()) {
+            emit rttClicked();
+            return;
+        }
         if (rttRect().contains(event->pos())) {
             emit rttClicked();
             return;
@@ -376,6 +635,17 @@ void ConnectionSegment::mousePressEvent(QMouseEvent* event)
         }
     }
     QWidget::mousePressEvent(event);
+}
+
+void ConnectionSegment::keyPressEvent(QKeyEvent* event)
+{
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter
+         || event->key() == Qt::Key_Space) && m_state == ConnectionState::Connected
+        && !m_remoteStatusText.isEmpty()) {
+        showRoutePopup();
+        return;
+    }
+    QWidget::keyPressEvent(event);
 }
 
 // =========================================================================
@@ -439,7 +709,7 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
         "QLabel { color: #8aa8c0; font-size: 11px;"
         " font-family: 'SF Mono', Menlo, monospace; }"));
     m_hbox->addWidget(m_utcLabel);
-    m_hbox->addSpacing(24);
+    m_hbox->addSpacing(kUtcToMasterGap);
 
     // ── MasterOutputWidget — Task 10b composite ────────────────────────────
     m_master = new MasterOutputWidget(audio, this);

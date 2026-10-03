@@ -72,18 +72,18 @@ extern void setSize_amsq (AMSQ a, int size);
 
 // RXA Properties
 
-extern void SetRXAAMSQRun (int channel, int run);
+extern __declspec (dllexport) void SetRXAAMSQRun (int channel, int run);
 
-extern void SetRXAAMSQThreshold (int channel, double threshold);
+extern __declspec (dllexport) void SetRXAAMSQThreshold (int channel, double threshold);
 
-extern void SetRXAAMSQMaxTail (int channel, double tail);
+extern __declspec (dllexport) void SetRXAAMSQMaxTail (int channel, double tail);
 
 // TXA Properties
 
-extern void SetTXAAMSQRun (int channel, int run);
+extern __declspec (dllexport) void SetTXAAMSQRun (int channel, int run);
 
-extern void SetTXAAMSQMutedGain (int channel, double dBlevel);
+extern __declspec (dllexport) void SetTXAAMSQMutedGain (int channel, double dBlevel);
 
-extern void SetTXAAMSQThreshold (int channel, double threshold);
+extern __declspec (dllexport) void SetTXAAMSQThreshold (int channel, double threshold);
 
 #endif

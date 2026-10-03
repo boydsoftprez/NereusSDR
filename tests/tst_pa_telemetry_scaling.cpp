@@ -23,6 +23,7 @@
 
 #include <QtTest>
 
+#include "core/HardwareProfile.h"
 #include "core/HpsdrModel.h"
 #include "core/PaTelemetryScaling.h"
 
@@ -61,6 +62,12 @@ private slots:
     void hl2_temp_at_typical_idle_raw_is_room_temperature();
     void hl2_temp_at_mid_scale_is_one_thirteen_c();
     void hl2_temp_at_full_scale_is_about_two_seventy_six_c();
+
+    // ─── convertToAmps (mi0bot console.cs convertToAmps, HL2 branch) ─────
+    void amps_use_the_volt_calibration_offset_and_sensitivity();
+    void amps_below_the_offset_read_zero();
+    void hl2_amps_use_the_fixed_sense_scaling();
+    void default_volt_calibration_follows_the_model();
 };
 
 // ─── scaleFwdPowerWatts ─────────────────────────────────────────────────
@@ -343,6 +350,59 @@ void TestPaTelemetryScaling::anan_g2e_exciter_at_zero_is_zero()
     QCOMPARE(scaleExciterPowerMw(HPSDRModel::ORIONMKII, 0),  0.0f);
     QCOMPARE(scaleExciterPowerMw(HPSDRModel::ANAN_G2E, 61),
              scaleExciterPowerMw(HPSDRModel::ORIONMKII, 61));
+}
+
+// ─── convertToAmps ───────────────────────────────────────────────────────
+//
+// Non-HL2 (mi0bot console.cs:25114-25141 [v2.10.3.13-beta2]):
+//   fwdvolts = IOreading * 5000 / 4095;  amps = (fwdvolts - voff) / sens
+//   raw=2048, voff=360, sens=120 -> 2500.6105 mV -> 17.838 A
+//   raw=2048, voff=200, sens=100 -> 23.006 A
+void TestPaTelemetryScaling::amps_use_the_volt_calibration_offset_and_sensitivity()
+{
+    const double a = convertToAmps(HPSDRModel::ANAN8000D, 2048.0, 360.0, 120.0);
+    QVERIFY2(qAbs(a - 17.8384) < 1e-3, qPrintable(QString::number(a, 'f', 6)));
+    const double b = convertToAmps(HPSDRModel::ANAN7000D, 2048.0, 200.0, 100.0);
+    QVERIFY2(qAbs(b - 23.0061) < 1e-3, qPrintable(QString::number(b, 'f', 6)));
+}
+
+void TestPaTelemetryScaling::amps_below_the_offset_read_zero()
+{
+    // raw=100 -> 122 mV, below a 360 mV offset -> clamped to 0 A.
+    QCOMPARE(convertToAmps(HPSDRModel::ANAN_G2, 100.0, 360.0, 120.0), 0.0);
+    QCOMPARE(convertToAmps(HPSDRModel::ANAN_G2, 0.0, 0.001, 66.23), 0.0);
+}
+
+// HL2 (MI0BOT: HL2 current): 3.26 V reference, 4096 steps, x50 sense amp,
+// 0.04 ohm sense resistor, 1000/(1000+270) divider at the slow ADC input.
+//   raw=1000 -> ((3.26 * 1000/4096) / 50) / 0.04 / (1000/1270) = 0.50540 A
+// The volt calibration does not enter the HL2 branch.
+void TestPaTelemetryScaling::hl2_amps_use_the_fixed_sense_scaling()
+{
+    const double a = convertToAmps(HPSDRModel::HERMESLITE, 1000.0, 360.0, 120.0);
+    QVERIFY2(qAbs(a - 0.50540) < 1e-4, qPrintable(QString::number(a, 'f', 6)));
+    QCOMPARE(convertToAmps(HPSDRModel::HERMESLITE, 1000.0, 0.0, 1.0), a);
+    QCOMPARE(convertToAmps(HPSDRModel::HERMESLITE, 0.0, 360.0, 120.0), 0.0);
+}
+
+// From Thetis clsHardwareSpecific.cs:265-292 [v2.10.3.15]
+// GetDefaultVoltCalibration.
+// Adjacent upstream tag (HasAmps, clsHardwareSpecific.cs:260): //N1GP G2E added
+void TestPaTelemetryScaling::default_volt_calibration_follows_the_model()
+{
+    const VoltCalibration c7000 = defaultVoltCalibrationFor(HPSDRModel::ANAN7000D);
+    QCOMPARE(c7000.voff, 340.0f);
+    QCOMPARE(c7000.sens, 88.0f);
+    QCOMPARE(defaultVoltCalibrationFor(HPSDRModel::ANVELINAPRO3).sens, 88.0f);
+    const VoltCalibration g2 = defaultVoltCalibrationFor(HPSDRModel::ANAN_G2);
+    QCOMPARE(g2.voff, 0.001f);
+    QCOMPARE(g2.sens, 66.23f);
+    QCOMPARE(defaultVoltCalibrationFor(HPSDRModel::ANAN_G2_1K).sens, 66.23f);
+    const VoltCalibration c8000 = defaultVoltCalibrationFor(HPSDRModel::ANAN8000D);
+    QCOMPARE(c8000.voff, 360.0f);
+    QCOMPARE(c8000.sens, 120.0f);
+    QCOMPARE(defaultVoltCalibrationFor(HPSDRModel::ANAN_G2E).voff, 360.0f);
+    QCOMPARE(defaultVoltCalibrationFor(HPSDRModel::HERMESLITE).sens, 120.0f);
 }
 
 QTEST_GUILESS_MAIN(TestPaTelemetryScaling)

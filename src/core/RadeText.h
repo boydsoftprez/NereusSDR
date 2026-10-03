@@ -1,48 +1,33 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// no-port-check: NereusSDR-native file. The Phase 3R Task I4 review
-// concluded the realistic implementation is a thin Qt6 wrapper around
-// the already-vendored third_party/rade callsign-over-EOO API
-// (rade_tx_set_eoo_callsign / rade_rx_get_eoo_callsign at
-// third_party/rade/src/rade_api.h:120-145 [@b289102]), not a port of
-// freedv-gui's rade_text.c (which transitively pulls in ~1500 lines
-// of codec2 dependencies absent from NereusSDR's tree). The mentions
-// of freedv-gui below are deviation-rationale prose, not source-port
-// claims; see docs/attribution/aethersdr-reconciliation.md Phase 3R
-// Task I4 for the full discussion.
+// no-port-check: NereusSDR-native Qt6 wrapper. The over-the-air format it
+// drives is ported in RadeTextCodec / RadeLdpc / RadeHra5656 (registered in
+// docs/attribution/FREEDV-GUI-PROVENANCE.md); the mentions of FreeDV below
+// say which upstream calls this wrapper stands in for, not a port claim.
 //
 // =================================================================
 // src/core/RadeText.h  (NereusSDR)
 // =================================================================
 //
-// NereusSDR - RadeText: thin Qt6 wrapper around the third_party/rade
-// library's native callsign-over-EOO channel.
+// NereusSDR - RadeText: the callsign in a RADE end-of-over (EOO) frame,
+// in FreeDV's format, as a small Qt6 object RadeChannel owns.
 //
-// This file is NereusSDR-native code. There is no upstream port: the
-// original Phase 3R plan called for a verbatim port of freedv-gui
-// `src/pipeline/rade_text.{h,c}`, but that source pulls in roughly
-// 1500 lines of codec2 dependencies (gp_interleaver, ldpc_codes,
-// mpdecode_core, ofdm_internal, ulog) that are not in the NereusSDR
-// tree. The already-vendored RADE library exposes a working
-// callsign-over-EOO channel via
-// `rade_tx_set_eoo_callsign` / `rade_rx_get_eoo_callsign`
-// (third_party/rade/src/rade_api.h:120-145 [@b289102]) with no
-// additional dependencies, so RadeText wraps that surface instead.
+// TX: pushTxCallsign(rade) encodes ourCallsign() with RadeTextCodec (the
+// port of freedv-backend's rade_text) into rade_n_eoo_bits() floats and
+// hands them to librade's rade_tx_set_eoo_bits, which rade_tx_eoo then
+// sends; FreeDV does the same (freedv-gui src/freedv_interface.cpp:697-711
+// [@a4ae053]). RX: processRxEooBits decodes the EOO data rade_rx returns
+// and emits textDecoded(callsign) for a non-empty callsign whose CRC
+// matched, as freedv-backend's RADEReceiveStep hands them to rade_text_rx.
 //
-// Trade-offs vs the freedv-gui rade_text.c that the plan originally
-// targeted:
-//   * No LDPC FEC: the RADE EOO channel is bare 7-bit ASCII bits, so
-//     it is less robust at low SNR. The freedv-gui channel runs an
-//     LDPC code over the bits.
-//   * No CRC: per-message integrity is a future enhancement.
-//   * No grid square: the RADE EOO channel is a flat 7-bit ASCII path
-//     with at most RADE_EOO_CALLSIGN_MAX (8) characters; a grid square
-//     would need a separate format-design pass over the leftover EOO
-//     bits and is deferred to a future task.
+// Until 2026-09-28 this wrapper used librade's raw 7-bit ASCII helpers
+// (rade_tx_set_eoo_callsign / rade_rx_get_eoo_callsign), which have no
+// FEC or CRC, which FreeDV never used, and which upstream rade_c removed
+// on 2026-07-10 (e57958f); a FreeDV station could not read a NereusSDR
+// callsign, nor the reverse.
 //
 // The underlying RADE library is BSD-2-Clause licensed (see
 // third_party/rade/LICENSE; Copyright (C) 2026 Peter B Marks).
-// BSD-2-Clause is GPL-compatible; NereusSDR ships under GPLv3.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -65,6 +50,13 @@
 //                 counterpart. Wire-up into RadeChannel's processIq /
 //                 txEncode paths is deferred to Phase L per the plan.
 //                 AI tooling: Anthropic Claude Code.
+//   2026-09-28  J.J. Boyd / KG4VCF  RADE end-of-over callsigns: FreeDV's
+//                 format through RadeTextCodec instead of librade's raw
+//                 ASCII helpers, so NereusSDR and FreeDV stations decode
+//                 each other. An empty callsign now clears the EOO data
+//                 (FreeDV sends zeros when it has no callsign to send);
+//                 textDecoded fires only for a non-empty callsign.
+//                 AI tooling: Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -72,31 +64,12 @@
 #include <QObject>
 #include <QString>
 
-// Forward declaration so RadeText.h does not need to pull in
-// rade_api.h transitively at every callsite. The .cpp resolves
-// `struct rade` via `#include "rade_api.h"`.
+// Forward declaration so RadeText.h does not pull in rade_api.h (and
+// librade's internals) at every callsite.
 struct rade;
 
 namespace NereusSDR {
 
-// Thin Qt6 wrapper around third_party/rade's native callsign-over-EOO
-// channel (rade_tx_set_eoo_callsign / rade_rx_get_eoo_callsign, declared
-// in third_party/rade/src/rade_api.h:120-145 [@b289102]). Owns no rade
-// state of its own; instead, callers pass in the active
-// `struct rade*` from RadeChannel when calling encode / decode.
-//
-// The text channel is one-shot per "over": before the TX over starts,
-// caller invokes setOurCallsign() to stash the local callsign, then
-// pushTxCallsign(rade) to encode it into the EOO bit-buffer that
-// `rade_tx_eoo` will emit at end-of-over. On RX, when `rade_rx`
-// returns `has_eoo_out=true`, caller hands the eoo_out array to
-// processRxEooBits(eooBits, nBits) which decodes and emits
-// textDecoded(callsign).
-//
-// Grid square is NOT supported here. The RADE EOO channel is a flat
-// 7-bit ASCII path with ~8 chars; a grid-square channel would need a
-// separate format-design pass over the leftover EOO bits, deferred to
-// a future task.
 class RadeText : public QObject {
     Q_OBJECT
 
@@ -104,32 +77,23 @@ public:
     explicit RadeText(QObject* parent = nullptr);
     ~RadeText() override;
 
-    // Stash the local callsign for subsequent pushTxCallsign() calls.
-    // Storage is verbatim (case-preserving); pushTxCallsign upper-cases
-    // on the way to the wire to match the conventional callsign form
-    // and to be defensive against mixed-case user input.
+    // The callsign pushTxCallsign sends. Stored as given; the codec
+    // upper-cases it and drops characters outside FreeDV's set.
     void setOurCallsign(const QString& callsign);
     QString ourCallsign() const;
 
-    // Stuff the stashed callsign into the active rade's EOO bit
-    // buffer. Call once at TX-start (MOX on) per over. No-op if rade
-    // is null or ourCallsign() is empty. The callsign is truncated to
-    // RADE_EOO_CALLSIGN_MAX characters and upper-cased before being
-    // passed to rade_tx_set_eoo_callsign.
+    // Write ourCallsign() into the active rade's EOO data, for the next
+    // rade_tx_eoo. No-op when rade is null. An empty callsign writes zeros,
+    // what librade holds before anything is set and what FreeDV sends with
+    // no callsign.
     void pushTxCallsign(struct rade* rade);
 
-    // Decode incoming EOO bits. Call from RadeChannel::processIq when
-    // rade_rx returns has_eoo_out=true; pass eoo_out and the value of
-    // rade_n_eoo_bits(rade). Emits textDecoded(callsign) if a valid
-    // (non-empty after trimming) callsign is recovered.
+    // Decode the EOO data rade_rx returned with has_eoo_out set. nBits is
+    // rade_n_eoo_bits(rade) (floats). Emits textDecoded(callsign) when
+    // FreeDV's decoder would accept it and the callsign is not empty.
     void processRxEooBits(const float* eooBits, int nBits);
 
 signals:
-    // Fired when processRxEooBits successfully recovers a non-empty
-    // callsign. The argument is the decoded callsign with trailing
-    // padding spaces removed (the underlying rade_rx_get_eoo_callsign
-    // pads to RADE_EOO_CALLSIGN_MAX chars with spaces and trims them
-    // on the way out; see rade_api_nopy.c:195-200 [@b289102]).
     void textDecoded(const QString& callsign);
 
 private:

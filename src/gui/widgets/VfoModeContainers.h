@@ -15,6 +15,9 @@
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-09-24 : FmOptContainer::hasBuiltControls (plan row fm-flag,
+//                 R-R3-49, R-R3-21). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -135,6 +138,10 @@ public:
     explicit FmOptContainer(QWidget* parent = nullptr);
     void setSlice(SliceModel* s);
     void syncFromSlice();  // reads slice state into widgets; safe if m_slice is null
+    // R-R3-49 (plan row fm-flag): false while every FM control here is
+    // hidden until built (FM transmit, CTCSS tones), so the flag shows no
+    // empty FM box.
+    static bool hasBuiltControls();
 
 private:
     void buildUi();

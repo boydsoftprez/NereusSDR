@@ -1,0 +1,67 @@
+# NereusSDR WebSocket relay configuration (INI), for python3 -m nereus_relay.
+# Every key but relay_secret_file is optional; the values shown are the
+# defaults. The wire is docs/architecture/2026-09-23-rendezvous-v1.md;
+# section 12 explains the relay and each limit.
+
+[relay]
+# A Unix stream socket: Caddy terminates TLS and forwards
+# wss://<host>/v1/relay here (reverse_proxy unix//<socket>). Its mode and
+# group decide who may connect: Caddy's group and nobody else. The client's
+# address is the last in X-Forwarded-For, which Caddy sets; a request
+# without one is refused. Under systemd, RuntimeDirectory=nereus-relay makes
+# the directory.
+socket = /run/nereus-relay/relay.sock
+socket_mode = 0660
+socket_group = caddy
+
+# The file holding the relay secret, and nothing else: the same file the
+# rendezvous service's relay_secret_file names. Under systemd,
+# LoadCredential= hands it over. Never put the secret itself in this file.
+relay_secret_file =
+
+# debug, info, warning or error. Logs go to standard error only.
+log_level = info
+
+[limits]
+# Sessions (one Core leg and one device leg each) at once.
+slots = 16
+# Sessions at once for any one Core (the grant carries an opaque value per
+# Core): four current paths, four reconnects and one fifth-device prompt.
+# These are transport sessions, separate from Core's four admitted devices
+# and from coturn's allocation quota. The global 16-session cap still applies.
+sessions_per_station = 9
+# Connections per address group (an IPv4 address, or an IPv6 /56), joined
+# or not, counted until each has closed (refused ones included). Both ends
+# of all nine primary paths and nine watch paths can share one address group.
+connections_per_address = 36
+# Connections that have not joined yet, in total. When a new one comes and
+# they are all taken, the one waiting longest is ended (full) to make room.
+max_pending = 64
+# A connection must send its join within this long.
+join_timeout_ms = 10000
+# A leg that has not joined yet, or has left, may (re)join this long.
+rejoin_ms = 30000
+# A session whose two legs forward nothing for this long ends.
+idle_timeout_ms = 30000
+# Each way, per session and per lane (control and media each have their
+# own): the bytes a second one leg may send to the other (coturn's
+# max-bps). Frames over it are dropped.
+rate_bytes_per_second = 80000
+# Each lane's send queue towards each leg. A frame that would pass either
+# cap drops that lane's oldest waiting frames first.
+queue_frames = 64
+queue_bytes = 24576
+# Each watch direction has its own small rate bucket and receive queue.
+# Watch bytes also spend that side's ordinary control-lane rate bucket.
+watch_rate_bytes_per_second = 8000
+watch_queue_frames = 16
+watch_queue_bytes = 8192
+# A leg whose writer spends longer than this on one frame is closed (1008).
+send_stall_ms = 10000
+ping_interval_seconds = 20
+ping_timeout_seconds = 20
+# The kernel's receive and send buffer for each connection (SO_RCVBUF and
+# SO_SNDBUF), in bytes; Linux doubles the value. On the Unix socket the send
+# buffer is what the hop to Caddy can hold (section 12.5). 0 leaves the
+# kernel's sizing, which holds several times more.
+socket_buffer_bytes = 16384

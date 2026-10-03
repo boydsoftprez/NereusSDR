@@ -1,0 +1,54 @@
+{
+  "checkpoint": "f8531cd92676209f0acaf96b475e0d6c7a51e1b3",
+  "hardware": "Radxa ROCK 5C, Armbian Trixie, ANAN-G2 Saturn",
+  "scope": "Receive-only LAN display; no Opus media stream in this run",
+  "probe": {
+    "actualReceivedEncodedBytes": 554264,
+    "codecDispositions": {
+      "accepted": 230,
+      "needKeyframe": 0,
+      "rejected": 0
+    },
+    "codecReasons": {
+      "none": 230
+    },
+    "context": {
+      "centreHz": 14225023.4375,
+      "contextGeneration": 1,
+      "sampleRateHz": 192000,
+      "sourceCentreHz": 14225000,
+      "spanHz": 48046.875,
+      "traceSamples": 1024,
+      "waterfallSamples": 1024,
+      "wideSamples": 768
+    },
+    "distinctFrames": 230,
+    "durationSeconds": 20,
+    "failure": "",
+    "receivedFrames": 230,
+    "status": "ok",
+    "waterfallAdvances": 230,
+    "wideFrames": 230
+  },
+  "service": {
+    "installed": true,
+    "active": true,
+    "result": "success",
+    "execMainStatus": 0,
+    "restarts": 0
+  },
+  "gui": {
+    "profile": "radxa_5c_r3",
+    "controlEndpoint": "192.168.109.106:50055",
+    "authenticatedHandshake": "verified after reopening rebuilt GUI",
+    "spectrum": "observed changing at 3.650 MHz LSB",
+    "waterfall2D": "observed populated and advancing at 3.650 MHz LSB",
+    "waterfall3D": "wide rows received; current-build visual acceptance pending",
+    "audio": "network sender, jitter/clock control and playback not yet connected"
+  },
+  "limitations": [
+    "Bounded run includes startup; not sustained frame-rate acceptance",
+    "No new MTU or bandwidth measurement for this checkpoint",
+    "No board reboot of this checkpoint tested"
+  ]
+}

@@ -48,6 +48,39 @@ if(NOT RNNOISE_SOURCES)
         "rnnoise_upstream_SOURCE_DIR (${rnnoise_upstream_SOURCE_DIR})?")
 endif()
 
+# rnnoise_model_from_buffer (src/denoise.c:235-242 [@70f1d256], unchanged on
+# xiph master) never sets model->file, and rnnoise_model_free
+# (denoise.c:271-275) fcloses it when it is not NULL, so DspAssetValidation's
+# trial load (from_buffer, then free) fcloses stale heap bytes wherever the
+# allocator does not clear freed memory (glibc; the Rock's nereusd died at
+# startup). Compile a copy of denoise.c from the build directory that also
+# clears model->file there; the fetched source is never edited. The anchor
+# "model->blob = NULL;" appears exactly once at this pin, inside
+# rnnoise_model_from_buffer; stop the configure if a new pin changes that.
+# Recorded in docs/attribution/RNNOISE-PROVENANCE.md "Downstream changes"
+# (R-R3-21, R-R3-10).
+set(_rnnoise_denoise "${rnnoise_upstream_SOURCE_DIR}/src/denoise.c")
+set(_rnnoise_anchor "model->blob = NULL;")
+file(READ "${_rnnoise_denoise}" _rnnoise_text)
+string(FIND "${_rnnoise_text}" "${_rnnoise_anchor}" _rnnoise_first)
+string(FIND "${_rnnoise_text}" "${_rnnoise_anchor}" _rnnoise_last REVERSE)
+if(_rnnoise_first EQUAL -1 OR NOT _rnnoise_first EQUAL _rnnoise_last)
+    message(FATAL_ERROR
+        "rnnoise denoise.c changed: the anchor '${_rnnoise_anchor}' no longer "
+        "appears exactly once in ${_rnnoise_denoise}. Re-check that "
+        "rnnoise_model_from_buffer sets model->file, then update or drop the "
+        "model->file patch in third_party/rnnoise/CMakeLists.txt.")
+endif()
+string(REPLACE "${_rnnoise_anchor}" "${_rnnoise_anchor} model->file = NULL;"
+       _rnnoise_text "${_rnnoise_text}")
+# Write through configure_file(COPYONLY) so a reconfigure that produces the
+# same text leaves the timestamp alone and does not rebuild rnnoise.
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/rnnoise_patched/denoise.c.in" "${_rnnoise_text}")
+configure_file("${CMAKE_CURRENT_BINARY_DIR}/rnnoise_patched/denoise.c.in"
+               "${CMAKE_CURRENT_BINARY_DIR}/rnnoise_patched/denoise.c" COPYONLY)
+list(REMOVE_ITEM RNNOISE_SOURCES "${_rnnoise_denoise}")
+list(APPEND RNNOISE_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/rnnoise_patched/denoise.c")
+
 # rnnoise_model_init.c provides init_rnnoise(), which is normally bundled
 # inside rnnoise_data_little.c / rnnoise_data.c. Those files are excluded
 # because they contain 274 000+ lines of baked model weights. We supply

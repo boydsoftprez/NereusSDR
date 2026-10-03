@@ -88,10 +88,16 @@ inline constexpr std::array<const char*, 3> kPreselectorLeaves = {
 inline constexpr const char* kAlex1HpfPrefix  = "alex/hpf";
 inline constexpr const char* kAlex1Bpf1Prefix = "alex/bpf1";
 
-// The Alex transmit low-pass rows (alex/lpf/…) use ham-band slugs
-// (160m, 80m, 40m, 20m, 15m, 10m, 6m) rather than crossover slugs, and they
-// have no core-side consumer: low-pass edges are meaningful on every Alex
-// board, so there is no capability gate that would make them stray data.
-// They are intentionally absent here rather than forgotten.
+// The Alex-1 low-pass rows use ham-band slugs (160m, 80m, 40m, 20m, 15m,
+// 10m, 6m; codec::alex::kAlexLpfRowSlugs) rather than crossover slugs, with
+// the start and end leaves: hardware/<mac>/alex/lpf/<slug>/{start,end}.
+// RadioModel reads them into codec::alex::AlexLpfEdges for the connection.
+// They are meaningful on every Alex board, so there is no capability gate
+// that would make them stray data.
+inline constexpr const char* kAlex1LpfPrefix = "alex/lpf";
+
+// Thetis chkLPFBypass ("6m/ByPass on RX", console.cs LPFBypass): the 6 m
+// low-pass while receiving, whatever the frequency. Default False.
+inline constexpr const char* kLpfBypass = "alex/master/lpfBypass";
 
 } // namespace NereusSDR::alexKeys

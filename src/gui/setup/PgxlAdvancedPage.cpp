@@ -11,6 +11,71 @@
 //   sections 5.6.1 through 5.6.6 and footer.
 //
 // AI tooling: Anthropic Claude Code.
+//
+// Modification history (NereusSDR):
+//   2026-09-24  J.J. Boyd / KG4VCF  R-R3-47 / R-R3-22: the counters are the
+//                                    model's (the Core's in a remote
+//                                    window); in a remote window the page is
+//                                    a view of the Core's output limit,
+//                                    counters and fault history plus its
+//                                    commands (setPgxlPowerCap,
+//                                    clearAccessoryFaults); each fault row
+//                                    carries its plain words. AI-assisted
+//                                    via Anthropic Claude Code.
+//   2026-09-24  J.J. Boyd / KG4VCF  R-R3-47 / R-R3-22: a remote window
+//                                    builds every section. The amp's own
+//                                    settings (name, bias, fan, LED,
+//                                    network, Save & Reboot, Revert) go to
+//                                    the Core as typed requests, which it
+//                                    sends the amp as this page's own
+//                                    commands; the page asks the same
+//                                    Save & Reboot question and, before
+//                                    network changes, the Network section's
+//                                    own warning; the amp's answers, its
+//                                    values and the Core's refusals show on
+//                                    the page. Pairing settings reach the
+//                                    Core as station settings. AI-assisted
+//                                    via Anthropic Claude Code.
+//   2026-09-24  J.J. Boyd / KG4VCF  R-R3-47 / R-R3-22 fix wave: a fixed
+//                                    network setting needs an address and a
+//                                    netmask (both windows); the remote
+//                                    window's network warning and question
+//                                    in words true there; only this
+//                                    device's refusals reload the page.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-09-24  J.J. Boyd / KG4VCF  R-R3-47 / R-R3-22: a local window asks
+//                                    the same plain question as a remote one
+//                                    before applying network settings
+//                                    (operator decision 2026-09-24).
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-09-25  J.J. Boyd / KG4VCF  R-R3-49 (parity Task 9, operator
+//                                    amendment 2026-09-25): a local
+//                                    window's tab gets an Operate button
+//                                    beside the state badge, as a remote
+//                                    window's tab has. It sends the local
+//                                    applet's own line through this
+//                                    computer's PgxlConnection and reads
+//                                    Operate or Standby from the amp's
+//                                    report. AI-assisted via Anthropic
+//                                    Claude Code.
+//   2026-09-26  J.J. Boyd / KG4VCF  iPhone app plan Task 77 fix round 3
+//                                    (R-IOS-02, R-IOS-03, R-IOS-13):
+//                                    Operate waits while a Tuner Genius
+//                                    cycle runs; a faulted amp is offered
+//                                    Standby. AI-assisted via Anthropic
+//                                    Claude Code.
+//   2026-09-26  J.J. Boyd / KG4VCF  Task 77 fix round 4: Standby while
+//                                    operate=1 is unconfirmed. AI-assisted
+//                                    via Anthropic Claude Code.
+//   2026-09-29 -- R-R3-49 / R-IOS-18: Setup description version 15 ids.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30: Fix wave RD-I11: the nickname field takes one word (no
+//               spaces or '='), with a one-word placeholder. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30: Fix round 1: a saved, mirrored or device-read name with
+//               spaces is offered with underscores, so the one-word box
+//               takes edits. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "PgxlAdvancedPage.h"
@@ -27,6 +92,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QModelIndex>
 #include <QPushButton>
 #include <QRadioButton>
@@ -42,8 +108,15 @@
 #include "../../core/AppSettings.h"
 #include "../../core/ConnectionDiagnostics.h"
 #include "../../core/FaultLog.h"
+#include "../../core/StationDeviceSettings.h"
 #include "../../core/PgxlConnection.h"
+#include "../../core/session/IStationLink.h"
+#include "../../core/StationAccessoryData.h"
+#include "../../models/AccessoryDataModel.h"
+#include "../../models/AccessorySettingsModel.h"
+#include "../../models/AmplifierModel.h"
 #include "../../models/RadioModel.h"
+#include "../OperatorReasonText.h"
 #include "../PgxlSaveRebootDialog.h"
 
 namespace NereusSDR {
@@ -99,7 +172,8 @@ public:
 
     QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override
     {
-        if (!index.isValid() || role != Qt::DisplayRole) {
+        if (!index.isValid()
+            || (role != Qt::DisplayRole && role != Qt::ToolTipRole)) {
             return QVariant();
         }
         const auto events = m_faultLog->events();
@@ -107,6 +181,10 @@ public:
             return QVariant();
         }
         const FaultEvent& ev = events.at(index.row());
+        // R-R3-47: every row says what happened in plain words.
+        if (role == Qt::ToolTipRole) {
+            return ev.text;
+        }
         switch (index.column()) {
         case 0: {
             QDateTime dt = QDateTime::fromMSecsSinceEpoch(ev.whenMs);
@@ -139,7 +217,10 @@ private:
 PgxlAdvancedPage::PgxlAdvancedPage(RadioModel* model, QWidget* parent)
     : QWidget(parent)
     , m_model(model)
-    , m_diagnostics(new ConnectionDiagnostics(this))
+    // R-R3-47 / R-R3-22: the model's counters (bound to its own connection
+    // in a local window, the Core's in a remote one); a local instance only
+    // when the page is built without a model (unit tests).
+    , m_diagnostics(model ? model->pgxlDiagnostics() : new ConnectionDiagnostics(this))
     // Phase 3P-II Phase 4 Task 94: FaultLog is now owned by RadioModel (shared instance).
     // Use m_model->pgxlFaultLog() when m_model is non-null; fall back to a local instance
     // (same key) when m_model is null (unit-test construction without a live RadioModel).
@@ -164,6 +245,17 @@ PgxlAdvancedPage::PgxlAdvancedPage(RadioModel* model, QWidget* parent)
     topLay->setContentsMargins(12, 12, 12, 12);
     topLay->setSpacing(16);
 
+    if (isRemote()) {
+        // R-R3-47 / R-R3-22: every section, as in a local window. The amp's
+        // own settings go to the Core, which sends the amp this page's own
+        // commands (a remote window never opens a connection to the amp);
+        // the output limit, counters and fault history are the Core's.
+        buildRemoteSections(topLay);
+        topLay->addStretch();
+        applySetupIds();
+        return;
+    }
+
     buildIdentitySection(topLay);
     buildHardwareSection(topLay);
     buildNetworkSection(topLay);
@@ -187,18 +279,103 @@ PgxlAdvancedPage::PgxlAdvancedPage(RadioModel* model, QWidget* parent)
                     this, &PgxlAdvancedPage::onSetupResponse);
             connect(pgxl, &PgxlConnection::ifconfResponse,
                     this, &PgxlAdvancedPage::onIfconfResponse);
-
-            // Bind diagnostics helper to the PGXL connection
-            m_diagnostics->bindTo(pgxl);
+            // R-R3-47: RadioModel binds its counters to this connection
+            // for its whole life (StationAccessoryData publishes them).
+            // R-R3-49 (parity Task 9): Operate follows the connection.
+            connect(pgxl, &PgxlConnection::connected,
+                    this, &PgxlAdvancedPage::updateOperateButton);
+            connect(pgxl, &PgxlConnection::disconnected,
+                    this, &PgxlAdvancedPage::updateOperateButton);
         }
+        // R-R3-49 (parity Task 9): and the amp's reported state.
+        if (AmplifierModel* amp = m_model->amplifierModel()) {
+            connect(amp, &AmplifierModel::statusChanged,
+                    this, &PgxlAdvancedPage::updateOperateButton);
+        }
+        // Group B fix wave (M5): and whether the radio is on the air.
+        connect(m_model, &RadioModel::coreOnAirChanged,
+                this, &PgxlAdvancedPage::updateOperateButton);
+        // Task 77 fix round 3: and whether a Tuner Genius cycle runs.
+        connect(m_model, &RadioModel::pgxlSwitchWaitChanged,
+                this, &PgxlAdvancedPage::updateOperateButton);
     }
 
     connect(m_diagnostics, &ConnectionDiagnostics::changed,
             this, &PgxlAdvancedPage::onDiagnosticsChanged);
+    onDiagnosticsChanged();
 
     // Initial UI state
     updateConnectionUi(m_model && m_model->pgxlConnection()
                        && m_model->pgxlConnection()->isConnected());
+    updateOperateButton();
+
+    applySetupIds();
+}
+
+// R-R3-49 (parity Task 9, operator amendment 2026-09-25): the local tab's
+// Operate reads the action the amp's reported state allows (Standby while
+// it operates, Operate otherwise), as a remote window's tab does. It is
+// offered while this computer is connected to the amp. Group B fix wave
+// (M5, the operator's ruling 2026-09-25): it waits while the radio is on
+// the air, as the applet's OPERATE and a remote window's do, with the same
+// reason.
+void PgxlAdvancedPage::updateOperateButton()
+{
+    if (!m_operateBtn) {
+        return;
+    }
+    const PgxlConnection* pgxl = m_model ? m_model->pgxlConnection() : nullptr;
+    const AmplifierModel* amp = m_model ? m_model->amplifierModel() : nullptr;
+    const bool connected = pgxl && pgxl->isConnected();
+    const bool operating = amp && amp->operate();
+    // Task 77 fix round 3: a faulted amp is offered Standby (operate=0),
+    // which ends a changeover the fault left waiting; and the button waits
+    // while a Tuner Genius cycle runs.
+    // Round 4: and while operate=1 is unconfirmed, Standby too.
+    const bool unconfirmed = m_model && m_model->ampOperateUnconfirmed();
+    const bool faulted = (amp && amp->state() == AmplifierModel::State::Fault) || unconfirmed;
+    const bool onAir = m_model && m_model->isCoreOnAir();
+    const bool tuning = m_model && m_model->pgxlSwitchWaitsForTuner();
+    m_operateBtn->setText(operating || faulted ? tr("Standby") : tr("Operate"));
+    m_operateBtn->setEnabled(connected && !onAir && !tuning);
+    m_operateBtn->setToolTip(!connected ? tr("The Power Genius is not connected.")
+                             : onAir ? RadioModel::onAirReason()
+                             : tuning ? RadioModel::tunerTuningReason()
+                             : unconfirmed ? tr("The amplifier has not reported operate. Put it in standby.")
+                             : faulted ? tr("The amplifier reports a fault. Put it in standby.")
+                             : operating ? tr("Put the Power Genius in standby.")
+                                         : tr("Put the Power Genius in operate."));
+}
+
+void PgxlAdvancedPage::onOperateClicked()
+{
+    PgxlConnection* pgxl = m_model ? m_model->pgxlConnection() : nullptr;
+    const AmplifierModel* amp = m_model ? m_model->amplifierModel() : nullptr;
+    if (!pgxl || !pgxl->isConnected() || !amp) {
+        updateOperateButton();
+        return;
+    }
+    // Group B fix wave (M5): refused on the air, by the Core's own rule.
+    // Parity mini-round (ruling c): with the remote window's reason.
+    // Task 77 fix round 3: and while a Tuner Genius cycle runs.
+    // Task 77 fix round 3: a faulted amp goes to standby. Round 4: so does
+    // one whose operate=1 is unconfirmed.
+    const bool faulted = amp->state() == AmplifierModel::State::Fault
+        || m_model->ampOperateUnconfirmed();
+    const bool wantOperate = !amp->operate() && !faulted;
+    if (m_model->refuseLocalAccessorySwitchOnAir(QStringLiteral("pgxl"),
+                                                 /*standbyRequested=*/!wantOperate)) {
+        updateOperateButton();
+        return;
+    }
+    // The local applet's own line (MainWindow's AmpApplet::operateToggled
+    // handler). Bench-fix 2026-05-19: pcap stream 11 (.19
+    // PowerGeniusDesktop -> .235 PGXL :9008) shows the actually-used wire
+    // command for OPERATE is `operate=1` (key=value), not bare `operate`.
+    // PGXL rejected `operate` / `standby` with error 50000016 every click.
+    // The button follows the amp's report, not the click.
+    pgxl->sendCommand(wantOperate ? QStringLiteral("operate=1")
+                                  : QStringLiteral("operate=0"));
 }
 
 PgxlAdvancedPage::~PgxlAdvancedPage() = default;
@@ -214,7 +391,12 @@ void PgxlAdvancedPage::buildIdentitySection(QVBoxLayout* topLay)
     form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
     m_nickname = new QLineEdit;
-    m_nickname->setPlaceholderText(QStringLiteral("e.g. Shack PGXL"));
+    m_nickname->setPlaceholderText(QStringLiteral("e.g. Shack_PGXL"));
+    // RD-I11: the amp and tuner take the name as one word of a `setup`
+    // line; a space or '=' would start another field. Neither can be typed.
+    m_nickname->setValidator(new QRegularExpressionValidator(
+        QRegularExpression(QStringLiteral("[^\\s=]*")), m_nickname));
+    m_nickname->setToolTip(QStringLiteral("One word: no spaces or equals signs."));
     form->addRow(QStringLiteral("Nickname:"), m_nickname);
 
     m_firmwareVersion = new QLabel(QStringLiteral("--"));
@@ -228,7 +410,24 @@ void PgxlAdvancedPage::buildIdentitySection(QVBoxLayout* topLay)
     m_stateBadge->setAlignment(Qt::AlignCenter);
     m_stateBadge->setStyleSheet(
         QStringLiteral("background: #555; color: #ccc; border-radius: 3px; padding: 2px 6px;"));
-    form->addRow(QStringLiteral("State:"), m_stateBadge);
+    // R-R3-49 (parity Task 9, operator amendment 2026-09-25): Operate beside
+    // the badge, as a remote window's tab has it. updateOperateButton sets
+    // its words from the amp's report and whether it is offered. A remote
+    // window's tab has its own Operate (FourO3APage, setPgxlOperate) above
+    // this page, so the page adds none there.
+    auto* stateRow = new QHBoxLayout;
+    stateRow->setContentsMargins(0, 0, 0, 0);
+    stateRow->addWidget(m_stateBadge);
+    if (!isRemote()) {
+        m_operateBtn = new QPushButton(tr("Operate"));
+        m_operateBtn->setObjectName(QStringLiteral("pgxlOperateButton"));
+        m_operateBtn->setEnabled(false);
+        connect(m_operateBtn, &QPushButton::clicked,
+                this, &PgxlAdvancedPage::onOperateClicked);
+        stateRow->addWidget(m_operateBtn);
+    }
+    stateRow->addStretch();
+    form->addRow(QStringLiteral("State:"), stateRow);
 
     m_meffaLabel = new QLabel(QStringLiteral("--"));
     form->addRow(QStringLiteral("MeFFA:"), m_meffaLabel);
@@ -237,6 +436,22 @@ void PgxlAdvancedPage::buildIdentitySection(QVBoxLayout* topLay)
 
     // Nickname editingFinished -> writeSetup
     connect(m_nickname, &QLineEdit::editingFinished, this, [this]() {
+        if (isRemote()) {
+            // R-R3-47 / R-R3-22: the Core renames the amp (the same `setup
+            // nickname=`) and keeps the name. One request per edit.
+            if (m_updatingFromDevice || !m_nickname->isModified()) {
+                return;
+            }
+            m_nickname->setModified(false);
+            IStationLink* link = m_model->stationLink();
+            const IStationLink::CommandOutcome outcome = link
+                ? link->requestPgxlName(m_nickname->text().trimmed())
+                : IStationLink::CommandOutcome{ false, tr("Connect to the Core first.") };
+            // Follow-up 3: this page shows the Core's refusal; no toast too.
+            m_model->noteAccessoryRequestShownOnPage(outcome.commandId, this);
+            showRemoteOutcome(outcome.sent, outcome.reason);
+            return;
+        }
         if (m_model && m_model->pgxlConnection() && m_model->pgxlConnection()->isConnected()) {
             m_model->pgxlConnection()->writeSetup(
                 {{QStringLiteral("nickname"), m_nickname->text().trimmed()}});
@@ -246,8 +461,12 @@ void PgxlAdvancedPage::buildIdentitySection(QVBoxLayout* topLay)
     });
 
     // Load persisted nickname
+    // Fix round 1 (minor 4): a name saved with spaces before names were one
+    // word is offered with underscores, so the box takes edits again (the
+    // validator never accepts the old text, and editingFinished never fires).
     auto& s = AppSettings::instance();
-    m_nickname->setText(s.value(QStringLiteral("PGXL_Nickname"), QString{}).toString());
+    m_nickname->setText(PgxlConnection::asSetupToken(
+        s.value(QStringLiteral("PGXL_Nickname"), QString{}).toString()));
 }
 
 void PgxlAdvancedPage::buildHardwareSection(QVBoxLayout* topLay)
@@ -388,12 +607,18 @@ void PgxlAdvancedPage::buildNetworkSection(QVBoxLayout* topLay)
 
     lay->addLayout(form);
 
-    auto* warnLabel = new QLabel(
-        QStringLiteral("PGXL must be unicast-reachable from this host after the change; "
-                       "if you lose connection, use Scan LAN to rediscover."));
+    // M4: a remote window's words (no Scan LAN there); local unchanged.
+    auto* warnLabel = new QLabel(isRemote() ? networkQuestionText() : networkWarningText());
     warnLabel->setWordWrap(true);
     warnLabel->setStyleSheet(QStringLiteral("color: #e8c01e;"));
     lay->addWidget(warnLabel);
+
+    // I5: a fixed setting without an address, a netmask or a usable
+    // gateway is not sent; the reason shows here.
+    m_networkProblem = new QLabel;
+    m_networkProblem->setWordWrap(true);
+    m_networkProblem->setVisible(false);
+    lay->addWidget(m_networkProblem);
 
     m_applyIfconfBtn = new QPushButton(QStringLiteral("Apply Network Settings"));
     auto* btnRow = new QHBoxLayout;
@@ -426,10 +651,9 @@ void PgxlAdvancedPage::buildPairingSection(QVBoxLayout* topLay)
     m_pairAttemptCheckbox = new QCheckBox(
         QStringLiteral("Auto-pair on connect"));
     m_pairAttemptCheckbox->setToolTip(
-        QStringLiteral("When enabled, NereusSDR sends the flexradio "
-                       "pairing handshake to PGXL on every successful "
-                       "9008 connect. Disable only if pairing is "
-                       "managed externally."));
+        QStringLiteral("When enabled, NereusSDR pairs the Power Genius with "
+                       "the radio each time it connects. Turn this off only "
+                       "if the pairing is done some other way."));
     form->addRow(QStringLiteral("Pairing:"), m_pairAttemptCheckbox);
 
     // TX antenna
@@ -456,7 +680,7 @@ void PgxlAdvancedPage::buildPairingSection(QVBoxLayout* topLay)
     sliceLay->addWidget(m_sliceA);
     sliceLay->addWidget(m_sliceB);
     sliceLay->addStretch();
-    form->addRow(QStringLiteral("Slice Binding:"), sliceWidget);
+    form->addRow(QStringLiteral("Follows slice:"), sliceWidget);
 
     auto* sliceGroup = new QButtonGroup(this);
     sliceGroup->addButton(m_sliceA);
@@ -520,7 +744,7 @@ void PgxlAdvancedPage::buildDiagnosticsSection(QVBoxLayout* topLay)
     addRow(0, QStringLiteral("Uptime"),               m_uptimeLabel);
     addRow(1, QStringLiteral("Last RTT"),              m_rttLabel);
     addRow(2, QStringLiteral("Keepalive Missed"),      m_keepaliveMissedLabel);
-    addRow(3, QStringLiteral("Reconnects (session)"),  m_reconnectCountLabel);
+    addRow(3, QStringLiteral("Reconnects (this run)"),  m_reconnectCountLabel);
     addRow(4, QStringLiteral("Frames In"),             m_framesInLabel);
     addRow(5, QStringLiteral("Frames Out"),            m_framesOutLabel);
     addRow(6, QStringLiteral("Bytes In"),              m_bytesInLabel);
@@ -555,8 +779,320 @@ void PgxlAdvancedPage::buildFaultHistorySection(QVBoxLayout* topLay)
     topLay->addWidget(box);
 
     connect(clearAllBtn, &QPushButton::clicked, this, [this]() {
+        // R-R3-47: a remote window asks the Core, which keeps the history.
+        if (isRemote()) {
+            IStationLink* link = m_model->stationLink();
+            const IStationLink::CommandOutcome outcome = link
+                ? link->requestClearAccessoryFaults(QStringLiteral("pgxl"))
+                : IStationLink::CommandOutcome{ false, tr("Connect to the Core first.") };
+            // Follow-up 3: this page shows the Core's refusal; no toast too.
+            m_model->noteAccessoryRequestShownOnPage(outcome.commandId, this);
+            if (!outcome.sent && m_remoteNote) {
+                m_remoteNote->setText(OperatorReasonText::forDisplay(outcome.reason));
+            }
+            return;
+        }
         m_faultLog->clear();
     });
+    m_clearFaultsBtn = clearAllBtn;
+}
+
+// ---------------------------------------------------------------------------
+// R-R3-47 / R-R3-22: a remote window's view of the Core
+// ---------------------------------------------------------------------------
+
+bool PgxlAdvancedPage::isRemote() const
+{
+    return m_model && m_model->role() == RadioModel::Role::Remote;
+}
+
+bool PgxlAdvancedPage::remoteDataAvailable() const
+{
+    const IStationLink* link = isRemote() ? m_model->stationLink() : nullptr;
+    return link && link->accessoryDataAvailable();
+}
+
+void PgxlAdvancedPage::buildRemoteSections(QVBoxLayout* topLay)
+{
+    m_remoteNote = new QLabel;
+    m_remoteNote->setObjectName(QStringLiteral("pgxlAdvancedRemoteNote"));
+    m_remoteNote->setWordWrap(true);
+    topLay->addWidget(m_remoteNote);
+    // R-R3-47 / R-R3-22: the amp's last answer, or why this Core cannot
+    // change the amp's own settings for this app.
+    m_deviceAnswer = new QLabel;
+    m_deviceAnswer->setObjectName(QStringLiteral("pgxlAdvancedDeviceAnswer"));
+    m_deviceAnswer->setWordWrap(true);
+    topLay->addWidget(m_deviceAnswer);
+
+    buildIdentitySection(topLay);
+    buildHardwareSection(topLay);
+    buildNetworkSection(topLay);
+    buildPairingSection(topLay);
+    buildDiagnosticsSection(topLay);
+    buildFaultHistorySection(topLay);
+    buildFooter(topLay);
+
+    // The output limit is the Core's (setPgxlPowerCap), sent when the
+    // value is complete.
+    m_powerCapSpin->setKeyboardTracking(false);
+    m_powerCapSpin->setToolTip(tr("The Core shows an alert in every window when the Power "
+                                  "Genius output goes above this."));
+    // One request to the amp when the slider is let go, not one per step.
+    m_ledSlider->setTracking(false);
+    connect(m_ledSlider, &QSlider::sliderMoved, this, [this](int value) {
+        m_ledValueLabel->setText(QString::number(value));
+    });
+
+    connect(m_diagnostics, &ConnectionDiagnostics::changed,
+            this, &PgxlAdvancedPage::onDiagnosticsChanged);
+    onDiagnosticsChanged();
+    AmplifierModel* amp = m_model->amplifierModel();
+    connect(amp, &AmplifierModel::stationConnectionChanged,
+            this, &PgxlAdvancedPage::refreshRemoteIdentity);
+    connect(amp, &AmplifierModel::statusChanged, this, &PgxlAdvancedPage::refreshRemoteIdentity);
+    connect(m_model->accessorySettingsModel(), &AccessorySettingsModel::pgxlChanged,
+            this, &PgxlAdvancedPage::refreshRemoteDevice);
+    connect(m_model->accessoryDataModel(), &AccessoryDataModel::powerCapChanged,
+            this, &PgxlAdvancedPage::refreshRemote);
+    connect(m_model, &RadioModel::stationLinkStateChanged, this, &PgxlAdvancedPage::refreshRemote);
+    // A Power Genius request the Core refused (its output limit, or the
+    // amp's own settings): the Core's values stay and its words show here.
+    // Only the amp's refusals; never an unrelated one.
+    connect(m_model, &RadioModel::accessoryRequestRefused, this,
+            [this](const QString& device, const QString& reason) {
+        if (device == QLatin1String("pgxl")) {
+            refreshRemote();
+            showRemoteOutcome(false, reason);
+        }
+    });
+    refreshRemote();
+}
+
+bool PgxlAdvancedPage::deviceSettingsAvailable() const
+{
+    const IStationLink* link = isRemote() ? m_model->stationLink() : nullptr;
+    return link && link->pgxlDeviceSettingsAvailable();
+}
+
+bool PgxlAdvancedPage::remoteAmpConnected() const
+{
+    const IStationLink* link = isRemote() ? m_model->stationLink() : nullptr;
+    return link && link->stationLinkReady()
+        && m_model->amplifierModel()->connectionPhase()
+               == AmplifierModel::ConnectionPhase::Connected;
+}
+
+// The amp's identity and state as the Core reports them (`amplifier`),
+// shown the way onPgxlStatusUpdated shows the amp's own status keys.
+void PgxlAdvancedPage::refreshRemoteIdentity()
+{
+    if (!isRemote() || !m_firmwareVersion) {
+        return;
+    }
+    const AmplifierModel* amp = m_model->amplifierModel();
+    const auto orDash = [](const QString& text) {
+        return text.isEmpty() ? QStringLiteral("--") : text;
+    };
+    QMap<QString, QString> kvs;
+    kvs.insert(QStringLiteral("version"), orDash(amp->deviceVersion()));
+    kvs.insert(QStringLiteral("serial"), orDash(amp->deviceSerial()));
+    kvs.insert(QStringLiteral("meffa"), orDash(amp->efficiencyText()));
+    if (remoteAmpConnected() && !amp->deviceState().isEmpty()) {
+        kvs.insert(QStringLiteral("state"), amp->deviceState());
+    }
+    onPgxlStatusUpdated(kvs);
+    updateRemoteControls();
+}
+
+// The amp's own settings as the Core last heard them, and its last answer.
+void PgxlAdvancedPage::refreshRemoteDevice()
+{
+    if (!isRemote() || !m_nickname) {
+        return;
+    }
+    const AccessorySettingsModel::Device amp = m_model->accessorySettingsModel()->pgxl();
+    m_updatingFromDevice = true;
+    if (!amp.nickname.isEmpty() && !m_nickname->hasFocus()) {
+        m_nickname->setText(PgxlConnection::asSetupToken(amp.nickname));
+        m_nickname->setModified(false);
+    }
+    if (amp.biasMode == QLatin1String("ClassA")) {
+        m_biasClassA->setChecked(true);
+    } else if (amp.biasMode == QLatin1String("ClassAB")) {
+        m_biasClassAB->setChecked(true);
+    }
+    if (!amp.fanMode.isEmpty()) {
+        const int index = m_fanModeCombo->findText(amp.fanMode);
+        if (index >= 0) {
+            m_fanModeCombo->setCurrentIndex(index);
+        }
+    }
+    if (amp.ledIntensity >= 0 && !m_ledSlider->isSliderDown()) {
+        m_ledSlider->setValue(amp.ledIntensity);
+        m_ledValueLabel->setText(QString::number(amp.ledIntensity));
+    }
+    if (amp.networkKnown) {
+        m_dhcpCheck->setChecked(amp.dhcp);
+        QLineEdit* edits[] = { m_ipEdit, m_netmaskEdit, m_gatewayEdit };
+        const QString values[] = { amp.address, amp.netmask, amp.gateway };
+        for (int i = 0; i < 3; ++i) {
+            if (!edits[i]->hasFocus()) {
+                edits[i]->setText(values[i]);
+            }
+        }
+    }
+    m_updatingFromDevice = false;
+    if (!deviceSettingsAvailable()) {
+        m_deviceAnswer->setText(IStationLink::pgxlDeviceSettingsUnavailableReason());
+    } else {
+        m_deviceAnswer->setText(amp.answerCount > 0 ? amp.answer : QString());
+    }
+    updateRemoteControls();
+}
+
+// What a remote window can change: the amp's own settings only when the
+// Core offers them; Apply, Revert and Save & Reboot only while the Core is
+// connected to the amp (as a local window's need its own connection).
+void PgxlAdvancedPage::updateRemoteControls()
+{
+    if (!isRemote() || !m_revertBtn) {
+        return;
+    }
+    const bool available = deviceSettingsAvailable();
+    const bool connected = remoteAmpConnected();
+    for (QWidget* widget : std::initializer_list<QWidget*>{
+             m_nickname, m_biasClassA, m_biasClassAB, m_fanModeCombo, m_ledSlider,
+             m_dhcpCheck}) {
+        widget->setEnabled(available);
+    }
+    const bool manual = available && !m_dhcpCheck->isChecked();
+    m_ipEdit->setEnabled(manual);
+    m_netmaskEdit->setEnabled(manual);
+    m_gatewayEdit->setEnabled(manual);
+    updateConnectionUi(connected);
+    m_applyIfconfBtn->setEnabled(available && connected);
+    m_revertBtn->setEnabled(available && connected);
+    m_saveAndRebootBtn->setEnabled(available && connected && m_pendingSaveReboot);
+}
+
+void PgxlAdvancedPage::showRemoteOutcome(bool sent, const QString& reason)
+{
+    if (sent) {
+        return;
+    }
+    // Not sent, or refused by the Core: the Core's values stay on the page.
+    refreshRemoteDevice();
+    if (m_deviceAnswer) {
+        m_deviceAnswer->setText(OperatorReasonText::forDisplay(reason));
+    }
+}
+
+bool PgxlAdvancedPage::confirmRemote(const QString& title, const QString& text)
+{
+    if (m_confirmForTesting) {
+        return m_confirmForTesting(title, text);
+    }
+    if (text == PgxlSaveRebootDialog::message()) {
+        PgxlSaveRebootDialog dlg(this);
+        dlg.setWindowTitle(title);
+        return dlg.exec() == QDialog::Accepted;
+    }
+    QMessageBox box(QMessageBox::Warning, title, text, QMessageBox::Cancel, this);
+    QPushButton* apply = box.addButton(title, QMessageBox::AcceptRole);
+    box.setDefaultButton(QMessageBox::Cancel);
+    box.exec();
+    return box.clickedButton() == apply;
+}
+
+QString PgxlAdvancedPage::networkQuestionText()
+{
+    return QStringLiteral("The Power Genius will switch to these network settings. If NereusSDR "
+                          "cannot reach it afterwards, enter its new address for the "
+                          "Power Genius on the Peripherals page and connect again.");
+}
+
+QString PgxlAdvancedPage::networkWarningText()
+{
+    return QStringLiteral("PGXL must be unicast-reachable from this host after the change; "
+                          "if you lose connection, use Scan LAN to rediscover.");
+}
+
+QString PgxlAdvancedPage::firmwareTextForTesting() const
+{
+    return m_firmwareVersion ? m_firmwareVersion->text() : QString();
+}
+
+QString PgxlAdvancedPage::networkProblemForTesting() const
+{
+    return m_networkProblem && !m_networkProblem->isHidden() ? m_networkProblem->text()
+                                                             : QString();
+}
+
+QString PgxlAdvancedPage::deviceAnswerForTesting() const
+{
+    return m_deviceAnswer ? m_deviceAnswer->text() : QString();
+}
+
+void PgxlAdvancedPage::refreshRemote()
+{
+    if (!isRemote()) {
+        return;
+    }
+    const bool available = remoteDataAvailable();
+    const AccessoryDataModel* data = m_model->accessoryDataModel();
+    m_updatingFromDevice = true;
+    m_powerCapCheck->setChecked(data->powerCapEnabled());
+    m_powerCapSpin->setValue(data->powerCapW());
+    m_updatingFromDevice = false;
+    m_powerCapCheck->setEnabled(available);
+    m_powerCapSpin->setEnabled(available && data->powerCapEnabled());
+    if (m_clearFaultsBtn) {
+        m_clearFaultsBtn->setEnabled(available);
+    }
+    m_remoteNote->setText(available
+        ? tr("The Core keeps these for the station's Power Genius. Changes here take effect "
+             "there and show in every window.")
+        : tr("This Core does not share its Power Genius records with this app. Updating the "
+             "Core may help."));
+    refreshRemoteIdentity();
+    refreshRemoteDevice();
+}
+
+void PgxlAdvancedPage::sendRemotePowerCap()
+{
+    IStationLink* link = m_model->stationLink();
+    const IStationLink::CommandOutcome outcome = link
+        ? link->requestPgxlPowerCap(m_powerCapCheck->isChecked(), m_powerCapSpin->value())
+        : IStationLink::CommandOutcome{ false, tr("Connect to the Core first.") };
+    // Follow-up 3: this page shows the Core's refusal; no toast too.
+    m_model->noteAccessoryRequestShownOnPage(outcome.commandId, this);
+    if (!outcome.sent) {
+        refreshRemote();
+        m_remoteNote->setText(OperatorReasonText::forDisplay(outcome.reason));
+    }
+}
+
+int PgxlAdvancedPage::faultRowCountForTesting() const
+{
+    return m_faultTableModel ? m_faultTableModel->rowCount() : 0;
+}
+
+QString PgxlAdvancedPage::faultTextForTesting(int row) const
+{
+    return m_faultTableModel
+        ? m_faultTableModel->data(m_faultTableModel->index(row, 0), Qt::ToolTipRole).toString()
+        : QString();
+}
+
+QString PgxlAdvancedPage::reconnectCountTextForTesting() const
+{
+    return m_reconnectCountLabel ? m_reconnectCountLabel->text() : QString();
+}
+
+QString PgxlAdvancedPage::remoteNoteForTesting() const
+{
+    return m_remoteNote ? m_remoteNote->text() : QString();
 }
 
 void PgxlAdvancedPage::buildFooter(QVBoxLayout* topLay)
@@ -650,7 +1186,7 @@ void PgxlAdvancedPage::onSetupResponse(const QMap<QString, QString>& fields)
     m_updatingFromDevice = true;
 
     if (fields.contains(QStringLiteral("nickname"))) {
-        m_nickname->setText(fields.value(QStringLiteral("nickname")));
+        m_nickname->setText(PgxlConnection::asSetupToken(fields.value(QStringLiteral("nickname"))));
     }
     if (fields.contains(QStringLiteral("bias"))) {
         QString bias = fields.value(QStringLiteral("bias")).toLower();
@@ -721,6 +1257,30 @@ void PgxlAdvancedPage::onDiagnosticsChanged()
 
 void PgxlAdvancedPage::onSaveAndReboot()
 {
+    if (isRemote()) {
+        // R-R3-47 / R-R3-22: the same question as a local window, then the
+        // Core sends the amp `save`.
+        if (!confirmRemote(QStringLiteral("Save & Reboot PGXL"),
+                           PgxlSaveRebootDialog::message())) {
+            return;
+        }
+        IStationLink* link = m_model->stationLink();
+        const IStationLink::CommandOutcome outcome = link
+            ? link->requestPgxlSaveAndRestart()
+            : IStationLink::CommandOutcome{ false, tr("Connect to the Core first.") };
+        // Follow-up 3: this page shows the Core's refusal; no toast too.
+        m_model->noteAccessoryRequestShownOnPage(outcome.commandId, this);
+        if (!outcome.sent) {
+            showRemoteOutcome(false, outcome.reason);
+            return;
+        }
+        m_stateBadge->setText(QStringLiteral("Rebooting..."));
+        m_stateBadge->setStyleSheet(
+            QStringLiteral("background: #c88000; color: #fff;"
+                           " border-radius: 3px; padding: 2px 6px;"));
+        setPendingState(false);
+        return;
+    }
     if (!m_model || !m_model->pgxlConnection()) {
         return;
     }
@@ -740,6 +1300,19 @@ void PgxlAdvancedPage::onSaveAndReboot()
 
 void PgxlAdvancedPage::onRevert()
 {
+    if (isRemote()) {
+        // R-R3-47 / R-R3-22: the Core asks the amp for its settings again
+        // (`setup read`, `ifconf read`); they arrive on accessorySettings.
+        IStationLink* link = m_model->stationLink();
+        const IStationLink::CommandOutcome outcome = link
+            ? link->requestPgxlReadSettings()
+            : IStationLink::CommandOutcome{ false, tr("Connect to the Core first.") };
+        // Follow-up 3: this page shows the Core's refusal; no toast too.
+        m_model->noteAccessoryRequestShownOnPage(outcome.commandId, this);
+        showRemoteOutcome(outcome.sent, outcome.reason);
+        setPendingState(false);
+        return;
+    }
     // Reload fields from device
     if (m_model && m_model->pgxlConnection()
             && m_model->pgxlConnection()->isConnected()) {
@@ -761,6 +1334,15 @@ void PgxlAdvancedPage::onBiasModeChanged()
     QString mode = m_biasClassA->isChecked()
                    ? QStringLiteral("ClassA")
                    : QStringLiteral("ClassAB");
+    if (isRemote()) {
+        // Both buttons report the change; one request per change.
+        auto* button = qobject_cast<QRadioButton*>(sender());
+        if (button && !button->isChecked()) {
+            return;
+        }
+        sendRemoteHardware(QStringLiteral("biasMode"), mode);
+        return;
+    }
     auto& s = AppSettings::instance();
     s.setValue(QStringLiteral("PGXL_BiasMode"), mode);
 
@@ -779,6 +1361,10 @@ void PgxlAdvancedPage::onFanModeChanged(int /*index*/)
         return;
     }
     QString mode = m_fanModeCombo->currentText().toLower();
+    if (isRemote()) {
+        sendRemoteHardware(QStringLiteral("fanMode"), m_fanModeCombo->currentText());
+        return;
+    }
     auto& s = AppSettings::instance();
     s.setValue(QStringLiteral("PGXL_FanMode"), m_fanModeCombo->currentText());
 
@@ -792,6 +1378,10 @@ void PgxlAdvancedPage::onLedSliderChanged(int value)
 {
     m_ledValueLabel->setText(QString::number(value));
     if (m_updatingFromDevice) {
+        return;
+    }
+    if (isRemote()) {
+        sendRemoteHardware(QStringLiteral("ledIntensity"), QString::number(value));
         return;
     }
     auto& s = AppSettings::instance();
@@ -810,6 +1400,10 @@ void PgxlAdvancedPage::onPowerCapToggled(bool checked)
         return;
     }
     m_powerCapSpin->setEnabled(checked);
+    if (isRemote()) {
+        sendRemotePowerCap();
+        return;
+    }
     auto& s = AppSettings::instance();
     s.setValue(QStringLiteral("PGXL_PowerCapEnabled"),
                checked ? QStringLiteral("True") : QStringLiteral("False"));
@@ -819,6 +1413,10 @@ void PgxlAdvancedPage::onPowerCapToggled(bool checked)
 void PgxlAdvancedPage::onPowerCapWattsChanged(int watts)
 {
     if (m_updatingFromDevice) {
+        return;
+    }
+    if (isRemote()) {
+        sendRemotePowerCap();
         return;
     }
     auto& s = AppSettings::instance();
@@ -835,14 +1433,53 @@ void PgxlAdvancedPage::onDhcpToggled(bool checked)
     m_ipEdit->setEnabled(!checked);
     m_netmaskEdit->setEnabled(!checked);
     m_gatewayEdit->setEnabled(!checked);
+    updateRemoteControls();
 }
 
 void PgxlAdvancedPage::onApplyIfconf()
 {
+    // I5: the same check the Core makes, before anything is asked or sent.
+    const QString problem = StationDeviceSettings::networkProblem(
+        m_dhcpCheck->isChecked(), m_ipEdit->text(), m_netmaskEdit->text(),
+        m_gatewayEdit->text());
+    m_networkProblem->setText(problem);
+    m_networkProblem->setVisible(!problem.isEmpty());
+    if (!problem.isEmpty()) {
+        return;
+    }
+    if (isRemote()) {
+        // R-R3-47 / R-R3-22: new network settings can take the amp off the
+        // Core's network, so the window asks first, in the Network
+        // section's own words; nothing is sent without a yes.
+        if (!confirmRemote(QStringLiteral("Apply Network Settings"),
+                           networkQuestionText())) {
+            return;
+        }
+        IStationLink* link = m_model->stationLink();
+        const IStationLink::CommandOutcome outcome = link
+            ? link->requestPgxlNetwork(m_dhcpCheck->isChecked(), m_ipEdit->text().trimmed(),
+                                       m_netmaskEdit->text().trimmed(),
+                                       m_gatewayEdit->text().trimmed())
+            : IStationLink::CommandOutcome{ false, tr("Connect to the Core first.") };
+        // Follow-up 3: this page shows the Core's refusal; no toast too.
+        m_model->noteAccessoryRequestShownOnPage(outcome.commandId, this);
+        if (!outcome.sent) {
+            showRemoteOutcome(false, outcome.reason);
+            return;
+        }
+        setPendingState(true);
+        return;
+    }
     if (!m_model || !m_model->pgxlConnection()) {
         return;
     }
     if (!m_model->pgxlConnection()->isConnected()) {
+        return;
+    }
+    // Operator decision 2026-09-24: a local window asks the same question
+    // before new network settings as a remote one; nothing is sent
+    // without a yes.
+    if (!confirmRemote(QStringLiteral("Apply Network Settings"), networkQuestionText())) {
         return;
     }
     m_model->pgxlConnection()->writeIfconf(
@@ -908,6 +1545,23 @@ void PgxlAdvancedPage::setPendingState(bool pending)
     if (m_saveAndRebootBtn) {
         m_saveAndRebootBtn->setEnabled(pending);
     }
+    updateRemoteControls();
+}
+
+// R-R3-47 / R-R3-22: one hardware setting, through the Core.
+void PgxlAdvancedPage::sendRemoteHardware(const QString& setting, const QString& value)
+{
+    IStationLink* link = m_model->stationLink();
+    const IStationLink::CommandOutcome outcome = link
+        ? link->requestPgxlHardware(setting, value)
+        : IStationLink::CommandOutcome{ false, tr("Connect to the Core first.") };
+    // Follow-up 3: this page shows the Core's refusal; no toast too.
+    m_model->noteAccessoryRequestShownOnPage(outcome.commandId, this);
+    if (!outcome.sent) {
+        showRemoteOutcome(false, outcome.reason);
+        return;
+    }
+    setPendingState(true);
 }
 
 void PgxlAdvancedPage::updateConnectionUi(bool connected)
@@ -962,6 +1616,39 @@ QString PgxlAdvancedPage::formatBytes(quint64 bytes)
             .arg(static_cast<double>(bytes) / 1024.0, 0, 'f', 1);
     }
     return QStringLiteral("%1 B").arg(bytes);
+}
+
+void PgxlAdvancedPage::applySetupIds()
+{
+    // Setup description version 15: this page's ids.
+    const std::pair<QWidget*, const char*> setupIds[] = {
+        {m_nickname, "nickname"},
+        {m_fanModeCombo, "fanMode"},
+        {m_ledSlider, "ledIntensity"},
+        {m_powerCapCheck, "powerCap"},
+        {m_powerCapSpin, "powerCapW"},
+        {m_dhcpCheck, "dhcp"},
+        {m_ipEdit, "address"},
+        {m_netmaskEdit, "netmask"},
+        {m_gatewayEdit, "gateway"},
+        {m_applyIfconfBtn, "applyNetwork"},
+        {m_pairAttemptCheckbox, "pairAttempt"},
+        {m_uptimeLabel, "connectedSinceMs"},
+        {m_rttLabel, "lastRttMs"},
+        {m_keepaliveMissedLabel, "keepaliveMissed"},
+        {m_reconnectCountLabel, "reconnectCount"},
+        {m_framesInLabel, "framesIn"},
+        {m_framesOutLabel, "framesOut"},
+        {m_bytesInLabel, "bytesIn"},
+        {m_bytesOutLabel, "bytesOut"},
+        {m_clearFaultsBtn, "clearFaults"},
+        {m_revertBtn, "revert"},
+        {m_saveAndRebootBtn, "saveReboot"}};
+    for (const auto& [widget, id] : setupIds) {
+        if (widget) {
+            widget->setProperty("nereusSetupId", QStringLiteral("catNetwork.powerGenius.") + QLatin1String(id));
+        }
+    }
 }
 
 }  // namespace NereusSDR

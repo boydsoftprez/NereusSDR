@@ -7,6 +7,8 @@
 //     N2ADR Filter toggle + surrounding HL2 I/O UI)
 //   Project Files/Source/Console/console.cs:25781-25945 (UpdateIOBoard
 //     state machine driving register state; subscribed via IoBoardHl2 model)
+//   Project Files/Source/Console/ucBandwidthView.cs (toDisplayUnits and
+//     formatOverlayLine: the bandwidth monitor's Mbit/s unit and one decimal)
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -19,6 +21,35 @@
 //                transaction log + state-machine viz + bandwidth mini are
 //                pure NereusSDR diagnostic surfaces (mi0bot doesn't expose
 //                them in the Thetis UI).
+//   2026-09-23 - R-R3-46: a remote restore leaves the Core's matrix;
+//                 Probe goes through RadioModel (the Core's verb remotely). J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-46: the N2ADR switch applies only its receive half
+//                without the transmit permission, and its tooltip says so.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-26 - R-R3-46 / R-R3-49 (remote-window parity Task 13): no
+//                 receive-only note when the window's Core applies the whole
+//                 preset (transmitSettingsVersion 8). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-26 - R-R3-32 (remote-window parity Task 14): the bandwidth
+//                 monitor reads RadioModel::hl2LinkFigures(), so a remote
+//                 window shows the Core's HL2 link ("From the Core").
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-26 - Parity Task 14 follow-up (R-R3-32): the bandwidth monitor
+//                 shows mi0bot's unit, Mbit/s (bytes a second x 8 / 1e6,
+//                 rounded up to one decimal), from ucBandwidthView.cs
+//                 [@c26a8a4]; it showed bytes a second / 1e6 labelled as
+//                 megabits. The bars fill at 10 Mbit/s. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - R-IOS-18: the N2ADR switch carries its Setup description
+//                 id. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-09-30: Fix round 1: the I/O board tooltip, the state machine
+//               title and the detected log line use plain punctuation,
+//               not em dashes. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 //
 // --- From Console/setup.cs ---
@@ -118,6 +149,48 @@
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 // =================================================================
+//
+// --- From Console/ucBandwidthView.cs ---
+/*  frmBandwidth.cs
+
+This file is part of a program that implements a Software-Defined Radio.
+
+This code/file can be found on GitHub : https://github.com/ramdor/Thetis
+
+Copyright (C) 2020-2026 Richard Samphire MW0LGE
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at
+
+mw0lge@grange-lane.co.uk
+*/
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+// =================================================================
 
 #include "Hl2IoBoardTab.h"
 
@@ -128,6 +201,7 @@
 #include "core/P1RadioConnection.h"
 #include "core/RadioDiscovery.h"
 #include "core/accessories/N2adrPreset.h"
+#include "models/Band.h"
 #include "models/RadioModel.h"
 
 #include <QCheckBox>
@@ -145,6 +219,8 @@
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
+
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -240,8 +316,15 @@ Hl2IoBoardTab::Hl2IoBoardTab(RadioModel* model, QWidget* parent)
                         .arg(b3, 2, 16, QLatin1Char('0'))
                         .toUpper());
             });
-    connect(m_ioBoard, &IoBoardHl2::currentOcByteChanged,
-            this, &Hl2IoBoardTab::updateOcIndicator);
+    // Plan Task 14 fix wave (R-R3-49): the strip shows the byte the
+    // connection composed, from the model, so a remote window shows the
+    // Core's. It no longer listens to IoBoardHl2::currentOcByteChanged, which
+    // only the Core's own connection emits.
+    connect(m_model, &RadioModel::bandOutputsChanged,
+            this, &Hl2IoBoardTab::refreshOcIndicator);
+    connect(m_model, &RadioModel::connectionStateChanged,
+            this, &Hl2IoBoardTab::refreshOcIndicator);
+    refreshOcIndicator();
     connect(m_bwMonitor, &HermesLiteBandwidthMonitor::throttledChanged,
             this, &Hl2IoBoardTab::onThrottledChanged);
 
@@ -297,7 +380,7 @@ void Hl2IoBoardTab::buildStatusBar(QVBoxLayout* outer)
     m_statusLabel->setToolTip(tr(
         "Detection of mi0bot's custom HL2 daughterboard at I2C address 0x41.\n"
         "If you only have the N2ADR Filter and/or smallio companion boards,\n"
-        "this will (correctly) say Not detected — those boards don't speak\n"
+        "this will (correctly) say Not detected: those boards don't speak\n"
         "this I2C protocol.  The N2ADR is driven by OC pins (see Live OC pin\n"
         "state below + Setup → Hardware → OC Outputs → HF for the matrix)."));
     QFont bold = m_statusLabel->font();
@@ -362,6 +445,7 @@ void Hl2IoBoardTab::buildConfigAndRegisterRow(QVBoxLayout* outer)
     // N2ADR Filter enable — ports mi0bot setup.cs chkHERCULES [@c26a8a4]
     // chkHERCULES: "Enable N2ADR Filter board" toggle in setup.cs:20234-20238
     m_n2adrFilter = new QCheckBox(tr("Enable N2ADR Filter board"), configGroup);
+    m_n2adrFilter->setProperty("nereusSetupId", "hardware.hl2Io.n2adrFilter");
     configLayout->addWidget(m_n2adrFilter);
 
     auto* noteLabel = new QLabel(
@@ -465,7 +549,7 @@ void Hl2IoBoardTab::buildConfigAndRegisterRow(QVBoxLayout* outer)
 void Hl2IoBoardTab::buildStateMachineRow(QVBoxLayout* outer)
 {
     // 12-step UpdateIOBoard state machine per mi0bot console.cs:25844-25928 [@c26a8a4]
-    auto* smGroup = new QGroupBox(tr("State machine  (UpdateIOBoard — 12 steps)"), this);
+    auto* smGroup = new QGroupBox(tr("State machine  (UpdateIOBoard, 12 steps)"), this);
     auto* smLayout = new QHBoxLayout(smGroup);
     smLayout->setSpacing(4);
 
@@ -540,6 +624,7 @@ void Hl2IoBoardTab::buildI2cAndBandwidthRow(QVBoxLayout* outer)
 
     // ── Right: Bandwidth monitor mini ─────────────────────────────────────────
     auto* bwGroup = new QGroupBox(tr("Bandwidth monitor"), this);
+    m_bwGroup = bwGroup;
     auto* bwLayout = new QVBoxLayout(bwGroup);
     bwLayout->setSpacing(4);
 
@@ -553,7 +638,7 @@ void Hl2IoBoardTab::buildI2cAndBandwidthRow(QVBoxLayout* outer)
     m_ep6Bar->setValue(0);
     m_ep6Bar->setTextVisible(false);
     m_ep6Bar->setFixedHeight(14);
-    m_ep6RateLabel = new QLabel(QStringLiteral("0.0 Mbps"), bwGroup);
+    m_ep6RateLabel = new QLabel(QStringLiteral("0.0 Mbit/s"), bwGroup);
     m_ep6RateLabel->setStyleSheet(QStringLiteral("font-size: 10px; font-family: monospace;"));
     m_ep6RateLabel->setFixedWidth(70);
     ep6Row->addWidget(ep6Lbl);
@@ -571,7 +656,7 @@ void Hl2IoBoardTab::buildI2cAndBandwidthRow(QVBoxLayout* outer)
     m_ep2Bar->setValue(0);
     m_ep2Bar->setTextVisible(false);
     m_ep2Bar->setFixedHeight(14);
-    m_ep2RateLabel = new QLabel(QStringLiteral("0.0 Mbps"), bwGroup);
+    m_ep2RateLabel = new QLabel(QStringLiteral("0.0 Mbit/s"), bwGroup);
     m_ep2RateLabel->setStyleSheet(QStringLiteral("font-size: 10px; font-family: monospace;"));
     m_ep2RateLabel->setFixedWidth(70);
     ep2Row->addWidget(ep2Lbl);
@@ -631,17 +716,52 @@ void Hl2IoBoardTab::updateStatusBar(bool detected)
     }
 }
 
-// ── updateOcIndicator ─────────────────────────────────────────────────────────
+// ── refreshOcIndicator / updateOcIndicator ───────────────────────────────────
+
+void Hl2IoBoardTab::refreshOcIndicator()
+{
+    if (!m_model->bandOutputsKnown()) {
+        m_ocShownByte = -1;
+        if (m_ocBandLabel) { m_ocBandLabel->setText(QStringLiteral("band=--")); }
+        if (m_ocByteLabel) { m_ocByteLabel->setText(QStringLiteral("--")); }
+        if (m_ocMoxLabel) {
+            m_ocMoxLabel->setText(QStringLiteral("--"));
+            m_ocMoxLabel->setStyleSheet(QStringLiteral("color: #888888; font-weight: bold;"));
+        }
+        for (QFrame* led : m_ocPinLeds) {
+            if (led) {
+                led->setStyleSheet(QStringLiteral(
+                    "QFrame { background: #222; border: 1px solid #555; border-radius: 5px; }"));
+            }
+        }
+        return;
+    }
+    updateOcIndicator(static_cast<quint8>(m_model->bandOutputsByte()),
+                      m_model->bandOutputsBand(), m_model->bandOutputsKeyed());
+}
+
+QString Hl2IoBoardTab::ocByteTextForTest() const
+{
+    return m_ocByteLabel ? m_ocByteLabel->text() : QString();
+}
+
+QString Hl2IoBoardTab::ocBandTextForTest() const
+{
+    return m_ocBandLabel ? m_ocBandLabel->text() : QString();
+}
+
+QString Hl2IoBoardTab::ocKeyedTextForTest() const
+{
+    return m_ocMoxLabel ? m_ocMoxLabel->text() : QString();
+}
 
 void Hl2IoBoardTab::updateOcIndicator(quint8 ocByte, int bandIdx, bool mox)
 {
-    static constexpr const char* kBandLabels[] = {
-        "160m", "80m", "60m", "40m", "30m", "20m", "17m",
-        "15m", "12m", "10m", "6m", "GEN", "WWV", "XVTR"
-    };
+    m_ocShownByte = int(ocByte);
+    // bandIdx is a Band number (2 m is 27, R-IOS-26).
     if (m_ocBandLabel) {
-        const QString name = (bandIdx >= 0 && bandIdx < int(sizeof(kBandLabels)/sizeof(*kBandLabels)))
-                             ? QString::fromLatin1(kBandLabels[bandIdx])
+        const QString name = (bandIdx >= 0 && bandIdx < int(Band::Count))
+                             ? bandLabel(static_cast<Band>(bandIdx))
                              : QString::number(bandIdx);
         m_ocBandLabel->setText(QStringLiteral("band=%1").arg(name));
     }
@@ -740,28 +860,81 @@ void Hl2IoBoardTab::appendI2cLogEntry(const QString& text)
 
 // ── updateBwDisplay ───────────────────────────────────────────────────────────
 
+namespace {
+
+// From mi0bot ucBandwidthView.cs:464-470 [@c26a8a4] toDisplayUnits, the
+// Mbitps branch (the frmBandwidth designer's DisplayUnits):
+//   return bytes_per_second * 8.0 / 1_000_000.0;
+double megabitsPerSecond(double bytesPerSecond)
+{
+    return bytesPerSecond * 8.0 / 1000000.0;
+}
+
+// From mi0bot ucBandwidthView.cs:440-450 [@c26a8a4] formatOverlayLine:
+//   double v1 = Math.Ceiling(value_display * 10.0) / 10.0;
+//   ... v1.ToString("F1") + " " + unit;   with unit "Mbit/s" (line 421)
+QString formatMegabitsPerSecond(double megabits)
+{
+    const double rounded = std::ceil(megabits * 10.0) / 10.0;
+    return QStringLiteral("%1 Mbit/s").arg(rounded, 0, 'f', 1);
+}
+
+}  // namespace
+
 void Hl2IoBoardTab::updateBwDisplay()
 {
-    // EP6 ingress: scale to 100% at 10 Mbps
-    // 192k×24bit×2ch = ~9.2 Mbps; round to 10 Mbps as display ceiling.
-    static constexpr double kMaxBps = 10.0e6;
+    // EP6 ingress: scale to 100% at 10 Mbit/s
+    // 192k×24bit×2ch = ~9.2 Mbit/s; round to 10 Mbit/s as display ceiling.
+    // NereusSDR bar, no upstream equivalent (mi0bot's view autoscales).
+    static constexpr double kMaxMbps = 10.0;
 
-    const double ep6Bps = m_bwMonitor->ep6IngressBytesPerSec();
-    const double ep2Bps = m_bwMonitor->ep2EgressBytesPerSec();
+    // R-R3-32 (parity Task 14): this window's monitor, or in a remote
+    // window the Core's figures; one the Core has not sent shows as
+    // unavailable, never 0.
+    const RadioModel::Hl2LinkFigures figures = m_model->hl2LinkFigures();
+    const bool fromCore = m_model->hl2LinkFiguresFromCore();
+    const QString source = fromCore ? tr("From the Core") : QString();
+    const auto showRate = [&](std::optional<double> bps, QProgressBar* bar, QLabel* label) {
+        if (!bps) {
+            bar->setValue(0);
+            label->setText(tr("Unavailable"));
+        } else {
+            const double megabits = megabitsPerSecond(*bps);
+            bar->setValue(qBound(0, static_cast<int>(megabits / kMaxMbps * 100.0), 100));
+            label->setText(formatMegabitsPerSecond(megabits));
+        }
+        label->setToolTip(source);
+    };
+    showRate(figures.rxBytesPerSecond, m_ep6Bar, m_ep6RateLabel);
+    showRate(figures.txBytesPerSecond, m_ep2Bar, m_ep2RateLabel);
+    showThrottleState(figures.throttled);
+    m_throttleStatusLabel->setToolTip(source);
 
-    const int ep6Pct = qBound(0, static_cast<int>(ep6Bps / kMaxBps * 100.0), 100);
-    const int ep2Pct = qBound(0, static_cast<int>(ep2Bps / kMaxBps * 100.0), 100);
+    m_throttleEventLabel->setText(figures.throttleEvents
+                                      ? QString::number(*figures.throttleEvents)
+                                      : tr("Unavailable"));
+    m_throttleEventLabel->setToolTip(fromCore ? tr("The Core does not send this count.")
+                                              : QString());
+    if (m_bwGroup) {
+        m_bwGroup->setTitle(fromCore ? tr("Bandwidth monitor, from the Core")
+                                     : tr("Bandwidth monitor"));
+    }
+}
 
-    m_ep6Bar->setValue(ep6Pct);
-    m_ep2Bar->setValue(ep2Pct);
-
-    m_ep6RateLabel->setText(
-        QStringLiteral("%1 Mbps").arg(ep6Bps / 1.0e6, 0, 'f', 2));
-    m_ep2RateLabel->setText(
-        QStringLiteral("%1 Mbps").arg(ep2Bps / 1.0e6, 0, 'f', 2));
-
-    m_throttleEventLabel->setText(
-        QString::number(m_bwMonitor->throttleEventCount()));
+void Hl2IoBoardTab::showThrottleState(std::optional<bool> throttled)
+{
+    if (!throttled) {
+        m_throttleStatusLabel->setText(tr("Unavailable"));
+        m_throttleStatusLabel->setStyleSheet(QStringLiteral("font-size: 10px;"));
+    } else if (*throttled) {
+        m_throttleStatusLabel->setText(tr("● throttled"));
+        m_throttleStatusLabel->setStyleSheet(
+            QStringLiteral("font-size: 10px; color: #ff4444;"));
+    } else {
+        m_throttleStatusLabel->setText(tr("○ not throttled"));
+        m_throttleStatusLabel->setStyleSheet(
+            QStringLiteral("font-size: 10px; color: #22cc44;"));
+    }
 }
 
 // ── decodeRegister ────────────────────────────────────────────────────────────
@@ -813,7 +986,7 @@ void Hl2IoBoardTab::onDetectedChanged(bool detected)
     if (detected) {
         refreshAllRegisters();
         appendI2cLogEntry(
-            QStringLiteral("[%1] Board detected — hardware version 0x%2")
+            QStringLiteral("[%1] Board detected, hardware version 0x%2")
                 .arg(QDateTime::currentDateTime().toString(QStringLiteral("hh:mm:ss.zzz")))
                 .arg(m_ioBoard->hardwareVersion(), 2, 16, QLatin1Char('0')).toUpper());
     }
@@ -885,15 +1058,12 @@ void Hl2IoBoardTab::onI2cQueueChanged()
 
 void Hl2IoBoardTab::onThrottledChanged(bool throttled)
 {
-    if (throttled) {
-        m_throttleStatusLabel->setText(tr("● throttled"));
-        m_throttleStatusLabel->setStyleSheet(
-            QStringLiteral("font-size: 10px; color: #ff4444;"));
-    } else {
-        m_throttleStatusLabel->setText(tr("○ not throttled"));
-        m_throttleStatusLabel->setStyleSheet(
-            QStringLiteral("font-size: 10px; color: #22cc44;"));
+    // This window's own monitor (a remote window's never changes; the
+    // Core's throttle reaches it through updateBwDisplay).
+    if (m_model->hl2LinkFiguresFromCore()) {
+        return;
     }
+    showThrottleState(throttled);
     m_throttleEventLabel->setText(
         QString::number(m_bwMonitor->throttleEventCount()));
 
@@ -954,9 +1124,59 @@ void Hl2IoBoardTab::applyN2adrMatrix(bool checked)
 {
     if (!m_model) { return; }
     OcMatrix& oc = m_model->ocMatrixMutable();
-    applyN2adrPreset(oc, checked);
+    // R-R3-46: without the transmit permission (a remote window) only the
+    // receive half applies, as the Core applies it; the transmit pins stay
+    // the Core's and none is saved from here.
+    if (m_transmitPermitted) {
+        applyN2adrPreset(oc, checked);
+    } else {
+        applyN2adrPresetReceiveOnly(oc, checked);
+    }
     // Persist whichever state we just composed (cleared or populated).
     oc.save();
+}
+
+void Hl2IoBoardTab::setTransmitPermitted(bool permitted, const QString& reason)
+{
+    Q_UNUSED(reason);  // the switch stays usable: its receive half applies
+    m_transmitPermitted = permitted;
+    refreshN2adrToolTip();
+}
+
+void Hl2IoBoardTab::setCoreAppliesWholeN2adrPreset(bool whole)
+{
+    m_coreAppliesWholePreset = whole;
+    refreshN2adrToolTip();
+}
+
+void Hl2IoBoardTab::refreshN2adrToolTip()
+{
+    // Say so on the switch when it moves only the receive filters: without
+    // transmit (applyN2adrMatrix) and with a Core that applies only that
+    // half. A Core at transmitSettingsVersion 8 applies the whole preset
+    // from the switch itself (RadioModel::flushRemoteHardwareApply).
+    if (m_n2adrFilter) {
+        static const char* const kOwnTip = "nereusN2adrOwnToolTip";
+        if (!m_n2adrFilter->property(kOwnTip).isValid()) {
+            m_n2adrFilter->setProperty(kOwnTip, m_n2adrFilter->toolTip());
+        }
+        const QString own = m_n2adrFilter->property(kOwnTip).toString();
+        const QString note = receiveOnlyN2adrNote();
+        const bool receiveOnly = !m_transmitPermitted && !m_coreAppliesWholePreset;
+        m_n2adrFilter->setToolTip(!receiveOnly ? own
+                                               : (own.isEmpty() ? note : own + QLatin1Char('\n') + note));
+    }
+}
+
+QString Hl2IoBoardTab::receiveOnlyN2adrNote()
+{
+    return tr("In a remote window this switches the receive filters only; the transmit "
+              "filters follow once remote transmit is available.");
+}
+
+QString Hl2IoBoardTab::n2adrToolTipForTest() const
+{
+    return m_n2adrFilter ? m_n2adrFilter->toolTip() : QString();
 }
 
 void Hl2IoBoardTab::onProbeClicked()
@@ -965,17 +1185,26 @@ void Hl2IoBoardTab::onProbeClicked()
     // FW minor) on the IoBoardHl2 queue.  Wire encoder drains them on the
     // next ep2 frames; responses populate IoBoardHl2 register state and
     // setDetected.  Noop on non-HL2 boards or before connect.
-    bool issued = false;
-    if (auto* p1 = qobject_cast<P1RadioConnection*>(m_model->connection())) {
-        p1->requestIoBoardProbe();
-        issued = true;
-    }
+    //
+    // R-R3-46: RadioModel makes the same P1 call locally; in a remote
+    // window it asks the Core, whose radio the board is on.
+    const bool remote = m_model && !m_model->ownsLocalDsp();
+    const RadioModel::IoBoardProbeOutcome outcome =
+        m_model ? m_model->requestIoBoardProbe() : RadioModel::IoBoardProbeOutcome{};
+    const bool issued = outcome.sent;
 
+    QString result;
+    if (!remote) {
+        result = issued ? QStringLiteral("(3 reads enqueued)")
+                        : QStringLiteral("(not sent: no Protocol 1 connection)");
+    } else {
+        result = issued ? QStringLiteral("(asked the Core)")
+                        : QStringLiteral("(not sent: %1)").arg(outcome.reason);
+    }
     appendI2cLogEntry(
         QStringLiteral("[%1] *** User-initiated probe %2 ***")
             .arg(QDateTime::currentDateTime().toString(QStringLiteral("hh:mm:ss.zzz")))
-            .arg(issued ? QStringLiteral("(3 reads enqueued)")
-                        : QStringLiteral("(no P1 connection — skipped)")));
+            .arg(result));
     m_lastProbeLabel->setText(
         QStringLiteral("Last probe: %1")
             .arg(QDateTime::currentDateTime().toString(QStringLiteral("hh:mm:ss"))));
@@ -1053,6 +1282,12 @@ void Hl2IoBoardTab::restoreSettings(const QMap<QString, QVariant>& settings)
     if (!keyPresent) {
         return;  // matrix already reconciled at connect-time; do not wipe.
     }
+    // R-R3-46: a remote window shows the Core's matrix, which the Core
+    // reconciled at its own connect. Rewriting it here would send the
+    // Core a write just for opening Setup.
+    if (m_model && !m_model->ownsLocalDsp()) {
+        return;
+    }
     applyN2adrMatrix(checked);
 }
 
@@ -1088,6 +1323,16 @@ QString Hl2IoBoardTab::ep6RateTextForTest() const
 QString Hl2IoBoardTab::ep2RateTextForTest() const
 {
     return m_ep2RateLabel ? m_ep2RateLabel->text() : QString();
+}
+
+int Hl2IoBoardTab::ep6BarPercentForTest() const
+{
+    return m_ep6Bar ? m_ep6Bar->value() : -1;
+}
+
+int Hl2IoBoardTab::ep2BarPercentForTest() const
+{
+    return m_ep2Bar ? m_ep2Bar->value() : -1;
 }
 
 QString Hl2IoBoardTab::throttleStatusTextForTest() const

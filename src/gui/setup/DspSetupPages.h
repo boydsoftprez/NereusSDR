@@ -15,6 +15,9 @@
 //   2026-05-04 — Issue #175 Wave 1: dropped misplaced AM TX / Carrier
 //                 Level stub from AmSamSetupPage (control belongs at
 //                 Thetis grpTXAM on tpTransmit, not the DSP/AM tab).
+//   2026-09-25 - R-R3-49 (parity Task 4): AgcAlcSetupPage and CfcSetupPage
+//                 override setTransmitSettingsPermittedAt for version 4.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -92,23 +95,72 @@
 
 #include <QCheckBox>
 #include <QList>
+#include <functional>
 
 class QTableWidget;
 
 namespace NereusSDR {
 
 class RadioModel;
+class SliceModel;
+class NnrControls;
 enum class AGCMode : int;
+
+// A Setup dialog's receiver authority. Ordinary dialogs use the model's
+// active slice; a hosted desktop supplies its owned window selection.
+class DspReceiverSelection : public QObject {
+    Q_OBJECT
+public:
+    explicit DspReceiverSelection(QObject* parent = nullptr) : QObject(parent) {}
+    void setSelector(std::function<SliceModel*()> selector,
+                     std::function<bool()> requiresOwnedReceiver = {});
+    bool restrictsReceiver() const;
+    SliceModel* selected(RadioModel* model) const;
+    void notifyChanged(RadioModel* model);
+signals:
+    void changed();
+private:
+    std::function<SliceModel*()> m_selector;
+    std::function<bool()> m_requiresOwnedReceiver;
+    SliceModel* m_lastSelected = nullptr;
+    bool m_lastRestricted = false;
+};
+
+class ReceiverDspSetupPage : public SetupPage {
+public:
+    ReceiverDspSetupPage(const QString& title, RadioModel* model, QWidget* parent,
+                         DspReceiverSelection* selection);
+protected:
+    SliceModel* selectedSlice();
+    DspReceiverSelection* receiverSelection() const { return m_selection; }
+    void watchReceiverSelection(std::function<void()> update);
+private:
+    DspReceiverSelection* m_selection;
+};
 
 // ── AGC / ALC ─────────────────────────────────────────────────────────────────
 
-class AgcAlcSetupPage : public SetupPage {
+class AgcAlcSetupPage : public ReceiverDspSetupPage {
     Q_OBJECT
 public:
-    explicit AgcAlcSetupPage(RadioModel* model, QWidget* parent = nullptr);
+    explicit AgcAlcSetupPage(RadioModel* model, QWidget* parent = nullptr,
+                             DspReceiverSelection* selection = nullptr);
+
+    // R-R3-49 (parity Task 4): the TX Leveler and TX ALC groups follow the
+    // transmit settings gate at version 4; the receive AGC groups on the
+    // page do not.
+    void setTransmitSettingsPermittedAt(int version, bool permitted,
+                                        const QString& reason) override;
 
 private:
     void updateCustomGating(AGCMode mode);
+    void rebuildForActiveSlice();
+
+    QGroupBox*  m_txLevelerGrp{nullptr};
+    QGroupBox*  m_txAlcGrp{nullptr};
+    bool m_txSettingsGateKnown{false};
+    bool m_txSettingsPermitted{false};
+    QString m_txSettingsReason;
 
     QComboBox*  m_agcModeCombo{nullptr};
     QSpinBox*   m_agcAttack{nullptr};
@@ -133,33 +185,38 @@ private:
 
 // ── NR / ANF ──────────────────────────────────────────────────────────────────
 
-class NrAnfSetupPage : public SetupPage {
+class NrAnfSetupPage : public ReceiverDspSetupPage {
     Q_OBJECT
 public:
-    explicit NrAnfSetupPage(RadioModel* model, QWidget* parent = nullptr);
+    explicit NrAnfSetupPage(RadioModel* model, QWidget* parent = nullptr,
+                            DspReceiverSelection* selection = nullptr);
 
     // Programmatically select a sub-tab by NrSlot. Used by MainWindow to
     // route "More Settings…" popup clicks to the correct filter's sub-tab.
-    void selectSubtab(NereusSDR::NrSlot slot);
+    void selectSubtab(NereusSDR::NrSlot slot, int openerSliceId = -1);
 
 private:
+    void rebuildForActiveSlice();
     QTabWidget* m_tabs{nullptr};  // owned by content layout
+    NnrControls* m_nnrControls{nullptr};
 };
 
 // ── NB / SNB ──────────────────────────────────────────────────────────────────
 
-class NbSnbSetupPage : public SetupPage {
+class NbSnbSetupPage : public ReceiverDspSetupPage {
     Q_OBJECT
 public:
-    explicit NbSnbSetupPage(RadioModel* model, QWidget* parent = nullptr);
+    explicit NbSnbSetupPage(RadioModel* model, QWidget* parent = nullptr,
+                            DspReceiverSelection* selection = nullptr);
 };
 
 // ── CW ───────────────────────────────────────────────────────────────────────
 
-class CwSetupPage : public SetupPage {
+class CwSetupPage : public ReceiverDspSetupPage {
     Q_OBJECT
 public:
-    explicit CwSetupPage(RadioModel* model, QWidget* parent = nullptr);
+    explicit CwSetupPage(RadioModel* model, QWidget* parent = nullptr,
+                         DspReceiverSelection* selection = nullptr);
 
     // P1 full-parity §4.2 — gate the "Sidetone Volume" row on
     // BoardCapabilities.hasSidetoneGenerator.  HL2 firmware generates the
@@ -182,18 +239,20 @@ private:
 
 // ── AM / SAM ─────────────────────────────────────────────────────────────────
 
-class AmSamSetupPage : public SetupPage {
+class AmSamSetupPage : public ReceiverDspSetupPage {
     Q_OBJECT
 public:
-    explicit AmSamSetupPage(RadioModel* model, QWidget* parent = nullptr);
+    explicit AmSamSetupPage(RadioModel* model, QWidget* parent = nullptr,
+                            DspReceiverSelection* selection = nullptr);
 };
 
 // ── FM ───────────────────────────────────────────────────────────────────────
 
-class FmSetupPage : public SetupPage {
+class FmSetupPage : public ReceiverDspSetupPage {
     Q_OBJECT
 public:
-    explicit FmSetupPage(RadioModel* model, QWidget* parent = nullptr);
+    explicit FmSetupPage(RadioModel* model, QWidget* parent = nullptr,
+                         DspReceiverSelection* selection = nullptr);
 };
 
 // (VoxDexpSetupPage placeholder removed in 3M-3a-iii Task 16 — wired page
@@ -219,6 +278,11 @@ class CfcSetupPage : public SetupPage {
     Q_OBJECT
 public:
     explicit CfcSetupPage(RadioModel* model, QWidget* parent = nullptr);
+
+    // R-R3-49 (parity Task 4): the phase rotator, CFC and CESSB settings
+    // follow the transmit settings gate at version 4.
+    void setTransmitSettingsPermittedAt(int version, bool permitted,
+                                        const QString& reason) override;
 
 signals:
     /// Emitted when the [Configure CFC bands…] button is clicked.  Batch 6
@@ -252,10 +316,11 @@ private:
 // outside Settings says TNF, mirroring upstream's own tpDSPMNF vs chkTNF
 // split. TNF design section 9.
 
-class MnfSetupPage : public SetupPage {
+class MnfSetupPage : public ReceiverDspSetupPage {
     Q_OBJECT
 public:
-    explicit MnfSetupPage(RadioModel* model, QWidget* parent = nullptr);
+    explicit MnfSetupPage(RadioModel* model, QWidget* parent = nullptr,
+                          DspReceiverSelection* selection = nullptr);
 
 protected:
     void showEvent(QShowEvent* event) override;

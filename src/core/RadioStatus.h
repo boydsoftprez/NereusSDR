@@ -20,6 +20,9 @@
 //                 Thetis (voltage is derived inside computeAlexFwdPower /
 //                 computeAlexRevPower, never returned directly); dropped here
 //                 per source-first deviation policy.
+//   2026-09-27 - Parity Task 33 (R-R3-49): setPowerReadings, a remote
+//                 window's copy of the Core's readings. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 // --- From console.cs ---
@@ -144,6 +147,10 @@ public:
     // ── Setters (called by connection layer) ──────────────────────────────
     void setForwardPower(double watts);
     void setReflectedPower(double watts);   // also recomputes SWR
+    // Parity Task 33 (R-R3-49, NereusSDR-original): a remote window's copy
+    // of the Core's three power readings as one sample, SWR as the Core
+    // worked it, with one powerChanged.
+    void setPowerReadings(double forwardWatts, double reflectedWatts, double swr);
     void setExciterPowerMw(int mw);
     void setPaTemperature(double celsius);
     void setPaCurrent(double amps);

@@ -93,10 +93,10 @@ extern void setNc_nbp (NBP a);
 
 extern void setMp_nbp (NBP a);
 
-void RXANBPSetFreqs (int channel, double flow, double fhigh);
+__declspec (dllexport) void RXANBPSetFreqs (int channel, double flow, double fhigh);
 
-void RXANBPSetNC (int channel, int nc);
+__declspec (dllexport) void RXANBPSetNC (int channel, int nc);
 
-void RXANBPSetMP (int channel, int mp);
+__declspec (dllexport) void RXANBPSetMP (int channel, int mp);
 
 #endif

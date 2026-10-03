@@ -10,6 +10,13 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-09-28 - RADE end-of-over callsigns by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code: radeAudioDrained,
+//                 armRadeAudioDrainedNotice and clearRadeAudio, so the
+//                 end-of-over tail knows when its audio has gone out.
+//   2026-09-22 — R-R3-36 prerequisite by J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex. Worker source routing now follows PC-mic
+//                 selection intent and fails silent when capture is unavailable.
 //   2026-04-29 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.  Phase 3M-1c TX pump
@@ -19,6 +26,18 @@
 //                 cadence sourced from radio mic frames via
 //                 TxMicSource).  Plan:
 //                 docs/architecture/phase3m-1c-tx-pump-architecture-plan.md
+//   2026-09-25 : R-R3-39 (station Task 32) by J.J. Boyd (KG4VCF): lifecycle
+//                 note for the transmit lane (the TX channel stays on its
+//                 owner's thread). AI-assisted via Anthropic Claude Code.
+//   2026-09-25 : iPhone app plan Task 36 (R-IOS-13) by J.J. Boyd (KG4VCF):
+//                 the remote microphone ring (RemoteMicFeed), its own
+//                 branch ahead of the VAX and PC branches in the normal and
+//                 the RADE paths. AI-assisted via Anthropic Claude Code.
+//   2026-09-30 : RADE threads by J.J. Boyd (KG4VCF): setRadeMicKeyed. The
+//                 RADE branch hands the microphone to the encoder only
+//                 while the transmitter is keyed, so an unkeyed worker no
+//                 longer posts a block to the main thread every tick.
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file.  The Thetis cmbuffs.c /
@@ -44,6 +63,7 @@ namespace NereusSDR {
 
 class AudioEngine;
 class RadeChannel;
+class RemoteMicFeed;
 class TxChannel;
 class TxMicSource;
 
@@ -68,12 +88,10 @@ class TxMicSource;
 //   pcm->in[stream]          <==>  m_in (interleaved I/Q double, 128 elems)
 //
 // PC mic override (Thetis cmaster.c:379 — `asioIN(pcm->in[stream])`):
-//   When AudioEngine::isPcMicOverrideActive() returns true (the user
-//   selected MicSource::Pc AND m_txInputBus is open), the worker
-//   overwrites the radio mic samples in m_in with PC mic samples
-//   pulled via AudioEngine::pullTxMic.  Partial pulls (< kBlockFrames)
-//   leave the remaining slots filled with the radio mic data — a
-//   "smooth degradation" rather than a hard zero-fill.
+//   When AudioEngine::isPcMicSelected() returns true, the worker overwrites
+//   the radio mic samples in m_in with samples pulled via pullTxMic. An
+//   absent/closed bus and partial pulls both zero-fill the unavailable part
+//   of the block, so selected PC intent can never fall through to radio mic.
 //
 // VOX/DEXP gating (Thetis cmaster.c:388 — `xdexp(tx)`) is deferred until
 // create_dexp is ported (separate follow-up).  VOX setters in TxChannel
@@ -84,7 +102,10 @@ class TxMicSource;
 //   1. Construct (parent = RadioModel).
 //   2. setMicSource / setTxChannel / setAudioEngine — all required
 //      before startPump().  TxChannel must already be moveToThread()'d
-//      to this worker.
+//      to this worker.  (R-R3-39: with the transmit lane RadioModel no
+//      longer moves it; its setters post their WDSP calls to the lane,
+//      and the worker only runs the per-block DEXP and fexchange0. The
+//      per-block event pump runs only for a channel that does live here.)
 //   3. startPump() — calls QThread::start().  The new thread enters
 //      run(), which loops on the semaphore until isRunning() goes false.
 //   4. stopPump() — calls m_micSource->stop() (which posts the poison
@@ -137,6 +158,15 @@ public:
     /// and the matching path-flip back to Wdsp.
     void setRadeChannel(RadeChannel* channel);
 
+    /// iPhone app plan Task 36 (R-IOS-13): the remote device's microphone
+    /// (RadioModel's RemoteMicFeed, which outlives this worker). Pulled on
+    /// every block; while it is in use (the remote device holds transmit
+    /// and is keyed, has VOX armed, or its key is waiting for the buffer)
+    /// its audio replaces the operator's source, in the normal path and in
+    /// the RADE path, ahead of VAX and the PC microphone. The TCI branch
+    /// returns before RADE and is not reused. Null clears.
+    void setRemoteMicFeed(RemoteMicFeed* feed);
+
     /// Start the worker.  Internally calls QThread::start().  Idempotent.
     void startPump();
 
@@ -148,6 +178,15 @@ public:
     /// Block size in mono frames per pump tick.  Mirrors Thetis
     /// getbuffsize(48000) at cmsetup.c:106-110 [v2.10.3.13].
     static constexpr int kBlockFrames = 64;
+
+    /// RADE end-of-over callsigns: the TX path latched at the last MOX-on
+    /// (setCurrentTxPath). Read from the main thread; the worker reads the
+    /// same atomic.
+    TxPath currentTxPath() const { return m_currentTxPath.load(std::memory_order_acquire); }
+
+    /// RADE threads: whether the RADE branch hands microphone blocks to
+    /// the encoder (setRadeMicKeyed).
+    bool radeMicKeyed() const { return m_radeMicKeyed.load(std::memory_order_acquire); }
 
 #ifdef NEREUS_BUILD_TESTS
     /// Test seam — drive one pump tick synchronously without standing up
@@ -164,10 +203,19 @@ public:
     /// after setCurrentTxPath().
     TxPath currentTxPathForTest() const;
 
+    /// RADE end-of-over callsigns test seam: the RADE audio queued for the
+    /// dispatch (48 kHz mono samples).
+    int radeAudioQueuedSamplesForTest();
+
     /// Phase 3R K-bench test seam — observe the active RADE channel
     /// pointer without exposing the production member.  Tests verify
     /// setRadeChannel round-trip + null-clear via this accessor.
     RadeChannel* radeChannelForTest() const;
+
+    /// Task 36 test seam: dispatch one block from `radioMic` (kBlockFrames
+    /// mono samples) as run() would after draining the mic source, without
+    /// the source's semaphore.
+    void dispatchBlockForTest(const float* radioMic);
 #endif
 
 signals:
@@ -185,6 +233,11 @@ signals:
     /// dedicated QThread.  The queued delivery serialises across the
     /// thread boundary without holding any audio-thread lock.
     void radeMicBlockReady(const QByteArray& speech16k);
+
+    /// RADE end-of-over callsigns: the RADE audio queued before
+    /// armRadeAudioDrainedNotice() has all gone through the TX chain.
+    /// Emitted once per arming, from this worker's thread.
+    void radeAudioDrained();
 
     /// Phase 3F Sub-Epic J Task 9: internal anti-VOX handoff.  Carries an
     /// OWNED copy of one mixed anti-VOX reference block from
@@ -215,6 +268,12 @@ public slots:
     // Idempotent: setting to the current value is a cheap no-op store.
     void setCurrentTxPath(TxPath path);
 
+    // RADE threads (2026-09-30): the RADE branch emits radeMicBlockReady
+    // only while this is set. RadioModel sets it at MOX-on and clears it at
+    // MOX-off (moxStateChanged, the same edge that latches the path), as
+    // FreeDV runs its transmit pipeline only while transmitting. Any thread.
+    void setRadeMicKeyed(bool keyed);
+
     // ── Phase 3R K-bench (source-first reframe): RADE mic substitute ────
     //
     // RadioModel's txModemReady lambda calls this after extracting the
@@ -228,6 +287,16 @@ public slots:
     // worker thread differs). Invoked via QMetaObject::invokeMethod
     // with Qt::QueuedConnection from the wireRadeChannel lambda.
     void setRadeAudioBlock(const QByteArray& audio48k);
+
+    // ── RADE end-of-over callsigns ──────────────────────────────────────
+    //
+    // armRadeAudioDrainedNotice: queued behind the end-of-over frame's
+    // setRadeAudioBlock, so radeAudioDrained fires once the dispatch has
+    // taken the last of it (at once when nothing is queued).
+    // clearRadeAudio: drops the queued RADE audio and any armed notice (a
+    // stop, or a new key, during the tail).
+    void armRadeAudioDrainedNotice();
+    void clearRadeAudio();
 
     // ── Phase 3R K-bench: RADE pre-encoder mic processing config ────────
     //
@@ -391,6 +460,9 @@ private:
     // every ~25 ms during RADE TX, contention is negligible).
     QMutex      m_radeAudioOverrideMutex;
     QByteArray  m_radeAudioOverride;
+    // RADE end-of-over callsigns: radeAudioDrained is owed once
+    // m_radeAudioOverride empties (under m_radeAudioOverrideMutex).
+    bool        m_radeDrainNoticeArmed{false};
 
     // Phase 3R K-bench: RADE pre-encoder mic processing state.
     // Mic gain dB is read live from TransmitModel via setRadeMicGainDb;
@@ -409,6 +481,10 @@ private:
     // PC-mic-override scratch — float buffer for AudioEngine::pullTxMic.
     // Sized kBlockFrames floats.
     std::vector<float> m_pcMicBuf;
+
+    // Task 36: the remote microphone ring, and one block of it.
+    std::atomic<RemoteMicFeed*> m_remoteMicFeed{nullptr};
+    std::vector<float> m_remoteMicBuf;
 
     // Anti-VOX run gate (3M-3a-iv).  Mirrors the most-recent
     // setAntiVoxRun(bool) call.  Read with acquire in
@@ -440,6 +516,11 @@ private:
     // it up with acquire, and the C++ memory model guarantees no
     // tearing or stale read.
     std::atomic<TxPath> m_currentTxPath{TxPath::Wdsp};
+
+    // RADE threads (2026-09-30): the path stays latched at Rade after a
+    // RADE over, and the pump runs unkeyed, so without this every mic block
+    // (about 750 a second) was posted to the main thread's txEncode.
+    std::atomic<bool> m_radeMicKeyed{false};
 };
 
 } // namespace NereusSDR

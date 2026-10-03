@@ -441,6 +441,9 @@ the seed:
 | --- | --- | --- | --- |
 | HermesLite (HL2) | HERMESLITE | `psEnabled ? 4 : 2`, default 2 (`P1CodecHl2`) | None: stays at 2 (PureSignal is off by default) |
 | HermesLiteRxOnly (HL2 RX-only kit) | none (has no `HPSDRModel` of its own; the model walk falls through to HERMES) | 4, always (`psDdcConfigHermesClass` via `P1CodecStandard`) | 2 to 4 |
+
+Corrected 2026-09-25 (receiver and transmit gaps plan, Task 15): the HermesLiteRxOnly row above is historical. The kit now resolves to HERMESLITE (mi0bot's one HL2 model), so it gets `P1CodecHl2` and behaves as the HermesLite row: no restart on connect. See the Phase 3F design, section 2.
+
 | Hermes | HERMES, ANAN10, ANAN100 | 4, always (`psDdcConfigHermesClass`) | 2 to 4 |
 | Angelia | ANAN100D | 5, always (`psDdcConfigG2Class`) | 2 to 5 |
 | Orion | ANAN200D | 5, always (`psDdcConfigG2Class`) | 2 to 5 |

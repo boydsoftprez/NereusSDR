@@ -17,6 +17,9 @@
 //                 byte-identical so parametric-EQ JSON blobs
 //                 round-trip across Thetis <-> NereusSDR profile
 //                 storage.
+//   2026-09-30 — Notes what is and is not byte-identical to Thetis
+//                 (the header's mtime and OS bytes are). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -66,6 +69,7 @@
 #pragma once
 
 #include <QString>
+#include <limits>
 #include <optional>
 
 namespace NereusSDR {
@@ -74,9 +78,9 @@ namespace NereusSDR {
 // Compress_gzip / Decompress_gzip [v2.10.3.13].
 //
 // The Thetis ucParametricEq UserControl serializes its band/preamp
-// state as Newtonsoft JSON, then wraps that JSON in a gzip+base64url
-// envelope before stuffing it into the TXProfile CFCParaEQData /
-// TXParaEQData columns.  NereusSDR's ParametricEqWidget produces
+// state as Newtonsoft JSON. TXParaEQData wraps one widget JSON; CFCParaEQData
+// wraps two widget JSON objects joined by literal <SEP>. NereusSDR's
+// ParametricEqWidget produces
 // Thetis-compatible JSON via saveToJson(); this helper applies the
 // same envelope so:
 //
@@ -84,10 +88,10 @@ namespace NereusSDR {
 //   2. Thetis-saved profile blobs decode cleanly when imported.
 //   3. NereusSDR-saved blobs decode cleanly if exported back into Thetis.
 //
-// The output is byte-identical to Thetis's encoder for the same input
-// (modulo the gzip header mtime field — gzip permits mtime=0 and
-// Thetis's GZipStream typically writes 0; either way the inflate side
-// is unaffected).
+// The gzip header carries mtime 0 and OS 0 as Thetis's GZipStream
+// writes them, so the output is the same on every platform. Its XFL
+// byte and compressed bytes are zlib's own and may differ from
+// Thetis's byte for byte; each side's inflate reads the other's.
 namespace ParaEqEnvelope {
 
 // Encode: utf8(payload) -> gzip (deflate level 9, windowBits=31) ->
@@ -107,7 +111,8 @@ QString encode(const QString& payload);
 // all failure modes to nullopt so callers don't need to distinguish.
 //
 // From Thetis Common.cs:1764-1790 [v2.10.3.13].
-std::optional<QString> decode(const QString& blob);
+std::optional<QString> decode(const QString& blob,
+                              qsizetype maxDecodedBytes = std::numeric_limits<qsizetype>::max());
 
 }  // namespace ParaEqEnvelope
 

@@ -169,6 +169,17 @@ namespace NereusSDR {
 
 namespace {
 constexpr double kMsToSec = 0.001;
+
+// R-R3-39: the receive-lane key of one NB parameter (FNV-1a of its name).
+constexpr quint64 nbParameter(const char* name)
+{
+    quint64 hash = 1469598103934665603ull;
+    for (const char* c = name; *c != '\0'; ++c) {
+        hash ^= static_cast<unsigned char>(*c);
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
 }
 
 NbMode cycleNbMode(NbMode current)
@@ -193,7 +204,7 @@ NbMode cycleNbMode(NbMode current)
 // in sync if WDSP raises the channel cap.
 static constexpr int kWdspMaxChannels = 32;
 
-NbFamily::NbFamily(int channelId, int sampleRate, int bufferSize)
+NbFamily::NbFamily(int channelId, int sampleRate, int bufferSize, bool createWdspNow)
     : m_channelId(channelId)
     , m_sampleRate(sampleRate)
     , m_bufferSize(bufferSize)
@@ -235,6 +246,27 @@ NbFamily::NbFamily(int channelId, int sampleRate, int bufferSize)
         // nb2Threshold / nb2*Ms stay at NbTuning's struct defaults — Thetis
         // has no NB2 tuning UI, so there's no upstream override to apply.
     }
+    // R-R3-39: what the create calls use, fixed here on the owner's thread;
+    // later setters post their own calls after the create.
+    m_createTuning = m_tuning;
+
+    if (createWdspNow) {
+        createWdspObjects();
+    }
+#else
+    Q_UNUSED(createWdspNow);
+#endif
+}
+
+void NbFamily::createWdspObjects()
+{
+#ifdef HAVE_WDSP
+    if (m_skipWdsp || m_wdspCreated) {
+        return;
+    }
+    const NbTuning& t = m_createTuning;
+    const int bufferSize = m_bufferSize.load();
+    const int sampleRate = m_sampleRate.load();
 
     // From Thetis cmaster.c:43-53 [v2.10.3.13] — NB (anb) create call.
     //
@@ -250,13 +282,13 @@ NbFamily::NbFamily(int channelId, int sampleRate, int bufferSize)
     create_anbEXT(
         m_channelId,
         /*run=*/1,
-        m_bufferSize,
-        static_cast<double>(m_sampleRate),
-        m_tuning.nbTauMs    * kMsToSec,
-        m_tuning.nbHangMs   * kMsToSec,
-        m_tuning.nbAdvMs    * kMsToSec,
-        m_tuning.nbBacktau,
-        m_tuning.nbThreshold);
+        bufferSize,
+        static_cast<double>(sampleRate),
+        t.nbTauMs    * kMsToSec,
+        t.nbHangMs   * kMsToSec,
+        t.nbAdvMs    * kMsToSec,
+        t.nbBacktau,
+        t.nbThreshold);
 
     // From Thetis specHPSDR.cs:896-907 [v2.10.3.13] — NB2 P/Invoke 10-arg form:
     //   (id, run, mode, buffsize, samplerate, tau, hangtime, advtime, backtau, threshold)
@@ -272,14 +304,14 @@ NbFamily::NbFamily(int channelId, int sampleRate, int bufferSize)
     create_nobEXT(
         m_channelId,
         /*run=*/1,
-        m_tuning.nb2Mode,
-        m_bufferSize,
-        static_cast<double>(m_sampleRate),
-        m_tuning.nb2SlewMs     * kMsToSec,       // tau  (cmaster.c:62/64 default 0.0001 s)
-        m_tuning.nb2HangMs     * kMsToSec,       // hangtime
-        m_tuning.nb2AdvMs      * kMsToSec,       // advtime
-        m_tuning.nb2Backtau,
-        m_tuning.nb2Threshold);
+        t.nb2Mode,
+        bufferSize,
+        static_cast<double>(sampleRate),
+        t.nb2SlewMs     * kMsToSec,       // tau  (cmaster.c:62/64 default 0.0001 s)
+        t.nb2HangMs     * kMsToSec,       // hangtime
+        t.nb2AdvMs      * kMsToSec,       // advtime
+        t.nb2Backtau,
+        t.nb2Threshold);
     // NOTE: SNB (channels[id].rxa.snba) seeding deliberately NOT done here
     // — it requires OpenChannel to have initialised the RXA channel first,
     // and NbFamily is constructed in contexts where that may not be true
@@ -287,6 +319,9 @@ NbFamily::NbFamily(int channelId, int sampleRate, int bufferSize)
     // that never saw OpenChannel). The SNB seed lives in
     // WdspEngine::createRxChannel (called only from the production path,
     // after OpenChannel succeeds). See seedSnbFromSettings() below.
+    m_wdspSampleRate = sampleRate;
+    m_wdspBufferSize = bufferSize;
+    m_wdspCreated = true;
 #endif
 }
 
@@ -304,21 +339,44 @@ void NbFamily::seedSnbFromSettings()
     const double snbK1 = s.value(QStringLiteral("SnbDefaultK1"),  8.0).toDouble();
     const double snbK2 = s.value(QStringLiteral("SnbDefaultK2"), 20.0).toDouble();
     const int    snbBw = s.value(QStringLiteral("SnbDefaultOutputBW"), 6000).toInt();
-    SetRXASNBAk1(m_channelId, snbK1);
-    SetRXASNBAk2(m_channelId, snbK2);
-    const double half = static_cast<double>(snbBw) / 2.0;
-    SetRXASNBAOutputBandwidth(m_channelId, -half, half);
+    // R-R3-39: the settings are read here, the WDSP calls run on the lane.
+    dispatch(0, [this, snbK1, snbK2, snbBw]() {
+        SetRXASNBAk1(m_channelId, snbK1);
+        SetRXASNBAk2(m_channelId, snbK2);
+        const double half = static_cast<double>(snbBw) / 2.0;
+        SetRXASNBAOutputBandwidth(m_channelId, -half, half);
+    });
 #endif
 }
 
 NbFamily::~NbFamily()
 {
+    destroyWdspObjects();
+}
+
+void NbFamily::destroyWdspObjects()
+{
 #ifdef HAVE_WDSP
-    if (m_skipWdsp) return;
+    if (m_skipWdsp || !m_wdspCreated) return;
     // From Thetis cmaster.c:104-105 [v2.10.3.13] — destroy in reverse of create.
     destroy_nobEXT(m_channelId);
     destroy_anbEXT(m_channelId);
+    m_wdspCreated = false;
 #endif
+}
+
+void NbFamily::setDispatcher(Dispatcher dispatcher)
+{
+    m_dispatcher = std::move(dispatcher);
+}
+
+void NbFamily::dispatch(quint64 parameter, std::function<void()> job)
+{
+    if (!m_dispatcher) {
+        job();
+        return;
+    }
+    m_dispatcher(parameter, std::move(job));
 }
 
 void NbFamily::setMode(NbMode mode)
@@ -336,8 +394,10 @@ void NbFamily::setMode(NbMode mode)
     //
     // WDSP: third_party/wdsp/src/nob.c:225  (flush_anb / flush_anbEXT)
     //       third_party/wdsp/src/nobII.c    (flush_nob / flush_nobEXT)
-    if (prev == NbMode::NB  && mode != NbMode::NB)  flush_anbEXT(m_channelId);
-    if (prev == NbMode::NB2 && mode != NbMode::NB2) flush_nobEXT(m_channelId);
+    dispatch(0, [this, prev, mode]() {
+        if (prev == NbMode::NB  && mode != NbMode::NB)  flush_anbEXT(m_channelId);
+        if (prev == NbMode::NB2 && mode != NbMode::NB2) flush_nobEXT(m_channelId);
+    });
 #endif
     // The per-buffer xanbEXTF / xnobEXTF dispatch in RxChannel::processIq()
     // reads m_mode and picks the right path; no WDSP run-flag toggle needed.
@@ -355,7 +415,9 @@ void NbFamily::setSnbEnabled(bool enabled)
     // From Thetis console.cs:36347 [v2.10.3.13]
     //   WDSP.SetRXASNBARun(WDSP.id(0, 0), chkDSPNB2.Checked)
     // WDSP: third_party/wdsp/src/snb.c
-    SetRXASNBARun(m_channelId, enabled ? 1 : 0);
+    dispatch(nbParameter("NbFamily::setSnbEnabled"), [this, enabled]() {
+        SetRXASNBARun(m_channelId, enabled ? 1 : 0);
+    });
 #endif
 }
 
@@ -370,7 +432,7 @@ void NbFamily::setNbThreshold(double threshold)
     m_tuning.nbThreshold = threshold;
 #ifdef HAVE_WDSP
     if (m_skipWdsp) return;
-    SetEXTANBThreshold(m_channelId, threshold);
+    dispatch(nbParameter("NbFamily::setNbThreshold"), [this, threshold]() { SetEXTANBThreshold(m_channelId, threshold); });
 #endif
 }
 
@@ -382,7 +444,7 @@ void NbFamily::setNbTauMs(double ms)
     // From Thetis setup.cs:16222 [v2.10.3.13]
     // Upstream tags preserved: //MW0LGE (from cited setup.cs:16225) [v2.10.3.15]
     //   NBTau = 0.001 * (double)udDSPNBTransition.Value
-    SetEXTANBTau(m_channelId, ms * kMsToSec);
+    dispatch(nbParameter("NbFamily::setNbTauMs"), [this, ms]() { SetEXTANBTau(m_channelId, ms * kMsToSec); });
 #endif
 }
 
@@ -394,7 +456,7 @@ void NbFamily::setNbLeadMs(double advMs)
     // From Thetis setup.cs:16229 [v2.10.3.13]
     // Upstream tags preserved: //MW0LGE (from cited setup.cs:16225) [v2.10.3.15]
     //   NBAdvTime = 0.001 * (double)udDSPNBLead.Value
-    SetEXTANBAdvtime(m_channelId, advMs * kMsToSec);
+    dispatch(nbParameter("NbFamily::setNbLeadMs"), [this, advMs]() { SetEXTANBAdvtime(m_channelId, advMs * kMsToSec); });
 #endif
 }
 
@@ -405,7 +467,7 @@ void NbFamily::setNbLagMs(double hangMs)
     if (m_skipWdsp) return;
     // From Thetis setup.cs:16236 [v2.10.3.13]
     //   NBHangTime = 0.001 * (double)udDSPNBLag.Value
-    SetEXTANBHangtime(m_channelId, hangMs * kMsToSec);
+    dispatch(nbParameter("NbFamily::setNbLagMs"), [this, hangMs]() { SetEXTANBHangtime(m_channelId, hangMs * kMsToSec); });
 #endif
 }
 
@@ -416,7 +478,7 @@ void NbFamily::setNb2Mode(int mode)
     if (m_skipWdsp) return;
     // From Thetis wdsp/nobII.c:658-663 [v2.10.3.15] — SetEXTNOBMode writes
     // NOB a = pnob[id], the per-receiver noise blanker II instance.
-    SetEXTNOBMode(m_channelId, mode);
+    dispatch(nbParameter("NbFamily::setNb2Mode"), [this, mode]() { SetEXTNOBMode(m_channelId, mode); });
 #endif
 }
 
@@ -430,7 +492,7 @@ void NbFamily::setSnbK1(double k1)
 #ifdef HAVE_WDSP
     if (m_skipWdsp) return;
     // From Thetis setup.cs:17609 [v2.10.3.13] — raw pass-through.
-    SetRXASNBAk1(m_channelId, k1);
+    dispatch(nbParameter("NbFamily::setSnbK1"), [this, k1]() { SetRXASNBAk1(m_channelId, k1); });
 #else
     Q_UNUSED(k1);
 #endif
@@ -441,7 +503,7 @@ void NbFamily::setSnbK2(double k2)
 #ifdef HAVE_WDSP
     if (m_skipWdsp) return;
     // From Thetis setup.cs:17617 [v2.10.3.13] — raw pass-through.
-    SetRXASNBAk2(m_channelId, k2);
+    dispatch(nbParameter("NbFamily::setSnbK2"), [this, k2]() { SetRXASNBAk2(m_channelId, k2); });
 #else
     Q_UNUSED(k2);
 #endif
@@ -454,8 +516,10 @@ void NbFamily::setSnbOutputBandwidthHz(int bandwidthHz)
     // Symmetric around DC, matching seedSnbFromSettings and the setup page
     // this replaced. No Thetis Setup control: Thetis picks SNB output
     // bandwidth per mode at rxa.cs:112-124 [v2.10.3.13].
-    const double half = static_cast<double>(bandwidthHz) / 2.0;
-    SetRXASNBAOutputBandwidth(m_channelId, -half, half);
+    dispatch(nbParameter("NbFamily::setSnbOutputBandwidthHz"), [this, bandwidthHz]() {
+        const double half = static_cast<double>(bandwidthHz) / 2.0;
+        SetRXASNBAOutputBandwidth(m_channelId, -half, half);
+    });
 #else
     Q_UNUSED(bandwidthHz);
 #endif
@@ -473,19 +537,40 @@ void NbFamily::setSnbOutputBandwidthHz(int bandwidthHz)
 // field, call init_nob/initBlanker, release.
 void NbFamily::setSampleRate(int newRateHz, int newBufferSize)
 {
-    if (newRateHz == m_sampleRate && newBufferSize == m_bufferSize) {
+    if (newRateHz == m_sampleRate.load() && newBufferSize == m_bufferSize.load()) {
         return;
     }
-    m_sampleRate = newRateHz;
-    m_bufferSize = newBufferSize;
+    setSampleRateCarry(newRateHz, newBufferSize);
+    dispatch(0, [this, newRateHz, newBufferSize]() {
+        applySampleRateWdsp(newRateHz, newBufferSize);
+    });
+}
+
+void NbFamily::setSampleRateCarry(int newRateHz, int newBufferSize)
+{
+    m_sampleRate.store(newRateHz);
+    m_bufferSize.store(newBufferSize);
+}
+
+void NbFamily::applySampleRateWdsp(int newRateHz, int newBufferSize)
+{
 #ifdef HAVE_WDSP
     if (m_skipWdsp) return;
+    if (!m_wdspCreated
+        || (newRateHz == m_wdspSampleRate && newBufferSize == m_wdspBufferSize)) {
+        return;
+    }
+    m_wdspSampleRate = newRateHz;
+    m_wdspBufferSize = newBufferSize;
     // NB1 (anb)
-    SetEXTANBBuffsize  (m_channelId, m_bufferSize);
-    SetEXTANBSamplerate(m_channelId, m_sampleRate);
+    SetEXTANBBuffsize  (m_channelId, newBufferSize);
+    SetEXTANBSamplerate(m_channelId, newRateHz);
     // NB2 (nob)
-    SetEXTNOBBuffsize  (m_channelId, m_bufferSize);
-    SetEXTNOBSamplerate(m_channelId, m_sampleRate);
+    SetEXTNOBBuffsize  (m_channelId, newBufferSize);
+    SetEXTNOBSamplerate(m_channelId, newRateHz);
+#else
+    Q_UNUSED(newRateHz);
+    Q_UNUSED(newBufferSize);
 #endif
 }
 
@@ -493,22 +578,31 @@ void NbFamily::pushAllTuning()
 {
 #ifdef HAVE_WDSP
     if (m_skipWdsp) return;
+    dispatch(nbParameter("NbFamily::setTuning"), [this, t = m_tuning]() { pushTuningWdsp(t); });
+#endif
+}
+
+void NbFamily::pushTuningWdsp(const NbTuning& t)
+{
+#ifdef HAVE_WDSP
     // NB1
-    SetEXTANBTau      (m_channelId, m_tuning.nbTauMs  * kMsToSec);
-    SetEXTANBHangtime (m_channelId, m_tuning.nbHangMs * kMsToSec);
-    SetEXTANBAdvtime  (m_channelId, m_tuning.nbAdvMs  * kMsToSec);
-    SetEXTANBBacktau  (m_channelId, m_tuning.nbBacktau);
-    SetEXTANBThreshold(m_channelId, m_tuning.nbThreshold);
+    SetEXTANBTau      (m_channelId, t.nbTauMs  * kMsToSec);
+    SetEXTANBHangtime (m_channelId, t.nbHangMs * kMsToSec);
+    SetEXTANBAdvtime  (m_channelId, t.nbAdvMs  * kMsToSec);
+    SetEXTANBBacktau  (m_channelId, t.nbBacktau);
+    SetEXTANBThreshold(m_channelId, t.nbThreshold);
 
     // NB2
-    SetEXTNOBMode     (m_channelId, m_tuning.nb2Mode);
-    SetEXTNOBTau      (m_channelId, m_tuning.nb2SlewMs   * kMsToSec);
-    SetEXTNOBHangtime (m_channelId, m_tuning.nb2HangMs   * kMsToSec);
-    SetEXTNOBAdvtime  (m_channelId, m_tuning.nb2AdvMs    * kMsToSec);
-    SetEXTNOBBacktau  (m_channelId, m_tuning.nb2Backtau);
-    SetEXTNOBThreshold(m_channelId, m_tuning.nb2Threshold);
+    SetEXTNOBMode     (m_channelId, t.nb2Mode);
+    SetEXTNOBTau      (m_channelId, t.nb2SlewMs   * kMsToSec);
+    SetEXTNOBHangtime (m_channelId, t.nb2HangMs   * kMsToSec);
+    SetEXTNOBAdvtime  (m_channelId, t.nb2AdvMs    * kMsToSec);
+    SetEXTNOBBacktau  (m_channelId, t.nb2Backtau);
+    SetEXTNOBThreshold(m_channelId, t.nb2Threshold);
     // max_imp_seq_time has no post-create setter in Thetis's spec — it is
     // fixed at create time per cmaster.c:66. Changes require channel re-create.
+#else
+    Q_UNUSED(t);
 #endif
 }
 

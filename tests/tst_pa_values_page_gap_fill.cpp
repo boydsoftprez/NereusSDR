@@ -395,6 +395,15 @@ void TstPaValuesPageGapFill::pa_current_and_supply_volts_visible_when_both_telem
              "PA current row must be visible when hasPaAmpsTelemetry=true");
     QVERIFY2(page.isSupplyVoltsRowVisibleForTest(),
              "Supply volts row must be visible when hasPaVoltsTelemetry=true");
+    // Group A follow-up (group B fix wave): the AIN6 reading carries
+    // Thetis's name for it, "DC Voltage" (setup.designer.cs labelTS254);
+    // on MkII-class boards it is not the 13.8 V supply.
+    bool dcVoltage = false;
+    for (QLabel* label : page.findChildren<QLabel*>()) {
+        QVERIFY(label->text() != QStringLiteral("Supply Voltage:"));
+        dcVoltage = dcVoltage || label->text() == QStringLiteral("DC Voltage:");
+    }
+    QVERIFY(dcVoltage);
 }
 
 QTEST_MAIN(TstPaValuesPageGapFill)

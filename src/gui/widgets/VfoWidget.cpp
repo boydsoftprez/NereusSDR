@@ -13,11 +13,136 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-09-30 - VFO flag crash lane: Slice A's close-button comment no
+//                 longer names the removed m_vfoWidget. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - RADE reason: the RADE row reads "off" with the slice's
+//                 radeReason as its tooltip while its RADE decoder is not
+//                 working (setRadeReason). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-10-01: Added approved compact STEP units during PR review by
+//                 J.J. Boyd (KG4VCF), with AI assistance via OpenAI Codex.
+//   2026-09-23 - R-R3-21: the VAX tab's channel selector is disabled with a
+//                 plain reason on a remote-station model. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-09-23 - R-R3-40: a small indicator on the NNR button, with the
+//                 step-back reason as its tooltip, while the Core holds the
+//                 receiver below the saved NNR choice. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
+//                 Later the same day: its colour from StyleConstants.
+//   2026-09-23 - R-R3-44: the VAX tab's channel selector works in a remote
+//                 window again: it picks this computer's VAX channel for the
+//                 Core's slice (kept on this computer, not the Core).
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-09-23 - R-R3-45: Speakers and Headphones buttons in the audio
+//                 block pick the receiver's output (VAX design 6.2); a
+//                 plain notice says why it is silent when the headphones
+//                 are chosen and none are set up. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: the floating record and play buttons are hidden
+//                 (UnbuiltFeatures) until the voice recorder is built.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: the FM box shows only once one of its features
+//                 is built (plan row fm-flag). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-45 fix wave: headphones turned on that did not open
+//                 say so (setHeadphonesEnabled); a remote window's reason
+//                 comes first. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
+//   2026-09-24 - R-R3-45 Task 2: setHeadphonesProblem(), a remote window's
+//                 reason a receiver on the headphones is silent. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-09-24 - R-R3-45: the output buttons read SPEAKERS and PHONES, in
+//                 capitals like the flag's other buttons (operator's
+//                 captions). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-09-25 - R-R3-49, Sub-epic C-1: the DFNR button is hidden, and its
+//                 quick controls not offered, while DFNR cannot run (a build
+//                 without it, or the Core's dfnrRunnable false), as MNR and
+//                 BNR are hidden. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-25 - R-R3-49, Sub-epic C-1 (tx-followup-3): DFNR, MNR and BNR
+//                 are never hidden. One that cannot run is shown disabled
+//                 with the plain reason (the Core's, in a remote window) and
+//                 opens no quick controls; BNR takes the row-2 cell beside
+//                 SNB. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-09-25 - R-R3-49, Sub-epic C-1 (tx-followup-4): the BNR button and
+//                 its quick controls are gone (operator: not offered for
+//                 now); row 2 keeps ANF and SNB. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - iPhone app Task 19 (R-IOS-06): the AGC labels, the AGC-T
+//                 range and the slice colours come from ControlRanges.h,
+//                 which the Core's catalogue reads too. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - iPhone app follow-up (R-IOS-06): the AF and SQL slider
+//                 ranges come from ControlRanges.h too. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-49, R-R3-21 (parity Task 11): the XIT button, offset
+//                 and zero write the slice in a remote window as in a local
+//                 one; they no longer follow the transmit permission.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-26 - R-R3-49 / R-R3-21 (parity Task 16): DFNR and MNR follow
+//                 the station's noise reduction (the Core's in a remote
+//                 window, RadioModel::noiseReductionUnavailableReason): shown
+//                 always, disabled with the plain reason while they cannot
+//                 run, with no quick controls. MNR is no longer hidden off a
+//                 Mac. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-09-26 - R-R3-49 (trunk merge of parity Tasks 16 to 18): one
+//                 availability path. Task 16's noiseReductionMethods and
+//                 nrUnavailableReason are dropped for the trunk's
+//                 nrCannotRunReason (DspAssetService); the flag also follows
+//                 RadioModel::nrAvailabilityChanged, so an older Core that
+//                 does not say shows DFNR and MNR disabled with the reason.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-26 : iPhone app plan Task 78 (R-IOS-02, R-IOS-30):
+//                 setInUseByRadio (ruling 8.11). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-27 : NR1's quick controls read ControlRanges.h, their ranges
+//                 and defaults corrected to Thetis's NR spinboxes (taps
+//                 1-1024, delay 1-1023, gain and leak 1-1000, defaults
+//                 64 / 16 / 100 / 100; R-IOS-06, R-IOS-27). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-27 : MNR's quick controls read ControlRanges.h; Reset restores
+//                 a new slice's values (Aggressiveness 4, Bias 1.2, where it
+//                 gave 6 and 1.5). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-27 : NR2, NR3, NR4 and DFNR's quick controls read ControlRanges.h
+//                 too, the table the Core's catalogue sends (R-IOS-06,
+//                 R-IOS-27); their values are unchanged. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - The RADE row keeps the decoder's last frequency offset and
+//                 re-appends it to each fresh SNR, since a remote window's
+//                 Core sends the offset only when it moves. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - Slice control plan Task 14b (ruling U5): on a listened
+//                 flag the AF slider and Mute return as this device's own
+//                 volume and mute ("Your volume"), never the slice's AF.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - core-slice take-over: the flag's Take control is
+//                 disabled with the Core's words when it refuses the take.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - TX badge take (JJ's ruling): while the badge offers a
+//                 take (TxBadgeOffer) it is enabled, says what a click will
+//                 do, and a click emits txTakeRequested. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-01: Completed attribution for bright and dim slice palette, A through H
+//                 by J.J. Boyd (KG4VCF), with AI assistance via
+//                 OpenAI Codex. Port introduced 2026-09-23.
+//                 Source: AetherSDR src/gui/SliceColors.h [@0cd4559].
+//                 Upstream has no per-file copyright header.
+//                 Copyright (C) 2024-2026 Jeremy (KK7GWY) and
+//                 AetherSDR contributors. GPLv3; project source:
+//                 https://github.com/ten9876/AetherSDR
 // =================================================================
 
 //=================================================================
@@ -264,11 +389,15 @@ warren@wpratt.com
 */
 
 #include "VfoWidget.h"
+#include "gui/TuneStepLabel.h"
 #include "DspParamPopup.h"
+#include "NnrControls.h"
 #include "VaxChannelSelector.h"
 #include "gui/AntennaPopupBuilder.h"
-#include "gui/applets/NyiOverlay.h"
+#include "gui/UnbuiltFeatures.h"
+#include "gui/OperatorReasonText.h"
 #include "core/BoardCapabilities.h"
+#include "core/ControlRanges.h"
 #include "core/SkuUiProfile.h"
 #include "core/HpsdrModel.h"
 #include "core/accessories/AlexController.h"
@@ -277,6 +406,7 @@ warren@wpratt.com
 #include "gui/widgets/AntennaPickerMenu.h"
 #include "models/FilterPresetStore.h"
 #include "models/RadioModel.h"
+#include "core/dsp/DspAssetService.h"
 #include "models/SliceModel.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
 
@@ -291,13 +421,68 @@ warren@wpratt.com
 #include <QHBoxLayout>
 #include <QGridLayout>
 #include <QMenu>
+#include <QVariant>
 #include <QFontDatabase>
 #include <QSignalBlocker>
+#include <QToolTip>
 
 #include <cmath>
 #include <algorithm>
 
 namespace NereusSDR {
+
+namespace {
+// The TX badge's own words while it is held or offers a take
+// (updateTransmitControlAvailability, setInUseByRadio).
+constexpr const char* kSavedTransmitTooltip = "VfoSavedTransmitTooltip";
+constexpr const char* kSavedTransmitDescription = "VfoSavedTransmitDescription";
+
+// BYPS's tooltip while it may be pressed (group B fix wave: kept in one
+// place, since setRxBypassPermitted puts it back).
+QString rxBypassToolTip()
+{
+    return QStringLiteral(
+        "RX Bypass on TX: routes the receive path through the bypass relay "
+        "while transmitting.");
+}
+
+// A noise-reduction slider's readout: slider / divide to its places, then
+// its suffix (ControlRanges::NrControl).
+QString nrReadout(const ControlRanges::NrControl& control, int position)
+{
+    return QString::number(double(position) / control.divide, 'f', control.decimals)
+        + QString::fromUtf8(control.suffix);
+}
+
+// One noise-reduction slider in `popup`, drawn from its ControlRanges entry:
+// positioned at `current` (property units), writing slider x scale, its
+// Reset (when the entry has one) restoring the entry's reset position.
+void addNrSlider(DspParamPopup* popup, const ControlRanges::NrControl& control,
+                 double current, std::function<void(double)> write,
+                 const QString& tooltip = QString())
+{
+    const ControlRanges::NrControl entry = control;
+    popup->addSlider(QString::fromUtf8(entry.label), static_cast<int>(entry.min),
+                     static_cast<int>(entry.max),
+                     ControlRanges::nrSliderFromValue(entry, current),
+                     [entry](int v) { return nrReadout(entry, v); },
+                     [entry, write = std::move(write)](int v) {
+                         write(ControlRanges::nrValueFromSlider(entry, v));
+                     },
+                     tooltip,
+                     entry.hasReset ? static_cast<int>(std::lround(entry.reset)) : INT_MIN);
+}
+
+// A noise-reduction choice's labels, in its order.
+QStringList nrOptionLabels(const ControlRanges::NrControl& control)
+{
+    QStringList labels;
+    for (std::size_t i = 0; i < control.optionCount; ++i) {
+        labels.append(QString::fromUtf8(control.options[i].label));
+    }
+    return labels;
+}
+} // namespace
 
 // 2026-05-13 bench fix (PR #238): QStackedWidget subclass that reports
 // the CURRENT page's sizeHint instead of the maximum across all pages.
@@ -574,12 +759,15 @@ void VfoWidget::buildHeaderRow()
         QStringLiteral("QPushButton { color: #888888; }"
                        "QPushButton:checked { color: #ffcc44; background: #2a2a1a; }"));
     m_rxBypassBtn->setFixedHeight(18);
-    m_rxBypassBtn->setToolTip(QStringLiteral(
-        "RX Bypass on TX — routes RX path through bypass relay during transmit. "
-        "Maps to Thetis chkRxOutOnTx (Alex.cs:61)."));
+    // Maps to Thetis chkRxOutOnTx (Alex.cs:61) [cite moved from the tooltip,
+    // R-R3-17].
+    m_rxBypassBtn->setToolTip(rxBypassToolTip());
     m_rxBypassBtn->setVisible(false);  // hidden until setBoardCapabilities + setHpsdrSku confirm gates
     connect(m_rxBypassBtn, &QPushButton::toggled, this, [this](bool on) {
-        if (m_updatingFromModel) { return; }
+        // Group B fix wave: a receive relay setting, not a key. A remote
+        // window's BYPS follows whether its Core takes it
+        // (setRxBypassPermitted), not the transmit permission.
+        if (m_updatingFromModel || !m_rxBypassPermitted) { return; }
         emit rxBypassToggled(on);
     });
     hdr->addWidget(m_rxBypassBtn);
@@ -630,6 +818,7 @@ void VfoWidget::buildHeaderRow()
 
     // TX badge
     m_txBadge = new QPushButton(QStringLiteral("TX"), this);
+    m_txBadge->setObjectName(QStringLiteral("VfoTxBadge"));
     m_txBadge->setFixedSize(28, 18);
     m_txBadge->setCheckable(true);
     m_txBadge->setStyleSheet(
@@ -665,6 +854,15 @@ void VfoWidget::buildHeaderRow()
     hdr->addWidget(m_sliceBadge);
 
     static_cast<QVBoxLayout*>(layout())->addLayout(hdr);
+
+    // Task 14a: who controls this slice. Hidden while nobody else shares it.
+    m_accessLine = new QLabel(this);
+    m_accessLine->setObjectName(QStringLiteral("VfoAccessLine"));
+    m_accessLine->setWordWrap(true);
+    m_accessLine->setStyleSheet(
+        QStringLiteral("color: #c8d8e8; font-size: 10px;"));
+    m_accessLine->setVisible(false);
+    static_cast<QVBoxLayout*>(layout())->addWidget(m_accessLine);
 }
 
 void VfoWidget::buildFrequencyRow()
@@ -817,6 +1015,7 @@ void VfoWidget::setRadeActive(bool on)
             m_lastRadeCallsign.clear();
             m_lastRadeSnrDb = std::numeric_limits<float>::quiet_NaN();
             m_lastRadeSynced = false;
+            m_lastRadeFreqOffsetHz = std::numeric_limits<float>::quiet_NaN();
             return;
         }
     }
@@ -825,8 +1024,11 @@ void VfoWidget::setRadeActive(bool on)
     // initial "RADE ○ ---" hollow-circle state.
     if (m_snrLabel) {
         const QString prefix = radePrefixForCallsign(m_lastRadeCallsign);
+        // RADE reason: a slice whose decoder is not working reads "off".
         m_snrLabel->setText(
-            QString("%1 <font color='#505050'>○</font> ---").arg(prefix));
+            QString("%1 <font color='#505050'>○</font> %2")
+                .arg(prefix, m_radeReason.isEmpty() ? QStringLiteral("---")
+                                                    : QStringLiteral("off")));
     }
 }
 
@@ -838,6 +1040,13 @@ void VfoWidget::setRadeSynced(bool synced)
 {
     m_lastRadeSynced = synced;
     if (!m_radeActive || !m_snrLabel) {
+        return;
+    }
+    if (!m_radeReason.isEmpty()) {
+        // RADE reason: no working decoder, so no sync or SNR to show.
+        m_snrLabel->setText(
+            QString("%1 <font color='#505050'>○</font> off")
+                .arg(radePrefixForCallsign(m_lastRadeCallsign)));
         return;
     }
     if (!synced) {
@@ -895,6 +1104,9 @@ void VfoWidget::setRadeSnrLabel(float snrDb)
         QString("%1 <font color='%2'>●</font> %3dB")
             .arg(prefix, color)
             .arg(static_cast<int>(snrDb)));
+    if (!std::isnan(m_lastRadeFreqOffsetHz)) {
+        setRadeFreqOffset(m_lastRadeFreqOffsetHz);
+    }
 }
 
 // From AetherSDR VfoWidget.cpp:3434-3445 [@0cd4559] — setRadeFreqOffset.
@@ -903,6 +1115,7 @@ void VfoWidget::setRadeSnrLabel(float snrDb)
 // setRadeFreqOffset() appends the offset.
 void VfoWidget::setRadeFreqOffset(float hz)
 {
+    m_lastRadeFreqOffsetHz = hz;
     if (!m_radeActive || !m_snrLabel) {
         return;
     }
@@ -940,6 +1153,31 @@ void VfoWidget::setRadeCallsign(const QString& callsign)
     } else {
         setRadeSynced(m_lastRadeSynced);
     }
+}
+
+void VfoWidget::setRadeReason(const QString& reason)
+{
+    m_radeReason = reason;
+    if (!m_snrLabel) {
+        return;
+    }
+    // The existing reason pattern: the plain sentence is the tooltip.
+    m_snrLabel->setToolTip(reason);
+    m_snrLabel->setAccessibleDescription(reason);
+    if (m_radeActive) {
+        // Repaints "off", or the sync and SNR text when the reason clears.
+        setRadeSynced(m_lastRadeSynced);
+    }
+}
+
+QString VfoWidget::radeRowTextForTest() const
+{
+    return m_snrLabel ? m_snrLabel->text() : QString();
+}
+
+QString VfoWidget::radeRowToolTipForTest() const
+{
+    return m_snrLabel ? m_snrLabel->toolTip() : QString();
 }
 
 void VfoWidget::updateSnrVisibility()
@@ -1079,6 +1317,7 @@ void VfoWidget::buildTabBar()
 void VfoWidget::buildAudioTab()
 {
     auto* audioWidget = new QWidget;
+    m_audioPage = audioWidget;
     auto* audioLayout = new QVBoxLayout(audioWidget);
     audioLayout->setContentsMargins(4, 4, 4, 4);
     audioLayout->setSpacing(4);
@@ -1090,15 +1329,24 @@ void VfoWidget::buildAudioTab()
         label->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(NereusSDR::Style::kLabelMid));
         label->setFixedWidth(24);
         row->addWidget(label);
+        m_afNameLabel = label;
 
         m_afGainSlider = new QSlider(Qt::Horizontal, audioWidget);
-        m_afGainSlider->setRange(0, 100);
+        m_afGainSlider->setRange(ControlRanges::kAfGainMin, ControlRanges::kAfGainMax);
+        m_afGainSlider->setSingleStep(ControlRanges::kAfGainStep);
         m_afGainSlider->setValue(50);
         m_afGainSlider->setStyleSheet(
             QStringLiteral("QSlider::groove:horizontal { background: #1a2a3a; height: 6px; border-radius: 3px; }"
                             "QSlider::handle:horizontal { background: #00b4d8; width: 12px; margin: -3px 0; border-radius: 6px; }"));
-        // From Thetis console.resx:8433 — ptbAF.ToolTip
-        m_afGainSlider->setToolTip(QStringLiteral("AF Gain - Monitor Volume for RX/TX"));
+        // From Thetis console.resx:8433 [v2.10.3.15]: ptbAF.ToolTip ("AF Gain -
+        // Monitor Volume for RX/TX"). R-R3-21: reworded, since here the slider sets
+        // only this slice's received audio (SliceModel::afGain ->
+        // RxChannel::setAfGain -> WDSP SetRXAPanelGain1). Your own
+        // transmitted audio is set by Mon Vol on the TX applet.
+        m_afToolTip = QStringLiteral(
+            "How loud you hear this slice's received audio. 0 to 100. "
+            "Your own transmitted audio has its own slider, Mon Vol, on the TX applet.");
+        m_afGainSlider->setToolTip(m_afToolTip);
         row->addWidget(m_afGainSlider);
 
         m_afGainLabel = new QLabel(QStringLiteral("50"), audioWidget);
@@ -1109,16 +1357,25 @@ void VfoWidget::buildAudioTab()
 
         connect(m_afGainSlider, &QSlider::valueChanged, this, [this](int val) {
             m_afGainLabel->setText(QString::number(val));
-            if (!m_updatingFromModel) {
-                emit afGainChanged(val);
+            if (m_updatingFromModel) { return; }
+            if (isListening()) {
+                // Task 14b: this device's own volume, never the slice's AF.
+                m_listenVolume = val;
+                emit listenVolumeRequested(m_sliceIndex, val, m_listenMuted);
+                return;
             }
+            m_modelAfGain = val;
+            emit afGainChanged(val);
         });
         audioLayout->addLayout(row);
     }
 
     // 2. AGC 5-button row — replaces m_agcCmb (live-wired, no NYI badge)
     {
-        static const char* kAgcLabels[] = { "Off", "Long", "Slow", "Med", "Fast" };
+        // The labels come from ControlRanges.h, which the Core's catalogue
+        // reads too (iPhone app Task 19).
+        static_assert(ControlRanges::kAgcModes.size() == 5,
+                      "the flag's AGC row has five buttons");
         // From Thetis console.resx:4554 (comboAGC.ToolTip) + console.cs:27987-28041
         // Thetis sets dynamic tooltip per AGC mode change; we use static variants.
         static const char* kAgcTooltips[] = {
@@ -1133,7 +1390,8 @@ void VfoWidget::buildAudioTab()
         row->setContentsMargins(0, 0, 0, 0);
         for (int i = 0; i < 5; ++i) {
             m_agcBtns[i] = new QPushButton(
-                QString::fromLatin1(kAgcLabels[i]), audioWidget);
+                QString::fromLatin1(ControlRanges::kAgcModes[static_cast<std::size_t>(i)].label),
+                audioWidget);
             m_agcBtns[i]->setCheckable(true);
             m_agcBtns[i]->setStyleSheet(vfoDspToggleStyle());
             m_agcBtns[i]->setToolTip(QString::fromLatin1(kAgcTooltips[i]));
@@ -1179,7 +1437,9 @@ void VfoWidget::buildAudioTab()
         m_panSlider->setStyleSheet(
             QStringLiteral("QSlider::groove:horizontal { background: #1a2a3a; height: 6px; border-radius: 3px; }"
                             "QSlider::handle:horizontal { background: #00b4d8; width: 12px; margin: -3px 0; border-radius: 6px; }"));
-        m_panSlider->setToolTip(QStringLiteral("Audio pan: left/right stereo balance (−100 = full left, 0 = center, +100 = full right)\nFrom Thetis radio.cs:1386 — WDSP patchpanel.c:159"));
+        // From Thetis radio.cs:1388 pan_dsp [v2.10.3.15]; WDSP patchpanel.c:169
+        // SetRXAPanelPan (cites moved from the tooltip, R-R3-17).
+        m_panSlider->setToolTip(QStringLiteral("Audio pan: left/right stereo balance (−100 = full left, 0 = center, +100 = full right)"));
         row->addWidget(m_panSlider);
 
         m_panLabel = new QLabel(QStringLiteral("0"), audioWidget);
@@ -1205,21 +1465,33 @@ void VfoWidget::buildAudioTab()
         m_muteBtn = new QPushButton(QStringLiteral("Mute"), audioWidget);
         m_muteBtn->setCheckable(true);
         m_muteBtn->setStyleSheet(vfoDspToggleStyle());
-        m_muteBtn->setToolTip(QStringLiteral("Mute RX audio output (SetRXAPanelRun)\nFrom Thetis dsp.cs:393 — WDSP patchpanel.c:126"));
+        // From Thetis dsp.cs:393 SetRXAPanelRun [v2.10.3.15]; WDSP
+        // patchpanel.c:136 (cites moved from the tooltip, R-R3-17).
+        m_muteToolTip = QStringLiteral("Mute the receive audio");
+        m_muteBtn->setToolTip(m_muteToolTip);
         row->addWidget(m_muteBtn);
 
         m_binBtn = new QPushButton(QStringLiteral("BIN"), audioWidget);
         m_binBtn->setCheckable(true);
         m_binBtn->setStyleSheet(vfoDspToggleStyle());
-        m_binBtn->setToolTip(QStringLiteral("Binaural audio: I/Q channels separate for headphone stereo image (SetRXAPanelBinaural)\nFrom Thetis radio.cs:1145 — WDSP patchpanel.c:187"));
+        // From Thetis radio.cs:1147 bin_on_dsp [v2.10.3.15]; WDSP
+        // patchpanel.c:197 SetRXAPanelBinaural (cites moved from the
+        // tooltip, R-R3-17).
+        m_binBtn->setToolTip(QStringLiteral("Binaural audio: I and Q play in separate ears, for a stereo image in headphones"));
         row->addWidget(m_binBtn);
 
         row->addStretch();
 
         connect(m_muteBtn, &QPushButton::toggled, this, [this](bool on) {
-            if (!m_updatingFromModel) {
-                emit muteChanged(on);
+            if (m_updatingFromModel) { return; }
+            if (isListening()) {
+                // Task 14b: mutes this slice on this device only.
+                m_listenMuted = on;
+                emit listenVolumeRequested(m_sliceIndex, m_listenVolume, on);
+                return;
             }
+            m_modelMuted = on;
+            emit muteChanged(on);
         });
         connect(m_binBtn, &QPushButton::toggled, this, [this](bool on) {
             if (!m_updatingFromModel) {
@@ -1227,6 +1499,54 @@ void VfoWidget::buildAudioTab()
             }
         });
         audioLayout->addLayout(row);
+    }
+
+    // 4b. R-R3-45: Speakers / Headphones, exclusive (VAX design 6.2). The
+    // receiver plays on one of them. NereusSDR-native; Thetis has no
+    // per-receiver output choice.
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+
+        m_speakersBtn = new QPushButton(QStringLiteral("SPEAKERS"), audioWidget);
+        m_speakersBtn->setObjectName(QStringLiteral("outputSpeakersButton"));
+        m_speakersBtn->setCheckable(true);
+        m_speakersBtn->setChecked(true);
+        m_speakersBtn->setStyleSheet(vfoDspToggleStyle());
+        m_speakersBtn->setToolTip(QStringLiteral("Play this receiver on the speakers"));
+        row->addWidget(m_speakersBtn);
+
+        m_headphonesBtn = new QPushButton(QStringLiteral("PHONES"), audioWidget);
+        m_headphonesBtn->setObjectName(QStringLiteral("outputHeadphonesButton"));
+        m_headphonesBtn->setCheckable(true);
+        m_headphonesBtn->setStyleSheet(vfoDspToggleStyle());
+        m_headphonesBtn->setToolTip(QStringLiteral("Play this receiver on the headphones"));
+        row->addWidget(m_headphonesBtn);
+
+        row->addStretch();
+
+        // Exclusive like the AGC row: clicking the checked one keeps it.
+        auto pick = [this](SliceModel::OutputRoute route) {
+            setOutputRoute(route);
+            if (!m_updatingFromModel && m_slice) {
+                m_slice->setOutputRoute(route);
+            }
+        };
+        connect(m_speakersBtn, &QPushButton::clicked, this, [pick](bool) {
+            pick(SliceModel::OutputRoute::Speakers);
+        });
+        connect(m_headphonesBtn, &QPushButton::clicked, this, [pick](bool) {
+            pick(SliceModel::OutputRoute::Headphones);
+        });
+        audioLayout->addLayout(row);
+
+        m_outputNotice = new QLabel(headphonesMissingText(), audioWidget);
+        m_outputNotice->setObjectName(QStringLiteral("outputRouteNotice"));
+        m_outputNotice->setWordWrap(true);
+        m_outputNotice->setStyleSheet(
+            QStringLiteral("color: %1; font-size: 10px;").arg(NereusSDR::Style::kAmberText));
+        m_outputNotice->setVisible(false);
+        audioLayout->addWidget(m_outputNotice);
     }
 
     // 5. Squelch row — SQL toggle + SQL threshold slider (NYI)
@@ -1243,8 +1563,8 @@ void VfoWidget::buildAudioTab()
         row->addWidget(m_sqlBtn);
 
         m_sqlSlider = new QSlider(Qt::Horizontal, audioWidget);
-        m_sqlSlider->setRange(0, 100);
-        m_sqlSlider->setSingleStep(1);
+        m_sqlSlider->setRange(ControlRanges::kSsqlThreshMin, ControlRanges::kSsqlThreshMax);
+        m_sqlSlider->setSingleStep(ControlRanges::kSsqlThreshStep);
         m_sqlSlider->setValue(0);
         m_sqlSlider->setStyleSheet(
             QStringLiteral("QSlider::groove:horizontal { background: #1a2a3a; height: 6px; border-radius: 3px; }"
@@ -1268,7 +1588,8 @@ void VfoWidget::buildAudioTab()
     }
 
     // 6. AGC threshold slider row
-    // From Thetis Project Files/Source/Console/console.cs:45977 — agc_thresh_point, range -160..0
+    // From Thetis Project Files/Source/Console/console.cs:46048-46049 [v2.10.3.15] — agc_thresh_point, range -160..+2
+    // (MW0LGE_21k9d: values are already offset as part of Display)
     {
         m_agcTContainer = new QWidget(audioWidget);
         auto* containerLayout = new QVBoxLayout(m_agcTContainer);
@@ -1283,8 +1604,9 @@ void VfoWidget::buildAudioTab()
         row->addWidget(m_agcTLabelWidget);
 
         m_agcTSlider = new QSlider(Qt::Horizontal, m_agcTContainer);
-        m_agcTSlider->setRange(-160, 0);
-        m_agcTSlider->setSingleStep(1);
+        m_agcTSlider->setRange(ControlRanges::kAgcThresholdMinDb,
+                               ControlRanges::kAgcThresholdMaxDb);
+        m_agcTSlider->setSingleStep(ControlRanges::kAgcThresholdStepDb);
         m_agcTSlider->setValue(-20);
         m_agcTSlider->setStyleSheet(
             QStringLiteral("QSlider::groove:horizontal { background: #1a2a3a; height: 6px; border-radius: 3px; }"
@@ -1357,7 +1679,7 @@ void VfoWidget::buildDspTab()
     // own slider row below the grid (consistent with its CW-only visibility gate).
     //
     //   Row 0: NB  | NR1  | NR2 | NR3
-    //   Row 1: NR4 | DFNR | MNR | (empty)
+    //   Row 1: NR4 | DFNR | MNR | NNR
     //   Row 2: ANF | SNB  |     |
     //
     // Overrides earlier horizontal-bank design per user directive 2026-04-23.
@@ -1382,11 +1704,11 @@ void VfoWidget::buildDspTab()
     // Upstream tags preserved: //MW0LGE (from cited console.cs:43545) [v2.10.3.15]
     m_nbButton = makeToggle(QStringLiteral("NB"));
     m_nbButton->setToolTip(tr(
-        "Noise blanker — left-click cycles Off \u2192 NB \u2192 NB2 \u2192 Off,\n"
-        "right-click opens Setup \u2192 DSP \u2192 NB/SNB.\n"
-        "NB  (nob.c, Whitney): time-domain impulse blanker, suited to\n"
+        "Noise blanker: left-click cycles Off \u2192 NB \u2192 NB2 \u2192 Off,\n"
+        "right-click opens its Setup page (NB/SNB).\n"
+        "NB: time-domain impulse blanker, suited to\n"
         "      sporadic crashes (powerline / ignition).\n"
-        "NB2 (nobII.c): second-generation with hold/interpolate modes,\n"
+        "NB2: second-generation with hold/interpolate modes,\n"
         "      suited to denser impulse noise."));
     // Right-click → Setup page. Mirrors Thetis chkNB_MouseDown
     // (console.cs:44447 [v2.10.3.13]) which calls ShowSetupTab(NB_Tab).
@@ -1406,12 +1728,12 @@ void VfoWidget::buildDspTab()
     m_nr3Btn->setContextMenuPolicy(Qt::CustomContextMenu);
     // Tooltips — Sub-epic C-1.
     // From Thetis console.resx:3879 — chkNR.ToolTip (closest analogue for NR1)
-    m_nr1Btn->setToolTip(QStringLiteral("NR1: Adaptive LMS noise reduction — left-click activates, right-click adjusts knobs"));
-    m_nr2Btn->setToolTip(QStringLiteral("NR2: EMNR (Enhanced Multiband Noise Reduction) — left-click activates, right-click adjusts knobs"));
-    m_nr3Btn->setToolTip(QStringLiteral("NR3: RNNR (Recurrent Neural Net noise reduction) — left-click activates, right-click adjusts knobs"));
+    m_nr1Btn->setToolTip(QStringLiteral("NR1: Adaptive LMS noise reduction. Left-click activates, right-click adjusts knobs"));
+    m_nr2Btn->setToolTip(QStringLiteral("NR2: EMNR (Enhanced Multiband Noise Reduction). Left-click activates, right-click adjusts knobs"));
+    m_nr3Btn->setToolTip(QStringLiteral("NR3: RNNR (Recurrent Neural Net noise reduction). Left-click activates, right-click adjusts knobs"));
     // 4×2 layout (option B) — four cols consistently filled.
     //   Row 0: NB  | NR1  | NR2 | NR3
-    //   Row 1: NR4 | DFNR | MNR | ANF
+    //   Row 1: NR4 | DFNR | MNR | NNR
     //   Row 2: SNB (alone)
     dspGrid->addWidget(m_nr1Btn, 0, 1);
     dspGrid->addWidget(m_nr2Btn, 0, 2);
@@ -1420,28 +1742,54 @@ void VfoWidget::buildDspTab()
     // Row 1: NR4 | DFNR | MNR | (col 3 empty)
     m_nr4Btn  = makeToggle(QStringLiteral("NR4"));
     m_dfnrBtn = makeToggle(QStringLiteral("DFNR"));  // Full label — was "DFN" (truncated at 28px); now fits at uniform width
-    m_bnrBtn  = makeToggle(QStringLiteral("BNR"));   // Hidden permanently (NVIDIA deferred)
     m_mnrBtn  = makeToggle(QStringLiteral("MNR"));
+    m_nnrBtn  = makeToggle(QStringLiteral("NNR"));
     m_nr4Btn->setContextMenuPolicy(Qt::CustomContextMenu);
     m_dfnrBtn->setContextMenuPolicy(Qt::CustomContextMenu);
-    m_bnrBtn->setContextMenuPolicy(Qt::CustomContextMenu);
     m_mnrBtn->setContextMenuPolicy(Qt::CustomContextMenu);
-    m_nr4Btn->setToolTip(QStringLiteral("NR4: SBNR (Spectral Baseline NR) — left-click activates, right-click adjusts knobs"));
-    m_dfnrBtn->setToolTip(QStringLiteral("DFNR: DeepFilter noise reduction — left-click activates, right-click adjusts knobs"));
-    m_bnrBtn->setToolTip(QStringLiteral("BNR: NVIDIA noise reduction — left-click activates, right-click adjusts knobs"));
-    m_mnrBtn->setToolTip(QStringLiteral("MNR: macOS noise reduction — left-click activates, right-click adjusts knobs"));
+    m_nnrBtn->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_nr4Btn->setToolTip(QStringLiteral("NR4: SBNR (Spectral Baseline NR). Left-click activates, right-click adjusts knobs"));
+    m_dfnrBtn->setToolTip(QStringLiteral("DFNR: DeepFilter noise reduction. Left-click activates, right-click adjusts knobs"));
+    m_mnrBtn->setToolTip(QStringLiteral("MNR: macOS noise reduction. Left-click activates, right-click adjusts knobs"));
+    m_nnrBtn->setToolTip(QStringLiteral("NNR: neural noise reduction. Left-click activates, right-click adjusts settings"));
+    m_nnrToolTip = m_nnrBtn->toolTip();
+    // R-R3-49, Sub-epic C-1: each filter's own tooltip, put back when it can
+    // run again (updateNrAvailability shows the reason while it cannot).
+    m_dfnrToolTip = m_dfnrBtn->toolTip();
+    m_mnrToolTip = m_mnrBtn->toolTip();
     dspGrid->addWidget(m_nr4Btn,  1, 0);
     dspGrid->addWidget(m_dfnrBtn, 1, 1);
     dspGrid->addWidget(m_mnrBtn,  1, 2);
-    // col (1,3) intentionally empty
+    dspGrid->addWidget(m_nnrBtn,  1, 3);
+    // R-R3-40: a small amber dot in the NNR button's corner while the Core
+    // holds the receiver below the saved choice. Mouse events pass through
+    // to the button, whose tooltip carries the same reason.
+    m_nnrLimitIndicator = new QLabel(m_nnrBtn->parentWidget());
+    m_nnrLimitIndicator->setObjectName(QStringLiteral("vfoNnrLimitIndicator"));
+    m_nnrLimitIndicator->setFixedSize(6, 6);
+    m_nnrLimitIndicator->setStyleSheet(
+        QStringLiteral("QLabel { background: %1; border-radius: 3px; }")
+            .arg(QLatin1String(NereusSDR::Style::kAmberText)));
+    m_nnrLimitIndicator->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_nnrLimitIndicator->setVisible(false);
+    dspGrid->addWidget(m_nnrLimitIndicator, 1, 3, Qt::AlignTop | Qt::AlignRight);
 
-#ifndef HAVE_BNR
-    m_bnrBtn->hide();  // Hidden permanently: NVIDIA BNR integration deferred.
-    // BNR not added to grid — hidden and parented to dspWidget for lifecycle.
-#endif
-#ifndef HAVE_MNR
-    m_mnrBtn->hide();  // Hidden on non-macOS platforms.
-#endif
+    // R-R3-49, Sub-epic C-1: DFNR and MNR are never hidden (operator,
+    // 2026-09-25: "Not a fan of disappearing buttons but rather disabled.").
+    // One that cannot run is shown disabled with the plain reason
+    // (updateNrAvailability): the model's, which in a remote window is the
+    // Core's, or this build's with no model. BNR (NVIDIA) is not offered
+    // (operator, 2026-09-25), so row 2 keeps ANF and SNB only.
+    // The shared toggle style has no disabled look, so these two add the
+    // style guide's disabled colours (StyleConstants kDisabled*) to show it.
+    for (QPushButton* btn : {m_dfnrBtn, m_mnrBtn}) {
+        btn->setStyleSheet(vfoDspToggleStyle() + QStringLiteral(
+            "QPushButton:disabled {"
+            "  background: %1; color: %2; border: 1px solid %3;"
+            "}").arg(NereusSDR::Style::kDisabledBg, NereusSDR::Style::kDisabledText,
+                     NereusSDR::Style::kDisabledBorder));
+    }
+    updateNrAvailability();
 
     // Row 2: ANF | SNB | (cols 2-3 empty)
     m_anfToggle = makeToggle(QStringLiteral("ANF"));
@@ -1450,8 +1798,8 @@ void VfoWidget::buildDspTab()
     m_snbToggle = makeToggle(QStringLiteral("SNB"));
     // From Thetis console.resx:3927 — chkDSPNB2.ToolTip (labeled "SNB" in Thetis UI)
     m_snbToggle->setToolTip(tr(
-        "Spectral Noise Blanker — left-click toggles, right-click opens\n"
-        "Setup \u2192 DSP \u2192 NB/SNB. Runs independently of NB/NB2 and\n"
+        "Spectral Noise Blanker: left-click toggles, right-click opens\n"
+        "its Setup page (NB/SNB). Runs independently of NB/NB2 and\n"
         "targets tonal/wideband statics that time-domain blankers can't\n"
         "see."));
     // Right-click → Setup page. Mirrors Thetis chkDSPNB2_MouseDown
@@ -1459,8 +1807,8 @@ void VfoWidget::buildDspTab()
     m_snbToggle->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_snbToggle, &QWidget::customContextMenuRequested,
             this, [this](const QPoint&) { emit openNbSetupRequested(); });
-    dspGrid->addWidget(m_anfToggle, 1, 3);  // fills row 1 col 4
-    dspGrid->addWidget(m_snbToggle, 2, 0);  // alone on row 2
+    dspGrid->addWidget(m_anfToggle, 2, 0);
+    dspGrid->addWidget(m_snbToggle, 2, 1);
 
     // Uniform size for all 9 grid buttons: 64×26 px.
     // User directive: natural button size (not cramped), zero gaps between
@@ -1469,7 +1817,7 @@ void VfoWidget::buildDspTab()
     // size so the sub-grid hugs its content instead of stretching to the
     // flag width.
     for (auto* btn : {m_nbButton, m_nr1Btn, m_nr2Btn, m_nr3Btn,
-                      m_nr4Btn, m_dfnrBtn, m_mnrBtn,
+                      m_nr4Btn, m_dfnrBtn, m_mnrBtn, m_nnrBtn,
                       m_anfToggle, m_snbToggle}) {
         if (btn) {
             btn->setFixedHeight(26);
@@ -1542,11 +1890,21 @@ void VfoWidget::buildDspTab()
     });
     // Sub-epic C-1: NR bank left-click = setActiveNr(slot) mutual exclusion.
     auto wireNrBtnToggle = [this](QPushButton* btn, NereusSDR::NrSlot slot) {
-        connect(btn, &QPushButton::toggled, this, [this, slot](bool on) {
+        connect(btn, &QPushButton::toggled, this, [this, btn, slot](bool on) {
             if (m_updatingFromModel || !m_slice) {
                 return;
             }
-            m_slice->setActiveNr(on ? slot : NereusSDR::NrSlot::Off);
+            m_lastNrButton = btn;
+            m_nrRefusal.clear();
+            const NereusSDR::NrSlot requested = on ? slot : NereusSDR::NrSlot::Off;
+            m_nrClickInFlight = true;
+            m_slice->setActiveNr(requested);
+            m_nrClickInFlight = false;
+            // Fix wave I3: a refused choice (NR3 with no model on the Core)
+            // leaves the receiver as it was; the buttons follow it back.
+            if (m_slice && m_slice->activeNr() != requested) {
+                onActiveNrChanged(m_slice->activeNr());
+            }
         });
     };
     wireNrBtnToggle(m_nr1Btn,  NereusSDR::NrSlot::NR1);
@@ -1554,8 +1912,8 @@ void VfoWidget::buildDspTab()
     wireNrBtnToggle(m_nr3Btn,  NereusSDR::NrSlot::NR3);
     wireNrBtnToggle(m_nr4Btn,  NereusSDR::NrSlot::NR4);
     wireNrBtnToggle(m_dfnrBtn, NereusSDR::NrSlot::DFNR);
-    wireNrBtnToggle(m_bnrBtn,  NereusSDR::NrSlot::BNR);
     wireNrBtnToggle(m_mnrBtn,  NereusSDR::NrSlot::MNR);
+    wireNrBtnToggle(m_nnrBtn,  NereusSDR::NrSlot::NNR);
 
     // Sub-epic C-1: NR bank right-click = DspParamPopup quick controls.
     connect(m_nr1Btn,  &QPushButton::customContextMenuRequested, this,
@@ -1568,10 +1926,10 @@ void VfoWidget::buildDspTab()
             [this](const QPoint& pos) { showNr4Popup(m_nr4Btn->mapToGlobal(pos)); });
     connect(m_dfnrBtn, &QPushButton::customContextMenuRequested, this,
             [this](const QPoint& pos) { showDfnrPopup(m_dfnrBtn->mapToGlobal(pos)); });
-    connect(m_bnrBtn,  &QPushButton::customContextMenuRequested, this,
-            [this](const QPoint& pos) { showBnrPopup(m_bnrBtn->mapToGlobal(pos)); });
     connect(m_mnrBtn,  &QPushButton::customContextMenuRequested, this,
             [this](const QPoint& pos) { showMnrPopup(m_mnrBtn->mapToGlobal(pos)); });
+    connect(m_nnrBtn,  &QPushButton::customContextMenuRequested, this,
+            [this](const QPoint& pos) { showNnrPopup(m_nnrBtn->mapToGlobal(pos)); });
     connect(m_anfToggle, &QPushButton::toggled, this, [this](bool on) {
         if (!m_updatingFromModel) { emit anfChanged(on); }
     });
@@ -1692,6 +2050,7 @@ void VfoWidget::buildXRitTab()
         row->setSpacing(4);
 
         m_ritBtn = new QPushButton(QStringLiteral("RIT"), ritWidget);
+        m_ritBtn->setObjectName(QStringLiteral("VfoRitButton"));
         m_ritBtn->setCheckable(true);
         m_ritBtn->setStyleSheet(vfoDspToggleStyle());
         m_ritBtn->setFixedHeight(22);
@@ -1709,6 +2068,7 @@ void VfoWidget::buildXRitTab()
         row->addWidget(m_ritLabel, 1);
 
         m_ritZeroBtn = new QPushButton(QStringLiteral("0"), ritWidget);
+        m_ritZeroBtn->setObjectName(QStringLiteral("VfoRitZeroButton"));
         m_ritZeroBtn->setFixedWidth(20);
         m_ritZeroBtn->setFlat(true);
         m_ritZeroBtn->setStyleSheet(kZeroBtn);
@@ -1725,6 +2085,7 @@ void VfoWidget::buildXRitTab()
         row->setSpacing(4);
 
         m_xitBtn = new QPushButton(QStringLiteral("XIT"), ritWidget);
+        m_xitBtn->setObjectName(QStringLiteral("VfoXitButton"));
         m_xitBtn->setCheckable(true);
         m_xitBtn->setStyleSheet(vfoDspToggleStyle());
         m_xitBtn->setFixedHeight(22);
@@ -1735,6 +2096,7 @@ void VfoWidget::buildXRitTab()
         row->addWidget(m_xitBtn);
 
         m_xitLabel = new ScrollableLabel(ritWidget);
+        m_xitLabel->setObjectName(QStringLiteral("VfoXitOffset"));
         m_xitLabel->setRange(-10000, 10000);
         m_xitLabel->setStep(m_stepHz);
         m_xitLabel->setValue(0);
@@ -1744,6 +2106,7 @@ void VfoWidget::buildXRitTab()
         row->addWidget(m_xitLabel, 1);
 
         m_xitZeroBtn = new QPushButton(QStringLiteral("0"), ritWidget);
+        m_xitZeroBtn->setObjectName(QStringLiteral("VfoXitZeroButton"));
         m_xitZeroBtn->setFixedWidth(20);
         m_xitZeroBtn->setFlat(true);
         m_xitZeroBtn->setStyleSheet(kZeroBtn);
@@ -1761,9 +2124,10 @@ void VfoWidget::buildXRitTab()
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
 
-        // Step cycle button — NOT NYI (wires to live SliceModel::setStepHz)
+        // Step cycle button: emits stepCycleRequested, which
+        // MainWindow::createSliceFlag routes to SliceModel::changeTuneStepUp().
         m_stepCycleBtn = new QPushButton(
-            QStringLiteral("%1 Hz").arg(m_stepHz), ritWidget);
+            formatTuneStepLabel(m_stepHz), ritWidget);
         m_stepCycleBtn->setFlat(true);
         m_stepCycleBtn->setStyleSheet(
             QStringLiteral("QPushButton {"
@@ -1772,8 +2136,13 @@ void VfoWidget::buildXRitTab()
                            "}"
                            "QPushButton:hover { border: 1px solid #0090e0; }"));
         m_stepCycleBtn->setFixedHeight(22);
-        // NereusSDR native — Thetis has no equivalent step-cycle button
-        // (Thetis uses wheel on the VFO display directly; step size is implicit)
+        // From Thetis console.cs:29034-29038 [v2.10.3.15]: a left click on the step
+        // display (txtWheelTune, whose MouseDown is bound to WheelTune_MouseDown at
+        // console.Designer.cs:2870) calls ChangeTuneStepUp, which advances the step
+        // and wraps. Thetis also has larger / smaller step buttons,
+        // btnChangeTuneStepLarger_Click and btnChangeTuneStepSmaller_Click
+        // (console.cs:30635-30643). This single button mirrors the left-click
+        // behaviour.
         m_stepCycleBtn->setToolTip(QStringLiteral("Cycle tuning step size (click to advance to next step)"));
         row->addWidget(m_stepCycleBtn, 1);
 
@@ -1802,6 +2171,9 @@ void VfoWidget::buildXRitTab()
         }
     });
 
+    // R-R3-49, R-R3-21 (parity Task 11): XIT is a slice setting, written
+    // in a remote window as in a local one (the Core's slice follows), and
+    // not tied to the transmit permission. RIT above has the same shape.
     connect(m_xitBtn, &QPushButton::toggled, this, [this](bool on) {
         if (!m_updatingFromModel) {
             emit xitEnabledChanged(on);
@@ -2155,6 +2527,9 @@ void VfoWidget::setAgcMode(AGCMode mode)
 
 void VfoWidget::setAfGain(int gain)
 {
+    m_modelAfGain = gain;
+    // Task 14b: a listened flag shows this device's own volume instead.
+    if (isListening()) { return; }
     m_updatingFromModel = true;
     m_afGainSlider->setValue(gain);
     m_afGainLabel->setText(QString::number(gain));
@@ -2190,22 +2565,53 @@ void VfoWidget::setStepHz(int hz)
         m_xitLabel->setStep(hz);
     }
     if (m_stepCycleBtn) {
-        m_stepCycleBtn->setText(QStringLiteral("%1 Hz").arg(hz));
+        m_stepCycleBtn->setText(formatTuneStepLabel(hz));
     }
 }
 
 // Phase 3F Sub-Epic C Task 9: emit handoff request to MainWindow for forwarding.
 void VfoWidget::onTxBadgeClicked()
 {
+    // Task 78: the radio's own transmission is not this window's to move.
+    if (m_inUseByRadio) {
+        m_txBadge->setChecked(false);
+        return;
+    }
+    // TX badge take (JJ, 2026-09-30): a click that starts a take. The
+    // badge's own toggle is undone: the TX mark follows the Core.
+    if (txBadgeTakeOffered()) {
+        m_txBadge->setChecked(m_txMarked);
+        emit txTakeRequested(m_sliceIndex);
+        return;
+    }
+    if (!m_transmitPermitted) { return; }
+    // Task 14a: a slice another device controls is not this window's to
+    // make the TX slice.
+    if (isListening()) { return; }
     emit txHandoffRequested(m_sliceIndex);
+}
+
+bool VfoWidget::txBadgeTakeOffered() const
+{
+    // Offered only where a click could not make the slice the TX slice at
+    // once, never while a slice request waits or the radio's own PTT
+    // transmits on this frequency.
+    return m_txBadgeOffer.offered && m_accessPending.isEmpty() && !m_inUseByRadio
+        && (!m_transmitPermitted || isListening());
+}
+
+void VfoWidget::setTxBadgeOffer(const TxBadgeOffer& offer)
+{
+    if (m_txBadgeOffer == offer) { return; }
+    m_txBadgeOffer = offer;
+    updateTransmitControlAvailability();
 }
 
 void VfoWidget::setSliceIndex(int index)
 {
     m_sliceIndex = index;
-    static const QChar letters[] = {'A', 'B', 'C', 'D'};
-    if (index >= 0 && index < 4) {
-        m_sliceBadge->setText(QString(letters[index]));
+    if (index >= 0) {
+        m_sliceBadge->setText(QString(QChar(QLatin1Char(static_cast<char>('A' + index)))));
         QColor c = sliceColor(index);
         m_sliceBadge->setStyleSheet(
             QStringLiteral("background: %1; color: white; font-size: 11px;"
@@ -2215,7 +2621,64 @@ void VfoWidget::setSliceIndex(int index)
 
 void VfoWidget::setTxSlice(bool isTx)
 {
-    m_txBadge->setChecked(isTx);
+    m_txMarked = isTx;
+    m_txBadge->setChecked(isTx && !m_inUseByRadio);
+}
+
+void VfoWidget::setStationPresentationAllowed(bool allowed)
+{
+    if (m_stationPresentationAllowed == allowed) { return; }
+    m_stationPresentationAllowed = allowed;
+    if (!allowed) { hide(); }
+    positionFloatingButtons();
+}
+
+bool VfoWidget::txSliceShown() const
+{
+    return m_txBadge && m_txBadge->isChecked();
+}
+
+QString VfoWidget::inUseByRadioText()
+{
+    return QStringLiteral("The radio is transmitting on this frequency.");
+}
+
+void VfoWidget::setInUseByRadio(bool inUse)
+{
+    if (m_inUseByRadio == inUse) { return; }
+    m_inUseByRadio = inUse;
+    m_txBadge->setProperty("inUseByRadio", inUse);
+    if (inUse) {
+        m_txBadge->setChecked(false);
+        m_txBadge->setStyleSheet(
+            QStringLiteral("QPushButton { background: #3a2a10; border: 1px solid #d09020;"
+                           "border-radius: 3px; color: #ffc040; font-size: 10px; font-weight: bold; }"));
+        m_txBadge->setToolTip(inUseByRadioText());
+        m_txBadge->setAccessibleDescription(inUseByRadioText());
+    } else {
+        m_txBadge->setStyleSheet(
+            QStringLiteral("QPushButton { background: #1a2a3a; border: 1px solid #304050;"
+                           "border-radius: 3px; color: #6888a0; font-size: 10px; font-weight: bold; }"
+                           "QPushButton:checked { background: #6a3030; border-color: #ff4444; color: #ff8080; }"));
+        m_txBadge->setToolTip(QStringLiteral("Indicates this slice is the TX slice"));
+        m_txBadge->setAccessibleDescription(QString());
+    }
+    // TX badge take: a held or offering badge keeps these as the words it
+    // returns to, and shows its own now.
+    if (m_txBadge->property(kSavedTransmitTooltip).isValid()) {
+        m_txBadge->setProperty(kSavedTransmitTooltip, m_txBadge->toolTip());
+        m_txBadge->setProperty(kSavedTransmitDescription, m_txBadge->accessibleDescription());
+        updateTransmitControlAvailability();
+    }
+}
+
+void VfoWidget::setActiveSlice(bool active)
+{
+    if (m_activeSlice == active) {
+        return;
+    }
+    m_activeSlice = active;
+    emit activeSliceChanged(active);
 }
 
 void VfoWidget::setAntennaList(const QStringList& ants)
@@ -2306,14 +2769,46 @@ void VfoWidget::onActiveNrChanged(NereusSDR::NrSlot slot)
 {
     if (!m_nr1Btn) { return; }  // not yet built
     QSignalBlocker b1(m_nr1Btn),  b2(m_nr2Btn),  b3(m_nr3Btn), b4(m_nr4Btn);
-    QSignalBlocker b5(m_dfnrBtn), b6(m_bnrBtn),  b7(m_mnrBtn);
+    QSignalBlocker b5(m_dfnrBtn), b7(m_mnrBtn), b8(m_nnrBtn);
     m_nr1Btn->setChecked(slot  == NereusSDR::NrSlot::NR1);
     m_nr2Btn->setChecked(slot  == NereusSDR::NrSlot::NR2);
     m_nr3Btn->setChecked(slot  == NereusSDR::NrSlot::NR3);
     m_nr4Btn->setChecked(slot  == NereusSDR::NrSlot::NR4);
     m_dfnrBtn->setChecked(slot == NereusSDR::NrSlot::DFNR);
-    m_bnrBtn->setChecked(slot  == NereusSDR::NrSlot::BNR);
     m_mnrBtn->setChecked(slot  == NereusSDR::NrSlot::MNR);
+    m_nnrBtn->setChecked(slot  == NereusSDR::NrSlot::NNR);
+}
+
+void VfoWidget::onNnrLimitChanged(int limit)
+{
+    if (!m_nnrBtn || !m_nnrLimitIndicator) { return; }  // not yet built
+    // The slice words the reason for this window: a remote window names
+    // the Core computer, a local one this computer.
+    const QString reason = m_slice && limit != 0 ? m_slice->nnrLimitText() : QString();
+    m_nnrLimitIndicator->setVisible(!reason.isEmpty());
+    m_nnrLimitIndicator->setToolTip(reason);
+    m_nnrBtn->setToolTip(reason.isEmpty() ? m_nnrToolTip : reason);
+}
+
+// Fix wave I3: say why a noise reducer did not turn on, at the button that
+// asked, in the receiver's plain words.
+void VfoWidget::onNrSelectionRefused(const QString& reason)
+{
+    if (m_slice) {
+        onActiveNrChanged(m_slice->activeNr());
+    }
+    // Follow-up item 3: one message per refused click, at the control that
+    // was clicked. A choice made elsewhere says why there.
+    if (!m_nrClickInFlight) {
+        return;
+    }
+    // A Core refusal is shown in user words; the raw text is logged.
+    m_nrRefusal = reason.isEmpty() ? reason : OperatorReasonText::forDisplay(reason);
+    QWidget* anchor = m_lastNrButton ? static_cast<QWidget*>(m_lastNrButton.data())
+                                     : static_cast<QWidget*>(m_nr3Btn);
+    if (anchor && anchor->isVisible() && !m_nrRefusal.isEmpty()) {
+        QToolTip::showText(anchor->mapToGlobal(QPoint(0, anchor->height())), m_nrRefusal, anchor);
+    }
 }
 
 void VfoWidget::setSnbEnabled(bool v)
@@ -2350,7 +2845,9 @@ void VfoWidget::applyModeVisibility(DSPMode mode)
     // Mode containers embedded in DspTab — show only the one matching
     // the active demodulation mode.
     if (m_fmContainer) {
-        m_fmContainer->setVisible(mode == DSPMode::FM);
+        // R-R3-49: no empty FM box while every FM control is unbuilt.
+        m_fmContainer->setVisible(mode == DSPMode::FM
+                                  && FmOptContainer::hasBuiltControls());
     }
     if (m_digContainer) {
         m_digContainer->setVisible(mode == DSPMode::DIGL || mode == DSPMode::DIGU);
@@ -2377,6 +2874,9 @@ void VfoWidget::applyModeVisibility(DSPMode mode)
 
 void VfoWidget::setMuted(bool v)
 {
+    m_modelMuted = v;
+    // Task 14b: a listened flag shows this device's own mute instead.
+    if (isListening()) { return; }
     if (m_muteBtn && m_muteBtn->isChecked() != v) {
         m_updatingFromModel = true;
         m_muteBtn->setChecked(v);
@@ -2424,7 +2924,8 @@ void VfoWidget::setSsqlThresh(double dB)
 void VfoWidget::setAgcThreshold(int dBu)
 {
     if (m_agcTSlider) {
-        int val = std::max(-160, std::min(0, dBu));
+        int val = std::max(ControlRanges::kAgcThresholdMinDb,
+                           std::min(ControlRanges::kAgcThresholdMaxDb, dBu));
         if (m_agcTSlider->value() != val) {
             m_updatingFromModel = true;
             m_agcTSlider->setValue(val);
@@ -2436,7 +2937,8 @@ void VfoWidget::setAgcThreshold(int dBu)
     }
 }
 
-void VfoWidget::updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double offset)
+void VfoWidget::updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double offset,
+                                   bool noiseFloorValid)
 {
     m_autoAgcActive = autoOn;
     m_noiseFloorDbm = noiseFloorDbm;
@@ -2457,9 +2959,11 @@ void VfoWidget::updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double of
         // Show info sub-line
         if (m_agcInfoLabel) {
             m_agcInfoLabel->setText(
-                QStringLiteral("NF %1 dB \u00b7 offset +%2")
-                    .arg(static_cast<int>(noiseFloorDbm))
-                    .arg(static_cast<int>(offset)));
+                noiseFloorValid
+                    ? QStringLiteral("NF %1 dB \u00b7 offset +%2")
+                          .arg(static_cast<int>(noiseFloorDbm))
+                          .arg(static_cast<int>(offset))
+                    : QStringLiteral("NF awaiting measurement"));
             m_agcInfoLabel->show();
         }
     } else {
@@ -2486,6 +2990,72 @@ void VfoWidget::setBinauralEnabled(bool v)
     }
 }
 
+// ---- R-R3-45: speakers or headphones ----
+
+QString VfoWidget::headphonesMissingText()
+{
+    return QStringLiteral("Silent: no headphones are set up. "
+                          "Turn them on in Setup, Audio, Devices.");
+}
+
+void VfoWidget::setOutputRoute(SliceModel::OutputRoute route)
+{
+    const bool headphones = route == SliceModel::OutputRoute::Headphones;
+    const bool wasUpdating = m_updatingFromModel;
+    m_updatingFromModel = true;
+    if (m_speakersBtn) {
+        m_speakersBtn->setChecked(!headphones);
+    }
+    if (m_headphonesBtn) {
+        m_headphonesBtn->setChecked(headphones);
+    }
+    m_updatingFromModel = wasUpdating;
+    updateOutputNotice();
+}
+
+void VfoWidget::setHeadphonesAvailable(bool available)
+{
+    m_headphonesAvailable = available;
+    updateOutputNotice();
+}
+
+QString VfoWidget::headphonesNotOpenedText()
+{
+    return QStringLiteral("Silent: the headphones could not be opened.");
+}
+
+void VfoWidget::setHeadphonesEnabled(bool enabled)
+{
+    m_headphonesEnabled = enabled;
+    updateOutputNotice();
+}
+
+void VfoWidget::setHeadphonesProblem(const QString& problem)
+{
+    m_headphonesProblem = problem;
+    updateOutputNotice();
+}
+
+void VfoWidget::updateOutputNotice()
+{
+    if (!m_outputNotice) {
+        return;
+    }
+    const bool headphones = m_headphonesBtn && m_headphonesBtn->isChecked();
+    // R-R3-45: a remote window's own reason comes first (a Core that
+    // cannot send the headphones mix plays the receiver on the speakers, so
+    // "silent" would be wrong; a headphones device that failed). Then this
+    // computer's: headphones turned on that did not open, or none set up.
+    if (!m_headphonesProblem.isEmpty()) {
+        m_outputNotice->setText(m_headphonesProblem);
+    } else if (!m_headphonesAvailable) {
+        m_outputNotice->setText(m_headphonesEnabled ? headphonesNotOpenedText()
+                                                    : headphonesMissingText());
+    }
+    m_outputNotice->setVisible(headphones
+                               && (!m_headphonesAvailable || !m_headphonesProblem.isEmpty()));
+}
+
 // ---- Slice coupling (for mode container binding only) ----
 
 void VfoWidget::setSlice(SliceModel* slice)
@@ -2503,6 +3073,15 @@ void VfoWidget::setSlice(SliceModel* slice)
                    this, nullptr);
     }
 
+    if (m_slice) {
+        disconnect(m_slice, &SliceModel::outputRouteChanged,
+                   this, &VfoWidget::setOutputRoute);
+        disconnect(m_slice, &SliceModel::nnrLimitChanged,
+                   this, &VfoWidget::onNnrLimitChanged);
+        disconnect(m_slice, &SliceModel::nrSelectionRefused, this, nullptr);
+        disconnect(m_slice, &SliceModel::radeReasonChanged,
+                   this, &VfoWidget::setRadeReason);
+    }
     m_slice = QPointer<SliceModel>(slice);
     if (m_fmContainer) {
         m_fmContainer->setSlice(slice);
@@ -2514,12 +3093,26 @@ void VfoWidget::setSlice(SliceModel* slice)
         m_rttyContainer->setSlice(slice);
     }
 
+    // R-R3-45: speakers or headphones. The buttons write m_slice directly;
+    // the slice's change signal brings the flag back in step.
+    if (slice) {
+        connect(slice, &SliceModel::outputRouteChanged,
+                this, &VfoWidget::setOutputRoute);
+    }
+    setOutputRoute(slice ? slice->outputRoute()
+                         : SliceModel::OutputRoute::Speakers);
+
     // Sub-epic C-1: NR bank — sync from slice activeNr and initial state.
     if (slice) {
         connect(slice, &SliceModel::activeNrChanged,
                 this, &VfoWidget::onActiveNrChanged);
         onActiveNrChanged(slice->activeNr());
+        connect(slice, &SliceModel::nnrLimitChanged,
+                this, &VfoWidget::onNnrLimitChanged, Qt::UniqueConnection);
+        connect(slice, &SliceModel::nrSelectionRefused,
+                this, &VfoWidget::onNrSelectionRefused);
     }
+    onNnrLimitChanged(slice ? slice->nnrLimit() : 0);
 
     // Phase 3R L1: SNR row binding. RadeChannel pushes snrDb via the
     // I5 signal-graph (RadeChannel::snrChanged -> RadioModel::onRadeSnrChanged
@@ -2532,6 +3125,13 @@ void VfoWidget::setSlice(SliceModel* slice)
                 this, &VfoWidget::onSnrChanged);
         onSnrChanged(slice->snrDb());
     }
+    // RADE reason: why the slice's RADE decoder is not working, if it is
+    // not (the Core's, mirrored, on a remote window).
+    if (slice) {
+        connect(slice, &SliceModel::radeReasonChanged,
+                this, &VfoWidget::setRadeReason, Qt::UniqueConnection);
+    }
+    setRadeReason(slice ? slice->radeReason() : QString());
 
     // VAX selector — bidirectional wiring (Phase 3O Sub-Phase 8 Task 8.2)
     if (m_vaxSelector && slice) {
@@ -2595,15 +3195,20 @@ void VfoWidget::buildFloatingButtons()
     // NereusSDR native — Thetis has no per-slice close button
     m_closeBtn->setToolTip(QStringLiteral("Close slice"));
     connect(m_closeBtn, &QPushButton::clicked, this, [this]() {
+        // Task 14a: on a slice this window only listens to, the close
+        // button stops listening; it never removes another device's slice.
+        if (isListening()) {
+            emit stopListeningRequested(m_sliceIndex);
+            return;
+        }
         emit closeRequested(m_sliceIndex);
     });
     // Phase 3F (Bug 2): Slice A (index 0) is the last-slice invariant —
-    // RadioModel::removeSlice refuses to remove the final slice, and its flag
-    // (m_vfoWidget) is referenced by many wireSliceToSpectrum lambdas whose
-    // teardown is deliberately skipped on sliceRemoved. Hiding the close
-    // button on Slice A keeps the affordance honest (a button that does
-    // nothing reads as broken) and avoids the fragile slice-0 removal path.
-    if (m_sliceIndex == 0) {
+    // RadioModel::removeSlice refuses to remove the final slice. Hiding the
+    // close button on Slice A keeps the affordance honest (a button that
+    // does nothing reads as broken). (Its flag is now torn down like every
+    // other when a Core closes Slice A: VFO flag crash lane, 2026-09-30.)
+    if (m_sliceIndex == 0 && !isListening()) {
         m_closeBtn->hide();
     }
 
@@ -2617,8 +3222,14 @@ void VfoWidget::buildFloatingButtons()
             applyLockedState(locked);
         }
     });
+    // Task 14a: the lock writes the slice too, so it is held on a listened
+    // flag; the close button's words follow the access.
+    if (isListening()) {
+        holdForListening(m_lockBtn);
+        m_closeBtn->setToolTip(tr("Stop listening"));
+    }
 
-    // Record button — checkable, NYI-badged (no consumer in Stage 1)
+    // Record button: checkable, disabled (no consumer yet)
     m_recBtn = makeBtn(QStringLiteral("\u23FA"), kFloatingBtn);
     // From Thetis console.resx:2028 — ckQuickRec.ToolTip
     m_recBtn->setToolTip(QStringLiteral("Quick Record of \"off the air\" signals"));
@@ -2628,9 +3239,9 @@ void VfoWidget::buildFloatingButtons()
             emit recordToggled(on);
         }
     });
-    NyiOverlay::markNyi(m_recBtn, QStringLiteral("phase3g10-stage2"));
+    m_recBtn->setEnabled(false);  // nothing behind it until the voice recorder is built
 
-    // Play button — checkable, NYI-badged (no consumer in Stage 1)
+    // Play button: checkable, disabled (no consumer yet)
     m_playBtn = makeBtn(QStringLiteral("\u25B6"), kFloatingBtn);
     // From Thetis console.resx:1941 — ckQuickPlay.ToolTip
     m_playBtn->setToolTip(QStringLiteral("Quick Playback of signals recorded \"off the air\""));
@@ -2640,7 +3251,12 @@ void VfoWidget::buildFloatingButtons()
             emit playToggled(on);
         }
     });
-    NyiOverlay::markNyi(m_playBtn, QStringLiteral("phase3g10-stage2"));
+    m_playBtn->setEnabled(false);  // nothing behind it until the voice recorder is built
+
+    // R-R3-49: record and play are hidden until the voice recorder is
+    // built; positionFloatingButtons() keeps them out of the strip.
+    UnbuiltFeatures::hideUnlessBuilt(m_recBtn, UnbuiltFeature::Voice);
+    UnbuiltFeatures::hideUnlessBuilt(m_playBtn, UnbuiltFeature::Voice);
 }
 
 // ---- Lock state: applyLockedState + setLocked (S1.8a review — I3) ----
@@ -2723,12 +3339,23 @@ void VfoWidget::positionFloatingButtons()
     // Phase 3F (Bug 2): the close button is hidden on Slice A (index 0);
     // keep it hidden here and let the remaining buttons fill the gap so the
     // strip has no empty slot at the top.
-    const bool closeShown = (m_sliceIndex != 0);
+    // Task 14a: on a listened flag the close button stops listening, which
+    // is fine on Slice A too.
+    const bool closeShown = (m_sliceIndex != 0) || isListening();
+
+    // R-R3-49: record and play take no slot while the voice recorder is
+    // not built.
+    const bool voiceBuilt = UnbuiltFeatures::isBuilt(UnbuiltFeature::Voice);
 
     QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn};
     for (QPushButton* btn : btns) {
+        if (!voiceBuilt && (btn == m_recBtn || btn == m_playBtn)) {
+            btn->hide();
+            continue;
+        }
         const bool isCloseBtn = (btn == m_closeBtn);
-        const bool show = isVisible() && (closeShown || !isCloseBtn);
+        const bool show = m_stationPresentationAllowed && isVisible()
+            && (closeShown || !isCloseBtn);
         if (isCloseBtn && !closeShown) {
             btn->hide();
             continue;  // don't advance btnY — next button takes the top slot
@@ -2841,8 +3468,9 @@ void VfoWidget::mousePressEvent(QMouseEvent* event)
     event->accept();
     emit sliceActivationRequested(m_sliceIndex);
 
-    // Double-click on frequency area → enter edit mode
-    if (event->type() == QEvent::MouseButtonDblClick) {
+    // Double-click on frequency area → enter edit mode. Task 14a: not on a
+    // slice another device controls.
+    if (event->type() == QEvent::MouseButtonDblClick && !isListening()) {
         QRect freqRect = m_freqStack->geometry();
         if (freqRect.contains(event->pos())) {
             // Format current frequency as MHz for editing
@@ -2858,7 +3486,7 @@ void VfoWidget::mousePressEvent(QMouseEvent* event)
 void VfoWidget::wheelEvent(QWheelEvent* event)
 {
     event->accept();
-    if (m_locked) {
+    if (m_locked || isListening()) {
         return;
     }
     int delta = event->angleDelta().y();
@@ -2886,10 +3514,52 @@ void VfoWidget::wheelEvent(QWheelEvent* event)
 void VfoWidget::contextMenuEvent(QContextMenuEvent* event)
 {
     QMenu menu(this);
+    populateContextMenu(menu);
+    menu.setStyleSheet(QString::fromLatin1(kPopupMenu));   // Phase 3P-I-a T15 — issue #98
+    menu.exec(event->globalPos());
+}
+
+void VfoWidget::populateContextMenu(QMenu& menu)
+{
+    // Task 14a: the access actions come first. While a request waits for
+    // the Core they are shown disabled with what the flag is waiting for.
+    const bool listening = isListening();
+    const auto addAccessAction = [this, &menu](const QString& text,
+                                               void (VfoWidget::*signal)(int)) {
+        QAction* act = menu.addAction(text);
+        if (!m_accessPending.isEmpty()) {
+            act->setEnabled(false);
+            act->setToolTip(m_accessPending);
+        }
+        connect(act, &QAction::triggered, this, [this, signal]() {
+            if (!m_accessPending.isEmpty()) { return; }
+            emit (this->*signal)(m_sliceIndex);
+        });
+    };
+    if (listening) {
+        addAccessAction(tr("Take control"), &VfoWidget::takeControlRequested);
+        // Core-slice take-over: off with the Core's words when it refuses.
+        if (!m_sliceAccess.takeHeldReason.isEmpty() && m_accessPending.isEmpty()) {
+            QAction* take = menu.actions().constLast();
+            take->setEnabled(false);
+            take->setToolTip(m_sliceAccess.takeHeldReason);
+        }
+        addAccessAction(tr("Stop listening"), &VfoWidget::stopListeningRequested);
+        menu.addSeparator();
+    } else if (m_sliceAccess.state == SliceAccess::State::Controlled) {
+        addAccessAction(tr("Release"), &VfoWidget::releaseRequested);
+        menu.addSeparator();
+    }
+    const int firstSharedAction = menu.actions().size();
 
     // Make this the TX slice
     QAction* makeTxAct = menu.addAction(QStringLiteral("Make this the TX slice"));
+    if (!m_transmitPermitted) {
+        makeTxAct->setEnabled(false);
+        makeTxAct->setToolTip(m_transmitPermissionReason);
+    }
     connect(makeTxAct, &QAction::triggered, this, [this]() {
+        if (!m_transmitPermitted || isListening()) { return; }
         emit txHandoffRequested(m_sliceIndex);
     });
 
@@ -2966,9 +3636,12 @@ void VfoWidget::contextMenuEvent(QContextMenuEvent* event)
 
     menu.addSeparator();
 
-    // Diversity submenu (placeholder; Sub-Epic G enables on Slice A + 2-ADC SKU).
-    QAction* divAct = menu.addAction(QStringLiteral("Diversity >"));
-    divAct->setEnabled(false);
+    // R-R3-21: opens the Diversity dialog (Tools > Diversity), which holds
+    // the diversity controls. It used to be a greyed placeholder.
+    QAction* divAct = menu.addAction(QStringLiteral("Diversity..."));
+    connect(divAct, &QAction::triggered, this, [this]() {
+        emit diversityRequested();
+    });
 
     // Filter policy (opens FilterPolicyDialog via chainIndex=0 default).
     QAction* filterAct = menu.addAction(QStringLiteral("Filter policy..."));
@@ -2983,8 +3656,19 @@ void VfoWidget::contextMenuEvent(QContextMenuEvent* event)
         emit removeSliceRequested(m_sliceIndex);
     });
 
-    menu.setStyleSheet(QString::fromLatin1(kPopupMenu));   // Phase 3P-I-a T15 — issue #98
-    menu.exec(event->globalPos());
+    // Task 14a: every entry below the access actions changes the shared
+    // slice (or the radio for it), so on a listened flag each is shown
+    // disabled with who controls the slice.
+    if (listening) {
+        const QList<QAction*> actions = menu.actions();
+        for (int i = firstSharedAction; i < actions.size(); ++i) {
+            QAction* act = actions.at(i);
+            if (act->isSeparator()) { continue; }
+            act->setEnabled(false);
+            act->setToolTip(m_sliceAccess.heldReason);
+        }
+    }
+    menu.setToolTipsVisible(true);
 }
 
 // ---- Helpers ----
@@ -3118,13 +3802,30 @@ QString VfoWidget::formatFilterWidth(int low, int high) const
 
 QColor VfoWidget::sliceColor(int index)
 {
-    // From AetherSDR SliceColors.h
-    switch (index) {
-    case 0: return QColor(0x00, 0xd4, 0xff);  // cyan
-    case 1: return QColor(0xff, 0x40, 0xff);  // magenta
-    case 2: return QColor(0x40, 0xff, 0x40);  // green
-    case 3: return QColor(0xff, 0xff, 0x00);  // yellow
-    default: return QColor(0x00, 0xd4, 0xff);
+    // From AetherSDR SliceColors.h (the table is ControlRanges.h's
+    // kSliceColours, which the Core's catalogue reads too).
+    // From AetherSDR src/gui/SliceColors.h:5, 16-23 [@0cd4559]:
+    // index all eight bright entries by slice id % 8.
+    return QColor(static_cast<QRgb>(ControlRanges::sliceColour(index % kSliceColorCount)));
+}
+
+QColor VfoWidget::sliceDimColor(int index)
+{
+    // From AetherSDR src/gui/SliceColors.h:5, 16-23 [@0cd4559]: the dim half
+    // (dr, dg, db) of all eight kSliceColors entries, indexed by slice id % 8
+    // as there. Current AetherSDR carries the same eight values as
+    // color.slice.dim.a-h in resources/themes/default-dark.json:227-234
+    // [@9f81dc00].
+    switch (index % kSliceColorCount) {
+    case 0: return QColor(0x00, 0x60, 0x80);  // A = cyan
+    case 1: return QColor(0x80, 0x20, 0x80);  // B = magenta
+    case 2: return QColor(0x20, 0x80, 0x20);  // C = green
+    case 3: return QColor(0x80, 0x80, 0x00);  // D = yellow
+    case 4: return QColor(0x80, 0x50, 0x00);  // E = orange
+    case 5: return QColor(0x00, 0x70, 0x60);  // F = teal
+    case 6: return QColor(0x80, 0x30, 0x40);  // G = coral
+    case 7: return QColor(0x58, 0x40, 0x80);  // H = lavender
+    default: return QColor(0x00, 0x60, 0x80);
     }
 }
 
@@ -3180,12 +3881,338 @@ void VfoWidget::setRxBypassActive(bool on)
 // is non-owning; lifetime is RadioModel-owned and MainWindow-scoped.
 void VfoWidget::setRadioModel(RadioModel* model)
 {
+    for (QMetaObject::Connection& conn : m_nrAvailabilityConns) {
+        if (conn) {
+            disconnect(conn);
+            conn = {};
+        }
+    }
     m_radioModel = model;
+    // R-R3-49, Sub-epic C-1: DFNR and MNR are enabled only while the Core
+    // can run them.
+    if (model && model->dspAssets()) {
+        m_nrAvailabilityConns[0] = connect(model->dspAssets(),
+                                           &DspAssetService::dfnrAvailabilityChanged,
+                                           this, &VfoWidget::updateNrAvailability);
+        m_nrAvailabilityConns[1] = connect(model->dspAssets(),
+                                           &DspAssetService::mnrAvailabilityChanged,
+                                           this, &VfoWidget::updateNrAvailability);
+        // And whether an older Core says at all (dspAssetVersion).
+        m_nrAvailabilityConns[2] = connect(model, &RadioModel::nrAvailabilityChanged,
+                                           this, &VfoWidget::updateNrAvailability);
+    }
+    updateNrAvailability();
+    if (model && model->role() == RadioModel::Role::Remote) {
+        setTransmitPermitted(false);
+        // Group B fix wave: until MainWindow hears the Core takes it.
+        setRxBypassPermitted(false, QString());
+        // R-R3-44: the VAX selector stays live. In a remote window it picks
+        // this computer's VAX channel for the Core's slice; the remote model
+        // keeps the choice on this computer (RadioModel::
+        // setRemoteVaxChannelStore) and RemoteVaxRouter feeds the channel
+        // from the Core's receiver stream.
+    }
+}
+
+QString VfoWidget::nrCannotRunReason(NereusSDR::NrSlot slot) const
+{
+    // With a model it says (the Core's word, mirrored, in a remote window);
+    // without one, this build decides.
+    return m_radioModel ? m_radioModel->nrCannotRunReason(slot)
+                        : RadioModel::nrCannotRunInThisBuildReason(slot);
+}
+
+void VfoWidget::updateNrAvailability()
+{
+    // Shown always; disabled with the plain reason while it cannot run. A
+    // slice holding one is turned off by the Core (RadioModel::
+    // turnOffDfnrWithoutModel, turnOffNrThatCannotRun).
+    const struct {
+        QPushButton* button;
+        NereusSDR::NrSlot slot;
+        const QString* ownTip;
+    } filters[] = {
+        {m_dfnrBtn, NereusSDR::NrSlot::DFNR, &m_dfnrToolTip},
+        {m_mnrBtn, NereusSDR::NrSlot::MNR, &m_mnrToolTip},
+    };
+    for (const auto& f : filters) {
+        if (!f.button) {
+            continue;
+        }
+        const QString reason = nrCannotRunReason(f.slot);
+        f.button->setEnabled(reason.isEmpty());
+        f.button->setToolTip(reason.isEmpty() ? *f.ownTip : reason);
+        f.button->setAccessibleDescription(reason);
+    }
+}
+
+void VfoWidget::setRxBypassPermitted(bool permitted, const QString& reason)
+{
+    // Group B fix wave: BYPS (RX bypass on TX) writes the Core's
+    // AlexController through `alexAntennas` in a remote window; disabled
+    // with the reason when the Core does not take it.
+    m_rxBypassPermitted = permitted;
+    if (!m_rxBypassBtn) { return; }
+    m_rxBypassBtn->setEnabled(permitted);
+    const QString tip = permitted ? rxBypassToolTip()
+        : (reason.isEmpty()
+               ? tr("Connect to the Core to change the radio's hardware settings.")
+               : reason);
+    m_rxBypassBtn->setToolTip(tip);
+    m_rxBypassBtn->setAccessibleDescription(permitted ? QString() : tip);
+}
+
+void VfoWidget::setTransmitPermitted(bool permitted, const QString& reason)
+{
+    m_transmitPermitted = permitted;
+    m_transmitPermissionReason = reason.isEmpty()
+        ? tr("Transmit controls are unavailable until the Core confirms transmit permission.")
+        : reason;
+    updateTransmitControlAvailability();
+}
+
+void VfoWidget::updateTransmitControlAvailability()
+{
+    const auto apply = [this](QWidget* control) {
+        if (!control) { return; }
+        static constexpr auto kSavedTooltip = kSavedTransmitTooltip;
+        static constexpr auto kSavedDescription = kSavedTransmitDescription;
+        static constexpr auto kSavedEnabled = "VfoSavedTransmitEnabled";
+        // TX badge take (JJ, 2026-09-30): a badge that offers a take is
+        // enabled and says what a click will do.
+        const bool offered = txBadgeTakeOffered();
+        // Task 14a: a listened slice holds the TX badge too; the checked
+        // (red on the air) state is left alone so it still shows.
+        const bool held = !offered && (!m_transmitPermitted || isListening());
+        QString reason = !m_transmitPermitted
+            ? m_transmitPermissionReason : m_sliceAccess.heldReason;
+        if (!m_txBadgeOffer.heldReason.isEmpty()) {
+            reason = m_txBadgeOffer.heldReason;
+        } else if (m_txBadgeOffer.offered && !m_accessPending.isEmpty()) {
+            reason = m_accessPending;
+        } else if (m_txBadgeOffer.offered && m_inUseByRadio) {
+            reason = inUseByRadioText();
+        }
+        if (held || offered) {
+            if (!control->property(kSavedTooltip).isValid()) {
+                control->setProperty(kSavedTooltip, control->toolTip());
+                control->setProperty(kSavedDescription, control->accessibleDescription());
+                control->setProperty(kSavedEnabled, control->isEnabled());
+            }
+            const QString words = offered ? m_txBadgeOffer.toolTip : reason;
+            control->setEnabled(offered);
+            control->setToolTip(words);
+            control->setAccessibleDescription(words);
+            return;
+        }
+        if (control->property(kSavedTooltip).isValid()) {
+            control->setEnabled(control->property(kSavedEnabled).toBool());
+            control->setToolTip(control->property(kSavedTooltip).toString());
+            control->setAccessibleDescription(control->property(kSavedDescription).toString());
+            control->setProperty(kSavedTooltip, QVariant());
+            control->setProperty(kSavedDescription, QVariant());
+            control->setProperty(kSavedEnabled, QVariant());
+        }
+    };
+
+    // R-R3-49 (parity Task 11): XIT is not here; it writes the slice.
+    // Group B fix wave: nor is BYPS (setRxBypassPermitted).
+    apply(m_txBadge);
+}
+
+// ---- Task 14a: slice access ----
+
+void VfoWidget::setSliceAccess(const SliceAccess& access)
+{
+    if (m_sliceAccess == access) { return; }
+    m_sliceAccess = access;
+    applySliceAccess();
+}
+
+void VfoWidget::setSliceAccessPending(const QString& text)
+{
+    if (m_accessPending == text) { return; }
+    m_accessPending = text;
+    applySliceAccess();
+}
+
+QString VfoWidget::accessLineText() const
+{
+    return m_accessPending.isEmpty() ? m_sliceAccess.line : m_accessPending;
+}
+
+QList<QWidget*> VfoWidget::heldControlsForTest() const
+{
+    QList<QWidget*> controls = listeningHeldControls();
+    if (m_txBadge) { controls.append(m_txBadge); }
+    return controls;
+}
+
+QString VfoWidget::afNameForTest() const
+{
+    return m_afNameLabel ? m_afNameLabel->text() : QString();
+}
+
+QList<QWidget*> VfoWidget::listeningHeldControls() const
+{
+    // The shared tuning controls. BYPS is not here: it is the radio's
+    // hardware, gated by setRxBypassPermitted. Task 14b: every tab page is
+    // held but the audio page, where only the AF slider (with its name and
+    // value) and Mute stay live, as this device's own volume and mute.
+    QList<QWidget*> controls;
+    for (QWidget* control : {static_cast<QWidget*>(m_rxAntBtn),
+                             static_cast<QWidget*>(m_txAntBtn),
+                             static_cast<QWidget*>(m_freqStack),
+                             static_cast<QWidget*>(m_lockBtn)}) {
+        if (control) { controls.append(control); }
+    }
+    if (!m_tabStack) { return controls; }
+    for (int i = 0; i < m_tabStack->count(); ++i) {
+        QWidget* page = m_tabStack->widget(i);
+        if (page != m_audioPage) {
+            controls.append(page);
+            continue;
+        }
+        const QList<QWidget*> children =
+            page->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly);
+        for (QWidget* child : children) {
+            if (child == m_afNameLabel || child == m_afGainSlider
+                || child == m_afGainLabel || child == m_muteBtn) {
+                continue;
+            }
+            controls.append(child);
+        }
+    }
+    return controls;
+}
+
+QRect VfoWidget::frequencyAreaForTest() const
+{
+    return m_freqStack ? m_freqStack->geometry() : QRect();
+}
+
+bool VfoWidget::frequencyEditOpen() const
+{
+    return m_freqStack && m_freqStack->currentIndex() == 1;
+}
+
+void VfoWidget::holdForListening(QWidget* control) const
+{
+    if (!control) { return; }
+    static constexpr auto kSavedTooltip = "VfoSavedAccessTooltip";
+    static constexpr auto kSavedDescription = "VfoSavedAccessDescription";
+    static constexpr auto kSavedEnabled = "VfoSavedAccessEnabled";
+    if (isListening()) {
+        if (!control->property(kSavedTooltip).isValid()) {
+            control->setProperty(kSavedTooltip, control->toolTip());
+            control->setProperty(kSavedDescription, control->accessibleDescription());
+            control->setProperty(kSavedEnabled, control->isEnabled());
+        }
+        control->setEnabled(false);
+        control->setToolTip(m_sliceAccess.heldReason);
+        control->setAccessibleDescription(m_sliceAccess.heldReason);
+        return;
+    }
+    if (control->property(kSavedTooltip).isValid()) {
+        control->setEnabled(control->property(kSavedEnabled).toBool());
+        control->setToolTip(control->property(kSavedTooltip).toString());
+        control->setAccessibleDescription(control->property(kSavedDescription).toString());
+        control->setProperty(kSavedTooltip, QVariant());
+        control->setProperty(kSavedDescription, QVariant());
+        control->setProperty(kSavedEnabled, QVariant());
+    }
+}
+
+void VfoWidget::applySliceAccess()
+{
+    const bool listening = isListening();
+
+    // A frequency typed before the access changed is abandoned rather than
+    // sent for a slice this window no longer controls.
+    if (listening && m_freqStack && m_freqStack->currentIndex() == 1) {
+        m_freqStack->setCurrentIndex(0);
+    }
+
+    for (QWidget* control : listeningHeldControls()) {
+        holdForListening(control);
+    }
+    updateTransmitControlAvailability();
+    applyAudioBinding();
+
+    if (m_accessLine) {
+        const QString text = accessLineText();
+        m_accessLine->setText(text);
+        const bool shown = !text.isEmpty();
+        if (m_accessLine->isVisibleTo(this) != shown) {
+            m_accessLine->setVisible(shown);
+            adjustSize();
+        }
+    }
+
+    if (m_closeBtn) {
+        m_closeBtn->setToolTip(listening ? tr("Stop listening")
+                                         : QStringLiteral("Close slice"));
+        positionFloatingButtons();
+    }
+}
+
+void VfoWidget::setListenVolume(int level, bool muted)
+{
+    m_listenVolume = std::clamp(level, 0, 100);
+    m_listenMuted = muted;
+    if (isListening()) {
+        applyAudioBinding();
+    }
+}
+
+void VfoWidget::applyAudioBinding()
+{
+    // Task 14b (ruling U5): a listened flag's slider and Mute are this
+    // device's own volume and mute; any other flag's are the slice's AF
+    // and mute, as before.
+    if (!m_afGainSlider || !m_muteBtn) { return; }
+    const bool listening = isListening();
+    const int value = listening ? m_listenVolume : m_modelAfGain;
+    const bool muted = listening ? m_listenMuted : m_modelMuted;
+    const bool wasUpdating = m_updatingFromModel;
+    m_updatingFromModel = true;
+    m_afGainSlider->setValue(value);
+    m_afGainLabel->setText(QString::number(value));
+    m_muteBtn->setChecked(muted);
+    m_updatingFromModel = wasUpdating;
+
+    if (m_afNameLabel) {
+        if (listening) {
+            m_afNameLabel->setText(tr("Your volume"));
+            m_afNameLabel->setMinimumWidth(24);
+            m_afNameLabel->setMaximumWidth(QWIDGETSIZE_MAX);
+        } else {
+            m_afNameLabel->setText(QStringLiteral("AF"));
+            m_afNameLabel->setFixedWidth(24);
+        }
+    }
+    m_afGainSlider->setToolTip(listening
+        ? tr("How loud you hear this slice on this device. 0 to 100. "
+             "The controller and other listeners do not hear the change.")
+        : m_afToolTip);
+    m_muteBtn->setToolTip(listening
+        ? tr("Mute this slice on this device only.")
+        : m_muteToolTip);
 }
 
 SliceModel* VfoWidget::contextMenuSliceForTest() const
 {
     return m_radioModel ? m_radioModel->sliceById(m_sliceIndex) : nullptr;
+}
+
+void VfoWidget::showTab(Tab tab)
+{
+    const int index = static_cast<int>(tab);
+    if (index < 0 || index >= m_tabButtons.size() || m_activeTab == index) {
+        return;
+    }
+    // The tab button's own handler opens the page and resizes the flag.
+    m_tabButtons[index]->click();
 }
 
 // --- Task 3.4: Small filter display mode (Appearance > Meter Styles) ---
@@ -3200,40 +4227,33 @@ void VfoWidget::setSmallFilterMode(bool small)
 // ---- Sub-epic C-1: NR bank DspParamPopup builders (Task 15) ----
 // Each popup shows the 3-5 most-adjusted knobs for the given NR slot.
 // "More Settings…" fires openNrSetupRequested(slot) routed by MainWindow in Task 18.
-// Ranges and defaults from Thetis setup.cs [v2.10.3.13] + AetherSDR MainWindow.cpp
-// [@0cd4559] lines 7980-8324.
+// Ranges, defaults and Reset values come from ControlRanges.h, where each
+// keeps its source (Thetis, AetherSDR or NereusSDR's own); the Core's
+// catalogue sends the same table.
 
 void VfoWidget::showNr1Popup(const QPoint& globalPos)
 {
     if (!m_slice) { return; }
     auto* p = new DspParamPopup(this);
 
-    // NR1 (ANR — Adaptive LMS).
-    // From Thetis setup.cs udDSPNR1Taps/udDSPNR1Delay/udDSPNR1Gain/udDSPNR1Leak ranges
-    // [v2.10.3.13].  Gain/Leakage stored as WDSP-domain values; sliders use UI units.
-    p->addSlider(QStringLiteral("Taps"), 16, 128, m_slice->nr1Taps(),
-                 [](int v) { return QString::number(v); },
-                 [this](int v) { if (m_slice) m_slice->setNr1Taps(v); });
-    p->addSlider(QStringLiteral("Delay"), 1, 256, m_slice->nr1Delay(),
-                 [](int v) { return QString::number(v); },
-                 [this](int v) { if (m_slice) m_slice->setNr1Delay(v); });
-    // Gain: UI units = WDSP value / 1e-6. Slider range 0-999 = 0.0-0.000999 WDSP.
-    const int uiGain = static_cast<int>(m_slice->nr1Gain() / 1e-6);
-    p->addSlider(QStringLiteral("Gain"), 0, 999, uiGain,
-                 [](int v) { return QString::number(v); },
-                 [this](int v) { if (m_slice) m_slice->setNr1Gain(v * 1e-6); });
-    // Leakage: UI units = WDSP value / 1e-3. Slider range 0-999 = 0.0-0.999e-3 WDSP.
-    const int uiLeak = static_cast<int>(m_slice->nr1Leakage() / 1e-3);
-    p->addSlider(QStringLiteral("Leak"), 0, 999, uiLeak,
-                 [](int v) { return QString::number(v); },
-                 [this](int v) { if (m_slice) m_slice->setNr1Leakage(v * 1e-3); });
-    p->addRadioGroup(QStringLiteral("Position"),
-                     {QStringLiteral("Pre-AGC"), QStringLiteral("Post-AGC")},
+    // NR1 (ANR — Adaptive LMS). Thetis's NR spinbox ranges and defaults and
+    // its SetRXAANRVals conversion (gain x 1e-6, leak x 1e-3), from
+    // ControlRanges.h. Gain and leak are stored in the WDSP domain.
+    using namespace ControlRanges;
+    addNrSlider(p, kNr1Taps, m_slice->nr1Taps(),
+                [this](double v) { if (m_slice) m_slice->setNr1Taps(static_cast<int>(std::lround(v))); });
+    addNrSlider(p, kNr1Delay, m_slice->nr1Delay(),
+                [this](double v) { if (m_slice) m_slice->setNr1Delay(static_cast<int>(std::lround(v))); });
+    addNrSlider(p, kNr1Gain, m_slice->nr1Gain(),
+                [this](double v) { if (m_slice) m_slice->setNr1Gain(v); });
+    addNrSlider(p, kNr1Leak, m_slice->nr1Leakage(),
+                [this](double v) { if (m_slice) m_slice->setNr1Leakage(v); });
+    p->addRadioGroup(QString::fromUtf8(kNr1Position.label), nrOptionLabels(kNr1Position),
                      static_cast<int>(m_slice->nr1Position()),
                      [this](int v) {
                          if (m_slice) m_slice->setNr1Position(static_cast<NereusSDR::NrPosition>(v));
                      });
-    p->finalize([this]() { emit openNrSetupRequested(NereusSDR::NrSlot::NR1); }, nullptr);
+    p->finalize([this]() { requestNrSetup(NereusSDR::NrSlot::NR1); }, nullptr);
     p->showAt(globalPos);
 }
 
@@ -3242,39 +4262,28 @@ void VfoWidget::showNr2Popup(const QPoint& globalPos)
     if (!m_slice) { return; }
     auto* p = new DspParamPopup(this);
 
-    // NR2 (EMNR — Enhanced Multiband Noise Reduction).
-    // From Thetis setup.designer.cs grpDSPGainMethod / grpDSPNR2NPEMethod /
-    // chkDSPNR2AE / chkNR2PostProc_enable_rx1 labels [v2.10.3.13].
-    p->addRadioGroup(QStringLiteral("Gain Method"),
-                     {QStringLiteral("Linear"), QStringLiteral("Log"),
-                      QStringLiteral("Gamma"), QStringLiteral("Trained")},
+    // NR2 (EMNR, Enhanced Multiband Noise Reduction). Thetis's labels,
+    // choices and defaults, from ControlRanges.h.
+    using namespace ControlRanges;
+    p->addRadioGroup(QString::fromUtf8(kNr2GainMethod.label), nrOptionLabels(kNr2GainMethod),
                      static_cast<int>(m_slice->nr2GainMethod()),
                      [this](int v) {
                          if (m_slice) m_slice->setNr2GainMethod(static_cast<NereusSDR::EmnrGainMethod>(v));
                      });
-    // From Thetis setup.designer.cs grpDSPNR2NPEMethod / radDSPNR2OSMS/MMSE/NSTAT [v2.10.3.13].
-    p->addRadioGroup(QStringLiteral("NPE Method"),
-                     {QStringLiteral("OSMS"), QStringLiteral("MMSE"), QStringLiteral("NSTAT")},
+    p->addRadioGroup(QString::fromUtf8(kNr2NpeMethod.label), nrOptionLabels(kNr2NpeMethod),
                      static_cast<int>(m_slice->nr2NpeMethod()),
                      [this](int v) {
                          if (m_slice) m_slice->setNr2NpeMethod(static_cast<NereusSDR::EmnrNpeMethod>(v));
                      });
-    // From Thetis setup.designer.cs chkDSPNR2AE.Text = "AE Filter" [v2.10.3.13].
-    p->addCheckbox(QStringLiteral("AE Filter"), m_slice->nr2AeFilter(),
+    p->addCheckbox(QString::fromUtf8(kNr2AeFilter.label), m_slice->nr2AeFilter(),
                    [this](bool v) { if (m_slice) m_slice->setNr2AeFilter(v); });
-    // From Thetis setup.designer.cs chkNR2PostProc_enable_rx1.Text = "Noise post proc" [v2.10.3.13].
-    p->addCheckbox(QStringLiteral("Noise post proc"), m_slice->nr2Post2Run(),
+    p->addCheckbox(QString::fromUtf8(kNr2Post2Run.label), m_slice->nr2Post2Run(),
                    [this](bool v) { if (m_slice) m_slice->setNr2Post2Run(v); });
-    // From Thetis setup.designer.cs labelTS476.Text = "Factor:" / labelTS475.Text = "Rate:" [v2.10.3.13].
-    const int post2Factor = static_cast<int>(m_slice->nr2Post2Factor());
-    p->addSlider(QStringLiteral("Factor"), 0, 30, post2Factor,
-                 [](int v) { return QString::number(v); },
-                 [this](int v) { if (m_slice) m_slice->setNr2Post2Factor(static_cast<double>(v)); });
-    const int post2Rate = static_cast<int>(m_slice->nr2Post2Rate());
-    p->addSlider(QStringLiteral("Rate"), 0, 30, post2Rate,
-                 [](int v) { return QString::number(v); },
-                 [this](int v) { if (m_slice) m_slice->setNr2Post2Rate(static_cast<double>(v)); });
-    p->finalize([this]() { emit openNrSetupRequested(NereusSDR::NrSlot::NR2); }, nullptr);
+    addNrSlider(p, kNr2Post2Factor, m_slice->nr2Post2Factor(),
+                [this](double v) { if (m_slice) m_slice->setNr2Post2Factor(v); });
+    addNrSlider(p, kNr2Post2Rate, m_slice->nr2Post2Rate(),
+                [this](double v) { if (m_slice) m_slice->setNr2Post2Rate(v); });
+    p->finalize([this]() { requestNrSetup(NereusSDR::NrSlot::NR2); }, nullptr);
     p->showAt(globalPos);
 }
 
@@ -3283,21 +4292,18 @@ void VfoWidget::showNr3Popup(const QPoint& globalPos)
     if (!m_slice) { return; }
     auto* p = new DspParamPopup(this);
 
-    // NR3 (RNNR — Recurrent Neural Net NR).
-    // From Thetis setup.cs udRNNR position + RXANR3FixedGain [v2.10.3.13]
-    // and AetherSDR MainWindow.cpp:8200-8260 [@0cd4559].
-    p->addRadioGroup(QStringLiteral("Position"),
-                     {QStringLiteral("Pre-AGC"), QStringLiteral("Post-AGC")},
+    // NR3 (RNNR, Recurrent Neural Net NR). Thetis's position and fixed
+    // input gain, from ControlRanges.h.
+    using namespace ControlRanges;
+    p->addRadioGroup(QString::fromUtf8(kNr3Position.label), nrOptionLabels(kNr3Position),
                      static_cast<int>(m_slice->nr3Position()),
                      [this](int v) {
                          if (m_slice) m_slice->setNr3Position(static_cast<NereusSDR::NrPosition>(v));
                      });
-    // From Thetis setup.designer.cs chkNR3_RNNoiseFixedGain.Text =
-    // "Use fixed gain for input samples" [v2.10.3.13].
-    p->addCheckbox(QStringLiteral("Use fixed gain for input samples"), m_slice->nr3UseDefaultGain(),
+    p->addCheckbox(QString::fromUtf8(kNr3UseDefaultGain.label), m_slice->nr3UseDefaultGain(),
                    [this](bool v) { if (m_slice) m_slice->setNr3UseDefaultGain(v); });
     // "Load Model…" opens Setup NR3 page where file dialog lives (Task 17).
-    p->finalize([this]() { emit openNrSetupRequested(NereusSDR::NrSlot::NR3); }, nullptr);
+    p->finalize([this]() { requestNrSetup(NereusSDR::NrSlot::NR3); }, nullptr);
     p->showAt(globalPos);
 }
 
@@ -3306,169 +4312,120 @@ void VfoWidget::showNr4Popup(const QPoint& globalPos)
     if (!m_slice) { return; }
     auto* p = new DspParamPopup(this);
 
-    // NR4 (SBNR — Spectral Baseline NR).
-    // From Thetis setup.designer.cs labelTS446/473 "Reduction", labelTS449/471 "Smoothing",
-    // labelTS451/468 "Whitening", labelTS453/466 "Rescale", labelTS455/459 "SNRthresh",
-    // radNR4_algo1/2/3 "Algo 1/2/3" [v2.10.3.13].
-    const int reduction = static_cast<int>(m_slice->nr4Reduction());
-    p->addSlider(QStringLiteral("Reduction"), 0, 20, reduction,
-                 [](int v) { return QString::number(v) + QStringLiteral(" dB"); },
-                 [this](int v) { if (m_slice) m_slice->setNr4Reduction(static_cast<double>(v)); });
-    const int smoothing = static_cast<int>(m_slice->nr4Smoothing());
-    p->addSlider(QStringLiteral("Smoothing"), 0, 100, smoothing,
-                 [](int v) { return QString::number(v) + QStringLiteral("%"); },
-                 [this](int v) { if (m_slice) m_slice->setNr4Smoothing(static_cast<double>(v)); });
-    const int whitening = static_cast<int>(m_slice->nr4Whitening());
-    p->addSlider(QStringLiteral("Whitening"), 0, 100, whitening,
-                 [](int v) { return QString::number(v) + QStringLiteral("%"); },
-                 [this](int v) { if (m_slice) m_slice->setNr4Whitening(static_cast<double>(v)); });
-    const int rescale = static_cast<int>(m_slice->nr4Rescale());
-    p->addSlider(QStringLiteral("Rescale"), 0, 20, rescale,
-                 [](int v) { return QString::number(v) + QStringLiteral(" dB"); },
-                 [this](int v) { if (m_slice) m_slice->setNr4Rescale(static_cast<double>(v)); });
-    const int snrThresh = static_cast<int>(m_slice->nr4PostThresh());
-    p->addSlider(QStringLiteral("SNRthresh"), -30, 0, snrThresh,
-                 [](int v) { return QString::number(v) + QStringLiteral(" dB"); },
-                 [this](int v) { if (m_slice) m_slice->setNr4PostThresh(static_cast<double>(v)); });
-    p->addRadioGroup(QStringLiteral("Algo"),
-                     {QStringLiteral("Algo 1"), QStringLiteral("Algo 2"), QStringLiteral("Algo 3")},
+    // NR4 (SBNR, Spectral Baseline NR). Thetis's labels; the ranges and
+    // defaults ControlRanges.h holds (NereusSDR's where they differ).
+    using namespace ControlRanges;
+    addNrSlider(p, kNr4Reduction, m_slice->nr4Reduction(),
+                [this](double v) { if (m_slice) m_slice->setNr4Reduction(v); });
+    addNrSlider(p, kNr4Smoothing, m_slice->nr4Smoothing(),
+                [this](double v) { if (m_slice) m_slice->setNr4Smoothing(v); });
+    addNrSlider(p, kNr4Whitening, m_slice->nr4Whitening(),
+                [this](double v) { if (m_slice) m_slice->setNr4Whitening(v); });
+    addNrSlider(p, kNr4Rescale, m_slice->nr4Rescale(),
+                [this](double v) { if (m_slice) m_slice->setNr4Rescale(v); });
+    addNrSlider(p, kNr4PostThresh, m_slice->nr4PostThresh(),
+                [this](double v) { if (m_slice) m_slice->setNr4PostThresh(v); });
+    p->addRadioGroup(QString::fromUtf8(kNr4Algo.label), nrOptionLabels(kNr4Algo),
                      static_cast<int>(m_slice->nr4Algo()),
                      [this](int v) {
                          if (m_slice) m_slice->setNr4Algo(static_cast<NereusSDR::SbnrAlgo>(v));
                      });
-    p->finalize([this]() { emit openNrSetupRequested(NereusSDR::NrSlot::NR4); }, nullptr);
+    p->finalize([this]() { requestNrSetup(NereusSDR::NrSlot::NR4); }, nullptr);
     p->showAt(globalPos);
 }
 
 void VfoWidget::showDfnrPopup(const QPoint& globalPos)
 {
-    if (!m_slice) { return; }
+    // R-R3-49: no quick controls for a DFNR that cannot run.
+    if (!m_slice || !nrCannotRunReason(NereusSDR::NrSlot::DFNR).isEmpty()) { return; }
     auto* p = new DspParamPopup(this);
 
-    // DFNR (DeepFilterNet3) — AetherSDR post-WDSP filter, not in Thetis.
-    // Factory defaults per user directive 2026-04-23: AttenLimit 100 dB,
-    // Post-Filter Beta 0.05 (UI 5).
-    const int attenLimit = static_cast<int>(m_slice->dfnrAttenLimit());
-    p->addSlider(QStringLiteral("Attenuation Limit"), 0, 100, attenLimit,
-                 [](int v) { return QString::number(v) + QStringLiteral(" dB"); },
-                 [this](int v) { if (m_slice) m_slice->setDfnrAttenLimit(static_cast<double>(v)); },
-                 tr("Maximum noise attenuation in dB (0 = bypass, 100 = maximum). "
-                    "Default 100. Higher values suppress more noise but may clip speech peaks."),
-                 /*factory=*/100);
+    // DFNR (DeepFilterNet3), a post-WDSP filter that is not in Thetis. Its
+    // ranges and Reset (AetherSDR's defaults) from ControlRanges.h.
+    using namespace ControlRanges;
+    addNrSlider(p, kDfnrAttenLimit, m_slice->dfnrAttenLimit(),
+                [this](double v) { if (m_slice) m_slice->setDfnrAttenLimit(v); },
+                tr("Maximum noise attenuation in dB (0 = bypass, 100 = maximum). "
+                   "Default 100. Higher values suppress more noise but may clip speech peaks."));
 
-    const int beta = static_cast<int>(m_slice->dfnrPostFilterBeta() * 100.0);
-    p->addSlider(QStringLiteral("Post-Filter Beta"), 0, 100, beta,
-                 [](int v) { return QString::number(v / 100.0, 'f', 2); },
-                 [this](int v) { if (m_slice) m_slice->setDfnrPostFilterBeta(v / 100.0); },
-                 tr("Post-filter aggressiveness (0 = disabled, 0.30+ = aggressive). "
-                    "Default 0 (off) — matches AetherSDR. Higher values reduce "
-                    "residual musical-noise artifacts but may over-attenuate "
-                    "consonants. Typical tuning: start at 0.05-0.10 and nudge up."),
-                 /*factory=*/0);
+    addNrSlider(p, kDfnrPostFilterBeta, m_slice->dfnrPostFilterBeta(),
+                [this](double v) { if (m_slice) m_slice->setDfnrPostFilterBeta(v); },
+                tr("Post-filter aggressiveness (0 = disabled, 0.30+ = aggressive). "
+                   "Default 0 (off). Higher values reduce "
+                   "residual musical-noise artifacts but may over-attenuate "
+                   "consonants. Typical tuning: start at 0.05-0.10 and nudge up."));
 
-    p->finalize([this]() { emit openNrSetupRequested(NereusSDR::NrSlot::DFNR); },
+    p->finalize([this]() { requestNrSetup(NereusSDR::NrSlot::DFNR); },
                 /*onReset=*/[]() { /* per-slider resetters push via valueChanged */ });
-    p->showAt(globalPos);
-}
-
-void VfoWidget::showBnrPopup(const QPoint& globalPos)
-{
-    if (!m_slice) { return; }
-    auto* p = new DspParamPopup(this);
-
-    // BNR (NVIDIA Noise Removal) — button hidden unless HAVE_BNR; popup
-    // included for completeness in case BNR is enabled in a future build.
-    // AetherSDR MainWindow.cpp:8080-8100 [@0cd4559].
-    const int strength = static_cast<int>(m_slice->bnrStrength() * 100.0);
-    p->addSlider(QStringLiteral("Strength"), 0, 100, strength,
-                 [](int v) { return QString::number(v) + QStringLiteral("%"); },
-                 [this](int v) { if (m_slice) m_slice->setBnrStrength(v / 100.0); });
-    p->finalize([this]() { emit openNrSetupRequested(NereusSDR::NrSlot::BNR); }, nullptr);
     p->showAt(globalPos);
 }
 
 void VfoWidget::showMnrPopup(const QPoint& globalPos)
 {
-    if (!m_slice) { return; }
+    // R-R3-49: no quick controls for an MNR the Core cannot run.
+    if (!m_slice || !nrCannotRunReason(NereusSDR::NrSlot::MNR).isEmpty()) { return; }
     auto* p = new DspParamPopup(this);
 
-    // MNR (macOS Accelerate MMSE-Wiener NR). 6 runtime-tunable knobs with
-    // factory defaults tuned for balanced noticeable-but-not-underwater NR.
-    // Right-click → Reset button restores these defaults.
-    const int strength = static_cast<int>(m_slice->mnrStrength() * 100.0);
-    p->addSlider(QStringLiteral("Strength"), 0, 200, strength,
-                 [](int v) { return QString::number(v) + QStringLiteral("%"); },
-                 [this](int v) { if (m_slice) { m_slice->setMnrStrength(v / 100.0); } },
-                 tr("Dry/wet blend.\n"
-                    "  0%   = bypass (filter runs but output = input)\n"
-                    "  100% = full NR (output = filter result)\n"
-                    "  200% = over-drive (phase-flip, destructive)\n"
-                    "Default 100."),
-                 /*factory=*/100);
+    // MNR (macOS Accelerate MMSE-Wiener NR). 6 runtime-tunable knobs; their
+    // ranges and Reset values come from ControlRanges.h, and Reset restores
+    // a new slice's values (MacNRFilter's DEF_*).
+    using namespace ControlRanges;
+    addNrSlider(p, kMnrStrength, m_slice->mnrStrength(),
+                [this](double v) { if (m_slice) { m_slice->setMnrStrength(v); } },
+                tr("Dry/wet blend.\n"
+                   "  0%   = bypass (filter runs but output = input)\n"
+                   "  100% = full NR (output = filter result)\n"
+                   "  200% = over-drive (phase-flip, destructive)\n"
+                   "Default 100."));
 
-    const int oversubUi = static_cast<int>(m_slice->mnrOversub());
-    p->addSlider(QStringLiteral("Aggressiveness"), 1, 1000, oversubUi,
-                 [](int v) { return QString::number(v); },
-                 [this](int v) { if (m_slice) { m_slice->setMnrOversub(static_cast<double>(v)); } },
-                 tr("MMSE-Wiener oversubtraction factor. Higher values attenuate "
-                    "low-SNR bins more aggressively while leaving high-SNR (voice) "
-                    "bins closer to unity.\n"
-                    "  1    = very gentle\n"
-                    "  6    = noticeable NR (default)\n"
-                    "  20+  = underwater/robotic\n"
-                    "  200+ = diminishing returns"),
-                 /*factory=*/6);
+    addNrSlider(p, kMnrOversub, m_slice->mnrOversub(),
+                [this](double v) { if (m_slice) { m_slice->setMnrOversub(v); } },
+                tr("MMSE-Wiener oversubtraction factor. Higher values attenuate "
+                   "low-SNR bins more aggressively while leaving high-SNR (voice) "
+                   "bins closer to unity.\n"
+                   "  1    = very gentle\n"
+                   "  4    = noticeable NR (default)\n"
+                   "  20+  = underwater/robotic\n"
+                   "  200+ = diminishing returns"));
 
-    const int floorUi = static_cast<int>(m_slice->mnrFloor() * 1000.0);
-    p->addSlider(QStringLiteral("Floor"), 0, 2000, floorUi,
-                 [](int v) { return QString::number(v) + QStringLiteral("m"); },
-                 [this](int v) { if (m_slice) { m_slice->setMnrFloor(v * 0.001); } },
-                 tr("Minimum Wiener gain per bin (×0.001).\n"
-                    "  0    = total silence (filter can zero a bin)\n"
-                    "  50   = -26 dB max attenuation (default)\n"
-                    "  1000 = 0 dB (bin never attenuated)\n"
-                    "  2000 = amplify (destructive)\n"
-                    "Lower floor = more aggressive noise subtraction but more "
-                    "musical-noise artifacts."),
-                 /*factory=*/50);
+    addNrSlider(p, kMnrFloor, m_slice->mnrFloor(),
+                [this](double v) { if (m_slice) { m_slice->setMnrFloor(v); } },
+                tr("Minimum Wiener gain per bin (×0.001).\n"
+                   "  0    = total silence (filter can zero a bin)\n"
+                   "  50   = -26 dB max attenuation (default)\n"
+                   "  1000 = 0 dB (bin never attenuated)\n"
+                   "  2000 = amplify (destructive)\n"
+                   "Lower floor = more aggressive noise subtraction but more "
+                   "musical-noise artifacts."));
 
-    const int alphaUi = static_cast<int>(m_slice->mnrAlpha() * 100.0);
-    p->addSlider(QStringLiteral("Alpha"), 0, 100, alphaUi,
-                 [](int v) { return QString::number(v / 100.0, 'f', 2); },
-                 [this](int v) { if (m_slice) { m_slice->setMnrAlpha(v * 0.01); } },
-                 tr("Decision-directed smoothing coefficient.\n"
-                    "  0.00 = no smoothing (fast/chattery tracking)\n"
-                    "  0.92 = Ephraim-Malah classic (default)\n"
-                    "  1.00 = frozen (prior SNR never updates)\n"
-                    "Balances NR speed vs. musical-noise artifacts."),
-                 /*factory=*/92);
+    addNrSlider(p, kMnrAlpha, m_slice->mnrAlpha(),
+                [this](double v) { if (m_slice) { m_slice->setMnrAlpha(v); } },
+                tr("Decision-directed smoothing coefficient.\n"
+                   "  0.00 = no smoothing (fast/chattery tracking)\n"
+                   "  0.92 = Ephraim-Malah classic (default)\n"
+                   "  1.00 = frozen (prior SNR never updates)\n"
+                   "Balances NR speed vs. musical-noise artifacts."));
 
-    const int biasUi = static_cast<int>(m_slice->mnrBias() * 10.0);
-    p->addSlider(QStringLiteral("Bias"), 0, 100, biasUi,
-                 [](int v) { return QString::number(v / 10.0, 'f', 1); },
-                 [this](int v) { if (m_slice) { m_slice->setMnrBias(v * 0.1); } },
-                 tr("Min-statistics noise-floor bias correction.\n"
-                    "  <1.0 = underestimate noise floor (less NR, more signal)\n"
-                    "  1.5  = balanced (default)\n"
-                    "  >3.0 = overestimate noise floor (more NR, may erode signal)\n"
-                    "If NR is too weak, nudge Bias up. If it's eating speech, nudge down."),
-                 /*factory=*/15);
+    addNrSlider(p, kMnrBias, m_slice->mnrBias(),
+                [this](double v) { if (m_slice) { m_slice->setMnrBias(v); } },
+                tr("Min-statistics noise-floor bias correction.\n"
+                   "  <1.0 = underestimate noise floor (less NR, more signal)\n"
+                   "  1.2  = balanced (default)\n"
+                   "  >3.0 = overestimate noise floor (more NR, may erode signal)\n"
+                   "If NR is too weak, nudge Bias up. If it's eating speech, nudge down."));
 
-    const int gsmoothUi = static_cast<int>(m_slice->mnrGsmooth() * 100.0);
-    p->addSlider(QStringLiteral("Gsmooth"), 0, 100, gsmoothUi,
-                 [](int v) { return QString::number(v / 100.0, 'f', 2); },
-                 [this](int v) { if (m_slice) { m_slice->setMnrGsmooth(v * 0.01); } },
-                 tr("Temporal (per-bin) gain smoothing.\n"
-                    "  0.00 = instant (more musical noise, fast transients)\n"
-                    "  0.70 = balanced (default)\n"
-                    "  1.00 = frozen (gain never updates — filter stuck)\n"
-                    "Higher = smoother but slower to react to changing noise."),
-                 /*factory=*/70);
+    addNrSlider(p, kMnrGsmooth, m_slice->mnrGsmooth(),
+                [this](double v) { if (m_slice) { m_slice->setMnrGsmooth(v); } },
+                tr("Temporal (per-bin) gain smoothing.\n"
+                   "  0.00 = instant (more musical noise, fast transients)\n"
+                   "  0.70 = balanced (default)\n"
+                   "  1.00 = frozen (gain never updates; the filter is stuck)\n"
+                   "Higher = smoother but slower to react to changing noise."));
 
     // Wire Reset button (finalize's second callback) to restore the
     // factory defaults on every slider. DspParamPopup::finalize runs the
     // per-slider resetters registered by addSlider's /*factory=*/ arg.
-    p->finalize([this]() { emit openNrSetupRequested(NereusSDR::NrSlot::MNR); },
+    p->finalize([this]() { requestNrSetup(NereusSDR::NrSlot::MNR); },
                 /*onReset=*/[]() {
                     // Per-slider resetters registered via addSlider's
                     // factoryDefault arg already push slider → onChange →
@@ -3477,6 +4434,34 @@ void VfoWidget::showMnrPopup(const QPoint& globalPos)
                     // hides it when onReset is null).
                 });
     p->showAt(globalPos);
+}
+
+void VfoWidget::showNnrPopup(const QPoint& globalPos)
+{
+    if (!m_slice) { return; }
+
+    auto* popup = new DspParamPopup(this);
+    auto* controls = new NnrControls(m_radioModel, m_slice.data(),
+                                     NnrControls::Presentation::Compact, popup);
+    popup->addWidget(controls);
+    connect(controls, &NnrControls::bindingInvalidated, popup, &QWidget::close);
+    connect(controls, &NnrControls::openMoreSettingsRequested, popup,
+            [this, popup](int) {
+                requestNrSetup(NrSlot::NNR);
+                popup->close();
+            });
+    connect(controls, &NnrControls::openModelsRequested, popup,
+            [this, popup](int sliceId) {
+                emit openNnrModelsRequested(sliceId);
+                popup->close();
+            });
+    popup->showAt(globalPos);
+}
+
+void VfoWidget::requestNrSetup(NrSlot slot)
+{
+    emit openNrSetupRequested(slot);
+    emit openNrSetupForSliceRequested(slot, m_slice ? m_slice->sliceIndex() : m_sliceIndex);
 }
 
 } // namespace NereusSDR

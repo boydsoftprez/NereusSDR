@@ -1,0 +1,17 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "property.write",
+    "key": "slice:0",
+    "writeId": 3,
+    "properties": [
+      {
+        "ordinal": 1,
+        "name": "frequency",
+        "kind": "f64",
+        "value": 14074000.0
+      }
+    ]
+  },
+  "decodes": true
+}

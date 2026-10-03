@@ -23,6 +23,14 @@
 // because MainWindow is not constructible in this harness. Logic that cannot
 // be tested there has already shipped green and failed on the bench twice on
 // this branch (see docs/architecture/2026-07-28-phase3f-session-state.md §6).
+//
+// Modification history (NereusSDR):
+//   2026-09-29  Slice control and listening, layout change rule: scoped
+//               rehome, spread and occupancy (RadioModel::PanScope) so a
+//               layout change moves only slices this window controls and
+//               never touches a listened slice's stream, DDC or tuning.
+//               J.J. Boyd (KG4VCF), with AI-assisted implementation
+//               (Claude Code).
 
 #include <QtTest/QtTest>
 
@@ -246,6 +254,149 @@ private slots:
         const int moved = model.rehomeSlicesToPans({});
         QCOMPARE(moved, 0);
         QCOMPARE(model.slices().at(0)->panKey(), QStringLiteral("pan-0"));
+    }
+    // Slice control and listening, layout change rule. A window rehomes only
+    // the slices it controls. A listened slice and another device's slice
+    // keep their pan key: the key is shared, and writing it would move the
+    // slice for the device that controls it.
+    void a_scoped_rehome_moves_only_controlled_slices()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        for (int i = 0; i < 4; ++i) {
+            model.addSlice(QStringLiteral("pan-%1").arg(i));
+        }
+        RadioModel::PanScope scope;
+        scope.controlled = {0, 1};
+        scope.listenedOn.insert(2, QStringLiteral("pan-2"));
+        // Slice 3 belongs to another device and is not listened here.
+
+        QSignalSpy listenedSpy(model.slices().at(2), &SliceModel::panKeyChanged);
+        QSignalSpy foreignSpy(model.slices().at(3), &SliceModel::panKeyChanged);
+        const int moved = model.rehomeSlicesToPans({QStringLiteral("pan-0")}, &scope);
+
+        QCOMPARE(moved, 1);
+        QCOMPARE(model.slices().at(1)->panKey(), QStringLiteral("pan-0"));
+        QCOMPARE(model.slices().at(2)->panKey(), QStringLiteral("pan-2"));
+        QCOMPARE(model.slices().at(3)->panKey(), QStringLiteral("pan-3"));
+        QCOMPARE(listenedSpy.count(), 0);
+        QCOMPARE(foreignSpy.count(), 0);
+    }
+
+    // Occupancy in a window is what that window shows: its controlled
+    // slices at their pan keys and its listened slices where it placed them.
+    // Another device's slice does not make a pan here look occupied.
+    void scoped_occupancy_counts_controlled_and_listened_slices_only()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        model.addSlice(QStringLiteral("pan-0"));
+        model.addSlice(QStringLiteral("pan-1"));
+        model.addSlice(QStringLiteral("pan-2"));
+        RadioModel::PanScope scope;
+        scope.controlled = {0};
+        // Listened slice 1 is placed on pan-3 in this window, whatever its
+        // controller's pan key says.
+        scope.listenedOn.insert(1, QStringLiteral("pan-3"));
+        // Slice 2 is foreign: its pan-2 key means nothing in this window.
+
+        const QStringList wanted{QStringLiteral("pan-0"), QStringLiteral("pan-1"),
+                                 QStringLiteral("pan-2"), QStringLiteral("pan-3")};
+        QCOMPARE(model.pansWithoutSlices(wanted, &scope),
+                 QStringList({QStringLiteral("pan-1"), QStringLiteral("pan-2")}));
+        // Unscoped keeps today's answer.
+        QCOMPARE(model.pansWithoutSlices(wanted), QStringList({QStringLiteral("pan-3")}));
+    }
+
+    // Spreading takes surplus only from controlled slices. A listened slice
+    // co-hosted with a controlled one is never the donor.
+    void a_scoped_spread_takes_donors_from_controlled_slices_only()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        model.addSlice(QStringLiteral("pan-0"));
+        model.addSlice(QStringLiteral("pan-0"));
+        model.addSlice(QStringLiteral("pan-0"));
+        RadioModel::PanScope scope;
+        scope.controlled = {0, 2};
+        scope.listenedOn.insert(1, QStringLiteral("pan-0"));
+
+        QSignalSpy listenedSpy(model.slices().at(1), &SliceModel::panKeyChanged);
+        const QStringList wanted{QStringLiteral("pan-0"), QStringLiteral("pan-1"),
+                                 QStringLiteral("pan-2")};
+        const int spread = model.spreadSlicesOntoEmptyPans(wanted, &scope);
+
+        // One controlled surplus exists (0 and 2 share pan-0), so one pan
+        // fills and the other stays empty for the caller.
+        QCOMPARE(spread, 1);
+        QCOMPARE(listenedSpy.count(), 0);
+        QCOMPARE(model.slices().at(1)->panKey(), QStringLiteral("pan-0"));
+        QCOMPARE(model.pansWithoutSlices(wanted, &scope).size(), 1);
+        QCOMPARE(model.slices().size(), 3);
+    }
+
+    // The listened slices a layout change takes out of view, in slice order.
+    void listened_slices_off_the_new_layout_are_reported()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        for (int i = 0; i < 4; ++i) {
+            model.addSlice(QStringLiteral("pan-%1").arg(i));
+        }
+        RadioModel::PanScope scope;
+        scope.controlled = {0};
+        scope.listenedOn.insert(3, QStringLiteral("pan-2"));
+        scope.listenedOn.insert(1, QStringLiteral("pan-0"));
+        scope.listenedOn.insert(2, QStringLiteral("pan-3"));
+
+        QCOMPARE(model.listenedOffPans({QStringLiteral("pan-0"), QStringLiteral("pan-1")},
+                                       scope),
+                 QList<int>({2, 3}));
+        QVERIFY(model.listenedOffPans({QStringLiteral("pan-0"), QStringLiteral("pan-2"),
+                                       QStringLiteral("pan-3")}, scope).isEmpty());
+    }
+
+    // Acceptance for the layout change rule: shrinking and growing again
+    // with a listened slice in the window leaves the slice count, every
+    // stream, the DDC each stream is on, and every slice's tuning as they
+    // were. Only the controlled slices' pan keys move.
+    void a_scoped_layout_change_leaves_streams_ddcs_and_tuning_alone()
+    {
+        RadioModel model;
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        for (int i = 0; i < 3; ++i) {
+            model.addSlice(QStringLiteral("pan-%1").arg(i));
+        }
+        model.slices().at(0)->setFrequency(7100000.0);
+        model.slices().at(1)->setFrequency(14200000.0);
+        model.slices().at(2)->setFrequency(21300000.0);
+        RadioModel::PanScope scope;
+        scope.controlled = {0, 1};
+        scope.listenedOn.insert(2, QStringLiteral("pan-2"));
+
+        auto snapshot = [&model] {
+            QList<QVariant> out{model.slices().size()};
+            for (SliceModel* s : model.slices()) {
+                out << s->sliceIndex() << s->streamIndex() << s->frequency();
+            }
+            for (int i = 0; i < 4; ++i) { out << model.ddcForStream(i); }
+            return out;
+        };
+        const QList<QVariant> before = snapshot();
+        QSignalSpy listenedSpy(model.slices().at(2), &SliceModel::panKeyChanged);
+
+        const QStringList one{QStringLiteral("pan-0")};
+        model.rehomeSlicesToPans(one, &scope);
+        QCOMPARE(model.listenedOffPans(one, scope), QList<int>({2}));
+        QCOMPARE(snapshot(), before);
+
+        const QStringList three{QStringLiteral("pan-0"), QStringLiteral("pan-1"),
+                                QStringLiteral("pan-2")};
+        scope.listenedOn.remove(2);   // this window stopped listening
+        model.spreadSlicesOntoEmptyPans(three, &scope);
+        QCOMPARE(snapshot(), before);
+        QCOMPARE(listenedSpy.count(), 0);
+        QCOMPARE(model.slices().at(2)->panKey(), QStringLiteral("pan-2"));
     }
 };
 

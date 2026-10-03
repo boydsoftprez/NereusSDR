@@ -35,6 +35,16 @@ using namespace NereusSDR;
 
 namespace {
 
+class DiagnosticsP1Connection : public P1RadioConnection {
+public:
+    void markConnected(quint16 port)
+    {
+        m_radioInfo.port = port;
+        setState(ConnectionState::Connected);
+    }
+    void retire() { setState(ConnectionState::LinkLost); }
+};
+
 // Build a minimal valid 1032-byte ep6 datagram with both subframes' sync
 // + the caller-supplied 5-byte C&C (C0..C4) for each subframe.  Sample
 // data is left zero — the parser will still return successfully because
@@ -63,6 +73,79 @@ QByteArray makeEp6Frame(quint8 sub0[5], quint8 sub1[5])
 class TestP1StatusTelemetry : public QObject {
     Q_OBJECT
 private slots:
+
+    void parsedAdcStatusRidesExistingTelemetryReply()
+    {
+        DiagnosticsP1Connection conn;
+        conn.init();
+        conn.markConnected(41024);
+        QSignalSpy replies(&conn, &RadioConnection::telemetryObservationReady);
+        conn.collectTelemetryObservation(6);
+        QCOMPARE(replies.count(), 1);
+        QCOMPARE(replies.at(0).size(), 7); // one bounded owner-thread diagnostics value
+        RadioDiagnosticsObservation before =
+            qvariant_cast<RadioDiagnosticsObservation>(replies.takeFirst().at(6));
+        QCOMPARE(before.radioUdpBasePort, std::optional<quint16>(41024));
+        QVERIFY(!before.adcOverloads[0].known);
+
+        quint8 positive[5] = {0x00, 0x01, 0, 0, 0};
+        quint8 unrelated[5] = {0x08, 0, 0, 0, 0};
+        QSignalSpy positiveSignals(&conn, &RadioConnection::adcOverflow);
+        conn.parseEp6FrameForTest(makeEp6Frame(positive, unrelated));
+        conn.collectTelemetryObservation(7);
+        QCOMPARE(replies.count(), 1);
+        const RadioDiagnosticsObservation set =
+            qvariant_cast<RadioDiagnosticsObservation>(replies.takeFirst().at(6));
+        QCOMPARE(set.radioUdpBasePort, std::optional<quint16>(41024));
+        QVERIFY(set.adcOverloads[0].known);
+        QVERIFY(set.adcOverloads[0].active);
+        QCOMPARE(set.adcOverloads[0].eventsSinceConnection, 1);
+        QVERIFY(set.adcOverloads[0].lastOverloadAgeMs);
+        QVERIFY(!set.adcOverloads[1].known);
+        QTest::qWait(15);
+        conn.collectTelemetryObservation(71);
+        const RadioDiagnosticsObservation aged =
+            qvariant_cast<RadioDiagnosticsObservation>(replies.takeFirst().at(6));
+        QVERIFY(*aged.adcOverloads[0].lastOverloadAgeMs >= 10);
+        conn.parseEp6FrameForTest(makeEp6Frame(positive, unrelated));
+        conn.collectTelemetryObservation(72);
+        const RadioDiagnosticsObservation refreshed =
+            qvariant_cast<RadioDiagnosticsObservation>(replies.takeFirst().at(6));
+        QCOMPARE(refreshed.adcOverloads[0].eventsSinceConnection, 1);
+        QVERIFY(*refreshed.adcOverloads[0].lastOverloadAgeMs
+                < *aged.adcOverloads[0].lastOverloadAgeMs);
+        QCOMPARE(positiveSignals.count(), 2); // existing positive signal remains
+
+        quint8 multi[5] = {0x20, 0, 1, 1, 0};
+        conn.parseEp6FrameForTest(makeEp6Frame(multi, unrelated));
+        conn.parseEp6FrameForTest(makeEp6Frame(positive, unrelated));
+        conn.collectTelemetryObservation(8);
+        const RadioDiagnosticsObservation mixed =
+            qvariant_cast<RadioDiagnosticsObservation>(replies.takeFirst().at(6));
+        QCOMPARE(mixed.adcOverloads[0].eventsSinceConnection, 2); // clear -> set
+        QCOMPARE(mixed.adcOverloads[1].eventsSinceConnection, 1);
+        QCOMPARE(mixed.adcOverloads[2].eventsSinceConnection, 1);
+        QVERIFY(mixed.adcOverloads[1].active); // 0x00 did not clear ADC1
+
+        quint8 clear[5] = {0x00, 0, 0, 0, 0};
+        conn.parseEp6FrameForTest(makeEp6Frame(clear, unrelated));
+        conn.collectTelemetryObservation(9);
+        const RadioDiagnosticsObservation cleared =
+            qvariant_cast<RadioDiagnosticsObservation>(replies.takeFirst().at(6));
+        QVERIFY(!cleared.adcOverloads[0].active);
+        QCOMPARE(cleared.adcOverloads[0].eventsSinceConnection, 2);
+        QVERIFY(cleared.adcOverloads[0].lastOverloadAgeMs);
+        QVERIFY(cleared.adcOverloads[1].active);
+
+        conn.retire();
+        conn.markConnected(41025); // same QObject, new connection epoch
+        conn.collectTelemetryObservation(10);
+        const RadioDiagnosticsObservation reconnected =
+            qvariant_cast<RadioDiagnosticsObservation>(replies.takeFirst().at(6));
+        QCOMPARE(reconnected.radioUdpBasePort, std::optional<quint16>(41025));
+        QVERIFY(!reconnected.adcOverloads[0].known);
+        QVERIFY(!reconnected.adcOverloads[1].known);
+    }
 
     // ── Case 0x08: exciter + fwd ──────────────────────────────────────────
     void parsesCase08_excitesAndFwd()

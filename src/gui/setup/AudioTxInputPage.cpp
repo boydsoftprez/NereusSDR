@@ -8,6 +8,21 @@
 // Phase 3M-1b Task I.1 (2026-04-28): Top-level mic-source selector.
 // Phase 3M-1b Task I.2 (2026-04-28): PC Mic group box (5 rows: backend,
 //   device, buffer size, Test Mic + VU, Mic Gain).
+// R-R3-36 Task 6 (2026-09-22): PC Mic controls edit the shared
+//   audio/TxInput config; Test Mic holds a real capture demand; microphone
+//   status and Retry beside Test Mic.
+// R-R3-36 (2026-09-23): usable in a remote window through
+//   RadioModel::localAudioDevices(); the controls held for the radio follow
+//   the transmit permission.
+// R-R3-49 parity Task 3 (2026-09-25): Mic Gain and the radio microphone
+//   groups follow the transmit settings gate (transmitSettingsVersion 3)
+//   and change the Core's values off the air; the mic source keeps the
+//   transmit permission.
+// R-R3-49 / R-IOS-18 (2026-09-29): Setup description version 15 ids on Mic
+//   Gain and the radio microphone groups, whose titles use parentheses.
+// Radio codec lane (2026-09-30): Radio Mic opens on the Hermes Lite 2 with
+//   the audio add-on note and the Hermes group; Saturn G2 Mic Tip-Ring; the
+//   Orion group disabled on the Red Pitaya; Line In Gain in 1.5 dB steps.
 //
 // Written by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -15,11 +30,14 @@
 // no-port-check: NereusSDR-original file; no Thetis logic ported here.
 
 #include "AudioTxInputPage.h"
+#include "CaptureStatusText.h"
 
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
+#include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
 #include "core/AudioEngine.h"
+#include "core/session/IStationLink.h"
 #include "gui/HGauge.h"
 
 #include <QAbstractButton>
@@ -28,10 +46,13 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QHideEvent>
 #include <QLabel>
 #include <QRadioButton>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
+
+#include <cmath>
 
 // PortAudio enumeration — only the opaque struct access and hostApis() are
 // used here (no direct Pa_* calls); PortAudioBus wraps the C API.
@@ -108,14 +129,19 @@ const QVector<int> AudioTxInputPage::kBufferSizes = {
 AudioTxInputPage::AudioTxInputPage(RadioModel* model, QWidget* parent)
     : SetupPage(QStringLiteral("TX Input"), model, parent)
 {
-    const bool hasMicJack = model
-        ? model->boardCapabilities().hasMicJack
+    // Radio codec lane: a board with a mic jack, or the HL2 with its
+    // audio add-on board, takes the radio mic.
+    const bool radioMicSelectable = model
+        ? model->boardCapabilities().radioMicSelectable()
         : true;  // safe default: don't disable Radio Mic for null model
     m_hw = model
         ? model->boardCapabilities().board
         : HPSDRHW::Unknown;
+    m_radioMicNeedsAddOn = model && model->boardCapabilities().radioMicNeedsAddOn;
+    m_orionMicPanelAvailable = !model
+        || RadioModel::orionMicPanelAvailable(model->hardwareProfile().model);
 
-    buildPage(hasMicJack, m_hw);
+    buildPage(radioMicSelectable, m_hw);
 
     // Wire two-way sync with TransmitModel.
     if (model) {
@@ -131,44 +157,6 @@ AudioTxInputPage::AudioTxInputPage(RadioModel* model, QWidget* parent)
 
         // Apply the current model state at construction.
         syncButtonsFromModel(tx->micSource());
-
-        // Seed the PC Mic group controls from model session state.
-        // Backend combo: resolve -1 to the OS default if the model still
-        // holds the initial sentinel.
-        const int storedApi = tx->pcMicHostApiIndex();
-        const int effectiveApi = (storedApi == -1) ? defaultHostApiIndex() : storedApi;
-        if (m_backendCombo) {
-            const QVector<PortAudioBus::HostApiInfo> apis = PortAudioBus::hostApis();
-            for (int i = 0; i < apis.size(); ++i) {
-                if (apis[i].index == effectiveApi) {
-                    QSignalBlocker blk(m_backendCombo);
-                    m_backendCombo->setCurrentIndex(i);
-                    break;
-                }
-            }
-        }
-        populateDeviceCombo(effectiveApi);
-
-        // Seed device combo selection from stored device name.
-        const QString storedDevice = tx->pcMicDeviceName();
-        if (m_deviceCombo && !storedDevice.isEmpty()) {
-            const int idx = m_deviceCombo->findText(storedDevice);
-            if (idx >= 0) {
-                QSignalBlocker blk(m_deviceCombo);
-                m_deviceCombo->setCurrentIndex(idx);
-            }
-        }
-
-        // Seed buffer slider from stored buffer samples.
-        const int storedBuf = tx->pcMicBufferSamples();
-        if (m_bufferSlider) {
-            const int pos = kBufferSizes.indexOf(storedBuf);
-            if (pos >= 0) {
-                QSignalBlocker blk(m_bufferSlider);
-                m_bufferSlider->setValue(pos);
-            }
-            updateBufferLabel(storedBuf);
-        }
 
         // Seed mic gain slider — clamp stored model value to the per-board
         // slider range so a value persisted for a different board doesn't
@@ -216,14 +204,7 @@ AudioTxInputPage::AudioTxInputPage(RadioModel* model, QWidget* parent)
             QSignalBlocker blk(m_hermesMicBoostChk);
             m_hermesMicBoostChk->setChecked(tx->micBoost());
         }
-        if (m_hermesLineInGainSlider) {
-            QSignalBlocker blk(m_hermesLineInGainSlider);
-            const int sliderVal = static_cast<int>(tx->lineInBoost());
-            m_hermesLineInGainSlider->setValue(sliderVal);
-            if (m_hermesLineInGainLabel) {
-                m_hermesLineInGainLabel->setText(lineInBoostLabel(sliderVal));
-            }
-        }
+        showLineInBoost(tx->lineInBoost());
         // Orion family: micTipRing + micBias + micPttDisabled + micBoost
         if (m_orionMicTipRingChk) {
             QSignalBlocker blk(m_orionMicTipRingChk);
@@ -262,56 +243,209 @@ AudioTxInputPage::AudioTxInputPage(RadioModel* model, QWidget* parent)
             QSignalBlocker blk(m_saturnMicBoostChk);
             m_saturnMicBoostChk->setChecked(tx->micBoost());
         }
-
-        // Live model → UI connections for PC Mic session state.
-        // Buffer samples: model change → slider position.
-        connect(tx, &TransmitModel::pcMicBufferSamplesChanged,
-                this, [this](int samples) {
-                    if (!m_bufferSlider) { return; }
-                    const int pos = kBufferSizes.indexOf(samples);
-                    if (pos >= 0) {
-                        QSignalBlocker blk(m_bufferSlider);
-                        m_bufferSlider->setValue(pos);
-                    }
-                    updateBufferLabel(samples);
-                });
-
-        // Host API index: model change → backend combo selection.
-        connect(tx, &TransmitModel::pcMicHostApiIndexChanged,
-                this, [this](int hostApiIndex) {
-                    if (!m_backendCombo) { return; }
-                    for (int i = 0; i < m_backendCombo->count(); ++i) {
-                        if (m_backendCombo->itemData(i).toInt() == hostApiIndex) {
-                            QSignalBlocker blk(m_backendCombo);
-                            m_backendCombo->setCurrentIndex(i);
-                            break;
-                        }
-                    }
-                });
+        if (m_saturnMicTipRingChk) {
+            QSignalBlocker blk(m_saturnMicTipRingChk);
+            m_saturnMicTipRingChk->setChecked(tx->micTipRing());
+        }
     }
+
+    // R-R3-36: the PC Mic controls show the one audio/TxInput config the
+    // engine holds (the Devices page edits the same one) and follow every
+    // change to it, whichever page made it.
+    if (AudioEngine* eng = engine()) {
+        applyTxInputConfigToControls(eng->txInputConfig());
+        connect(eng, &AudioEngine::txInputConfigChanged,
+                this, &AudioTxInputPage::applyTxInputConfigToControls);
+        connect(eng, &AudioEngine::captureStatusChanged,
+                this, [this](const CaptureSupervisor::Status&) { refreshCaptureStatus(); });
+        connect(m_retryCaptureBtn, &QPushButton::clicked,
+                this, [this]() {
+                    if (AudioEngine* e = engine()) {
+                        e->retryCapture();
+                    }
+                });
+    } else {
+        applyTxInputConfigToControls(AudioDeviceConfig{});
+    }
+    refreshCaptureStatus();
 
     // Set up the VU timer (10 ms refresh, stopped until Test Mic is pressed).
     m_vuTimer = new QTimer(this);
     m_vuTimer->setInterval(10);
     connect(m_vuTimer, &QTimer::timeout, this, &AudioTxInputPage::onVuTimerTick);
+
+    // R-R3-49 (parity Task 3): in a remote window Mic Gain and the radio
+    // microphone groups start closed until the Core says it takes them
+    // (SetupDialog pushes setTransmitSettingsPermittedAt(3, ...)).
+    if (model && !model->ownsLocalDsp()) {
+        setTransmitSettingsPermittedAt(3, false, QString());
+    }
 }
 
 AudioTxInputPage::~AudioTxInputPage()
 {
+    // R-R3-36: a destroyed page gives up its Test Mic capture demand.
+    m_testMicLease.release();
     // Stop VU timer on destruction to prevent dangling callbacks.
     if (m_vuTimer) {
         m_vuTimer->stop();
     }
 }
 
+// R-R3-36: a hidden page (another Setup page selected, the dialog closed)
+// stops its Test Mic, which releases the capture demand.
+void AudioTxInputPage::hideEvent(QHideEvent* event)
+{
+    if (m_testMicBtn && m_testMicBtn->isChecked()) {
+        m_testMicBtn->setChecked(false);
+    }
+    SetupPage::hideEvent(event);
+}
+
+// ---------------------------------------------------------------------------
+// Shared audio/TxInput config (R-R3-36)
+// ---------------------------------------------------------------------------
+
+AudioEngine* AudioTxInputPage::engine()
+{
+    // R-R3-36: the PC microphone is this computer's, in a remote window
+    // too (Test Mic opens it there); see RadioModel::localAudioDevices().
+    return model() ? model()->localAudioDevices() : nullptr;
+}
+
+void AudioTxInputPage::applyTxInputConfigToControls(const AudioDeviceConfig& cfg)
+{
+    m_applyingTxInputConfig = true;
+
+    // Backend: -1 (PortAudio default) is shown as the OS-default API.
+    const int effectiveApi = (cfg.hostApiIndex == -1) ? defaultHostApiIndex()
+                                                      : cfg.hostApiIndex;
+    if (m_backendCombo) {
+        const int idx = m_backendCombo->findData(effectiveApi);
+        if (idx >= 0) {
+            QSignalBlocker blk(m_backendCombo);
+            m_backendCombo->setCurrentIndex(idx);
+        }
+    }
+    populateDeviceCombo(effectiveApi);
+
+    // Device: empty is the "(default)" entry. A named device that is not
+    // present stays selected under its own name, so the page never shows a
+    // different microphone than the one configured.
+    if (m_deviceCombo) {
+        QSignalBlocker blk(m_deviceCombo);
+        int idx = 0;
+        if (!cfg.deviceName.isEmpty()) {
+            idx = m_deviceCombo->findData(cfg.deviceName);
+            if (idx < 0) {
+                m_deviceCombo->addItem(
+                    QStringLiteral("%1 (not available)").arg(cfg.deviceName),
+                    cfg.deviceName);
+                idx = m_deviceCombo->count() - 1;
+            }
+        }
+        m_deviceCombo->setCurrentIndex(idx);
+    }
+
+    // Buffer.
+    if (m_bufferSlider) {
+        const int pos = kBufferSizes.indexOf(cfg.bufferSamples);
+        if (pos >= 0) {
+            QSignalBlocker blk(m_bufferSlider);
+            m_bufferSlider->setValue(pos);
+        }
+    }
+    updateBufferLabel(cfg.bufferSamples);
+
+    m_applyingTxInputConfig = false;
+}
+
+// Persists exactly as the Devices page TX Input card does, then hands the
+// config to the engine (which reports it back through txInputConfigChanged).
+void AudioTxInputPage::commitTxInputConfig(const AudioDeviceConfig& cfg)
+{
+    AudioEngine* eng = engine();
+    if (!eng) {
+        return;
+    }
+    cfg.saveToSettings(QStringLiteral("audio/TxInput"));
+    AppSettings::instance().save();
+    eng->setTxInputConfig(cfg);
+}
+
+void AudioTxInputPage::refreshCaptureStatus()
+{
+    AudioEngine* eng = engine();
+    const CaptureSupervisor::Status status =
+        eng ? eng->captureStatus() : CaptureSupervisor::Status{};
+    if (m_captureStatusLabel) {
+        m_captureStatusLabel->setText(captureStatusText(status));
+    }
+    if (m_retryCaptureBtn) {
+        m_retryCaptureBtn->setEnabled(
+            eng != nullptr && status.state == CaptureSupervisor::Status::State::Failed);
+    }
+}
+
+// R-R3-36: the controls held for the radio follow the transmit permission;
+// this computer's microphone controls do not. See the header.
+void AudioTxInputPage::setTransmitPermitted(bool permitted, const QString& reason)
+{
+    m_heldTransmitPermitted = permitted;
+    m_heldTransmitReason = reason.isEmpty()
+        ? tr("Remote transmit controls are not available from this Core.")
+        : reason;
+    applyHeldControlGate();
+}
+
+// R-R3-21 / R-R3-10: the held controls are the Core's settings as well.
+void AudioTxInputPage::setStationSettingsAvailable(bool available, const QString& reason)
+{
+    m_heldStationAvailable = available;
+    m_heldStationReason = reason.isEmpty()
+        ? tr("Connect to the Core to change these.") : reason;
+    applyHeldControlGate();
+}
+
+// R-R3-49 (parity Task 3): Mic Gain (micGainDb) and the radio microphone
+// groups are transmit settings that key nothing; in a remote window they
+// change the Core's values while its radio is off the air.
+void AudioTxInputPage::setTransmitSettingsPermittedAt(int version, bool permitted,
+                                                      const QString& reason)
+{
+    if (version != 3) {
+        return;
+    }
+    m_heldSettingsPermitted = permitted;
+    m_heldSettingsReason = reason.isEmpty()
+        ? IStationLink::transmitSettingsUnavailableReason() : reason;
+    applyHeldControlGate();
+}
+
+// One gate for both conditions on each control: the save/restore helper
+// keeps one saved state per control, so the conditions are combined here
+// rather than stacked. The mic source follows the transmit permission (C2);
+// Mic Gain and the radio microphone groups the transmit settings gate.
+void AudioTxInputPage::applyHeldControlGate()
+{
+    gateTransmitControls({m_micSourceGroup},
+        m_heldTransmitPermitted && m_heldStationAvailable,
+        m_heldStationAvailable ? m_heldTransmitReason : m_heldStationReason);
+    gateTransmitControls({m_micGainSlider, m_micGainLabel,
+                          m_hermesGroup, m_orionGroup, m_saturnGroup},
+        m_heldSettingsPermitted && m_heldStationAvailable,
+        m_heldStationAvailable ? m_heldSettingsReason : m_heldStationReason);
+}
+
 // ---------------------------------------------------------------------------
 // Build helpers
 // ---------------------------------------------------------------------------
 
-void AudioTxInputPage::buildPage(bool hasMicJack, HPSDRHW hw)
+void AudioTxInputPage::buildPage(bool radioMicSelectable, HPSDRHW hw)
 {
     // ── Mic Source group box (I.1) ────────────────────────────────────────────
     auto* srcGrp = new QGroupBox(QStringLiteral("Mic Source"), this);
+    m_micSourceGroup = srcGrp;
     auto* srcLayout = new QVBoxLayout(srcGrp);
 
     m_pcMicBtn    = new QRadioButton(QStringLiteral("PC Mic"), srcGrp);
@@ -330,8 +464,9 @@ void AudioTxInputPage::buildPage(bool hasMicJack, HPSDRHW hw)
     // PC Mic is selected by default.
     m_pcMicBtn->setChecked(true);
 
-    // Gate Radio Mic on hasMicJack capability.
-    if (!hasMicJack) {
+    // Gate Radio Mic on the board taking the radio mic (a mic jack, or the
+    // HL2's audio add-on board).
+    if (!radioMicSelectable) {
         m_radioMicBtn->setEnabled(false);
         m_radioMicBtn->setToolTip(
             QStringLiteral("Radio mic jack not present on Hermes Lite 2"));
@@ -339,6 +474,16 @@ void AudioTxInputPage::buildPage(bool hasMicJack, HPSDRHW hw)
 
     srcLayout->addWidget(m_pcMicBtn);
     srcLayout->addWidget(m_radioMicBtn);
+    // Radio codec lane: the HL2 gateware cannot report its AK4951 audio
+    // add-on board, so Radio Mic stays open with a plain note, as mi0bot
+    // leaves Mic In / Line In open on every model (mi0bot setup.cs:14566-14589
+    // [@c26a8a4]).
+    if (m_radioMicNeedsAddOn) {
+        m_radioMicBtn->setToolTip(RadioModel::radioMicAddOnNote());
+        m_radioMicNoteLabel = new QLabel(RadioModel::radioMicAddOnNote(), srcGrp);
+        m_radioMicNoteLabel->setWordWrap(true);
+        srcLayout->addWidget(m_radioMicNoteLabel);
+    }
     srcLayout->addWidget(m_vaxMicBtn);
 
     contentLayout()->insertWidget(0, srcGrp);
@@ -412,7 +557,7 @@ void AudioTxInputPage::buildPcMicGroup(QVBoxLayout* parentLayout)
     m_testMicBtn = new QPushButton(QStringLiteral("Test Mic"), this);
     m_testMicBtn->setCheckable(true);
     m_testMicBtn->setToolTip(
-        QStringLiteral("Click to sample the selected PC mic and see the live level"));
+        QStringLiteral("Click to open the selected PC mic and see the live level"));
 
     m_vuBar = new HGauge(this);
     m_vuBar->setRange(0.0, 100.0);
@@ -428,6 +573,19 @@ void AudioTxInputPage::buildPcMicGroup(QVBoxLayout* parentLayout)
 
     connect(m_testMicBtn, &QPushButton::toggled,
             this, &AudioTxInputPage::onTestMicToggled);
+
+    // ── Microphone status + Retry (R-R3-36) ───────────────────────────────────
+    m_captureStatusLabel = new QLabel(this);
+    m_captureStatusLabel->setObjectName(QStringLiteral("captureStatus"));
+    m_captureStatusLabel->setWordWrap(true);
+    m_retryCaptureBtn = new QPushButton(QStringLiteral("Retry microphone"), this);
+    m_retryCaptureBtn->setObjectName(QStringLiteral("retryCapture"));
+    m_retryCaptureBtn->setEnabled(false);
+
+    auto* statusRow = new QHBoxLayout();
+    statusRow->addWidget(m_captureStatusLabel, 1);
+    statusRow->addWidget(m_retryCaptureBtn);
+    grpLayout->addRow(QStringLiteral(""), statusRow);
 
     // ── Row 5: Mic Gain ───────────────────────────────────────────────────────
     // Range is read from BoardCapabilities::micGainMinDb / micGainMaxDb.
@@ -452,6 +610,7 @@ void AudioTxInputPage::buildPcMicGroup(QVBoxLayout* parentLayout)
         : TransmitModel::kMicGainDbMax;
 
     m_micGainSlider = new QSlider(Qt::Horizontal, this);
+    m_micGainSlider->setProperty("nereusSetupId", "audio.txInput.micGain");
     m_micGainSlider->setMinimum(micGainMin);
     m_micGainSlider->setMaximum(micGainMax);
     m_micGainSlider->setSingleStep(1);
@@ -572,10 +731,13 @@ void AudioTxInputPage::updateRadioMicGroupVisibility(MicSource source, HPSDRHW h
     // Only show a Radio Mic group when Radio Mic is actually selected.
     const bool radioMicActive = (source == MicSource::Radio);
 
+    // The Hermes Lite 2 takes the Hermes group's Mic In / Line In, boost and
+    // Line In Gain through its AK4951 add-on board (P1CodecHl2).
     const bool isHermes = (hw == HPSDRHW::Hermes
                         || hw == HPSDRHW::HermesII
                         || hw == HPSDRHW::Angelia
-                        || hw == HPSDRHW::Atlas);
+                        || hw == HPSDRHW::Atlas
+                        || (hw == HPSDRHW::HermesLite && m_radioMicNeedsAddOn));
     const bool isOrion  = (hw == HPSDRHW::Orion
                         || hw == HPSDRHW::OrionMKII);
     const bool isSaturn = (hw == HPSDRHW::Saturn
@@ -590,9 +752,25 @@ void AudioTxInputPage::updateRadioMicGroupVisibility(MicSource source, HPSDRHW h
 // lineInBoostLabel: format dB label for the Line In Gain slider (I.3)
 // ---------------------------------------------------------------------------
 
-/*static*/ QString AudioTxInputPage::lineInBoostLabel(int sliderValue)
+/*static*/ QString AudioTxInputPage::lineInBoostLabel(double dB)
 {
-    return QStringLiteral("%1 dB").arg(sliderValue);
+    // One decimal place, as Thetis's udLineInBoost shows it.
+    return QStringLiteral("%1 dB").arg(dB, 0, 'f', 1);
+}
+
+// Shows a Line In Gain in the slider (half decibels) and its label.
+void AudioTxInputPage::showLineInBoost(double dB)
+{
+    if (!m_hermesLineInGainSlider) { return; }
+    {
+        QSignalBlocker blk(m_hermesLineInGainSlider);
+        m_hermesLineInGainSlider->setValue(
+            static_cast<int>(std::lround(dB * kLineInGainSliderScale)));
+    }
+    if (m_hermesLineInGainLabel) {
+        m_hermesLineInGainLabel->setText(lineInBoostLabel(
+            double(m_hermesLineInGainSlider->value()) / kLineInGainSliderScale));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -642,18 +820,23 @@ void AudioTxInputPage::syncButtonsFromModel(MicSource source)
 void AudioTxInputPage::onBackendChanged(int comboIndex)
 {
     if (!m_backendCombo) { return; }
+    if (m_applyingTxInputConfig) { return; }
 
     const int hostApiIndex = m_backendCombo->itemData(comboIndex).toInt();
 
     // Repopulate device combo for the new host API.
     populateDeviceCombo(hostApiIndex);
 
-    // Persist to TransmitModel session state.
-    if (model()) {
-        model()->transmitModel().setPcMicHostApiIndex(hostApiIndex);
-        // Device name resets to default when backend changes.
-        model()->transmitModel().setPcMicDeviceName(QString());
-    }
+    // R-R3-36: one audio/TxInput config. The Devices card stores the API by
+    // name (driverApi) and index; keep both in step. Device name resets to
+    // the default when the backend changes.
+    AudioEngine* eng = engine();
+    if (!eng) { return; }
+    AudioDeviceConfig cfg = eng->txInputConfig();
+    cfg.hostApiIndex = hostApiIndex;
+    cfg.driverApi = (hostApiIndex < 0) ? QString() : m_backendCombo->itemText(comboIndex);
+    cfg.deviceName.clear();
+    commitTxInputConfig(cfg);
 }
 
 // ---------------------------------------------------------------------------
@@ -663,13 +846,13 @@ void AudioTxInputPage::onBackendChanged(int comboIndex)
 void AudioTxInputPage::onDeviceChanged(int comboIndex)
 {
     if (!m_deviceCombo) { return; }
-    if (m_updatingFromModel) { return; }
+    if (m_updatingFromModel || m_applyingTxInputConfig) { return; }
 
-    const QString deviceName = m_deviceCombo->itemData(comboIndex).toString();
-
-    if (model()) {
-        model()->transmitModel().setPcMicDeviceName(deviceName);
-    }
+    AudioEngine* eng = engine();
+    if (!eng) { return; }
+    AudioDeviceConfig cfg = eng->txInputConfig();
+    cfg.deviceName = m_deviceCombo->itemData(comboIndex).toString();
+    commitTxInputConfig(cfg);
 }
 
 // ---------------------------------------------------------------------------
@@ -682,10 +865,13 @@ void AudioTxInputPage::onBufferSliderChanged(int sliderPos)
 
     const int samples = kBufferSizes[sliderPos];
     updateBufferLabel(samples);
+    if (m_applyingTxInputConfig) { return; }
 
-    if (model()) {
-        model()->transmitModel().setPcMicBufferSamples(samples);
-    }
+    AudioEngine* eng = engine();
+    if (!eng) { return; }
+    AudioDeviceConfig cfg = eng->txInputConfig();
+    cfg.bufferSamples = samples;
+    commitTxInputConfig(cfg);
 }
 
 // ---------------------------------------------------------------------------
@@ -695,17 +881,18 @@ void AudioTxInputPage::onBufferSliderChanged(int sliderPos)
 void AudioTxInputPage::onTestMicToggled(bool checked)
 {
     if (checked) {
-        // Start the 10 ms VU-poll timer.
-        // TODO [3M-1b I.x]: if m_txInputBus is not open, trigger
-        // AudioEngine to open the PC Mic capture stream with the current
-        // host API / device / buffer settings so the level reflects the
-        // actual hardware. For now, pcMicInputLevel() returns 0.0f when
-        // the bus is idle — the VU bar will show silent until TX is active.
+        // R-R3-36: a real capture demand; the selected input opens even
+        // before a radio is connected, and the status row reports progress.
+        if (AudioEngine* eng = engine()) {
+            m_testMicLease = eng->acquireCaptureDemand(CaptureSupervisor::Demand::TestMic);
+        }
         m_vuTimer->start();
         if (m_testMicBtn) {
             m_testMicBtn->setText(QStringLiteral("Stop Test"));
         }
     } else {
+        // Releases only this page's demand; an active session keeps its own.
+        m_testMicLease.release();
         m_vuTimer->stop();
         if (m_vuBar) {
             m_vuBar->setValue(0.0);
@@ -725,12 +912,9 @@ void AudioTxInputPage::onVuTimerTick()
     if (!m_vuBar) { return; }
 
     float level = 0.0f;
-    if (model() && model()->audioEngine()) {
-        // Bus-tap approach: read peak amplitude from m_txInputBus without
-        // consuming any samples. The PortAudioBus callback updates txLevel()
-        // (std::atomic<float>) every 10–20 ms. When the TX-input bus is not
-        // open (no active capture stream), pcMicInputLevel() returns 0.0f.
-        level = model()->audioEngine()->pcMicInputLevel();
+    if (AudioEngine* eng = engine()) {
+        // Peak level of the capture reader; 0.0f until capture is Ready.
+        level = eng->pcMicInputLevel();
     }
 
     // Scale from normalized [0.0, 1.0] to gauge range [0, 100].
@@ -782,7 +966,10 @@ void AudioTxInputPage::onModelMicGainDbChanged(int dB)
 
 void AudioTxInputPage::buildHermesRadioMicGroup(QVBoxLayout* parentLayout)
 {
-    m_hermesGroup = new QGroupBox(QStringLiteral("Radio Mic — Hermes / Atlas"), this);
+    m_hermesGroup = new QGroupBox(m_hw == HPSDRHW::HermesLite
+                                      ? QStringLiteral("Radio Mic (Hermes Lite 2)")
+                                      : QStringLiteral("Radio Mic (Hermes / Atlas)"),
+                                  this);
     auto* grpLayout = new QVBoxLayout(m_hermesGroup);
 
     // ── Row 1: Mic In / Line In radio buttons ─────────────────────────────────
@@ -791,6 +978,7 @@ void AudioTxInputPage::buildHermesRadioMicGroup(QVBoxLayout* parentLayout)
     micInBtn->setChecked(true);  // Hermes default: mic input active
 
     m_hermesMicInputGroup = new QButtonGroup(this);
+    m_hermesMicInputGroup->setProperty("nereusSetupId", "audio.txInput.hermesLineIn");
     m_hermesMicInputGroup->addButton(micInBtn,  0);  // id=0 → lineIn=false
     m_hermesMicInputGroup->addButton(lineInBtn, 1);  // id=1 → lineIn=true
 
@@ -805,6 +993,7 @@ void AudioTxInputPage::buildHermesRadioMicGroup(QVBoxLayout* parentLayout)
 
     // ── Row 2: +20 dB Mic Boost checkbox ────────────────────────────────────
     m_hermesMicBoostChk = new QCheckBox(QStringLiteral("+20 dB Mic Boost"), m_hermesGroup);
+    m_hermesMicBoostChk->setProperty("nereusSetupId", "audio.txInput.hermesMicBoost");
     m_hermesMicBoostChk->setChecked(true);  // TransmitModel default: true
     grpLayout->addWidget(m_hermesMicBoostChk);
 
@@ -812,16 +1001,24 @@ void AudioTxInputPage::buildHermesRadioMicGroup(QVBoxLayout* parentLayout)
             this, &AudioTxInputPage::onHermesMicBoostToggled);
 
     // ── Row 3: Line In Gain slider ───────────────────────────────────────────
-    // Range: kLineInBoostMin (-34.5 → int: -34) to kLineInBoostMax (12), 1 dB steps.
-    // kLineInBoostMin is a double (-34.5) cast to int at slider construction
-    // time via static_cast<int>; the slider integer minimum is therefore -34.
+    // Range kLineInBoostMin (-34.5) to kLineInBoostMax (12) in
+    // kLineInBoostStep (1.5 dB) steps, as Thetis's udLineInBoost (setup.
+    // designer.cs:47006-47034 [v2.10.3.15]: Increment 1.5, Minimum -34.5,
+    // Maximum 12, one decimal). The slider counts half decibels
+    // (kLineInGainSliderScale), so -34.5 dB is -69 and a step is 3.
     m_hermesLineInGainSlider = new QSlider(Qt::Horizontal, m_hermesGroup);
-    m_hermesLineInGainSlider->setMinimum(static_cast<int>(TransmitModel::kLineInBoostMin));
-    m_hermesLineInGainSlider->setMaximum(static_cast<int>(TransmitModel::kLineInBoostMax));
-    m_hermesLineInGainSlider->setSingleStep(1);
+    m_hermesLineInGainSlider->setProperty("nereusSetupId", "audio.txInput.hermesLineInGain");
+    m_hermesLineInGainSlider->setProperty("nereusSetupScale", double(kLineInGainSliderScale));
+    m_hermesLineInGainSlider->setMinimum(
+        static_cast<int>(std::lround(TransmitModel::kLineInBoostMin * kLineInGainSliderScale)));
+    m_hermesLineInGainSlider->setMaximum(
+        static_cast<int>(std::lround(TransmitModel::kLineInBoostMax * kLineInGainSliderScale)));
+    m_hermesLineInGainSlider->setSingleStep(
+        static_cast<int>(std::lround(TransmitModel::kLineInBoostStep * kLineInGainSliderScale)));
+    m_hermesLineInGainSlider->setPageStep(m_hermesLineInGainSlider->singleStep());
     m_hermesLineInGainSlider->setValue(0);  // TransmitModel default: 0.0 dB
 
-    m_hermesLineInGainLabel = new QLabel(lineInBoostLabel(0), m_hermesGroup);
+    m_hermesLineInGainLabel = new QLabel(lineInBoostLabel(0.0), m_hermesGroup);
     m_hermesLineInGainLabel->setMinimumWidth(60);
 
     auto* gainRow = new QHBoxLayout();
@@ -833,6 +1030,17 @@ void AudioTxInputPage::buildHermesRadioMicGroup(QVBoxLayout* parentLayout)
     connect(m_hermesLineInGainSlider, &QSlider::valueChanged,
             this, &AudioTxInputPage::onHermesLineInGainChanged);
 
+    // On the Hermes Lite 2 these settings reach the AK4951 on its audio
+    // add-on board, which the gateware cannot report, so each row carries
+    // the same note as Radio Mic (the Setup description's tooltip).
+    if (m_hw == HPSDRHW::HermesLite && m_radioMicNeedsAddOn) {
+        const QString note = RadioModel::radioMicAddOnNote();
+        micInBtn->setToolTip(note);
+        lineInBtn->setToolTip(note);
+        m_hermesMicBoostChk->setToolTip(note);
+        m_hermesLineInGainSlider->setToolTip(note);
+    }
+
     parentLayout->addWidget(m_hermesGroup);
 }
 
@@ -842,25 +1050,29 @@ void AudioTxInputPage::buildHermesRadioMicGroup(QVBoxLayout* parentLayout)
 
 void AudioTxInputPage::buildOrionRadioMicGroup(QVBoxLayout* parentLayout)
 {
-    m_orionGroup = new QGroupBox(QStringLiteral("Radio Mic — Orion-MkII"), this);
+    m_orionGroup = new QGroupBox(QStringLiteral("Radio Mic (Orion-MkII)"), this);
     auto* grpLayout = new QVBoxLayout(m_orionGroup);
 
     m_orionMicTipRingChk = new QCheckBox(
         QStringLiteral("Mic Tip-Ring (Tip is Mic)"), m_orionGroup);
+    m_orionMicTipRingChk->setProperty("nereusSetupId", "audio.txInput.orionMicTipRing");
     m_orionMicTipRingChk->setChecked(true);  // TransmitModel default: true
     grpLayout->addWidget(m_orionMicTipRingChk);
 
     m_orionMicBiasChk = new QCheckBox(QStringLiteral("Mic Bias"), m_orionGroup);
+    m_orionMicBiasChk->setProperty("nereusSetupId", "audio.txInput.orionMicBias");
     m_orionMicBiasChk->setChecked(false);  // TransmitModel default: false
     grpLayout->addWidget(m_orionMicBiasChk);
 
     m_orionMicPttDisabledChk = new QCheckBox(
         QStringLiteral("Mic PTT Disabled"), m_orionGroup);
+    m_orionMicPttDisabledChk->setProperty("nereusSetupId", "audio.txInput.orionMicPttDisabled");
     m_orionMicPttDisabledChk->setChecked(false);  // TransmitModel default: false
     grpLayout->addWidget(m_orionMicPttDisabledChk);
 
     m_orionMicBoostChk = new QCheckBox(
         QStringLiteral("+20 dB Mic Boost"), m_orionGroup);
+    m_orionMicBoostChk->setProperty("nereusSetupId", "audio.txInput.orionMicBoost");
     m_orionMicBoostChk->setChecked(true);  // TransmitModel default: true
     grpLayout->addWidget(m_orionMicBoostChk);
 
@@ -873,6 +1085,16 @@ void AudioTxInputPage::buildOrionRadioMicGroup(QVBoxLayout* parentLayout)
     connect(m_orionMicBoostChk,      &QCheckBox::toggled,
             this, &AudioTxInputPage::onOrionMicBoostToggled);
 
+    // Radio codec lane: Thetis greys out the ORION mic panel on the Red
+    // Pitaya (RadioModel::orionMicPanelAvailable). The group stays in view,
+    // disabled with its reason; the transmit gates keep this state as the
+    // one they put back.
+    if (!m_orionMicPanelAvailable) {
+        m_orionGroup->setEnabled(false);
+        m_orionGroup->setToolTip(RadioModel::orionMicPanelUnavailableReason());
+        m_orionGroup->setAccessibleDescription(RadioModel::orionMicPanelUnavailableReason());
+    }
+
     parentLayout->addWidget(m_orionGroup);
 }
 
@@ -882,7 +1104,7 @@ void AudioTxInputPage::buildOrionRadioMicGroup(QVBoxLayout* parentLayout)
 
 void AudioTxInputPage::buildSaturnRadioMicGroup(QVBoxLayout* parentLayout)
 {
-    m_saturnGroup = new QGroupBox(QStringLiteral("Radio Mic — Saturn G2"), this);
+    m_saturnGroup = new QGroupBox(QStringLiteral("Radio Mic (Saturn G2)"), this);
     auto* grpLayout = new QVBoxLayout(m_saturnGroup);
 
     // ── Row 1: 3.5 mm Jack / XLR radio buttons ───────────────────────────────
@@ -892,6 +1114,7 @@ void AudioTxInputPage::buildSaturnRadioMicGroup(QVBoxLayout* parentLayout)
     xlrBtn->setChecked(true);
 
     m_saturnMicInputGroup = new QButtonGroup(this);
+    m_saturnMicInputGroup->setProperty("nereusSetupId", "audio.txInput.saturnMicXlr");
     m_saturnMicInputGroup->addButton(jackBtn, 0);  // id=0 → micXlr=false (3.5mm)
     m_saturnMicInputGroup->addButton(xlrBtn,  1);  // id=1 → micXlr=true  (XLR)
 
@@ -904,18 +1127,34 @@ void AudioTxInputPage::buildSaturnRadioMicGroup(QVBoxLayout* parentLayout)
     connect(m_saturnMicInputGroup, &QButtonGroup::idToggled,
             this, &AudioTxInputPage::onSaturnMicInputToggled);
 
-    // ── Rows 2-4: three checkboxes ───────────────────────────────────────────
+    // ── Row 2: Mic Tip-Ring ─────────────────────────────────────────────────
+    // Radio codec lane: Thetis enables the ORION mic panel (Tip / Ring) on
+    // the G2 and G2-1K as well (setup.cs:20292, 20343 [v2.10.3.15]); its
+    // Tip radio sends SetMicTipRing(0) (setup.cs:16504-16510), the same
+    // TransmitModel::micTipRing the Orion group sets.
+    m_saturnMicTipRingChk = new QCheckBox(
+        QStringLiteral("Mic Tip-Ring (Tip is Mic)"), m_saturnGroup);
+    m_saturnMicTipRingChk->setProperty("nereusSetupId", "audio.txInput.saturnMicTipRing");
+    m_saturnMicTipRingChk->setChecked(true);  // TransmitModel default: true
+    grpLayout->addWidget(m_saturnMicTipRingChk);
+    connect(m_saturnMicTipRingChk, &QCheckBox::toggled,
+            this, &AudioTxInputPage::onSaturnMicTipRingToggled);
+
+    // ── Rows 3-5: three checkboxes ───────────────────────────────────────────
     m_saturnMicPttDisabledChk = new QCheckBox(
         QStringLiteral("Mic PTT Disabled"), m_saturnGroup);
+    m_saturnMicPttDisabledChk->setProperty("nereusSetupId", "audio.txInput.saturnMicPttDisabled");
     m_saturnMicPttDisabledChk->setChecked(false);  // TransmitModel default
     grpLayout->addWidget(m_saturnMicPttDisabledChk);
 
     m_saturnMicBiasChk = new QCheckBox(QStringLiteral("Mic Bias"), m_saturnGroup);
+    m_saturnMicBiasChk->setProperty("nereusSetupId", "audio.txInput.saturnMicBias");
     m_saturnMicBiasChk->setChecked(false);  // TransmitModel default
     grpLayout->addWidget(m_saturnMicBiasChk);
 
     m_saturnMicBoostChk = new QCheckBox(
         QStringLiteral("+20 dB Mic Boost"), m_saturnGroup);
+    m_saturnMicBoostChk->setProperty("nereusSetupId", "audio.txInput.saturnMicBoost");
     m_saturnMicBoostChk->setChecked(true);  // TransmitModel default: true
     grpLayout->addWidget(m_saturnMicBoostChk);
 
@@ -952,11 +1191,23 @@ void AudioTxInputPage::onHermesMicBoostToggled(bool on)
 void AudioTxInputPage::onHermesLineInGainChanged(int sliderValue)
 {
     if (m_updatingFromModel) { return; }
+    // The slider counts half decibels; a value between steps (a drag) snaps
+    // to the nearest 1.5 dB step from the minimum, as udLineInBoost's
+    // Increment does.
+    const int step = m_hermesLineInGainSlider ? m_hermesLineInGainSlider->singleStep() : 1;
+    const int minimum = m_hermesLineInGainSlider ? m_hermesLineInGainSlider->minimum() : 0;
+    const int snapped = minimum + static_cast<int>(
+        std::lround(double(sliderValue - minimum) / step)) * step;
+    if (m_hermesLineInGainSlider && snapped != sliderValue) {
+        QSignalBlocker blk(m_hermesLineInGainSlider);
+        m_hermesLineInGainSlider->setValue(snapped);
+    }
+    const double dB = double(snapped) / kLineInGainSliderScale;
     if (m_hermesLineInGainLabel) {
-        m_hermesLineInGainLabel->setText(lineInBoostLabel(sliderValue));
+        m_hermesLineInGainLabel->setText(lineInBoostLabel(dB));
     }
     if (!model()) { return; }
-    model()->transmitModel().setLineInBoost(static_cast<double>(sliderValue));
+    model()->transmitModel().setLineInBoost(dB);
 }
 
 // ===========================================================================
@@ -1025,6 +1276,13 @@ void AudioTxInputPage::onSaturnMicBoostToggled(bool on)
     model()->transmitModel().setMicBoost(on);
 }
 
+void AudioTxInputPage::onSaturnMicTipRingToggled(bool on)
+{
+    if (m_updatingFromModel) { return; }
+    if (!model()) { return; }
+    model()->transmitModel().setMicTipRing(on);
+}
+
 // ===========================================================================
 // ── Radio Mic Model→UI slots — all families (I.3) ───────────────────────────
 // ===========================================================================
@@ -1058,25 +1316,19 @@ void AudioTxInputPage::onModelMicBoostChanged(bool on)
 
 void AudioTxInputPage::onModelLineInBoostChanged(double dB)
 {
-    if (!m_hermesLineInGainSlider) { return; }
     m_updatingFromModel = true;
-    {
-        QSignalBlocker blk(m_hermesLineInGainSlider);
-        m_hermesLineInGainSlider->setValue(static_cast<int>(dB));
-    }
-    if (m_hermesLineInGainLabel) {
-        m_hermesLineInGainLabel->setText(lineInBoostLabel(static_cast<int>(dB)));
-    }
+    showLineInBoost(dB);
     m_updatingFromModel = false;
 }
 
 void AudioTxInputPage::onModelMicTipRingChanged(bool on)
 {
-    if (!m_orionMicTipRingChk) { return; }
     m_updatingFromModel = true;
-    {
-        QSignalBlocker blk(m_orionMicTipRingChk);
-        m_orionMicTipRingChk->setChecked(on);
+    for (QCheckBox* box : {m_orionMicTipRingChk, m_saturnMicTipRingChk}) {
+        if (box) {
+            QSignalBlocker blk(box);
+            box->setChecked(on);
+        }
     }
     m_updatingFromModel = false;
 }

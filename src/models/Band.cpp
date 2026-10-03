@@ -4,12 +4,17 @@
 //
 // Ported from Thetis source:
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/clsBandStackManager.cs (the 2 m band edges),
+//   original licence from Thetis source is included below
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-28 - 2 m as its own band (Band2m, 144 to 148 MHz, "2m"),
+//                 R-IOS-26 / R-R3-49. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -63,7 +68,45 @@
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
-#pragma once
+// --- From clsBandStackManager.cs ---
+/*  clsBandStackManager.cs
+
+This file is part of a program that implements a Software-Defined Radio.
+
+This code/file can be found on GitHub : https://github.com/ramdor/Thetis
+
+Copyright (C) 2020-2026 Richard Samphire MW0LGE
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at
+
+mw0lge@grange-lane.co.uk
+*/
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 
 #include "Band.h"
 
@@ -95,6 +138,12 @@ constexpr HamBandRange kHamBandRanges[] = {
     { Band::Band12m,  24890000.0,  24990000.0 },
     { Band::Band10m,  28000000.0,  29700000.0 },
     { Band::Band6m,   50000000.0,  54000000.0 },
+    // From Thetis clsBandStackManager.cs:1330 [v2.10.3.15]:
+    //   frequencyData.Add(new BandFrequencyData(144.0, 148.0, Band.B2M, BandType.VHF, false, region));
+    // The same 144.0 to 148.0 MHz row is in every region's table
+    // (clsBandStackManager.cs:1346-1729), and the lookup is inclusive at
+    // both ends (clsBandStackManager.cs:1240, freq >= low && freq <= high).
+    { Band::Band2m,  144000000.0, 148000000.0 },
 };
 
 // WWV time-signal transmitters (NIST Fort Collins, CO) and WWVH (Hawaii).
@@ -138,6 +187,9 @@ QString bandLabel(Band b)
         case Band::Band14m:  return QStringLiteral("14m");
         case Band::Band13m:  return QStringLiteral("13m");
         case Band::Band11m:  return QStringLiteral("11m");
+        // From Thetis console.cs:17364 [v2.10.3.15]:
+        //   case Band.B2M: ret = "2m"; break;
+        case Band::Band2m:   return QStringLiteral("2m");
         case Band::Count:    break;
     }
     return QStringLiteral("GEN");
@@ -167,18 +219,19 @@ Band bandFromFrequency(double hz)
 
 Band bandFromUiIndex(int idx)
 {
-    // UI band buttons are HF amateur + GEN/WWV/XVTR only (14).  SWL bands
-    // (Phase 3L extension, indices >= Band::SwlFirst) have no buttons —
-    // they're set programmatically via the OcMatrix path on HL2.
-    if (idx < 0 || idx >= static_cast<int>(Band::SwlFirst)) {
+    // The band button grid: 160m .. XVTR at 0-13, as the Band numbers, and
+    // 2 m at 14, after them, so the grid's saved visibility bits and
+    // active-band index keep their meaning. The SWL bands have no buttons.
+    // The grid's index is the band's per-band state slot.
+    if (idx < 0 || idx >= kPerBandStateCount) {
         return Band::GEN;
     }
-    return static_cast<Band>(idx);
+    return bandFromPerBandStateSlot(idx);
 }
 
 int uiIndexFromBand(Band b)
 {
-    return static_cast<int>(b);
+    return perBandStateSlot(b);
 }
 
 Band bandFromName(const QString& name)
@@ -195,6 +248,7 @@ Band bandFromName(const QString& name)
     if (name == QLatin1String("12"))  { return Band::Band12m; }
     if (name == QLatin1String("10"))  { return Band::Band10m; }
     if (name == QLatin1String("6"))   { return Band::Band6m; }
+    if (name == QLatin1String("2"))   { return Band::Band2m; }
 
     // Label form (matches bandKeyName() output).
     if (name == QLatin1String("160m")) { return Band::Band160m; }
@@ -208,6 +262,9 @@ Band bandFromName(const QString& name)
     if (name == QLatin1String("12m"))  { return Band::Band12m; }
     if (name == QLatin1String("10m"))  { return Band::Band10m; }
     if (name == QLatin1String("6m"))   { return Band::Band6m; }
+    // From Thetis console.cs:17416 [v2.10.3.15]:
+    //   case "2m": b = Band.B2M; break;
+    if (name == QLatin1String("2m"))   { return Band::Band2m; }
 
     // Special bands.
     if (name == QLatin1String("GEN"))  { return Band::GEN; }

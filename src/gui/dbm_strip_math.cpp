@@ -6,6 +6,8 @@
 
 #include "dbm_strip_math.h"
 
+#include <cmath>
+
 namespace NereusSDR::DbmStrip {
 
 QRect stripRect(const QRect& specRect, int stripW)
@@ -36,6 +38,25 @@ float adaptiveStepDb(float dynamicRange)
     if (rawStep >= 10.0f) return 10.0f;
     if (rawStep >=  5.0f) return  5.0f;
     return 2.0f;
+}
+
+// Mirrors SpectrumWidget::drawDbmScaleLabels' label-value generation
+// (adaptive step + ceil'd first tick + the unconditional bottom label)
+// without any of that function's QPainter/geometry work.
+QVector<int> dssRoundedLabelSet(float topDbm, float rangeDb)
+{
+    QVector<int> labels;
+    if (rangeDb <= 0.0f) {
+        return labels;
+    }
+    const float stepDb = adaptiveStepDb(rangeDb);
+    const float bottomDbm = topDbm - rangeDb;
+    const float firstLabel = std::ceil(bottomDbm / stepDb) * stepDb;
+    for (float dbm = firstLabel; dbm <= topDbm; dbm += stepDb) {
+        labels << static_cast<int>(std::lround(dbm));
+    }
+    labels << static_cast<int>(std::lround(bottomDbm));
+    return labels;
 }
 
 }  // namespace NereusSDR::DbmStrip

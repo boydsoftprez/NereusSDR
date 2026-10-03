@@ -180,9 +180,10 @@ private slots:
     // ════════════════════════════════════════════════════════════════════════
     // §2 — TX→RX phase signal ordering
     //
-    // Full TX→RX walk with 0ms timers:
-    //   setMox(false) emits: txAboutToEnd, hardwareFlipped(false)
-    //   onKeyUpDelayElapsed emits: txaFlushed
+    // Full TX→RX walk with 0ms timers (Task 33: Thetis's unkey order,
+    // console.cs:29651-29685 [v2.10.3.15], the drain before the hardware):
+    //   setMox(false) emits: txAboutToEnd, txDrainRequested
+    //   onKeyUpDelayElapsed emits: txaFlushed, hardwareFlipped(false)
     //   onPttOutElapsed emits: rxReady, moxStateChanged(false)
     // ════════════════════════════════════════════════════════════════════════
 
@@ -252,9 +253,9 @@ private slots:
         QCOMPARE(spy.count(), 1);
     }
 
-    // Order within the TX→RX walk:
-    //   txAboutToEnd → hardwareFlipped(false) → txaFlushed → rxReady
-    //   → moxStateChanged(false)
+    // Order within the TX→RX walk (Task 33):
+    //   txAboutToEnd → txDrainRequested → txaFlushed → hardwareFlipped(false)
+    //   → rxReady → moxStateChanged(false)
     void txToRx_phaseSignalOrder()
     {
         MoxController ctrl;
@@ -268,6 +269,8 @@ private slots:
                 this, [&]() { log.append("txAboutToEnd"); });
         connect(&ctrl, &MoxController::hardwareFlipped,
                 this, [&](bool isTx) { log.append(isTx ? "hardwareFlipped(true)" : "hardwareFlipped(false)"); });
+        connect(&ctrl, &MoxController::txDrainRequested,
+                this, [&]() { log.append("txDrainRequested"); });
         connect(&ctrl, &MoxController::txaFlushed,
                 this, [&]() { log.append("txaFlushed"); });
         connect(&ctrl, &MoxController::rxReady,
@@ -278,18 +281,20 @@ private slots:
         ctrl.setMox(false);
         drainTxToRxWalk();
 
-        QCOMPARE(log.size(), 5);
+        QCOMPARE(log.size(), 6);
         QCOMPARE(log.at(0), QStringLiteral("txAboutToEnd"));
-        QCOMPARE(log.at(1), QStringLiteral("hardwareFlipped(false)"));
+        QCOMPARE(log.at(1), QStringLiteral("txDrainRequested"));
         QCOMPARE(log.at(2), QStringLiteral("txaFlushed"));
-        QCOMPARE(log.at(3), QStringLiteral("rxReady"));
-        QCOMPARE(log.at(4), QStringLiteral("moxStateChanged(false)"));
+        QCOMPARE(log.at(3), QStringLiteral("hardwareFlipped(false)"));
+        QCOMPARE(log.at(4), QStringLiteral("rxReady"));
+        QCOMPARE(log.at(5), QStringLiteral("moxStateChanged(false)"));
     }
 
-    // txAboutToEnd and hardwareFlipped(false) fire at setMox(false) call time
-    // (synchronous, before any timer elapses). txaFlushed fires after first
-    // processEvents (keyUpDelayTimer). rxReady fires after second processEvents.
-    void txToRx_hardwareFlipped_firesBeforeKeyUpDelay()
+    // Task 33: txAboutToEnd and txDrainRequested fire at setMox(false) call
+    // time; the hardware stays keyed until mox_delay has run after the
+    // drain: txaFlushed and hardwareFlipped(false) fire after the first
+    // processEvents (keyUpDelayTimer), rxReady after the second.
+    void txToRx_hardwareFlipped_firesAfterKeyUpDelay()
     {
         MoxController ctrl;
         ctrl.setTimerIntervals(0, 0, 0, 0, 0, 0);
@@ -297,27 +302,79 @@ private slots:
         ctrl.setMox(true);
         QCoreApplication::processEvents();
 
+        QSignalSpy drainSpy(&ctrl, &MoxController::txDrainRequested);
         QSignalSpy hardwareSpy(&ctrl, &MoxController::hardwareFlipped);
         QSignalSpy txaFlushedSpy(&ctrl, &MoxController::txaFlushed);
         QSignalSpy rxReadySpy(&ctrl, &MoxController::rxReady);
 
         ctrl.setMox(false);
 
-        // BEFORE processEvents: hardwareFlipped(false) must have fired.
-        QCOMPARE(hardwareSpy.count(), 1);
-        QCOMPARE(hardwareSpy.at(0).at(0).toBool(), false);
-        // txaFlushed and rxReady must not have fired yet (timer-driven).
+        QCOMPARE(drainSpy.count(), 1);
+        // The hardware is not released before mox_delay.
+        QCOMPARE(hardwareSpy.count(), 0);
         QCOMPARE(txaFlushedSpy.count(), 0);
         QCOMPARE(rxReadySpy.count(), 0);
 
-        QCoreApplication::processEvents(); // keyUpDelayTimer → txaFlushed + TxToRxFlush
+        QCoreApplication::processEvents(); // keyUpDelayTimer → txaFlushed + hardwareFlipped(false)
 
         QCOMPARE(txaFlushedSpy.count(), 1);
+        QCOMPARE(hardwareSpy.count(), 1);
+        QCOMPARE(hardwareSpy.at(0).at(0).toBool(), false);
         QCOMPARE(rxReadySpy.count(), 0); // pttOutDelayTimer not yet fired
 
         QCoreApplication::processEvents(); // pttOutDelayTimer → rxReady + Rx
 
         QCOMPARE(rxReadySpy.count(), 1);
+    }
+
+    // Task 33: with awaitsTxDrain the walk holds the hardware keyed until
+    // the drain reports (Thetis's SetChannelState(tx, 0, 1) returns before
+    // Sleep(mox_delay)), then runs mox_delay and releases it.
+    void txToRx_awaitsTheDrainBeforeTheHardware()
+    {
+        MoxController ctrl;
+        ctrl.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        ctrl.setTxDrainTimeoutMsForTest(60000);
+        ctrl.setAwaitsTxDrain(true);
+
+        ctrl.setMox(true);
+        QCoreApplication::processEvents();
+
+        QSignalSpy hardwareSpy(&ctrl, &MoxController::hardwareFlipped);
+        ctrl.setMox(false);
+        for (int i = 0; i < 5; ++i) {
+            QCoreApplication::processEvents();
+        }
+        QCOMPARE(hardwareSpy.count(), 0);
+        QCOMPARE(ctrl.state(), MoxState::TxToRxInFlight);
+
+        ctrl.onTxDrained();
+        drainTxToRxWalk();
+        QCOMPARE(hardwareSpy.count(), 1);
+        QCOMPARE(ctrl.state(), MoxState::Rx);
+    }
+
+    // Task 33: a drain that never reports holds the hardware no longer than
+    // the bound (WDSP SetChannelState's 100 ms).
+    void txToRx_drainWaitIsBounded()
+    {
+        MoxController ctrl;
+        ctrl.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        ctrl.setAwaitsTxDrain(true);
+        QCOMPARE(MoxController::kTxDrainTimeoutMs, 100);
+        ctrl.setTxDrainTimeoutMsForTest(20);
+
+        ctrl.setMox(true);
+        QCoreApplication::processEvents();
+
+        QSignalSpy hardwareSpy(&ctrl, &MoxController::hardwareFlipped);
+        ctrl.setMox(false);
+        QTRY_COMPARE_WITH_TIMEOUT(hardwareSpy.count(), 1, 2000);
+        QCOMPARE(hardwareSpy.at(0).at(0).toBool(), false);
+        QTRY_COMPARE_WITH_TIMEOUT(ctrl.state(), MoxState::Rx, 2000);
+        // A late report of that drain changes nothing.
+        ctrl.onTxDrained();
+        QCOMPARE(hardwareSpy.count(), 1);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -392,14 +449,15 @@ private slots:
         ctrl.setMox(false);
         drainTxToRxWalk();
 
-        // Expected order across a full round-trip:
+        // Expected order across a full round-trip (Task 33: the hardware
+        // is released after the drain and mox_delay):
         QCOMPARE(log.size(), 7);
         QCOMPARE(log.at(0), QStringLiteral("txAboutToBegin"));
         QCOMPARE(log.at(1), QStringLiteral("hardwareFlipped(true)"));
         QCOMPARE(log.at(2), QStringLiteral("txReady"));
         QCOMPARE(log.at(3), QStringLiteral("txAboutToEnd"));
-        QCOMPARE(log.at(4), QStringLiteral("hardwareFlipped(false)"));
-        QCOMPARE(log.at(5), QStringLiteral("txaFlushed"));
+        QCOMPARE(log.at(4), QStringLiteral("txaFlushed"));
+        QCOMPARE(log.at(5), QStringLiteral("hardwareFlipped(false)"));
         QCOMPARE(log.at(6), QStringLiteral("rxReady"));
     }
 
@@ -524,9 +582,10 @@ private slots:
         QCOMPARE(log.size(), 6);
         QCOMPARE(log.at(0), QStringLiteral("txAboutToBegin"));
         QCOMPARE(log.at(1), QStringLiteral("hardwareFlipped(true)"));
+        // Task 33: the hardware is released after the drain and mox_delay.
         QCOMPARE(log.at(2), QStringLiteral("txAboutToEnd"));
-        QCOMPARE(log.at(3), QStringLiteral("hardwareFlipped(false)"));
-        QCOMPARE(log.at(4), QStringLiteral("txaFlushed"));
+        QCOMPARE(log.at(3), QStringLiteral("txaFlushed"));
+        QCOMPARE(log.at(4), QStringLiteral("hardwareFlipped(false)"));
         QCOMPARE(log.at(5), QStringLiteral("rxReady"));
     }
 

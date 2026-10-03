@@ -1,0 +1,8 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "auth.request",
+    "token": "not-a-station-token"
+  },
+  "decodes": true
+}

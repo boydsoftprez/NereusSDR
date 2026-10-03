@@ -67,6 +67,9 @@ public:
     explicit TuneStepButtonItem(QObject* parent = nullptr);
 
     void setActiveStep(int index);
+    /// R-R3-21: the tuning step on button `index`, in Hz (1 Hz .. 1 MHz,
+    /// the button labels); 0 outside 0..kStepCount-1.
+    static int stepHz(int index);
     int activeStep() const { return m_activeStep; }
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }

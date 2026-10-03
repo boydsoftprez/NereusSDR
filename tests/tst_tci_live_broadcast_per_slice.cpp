@@ -60,6 +60,29 @@ QStringList framesWithPrefix(const QStringList& frames, const QString& prefix)
     return out;
 }
 
+// As drainFrames, running the coalescer drain the 5 ms tick runs first, so
+// the vfo / if / dds lines queued through it are on the wire too.
+QStringList drainTick(TciProtocol* p)
+{
+    if (p) {
+        p->drainCoalescedNotifications();
+    }
+    return drainFrames(p);
+}
+
+QStringList tuningLines(const QStringList& frames, int rx)
+{
+    QStringList out;
+    for (const QString& f : frames) {
+        if (f.startsWith(QStringLiteral("if:%1,").arg(rx))
+            || f.startsWith(QStringLiteral("vfo:%1,").arg(rx))
+            || f.startsWith(QStringLiteral("dds:%1,").arg(rx))) {
+            out << f;
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 class TstTciLiveBroadcastPerSlice : public QObject
@@ -178,6 +201,96 @@ private slots:
         const QStringList offFrames = drainFrames(proto);
         QVERIFY(framesWithPrefix(offFrames, QStringLiteral("rx_anf_enable:"))
                     .contains(QStringLiteral("rx_anf_enable:%1,false;").arg(b)));
+    }
+
+    // Task 12 (R-R3-49): an app's if follows a tune inside the pan. Thetis's
+    // VFO event sends if then vfo for the channel (TCIServer.cs:1396-1398
+    // [v2.10.3.15]), the offset being vfo - centre + RIT; the centre did not
+    // move, so no dds. Before this, the live path sent vfo and a dds holding
+    // the VFO, and never an if.
+    void a_tune_inside_the_pan_sends_the_new_if()
+    {
+        RadioModel model;
+        TciServer  server(&model);
+        const int a = model.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sa = model.sliceById(a);
+        QVERIFY(sa);
+        TciProtocol* proto = server.protocolForTest();
+        QVERIFY(proto);
+
+        // The pan sits on the slice at 14.200 MHz; the app has that dds.
+        sa->setFrequency(14200000.0);
+        model.applySliceStreamCentre(sa, 14200000.0);
+        QVERIFY(drainTick(proto).contains(QStringLiteral("dds:%1,14200000;").arg(a)));
+
+        // Tune 10 kHz up inside the pan, as the pan's frequency hook does it.
+        sa->setFrequency(14210000.0);
+        model.applySliceStreamCentre(sa, 14200000.0);
+        QCOMPARE(tuningLines(drainTick(proto), a),
+                 (QStringList{QStringLiteral("if:%1,0,10000;").arg(a),
+                              QStringLiteral("vfo:%1,0,14210000;").arg(a),
+                              QStringLiteral("if:%1,1,10000;").arg(a),
+                              QStringLiteral("vfo:%1,1,14210000;").arg(a)}));
+
+        // A tune the pan follows: the centre moves with the VFO, the
+        // offset is 0, and the dds goes with its if.
+        sa->setFrequency(14300000.0);
+        model.applySliceStreamCentre(sa, 14300000.0);
+        QCOMPARE(tuningLines(drainTick(proto), a),
+                 (QStringList{QStringLiteral("if:%1,0,0;").arg(a),
+                              QStringLiteral("vfo:%1,0,14300000;").arg(a),
+                              QStringLiteral("if:%1,1,0;").arg(a),
+                              QStringLiteral("vfo:%1,1,14300000;").arg(a),
+                              QStringLiteral("dds:%1,14300000;").arg(a),
+                              QStringLiteral("if:%1,0,0;").arg(a)}));
+    }
+
+    // Task 12 (R-R3-49): an app's if follows a pan move with the VFO still.
+    // Thetis's centre event sends dds then if:rx,0 (TCIServer.cs:1378-1382
+    // [v2.10.3.15]); RIT is part of the offset, as it is part of RXOsc.
+    void a_pan_move_sends_dds_then_the_new_if()
+    {
+        RadioModel model;
+        TciServer  server(&model);
+        const int a = model.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sa = model.sliceById(a);
+        QVERIFY(sa);
+        TciProtocol* proto = server.protocolForTest();
+        QVERIFY(proto);
+
+        sa->setFrequency(14210000.0);
+        model.applySliceStreamCentre(sa, 14200000.0);
+        sa->setRitHz(300);
+        sa->setRitEnabled(true);
+        drainTick(proto);
+
+        model.applySliceStreamCentre(sa, 14250000.0);  // drag the pan up
+        QCOMPARE(tuningLines(drainTick(proto), a),
+                 (QStringList{QStringLiteral("dds:%1,14250000;").arg(a),
+                              QStringLiteral("if:%1,0,-39700;").arg(a)}));
+    }
+
+    // Task 12 (R-R3-49): the init burst builds dds and if with the live
+    // path's builders, so an app that connects after a tune starts from the
+    // same centre and offset the live lines would have sent.
+    void the_init_burst_reports_the_centre_and_offset()
+    {
+        RadioModel model;
+        TciServer  server(&model);
+        const int a = model.addSlice(QStringLiteral("pan-0"));
+        SliceModel* sa = model.sliceById(a);
+        QVERIFY(sa);
+        TciProtocol* proto = server.protocolForTest();
+        QVERIFY(proto);
+
+        sa->setFrequency(14210000.0);
+        model.applySliceStreamCentre(sa, 14200000.0);
+
+        const QStringList burst = proto->buildInitBurst();
+        QVERIFY(burst.contains(QStringLiteral("dds:%1,14200000;").arg(a)));
+        QVERIFY(burst.contains(QStringLiteral("if:%1,0,10000;").arg(a)));
+        QVERIFY(burst.contains(QStringLiteral("if:%1,1,10000;").arg(a)));
+        QVERIFY(burst.contains(QStringLiteral("vfo:%1,0,14210000;").arg(a)));
     }
 };
 

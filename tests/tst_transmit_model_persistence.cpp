@@ -289,11 +289,13 @@ private slots:
         {
             TransmitModel t;
             t.loadFromSettings(kMacA);
-            t.setLineInBoost(6.5);
+            // An entry on the 1.5 dB grid (radio codec review: an
+            // off-grid value is held at the entry the radio is sent).
+            t.setLineInBoost(7.5);
         }
         TransmitModel t2;
         t2.loadFromSettings(kMacA);
-        QCOMPARE(t2.lineInBoost(), 6.5);
+        QCOMPARE(t2.lineInBoost(), 7.5);
     }
 
     void roundTrip_micTipRing()

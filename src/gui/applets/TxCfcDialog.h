@@ -39,6 +39,22 @@
 //                 frmCFCConfig.cs:218-306 [v2.10.3.13].  50ms QTimer-
 //                 driven bar chart fed by Task 7
 //                 TxChannel::getCfcDisplayCompression wrapper.
+//   2026-09-25 - R-R3-49 (parity Task 4): setSettingsPermitted greys the
+//                 controls with a reason in a remote window while the Core
+//                 cannot take a CFC change. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-09-27 - R-R3-49 (parity Task 33): in a remote window the bar
+//                 chart reads the Core's txCfcCompression stream while the
+//                 dialog is shown (setStationBarChart,
+//                 applyStationCompression), or says why it cannot. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - Setup publication (CFC band editor): a remote window
+//                 sends the whole band table as the Core's cfc.setProfile
+//                 command (setStationProfileSender, onStationCommandFinished),
+//                 one at a time with the newest edit held, and shows a
+//                 refusal under the controls. An older Core keeps the
+//                 property write. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -87,13 +103,16 @@
 
 #include <QCloseEvent>
 #include <QDialog>
+#include <functional>
 #include <QPointer>
 #include <QShowEvent>
 #include <QHash>
 #include "core/CfcProfile.h"
+#include "core/CfcEditProfile.h"
 
 class QButtonGroup;
 class QCheckBox;
+class QLabel;
 class QDoubleSpinBox;
 class QHideEvent;
 class QPushButton;
@@ -128,6 +147,54 @@ public:
     // after the dialog was lazy-created).  Null is allowed — the bar chart
     // simply skips the WDSP poll until a TxChannel is available.
     void setTxChannel(TxChannel* tx);
+
+    // R-R3-49 (parity Task 4): whether this window may change CFC now. A
+    // remote window's TxApplet sets it from the Core's
+    // transmitSettingsVersion 4 and the Core's on-the-air state; closed,
+    // every control greys and the reason shows at the top.
+    void setSettingsPermitted(bool permitted, const QString& reason);
+    QLabel* settingsReasonLabel() const { return m_settingsReasonLabel; }
+
+    // R-R3-49 (parity Task 33): a remote window's bar chart. With a hook
+    // set, showing the dialog asks for the Core's CFC display
+    // (setWanted(true)) instead of reading a local TxChannel, and hiding it
+    // lets it go (setWanted(false)). applyStationCompression draws one of
+    // the Core's readings (TxChannel::kCfcDisplayBinCount values) over the
+    // chart's range exactly as a local reading is drawn.
+    void setStationBarChart(std::function<void(bool)> setWanted);
+    void applyStationCompression(const QList<double>& binsDb);
+    // Why the chart has no bars from the Core (a Core that does not send
+    // them); empty hides the note.
+    void setBarChartUnavailable(const QString& reason);
+    QLabel* barChartReasonLabel() const { return m_barChartReasonLabel; }
+
+    // Setup publication (CFC band editor): a remote window's route to the
+    // Core's cfc.setProfile command. With both hooks set and available()
+    // true, an edit sends the whole table (CfcProfile::publishedJson) with
+    // the revision the window last saw, instead of writing cfcParaEqData.
+    // One command is out at a time; later edits wait as the newest one.
+    // available() false (an older Core) keeps the property write.
+    struct StationProfileSend {
+        bool sent = false;
+        QString reason;
+        quint32 commandId = 0;
+    };
+    using StationProfileAvailable = std::function<bool()>;
+    using StationProfileSender =
+        std::function<StationProfileSend(const QString& profileJson,
+                                         const QString& expectedRevision)>;
+    void setStationProfileSender(StationProfileAvailable available,
+                                 StationProfileSender send);
+    // RadioModel::stationCommandFinished; only this dialog's command counts.
+    void onStationCommandFinished(quint32 commandId, bool accepted,
+                                  const QString& reason);
+    // RadioModel::stationLinkStateChanged. A lost link takes the answer to
+    // this dialog's command with it: the change waiting on it and any edit
+    // held behind it are dropped, and the dialog follows the Core's values
+    // again.
+    void onStationLinkChanged(bool ready);
+    // Why the Core did not take the last change; hidden when it did.
+    QLabel* profileReasonLabel() const { return m_profileReasonLabel; }
 
     // ── Widget accessors for tests ────────────────────────────────────────
 
@@ -234,8 +301,8 @@ private:
     void updateEditRowFromSelection(int index);
     void pushCfcProfileToModel();
 
-    CfcProfile captureProfile() const;
-    void restoreProfile(const CfcProfile& profile);
+    CfcEditProfile captureProfile() const;
+    void restoreProfile(const CfcEditProfile& profile);
     QByteArray captureEditState() const;
     void restoreEditState(const QByteArray& state);
     void rebaseEditHistory();
@@ -255,6 +322,11 @@ private:
     // Selected-index helpers — Thetis-style, returns the index across both
     // widgets (frmCFCConfig.cs:307-315 [v2.10.3.13]).
     int  selectedIndex() const;
+
+    // The bars for one CFC display reading (kCfcDisplayBinCount values):
+    // the slice over the chart's frequency range, as Thetis's timerTick
+    // takes it. Shared by the local and the remote chart.
+    void drawCompressionBins(const double* bins, int count);
 
     QPointer<TransmitModel> m_tm;        // non-owning
     QPointer<TxChannel>     m_tx;        // non-owning, may be null pre-connect
@@ -286,7 +358,7 @@ private:
     QLabel* m_selectedSummary = nullptr;
     QLabel* m_invalidCurveGuidance = nullptr;
     bool m_curveAvailable = true;
-    CfcProfile m_invalidLegacyProfile;
+    CfcEditProfile m_invalidLegacyProfile;
     QString m_invalidLegacyBlob;
     QPointer<QSlider> m_cancelledSlider;
     QHBoxLayout* m_bandSelectors = nullptr;
@@ -323,7 +395,21 @@ private:
 
     // ── Bar chart timer + scratch buffer ─────────────────────────────────
     QTimer*         m_barChartTimer    = nullptr;
+    QLabel*         m_settingsReasonLabel = nullptr;  // R-R3-49 (parity Task 4)
     bool            m_barChartBusy     = false;  // mirrors Thetis _busy
+    // Parity Task 33: a remote window's bar chart source and its note.
+    std::function<void(bool)> m_stationBarChart;
+    QLabel*         m_barChartReasonLabel = nullptr;
+    // Setup publication (CFC band editor): the remote command route.
+    void sendPendingStationProfile();
+    void clearStationProfileInFlight();
+    void showProfileReason(const QString& reason);
+    StationProfileAvailable m_stationProfileAvailable;
+    StationProfileSender    m_stationProfileSend;
+    quint32         m_profileCommandId = 0;   // 0: none out
+    bool            m_profilePending   = false;
+    QString         m_pendingProfileJson;
+    QLabel*         m_profileReasonLabel = nullptr;
 
     // Scratch storage for a single tick of WDSP CFC display data.
     // Sized to TxChannel::kCfcDisplayBinCount (1025) lazily on first tick.

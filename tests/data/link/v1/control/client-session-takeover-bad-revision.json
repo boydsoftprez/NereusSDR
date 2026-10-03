@@ -1,0 +1,5 @@
+{
+  "from": "client",
+  "wire": {"type": "session.takeover", "deviceId": "id", "revision": -1},
+  "decodes": false
+}

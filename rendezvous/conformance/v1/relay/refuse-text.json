@@ -1,0 +1,26 @@
+{
+  "runs": [
+    "relay"
+  ],
+  "steps": [
+    {
+      "connect": "core"
+    },
+    {
+      "from": "core",
+      "role": "scripted",
+      "text": "join"
+    },
+    {
+      "to": "core",
+      "binary": [
+        "83",
+        "70726f746f636f6c4572726f72"
+      ]
+    },
+    {
+      "expectClosed": "core",
+      "code": 1000
+    }
+  ]
+}

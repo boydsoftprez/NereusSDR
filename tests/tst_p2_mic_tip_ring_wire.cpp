@@ -102,9 +102,10 @@ private slots:
         conn.composeCmdTxForTest(buf);
         // Bit 3 (mic_trs) must be 1.
         QCOMPARE(int(buf[50] & 0x08), 0x08);
-        // Bits 0 (line_in) and 1 (mic_boost) must be 0.
+        // Bit 0 (line_in) must be 0; bit 1 (mic_boost) keeps its default.
         QCOMPARE(int(buf[50] & 0x01), 0);
-        QCOMPARE(int(buf[50] & 0x02), 0);
+        // mic_boost stays at its default, on (Thetis console.cs:13259 mic_boost = true).
+        QCOMPARE(int(buf[50] & 0x02), 0x02);
     }
 
     // ── 6. Bits 4,6-7 of byte 50 unaffected by setMicTipRing; bit 5 is G.6 default ─

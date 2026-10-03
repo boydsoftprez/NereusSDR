@@ -23,6 +23,10 @@
 //      NotchModel::globalEnabledChanged, and a flip from either surface
 //      reaches the model exactly once.
 //   5. NotchModel::notchAddRejected reaches operator-visible feedback.
+//   6. R-R3-21 / R-R3-09: a remote window's notch controls (+TNF, the TNF
+//      page, a drag) become notch.* requests to the Core, write no notch
+//      settings, and drags send at most about ten moves a second plus a
+//      final one on release.
 //
 // MainWindow needs a full RadioModel (WDSP, audio, network) to construct,
 // which no unit-test executable can afford; see the header of
@@ -45,9 +49,13 @@
 #include "core/AppSettings.h"
 #include "gui/MainWindow.h"
 #include "gui/SpectrumOverlayPanel.h"
+#include "gui/setup/DspSetupPages.h"
 #include "gui/StyleConstants.h"
 #include "models/NotchModel.h"
+#include "models/RadioModel.h"
 #include "models/SliceModel.h"
+
+#include <QElapsedTimer>
 
 using namespace NereusSDR;
 
@@ -65,6 +73,52 @@ private:
             panel = new SpectrumOverlayPanel(&host);
         }
     };
+
+    // A stand-in for StationClient: records every request a mirror-mode
+    // NotchModel sends and hands back a fresh id.
+    struct Requests {
+        QList<QPair<QByteArray, QVariantMap>> sent;
+        quint32 next{1};
+        NotchModel::RemoteRequestHandler handler()
+        {
+            return [this](const QByteArray& verb, const QVariantMap& args) -> quint32 {
+                sent.append({verb, args});
+                return next++;
+            };
+        }
+        int count(const QByteArray& verb) const
+        {
+            int n = 0;
+            for (const auto& r : sent) {
+                if (r.first == verb) { ++n; }
+            }
+            return n;
+        }
+    };
+
+    static QString coreList(const QList<Notch>& notches)
+    {
+        QString json = QStringLiteral("[");
+        for (int i = 0; i < notches.size(); ++i) {
+            const Notch& n = notches.at(i);
+            json += QStringLiteral("%1{\"id\":%2,\"centreHz\":%3,\"widthHz\":%4,\"active\":%5}")
+                        .arg(i ? QStringLiteral(",") : QString())
+                        .arg(n.id)
+                        .arg(n.centerHz, 0, 'f', 0)
+                        .arg(n.widthHz, 0, 'f', 0)
+                        .arg(n.active ? QStringLiteral("true") : QStringLiteral("false"));
+        }
+        return json + QStringLiteral("]");
+    }
+
+    static bool hasNotchSettings()
+    {
+        const QStringList keys = AppSettings::instance().allKeys();
+        for (const QString& key : keys) {
+            if (key.startsWith(QStringLiteral("Notch"))) { return true; }
+        }
+        return false;
+    }
 
     static QPushButton* buttonWithText(QWidget& host, const QString& text) {
         const QList<QPushButton*> btns = host.findChildren<QPushButton*>();
@@ -267,7 +321,8 @@ private slots:
             QKeySequence(QStringLiteral("Ctrl+Shift+R")),
             QKeySequence(QStringLiteral("Ctrl+Shift+D")),
             QKeySequence(Qt::CTRL | Qt::Key_X),
-            QKeySequence(QStringLiteral("Ctrl+Shift+K")),
+            // Clear all spots (R-R3-21: was a second Ctrl+Shift+K).
+            QKeySequence(QStringLiteral("Ctrl+Shift+X")),
         };
         QVERIFY2(!taken.contains(MainWindow::tnfToggleShortcut()),
                  "TNF accelerator collides with one MainWindow already "
@@ -360,6 +415,185 @@ private slots:
                                                "duplicate")
                                     .arg(QLatin1String(sig))));
         }
+    }
+
+    // ── R-R3-21 / R-R3-09: a remote window's notch controls ───────────────
+
+    // +TNF (and every other add) from a remote window asks the Core, naming
+    // the receiver it was made on, and writes no notch settings.
+    void remote_tnf_add_sends_notch_add_and_writes_no_settings()
+    {
+        RadioModel remote(RadioModel::Role::Remote);
+        QCOMPARE(remote.addSliceWithStationId(3), 3);
+        remote.applyStationActiveSlice(3);
+        SliceModel* slice = remote.sliceById(3);
+        QVERIFY(slice);
+        NotchModel* nm = remote.notchModel();
+        Requests requests;
+        nm->setMirrorMode(true);
+        nm->setRemoteRequestHandler(requests.handler());
+
+        QCOMPARE(remote.addNotchForSlice(slice, 14200000.0, 200.0), -1);
+        QCOMPARE(requests.sent.size(), 1);
+        QCOMPARE(requests.sent.at(0).first, QByteArray("notch.add"));
+        const QVariantMap args = requests.sent.at(0).second;
+        QCOMPARE(args.size(), 3);
+        QCOMPARE(args.value(QStringLiteral("sliceId")).toInt(), 3);
+        QCOMPARE(args.value(QStringLiteral("centreHz")).toDouble(), 14200000.0);
+        QCOMPARE(args.value(QStringLiteral("widthHz")).toDouble(), 200.0);
+        // Nothing is added until the Core's list says so.
+        QCOMPARE(nm->notches().size(), 0);
+
+        // The TNF page's Add button takes the same route.
+        MnfSetupPage page(&remote);
+        auto* add = page.findChild<QPushButton*>(QStringLiteral("btnMNFAdd"));
+        QVERIFY(add);
+        add->click();
+        QCOMPARE(requests.count("notch.add"), 2);
+        QCOMPARE(requests.sent.last().second.value(QStringLiteral("sliceId")).toInt(), 3);
+
+        QVERIFY(!hasNotchSettings());
+    }
+
+    // The window never restores or writes the Core's notch settings; its
+    // list is the Core's, ids and all. Its own display preference stays.
+    void mirror_mode_takes_the_cores_list_and_leaves_notch_settings_alone()
+    {
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("NotchCount"), QStringLiteral("1"));
+        s.setValue(QStringLiteral("Notch0Center"), QStringLiteral("7100000"));
+        s.setValue(QStringLiteral("NotchGlobalEnabled"), QStringLiteral("False"));
+
+        NotchModel nm;
+        Requests requests;
+        nm.setMirrorMode(true);
+        nm.setRemoteRequestHandler(requests.handler());
+        nm.restoreFromSettings();
+        QCOMPARE(nm.notches().size(), 0);
+
+        QSignalSpy added(&nm, &NotchModel::notchAdded);
+        QVERIFY(nm.applyRemoteProperty("listJson", coreList({{41, 7040000.0, 200.0, true},
+                                                             {42, 7050000.0, 300.0, false}})));
+        QVERIFY(nm.applyRemoteProperty("revision", 7u));
+        QCOMPARE(nm.notches().size(), 2);
+        QCOMPARE(nm.notches().at(0).id, 41);
+        QCOMPARE(nm.notches().at(1).id, 42);
+        QVERIFY(!nm.notches().at(1).active);
+        QCOMPARE(nm.revision(), 7u);
+        QCOMPARE(added.count(), 2);
+
+        nm.setGlobalEnabled(true);
+        nm.setAutoIncrease(false);
+        QVERIFY(nm.setActive(41, false));
+        QVERIFY(nm.removeNotch(42));
+        nm.saveToSettings();
+        nm.setVisualEnabled(true);
+
+        QCOMPARE(s.value(QStringLiteral("NotchCount")).toString(), QStringLiteral("1"));
+        QCOMPARE(s.value(QStringLiteral("Notch0Center")).toString(), QStringLiteral("7100000"));
+        QCOMPARE(s.value(QStringLiteral("NotchGlobalEnabled")).toString(), QStringLiteral("False"));
+        QVERIFY(!s.contains(QStringLiteral("NotchAutoIncrease")));
+        QVERIFY(!s.contains(QStringLiteral("Notch1Center")));
+        QCOMPARE(s.value(QStringLiteral("NotchVisualEnabled")).toString(), QStringLiteral("True"));
+        QCOMPARE(requests.count("notch.setActive"), 1);
+        QCOMPARE(requests.count("notch.delete"), 1);
+        // A list that is not the Core's shape is ignored, not half-applied.
+        QTest::ignoreMessage(QtWarningMsg,
+                             "NotchModel: ignoring a malformed notch list from the Core");
+        QVERIFY(!nm.applyRemoteProperty("listJson", QStringLiteral("[{\"id\":0}]")));
+        QCOMPARE(nm.notches().size(), 1);
+    }
+
+    // An edit shows at once and is held over the Core's older list until
+    // the Core's list has caught up with it; a refusal puts the Core's list
+    // back and says why.
+    void remote_edit_holds_until_the_core_answers()
+    {
+        NotchModel nm;
+        Requests requests;
+        nm.setMirrorMode(true);
+        nm.setRemoteRequestHandler(requests.handler());
+        QVERIFY(nm.applyRemoteProperty("listJson", coreList({{5, 7040000.0, 200.0, true}})));
+        QVERIFY(nm.applyRemoteProperty("revision", 10u));
+
+        QVERIFY(nm.setCenter(5, 7041000.0));
+        QCOMPARE(nm.notches().first().centerHz, 7041000.0);
+        QTRY_COMPARE(requests.count("notch.move"), 1);
+        const quint32 move = requests.next - 1;
+        const QVariantMap args = requests.sent.last().second;
+        QCOMPARE(args.value(QStringLiteral("id")).toInt(), 5);
+        QCOMPARE(args.value(QStringLiteral("centreHz")).toDouble(), 7041000.0);
+        QCOMPARE(args.value(QStringLiteral("widthHz")).toDouble(), 200.0);
+
+        // An older list from the Core does not pull the marker back.
+        QVERIFY(nm.applyRemoteProperty("listJson", coreList({{5, 7040000.0, 200.0, true}})));
+        QCOMPARE(nm.notches().first().centerHz, 7041000.0);
+        nm.receiveRemoteResult(move, "notch.move", true, {},
+                               {{QStringLiteral("revision"), 11}});
+        QCOMPARE(nm.notches().first().centerHz, 7041000.0);
+        QVERIFY(nm.applyRemoteProperty("listJson", coreList({{5, 7041000.0, 200.0, true}})));
+        QVERIFY(nm.applyRemoteProperty("revision", 11u));
+        QCOMPARE(nm.notches().first().centerHz, 7041000.0);
+
+        // Refused: the Core's list comes back at once, with the reason.
+        QSignalSpy refused(&nm, &NotchModel::notchRequestRefused);
+        QVERIFY(nm.setActive(5, false));
+        QVERIFY(!nm.notches().first().active);
+        nm.receiveRemoteResult(requests.next - 1, "notch.setActive", false,
+                               QStringLiteral("That notch is no longer on this Core."), {});
+        QVERIFY(nm.notches().first().active);
+        QCOMPARE(refused.count(), 1);
+        QCOMPARE(refused.first().at(0).toString(),
+                 QStringLiteral("That notch is no longer on this Core."));
+
+        // A refused add reaches the same notice a local refusal does.
+        QSignalSpy addRefused(&nm, &NotchModel::notchAddRejected);
+        const quint32 add = nm.requestAdd(0, 7050000.0, 200.0);
+        QVERIFY(add != 0);
+        nm.receiveRemoteResult(add, "notch.add", false,
+                               QStringLiteral("A notch already exists within 10 Hz"), {});
+        QCOMPARE(addRefused.count(), 1);
+        QCOMPARE(MainWindow::tnfAddRejectedNotice(addRefused.first().at(0).toString()),
+                 QStringLiteral("Notch not added: A notch already exists within 10 Hz."));
+    }
+
+    // A drag sends at most one move per 100 ms, and a final one on release
+    // carrying where the notch was let go.
+    void remote_drag_sends_about_ten_moves_a_second_plus_a_final_one()
+    {
+        NotchModel nm;
+        Requests requests;
+        nm.setMirrorMode(true);
+        nm.setRemoteRequestHandler(requests.handler());
+        QVERIFY(nm.applyRemoteProperty("listJson", coreList({{9, 7040000.0, 200.0, true}})));
+
+        QElapsedTimer clock;
+        clock.start();
+        double centre = 7040000.0;
+        for (int step = 0; step < 60; ++step) {
+            centre += 10.0;
+            QVERIFY(nm.setCenter(9, centre));
+            QTest::qWait(10);
+        }
+        const qint64 elapsed = clock.elapsed();
+        const int during = requests.count("notch.move");
+        nm.flushPendingMoves();   // release
+        const int total = requests.count("notch.move");
+
+        QVERIFY2(during >= 2, qPrintable(QString::number(during)));
+        QVERIFY2(during <= elapsed / NotchModel::kRemoteMoveIntervalMs + 1,
+                 qPrintable(QStringLiteral("%1 moves in %2 ms").arg(during).arg(elapsed)));
+        QVERIFY(total <= during + 1);
+        QCOMPARE(requests.sent.last().second.value(QStringLiteral("centreHz")).toDouble(),
+                 centre);
+        // Nothing more follows the release.
+        QTest::qWait(2 * NotchModel::kRemoteMoveIntervalMs);
+        QCOMPARE(requests.count("notch.move"), total);
+    }
+
+    void mainwindow_shows_a_refused_remote_notch_change()
+    {
+        QVERIFY(MainWindow::staticMetaObject.indexOfSlot("onNotchRequestRefused(QString)") >= 0);
     }
 
     // ── correction 16: a rejected add is not silent ───────────────────────

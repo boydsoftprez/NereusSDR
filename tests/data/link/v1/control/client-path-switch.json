@@ -1,0 +1,7 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "path.switch"
+  },
+  "decodes": true
+}

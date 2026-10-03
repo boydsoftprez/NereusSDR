@@ -15,6 +15,39 @@
 //                 Alex-2 Filters (placeholder for Task 9). J.J. Boyd (KG4VCF).
 //   2026-04-20 — Replaced Alex-2 Filters placeholder with real AntennaAlexAlex2Tab
 //                 (Task 9). J.J. Boyd (KG4VCF).
+//   2026-09-23 - R-R3-46: forwards the transmit permission to Antenna
+//                 Control. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-09-24 - R-R3-46: forwards the transmit permission to Alex-1
+//                Filters too. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-09-25 - R-R3-49 / R-R3-46 (parity Task 12): Antenna Control's
+//                transmit half now follows whether the Core takes it (the
+//                Alex facade), so only Alex-1 Filters gets the transmit
+//                permission. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-09-26 - R-R3-46 / R-R3-49 (parity Task 14): forwards the Alex-1
+//                high-pass switches' availability. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - R-R3-46 / R-R3-49: the Alex Filters tabs' receive filter rows
+//                (per-row bypass and edges, Alex-2 master bypass) select the
+//                receive high-pass as Thetis's setAlexHPF /
+//                setBPF1ForOrionIISaturn / setAlex2HPF do (radioHardwareVersion
+//                8). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - The BPF1 rows follow codec::alex::usesBpf1Preselector, so
+//                the ANAN-7000DLE / 8000DLE (OrionMKII) show them as Thetis
+//                does. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - The Alex-1 panels follow the bank the Core programs
+//                (usesBpf1Preselector, console.cs:6827-6837): BPF1 with the
+//                switches, or Alex HPF with them. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - R-R3-46 / R-R3-49: the Alex-1 Filters tab's low-pass rows
+//                and 6m/ByPass on RX select the low-pass as Thetis's
+//                setAlexLPF does (radioHardwareVersion 10). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - Keeps G8NJJ's setup.cs:6244 comment beside the Alex-2 gate
+//                cite (CI tag preservation). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -69,6 +102,7 @@
 
 #include "core/BoardCapabilities.h"
 #include "core/HpsdrModel.h"
+#include "core/codec/AlexFilterMap.h"
 #include "models/RadioModel.h"
 
 #include <QTabWidget>
@@ -142,21 +176,32 @@ void AntennaAlexTab::populate(const RadioInfo& info, const BoardCapabilities& ca
     // internally by AntennaAlexAntennaControlTab via AlexController.
     // Phase 3P-F Task 3: removed old placeholder table gating code.
 
-    // Gate Saturn BPF1 column on board type.
-    // Saturn = ANAN-G2 / G2-1K (G8NJJ). SaturnMKII = MkII board revision.
-    // HermesC10 (ANAN-G2E) also uses the BPF1 algorithm path.
-    // From Thetis console.cs:6829-6834 [v2.10.3.15] //N1GP G2E added (HermesC10) //DK1HLM:
-    //   setAlex1HPF dispatches setBPF1ForOrionIISaturn for OrionMKII || Saturn || HermesC10.
-    const bool isSaturn = (caps.board == HPSDRHW::Saturn
-                        || caps.board == HPSDRHW::SaturnMKII
-                        || caps.board == HPSDRHW::HermesC10);  //N1GP G2E added (HermesC10) //DK1HLM
-    m_alex1Tab->updateBoardCapabilities(isSaturn);
+    // Show the BPF1 group, with the five HPF / 6 m LNA switches, in place of
+    // the Alex HPF group when the Core programs the board's receive filter
+    // through BPF1 (codec::alex::usesBpf1Preselector, the selector
+    // computeRxPreselector uses): OrionMKII, Saturn, SaturnMKII, HermesC10.
+    // From Thetis console.cs:6827-6837 [v2.10.3.15] (setAlex1HPF):
+    //   if ((HardwareSpecific.Hardware == HPSDRHW.OrionMKII) || (HardwareSpecific.Hardware == HPSDRHW.Saturn)
+    //      || (HardwareSpecific.Hardware == HPSDRHW.HermesC10))  //N1GP G2E added (HermesC10) //DK1HLM
+    //   { setBPF1ForOrionIISaturn(freq); } else { setAlexHPF(freq); }
+    // From Thetis setup.cs:6336-6360 [v2.10.3.15] (the panel list by model):
+    //   HardwareSpecific.Model != HPSDRModel.ANAN_G2E && //N1GP G2E added
+    //   HardwareSpecific.Model != HPSDRModel.REDPITAYA)//DH1KLM
+    //   { panelBPFControl.Visible = false; panelAlex1HPFControl.Visible = true; ... }
+    // Thetis's panel list matches the programmed bank for every model but the
+    // plain ORIONMKII: it is on the OrionMKII board, so Thetis programs BPF1
+    // yet shows the HPF panel, whose rows then do nothing. The tab shows the
+    // rows that take effect, so the ORION MKII shows BPF1.
+    const bool bpfPanel = codec::alex::usesBpf1Preselector(caps.board);
+    m_alex1Tab->updateBoardCapabilities(bpfPanel);
 
     // Gate Alex-2 board status on caps.hasAlex2 (Phase 3P-I-b T8).
     // From Thetis setup.cs:6228-6264 [v2.10.3.13]: tpAlex2FilterControl
     // is visible only for BPF2-capable boards (ANAN7000D family +
     // OrionMKII + Saturn).
     //DH1KLM  [REDPITAYA-class SKU attribution in setup.cs:6256/6261]
+    // G8NJJ. will need more work ofr high power PA
+    //   [original inline comment from setup.cs:6244, on the ANAN_G2_1K branch]
     m_alex2FiltersTab->updateBoardCapabilities(caps.hasAlex2);
     const int alex2Idx = m_subTabs->indexOf(m_alex2FiltersTab);
     if (alex2Idx >= 0) {
@@ -167,6 +212,35 @@ void AntennaAlexTab::populate(const RadioInfo& info, const BoardCapabilities& ca
     m_lastMac = info.macAddress;
     m_alex1Tab->restoreSettings(info.macAddress);
     m_alex2FiltersTab->restoreSettings(info.macAddress);
+}
+
+// ── setTransmitPermitted (R-R3-46) ────────────────────────────────────────────
+
+void AntennaAlexTab::setTransmitPermitted(bool permitted, const QString& reason)
+{
+    // Parity Task 12: Antenna Control's transmit half follows the Alex
+    // facade's transmit edit availability instead. radioHardwareVersion 10:
+    // the Alex-1 low-pass rows are no longer transmit-gated; they follow
+    // setLpfRowsAvailable, as the high-pass rows follow
+    // setHpfSwitchesAvailable.
+    Q_UNUSED(permitted);
+    Q_UNUSED(reason);
+}
+
+void AntennaAlexTab::setHpfSwitchesAvailable(bool available, const QString& reason)
+{
+    m_alex1Tab->setHpfSwitchesAvailable(available, reason);
+}
+
+void AntennaAlexTab::setHpfRowsAvailable(bool available, const QString& reason)
+{
+    m_alex1Tab->setHpfRowsAvailable(available, reason);
+    m_alex2FiltersTab->setHpfRowsAvailable(available, reason);
+}
+
+void AntennaAlexTab::setLpfRowsAvailable(bool available, const QString& reason)
+{
+    m_alex1Tab->setLpfRowsAvailable(available, reason);
 }
 
 // ── restoreSettings ───────────────────────────────────────────────────────────

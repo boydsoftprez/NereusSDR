@@ -35,9 +35,40 @@ public:
     QString pageTitle() const { return m_title; }
     virtual void syncFromModel();
 
-    // ── Static NYI marker ─────────────────────────────────────────────────────
-    // Marks a widget as Not Yet Implemented: disables it and sets a tooltip.
-    static void markNyi(QWidget* widget, const QString& phase);
+    // R-R3-21: a receive page can hold a transmit section. SetupDialog pushes
+    // the negotiated transmit permission to every realized page; a page with
+    // such a section overrides this and gates just that section, leaving the
+    // rest of the page live. The default does nothing.
+    virtual void setTransmitPermitted(bool permitted, const QString& reason);
+
+    // Fix wave 2 (M8): in a remote window VOX also needs this computer's
+    // microphone line to the Core. SetupDialog pushes it to every realized
+    // page; a page holding a VOX control overrides this and shows it
+    // disabled with `reason` while there is none. The default does nothing.
+    virtual void setVoxPermitted(bool permitted, const QString& reason);
+
+    // R-R3-49 (parity Task 1): a page can hold transmit settings that key
+    // nothing (DSP > Options TX combos). SetupDialog pushes the transmit
+    // settings gate to every realized page; a page with such settings
+    // overrides this and gates just them. The default does nothing.
+    virtual void setTransmitSettingsPermitted(bool permitted, const QString& reason);
+
+    // R-R3-49 (parity Task 3): the same gate for settings a later
+    // transmitSettingsVersion brought (3: the radio microphone settings and
+    // the TX profiles). SetupDialog pushes each version MainWindow gives it;
+    // a page overrides this and gates the settings of the versions it
+    // holds. Never called in a local window. The default does nothing.
+    virtual void setTransmitSettingsPermittedAt(int version, bool permitted,
+                                                const QString& reason);
+
+    // R-R3-21 / R-R3-10: whether the Core's settings can be changed from
+    // this window right now. False in a remote window while it is not
+    // connected to its Core (or has not received the Core's settings yet).
+    // SetupDialog pushes it to every realized page; a Mixed page overrides
+    // this and gates just the controls that write the Core's settings,
+    // leaving this computer's own controls live. The default does nothing.
+    // Always true in a local window.
+    virtual void setStationSettingsAvailable(bool available, const QString& reason);
 
     // ── Section builder ───────────────────────────────────────────────────────
     // Add a titled group box section to the page content area.
@@ -69,6 +100,28 @@ public:
     QLineEdit* addLabeledEdit(const QString& label, const QString& placeholder = {});
 
 protected:
+    // R-R3-21: disables each control with `reason` as its tooltip and
+    // accessible description while transmit is not permitted, and puts back
+    // the enabled state, tooltip and description each had once it is. Safe
+    // to call repeatedly with the same state.
+    static void gateTransmitControls(const QList<QWidget*>& controls, bool permitted,
+                                     const QString& reason);
+
+    // R-R3-21 / R-R3-10: the same, for the controls that write the Core's
+    // settings on a Mixed page, while those settings are unavailable. It
+    // keeps its own saved state, so a control must follow only one of the
+    // two helpers; a page with a control held for both combines the two
+    // conditions and calls one of them.
+    static void gateStationControls(const QList<QWidget*>& controls, bool available,
+                                    const QString& reason);
+
+    // The same again, for controls locked while the radio is on the air
+    // (a page's own on-the-air rule). It keeps its own saved state, so a
+    // control follows only this helper; a control also held for transmit
+    // combines the two conditions and calls gateTransmitControls.
+    static void gateOnAirControls(const QList<QWidget*>& controls, bool offAir,
+                                  const QString& reason);
+
     QVBoxLayout* contentLayout() { return m_contentLayout; }
     RadioModel*  model()         { return m_model; }
 

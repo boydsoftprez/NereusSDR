@@ -10,6 +10,12 @@
 // HL2 rows are skipped intentionally — that's the bug fix (HL2 codec
 // emits different bytes than legacy did, by design).
 //
+// Bank 10 byte 2 (C2) of every non-HL2 row reads 0x41, not the captured
+// 0x40: bit 0 is mic_boost (Thetis ChannelMaster/networkproto1.c:581
+// [v2.10.3.15]), and the connection's mic boost starts on as Thetis's does
+// (console.cs:13259 [v2.10.3.15]: private bool mic_boost = true;). Only that
+// byte of those rows was changed in the JSON.
+//
 // This is THE proof that Hermes/Orion/Angelia/etc ship byte-identical
 // to pre-refactor main. If this test fails, the cutover regressed
 // something — investigate before merging.

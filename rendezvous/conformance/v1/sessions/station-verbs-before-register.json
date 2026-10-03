@@ -1,0 +1,45 @@
+{
+  "runs": [
+    "service"
+  ],
+  "serverSetup": {},
+  "steps": [
+    {
+      "connect": "station"
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "hello",
+        "version": 1,
+        "nonce": "$b64:32:stationNonce",
+        "stun": [
+          "stun:rv4.conformance.invalid:3478",
+          "stun:rv6.conformance.invalid:3478"
+        ]
+      }
+    },
+    {
+      "from": "station",
+      "role": "scripted",
+      "message": {
+        "type": "nameplate.claim"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "error",
+        "code": "protocolError",
+        "reason": "A message could not be read, so the connection was closed. Updating the app or the Core may help.",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "expectClosed": "station",
+      "code": 1000
+    }
+  ]
+}

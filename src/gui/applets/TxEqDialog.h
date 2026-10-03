@@ -62,6 +62,20 @@
 //                 now pick up Style::sliderVStyle() + kSpinBoxStyle —
 //                 fixes a styling regression where they rendered with
 //                 the system default look-and-feel.
+//   2026-09-25 - R-R3-49 (parity Task 4): the Legacy EQ box is the model's
+//                 txEqUseLegacy (Thetis EQUseLegacy, kept with the TX
+//                 profile); the dialog no longer pushes curves to WDSP
+//                 (RadioModel does, from the model, locally and on a
+//                 Core); a remote window's settings gate greys it with
+//                 the reason. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-09-28 - R-IOS-13 / R-R3-49: a blank or unreadable
+//                 txEqParaEqData shows Thetis's GetDefaults curve (the
+//                 one the Core applies) instead of keeping the panel's
+//                 previous points, and a load sets the band count,
+//                 low/high and Use Q Factors controls as setParaEQData
+//                 does (eqform.cs:3312-3368 [v2.10.3.15]). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -118,6 +132,7 @@ class QHBoxLayout;
 class QLabel;
 class QButtonGroup;
 class QCheckBox;
+class QLabel;
 class QCloseEvent;
 class QComboBox;
 class QDoubleSpinBox;
@@ -153,6 +168,15 @@ public:
     // is forced false in the ctor so close-button or programmatic
     // hide preserves the singleton).
     static TxEqDialog* instance(RadioModel* radio, QWidget* parent = nullptr);
+
+    // R-R3-49 (parity Task 4): whether this window may change the TX EQ
+    // now. A remote window's MainWindow sets it from the Core's
+    // transmitSettingsVersion 4 and the Core's on-the-air state; closed,
+    // every control greys and the reason shows at the top. Kept for a
+    // dialog built later. A local window never closes it.
+    static void setSettingsPermitted(bool permitted, const QString& reason);
+    static bool settingsPermitted();
+    QLabel* settingsReasonLabel() const { return m_settingsReasonLabel; }
 
     // ── Test / introspection accessors ────────────────────────────
     bool usingLegacyEq() const;
@@ -201,6 +225,10 @@ private slots:
     // this, the next user edit would overwrite the just-loaded curve
     // (Codex P1 #2 on PR #159).
     void syncParametricFromModel();
+    // Thetis setParaEQData's control half: band count buttons, low/high
+    // limits, Use Q Factors and the selected band's maximum follow the
+    // widget after a load (R-IOS-13 / R-R3-49).
+    void syncParametricControlsFromWidget();
 
 protected:
     // Hide-on-close per Thetis frmCFCConfig.cs:477-482 [v2.10.3.13]
@@ -233,26 +261,17 @@ private:
     // selected ParametricEqWidget point.
     void updateEditRowFromSelection();
     // Push the current ParametricEqWidget points into TransmitModel::
-    // setTxEqParaEqData (JSON round-trip) AND push the parametric
-    // curve directly to WDSP via pushParametricCurveToWdsp().
+    // setTxEqParaEqData (JSON round-trip). R-R3-49 (parity Task 4): the
+    // dialog only writes the model; RadioModel puts the curve the Legacy
+    // EQ box picks on the TX channel (local or on the Core).
     void pushParametricToModel();
-
-    // Build (F[10], G[11]) from parametric widget state and push via
-    // TxChannel::setTxEqProfile.  Called on every parametric edit
-    // (from pushParametricToModel) and on toggle into parametric mode
-    // (from onLegacyToggled) so WDSP switches curves immediately
-    // without waiting for the user's first edit.
-    void pushParametricCurveToWdsp();
-
-    // Build (F[10], G[11]) from legacy txEqFreq/txEqBand/txEqPreamp
-    // model state and push via TxChannel::setTxEqProfile.  Called on
-    // toggle BACK to legacy mode so WDSP restores the legacy curve
-    // immediately (the legacy slider setters re-fire pushEqProfile
-    // via RadioModel only on user edit; without this, the parametric
-    // curve would persist on WDSP until the user nudged a slider).
-    void pushLegacyCurveToWdsp();
+    // Show the panel the model's txEqUseLegacy picks.
+    void syncLegacyFromModel();
+    // Grey or free the controls from the settings gate.
+    void applySettingsPermitted();
 
     QPointer<RadioModel> m_radio;          // non-owning
+    QLabel* m_settingsReasonLabel = nullptr;  // R-R3-49 (parity Task 4)
     bool m_updatingFromModel = false;
     bool m_ignoreUpdates     = false;
 

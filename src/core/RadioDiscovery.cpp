@@ -17,6 +17,16 @@
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-09-25 - Receiver and transmit gaps plan, Task 5: a Protocol 1
+//                 reply's top rate follows the board (384 kHz for the HL2,
+//                 192 kHz for the others) instead of 384 kHz for all.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - The HL2's receiver count is discovery byte 19, as mi0bot
+//                 reads it (clsRadioDiscovery.cs:1176 [v2.10.3.13-beta2]);
+//                 other Protocol 1 boards keep byte 20 (Thetis
+//                 clsRadioDiscovery.cs:1166 [v2.10.3.15]). J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  clsRadioDiscovery.cs
@@ -60,7 +70,10 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "RadioDiscovery.h"
+#include <QThread>
+#include <QMutexLocker>
 #include "BoardCapabilities.h"
+#include "HardwareProfile.h"
 #include "LogCategories.h"
 
 #include <QDateTime>
@@ -106,6 +119,9 @@ int RadioInfo::maxReceiversForBoard(HPSDRHW type)
     case HPSDRHW::Hermes:       return 4;
     case HPSDRHW::HermesII:     return 4;
     case HPSDRHW::HermesLite:   return 4;
+    case HPSDRHW::HermesLiteRxOnly: return 4; // Plan Task 15: the kit is an HL2
+                                              // (mi0bot console.cs:8409 HERMESLITE
+                                              // P1_rxcount = 4 [v2.10.3.13-beta2])
     case HPSDRHW::HermesC10:    return 4; // ANAN-G2E: HERMES-class single-ADC nrx=4
                                           // [N1GP G2E added; Thetis network.h:425 v2.10.3.15]
     case HPSDRHW::Angelia:      return 7;
@@ -150,6 +166,21 @@ RadioDiscovery::~RadioDiscovery()
 // Process-wide quiet deadline — see the declaration for why this is not
 // per-instance, and why it is monotonic rather than wall-clock.
 QDeadlineTimer RadioDiscovery::s_scanHoldOff;
+QMutex RadioDiscovery::s_scanHoldOffMutex;
+
+bool RadioDiscovery::scanCancelled() const
+{
+    return m_stopRequested.load(std::memory_order_acquire)
+        || QThread::currentThread()->isInterruptionRequested();
+}
+
+#ifdef NEREUS_BUILD_TESTS
+void RadioDiscovery::clearHoldOffForTest()
+{
+    const QMutexLocker lock(&s_scanHoldOffMutex);
+    s_scanHoldOff = QDeadlineTimer();
+}
+#endif
 
 void RadioDiscovery::holdOffScans(std::chrono::milliseconds quiet)
 {
@@ -157,6 +188,7 @@ void RadioDiscovery::holdOffScans(std::chrono::milliseconds quiet)
     // longer one already in flight.  Qt::PreciseTimer because this bounds a
     // radio-safety interval, not a UI refresh.
     const QDeadlineTimer candidate(quiet, Qt::PreciseTimer);
+    const QMutexLocker lock(&s_scanHoldOffMutex);
     if (candidate > s_scanHoldOff) {
         s_scanHoldOff = candidate;
     }
@@ -168,12 +200,17 @@ qint64 RadioDiscovery::holdOffRemainingMs() const
 {
     // remainingTime() is monotonic and already clamps to 0 once expired; the
     // guard covers the -1 "forever" encoding, which we never construct.
+    const QMutexLocker lock(&s_scanHoldOffMutex);
     const qint64 remaining = s_scanHoldOff.remainingTime();
     return remaining > 0 ? remaining : 0;
 }
 
 void RadioDiscovery::startDiscovery()
 {
+    if (QThread::currentThread()->isInterruptionRequested()) {
+        emit discoveryFinished();
+        return;
+    }
     // Post-disconnect quiet period: defer, never drop.  One pending deferred
     // scan is enough — the scan that eventually runs walks every NIC anyway.
     if (const qint64 waitMs = holdOffRemainingMs(); waitMs > 0) {
@@ -288,11 +325,30 @@ bool RadioDiscovery::parseP1Reply(const QByteArray& bytes, const QHostAddress& s
     }
 
     // Optional extra fields (len > 20) — From Thetis parseDiscoveryReply P1 branch
+    //
+    // The receiver count's byte depends on the board. The HL2 carries it in
+    // byte 19; mi0bot reads it there in the HL2 case of its device switch:
+    //   From mi0bot clsRadioDiscovery.cs:1169-1176 [v2.10.3.13-beta2]
+    //     case HPSDRHW.HermesLite:
+    //         byte[] fixedIp = new byte[4];                   // MI0BOT: Extra info from discovery for HL2
+    //         ...
+    //         r.BetaVersion = data[21];
+    //         r.NumRxs = data[19];
+    // The bench capture's HL2 reply has byte 19 = 0x04 and byte 20 = 0x45
+    // (docs/protocols/openhpsdr-protocol1-capture-reference.md section 2.2),
+    // so byte 20 is not a receiver count on the HL2. (mi0bot's later len > 20
+    // block writes data[20] over NumRxs, which only its radio list shows;
+    // NereusSDR takes the HL2 case's byte, as the MI0BOT comment intends.)
+    // Every other Protocol 1 board carries it in byte 20:
+    //   From Thetis clsRadioDiscovery.cs:1166 [v2.10.3.15]
+    //     r.NumRxs = data[20];
+    // 0 means no report and keeps the board's own count.
     if (bytes.size() > 20) {
-        out.maxReceivers = static_cast<quint8>(bytes[20]);
-        if (out.maxReceivers <= 0) {
-            out.maxReceivers = RadioInfo::maxReceiversForBoard(out.boardType);
-        }
+        const int countByte = (out.boardType == HPSDRHW::HermesLite) ? 19 : 20;
+        out.reportedReceivers = static_cast<quint8>(bytes[countByte]);
+        out.maxReceivers = out.reportedReceivers > 0
+            ? out.reportedReceivers
+            : RadioInfo::maxReceiversForBoard(out.boardType);
     }
 
     // Populate derived capabilities
@@ -303,7 +359,16 @@ bool RadioDiscovery::parseP1Reply(const QByteArray& bytes, const QHostAddress& s
     out.name                = QString::fromLatin1(BoardCapsTable::forBoard(out.boardType).displayName);
     out.hasDiversityReceiver = (out.adcCount >= 2);
     out.hasPureSignal        = (out.boardType != HPSDRHW::Atlas && out.boardType != HPSDRHW::Unknown);
-    out.maxSampleRate        = 384000;  // P1 max
+    // Plan Task 5: the top Protocol 1 rate for this board, not 384 kHz for
+    // every reply. On Protocol 1 only the RedPitaya (Thetis) and the HL2
+    // (mi0bot) reach 384 kHz; every other board tops out at 192 kHz. The
+    // cited ladder is BoardCapsTable::sampleRatesFor. A reply carries the board, not the model, so the board's default
+    // model stands in. A RedPitaya answers as a Hermes or OrionMKII board
+    // and is told apart only by the model the operator picks; the rate
+    // list and Radio Info read that model.
+    out.maxSampleRate = BoardCapsTable::maxSampleRateFor(
+        BoardCapsTable::forBoard(out.boardType), ProtocolVersion::Protocol1,
+        defaultModelForBoard(out.boardType));
 
     return true;
 }
@@ -362,6 +427,11 @@ bool RadioDiscovery::parseP2Reply(const QByteArray& bytes, const QHostAddress& s
     // From Thetis: if (len > 20) — receivers count
     if (bytes.size() > 20) {
         int hwRx = static_cast<quint8>(bytes[20]);
+        // From Thetis clsRadioDiscovery.cs:1194 [v2.10.3.15]:
+        //   r.NumRxs = data[20];
+        // Kept apart from the fallback: RadioModel sizes the Protocol 2
+        // stream pool from the radio's own number when it gives one.
+        out.reportedReceivers = hwRx;
         out.maxReceivers = (hwRx > 0) ? hwRx : RadioInfo::maxReceiversForBoard(out.boardType);
     }
 
@@ -476,7 +546,7 @@ void RadioDiscovery::scanAllNics()
     for (const QNetworkInterface& iface : interfaces) {
         // Cooperative cancel — see stopDiscovery(). Bail before touching
         // a new NIC if a shutdown was requested. (Inner loop also checks.)
-        if (m_stopRequested.load(std::memory_order_acquire)) {
+        if (scanCancelled()) {
             return;
         }
 
@@ -531,6 +601,9 @@ void RadioDiscovery::scanAllNics()
 
         // From Thetis discoverOnNic(): attempts × (send + quiet-poll loop)
         for (int attempt = 0; attempt < attempts; attempt++) {
+            if (scanCancelled()) {
+                return;
+            }
             // Send P1 and P2 probes to directed subnet broadcast and 255.255.255.255
             if (!nicBroadcast.isNull()) {
                 sock.writeDatagram(p1Packet, nicBroadcast, kDiscoveryPort);
@@ -544,7 +617,7 @@ void RadioDiscovery::scanAllNics()
                 // Cooperative cancel — see stopDiscovery(). Checked after
                 // each waitForReadyRead window so shutdown latency is at
                 // most one pollTimeoutMs (~150 ms on SafeDefault).
-                if (m_stopRequested.load(std::memory_order_acquire)) {
+                if (scanCancelled()) {
                     sock.close();
                     return;
                 }
@@ -558,6 +631,9 @@ void RadioDiscovery::scanAllNics()
                 quietPolls = 0;
 
                 while (sock.hasPendingDatagrams()) {
+                    if (scanCancelled()) {
+                        return;
+                    }
                     QHostAddress senderAddr;
                     quint16 senderPort = 0;
                     QByteArray data;

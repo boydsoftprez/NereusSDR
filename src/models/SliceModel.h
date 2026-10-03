@@ -8,14 +8,85 @@
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/radio.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/setup.designer.cs (upstream has no top-of-file header — project-level LICENSE applies)
+//   Project Files/Source/Console/TuneStep.cs, original licence from Thetis source is included below
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-09-30: radeReason, why a RADE slice has no working decoder, in
+//               plain words, declared last. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-09-30: applyRadeModeChange, the RADE decoder start and stop that
+//               setDspMode and restoreFromSettings (a band change, a
+//               restored slice) both run. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-09-29: radeSynced and radeFreqOffsetHz, the RADE decoder's sync and
+//               frequency offset as the VFO flag shows them, declared last.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28: diversityPattern, the Diversity dialog's sensitivity
+//               pattern as the Core sends it (core/DiversityPattern),
+//               declared last. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-09-27: Match NR2/NR4 controls and defaults to Thetis v2.10.3.15.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//               (R-IOS-06, R-IOS-27).
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-09-22 — Name the general receive bounds for Core layout validation,
+//                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
+//   2026-09-23 : R-R3-40 runtime NNR limit (nnrLimit, nnrRetryRequested),
+//                 by J.J. Boyd (KG4VCF), with Anthropic Claude Code
+//                 assistance.
+//   2026-09-23 : R-R3-44 setVaxChannelStore(): in a remote window a
+//                 slice's VAX channel is this computer's, never the Core's
+//                 Slice<N>/VaxChannel. By J.J. Boyd (KG4VCF), with
+//                 Anthropic Claude Code assistance.
+//   2026-09-23 : R-R3-45 outputRoute: each receiver plays on the speakers
+//                 or the headphones, persisted as Slice<N>/OutputRoute
+//                 (VAX design 6.2). By J.J. Boyd (KG4VCF), with Anthropic
+//                 Claude Code assistance.
+//   2026-09-23 : R-R3-45 Task 2 setOutputRoutePersisted(): a remote
+//                 window's slice leaves its route to the Core. By J.J. Boyd
+//                 (KG4VCF), with Anthropic Claude Code assistance.
+//   2026-09-24 : R-IOS-01 activeWriteReason(): the refusal of a client's
+//                 write to `active`, in plain operator words. By J.J. Boyd
+//                 (KG4VCF), with Anthropic Claude Code assistance.
+//   2026-09-26 : R-R3-13 / R-R3-49 (remote-window parity Task 15): the
+//                 Core's ADC and AGC readings (adcPeakDbfs, adcAverageDbfs,
+//                 agcGainDb, agcPeakDb, agcAverageDb), outbound under
+//                 meterReadingsVersion 1. By J.J. Boyd (KG4VCF), with
+//                 Anthropic Claude Code assistance.
+//   2026-09-26 : R-R3-49 (remote-window parity Task 16): minNotchWidthHz,
+//                 the Core's channel's minimum notch width, outbound under
+//                 dspInfoVersion 1. By J.J. Boyd (KG4VCF), with Anthropic
+//                 Claude Code assistance.
+//   2026-09-26  J.J. Boyd / KG4VCF  iPhone app plan Task 77 (R-IOS-02,
+//                                    R-IOS-03, R-IOS-13): txSliceMarked and
+//                                    setTxMarkAllowed (ruling 5.4a). AI-
+//                                    assisted via Anthropic Claude Code.
+//   2026-09-27  J.J. Boyd / KG4VCF  NR1's defaults are Thetis's NR
+//                                    spinbox defaults as its Setup applies
+//                                    them (gain 100e-6, leak 100e-3), read
+//                                    from ControlRanges.h (R-IOS-06,
+//                                    R-IOS-27). AI-assisted via Anthropic
+//                                    Claude Code. MNR's defaults read from
+//                                    there too, and NR2, NR3, NR4 and
+//                                    DFNR's (values unchanged).
+//   2026-09-27 - R-R3-49: savedSampleRateHz, the rate saved for a band,
+//                read at connect. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - Slice control and shared listening plan Task 5: a remote
+//                window's read-only listener mark (isReadOnlyListener), set
+//                by SliceAccessMirror; a setter that would send a change
+//                holds it back with the Core's listener words instead.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-09-23: Replaced the STEP stub ladder with a port of Thetis
+//                 tune_step_list (TuneStep pairs) and ChangeTuneStepUp/Down
+//                 by J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -116,18 +187,65 @@
 // Upstream source 'Project Files/Source/Console/setup.designer.cs' has no top-of-file GPL header —
 // project-level Thetis LICENSE applies.
 
+// --- From TuneStep.cs ---
+//=================================================================
+// TuneStep.cs
+//=================================================================
+// PowerSDR is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2011  FlexRadio Systems
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: gpl@flexradio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    4616 W. Howard Lane  Suite 1-150
+//    Austin, TX 78728
+//    USA
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
 #include "Band.h"
+#include "core/ControlRanges.h"
 #include "core/NbFamily.h"
 #include "core/SampleRateCatalog.h"
 #include "core/WdspTypes.h"
+#include "core/dsp/NnrSettings.h"
 
+#include <QByteArray>
 #include <QList>
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
 #include <QString>
+#include <QVariant>
 
 #include <atomic>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -141,12 +259,61 @@ struct SkuUiProfile;  // issue #257 — passed to refreshAntennasFromAlex so the
                       // RX-only label slot (rxOnly != 0) wins over the main
                       // ANT* label on Mk II BPF / EXT* path reads.
 
-// Stage 1 stub ladder — Stage 2 replaces with Thetis tune_step_list
-// (console.cs tune_step_list has 11 entries; Stage 1 uses this 6-entry
-// subset only for the X/RIT STEP cycle button).
-inline constexpr int kStageOneStepLadder[] = {1, 10, 100, 500, 1000, 10000};
-inline constexpr int kStageOneStepLadderSize =
-    static_cast<int>(sizeof(kStageOneStepLadder) / sizeof(kStageOneStepLadder[0]));
+// From Thetis TuneStep.cs:44-68 [v2.10.3.15]: class TuneStep pairs a step in
+// Hz (StepHz) with its display name (Name). Ported as a plain aggregate.
+struct TuneStep {
+    int stepHz;
+    const char* name;
+};
+
+// A list of available tuning steps  [original inline comment from console.cs:11270]
+// From Thetis console.cs:1953-1982 [v2.10.3.15]: tune_step_list, 26 entries
+// in ascending order. Values, names, order and the index comments are verbatim.
+inline constexpr TuneStep kTuneStepList[] = {
+    {1, "1Hz"},//0
+    {2, "2Hz"},//1
+    {10, "10Hz"},//2
+    {25, "25Hz"},//3
+    {50, "50Hz"},//4
+    {100, "100Hz"},//5
+    {250, "250Hz"},//6
+    {500, "500Hz"},//7
+    {1000, "1kHz"},//8
+    {2000, "2kHz"},//9
+    {2500, "2.5kHz"},//10
+    {5000, "5kHz"},//11
+    {6250, "6.25kHz"},//12
+    {9000, "9kHz"},//13
+    {10000, "10kHz"},//14
+    {12500, "12.5kHz"},//15
+    {15000, "15kHz"},//16
+    {20000, "20kHz"},//17
+    {25000, "25kHz"},//18
+    {30000, "30kHz"},//19
+    {50000, "50kHz"},//20
+    {100000, "100kHz"},//21
+    {250000, "250kHz"},//22
+    {500000, "500kHz"},//23
+    {1000000, "1MHz"},//24
+    {10000000, "10MHz"}//25
+};  // initialize wheel tuning list array
+
+inline constexpr int kTuneStepListSize =
+    static_cast<int>(sizeof(kTuneStepList) / sizeof(kTuneStepList[0]));
+
+// Index of the kTuneStepList entry whose stepHz equals hz, or -1 when hz is
+// not on the list. Mirrors the -1-on-miss contract of Thetis TuneStepLookup
+// (console.cs:11303-11312 [v2.10.3.15]), which keys on the Name string; this
+// keys on Hz because NereusSDR persists the step in Hz, not as an index.
+constexpr int tuneStepIndexForHz(int hz)
+{
+    for (int i = 0; i < kTuneStepListSize; ++i) {
+        if (kTuneStepList[i].stepHz == hz) {
+            return i;
+        }
+    }
+    return -1;
+}
 
 // Represents a single receiver slice.
 // In NereusSDR, slices are a client-side abstraction — the radio has
@@ -161,6 +328,16 @@ inline constexpr int kStageOneStepLadderSize =
 class SliceModel : public QObject {
     Q_OBJECT
 
+public:
+    // R-R3-45 (VAX design 6.2): the output this receiver plays on. A
+    // receiver plays on exactly one of them; the VAX tap is separate.
+    enum class OutputRoute : int { Speakers = 0, Headphones = 1 };
+    Q_ENUM(OutputRoute)
+
+private:
+    Q_PROPERTY(NereusSDR::SliceModel::OutputRoute outputRoute READ outputRoute
+               WRITE setOutputRoute NOTIFY outputRouteChanged)
+
     Q_PROPERTY(double     frequency    READ frequency    WRITE setFrequency    NOTIFY frequencyChanged)
     Q_PROPERTY(NereusSDR::DSPMode dspMode READ dspMode   WRITE setDspMode      NOTIFY dspModeChanged)
     Q_PROPERTY(int        filterLow    READ filterLow    WRITE setFilterLow    NOTIFY filterChanged)
@@ -172,7 +349,68 @@ class SliceModel : public QObject {
     Q_PROPERTY(QString    rxAntenna    READ rxAntenna    WRITE setRxAntenna    NOTIFY rxAntennaChanged)
     Q_PROPERTY(QString    txAntenna    READ txAntenna    WRITE setTxAntenna    NOTIFY txAntennaChanged)
     Q_PROPERTY(bool       active       READ isActive     NOTIFY activeChanged)
-    Q_PROPERTY(bool       txSlice      READ isTxSlice    NOTIFY txSliceChanged)
+    // iPhone app plan Task 77 (ruling 5.4a): what the link sends as
+    // txSlice, the transmit slice only while its owner holds transmit.
+    Q_PROPERTY(bool       txSlice      READ txSliceMarked NOTIFY txSliceChanged)
+
+    // ── Remote Daemon R2 Task 6: mirrorable slice identity + band ───────────
+    // sliceIndex is the slice's stable id, assigned once by RadioModel::
+    // addSlice() and never renumbered by removeSlice() (RadioModel.cpp
+    // addSlice() / removeSlice() / sliceById()). It diverges from list
+    // position the moment a slice is removed from the middle of the list,
+    // which is exactly why StateMirror (Task 7) must key mirrored slices by
+    // this id and never by list position.
+    //
+    // MirrorPolicy requirement for Task 7: register sliceIndex as
+    // CONSTANT-snapshot. It carries no NOTIFY signal (the id never changes
+    // after construction), so a mirror strategy that only enumerates
+    // NOTIFY-bearing properties would silently skip it, and the remote GUI
+    // would never learn which slice it is looking at.
+    Q_PROPERTY(int sliceIndex READ sliceIndex CONSTANT)
+
+    // Current ham/SWL band, derived from m_currentBand and kept current by
+    // setFrequency's Band::bandFromFrequency() boundary check
+    // (SliceModel.cpp:211-214). Lets a remote GUI render per-band state
+    // without recomputing the band itself from frequency.
+    //
+    // MirrorPolicy requirement for Task 7: register band as Outbound
+    // (daemon to GUI only). The GUI never sets a slice's band directly; it
+    // only ever changes as a side effect of tuning frequency.
+    Q_PROPERTY(NereusSDR::Band band READ band NOTIFY bandChanged)
+
+    // ── Remote Daemon R2 Task 12: per-slice S-meter readings ────────────────
+    // Written by SliceMeterPump (src/core/meters/), a core-side QTimer that
+    // replaces the GUI-only MeterPoller::pollSliceSMeters() so a headless
+    // nereusd can produce this reading too. No WRITE clause on purpose: the
+    // pump is the sole local writer (via the plain setSignalStrengthDbm()
+    // method below, the same no-Q_PROPERTY-accessor pattern isActive()/
+    // setActive() and isTxSlice()/setTxSlice() already use), matching
+    // MeterPoller.cpp's own -140.0 "no reading yet" fallback convention.
+    //
+    // MirrorPolicy requirement: register as Outbound. The daemon produces
+    // the value; a remote client never writes it back. On a Role::Remote
+    // model, this property is instead written from the mirror's inbound
+    // path via applyMirroredValue() below -- the only one of that method's
+    // cases that actually accepts a value rather than refusing it.
+    Q_PROPERTY(double signalStrengthDbm READ signalStrengthDbm
+               NOTIFY signalStrengthDbmChanged)
+    // The selected reading above retains the local analog S-meter's chosen
+    // source.  These two station-calibrated source readings are independent
+    // of that GUI selection so a remote client can render its own selected
+    // S-meter mode without asking its local model to read WDSP.
+    Q_PROPERTY(double signalPeakDbm READ signalPeakDbm
+               NOTIFY signalPeakDbmChanged)
+    Q_PROPERTY(double signalAverageDbm READ signalAverageDbm
+               NOTIFY signalAverageDbmChanged)
+
+    // R-R3-15: the station-owned tracker used by Auto AGC-T. This is
+    // independent of the display/Clarity floor and is outbound telemetry.
+    Q_PROPERTY(double stationAutoAgcNoiseFloorDbm READ stationAutoAgcNoiseFloorDbm
+               NOTIFY stationAutoAgcNoiseFloorChanged)
+    Q_PROPERTY(bool stationAutoAgcNoiseFloorValid READ stationAutoAgcNoiseFloorValid
+               NOTIFY stationAutoAgcNoiseFloorChanged)
+    Q_PROPERTY(quint64 stationAutoAgcNoiseFloorGeneration READ stationAutoAgcNoiseFloorGeneration
+               NOTIFY stationAutoAgcNoiseFloorChanged)
 
     // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
     // Phase 3F: per-slice letter identifier A-E. Drives badge color via VfoWidget::sliceColor().
@@ -194,6 +432,9 @@ class SliceModel : public QObject {
     // ReceiverManager, FFTEngine, and the FFTRouter topology.
     Q_PROPERTY(int streamIndex READ streamIndex WRITE setStreamIndex
                NOTIFY streamIndexChanged)
+    Q_PROPERTY(bool streamCtunPinned READ streamCtunPinned
+               NOTIFY streamCtunPinnedChanged)
+    Q_PROPERTY(quint64 streamEpoch READ streamEpoch NOTIFY streamEpochChanged)
 
     // Phase 3F Sub-Epic I: this slice's offset from its stream's centre,
     // pushed into WDSP via RxChannel::setShiftFrequency (the Thetis RXOsc
@@ -276,6 +517,37 @@ class SliceModel : public QObject {
     // Single source of truth for active NR slot. Mutual exclusion enforced
     // in setActiveNr. See Thetis console.cs:43297-43450 SelectNR() [v2.10.3.13].
     Q_PROPERTY(NereusSDR::NrSlot activeNr READ activeNr WRITE setActiveNr NOTIFY activeNrChanged)
+    // WDSP 2.10 NNR: accepted configuration, separate from runtime diagnostics.
+    Q_PROPERTY(int nnrModelSlot READ nnrModelSlot WRITE setNnrModelSlot NOTIFY nnrModelSlotChanged)
+    Q_PROPERTY(double nnrMaskFloorDb READ nnrMaskFloorDb WRITE setNnrMaskFloorDb NOTIFY nnrMaskFloorDbChanged)
+    Q_PROPERTY(NereusSDR::NrPosition nnrPosition READ nnrPosition WRITE setNnrPosition NOTIFY nnrPositionChanged)
+    Q_PROPERTY(double nnrAlpha READ nnrAlpha WRITE setNnrAlpha NOTIFY nnrAlphaChanged)
+    Q_PROPERTY(double nnrAlphaKneeDb READ nnrAlphaKneeDb WRITE setNnrAlphaKneeDb NOTIFY nnrAlphaKneeDbChanged)
+    Q_PROPERTY(double nnrTauSeconds READ nnrTauSeconds WRITE setNnrTauSeconds NOTIFY nnrTauSecondsChanged)
+    Q_PROPERTY(double nnrMaxGainDb READ nnrMaxGainDb WRITE setNnrMaxGainDb NOTIFY nnrMaxGainDbChanged)
+    Q_PROPERTY(double nnrAttackMs READ nnrAttackMs WRITE setNnrAttackMs NOTIFY nnrAttackMsChanged)
+    Q_PROPERTY(double nnrReleaseMs READ nnrReleaseMs WRITE setNnrReleaseMs NOTIFY nnrReleaseMsChanged)
+    Q_PROPERTY(bool nnrAvailable READ nnrAvailable NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(bool nnrReady READ nnrReady NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(bool nnrRunning READ nnrRunning NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(bool nnrStandardAvailable READ nnrStandardAvailable NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(bool nnrPremiumAvailable READ nnrPremiumAvailable NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(bool nnrRateSupported READ nnrRateSupported NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(int nnrActualModelSlot READ nnrActualModelSlot NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(int nnrDspRateHz READ nnrDspRateHz NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(int nnrNetworkRateHz READ nnrNetworkRateHz NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(int nnrDelaySamples READ nnrDelaySamples NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(bool nnrProfilingAvailable READ nnrProfilingAvailable NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(double nnrLatencyMs READ nnrLatencyMs NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(int nnrTestMode READ nnrTestMode NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(int nnrOutputMode READ nnrOutputMode NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(QString nnrModelSource READ nnrModelSource NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(QString nnrStatus READ nnrStatus NOTIFY nnrDiagnosticsChanged)
+    Q_PROPERTY(QString nnrLastError READ nnrLastError NOTIFY nnrLastErrorChanged)
+    // R-R3-40: runtime NNR limit (NnrLimit) the Core set because the receiver
+    // could not keep up. Outbound only, never persisted.
+    Q_PROPERTY(int nnrLimit READ nnrLimit NOTIFY nnrLimitChanged)
+
 
     // NR1 (ANR) tuning — 5 knobs.
     // Gain/Leakage stored in WDSP-domain values (not UI-units — UI applies
@@ -385,7 +657,59 @@ class SliceModel : public QObject {
     Q_PROPERTY(QString lastRadeRxCallsign READ lastRadeRxCallsign
                WRITE setLastRadeRxCallsign NOTIFY lastRadeRxCallsignChanged)
 
+    // R-R3-13 / R-R3-49 (remote-window parity Task 15): the Core's ADC and
+    // AGC readings for this slice's receiver, as its container meters bind
+    // them (ADC Peak, ADC Average, AGC Gain, AGC Peak, AGC Average).
+    // SliceMeterPump writes them at its rate, as it writes signalPeakDbm; a
+    // remote window's meters read them (meterReadingsVersion 1) and never
+    // its own inactive DSP. Outbound, no WRITE, same shape as the S-meter
+    // readings above. -400 (SliceMeterPump::kNoReadingDbm) is no reading.
+    Q_PROPERTY(double adcPeakDbfs    READ adcPeakDbfs    NOTIFY adcPeakDbfsChanged)
+    Q_PROPERTY(double adcAverageDbfs READ adcAverageDbfs NOTIFY adcAverageDbfsChanged)
+    Q_PROPERTY(double agcGainDb      READ agcGainDb      NOTIFY agcGainDbChanged)
+    Q_PROPERTY(double agcPeakDb      READ agcPeakDb      NOTIFY agcPeakDbChanged)
+    Q_PROPERTY(double agcAverageDb   READ agcAverageDb   NOTIFY agcAverageDbChanged)
+    // R-R3-49 (remote-window parity Task 16, dspInfoVersion 1): the narrowest
+    // notch this slice's receiver can realise, in Hz, as the local TNF page
+    // reads it (RxChannel::minNotchWidthHz); 0 while it has no channel. The
+    // Core's RadioModel keeps it (refreshSliceMinNotchWidths); a remote
+    // window's notch width presets, trace dent and TNF page read it.
+    // Outbound, no WRITE.
+    Q_PROPERTY(double minNotchWidthHz READ minNotchWidthHz NOTIFY minNotchWidthHzChanged)
+    // The Diversity dialog's sensitivity pattern for this slice, as its
+    // radar draws it from the slice's frequency, diversity phase and gain
+    // (DiversityPattern::wireJson; the station link document, "The
+    // diversity pattern"). Outbound, no WRITE, sent only to a peer that
+    // declared diversityPattern (diversityPatternVersion 1). Declared last
+    // so every earlier property keeps its wire ordinal.
+    Q_PROPERTY(QString diversityPattern READ diversityPattern NOTIFY diversityPatternChanged)
+    // The RADE decoder's sync and frequency offset in Hz, the two values the
+    // VFO flag's RADE row shows beside snrDb (VfoWidget::setRadeSynced and
+    // setRadeFreqOffset); set from the slice's RadeChannel
+    // (RadioModel::wireRadeChannel). Outbound, no WRITE, sent only to a peer
+    // that declared radeStatus (radeStatusVersion 1; the station link
+    // document, "The RADE status"). Declared last so every earlier property
+    // keeps its wire ordinal.
+    Q_PROPERTY(bool radeSynced READ radeSynced NOTIFY radeSyncedChanged)
+    Q_PROPERTY(double radeFreqOffsetHz READ radeFreqOffsetHz NOTIFY radeFreqOffsetHzChanged)
+    // Why this slice is in RADE with no working decoder, in plain words for
+    // the operator ("RADE could not start on slice B: ..."); empty while it
+    // decodes, outside RADE, and before the receiver runs. Set by the Core's
+    // RadioModel (refreshRadeReasons); the VFO flag's RADE row shows it.
+    // Outbound, no WRITE, sent only to a peer that declared radeReason
+    // (radeReasonVersion 1; the station link document, "The RADE status").
+    // Declared last so every earlier property keeps its wire ordinal.
+    Q_PROPERTY(QString radeReason READ radeReason NOTIFY radeReasonChanged)
+
 public:
+    // Receive-layout admission bounds: general receive defaults, not a
+    // per-radio/transverter capability.
+    // Manual VFO entry retains its existing narrower 100 kHz floor.
+    // From Thetis console.cs:15540 [v2.10.3.15] — min_freq = 0.0 MHz.
+    static constexpr double kMinReceiveFrequencyHz = 0.0;
+    // From Thetis console.cs:15552 [v2.10.3.15] — max_freq = 61.44 MHz.
+    static constexpr double kMaxReceiveFrequencyHz = 61440000.0;
+
     /// Type alias so RxChannelState/TxChannelState can reference SliceModel::Mode
     /// (matches the design contract; underlying type is the canonical DSPMode enum).
     using Mode = DSPMode;
@@ -399,6 +723,9 @@ public:
 
     double frequency() const { return m_frequency; }
     void setFrequency(double freq);
+    // Authoritative Core state must update a locked Remote view. Ordinary
+    // operator tuning still uses setFrequency and keeps the lock guard.
+    bool applyStationFrequency(double freq);
 
     // ---- Demodulation mode ----
 
@@ -427,6 +754,11 @@ public:
 
     int stepHz() const { return m_stepHz; }
     void setStepHz(int hz);
+
+    // Move to the next / previous kTuneStepList entry, wrapping at both
+    // ends. Thetis ChangeTuneStepUp / ChangeTuneStepDown (console.cs:6124-6134 [v2.10.3.15]).
+    void changeTuneStepUp();
+    void changeTuneStepDown();
 
     // ---- Gains ----
 
@@ -473,9 +805,106 @@ public:
 
     bool isTxSlice() const { return m_txSlice; }
     void setTxSlice(bool tx);
+    /// iPhone app plan Task 77 (ruling 5.4a): the TX mark as the link sends
+    /// it: the transmit slice and (setTxMarkAllowed) its owner holds
+    /// transmit. isTxSlice() stays the arbiter's binding.
+    bool txSliceMarked() const { return m_txSlice && m_txMarkAllowed; }
+    /// Set by the Core: whether this slice's owner holds transmit. A change
+    /// that changes txSliceMarked() notifies txSliceChanged.
+    void setTxMarkAllowed(bool allowed);
 
     int sliceIndex() const { return m_sliceIndex; }
     void setSliceIndex(int idx) { m_sliceIndex = idx; }
+
+    // Remote Daemon R2 Task 6: plain getter over m_currentBand for the
+    // Q_PROPERTY above. Deliberately does not compute or normalise
+    // anything; setFrequency is the only writer of m_currentBand, via
+    // Band::bandFromFrequency(), so this accessor cannot diverge from what
+    // the frequency-driven bandChanged signal already announced.
+    Band band() const { return m_currentBand; }
+
+    // Remote Daemon R2 Task 12: per-slice S-meter reading, in dBm.
+    // Read-only telemetry -- see the Q_PROPERTY comment above for who
+    // writes it and why there is no WRITE accessor. Default -140.0 matches
+    // MeterPoller.cpp's smeterDbm fallback and TciServer.cpp's rx1Dbm
+    // fallback (both "no WDSP data yet").
+    double signalStrengthDbm() const { return m_signalStrengthDbm; }
+    double signalPeakDbm() const { return m_signalPeakDbm; }
+    double signalAverageDbm() const { return m_signalAverageDbm; }
+
+    // Plain public setter, deliberately NOT a Q_PROPERTY WRITE accessor --
+    // same shape as setActive()/setTxSlice() above. SliceMeterPump calls
+    // this directly once per slice per poll tick; on a Role::Remote model
+    // it is instead reached through applyMirroredValue() below, the mirror
+    // inbound-apply path a property with no WRITE accessor requires (see
+    // StateMirror.h's class comment). Emits signalStrengthDbmChanged only
+    // on actual change.
+    void setSignalStrengthDbm(double dbm);
+    void setSignalPeakDbm(double dbm);
+    void setSignalAverageDbm(double dbm);
+
+    // Parity Task 15: the ADC and AGC readings (see their Q_PROPERTY
+    // comment). Plain setters, called by SliceMeterPump on the Core and
+    // reached through applyMirroredValue() in a remote window; each emits
+    // only on a change.
+    double adcPeakDbfs() const { return m_adcPeakDbfs; }
+    double adcAverageDbfs() const { return m_adcAverageDbfs; }
+    double agcGainDb() const { return m_agcGainDb; }
+    double agcPeakDb() const { return m_agcPeakDb; }
+    double agcAverageDb() const { return m_agcAverageDb; }
+    // Parity Task 16: see the minNotchWidthHz Q_PROPERTY. Change-only.
+    double minNotchWidthHz() const { return m_minNotchWidthHz; }
+    /// See the diversityPattern Q_PROPERTY. Computed from the slice's
+    /// frequency, diversity phase and gain at each read.
+    QString diversityPattern() const;
+    /// See the radeSynced / radeFreqOffsetHz Q_PROPERTYs. False and 0
+    /// until the slice's RADE decoder reports; radeSynced is false again
+    /// when the slice leaves its RADE sideband and when its decoder goes.
+    bool radeSynced() const { return m_radeSynced; }
+    double radeFreqOffsetHz() const { return m_radeFreqOffsetHz; }
+    /// Change-only; the slice's RadeChannel is the writer.
+    void setRadeSynced(bool synced);
+    void setRadeFreqOffsetHz(double hz);
+    /// See the radeReason Q_PROPERTY. Change-only; the Core's RadioModel
+    /// is the writer (a remote window's, the Core's value as mirrored).
+    QString radeReason() const { return m_radeReason; }
+    void setRadeReason(const QString& reason);
+    void setMinNotchWidthHz(double hz);
+    void setAdcPeakDbfs(double dbfs);
+    void setAdcAverageDbfs(double dbfs);
+    void setAgcGainDb(double db);
+    void setAgcPeakDb(double db);
+    void setAgcAverageDb(double db);
+
+    double stationAutoAgcNoiseFloorDbm() const { return m_stationAutoAgcNoiseFloorDbm; }
+    bool stationAutoAgcNoiseFloorValid() const { return m_stationAutoAgcNoiseFloorValid; }
+    quint64 stationAutoAgcNoiseFloorGeneration() const { return m_stationAutoAgcNoiseFloorGeneration; }
+    void setStationAutoAgcNoiseFloor(double dbm, bool valid, quint64 generation);
+
+    // Remote Daemon R2 Task 8: StateMirror::applyInbound()'s hook for
+    // SliceModel's no-WRITE properties -- active, txSlice, band, and (Task
+    // 12) signalStrengthDbm, signalPeakDbm and signalAverageDbm (a fifth,
+    // sliceIndex, is CONSTANT /
+    // ConstantSnapshot and is refused before ever reaching here;
+    // sliceLetter is excluded from the mirror entirely). active and
+    // txSlice are exclusive across MULTIPLE slices and arbitrated by
+    // RadioModel::setActiveSlice() and TxSliceArbiter respectively, not
+    // owned by any one SliceModel; band is purely derived from frequency
+    // by Band::bandFromFrequency() (see the comment above); all three are
+    // refused, naming the owner to use instead. The three S-meter readings
+    // accept and apply their values rather than refusing them: they have no
+    // other owner to name, because on a Role::Remote model the
+    // mirror's inbound apply IS the value's sole legitimate writer (the
+    // local writer, SliceMeterPump, is never constructed on that role --
+    // see RadioModel's constructor).
+    Q_INVOKABLE QString applyMirroredValue(const QByteArray& propertyName,
+                                           const QVariant& value);
+
+    // R-IOS-01: why a client's write to `active` is refused, in words an
+    // operator reads. The station gives it for a property.write (its
+    // outbound gate, StationServer::handlePropertyWrite) and the hook above
+    // gives the same text.
+    static QString activeWriteReason();
 
     // Panadapter assignment (-1 = unassigned).
     // Legacy int handle. Retained for any pre-3F callers; the authoritative
@@ -527,6 +956,10 @@ public:
 
     int  streamIndex() const { return m_streamIndex; }
     void setStreamIndex(int idx);
+    bool streamCtunPinned() const { return m_streamCtunPinned; }
+    void setStreamCtunPinned(bool pinned);
+    quint64 streamEpoch() const { return m_streamEpoch; }
+    void setStreamEpoch(quint64 epoch);
     double shiftOffsetHz() const { return m_shiftOffsetHz; }
     void setShiftOffsetHz(double hz);
 
@@ -640,6 +1073,110 @@ public:
     // --- NR accessors (Sub-epic C-1) ---
     NereusSDR::NrSlot activeNr() const { return m_activeNr; }
     void              setActiveNr(NereusSDR::NrSlot slot);
+
+    using NnrSettingsApplier = std::function<std::optional<NnrSettings>(const NnrSettings&, QString*)>;
+    using NrSelectionApplier = std::function<bool(NrSlot, QString*)>;
+    void setNnrSettingsApplier(NnrSettingsApplier apply) { m_nnrSettingsApplier = std::move(apply); }
+    void setNrSelectionApplier(NrSelectionApplier apply) { m_nrSelectionApplier = std::move(apply); }
+    bool hasNrSelectionApplier() const { return static_cast<bool>(m_nrSelectionApplier); }
+
+    // ---- Slice control plan Task 5: a listened slice in a remote window ----
+    /// This window listens to the slice and another device (or nobody)
+    /// controls it. Set only by the remote window's SliceAccessMirror; not
+    /// a Q_PROPERTY and never mirrored. While it is set, a setter whose
+    /// change would go to the Core as a write holds it back, changes
+    /// nothing here and emits listenerWriteHeld() with the Core's words.
+    /// setPanKey is the exception: the pan that shows the slice is this
+    /// window's layout, and the window does not send it.
+    bool isReadOnlyListener() const { return m_readOnlyListener; }
+    /// The words a held change carries (empty while not read-only).
+    QString readOnlyListenerReason() const { return m_readOnlyListenerReason; }
+    void setReadOnlyListener(bool readOnly, const QString& reason);
+    /// True while the Core's own state is being applied to this slice (the
+    /// StationClient's inbound guard): that is never held back. Set by the
+    /// remote window's StationClient.
+    using StationApplyProbe = std::function<bool()>;
+    void setStationApplyProbe(StationApplyProbe probe) { m_stationApplyProbe = std::move(probe); }
+    /// For a caller outside the setters (RadioModel's slice requests): the
+    /// same hold, announced the same way. False when nothing is held.
+    bool holdForListener();
+    NnrSettings nnrSettings() const { return m_nnrSettings; }
+    bool applyNnrSettings(const NnrSettings& requested);
+    void resetNnrTuning();
+    // Explicit session-only action. The radio/session owner validates and
+    // applies it; changing diagnostics never changes persisted preferences.
+    void requestNnrDiagnostics(int testMode, int outputMode);
+    int nnrModelSlot() const { return m_nnrSettings.modelSlot; }
+    void setNnrModelSlot(int value);
+    double nnrMaskFloorDb() const { return m_nnrSettings.maskFloorDb; }
+    void setNnrMaskFloorDb(double value);
+    NereusSDR::NrPosition nnrPosition() const { return m_nnrSettings.position; }
+    void setNnrPosition(NereusSDR::NrPosition value);
+    double nnrAlpha() const { return m_nnrSettings.alpha; }
+    void setNnrAlpha(double value);
+    double nnrAlphaKneeDb() const { return m_nnrSettings.alphaKneeDb; }
+    void setNnrAlphaKneeDb(double value);
+    double nnrTauSeconds() const { return m_nnrSettings.tauSeconds; }
+    void setNnrTauSeconds(double value);
+    double nnrMaxGainDb() const { return m_nnrSettings.maxGainDb; }
+    void setNnrMaxGainDb(double value);
+    double nnrAttackMs() const { return m_nnrSettings.attackMs; }
+    void setNnrAttackMs(double value);
+    double nnrReleaseMs() const { return m_nnrSettings.releaseMs; }
+    void setNnrReleaseMs(double value);
+    void updateNnrDiagnostics(const NnrDiagnostics& diagnostics);
+    NnrDiagnostics nnrDiagnostics() const { return m_nnrDiagnostics; }
+    bool nnrAvailable() const { return m_nnrDiagnostics.available; }
+    bool nnrReady() const { return m_nnrDiagnostics.ready; }
+    bool nnrRunning() const { return m_nnrDiagnostics.running; }
+    bool nnrStandardAvailable() const { return m_nnrDiagnostics.modelAvailable[0]; }
+    bool nnrPremiumAvailable() const { return m_nnrDiagnostics.modelAvailable[1]; }
+    bool nnrRateSupported() const { return m_nnrDiagnostics.rateSupported; }
+    int nnrActualModelSlot() const { return m_nnrDiagnostics.actualModelSlot; }
+    int nnrDspRateHz() const { return m_nnrDiagnostics.dspRateHz; }
+    int nnrNetworkRateHz() const { return m_nnrDiagnostics.networkRateHz; }
+    int nnrDelaySamples() const { return m_nnrDiagnostics.delaySamples; }
+    bool nnrProfilingAvailable() const { return m_nnrDiagnostics.profilingAvailable; }
+    double nnrLatencyMs() const { return m_nnrDiagnostics.latencyMs; }
+    int nnrTestMode() const { return m_nnrDiagnostics.testMode; }
+    int nnrOutputMode() const { return m_nnrDiagnostics.outputMode; }
+    QString nnrModelSource() const;
+    // R-R3-40: while a limit is in force the status is its plain reason, so
+    // a remote GUI too old to know nnrLimit still reads why its model
+    // changed. Otherwise the receiver's own explanation.
+    QString nnrStatus() const
+    {
+        return m_nnrLimit != 0 ? nnrLimitText() : m_nnrDiagnostics.explanation;
+    }
+    QString nnrLastError() const { return m_nnrLastError; }
+    bool applyStationNnrDiagnostic(const QByteArray& name, const QVariant& value);
+    void reportNnrEditResult(const QString& reason) { setNnrLastError(reason); }
+
+    // R-R3-40: the runtime NNR limit (NnrLimit: 0 none, 1 Standard only,
+    // 2 off). Set by the Core when this receiver cannot keep up, and on a
+    // remote GUI by the station mirror. Never saved: the operator's saved
+    // choice (nnrModelSlot, activeNr) is untouched while it is in force.
+    int nnrLimit() const { return m_nnrLimit; }
+    void setNnrLimit(int limit);
+    // The plain-English reason for the limit, empty when there is none. A
+    // limit that arrived through the station mirror names the Core
+    // computer; one set here names this computer.
+    QString nnrLimitText() const
+    {
+        return nnrLimitExplanation(m_nnrLimit, m_nnrLimitFromCore ? NnrLimitSite::CoreComputer
+                                                                  : NnrLimitSite::ThisComputer);
+    }
+    // The operator asks to try the saved choice again ("Try again").
+    // Emits nnrRetryRequested; the session owner clears the limit.
+    void requestNnrRetry();
+
+    // Set identity before restore; the stable slice id is never a tab index.
+    void setSettingsRadioIdentity(const QString& mac);
+    QString settingsRadioIdentity() const { return m_settingsRadioMac; }
+    QString nnrSettingsPrefix() const;
+    void saveNnrSettings() const;
+    void restoreNnrSettings();
+
 
     // NR1
     int    nr1Taps()    const { return m_nr1Taps; }
@@ -857,8 +1394,27 @@ public:
     // band click should seed defaults or restore last-used state.
     bool hasSettingsFor(Band band) const;
 
+    // R-R3-49: the sample rate saved for `band` (the per-band SampleRate
+    // key saveToSettings writes), or 0 when none is saved or the saved
+    // value is not a positive integer. Reads settings only; changes
+    // nothing. RadioModel reads it at connect, before a bind makes the
+    // slice adopt its stream's rate.
+    int savedSampleRateHz(Band band) const;
+
     void saveToSettings(NereusSDR::Band band);
     void restoreFromSettings(NereusSDR::Band band);
+
+    // Seed a manifest-validated receive descriptor while its Local RadioModel
+    // is completely offline.  This is intentionally narrower than the normal
+    // setters: it restores ordinary legacy preferences, then makes the
+    // manifest frequency/mode and that mode's filter authoritative without
+    // signals, wire commands, DSP work, or RADE channel construction.
+    //
+    // A parentless SliceModel is refused.  It cannot prove the Local role or
+    // that no RadioModel-owned receive resources are live, including in unit
+    // tests; exercise this path with an offline Local RadioModel parent.
+    bool restoreReceiveState(double frequencyHz, NereusSDR::DSPMode mode);
+
     static void migrateLegacyKeys();
 
     // Reads the persisted "last band" marker for this slice index from
@@ -879,6 +1435,32 @@ public:
     // VAX routing (Phase 3O) — 0=Off, 1..4=VAX channel.
     int vaxChannel() const { return m_vaxChannel.load(std::memory_order_acquire); }
     void setVaxChannel(int ch);
+
+    // R-R3-44: where setVaxChannel() keeps the channel. Unset (a local
+    // window), it writes Slice<N>/VaxChannel as before. Set, it calls the
+    // store instead and writes no setting: a remote window's RadioModel
+    // installs one on every slice, because the Core's Slice<N>/VaxChannel
+    // is the Core computer's VAX, not this one's. Owner thread.
+    using VaxChannelStore = std::function<void(int sliceIndex, int channel)>;
+    void setVaxChannelStore(VaxChannelStore store);
+
+    // ── R-R3-45: speakers or headphones (VAX design 6.2) ─────────────────────
+    // Speakers by default. Atomic so the audio thread reads it without a
+    // lock. setOutputRoute persists Slice<N>/OutputRoute ("Speakers" or
+    // "Headphones") and emits on change; restoreOutputRoute reads it back
+    // (an unknown value means speakers).
+    OutputRoute outputRoute() const
+    {
+        return static_cast<OutputRoute>(m_outputRoute.load(std::memory_order_acquire));
+    }
+    void setOutputRoute(OutputRoute route);
+    void restoreOutputRoute();
+    // R-R3-45: whether setOutputRoute() writes Slice<N>/OutputRoute. True
+    // (the default) for a local slice. A remote window's RadioModel sets it
+    // false: the route is the Core's slice property, mirrored both ways, and
+    // the Core saves and restores it. Owner thread.
+    void setOutputRoutePersisted(bool persisted) { m_outputRoutePersisted = persisted; }
+    static QString outputRouteSettingValue(OutputRoute route);
 
     // ── Phase 3J-2 Task D5: per-slice live SNR (NereusSDR-native) ──
     // NaN sentinel means "no SNR available." setSnrDb() emits
@@ -913,11 +1495,33 @@ public slots:
                                  const NereusSDR::SkuUiProfile* sku = nullptr);
 
 signals:
+    void nnrDiagnosticsRequested(int testMode, int outputMode);
     void frequencyChanged(double freq);
     // Phase 3P-II Task 64: emitted when frequency crosses a ham-band boundary.
     // Uses Band::bandFromFrequency(freq) to detect crossings; emits once per
     // distinct Band change. Consumed by MainWindow to notify PgxlConnection.
     void bandChanged(NereusSDR::Band newBand);
+    // Remote Daemon R2 Task 12: per-slice S-meter readings changed.
+    void signalStrengthDbmChanged(double dbm);
+    void signalPeakDbmChanged(double dbm);
+    void signalAverageDbmChanged(double dbm);
+    // Parity Task 15: the ADC and AGC readings changed.
+    void adcPeakDbfsChanged(double dbfs);
+    void adcAverageDbfsChanged(double dbfs);
+    void agcGainDbChanged(double db);
+    void agcPeakDbChanged(double db);
+    void agcAverageDbChanged(double db);
+    // Parity Task 16: minNotchWidthHz changed.
+    void minNotchWidthHzChanged(double hz);
+    /// The frequency, diversity phase or gain moved the pattern.
+    void diversityPatternChanged(const QString& pattern);
+    /// The RADE decoder gained or lost sync.
+    void radeSyncedChanged(bool synced);
+    /// The RADE decoder reported a new frequency offset (Hz).
+    void radeFreqOffsetHzChanged(double hz);
+    /// Why this RADE slice has no working decoder changed (empty: none).
+    void radeReasonChanged(const QString& reason);
+    void stationAutoAgcNoiseFloorChanged();
     void dspModeChanged(NereusSDR::DSPMode mode);
     void filterChanged(int low, int high);
     void agcModeChanged(NereusSDR::AGCMode mode);
@@ -933,6 +1537,8 @@ signals:
     void chainIndexChanged(int idx);
     void ddcIndexChanged(int ddc);
     void streamIndexChanged(int idx);      // Phase 3F Sub-Epic I
+    void streamCtunPinnedChanged(bool pinned);
+    void streamEpochChanged(quint64 epoch);
     void shiftOffsetHzChanged(double hz);  // Phase 3F Sub-Epic I
     void panKeyChanged(const QString& key);  // Phase 3F multi-pan routing
     void sampleRateHzChanged(int hz);
@@ -970,6 +1576,33 @@ signals:
     void nbModeChanged(NereusSDR::NbMode v);
     // NR signals (Sub-epic C-1)
     void activeNrChanged(NereusSDR::NrSlot slot);
+    void nnrModelSlotChanged(int value);
+    void nnrMaskFloorDbChanged(double value);
+    void nnrPositionChanged(NereusSDR::NrPosition value);
+    void nnrAlphaChanged(double value);
+    void nnrAlphaKneeDbChanged(double value);
+    void nnrTauSecondsChanged(double value);
+    void nnrMaxGainDbChanged(double value);
+    void nnrAttackMsChanged(double value);
+    void nnrReleaseMsChanged(double value);
+    void nnrConfigurationChanged();
+    void nnrDiagnosticsChanged();
+    void nnrLastErrorChanged();
+    void nnrEditRejected(const QString& reason);
+    void nnrLimitChanged(int limit);
+    // The operator wants the saved NNR choice back: "Try again", or choosing
+    // a model while a limit is in force.
+    void nnrRetryRequested();
+    // Fix wave I3: setActiveNr() was refused (for example NR3 on a Core with
+    // no NR3 model). The active reducer is unchanged; the reason is plain
+    // words for the operator.
+    void nrSelectionRefused(const QString& reason);
+    // Slice control plan Task 5: isReadOnlyListener() changed.
+    void readOnlyListenerChanged(bool readOnly);
+    // Slice control plan Task 5: a change was held back because this window
+    // only listens to the slice; `reason` is the Core's listener words.
+    void listenerWriteHeld(const QString& reason);
+
     void nr1TapsChanged(int v);
     void nr1DelayChanged(int v);
     void nr1GainChanged(double v);
@@ -1029,6 +1662,9 @@ signals:
     // ── Phase 3O VAX routing ──────────────────────────────────────────────────
     void vaxChannelChanged(int ch);
 
+    // ── R-R3-45: speakers or headphones ──
+    void outputRouteChanged(NereusSDR::SliceModel::OutputRoute route);
+
     // ── Phase 3J-2 Task D5: live SNR (NereusSDR-native) ──
     void snrDbChanged(double db);
 
@@ -1036,6 +1672,7 @@ signals:
     void lastRadeRxCallsignChanged(const QString& callsign);
 
 private:
+    void applyFrequency(double freq);
     // Phase 3R Task J3 - resolves the RadeChannel model-path argument
     // used when setDspMode transitions into DSPMode::RADE_U or
     // DSPMode::RADE_L.  Lookup
@@ -1050,17 +1687,49 @@ private:
 
     double  m_frequency{14225000.0};     // Default: 14.225 MHz (20m USB)
     Band    m_currentBand{Band::Band20m}; // Phase 3P-II Task 64: tracks last emitted band
+    // Remote Daemon R2 Task 12: per-slice S-meter reading, dBm. -140.0
+    // matches MeterPoller.cpp's smeterDbm / TciServer.cpp's rx1Dbm "no WDSP
+    // data yet" fallback.
+    double  m_signalStrengthDbm{-140.0};
+    double  m_signalPeakDbm{-140.0};
+    double  m_signalAverageDbm{-140.0};
+    // Parity Task 15: no reading (-400, SliceMeterPump::kNoReadingDbm)
+    // until the pump or the mirror writes one.
+    double  m_adcPeakDbfs{-400.0};
+    double  m_adcAverageDbfs{-400.0};
+    double  m_agcGainDb{-400.0};
+    double  m_agcPeakDb{-400.0};
+    double  m_agcAverageDb{-400.0};
+    // Parity Task 16: 0 until a channel (or the Core) gives one.
+    double  m_minNotchWidthHz{0.0};
+    // The diversityPattern last read or announced, so an input change that
+    // leaves the rounded pattern as it was announces nothing.
+    mutable QString m_diversityPatternLast;
+    // The RADE decoder's sync and frequency offset (radeSynced,
+    // radeFreqOffsetHz).
+    bool    m_radeSynced{false};
+    double  m_radeFreqOffsetHz{0.0};
+    // Why this RADE slice has no working decoder (radeReason).
+    QString m_radeReason;
+    void noteDiversityPatternInputs();
+    double  m_stationAutoAgcNoiseFloorDbm{-200.0};
+    bool    m_stationAutoAgcNoiseFloorValid{false};
+    quint64 m_stationAutoAgcNoiseFloorGeneration{0};
+    bool    m_streamCtunPinned{false};
+    quint64 m_streamEpoch{0};
     DSPMode m_dspMode{DSPMode::USB};
     int     m_filterLow{100};            // USB default from Thetis F5
     int     m_filterHigh{3000};
     AGCMode m_agcMode{AGCMode::Med};
-    int     m_stepHz{100};               // From Thetis tune_step_list[5] = 100 Hz
+    // From Thetis console.cs:1984 [v2.10.3.15]: Thetis starts at tune_step_index = 2 (10 Hz).
+    int     m_stepHz{100};               // kTuneStepList[5]; NereusSDR default kept pending maintainer review
     int     m_afGain{50};                // 0-100, maps to 0.0-1.0 volume
     int     m_rfGain{80};                // 0-100, maps to AGC gain
     QString m_rxAntenna{QStringLiteral("ANT1")};
     QString m_txAntenna{QStringLiteral("ANT1")};
     bool    m_active{false};
     bool    m_txSlice{false};
+    bool    m_txMarkAllowed{true};  // Task 77, ruling 5.4a
     int     m_sliceIndex{0};
     int     m_panId{-1};
     QString m_panKey;                    // Phase 3F: owning pan id ("pan-N")
@@ -1110,56 +1779,86 @@ private:
     // --- NR state (Sub-epic C-1) ---
     // See Thetis console.cs:43297-43450 SelectNR() [v2.10.3.13].
     NereusSDR::NrSlot m_activeNr{NereusSDR::NrSlot::Off};
+    NnrSettings m_nnrSettings;
+    NnrDiagnostics m_nnrDiagnostics;
+    NnrSettingsApplier m_nnrSettingsApplier;
+    NrSelectionApplier m_nrSelectionApplier;
+    // Slice control plan Task 5 (see isReadOnlyListener()).
+    bool m_readOnlyListener{false};
+    QString m_readOnlyListenerReason;
+    StationApplyProbe m_stationApplyProbe;
+    // A setter's check: true (and announced) when `requested` would change
+    // the value on a read-only listener outside the Core's own apply.
+    template <typename T, typename U>
+    bool holdsListenerWrite(const T& current, const U& requested)
+    {
+        if (!m_readOnlyListener || current == requested) {
+            return false;
+        }
+        return holdForListener();
+    }
+    QString m_settingsRadioMac;
+    QString m_nnrLastError;
+    int m_nnrLimit{0};   // R-R3-40 runtime only; see nnrLimit()
+    bool m_nnrLimitFromCore{false};   // set by the station mirror; see nnrLimitText()
+    void setNnrLastError(const QString& error);
 
-    // NR1 — from RxChannel::Nr1Tuning defaults (Task 8 commit 8747ae4),
-    // which in turn match Thetis radio.cs:673-699 [v2.10.3.13].
-    int    m_nr1Taps    = 64;           // radio.cs:674   nr_taps = 64
-    int    m_nr1Delay   = 16;           // radio.cs:675   nr_delay = 16
-    double m_nr1Gain    = 16e-4;        // radio.cs:677   nr_gain = 16e-4 (WDSP-domain)
-    double m_nr1Leakage = 10e-7;        // radio.cs:679   nr_leak = 10e-7 (WDSP-domain)
-    NereusSDR::NrPosition m_nr1Position = NereusSDR::NrPosition::PostAgc;  // setup.cs:8723
+
+    // NR1: Thetis's NR spinbox defaults as Thetis hands them to
+    // SetRXAANRVals (taps 64, delay 16, gain 100 x 1e-6, leak 100 x 1e-3;
+    // see ControlRanges.h). Gain and leak are WDSP-domain values.
+    int    m_nr1Taps    = static_cast<int>(ControlRanges::kNr1Taps.defaultValue);
+    int    m_nr1Delay   = static_cast<int>(ControlRanges::kNr1Delay.defaultValue);
+    double m_nr1Gain    = ControlRanges::kNr1Gain.defaultValue;
+    double m_nr1Leakage = ControlRanges::kNr1Leak.defaultValue;
+    NereusSDR::NrPosition m_nr1Position =
+        static_cast<NereusSDR::NrPosition>(ControlRanges::kNrPositionDefault);
 
     // NR2 — from RxChannel::Nr2Tuning defaults (Task 8 commit 8747ae4),
     // matching Thetis radio.cs:2062-2213, setup.cs:34711-34748 [v2.10.3.13].
-    NereusSDR::EmnrGainMethod m_nr2GainMethod = NereusSDR::EmnrGainMethod::Gamma;  // setup.cs:17359-17468
-    NereusSDR::EmnrNpeMethod  m_nr2NpeMethod  = NereusSDR::EmnrNpeMethod::Osms;    // setup.cs:17374-17404
+    NereusSDR::EmnrGainMethod m_nr2GainMethod = static_cast<NereusSDR::EmnrGainMethod>(
+        ControlRanges::kNr2GainMethod.defaultValue);   // Gamma
+    NereusSDR::EmnrNpeMethod  m_nr2NpeMethod  = static_cast<NereusSDR::EmnrNpeMethod>(
+        ControlRanges::kNr2NpeMethod.defaultValue);    // OSMS
     double m_nr2TrainT1 = -0.5;         // EMNR zetaThresh default (unsigned domain)
     double m_nr2TrainT2 = 0.20;         // EMNR t2 default
-    bool   m_nr2AeFilter = true;        // radio.cs:2103  rx_nr2_ae_run = 1
+    bool   m_nr2AeFilter = ControlRanges::kNr2AeFilter.defaultValue != 0.0;  // rx_nr2_ae_run = 1
     NereusSDR::NrPosition m_nr2Position = NereusSDR::NrPosition::PostAgc;    // radio.cs:2237
-    bool   m_nr2Post2Run    = false;    // radio.cs:2122  default off
+    bool   m_nr2Post2Run    = ControlRanges::kNr2Post2Run.defaultValue != 0.0;  // default off
     double m_nr2Post2Level  = 15.0;    // radio.cs:2139  rx_nr2_ae_post2_nlevel = 15.0
-    double m_nr2Post2Factor = 15.0;    // radio.cs:2158  rx_nr2_ae_post2_factor = 15.0
-    double m_nr2Post2Rate   = 5.0;     // radio.cs:2177  rx_nr2_ae_post2_rate = 5.0
+    double m_nr2Post2Factor = ControlRanges::kNr2Post2Factor.defaultValue;  // 15.0
+    double m_nr2Post2Rate   = ControlRanges::kNr2Post2Rate.defaultValue;    // 5.0
     int    m_nr2Post2Taper  = 12;      // radio.cs:2196  rx_nr2_ae_post2_taper = 12
 
     // NR3 — from RxChannel::Nr3Tuning defaults (Task 8 commit 8747ae4),
     // matching Thetis radio.cs:2257-2311, setup.cs:35460-35462 [v2.10.3.13].
-    NereusSDR::NrPosition m_nr3Position = NereusSDR::NrPosition::PostAgc;  // radio.cs:2275
-    bool   m_nr3UseDefaultGain = true;  // setup.cs:35460  RXANR3FixedGain default
+    NereusSDR::NrPosition m_nr3Position =
+        static_cast<NereusSDR::NrPosition>(ControlRanges::kNr3Position.defaultValue);  // Post-AGC
+    bool   m_nr3UseDefaultGain = ControlRanges::kNr3UseDefaultGain.defaultValue != 0.0;  // fixed gain
 
-    // NR4 — from RxChannel::Nr4Tuning defaults (Task 8 commit 8747ae4),
-    // matching Thetis radio.cs:2312-2355, setup.cs:34511-34527 [v2.10.3.13].
-    double m_nr4Reduction  = 10.0;     // setup.cs default
-    double m_nr4Smoothing  = 65.0;     // setup.cs default
-    double m_nr4Whitening  = 2.0;      // setup.cs default
-    double m_nr4Rescale    = 2.0;      // setup.cs default
-    double m_nr4PostThresh = -10.0;    // setup.cs default
-    NereusSDR::SbnrAlgo m_nr4Algo = NereusSDR::SbnrAlgo::Algo2;  // setup.cs:34511-34527
+    // NR4: Thetis defaults from ControlRanges.h; saved settings override these.
+    double m_nr4Reduction  = ControlRanges::kNr4Reduction.defaultValue;   // 10
+    double m_nr4Smoothing  = ControlRanges::kNr4Smoothing.defaultValue;   // 0
+    double m_nr4Whitening  = ControlRanges::kNr4Whitening.defaultValue;   // 0
+    double m_nr4Rescale    = ControlRanges::kNr4Rescale.defaultValue;     // 2
+    double m_nr4PostThresh = ControlRanges::kNr4PostThresh.defaultValue;  // -10
+    NereusSDR::SbnrAlgo m_nr4Algo =
+        static_cast<NereusSDR::SbnrAlgo>(ControlRanges::kNr4Algo.defaultValue);  // Algo 1
 
     // DFNR — AetherSDR DeepFilterFilter defaults [@0cd4559] (post-WDSP, not
     // in Thetis). m_attenLimit{100.0f}, m_postFilterBeta{0.0f} verbatim.
-    double m_dfnrAttenLimit     = 100.0;
-    double m_dfnrPostFilterBeta = 0.0;
+    double m_dfnrAttenLimit     = ControlRanges::kDfnrAttenLimit.defaultValue;      // 100
+    double m_dfnrPostFilterBeta = ControlRanges::kDfnrPostFilterBeta.defaultValue;  // 0
 
     // BNR + MNR — AetherSDR filter defaults (post-WDSP, not in Thetis).
     double m_bnrStrength = 1.0;
-    double m_mnrStrength = 1.0;
-    double m_mnrOversub  = 4.0;    // MacNRFilter::DEF_OVER;   range 0.01-1000 at filter
-    double m_mnrFloor    = 0.05;   // MacNRFilter::DEF_FLOOR;  range 0.0-2.0 at filter
-    double m_mnrAlpha    = 0.92;   // MacNRFilter::DEF_ALPHA;  range 0.0-1.0
-    double m_mnrBias     = 1.2;    // MacNRFilter::DEF_BIAS;   range 0.0-10.0
-    double m_mnrGsmooth  = 0.70;   // MacNRFilter::DEF_GSMOOTH; range 0.0-1.0
+    // MNR: MacNRFilter's DEF_* values, from ControlRanges.h.
+    double m_mnrStrength = ControlRanges::kMnrStrengthDefault;
+    double m_mnrOversub  = ControlRanges::kMnrOversubDefault;  // range 0.01-1000 at filter
+    double m_mnrFloor    = ControlRanges::kMnrFloorDefault;    // range 0.0-2.0 at filter
+    double m_mnrAlpha    = ControlRanges::kMnrAlphaDefault;    // range 0.0-1.0
+    double m_mnrBias     = ControlRanges::kMnrBiasDefault;     // range 0.0-10.0
+    double m_mnrGsmooth  = ControlRanges::kMnrGsmoothDefault;  // range 0.0-1.0
 
     bool   m_snbEnabled{false};       // Neutral default — feature off at start
     bool   m_anfEnabled{false};       // Neutral default, feature off at start
@@ -1196,6 +1895,9 @@ private:
 
     // ── Phase 3O VAX routing ──────────────────────────────────────────────────
     std::atomic<int> m_vaxChannel{0};  // 0=Off, 1..4=VAX N. Atomic for audio-thread-safe reads.
+    VaxChannelStore m_vaxChannelStore;  // R-R3-44: see setVaxChannelStore()
+    std::atomic<int> m_outputRoute{0};  // R-R3-45: OutputRoute; 0 = speakers
+    bool m_outputRoutePersisted{true};  // R-R3-45: see setOutputRoutePersisted()
 
     // ── Phase 3J-2 Task D5: live SNR (NereusSDR-native) ──
     // Default NaN means "no SNR available." Populated by RadeChannel
@@ -1245,6 +1947,21 @@ private:
     // Constructor helper: build the timer + connect its expiry lambda.
     // Called from both SliceModel ctor overloads.
     void setupRadeIdleClearTimer();
+
+    // The RADE decoder's start and stop for a mode change from oldMode to
+    // newMode (m_dspMode already holds newMode): create, destroy or
+    // recreate the slice's RadeChannel and clear the old decoder's
+    // callsign, sync and idle timer. Every path that changes the mode runs
+    // it, setDspMode and restoreFromSettings (band buttons, a device's
+    // slice made again) alike, so a slice that reads RADE always has its
+    // decoder and one that does not has none. No-op when neither mode is
+    // RADE.
+    void applyRadeModeChange(DSPMode oldMode, DSPMode newMode);
+    // restoreReceiveState's offline seam, before the radio and its DSP
+    // exist: the restored layout's own RADE start
+    // (RadioModel::activateRestoredRadeReceiveOwner) runs later, so
+    // applyRadeModeChange creates no decoder while this is set.
+    bool m_radeStartDeferredToAdmission{false};
 };
 
 } // namespace NereusSDR

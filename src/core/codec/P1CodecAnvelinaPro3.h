@@ -52,8 +52,9 @@ namespace NereusSDR {
 // the G2-class branch, matching Thetis console.cs:8218 [v2.10.3.13]
 // which lists ANVELINAPRO3 in the same case as ANAN_G2 / 7000D / 8000D.
 //
-// Phase 3F: applyDdcAssignment overridden with a stub; real implementation
-// queued for Sub-Epic B Task 10 per Thetis UpdateDDCs Hermes-class branch.
+// applyDdcAssignment returns P1CodecStandard's Orion-class layout (plan
+// Task 11): Thetis's UpdateDDCs Orion case, with GetDDC's Protocol 1 frame
+// slots (RX1 slot 0, RX2 slot 2, PureSignal pair slots 3 + 4).
 class P1CodecAnvelinaPro3 : public P1CodecStandard {
 public:
     void composeCcForBank(int bank, const CodecContext& ctx, quint8 out[5]) const override;

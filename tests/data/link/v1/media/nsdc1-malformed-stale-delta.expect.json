@@ -1,0 +1,11 @@
+{
+    "codec": "nsdc1",
+    "expect": {
+        "after": [
+            "media-nsdc1-full"
+        ],
+        "disposition": "rejected",
+        "keyframe": false,
+        "reason": "malformed"
+    }
+}

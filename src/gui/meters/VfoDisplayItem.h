@@ -12,6 +12,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-24 : setUnavailableText: says the container's slice is not
+//                 open instead of its last frequency (R-R3-49, R-R3-21).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -83,6 +86,11 @@ public:
     void setTransmitting(bool tx) { m_transmitting = tx; }
     bool isTransmitting() const noexcept { return m_transmitting; }
     void setSplit(bool split) { m_split = split; }
+    // R-R3-49 / R-R3-21 (fix wave M2): plain words shown instead of the
+    // frequency and labels while the container's slice is not open (for
+    // example "Slice B is not open"); empty shows the slice. Not saved.
+    void setUnavailableText(const QString& text) { m_unavailableText = text; }
+    QString unavailableText() const { return m_unavailableText; }
 
     void setFrequencyColour(const QColor& c) { m_freqColour = c; }
     QColor frequencyColour() const { return m_freqColour; }
@@ -122,6 +130,7 @@ private:
     QString m_bandLabel{QStringLiteral("20m")};
     bool m_transmitting{false};
     bool m_split{false};
+    QString m_unavailableText;
 
     // Colors from Thetis clsVfoDisplay defaults
     QColor m_freqColour{0xff, 0xa5, 0x00};     // Orange

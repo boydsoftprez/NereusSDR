@@ -19,6 +19,10 @@
 //                  equivalent based on PaCalBoardClass. Section 3.3 of
 //                  P1 full-parity epic. J.J. Boyd (KG4VCF), with
 //                  AI-assisted transformation via Anthropic Claude Code.
+//   2026-09-28 -- Each point's range, step and decimals now Thetis's own
+//                  (paCalPointSpec); each box carries its Setup description
+//                  id (R-R3-49, R-IOS-18). J.J. Boyd (KG4VCF), AI-assisted
+//                  via Anthropic Claude Code.
 // =================================================================
 
 // --- From setup.cs ---
@@ -136,27 +140,6 @@ namespace NereusSDR {
 
 namespace {
 
-// Per-class spinbox range/step. Mirrors the per-board ud{10|100|200}PA{N}W
-// blocks in setup.cs:5404-5594 [v2.10.3.13]. HL2 maps to Anan10 per mi0bot
-// setup.cs:5463-5466 [v2.10.3.13-beta2] (HL2 grouped with ANAN10/ANAN10E
-// for PA cal: shared ud10PA1W..ud10PA10W spinbox set).
-struct ClassSpec {
-    double  rangeMax;
-    double  step;
-    int     decimals;
-};
-
-ClassSpec specFor(PaCalBoardClass cls) noexcept
-{
-    switch (cls) {
-        case PaCalBoardClass::Anan10:     return {15.0,  0.1,  2};
-        case PaCalBoardClass::Anan100:    return {150.0, 1.0,  2};
-        case PaCalBoardClass::Anan8000:   return {300.0, 1.0,  2};
-        case PaCalBoardClass::None:
-        default:                          return {0.0,   0.0,  0};
-    }
-}
-
 // Format the spinbox label as "<value> W" with trailing zeros stripped:
 // "0.5 W" / "10 W" / "100 W" -- not "0.500 W" / "10.0 W". Uses 'g' format
 // with 4 significant digits (max value 200 in production = 3 sig figs).
@@ -255,7 +238,6 @@ void PaCalibrationGroup::rebuildLayout(PaCalBoardClass cls)
         return;
     }
 
-    const ClassSpec spec = specFor(cls);
     PaCalProfile defaults = PaCalProfile::defaults(cls);
 
     for (int i = 1; i <= 10; ++i) {
@@ -269,11 +251,17 @@ void PaCalibrationGroup::rebuildLayout(PaCalBoardClass cls)
         //   value mirrors the label until the user calibrates.
         auto* label = new QLabel(labelForLabelValue(labelValue), this);
         auto* spin  = new QDoubleSpinBox(this);
-        spin->setRange(0.0, spec.rangeMax);
+        // R-R3-49: each point's own Thetis range, step and decimals
+        // (paCalPointSpec cites the ud{10|100|200}PA{N}W boxes).
+        const PaCalPointSpec spec = paCalPointSpec(cls, i);
+        spin->setRange(0.0, spec.maximum);
         spin->setSingleStep(spec.step);
         spin->setDecimals(spec.decimals);
         spin->setValue(labelValue);
         spin->setSuffix(tr(" W"));
+        // R-IOS-18: the Setup description's id for this point.
+        spin->setProperty("nereusSetupId",
+                          QStringLiteral("pa.wattMeter.calPoint%1").arg(i));
 
         m_labels[idx] = label;
         m_spins[idx]  = spin;
@@ -293,7 +281,7 @@ void PaCalibrationGroup::onSpinChanged(int idx, double v)
     // Persist immediately. Mirrors CalibrationTab's groups 1-4 pattern --
     // every UI-driven setter call is followed by an explicit save(); the
     // model-layer setters intentionally do NOT auto-save (see
-    // CalibrationController::setLevelOffsetDb / setFreqCorrectionFactor
+    // CalibrationController::setFreqCorrectionFactor
     // which only emit changed()). Pre-Phase-3A migration this lived in the
     // CalibrationTab spinbox lambda; lost during the move to PaWattMeterPage
     // and surfaced by Codex review on PR #165.

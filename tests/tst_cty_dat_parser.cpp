@@ -31,11 +31,11 @@
 
 using namespace NereusSDR;
 
-// Use the configured source root: __FILE__ can be relative to the build
-// directory, while CTest runs this executable from build/tests/.
+// Qt resolves fixtures from the configured source directory even when
+// compiler caching rewrites __FILE__ to a path relative to the build root.
 static QString resolveCtyDatPath()
 {
-    return QString::fromUtf8(NEREUS_SOURCE_ROOT) + "/cty.dat";
+    return QFINDTESTDATA("../cty.dat");
 }
 
 class TestCtyDatParser : public QObject {

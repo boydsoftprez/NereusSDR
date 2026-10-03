@@ -2,13 +2,19 @@
 // matches Thetis SetComboPreampForHPSDR console.cs:40755-40825 [@501e3f5]
 // per board, and that RxApplet.preampComboItemCountForTest() reflects those
 // per-board counts at construction time. Phase 3P-C Step 2 + Step 3.
+// R-R3-46 / R-R3-21 (2026-09-23): in a remote window the combo shows and
+// writes the Core's preamp mode (the `stepAtt` object).
 
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QStackedWidget>
 
 #include "core/BoardCapabilities.h"
 #include "core/HpsdrModel.h"
 #include "core/StepAttenuatorController.h"
+#include "core/StepAttenuatorFacade.h"
 #include "gui/applets/RxApplet.h"
 #include "models/RadioModel.h"
 
@@ -91,9 +97,9 @@ private slots:
         QCOMPARE(int(items.size()), 4);
     }
 
-    // HL2 is not in Thetis SetComboPreampForHPSDR (postdates the switch).
-    // Per spec §8 and mi0bot HL2 LNA design [@c26a8a4]: anan100d 4-step set.
-    // Phase 3P-C Step 2: corrected from 1-item "On only" to 4-item anan100d.
+    // HL2 shares HERMES's branch in mi0bot SetComboPreampForHPSDR
+    // (mi0bot console.cs:41709-41718 [v2.10.3.13-beta2], "MI0BOT: HL2"):
+    // without Alex, the anan100d 4-step set.
     void hl2_four_items()
     {
         auto items = BoardCapsTable::preampItemsForBoard(HPSDRHW::HermesLite, /*alexPresent=*/false);
@@ -102,6 +108,19 @@ private slots:
         QCOMPARE(QLatin1String(items[1].label), QLatin1String("-10dB"));
         QCOMPARE(QLatin1String(items[2].label), QLatin1String("-20dB"));
         QCOMPARE(QLatin1String(items[3].label), QLatin1String("-30dB"));
+    }
+
+    // HL2 with Alex: on/off plus the five Alex items, as HERMES.
+    void hl2_with_alex_seven_items()
+    {
+        auto hl2 = BoardCapsTable::preampItemsForBoard(HPSDRHW::HermesLite, /*alexPresent=*/true);
+        auto hermes = BoardCapsTable::preampItemsForBoard(HPSDRHW::Hermes, /*alexPresent=*/true);
+        QCOMPARE(int(hl2.size()), 7);
+        QCOMPARE(int(hl2.size()), int(hermes.size()));
+        for (std::size_t i = 0; i < hl2.size(); ++i) {
+            QCOMPARE(QLatin1String(hl2[i].label), QLatin1String(hermes[i].label));
+            QCOMPARE(hl2[i].modeInt, hermes[i].modeInt);
+        }
     }
 
     // Angelia (ANAN-100D) no ALEX → 4 items; with ALEX → 7 items.
@@ -167,9 +186,10 @@ private slots:
     {
         auto items = BoardCapsTable::preampItemsForBoard(HPSDRHW::Hermes, /*alexPresent=*/false);
         QCOMPARE(items[0].modeInt, static_cast<int>(PreampMode::On));      // "0dB"
-        QCOMPARE(items[1].modeInt, static_cast<int>(PreampMode::Minus10)); // "-10dB"
-        QCOMPARE(items[2].modeInt, static_cast<int>(PreampMode::Minus20)); // "-20dB"
-        QCOMPARE(items[3].modeInt, static_cast<int>(PreampMode::Minus30)); // "-30dB"
+        // SA step attenuator modes (console.cs:28401-28420 [v2.10.3.15]).
+        QCOMPARE(items[1].modeInt, static_cast<int>(PreampMode::SaMinus10)); // "-10dB"
+        QCOMPARE(items[2].modeInt, static_cast<int>(PreampMode::SaMinus20)); // "-20dB"
+        QCOMPARE(items[3].modeInt, static_cast<int>(PreampMode::SaMinus30)); // "-30dB"
     }
 
     void alex_mode_ints_correct()
@@ -209,6 +229,69 @@ private slots:
         model.setBoardForTest(HPSDRHW::OrionMKII);
         RxApplet applet(nullptr, &model);
         QCOMPARE(applet.preampComboItemCountForTest(), 4);
+    }
+
+    void rxapplet_remote_combo_shows_and_writes_the_cores_preamp()
+    {
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.setBoardForTest(HPSDRHW::Hermes);
+        RxApplet applet(nullptr, &remote);
+        auto* stack = applet.findChild<QStackedWidget*>(QStringLiteral("RxAttenuatorStack"));
+        QVERIFY(stack != nullptr);
+        auto* combo = stack->findChild<QComboBox*>();
+        QVERIFY(combo != nullptr);
+        QCOMPARE(combo->count(), 7);
+        StepAttenuatorFacade* stepAtt = remote.stepAttFacade();
+        stepAtt->setWindowAvailability(true, QString());
+        QVERIFY(combo->isEnabled());
+
+        // The Core's mode is shown...
+        stepAtt->setPreampMode(combo->itemData(3).toInt());
+        QCOMPARE(combo->currentIndex(), 3);
+        // ...and the window's choice is written to the Core's object.
+        combo->setCurrentIndex(5);
+        QCOMPARE(stepAtt->preampMode(), combo->itemData(5).toInt());
+    }
+
+    // R-R3-46: a remote window is built before the Core's radio is known.
+    // When the Core's board arrives (MainWindow hands currentRadioChanged
+    // to setBoardCapabilities) and it is a dual-ADC board, the RX1 preamp
+    // toggle is built then, follows the Core's `stepAtt` object and writes
+    // to it; a single-ADC board hides it again.
+    void rxapplet_remote_rx1_preamp_toggle_arrives_with_the_cores_board()
+    {
+        RadioModel remote(RadioModel::Role::Remote);
+        RxApplet applet(nullptr, &remote);
+        QVERIFY(!remote.boardCapabilities().p2PreampPerAdc);
+        QVERIFY(applet.findChild<QCheckBox*>(QStringLiteral("RxRx1PreampToggle")) == nullptr);
+
+        remote.setBoardForTest(HPSDRHW::OrionMKII);
+        QVERIFY(remote.boardCapabilities().p2PreampPerAdc);
+        applet.setBoardCapabilities(remote.boardCapabilities());
+        auto* toggle = applet.findChild<QCheckBox*>(QStringLiteral("RxRx1PreampToggle"));
+        QVERIFY(toggle != nullptr);
+        QVERIFY(!toggle->isHidden());
+        // Until the Core takes the window's edits it is disabled with the
+        // object's plain reason, like the rest of the row.
+        StepAttenuatorFacade* stepAtt = remote.stepAttFacade();
+        QVERIFY(!toggle->isEnabled());
+        QVERIFY(!toggle->toolTip().isEmpty());
+
+        stepAtt->setWindowAvailability(true, QString());
+        QVERIFY(toggle->isEnabled());
+        stepAtt->setRx1Preamp(true);
+        QVERIFY(toggle->isChecked());
+        toggle->click();
+        QVERIFY(!stepAtt->rx1Preamp());
+
+        // A second board message builds nothing new.
+        applet.setBoardCapabilities(remote.boardCapabilities());
+        QCOMPARE(applet.findChildren<QCheckBox*>(QStringLiteral("RxRx1PreampToggle")).size(), 1);
+
+        // A single-ADC board hides it.
+        remote.setBoardForTest(HPSDRHW::Hermes);
+        applet.setBoardCapabilities(remote.boardCapabilities());
+        QVERIFY(toggle->isHidden());
     }
 };
 

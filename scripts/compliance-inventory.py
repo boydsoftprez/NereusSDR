@@ -19,6 +19,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from header_block import header_text  # noqa: E402
+
 REPO = Path(__file__).resolve().parent.parent
 
 THETIS_PROVENANCE = REPO / "docs" / "attribution" / "THETIS-PROVENANCE.md"
@@ -143,6 +146,12 @@ REQUIRED_MARKERS: dict[str, list[str]] = {
 # WDSP-PROVENANCE.md "10 files with no license headers").
 TEXT_SUFFIXES = {".c", ".h", ".hpp", ".cpp", ".cc", ".py"}
 
+# The header markers must appear in the file's leading comment block (read
+# whole, and never less than 160 lines): the same rule as
+# scripts/verify-thetis-headers.py, the merge gate, through the shared
+# scripts/header_block.py. A fixed character count, and later a fixed line
+# count, failed files whose NereusSDR modification history grew.
+
 # Within wdsp-vendored, these basenames are documented as utility/data/no-
 # header files per WDSP-PROVENANCE.md and must not be flagged. Keep in
 # sync with WDSP_HEADER_EXEMPTIONS in scripts/verify-thetis-headers.py.
@@ -163,7 +172,9 @@ def _verify_markers(path: str, classification: str) -> list[str]:
     if classification == "wdsp-vendored" and abs_path.name in WDSP_NO_HEADER_BASENAMES:
         return []
     try:
-        head = abs_path.read_text(encoding="utf-8", errors="replace")[:8000]
+        head = header_text(
+            abs_path.read_text(encoding="utf-8", errors="replace"), abs_path.suffix
+        )
     except (IsADirectoryError, FileNotFoundError):
         return []
     return [m for m in markers if m not in head]

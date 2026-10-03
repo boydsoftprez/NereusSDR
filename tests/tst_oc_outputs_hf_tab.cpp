@@ -1,6 +1,9 @@
 // no-port-check: smoke test for OC Outputs HF sub-sub-tab UI construction + matrix wiring
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QCheckBox>
+
+#include "core/AppSettings.h"
 
 #include "gui/setup/hardware/OcOutputsHfTab.h"
 #include "core/OcMatrix.h"
@@ -118,6 +121,43 @@ private slots:
         QVERIFY(changed);
         QCOMPARE(static_cast<int>(matrix.pinAction(0)),
                  static_cast<int>(OcMatrix::TXPinAction::Mox));
+    }
+
+    // R-R3-21: the Penny Ext Control checkbox shows the radio's saved value
+    // and saves to the key PennyLaneController reads
+    // (hardware/<mac>/penny/extCtrlEnabled), not the unread
+    // hardware/oc/pennyExtCtrl.
+    void penny_ext_control_uses_the_radio_key()
+    {
+        auto& s = AppSettings::instance();
+        const QString mac = QStringLiteral("aa:bb:cc:00:11:22");
+        const QString perMac = QStringLiteral("hardware/%1/penny/extCtrlEnabled").arg(mac);
+        const QString legacy = QStringLiteral("hardware/oc/pennyExtCtrl");
+        s.remove(legacy);
+        s.setValue(perMac, QStringLiteral("False"));
+
+        RadioModel model;
+        model.pennyLaneControllerMutable().setMacAddress(mac);
+        model.pennyLaneControllerMutable().load();
+        OcMatrix matrix;
+        OcOutputsHfTab tab(&model, &matrix);
+
+        QCheckBox* box = nullptr;
+        for (QCheckBox* c : tab.findChildren<QCheckBox*>()) {
+            if (c->text() == QStringLiteral("Penny Ext Control enabled")) { box = c; }
+        }
+        QVERIFY(box != nullptr);
+        QVERIFY2(!box->isChecked(), "the checkbox must show the radio's saved value");
+
+        box->setChecked(true);
+        QCOMPARE(s.value(perMac).toString(), QStringLiteral("True"));
+        QVERIFY(model.pennyLaneController().extCtrlEnabled());
+        QVERIFY2(!s.contains(legacy), "the unread global key must not be written");
+
+        // A change made elsewhere reaches the checkbox.
+        model.pennyLaneControllerMutable().setExtCtrlEnabled(false);
+        QVERIFY(!box->isChecked());
+        s.remove(perMac);
     }
 };
 

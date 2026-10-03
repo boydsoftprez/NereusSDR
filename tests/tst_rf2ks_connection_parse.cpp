@@ -15,6 +15,9 @@ private slots:
     void parsesOperationalInterface();
     void parsesData();
     void operationalInterfaceCapturesErrorField();
+    // R-R3-47: the device the amp names, and its interface errors as faults.
+    void infoRecordsTheReportedDevice();
+    void interfaceErrorIsOneFaultUntilItChanges();
 };
 
 void Rf2ksConnectionParseTest::parsesInfo() {
@@ -129,6 +132,41 @@ void Rf2ksConnectionParseTest::operationalInterfaceCapturesErrorField() {
     const auto args = spy.takeFirst();
     QCOMPARE(args.at(0).toString(), QString("UNIV"));
     QCOMPARE(args.at(1).toString(), QString("No TCI available"));
+}
+
+void Rf2ksConnectionParseTest::infoRecordsTheReportedDevice() {
+    Rf2ksConnection conn;
+    QVERIFY(conn.reportedDevice().isEmpty());
+    conn.injectJsonForTesting(
+        "/info",
+        R"({"device":"RF2K-S","software_version":{"GUI":200,"controller":267},"custom_device_name":"KG4VCF"})");
+    QCOMPARE(conn.reportedDevice(), Rf2ksConnection::expectedDevice());
+    conn.injectJsonForTesting("/info", R"({"custom_device_name":"KG4VCF"})");
+    QVERIFY(conn.reportedDevice().isEmpty());
+    // Parsing alone never admits anything: identity admission is opt-in
+    // and needs a reply to the connection's own request.
+    QVERIFY(!conn.identityAdmissionRequired());
+    QVERIFY(!conn.isConnected());
+}
+
+void Rf2ksConnectionParseTest::interfaceErrorIsOneFaultUntilItChanges() {
+    Rf2ksConnection conn;
+    QSignalSpy faults(&conn, &Rf2ksConnection::faultObserved);
+    conn.injectJsonForTesting("/operational-interface",
+                              R"({"operational_interface":"TCI","error":""})");
+    QCOMPARE(faults.count(), 0);
+    conn.injectJsonForTesting("/operational-interface",
+                              R"({"operational_interface":"UNIV","error":"No TCI available"})");
+    conn.injectJsonForTesting("/operational-interface",
+                              R"({"operational_interface":"UNIV","error":"No TCI available"})");
+    QCOMPARE(faults.count(), 1);
+    QCOMPARE(faults.at(0).at(0).toString(), QString("interface"));
+    QCOMPARE(faults.at(0).at(1).toString(), QString("No TCI available"));
+    conn.injectJsonForTesting("/operational-interface",
+                              R"({"operational_interface":"TCI","error":""})");
+    conn.injectJsonForTesting("/operational-interface",
+                              R"({"operational_interface":"UNIV","error":"No TCI available"})");
+    QCOMPARE(faults.count(), 2);
 }
 
 QTEST_MAIN(Rf2ksConnectionParseTest)

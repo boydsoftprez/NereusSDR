@@ -269,6 +269,8 @@ void TestTciDispatchSeam::
     QCOMPARE(existingFrames, addedFrames);
     QVERIFY(existingFrames.contains(QStringLiteral("vfo:1,0,18123456;")));
     QVERIFY(existingFrames.contains(QStringLiteral("vfo:1,1,18123456;")));
+    // dds is B's centre (Task 12, R-R3-49): B opened its own stream on the
+    // tune, centred on it, so the centre is the tuned frequency.
     QVERIFY(existingFrames.contains(QStringLiteral("dds:1,18123456;")));
     QVERIFY2(!existingFrames.contains(QStringLiteral("vfo:0,0,18123456;")),
              "the surviving slice must broadcast its own id, not the list "

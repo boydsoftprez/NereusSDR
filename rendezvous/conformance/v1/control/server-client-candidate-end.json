@@ -1,0 +1,9 @@
+{
+  "from": "server",
+  "to": "client",
+  "wire": {
+    "type": "candidate",
+    "candidate": ""
+  },
+  "decodes": true
+}

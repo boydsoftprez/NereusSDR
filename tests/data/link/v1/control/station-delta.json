@@ -1,0 +1,16 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "delta",
+    "key": "slice:0",
+    "properties": [
+      {
+        "ordinal": 15,
+        "name": "signalStrengthDbm",
+        "kind": "f64",
+        "value": -73.5
+      }
+    ]
+  },
+  "decodes": true
+}

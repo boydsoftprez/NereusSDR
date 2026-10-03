@@ -27,6 +27,8 @@
 //                 Downstream `TransmitModel::computeAudioVolume` short-
 //                 circuits (gbb >= 99.5) to a linear-fallback path so
 //                 these slots don't block transmit.
+//   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From clsHardwareSpecific.cs (Thetis v2.10.3.13) ---
@@ -291,6 +293,10 @@ constexpr float lookupHfBand(const HfRow& row, Band band) noexcept {
         case Band::Band14m:
         case Band::Band13m:
         case Band::Band11m:
+        // 2 m: no row in the HF table. Thetis leaves B2M at its 100
+        // ("no output") fill (clsHardwareSpecific.cs:477-479 [v2.10.3.15]),
+        // and its IsOKToTX refuses 2 m (a VHF row), so no 2 m gain is used.
+        case Band::Band2m:
             return kPaGainSentinel;
         case Band::Count:
             // `Count` is not a real band; NereusSDR-internal sentinel.

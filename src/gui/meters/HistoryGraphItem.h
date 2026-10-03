@@ -12,6 +12,11 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23: R-R3-13: a no-reading sample (isNoMeterReading) is not
+//                 pushed, so it moves neither the axis scale nor the line;
+//                 sampleCount0() / sampleCount1() read-only accessors.
+//                 J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -144,6 +149,10 @@ public:
     // --- Data ---
     void setValue(double v) override;   // axis 0 — called by MeterWidget
     void setValue1(double v);           // axis 1 — called by MeterWidget for bindingId1
+
+    // Samples held per axis (R-R3-13: no-reading samples are skipped).
+    int sampleCount0() const { return m_buf0.count; }
+    int sampleCount1() const { return m_buf1.count; }
 
     // --- Multi-layer rendering ---
     Layer renderLayer() const override { return Layer::OverlayDynamic; }

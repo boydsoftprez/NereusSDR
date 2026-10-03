@@ -10,6 +10,44 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-09-23 - R-R3-46: in a remote window the tabs show the Core's
+//                 radio; edits stay off the Core's raw hardware keys.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-23 - R-R3-46: a remote window's receive settings write through
+//                 to the Core, which applies them (radioHardwareVersion 2);
+//                 transmit fields follow the transmit permission.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: the XVTR and Bandwidth Monitor tabs stay hidden
+//                 (UnbuiltFeatures) until their features are built.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-24 - R-R3-49: the Diversity tab is removed (DiversityTab
+//                 deleted); saved diversity/* values stay in the file.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-25 - R-R3-46 / R-R3-49 (remote-window parity Task 13): the OC
+//                 transmit pins close on the air in both windows (Thetis
+//                 UpdateForHotSwitch); the pin actions and transmit
+//                 calibration follow transmitSettingsVersion 8, User Dig Out
+//                 the transmit settings gate. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-09-26 - R-R3-46 / R-R3-49 (remote-window parity Task 14): HL2
+//                 Options' I2C tool and Pin Control and the Alex-1 tab's three
+//                 transmit high-pass switches follow radioHardwareVersion 7.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-28 - R-R3-46 / R-R3-49: the Alex Filters tabs' receive filter rows
+//                (per-row bypass and edges, Alex-2 master bypass) select the
+//                receive high-pass as Thetis's setAlexHPF /
+//                setBPF1ForOrionIISaturn / setAlex2HPF do (radioHardwareVersion
+//                8). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - R-R3-46 / R-R3-49: the Alex-1 Filters tab's low-pass rows
+//                and 6m/ByPass on RX select the low-pass as Thetis's
+//                setAlexLPF does (radioHardwareVersion 10). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-29 - HL2 Options' Enable CL2, CL2 frequency and External 10 MHz
+//                follow radioHardwareVersion 11 in a remote window.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-09-30 - HL2 Options' Swap audio channels follows
+//                radioHardwareVersion 13 in a remote window. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -58,24 +96,27 @@
 //============================================================================================//
 
 #include "HardwarePage.h"
+#include "gui/UnbuiltFeatures.h"
 
 #include "hardware/RadioInfoTab.h"
 #include "hardware/AntennaAlexTab.h"
 #include "hardware/OcOutputsTab.h"
 #include "hardware/XvtrTab.h"
-#include "hardware/DiversityTab.h"
 #include "hardware/CalibrationTab.h"
 #include "hardware/Hl2IoBoardTab.h"
 #include "hardware/Hl2OptionsTab.h"
 #include "hardware/BandwidthMonitorTab.h"
 
 #include "core/AppSettings.h"
+#include "core/accessories/AlexAntennaFacade.h"
 #include "core/BoardCapabilities.h"
 #include "core/HardwareProfile.h"
 #include "core/RadioDiscovery.h"
+#include "core/session/IStationLink.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 
+#include <QLabel>
 #include <QTabWidget>
 #include <QVBoxLayout>
 
@@ -93,6 +134,14 @@ HardwarePage::HardwarePage(RadioModel* model, QWidget* parent)
     m_tabs = new QTabWidget(this);
     m_tabs->setTabPosition(QTabWidget::North);
     contentLayout()->setContentsMargins(0, 0, 0, 0);
+    // R-R3-46: why a remote window cannot change these, when it cannot.
+    m_remote = model != nullptr && !model->ownsLocalDsp();
+    m_remoteNotice = new QLabel(this);
+    m_remoteNotice->setObjectName(QStringLiteral("hardwareConfigUnavailable"));
+    m_remoteNotice->setWordWrap(true);
+    m_remoteNotice->setMargin(8);
+    m_remoteNotice->hide();
+    contentLayout()->addWidget(m_remoteNotice);
     contentLayout()->addWidget(m_tabs);
 
     // ── Create stub tab widgets ───────────────────────────────────────────────
@@ -100,7 +149,6 @@ HardwarePage::HardwarePage(RadioModel* model, QWidget* parent)
     m_antennaAlexTab  = new AntennaAlexTab(model, this);
     m_ocOutputsTab    = new OcOutputsTab(model, this);
     m_xvtrTab         = new XvtrTab(model, this);
-    m_diversityTab    = new DiversityTab(model, this);
     m_paCalTab        = new CalibrationTab(model, this);
     m_hl2OptionsTab   = new Hl2OptionsTab(model, this);
     m_hl2IoTab        = new Hl2IoBoardTab(model, this);
@@ -114,11 +162,15 @@ HardwarePage::HardwarePage(RadioModel* model, QWidget* parent)
     m_antennaAlexIdx = m_tabs->addTab(m_antennaAlexTab, tr("Antenna / ALEX"));
     m_ocOutputsIdx   = m_tabs->addTab(m_ocOutputsTab,   tr("OC Outputs"));
     m_xvtrIdx        = m_tabs->addTab(m_xvtrTab,        tr("XVTR"));
-    m_diversityIdx   = m_tabs->addTab(m_diversityTab,   tr("Diversity"));
     m_paCalIdx       = m_tabs->addTab(m_paCalTab,       tr("Calibration"));
     m_hl2OptionsIdx  = m_tabs->addTab(m_hl2OptionsTab,  tr("HL2 Options"));
     m_hl2IoIdx       = m_tabs->addTab(m_hl2IoTab,       tr("HL2 I/O"));
     m_bwMonitorIdx   = m_tabs->addTab(m_bwMonitorTab,   tr("Bandwidth Monitor"));
+    // R-R3-49: tabs whose feature is not built yet stay hidden, before and
+    // after a radio is known (onCurrentRadioChanged ANDs the same check).
+    m_tabs->setTabVisible(m_xvtrIdx, UnbuiltFeatures::isBuilt(UnbuiltFeature::Transverters));
+    m_tabs->setTabVisible(m_bwMonitorIdx,
+                          UnbuiltFeatures::isBuilt(UnbuiltFeature::BandwidthMonitor));
 
     // ── Wire per-tab settingChanged → write-through persistence (Task 21) ─────
     // Lambda helper: generic connect for any tab type that has settingChanged.
@@ -148,13 +200,28 @@ HardwarePage::HardwarePage(RadioModel* model, QWidget* parent)
             this,             &HardwarePage::hpfBypassOnPsChanged);
     wire(m_ocOutputsTab,   QStringLiteral("ocOutputs"));
     wire(m_xvtrTab,        QStringLiteral("xvtr"));
-    wire(m_diversityTab,   QStringLiteral("diversity"));
     wire(m_paCalTab,       QStringLiteral("paCalibration"));
     wire(m_hl2OptionsTab,  QStringLiteral("hl2Options"));
     wire(m_hl2IoTab,       QStringLiteral("hl2IoBoard"));
     wire(m_bwMonitorTab,   QStringLiteral("bandwidthMonitor"));
 
     // ── Listen for live radio connection so sub-tabs populate ─────────────────
+    if (m_remote) {
+        if (AlexAntennaFacade* alex = m_model->alexAntennaFacade()) {
+            connect(alex, &AlexAntennaFacade::windowAvailabilityChanged,
+                    this, [this](bool) { applyRemoteAvailability(); });
+        }
+        applyRemoteAvailability();
+    }
+
+    // R-R3-46 / R-R3-49 (parity Task 13): the OC transmit pins close while
+    // the radio is on the air, in a local window and a remote one alike.
+    if (m_model) {
+        connect(m_model, &RadioModel::coreOnAirChanged,
+                this, [this](bool) { applyTransmitHardwareGates(); });
+    }
+    applyTransmitHardwareGates();
+
     if (m_model) {
         connect(m_model, &RadioModel::currentRadioChanged,
                 this, &HardwarePage::onCurrentRadioChanged);
@@ -162,6 +229,11 @@ HardwarePage::HardwarePage(RadioModel* model, QWidget* parent)
         // now. Otherwise we'd show empty fields until the next reconnect.
         if (m_model->isConnected() && m_model->connection()) {
             onCurrentRadioChanged(m_model->connection()->radioInfo());
+        } else if (!m_model->ownsLocalDsp()
+                   && !m_model->currentRadioInfo().macAddress.isEmpty()) {
+            // R-R3-46: a remote window has no connection of its own; the
+            // Core's radio is the model's stored radio info.
+            onCurrentRadioChanged(m_model->currentRadioInfo());
         }
     }
 }
@@ -190,6 +262,13 @@ void HardwarePage::onTabSettingChanged(const QString& tabKey,
                                         const QVariant& value)
 {
     if (m_currentMac.isEmpty()) { return; } // no radio connected yet
+    // R-R3-46: in a remote window the tabs show the Core's radio and write
+    // through to its settings for that radio, as a local window writes its
+    // own. The Core then reloads the controllers that hold them (its
+    // hardware apply step), so the radio changes now and the Core's later
+    // saves keep the change. Against a Core that does not offer that, the
+    // edit is dropped (the tabs are disabled with the reason).
+    if (m_remote && !remoteEditsAvailable()) { return; }
 
     // The tab emits keys like "radioInfo/sampleRate"; strip the leading tabKey/
     // prefix if already included, or compose it.
@@ -236,8 +315,8 @@ void HardwarePage::onCurrentRadioChanged(const RadioInfo& info)
     m_tabs->setTabText(m_ocOutputsIdx,
         caps.hasIoBoardHl2 ? tr("Hermes Lite Control") : tr("OC Outputs"));
 
-    m_tabs->setTabVisible(m_xvtrIdx,        caps.xvtrJackCount > 0);
-    m_tabs->setTabVisible(m_diversityIdx,   caps.hasDiversityReceiver);
+    m_tabs->setTabVisible(m_xvtrIdx,        caps.xvtrJackCount > 0
+                                            && UnbuiltFeatures::isBuilt(UnbuiltFeature::Transverters));
     // Calibration tab is always visible — its 4 remaining groups (Freq Cal,
     // Level Cal, HPSDR Diag, TX Display) apply to every board, and Group 5
     // (Volts/Amps Cal) is harmless on boards without integrated PA. PA-cal
@@ -246,14 +325,14 @@ void HardwarePage::onCurrentRadioChanged(const RadioInfo& info)
     // category gate in SetupDialog.cpp.
     m_tabs->setTabVisible(m_hl2OptionsIdx,  caps.hasIoBoardHl2);
     m_tabs->setTabVisible(m_hl2IoIdx,       caps.hasIoBoardHl2);
-    m_tabs->setTabVisible(m_bwMonitorIdx,   caps.hasBandwidthMonitor);
+    m_tabs->setTabVisible(m_bwMonitorIdx,   caps.hasBandwidthMonitor
+                                            && UnbuiltFeatures::isBuilt(UnbuiltFeature::BandwidthMonitor));
 
     // Populate each tab with the new board info.
     m_radioInfoTab->populate(info, caps);
     m_antennaAlexTab->populate(info, caps);
     m_ocOutputsTab->populate(info, caps);
     m_xvtrTab->populate(info, caps);
-    m_diversityTab->populate(info, caps);
     m_paCalTab->populate(info, caps);
     m_hl2OptionsTab->populate(info, caps);
     m_hl2IoTab->populate(info, caps);
@@ -266,7 +345,6 @@ void HardwarePage::onCurrentRadioChanged(const RadioInfo& info)
         m_antennaAlexTab->restoreSettings( filterPrefix(all, QStringLiteral("antennaAlex/")));
         m_ocOutputsTab->restoreSettings(   filterPrefix(all, QStringLiteral("ocOutputs/")));
         m_xvtrTab->restoreSettings(        filterPrefix(all, QStringLiteral("xvtr/")));
-        m_diversityTab->restoreSettings(   filterPrefix(all, QStringLiteral("diversity/")));
         m_paCalTab->restoreSettings(       filterPrefix(all, QStringLiteral("paCalibration/")));
         m_hl2OptionsTab->restoreSettings(  filterPrefix(all, QStringLiteral("hl2Options/")));
         m_hl2IoTab->restoreSettings(       filterPrefix(all, QStringLiteral("hl2IoBoard/")));
@@ -274,9 +352,136 @@ void HardwarePage::onCurrentRadioChanged(const RadioInfo& info)
     }
 }
 
+// ── Remote availability and transmit permission (R-R3-46) ────────────────────
+
+bool HardwarePage::remoteEditsAvailable() const
+{
+    const AlexAntennaFacade* alex = m_model ? m_model->alexAntennaFacade() : nullptr;
+    return alex != nullptr && alex->windowAvailable();
+}
+
+void HardwarePage::applyRemoteAvailability()
+{
+    if (!m_remote) {
+        return;
+    }
+    const bool available = remoteEditsAvailable();
+    const AlexAntennaFacade* alex = m_model ? m_model->alexAntennaFacade() : nullptr;
+    const QString reason = available || alex == nullptr ? QString()
+                                                        : alex->windowUnavailableReason();
+    m_tabs->setEnabled(available);
+    m_tabs->setToolTip(reason);
+    m_remoteNotice->setText(reason);
+    m_remoteNotice->setVisible(!available && !reason.isEmpty());
+}
+
+void HardwarePage::setTransmitPermitted(bool permitted, const QString& reason)
+{
+    m_antennaAlexTab->setTransmitPermitted(permitted, reason);
+    m_ocOutputsTab->setTransmitPermitted(permitted, reason);
+    m_hl2OptionsTab->setTransmitPermitted(permitted, reason);
+    m_hl2IoTab->setTransmitPermitted(permitted, reason);
+}
+
+void HardwarePage::setTransmitSettingsPermitted(bool permitted, const QString& reason)
+{
+    m_ocOutputsTab->setUserDigOutPermitted(permitted, reason);
+    applyTransmitHardwareGates();
+}
+
+void HardwarePage::setTransmitSettingsPermittedAt(int /*version*/, bool /*permitted*/,
+                                                  const QString& /*reason*/)
+{
+    // The dialog pushes each version on every link change; the gates here
+    // read the link and the on-air state themselves (below), since the
+    // version 8 push also closes on the air and part of version 8 does not.
+    applyTransmitHardwareGates();
+}
+
+void HardwarePage::applyTransmitHardwareGates()
+{
+    if (!m_ocOutputsTab || !m_paCalTab || !m_hl2IoTab) {
+        return;
+    }
+    // R-R3-46 / R-R3-49 (parity Task 13): a local window changes its own
+    // radio; a remote one only a Core at transmitSettingsVersion 8.
+    const IStationLink* link = m_model ? m_model->stationLink() : nullptr;
+    const bool offered = !m_remote || (link != nullptr && link->transmitSettingsAvailable(8));
+    const QString notOffered = IStationLink::transmitSettingsUnavailableReason();
+    // Thetis greys the TX pin boxes while MOX is on unless OC hot switching
+    // is allowed, which NereusSDR does not build (the box is hidden), so
+    // they close on the air in both windows. The pin actions, TX Display
+    // Cal and Volts/Amps Calibration have no such rule in Thetis.
+    // From Thetis setup.cs:21944 [v2.10.3.15] UpdateForHotSwitch
+    //   bool enable = !tx || (tx && chkAllowHotSwitching.Checked);
+    const bool onAir = m_model != nullptr && m_model->isCoreOnAir();
+    m_ocOutputsTab->setTransmitPinsPermitted(offered && !onAir,
+                                             offered ? RadioModel::onAirReason() : notOffered);
+    m_ocOutputsTab->setPinActionsPermitted(offered, notOffered);
+    m_paCalTab->setTransmitCalibrationPermitted(offered, notOffered);
+    // The N2ADR switch: a Core at version 8 applies its whole preset, so
+    // its tooltip no longer says it moves the receive filters only.
+    m_hl2IoTab->setCoreAppliesWholeN2adrPreset(m_remote && offered);
+    // R-R3-46 / R-R3-49 (parity Task 14): a remote window reaches the
+    // Core's I2C bus and output pins, and changes the three transmit
+    // high-pass switches, only on a Core at radioHardwareVersion 7. The
+    // tab itself closes a write and Pin Control on the air; the three
+    // switches have no on-air rule (Thetis sets them with no MOX check).
+    const bool hardwareOffered =
+        !m_remote || (link != nullptr && link->radioHardwareAvailable(7));
+    if (m_hl2OptionsTab) {
+        m_hl2OptionsTab->setIoBoardControlAvailable(
+            hardwareOffered, IStationLink::ioBoardI2cUnavailableReason());
+    }
+    if (m_antennaAlexTab) {
+        m_antennaAlexTab->setHpfSwitchesAvailable(
+            hardwareOffered, IStationLink::alexHpfSwitchesUnavailableReason());
+        // radioHardwareVersion 8: the receive filter rows, which the Core
+        // applies to its radio at once (RadioModel::savedAlexHpfEdges). No
+        // on-air rule: Thetis's per-row setters have no MOX check.
+        m_antennaAlexTab->setHpfRowsAvailable(
+            !m_remote || (link != nullptr && link->radioHardwareAvailable(8)),
+            IStationLink::alexHpfRowsUnavailableReason());
+        // radioHardwareVersion 10: the low-pass rows and 6m/ByPass on RX.
+        // No on-air rule: Thetis's spinner and check box handlers have no
+        // MOX check.
+        m_antennaAlexTab->setLpfRowsAvailable(
+            !m_remote || (link != nullptr && link->radioHardwareAvailable(10)),
+            IStationLink::alexLpfRowsUnavailableReason());
+    }
+    // radioHardwareVersion 11: HL2 Options' clock options (Enable CL2, CL2
+    // frequency, External 10 MHz), which the Core sends to its radio. No
+    // on-air rule: mi0bot's handlers have no MOX check.
+    if (m_hl2OptionsTab) {
+        m_hl2OptionsTab->setClockControlAvailable(
+            !m_remote || (link != nullptr && link->radioHardwareAvailable(11)),
+            IStationLink::hl2ClockUnavailableReason());
+        // radioHardwareVersion 13: HL2 Options' Swap audio channels, which
+        // the Core applies to the receive audio it sends its radio. No
+        // on-air rule: mi0bot's handler has no MOX check.
+        m_hl2OptionsTab->setSwapAudioAvailable(
+            !m_remote || (link != nullptr && link->radioHardwareAvailable(13)),
+            IStationLink::hl2SwapAudioUnavailableReason());
+    }
+}
+
+bool HardwarePage::showAntennaTab()
+{
+    if (m_antennaAlexIdx < 0 || !m_tabs->isTabVisible(m_antennaAlexIdx)) {
+        return false;
+    }
+    m_tabs->setCurrentIndex(m_antennaAlexIdx);
+    return true;
+}
+
 // ── Test helper ───────────────────────────────────────────────────────────────
 
 #ifdef NEREUS_BUILD_TESTS
+QString HardwarePage::currentTabText() const
+{
+    return m_tabs->tabText(m_tabs->currentIndex());
+}
+
 bool HardwarePage::isTabVisibleForTest(Tab t) const
 {
     switch (t) {
@@ -284,13 +489,32 @@ bool HardwarePage::isTabVisibleForTest(Tab t) const
         case Tab::AntennaAlex:      return m_tabs->isTabVisible(m_antennaAlexIdx);
         case Tab::OcOutputs:        return m_tabs->isTabVisible(m_ocOutputsIdx);
         case Tab::Xvtr:             return m_tabs->isTabVisible(m_xvtrIdx);
-        case Tab::Diversity:        return m_tabs->isTabVisible(m_diversityIdx);
         case Tab::Calibration:      return m_tabs->isTabVisible(m_paCalIdx);
         case Tab::Hl2Options:       return m_tabs->isTabVisible(m_hl2OptionsIdx);
         case Tab::Hl2IoBoard:       return m_tabs->isTabVisible(m_hl2IoIdx);
         case Tab::BandwidthMonitor: return m_tabs->isTabVisible(m_bwMonitorIdx);
     }
     return false;
+}
+
+QWidget* HardwarePage::tabWidgetForTest(Tab t) const
+{
+    switch (t) {
+        case Tab::RadioInfo:        return m_radioInfoTab;
+        case Tab::AntennaAlex:      return m_antennaAlexTab;
+        case Tab::OcOutputs:        return m_ocOutputsTab;
+        case Tab::Xvtr:             return m_xvtrTab;
+        case Tab::Calibration:      return m_paCalTab;
+        case Tab::Hl2Options:       return m_hl2OptionsTab;
+        case Tab::Hl2IoBoard:       return m_hl2IoTab;
+        case Tab::BandwidthMonitor: return m_bwMonitorTab;
+    }
+    return nullptr;
+}
+
+bool HardwarePage::remoteEditsAvailableForTest() const
+{
+    return !m_remote || remoteEditsAvailable();
 }
 
 QString HardwarePage::tabTextForTest(Tab t) const
@@ -300,7 +524,6 @@ QString HardwarePage::tabTextForTest(Tab t) const
         case Tab::AntennaAlex:      return m_tabs->tabText(m_antennaAlexIdx);
         case Tab::OcOutputs:        return m_tabs->tabText(m_ocOutputsIdx);
         case Tab::Xvtr:             return m_tabs->tabText(m_xvtrIdx);
-        case Tab::Diversity:        return m_tabs->tabText(m_diversityIdx);
         case Tab::Calibration:      return m_tabs->tabText(m_paCalIdx);
         case Tab::Hl2Options:       return m_tabs->tabText(m_hl2OptionsIdx);
         case Tab::Hl2IoBoard:       return m_tabs->tabText(m_hl2IoIdx);

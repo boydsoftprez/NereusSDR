@@ -9,6 +9,9 @@
 //   2026-05-02 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted authoring via Anthropic
 //                 Claude Code (Stage C2 filter preset editor).
+//   2026-09-29 - R-R3-49 / R-IOS-18: Setup description version 15 ids,
+//                 and the reset wording says "defaults" in plain words.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "FilterPresetsSetupPage.h"
@@ -62,10 +65,11 @@ void FilterPresetsSetupPage::buildUi()
     // and then calling layout->addItem() does NOT reparent — that path
     // leaves the widgets pinned to the SetupPage origin and they overlap
     // the title bar. (Qt: only addLayout/addWidget call adoptLayout.)
-    auto* modeLbl = new QLabel(QStringLiteral("DSP Mode:"), modeBox);
+    auto* modeLbl = new QLabel(QStringLiteral("Mode:"), modeBox);
     modeLbl->setStyleSheet(QStringLiteral("color: #c8d8e8;"));
 
     m_modeCombo = new QComboBox(modeBox);
+    m_modeCombo->setProperty("nereusSetupId", "dsp.filterPresets.mode");
     m_modeCombo->setStyleSheet(
         QStringLiteral("QComboBox { background: #1a2030; color: #c8d8e8; "
                        "border: 1px solid #304050; border-radius: 3px; padding: 2px 6px; }"
@@ -100,6 +104,7 @@ void FilterPresetsSetupPage::buildUi()
     auto* tableBoxLayout = qobject_cast<QBoxLayout*>(tableBox->layout());
 
     m_table = new QTableWidget(0, 6, tableBox);  // rows filled by populateTable()
+    m_table->setProperty("nereusSetupId", "dsp.filterPresets.presets");
     m_table->setHorizontalHeaderLabels({
         QStringLiteral("#"),
         QStringLiteral("Name"),
@@ -147,6 +152,8 @@ void FilterPresetsSetupPage::buildUi()
 
     auto* resetRowBtn  = new QPushButton(QStringLiteral("Reset Selected Row"), actBox);
     auto* resetModeBtn = new QPushButton(QStringLiteral("Reset All Rows for This Mode"), actBox);
+    resetRowBtn->setProperty("nereusSetupId", "dsp.filterPresets.resetRow");
+    resetModeBtn->setProperty("nereusSetupId", "dsp.filterPresets.resetMode");
     resetRowBtn->setStyleSheet(kBtnStyle);
     resetModeBtn->setStyleSheet(kBtnStyle);
 
@@ -167,7 +174,8 @@ void FilterPresetsSetupPage::buildUi()
     globalRow->setSpacing(8);
 
     auto* resetAllBtn = new QPushButton(
-        QStringLiteral("Reset Every Mode to Thetis Defaults"), globalBox);
+        QStringLiteral("Reset Every Mode to Defaults"), globalBox);
+    resetAllBtn->setProperty("nereusSetupId", "dsp.filterPresets.resetAll");
     resetAllBtn->setStyleSheet(kBtnStyle);
 
     globalRow->addWidget(resetAllBtn);
@@ -380,7 +388,7 @@ void FilterPresetsSetupPage::onResetThisMode()
     const auto answer = QMessageBox::question(
         this,
         QStringLiteral("Reset Mode Presets"),
-        QStringLiteral("Reset all presets for %1 to Thetis defaults?")
+        QStringLiteral("Reset all presets for %1 to the defaults?")
             .arg(SliceModel::modeName(currentMode())),
         QMessageBox::Yes | QMessageBox::No);
     if (answer == QMessageBox::Yes) {
@@ -396,7 +404,7 @@ void FilterPresetsSetupPage::onResetAll()
     const auto answer = QMessageBox::question(
         this,
         QStringLiteral("Reset All Presets"),
-        QStringLiteral("Reset ALL filter presets for ALL modes to Thetis defaults?\n\n"
+        QStringLiteral("Reset ALL filter presets for ALL modes to the defaults?\n\n"
                        "This cannot be undone."),
         QMessageBox::Yes | QMessageBox::No);
     if (answer == QMessageBox::Yes) {

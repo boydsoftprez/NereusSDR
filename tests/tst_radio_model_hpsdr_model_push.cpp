@@ -152,6 +152,16 @@ private slots:
         QCOMPARE(ctx.diversity, true);
         QCOMPARE(ctx.adcCtrl, quint16(0x0004));
     }
+
+    // P1CodecStandard keys slice B's DDC under PureSignal transmit on the
+    // model, so the context must carry it, through the seam as well.
+    void codecContext_carriesTheModel() {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANAN10E);
+        QCOMPARE(model.currentCodecContextForTest().model, HPSDRModel::ANAN10E);
+        model.setDdcContextForTest(/*mox=*/true, /*ps=*/true, /*diversity=*/false);
+        QCOMPARE(model.currentCodecContextForTest().model, HPSDRModel::ANAN10E);
+    }
 };
 
 QTEST_MAIN(TestRadioModelHpsdrModelPush)

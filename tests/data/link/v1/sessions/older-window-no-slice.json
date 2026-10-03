@@ -1,0 +1,13 @@
+{
+    "runs": ["station"],
+    "stationSetup": {"radio": "static", "slices": 2, "token": "none", "pairedDevice": true, "otherPairedDevices": 1, "receivers": 2, "maxSlices": 2, "otherClients": [{"name": "b", "device": 1, "features": {"deviceAuth": 1, "sessionHolder": 1}, "shortName": "Tablet B"}]},
+    "steps": [
+        {"from": "station", "message": {"challenge": "$capture:challenge", "features": {"deviceAuth": 1, "pairing": 1, "sessionHolder": 1}, "identity": {"certBinding": "$string", "publicKey": "$string"}, "major": 1, "majors": [1], "minor": 11, "peer": "nereusd", "settingsSchema": 0, "type": "hello"}},
+        {"connect": "b"},
+        {"from": "client", "role": "behaviour", "message": {"type": "hello", "major": 1, "minor": 11, "settingsSchema": "$int", "peer": "$string", "majors": "$majors", "features": {"deviceAuth": 1}}},
+        {"from": "client", "role": "behaviour", "message": {"type": "auth.request", "token": "", "device": "$device:signed"}},
+        {"from": "station", "message": {"accepted": true, "reason": "", "retryable": false, "type": "auth.result"}},
+        {"from": "station", "message": {"reason": "All the radio's slices are in use. Try again when another device closes one.", "retryable": true, "type": "session.end"}},
+        {"expectClosed": {"retryable": true}}
+    ]
+}

@@ -1,0 +1,9 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "register",
+    "id": "LWHU2KYJNRFDWVPXVDCKAO3LB7",
+    "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEg_nsJyqEh0XXav5VH_mkzbwEzIso5Z0SBCuMPrWBZ7iv5oOEFS16bH6n9dWRkTS18CZwprmg2_pm-qhKDnHejw"
+  },
+  "decodes": false
+}

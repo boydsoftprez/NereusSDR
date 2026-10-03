@@ -22,6 +22,10 @@
 //                 via Anthropic Claude Code.
 //                 Ported from AetherSDR `src/gui/FilterPassbandWidget.cpp`
 //                 (filter low/high drag + shift-band visualisation).
+//   2026-09-26 - R-R3-49: the shift area uses the native open / closed
+//                 hand cursors instead of Qt's drawn four-way move cursor,
+//                 which crashed Qt 6.11.0 on macOS. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "FilterPassbandWidget.h"
@@ -41,7 +45,12 @@ FilterPassbandWidget::FilterPassbandWidget(QWidget* parent)
     setMinimumSize(minimumSizeHint());
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setMouseTracking(true);
-    setCursor(Qt::SizeAllCursor);
+    // Native cursors only (open hand over the shift area, closed hand while
+    // shifting). Root cause of the macOS crash noted in mouseMoveEvent: Qt
+    // 6.11.0 draws SizeAllCursor / WaitCursor / BusyCursor from its own
+    // ICC-tagged PNGs, and QImage::toCGImage() frees the colour space before
+    // CGImageCreate uses it. Guarded by scripts/verify-no-image-cursors.py.
+    setCursor(Qt::OpenHandCursor);
 
     // Performance: paintEvent fills rect() opaquely (line 74) before
     // drawing the trapezoid.  Mark opaque so Qt skips compositing the
@@ -164,7 +173,7 @@ void FilterPassbandWidget::mousePressEvent(QMouseEvent* ev)
         setCursor(Qt::SizeHorCursor);
     } else {
         m_dragMode = DragShift;
-        setCursor(Qt::SizeAllCursor);
+        setCursor(Qt::ClosedHandCursor);  // native; Qt 6.11 macOS cursor crash
     }
 }
 
@@ -173,6 +182,10 @@ void FilterPassbandWidget::mouseMoveEvent(QMouseEvent* ev)
     // Hover cursor feedback — three zones: left edge, center, right edge.
     // Only call setCursor when the shape actually changes to avoid
     // excessive CGImageCreate calls on macOS (EXC_BREAKPOINT in Qt cursor code).
+    // Root cause (2026-09-26): Qt 6.11.0's QImage::toCGImage() frees the
+    // colour space of the ICC-tagged PNG it draws SizeAllCursor from, so the
+    // four-way move cursor crashed in CGImageCreate. The centre zone now uses
+    // the native open hand, which never reaches that path.
     // From AetherSDR FilterPassbandWidget.cpp lines 133-142
     if (m_dragMode == DragNone) {
         constexpr int margin = 16;
@@ -181,7 +194,7 @@ void FilterPassbandWidget::mouseMoveEvent(QMouseEvent* ev)
         const int hiLineX = width() - margin - kSkirt - 8;
         const int x = ev->pos().x();
         const Qt::CursorShape wanted = (x <= loLineX || x >= hiLineX)
-            ? Qt::SizeHorCursor : Qt::SizeAllCursor;
+            ? Qt::SizeHorCursor : Qt::OpenHandCursor;
         if (cursor().shape() != wanted) {
             setCursor(wanted);
         }
@@ -248,6 +261,11 @@ void FilterPassbandWidget::mouseMoveEvent(QMouseEvent* ev)
 
 void FilterPassbandWidget::mouseReleaseEvent(QMouseEvent*)
 {
+    // Back to the open hand once a shift drag ends (the closed hand is only
+    // for the drag itself).
+    if (m_dragMode == DragShift) {
+        setCursor(Qt::OpenHandCursor);
+    }
     m_dragMode = DragNone;
 }
 
