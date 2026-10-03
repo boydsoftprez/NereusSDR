@@ -75,6 +75,71 @@ architecture and operator console. See [CHANGELOG.md](CHANGELOG.md) for
 release history and the [tester guide](docs/debugging/v2026.10.0-alpha-tester-smoketest.md)
 for upgrade checks and current limits.
 
+## Core, GUI and remote access
+
+The **Core** owns the radio connection and station state. It runs receiver
+and transmit DSP, noise reduction and PureSignal, computes spectra, manages
+station audio and accessories, and decides receiver and transmit authority.
+The **GUI** is the operator's console: it renders VFOs, pans, waterfalls,
+meters and editors, sends control requests, plays received audio and sends
+microphone audio to the Core. Radio processing stays with the Core as the
+operator moves between consoles.
+
+There are two ways to run it. A local desktop runs the Core and GUI together.
+For a remote station, headless **`nereusd`** runs beside the radio while the
+GUI runs on a Mac, Windows or Linux computer elsewhere. Several authenticated
+devices can use one Core, within station capacity, with receiver ownership
+and a single transmit holder enforced by that Core.
+
+The headless Core can run on a suitable Linux **single-board computer (SBC)**,
+including a Raspberry Pi inside an **ANAN-G2**, or a separate SBC beside the
+radio. Development testing included a **Raspberry Pi 4** and a **Radxa Rock 5C
+with 2 GB RAM**. Other compatible SBCs can host the same Core; sustainable
+receiver count, DSP features and display load depend on the board and its
+configuration. A display and a locally running GUI are not required at the
+radio. The radio and Core can remain at the station while the operator uses
+a separate console.
+
+### How the RV server connects a remote console
+
+The **rendezvous (RV) server** is a separate network service that helps a
+GUI reach a Core across different networks. Both ends contact the configured
+RV service. The Core registers its station identity with the RV signalling
+service; the GUI asks for an introduction to that station. The service passes
+connection offers and network candidates between them and provides a pairing
+mailbox when the devices are not on the same network. The Core authenticates
+the device and retains all control and transmit-authority decisions.
+
+After introduction, the station session uses its own connection. It can run
+directly between the GUI and Core, through a **TURN relay** when a direct path
+is unavailable, or through the separate **WebSocket relay** for a network that
+only passes web traffic. The RV service issues short-lived relay credentials;
+its signalling process handles introductions rather than ongoing session
+traffic. The signalling service, TURN relay and WebSocket relay are separate
+parts of the RV server installation.
+
+A directly reachable Core on the same LAN or a VPN can also be selected by
+address. Core Settings shows the chosen station, connection and audio path,
+so the operator can see which Core is in use and how the session is connected.
+The RV server provides reachability; the Core continues to own the radio and
+perform the DSP on every path.
+
+```mermaid
+flowchart LR
+    Radio["OpenHPSDR radio"] <-->|"Radio I/Q and control"| Core["Core: local desktop or headless SBC"]
+    Core <-->|"Session: controls, audio, spectra and meters"| GUI["GUI: operator's computer"]
+    Core <-->|"Registration and introduction"| RV["RV signalling service"]
+    GUI <-->|"Introduction and pairing mailbox"| RV
+    Core <-->|"Optional session path"| Relay["TURN or WebSocket relay"]
+    Relay <-->|"Optional session path"| GUI
+```
+
+See the [Core architecture](docs/architecture/2026-07-28-remote-daemon-architecture-design.md),
+[station link](docs/architecture/2026-09-23-station-link-v1.md) and
+[RV server installation guide](rendezvous/README.md) for implementation and
+server setup. The development [Rock 5C receive-control bench](docs/architecture/2026-08-03-remote-daemon-r2-verification/rock-5c-2026-09-20/README.md)
+records a specific hardware check; feature acceptance remains recorded separately.
+
 ## Key Features
 
 - **Independent receivers and displays.** Per-receiver tuning, mode, DSP and

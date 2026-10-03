@@ -6,15 +6,65 @@
 
 This is the first release using **calendar versions**. `2026.10.0` means the first release in October 2026. Another release that month will be `2026.10.1`; the first release in November will be `2026.11.0`. Releases continue to ship when ready. Existing releases keep their original numbers.
 
-## A Core for the whole station
+## The Core and GUI can run in different places
 
-The radio-owning Core can run with the desktop console or as the headless `nereusd` process beside the radio. Remote desktop windows connect to that Core for receiver control, display data, station audio and permitted transmit operation. Pairing, authenticated device identities, saved station choices, direct and relayed media paths, link recovery and explicit connection provenance are part of the implemented station system.
+The **Core** owns the radio connection and station state. It runs receiver
+and transmit DSP, noise reduction and PureSignal, computes spectra, manages
+station audio and accessories, and decides receiver and transmit authority.
+The **GUI** is the operator's console: it renders VFOs, pans, waterfalls,
+meters and editors, sends control requests, plays received audio and sends
+microphone audio to the Core. Radio processing stays with the Core as the
+operator moves between consoles.
 
-Core Settings brings Core names, saved and manually entered addresses, connection targets, current audio status and device authority together. Logs, Pi deployment artifacts and Radxa staging/rollback artifacts have bounded retention for unattended installations.
+There are two ways to run it. A local desktop runs the Core and GUI together.
+For a remote station, headless **`nereusd`** runs beside the radio while the
+GUI runs on a Mac, Windows or Linux computer elsewhere. Several authenticated
+devices can use one Core, within station capacity, with receiver ownership
+and a single transmit holder enforced by that Core.
 
-Several devices can share a Core, subject to radio capacity. Each device owns its receivers; other devices' receivers can appear as named markers. Receiver and transmit transfers use explicit Core decisions and confirmations. Only one device holds transmit. Link loss blocks new keying, and old-session replies cannot grant authority to a replacement session.
+The headless Core can run on a suitable Linux **single-board computer (SBC)**,
+including a Raspberry Pi inside an **ANAN-G2**, or a separate SBC beside the
+radio. Development testing included a **Raspberry Pi 4** and a **Radxa Rock 5C
+with 2 GB RAM**. Other compatible SBCs can host the same Core; sustainable
+receiver count, DSP features and display load depend on the board and its
+configuration. A display and a locally running GUI are not required at the
+radio. The radio and Core can remain at the station while the operator uses
+a separate console.
 
-The Core includes the station contracts used by the native iPhone/iPad client. The mobile app has its own release counter and delivery process; this desktop release does not announce an App Store release.
+### Reaching the station through the RV server
+
+The **rendezvous (RV) server** is a separate network service that helps a
+GUI reach a Core across different networks. Both ends contact the configured
+RV service. The Core registers its station identity with the RV signalling
+service; the GUI asks for an introduction to that station. The service passes
+connection offers and network candidates between them and provides a pairing
+mailbox when the devices are not on the same network. The Core authenticates
+the device and retains all control and transmit-authority decisions.
+
+After introduction, the station session uses its own connection. It can run
+directly between the GUI and Core, through a **TURN relay** when a direct path
+is unavailable, or through the separate **WebSocket relay** for a network that
+only passes web traffic. The RV service issues short-lived relay credentials;
+its signalling process handles introductions rather than ongoing session
+traffic. The signalling service, TURN relay and WebSocket relay are separate
+parts of the RV server installation.
+
+A directly reachable Core on the same LAN or a VPN can also be selected by
+address. Core Settings shows the chosen station, connection and audio path,
+so the operator can see which Core is in use and how the session is connected.
+The RV server provides reachability; the Core continues to own the radio and
+perform the DSP on every path.
+
+Core Settings brings Core names, saved and manually entered addresses,
+connection targets, current audio status and device authority together.
+Logs, Pi deployment artifacts and Radxa staging/rollback artifacts have
+bounded retention for unattended installations.
+
+Receiver and transmit transfers use explicit Core decisions and confirmations.
+Link loss blocks new keying, and old-session replies cannot grant authority
+to a replacement session. The Core includes the station contracts used by the
+native iPhone/iPad client, whose release counter and delivery process remain
+independent of this desktop release.
 
 ## Independent receivers and richer displays
 

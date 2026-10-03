@@ -2,8 +2,9 @@
 
 Cross-platform C++20 / Qt6 SDR console for every OpenHPSDR Protocol 1 and 2
 radio (ANAN line, Hermes Lite 2): multiple slices and panadapters, and a
-remote Core with desktop and phone clients. The client does ALL signal
-processing; the radio is an ADC/DAC with network transport.
+remote Core with desktop and phone clients. The Core owns the radio and
+performs baseband DSP; the GUI presents controls and processed station data.
+The radio is an ADC/DAC with network transport.
 
 ## Building on OpenHPSDR
 
