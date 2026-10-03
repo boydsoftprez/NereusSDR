@@ -117,6 +117,13 @@ public:
 
     void sendText(const QByteArray& wire) override
     {
+        if (hideAudioCatalogue && wire.contains("\"catalog\"")) {
+            SessionMessage catalogMessage;
+            if (SessionMessages::decode(wire, &catalogMessage)
+                && catalogMessage.objectKey == QByteArrayLiteral("catalog")) {
+                return;
+            }
+        }
         const bool mayRewrite = ((m_helloMinor || !declareRemoteTx) && wire.contains("\"hello\""))
             || (grantTransmit && wire.contains("\"capabilities\""))
             || (forgeNextAudioContext && wire.contains("\"audio-context\""))
@@ -177,6 +184,7 @@ public:
     int hiddenAudioProfiles = 0;
     Forge forgeNextAudioContext;
     bool hideAudioProfile = false;
+    bool hideAudioCatalogue = false;
     bool hideAudioClock = false;
     bool hideReceiverAudio = false;
     bool hideHeadphonesMix = false;
@@ -312,6 +320,7 @@ struct RemoteAudioSessionHarness {
         auto* clientEnd = new RewritingTransport(QStringLiteral("client"), helloMinor);
         station->forgeNextAudioContext = std::move(forgeFirstContext);
         station->hideAudioProfile = hideAudioProfile;
+        station->hideAudioCatalogue = hideAudioCatalogue;
         station->hideAudioClock = hideAudioClock;
         station->hideReceiverAudio = hideReceiverAudio;
         station->hideHeadphonesMix = hideHeadphonesMix;
@@ -457,6 +466,7 @@ struct RemoteAudioSessionHarness {
 
     // Set before connectSession(): the Core appears to predate lossless.
     bool hideAudioProfile = false;
+    bool hideAudioCatalogue = false;
     // Set before connectSession(): the Core appears to predate measured
     // audio delay (R-R3-35).
     bool hideAudioClock = false;

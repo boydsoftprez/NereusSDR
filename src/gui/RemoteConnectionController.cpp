@@ -14,6 +14,7 @@
 #include "gui/StyleConstants.h"
 #include "models/RadioModel.h"
 #include <QComboBox>
+#include <QStandardItemModel>
 #include <QDateTime>
 #include <QDialogButtonBox>
 #include <QHBoxLayout>
@@ -487,6 +488,7 @@ RemoteConnectionPanel::RemoteConnectionPanel(RemoteConnectionController* control
     QLabel* audioDetails = nullptr;
     QPushButton* retryButton = nullptr;
     QComboBox* qualityChoice = nullptr;
+    QLabel* qualityUnavailable = nullptr;
     if (media) {
         audioDetails = new QLabel(this);
         audioDetails->setObjectName(QStringLiteral("remoteAudioDetails"));
@@ -501,25 +503,38 @@ RemoteConnectionPanel::RemoteConnectionPanel(RemoteConnectionController* control
         auto* qualityLabel = new QLabel(tr("Audio quality:"), this);
         qualityChoice = new QComboBox(this);
         qualityChoice->setObjectName(QStringLiteral("remoteAudioQuality"));
-        qualityChoice->addItem(tr("Opus"), QVariant::fromValue(int(RemoteAudioProfile::Opus)));
-        qualityChoice->addItem(tr("Lossless"), QVariant::fromValue(int(RemoteAudioProfile::Lossless)));
-        qualityChoice->setToolTip(tr("Opus is compressed and needs 24 to 48 kbit/s. Lossless "
-                                     "plays the Core's audio unchanged, for digital modes, "
-                                     "and needs about 1.6 Mbit/s. If the network cannot carry "
-                                     "it, audio stays on Opus. Saved on this computer."));
+        qualityChoice->addItem(tr("High — 48 kbps"), int(RemoteAudioQualityChoice::High));
+        qualityChoice->addItem(tr("Save data — 24 kbps"), int(RemoteAudioQualityChoice::SaveData));
+        qualityChoice->addItem(tr("Lossless"), int(RemoteAudioQualityChoice::Lossless));
+        qualityChoice->setToolTip(tr("High and Save data are compressed. Lossless plays the Core's "
+                                     "audio unchanged and needs about 1.6 Mbit/s. If the network "
+                                     "cannot carry it, audio stays on Opus. Saved on this computer."));
         qualityLabel->setBuddy(qualityChoice);
         qualityRow->addWidget(qualityLabel);
         qualityRow->addWidget(qualityChoice, 1);
         layout->addLayout(qualityRow);
         qualityChoice->setCurrentIndex(
-            qualityChoice->findData(int(media->audioProfileChoice())));
+            qualityChoice->findData(int(media->audioQualityChoice())));
         QPointer<RemoteMediaController> choiceMedia(media);
         connect(qualityChoice, &QComboBox::currentIndexChanged, this,
                 [qualityChoice, choiceMedia](int index) {
             if (!choiceMedia || index < 0) { return; }
-            choiceMedia->setAudioProfileChoice(
-                static_cast<RemoteAudioProfile>(qualityChoice->itemData(index).toInt()));
+            choiceMedia->setAudioQualityChoice(
+                static_cast<RemoteAudioQualityChoice>(qualityChoice->itemData(index).toInt()));
         });
+        // QComboBox emits activated even when the selected row is chosen
+        // again, so a saved Lossless request can retry its failed link trial.
+        connect(qualityChoice, &QComboBox::activated, this, [qualityChoice, choiceMedia](int index) {
+            if (choiceMedia && index >= 0
+                && qualityChoice->itemData(index).toInt() == int(RemoteAudioQualityChoice::Lossless)
+                && choiceMedia->audioStatus().qualityReason == RemoteAudioQualityReason::NetworkTooSlow) {
+                choiceMedia->setAudioQualityChoice(RemoteAudioQualityChoice::Lossless);
+            }
+        });
+        qualityUnavailable = new QLabel(this);
+        qualityUnavailable->setObjectName(QStringLiteral("remoteAudioQualityUnavailable"));
+        qualityUnavailable->setWordWrap(true);
+        layout->addWidget(qualityUnavailable);
         retryButton = new QPushButton(tr("Retry audio"), this);
         retryButton->setObjectName(QStringLiteral("retryRemoteAudio"));
         retryButton->setAutoDefault(false);
@@ -552,7 +567,7 @@ RemoteConnectionPanel::RemoteConnectionPanel(RemoteConnectionController* control
 
     if (media) {
         QPointer<RemoteMediaController> guardedMedia(media);
-        m_refreshAudio = [this, guardedMedia, audioDetails, retryButton, qualityChoice] {
+        m_refreshAudio = [this, guardedMedia, audioDetails, retryButton, qualityChoice, qualityUnavailable] {
             if (!guardedMedia) { return; }
             // R-R3-43: and each receiver stream apps on this computer use.
             const QString text = formatRemoteAudioDetails(guardedMedia->audioStatus(),
@@ -565,9 +580,26 @@ RemoteConnectionPanel::RemoteConnectionPanel(RemoteConnectionController* control
             {
                 const QSignalBlocker blocker(qualityChoice);
                 qualityChoice->setCurrentIndex(
-                    qualityChoice->findData(int(guardedMedia->audioProfileChoice())));
+                    qualityChoice->findData(int(guardedMedia->audioQualityChoice())));
             }
-            if (textChanged) { fitHeightToContent(); }
+            QStringList reasons;
+            auto* rows = qobject_cast<QStandardItemModel*>(qualityChoice->model());
+            for (int index = 0; index < qualityChoice->count(); ++index) {
+                const auto choice = static_cast<RemoteAudioQualityChoice>(qualityChoice->itemData(index).toInt());
+                const QString reason = guardedMedia->audioQualityUnavailableReason(choice);
+                if (rows) {
+                    rows->item(index)->setEnabled(reason.isEmpty());
+                    rows->item(index)->setToolTip(reason);
+                }
+                if (!reason.isEmpty()) {
+                    reasons << QStringLiteral("%1: %2").arg(remoteAudioQualityChoiceName(choice), reason);
+                }
+            }
+            const QString unavailableText = reasons.join(QLatin1Char('\n'));
+            const bool reasonChanged = qualityUnavailable->text() != unavailableText;
+            qualityUnavailable->setText(unavailableText);
+            qualityUnavailable->setVisible(!unavailableText.isEmpty());
+            if (textChanged || reasonChanged) { fitHeightToContent(); }
         };
         connect(media, &RemoteMediaController::audioStatusChanged, this,
                 [this] { m_refreshAudio(); });

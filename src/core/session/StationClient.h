@@ -982,6 +982,9 @@ public:
     /// The station's descriptor as applied. Default-constructed before the
     /// capability exchange.
     const StationCapabilities& capabilities() const { return m_capabilities; }
+    /// The Core catalogue's advertised audio bitrates; absent until its JSON
+    /// arrives, empty if it carries no audio table. No local measured table.
+    const std::optional<QList<int>>& audioOpusBitrates() const { return m_audioOpusBitrates; }
     /// Test seam: declare a hello feature this window does not (an app's,
     /// such as audioQuality). Before startSession().
     void declareFeatureForTest(const QByteArray& name, int version)
@@ -1593,6 +1596,8 @@ public:
     /// the Core told this window remoteTxVersion 1 or later.
     RemoteTransmitClient* remoteTransmit() override { return m_remoteTransmit; }
     bool remoteTransmitAvailable() const;
+    bool remoteMicSourceAvailable() const override;
+    CommandOutcome requestMicSource(MicSource desired, std::function<void()> accepted = {}) override;
 
     void setHeartbeatIntervalMs(int ms);
     int heartbeatIntervalMs() const { return m_heartbeatIntervalMs; }
@@ -1660,6 +1665,7 @@ signals:
     /// Every full state publication, including reseeding an existing session.
     /// Does not recreate media or reset the session epoch.
     void stateSnapshotApplied();
+    void audioOpusBitratesChanged();
 
     /// The session ended, with the station's own reason where it gave one
     /// (a version refusal, a failed authentication, or being displaced by
@@ -1817,6 +1823,7 @@ private:
     /// answer the question this asks.
     void reconcileSlicesAgainstStation();
 
+    void handleAudioCatalogue(const QList<MirrorUpdate>& updates);
     void handleObjectCreate(const SessionMessage& message);
     void handleObjectDestroy(const SessionMessage& message);
     void handleDelta(const SessionMessage& message);
@@ -1905,6 +1912,7 @@ private:
     QString m_lastError;
     StationEndReport m_lastEndReport;
     bool m_handshakeComplete = false;
+    std::optional<QList<int>> m_audioOpusBitrates;
     bool m_authenticated = false;
     bool m_signedInWithDeviceKey = false;
     // R-IOS-13 / R-R3-49: the Mod Monitor's source the window wants (-1
@@ -1941,6 +1949,8 @@ private:
     QHash<QByteArray, int> m_declaredFeatures;
     /// Desktop remote transmit: owned (child).
     RemoteTransmitClient* m_remoteTransmit = nullptr;
+    std::optional<QPair<quint64, MicSource>> m_requestedLocalMicSource;
+    std::function<void()> m_micSourceAccepted;
     void refreshRemoteTransmit();
     bool directWatchEligible() const;
     bool relayWatchEligible(bool newAdmission) const;

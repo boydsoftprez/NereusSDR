@@ -1190,6 +1190,7 @@ private slots:
     void alteredFixturesFailReadably();
     void aDeferredOwnConnectionOpensAtItsStep();
     void jsonStringsMatchTheirShape();
+    void currentCoreHelloOfferRemainsStrict();
     void theVirtualClockKeepsALongTimersDueAsRealTimePasses();
     void theVirtualClockAloneFiresTheStationsTimers();
     void theVirtualClockTimesAStartByVirtualTimeOnly();
@@ -1596,8 +1597,10 @@ void TstLinkConformanceSession::rightAndWrongLegsGetDifferentAnswers()
                 continue;
             }
             const QJsonValue id = message.value(QStringLiteral("id"));
+            // Ranged app-owned IDs capture only the name, not the range.
             const QJsonValue refersTo = id.isString()
-                ? QJsonValue(id.toString().replace(QStringLiteral("$int:"), QStringLiteral("$ref:")))
+                    && id.toString().startsWith(QStringLiteral("$int:"))
+                ? QJsonValue(QStringLiteral("$ref:%1").arg(id.toString().section(QLatin1Char(':'), 1, 1)))
                 : id;
             QStringList answers;
             for (int j = i + 1; j < steps.size(); ++j) {
@@ -2193,6 +2196,48 @@ void TstLinkConformanceSession::aDeferredOwnConnectionOpensAtItsStep()
     QVERIFY2(LinkFixtures::checkSessionFormat(stray).contains(
                  QStringLiteral("openOwnConnection must be true, once")),
              qPrintable(LinkFixtures::checkSessionFormat(stray)));
+}
+
+void TstLinkConformanceSession::currentCoreHelloOfferRemainsStrict()
+{
+    const QJsonObject legacy{{QStringLiteral("type"), QStringLiteral("hello")},
+        {QStringLiteral("features"), QJsonObject{{QStringLiteral("deviceAuth"), 1},
+            {QStringLiteral("pairing"), 1}, {QStringLiteral("sessionHolder"), 1}}}};
+    const QJsonValue expected = LinkFixtures::currentCoreStationExpectation(legacy);
+    QJsonObject actual = expected.toObject();
+    QCOMPARE(actual.value(QStringLiteral("features")).toObject()
+                 .value(QStringLiteral("radioMic")).toInt(), 2);
+    QVERIFY(LinkFixtures::match(expected, actual, nullptr).isEmpty());
+    for (int version : {0, 1, 3}) {
+        QJsonObject wrong = actual;
+        QJsonObject features = wrong.value(QStringLiteral("features")).toObject();
+        if (version == 0) { features.remove(QStringLiteral("radioMic")); }
+        else { features.insert(QStringLiteral("radioMic"), version); }
+        wrong.insert(QStringLiteral("features"), features);
+        QVERIFY(LinkFixtures::match(expected, wrong, nullptr)
+                    .contains(QStringLiteral("radioMic")));
+    }
+    QJsonObject extra = actual;
+    QJsonObject features = extra.value(QStringLiteral("features")).toObject();
+    features.insert(QStringLiteral("unexpected"), 1);
+    extra.insert(QStringLiteral("features"), features);
+    QVERIFY(LinkFixtures::match(expected, extra, nullptr)
+                .contains(QStringLiteral("unexpected")));
+
+    QJsonObject explicitOlder = actual;
+    features.remove(QStringLiteral("unexpected"));
+    features.insert(QStringLiteral("radioMic"), 1);
+    explicitOlder.insert(QStringLiteral("features"), features);
+    QCOMPARE(LinkFixtures::currentCoreStationExpectation(explicitOlder), QJsonValue(explicitOlder));
+    QVERIFY(!LinkFixtures::match(explicitOlder, actual, nullptr).isEmpty());
+    QJsonObject other = legacy;
+    other.insert(QStringLiteral("type"), QStringLiteral("capabilities"));
+    QCOMPARE(LinkFixtures::currentCoreStationExpectation(other), QJsonValue(other));
+    const QJsonObject bare{{QStringLiteral("type"), QStringLiteral("hello")}};
+    QCOMPARE(LinkFixtures::currentCoreStationExpectation(bare), QJsonValue(bare));
+    const QJsonObject noIdentity{{QStringLiteral("type"), QStringLiteral("hello")},
+        {QStringLiteral("features"), QJsonObject{{QStringLiteral("pairing"), 1}}}};
+    QCOMPARE(LinkFixtures::currentCoreStationExpectation(noIdentity), QJsonValue(noIdentity));
 }
 
 void TstLinkConformanceSession::jsonStringsMatchTheirShape()

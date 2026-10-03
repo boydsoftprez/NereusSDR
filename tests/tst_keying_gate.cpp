@@ -32,6 +32,7 @@
 // =================================================================
 
 #include <QtTest>
+#include <QScopeGuard>
 
 #include "core/MoxController.h"
 
@@ -399,6 +400,76 @@ private slots:
     }
 
     // ---- Admit paths ----------------------------------------------------------
+
+    void stationPollFlavorsAskTheGateOnce_data()
+    {
+        QTest::addColumn<int>("mode");
+        QTest::newRow("mic") << int(PttMode::Mic);
+        QTest::newRow("cat") << int(PttMode::Cat);
+        QTest::newRow("vox") << int(PttMode::Vox);
+        QTest::newRow("tci") << int(PttMode::Tci);
+    }
+
+    void stationPollFlavorsAskTheGateOnce()
+    {
+        QFETCH(int, mode);
+        Rig rig;
+        const auto poll = [&](bool down) {
+            switch (PttMode(mode)) {
+            case PttMode::Mic: rig.mox.onMicPttFromRadio(down); break;
+            case PttMode::Cat: rig.mox.onCatPtt(down); break;
+            case PttMode::Vox: rig.mox.onVoxActive(down); break;
+            case PttMode::Tci: rig.mox.onTciPtt(down); break;
+            default: QFAIL("unexpected poll flavor");
+            }
+        };
+        poll(true);
+        QVERIFY(rig.mox.isMox());
+        QCOMPARE(rig.gate.asked, 1);
+        QVERIFY(rig.mox.currentKeyer().isStation());
+        QCOMPARE(rig.mox.currentKeyer().source, PttMode(mode));
+        poll(false);
+        QVERIFY(!rig.mox.isMox());
+        rig.settle();
+        poll(true);
+        QCOMPARE(rig.gate.asked, 2); // new edge gets its own single admission
+        poll(false);
+        rig.settle();
+    }
+
+    void reentrantStationPollCannotBorrowOrEraseRemoteAdmission()
+    {
+        Rig rig;
+        KeyerIdentity phone = remote("phone");
+        phone.session = QStringLiteral("station:radio-owner");
+        int remoteChecks = 0;
+        bool stationChecked = false;
+        rig.mox.setMoxCheck([&]() {
+            const auto attempt = rig.mox.keyAttemptIdentity();
+            safety::BandPlanGuard::MoxCheckResult result;
+            if (attempt && attempt->isStation()) {
+                stationChecked = true;
+                result.ok = false; // local capture is unavailable; remote admission cannot exempt it
+                result.reason = QStringLiteral("Local microphone not ready");
+            } else {
+                if (++remoteChecks == 2) { rig.mox.onCatPtt(true); }
+                result.ok = true;
+            }
+            return result;
+        });
+        const auto cleanup = qScopeGuard([&]() { rig.mox.setMoxCheck({}); rig.mox.setMox(false); });
+        rig.mox.setMox(true, phone);
+        QVERIFY(stationChecked);
+        QVERIFY(rig.mox.isMox());
+        QCOMPARE(rig.mox.currentKeyer().deviceId, phone.deviceId);
+        QCOMPARE(rig.mox.currentKeyer().session, phone.session);
+        QCOMPARE(rig.gate.asked, 1);
+        QVERIFY(!rig.mox.keyAttemptIdentity());
+        rig.mox.setMoxCheck({});
+        rig.mox.setMox(false, phone);
+        rig.settle();
+        rig.mox.onCatPtt(false);
+    }
 
     void anAdmittedPressKeysForTheStationDevice()
     {

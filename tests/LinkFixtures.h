@@ -149,6 +149,12 @@ public:
     static QString match(const QJsonValue& expected, const QJsonValue& actual,
                          Captures* captures, const QString& path = QStringLiteral("$"));
 
+    /// Current Core's additive radio-mic offer in an identity-auth hello.
+    /// Existing version-1 session fixtures retain their original wire data;
+    /// this runner requires the fixed current offer of 2, while an explicit
+    /// expected version remains exact. Other messages remain unchanged.
+    static QJsonValue currentCoreStationExpectation(const QJsonValue& expected);
+
     /// A client message to send, placeholders filled as the link
     /// document's section 16.3 says both runners fill them: "$string" and
     /// "$string:<name>" with "conformance", "$int" with 0, "$int:<name>"

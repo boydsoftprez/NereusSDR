@@ -540,6 +540,7 @@ private slots:
 
 private:
     void buildUI();
+    void refreshMicSourceBadge();
     void wireControls();  // called after buildUI() — attaches signals/slots
     void syncPsaFromFacade();
     // Fix wave GUI-I7: put back PS-A's tooltip under the facade's reason.

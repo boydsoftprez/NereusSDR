@@ -134,7 +134,8 @@ class HGauge;
 //   Row 4: Test Mic button + HGauge VU bar (10 ms QTimer bus-tap)
 //   Row 5: Mic Gain slider (bidirectional mirror with TxApplet)
 //
-// Selection change calls TransmitModel::setMicSource. Model changes
+// Selection changes use RadioModel::requestMicSource. Remote changes wait for
+// authenticated session acknowledgement; local changes use the model setter. Model changes
 // (setMicSource from elsewhere) drive the radio-button check state via
 // micSourceChanged signal connection. Two-way sync uses m_updatingFromModel
 // guard to prevent echo loops.
@@ -311,6 +312,7 @@ private:
 
     // Row 3: Buffer size
     QSlider*     m_bufferSlider{nullptr};
+    QLabel* m_micSelectionStatusLabel{nullptr};
     QLabel*      m_bufferLabel{nullptr};
 
     // Row 4: Test Mic + VU bar

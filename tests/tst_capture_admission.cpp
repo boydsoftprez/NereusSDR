@@ -225,6 +225,90 @@ private slots:
 
     // PC mic selected, capture not Ready: every PTT source is refused with
     // the exact text and nothing reaches the radio or the state machine.
+    void remoteRadioCandidateDoesNotExemptIdleOrNextLocalPcKey()
+    {
+        Rig rig(QStringLiteral("ready"));
+        const QByteArray device("radio-window");
+        const QString owner("station:radio-session");
+        rig.model->setRemoteMicSelection(owner, device, RemoteMicSource::RadioMic);
+        QVERIFY(reachCaptureState(rig, QStringLiteral("closed")));
+        rig.mox()->setMox(true);
+        QVERIFY(!rig.mox()->isMox());
+        KeyerIdentity keyer;
+        keyer.deviceId = device;
+        keyer.session = owner;
+        rig.model->beginRemoteRadioKeyAttempt(owner, device, 1);
+        rig.mox()->setMox(true, keyer);
+        QVERIFY(rig.mox()->isMox());
+        rig.model->finishRemoteRadioKeyAttempt(owner, device, 1, 7);
+        rig.mox()->setMox(false, keyer);
+        QTRY_COMPARE(rig.mox()->state(), MoxState::Rx);
+        rig.mox()->setMox(true);
+        QVERIFY(!rig.mox()->isMox());
+        QCOMPARE(rig.model->transmitModel().micSource(), MicSource::Pc);
+    }
+
+    void remoteRadioKeySurvivesPcCaptureLossButRetiresAtHardwareOff()
+    {
+        Rig rig(QStringLiteral("ready"));
+        QVERIFY(reachCaptureState(rig, QStringLiteral("ready")));
+        const QByteArray device("radio-window");
+        const QString owner("station:radio-session");
+        KeyerIdentity keyer;
+        keyer.deviceId = device;
+        keyer.session = owner;
+        rig.model->setRemoteMicSelection(owner, device, RemoteMicSource::RadioMic);
+        rig.model->beginRemoteRadioKeyAttempt(owner, device, 1);
+        rig.mox()->setMox(true, keyer);
+        QVERIFY(rig.mox()->isMox());
+        RadioModel::KeyedBy keyed;
+        keyed.deviceId = device;
+        keyed.epoch = 7;
+        rig.model->setKeyedBy(keyed);
+        rig.model->finishRemoteRadioKeyAttempt(owner, device, 1, 7);
+        QSignalSpy ending(rig.mox(), &MoxController::txAboutToEnd);
+        const qint64 pid = rig.engine()->captureHelperProcessIdForTest();
+        QVERIFY(pid > 0);
+        killProcess(pid);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.engine()->captureStatus().state, State::Failed, 5000);
+        QVERIFY(rig.mox()->isMox());
+        QCOMPARE(ending.count(), 0);
+        QVERIFY(rig.model->remoteRadioMicKeyActive(device));
+        rig.mox()->setMox(false, keyer);
+        QTRY_COMPARE(rig.mox()->state(), MoxState::Rx);
+        QVERIFY(!rig.model->remoteRadioMicKeyActive(device));
+        rig.mox()->setMox(true);
+        QVERIFY(!rig.mox()->isMox());
+    }
+
+    void explicitKeyScopeMasksReentrantLocalCallAndRollsBack()
+    {
+        Rig rig(QStringLiteral("ready"));
+        KeyerIdentity keyer;
+        keyer.deviceId = QByteArray("radio-window");
+        keyer.session = QStringLiteral("station:radio-session");
+        bool nested = false;
+        bool sawStation = false;
+        rig.mox()->setMoxCheck([&]() {
+            const auto identity = rig.mox()->keyAttemptIdentity();
+            if (!nested && identity && identity->deviceId == keyer.deviceId) {
+                nested = true;
+                rig.mox()->setMox(true);
+                nested = false;
+            } else if (nested) {
+                sawStation = identity && identity->isStation();
+            }
+            safety::BandPlanGuard::MoxCheckResult result;
+            result.ok = false;
+            result.reason = QStringLiteral("Refused scoped attempt");
+            return result;
+        });
+        rig.mox()->setMox(true, keyer);
+        QVERIFY(sawStation);
+        QVERIFY(!rig.mox()->isMox());
+        QVERIFY(!rig.mox()->keyAttemptIdentity().has_value());
+    }
+
     void refusalHasNoRfEffect_data()
     {
         QTest::addColumn<int>("ptt");

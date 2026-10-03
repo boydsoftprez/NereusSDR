@@ -1129,6 +1129,8 @@ private slots:
         QVERIFY(remoteMedia.audioProfileNegotiated());
         QVERIFY(!remoteMedia.receiverAudioNegotiated());
         QVERIFY(!remoteMedia.headphonesMixNegotiated());
+        // Receiver audio is independent of the negotiated quality choice.
+        QVERIFY(remoteMedia.audioQualityNegotiated());
         QCOMPARE(h.client.capabilities().mediaRelayRoutingVersion, 1);
         QCOMPARE(h.client.capabilities().mediaTunnelVersion, 1);
         QCOMPARE(h.client.capabilities().miniDisplayVersion, 1);
@@ -1161,7 +1163,8 @@ private slots:
         QTest::qWait(300);
 
         const QStringList audioKeys{QStringLiteral("connectionId"), QStringLiteral("enabled"),
-                                    QStringLiteral("op"), QStringLiteral("profile"),
+                                    QStringLiteral("op"), QStringLiteral("opusBitrate"),
+                                    QStringLiteral("profile"),
                                     QStringLiteral("revision")};
         int starts = 0;
         int audio = 0;
@@ -1177,6 +1180,7 @@ private slots:
             } else if (op == QLatin1String("audio")) {
                 ++audio;
                 QCOMPARE(keys, audioKeys);
+                QCOMPARE(control.value(QStringLiteral("opusBitrate")).toInt(), 48000);
             }
         }
         QCOMPARE(starts, 1);

@@ -693,7 +693,7 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"rx2Attenuator", 1},
                                   // Radio codec lane: radioMicVersion,
                                   // the catalogue's radio mic keys.
-                                  {"radioMic", 1},
+                                  {"radioMic", 2},
                                   // Shared-input filters, ruling (d):
                                   // rxFilterLowPassVersion and radio's
                                   // rxFilter0LowPass fields.
@@ -777,7 +777,7 @@ QJsonArray captureCapabilities()
     // Level Cal 2: sent to a peer that declared rx2Attenuator.
     caps.rx2AttenuatorVersion = 1;
     // Radio codec lane: sent to a peer that declared radioMic.
-    caps.radioMicVersion = 1;
+    caps.radioMicVersion = 2;
     // Shared-input filters, ruling (d): sent to a peer that declared
     // rxFilterLowPass.
     caps.rxFilterLowPassVersion = 1;

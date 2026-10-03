@@ -483,6 +483,8 @@
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
 
+#include <QJsonDocument>
+#include <QJsonArray>
 #include "core/session/NetworkTrouble.h"
 #include "core/session/SystemProxy.h"
 #include "core/session/StationClient.h"
@@ -869,6 +871,8 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // window transmits through the Core (link section 18.6), so its hello
     // says so and the Core answers with txPermitted and remoteTxVersion.
     m_declaredFeatures.insert(QByteArrayLiteral("remoteTx"), 1);
+    m_declaredFeatures.insert(QByteArrayLiteral("radioMic"), 2);
+    m_declaredFeatures.insert(QByteArrayLiteral("audioQuality"), 1);
     // G-38: 2 adds Repair invalid settings (station.repairSettings).
     m_declaredFeatures.insert(QByteArrayLiteral("settingsHygiene"), 2);
     m_declaredFeatures.insert(QByteArrayLiteral("coreBuildInfo"), 1);
@@ -953,6 +957,38 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // iPhone app plan Task 37 (R-IOS-13): the Core's watchdog hears from
     // this window every 100 ms while it transmits or has VOX armed; on the
     // session a keepalive goes once (a lost one is overtaken by the next).
+    m_remoteTransmit->setMicrophoneRequirement([this]() {
+        const auto* slice = m_radioModel ? m_radioModel->txBoundSlice() : nullptr;
+        return !slice || (slice->dspMode() != DSPMode::CWL && slice->dspMode() != DSPMode::CWU);
+    });
+    connect(m_remoteTransmit, &RemoteTransmitClient::micSourceChanged, this,
+            [this](RemoteMicSource source, bool settled, const QString&) {
+        const QPointer<StationClient> sourceSelf(this);
+        if (settled && m_requestedLocalMicSource && m_radioModel && remoteTransmitAvailable()
+            && m_requestedLocalMicSource->first == m_sessionEpoch
+            && source == (m_requestedLocalMicSource->second == MicSource::Radio
+                ? RemoteMicSource::RadioMic : RemoteMicSource::ClientAudio)) {
+            const auto desired = m_requestedLocalMicSource->second;
+            m_requestedLocalMicSource.reset();
+            auto accepted = std::move(m_micSourceAccepted);
+            m_micSourceAccepted = {};
+            const QPointer<StationClient> self(this);
+            const quint64 epoch = m_sessionEpoch;
+            m_radioModel->transmitModel().setMicSource(desired);
+            if (self && accepted && epoch == m_sessionEpoch && remoteTransmitAvailable()
+                && m_remoteTransmit->micSourceSettled()
+                && m_remoteTransmit->acceptedMicSource() == source) { accepted(); }
+        } else if (!m_remoteTransmit->micSourcePending()) {
+            m_requestedLocalMicSource.reset();
+            m_micSourceAccepted = {};
+            if (settled && source == RemoteMicSource::ClientAudio && m_radioModel
+                && m_radioModel->transmitModel().micSource() == MicSource::Radio) {
+                m_radioModel->transmitModel().setMicSource(MicSource::Pc);
+            }
+        }
+        if (!sourceSelf) { return; }
+        if (m_radioModel) { emit m_radioModel->remoteMicSourceStateChanged(); }
+    });
     m_remoteTransmit->setSessionKeepalive([this](quint64 sequence, quint32 epoch) {
         if (!remoteTransmitAvailable()) {
             return false;
@@ -2340,6 +2376,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     // ids (resolveOrCreate(), unchanged by this task), which is what lets
     // a GUI holding a raw pointer to one survive a reconnect unchanged.
     m_objects.clear();
+    m_audioOpusBitrates.reset();
     m_outboundMirror->unwatchAll();
     m_outboundCoalescer.clear();
     // iPhone app plan Task 39: nothing is on the air as far as this window
@@ -4188,8 +4225,47 @@ void StationClient::reconcileSlicesAgainstStation()
     }
 }
 
+void StationClient::handleAudioCatalogue(const QList<MirrorUpdate>& updates)
+{
+    // The authenticated snapshot precedes handshakeComplete. Admit its
+    // offered table only after this active session negotiated quality.
+    if (!m_sessionActive || !m_authenticated
+        || m_agreedMinor < kRadioIdentitySessionProtocolMinor
+        || m_capabilities.audioQualityVersion < 1) {
+        return;
+    }
+    for (const MirrorUpdate& update : updates) {
+        if (update.name != QByteArrayLiteral("json")) { continue; }
+        const QJsonDocument document = QJsonDocument::fromJson(update.value.toString().toUtf8());
+        if (!document.isObject()) { continue; }
+        QList<int> bitrates;
+        const QJsonArray profiles = document.object().value(QStringLiteral("audio")).toObject()
+            .value(QStringLiteral("opusProfiles")).toArray();
+        for (const QJsonValue& entry : profiles) {
+            const QJsonValue bitrate = entry.toObject().value(QStringLiteral("bitrate"));
+            const int value = bitrate.toInt(0);
+            if (bitrate.isDouble() && value > 0 && bitrate.toDouble() == value
+                && !bitrates.contains(value)) {
+                bitrates.append(value);
+            }
+        }
+        if (m_audioOpusBitrates != std::optional<QList<int>>(bitrates)) {
+            m_audioOpusBitrates = bitrates;
+            const QPointer<StationClient> self(this);
+            const quint64 epoch = m_sessionEpoch;
+            emit audioOpusBitratesChanged();
+            if (!self || m_sessionEpoch != epoch) { return; }
+        }
+    }
+}
+
 void StationClient::handleObjectCreate(const SessionMessage& message)
 {
+    if (message.objectKey == QByteArrayLiteral("catalog")) {
+        m_pendingStationSchemas.remove(message.className);
+        handleAudioCatalogue(message.updates);
+        return;
+    }
     // iPhone app plan Task 78: who else is on the Core and their slices,
     // plain state for the window's screens; no model object stands for
     // them here.
@@ -4248,6 +4324,10 @@ void StationClient::handleObjectDestroy(const SessionMessage& message)
 
 void StationClient::handleDelta(const SessionMessage& message)
 {
+    if (message.objectKey == QByteArrayLiteral("catalog")) {
+        handleAudioCatalogue(message.updates);
+        return;
+    }
     if (RemoteDevicesState::holdsKey(message.objectKey)) {
         m_remoteDevices->applyObject(message.objectKey, message.updates);
         return;
@@ -7309,10 +7389,41 @@ void StationClient::handleRelayWatchResult(const SessionMessage& message)
     }
 }
 
+bool StationClient::remoteMicSourceAvailable() const
+{
+    return remoteTransmitAvailable() && m_capabilities.radioMicVersion >= 2;
+}
+
+IStationLink::CommandOutcome StationClient::requestMicSource(MicSource desired, std::function<void()> accepted)
+{
+    if (!m_radioModel || !m_remoteTransmit) { return {false, remoteMicLegacyReason()}; }
+    if (!remoteMicSourceAvailable()) {
+        if (desired != MicSource::Radio && m_remoteTransmit->micSourceSettled()
+            && m_remoteTransmit->acceptedMicSource() == RemoteMicSource::ClientAudio) {
+            m_radioModel->transmitModel().setMicSource(desired);
+            if (accepted) { accepted(); }
+            return {true, {}};
+        }
+        return {false, remoteMicLegacyReason()};
+    }
+    if (desired == MicSource::Radio && !m_radioModel->boardCapabilities().radioMicSelectable()) {
+        return {false, QStringLiteral("This radio does not offer a radio microphone input.")};
+    }
+    if (m_remoteTransmit->micSourcePending()) {
+        return {false, m_remoteTransmit->micSourceReason()};
+    }
+    m_requestedLocalMicSource = QPair<quint64, MicSource>{m_sessionEpoch, desired};
+    m_micSourceAccepted = std::move(accepted);
+    const bool sent = m_remoteTransmit->requestMicSource(desired == MicSource::Radio
+        ? RemoteMicSource::RadioMic : RemoteMicSource::ClientAudio);
+    return {sent, sent ? QString() : m_remoteTransmit->micSourceReason()};
+}
+
 void StationClient::refreshRemoteTransmit()
 {
     if (m_remoteTransmit != nullptr) {
         m_remoteTransmit->setAvailable(remoteTransmitAvailable());
+        m_remoteTransmit->setMicSourceCapability(remoteMicSourceAvailable());
     }
 }
 
@@ -7453,7 +7564,7 @@ void StationClient::handleCommandResult(const SessionMessage& message)
     }
     if (message.commandVerb == "tx.key" || message.commandVerb == "tx.unkey"
         || message.commandVerb == "tx.tune" || message.commandVerb == "tx.tunerTune"
-        || message.commandVerb == "tx.twoTone") {
+        || message.commandVerb == "tx.twoTone" || message.commandVerb == "tx.setMicSource") {
         const QPointer<StationClient> self(this);
         if (m_remoteTransmit != nullptr) {
             m_remoteTransmit->commandFinished(message.commandId, message.commandVerb,

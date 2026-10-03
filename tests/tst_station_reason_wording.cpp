@@ -831,6 +831,10 @@ const QStringList& unkeyEventLogText()
 const QList<ReasonSource>& reasonSources()
 {
     static const QList<ReasonSource> sources{
+        // Shared radio-mic refusals reach Core replies as well as the window.
+        {"src/core/session/RemoteMicSource.h",
+         {QStringLiteral("remoteRadioVoxReason"), QStringLiteral("remoteRadioProgramReason"),
+          QStringLiteral("remoteMicLegacyReason")}, {}, 3, {}, {}},
         // Shared-input filters, ruling (d): rxFilter0LowPassReason. The
         // slices are named by letter and band ("B on 20m"), one or several
         // joined by joinRangeNames. On the HL2 it also names the slices the
@@ -960,6 +964,14 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("TxRefusals::appCannotTransmit()"),
           QStringLiteral("refusal.text"),
           QStringLiteral("decision.refusal.text"),
+          // Radio input admission and its synchronous recheck forward the
+          // canonical TxRefusal.cpp sentences, including holder refusals.
+          QStringLiteral("TxRefusals::notReady().text"),
+          QStringLiteral("decision.refusal"),
+          QStringLiteral("!now.permitted ? now.refusal : m_transmitHolder ? "
+                         "m_transmitHolder->keyRefusalFor(requester) : TxRefusal{}"),
+          // The shared inline sentence is scanned in RemoteMicSource.h above.
+          QStringLiteral("remoteMicLegacyReason()"),
           // Addendum G-42: the Extended transmit setting's refusal, which
           // returns the transmit gate's sentence (TxRefusal.cpp), the
           // on-air sentence (RadioModel::onAirReason) or its own literal
@@ -1708,6 +1720,10 @@ struct AppSideReason {
 const QList<AppSideReason>& appSideReasons()
 {
     static const QList<AppSideReason> sites{
+        {"src/core/session/RemoteTransmitClient.h", "micSourceReason",
+         "this window's pending/refused source getter; Core sentences scanned at their source"},
+        {"src/models/RadioModel.cpp", "micSourceChangeReason",
+         "remote-only window preflight; shared radio-mic sentences scanned in RemoteMicSource.h"},
         {"src/core/session/StationClient.cpp", "",
          "the app's end of the link: its own reasons are shown through OperatorReasonText"},
         {"src/core/session/StationClient.h", "", "the app's end of the link"},

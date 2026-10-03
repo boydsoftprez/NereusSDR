@@ -704,16 +704,44 @@ private slots:
         h.connectSession();
         QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.audioStatus().state
                                      == RemoteAudioStatus::State::Playing, 20000);
+        // Playing can precede audible output. Establish the injected tone
+        // before measuring continuity across the replacement itself.
+        const auto heardStableTone = [&h] {
+            constexpr int kChunkFrames = 480;
+            constexpr int kStableFrames = kChunkFrames * 10;
+            const QVector<float>& heard = h.remoteBus->heard;
+            const int end = heard.size() / 2;
+            if (end < kStableFrames) { return false; }
+            for (int frame = end - kStableFrames; frame < end; frame += kChunkFrames) {
+                double energy = 0.0;
+                for (int i = 0; i < kChunkFrames; ++i) {
+                    const double sample = heard.at((frame + i) * 2);
+                    energy += sample * sample;
+                }
+                if (energy / kChunkFrames < 1e-6) { return false; }
+            }
+            return true;
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(heardStableTone(), 5000);
         const QString oldId = remoteMedia.mediaConnectionId();
         QVERIFY(!oldId.isEmpty());
         const int switchFrom = h.remoteBus->heard.size() / 2;
+        double beforeEnergy = 0.0;
+        for (int frame = std::max(0, switchFrom - 480); frame < switchFrom; ++frame) {
+            const double sample = h.remoteBus->heard.at(frame * 2);
+            beforeEnergy += sample * sample;
+        }
+        QVERIFY(beforeEnergy / 480.0 >= 1e-6);
         QVERIFY(remoteMedia.replaceConnection());
         QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.mediaConnectionId() != oldId, 20000);
+        const int replacedAt = h.remoteBus->heard.size() / 2;
         QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.audioStatus().state
                                      == RemoteAudioStatus::State::Playing, 5000);
         QTRY_VERIFY_WITH_TIMEOUT(h.remoteBus->heard.size() / 2 >= switchFrom + 48000, 10000);
         int silentRun = 0;
         int longestSilentRun = 0;
+        int silentFrom = -1;
+        int longestSilentFrom = -1;
         const QVector<float>& heard = h.remoteBus->heard;
         for (int frame = switchFrom; (frame + 480) * 2 <= heard.size(); frame += 480) {
             double energy = 0.0;
@@ -721,10 +749,24 @@ private slots:
                 const double sample = heard.at((frame + i) * 2);
                 energy += sample * sample;
             }
-            silentRun = energy / 480.0 < 1e-6 ? silentRun + 1 : 0;
-            longestSilentRun = std::max(longestSilentRun, silentRun);
+            if (energy / 480.0 < 1e-6) {
+                if (silentRun == 0) { silentFrom = frame; }
+                ++silentRun;
+            } else {
+                silentRun = 0;
+            }
+            if (silentRun > longestSilentRun) {
+                longestSilentRun = silentRun;
+                longestSilentFrom = silentFrom;
+            }
         }
-        QVERIFY2(longestSilentRun <= 4, qPrintable(QString::number(longestSilentRun * 10)));
+        qInfo() << "tunnel replacement audio" << "switchFrom" << switchFrom
+                << "beforeEnergy" << beforeEnergy / 480.0 << "replacedAt" << replacedAt
+                << "heardFrames" << heard.size() / 2 << "longestSilentMs" << longestSilentRun * 10
+                << "silentOffsetMs" << (longestSilentFrom - switchFrom) / 48;
+        QVERIFY2(longestSilentRun <= 4,
+                 qPrintable(QStringLiteral("%1 ms silence at +%2 ms from replacement request")
+                     .arg(longestSilentRun * 10).arg((longestSilentFrom - switchFrom) / 48)));
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 

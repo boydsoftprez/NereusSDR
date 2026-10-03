@@ -187,6 +187,7 @@
 
 #include "core/daemon/DaemonTelemetryController.h"
 #include "core/session/PureSignalSessionFacade.h"
+#include "core/session/SessionCommandDispatcher.h"
 #include "core/session/media/DaemonMediaController.h"
 #include "core/session/media/DisplayBudget.h"
 #include "core/session/media/DisplayLoadGovernor.h"
@@ -206,6 +207,41 @@
 #include "models/Band.h"
 
 namespace {
+
+QList<QJsonObject> commandReplies(const LoopbackTransport* app, const QByteArray& verb,
+                                  quint32 id)
+{
+    QList<QJsonObject> replies;
+    for (const QJsonObject& result : ofType(app->received(), QStringLiteral("command.result"))) {
+        if (result.value(QStringLiteral("verb")).toString().toUtf8() == verb
+            && result.value(QStringLiteral("id")).toInteger() == id) {
+            replies.append(result);
+        }
+    }
+    return replies;
+}
+
+// Deliver through the authenticated loopback, including when a model observer
+// pumps the event loop inside another command. The receipt barrier observes
+// the real StationServer input signal after its handler returns; it does not
+// assume the command has already answered.
+bool receiveCommand(LoopbackTransport* app, const QByteArray& verb, quint32 id,
+                    const QList<MirrorUpdate>& arguments = {})
+{
+    const QPointer<LoopbackTransport> station(app->peerForTest());
+    if (!station) { return false; }
+    const QByteArray wire = SessionMessages::encode(
+        SessionMessages::commandInvoke(verb, id, arguments));
+    bool received = false;
+    const QMetaObject::Connection receipt = QObject::connect(
+        station.data(), &SessionTransport::textReceived, station.data(),
+        [&received, &wire](const QByteArray& actual) {
+            if (actual == wire) { received = true; }
+        });
+    const auto disconnectReceipt = qScopeGuard([receipt] { QObject::disconnect(receipt); });
+    app->sendText(wire);
+    return QTest::qWaitFor([&received] { return received; }, 5000);
+}
 
 // ── Task 76: media per device ───────────────────────────────────────────
 
@@ -2160,6 +2196,358 @@ private slots:
         QVERIFY2(resultsFor(appA).first().value(QStringLiteral("accepted")).toBool(false),
                  QJsonDocument(resultsFor(appA).first()).toJson().constData());
         QVERIFY(resultsFor(appB).first().value(QStringLiteral("accepted")).toBool(false));
+    }
+
+    // B2: a nested authenticated dispatch must return to the outer owner,
+    // requester and reply frame, rather than clearing their shared state.
+    void aNestedDevicesCommandPreservesTheOriginalReplyAndSliceOwner()
+    {
+        Core core;
+        Device a;
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(a);
+        core.pair(b);
+        LoopbackTransport* appA = core.signIn(a);
+        LoopbackTransport* appB = core.signIn(b);
+        QVERIFY(admitted(appA) && admitted(appB));
+        const int bSlice = core.model->sliceOwnership()->ownedBy(b.key.fingerprint()).first();
+        const quint32 id = 9200;
+        bool nested = false;
+        bool nestedReceived = false;
+        int added = -1;
+        const QMetaObject::Connection observer = connect(
+            core.model.get(), &RadioModel::sliceAdded, this, [&](int sliceId) {
+                if (nested) { return; }
+                nested = true;
+                added = sliceId;
+                nestedReceived = receiveCommand(appB, "setActiveSliceById", id,
+                                                {int64("sliceId", bSlice)});
+            });
+        const auto stopObserver = qScopeGuard([observer] { QObject::disconnect(observer); });
+        QVERIFY(receiveCommand(appA, "addSlice", id,
+                               {utf8("initialPanId", QStringLiteral("pan-0"))}));
+        QVERIFY(nested && nestedReceived);
+        QTRY_COMPARE(commandReplies(appB, "setActiveSliceById", id).size(), 1);
+        QVERIFY(commandReplies(appB, "setActiveSliceById", id).first()
+                    .value(QStringLiteral("accepted")).toBool());
+        QTRY_COMPARE(commandReplies(appA, "addSlice", id).size(), 1);
+        QVERIFY(commandReplies(appA, "addSlice", id).first()
+                    .value(QStringLiteral("accepted")).toBool());
+        QCOMPARE(core.model->sliceOwnership()->mark(added).owner, a.key.fingerprint());
+        QCOMPARE(core.model->sliceOwnership()->activeFor(b.key.fingerprint()), bSlice);
+        QCOMPARE(commandReplies(appA, "setActiveSliceById", id).size(), 0);
+        QCOMPARE(commandReplies(appB, "addSlice", id).size(), 0);
+    }
+
+    void aLaterCommandCannotConsumeAnotherCommandsDeferredReplyRoute_data()
+    {
+        QTest::addColumn<QByteArray>("firstVerb");
+        QTest::addColumn<quint32>("secondId");
+        QTest::newRow("same-verb-different-ids") << QByteArray("tx.key") << quint32(9211);
+        QTest::newRow("different-verbs-same-id") << QByteArray("tx.tune") << quint32(9210);
+    }
+
+    // Complete one real dispatcher's callback inside another dispatch, then
+    // complete the latter after it returns. The public transmit callback seam
+    // controls result timing without running DSP or bypassing authentication.
+    void aLaterCommandCannotConsumeAnotherCommandsDeferredReplyRoute()
+    {
+        QFETCH(QByteArray, firstVerb);
+        QFETCH(quint32, secondId);
+        Core core;
+        allowTransmit(core);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* app = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(app));
+        SessionCommandDispatcher* dispatcher =
+            core.server->findChild<SessionCommandDispatcher*>();
+        QVERIFY(dispatcher != nullptr);
+        QList<RemoteKeying::Reply> callbacks;
+        SessionCommandDispatcher::TransmitAccess access;
+        access.keying = [&](const RemoteKeying::Command&, RemoteKeying::Reply reply) {
+            callbacks.append(std::move(reply));
+            if (callbacks.size() == 2) {
+                RemoteKeying::Result result;
+                result.accepted = true;
+                result.epoch = 1;
+                callbacks.first()(result);
+            }
+        };
+        dispatcher->setTransmitAccess(access);
+        const quint32 firstId = 9210;
+        const QList<MirrorUpdate> firstArguments = firstVerb == "tx.key"
+            ? QList<MirrorUpdate>{utf8("trigger", QStringLiteral("screen"))}
+            : QList<MirrorUpdate>{{0, "on", MirrorWireKind::Bool, QVariant(true)}};
+        QVERIFY(receiveCommand(app, firstVerb, firstId, firstArguments));
+        QCOMPARE(commandReplies(app, firstVerb, firstId).size(), 0);
+        QVERIFY(receiveCommand(app, "tx.key", secondId,
+                               {utf8("trigger", QStringLiteral("screen"))}));
+        QCOMPARE(callbacks.size(), 2);
+        QTRY_COMPARE(commandReplies(app, firstVerb, firstId).size(), 1);
+        QCOMPARE(commandReplies(app, "tx.key", secondId).size(), 0);
+        RemoteKeying::Result result;
+        result.accepted = true;
+        result.epoch = 2;
+        callbacks.last()(result);
+        QTRY_COMPARE(commandReplies(app, "tx.key", secondId).size(), 1);
+        const QJsonObject answer = commandReplies(app, "tx.key", secondId).first();
+        QVERIFY(answer.value(QStringLiteral("accepted")).toBool());
+        QCOMPARE(answer.value(QStringLiteral("values")).toArray().first().toObject()
+                     .value(QStringLiteral("value")).toInteger(), qint64(2));
+    }
+
+    // Section 18.6 promises an answer to every key copy, including copies
+    // received before the first microphone priming completion.
+    void everyPendingExactKeyCopyGetsTheAuthoritativeAnswer()
+    {
+        Core core;
+        allowTransmit(core);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* app = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(app));
+        std::function<void(bool)> completePriming;
+        int primes = 0;
+        RemoteKeying::MicUplink uplink;
+        uplink.carriesMic = [](const QByteArray&) { return true; };
+        uplink.prime = [&](const QByteArray&, std::function<void(bool)> done) {
+            ++primes;
+            completePriming = std::move(done);
+        };
+        uplink.endPriming = [](const QByteArray&) {};
+        core.server->remoteKeying()->setMicUplink(uplink);
+        const quint32 id = 9220;
+        for (int copy = 0; copy < 3; ++copy) {
+            QVERIFY(receiveCommand(app, "tx.key", id,
+                                   {utf8("trigger", QStringLiteral("screen"))}));
+        }
+        QCOMPARE(primes, 1);
+        QVERIFY(static_cast<bool>(completePriming));
+        QCOMPARE(commandReplies(app, "tx.key", id).size(), 0);
+        QVERIFY(!core.model->moxController()->isMox());
+        completePriming(true);
+        QTRY_COMPARE(commandReplies(app, "tx.key", id).size(), 3);
+        const QList<QJsonObject> replies = commandReplies(app, "tx.key", id);
+        QVERIFY(replies.first().value(QStringLiteral("accepted")).toBool());
+        const QJsonArray values = replies.first().value(QStringLiteral("values")).toArray();
+        QCOMPARE(values.size(), 1);
+        QCOMPARE(values.first().toObject().value(QStringLiteral("name")).toString(),
+                 QStringLiteral("epoch"));
+        QCOMPARE(values.first().toObject().value(QStringLiteral("value")).toInteger(), qint64(1));
+        QCOMPARE(replies.at(1), replies.first());
+        QCOMPARE(replies.at(2), replies.first());
+        QCOMPARE(primes, 1);
+        QVERIFY(core.model->moxController()->isMox());
+    }
+
+    // emitResultAs must not lend its explicit owner to a new plain-result
+    // command dispatched by another authenticated peer during result delivery.
+    void explicitResultDeliveryDoesNotStealAnotherDevicesPlainResultOwner()
+    {
+        Core core;
+        Device a;
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(a);
+        core.pair(b);
+        LoopbackTransport* appA = core.signIn(a);
+        LoopbackTransport* appB = core.signIn(b);
+        QVERIFY(admitted(appA) && admitted(appB));
+        const int aSlice = core.model->sliceOwnership()->ownedBy(a.key.fingerprint()).first();
+        const int bSlice = core.model->sliceOwnership()->ownedBy(b.key.fingerprint()).first();
+        const quint32 id = 9230;
+        bool nested = false;
+        bool nestedReceived = false;
+        const QMetaObject::Connection observer = connect(
+            appA->peerForTest(), &LoopbackTransport::outboundText, this,
+            [&](const QByteArray& wire) {
+                SessionMessage result;
+                if (nested || !SessionMessages::decode(wire, &result)
+                    || result.kind != SessionMessageKind::CommandResult
+                    || result.commandVerb != "requestSliceSampleRate" || result.commandId != id) {
+                    return;
+                }
+                nested = true;
+                nestedReceived = receiveCommand(appB, "setActiveSliceById", id,
+                                                {int64("sliceId", bSlice)});
+            });
+        const auto stopObserver = qScopeGuard([observer] { QObject::disconnect(observer); });
+        QVERIFY(receiveCommand(appA, "requestSliceSampleRate", id,
+                               {int64("sliceId", aSlice), int64("rateHz", 96000)}));
+        QTRY_VERIFY(nested);
+        QVERIFY(nestedReceived);
+        QTRY_COMPARE(commandReplies(appA, "requestSliceSampleRate", id).size(), 1);
+        QTRY_COMPARE(commandReplies(appB, "setActiveSliceById", id).size(), 1);
+        QVERIFY(commandReplies(appB, "setActiveSliceById", id).first()
+                    .value(QStringLiteral("accepted")).toBool());
+        QCOMPARE(commandReplies(appA, "setActiveSliceById", id).size(), 0);
+        QCOMPARE(commandReplies(appB, "requestSliceSampleRate", id).size(), 0);
+    }
+
+    void aNestedCommandCannotDiscardTheOuterSelfRevocationsResultBeforeEnd()
+    {
+        Core core;
+        Device a;
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(a);
+        core.pair(b);
+        LoopbackTransport* appA = core.signIn(a);
+        LoopbackTransport* appB = core.signIn(b);
+        QVERIFY(admitted(appA) && admitted(appB));
+        bool nested = false;
+        bool nestedReceived = false;
+        const QMetaObject::Connection observer = connect(
+            core.server->deviceStore(), &DeviceStore::deviceRemoved, this,
+            [&](const QByteArray& removed) {
+                if (removed != a.key.fingerprint() || nested) { return; }
+                nested = true;
+                nestedReceived = receiveCommand(appB, "unrecognisedNestedCommand", 9241);
+            });
+        const auto stopObserver = qScopeGuard([observer] { QObject::disconnect(observer); });
+        QVERIFY(receiveCommand(appA, "devices.revoke", 9240, {utf8("id", a.id())}));
+        QVERIFY(nested && nestedReceived);
+        QTRY_COMPARE(commandReplies(appB, "unrecognisedNestedCommand", 9241).size(), 1);
+        QTRY_COMPARE(commandReplies(appA, "devices.revoke", 9240).size(), 1);
+        QVERIFY(commandReplies(appA, "devices.revoke", 9240).first()
+                    .value(QStringLiteral("accepted")).toBool());
+        QTRY_VERIFY(!appA->isOpen());
+        const QList<QByteArray> kinds = appA->receivedKinds();
+        QVERIFY(kinds.lastIndexOf("command.result") < kinds.lastIndexOf("session.end"));
+        QVERIFY(appB->isOpen());
+        QVERIFY(!core.server->deviceStore()->find(a.key.fingerprint()));
+    }
+
+    void endingANestedCommandSessionDoesNotAnswerItsReplacement()
+    {
+        Core core;
+        Device a;
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(a);
+        core.pair(b);
+        LoopbackTransport* appA = core.signIn(a);
+        LoopbackTransport* appB = core.signIn(b);
+        QVERIFY(admitted(appA) && admitted(appB));
+        LoopbackTransport* replacement = nullptr;
+        bool nested = false;
+        const quint32 id = 9250;
+        const QMetaObject::Connection observer = connect(
+            core.model.get(), &RadioModel::sliceAdded, this, [&](int) {
+                if (nested) { return; }
+                nested = true;
+                appA->closeLink(QStringLiteral("nested session ended"));
+                replacement = core.signIn(a);
+            });
+        const auto stopObserver = qScopeGuard([observer] { QObject::disconnect(observer); });
+        appA->sendText(SessionMessages::encode(SessionMessages::commandInvoke(
+            "addSlice", id, {utf8("initialPanId", QStringLiteral("pan-0"))})));
+        QTRY_VERIFY(nested && replacement != nullptr);
+        QVERIFY(admitted(replacement));
+        QVERIFY(!appA->isOpen());
+        // A later barrier on the unaffected peer proves the old dispatch
+        // returned; then the replacement may reuse exactly the old verb/id.
+        QVERIFY(receiveCommand(appB, "unrecognisedBarrier", 9251));
+        QCOMPARE(commandReplies(appA, "addSlice", id).size(), 0);
+        QCOMPARE(commandReplies(replacement, "addSlice", id).size(), 0);
+        QVERIFY(receiveCommand(replacement, "addSlice", id,
+                               {utf8("initialPanId", QStringLiteral("pan-0"))}));
+        QTRY_COMPARE(commandReplies(replacement, "addSlice", id).size(), 1);
+        QVERIFY(commandReplies(replacement, "addSlice", id).first()
+                    .value(QStringLiteral("accepted")).toBool());
+        QCOMPARE(commandReplies(appB, "addSlice", id).size(), 0);
+    }
+
+    void aNestedResultDeliveryKeepsTheOuterQuestionAfterItsAnswer()
+    {
+        Core core;
+        allowTransmit(core);
+        Device a;
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(a);
+        core.pair(b);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        LoopbackTransport* appB = core.signIn(b, kTransmitter);
+        QVERIFY(admitted(appA) && admitted(appB));
+        QVERIFY(core.invoke(appA, "tx.take").value(QStringLiteral("accepted")).toBool());
+        const QJsonObject asked = core.invoke(appB, "tx.take");
+        QVERIFY(!asked.value(QStringLiteral("accepted")).toBool(true));
+        QTRY_VERIFY(!ofType(appB->received(), QStringLiteral("confirm.request")).isEmpty());
+        const qint64 questionId = ofType(appB->received(), QStringLiteral("confirm.request"))
+                                       .last().value(QStringLiteral("id")).toInteger();
+        // The previously unkeyed holder now keys; proceeding must ask again
+        // with the red question, after the proceed's own result.
+        QVERIFY(core.invoke(appA, "tx.key", {utf8("trigger", QStringLiteral("screen"))})
+                    .value(QStringLiteral("accepted")).toBool());
+        QTRY_COMPARE(core.model->moxController()->state(), MoxState::Tx);
+        const quint32 id = 9270;
+        bool nested = false;
+        bool nestedReceived = false;
+        const QMetaObject::Connection observer = connect(
+            appB->peerForTest(), &LoopbackTransport::outboundText, this,
+            [&](const QByteArray& wire) {
+                SessionMessage result;
+                if (nested || !SessionMessages::decode(wire, &result)
+                    || result.kind != SessionMessageKind::CommandResult
+                    || result.commandVerb != "confirm.proceed" || result.commandId != id) {
+                    return;
+                }
+                nested = true;
+                nestedReceived = receiveCommand(appA, "unrecognisedNestedQuestionCommand", 9271);
+            });
+        const auto stopObserver = qScopeGuard([observer] { QObject::disconnect(observer); });
+        const qsizetype before = appB->received().size();
+        QVERIFY(receiveCommand(appB, "confirm.proceed", id,
+                               {int64("id", questionId), int64("choice", -1)}));
+        QVERIFY(nested && nestedReceived);
+        QTRY_COMPARE(commandReplies(appB, "confirm.proceed", id).size(), 1);
+        QTRY_COMPARE(ofType(appB->received(), QStringLiteral("confirm.request")).size(), 2);
+        int answerIndex = -1;
+        int questionIndex = -1;
+        const QList<QByteArray> received = appB->received();
+        for (qsizetype i = before; i < received.size(); ++i) {
+            const QJsonObject message = QJsonDocument::fromJson(received.at(i)).object();
+            if (message.value(QStringLiteral("type")).toString() == "command.result"
+                && message.value(QStringLiteral("verb")).toString() == "confirm.proceed"
+                && message.value(QStringLiteral("id")).toInteger() == id) {
+                answerIndex = int(i);
+            } else if (message.value(QStringLiteral("type")).toString() == "confirm.request") {
+                questionIndex = int(i);
+            }
+        }
+        QVERIFY(answerIndex >= 0);
+        QVERIFY(questionIndex > answerIndex);
+        QVERIFY(core.server->transmitHolder()->isHeldBy(a.key.fingerprint()));
+        QVERIFY(core.model->moxController()->isMox());
+    }
+
+    // A duplicate's synchronous refusal is terminal for that invocation,
+    // while the original accepted PureSignal operation still owes its phase.
+    void aPureSignalDuplicateRefusalKeepsTheOriginalTerminalPhaseRoute()
+    {
+        Core core;
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a);
+        QVERIFY(admitted(appA));
+        const quint32 id = 9260;
+        const QByteArray request = SessionMessages::encode(
+            SessionMessages::commandInvoke("ps3.off", id, {}));
+        // One active session needs no shared-setting consent. Both receipts
+        // precede the facade's queued execution; Off is safe on this
+        // in-process Core without a PureSignal DSP coordinator.
+        appA->sendText(request);
+        appA->sendText(request);
+        QTRY_COMPARE(commandReplies(appA, "ps3.off", id).size(), 3);
+        const QList<QJsonObject> replies = commandReplies(appA, "ps3.off", id);
+        QVERIFY(replies.at(0).value(QStringLiteral("accepted")).toBool());
+        QVERIFY(!replies.at(1).value(QStringLiteral("accepted")).toBool(true));
+        QCOMPARE(replies.at(1).value(QStringLiteral("reason")).toString(),
+                 QStringLiteral("This PureSignal request is already in progress."));
+        QVERIFY(replies.at(2).value(QStringLiteral("accepted")).toBool());
+        const QJsonArray values = replies.at(2).value(QStringLiteral("values")).toArray();
+        QVERIFY(std::any_of(values.begin(), values.end(), [](const QJsonValue& value) {
+            return value.toObject().value(QStringLiteral("name")).toString() == "phase"
+                && value.toObject().value(QStringLiteral("value")).toString() == "completed";
+        }));
     }
 
     // ── Slice ownership (Task 73) ────────────────────────────────────────

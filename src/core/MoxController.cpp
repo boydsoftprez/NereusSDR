@@ -211,6 +211,7 @@
 // derived values are cited inline below.
 
 #include "core/MoxController.h"
+#include <QScopeGuard>
 
 #include <QSignalBlocker>
 #include "core/LogCategories.h"
@@ -563,6 +564,21 @@ void MoxController::setOtherDeviceHolds(OtherDeviceHoldsFn probe)
 
 void MoxController::setMox(bool on, const KeyerIdentity& keyer)
 {
+    const QPointer<MoxController> scopeOwner(this);
+    const auto previousAttempt = m_keyAttemptIdentity;
+    const bool previousAdmitted = m_keyAdmitted;
+    const auto previousAdmittedKeyer = m_admittedKeyer;
+    m_keyAttemptIdentity = keyer;
+    m_keyAdmitted = false;
+    const auto restoreAdmission = qScopeGuard([scopeOwner, previousAttempt, previousAdmitted,
+                                              previousAdmittedKeyer]() {
+        if (scopeOwner) {
+            scopeOwner->m_keyAttemptIdentity = previousAttempt;
+            scopeOwner->m_keyAdmitted = previousAdmitted;
+            scopeOwner->m_admittedKeyer = previousAdmittedKeyer;
+        }
+    });
+
     if (!on) {
         // Ruling 8.5: a release unkeys only its keyer's key. Unkeying is
         // never asked of the gate.
@@ -578,7 +594,7 @@ void MoxController::setMox(bool on, const KeyerIdentity& keyer)
         if (m_currentKeyer.deviceId == keyer.deviceId) {
             m_keyAdmitted = true;
             m_admittedKeyer = keyer;
-            setMox(true);
+            setMoxImpl(true);
             m_keyAdmitted = false;
             return;
         }
@@ -606,7 +622,7 @@ void MoxController::setMox(bool on, const KeyerIdentity& keyer)
     }
     m_keyAdmitted = true;
     m_admittedKeyer = keyer;
-    setMox(true);
+    setMoxImpl(true);
     m_keyAdmitted = false;
 }
 
@@ -1084,6 +1100,25 @@ void MoxController::setTune(bool on)
 // ---------------------------------------------------------------------------
 void MoxController::setMox(bool on)
 {
+    const QPointer<MoxController> scopeOwner(this);
+    const auto previousAttempt = m_keyAttemptIdentity;
+    const bool previousAdmitted = m_keyAdmitted;
+    const auto previousAdmittedKeyer = m_admittedKeyer;
+    m_keyAttemptIdentity = KeyerIdentity::station(PttMode::None);
+    m_keyAdmitted = false;
+    const auto restoreAdmission = qScopeGuard([scopeOwner, previousAttempt, previousAdmitted,
+                                              previousAdmittedKeyer]() {
+        if (scopeOwner) {
+            scopeOwner->m_keyAttemptIdentity = previousAttempt;
+            scopeOwner->m_keyAdmitted = previousAdmitted;
+            scopeOwner->m_admittedKeyer = previousAdmittedKeyer;
+        }
+    });
+    setMoxImpl(on);
+}
+
+void MoxController::setMoxImpl(bool on)
+{
     // ── Task 7 fix wave, I2: TX inhibit and the PA trip refuse every key ─────
     //
     // From Thetis chkMOX_CheckedChanged2, console.cs:29364-29371 [v2.10.3.15]:
@@ -1458,6 +1493,21 @@ void MoxController::dropPttOnUnkey()
 // ---------------------------------------------------------------------------
 void MoxController::tryPollKey(PttMode mode, quint8 refusedBit)
 {
+    const QPointer<MoxController> scopeOwner(this);
+    const auto previousAttempt = m_keyAttemptIdentity;
+    const bool previousAdmitted = m_keyAdmitted;
+    const auto previousAdmittedKeyer = m_admittedKeyer;
+    m_keyAttemptIdentity = KeyerIdentity::station(PttMode::None);
+    m_keyAdmitted = false;
+    const auto restoreAdmission = qScopeGuard([scopeOwner, previousAttempt, previousAdmitted,
+                                              previousAdmittedKeyer]() {
+        if (scopeOwner) {
+            scopeOwner->m_keyAttemptIdentity = previousAttempt;
+            scopeOwner->m_keyAdmitted = previousAdmitted;
+            scopeOwner->m_admittedKeyer = previousAdmittedKeyer;
+        }
+    });
+
     if (m_mox) {
         // Task 34 (ruling 8.5): a station source never renames another
         // keyer's key, or its release would unkey that keyer.
@@ -1509,7 +1559,9 @@ void MoxController::tryPollKey(PttMode mode, quint8 refusedBit)
     setPttMode(mode);
     m_quietRefusal = (m_refusedHeld & refusedBit) != 0;
     m_lastRefusalNotQueued = false;
-    setMox(true);
+    // This poll already asked the gate. Keep its admitted station identity;
+    // the public setter masks admission for independent/reentrant calls.
+    setMoxImpl(true);
     m_keyAdmitted = false;
     m_quietRefusal = false;
     if (m_mox) {
@@ -2665,6 +2717,13 @@ void MoxController::primeWdspState()
 // ---------------------------------------------------------------------------
 void MoxController::onMicPttFromRadio(bool pressed)
 {
+    const QPointer<MoxController> scopeOwner(this);
+    const auto previousAttempt = m_keyAttemptIdentity;
+    m_keyAttemptIdentity = KeyerIdentity::station(PttMode::None);
+    const auto restoreAttempt = qScopeGuard([scopeOwner, previousAttempt]() {
+        if (scopeOwner) { scopeOwner->m_keyAttemptIdentity = previousAttempt; }
+    });
+
     // From Thetis console.cs:25472 [v2.10.3.15]:
     //   bool mic_ptt = (dotdashptt & 0x01) != 0; // PTT from radio
     // (the next line, cw_ptt, carries: //[2.10.3.9]MW0LGE only want to do this on semi breakin  [original inline comment from console.cs:25473])

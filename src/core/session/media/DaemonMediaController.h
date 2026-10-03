@@ -502,6 +502,7 @@ private:
     /// of the one headphones stream id continues across contexts.
     struct HeadphonesAudioStream {
         quint32 revision{0};
+        int encoderBitrate{0};
         bool desiredEnabled{false};
         RemoteAudioProfile requestedProfile{RemoteAudioProfile::Opus};
         RemoteAudioProfile activeProfile{RemoteAudioProfile::Opus};

@@ -236,11 +236,15 @@ public:
     DisplayBudgetReason panDisplayBudgetReason(const QString& panId) const;
 
     /// R-R3-23: the AppSettings key (stored on this computer, never on the
-    /// Core) holding the remote audio choice, "Opus" or "Lossless".
+    /// Core) holding High, SaveData or Lossless (legacy Opus reads as High).
     static constexpr const char* kAudioProfileSettingKey = "RemoteAudioProfile";
     /// The operator's remote audio choice, read from this computer's
     /// settings at construction and replayed on every connection.
     RemoteAudioProfile audioProfileChoice() const;
+    RemoteAudioQualityChoice audioQualityChoice() const;
+    bool audioQualityNegotiated() const;
+    /// Empty when selectable; otherwise the peer/catalogue's availability reason.
+    QString audioQualityUnavailableReason(RemoteAudioQualityChoice choice) const;
     /// Core and this GUI can use the choice: the minor-8 audio detail and a
     /// Core advertising audioProfileVersion 1 or later. Without it the GUI
     /// sends exactly today's media start and audio controls.
@@ -425,6 +429,7 @@ public slots:
     /// Core for it at once. Choosing again also ends an earlier fallback to
     /// Opus and starts a new link trial.
     void setAudioProfileChoice(NereusSDR::RemoteAudioProfile profile);
+    void setAudioQualityChoice(NereusSDR::RemoteAudioQualityChoice choice);
     /// Fix wave 3 (the several-devices design, ruling 9.3, asking again
     /// around the transmit holder): who holds transmit, as the Core's
     /// holder notification says (Task 34's `txState`: `holderEpoch`, which
@@ -601,6 +606,7 @@ private:
     void onHeadphonesError(const QString& reason, RemoteAudioReceiver::Fault fault);
     void setHeadphonesProblem(const QString& problem);
     void refreshAudioStatus();
+    void resetMicrophoneQuality();
     void checkLosslessLink();
     void fallBackToOpus(const QString& cause);
     void sendClockProbe();

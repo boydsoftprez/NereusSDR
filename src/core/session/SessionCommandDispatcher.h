@@ -248,6 +248,7 @@
 
 #include "core/SupportBundle.h"
 #include "core/session/RemoteKeying.h"
+#include "core/session/RemoteMicSource.h"
 #include "core/session/SessionMessages.h"
 #include "core/session/StationDevicesFacade.h"
 #include "core/safety/TxRefusal.h"
@@ -319,6 +320,17 @@ public:
     /// it and one device leaving cancels only its own. Nothing else
     /// changes.
     void setSessionOwner(const QString& owner);
+    /// Lexical command identity and negotiated offers. Nested authenticated
+    /// dispatches exchange these values without resetting jobs or generations.
+    struct DispatchContext {
+        QString owner;
+        QByteArray requester;
+        bool requesterSharesSlices = false;
+        bool pureSignalArmingOffered = false;
+        bool transmitSettingsOnAir = false;
+        std::optional<QString> resultOwner;
+    };
+    DispatchContext exchangeDispatchContext(DispatchContext context);
     /// R-R3-49 (parity Task 7): the session's peer was offered
     /// transmitSettingsVersion 7, so ps3.single, ps3.automatic,
     /// ps3.applyCurrent and ps3.restoreCorrection are taken from it while
@@ -422,6 +434,8 @@ public:
     /// waiting for its microphone buffer); a later one is emitted then, and
     /// the Core routes it by verb and id to the session that asked.
     struct TransmitAccess {
+        std::function<SessionMessage(const SessionMessage&, const QString&, const QByteArray&,
+                                     std::optional<RemoteMicSource>)> micSource;
         std::function<TxRefusal(const QByteArray& requester)> onAir;
         std::function<TxRefusal(const QByteArray& requester)> txSlice;
         /// Slice control fix wave (Important 4): tx.setTxSlice from
@@ -701,6 +715,7 @@ private:
     /// iPhone app plan Task 77: tx.take {holderEpoch, shownKeyed}.
     void handleTxTake(const NereusSDR::SessionMessage& invoke);
     // Task 35: tx.key, tx.unkey, tx.tune, tx.twoTone.
+    void handleTxMicSource(const NereusSDR::SessionMessage& invoke);
     void handleTxKeying(const NereusSDR::SessionMessage& invoke);
     TransmitAccess m_transmitAccess;
     struct PendingPureSignalCommand {

@@ -822,6 +822,7 @@ warren@wpratt.com
 #include "models/RadioModel.h"
 #include "models/StationTciModel.h"
 #include "core/session/IStationLink.h"
+#include "core/session/RemoteTransmitClient.h"
 #include "models/AccessoryDataModel.h"
 #include "models/SliceModel.h"
 #include "widgets/VfoWidget.h"
@@ -3625,6 +3626,8 @@ void MainWindow::ensureRemoteSession()
         }
 
         m_stationClient = new StationClient(m_radioModel, proxy, this);
+        connect(m_radioModel, &RadioModel::remoteMicSourceStateChanged,
+                this, [this]() { applyRemoteRoleGating(); });
         // iPhone app Task 18 (R-IOS-08): this computer's own device key.
         // A Core it paired with is signed in to by key, and a token
         // sign-in to a Core with an identity enrols the key (the link
@@ -14732,6 +14735,13 @@ SetupDialog* MainWindow::createSetupDialog()
     if (m_remoteMedia != nullptr && !m_remoteMedia->micLineOpen()) {
         dialog->setVoxPermitted(false, TxRefusals::micNotConnected().text);
     }
+    if (m_stationClient && m_stationClient->remoteTransmit()) {
+        const auto* source = m_stationClient->remoteTransmit();
+        if (!source->micSourceSettled() || source->acceptedMicSource() == RemoteMicSource::RadioMic) {
+            dialog->setVoxPermitted(false,
+                !source->micSourceSettled() ? source->micSourceReason() : remoteRadioVoxReason());
+        }
+    }
     // Station VOX: a hosting window's, while another device holds transmit.
     if (const QString holderReason = desktopVoxHolderReason(); !holderReason.isEmpty()) {
         dialog->setVoxPermitted(false, holderReason);
@@ -15456,6 +15466,13 @@ void MainWindow::applyRemoteRoleGating()
     // Core's refusal of arming it stays the backstop).
     bool voxLine = m_remoteMedia == nullptr || m_remoteMedia->micLineOpen();
     QString voxReason = voxLine ? QString() : TxRefusals::micNotConnected().text;
+    if (m_stationClient && m_stationClient->remoteTransmit()) {
+        const auto* source = m_stationClient->remoteTransmit();
+        if (!source->micSourceSettled() || source->acceptedMicSource() == RemoteMicSource::RadioMic) {
+            voxLine = false;
+            voxReason = !source->micSourceSettled() ? source->micSourceReason() : remoteRadioVoxReason();
+        }
+    }
     // iPhone app plan Task 77 (rulings 7.7, 8.4): while another device
     // holds transmit, the transmitter's settings are its own, and VOX
     // follows the holder: every transmit control here is shown disabled

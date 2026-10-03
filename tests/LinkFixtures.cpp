@@ -716,6 +716,24 @@ QString LinkFixtures::match(const QJsonValue& expected, const QJsonValue& actual
                                     .arg(path, shown(expected), shown(actual));
 }
 
+QJsonValue LinkFixtures::currentCoreStationExpectation(const QJsonValue& expected)
+{
+    if (!expected.isObject()) { return expected; }
+    QJsonObject message = expected.toObject();
+    if (message.value(QStringLiteral("type")) != QStringLiteral("hello")
+        || !message.value(QStringLiteral("features")).isObject()) {
+        return expected;
+    }
+    QJsonObject features = message.value(QStringLiteral("features")).toObject();
+    if (features.value(QStringLiteral("deviceAuth")) != 1
+        || features.contains(QStringLiteral("radioMic"))) {
+        return expected;
+    }
+    features.insert(QStringLiteral("radioMic"), 2);
+    message.insert(QStringLiteral("features"), features);
+    return message;
+}
+
 QJsonValue LinkFixtures::substitute(const QJsonValue& value, Captures* captures,
                                     int* counter, QString* error)
 {
@@ -1811,7 +1829,7 @@ QString LinkFixtures::runSession(const QJsonObject& fixture, StationServer& serv
                         .arg(describe(index), QString::fromUtf8(wire.left(kMaxShownChars)));
                 }
                 const QJsonObject actual = doc.object();
-                const QString difference = match(message, actual, &captures);
+                const QString difference = match(currentCoreStationExpectation(message), actual, &captures);
                 if (!difference.isEmpty()) {
                     return QStringLiteral("%1: %2\n  the station sent: %3")
                         .arg(describe(index), difference, shown(actual));

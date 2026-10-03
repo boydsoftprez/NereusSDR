@@ -87,6 +87,7 @@
 #include <functional>
 
 #include "core/session/MirrorSchema.h"
+#include "core/session/RemoteMicSource.h"
 
 namespace NereusSDR {
 
@@ -164,6 +165,14 @@ public:
     /// (the Core unkeys a device whose link drops, and never re-keys).
     void setAvailable(bool available);
     bool available() const { return m_available; }
+    void setMicSourceCapability(bool available);
+    bool requestMicSource(RemoteMicSource source);
+    RemoteMicSource acceptedMicSource() const { return m_acceptedMicSource; }
+    bool micSourceSettled() const { return m_micSourceSettled; }
+    bool micSourcePending() const { return m_micSourcePending; }
+    QString micSourceReason() const { return m_micSourceReason; }
+    void setMicrophoneRequirement(std::function<bool()> required)
+    { m_microphoneRequired = std::move(required); }
 
     // ---- The operator's controls ("screen") ----
     /// MOX pressed (true) or released (false).
@@ -230,6 +239,7 @@ signals:
     void refused(const QString& reason, const QString& code, const QString& fix);
     void micKeyDownChanged(bool down);
     void holdsTransmitChanged(bool holds);
+    void micSourceChanged(RemoteMicSource accepted, bool settled, const QString& reason);
 
 private:
     enum class Phase { Idle, Waiting, On };
@@ -239,7 +249,7 @@ private:
         quint32 epoch{0};
         bool sawTransmitting{false};
     };
-    enum class Kind { ScreenKey, ProgramKey, Release, Tune, TwoTone };
+    enum class Kind { ScreenKey, ProgramKey, Release, Tune, TwoTone, MicSource };
     struct Pending {
         Kind kind;
         QByteArray verb;
@@ -253,6 +263,14 @@ private:
     void publish();
     static quint32 epochOf(const QList<MirrorUpdate>& values);
 
+    bool microphoneRequired() const { return !m_microphoneRequired || m_microphoneRequired(); }
+    std::function<bool()> m_microphoneRequired;
+    bool m_micSourceAvailable{false};
+    bool m_micSourceSettled{true};
+    bool m_micSourcePending{false};
+    RemoteMicSource m_acceptedMicSource{RemoteMicSource::ClientAudio};
+    RemoteMicSource m_requestedMicSource{RemoteMicSource::ClientAudio};
+    QString m_micSourceReason;
     Sender m_sender;
     bool m_available{false};
     Key m_screen;
