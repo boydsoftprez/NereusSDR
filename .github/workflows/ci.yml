@@ -273,6 +273,9 @@ jobs:
         # Runs tests/compliance/ (inventory schema + cite baseline).
         run: python3 -m pytest tests/compliance/ -v
 
+      - name: "pytest: release version rules"
+        run: python3 -m pytest tests/release/ -v
+
   # --------------------------------------------------------------------
   # The rendezvous service (rendezvous/, iPhone app plan Task 26).
   #

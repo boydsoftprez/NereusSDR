@@ -17,6 +17,8 @@
 //                AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-01 - #299: deferred real initialization test seam for startup
+//                 wiring coverage. J.J. Boyd (KG4VCF), assisted by OpenAI Codex.
 //   2026-09-30  J.J. Boyd / KG4VCF  RADE reason: test seam (createRadeChannel honours setRadeCreateFailsForTest and setRadeStartFailsForTest).
 //                                    AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -278,6 +280,12 @@ bool WdspEngine::initialize(const QString& configDir)
     prepareConfigDir(configDir);
 
 #ifdef NEREUS_BUILD_TESTS
+    if (m_deferredInitForTest) {
+        QTimer::singleShot(0, this, [this]() {
+            finishInitialization(/*wisdomWasRebuilt=*/false);
+        });
+        return false;
+    }
     if (m_synchronousInitForTest) {
         // Test-only path (remote-daemon R2 Task 2): never spawns
         // WisdomThread, never calls WDSPwisdom(). finishInitialization()

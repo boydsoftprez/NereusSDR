@@ -10,6 +10,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-01 - #299: deferred real initialization test seam for startup
+//                 wiring coverage. J.J. Boyd (KG4VCF), assisted by OpenAI Codex.
 //   2026-09-30  J.J. Boyd / KG4VCF  RADE reason: test seam setRadeCreateFailsForTest and setRadeStartFailsForTest.
 //                                    AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -278,6 +280,11 @@ public:
     // behaviour exactly; initialize() is unmodified in every other respect.
     void setSynchronousInitForTest(bool enable) { m_synchronousInitForTest = enable; }
 
+    // Run real finishInitialization on the next event-loop turn to exercise
+    // connectToRadio's startup wait before it creates and wires the workers.
+    // Like the synchronous seam, skip WisdomThread and its long planning.
+    void setDeferredInitForTest(bool enable) { m_deferredInitForTest = enable; }
+
     // Test-only seams (RADE reason). While set, createRadeChannel makes no
     // channel, or makes channels whose start() refuses
     // (RadeChannel::setStartFailsForTest), so a test can drive a RADE slice
@@ -287,8 +294,8 @@ public:
 
     // Test-only observability paired with the seam above. True once
     // initialize() has entered the ASYNC branch that constructs the
-    // "WisdomThread" QThread (i.e. setSynchronousInitForTest(true) was not
-    // armed before this engine's one and only initialize() call). Sticky:
+    // "WisdomThread" QThread (neither test initialization seam was armed
+    // before this engine's one and only initialize() call). Sticky:
     // nothing ever resets it back to false.
     //
     // The QThread built in the async branch (WdspEngine.cpp, the
@@ -856,6 +863,7 @@ private:
     // why this has to be consulted inside initialize() rather than
     // implemented as a separate pre-initialize entry point.
     bool m_synchronousInitForTest{false};
+    bool m_deferredInitForTest{false};
     // Backing fields for the RADE reason seams above.
     bool m_radeCreateFailsForTest{false};
     bool m_radeStartFailsForTest{false};

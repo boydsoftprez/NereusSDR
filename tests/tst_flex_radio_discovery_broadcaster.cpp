@@ -25,6 +25,7 @@ class FlexRadioDiscoveryBroadcasterTest : public QObject {
 
 private slots:
     void headerLayout();             // 28-byte header structure
+    void defaultVersionIsFrozen();
     void payloadIsAscii();           // payload is printable ASCII
     void packetCountRolls();         // builds with counts 0..15, byte1 changes
     void totalSizeIsMultipleOf4();
@@ -115,6 +116,23 @@ void FlexRadioDiscoveryBroadcasterTest::payloadIsAscii()
     // radio_license_id must start with FlexRadio OUI 00-1C-2D; last 3 octets
     // derived from host MAC (11:22:33:44:55:66 -> last 3 = 44-55-66).
     QVERIFY(payloadStr.contains(QStringLiteral("radio_license_id=00-1C-2D-44-55-66")));
+}
+
+void FlexRadioDiscoveryBroadcasterTest::defaultVersionIsFrozen()
+{
+    NereusSDR::FlexRadioDiscoveryBroadcaster b;
+    const QList<QByteArray> tokens = b.buildBeaconForTesting(0, 0x60000000).mid(28).split(' ');
+    int versionTokens = 0;
+    for (const QByteArray& token : tokens) {
+        if (token.startsWith("version=")) {
+            ++versionTokens;
+            QCOMPARE(token, QByteArray("version=0.5.2"));
+        }
+    }
+    QCOMPARE(versionTokens, 1);
+    QVERIFY(tokens.contains("discovery_protocol_version=3.1.0.4"));
+    QVERIFY(tokens.contains("max_licensed_version=v4"));
+    QVERIFY(tokens.contains("min_software_version=2.13.0.0"));
 }
 
 void FlexRadioDiscoveryBroadcasterTest::packetCountRolls()

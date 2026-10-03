@@ -16,6 +16,9 @@
 // Modification history (NereusSDR):
 //   2026-10-03 - Diversity atomic reentry and slice-close/hydration lifetime
 //                 fences, J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-01 - #299: replay anti-VOX run and detector tau to each new
+//                 transmit worker after reconnect. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-01 - #256: replay the HL2 TuneSlider tone magnitude before
 //                 every TUNE key. J.J. Boyd (KG4VCF), AI-assisted via
 //                 OpenAI Codex.
@@ -7716,10 +7719,9 @@ void RadioModel::wireTransmitProcessingChain()
     // TM -> Mox -> TxChannel signal chain handles per-property
     // updates through recompute()'s computed-value guard.
     //
-    // antiVoxTau and antiVoxRun are not covered here -- their TM ->
-    // Mox connects are deferred to wireConnectionSignals (lines
-    // 5025/5051) where an explicit re-push already happens after
-    // TxWorkerThread is wired.
+    // antiVoxTau and antiVoxRun are replayed directly to each new
+    // TxWorkerThread in wireConnectionSignals, after their signal
+    // connections are installed.
     if (m_moxController) {
         m_moxController->primeWdspState();
     }
@@ -19528,7 +19530,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                                 : info.macAddress;
         m_flexBroadcaster->setMacAddress(mac);
         m_flexBroadcaster->setSerial(derivedFlexSerial(mac));
-        m_flexBroadcaster->setVersion(QStringLiteral(NEREUSSDR_VERSION));
+        // The beacon reports its frozen version; never give it NEREUSSDR_VERSION.
         m_flexBroadcaster->setCallsign(
             as.value(QStringLiteral("StationCallsign"),
                      QStringLiteral("NEREUS")).toString());
@@ -20152,10 +20154,9 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
                 m_txWorker.get(), &TxWorkerThread::setAntiVoxDetectorTau,
                 Qt::QueuedConnection);
 
-        // 3M-3a-iv: initial push of TM tau into MoxController so the first
-        // emission of antiVoxDetectorTauRequested aligns DEXP with whatever
-        // AppSettings restored.  The NaN sentinel inside MoxController
-        // forces the emit even if the value matches its default.
+        // Keep the persistent controller aligned with the restored model.
+        // Its idempotent setter may emit only on the first connection;
+        // the fresh worker receives an explicit replay below on every connect.
         m_moxController->setAntiVoxTau(m_transmitModel.antiVoxTauMs());
 
         // 3M-3a-iv scope-expansion: TransmitModel::antiVoxRunChanged ->
@@ -20178,12 +20179,21 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
                 m_txWorker.get(), &TxWorkerThread::setAntiVoxRun,
                 Qt::QueuedConnection);
 
-        // 3M-3a-iv scope-expansion: initial push of TM antiVoxRun into
-        // MoxController so the first emission of antiVoxRunRequested aligns
-        // TxChannel/atomic gate with whatever AppSettings restored.  The
-        // init guard inside MoxController forces the emit even if value
-        // matches default.
+        // Keep normal controller updates idempotent across reconnects.
         m_moxController->setAntiVoxRun(m_transmitModel.antiVoxRun());
+
+        // #299: MoxController survives disconnect, while TxWorkerThread
+        // and WDSP DEXP are recreated. Unchanged run/tau values therefore
+        // need replay even when the controller emits no property change.
+        // Queue to the same receiver as the normal updates so the new
+        // worker's reference gate and detector receive the restored state.
+        // Semantics: Thetis setup.cs:18980-18996 [v2.10.3.13].
+        QMetaObject::invokeMethod(m_txWorker.get(), "setAntiVoxDetectorTau",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(double, m_transmitModel.antiVoxTauMs() / 1000.0));
+        QMetaObject::invokeMethod(m_txWorker.get(), "setAntiVoxRun",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(bool, m_transmitModel.antiVoxRun()));
     }
 }
 

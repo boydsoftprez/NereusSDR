@@ -15,6 +15,9 @@
 //   2026-09-24 - R-R3-22 / R-R3-47: setSourceAddress and the no-send test
 //                 mode. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-03 - Froze the beacon version= field at 0.5.2 when NereusSDR
+//                 moved to calendar versions. J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via OpenAI Codex.
 // =================================================================
 
 #include "FlexRadioDiscoveryBroadcaster.h"
@@ -311,12 +314,13 @@ QByteArray FlexRadioDiscoveryBroadcaster::buildBeacon(
     const QString serialStr   = m_serial.isEmpty()
                                     ? QStringLiteral("0000-0000-0000-0000")
                                     : m_serial;
-    // PGXL likely validates that version is in Flex's 4-part X.Y.Z.NNNNN format
-    // (real radios send e.g. 4.2.18.41174). NereusSDR's actual app version
-    // (0.5.1) is 3-part and looks non-Flex. Use a Flex-shaped placeholder so
-    // PGXL accepts the beacon. Operator can override via setVersion().
+    // The Power Genius utility parses version= as a Flex radio's firmware
+    // version with Version.Parse (reverse-engineering notes, 2026-05-19).
+    // NereusSDR sent its app version here through 0.5.2. Calendar versioning
+    // froze this field at that value so the amplifier keeps seeing exactly
+    // what it was used with. Never derive it from NEREUSSDR_VERSION.
     const QString versionStr  = m_version.isEmpty()
-                                    ? QStringLiteral("4.0.0.1")
+                                    ? QString::fromLatin1(kFrozenBeaconVersion)
                                     : m_version;
     const QString nicknameStr = m_nickname.isEmpty()
                                     ? QStringLiteral("NereusSDR")

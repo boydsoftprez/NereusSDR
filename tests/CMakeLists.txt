@@ -7441,6 +7441,14 @@ if(WDSP_FOUND)
         target_include_directories(tst_hl2_tune_magnitude_replay PRIVATE ${FFTW3_INCLUDE_DIRS})
         target_compile_definitions(tst_hl2_tune_magnitude_replay PRIVATE NEREUS_BUILD_TESTS WDSP_STATIC_BUILD)
     endif()
+
+    nereus_add_test(tst_antivox_reconnect_replay
+        fakes/P1FakeRadio.cpp fakes/ConnectableRadioModel.cpp WdspAntiVoxReplayProbe.c)
+    set_source_files_properties(WdspAntiVoxReplayProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    if(TARGET tst_antivox_reconnect_replay)
+        target_include_directories(tst_antivox_reconnect_replay PRIVATE ${FFTW3_INCLUDE_DIRS})
+        target_compile_definitions(tst_antivox_reconnect_replay PRIVATE NEREUS_BUILD_TESTS WDSP_STATIC_BUILD)
+    endif()
 endif()
 
 nereus_add_test(tst_connectable_radio_model

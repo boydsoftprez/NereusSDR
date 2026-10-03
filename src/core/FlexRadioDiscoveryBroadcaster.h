@@ -16,6 +16,9 @@
 //                 its station network address, where its 4992 listener
 //                 listens), isRunning and a no-send test mode. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-03 - Froze the beacon version= field at 0.5.2 when NereusSDR
+//                 moved to calendar versions. J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via OpenAI Codex.
 // =================================================================
 
 #pragma once
@@ -41,13 +44,16 @@ namespace NereusSDR {
 class FlexRadioDiscoveryBroadcaster : public QObject {
     Q_OBJECT
 public:
+    static constexpr char kFrozenBeaconVersion[] = "0.5.2";
+
     explicit FlexRadioDiscoveryBroadcaster(QObject* parent = nullptr);
 
     // Configurable fields. Setters update the next emitted beacon.
     void setSerial(const QString& serial);           // 16-digit dashed
     void setNickname(const QString& nickname);
     void setCallsign(const QString& callsign);
-    void setVersion(const QString& version);         // e.g. "0.5.1"
+    // For tests and explicit overrides; the default is kFrozenBeaconVersion.
+    void setVersion(const QString& version);
     void setMacAddress(const QString& macColonForm); // "aa:bb:cc:dd:ee:ff"
     void setModel(const QString& model);             // e.g. "FLEX-6400" (Flex model string for PGXL validation)
 
