@@ -207,7 +207,15 @@ TxCfcDialog::TxCfcDialog(TransmitModel* tm,
     connect(m_barChartTimer, &QTimer::timeout, this, &TxCfcDialog::onBarChartTick);
 }
 
-TxCfcDialog::~TxCfcDialog() = default;
+TxCfcDialog::~TxCfcDialog()
+{
+    // QDialog hides focused children in its base destructor, after our members
+    // have gone away. Finish hiding while callbacks can still see valid state.
+    hide();
+    m_ignoreUpdates = true;
+    ++m_numericEditGeneration;
+    m_numericEditor = nullptr;
+}
 
 void TxCfcDialog::setTxChannel(TxChannel* tx)
 {
@@ -723,6 +731,7 @@ void TxCfcDialog::beginEdit()
 void TxCfcDialog::finishEdit()
 {
     if (m_ignoreUpdates || m_updatingFromModel) { return; }
+    ++m_numericEditGeneration;
     const QByteArray state = captureEditState();
     const int index = selectedIndex();
     m_selectionStates.insert(state, index >= 0 ? m_compWidget->points()[index].bandId : -1);
@@ -756,6 +765,7 @@ void TxCfcDialog::rebaseEditHistory()
     m_gestureActive = false;
     m_sliderActive = false;
     m_numericEditor = nullptr;
+    ++m_numericEditGeneration;
     m_liveGestureWrote = false;
     m_history->cancelEdit();
     m_selectionStates.clear();
@@ -1118,6 +1128,21 @@ bool TxCfcDialog::eventFilter(QObject* watched, QEvent* event)
             if (m_numericEditor) { m_numericEditor = nullptr; finishEdit(); }
             beginEdit(); m_numericEditor = spin;
         }
+    }
+    if (spin && event->type() == QEvent::Wheel && !m_ignoreUpdates && !m_updatingFromModel) {
+        // Close preceding text/wheel edits before a new native wheel event.
+        // valueChanged runs during Qt's handler; commit after that mutation.
+        if (m_numericEditor) { m_numericEditor = nullptr; finishEdit(); }
+        beginEdit();
+        m_numericEditor = spin;
+        const quint64 generation = ++m_numericEditGeneration;
+        QTimer::singleShot(0, this, [this, editor = QPointer<QAbstractSpinBox>(spin), generation] {
+            if (generation != m_numericEditGeneration || !editor || m_numericEditor != editor) { return; }
+            m_numericEditor = nullptr;
+            finishEdit();
+            // Retained focus must still group the next typed value as one edit.
+            if (editor->hasFocus()) { beginEdit(); m_numericEditor = editor; }
+        });
     }
     if (qobject_cast<QSlider*>(watched) && event->type() == QEvent::MouseButtonPress) {
         beginEdit();

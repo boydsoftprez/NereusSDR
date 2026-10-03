@@ -264,7 +264,12 @@ TxEqDialog::TxEqDialog(RadioModel* radio, QWidget* parent)
     rebaseEditHistory();
 }
 
-TxEqDialog::~TxEqDialog() = default;
+TxEqDialog::~TxEqDialog()
+{
+    // Finish focused numeric edits while selection/history members are alive;
+    // QDialog's base destructor otherwise hides after those members are gone.
+    hide();
+}
 
 TxEqDialog* TxEqDialog::instance(RadioModel* radio, QWidget* parent)
 {
@@ -1690,6 +1695,7 @@ void TxEqDialog::pushLegacyControls()
     if (!m_radio || m_updatingFromModel) { return; }
     const QScopedValueRollback<bool> guard(m_updatingFromModel, true);
     auto& tx = m_radio->transmitModel();
+    const auto profileUpdate = tx.scopedTxEqProfileUpdate();
     tx.setTxEqPreamp(m_preampSpin->value());
     for (int i = 0; i < 10; ++i) { tx.setTxEqBand(i, m_bandSpins[i]->value()); tx.setTxEqFreq(i, m_freqSpins[i]->value()); }
     tx.setTxEqNc(m_ncSpin->value()); tx.setTxEqMp(m_mpChk->isChecked());

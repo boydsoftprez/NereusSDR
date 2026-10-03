@@ -51,6 +51,7 @@
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QTimer>
+#include <QWheelEvent>
 #include <QSlider>
 #include <QLineEdit>
 #include <QLabel>
@@ -144,6 +145,133 @@ private slots:
     void cleanup()
     {
         AppSettings::instance().clear();
+    }
+
+
+    void focusedNativeWheelEventsHaveIndependentHistory_data()
+    {
+        QTest::addColumn<QString>("field");
+        for (const QString& field : {QString("comp"), QString("gain"), QString("compQ"), QString("eqQ"),
+                                    QString("precomp"), QString("postEq"), QString("low"), QString("high")}) {
+            QTest::newRow(qPrintable(field)) << field;
+        }
+    }
+    void focusedNativeWheelEventsHaveIndependentHistory()
+    {
+        QFETCH(QString, field);
+        RadioModel rm;
+        const CfcProfile original = pairedProfile(10);
+        QVERIFY(rm.transmitModel().setCfcProfile(original));
+        TxCfcDialog dlg(&rm.transmitModel(), nullptr);
+        dlg.compWidget()->setSelectedIndex(3);
+        QAbstractSpinBox* spin = field == "comp" ? static_cast<QAbstractSpinBox*>(dlg.compSpin())
+            : field == "gain" ? static_cast<QAbstractSpinBox*>(dlg.gainSpin())
+            : field == "compQ" ? static_cast<QAbstractSpinBox*>(dlg.compQSpin())
+            : field == "eqQ" ? static_cast<QAbstractSpinBox*>(dlg.eqQSpin())
+            : field == "precomp" ? static_cast<QAbstractSpinBox*>(dlg.precompSpin())
+            : field == "postEq" ? static_cast<QAbstractSpinBox*>(dlg.postEqGainSpin())
+            : field == "low" ? static_cast<QAbstractSpinBox*>(dlg.lowSpin())
+            : static_cast<QAbstractSpinBox*>(dlg.highSpin());
+        if (field == "low" || field == "high") { dlg.findChild<QPushButton*>("TxCfcAdvanced")->click(); }
+        dlg.show(); dlg.activateWindow(); spin->setFocus(); QApplication::processEvents();
+        QVERIFY(spin->hasFocus());
+        QSignalSpy publications(&rm.transmitModel(), &TransmitModel::cfcProfileChanged);
+        const auto wheel = [&] {
+            const QPointF pos = spin->rect().center();
+            QWheelEvent event(pos, spin->mapToGlobal(pos.toPoint()), {}, QPoint(0, field == "high" ? -120 : 120),
+                              Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+            QApplication::sendEvent(spin, &event);
+            QApplication::processEvents();
+        };
+        wheel();
+        const CfcProfile first = rm.transmitModel().effectiveCfcProfile();
+        QVERIFY(first != original); QVERIFY(spin->hasFocus());
+        wheel();
+        const CfcProfile second = rm.transmitModel().effectiveCfcProfile();
+        QVERIFY(second != first); QVERIFY(spin->hasFocus());
+        QCOMPARE(publications.count(), 2);
+        if (field != "low" && field != "high") {
+            QCOMPARE(second.compression.frequenciesHz, original.compression.frequenciesHz);
+            QCOMPARE(second.postEq.frequenciesHz, original.postEq.frequenciesHz);
+        } else {
+            QCOMPARE(second.compression.frequenciesHz, second.postEq.frequenciesHz);
+        }
+        if (field != "compQ") { QCOMPARE(second.compression.q, original.compression.q); }
+        if (field != "eqQ") { QCOMPARE(second.postEq.q, original.postEq.q); }
+        if (field != "precomp") { QCOMPARE(second.compression.globalGainDb, original.compression.globalGainDb); }
+        if (field != "postEq") { QCOMPARE(second.postEq.globalGainDb, original.postEq.globalGainDb); }
+        auto* undo = dlg.findChild<QPushButton*>("TxCfcUndo");
+        auto* redo = dlg.findChild<QPushButton*>("TxCfcRedo");
+        undo->click(); QCOMPARE(rm.transmitModel().effectiveCfcProfile(), first);
+        undo->click(); QCOMPARE(rm.transmitModel().effectiveCfcProfile(), original);
+        QVERIFY(!undo->isEnabled());
+        redo->click(); QCOMPARE(rm.transmitModel().effectiveCfcProfile(), first);
+        redo->click(); QCOMPARE(rm.transmitModel().effectiveCfcProfile(), second);
+    }
+
+
+    void pendingNativeWheelFinishCannotOverwriteReload()
+    {
+        RadioModel rm;
+        QVERIFY(rm.transmitModel().setCfcProfile(pairedProfile(10)));
+        TxCfcDialog dlg(&rm.transmitModel(), nullptr);
+        dlg.compWidget()->setSelectedIndex(3);
+        auto* spin = dlg.compSpin();
+        dlg.show(); dlg.activateWindow(); spin->setFocus(); QApplication::processEvents();
+        const QPointF pos = spin->rect().center();
+        QWheelEvent event(pos, spin->mapToGlobal(pos.toPoint()), {}, QPoint(0,120),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(spin, &event);
+        auto authoritative = pairedProfile(5);
+        authoritative.compression.globalGainDb = 9.25;
+        QVERIFY(rm.transmitModel().setCfcProfile(authoritative));
+        QSignalSpy publications(&rm.transmitModel(), &TransmitModel::cfcProfileChanged);
+        QApplication::processEvents();
+        QCOMPARE(rm.transmitModel().effectiveCfcProfile(), authoritative);
+        QCOMPARE(publications.count(), 0);
+        QVERIFY(!dlg.findChild<QPushButton*>("TxCfcUndo")->isEnabled());
+    }
+
+    void noOpWheelRetainsOpaqueBlobAndHistory()
+    {
+        RadioModel rm;
+        const QString opaque = QStringLiteral("future-version-opaque-profile");
+        rm.transmitModel().setCfcParaEqData(opaque);
+        TxCfcDialog dlg(&rm.transmitModel(), nullptr);
+        auto* spin = dlg.highSpin();
+        spin->setValue(spin->maximum());
+        // The preceding explicit edit may repair the blob; reestablish authority.
+        rm.transmitModel().setCfcParaEqData(opaque);
+        dlg.findChild<QPushButton*>("TxCfcAdvanced")->click();
+        dlg.show(); dlg.activateWindow(); spin->setFocus(); QApplication::processEvents();
+        QSignalSpy publications(&rm.transmitModel(), &TransmitModel::cfcProfileChanged);
+        const QPointF pos = spin->rect().center();
+        QWheelEvent event(pos, spin->mapToGlobal(pos.toPoint()), {}, QPoint(0,120),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(spin, &event); QApplication::processEvents();
+        QCOMPARE(publications.count(), 0);
+        QCOMPARE(rm.transmitModel().cfcParaEqData(), opaque);
+        QVERIFY(!dlg.findChild<QPushButton*>("TxCfcUndo")->isEnabled());
+    }
+
+    void focusedNumericTeardownCancelsPendingWheelFinish()
+    {
+        RadioModel rm;
+        QVERIFY(rm.transmitModel().setCfcProfile(pairedProfile(10)));
+        {
+            TxCfcDialog dlg(&rm.transmitModel(), nullptr);
+            dlg.compWidget()->setSelectedIndex(3);
+            auto* spin = dlg.compSpin();
+            dlg.show(); dlg.activateWindow(); spin->setFocus(); QApplication::processEvents();
+            QVERIFY(spin->hasFocus());
+            const QPointF pos = spin->rect().center();
+            QWheelEvent event(pos, spin->mapToGlobal(pos.toPoint()), {}, QPoint(0,120),
+                              Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+            QApplication::sendEvent(spin, &event); // Destroy before the queued finish.
+        }
+        QSignalSpy publications(&rm.transmitModel(), &TransmitModel::cfcProfileChanged);
+        QApplication::processEvents();
+        QCOMPARE(publications.count(), 0);
     }
 
     void plotsShareExactBounds()
@@ -476,6 +604,69 @@ private slots:
             QCOMPARE(rm.transmitModel().effectiveCfcProfile(), original);
             QVERIFY(!undo->isEnabled());
         }
+    }
+
+    void unsubmittedNumericTextFinalizesWhileStateIsAlive_data()
+    {
+        QTest::addColumn<bool>("reopen");
+        QTest::newRow("destroy") << false;
+        QTest::newRow("hide-reopen") << true;
+    }
+    void unsubmittedNumericTextFinalizesWhileStateIsAlive()
+    {
+        QFETCH(bool, reopen);
+        RadioModel rm;
+        const auto original = pairedProfile(5);
+        QVERIFY(rm.transmitModel().setCfcProfile(original));
+        {
+            TxCfcDialog dlg(&rm.transmitModel(), nullptr);
+            dlg.compWidget()->setSelectedIndex(2);
+            auto* field = dlg.compSpin();
+            dlg.show(); dlg.activateWindow(); field->setFocus(); QApplication::processEvents();
+            auto* text = field->findChild<QLineEdit*>();
+            text->selectAll(); QTest::keyClicks(text, "8.5");
+            QCOMPARE(rm.transmitModel().effectiveCfcProfile(), original);
+            if (reopen) {
+                dlg.hide();
+                QCOMPARE(rm.transmitModel().effectiveCfcProfile().compression.gainsDb[2], 8.5);
+                dlg.show();
+                auto* undo = dlg.findChild<QPushButton*>("TxCfcUndo");
+                QVERIFY(undo->isEnabled()); undo->click();
+                QCOMPARE(rm.transmitModel().effectiveCfcProfile(), original);
+            }
+        }
+        QApplication::processEvents();
+        if (!reopen) { QCOMPARE(rm.transmitModel().effectiveCfcProfile().compression.gainsDb[2], 8.5); }
+        else { QCOMPARE(rm.transmitModel().effectiveCfcProfile(), original); }
+    }
+
+    void textAfterWheelKeepsLocalUndoAndOneTextTransaction()
+    {
+        RadioModel rm;
+        const auto original = pairedProfile(5);
+        QVERIFY(rm.transmitModel().setCfcProfile(original));
+        TxCfcDialog dlg(&rm.transmitModel(), nullptr);
+        dlg.compWidget()->setSelectedIndex(2);
+        auto* field = dlg.compSpin();
+        auto* text = field->findChild<QLineEdit*>();
+        dlg.show(); dlg.activateWindow(); field->setFocus(); QApplication::processEvents();
+        const QPointF pos = field->rect().center();
+        QWheelEvent wheel(pos, field->mapToGlobal(pos.toPoint()), {}, QPoint(0,120),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(field, &wheel); QApplication::processEvents();
+        const auto afterWheel = rm.transmitModel().effectiveCfcProfile();
+        QVERIFY(afterWheel != original);
+        text->selectAll(); QTest::keyClicks(text, "8.5");
+        QCOMPARE(rm.transmitModel().effectiveCfcProfile(), afterWheel);
+        QTest::keyClick(text, Qt::Key_Z, Qt::ControlModifier);
+        QCOMPARE(rm.transmitModel().effectiveCfcProfile(), afterWheel);
+        text->selectAll(); QTest::keyClicks(text, "8.5");
+        QTest::keyClick(text, Qt::Key_Return);
+        QCOMPARE(rm.transmitModel().effectiveCfcProfile().compression.gainsDb[2], 8.5);
+        auto* undo = dlg.findChild<QPushButton*>("TxCfcUndo");
+        undo->click(); QCOMPARE(rm.transmitModel().effectiveCfcProfile(), afterWheel);
+        undo->click(); QCOMPARE(rm.transmitModel().effectiveCfcProfile(), original);
+        QVERIFY(!undo->isEnabled());
     }
 
     void numericTextEditAndTextUndo()

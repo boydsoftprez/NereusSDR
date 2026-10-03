@@ -7,11 +7,15 @@
 //   Project Files/Source/Console/setup.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/radio.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/dsp.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/frmCFCConfig.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/HPSDR/NetworkIO.cs (upstream has no top-of-file header — project-level LICENSE applies)
 //   Project Files/Source/ChannelMaster/cmaster.c, original licence from Thetis source is included below
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Ported frmCFCConfig.cs CFC profile application and
+//                 batched immutable legacy EQ delivery by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -7222,24 +7226,10 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // alongside G[] and is the only path that respects user-tuned
             // band frequencies.  NereusSDR exposes BOTH band gains AND band
             // freqs as user-tunable, so we go through the Profile path on
-            // every EQ change — the Graph10 wrapper stays available for a
+            // every legacy EQ change — the Graph10 wrapper stays available for a
             // future "reset to default freqs" UX.
 
-            auto pushEqProfile = [this]() {
-                if (!m_txChannel) { return; }
-                std::vector<double> freqs10(10, 0.0);
-                std::vector<double> gains11(11, 0.0);
-                gains11[0] = static_cast<double>(m_transmitModel.txEqPreamp());
-                for (int i = 0; i < 10; ++i) {
-                    freqs10[static_cast<std::size_t>(i)] =
-                        static_cast<double>(m_transmitModel.txEqFreq(i));
-                    gains11[static_cast<std::size_t>(i + 1)] =
-                        static_cast<double>(m_transmitModel.txEqBand(i));
-                }
-                m_txChannel->setTxEqProfile(freqs10, gains11);
-            };
-
-            // Full-chain push — mirrors all 27 connect lambdas below by reading
+            // Full-chain push (EQ profiles use the immutable binder) — reads
             // current TransmitModel state and pushing to TxChannel.  Used for
             // the initial on-connect sync (loadFromSettings already fired the
             // *Changed signals before this connect block was installed, so
@@ -7247,12 +7237,11 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // activeProfileChanged (setActiveProfile's applyValuesToModel
             // setters short-circuit on no-op writes when profile values match
             // already-loaded live keys, so signal-driven sync isn't reliable).
-            // Covers EQ + Leveler + ALC (3M-3a-i) AND CFC + CPDR + CESSB +
+            // Covers EQ controls + Leveler + ALC (3M-3a-i) AND CPDR + CESSB +
             // PhRot (3M-3a-ii Batch 3) — full 28-property TX-chain restore.
-            auto pushTxProcessingChain = [this, pushEqProfile]() {
+            auto pushTxProcessingChain = [this]() {
                 if (!m_txChannel) { return; }
                 m_txChannel->setTxEqRunning(m_transmitModel.txEqEnabled());
-                pushEqProfile();
                 m_txChannel->setTxEqNc(m_transmitModel.txEqNc());
                 m_txChannel->setTxEqMp(m_transmitModel.txEqMp());
                 m_txChannel->setTxEqCtfmode(m_transmitModel.txEqCtfmode());
@@ -7306,25 +7295,8 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 m_txChannel->setTxEqRunning(on);
             });
 
-            // 2. txEqPreampChanged → rebuild full Profile (preamp lives in
-            //    G[0] of the SetTXAEQProfile vector).
-            connect(&m_transmitModel, &TransmitModel::txEqPreampChanged,
-                    m_txChannel, [pushEqProfile](int /*dB*/) {
-                pushEqProfile();
-            });
-
-            // 3. txEqBandChanged → rebuild full Profile (any single band
-            //    edit pushes the whole 10-band shape).
-            connect(&m_transmitModel, &TransmitModel::txEqBandChanged,
-                    m_txChannel, [pushEqProfile](int /*idx*/, int /*dB*/) {
-                pushEqProfile();
-            });
-
-            // 4. txEqFreqChanged → rebuild full Profile (custom-freq path).
-            connect(&m_transmitModel, &TransmitModel::txEqFreqChanged,
-                    m_txChannel, [pushEqProfile](int /*idx*/, int /*Hz*/) {
-                pushEqProfile();
-            });
+            // Ordinary legacy EQ edits use the production profile binder.
+            bindTxEqProfileChannel(m_txChannel);
 
             // 5. txEqNcChanged → setTxEqNc.
             connect(&m_transmitModel, &TransmitModel::txEqNcChanged,
@@ -7383,9 +7355,8 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // ── 3M-3a-ii Batch 3 — CFC / CPDR / CESSB / PhRot routing ───────
             // 14 new connects route the 15 TransmitModel properties added in
             // 3M-3a-ii Batch 2 into the TxChannel WDSP wrappers added in
-            // Batches 1 + 1.6.  3 array-changed signals collapse into a
-            // shared pushCfcProfile() rebuild (matches the pushEqProfile
-            // pattern at #2-#4 above).
+            // Batches 1 + 1.6. CFC profiles use their complete immutable
+            // production binder below.
 
             // 14. phaseRotatorEnabledChanged → Stage::PhRot run.
             connect(&m_transmitModel, &TransmitModel::phaseRotatorEnabledChanged,
@@ -15430,6 +15401,43 @@ void RadioModel::replayCfcProfile()
         channel->setTxCfcRunning(enabled);
         channel->setTxCfcPostEqRunning(postEqEnabled);
         applyCfcProfile(channel, profile);
+    }, Qt::AutoConnection);
+}
+
+// NereusSDR-original legacy EQ delivery glue, preserving the ten-band path.
+void RadioModel::bindTxEqProfileChannel(TxChannel* channel)
+{
+    for (const QMetaObject::Connection& connection : m_txEqProfileConnections) {
+        disconnect(connection);
+    }
+    m_txEqProfileConnections.clear();
+    m_txEqProfileChannel = channel;
+    if (!channel) { return; }
+    m_txEqProfileConnections.append(connect(&m_transmitModel, &TransmitModel::txEqProfileChanged,
+        channel, [channel](const QList<int>& frequencies, const QList<int>& gains) {
+            channel->setTxEqProfile(std::vector<double>(frequencies.begin(), frequencies.end()),
+                                    std::vector<double>(gains.begin(), gains.end()));
+        }));
+    if (m_micProfileMgr) {
+        // Matching profiles still require replay; capture on the model thread.
+        m_txEqProfileConnections.append(connect(m_micProfileMgr, &MicProfileManager::activeProfileChanged,
+            this, [this](const QString&) { replayTxEqProfile(); }));
+    }
+    replayTxEqProfile();
+}
+
+void RadioModel::replayTxEqProfile()
+{
+    TxChannel* channel = m_txEqProfileChannel.data();
+    if (!channel) { return; }
+    std::vector<double> frequencies(10), gains(11);
+    gains[0] = m_transmitModel.txEqPreamp();
+    for (int i = 0; i < 10; ++i) {
+        frequencies[i] = m_transmitModel.txEqFreq(i);
+        gains[i + 1] = m_transmitModel.txEqBand(i);
+    }
+    QMetaObject::invokeMethod(channel, [channel, frequencies, gains] {
+        channel->setTxEqProfile(frequencies, gains);
     }, Qt::AutoConnection);
 }
 

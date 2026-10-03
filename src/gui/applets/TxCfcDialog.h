@@ -273,6 +273,7 @@ private:
     bool m_gestureActive = false;
     bool m_sliderActive = false;
     QPointer<QAbstractSpinBox> m_numericEditor;
+    quint64 m_numericEditGeneration = 0;
     QPushButton* m_undoBtn = nullptr;
     QPushButton* m_redoBtn = nullptr;
     QPushButton* m_applyBandsBtn = nullptr;

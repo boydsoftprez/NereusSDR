@@ -2220,6 +2220,8 @@ public:
     static void setPSTxIdx(int txid, int idx);
 
 #ifdef NEREUS_BUILD_TESTS
+    std::array<std::vector<double>, 2> lastEqProfileForTest() const { return m_lastEqProfile; }
+    quint64 eqProfileApplyCountForTest() const { return m_eqProfileApplyCount; }
     std::array<std::vector<double>, 5> lastCfcProfileForTest() const { return m_lastCfcProfile; }
     quint64 cfcProfileApplyCountForTest() const { return m_cfcProfileApplyCount; }
     double lastCfcPrecompDbForTest() const { return m_lastCfcPrecompDb; }
@@ -3021,6 +3023,8 @@ private:
 
     // CFC carry (mirrors WDSP-wired setTxCfcRunning/PostEqRunning/PrecompDb/PrePeqDb)
 #ifdef NEREUS_BUILD_TESTS
+    std::array<std::vector<double>, 2> m_lastEqProfile;
+    quint64 m_eqProfileApplyCount = 0;
     std::array<std::vector<double>, 5> m_lastCfcProfile;
     quint64 m_cfcProfileApplyCount = 0;
     double m_lastCfcPrecompDb = 0;

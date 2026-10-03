@@ -52,6 +52,16 @@
 
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QSemaphore>
+#include <QThread>
+#include <QScopeGuard>
+#include "core/TxChannel.h"
+#ifdef HAVE_WDSP
+extern "C" {
+void OpenChannel(int, int, int, int, int, int, int, int, double, double, double, double, int);
+void CloseChannel(int);
+}
+#endif
 #include <QDir>
 #include <QDoubleSpinBox>
 #include <QLineEdit>
@@ -91,11 +101,186 @@ private slots:
             new QApplication(argc, nullptr);
         }
         AppSettings::instance().clear();
+#ifdef HAVE_WDSP
+        OpenChannel(1, 64, 1024, 48000, 96000, 48000, 1, 0, 0, 0.010, 0, 0.010, 1);
+#endif
+    }
+
+    void cleanupTestCase()
+    {
+#ifdef HAVE_WDSP
+        CloseChannel(1);
+#endif
     }
 
     void cleanup()
     {
         AppSettings::instance().clear();
+    }
+
+
+    void graphicResetUndoRedoPublishOneAcceptedProfile()
+    {
+        RadioModel rm;
+        auto& tx = rm.transmitModel();
+        tx.setTxEqPreamp(7); tx.setTxEqBand(0, 3); tx.setTxEqBand(1, -5);
+        tx.setTxEqFreq(0, 40); tx.setTxEqFreq(1, 80);
+        TxChannel channel(1, 64, 64);
+        rm.bindTxEqProfileChannelForTest(&channel);
+        const auto original = channel.lastEqProfileForTest();
+        TxEqDialog dlg(&rm);
+        const quint64 before = channel.eqProfileApplyCountForTest();
+        dlg.findChild<QPushButton*>("TxEqLegacyResetBtn")->click();
+        QCOMPARE(channel.eqProfileApplyCountForTest(), before + 1);
+        QCOMPARE(channel.lastEqProfileForTest()[0], original[0]);
+        QCOMPARE(channel.lastEqProfileForTest()[1], std::vector<double>(11, 0));
+        dlg.findChild<QPushButton*>("TxEqUndoBtn")->click();
+        QCOMPARE(channel.eqProfileApplyCountForTest(), before + 2);
+        QCOMPARE(channel.lastEqProfileForTest(), original);
+        dlg.findChild<QPushButton*>("TxEqRedoBtn")->click();
+        QCOMPARE(channel.eqProfileApplyCountForTest(), before + 3);
+        QCOMPARE(channel.lastEqProfileForTest()[1], std::vector<double>(11, 0));
+        dlg.findChild<QPushButton*>("TxEqLegacyResetBtn")->click();
+        QCOMPARE(channel.eqProfileApplyCountForTest(), before + 3);
+        tx.setTxEqBand(2, 9);
+        QCOMPARE(channel.eqProfileApplyCountForTest(), before + 4);
+        QCOMPARE(channel.lastEqProfileForTest()[1][3], 9.0);
+    }
+
+    void queuedLegacyEditsRetainIndependentAcceptedArguments()
+    {
+        RadioModel rm;
+        auto& tx = rm.transmitModel();
+        TxChannel channel(1, 64, 64);
+        QThread worker;
+        QSemaphore started, release;
+        channel.moveToThread(&worker); worker.start();
+        const auto finish = qScopeGuard([&] {
+            release.release();
+            rm.bindTxEqProfileChannelForTest(nullptr);
+            QMetaObject::invokeMethod(&channel, [&] { channel.moveToThread(rm.thread()); }, Qt::BlockingQueuedConnection);
+            worker.quit(); worker.wait();
+        });
+        rm.bindTxEqProfileChannelForTest(&channel);
+        QList<std::array<std::vector<double>, 2>> observed;
+        connect(&tx, &TransmitModel::txEqProfileChanged, &channel,
+                [&](const QList<int>&, const QList<int>&) { observed.append(channel.lastEqProfileForTest()); });
+        QMetaObject::invokeMethod(&channel, [&] { started.release(); release.acquire(); }, Qt::QueuedConnection);
+        QVERIFY(started.tryAcquire(1, 5000));
+        {
+            const auto batch = tx.scopedTxEqProfileUpdate();
+            tx.setTxEqPreamp(7); tx.setTxEqBand(0, 3); tx.setTxEqFreq(0, 40);
+        }
+        {
+            const auto batch = tx.scopedTxEqProfileUpdate();
+            tx.setTxEqPreamp(-2); tx.setTxEqBand(0, 9); tx.setTxEqFreq(0, 50);
+        }
+        release.release();
+        QMetaObject::invokeMethod(&channel, [] {}, Qt::BlockingQueuedConnection);
+        QCOMPARE(observed.size(), 2);
+        QCOMPARE(observed[0][0], (std::vector<double>{40,63,125,250,500,1000,2000,4000,8000,16000}));
+        QCOMPARE(observed[0][1], (std::vector<double>{7,3,-12,-12,-1,1,4,9,12,-10,-10}));
+        QCOMPARE(observed[1][0], (std::vector<double>{50,63,125,250,500,1000,2000,4000,8000,16000}));
+        QCOMPARE(observed[1][1], (std::vector<double>{-2,9,-12,-12,-1,1,4,9,12,-10,-10}));
+    }
+
+
+    void nestedLegacyBatchPublishesAtOutermostExitOnly()
+    {
+        RadioModel rm;
+        auto& tx = rm.transmitModel();
+        TxChannel channel(1, 64, 64);
+        rm.bindTxEqProfileChannelForTest(&channel);
+        QSignalSpy bands(&tx, &TransmitModel::txEqBandChanged);
+        const quint64 before = channel.eqProfileApplyCountForTest();
+        const auto edit = [&] {
+            const auto outer = tx.scopedTxEqProfileUpdate();
+            tx.setTxEqPreamp(7);
+            {
+                const auto inner = tx.scopedTxEqProfileUpdate();
+                tx.setTxEqBand(0, 3); tx.setTxEqFreq(0, 40);
+            }
+            QCOMPARE(channel.eqProfileApplyCountForTest(), before);
+            tx.setTxEqBand(1, -5);
+            return; // RAII closes both nested and early-return paths.
+        };
+        edit();
+        QCOMPARE(bands.count(), 2);
+        QCOMPARE(channel.eqProfileApplyCountForTest(), before + 1);
+        QCOMPARE(channel.lastEqProfileForTest()[0], (std::vector<double>{40,63,125,250,500,1000,2000,4000,8000,16000}));
+        QCOMPARE(channel.lastEqProfileForTest()[1], (std::vector<double>{7,3,-5,-12,-1,1,4,9,12,-10,-10}));
+        {
+            const auto batch = tx.scopedTxEqProfileUpdate();
+            tx.setTxEqBand(0, 3); tx.setTxEqBand(-1, 9);
+        }
+        {
+            const auto batch = tx.scopedTxEqProfileUpdate();
+            tx.setTxEqBand(0, 8); tx.setTxEqBand(0, 3);
+        }
+        QCOMPARE(channel.eqProfileApplyCountForTest(), before + 1);
+    }
+
+    void legacyBindAndMatchingProfileReplayApplyOnce()
+    {
+        RadioModel rm;
+        auto& tx = rm.transmitModel();
+        tx.loadFromSettings("aa:bb:cc:11:22:33");
+        auto* manager = rm.micProfileManager(); QVERIFY(manager);
+        manager->setMacAddress("aa:bb:cc:11:22:33"); manager->load();
+        tx.setTxEqPreamp(7); tx.setTxEqBand(0, 3); tx.setTxEqFreq(0, 40);
+        QVERIFY(manager->saveProfile("Graphic", &tx));
+        TxChannel channel(1, 64, 64);
+        rm.bindTxEqProfileChannelForTest(&channel);
+        QCOMPARE(channel.eqProfileApplyCountForTest(), quint64(1));
+        const auto original = channel.lastEqProfileForTest();
+        QVERIFY(manager->setActiveProfile("Graphic", &tx));
+        QCOMPARE(channel.eqProfileApplyCountForTest(), quint64(2));
+        QCOMPARE(channel.lastEqProfileForTest(), original);
+        rm.bindTxEqProfileChannelForTest(nullptr);
+        tx.setTxEqBand(0, 9);
+        QCOMPARE(channel.eqProfileApplyCountForTest(), quint64(2));
+        rm.bindTxEqProfileChannelForTest(&channel);
+        QCOMPARE(channel.eqProfileApplyCountForTest(), quint64(3));
+        QCOMPARE(channel.lastEqProfileForTest()[1][1], 9.0);
+        rm.bindTxEqProfileChannelForTest(&channel);
+        QCOMPARE(channel.eqProfileApplyCountForTest(), quint64(4));
+        tx.setTxEqBand(0, 8);
+        QCOMPARE(channel.eqProfileApplyCountForTest(), quint64(5));
+    }
+
+    void focusedNumericTeardownIsSafe_data()
+    {
+        QTest::addColumn<QString>("field");
+        QTest::newRow("graphic") << QString("graphic");
+        QTest::newRow("parametric-amount") << QString("gain");
+        QTest::newRow("parametric-Q") << QString("q");
+    }
+    void focusedNumericTeardownIsSafe()
+    {
+        QFETCH(QString, field);
+        RadioModel rm;
+        QString expectedBlob;
+        {
+            TxEqDialog dlg(&rm);
+            QAbstractSpinBox* spin = dlg.findChild<QSpinBox*>("TxEqPreampSpin");
+            if (field != "graphic") {
+                dlg.modeSelector()->button(1)->click();
+                dlg.parametricWidget()->setGlobalGainDb(3.0);
+                dlg.parametricWidget()->setSelectedIndex(3);
+                spin = dlg.findChild<QDoubleSpinBox*>(field == "gain" ? "TxEqParaGainSpin" : "TxEqParaQSpin");
+            }
+            dlg.show(); dlg.activateWindow(); spin->setFocus(); QApplication::processEvents();
+            QVERIFY(spin->hasFocus());
+            if (field == "graphic") { static_cast<QSpinBox*>(spin)->setValue(7); }
+            else {
+                static_cast<QDoubleSpinBox*>(spin)->setValue(5.5);
+                expectedBlob = ParaEqEnvelope::encode(dlg.parametricWidget()->saveToJson());
+            }
+            // Leave the numeric session open during destruction.
+        }
+        QApplication::processEvents();
+        if (field == "graphic") { QCOMPARE(rm.transmitModel().txEqPreamp(), 7); }
+        else { QCOMPARE(rm.transmitModel().txEqParaEqData(), expectedBlob); }
     }
 
     void laptopLayoutAndNativeCapture()

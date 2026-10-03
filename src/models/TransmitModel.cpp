@@ -2537,6 +2537,35 @@ void TransmitModel::setTxEqEnabled(bool on)
     emit txEqEnabledChanged(on);
 }
 
+// NereusSDR-original transaction over the existing integer legacy EQ state.
+void TransmitModel::beginTxEqProfileUpdate()
+{
+    if (m_txEqProfileUpdateDepth++ == 0) {
+        m_txEqProfileStartPreamp = m_txEqPreamp;
+        m_txEqProfileStartBands = m_txEqBand;
+        m_txEqProfileStartFreqs = m_txEqFreq;
+    }
+}
+
+void TransmitModel::endTxEqProfileUpdate()
+{
+    Q_ASSERT(m_txEqProfileUpdateDepth > 0);
+    if (--m_txEqProfileUpdateDepth == 0 &&
+        (m_txEqPreamp != m_txEqProfileStartPreamp || m_txEqBand != m_txEqProfileStartBands ||
+         m_txEqFreq != m_txEqProfileStartFreqs)) {
+        publishTxEqProfile();
+    }
+}
+
+void TransmitModel::publishTxEqProfile()
+{
+    if (m_txEqProfileUpdateDepth > 0) { return; }
+    QList<int> frequencies(m_txEqFreq.begin(), m_txEqFreq.end());
+    QList<int> gains{m_txEqPreamp};
+    for (int gain : m_txEqBand) { gains.append(gain); }
+    emit txEqProfileChanged(frequencies, gains);
+}
+
 void TransmitModel::setTxEqPreamp(int dB)
 {
     // NereusSDR clamp [-12, 15] dB (Thetis EQ preamp slider precedent).
@@ -2545,6 +2574,7 @@ void TransmitModel::setTxEqPreamp(int dB)
     m_txEqPreamp = clamped;
     persistOne(QStringLiteral("TXEQPreamp"), QString::number(m_txEqPreamp));
     emit txEqPreampChanged(clamped);
+    publishTxEqProfile();
 }
 
 void TransmitModel::setTxEqBand(int index, int dB)
@@ -2556,6 +2586,7 @@ void TransmitModel::setTxEqBand(int index, int dB)
     // Thetis TXProfile keys: TXEQ1..TXEQ10 (1-indexed, per database.cs:4316-4325 [v2.10.3.13]).
     persistOne(QStringLiteral("TXEQ%1").arg(index + 1), QString::number(clamped));
     emit txEqBandChanged(index, clamped);
+    publishTxEqProfile();
 }
 
 void TransmitModel::setTxEqFreq(int index, int hz)
@@ -2567,6 +2598,7 @@ void TransmitModel::setTxEqFreq(int index, int hz)
     // Thetis TXProfile keys: TxEqFreq1..TxEqFreq10 (mixed-case per database.cs:4326-4335 [v2.10.3.13]).
     persistOne(QStringLiteral("TxEqFreq%1").arg(index + 1), QString::number(clamped));
     emit txEqFreqChanged(index, clamped);
+    publishTxEqProfile();
 }
 
 void TransmitModel::setTxLevelerOn(bool on)

@@ -3642,6 +3642,11 @@ void TxChannel::setTxEqProfile(const std::vector<double>& freqs10,
     }
     SetTXAEQProfile(m_channelId, kNfreqs, F, G);
 #endif
+#ifdef NEREUS_BUILD_TESTS
+    // Accepted arguments after validation, channel guard and WDSP boundary.
+    m_lastEqProfile = {freqs10, gains11};
+    ++m_eqProfileApplyCount;
+#endif
 }
 
 void TxChannel::setTxEqNc(int nc)

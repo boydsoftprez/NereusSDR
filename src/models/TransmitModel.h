@@ -244,6 +244,8 @@
 #include "core/audio/CompositeTxMicRouter.h"
 
 #include <QObject>
+#include <QScopeGuard>
+#include <QList>
 #include <QString>
 #include <array>
 #include <atomic>
@@ -1616,6 +1618,15 @@ public:
     // ── Number of EQ bands.  Read-only constant per Thetis 10-band UI. ──
     int  txEqNumBands() const noexcept { return 10; }
 
+    // NereusSDR-original publication transaction. Property signals/persistence
+    // remain immediate; the outermost scope publishes only the final F/G shape.
+    [[nodiscard]] auto scopedTxEqProfileUpdate()
+    {
+        beginTxEqProfileUpdate();
+        return qScopeGuard([this] { endTxEqProfileUpdate(); });
+    }
+
+
     // ── TX EQ enable + preamp ──
     bool txEqEnabled() const noexcept { return m_txEqEnabled; }
     int  txEqPreamp() const noexcept  { return m_txEqPreamp; }
@@ -1762,6 +1773,7 @@ signals:
     void filterChanged(int low, int high);
 
     void txEqEnabledChanged(bool on);
+    void txEqProfileChanged(const QList<int>& frequenciesHz, const QList<int>& gainsDb);
     void txEqPreampChanged(int dB);
     /// Emitted when any individual band gain changes; carries index + new value.
     void txEqBandChanged(int index, int dB);
@@ -2366,6 +2378,13 @@ private:
 
     // EQ enable + preamp.  database.cs:4553-4554 [v2.10.3.13].
     bool m_txEqEnabled  = false;   // dr["TXEQEnabled"] = false;
+    void beginTxEqProfileUpdate();
+    void endTxEqProfileUpdate();
+    void publishTxEqProfile();
+    int m_txEqProfileUpdateDepth = 0;
+    int m_txEqProfileStartPreamp = 0;
+    std::array<int, 10> m_txEqProfileStartBands{};
+    std::array<int, 10> m_txEqProfileStartFreqs{};
     int  m_txEqPreamp   = 0;       // dr["TXEQPreamp"]  = 0;
 
     // Per-band gains and frequencies.  Defaults from WDSP TXA.c:112-113
