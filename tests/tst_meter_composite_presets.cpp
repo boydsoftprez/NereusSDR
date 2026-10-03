@@ -125,6 +125,44 @@ private slots:
         BarPresetItem bar; bar.configureAsMic(); bar.takeStaticPresentationChange(); QVERIFY(bar.applyConfiguration({{"titleColor","#ffff0000"}})); QVERIFY(bar.takeStaticPresentationChange()); QVERIFY(!bar.takeStaticPresentationChange());
         auto channels=power.configuration()["channels"].toArray(); auto first=channels[0].toObject(); first["bindingId"]=MeterBinding::TxReversePower; channels[0]=first; QVERIFY(power.applyConfiguration({{"channels",channels}})); QCOMPARE(power.readingBindings(),(QSet<int>{101,102}));
     }
+    void historySamplingOutlivesFasterSharedFrames() {
+        CompositePresetItem history(CompositePresetItem::Face::History);
+        auto channels=configuredChannels(history); auto c=channels[0].toObject();
+        c["attack"]=1; c["decay"]=1; c["updateIntervalMs"]=250; c["color"]="#ff00ff00"; channels[0]=c;
+        QVERIFY(history.applyConfiguration({{"channels",channels},{"historyMs",1200},{"historyCapacity",4},{"autoScale",false},{"minValue",-140},{"maxValue",0},{"showReadout",false},{"faceHeight",240}}));
+        auto trace=[&](int right=640) {
+            QImage image(640,240,QImage::Format_ARGB32_Premultiplied); image.fill(Qt::transparent);
+            QPainter painter(&image); history.paintForLayer(painter,640,240,MeterItem::Layer::OverlayDynamic); painter.end();
+            int pixels=0; for(int y=0;y<image.height();++y) { for(int x=0;x<right;++x) { const QColor pixel=image.pixelColor(x,y); if(pixel.green()>200 && pixel.red()<30 && pixel.blue()<30) {++pixels;} } }
+            return pixels;
+        };
+        // Independent timeline: 250 ms sampling on 100 ms shared ticks retains
+        // readings at 0,300,600,900, rather than restarting the gate every tick.
+        for(int now=0;now<=900;now+=100) {
+            const double value=now<300?-120:now<600?-60:now<900?-90:-30;
+            history.pushBindingValue(MeterBinding::SignalAvg,value); history.advanceMeter(now);
+            if(now==200) {QCOMPARE(trace(),0);}
+            if(now==300) {QVERIFY2(trace()>100,"History must draw its second sample despite faster shared frames");}
+            if(now==600) {QVERIFY(trace()>200);}
+            if(now==900) {QVERIFY(trace()>300);}
+        }
+        history.setBindingUnavailable(MeterBinding::SignalAvg,"No live reading");
+        history.advanceMeter(1000); QVERIFY(trace()>300); // Absence adds no invented sample.
+        history.advanceMeter(1799); QVERIFY(trace()>100); // Last two real samples remain.
+        history.advanceMeter(2100); QCOMPARE(trace(),0); // Exact duration expires the final sample.
+        history.setBindingUnavailable(MeterBinding::SignalAvg,{});
+        history.pushBindingValue(MeterBinding::SignalAvg,-80); history.advanceMeter(2200);
+        history.pushBindingValue(MeterBinding::SignalAvg,-40); history.advanceMeter(2500); QVERIFY(trace()>100);
+        history.resetForTxTransition(true); QCOMPARE(trace(),0); QVERIFY(!history.channelHasReading(0));
+        history.pushBindingValue(MeterBinding::SignalAvg,-100); history.advanceMeter(2600);
+        history.pushBindingValue(MeterBinding::SignalAvg,-40); history.advanceMeter(2900); QVERIFY(trace()>100);
+        history.advanceMeter(50); QCOMPARE(trace(),0); // Rollback drops future trace points.
+        history.advanceMeter(350); QVERIFY(trace()>100);
+        // A source/configuration reset also starts a new history timeline.
+        QVERIFY(history.applyConfiguration({{"historyCapacity",2}})); QCOMPARE(trace(),0);
+        for(int now=3000;now<=3900;now+=300) {history.pushBindingValue(MeterBinding::SignalAvg,now==3900?-30:-100);history.advanceMeter(now);}
+        QVERIFY(trace()>100); QCOMPARE(trace(475),0); // Capacity retains only 3600→3900, at the right edge.
+    }
     void primitiveClockSharesCadence() {
         ContainerContentRegistry registry; MeterWidget widget; widget.resize(360,120); auto* item=registry.createMeterItem(registry.makeEntry("CLOCK"),&widget); QVERIFY(item); widget.addItem(item); widget.show();
 #ifdef NEREUS_GPU_SPECTRUM

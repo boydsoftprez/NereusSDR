@@ -72,7 +72,7 @@ private slots:
         auto meter=std::make_unique<MeterWidget>(); // Native surface choice occurs parentless.
         const ContentEntry entry=registry.makeEntry(type);auto* item=registry.createMeterItem(entry,meter.get());QVERIFY(item);
         auto* face=qobject_cast<CompositePresetItem*>(item);auto* bar=qobject_cast<BarPresetItem*>(item);
-        if(face) {auto channels=face->configuration()["channels"].toArray();for(int i=0;i<channels.size();++i){auto channel=channels[i].toObject();channel["ignoreHistoryMs"]=0;channels[i]=channel;}QVERIFY(face->applyConfiguration({{"channels",channels}}));face->setFrequency(14200123);face->setModeLabel("USB");face->setBandLabel("20m");}
+        if(face) {auto channels=face->configuration()["channels"].toArray();for(int i=0;i<channels.size();++i){auto channel=channels[i].toObject();channel["ignoreHistoryMs"]=0;if(type=="meter.historyGraph") {channel["updateIntervalMs"]=250;}channels[i]=channel;}QVERIFY(face->applyConfiguration({{"channels",channels}}));if(type=="meter.historyGraph") {QVERIFY(face->applyConfiguration({{"historyMs",1200},{"autoScale",false}}));}face->setFrequency(14200123);face->setModeLabel("USB");face->setBandLabel("20m");}
         if(bar) {QVERIFY(bar->applyConfiguration({{"ignoreHistoryMs",0}}));}
         const int height=face?face->preferredFaceHeight():bar->preferredRowHeight();
         if(face) {width=std::max(width,face->minimumFaceSize().width());}

@@ -720,3 +720,34 @@ identities are recorded in `.crew/2026-10-02-containers-and-objects-plan/task-10
 Physical pointer/QDragEscape, monitor removal and Windows/Linux native/GPU benches
 remain pending. Root owns whole-branch independent review after the signed
 Task10 checkpoint; this appendix does not label that review passed.
+
+### Integrated-review correction wave
+
+The frozen integrated review identified three bounded GUI defects. HistoryGraph
+now measures retained-sample cadence independently of faster shared frames; its
+rendered-line regression covers 250 ms samples on 100 ms ticks, exact expiry,
+absence, capacity and TX/configuration resets. A presentation clock rollback
+drops future trace points without changing channel dynamics. Matching native
+HistoryGraph captures use that slower cadence and a 1.2 s visible window.
+
+Settings-created object and whole-container copies clear active remembered homes
+and neighbor anchors, matching live duplicate semantics. Original home/config,
+unknown fields and MMIO bindings remain in immutable portable recovery. Actual
+Settings Duplicate → Apply → shell-close checks send the original between its
+previous neighbors and the copy to main, with stable real singleton identity and
+no frequency actions. Singleton-containing container duplication remains refused;
+portable singleton imports retain their separate Move semantics.
+
+Minimizes and Hide when RX unused remain unavailable and are disabled with plain
+explanations. Structured and legacy Apply skip these controls, retaining boolean
+and nonstandard raw values through selection, save/reload and portable recovery.
+No minimize/RX-unused lifecycle implementation was added. Red/green receipts and
+exact corrected products are tracked in correction-report.md; final full ordinary,
+paired/new-only timing, realtime gates and scoped re-review remain separate gates.
+
+Controller freshness check: official AetherSDR main was fetched and checked at
+`732b99a90e9f6ad8154872bc1ab11471d04d2569`, sixteen commits after the studied
+`5766bb13` pin. The selected AppletPanel/FramelessResizer grip, placement and
+resizer patterns and TxApplet remain unchanged; the catalog delta adds CTR2Proxy
+only. The studied immutable attribution pin remains authoritative; no CTR2 scope
+or new port was adopted. NereusSDR published main remains exact `dd53da5a`.

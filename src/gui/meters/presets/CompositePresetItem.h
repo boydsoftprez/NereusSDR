@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-03 — Independent history sampling cadence by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-02 — Native complete faces by J.J. Boyd (KG4VCF), with AI-assisted
@@ -121,7 +123,7 @@ private:
     QJsonObject m_config;
     bool m_tx=false,m_aboveS9=false,m_inert=false,m_presentationDirty=true,m_staticPresentationDirty=true;
     int m_powerScale=100;
-    qint64 m_lastFrame=-1;
+    qint64 m_lastFrame=-1, m_lastHistorySample=-1;
     QString m_stateMode,m_stateBand,m_stateUnavailable;
     struct Sample { qint64 time; double value; };
     QVector<Sample> m_samples;

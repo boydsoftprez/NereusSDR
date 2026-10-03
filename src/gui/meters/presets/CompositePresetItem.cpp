@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-03 — Independent history sampling cadence by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-03 — Draw ANAN selector once in the static layer by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
@@ -206,7 +208,7 @@ QString CompositePresetItem::typeId() const {
 }
 void CompositePresetItem::configureDynamics() {
     for(Channel& channel:m_channels) { const QJsonObject& c=channel.config; channel.dynamics.configure(c["attack"].toDouble(),c["decay"].toDouble(),c["updateIntervalMs"].toInt(),c["historyMs"].toInt(),c["ignoreHistoryMs"].toInt()); channel.dynamics.reset(channel.calibration.firstKey()-(m_aboveS9 && isReceiveSignalBinding(channel.binding)?20:0)); }
-    m_samples.clear(); m_lastFrame=-1;
+    m_samples.clear(); m_lastFrame=-1; m_lastHistorySample=-1;
 }
 QSet<int> CompositePresetItem::readingBindings() const { QSet<int> result; for(int i=0;i<m_channels.size();++i) { const int id=i==0 ? bindingId() : m_channels[i].binding; if(id>=0) { result.insert(id); } } return result; }
 void CompositePresetItem::pushBindingValue(int binding,double reading) {
@@ -218,10 +220,15 @@ void CompositePresetItem::setBindingUnavailable(int binding,const QString& reaso
 }
 bool CompositePresetItem::advanceMeter(qint64 now) {
     bool changed=false;
-    const auto oldSize=m_samples.size(); m_samples.removeIf([&](const Sample& sample) { return now-sample.time>=m_config["historyMs"].toInt(); }); changed=m_samples.size()!=oldSize;
+    // A restarted presentation clock cannot retain samples from its future.
+    // Channel dynamics keep their independent sampling/reset policy.
+    if(m_face==Face::History && m_lastFrame>=0 && now<m_lastFrame) {
+        changed=!m_samples.isEmpty(); m_samples.clear(); m_lastHistorySample=-1;
+    }
+    const auto oldSize=m_samples.size(); m_samples.removeIf([&](const Sample& sample) { return now-sample.time>=m_config["historyMs"].toInt(); }); changed=(m_samples.size()!=oldSize) || changed;
     for(Channel& channel:m_channels) { changed=channel.dynamics.advance(now) || changed; }
-    if(m_face==Face::History && !m_channels.isEmpty() && m_channels[0].dynamics.hasReading() && (m_lastFrame<0 || now-m_lastFrame>=m_channels[0].config["updateIntervalMs"].toInt())) {
-        m_samples.append({now,m_channels[0].dynamics.value()}); const int duration=m_config["historyMs"].toInt(); m_samples.removeIf([&](const Sample& s) { return now-s.time>=duration; });
+    if(m_face==Face::History && !m_channels.isEmpty() && m_channels[0].dynamics.hasReading() && (m_lastHistorySample<0 || now-m_lastHistorySample>=m_channels[0].config["updateIntervalMs"].toInt())) {
+        m_samples.append({now,m_channels[0].dynamics.value()}); m_lastHistorySample=now; const int duration=m_config["historyMs"].toInt(); m_samples.removeIf([&](const Sample& s) { return now-s.time>=duration; });
         const int extra=m_samples.size()-m_config["historyCapacity"].toInt(); if(extra>0) { m_samples.remove(0,extra); } changed=true;
     }
     const bool clock=m_clock && (m_lastFrame<0 || now/250!=m_lastFrame/250); m_lastFrame=now; const bool dirty=m_presentationDirty; m_presentationDirty=false; return changed || clock || dirty;

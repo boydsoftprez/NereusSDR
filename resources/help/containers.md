@@ -14,7 +14,8 @@ remembered container**. Meter faces can be duplicated. Applet views are singleto
 choose **Move** to relocate their existing view rather than create a second one.
 
 A pop-out shell remembers each object's original container and neighbors. Closing
-it returns all objects together. If a remembered container was deleted, the main
+it returns all objects together. New objects and copies created in the shell
+return to the main container. If a remembered container was deleted, the main
 container is the fallback. Locked destinations refuse the operation without a
 partial move. Closing an ordinary floating container hides it and retains its
 placement. **Hide container (retain placement)** also preserves its contents.
@@ -42,6 +43,8 @@ Header space stays reserved. Hold **Shift** or use **Reveal controls** in the co
 menu to recover hidden controls, then change the Header setting. **Lock** prevents
 arrangement, floating/docking and resizing; it does not disable the object's normal
 radio controls. Auto height follows the stack's actual minimum heights.
+**Minimizes** and **Hide when RX unused** are unavailable; their saved values
+remain retained for recovery.
 
 A container provides an inherited source, and supported meters may select an
 explicit slice/session in Properties. Missing, stale or foreign sources show an

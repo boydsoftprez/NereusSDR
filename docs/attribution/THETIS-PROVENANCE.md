@@ -519,3 +519,11 @@ Task 10 native integration (2026-10-03): `CompositePresetItem.cpp` draws the
 Nereus ANAN group selector only in its static background layer. This prevents
 duplicate label painting in the dynamic layer; upstream source geometry,
 channels, calibration, notices and inline comments remain unchanged.
+
+Integrated-review correction (2026-10-03): CompositePresetItem keeps history sample
+cadence separate from shared presentation frames and drops future trace points on
+clock rollback without changing MeterDynamics. ContainerSettingsDialog gives new
+object/container copies fresh return homes and disables unsupported container
+preferences while retaining their raw values. NereusSDR-original GUI adaptation
+by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; existing upstream notices,
+calibration and inline cites remain unchanged.

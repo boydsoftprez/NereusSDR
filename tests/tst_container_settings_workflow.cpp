@@ -11,6 +11,7 @@
 #include <QListWidget>
 #include <QComboBox>
 #include <QPushButton>
+#include <QCheckBox>
 #include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -37,6 +38,8 @@ using namespace NereusSDR;
 class TstContainerSettingsWorkflow:public QObject {
  Q_OBJECT
 private slots:
+ void initTestCase() {AppSettings::setProfileOverride(QStringLiteral("task10-settings-%1").arg(QCoreApplication::applicationPid()));AppSettings::instance().clear();}
+ void cleanupTestCase() {QFile::remove(AppSettings::instance().filePath());}
  void completeRowsPropertiesApplyReloadCancelAndInvalidImport() {
     QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
     QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
@@ -86,6 +89,67 @@ private slots:
     ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);dialog.findChild<QListWidget*>("containerDraftContents")->setCurrentRow(0);const auto original=dialog.editSession()->draft();
     dialog.findChild<QPushButton*>("duplicateContent")->click();QCOMPARE(dialog.editSession()->draft(),original);
     bool explained=false;for(auto* label:dialog.findChildren<QLabel*>()) {explained|=label->text().contains("Invalid");}QVERIFY(explained);dialog.reject();
+ }
+ void duplicatedShellPresentationsHaveNewHomes_data() {
+    QTest::addColumn<bool>("wholeContainer");QTest::newRow("object")<<false;QTest::newRow("container")<<true;
+ }
+ void duplicatedShellPresentationsHaveNewHomes() {
+    QFETCH(bool,wholeContainer);
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
+    RadioModel model(RadioModel::Role::Remote);SliceModel slice(0);QSignalSpy frequencies(&slice,&SliceModel::frequencyChanged);
+    QWidget root,liveParent;RxApplet singleton(&slice,&model,&liveParent);registry.attachSingleton("applet:rx",&singleton);QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
+    WorkspaceDocument d;d.mainContainerId="main";ContainerDocument main,home;main.id="main";home.id="B";home.layout=ContentLayout::VerticalStack;
+    auto before=registry.makeEntry("TEXT"),original=registry.makeEntry("meter.mic"),after=registry.makeEntry("TEXT");original.name="Customized microphone";
+    original.context={{"mmioGuid","00112233-4455-6677-8899-aabbccddeeff"},{"mmioVariable","alpha"},{"future",17}};original.extensions["unknown"]=QJsonObject{{"exact","keep"}};
+    auto singletonEntry=registry.makeEntry("applet:rx");main.contents={singletonEntry};home.contents={before,original,after};d.containers={main,home};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);
+    ContainerArrangeController arrange(store,&manager);QVERIFY(arrange.popOut(original.id).ok);const QString shell=store.snapshot().containers.last().id;
+    const auto popped=store.snapshot().containers.last().contents.first();QVERIFY(popped.returnLocation);QCOMPARE(popped.returnLocation->containerId,QString("B"));
+    QWidget* singletonParent=singleton.parentWidget();
+    const QByteArray recoverySource=wholeContainer?ContainerDocumentCodec::exportContainer(store.snapshot().containers.last()):ContainerDocumentCodec::exportEntries({popped}).toUtf8();
+    ContainerSettingsDialog dialog(manager.container(shell),nullptr,&manager);dialog.findChild<QListWidget*>("containerDraftContents")->setCurrentRow(0);
+    QPushButton* duplicate=dialog.findChild<QPushButton*>("duplicateContent");
+    if(wholeContainer) {for(auto* button:dialog.findChildren<QPushButton*>()) {if(button->text()=="Duplicate") {duplicate=button;break;}}}
+    QVERIFY(duplicate);duplicate->click();const auto draft=dialog.editSession()->draft();
+    const auto copy=wholeContainer?draft.containers.last().contents.first():draft.containers.last().contents.last();
+    QVERIFY(copy.id!=original.id);QVERIFY2(!copy.returnLocation,"New Settings copies must not inherit a popped object's remembered home");
+    QCOMPARE(copy.config,original.config);QCOMPARE(copy.context,original.context);QCOMPARE(copy.extensions["unknown"],original.extensions["unknown"]);QVERIFY(copy.extensions.contains("nereusPortableRecovery"));
+    const auto recovery=copy.extensions["nereusPortableRecovery"].toObject()["records"].toArray();QVERIFY(!recovery.isEmpty());
+    const QByteArray recoveredBytes=QByteArray::fromBase64(recovery.first().toObject()["sourceBase64"].toString().toLatin1());
+    if(wholeContainer) {QCOMPARE(recoveredBytes,recoverySource);}
+    // exportEntries gives its envelope a fresh UUID; its original entry, including
+    // the active home and anchors, must still be retained exactly in recovery.
+    const auto recovered=ContainerDocumentCodec::decode(QJsonDocument(QJsonDocument::fromJson(recoveredBytes).object()["workspace"].toObject()).toJson());
+    QVERIFY(recovered.ok);QCOMPARE(recovered.document.containers.first().contents.first(),popped);
+    QCOMPARE(copy.name,original.name+(wholeContainer?QString():QString(" copy")));
+    QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+    const QString copiedShell=wholeContainer?store.snapshot().containers.last().id:shell;
+    QVERIFY(arrange.closeContainer(shell).ok);if(wholeContainer) {QVERIFY(arrange.closeContainer(copiedShell).ok);}
+    const auto saved=store.snapshot();QCOMPARE(saved.containers[0].contents.size(),2);QCOMPARE(saved.containers[0].contents.first().id,singletonEntry.id);QCOMPARE(saved.containers[0].contents.last().id,copy.id);
+    QCOMPARE(saved.containers[1].contents.size(),3);QCOMPARE(saved.containers[1].contents[0].id,before.id);QCOMPARE(saved.containers[1].contents[1].id,original.id);QCOMPARE(saved.containers[1].contents[2].id,after.id);
+    auto returned=saved.containers[1].contents[1];returned.returnLocation=original.returnLocation;QCOMPARE(returned,original);
+    ContainerWorkspaceStore reload(settings);QCOMPARE(reload.load().document,saved);QCOMPARE(frequencies.count(),0);QCOMPARE(poller.targetCountForTest(),0);QCOMPARE(registry.singletonView("applet:rx"),static_cast<QWidget*>(&singleton));QCOMPARE(singleton.parentWidget(),singletonParent);
+    ContainerSettingsDialog singletonDialog(manager.container("main"),nullptr,&manager);const auto unchanged=singletonDialog.editSession()->draft();
+    for(auto* button:singletonDialog.findChildren<QPushButton*>()) {if(button->text()=="Duplicate") {button->click();break;}}
+    QCOMPARE(singletonDialog.editSession()->draft(),unchanged);QCOMPARE(registry.singletonView("applet:rx"),static_cast<QWidget*>(&singleton));
+ }
+ void unsupportedContainerOptionsKeepRawValues_data() {
+    QTest::addColumn<QJsonValue>("minimises");QTest::addColumn<QJsonValue>("unused");
+    QTest::newRow("booleans")<<QJsonValue(true)<<QJsonValue(false);
+    QTest::newRow("raw")<<QJsonValue("legacy preference")<<QJsonValue(QJsonObject{{"unknown",19}});
+ }
+ void unsupportedContainerOptionsKeepRawValues() {
+    QFETCH(QJsonValue,minimises);QFETCH(QJsonValue,unused);
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
+    WorkspaceDocument d;d.mainContainerId="A";ContainerDocument a,b;a.id="A";b.id="B";a.config={{"containerMinimises",minimises},{"hidesWhenRxNotUsed",unused}};d.containers={a,b};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);
+    ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);const auto original=dialog.editSession()->draft();
+    int found=0;for(auto* check:dialog.findChildren<QCheckBox*>()) {if(check->text()=="Minimizes" || check->text()=="Hide when RX unused") {++found;QVERIFY(!check->isEnabled());QVERIFY(!check->toolTip().isEmpty());check->click();}}
+    QCOMPARE(found,2);dialog.selectDraftContainer("B");dialog.selectDraftContainer("A");QCOMPARE(dialog.editSession()->draft(),original);
+    QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);ContainerWorkspaceStore reload(settings);QCOMPARE(reload.load().document.containers[0].config,a.config);
+    const auto portable=ContainerDocumentCodec::importContainer(ContainerDocumentCodec::exportContainer(store.snapshot().containers[0]));QVERIFY(portable.ok);QCOMPARE(portable.document.containers[0].config,a.config);
+    ContainerWidget legacy;legacy.setContainerMinimises(true);legacy.setContainerHidesWhenRxNotUsed(true);ContainerSettingsDialog legacyDialog(&legacy);
+    for(auto* check:legacyDialog.findChildren<QCheckBox*>()) {if(check->text()=="Minimizes" || check->text()=="Hide when RX unused") {QVERIFY(!check->isEnabled());check->click();}}
+    QPushButton* apply=nullptr;for(auto* button:legacyDialog.findChildren<QPushButton*>()) {if(button->text()=="Apply") {apply=button;break;}}QVERIFY(apply);apply->click();QVERIFY(legacy.containerMinimises());QVERIFY(legacy.containerHidesWhenRxNotUsed());
  }
  void legacySignalUnitsUseGlobalPreferences() {
     ContainerContentRegistry registry;ContentPropertyEditor editor(registry);editor.setEntry(registry.makeEntry("SIGNALTEXT"));

@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — New-copy return homes and retained unsupported preferences by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Plain meter-data-source tooltip by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
@@ -497,7 +499,7 @@ void ContainerSettingsDialog::buildInUsePanel(QWidget* parent)
                 if(c.contents[row].typeId.startsWith("applet:")) {m_transactionStatus->setText(tr("Singleton applets offer Move; they cannot be duplicated."));return;}
                 auto imported=ContainerDocumentCodec::importEntries(ContainerDocumentCodec::exportEntries({c.contents[row]}));
                 if(!imported.ok) {m_transactionStatus->setText(imported.error);return;}
-                auto e=imported.document.containers.first().contents.first();e.name+=tr(" copy");c.contents.insert(row+1,e);break;
+                auto e=imported.document.containers.first().contents.first();e.returnLocation.reset();e.name+=tr(" copy");c.contents.insert(row+1,e);break;
             }
             m_editSession->setDraft(d);loadCurrentDraft();m_itemList->setCurrentRow(row+1);
         });
@@ -1019,6 +1021,10 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
                                          m_container && m_container->autoHeight());
     m_hidesWhenRxNotUsedCheck = makeCheck(QStringLiteral("Hide when RX unused"),
                                          m_container && m_container->containerHidesWhenRxNotUsed());
+    m_minimisesCheck->setEnabled(false);
+    m_minimisesCheck->setToolTip(tr("Minimizing with the main window is unavailable. Saved values are retained."));
+    m_hidesWhenRxNotUsedCheck->setEnabled(false);
+    m_hidesWhenRxNotUsedCheck->setToolTip(tr("Hiding unused receivers is unavailable. Saved values are retained."));
     m_highlightCheck         = makeCheck(QStringLiteral("Highlight"),
                                          m_container && m_container->isHighlighted());
 
@@ -1080,6 +1086,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
                 auto result=ContainerDocumentCodec::importContainer(ContainerDocumentCodec::exportContainer(original));
                 if(!result.ok) {m_transactionStatus->setText(result.error);return;}
                 auto copy=result.document.containers.first(); copy.name+=tr(" copy");
+                for(auto& entry:copy.contents) {entry.returnLocation.reset();}
                 draft.containers.append(copy); m_editSession->setDraft(draft); refreshDraftDropdown(); selectDraftContainer(copy.id); return;
             }
             return;
@@ -2058,9 +2065,9 @@ void ContainerSettingsDialog::saveCurrentDraft()
                 if(m_hideTitleCheck->isChecked()) {d.header=HeaderMode::Hidden;}
                 else if(d.header==HeaderMode::Hidden) {d.header=HeaderMode::Always;}
             }
-            if (m_minimisesCheck) { setBool("containerMinimises",m_minimisesCheck->isChecked()); }
+            if (m_minimisesCheck && m_minimisesCheck->isEnabled()) { setBool("containerMinimises",m_minimisesCheck->isChecked()); }
             if (m_autoHeightCheck) { d.autoHeight=m_autoHeightCheck->isChecked(); }
-            if (m_hidesWhenRxNotUsedCheck) { setBool("hidesWhenRxNotUsed",m_hidesWhenRxNotUsedCheck->isChecked()); }
+            if (m_hidesWhenRxNotUsedCheck && m_hidesWhenRxNotUsedCheck->isEnabled()) { setBool("hidesWhenRxNotUsed",m_hidesWhenRxNotUsedCheck->isChecked()); }
             if(m_headerCombo) {d.header=static_cast<HeaderMode>(m_headerCombo->currentData().toInt());}
             if(m_layoutCombo) {d.layout=static_cast<ContentLayout>(m_layoutCombo->currentData().toInt());}
             if(m_anchorCombo) {d.anchor=static_cast<AxisLock>(m_anchorCombo->currentData().toInt());}
@@ -2093,13 +2100,13 @@ void ContainerSettingsDialog::applyToContainer()
     if (m_hideTitleCheck) {
         m_container->setTitleBarVisible(!m_hideTitleCheck->isChecked());
     }
-    if (m_minimisesCheck) {
+    if (m_minimisesCheck && m_minimisesCheck->isEnabled()) {
         m_container->setContainerMinimises(m_minimisesCheck->isChecked());
     }
     if (m_autoHeightCheck) {
         m_container->setAutoHeight(m_autoHeightCheck->isChecked());
     }
-    if (m_hidesWhenRxNotUsedCheck) {
+    if (m_hidesWhenRxNotUsedCheck && m_hidesWhenRxNotUsedCheck->isEnabled()) {
         m_container->setContainerHidesWhenRxNotUsed(
             m_hidesWhenRxNotUsedCheck->isChecked());
     }
