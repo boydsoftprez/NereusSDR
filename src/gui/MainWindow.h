@@ -334,6 +334,7 @@ public:
     void openCoreSettings(const QString& targetId);
     /// Presentation facts for this window; no saved-entry or session ownership.
     CoreSettingsContext coreSettingsSnapshot() const;
+    void setSavedCoreName(const QString& name);
     RadioModel* radioModel() const { return m_radioModel; }
     // Caller owns the controller and model; local windows only.
     void setDesktopStationController(DesktopStationController* controller);
@@ -1386,6 +1387,7 @@ private:
     // TCI and the VAX channels.
     ReceiverStopNotices m_receiverStopNotices;
     class RemoteTelemetryController* m_remoteTelemetry{nullptr};
+    QString m_savedCoreName;
     class RemoteConnectionController* m_remoteConnection{nullptr};
     class RemoteConnectionPanel* m_remoteConnectionPanel{nullptr};
     /// R-R3-38: the stop message over the content of a remote window.

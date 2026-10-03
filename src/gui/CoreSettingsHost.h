@@ -29,6 +29,7 @@ public:
     QString admissionUnavailableReason(const QByteArray& identity) const;
 signals:
     void admissionChanged();
+    void coreNamePresentationChanged();
 private:
     struct PageState {
         QPointer<CoresSetupPage> page;

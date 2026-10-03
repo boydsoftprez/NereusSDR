@@ -12,6 +12,7 @@
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
 
 #include "gui/GuiConnectionController.h"
+#include "core/security/StationLabel.h"
 
 #include "core/AppSettings.h"
 #include "core/security/ClientDeviceIdentity.h"
@@ -155,6 +156,8 @@ GuiConnectionController::GuiConnectionController(QObject* parent)
         return snapshot;
     });
     connect(m_coreSettings.get(), &CoreSettingsHost::admissionChanged, this, &GuiConnectionController::refresh);
+    connect(m_coreSettings.get(), &CoreSettingsHost::coreNamePresentationChanged,
+        this, &GuiConnectionController::refresh);
     connect(m_selector.get(), &ConnectionSelector::manageCoreRequested, this, [this](const QString& key) {
         MainWindow* window = m_sessions.window();
         if (!m_shuttingDown && m_coreSettings && window && key.startsWith(QLatin1String("saved:"))
@@ -385,6 +388,14 @@ void GuiConnectionController::refresh()
 {
     if (m_shuttingDown) { return; }
     observeNetworkGeneration();
+    if (MainWindow* window = m_sessions.window()) {
+        const auto target = m_store.target(m_windowTargetId);
+        const bool lease = target && m_windowTargetIncarnation != 0
+            && m_store.targetIncarnation(m_windowTargetId) == m_windowTargetIncarnation;
+        window->setSavedCoreName(lease && target->lastKnownCoreName
+            && target->lastKnownCoreName->pairedIdentity == target->connection.identityFingerprint
+                ? target->lastKnownCoreName->name : QString());
+    }
     if (m_coreSettings) { m_coreSettings->refresh(); }
     m_negativeExpiryTimer.stop();
     qint64 nextExpiry = 0;
@@ -444,7 +455,8 @@ void GuiConnectionController::refresh()
             if (!exact) { row.state += tr(", saved changes pending"); }
             else if (!current.savedAddressBeforeDiscovery.isEmpty()) { row.state += tr(", using the LAN address"); }
         }
-        row.connectable = !exact || !m_remoteControls || m_remoteControls->canConnect();
+        row.connectable = !exact || !m_remoteControls || m_remoteControls->canConnect()
+            || canExplicitlyReplaceStaleCore(target);
         if (m_coreSettings && m_coreSettings->ownsTemporaryAdmission(target.connection.identityFingerprint)) {
             row.connectable = false;
             row.state = m_coreSettings->admissionUnavailableReason(target.connection.identityFingerprint);
@@ -459,7 +471,8 @@ void GuiConnectionController::refresh()
         ConnectionTargetRow row = lanCoreRow(endpoint, m_store.targets());
         if (exact && m_remoteControls && !row.pairable) {
             row.state = m_remoteControls->statusText();
-            row.connectable = m_remoteControls->canConnect();
+            row.connectable = m_remoteControls->canConnect()
+                || canExplicitlyReplaceStaleCore(matches.first());
         }
         rows.append(row);
     }
@@ -486,12 +499,42 @@ void GuiConnectionController::refresh()
     }
 }
 
+bool GuiConnectionController::needsFreshCanonicalSession(const SavedCoreTarget& target) const
+{
+    if (m_shuttingDown || !m_storeLoaded || !m_remoteControls || !m_sessions.window()
+        || m_windowTargetId != target.id || m_sessions.selection().savedId != target.id
+        || m_windowCoordinatorGeneration != m_sessions.generation()
+        || m_windowTargetIncarnation == 0 || m_store.targetIncarnation(target.id) == 0
+        || m_store.targetIncarnation(target.id) == m_windowTargetIncarnation
+        || !selectionMatchesSaved(m_sessions.selection(), target)) { return false; }
+    const auto* client = m_sessions.window()->findChild<StationClient*>();
+    if (!client || client->isConnectionActive()) { return false; }
+    const RemoteStationOptions options = connectionOptionsForTarget(target);
+    return isReadyToConnect(options);
+}
+
+bool GuiConnectionController::canExplicitlyReplaceStaleCore(const SavedCoreTarget& target) const
+{
+    if (!needsFreshCanonicalSession(target)) { return false; }
+    const RemoteStationOptions options = connectionOptionsForTarget(target);
+    if (m_coreSettings && m_coreSettings->ownsTemporaryAdmission(options.identityFingerprint)) { return false; }
+    return m_sessions.canReplace({options, target.id, {}});
+}
+
 ConnectionTargetRow GuiConnectionController::savedCoreRow(const SavedCoreTarget& target,
                                                          bool storeLoaded)
 {
     const bool paired = !target.connection.identityFingerprint.isEmpty();
+    QString name = target.label.isEmpty() ? endpointText(target.connection)
+                                        : tr("%1 (local name)").arg(target.label);
+    if (target.lastKnownCoreName && target.connection.identityFingerprint.size() == 32
+        && !target.connection.allowUnpinned
+        && target.lastKnownCoreName->pairedIdentity == target.connection.identityFingerprint) {
+        const auto actual = StationLabel::parse(target.lastKnownCoreName->name);
+        if (actual) { name = tr("%1 (last known)").arg(actual->display()); }
+    }
     return {QStringLiteral("saved:") + target.id, ConnectionTargetKind::SavedCore,
-            target.label.isEmpty() ? endpointText(target.connection) : target.label,
+            name,
             target.lastRadioName.isEmpty() ? tr("Radio unknown")
                                            : tr("%1 (last known)").arg(target.lastRadioName),
             target.connection.cachedAddresses.isEmpty()
@@ -753,7 +796,8 @@ void GuiConnectionController::connectTarget(const QString& key)
         }
         const auto current = m_sessions.selection();
         if (current.savedId == target->id && sameConnection(current.connection, target->connection)) {
-            if (m_remoteControls) { m_remoteControls->connectToStation(); }
+            if (needsFreshCanonicalSession(*target)) { choose({options, target->id, {}}, true); }
+            else if (m_remoteControls) { m_remoteControls->connectToStation(); }
         } else {
             choose({options, target->id, {}}, true);
         }
@@ -769,7 +813,15 @@ void GuiConnectionController::connectTarget(const QString& key)
                 const auto current = m_sessions.selection();
                 if (current.savedId == selection.savedId
                     && sameConnection(current.connection, selection.connection)) {
-                    if (m_remoteControls) { m_remoteControls->connectToStation(); }
+                    if (needsFreshCanonicalSession(matches.first())) {
+                        // Explicit LAN recovery keeps its pinned discovered
+                        // listener while giving enrollment a fresh store lease.
+                        selection.connection = connectionOptionsForTarget(matches.first());
+                        selection.savedAddressBeforeDiscovery = selection.connection.url;
+                        selection.connection.url = endpoint.url().toString();
+                        selection.connection.allowUnpinned = false;
+                        choose(selection, true);
+                    } else if (m_remoteControls) { m_remoteControls->connectToStation(); }
                 } else {
                     choose(selection, true);
                 }

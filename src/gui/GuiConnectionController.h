@@ -86,6 +86,8 @@ private:
     bool choose(const StationStartupSelection&, bool startConnection);
 
     bool observationLeaseCurrent(StationClient* client) const;
+    bool needsFreshCanonicalSession(const SavedCoreTarget& target) const;
+    bool canExplicitlyReplaceStaleCore(const SavedCoreTarget& target) const;
     QString m_windowTargetId;
     quint64 m_windowTargetIncarnation = 0;
     quint64 m_windowCoordinatorGeneration = 0;

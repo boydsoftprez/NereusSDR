@@ -51,6 +51,9 @@
 #include <QApplication>
 #include <QMetaMethod>
 #include <QComboBox>
+#include <QAbstractItemView>
+#include "gui/RemoteAudioWidget.h"
+#include "gui/widgets/GuardedSlider.h"
 #include <QStandardItemModel>
 #include <QCoreApplication>
 #include <QLabel>
@@ -7846,6 +7849,30 @@ private slots:
         QTest::qWait(1500);
         QCOMPARE(links.constLast()->dropped, droppedAtOpus);
         QCOMPARE(errors.count(), 1);
+
+        // The shared Settings/panel control deliberately reselects the saved
+        // Lossless item to retry the actual link trial, even under ControlsLock.
+        // Wheel protection must not change this computer-wide preference path.
+        RemoteAudioWidget qualityWidget(&remoteMedia, nullptr);
+        qualityWidget.show();
+        auto* quality = qualityWidget.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        QVERIFY(quality);
+        const bool previousLock = ControlsLock::isLocked();
+        const auto restoreLock = qScopeGuard([previousLock] { ControlsLock::setLocked(previousLock); });
+        for (const bool locked : {false, true}) {
+            QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioStatus().qualityReason,
+                std::optional<RemoteAudioQualityReason>(RemoteAudioQualityReason::NetworkTooSlow), 12000);
+            ControlsLock::setLocked(locked);
+            QCOMPARE(quality->currentData().toInt(), int(RemoteAudioQualityChoice::Lossless));
+            const int requestsBeforeRetry = int(requestedProfiles(coreControls).size());
+            QTest::mouseClick(quality, Qt::LeftButton);
+            QTRY_VERIFY(quality->view()->isVisible());
+            QTest::keyClick(quality->view(), Qt::Key_Return);
+            QTRY_VERIFY_WITH_TIMEOUT(requestedProfiles(coreControls).size() > requestsBeforeRetry, 5000);
+            QCOMPARE(requestedProfiles(coreControls).at(requestsBeforeRetry), QStringLiteral("lossless"));
+            QVERIFY(!remoteMedia.audioStatus().qualityReason.has_value());
+            QCOMPARE(remoteMedia.audioQualityChoice(), RemoteAudioQualityChoice::Lossless);
+        }
 
         // The next connection replays the stored choice.
         const int controlsBefore = int(requestedProfiles(coreControls).size());

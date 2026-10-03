@@ -193,6 +193,11 @@ QString remoteAudioDeliveryText(const AudioDelayEstimate& estimate);
 /// and while it is receiving a line with its measured arrival jitter,
 /// missing packets and gaps filled, from receiverPlayback by slice id. With
 /// no receivers the text is exactly as before.
+/// The same formatter facts grouped for native shared Audio presentation.
+struct RemoteAudioDetailSections { QString receive, microphone, apps; };
+RemoteAudioDetailSections formatRemoteAudioDetailSections(const RemoteAudioStatus& status,
+    const RemoteAudioReceiverTelemetry& playback, const RemoteAudioDelayReport& delay = {},
+    const QHash<int, RemoteAudioReceiverTelemetry>& receiverPlayback = {});
 QString formatRemoteAudioDetails(const RemoteAudioStatus& status,
                                  const RemoteAudioReceiverTelemetry& playback,
                                  const RemoteAudioDelayReport& delay = {},

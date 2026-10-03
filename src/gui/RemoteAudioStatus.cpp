@@ -298,13 +298,19 @@ QString remoteReceiverAudioStateText(const RemoteReceiverAudioStatus& receiver)
     return {};
 }
 
-QString formatRemoteAudioDetails(const RemoteAudioStatus& status,
+namespace {
+struct RemoteAudioDetailParts {
+    QStringList beforeMicrophone, afterMicrophone, apps;
+    QString microphone;
+};
+RemoteAudioDetailParts remoteAudioDetailParts(const RemoteAudioStatus& status,
                                  const RemoteAudioReceiverTelemetry& playback,
                                  const RemoteAudioDelayReport& delay,
                                  const QHash<int, RemoteAudioReceiverTelemetry>& receiverPlayback)
 {
     using State = RemoteAudioStatus::State;
-    QStringList lines;
+    RemoteAudioDetailParts parts;
+    QStringList& lines = parts.beforeMicrophone;
     lines << QStringLiteral("Remote audio: %1").arg(remoteAudioHeadline(status.state));
     if (status.problem) {
         lines << QStringLiteral("Problem: %1").arg(remoteAudioProblemText(*status.problem));
@@ -322,22 +328,23 @@ QString formatRemoteAudioDetails(const RemoteAudioStatus& status,
     if (status.headphonesFormat) {
         lines << QStringLiteral("Current headphones format: %1").arg(*status.headphonesFormat);
     }
-    lines << QStringLiteral("Current microphone format: %1").arg(status.microphoneFormat);
-    lines << QStringLiteral("Output: %1 (selected)").arg(status.selectedOutput);
+    parts.microphone = QStringLiteral("Current microphone format: %1").arg(status.microphoneFormat);
+    QStringList& health = parts.afterMicrophone;
+    health << QStringLiteral("Output: %1 (selected)").arg(status.selectedOutput);
 
     const bool showHealth = status.state != State::NotConnected
         && status.state != State::MutedHere && status.state != State::RadioOffline;
     if (showHealth) {
         // U+00A0 between each number and its unit keeps them on one line.
-        lines << (playback.arrivalJitterMs
+        health << (playback.arrivalJitterMs
             ? QStringLiteral("Arrival jitter: %1\u00A0ms").arg(qRound(*playback.arrivalJitterMs))
             : QStringLiteral("Arrival jitter: not measured"));
-        lines << (playback.expectedPackets > 0
+        health << (playback.expectedPackets > 0
             ? QStringLiteral("Missing packets: %1 of %2")
                   .arg(playback.missingPackets).arg(playback.expectedPackets)
             : QStringLiteral("Missing packets: none received"));
-        lines << QStringLiteral("Gaps filled: %1").arg(playback.concealedPackets);
-        lines << (playback.speakerQueuedMs
+        health << QStringLiteral("Gaps filled: %1").arg(playback.concealedPackets);
+        health << (playback.speakerQueuedMs
             ? QStringLiteral("Speaker buffer: %1\u00A0ms on this computer")
                   .arg(qRound(*playback.speakerQueuedMs))
             : QStringLiteral("Speaker buffer: not measured"));
@@ -345,7 +352,7 @@ QString formatRemoteAudioDetails(const RemoteAudioStatus& status,
         // It deepens after late packets and eases back on a steady link,
         // so a rise in the delay below has its reason in plain sight.
         if (playback.jitterHoldMs) {
-            lines << (*playback.jitterHoldMs > double(AudioJitterBuffer::kHoldNs) / 1e6 + 0.5
+            health << (*playback.jitterHoldMs > double(AudioJitterBuffer::kHoldNs) / 1e6 + 0.5
                 ? QStringLiteral("Network buffer: %1\u00A0ms on this computer, deepened after late packets")
                       .arg(qRound(*playback.jitterHoldMs))
                 : QStringLiteral("Network buffer: %1\u00A0ms on this computer")
@@ -353,17 +360,18 @@ QString formatRemoteAudioDetails(const RemoteAudioStatus& status,
         }
         // R-R3-35: only a Core that answers clock probes adds this line.
         if (delay.measurable) {
-            lines << (delay.estimate
+            health << (delay.estimate
                 ? QStringLiteral("Audio delay: %1").arg(remoteAudioDelayText(*delay.estimate))
                 : QStringLiteral("Audio delay: not measured"));
         }
     }
+    QStringList& apps = parts.apps;
     // R-R3-43: each receiver's own stream to apps, apart from the speakers.
     for (const RemoteReceiverAudioStatus& receiver : status.receivers) {
         // The letter the operator sees for the slice (RadioModel.cpp's
         // receiverLetter): slice id 0 is receiver A.
         const QChar letter(QLatin1Char(static_cast<char>('A' + std::clamp(receiver.sliceId, 0, 25))));
-        lines << QStringLiteral("Receiver %1 for apps: %2")
+        apps << QStringLiteral("Receiver %1 for apps: %2")
                      .arg(letter, remoteReceiverAudioStateText(receiver));
         if (receiver.state != RemoteReceiverAudioStatus::State::Receiving) {
             continue;
@@ -374,7 +382,7 @@ QString formatRemoteAudioDetails(const RemoteAudioStatus& status,
         }
         const RemoteAudioReceiverTelemetry& stream = *measured;
         // U+00A0 between each number and its unit keeps them on one line.
-        lines << QStringLiteral("Receiver %1: arrival jitter %2, missing packets %3, "
+        apps << QStringLiteral("Receiver %1: arrival jitter %2, missing packets %3, "
                                 "gaps filled %4")
                      .arg(letter,
                           stream.arrivalJitterMs
@@ -386,7 +394,26 @@ QString formatRemoteAudioDetails(const RemoteAudioStatus& status,
                               : QStringLiteral("none received"))
                      .arg(stream.concealedPackets);
     }
-    return lines.join(QLatin1Char('\n'));
+    return parts;
+}
+} // namespace
+
+RemoteAudioDetailSections formatRemoteAudioDetailSections(const RemoteAudioStatus& status,
+    const RemoteAudioReceiverTelemetry& playback, const RemoteAudioDelayReport& delay,
+    const QHash<int, RemoteAudioReceiverTelemetry>& receiverPlayback)
+{
+    const auto parts = remoteAudioDetailParts(status, playback, delay, receiverPlayback);
+    return {(parts.beforeMicrophone + parts.afterMicrophone).join(QLatin1Char('\n')),
+            parts.microphone, parts.apps.join(QLatin1Char('\n'))};
+}
+
+QString formatRemoteAudioDetails(const RemoteAudioStatus& status,
+    const RemoteAudioReceiverTelemetry& playback, const RemoteAudioDelayReport& delay,
+    const QHash<int, RemoteAudioReceiverTelemetry>& receiverPlayback)
+{
+    const auto parts = remoteAudioDetailParts(status, playback, delay, receiverPlayback);
+    return (parts.beforeMicrophone + QStringList{parts.microphone} + parts.afterMicrophone + parts.apps)
+        .join(QLatin1Char('\n'));
 }
 
 bool remoteAudioFailureRecovered(const RemoteAudioFailure& failure, quint32 epoch,

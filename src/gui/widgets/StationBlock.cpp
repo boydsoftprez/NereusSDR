@@ -1,3 +1,5 @@
+// no-port-check: NereusSDR-original compact station presentation.
+// 2026-10-02 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // src/gui/widgets/StationBlock.cpp
 #include "StationBlock.h"
 
@@ -5,6 +7,8 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QVBoxLayout>
+#include <QResizeEvent>
+#include <algorithm>
 
 namespace NereusSDR {
 
@@ -37,6 +41,17 @@ StationBlock::StationBlock(QWidget* parent) : QWidget(parent)
     m_hardwareLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     vbox->addWidget(m_hardwareLabel);
 
+    m_audioLabel = new QLabel(this);
+    m_audioLabel->setObjectName(QStringLiteral("StationBlock_AudioPath"));
+    m_hardwareLabel->setObjectName(QStringLiteral("StationBlock_ControlPath"));
+    m_audioLabel->setAlignment(Qt::AlignCenter);
+    m_audioLabel->setStyleSheet(m_hardwareLabel->styleSheet());
+    m_audioLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    m_audioLabel->hide();
+    vbox->addWidget(m_audioLabel);
+    for (QLabel* label : {m_label, m_hardwareLabel, m_audioLabel}) {
+        label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    }
     hbox->addLayout(vbox);
 
     setCursor(Qt::PointingHandCursor);
@@ -65,10 +80,13 @@ void StationBlock::setRadioName(const QString& name)
     }
     m_label->setText(name.isEmpty() ? QStringLiteral("Click to connect") : name);
     applyStyle();
+    updateElision();
 }
 
 void StationBlock::setHardwareLine(const QString& model, const QString& firmware)
 {
+    m_corePresentation = false; setMaximumWidth(QWIDGETSIZE_MAX);
+    m_audioLine.clear(); m_audioLabel->hide();
     QString line = model;
     if (!model.isEmpty() && !firmware.isEmpty()) {
         line += QStringLiteral(" · ");
@@ -81,7 +99,36 @@ void StationBlock::setHardwareLine(const QString& model, const QString& firmware
     m_hardwareLine = line;
     m_hardwareLabel->setText(line);
     m_hardwareLabel->setVisible(!line.isEmpty());
+    updateElision();
 }
+
+void StationBlock::setConnectionLines(const QString& controls, const QString& audio)
+{
+    m_corePresentation = true; setMaximumWidth(320);
+    m_hardwareLine = controls; m_audioLine = audio;
+    m_hardwareLabel->setVisible(!controls.isEmpty()); m_audioLabel->setVisible(!audio.isEmpty());
+    updateElision(); updateGeometry();
+}
+QSize StationBlock::sizeHint() const
+{
+    const int textWidth = std::max({m_label->fontMetrics().horizontalAdvance(m_radioName),
+        m_hardwareLabel->fontMetrics().horizontalAdvance(m_hardwareLine),
+        m_audioLabel->fontMetrics().horizontalAdvance(m_audioLine)});
+    return {m_corePresentation ? std::clamp(textWidth + 20, 140, 320) : std::max(textWidth + 20, 140),
+            QWidget::sizeHint().height()};
+}
+void StationBlock::updateElision()
+{
+    const int available = std::max(0, width() - 20);
+    const auto set = [available](QLabel* label, const QString& text) {
+        label->setText(label->fontMetrics().elidedText(text, Qt::ElideRight, available));
+        label->setToolTip(text);
+    };
+    set(m_label, m_radioName.isEmpty() ? QStringLiteral("Click to connect") : m_radioName);
+    set(m_hardwareLabel, m_hardwareLine); set(m_audioLabel, m_audioLine);
+}
+void StationBlock::resizeEvent(QResizeEvent* event)
+{ QWidget::resizeEvent(event); updateElision(); }
 
 void StationBlock::mousePressEvent(QMouseEvent* event)
 {

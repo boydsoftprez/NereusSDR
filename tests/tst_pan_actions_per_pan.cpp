@@ -58,6 +58,10 @@
 #include "gui/PanadapterStack.h"
 #include "gui/SpectrumOverlayPanel.h"
 #include "gui/SpectrumWidget.h"
+#include "gui/SMeterWidget.h"
+#include "gui/applets/TxApplet.h"
+#include "core/TxSliceArbiter.h"
+#include "gui/meters/MeterPoller.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -289,6 +293,10 @@ private slots:
         // the trigger; viewport rebuilds can change cursor representation.
         QTest::qWait(300);
         sw->setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode3D));
+        // 2026-10-02 KG4VCF, Codex: seed six populated history rows at an
+        // explicit cadence. The landed remote capture path folds input rows;
+        // the selection invariance below must not assume the automatic divider.
+        sw->setDssRowDivider(1);
         SpectrumEndpointContext context;
         context.codec = {29, 1, -180, 0, 11, 11, 0};
         context.exactCentreHz = 3650000;

@@ -202,6 +202,9 @@
 #include "setup/HardwarePage.h"
 #include "setup/ThisCorePage.h"
 #include "setup/CoresSetupPage.h"
+#include "setup/CoreAudioSetupPage.h"
+#include "gui/RemoteMediaController.h"
+#include "gui/RemoteTelemetryController.h"
 #include "setup/HardwareDdcRoutingPage.h"
 // PA (Setup IA reshape Phase 2 — placeholder pages, content lands in Phase 3+)
 #include "setup/PaSetupPages.h"
@@ -635,6 +638,7 @@ void SetupDialog::setCoreTargets(CoreTargetStore* store)
                     this, &SetupDialog::coreConnectionDetailsRequested);
             connect(page, &CoresSetupPage::diagnosticsRequested,
                     this, &SetupDialog::coreDiagnosticsRequested);
+            connect(page, &CoresSetupPage::audioRequested, this, [this] { selectPage(QStringLiteral("Audio with the Core")); });
             if (m_coresPageBinder) { m_coresPageBinder(page); }
             return page;
         };
@@ -642,6 +646,19 @@ void SetupDialog::setCoreTargets(CoreTargetStore* store)
             const int index = static_cast<int>(&entry - m_pages.data());
             if (QWidget* replacement = realizePage(index)) { m_stack->setCurrentWidget(replacement); }
         }
+    }
+}
+
+void SetupDialog::setCoreAudioSources(RemoteMediaController* media, RemoteTelemetryController* telemetry)
+{
+    // Sources belong to this window and are installed before the lazy leaf is realized.
+    m_coreAudioMedia = media; m_coreAudioTelemetry = telemetry;
+}
+void SetupDialog::setCoreAudioContext(const CoreSettingsContext& context)
+{
+    m_coreAudioContext = context;
+    for (const PageEntry& entry : m_pages) {
+        if (auto* page = qobject_cast<CoreAudioSetupPage*>(entry.widget)) { page->setContext(context); }
     }
 }
 
@@ -1433,7 +1450,14 @@ void SetupDialog::buildTree()
                 this, &SetupDialog::coreConnectionDetailsRequested);
         connect(page, &CoresSetupPage::diagnosticsRequested,
                 this, &SetupDialog::coreDiagnosticsRequested);
+        connect(page, &CoresSetupPage::audioRequested, this, [this] { selectPage(QStringLiteral("Audio with the Core")); });
         if (m_coresPageBinder) { m_coresPageBinder(page); }
+        return page;
+    });
+
+    registerPage(cores, "Audio with the Core", SetupScope::ThisComputer, [this]() -> QWidget* {
+        auto* page = new CoreAudioSetupPage(m_coreAudioMedia, m_coreAudioTelemetry);
+        page->setContext(m_coreAudioContext);
         return page;
     });
 
