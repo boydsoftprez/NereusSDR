@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original lossless presentation JSON codec.
 #include "ContainerDocumentCodec.h"
+#include "LegacyContainerImporter.h"
+#include "ContainerContentRegistry.h"
+#include <QUuid>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
@@ -379,5 +382,106 @@ QString ContainerDocumentCodec::validate(const WorkspaceDocument& document)
         return QStringLiteral("mainContainerId does not name a container");
     }
     return {};
+}
+
+namespace {
+QByteArray portable(const WorkspaceDocument& document, const QString& format)
+{
+    return QJsonDocument(QJsonObject{{"format",format},{"schemaVersion",1},
+        {"workspace",QJsonDocument::fromJson(ContainerDocumentCodec::encode(document)).object()}}).toJson(QJsonDocument::Compact);
+}
+DocumentResult recoverAndRegenerate(DocumentResult result, const QByteArray& bytes, const QJsonObject& envelope = {})
+{
+    if (!result.ok) { return result; }
+    QHash<QString,QString> containers, entries;
+    for (const auto& c : result.document.containers) {
+        containers[c.id]=QUuid::createUuid().toString(QUuid::WithoutBraces);
+        for (const auto& e : c.contents) { entries[e.id]=QUuid::createUuid().toString(QUuid::WithoutBraces); }
+    }
+    QJsonObject unknownEnvelope=envelope;
+    unknownEnvelope.remove("workspace"); unknownEnvelope.remove("format"); unknownEnvelope.remove("schemaVersion");
+    const QJsonObject recovery{{"sourceBase64",QString::fromLatin1(bytes.toBase64())},
+        {"workspaceExtensions",result.document.extensions},{"envelopeExtensions",unknownEnvelope}};
+    const auto retain=[&](QJsonObject& extensions) {
+        bool hasOriginal=false;
+        for(auto it=extensions.begin();it!=extensions.end();++it) {
+            const auto payload=it.value().toObject();
+            if(payload["format"]=="nereus.portable-recovery" && payload["schemaVersion"]==1 && payload["records"].isArray()) {
+                for(const auto& record:payload["records"].toArray()) {if(record.toObject()["sourceBase64"].isString()) {hasOriginal=true;break;}}
+            }
+        }
+        if(!hasOriginal) {ContainerDocumentCodec::retainPortableRecovery(extensions,recovery);}
+        else if(!unknownEnvelope.isEmpty()) {ContainerDocumentCodec::retainPortableRecovery(extensions,QJsonObject{{"envelopeExtensions",unknownEnvelope}});}
+    };
+    result.document.mainContainerId=containers.value(result.document.mainContainerId);
+    for (auto& c : result.document.containers) {
+        c.id=containers.value(c.id); retain(c.extensions);
+        for (auto& e : c.contents) {
+            e.id=entries.value(e.id); retain(e.extensions);
+            if (e.returnLocation) {
+                auto& r=*e.returnLocation;
+                r.containerId=containers.value(r.containerId,r.containerId);
+                r.beforeId=entries.value(r.beforeId,r.beforeId);
+                r.afterId=entries.value(r.afterId,r.afterId);
+            }
+        }
+    }
+    return result;
+}
+DocumentResult importPortable(const QByteArray& bytes, const QString& expected)
+{
+    const QJsonDocument json=QJsonDocument::fromJson(bytes);
+    const QJsonObject root=json.object();
+    if (root.contains("format") || root.contains("workspace")) {
+        if (!json.isObject() || root.value("format")!=expected || root.value("schemaVersion")!=1 || !root.value("workspace").isObject()) {
+            return {false,{},QStringLiteral("Unsupported or malformed portable content envelope")};
+        }
+        auto result=ContainerDocumentCodec::decode(QJsonDocument(root["workspace"].toObject()).toJson(QJsonDocument::Compact));
+        if (result.ok && result.document.containers.size()!=1) { return {false,{},QStringLiteral("Portable content requires exactly one container")}; }
+        if(result.ok) {
+            ContainerContentRegistry registry;
+            for(const auto& entry:result.document.containers[0].contents) {const QString error=registry.validateEntry(entry);if(!error.isEmpty()) {return {false,{},error};}}
+        }
+        return recoverAndRegenerate(result,bytes,root);
+    }
+    return recoverAndRegenerate(LegacyContainerImporter::fromContainerFile(bytes),bytes);
+}
+}
+void ContainerDocumentCodec::retainPortableRecovery(QJsonObject& extensions,const QJsonObject& record)
+{
+    QString key=QStringLiteral("nereusPortableRecovery");
+    int suffix=0;
+    for(;;) {
+        if(!extensions.contains(key)) {extensions[key]=QJsonObject{{"format","nereus.portable-recovery"},{"schemaVersion",1},{"records",QJsonArray{record}}};return;}
+        auto payload=extensions[key].toObject();
+        if(payload["format"]=="nereus.portable-recovery" && payload["schemaVersion"]==1 && payload["records"].isArray()) {
+            auto records=payload["records"].toArray();
+            if(!records.contains(record)) {records.append(record);payload["records"]=records;extensions[key]=payload;}
+            return;
+        }
+        key=QStringLiteral("nereusPortableRecovery%1").arg(++suffix);
+    }
+}
+QByteArray ContainerDocumentCodec::exportContainer(const ContainerDocument& container)
+{
+    WorkspaceDocument d; d.mainContainerId=container.id; d.containers={container};
+    return portable(d,QStringLiteral("nereus.container"));
+}
+DocumentResult ContainerDocumentCodec::importContainer(const QByteArray& bytes)
+{
+    return importPortable(bytes,QStringLiteral("nereus.container"));
+}
+QString ContainerDocumentCodec::exportEntries(const QVector<ContentEntry>& entries)
+{
+    ContainerDocument c; c.id=QUuid::createUuid().toString(QUuid::WithoutBraces); c.name=QStringLiteral("Imported contents"); c.contents=entries;
+    WorkspaceDocument d; d.mainContainerId=c.id; d.containers={c};
+    return QString::fromUtf8(portable(d,QStringLiteral("nereus.entries")));
+}
+DocumentResult ContainerDocumentCodec::importEntries(const QString& text)
+{
+    const QString trimmed=text.trimmed();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) { return importPortable(text.toUtf8(),QStringLiteral("nereus.entries")); }
+    auto result=LegacyContainerImporter::fromClipboard(text);
+    return recoverAndRegenerate(result,text.toUtf8());
 }
 } // namespace NereusSDR

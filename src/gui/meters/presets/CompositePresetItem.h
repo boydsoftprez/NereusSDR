@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-02 — Effective contextual draft properties and portable settings by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-02 — Native complete faces by J.J. Boyd (KG4VCF), with AI-assisted
 // transformation via OpenAI Codex.
 /*  MeterManager.cs
@@ -83,6 +85,7 @@ public:
     VfoDisplayItem* vfoDisplay() const { return m_vfo; }
     ClockItem* clockDisplay() const { return m_clock; }
     int preferredFaceHeight() const;
+    int minimumConfiguredFaceHeight() const;
     QSize minimumFaceSize() const;
     double channelValue(int) const;
     double channelPeak(int) const;

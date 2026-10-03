@@ -602,3 +602,52 @@ uses original Nereus whole-workspace drafts and read-only preview projection wit
 stricter singleton/native ownership; no upstream editor code was copied. Existing
 upstream notices/inline tags remain, with Nereus modification histories and
 THETIS-PROVENANCE updated.
+
+## Task 9 — effective settings and portable content (2026-10-02)
+
+Available/Contents/Properties now operate on complete document entry identities,
+with readable registry names, explicit unavailable reasons, singleton Move-only
+choices and a prominent native preview. Contextual controls use actual typed
+renderer fields, calibrated scale locks, validated heights/history/timing and
+color pickers. Primitive adapters retain legacy originals and known overlays.
+Renderer edit-undo restores sparse/raw config independently of name/source edits;
+advanced MMIO remains intact through subsequent appearance edits and reload.
+Global signal units are explained; unsupported applet/clock sources and stacked
+geometry are disabled with their actual controller/layout reasons.
+
+All operations remain draft-only until Apply. Pending status follows full draft
+comparison, including edit-undo after Apply. Header Always/Reveal/Hidden, layout,
+placement, anchor, lock, background and RX/TX visibility use the typed document and
+existing Manager behavior. Container removal uses Task 7's shared pure return merge:
+remembered destinations/neighbors, fallback warnings and locked atomic refusal.
+Singleton import keeps the existing identity/config/context, stages a move from its
+old home, remaps imported neighbor references and retains imported metadata.
+
+Portable `nereus.container` / `nereus.entries` schemaVersion 1 envelopes share the
+existing document codec. Legacy raw/file/Base64 readers remain; malformed/future
+structured payloads fail without fallback or draft mutation. Imported IDs and
+internal return links regenerate together. Tagged collision-safe recovery slots
+retain the exact first source bytes and unknown envelope/workspace extensions on
+each entry, surviving selection/append/Apply/restart. Repeated generated exchange
+cycles preserve that immutable original rather than nesting entire prior workspaces;
+new unknown envelope metadata is deduplicated. Foreign same-name extensions survive.
+
+Final source-matched GPU/CPU builds and 16-target matrices are recorded under
+`.crew/2026-10-02-containers-and-objects-plan/task-9-*`. Builds use Ninja,
+RelWithDebInfo, Qt /opt/homebrew, ccache, GPU ON/OFF and both LTO flags OFF.
+GPU passed 16/16 in 15.80 s; CPU passed 16/16 in 20.38 s, both exit 0.
+Each raw Qt record has 192 passes, zero failures/skips. R1 and registration exit 0.
+The final report gives exact log provenance; earlier intermediate
+and failure logs remain independently named. Registration and normal attribution
+hooks run before the signed checkpoint. The new duplicate-error fixture originally
+looked up a nonexistent status QLabel; retained LLDB evidence locates the null
+QLabel::text() call, and the repaired assertion inspects actual diagnostic labels.
+
+`task-9-captures/{gpu,cpu}` contains settings-properties, settings-mixed-native,
+settings-legacy-properties and settings-unavailable. The real Cocoa fixture has a
+cached -4 dB microphone face/average marker, inert snapshot of the existing RX
+applet, customized cyan legacy bar and retained retired record. GPU Metal frame
+submission/framebuffer readback and CPU QWidget rendering are asserted. No operator
+profile, connected hardware, duplicate singleton, extra poll target or action is used.
+Physical pointer/QDragEscape/monitor tests remain pending locked-Mac access;
+Windows/Linux and broad all_tests/RT/end-to-end benches belong to Task 10.

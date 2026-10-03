@@ -477,28 +477,28 @@ signal `entryEdited(const ContentEntry&)`; produce codec
 `importEntries(const QString&) -> DocumentResult` (one-container workspace).
 New files/clipboard use schema envelopes; importer continues accepting old forms.
 
-- [ ] Test select/rename/duplicate/remove, add from Available, move in dialog,
+- [x] Test select/rename/duplicate/remove, add from Available, move in dialog,
   contextual appearance/behavior/advanced binding controls, Apply/Cancel and
   explanatory unavailable rows. Singleton offers Move, never Duplicate. Every
   enabled property changes its intended renderer/behavior and survives reload.
-- [ ] Test new/legacy file and Base64 clipboard import/export, opaque extensions,
+- [x] Test new/legacy file and Base64 clipboard import/export, opaque extensions,
   full MMIO/config, duplicate identity regeneration and invalid input leaving
   the draft unchanged. Import of a singleton resolves an existing view as a
   move only; never allocates a duplicate or steals it before Apply.
-- [ ] Build/run both new targets; expect old separate clone/export/property
+- [x] Build/run both new targets; expect old separate clone/export/property
   paths to fail the new workflow assertions.
-- [ ] Build accepted Available/Contents/Properties structure with prominent preview,
+- [x] Build accepted Available/Contents/Properties structure with prominent preview,
   durable names and contextual actions. Group properties into container,
   appearance/behavior and advanced bindings. Use meaningful composite names;
   disable unsupported properties with reasons. Return/hide/delete labels state
   their outcome. Route all operations through draft, registry and codec.
-- [ ] Implement portable envelopes plus old-format readers; retain unknown data,
+- [x] Implement portable envelopes plus old-format readers; retain unknown data,
   validate before replacing draft, regenerate imported meter/container IDs and
   remap return links inside the imported set. Keep any original source bytes in
   the recoverable payload. Build/run new tests, `tst_container_legacy_import`,
   `tst_container_edit_session`; expected pass. Show implemented settings preview
   with a meter/applet mixture and customized legacy content.
-- [ ] Commit: `feat: finish container settings and lossless content exchange`.
+- [x] Commit: `feat: finish container settings and lossless content exchange`.
 
 ### Task 10: Integration evidence and recovery readiness
 

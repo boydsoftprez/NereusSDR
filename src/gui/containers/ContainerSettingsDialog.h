@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Effective contextual draft properties and portable settings by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -92,6 +94,7 @@ class SolidColourItem;
 class LEDItem;
 class ContainerEditSession;
 class ContainerPreviewWidget;
+class ContentPropertyEditor;
 
 class ContainerSettingsDialog : public QDialog {
     Q_OBJECT
@@ -111,6 +114,11 @@ public:
     void selectDraftContainer(const QString& id);
     void refreshDraftView();
     void reject() override;
+    bool importPortableContainer(const QByteArray& bytes);
+    bool importPortableEntries(const QString& text);
+    QByteArray exportPortableContainer();
+    QString exportPortableEntries();
+    static QWidget* buildTypeSpecificEditor(MeterItem* item, QWidget* parent);
 
     // Compute the next y-position for an item being appended to a
     // vertically-stacked layout. Items spanning more than 70% of the
@@ -173,16 +181,19 @@ private:
 
     // Phase 3G-6 block 4 dispatch — instantiates the per-item
     // BaseItemEditor subclass for the selected item's type tag.
-    QWidget* buildTypeSpecificEditor(MeterItem* item);
+
 
     QPointer<ContainerWidget> m_container;
     QPointer<ContainerManager> m_manager;
     std::unique_ptr<ContainerEditSession> m_editSession;
     ContainerPreviewWidget* m_preview=nullptr;
     QLabel* m_transactionStatus=nullptr;
+    QLabel* m_draftStatus=nullptr;
+    void updateDraftStatus();
     QString m_selectedId;
-    QSet<QString> m_editedIds;
-    QHash<QString, ContentEntry> m_hydratedEntries, m_originalEntries;
+    ContentPropertyEditor* m_contentEditor=nullptr;
+    QComboBox *m_headerCombo=nullptr, *m_layoutCombo=nullptr, *m_placementCombo=nullptr, *m_anchorCombo=nullptr;
+    bool insertImported(const DocumentResult& result, bool replaceContainer);
     bool m_loadingDraft=false;
     void saveCurrentDraft();
     void loadCurrentDraft();

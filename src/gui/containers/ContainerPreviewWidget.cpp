@@ -35,6 +35,7 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
         && document.config==m_document.config) { m_document=document; return; }
     const auto prior=m_document; const bool reuse=m_materialized && document.layout==ContentLayout::VerticalStack && prior.layout==document.layout;
     const auto oldViews=m_views; QSet<QWidget*> retained;
+    setStyleSheet(QStringLiteral("#containerDraftPreview {background:%1;}").arg(document.config.value("backgroundColor").toString("#0f0f1a")));
     m_document=document; m_materialized=true; m_surfaces.clear(); m_views.clear();
     while (auto* child=m_layout->takeAt(0)) { delete child; }
     MeterWidget* canvas=nullptr; QSet<MeterWidget*> reusedMeters;

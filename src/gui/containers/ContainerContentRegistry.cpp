@@ -110,6 +110,11 @@ bool validBaseFields(const QString& raw) {
     }
     return true;
 }
+QString catalogType(const QString& type)
+{
+    const QHash<QString,QString> aliases{{"BarPreset","meter.customBar"},{"PowerSwrPreset","meter.powerSwr"},{"AnanMM","meter.ananMulti"},{"CrossNeedle","meter.crossNeedle"},{"MagicEyePreset","meter.magicEye"},{"SignalTextPreset","meter.signalText"},{"HistoryGraphPreset","meter.historyGraph"},{"VfoDisplayPreset","meter.vfoDisplay"},{"ClockPreset","meter.clock"},{"ContestPreset","meter.contest"},{"SMeterPreset","meter.sMeter"}};
+    return aliases.value(type,type);
+}
 const char* kEntryProperty = "containerContentEntry";
 }
 ContainerContentRegistry::ContainerContentRegistry(QObject* parent) : QObject(parent)
@@ -141,7 +146,7 @@ QString ContainerContentRegistry::appletTypeForVisibilityId(const QString& id)
 void ContainerContentRegistry::attachSingleton(const QString& typeId, QWidget* widget)
 {
     bool known = false;
-    for (const auto& d : descriptors()) { if (d.typeId == typeId && d.singleton) { known = true; } }
+    for (const auto& d : descriptors()) { if (d.typeId == catalogType(typeId) && d.singleton) { known = true; } }
     if (!known || m_singletons.value(typeId) == widget) { return; }
     // A second factory cannot replace a live singleton and invalidate connections.
     if (m_singletons.value(typeId) && widget) { return; }
@@ -190,12 +195,12 @@ void ContainerContentRegistry::setAvailable(const QString& typeId, bool availabl
 }
 bool ContainerContentRegistry::isAvailable(const QString& typeId) const
 {
-    for (const auto& d : descriptors()) { if (d.typeId == typeId) { return d.available; } }
+    for (const auto& d : descriptors()) { if (d.typeId == catalogType(typeId)) { return d.available; } }
     return false;
 }
 QString ContainerContentRegistry::unavailableReason(const QString& typeId) const
 {
-    for (const auto& d : descriptors()) { if (d.typeId == typeId) { return d.unavailableReason; } }
+    for (const auto& d : descriptors()) { if (d.typeId == catalogType(typeId)) { return d.unavailableReason; } }
     return QStringLiteral("Unknown content type; original data retained");
 }
 QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
@@ -279,7 +284,7 @@ ContentEntry ContainerContentRegistry::makeEntry(const QString& typeId) const {
     entry.typeId = typeId;
     entry.name = typeId + QStringLiteral(" (unavailable)");
     for (const auto& descriptor : descriptors()) {
-        if (descriptor.typeId == typeId) { entry.name = descriptor.title; break; }
+        if (descriptor.typeId == catalogType(typeId)) { entry.name = descriptor.title; break; }
     }
     const auto item = allocate(typeId);
     if (const auto* face=qobject_cast<const BarPresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->configuration()); }
@@ -290,7 +295,7 @@ ContentEntry ContainerContentRegistry::makeEntry(const QString& typeId) const {
 QString ContainerContentRegistry::validateEntry(const ContentEntry& entry) const {
     // Unavailable records are valid recoverable data, never editing failures.
     if (entry.extensions.contains(QStringLiteral("unavailableReason"))) { return {}; }
-    for (const auto& descriptor : descriptors()) { if (descriptor.typeId == entry.typeId && !descriptor.available) { return {}; } }
+    for (const auto& descriptor : descriptors()) { if (descriptor.typeId == catalogType(entry.typeId) && !descriptor.available) { return {}; } }
     if (!allocate(entry.typeId)) { return {}; }
     std::unique_ptr<MeterItem> item(createMeterItem(entry, nullptr, ContentRenderMode::Validation));
     return item ? QString() : QStringLiteral("Invalid legacy %1 record").arg(entry.typeId);
@@ -299,7 +304,7 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
                                                    ContentRenderMode mode) const {
     // Re-evaluate current support; a stored explanation is not a permanent veto.
     for (const auto& descriptor : descriptors()) {
-        if (descriptor.typeId == entry.typeId && !descriptor.available) { return nullptr; }
+        if (descriptor.typeId == catalogType(entry.typeId) && !descriptor.available) { return nullptr; }
     }
     auto item = allocate(entry.typeId);
     if (!item) { return nullptr; }
@@ -362,8 +367,8 @@ QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWid
     }
     auto* tile=new QWidget(parent); auto* layout=new QVBoxLayout(tile);
     tile->setMinimumHeight(64); tile->setStyleSheet("background:#172534;color:#c8d8e8;border:1px solid #203040;");
-    const QString reason=!isAvailable(entry.typeId) ? unavailableReason(entry.typeId)
-        : (entry.typeId.startsWith("applet:") ? tr("Existing live applet presentation. Draft source changes take effect on Apply; controls are disabled here.")
+    const QString reason=entry.extensions.contains("unavailableReason") ? entry.extensions.value("unavailableReason").toString() : !isAvailable(entry.typeId) ? unavailableReason(entry.typeId)
+        : (entry.typeId.startsWith("applet:") ? (entry.typeId=="applet:s_meter" ? tr("Existing S-meter view. Source changes take effect on Apply; preview controls are disabled.") : tr("Existing applet view with its current window controller. Controls are disabled in this preview."))
         : tr("Unsupported configuration; original data retained."));
     auto* title=new QLabel(entry.name+QStringLiteral(" — ")+reason,tile); title->setWordWrap(true); layout->addWidget(title);
     if (auto* view=singletonView(entry.typeId); view && view->isVisible() && isAvailable(entry.typeId)) {

@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-02 — Effective contextual draft properties and portable settings by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-02 — Native complete faces by J.J. Boyd (KG4VCF), with AI-assisted
 // transformation via OpenAI Codex.
 /*  MeterManager.cs
@@ -275,6 +277,10 @@ QString CompositePresetItem::formatSignalReading(double value,MeterUnit unit,boo
     for(int i=0;i<thresholds.size();++i) { if(corrected<=thresholds[i]) { return i<10?QStringLiteral("S%1").arg(i):QStringLiteral("S9+%1").arg(over[i]); } }
     return QStringLiteral("S9+60");
 }
+int CompositePresetItem::minimumConfiguredFaceHeight() const {
+    const QList<int> minimumHeights{144,300,260,180,120,120,120,120,280};
+    return minimumHeights[int(m_face)];
+}
 QStringList CompositePresetItem::editableChannelFields(int channel) const {
     if(channel<0 || channel>=m_channels.size()) { return {}; }
     QStringList fields{"bindingId","attack","decay","updateIntervalMs","ignoreHistoryMs","color"};
@@ -320,8 +326,7 @@ bool CompositePresetItem::applyConfiguration(const QJsonObject& edit) {
     for(const QString& key:{QStringLiteral("x"),QStringLiteral("y"),QStringLiteral("w"),QStringLiteral("h"),QStringLiteral("minValue"),QStringLiteral("maxValue")}) { if(!next[key].isDouble() || !std::isfinite(next[key].toDouble()) || qAbs(next[key].toDouble())>std::numeric_limits<float>::max()) { return false; } }
     if(next["w"].toDouble()<=0 || next["h"].toDouble()<=0 || next["maxValue"].toDouble()<=next["minValue"].toDouble()) { return false; }
     for(const QString& key:{QStringLiteral("fontSize"),QStringLiteral("faceHeight"),QStringLiteral("historyMs"),QStringLiteral("historyCapacity"),QStringLiteral("displayGroup"),QStringLiteral("bindingId")}) { double v=next[key].toDouble(-1.5); if(!next[key].isDouble() || v!=std::floor(v) || v<-1 || v>1000000) { return false; } }
-    const QList<int> minimumHeights{144,300,260,180,120,120,120,120,280};
-    if(next["fontSize"].toInt()<8 || next["faceHeight"].toInt()<minimumHeights[int(m_face)] || next["historyMs"].toInt()<100 || next["historyCapacity"].toInt()<2) { return false; }
+    if(next["fontSize"].toInt()<8 || next["faceHeight"].toInt()<minimumConfiguredFaceHeight() || next["historyMs"].toInt()<100 || next["historyCapacity"].toInt()<2) { return false; }
     for(const QString& key:{QStringLiteral("backdropColor"),QStringLiteral("titleColor"),QStringLiteral("lowColor"),QStringLiteral("highColor")}) { if(!next[key].isString() || !QColor(next[key].toString()).isValid()) { return false; } }
     for(const QString& key:{QStringLiteral("showTitle"),QStringLiteral("showReadout"),QStringLiteral("showPeakValue"),QStringLiteral("fadeRx"),QStringLiteral("fadeTx"),QStringLiteral("autoScale"),QStringLiteral("showDate"),QStringLiteral("show24Hour")}) { if(!next[key].isBool()) { return false; } }
     if(!next["title"].isString() || !next["units"].isString() || !QStringList{"Both","UTC","Local"}.contains(next["clockMode"].toString())) { return false; }

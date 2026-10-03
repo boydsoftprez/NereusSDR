@@ -11,6 +11,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Effective contextual draft properties and portable settings by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -215,6 +217,8 @@ public:
     void setPinOnTop(bool pin);
 
     // --- Container Properties ---
+    QColor backgroundColor() const {return m_backgroundColor;}
+    void setBackgroundColor(const QColor& color);
     bool hasBorder() const { return m_border; }
     void setBorder(bool border);
     bool isLocked() const { return m_locked; }

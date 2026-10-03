@@ -10,6 +10,7 @@ public:
     void setDraft(const WorkspaceDocument& document) { m_draft = document; m_casConflicts.clear(); }
     CommitResult apply();
     void cancel();
+    bool hasPendingChanges() const {return m_draft!=m_base;}
     QStringList conflictingContainers() const;
     void reloadContainers(const QStringList& ids);
 private:

@@ -504,3 +504,13 @@ column 2 (not column 1) so the header-verifier script does not scan them.
 | Same as .cpp | src/gui/applets/ClientChainApplet.h | NereusSDR-original applet header; see .cpp |
 | Setup → Network → TCI Server page — NereusSDR-original Setup UI; 6 group boxes, 17 AppSettings keys | src/gui/setup/CatNetworkSetupPages.cpp | NereusSDR-native Setup page; TCI server settings surfaced from Thetis frmOptions/TCIServer section but no .Designer.cs code ported |
 | Same as .cpp | src/gui/setup/CatNetworkSetupPages.h | NereusSDR-original Setup page header; see .cpp |
+
+### 2026-10-02 Containers and Objects Task 9
+
+The container settings and existing BaseItemEditor/CompositePresetItem adapters
+retain their verbatim upstream licence blocks and citations. Task 9 adds
+NereusSDR-original draft-only contextual controls, calibrated validation floors,
+portable document envelopes and collision-safe recovery; it copies no new
+upstream implementation. ContentPropertyEditor and the SignalTextItemEditor
+Qt adapter are original GUI plumbing, marked `no-port-check`. Global signal
+units remain the existing multimeter preference rather than a per-item override.

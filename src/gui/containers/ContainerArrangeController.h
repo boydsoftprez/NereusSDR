@@ -31,12 +31,15 @@ class ContainerArrangeController : public QObject
     QByteArray mimeData(const QString& entryId) const;
     ArrangeResult validateDrop(const QByteArray& data, const QString& destinationId) const;
     ArrangeResult drop(const QByteArray& data, const QString& destinationId, int insertionIndex);
+    static ArrangeResult moveDraft(WorkspaceDocument& document, const QString& entryId,
+                                   const QString& destinationId, int insertionIndex);
+    // Pure draft operation; validate every destination before mutating the candidate.
+    static ArrangeResult returnBatch(WorkspaceDocument& document, int source,
+                                     const QVector<ContentEntry>& entries);
     static constexpr const char* kMimeType = "application/x-nereussdr-container-entry";
 
   private:
     ArrangeResult commit(const WorkspaceDocument& document);
-    ArrangeResult returnBatch(WorkspaceDocument& document, int source,
-                              const QVector<ContentEntry>& entries);
     ContainerWorkspaceStore& m_store;
     ContainerManager* m_manager;
     const QString m_identity;

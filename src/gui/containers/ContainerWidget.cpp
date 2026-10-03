@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Effective contextual draft properties and portable settings by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -538,6 +540,13 @@ void ContainerWidget::setNotes(const QString& notes)
     m_notes = scrubbed;
     updateTitle();
     emit notesChanged(m_notes);
+}
+
+void ContainerWidget::setBackgroundColor(const QColor& color)
+{
+    if(!color.isValid() || m_backgroundColor==color) {return;}
+    m_backgroundColor=color;
+    m_contentHolder->setStyleSheet(QStringLiteral("background: %1;").arg(color.name(QColor::HexArgb)));
 }
 
 void ContainerWidget::setNoControls(bool noControls) { m_noControls = noControls; }

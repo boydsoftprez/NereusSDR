@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Effective contextual draft properties and portable settings by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
@@ -338,6 +340,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         c->setShowOnRx(d.config.value("showOnRx").toBool(true)); c->setShowOnTx(d.config.value("showOnTx").toBool(true));
         c->setContainerMinimises(d.config.value("containerMinimises").toBool(false));
         c->setContainerHidesWhenRxNotUsed(d.config.value("hidesWhenRxNotUsed").toBool(false));
+        c->setBackgroundColor(QColor(d.config.value("backgroundColor").toString("#0f0f1a")));
         c->setBorder(d.config.value("border").toBool(true)); c->setNoControls(d.config.value("noControls").toBool(false));
         c->setPinOnTop(d.config.value("pinOnTop").toBool(false));
         if (fresh && d.dockMode==DockMode::Floating && !d.geometry.isValid()) {

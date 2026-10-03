@@ -1767,6 +1767,7 @@ set(GUI_SOURCES
     src/gui/containers/ContainerManager.cpp
     src/gui/containers/ContainerButtonDispatcher.cpp
     src/gui/containers/ContainerSettingsDialog.cpp
+    src/gui/containers/ContentPropertyEditor.cpp
     src/gui/containers/MmioEndpointsDialog.cpp
     src/gui/containers/MmioVariablePickerPopup.cpp
     src/core/mmio/ITransportWorker.cpp

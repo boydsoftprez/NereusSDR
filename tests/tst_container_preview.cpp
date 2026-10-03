@@ -220,7 +220,7 @@ private slots:
         QCOMPARE(committed.count(),0); QCOMPARE(store.snapshot(),original); QVERIFY(livePointer);
         {
             ContainerSettingsDialog dialog(manager.container("B"),nullptr,&manager); QPushButton* remove=nullptr;
-            for(auto* button:dialog.findChildren<QPushButton*>()) { if(button->text()=="Delete") { remove=button; break; } }
+            for(auto* button:dialog.findChildren<QPushButton*>()) { if(button->text()=="Remove / return contents") { remove=button; break; } }
             QVERIFY(remove); remove->click(); QCOMPARE(dialog.editSession()->draft().containers.size(),1); QCOMPARE(manager.containerCount(),2);
             QVERIFY(manager.container("B")); QCOMPARE(store.snapshot(),original); QCOMPARE(committed.count(),0); dialog.reject();
         }

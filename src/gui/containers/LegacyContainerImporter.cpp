@@ -156,6 +156,10 @@ DocumentResult LegacyContainerImporter::fromSettings(const AppSettings& settings
     return finish(document);
 }
 DocumentResult LegacyContainerImporter::fromContainerFile(const QByteArray& bytes) {
+    const QJsonObject envelope=QJsonDocument::fromJson(bytes).object();
+    if(envelope.contains("format") || envelope.contains("workspace")) {
+        return envelope.value("format")=="nereus.entries" ? ContainerDocumentCodec::importEntries(QString::fromUtf8(bytes)) : ContainerDocumentCodec::importContainer(bytes);
+    }
     QByteArray trimmed = bytes.trimmed();
     if (trimmed.startsWith(QByteArray::fromHex("efbbbf"))) { trimmed.remove(0,3); }
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {

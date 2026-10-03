@@ -287,10 +287,9 @@ ArrangeResult ContainerArrangeController::commit(const WorkspaceDocument& docume
                                           : m_store.commit(document, document.revision);
     return {result.status == CommitStatus::Saved, result.error};
 }
-ArrangeResult ContainerArrangeController::move(const QString& id, const QString& destination,
+ArrangeResult ContainerArrangeController::moveDraft(WorkspaceDocument& d, const QString& id, const QString& destination,
                                                int insertion)
 {
-    auto d = m_store.snapshot();
     const auto [source, index] = locate(d, id);
     const int target = containerIndex(d, destination);
     if (source < 0 || target < 0) {
@@ -312,7 +311,12 @@ ArrangeResult ContainerArrangeController::move(const QString& id, const QString&
     }
     d.containers[target].contents.insert(insertion, entry);
     d.containers[target].visible = true;
-    return commit(d);
+    return {true,{}};
+}
+ArrangeResult ContainerArrangeController::move(const QString& id,const QString& destination,int insertion)
+{
+    auto d=m_store.snapshot();const auto result=moveDraft(d,id,destination,insertion);
+    return result.ok?commit(d):result;
 }
 ArrangeResult ContainerArrangeController::popOut(const QString& id)
 {
