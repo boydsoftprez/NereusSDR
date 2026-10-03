@@ -1,3 +1,4 @@
+// no-port-check: NereusSDR-original Qt property adapter; global-unit control disabled in container drafts.
 #pragma once
 #include "BaseItemEditor.h"
 
@@ -16,6 +17,7 @@ class SignalTextItemEditor : public BaseItemEditor {
 public:
     explicit SignalTextItemEditor(QWidget* parent = nullptr);
     void setItem(MeterItem* item) override;
+    void useGlobalUnits();
 
 private:
     void buildTypeSpecific() override;

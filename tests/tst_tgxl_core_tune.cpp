@@ -50,24 +50,33 @@
 //               plain words) and nobody else; its own stop and a keyed
 //               cycle are not told. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-02: offline regressions for carrier readiness and a cancelled
+//               cycle's settle callback. J.J. Boyd (KG4VCF), AI-assisted
+//               via OpenAI Codex.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
 
 #include "core/PgxlConnection.h"
+#include "core/DspControlThread.h"
 #include "core/SmartSdrApiListener.h"
 #include "core/TgxlAnswerTracker.h"
 #include "core/TgxlConnection.h"
 #include "core/TuneMemoryStore.h"
+#include "core/TxChannel.h"
+#include "core/WdspEngine.h"
 #include "core/safety/TransmitHolder.h"
 #include "core/safety/TxRefusal.h"
 #include "models/SliceModel.h"
 
 #include <QHostAddress>
+#include <QElapsedTimer>
 #include <QPointer>
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
+
+#include <chrono>
 
 using namespace NereusSDR;
 
@@ -110,11 +119,14 @@ public:
     /// How this client echoes the Core's tune state (see the file header).
     enum class Echo { Off, PerChange, PerFrame };
     Echo echo{Echo::Off};
-    void send(const QString& command)
+    int send(const QString& command)
     {
         m_sock.write(QStringLiteral("C%1|%2\n").arg(++m_seq).arg(command).toUtf8());
         m_sock.flush();
+        return m_seq;
     }
+    QString response(int sequence) const { return m_responses.value(sequence); }
+    bool greeted() const { return m_greeted; }
     void close() { m_sock.abort(); }
 
 private:
@@ -122,6 +134,17 @@ private:
     {
         while (m_sock.canReadLine()) {
             const QString line = QString::fromUtf8(m_sock.readLine());
+            if (line.startsWith(QLatin1Char('H'))) {
+                m_greeted = true;
+                continue;
+            }
+            if (line.startsWith(QLatin1Char('R'))) {
+                const int bar = line.indexOf(QLatin1Char('|'));
+                if (bar > 1) {
+                    m_responses.insert(line.mid(1, bar - 1).toInt(), line.trimmed());
+                }
+                continue;
+            }
             const int at = line.indexOf(QLatin1String("|transmit "));
             if (at < 0) {
                 continue;
@@ -148,6 +171,8 @@ private:
     }
 
     QTcpSocket m_sock;
+    QHash<int, QString> m_responses;
+    bool m_greeted{false};
     int m_seq{0};
     bool m_tuneSeen{false};
     int m_tuneFrames{0};
@@ -155,6 +180,7 @@ private:
 
 // The Tuner Genius: its :9010 control port, and its LAN PTT client.
 class FakeTuner : public QObject {
+    Q_OBJECT
 public:
     FakeTuner()
     {
@@ -190,6 +216,9 @@ public:
     int count(const QString& command) const { return m_commands.count(command); }
     LanClient lan;   // from ::1, the tuner's own address
 
+signals:
+    void commandReceived(const QString& command);
+
 private:
     void readCommands()
     {
@@ -201,6 +230,7 @@ private:
             }
             const QString command = line.mid(bar + 1);
             m_commands << command;
+            emit commandReceived(command);
             const bool refuse = rejectAutotune && command == QLatin1String("autotune");
             m_conn->write(QStringLiteral("R%1|%2|\n")
                               .arg(line.mid(1, bar - 1))
@@ -213,6 +243,23 @@ private:
     QTcpServer m_server;
     QPointer<QTcpSocket> m_conn;
     QStringList m_commands;
+};
+
+// Legacy socket cases also need a real carrier gate. No WDSP channel or
+// radio is initialized: only the production RadioModel keying wiring.
+struct TuningCore : Core {
+    TxChannel tx{WdspEngine::kTxChannelId};
+
+    TuningCore()
+    {
+        model->injectTxChannelForTest(&tx);
+        model->wireTxChannelKeyingForTest();
+    }
+    ~TuningCore()
+    {
+        tx.closeRfGate();
+        model->injectTxChannelForTest(nullptr);
+    }
 };
 
 // The Core with its SmartSDR API listener up (any address, a free port)
@@ -390,6 +437,506 @@ private slots:
     void initTestCase() { g_previousHandler = qInstallMessageHandler(quietUnopenedSockets); }
     void cleanupTestCase() { qInstallMessageHandler(g_previousHandler); }
 
+    void deviceAutotuneWaitsForTxReadyAndRfGate_data()
+    {
+        QTest::addColumn<bool>("grantFirst");
+        QTest::addColumn<bool>("loseInterlockListener");
+        QTest::newRow("grant before txReady") << true << false;
+        QTest::newRow("txReady before grant") << false << false;
+        QTest::newRow("interlock fallback before txReady") << true << true;
+    }
+
+    // A TRANSMITTING interlock frame alone cannot prove the carrier can
+    // flow. Exercise the production RF-gate wiring, not a second copy of
+    // its two-signal condition, and record it at the real :9010 boundary.
+    // The injected channel has no radio/WDSP lane: this observes the Core's
+    // gate, not RF power or the tuner's coupler threshold.
+    void deviceAutotuneWaitsForTxReadyAndRfGate()
+    {
+        QFETCH(bool, grantFirst);
+        QFETCH(bool, loseInterlockListener);
+        Core core;
+        allowTransmit(core);
+        MoxController* mox = core.model->moxController();
+        mox->setTimerIntervals(loseInterlockListener ? 2200 : (grantFirst ? 800 : 0),
+                              0, 0, 0, 0, 0);
+        core.model->setTuneOffSettleMsForTest(0);
+        TxChannel tx{WdspEngine::kTxChannelId};
+        core.model->injectTxChannelForTest(&tx);
+        core.model->wireTxChannelKeyingForTest();
+        const auto detachTx = qScopeGuard([&]() {
+            tx.closeRfGate();
+            core.model->injectTxChannelForTest(nullptr);
+        });
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(appA));
+        FakeTuner tuner;
+        tuner.lan.echo = LanClient::Echo::Off;
+        QVERIFY(startTuner(core, tuner));
+        SmartSdrApiListener* listener = core.model->smartSdrListener();
+        tuner.lan.send(QStringLiteral("interlock create type=AMP name=TG serial=TEST valid_antennas=1"));
+        QTRY_VERIFY(listener->hasInterlockedAmp());
+        QSignalSpy ready(mox, &MoxController::txReady);
+        QSignalSpy grants(listener, &SmartSdrApiListener::interlockGranted);
+        QList<QPair<bool, bool>> atAutotune;
+        QObject observation;
+        connect(&tuner, &FakeTuner::commandReceived, &observation, [&](const QString& command) {
+            if (command == QLatin1String("autotune")) {
+                atAutotune.append({!ready.isEmpty(), tx.isRfGateOpen()});
+            }
+        });
+
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOn}).value(QStringLiteral("accepted")).toBool());
+        QVERIFY(core.model->isTgxlAutotuneInProgress());
+        if (grantFirst) {
+            QVERIFY(ready.isEmpty());
+        } else {
+            QTRY_COMPARE(ready.count(), 1);
+        }
+        QVERIFY(!tx.isRfGateOpen());
+        QCOMPARE(tuner.count(QStringLiteral("autotune")), 0);
+        if (loseInterlockListener) {
+            // Stop only the LAN listener, cancelling its lenient 500 ms
+            // interlock grant. The :9010 tuner connection stays up, so the
+            // orchestration's 1.5 s fallback is reached without txReady.
+            listener->stop();
+            QVERIFY(core.model->tgxlConnection()->isConnected());
+            QTimer deadline;
+            deadline.setSingleShot(true);
+            deadline.setTimerType(Qt::PreciseTimer);
+            QSignalSpy elapsed(&deadline, &QTimer::timeout);
+            deadline.start(1700);
+            QTRY_VERIFY_WITH_TIMEOUT(!elapsed.isEmpty() || !atAutotune.isEmpty(), 2500);
+            QCOMPARE(grants.count(), 0);
+            QVERIFY(ready.isEmpty());
+            QVERIFY(!tx.isRfGateOpen());
+            QCOMPARE(tuner.count(QStringLiteral("autotune")), 0);
+            QVERIFY(core.invoke(appA, "tx.tunerTune", {kOff}).value(QStringLiteral("accepted")).toBool());
+            QTRY_COMPARE(mox->state(), MoxState::Rx);
+            return;
+        }
+        tuner.lan.send(QStringLiteral("interlock ready 1"));
+        QTRY_COMPARE(grants.count(), 1);
+        if (grantFirst) {
+            QVERIFY(ready.isEmpty());
+            QVERIFY(!tx.isRfGateOpen());
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(atAutotune.size(), 1, 3000);
+        QVERIFY2(atAutotune.first().first, "autotune arrived before the real MoxController txReady");
+        QVERIFY2(atAutotune.first().second, "autotune arrived while the production TX RF gate was closed");
+        QCOMPARE(tuner.count(QStringLiteral("autotune")), 1);
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOff}).value(QStringLiteral("accepted")).toBool());
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+    }
+
+    // Both prerequisites can arrive while the real control lane is still
+    // stopped: setRunningAsync has only queued the gate-opening job. The
+    // tune command must wait for that actual opening and its own settle.
+    void deviceAutotuneSettlesAfterDelayedLaneRfGateOpening_data()
+    {
+        QTest::addColumn<bool>("ampHold");
+        QTest::newRow("lane delayed") << false;
+        QTest::newRow("amplifier hold then lane delayed") << true;
+    }
+    void deviceAutotuneSettlesAfterDelayedLaneRfGateOpening()
+    {
+        QFETCH(bool, ampHold);
+        Core core;
+        allowTransmit(core);
+        core.model->setTuneOffSettleMsForTest(0);
+        core.model->moxController()->setTimerIntervals(ampHold ? 300 : 0, 0, 0, 0, 0, 0);
+        DspControlThread lane(DspLane::Transmit);
+        TxChannel tx{WdspEngine::kTxChannelId};
+        tx.setControlLane(&lane);
+        core.model->injectTxChannelForTest(&tx);
+        core.model->wireTxChannelKeyingForTest();
+        const auto nowNs = []() -> qint64 {
+            return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+        };
+        std::atomic<qint64> openedNs{-1};
+        tx.setRfGateObserverForTest([&openedNs, nowNs](bool open) {
+            if (open) {
+                openedNs.store(nowNs(), std::memory_order_release);
+            }
+        });
+        const auto detachTx = qScopeGuard([&]() {
+            // Invalidate any queued on before draining, including on an
+            // early QtTest assertion return. Keep the channel and observer
+            // alive until the real lane has drained and joined.
+            tx.closeRfGate();
+            lane.start();
+            lane.stop();
+            tx.setRfGateObserverForTest({});
+            tx.setControlLane(nullptr);
+            core.model->injectTxChannelForTest(nullptr);
+        });
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(appA));
+        FakeTuner tuner;
+        tuner.lan.echo = LanClient::Echo::Off;
+        QVERIFY(startTuner(core, tuner));
+        SmartSdrApiListener* listener = core.model->smartSdrListener();
+        tuner.lan.send(QStringLiteral("interlock create type=AMP name=TG serial=TEST valid_antennas=1"));
+        QTRY_VERIFY(listener->hasInterlockedAmp());
+        QSignalSpy ready(core.model->moxController(), &MoxController::txReady);
+        QSignalSpy grants(listener, &SmartSdrApiListener::interlockGranted);
+        if (ampHold) {
+            core.model->pgxlConnection()->injectLineForTesting(QStringLiteral("V3.8.9"));
+            core.model->pgxlConnection()->injectLineForTesting(QStringLiteral("R1|0|state=STANDBY"));
+        }
+        qint64 commandNs = -1;
+        qint64 openedAtCommandNs = -1;
+        bool gateAtCommand = false;
+        QObject observation;
+        connect(&tuner, &FakeTuner::commandReceived, &observation, [&](const QString& command) {
+            if (command == QLatin1String("autotune")) {
+                commandNs = nowNs();
+                openedAtCommandNs = openedNs.load(std::memory_order_acquire);
+                gateAtCommand = tx.isRfGateOpen();
+            }
+        });
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOn}).value(QStringLiteral("accepted")).toBool());
+        if (ampHold) {
+            // A pre-existing changeover correctly refuses the tune. Start
+            // the cycle first, then introduce the hold before txReady.
+            QVERIFY(ready.isEmpty());
+            core.model->pgxlConnection()->sendCommand(QStringLiteral("operate=0"));
+            QVERIFY(core.model->ampChangingOver());
+        }
+        QTRY_COMPARE(ready.count(), 1);
+        tuner.lan.send(QStringLiteral("interlock ready 1"));
+        QTRY_COMPARE(grants.count(), 1);
+        QVERIFY(!tx.isRfGateOpen());
+        QCOMPARE(openedNs.load(std::memory_order_acquire), qint64(-1));
+
+        QTimer deadline;
+        deadline.setSingleShot(true);
+        deadline.setTimerType(Qt::PreciseTimer);
+        QSignalSpy elapsed(&deadline, &QTimer::timeout);
+        deadline.start(200);
+        QTRY_VERIFY_WITH_TIMEOUT(!elapsed.isEmpty() || tuner.count(QStringLiteral("autotune")) > 0, 1000);
+        QCOMPARE(tuner.count(QStringLiteral("autotune")), 0);
+        QVERIFY(!tx.isRfGateOpen());
+        QCOMPARE(openedNs.load(std::memory_order_acquire), qint64(-1));
+
+        lane.start();
+        if (ampHold) {
+            QVERIFY(lane.waitIdleForTest(1000));
+            QVERIFY(!tx.isRfGateOpen());
+            QCOMPARE(openedNs.load(std::memory_order_acquire), qint64(-1));
+            QCOMPARE(tuner.count(QStringLiteral("autotune")), 0);
+            core.model->pgxlConnection()->injectLineForTesting(QStringLiteral("S0|status state=STANDBY"));
+        }
+        QTRY_VERIFY(openedNs.load(std::memory_order_acquire) >= 0);
+        QTRY_COMPARE_WITH_TIMEOUT(tuner.count(QStringLiteral("autotune")), 1, 2000);
+        QVERIFY(gateAtCommand);
+        QVERIFY(openedAtCommandNs >= 0);
+        QVERIFY2(commandNs - openedAtCommandNs >= 150'000'000,
+                 "autotune arrived less than 150 ms after the lane actually opened the RF gate");
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOff}).value(QStringLiteral("accepted")).toBool());
+        QTRY_COMPARE(core.model->moxController()->state(), MoxState::Rx);
+    }
+
+    void cancelledCycleSettleCannotAutotuneNextCycle_data()
+    {
+        QTest::addColumn<bool>("waitForStandby");
+        QTest::newRow("next cycle waits for PGXL standby") << true;
+        QTest::newRow("next cycle waits for interlock") << false;
+    }
+
+    // Cycle A gets the interlock grant and arms the 150 ms settle. End A
+    // and start B before that deadline; A's callback must not send B an
+    // autotune while B has no carrier gate (standby or interlock pending).
+    void cancelledCycleSettleCannotAutotuneNextCycle()
+    {
+        QFETCH(bool, waitForStandby);
+        Core core;
+        allowTransmit(core);
+        core.model->setTuneOffSettleMsForTest(0);
+        TxChannel tx{WdspEngine::kTxChannelId};
+        core.model->injectTxChannelForTest(&tx);
+        core.model->wireTxChannelKeyingForTest();
+        const auto detachTx = qScopeGuard([&]() {
+            tx.closeRfGate();
+            core.model->injectTxChannelForTest(nullptr);
+        });
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(appA));
+        FakeTuner tuner;
+        tuner.lan.echo = LanClient::Echo::Off;
+        QVERIFY(startTuner(core, tuner));
+        SmartSdrApiListener* listener = core.model->smartSdrListener();
+        // Establish transport before A's short settle window. Register
+        // only after A stops, so B has a genuinely unacknowledged amp.
+        LanClient waitingAmp;
+        if (!waitForStandby) {
+            QVERIFY(waitingAmp.connectTo(QHostAddress::LocalHostIPv6, listener->serverPort()));
+            QVERIFY(QTest::qWaitFor([&]() { return waitingAmp.greeted(); }, 1000));
+        }
+        tuner.lan.send(QStringLiteral("interlock create type=AMP name=TG serial=TEST valid_antennas=1"));
+        QTRY_VERIFY(listener->hasInterlockedAmp());
+        MoxController* mox = core.model->moxController();
+        QSignalSpy ready(mox, &MoxController::txReady);
+        QElapsedTimer settleAge;
+        QObject observation;
+        connect(listener, &SmartSdrApiListener::interlockGranted, &observation,
+                [&settleAge](const QString&) { settleAge.start(); });
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOn}).value(QStringLiteral("accepted")).toBool());
+        QVERIFY(QTest::qWaitFor([&ready]() { return ready.count() == 1; }, 1000));
+        QVERIFY(!tx.isRfGateOpen());
+        tuner.lan.send(QStringLiteral("interlock ready 1"));
+        QVERIFY(QTest::qWaitFor([&settleAge]() { return settleAge.isValid(); }, 1000));
+        QVERIFY(tx.isRfGateOpen());
+
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOff}).value(QStringLiteral("accepted")).toBool());
+        QVERIFY(QTest::qWaitFor([mox]() { return mox->state() == MoxState::Rx; }, 1000));
+        QVERIFY(!core.model->isTgxlAutotuneInProgress());
+        QVERIFY(!tx.isRfGateOpen());
+        if (waitForStandby) {
+            ampOperating(core);
+        } else {
+            // The listener preserves A's recent pre-ACK for 500 ms. A
+            // second real participant must withhold its ACK to hold B.
+            const int registration = waitingAmp.send(QStringLiteral(
+                "interlock create type=AMP name=WAIT serial=WAIT valid_antennas=1"));
+            QVERIFY(QTest::qWaitFor([&]() { return !waitingAmp.response(registration).isEmpty(); }, 1000));
+            QCOMPARE(waitingAmp.response(registration), QStringLiteral("R%1|0|2").arg(registration));
+        }
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOn}).value(QStringLiteral("accepted")).toBool());
+        QVERIFY(core.model->isTgxlAutotuneInProgress());
+        QCOMPARE(core.model->tgxlAutotuneDeviceId(), a.key.fingerprint());
+        QVERIFY(!tx.isRfGateOpen());
+        if (waitForStandby) {
+            QCOMPARE(mox->state(), MoxState::Rx);
+            QCOMPARE(ready.count(), 1);
+        } else {
+            QVERIFY(QTest::qWaitFor([&ready]() { return ready.count() == 2; }, 1000));
+        }
+        QVERIFY2(settleAge.elapsed() < 150, "test setup missed cycle A's settle window");
+        QCOMPARE(tuner.count(QStringLiteral("autotune")), 0);
+
+        // This timer is an observation deadline for a negative assertion,
+        // not a sleep while waiting for a state change. End the wait early
+        // if the prohibited socket command arrives.
+        QTimer deadline;
+        deadline.setSingleShot(true);
+        deadline.setTimerType(Qt::PreciseTimer);
+        QSignalSpy elapsed(&deadline, &QTimer::timeout);
+        deadline.start(static_cast<int>(200 - settleAge.elapsed()));
+        QTRY_VERIFY_WITH_TIMEOUT(!elapsed.isEmpty() || tuner.count(QStringLiteral("autotune")) > 0, 1000);
+        QCOMPARE(tuner.count(QStringLiteral("autotune")), 0);
+        QVERIFY(!tx.isRfGateOpen());
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOff}).value(QStringLiteral("accepted")).toBool());
+        QTRY_COMPARE(mox->state(), MoxState::Rx);
+    }
+
+    void noTxChannelRefusesDeviceAutotuneWithoutKeying()
+    {
+        Core core; // Explicit null-channel fixture; do not adapt this case.
+        allowTransmit(core);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(appA));
+        FakeTuner tuner;
+        QVERIFY(startTuner(core, tuner));
+        const QJsonObject answer = core.invoke(appA, "tx.tunerTune", {kOn});
+        QVERIFY(!answer.value(QStringLiteral("accepted")).toBool());
+        QCOMPARE(answer.value(QStringLiteral("reason")).toString(),
+                 QStringLiteral("The Core could not start the tune carrier."));
+        QCOMPARE(core.model->moxController()->state(), MoxState::Rx);
+        QVERIFY(!core.model->isTune());
+        QVERIFY(!core.model->isTgxlAutotuneInProgress());
+        QCOMPARE(tuner.count(QStringLiteral("autotune")), 0);
+    }
+
+    void pendingLaneCompletionCannotAutotuneAfterEnding_data()
+    {
+        QTest::addColumn<int>("ending");
+        QTest::newRow("own stop") << 0;
+        QTest::newRow("Stop All TX") << 1;
+        QTest::newRow("receive only") << 2;
+        QTest::newRow("transmit taken") << 3;
+        QTest::newRow("tuner disconnected") << 4;
+        QTest::newRow("device disconnected") << 5;
+    }
+    void pendingLaneCompletionCannotAutotuneAfterEnding()
+    {
+        QFETCH(int, ending);
+        TuningCore core;
+        allowTransmit(core);
+        core.model->setTuneOffSettleMsForTest(0);
+        DspControlThread lane(DspLane::Transmit);
+        core.tx.setControlLane(&lane);
+        const auto stopLane = qScopeGuard([&]() {
+            core.tx.closeRfGate();
+            lane.start();
+            lane.stop();
+            core.tx.setControlLane(nullptr);
+        });
+        Device a;
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(a);
+        core.pair(b);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        LoopbackTransport* appB = core.signIn(b, kTransmitter);
+        QVERIFY(admitted(appA));
+        QVERIFY(admitted(appB));
+        FakeTuner tuner;
+        tuner.lan.echo = LanClient::Echo::Off;
+        QVERIFY(startTuner(core, tuner));
+        SmartSdrApiListener* listener = core.model->smartSdrListener();
+        tuner.lan.send(QStringLiteral("interlock create type=AMP name=TG serial=TEST valid_antennas=1"));
+        QTRY_VERIFY(listener->hasInterlockedAmp());
+        QSignalSpy ready(core.model->moxController(), &MoxController::txReady);
+        QSignalSpy grants(listener, &SmartSdrApiListener::interlockGranted);
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOn}).value(QStringLiteral("accepted")).toBool());
+        QTRY_COMPARE(ready.count(), 1);
+        tuner.lan.send(QStringLiteral("interlock ready 1"));
+        QTRY_COMPARE(grants.count(), 1);
+        QVERIFY(!core.tx.isRfGateOpen());
+        QCOMPARE(tuner.count(QStringLiteral("autotune")), 0);
+
+        switch (ending) {
+        case 0:
+            QVERIFY(core.invoke(appA, "tx.tunerTune", {kOff}).value(QStringLiteral("accepted")).toBool());
+            break;
+        case 1:
+            core.model->stopAllTx(QStringLiteral("Test stop"));
+            break;
+        case 2:
+            core.model->setReceiveOnlyStationPolicy(true);
+            break;
+        case 3: {
+            const QJsonObject ask = core.invoke(appB, "tx.take", {});
+            QCOMPARE(ask.value(QStringLiteral("reason")).toString(),
+                     QStringLiteral("Waiting for you to confirm."));
+            QTRY_VERIFY(!ofType(appB->received(), QStringLiteral("confirm.request")).isEmpty());
+            const QJsonObject question = ofType(appB->received(), QStringLiteral("confirm.request")).last();
+            const QJsonObject took = core.invoke(appB, "confirm.proceed",
+                {int64("id", question.value(QStringLiteral("id")).toInteger()), int64("choice", -1)});
+            QVERIFY(took.value(QStringLiteral("accepted")).toBool());
+            break;
+        }
+        case 4:
+            tuner.dropLink();
+            QTRY_VERIFY(!core.model->tgxlConnection()->isConnected());
+            break;
+        case 5:
+            appA->closeLink(QStringLiteral("Test disconnect"));
+            QTRY_VERIFY(!appA->isOpen());
+            break;
+        }
+        lane.start();
+        QTRY_VERIFY_WITH_TIMEOUT(!core.model->isTgxlAutotuneInProgress(), 4000);
+        QTRY_COMPARE(core.model->moxController()->state(), MoxState::Rx);
+        QVERIFY(!core.tx.isRfGateOpen());
+        if (ending == 3) {
+            QVERIFY(core.server->transmitHolder()->isHeldBy(b.key.fingerprint()));
+        }
+        QTimer deadline;
+        deadline.setSingleShot(true);
+        deadline.setTimerType(Qt::PreciseTimer);
+        QSignalSpy elapsed(&deadline, &QTimer::timeout);
+        deadline.start(200);
+        QTRY_VERIFY_WITH_TIMEOUT(!elapsed.isEmpty() || tuner.count(QStringLiteral("autotune")) > 0, 1000);
+        QCOMPARE(tuner.count(QStringLiteral("autotune")), 0);
+    }
+
+    // A long but bounded ready wait must not consume the tuner's 3 s
+    // sweep-start observation before the command was even submitted.
+    void softwareSweepTimeoutStartsAtCommandSubmission()
+    {
+        TuningCore core;
+        allowTransmit(core);
+        core.model->setTuneOffSettleMsForTest(0);
+        core.model->moxController()->setTimerIntervals(1700, 0, 0, 0, 0, 0);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(appA));
+        FakeTuner tuner;
+        tuner.lan.echo = LanClient::Echo::Off;
+        QVERIFY(startTuner(core, tuner));
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOn}).value(QStringLiteral("accepted")).toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(tuner.count(QStringLiteral("autotune")), 1, 3000);
+        QTimer deadline;
+        deadline.setSingleShot(true);
+        deadline.setTimerType(Qt::PreciseTimer);
+        QSignalSpy elapsed(&deadline, &QTimer::timeout);
+        deadline.start(1500); // Past 3 s from key request, before 3 s from send.
+        QTRY_VERIFY_WITH_TIMEOUT(!elapsed.isEmpty() || !core.model->isTgxlAutotuneInProgress(), 2000);
+        QVERIFY(core.model->isTgxlAutotuneInProgress());
+        QVERIFY(core.model->isTune());
+        QVERIFY(core.tx.isRfGateOpen());
+        QCOMPARE(tuner.count(QStringLiteral("autotune")), 1); // The 1.5 s retry cannot duplicate it.
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOff}).value(QStringLiteral("accepted")).toBool());
+        QTRY_COMPARE(core.model->moxController()->state(), MoxState::Rx);
+    }
+
+    // An ending observer may immediately retry after unkeying the old
+    // carrier. The old readiness deadline must not stop that new cycle.
+    void readinessTimeoutCannotUnkeyAReentrantReplacementCycle()
+    {
+        TuningCore core;
+        allowTransmit(core);
+        core.model->setTuneOffSettleMsForTest(0);
+        core.model->moxController()->setTimerIntervals(4000, 0, 0, 0, 0, 0);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, kTransmitter);
+        QVERIFY(admitted(appA));
+        FakeTuner tuner;
+        tuner.lan.echo = LanClient::Echo::Off;
+        QVERIFY(startTuner(core, tuner));
+        bool retried = false;
+        bool replacementAccepted = false;
+        bool returnedToRx = false;
+        bool gateClosedAtEnding = false;
+        QString endedReason;
+        QObject observation;
+        connect(core.model.get(), &RadioModel::tgxlAutotuneEnded, &observation,
+                [&](const QByteArray&, const QString& reason) {
+            if (retried) {
+                return;
+            }
+            retried = true;
+            endedReason = reason;
+            gateClosedAtEnding = !core.tx.isRfGateOpen();
+            core.model->setTune(false);
+            // Complete the real zero-delay walk in this observer's nested
+            // event loop, then retry before the old timeout returns.
+            returnedToRx = QTest::qWaitFor([&]() {
+                return core.model->moxController()->state() == MoxState::Rx;
+            }, 1000);
+            if (!returnedToRx) {
+                return;
+            }
+            core.model->moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+            replacementAccepted = core.invoke(appA, "tx.tunerTune", {kOn})
+                                      .value(QStringLiteral("accepted")).toBool();
+        });
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOn}).value(QStringLiteral("accepted")).toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(retried, 4000);
+        QCOMPARE(endedReason, RadioModel::tunerTuneEndedReason(RadioModel::TunerTuneEnd::CarrierNotStarted));
+        QVERIFY(gateClosedAtEnding);
+        QVERIFY2(returnedToRx, "The ending observer's bounded real unkey walk did not reach receive");
+        QVERIFY(replacementAccepted);
+        QTRY_COMPARE_WITH_TIMEOUT(tuner.count(QStringLiteral("autotune")), 1, 1000);
+        QVERIFY(core.model->isTgxlAutotuneInProgress());
+        QVERIFY(core.model->isTune());
+        QVERIFY(core.tx.isRfGateOpen());
+        QVERIFY(core.invoke(appA, "tx.tunerTune", {kOff}).value(QStringLiteral("accepted")).toBool());
+        QTRY_COMPARE(core.model->moxController()->state(), MoxState::Rx);
+    }
+
     // Bug 2 replay, with JJ's ruling (2026-09-30): a device holds transmit
     // after its own tune; the operator presses the tuner's front-panel
     // TUNE, which arrives as its `transmit tune on` (before its interlock
@@ -398,7 +945,7 @@ private slots:
     // device is told; the Core sends no autotune of its own.
     void hardwareTuneTakesFromTheHolderAndKeys()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -438,7 +985,7 @@ private slots:
     // tuner's press: the station key is refused naming the holder (8.9a).
     void tuneOnFromAnotherClientDoesNotTake()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -465,7 +1012,7 @@ private slots:
     // `transmit tune on` is not a press and takes nothing.
     void autoRecallAnswerDoesNotTake()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -506,7 +1053,7 @@ private slots:
     // autotune: the late `transmit tune on` takes nothing and keys nothing.
     void lateAnswerToADevicesTuneDoesNotTake()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -548,7 +1095,7 @@ private slots:
     void lateEchoesOfAPlainTuneDoNotTake()
     {
         QFETCH(bool, perFrame);
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -588,7 +1135,7 @@ private slots:
     void aLateEchoNeverKeys()
     {
         QFETCH(QString, holder);
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -644,7 +1191,7 @@ private slots:
     // a press inside the window uses up its entry and is dropped.
     void framesSentAroundReconnectsAreCounted()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -687,7 +1234,7 @@ private slots:
     // count; one more tune on is a press.
     void aSubscriptionPushDuringATuneIsCounted()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -723,7 +1270,7 @@ private slots:
     // stays up, so no frame goes to a dropped socket.
     void aClientConnectingDuringATuneIsCounted()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -761,7 +1308,7 @@ private slots:
     // tuner's tune off after that ends its sweep as before.
     void anIdlePushIsNotCounted()
     {
-        Core core;
+        TuningCore core;
         FakeTuner tuner;
         QVERIFY(startTuner(core, tuner));
         SmartSdrApiListener* listener = core.model->smartSdrListener();
@@ -787,7 +1334,7 @@ private slots:
     void aRecallAnswerKeysAsAStationKey()
     {
         QFETCH(bool, stationHolds);
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         FakeTuner tuner;
         QVERIFY(startTuner(core, tuner));
@@ -828,7 +1375,7 @@ private slots:
     // first's answer still takes nothing (counted, not one flag).
     void aRefusedAutotuneLeavesAnEarlierOneCounted()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -848,7 +1395,7 @@ private slots:
     // to answer, so its next tune on is its own TUNE.
     void aRefusedAutotuneIsNotWaitedFor()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -868,7 +1415,7 @@ private slots:
     // send and ends without a tune on does.
     void onlyTheAutotunesOwnSweepClearsIt()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -900,7 +1447,7 @@ private slots:
     // SmartSDR API port); the window does.
     void aReconnectDoesNotClearAnAutotuneTheWindowDoes()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -930,7 +1477,7 @@ private slots:
     // IPv6 form of it on the listener is the same tuner: its press takes.
     void aMappedAddressIsTheSameTuner()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -955,7 +1502,7 @@ private slots:
     // press arrives: the press makes it the tuner's TUNE, which takes.
     void aPressDuringTheAmplifierWaitMakesTheCycleTheTuners()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -987,7 +1534,7 @@ private slots:
     // as the station and is refused while a device holds transmit.
     void aTuningEdgeAloneDoesNotTake()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -1010,7 +1557,7 @@ private slots:
     // The tuner lets go while its take runs: the take ends, nothing keys.
     void hardwareTuneReleasedDuringTheTakeKeysNothing()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -1033,7 +1580,7 @@ private slots:
     // M2: a take that does not finish ends the cycle; nothing keys after.
     void aTakeThatFailsEndsTheCycle()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -1068,7 +1615,7 @@ private slots:
     // start while RF flows.
     void aHolderOnTheAirIsNotTaken()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -1096,7 +1643,7 @@ private slots:
     // M2: the start watchdog covers a carrier keyed by a take.
     void aTakenCarrierDropsOnTheSafetyTimeout()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -1120,7 +1667,7 @@ private slots:
     // ends, and the standby arriving afterwards keys nothing.
     void tuneOffDuringTheAmplifierStandbyKeysNothing()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         FakeTuner tuner;
         QVERIFY(startTuner(core, tuner));
@@ -1144,7 +1691,7 @@ private slots:
     // transmit it is refused, and nothing keys.
     void aDeviceTunerTuneStillCannotTake()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
@@ -1175,7 +1722,7 @@ private slots:
     // tune carrier without an autotune of ours, and its tune off drops it.
     void hardwareTuneKeysAndDropsOnTheTunersTuneOff()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         FakeTuner tuner;
         QVERIFY(startTuner(core, tuner));
@@ -1198,7 +1745,7 @@ private slots:
     // then `M|LOW RF POWER`), so the carrier drops and the cycle ends.
     void appTuneDropsWhenTheTunerGivesUp()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -1221,7 +1768,7 @@ private slots:
     // A device's cycle ends with the tuner's sweep: tuning 1 then 0.
     void deviceCycleDropsWhenTheSweepEnds()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -1245,7 +1792,7 @@ private slots:
     // bounded start watchdog (3 s).
     void deviceCycleDropsOnTheSafetyTimeout()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -1267,7 +1814,7 @@ private slots:
     // tuning=0 will come from a lost tuner.
     void tunerDisconnectDropsTheCarrier()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -1290,7 +1837,7 @@ private slots:
     // The same for the tuner's own front-panel cycle.
     void tunerDisconnectDropsAHardwareCycle()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         FakeTuner tuner;
         QVERIFY(startTuner(core, tuner));
@@ -1309,7 +1856,7 @@ private slots:
     // that never reports its sweep has its carrier dropped.
     void hardwareCycleDropsOnTheSafetyTimeout()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         FakeTuner tuner;
         QVERIFY(startTuner(core, tuner));
@@ -1326,7 +1873,7 @@ private slots:
     // ... and its sweep's end (tuning 1 then 0) drops the carrier too.
     void hardwareCycleDropsWhenTheSweepEnds()
     {
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         FakeTuner tuner;
         QVERIFY(startTuner(core, tuner));
@@ -1362,7 +1909,7 @@ private slots:
     void aDevicesCycleEndedUnkeyedTellsThatDeviceOnce()
     {
         QFETCH(UnkeyedEnd, end);
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
@@ -1483,7 +2030,7 @@ private slots:
     void aStoppedOrKeyedCycleIsNotToldTuneEnded()
     {
         QFETCH(int, how);
-        Core core;
+        TuningCore core;
         allowTransmit(core);
         Device a;
         core.pair(a);
@@ -1527,7 +2074,7 @@ private slots:
     // The tuner's `M|` messages (why a tune ended) reach the log and a signal.
     void tunerMessageLineIsReported()
     {
-        Core core;
+        TuningCore core;
         FakeTuner tuner;
         QVERIFY(startTuner(core, tuner));
         QSignalSpy spy(core.model->tgxlConnection(), &TgxlConnection::messageReceived);

@@ -674,6 +674,9 @@ private slots:
         s_diversity = &record;
         RxDspWorker worker;
         RadioModel model;
+        // This regression isolates WDSP route ordering, including a generic
+        // Hermes sync-mask source; hardware admission is tested separately.
+        model.setDiversityAdmissionBypassForTest();
         P2RadioConnection connection;
         connection.setBoardForTest(HPSDRHW::Saturn);
         model.injectConnectionForTest(&connection);
@@ -728,6 +731,9 @@ private slots:
         s_diversity = &record;
         RxDspWorker worker;
         RadioModel model;
+        // This regression isolates WDSP route ordering, including a generic
+        // Hermes sync-mask source; hardware admission is tested separately.
+        model.setDiversityAdmissionBypassForTest();
         P2RadioConnection connection;
         connection.setBoardForTest(static_cast<HPSDRHW>(board));
         model.injectConnectionForTest(&connection);
@@ -775,6 +781,9 @@ private slots:
         s_diversity = &record;
         RxDspWorker worker;
         RadioModel model;
+        // This regression isolates WDSP route ordering, including a generic
+        // Hermes sync-mask source; hardware admission is tested separately.
+        model.setDiversityAdmissionBypassForTest();
         P2RadioConnection connection;
         connection.setBoardForTest(HPSDRHW::Saturn);
         model.injectConnectionForTest(&connection);

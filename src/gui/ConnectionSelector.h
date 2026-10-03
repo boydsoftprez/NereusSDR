@@ -62,6 +62,8 @@ public:
     void setNotice(const QString& notice);
     void setDiscoveryStatus(const QString& text);
 
+    /// Host enables this only after binding the native Cores destination.
+    void setCoreManagementAvailable(bool available);
     QString selectedKey() const;
     void setSelectedKey(const QString& key);
 
@@ -73,6 +75,7 @@ signals:
     void addByCodeRequested();
     void disconnectRequested();
     void editRequested(QString key);
+    void manageCoreRequested(QString key);
     void forgetRequested(QString key);
     void detailsRequested(QString key);
     void addCoreRequested();
@@ -99,6 +102,8 @@ private:
     QPushButton* m_addRadioButton{nullptr};
     QPushButton* m_scanButton{nullptr};
     QPushButton* m_editButton{nullptr};
+    QPushButton* m_manageCoreButton{nullptr};
+    bool m_coreManagementAvailable{false};
     QPushButton* m_forgetButton{nullptr};
     QPushButton* m_detailsButton{nullptr};
     QPushButton* m_disconnectButton{nullptr};

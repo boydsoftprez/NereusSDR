@@ -61,6 +61,10 @@
 #               (KG4VCF), with AI-assisted implementation via Anthropic
 #               Claude Code.
 #
+#   2026-10-03: keep the libjuice poll worker alive while finished agents
+#               retain its registry, via libjuice-0003. J.J. Boyd (KG4VCF),
+#               with AI-assisted implementation via OpenAI Codex.
+#
 # =================================================================
 
 include(FetchContent)
@@ -263,6 +267,8 @@ function(nereus_add_remote_media_dependency)
         "libjuice-0001-give-turn-allocations-back.patch")
     _nereus_apply_vendor_patch("${_dc_build_source}/deps/libjuice"
         "libjuice-0002-bounded-turn-release-lifecycle.patch")
+    _nereus_apply_vendor_patch("${_dc_build_source}/deps/libjuice"
+        "libjuice-0003-keep-poll-worker-with-retained-agents.patch")
     _nereus_apply_vendor_patch("${_dc_build_source}"
         "libdatachannel-0003-retain-juice-agent-through-turn-release.patch")
     _nereus_apply_vendor_patch("${_dc_build_source}"

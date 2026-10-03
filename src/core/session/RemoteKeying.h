@@ -212,6 +212,8 @@ public:
     /// start: one waiting for its microphone, or a two-tone admitted and
     /// settling. (A device's Tuner Genius autotune waiting for the
     /// amplifier is not counted: it is the cycle switching it.)
+    /// Synchronous voice/tune/two-tone admission is pending too, including
+    /// callbacks before MOX or an asynchronous generated start commits.
     bool keyPending() const;
 
 signals:
@@ -232,6 +234,8 @@ private:
     /// Whether this key waits for `command.deviceId`'s microphone line.
     bool keyWaitsForMicrophone(const Command& command) const;
     void finishWait(const QByteArray& deviceId, const Result& result);
+    void finishSynchronousAdmission();
+    void notifyPendingKeyEnded();
     Result unkey(const Command& command);
     Result tune(const Command& command);
     Result twoTone(const Command& command);
@@ -265,6 +269,10 @@ private:
     /// The key being started for a device, whose epoch and trigger keyedBy
     /// takes when MOX comes on for it.
     std::optional<Pending> m_pending;
+    // Separate from m_pending: the TGXL cycle owns a pending epoch while
+    // waiting for the amplifier and must keep its existing exemption.
+    bool m_synchronousAdmission{false};
+    bool m_pendingEndDeferred{false};
     /// The keyer of the key now on (empty while unkeyed).
     QByteArray m_liveKeyer;
 
@@ -274,6 +282,19 @@ private:
         Result result;
     };
     QHash<QString, QList<Remembered>> m_sessions;
+
+    // Only reply collation: lexical generated admissions retain exact
+    // copies until their one authoritative answer is known. No key/source
+    // authority or pending epoch lives here. Scopes remain discoverable
+    // during delivery so session teardown can drop remaining callbacks.
+    struct GeneratedReplies {
+        Command command;
+        QList<Reply> copies;
+        GeneratedReplies* previous{nullptr};
+        bool joinable{true};
+        bool forgotten{false};
+    };
+    GeneratedReplies* m_generatedReplies{nullptr};
 
     // Task 36: keys waiting for a microphone buffer, one per device.
     struct Waiting {

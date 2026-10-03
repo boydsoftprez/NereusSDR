@@ -1603,6 +1603,7 @@ void TxChannel::applyRunningOnLane(bool on, int cfirRun, quint64 sequence)
     // leaves it alone.
     if (on && m_runSequence.load(std::memory_order_acquire) == sequence) {
         setRfGate(true);
+        emit rfGateOpened(sequence);
     }
     if (!on) {
         // Task 33: the drain has returned (WDSP's last output block was its

@@ -653,6 +653,20 @@ private slots:
             {QStringLiteral("src/core/session/PureSignalSessionFacade.cpp|"
                             "PureSignalSessionFacade::refreshStatus"),
              QStringLiteral("not a slice")},
+            // These owners identify the exact admitted radio-mic session,
+            // device and key epoch; slice access still uses the policy.
+            {QStringLiteral("src/models/RadioModel.cpp|RadioModel::setTxAnalyzer"),
+             QStringLiteral("radio-mic key session correlation in the admission callback")},
+            {QStringLiteral("src/models/RadioModel.cpp|RadioModel::setKeyedBy"),
+             QStringLiteral("radio-mic key epoch correlation")},
+            {QStringLiteral("src/models/RadioModel.cpp|RadioModel::forgetRemoteMicSession"),
+             QStringLiteral("retiring a radio-mic session")},
+            {QStringLiteral("src/models/RadioModel.cpp|RadioModel::finishRemoteRadioKeyAttempt"),
+             QStringLiteral("matching the radio-mic admission attempt")},
+            {QStringLiteral("src/models/RadioModel.cpp|RadioModel::remoteRadioMicKeyActive"),
+             QStringLiteral("matching the admitted radio-mic key")},
+            {QStringLiteral("src/models/RadioModel.cpp|RadioModel::pcCaptureGatesKeying"),
+             QStringLiteral("matching a radio-mic candidate before the PC capture preflight")},
         };
         static const QRegularExpression comparison(QStringLiteral(
             "(?:\\.|->)owner\\b\\s*(?:==|!=)|(?:==|!=)\\s*[\\w\\.\\->\\(\\)\\[\\]]*(?:\\.|->)owner\\b"));
@@ -793,8 +807,24 @@ private slots:
                 missing.append(QStringLiteral("%1: %2 not found").arg(file, QLatin1String(site.function)));
                 continue;
             }
-            const bool named = std::any_of(site.names.cbegin(), site.names.cend(),
+            bool named = std::any_of(site.names.cbegin(), site.names.cend(),
                                            [&body](const QString& name) { return body.contains(name); });
+            if (!named && QLatin1String(site.function) == QStringLiteral("TxSliceArbiter::requestHandoff")) {
+                // The synchronous permission callback is copied before invoking
+                // it so it survives disposal. Require its exact source and
+                // arguments, weak fence, and denial before the actual handoff.
+                const QString compact = QString(body).remove(QRegularExpression(QStringLiteral("\\s+")));
+                const QString copy = QStringLiteral("constTransmitAccessmayTransmit=m_mayTransmit;");
+                const QString call = QStringLiteral("constboolallowed=!mayTransmit||mayTransmit(requester,sliceId);");
+                const QString guard = QStringLiteral("if(!self){returnfalse;}");
+                const QString deny = QStringLiteral("if(!allowed){");
+                const QString move = QStringLiteral("returnrequestHandoffFrom(sliceId,requester);");
+                named = compact.contains(copy) && compact.contains(call) && compact.contains(guard)
+                    && compact.indexOf(copy) < compact.indexOf(call)
+                    && compact.indexOf(call) < compact.indexOf(guard)
+                    && compact.indexOf(guard) < compact.indexOf(deny)
+                    && compact.indexOf(deny) < compact.indexOf(move);
+            }
             if (!named) {
                 missing.append(QStringLiteral("%1: %2 does not name %3")
                                    .arg(file, QLatin1String(site.function), site.names.join(QStringLiteral(" or "))));

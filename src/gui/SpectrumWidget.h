@@ -1004,6 +1004,9 @@ public:
     // automatic branch actually divides by kDssVisibleRows. Did not exist
     // before Task 24; there was no prior reason for a test to read it.
     int  waterfallHeightForTest() const { return m_waterfall.height(); }
+    // Accepted TX/Clarity fixture accessors; observe live history without altering it.
+    const QImage& liveWaterfallForTest() const { return m_waterfall; }
+    int liveWaterfallWriteRowForTest() const { return m_wfWriteRow; }
     // Forwards DssRenderer's own existing rowDataRing()/headRing() row
     // accessors (both already public and used by tst_dss_renderer_ring.cpp
     // against a standalone DssRenderer) so a test can read one column of

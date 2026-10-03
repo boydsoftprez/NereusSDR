@@ -1265,6 +1265,7 @@ set(CORE_SOURCES
     # call further down).
     src/core/daemon/DaemonApp.cpp
     src/core/station/StationHost.cpp
+    src/core/station/StationSliceOwnershipPolicy.cpp
     src/core/station/StationHandover.cpp
     # iPhone app Task 17 (R-IOS-08): the Core's read-only status page, its
     # owner-only console socket and the console commands it answers.
@@ -1618,6 +1619,12 @@ set(GUI_SOURCES
     src/gui/RemoteDiagnosticsDialog.cpp
     src/gui/RemoteConnectionController.cpp
     src/gui/CoreTargetStore.cpp
+    src/gui/CoreAddressProbe.cpp
+    src/gui/CoreAddressController.cpp
+    src/gui/CoreRenameController.cpp
+    src/gui/RemoteAudioWidget.cpp
+    src/gui/setup/CoreAudioSetupPage.cpp
+    src/gui/CoreSettingsHost.cpp
     src/gui/StationStartupSelection.cpp
     src/gui/StationServiceManager.cpp
     src/gui/StationLanSelection.cpp
@@ -1735,11 +1742,33 @@ set(GUI_SOURCES
     src/gui/LanScanDialog.h
     src/gui/PgxlSaveRebootDialog.cpp
     src/gui/PgxlSaveRebootDialog.h
+    src/gui/containers/ContainerTypes.h
+    src/gui/containers/ContainerDocument.h
+    src/gui/containers/ContainerDocument.cpp
+    src/gui/containers/ContainerDocumentCodec.h
+    src/gui/containers/ContainerDocumentCodec.cpp
+    src/gui/containers/ContainerContentRegistry.h
+    src/gui/containers/ContainerContentRegistry.cpp
+    src/gui/containers/ContainerArrangeController.h
+    src/gui/containers/ContainerArrangeController.cpp
+    src/gui/containers/ContainerEditSession.h
+    src/gui/containers/ContainerEditSession.cpp
+    src/gui/containers/ContainerPreviewWidget.h
+    src/gui/containers/ContainerPreviewWidget.cpp
+    src/gui/containers/ContainerContentHost.h
+    src/gui/containers/ContainerContentHost.cpp
+    src/gui/containers/ContainerSourceAdapter.h
+    src/gui/containers/ContainerSourceAdapter.cpp
+    src/gui/containers/LegacyContainerImporter.h
+    src/gui/containers/LegacyContainerImporter.cpp
+    src/gui/containers/ContainerWorkspaceStore.h
+    src/gui/containers/ContainerWorkspaceStore.cpp
     src/gui/containers/ContainerWidget.cpp
     src/gui/containers/FloatingContainer.cpp
     src/gui/containers/ContainerManager.cpp
     src/gui/containers/ContainerButtonDispatcher.cpp
     src/gui/containers/ContainerSettingsDialog.cpp
+    src/gui/containers/ContentPropertyEditor.cpp
     src/gui/containers/MmioEndpointsDialog.cpp
     src/gui/containers/MmioVariablePickerPopup.cpp
     src/core/mmio/ITransportWorker.cpp
@@ -1782,6 +1811,33 @@ set(GUI_SOURCES
     src/gui/containers/meter_property_editors/OtherButtonItemEditor.cpp
     src/gui/containers/meter_property_editors/VoiceRecordPlayItemEditor.cpp
     src/gui/meters/MeterWidget.cpp
+    src/gui/meters/presets/BarPresetItem.cpp
+    src/gui/meters/presets/BarPresetItem.h
+    src/gui/meters/presets/CompositePresetItem.cpp
+    src/gui/meters/presets/CompositePresetItem.h
+    src/gui/meters/presets/SMeterPresetItem.cpp
+    src/gui/meters/presets/SMeterPresetItem.h
+    src/gui/meters/presets/PowerSwrPresetItem.cpp
+    src/gui/meters/presets/PowerSwrPresetItem.h
+    src/gui/meters/presets/AnanMultiMeterItem.cpp
+    src/gui/meters/presets/AnanMultiMeterItem.h
+    src/gui/meters/presets/CrossNeedleItem.cpp
+    src/gui/meters/presets/CrossNeedleItem.h
+    src/gui/meters/presets/MagicEyePresetItem.cpp
+    src/gui/meters/presets/MagicEyePresetItem.h
+    src/gui/meters/presets/SignalTextPresetItem.cpp
+    src/gui/meters/presets/SignalTextPresetItem.h
+    src/gui/meters/presets/HistoryGraphPresetItem.cpp
+    src/gui/meters/presets/HistoryGraphPresetItem.h
+    src/gui/meters/presets/VfoDisplayPresetItem.cpp
+    src/gui/meters/presets/VfoDisplayPresetItem.h
+    src/gui/meters/presets/ClockPresetItem.cpp
+    src/gui/meters/presets/ClockPresetItem.h
+    src/gui/meters/presets/ContestPresetItem.cpp
+    src/gui/meters/presets/ContestPresetItem.h
+    src/gui/meters/presets/PresetGeometry.h
+    src/gui/meters/MeterDynamics.cpp
+    src/gui/meters/MeterDynamics.h
     src/gui/meters/MeterItem.cpp
     src/gui/meters/ItemGroup.cpp
     src/gui/meters/MeterPoller.cpp
@@ -1863,6 +1919,7 @@ set(GUI_SOURCES
     src/gui/setup/FourO3APage.cpp
     # Parity Task 21 (R-IOS-18): Setup > This Core in a remote window.
     src/gui/setup/ThisCorePage.cpp
+    src/gui/setup/CoresSetupPage.cpp
     src/gui/setup/RfKitPage.cpp
     src/gui/setup/TciLogWindow.cpp
     src/gui/setup/KeyboardSetupPages.cpp
@@ -3145,6 +3202,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             EXCLUDE_FROM_ALL)
     install(FILES packaging/nereusd.conf.sample
             DESTINATION "${CMAKE_INSTALL_DATADIR}/nereusd"
+            COMPONENT nereusd
+            EXCLUDE_FROM_ALL)
+    # Source-stage installers for both ARM stations use the same bounded
+    # artifact cleanup. Ship the helper with every daemon stage so a fresh
+    # install does not depend on a separately provisioned maintenance file.
+    install(PROGRAMS scripts/radxa/prune-core-artifacts.py
+            DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/nereusd"
             COMPONENT nereusd
             EXCLUDE_FROM_ALL)
 endif()

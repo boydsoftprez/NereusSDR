@@ -1159,7 +1159,7 @@ change shows as surface drift and as a change to this table.
 | `sliceAccessVersion` | 3 |
 | `mediaDirectVersion` | 1 |
 | `rx2AttenuatorVersion` | 1 |
-| `radioMicVersion` | 1 |
+| `radioMicVersion` | 2 |
 | `rxFilterLowPassVersion` | 1 |
 | `radeReasonVersion` | 1 |
 
@@ -1459,10 +1459,17 @@ When a feature is off, its version is 0:
   {name}`, `.reset {}`, `.setGain {band, value}`, `.setAdjust {band, step,
   value}`, `.setMaxPower {band, value}` and `.setUseMax {band, on}`, each as
   the desktop's page does it (Setup description version 14 gives the
-  ranges and words). Each is refused while the radio is on the air, with
-  the reason the Core gives the desktop's own PA profile writes on a
-  receive-only Core or to a device that may not transmit, and for a value
-  outside its range. None keys the radio.
+  ranges and words). While the radio is on the air, Select, New, Copy,
+  Delete and Reset are locked. The four value verbs (`.setGain`,
+  `.setAdjust`, `.setMaxPower` and `.setUseMax`) are allowed only for the
+  current transmitting band and only from the device that holds transmit;
+  another band, an unknown transmitting band or a non-holder is refused.
+  Setup description version 20 publishes these locks per control and per
+  table row, making only the holder's transmitting-band row available;
+  earlier negotiated versions retain the closed version 14 rows. The
+  Core's capability, receive-only, transmit-permission and value-range
+  checks still apply, with the reasons it gives the desktop's own PA
+  profile writes. None keys the radio.
 - `radeStatusVersion` (RADE on the phone's VFO flag): optional, sent only
   at agreed minor 11 to a peer whose hello declared `radeStatus` 1, while
   the Core has a radio model, after `paProfileVersion` (or after the
@@ -5749,6 +5756,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `setAlexRxAntennaForRadio` | `mac` utf8, `band` i64, `antenna` i64, `rxOnly` bool | `radioAntennaRowsVersion` | 1 | 11 |
 | `setAlexBpfMode` | `chain` i64, `mode` i64 | `radioHardwareVersion` | 4 | 11 |
 | `tx.setTxSlice` | `sliceId` i64 | `remoteTxVersion` | 1 | 11 |
+| `tx.setMicSource` | `source` utf8 | `radioMicVersion` | 2 | 11 |
 | `tx.key` | `trigger` utf8 | `remoteTxVersion` | 1 | 11 |
 | `tx.unkey` | `epoch` i64 | `remoteTxVersion` | 1 | 11 |
 | `tx.tune` | `on` bool | `remoteTxVersion` | 1 | 11 |
@@ -8929,3 +8937,48 @@ measurement, `2026-09-23-relay-floor-measurement.md`) and joins either as
 rank 4, a rung of its own, or as a candidate source inside the rendezvous
 connection's ICE. Until it is built, a device on such a network does not
 reach the Core, and its attempt record says what each rung met.
+
+
+### Session microphone selection (`radioMic` 2)
+
+At the existing minor-11 boundary, an authenticated peer declaring `radioMic` 2
+and `remoteTx` 1 may receive `radioMicVersion: 2`. Version 1 only reports the
+radio microphone catalogue and add-on note. It never offers this command.
+
+`tx.setMicSource` has exactly one argument: ordinal 0, UTF-8 `source`, with the
+literal value `ClientAudio` or `RadioMic`. The command changes only that
+authenticated device/session's input selection. It neither changes the Core's
+independent PC/VAX/radio preference nor keys or releases transmit. MOX and a
+key waiting for microphone priming refuse changes. Session permission, holder
+authority and the Core's `board.radioMic` capability remain admission gates.
+An accepted result contains exactly one UTF-8 value `source` at ordinal 0,
+matching the requested literal. A refusal reports the retained source and may
+include the existing transmit refusal code/fix. Exact duplicates replay their
+original answer without applying an old choice again; reuse of a stored source
+command id for another payload or verb is refused. End/replacement of the
+authenticated session retires its choice and reply cache.
+
+A desktop keeps its PC/VAX preference separate from the accepted session input.
+Only a matching current-session accepted reply displays Radio as active and
+releases the desktop's microphone uplink demand. Pending, malformed, refused
+or stale replies cannot start a microphone-dependent key using another input.
+A Radio voice key latches genuine radio samples through normal or RADE processing
+until hardware dekeys. It does not require desktop microphone RTP, priming or
+RTP starvation recovery, and the Core's independent PC-capture readiness/loss
+does not gate that exact remote key. Session/holder, RF, inhibit and control
+keepalive/watchdog rules still apply. ClientAudio retains its silent feed-loss
+and starvation-stop behavior; it never falls back to the radio microphone.
+
+Remote radio-microphone VOX is unavailable under the existing Core-local VOX
+authority. Selecting Radio disarms that device's remote VOX; attempts to arm it
+are refused with “VOX from the radio microphone is not available from this
+window.” Remote desktop program audio shares microphone RTP and also requires
+ClientAudio: a Radio voice-program key is refused with “Choose PC/VAX input to
+transmit program audio.” Core-local program overrides and non-microphone CW,
+TUNE and two-tone paths retain their existing behavior. This feature adds no
+remote VAX transport or claim about a physical codec sample format.
+
+The radio speaker already receives all receiving slices automatically. Slice
+AF level, mute and pan affect it. The Core's master volume/mute also affects
+Core-local output; a desktop's speaker device and master affect that desktop.
+This microphone feature adds no separate remote Core-master control.

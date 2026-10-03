@@ -11,6 +11,25 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Preserve closed-slice names and narrow tuning refreshes by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
+//                Take and select action, with current access and target
+//                lifetime checks. AI-assisted via OpenAI Codex.
+//   2026-10-02 - J.J. Boyd (KG4VCF). Clarity grid and waterfall output
+//                follow the selected pan and survive original-pan retirement.
+//                AI-assisted implementation via OpenAI Codex.
+//   2026-10-01  J.J. Boyd / KG4VCF. Opt-in numeric TX-choice timestamps
+//                for RX history diagnosis. AI-assisted via OpenAI Codex.
+//   2026-10-01  J.J. Boyd / KG4VCF. Remote Max Bin follows the window
+//                host of an empty-key primary slice, with receiver ownership
+//                guards. AI-assisted via OpenAI Codex.
 //   2026-09-30 - J.J. Boyd (KG4VCF). Fix round 2 (minor 3): the disconnect
 //                comment says TX applet PS-A shows disabled, not hidden, for
 //                the unknown board. AI-assisted via Anthropic Claude Code.
@@ -801,6 +820,7 @@ warren@wpratt.com
 #include "gui/HostingSliceActions.h"
 #include "gui/LevelCalGridFollowGuard.h"
 #include "core/session/RemoteDevicesState.h"
+#include "core/session/PathRacer.h"
 #include "ConnectionPanel.h"
 #include "NetworkDiagnosticsDialog.h"
 #include "OperatorReasonText.h"
@@ -821,6 +841,7 @@ warren@wpratt.com
 #include "models/RadioModel.h"
 #include "models/StationTciModel.h"
 #include "core/session/IStationLink.h"
+#include "core/session/RemoteTransmitClient.h"
 #include "models/AccessoryDataModel.h"
 #include "models/SliceModel.h"
 #include "widgets/VfoWidget.h"
@@ -871,6 +892,13 @@ warren@wpratt.com
 #include "models/TransmitModel.h"
 #include "core/LogCategories.h"
 #include "containers/ContainerManager.h"
+#include "containers/ContainerContentRegistry.h"
+#include "containers/ContainerContentHost.h"
+#include "containers/ContainerWorkspaceStore.h"
+#include "containers/ContainerSourceAdapter.h"
+#include "meters/presets/CompositePresetItem.h"
+#include "meters/presets/BarPresetItem.h"
+#include <QJsonArray>
 #include "containers/ContainerWidget.h"
 #include "containers/ContainerButtonDispatcher.h"
 #include "containers/ContainerSettingsDialog.h"
@@ -1719,6 +1747,17 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
 MainWindow::~MainWindow()
 {
     m_shuttingDown = true;
+    // Retire native hosts while their windows and original construction owners
+    // still exist. QObject's later child teardown is too late to reparent a
+    // parked native applet safely back into this window.
+    if (m_meterPoller) { m_meterPoller->stop(); }
+    if (m_radioModel && m_radioModel->meterPoller()==m_meterPoller) { m_radioModel->setMeterPoller(nullptr); }
+    if (m_containerManager) {
+        auto* registry=m_containerManager->contentRegistry();
+        if (m_radioModel && m_radioModel->containerManager()==m_containerManager) { m_radioModel->setContainerManager(nullptr); }
+        delete m_containerManager; m_containerManager=nullptr;
+        delete registry;
+    }
     setDesktopStationController(nullptr);
     // QWidget deletes children after this class's members are destroyed.
     // A toast's destroyed callback edits m_toasts, so retire it while that
@@ -2471,8 +2510,12 @@ void MainWindow::refreshDesktopStationState()
             // transmit there (the arbiter drops MOX first, ruling 8.10).
             m_txApplet->setTransmitSliceChoices(
                 [this](int id) { return desktopSliceAllowed(id); },
-                [this](int id) { requestTransmitSlice(id); },
-                [this]() { return transmitSliceChoiceReason(); });
+                [this](int id) { activateTransmitSlice(id, true); },
+                {},
+                [this](int id) {
+                    const TxSliceAction action = txSliceAction(id);
+                    return TxApplet::TransmitSliceChoice{action.enabled, action.effectiveWords};
+                });
         } else {
             m_txApplet->setDesktopKeyHandlers({}, {}, {}, {});
             m_txApplet->setDesktopTwoToneHandler({});
@@ -2809,15 +2852,22 @@ void MainWindow::wireRemoteTransmitMeters()
                                                             : nullptr;
                 return !access || !access->entry(id).has_value() || access->controlledHere(id);
             },
-            [this](int id) { requestTransmitSlice(id); },
-            [this]() { return transmitSliceChoiceReason(); });
+            [this](int id) { activateTransmitSlice(id, true); },
+            {},
+            [this](int id) {
+                const TxSliceAction action = txSliceAction(id);
+                return TxApplet::TransmitSliceChoice{action.enabled, action.effectiveWords};
+            });
         connect(state, &TransmitState::holderChanged, m_txApplet,
                 &TxApplet::refreshTransmitSliceChoices);
         connect(m_stationClient, &StationClient::handshakeComplete, m_txApplet,
                 &TxApplet::refreshTransmitSliceChoices);
         if (SliceAccessMirror* access = m_stationClient->sliceAccess()) {
             connect(access, &SliceAccessMirror::changed, m_txApplet,
-                    [this](int) { if (m_txApplet) { m_txApplet->refreshTransmitSliceChoices(); } });
+                    [this](int) {
+                        if (m_txApplet) { m_txApplet->refreshTransmitSliceChoices(); }
+                        continueTxBadgeTake();
+                    });
         }
     }
 }
@@ -2959,6 +3009,7 @@ void MainWindow::ensureSliceChooser()
                 flag->setSliceAccessPending(QString());
             }
             if (m_rxApplet) { m_rxApplet->setSliceAccessPending(QString()); }
+            if (m_txApplet) { m_txApplet->refreshTransmitSliceChoices(); }
             if (!words.isEmpty()) { showToast(words, ToastSeverity::Info, 4000); }
         });
     }
@@ -3078,6 +3129,7 @@ void MainWindow::runFlagAccessAction(SliceChooserAction action, int sliceId)
         if (flag) { flag->setSliceAccessPending(QString()); }
         if (m_rxApplet) { m_rxApplet->setSliceAccessPending(QString()); }
     }
+    if (m_txApplet) { m_txApplet->refreshTransmitSliceChoices(); }
 }
 
 std::pair<int, bool> MainWindow::listenVolumeFor(int sliceId)
@@ -3624,6 +3676,8 @@ void MainWindow::ensureRemoteSession()
         }
 
         m_stationClient = new StationClient(m_radioModel, proxy, this);
+        connect(m_radioModel, &RadioModel::remoteMicSourceStateChanged,
+                this, [this]() { applyRemoteRoleGating(); });
         // iPhone app Task 18 (R-IOS-08): this computer's own device key.
         // A Core it paired with is signed in to by key, and a token
         // sign-in to a Core with an identity enrols the key (the link
@@ -3838,6 +3892,8 @@ void MainWindow::ensureRemoteSession()
                 refreshRemoteConnectionUi();
             }
         });
+        connect(m_stationClient->remoteDevices(), &RemoteDevicesState::coreInfoChanged,
+                this, &MainWindow::refreshRemoteConnectionUi);
         connect(m_stationClient, &StationClient::pathChanged,
                 this, &MainWindow::refreshRemoteConnectionUi);
         connect(m_remoteMedia, &RemoteMediaController::networkPathChanged,
@@ -4143,7 +4199,7 @@ void MainWindow::showRemoteConnectionPanel()
 {
     if (!m_remoteConnection) { return; }
     if (!m_remoteConnectionPanel) {
-        m_remoteConnectionPanel = new RemoteConnectionPanel(m_remoteConnection, this, m_remoteMedia);
+        m_remoteConnectionPanel = new RemoteConnectionPanel(m_remoteConnection, this, m_remoteMedia, m_remoteTelemetry);
     }
     m_remoteConnectionPanel->show();
     m_remoteConnectionPanel->raise();
@@ -4213,11 +4269,32 @@ void MainWindow::refreshRemoteConnectionUi()
         }
     }
     if (m_stationBlock) {
-        m_stationBlock->setRadioName(tr("Core %1").arg(m_remoteConnection->endpointText()));
-        m_stationBlock->setHardwareLine(
-            m_remoteConnection->state() == ConnectionState::Connected
-                ? m_remoteConnection->radioText() : m_remoteConnection->statusText(), {});
-        m_stationBlock->setToolTip(m_remoteConnection->detailText());
+        const CoreSettingsContext context = coreSettingsSnapshot();
+        const QString reported = context.authenticated ? context.coreName.trimmed() : QString();
+        const QString name = !reported.isEmpty() ? reported
+            : !m_savedCoreName.isEmpty() ? tr("%1 (last known)").arg(m_savedCoreName)
+            : tr("Core name not reported");
+        m_stationBlock->setRadioName(name);
+        const auto compactPath = [](const std::optional<NetworkPathSnapshot>& path) {
+            if (!path) { return tr("path unknown"); }
+            const QString kind = path->kind == NetworkPathSnapshot::Kind::Direct ? tr("direct")
+                : path->kind == NetworkPathSnapshot::Kind::Relayed ? tr("via relay") : tr("path unknown");
+            QHostAddress peer;
+            return peer.setAddress(path->remoteAddress)
+                ? QStringLiteral("%1 %2").arg(kind, peer.toString()) : kind;
+        };
+        const bool current = context.authenticated;
+        const auto control = current && m_stationClient->transport()
+            ? m_stationClient->transport()->networkPathSnapshot() : std::optional<NetworkPathSnapshot>{};
+        const auto media = current && m_remoteMedia ? m_remoteMedia->currentNetworkPath() : std::optional<NetworkPathSnapshot>{};
+        m_stationBlock->setConnectionLines(current ? tr("Controls %1").arg(compactPath(control))
+            : m_remoteConnection->statusText(), current ? tr("Audio/display %1 · %2").arg(compactPath(media),
+                m_remoteMedia ? remoteAudioBannerWord(m_remoteMedia->audioStatus().state) : tr("unavailable")) : QString());
+        m_stationBlock->setToolTip(name + QLatin1Char('\n') + context.controls
+            + QLatin1Char('\n') + context.audioAndDisplay + QLatin1Char('\n')
+            + m_remoteConnection->detailText() + QLatin1Char('\n')
+            + tr("Radio: %1\nListener: %2\nReached through: %3")
+                .arg(context.radio, context.listener, context.reachedThrough));
         if (m_chromeBar && m_chromeBarWidget) {
             m_chromeBar->setNaturalWidth(m_stationBlock, m_stationBlock->sizeHint().width());
             m_chromeBar->relayout(m_chromeBarWidget->width());
@@ -4608,10 +4685,10 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // remote window asks the Core (tx.setTxSlice) instead of moving its own
     // model's arbiter, which binds nothing.
     connect(newFlag, &VfoWidget::txHandoffRequested, this,
-            [this](int idx) { requestTransmitSlice(idx); });
+            [this](int idx) { activateTransmitSlice(idx, false); });
     // TX badge take (JJ's ruling, 2026-09-30).
     connect(newFlag, &VfoWidget::txTakeRequested, this,
-            [this](int idx) { startTxBadgeTake(idx); });
+            [this](int idx) { activateTransmitSlice(idx, false); });
     // Phase 3F Sub-Epic I closeout, defect G2: route to the slice's DDC
     // stream. This used to write SliceModel::setSampleRateHz, which stopped
     // reaching the wire once buildStreamConfigsForCodec began sourcing the
@@ -7043,6 +7120,74 @@ void MainWindow::buildUI()
 
     // --- Container Infrastructure (Phase 3G-1) ---
     m_containerManager = new ContainerManager(spectrumPane, m_mainSplitter, this);
+    auto* contentRegistry = new ContainerContentRegistry(this);
+    auto* workspaceStore = new ContainerWorkspaceStore(AppSettings::instance(), this);
+    m_containerManager->setWorkspaceAdapter(workspaceStore, contentRegistry);
+    m_containerManager->setTransmitting(m_radioModel->isTransmitting());
+    connect(m_radioModel,&RadioModel::transmittingChanged,m_containerManager,&ContainerManager::setTransmitting);
+    connect(m_containerManager, &ContainerManager::workspaceError, this, [this](const QString& error) {
+        showToast(tr("Container layout is read-only: %1").arg(error), ToastSeverity::Warning, 6000);
+    });
+    // Adopt legacy state exactly once. Existing document placements, including
+    // hidden/moved applets, are authoritative on every subsequent startup.
+    if (workspaceStore->loadError().isEmpty() && !AppSettings::instance().contains("ContainerWorkspace")) {
+        WorkspaceDocument workspace = workspaceStore->snapshot();
+        if (workspace.containers.isEmpty()) {
+            ContainerDocument main; main.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            main.name = tr("Main Panel"); main.layout = ContentLayout::VerticalStack;
+            workspace.mainContainerId = main.id; workspace.containers.append(main);
+        }
+        // Legacy floating containers stored their actual top-level rectangle
+        // separately from the child container record. Adopt it into the document
+        // once so that stale legacy keys never compete on later startups.
+        for (auto& c : workspace.containers) {
+            if (c.dockMode!=DockMode::Floating) { continue; }
+            const auto fields=c.config.value("floatingGeometry").toString().split(',');
+            if(fields.size()!=4) { continue; }
+            bool ok[4]; int rect[4]; for(int i=0;i<4;++i) { rect[i]=fields[i].toInt(&ok[i]); }
+            if(ok[0] && ok[1] && ok[2] && ok[3] && rect[2]>0 && rect[3]>0) { c.geometry=QRect(rect[0],rect[1],rect[2],rect[3]); }
+        }
+        QSet<QString> placed;
+        for (const auto& c : workspace.containers) { for (const auto& e : c.contents) { placed.insert(e.typeId); } }
+        for (auto& c : workspace.containers) {
+            if (c.id != workspace.mainContainerId) { continue; }
+            for (const auto& descriptor : contentRegistry->descriptors()) {
+                if (!descriptor.singleton || placed.contains(descriptor.typeId)) { continue; }
+                auto entry = contentRegistry->makeEntry(descriptor.typeId);
+                if (descriptor.typeId == "applet:s_meter") { c.contents.prepend(entry); }
+                else if (descriptor.typeId == "applet:mod_monitor") { c.contents.insert(qMin(1,c.contents.size()),entry); }
+                else { c.contents.append(entry); }
+            }
+        }
+        // Project old per-applet floating intent into committed shells, retaining
+        // original flags/geometry and a stable return location as migration data.
+        QVector<ContainerDocument> shells;
+        for (auto& c : workspace.containers) {
+            for (int i = c.contents.size()-1; i >= 0; --i) {
+                auto entry = c.contents[i];
+                if (!entry.typeId.startsWith("applet:") || !entry.config.value("floating").toBool()) { continue; }
+                entry.returnLocation = ReturnLocation{c.id, i>0?c.contents[i-1].id:QString(), i+1<c.contents.size()?c.contents[i+1].id:QString(),{}};
+                ContainerDocument shell; shell.id = QUuid::createUuid().toString(QUuid::WithoutBraces); shell.name = entry.name;
+                shell.layout = ContentLayout::VerticalStack; shell.dockMode = DockMode::Floating; shell.popOutShell = true;
+                shell.config["legacyAppletFloatGeometry"] = entry.config.value("floatGeometry");
+                shell.contents.append(entry); shells.append(shell); c.contents.removeAt(i);
+            }
+        }
+        workspace.containers += shells;
+        m_containerManager->commitWorkspace(workspace, workspace.revision);
+    }
+    connect(m_containerManager, &ContainerManager::workspaceReconciled, this, [this] {
+        if (m_shuttingDown) { return; }
+        for (ContainerWidget* c : m_containerManager->allContainers()) {
+            watchContainerItems(c->content());
+            if (m_meterPoller) { if (auto* host = m_containerManager->contentHost(c->id())) {
+                for (const auto& row : host->entryRows()) {
+                    if (row.widget && row.widget == m_containerManager->contentRegistry()->singletonView("applet:s_meter")) { m_meterPoller->setSMeterContext(row.context); }
+                }
+            } }
+        }
+        refreshContainerControls();
+    });
 
     // Phase 3P-I-a T17 — push board caps into every container so
     // AntennaButtonItems gate their click handler on hasAlex. Re-runs
@@ -7069,9 +7214,7 @@ void MainWindow::buildUI()
     auto rescaleAllPowerMeters = [this]() {
         const HPSDRModel m = m_radioModel->hardwareProfile().model;
         const int maxW     = paMaxWattsFor(m);
-        if (m_meterWidget) {
-            m_meterWidget->rescalePowerMeters(maxW);
-        }
+        if (m_meterPoller) { m_meterPoller->rescalePowerMeters(maxW); }
         for (ContainerWidget* c : m_containerManager->allContainers()) {
             for (MeterWidget* mw : c->findChildren<MeterWidget*>()) {
                 mw->rescalePowerMeters(maxW);
@@ -7323,24 +7466,46 @@ void MainWindow::buildUI()
     // Task 3.2: expose ContainerManager via RadioModel so MultimeterPage
     // can broadcast unit-mode changes to all live MeterItems.
     m_radioModel->setContainerManager(m_containerManager);
-    connect(m_containerManager, &ContainerManager::meterReadyForPolling,
-            this, [this](MeterWidget* meter) {
-        if (!meter || !m_meterPoller) { return; }
-        m_meterPoller->addTarget(meter);
-        // Auto-unregister when the meter is destroyed (e.g.
-        // ContainerWidget::setContent deleteLater()s a previous
-        // content during a swap). Without this the poller would
-        // dereference a dangling pointer on its next tick.
-        connect(meter, &QObject::destroyed, m_meterPoller,
-                [this](QObject* obj) {
-            if (m_meterPoller) {
-                m_meterPoller->removeTarget(static_cast<MeterWidget*>(obj));
-            }
-        });
+    const auto cachedMaxBin = MeterPoller::panMaxBinSourceForSlice([this](const SliceModel* slice) -> SpectrumWidget* {
+        if (!slice || !m_panStack || slice->streamIndex() < 0 || markerOnlyPlacement(slice->sliceIndex())) { return nullptr; }
+        PanadapterApplet* pan=m_panStack->panadapter(windowPanFor(slice));
+        SliceModel* displayed=pan ? m_radioModel->sliceById(pan->activeSliceIndex()) : nullptr;
+        if (!displayed || displayed->streamIndex()!=slice->streamIndex() || displayed->streamEpoch()!=slice->streamEpoch()) { return nullptr; }
+        return pan->spectrumWidget();
     });
+    m_meterPoller->setSessionIdSource([this] { return containerSessionId(); });
+    m_meterPoller->setRxReadingSource([this, cachedMaxBin](const QJsonObject& context, int binding) {
+        const bool remote = m_radioModel->role() == RadioModel::Role::Remote;
+        const bool ready = m_radioModel->isConnected() && (!remote || (m_stationClient && m_stationClient->isHandshakeComplete()));
+        const bool extended = !remote || (m_stationClient && m_stationClient->capabilities().meterReadingsVersion >= 1);
+        return ContainerSourceAdapter::reading(m_radioModel, context, windowRxSlice(), binding, ready, extended, cachedMaxBin, containerSessionId());
+    });
+    m_meterPoller->rescalePowerMeters(paMaxWattsFor(m_radioModel->hardwareProfile().model));
+    m_containerManager->setPreviewPoller(m_meterPoller);
+    connect(m_containerManager,&ContainerManager::previewPresentationRequested,this,[this](MeterWidget* meter,const QJsonObject& context){
+        for(auto* item:meter->items()) {
+            const auto source=item->property("containerSourceContext");
+            refreshContainerMeter(nullptr,meter,item,source.isValid()?source.toJsonObject():context);
+        }
+    });
+    connect(m_containerManager, &ContainerManager::meterContextReady, m_meterPoller, &MeterPoller::setTargetContext);
+    connect(m_containerManager, &ContainerManager::meterReadyForPolling, this, [this](MeterWidget* meter) {
+        if (!meter || !m_meterPoller) { return; }
+        if (!m_containerManager->workspaceStore()) { m_meterPoller->addTarget(meter); }
+        meter->rescalePowerMeters(paMaxWattsFor(m_radioModel->hardwareProfile().model));
+    });
+    // Shared GUI cadence also advances clocks/MMIO and previews while offline;
+    // cache readiness above keeps every disconnected radio reading unavailable.
+    m_meterPoller->start();
 
     m_containerManager->restoreState();
-    if (m_containerManager->containerCount() == 0) {
+    for (auto* c : m_containerManager->allContainers()) {
+        wireContainerControls(c);
+        if (auto* host = m_containerManager->contentHost(c->id())) {
+            for (MeterWidget* meter : host->meterSurfaces()) { m_meterPoller->setTargetContext(meter, host->sourceContext(meter)); }
+        }
+    }
+    if (m_containerManager->containerCount() == 0 && !m_containerManager->workspaceStore()) {
         createDefaultContainers();
     }
     // Always populate the panel container's content (meters + applets).
@@ -8229,7 +8394,7 @@ void MainWindow::buildUI()
     // calls were silently overwriting the user's saved thresholds via
     // scheduleSettingsSave() on every Clarity tick.
     connect(m_clarityController, &ClarityController::waterfallThresholdsChanged,
-            activeSpectrumWidget(), [this](float low, float high) {
+            this, [this](float low, float high) {
         // PR #212 follow-up bench fix (KG4VCF, 2026-05-10): suppress
         // Clarity threshold updates while MOX is active.  Clarity tracks
         // RX noise floor and would otherwise re-enable itself with
@@ -8252,16 +8417,24 @@ void MainWindow::buildUI()
         if (m_moxDisplay && m_moxDisplay->isKeyed()) {
             return;
         }
-        activeSpectrumWidget()->setClarityActive(true);
-        activeSpectrumWidget()->setClarityWaterfallThresholds(low, high);
+        if (SpectrumWidget* sw = activeSpectrumWidget()) {
+            sw->setClarityActive(true);
+            sw->setClarityWaterfallThresholds(low, high);
+        }
     });
 
     // Clarity → SpectrumWidget NF-aware grid (Task 2.9).
     // NereusSDR-original — no Thetis equivalent.
     // noiseFloorChanged fires after EWMA smoothing but before the deadband
     // gate so the grid tracks the floor at every cadence tick.
+    // The window owns both output routes; retiring the initial pane must
+    // neither disconnect them nor leave its grid receiving another pane's floor.
     connect(m_clarityController, &ClarityController::noiseFloorChanged,
-            activeSpectrumWidget(), &SpectrumWidget::onNoiseFloorChanged);
+            this, [this](float nf) {
+        if (SpectrumWidget* sw = activeSpectrumWidget()) {
+            sw->onNoiseFloorChanged(nf);
+        }
+    });
 
     // Task 2.10: per-band NF priming — settle detector.
     // NereusSDR-original — no Thetis equivalent.
@@ -8937,6 +9110,15 @@ void MainWindow::rebuildEditContainerSubmenu()
 void MainWindow::resetDefaultLayout()
 {
     if (!m_containerManager) { return; }
+    if (auto* store=m_containerManager->workspaceStore()) {
+        WorkspaceDocument document=store->snapshot();
+        ContainerDocument main; main.id=document.mainContainerId; main.name=tr("Main Panel"); main.layout=ContentLayout::VerticalStack;
+        for (const auto& c : document.containers) { for (const auto& entry : c.contents) {
+            if (entry.typeId.startsWith("applet:")) { auto retained=entry; retained.returnLocation.reset(); main.contents.append(retained); }
+        } }
+        document.containers={main};
+        m_containerManager->commitWorkspace(document,document.revision); return;
+    }
 
     // Destroy every non-panel container. Collect IDs first because
     // destroyContainer mutates the underlying map.
@@ -9008,58 +9190,12 @@ void MainWindow::populateDefaultMeter()
         return;
     }
 
-    // ContainerManager::restoreState may have set a MeterWidget with
-    // user-saved items as the panel container's content. Capture that
-    // payload before we overwrite c0's content. We can't reuse the
-    // pointer directly because ContainerWidget::setContent() calls
-    // deleteLater on the previous m_content; round-tripping through
-    // serialize/deserialize transfers the items into a fresh
-    // m_meterWidget that becomes the AppletPanelWidget header.
-    QString restoredItems;
-    if (auto* existingMeter = qobject_cast<MeterWidget*>(c0->content())) {
-        if (!existingMeter->items().isEmpty()) {
-            restoredItems = existingMeter->serializeItems();
-        }
-    }
-
-    m_meterWidget = new MeterWidget();
-
-    if (!restoredItems.isEmpty()) {
-        m_meterWidget->deserializeItems(restoredItems);
-        // Rebuild the runtime stack metadata from geometry so bar
-        // rows restored from a saved container participate in the
-        // reflow-on-resize path again. No-op for panels that don't
-        // contain a stack.
-        m_meterWidget->inferStackFromGeometry();
-        qCDebug(lcContainer) << "Restored" << m_meterWidget->items().size()
-                             << "panel meter items from saved state";
-    } else {
-        // S-Meter: top 45% — arc needle bound to SignalAvg
-        // From Thetis MeterManager.cs: ANAN needle uses AVG_SIGNAL_STRENGTH
-        ItemGroup* smeter = ItemGroup::createSMeterPreset(
-            MeterBinding::SignalAvg, QStringLiteral("S-Meter"), m_meterWidget);
-        smeter->installInto(m_meterWidget, 0.0f, 0.0f, 1.0f, 0.45f);
-        delete smeter;
-
-        // Power/SWR: middle 40% — stacked bars (stub TX bindings)
-        ItemGroup* pwrSwr = ItemGroup::createPowerSwrPreset(
-            QStringLiteral("Power/SWR"), m_meterWidget);
-        pwrSwr->installInto(m_meterWidget, 0.0f, 0.45f, 1.0f, 0.40f);
-        delete pwrSwr;
-
-        // ALC: bottom 15% — compact single-line bar (stub TX binding)
-        ItemGroup* alc = ItemGroup::createAlcPreset(m_meterWidget);
-        alc->installInto(m_meterWidget, 0.0f, 0.85f, 1.0f, 0.15f);
-        delete alc;
-    }
-
-    // Build an AppletPanelWidget: SMeterWidget header + scrollable applets.
-    // Task 40 (Phase 3P-II): AppletPanelWidget constructor now installs the
-    // analog SMeterWidget as the fixed header automatically.  The old
-    // setHeaderWidget(m_meterWidget, ...) call is removed; the composite
-    // MeterWidget (m_meterWidget) remains the Container #0 content for the
-    // traditional GroupBox-based meters and is not affected.
-    m_appletPanel = new AppletPanelWidget();
+    // Main constructs each applet once. The hidden legacy panel retains stable
+    // S-meter lookup and connections; document hosts own the displayed views.
+    m_appletPanel = new AppletPanelWidget(this);
+    m_appletPanel->setManagedWorkspace(true);
+    m_appletPanel->setArrangeController(m_containerManager->arrangeController());
+    m_appletPanel->hide();
     auto* panel = m_appletPanel;
 
     // Task 41 (Phase 3P-II): wire the SMeterWidget (installed by the
@@ -9078,8 +9214,22 @@ void MainWindow::populateDefaultMeter()
                 [this]() {
                     return m_stationClient && m_stationClient->isHandshakeComplete();
                 },
-                MeterPoller::panMaxBinSource([this](const QString& panKey) -> SpectrumWidget* {
-                    return m_panStack ? m_panStack->spectrum(panKey) : nullptr;
+                MeterPoller::panMaxBinSourceForSlice([this](const SliceModel* slice) -> SpectrumWidget* {
+                    if (!slice || !m_panStack || slice->streamIndex() < 0
+                        || markerOnlyPlacement(slice->sliceIndex())) {
+                        return nullptr;
+                    }
+                    // 2026-10-02 KG4VCF, Codex: restore the TX carry's inherited
+                    // resolver. Empty Core keys use this slice's actual host,
+                    // never the active pan or another receiver's retained trace.
+                    PanadapterApplet* pan = m_panStack->panadapter(windowPanFor(slice));
+                    SliceModel* displayed = pan
+                        ? m_radioModel->sliceById(pan->activeSliceIndex()) : nullptr;
+                    if (!displayed || displayed->streamIndex() != slice->streamIndex()
+                        || displayed->streamEpoch() != slice->streamEpoch()) {
+                        return nullptr;
+                    }
+                    return pan->spectrumWidget();
                 }));
             // R-R3-13 / R-R3-49 (parity Task 15): the ADC and AGC meters
             // read the Core's slice readings when it sends them.
@@ -9819,6 +9969,10 @@ void MainWindow::populateDefaultMeter()
     // user override that lasts until the next mode change repopulates
     // visibility. Acceptable for v1; tighter integration is a follow-up.
     m_appletVis = new AppletVisibilityController(this);
+    m_appletVis->setWorkspaceAdapter(m_containerManager->workspaceStore(), m_containerManager->contentRegistry());
+    connect(m_appletVis, &AppletVisibilityController::persistenceFailed, this, [this](const QString& error) {
+        showToast(tr("Container layout could not be saved: %1").arg(error), ToastSeverity::Warning, 6000);
+    });
 
     m_appletsById[QStringLiteral("Rx")]         = m_rxApplet;
     m_appletsById[QStringLiteral("Display")]    = m_displayApplet;
@@ -9911,8 +10065,8 @@ void MainWindow::populateDefaultMeter()
     // AppSettings already had values from a prior session).
     // Uses effective visibility (user pref AND available).
     for (const QString& id : m_appletVis->registeredIds()) {
-        if (auto* a = m_appletsById.value(id, nullptr)) {
-            panel->setAppletVisible(a, m_appletVis->isEffectivelyVisible(id));
+        if (m_appletsById.value(id, nullptr)) {
+            m_containerManager->contentRegistry()->setAvailable(ContainerContentRegistry::appletTypeForVisibilityId(id), m_appletVis->isAvailable(id));
         }
     }
 
@@ -9922,10 +10076,10 @@ void MainWindow::populateDefaultMeter()
     // catch both menu clicks and external capability changes (e.g. 4O3A).
     connect(m_appletVis, &AppletVisibilityController::effectiveVisibilityChanged,
             this, [this](const QString& id, bool effective) {
-        if (auto* a = m_appletsById.value(id, nullptr)) {
-            if (m_appletPanel) {
-                m_appletPanel->setAppletVisible(a, effective);
-            }
+        Q_UNUSED(effective);
+        if (m_containerManager && m_containerManager->contentRegistry()) {
+            m_containerManager->contentRegistry()->setAvailable(ContainerContentRegistry::appletTypeForVisibilityId(id), m_appletVis->isAvailable(id));
+            m_containerManager->reconcileWorkspace(m_containerManager->workspaceStore()->snapshot());
         }
     });
 
@@ -10003,7 +10157,22 @@ void MainWindow::populateDefaultMeter()
     // m_dvkApplet        = new DvkApplet(m_radioModel, nullptr);        // TODO 3M-1 (DVK)
     // m_catApplet        = new CatApplet(m_radioModel, nullptr);        // TODO 3J/3K/3-VAX
 
-    c0->setContent(panel);
+    // Detach the analog singleton before the old header wrapper is disposed.
+    panel->clearHeaderWidget();
+    auto* registry = m_containerManager->contentRegistry();
+    registry->attachSingleton("applet:s_meter", panel->smeterWidget());
+    for (const auto& descriptor : registry->descriptors()) {
+        if (descriptor.singleton && descriptor.typeId != "applet:s_meter") { registry->setAvailable(descriptor.typeId, false, tr("The live applet is not available in this session")); }
+    }
+    for (const QString& id : m_appletVis->registeredIds()) {
+        const QString type = ContainerContentRegistry::appletTypeForVisibilityId(id);
+        registry->setAvailable(type, m_appletVis->isAvailable(id));
+        registry->attachSingleton(type, m_appletsById.value(id));
+    }
+    if (auto* host = m_containerManager->contentHost(c0->id())) { host->setBannerMenu(m_bannerAppletsMenu); }
+    if (!m_containerManager->storageError().isEmpty()) {
+        showToast(tr("Container layout is read-only: %1").arg(m_containerManager->storageError()), ToastSeverity::Warning, 6000);
+    }
     qCDebug(lcMeter) << "Installed default meter layout: S-Meter + Power/SWR + ALC";
     qCDebug(lcContainer) << "Container #0: Meters + RxApplet + TxApplet + PhoneCwApplet + VaxApplet + TciApplet + ClientChainApplet";
 }
@@ -10919,11 +11088,13 @@ void MainWindow::buildMenuBar()
             if (!m_containerManager) { return; }
 
             ContainerWidget* c = m_containerManager->createContainer(1, DockMode::Floating);
+            if (!c) { return; }
             c->setNotes(QStringLiteral("Meter"));
 
             // Give it a MeterWidget as content (replaces the default placeholder label)
-            MeterWidget* meter = new MeterWidget();
-            c->setContent(meter);
+            if (!m_containerManager->workspaceStore()) {
+                MeterWidget* meter = new MeterWidget(); c->setContent(meter);
+            }
 
             // Open settings dialog so user can configure it
             ContainerSettingsDialog dialog(c, this, m_containerManager);
@@ -12711,13 +12882,6 @@ QList<MeterWidget*> contentMeters(QWidget* content)
     return meters;
 }
 
-// Existing control refresh paths use the container's primary meter.
-MeterWidget* containerMeter(const ContainerWidget* container)
-{
-    const auto meters = contentMeters(container ? container->content() : nullptr);
-    return meters.isEmpty() ? nullptr : meters.first();
-}
-
 } // namespace
 
 void MainWindow::reconcileMiniDisplays()
@@ -12728,13 +12892,19 @@ void MainWindow::reconcileMiniDisplays()
         // A floating form can hide its owner without setting the child's
         // explicit hidden flag. isVisible() includes that ancestor state.
         if (!container || !container->isVisible()) { continue; }
-        SliceModel* slice = containerSlice(container);
-        if (!slice || slice->streamIndex() < 0) { continue; }
         for (MeterWidget* meter : contentMeters(container->content())) {
+            const QVariant routed = meter->property("containerSourceContext");
             if (!meter->isVisible()) { continue; }
-            for (MeterItem* base : meter->items()) {
+            QVector<MeterItem*> descendants = meter->items();
+            for (MeterItem* root : meter->items()) { if (auto* face = qobject_cast<CompositePresetItem*>(root)) { descendants += face->internalItems(); } }
+            for (MeterItem* base : descendants) {
+                const QVariant entryContext = base->property("containerSourceContext");
+                SliceModel* slice = ContainerSourceAdapter::slice(m_radioModel,
+                    entryContext.isValid()?entryContext.toJsonObject():(routed.isValid()?routed.toJsonObject():QJsonObject{{"sliceId",container->rxSource()-1}}),
+                    windowRxSlice(), containerSessionId());
+                if (!slice || slice->streamIndex() < 0) { continue; }
                 auto* item = qobject_cast<FilterDisplayItem*>(base);
-                if (item && meter->shouldRender(item)
+                if (item && !item->property("containerUnsupportedSource").toBool() && meter->shouldRender(item)
                     && item->displayMode() != FilterDisplayItem::DisplayMode::None) {
                     wanted[slice->sliceIndex()].append(item);
                 }
@@ -12890,12 +13060,13 @@ void MainWindow::presentMiniFrame(int sliceId, const QVector<float>& traceDbm,
 
 void MainWindow::wireContainerControls(ContainerWidget* c)
 {
-    if (!c) { return; }
+    if (!c || c->property("mainControlsWired").toBool()) { return; }
+    c->setProperty("mainControlsWired",true);
     c->installEventFilter(this);
     // Issue #118: the band buttons, now on the container's own slice.
     connect(c, &ContainerWidget::bandClicked, this, [this, c](int idx) {
         if (!m_containerButtons) { return; }
-        showContainerButtonReason(m_containerButtons->clickBand(idx, c->rxSource()));
+        showContainerButtonReason(m_containerButtons->clickBand(idx, containerControlRxSource(c)));
     });
     connect(c, &ContainerWidget::modeClicked, this,
             [this, c](int index) { onContainerModeClicked(c, index); });
@@ -12937,7 +13108,10 @@ void MainWindow::wireContainerControls(ContainerWidget* c)
 
 void MainWindow::watchContainerItems(QWidget* content)
 {
-    if (auto* panel = qobject_cast<AppletPanelWidget*>(content)) {
+    QList<AppletPanelWidget*> panels;
+    if (content) { panels=content->findChildren<AppletPanelWidget*>(); }
+    if (auto* panel=qobject_cast<AppletPanelWidget*>(content)) { panels.prepend(panel); }
+    for (AppletPanelWidget* panel : panels) {
         connect(panel, &AppletPanelWidget::headerWidgetChanged,
                 this, &MainWindow::watchContainerItems, Qt::UniqueConnection);
         connect(panel, &AppletPanelWidget::panelWidgetAdded,
@@ -12945,6 +13119,19 @@ void MainWindow::watchContainerItems(QWidget* content)
     }
     for (MeterWidget* meter : contentMeters(content)) {
         meter->installEventFilter(this);
+        for (MeterItem* root : meter->items()) {
+            if (root->property("mainContainerWired").toBool()) { continue; }
+            root->setProperty("mainContainerWired", true);
+            onContainerItemAdded(root);
+            QVector<MeterItem*> targets{root};
+            if (auto* face = qobject_cast<CompositePresetItem*>(root)) { targets += face->internalItems(); }
+            for (auto* c : m_containerManager->allContainers()) {
+                if (!contentMeters(c->content()).contains(meter)) { continue; }
+                for (MeterItem* target : targets) { c->wireInteractiveItem(target); }
+                break;
+            }
+        }
+
         connect(meter, &MeterWidget::itemAdded, this,
                 &MainWindow::onContainerItemAdded, Qt::UniqueConnection);
         connect(meter, &MeterWidget::itemRemoved, this,
@@ -12977,10 +13164,26 @@ void MainWindow::onContainerItemAdded(MeterItem* item)
     reconcileMiniDisplays();
 }
 
+QString MainWindow::containerSessionId() const
+{
+    if (!m_radioModel) { return {}; }
+    if (m_radioModel->role() == RadioModel::Role::Remote) {
+        return m_stationClient ? QString::fromLatin1(m_stationClient->stationIdentityFingerprint().toHex()) : QString();
+    }
+    return m_radioModel->currentRadioMac();
+}
+
+int MainWindow::containerControlRxSource(const ContainerWidget* c) const
+{
+    if (!c) { return 0; }
+    const QVariant routed = c->property("containerDispatchContext");
+    if (!routed.isValid()) { return c->rxSource(); }
+    SliceModel* source = ContainerSourceAdapter::slice(m_radioModel, routed.toJsonObject(), windowRxSlice(), containerSessionId());
+    return source ? source->sliceIndex()+1 : 0;
+}
 SliceModel* MainWindow::containerSlice(const ContainerWidget* c) const
 {
-    if (!c || !m_containerButtons) { return nullptr; }
-    return m_containerButtons->sliceFor(c->rxSource());
+    return c && m_containerButtons ? m_containerButtons->sliceFor(containerControlRxSource(c)) : nullptr;
 }
 
 void MainWindow::watchSlicesForContainers()
@@ -13031,28 +13234,67 @@ void MainWindow::refreshContainerControls(MeterItem* only)
     if (!m_containerManager || !m_radioModel || !m_containerButtons) { return; }
     for (ContainerWidget* c : m_containerManager->allContainers()) {
         if (!c) { continue; }
-        if (only) {
-            MeterWidget* meter = containerMeter(c);
-            if (meter && meter->items().contains(only)) {
-                refreshContainer(c, only);
-                return;
-            }
-            continue;
-        }
-        refreshContainer(c);
+        refreshContainer(c, only);
     }
     reconcileMiniDisplays();
 }
 
 void MainWindow::refreshContainer(ContainerWidget* c, MeterItem* only)
 {
-    if (m_shuttingDown) { return; }  // fix wave M4, as refreshContainerControls
-    if (!c || !m_radioModel || !m_containerButtons) { return; }
-    MeterWidget* meter = containerMeter(c);
-    if (!meter) { return; }
-    const int rxSource = c->rxSource();
-    SliceModel* slice = containerSlice(c);
-
+    if (!c) { return; }
+    for (MeterWidget* meter : contentMeters(c->content())) {
+        const QVariant context = meter->property("containerSourceContext");
+        for (MeterItem* root : meter->items()) {
+            if (only && root != only && !root->findChildren<MeterItem*>().contains(only)) { continue; }
+            const QVariant entryContext = root->property("containerSourceContext");
+            refreshContainerMeter(c, meter, root, entryContext.isValid() ? entryContext.toJsonObject() :
+                (context.isValid() ? context.toJsonObject() : QJsonObject{{"sliceId", c->rxSource()-1}}));
+        }
+    }
+}
+void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, MeterItem* only, const QJsonObject& context, bool frequencyOnly)
+{
+    if (m_shuttingDown || !meter || !m_radioModel || !m_containerButtons) { return; }
+    const bool unsupported = only && only->property("containerUnsupportedSource").toBool();
+    SliceModel* source = unsupported || (!c && !m_radioModel->isConnected()) ? nullptr : ContainerSourceAdapter::slice(m_radioModel, context, windowRxSlice(), containerSessionId());
+    const int rxSource = source ? source->sliceIndex()+1 : 0;
+    SliceModel* slice = m_containerButtons->sliceFor(rxSource);
+    QVector<MeterItem*> items;
+    for (MeterItem* root : meter->items()) {
+        if (only && root != only && !root->findChildren<MeterItem*>().contains(only)) { continue; }
+        items.append(root);
+        if (auto* face = qobject_cast<CompositePresetItem*>(root)) { items += face->internalItems(); }
+    }
+    if (items.isEmpty()) { return; }
+    // Snapshot actual child presentation rather than dirtying equal model pushes.
+    const auto signature = [](MeterItem* item) {
+        QString value = item->serialize();
+        if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
+            for (int i=0;i<box->buttonCount();++i) { value += QString::number(box->isButtonAvailable(i))+box->buttonUnavailableReason(i)+box->button(i).text+QString::number(box->button(i).on); }
+        }
+        if (auto* band = qobject_cast<BandButtonItem*>(item)) { value += QString::number(band->activeBand()); }
+        if (auto* mode = qobject_cast<ModeButtonItem*>(item)) { value += QString::number(mode->activeMode()); }
+        if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) { value += QString::number(vfo->frequency())+vfo->unavailableText(); }
+        if (auto* other = qobject_cast<OtherButtonItem*>(item)) {
+            for (int i=0;i<other->buttonCount();++i) { value += QString::number(other->buttonState(static_cast<OtherButtonItem::ButtonId>(i))); }
+        }
+        return value;
+    };
+    QHash<MeterItem*, QString> before;
+    for (MeterItem* item : items) { before[item] = signature(item); }
+    const auto finishPresentation = [&] {
+        bool dirty = false;
+        for (MeterItem* item : items) {
+            if (before.value(item) == signature(item)) { continue; }
+            dirty = true;
+            if (auto* face = qobject_cast<CompositePresetItem*>(item->parent())) { face->markPresentationDirty(); }
+        }
+        if (dirty) {
+            for (MeterItem* root : meter->items()) {
+                if (items.contains(root)) { meter->invalidatePresentation(root); }
+            }
+        }
+    };
     // Function buttons and band buttons, whatever the slice (the function
     // buttons' global targets do not need it; the dispatcher reports a
     // slice that is not open on the ones that do).
@@ -13073,9 +13315,12 @@ void MainWindow::refreshContainer(ContainerWidget* c, MeterItem* only)
         // opened, or closed while this container was set to it) shows
         // none of its last state. The buttons light nothing and say why
         // when clicked; the VFO display says the slice is not open.
-        const QString notOpen = tr("%1 is not open")
-                                    .arg(ContainerWidget::sliceNameForRxSource(rxSource));
+        const QString notOpen = unsupported ? only->property("unsupportedSourceReason").toString() :
+            tr("%1 is not open").arg(ContainerWidget::sliceNameForRxSource(
+                context.contains("sliceId") ? context.value("sliceId").toInt(-1)+1 :
+                context.value("rxSource").toInt(c ? c->rxSource() : 0)));
         const auto applyNoSlice = [&](MeterItem* item) {
+            if (auto* face = qobject_cast<CompositePresetItem*>(item)) { face->setUnavailableText(notOpen); }
             if (applyAlways(item)) { return; }
             if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
                 m_containerButtons->applySliceAvailability(box, rxSource);
@@ -13094,12 +13339,10 @@ void MainWindow::refreshContainer(ContainerWidget* c, MeterItem* only)
                 vfo->setUnavailableText(notOpen);
             }
         };
-        if (only) {
-            applyNoSlice(only);
-        } else {
-            for (MeterItem* item : meter->items()) { applyNoSlice(item); }
+        {
+            for (MeterItem* item : items) { applyNoSlice(item); }
         }
-        c->update();
+        finishPresentation();
         return;
     }
 
@@ -13144,6 +13387,20 @@ void MainWindow::refreshContainer(ContainerWidget* c, MeterItem* only)
     const Band band = bandFromFrequency(slice->frequency());
 
     const auto applyTo = [&](MeterItem* item) {
+        if (auto* bar = qobject_cast<BarPresetItem*>(item)) { bar->setAboveS9Frequency(slice->frequency() > 30000000.0); }
+        if (auto* face = qobject_cast<CompositePresetItem*>(item)) {
+            face->setUnavailableText({}); face->setFrequency(qint64(std::llround(slice->frequency())));
+            face->setModeLabel(modeName); face->setBandLabel(bandLabel(band));
+            face->setAboveS9Frequency(slice->frequency() > 30000000.0);
+        }
+        if (frequencyOnly) {
+            if (auto* bandItem = qobject_cast<BandButtonItem*>(item)) { m_containerButtons->applyBand(bandItem, rxSource); }
+            if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
+                vfo->setFrequency(static_cast<int64_t>(std::llround(slice->frequency())));
+                vfo->setBandLabel(bandLabel(band));
+            }
+            return;
+        }
         if (applyAlways(item)) { return; }
         if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
             m_containerButtons->applySliceAvailability(box, rxSource);
@@ -13176,37 +13433,27 @@ void MainWindow::refreshContainer(ContainerWidget* c, MeterItem* only)
             vfo->setBandLabel(bandLabel(band));
         }
     };
-    if (only) {
-        applyTo(only);
-    } else {
-        for (MeterItem* item : meter->items()) { applyTo(item); }
+    {
+        for (MeterItem* item : items) { applyTo(item); }
     }
-    c->update();
+    finishPresentation();
 }
 
 void MainWindow::refreshContainerFrequency(SliceModel* slice)
 {
-    if (m_shuttingDown) { return; }  // fix wave M4, as refreshContainerControls
-    if (!m_containerManager || !m_radioModel || !m_containerButtons || !slice) { return; }
-    const Band band = bandFromFrequency(slice->frequency());
+    if (m_shuttingDown || !slice || !m_containerManager) { return; }
     for (ContainerWidget* c : m_containerManager->allContainers()) {
-        if (!c || containerSlice(c) != slice) { continue; }
-        MeterWidget* meter = containerMeter(c);
-        if (!meter) { continue; }
-        bool any = false;
-        for (MeterItem* item : meter->items()) {
-            if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
-                vfo->setFrequency(static_cast<int64_t>(std::llround(slice->frequency())));
-                vfo->setBandLabel(bandLabel(band));
-                any = true;
-            } else if (auto* bands = qobject_cast<BandButtonItem*>(item)) {
-                // The band buttons follow the slice's band however it
-                // changes: a band button, the VFO, a spot, the Core.
-                m_containerButtons->applyBand(bands, c->rxSource());
-                any = true;
+        for (MeterWidget* meter : contentMeters(c->content())) {
+            const QVariant surfaceContext = meter->property("containerSourceContext");
+            for (MeterItem* root : meter->items()) {
+                const QVariant entryContext = root->property("containerSourceContext");
+                const QJsonObject context = entryContext.isValid() ? entryContext.toJsonObject() :
+                    (surfaceContext.isValid() ? surfaceContext.toJsonObject() : QJsonObject{{"sliceId", c->rxSource()-1}});
+                if (ContainerSourceAdapter::slice(m_radioModel, context, windowRxSlice(), containerSessionId()) == slice) {
+                    refreshContainerMeter(c, meter, root, context, true);
+                }
             }
         }
-        if (any) { c->update(); }
     }
 }
 
@@ -13214,7 +13461,7 @@ void MainWindow::onContainerOtherButtonClicked(ContainerWidget* c, int buttonId)
 {
     if (!c || !m_containerButtons) { return; }
     const QString reason = m_containerButtons->click(
-        static_cast<OtherButtonItem::ButtonId>(buttonId), c->rxSource());
+        static_cast<OtherButtonItem::ButtonId>(buttonId), containerControlRxSource(c));
     showContainerButtonReason(reason);
     // Targets with no change signal of their own (peak hold, VAX) light
     // from this refresh.
@@ -13356,7 +13603,7 @@ void MainWindow::onContainerFrequencyStep(ContainerWidget* c, int64_t deltaHz)
     SliceModel* slice = containerSlice(c);
     if (!slice && c && m_containerButtons) {
         // Fix wave M2: the wheel says why it does nothing, as a click does.
-        showContainerButtonReason(ContainerButtonDispatcher::noSliceReason(c->rxSource()));
+        showContainerButtonReason(ContainerButtonDispatcher::noSliceReason(containerControlRxSource(c)));
         return;
     }
     if (!slice || deltaHz == 0) { return; }
@@ -13532,6 +13779,10 @@ void MainWindow::wireSetupDialog(SetupDialog* dialog)
     }
     connect(dialog, &SetupDialog::connectionsRequested,
             this, &MainWindow::connectionRequestedByOperator);
+    connect(dialog, &SetupDialog::coreConnectionDetailsRequested,
+            this, &MainWindow::showRemoteConnectionPanel);
+    connect(dialog, &SetupDialog::coreDiagnosticsRequested,
+            this, &MainWindow::openNetworkDiagnostics);
     if (m_txApplet) {
         connect(dialog, &SetupDialog::cfcDialogRequested,
                 m_txApplet, &TxApplet::requestOpenCfcDialog);
@@ -14635,6 +14886,63 @@ void MainWindow::openNetworkDiagnostics()
     dlg->show();
 }
 
+void MainWindow::setSavedCoreName(const QString& name)
+{
+    if (m_savedCoreName == name) { return; }
+    m_savedCoreName = name;
+    refreshRemoteConnectionUi();
+}
+
+CoreSettingsContext MainWindow::coreSettingsSnapshot() const
+{
+    CoreSettingsContext context;
+    context.connectionDetailsAvailable = m_remoteConnection != nullptr;
+    context.diagnosticsAvailable = m_radioModel != nullptr;
+    context.audioAvailable = m_remoteMedia != nullptr;
+    context.stationSettingsAvailable = stationSettingsAvailable();
+    context.stationSettingsReason = stationSettingsReason();
+    context.listener = tr("Not reported");
+    context.controls = tr("Path unavailable");
+    context.audioAndDisplay = tr("Path unavailable");
+    context.reachedThrough = tr("Not known");
+    if (!m_stationClient) { return context; }
+    context.epoch = m_stationClient->sessionEpoch(); // Host replaces this source stamp with a UI epoch.
+    context.pairedIdentity = m_stationClient->stationIdentityFingerprint();
+    context.authenticated = m_stationClient->isHandshakeComplete() && m_stationClient->signedInWithDeviceKey();
+    if (!context.authenticated) { return context; }
+    context.coreName = m_stationClient->remoteDevices()->coreInfo().stationLabel;
+    context.radio = m_remoteConnection ? m_remoteConnection->radioText() : tr("Radio unknown");
+    const auto controls = m_stationClient->transport()
+        ? m_stationClient->transport()->networkPathSnapshot() : std::optional<NetworkPathSnapshot>{};
+    context.controls = ConnectionSegment::routeText(controls);
+    context.audioAndDisplay = ConnectionSegment::routeText(m_remoteMedia
+        ? m_remoteMedia->currentNetworkPath() : std::optional<NetworkPathSnapshot>{});
+    const int rank = m_stationClient->pathRank();
+    if (rank == PathRacer::ThisNetwork) { context.reachedThrough = tr("This network"); }
+    else if (rank == PathRacer::Direct) { context.reachedThrough = tr("A direct address"); }
+    else if (rank >= PathRacer::ServiceDirect) { context.reachedThrough = tr("Remote access introduction"); }
+    // A diagnostic socket/ICE peer is never reusable listener evidence.
+    const QUrl listener = m_stationClient->connectedUrl();
+    QHostAddress numeric;
+    if (rank >= PathRacer::ThisNetwork && rank <= PathRacer::Direct
+        && listener.scheme() == QStringLiteral("wss")
+        && listener.port() > 0 && listener.port() <= 65535 && numeric.setAddress(listener.host())) {
+        context.listener = numeric.toString();
+    }
+    return context;
+}
+
+void MainWindow::openCoreSettings(const QString& targetId)
+{
+    SetupDialog* dialog = createSetupDialog();
+    if (!dialog) { return; }
+    // createSetupDialog emits setupDialogCreated before returning, so the host
+    // installs its canonical store/context and lazy page binder before inspection.
+    dialog->inspectCoreTarget(targetId);
+    dialog->show();
+    dialog->raise();
+}
+
 SetupDialog* MainWindow::createSetupDialog()
 {
     // R-R3-21 / R-R3-10: Setup opens in every state. A remote window that is
@@ -14677,10 +14985,19 @@ SetupDialog* MainWindow::createSetupDialog()
     if (m_remoteMedia != nullptr && !m_remoteMedia->micLineOpen()) {
         dialog->setVoxPermitted(false, TxRefusals::micNotConnected().text);
     }
+    if (m_stationClient && m_stationClient->remoteTransmit()) {
+        const auto* source = m_stationClient->remoteTransmit();
+        if (!source->micSourceSettled() || source->acceptedMicSource() == RemoteMicSource::RadioMic) {
+            dialog->setVoxPermitted(false,
+                !source->micSourceSettled() ? source->micSourceReason() : remoteRadioVoxReason());
+        }
+    }
     // Station VOX: a hosting window's, while another device holds transmit.
     if (const QString holderReason = desktopVoxHolderReason(); !holderReason.isEmpty()) {
         dialog->setVoxPermitted(false, holderReason);
     }
+    dialog->setCoreAudioSources(m_remoteMedia, m_remoteTelemetry);
+    dialog->setCoreAudioContext(coreSettingsSnapshot());
     dialog->setStationSettingsAvailable(stationSettingsAvailable(), stationSettingsReason());
     seedReceiverAudioNote(dialog, [this] { return receiverAudioNoteFor(m_remoteMedia); });
     dialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -14969,11 +15286,13 @@ bool MainWindow::windowHoldsTransmit() const
     return true;
 }
 
-void MainWindow::applyTxBadgeOffer(VfoWidget* flag) const
+MainWindow::TxSliceAction MainWindow::txSliceAction(int id) const
 {
-    if (!flag) { return; }
-    const int id = flag->sliceIndex();
-    VfoWidget::TxBadgeOffer offer;
+    TxSliceAction offer;
+    if (!m_radioModel || !m_radioModel->sliceById(id)) { return offer; }
+    const VfoWidget::SliceAccess access = windowSliceAccess(
+        windowSliceRows(*m_radioModel, sliceAccessServer(), sliceAccessClient())).value(id);
+    const bool listening = access.state == VfoWidget::SliceAccess::State::Listening;
     // Whether this window may take transmit, and from whom (empty when
     // nobody holds it: the take is at once).
     bool takesTransmit = false;
@@ -15026,13 +15345,13 @@ void MainWindow::applyTxBadgeOffer(VfoWidget* flag) const
             && m_stationClient->transmitState()->keyed();
     }
     const bool holds = windowHoldsTransmit();
-    if (flag->isListening()) {
+    if (listening) {
         // Case 3: a slice another device controls. The refusals keep their
         // words: on the air, and the Core's own refusal of the take.
         if (onAir) {
             offer.heldReason = SliceAccessController::takeWhileTransmittingWords(id);
-        } else if (!flag->sliceAccess().takeHeldReason.isEmpty()) {
-            offer.heldReason = flag->sliceAccess().takeHeldReason;
+        } else if (!access.takeHeldReason.isEmpty()) {
+            offer.heldReason = access.takeHeldReason;
         } else if (sliceTakes && !holds && !takeRefusal.isEmpty()) {
             offer.heldReason = takeRefusal;
         } else if (sliceTakes && (holds || takesTransmit)) {
@@ -15052,17 +15371,84 @@ void MainWindow::applyTxBadgeOffer(VfoWidget* flag) const
             ? tr("Take transmit and make this the TX slice")
             : tr("Take transmit from %1 and make this the TX slice").arg(holderName);
     }
-    flag->setTxBadgeOffer(offer);
+    const bool permitted = transmitControlsPermitted() && transmitSliceChoiceReason().isEmpty();
+    QString reason = !transmitControlsPermitted() ? remoteTransmitReason()
+        : (!transmitSliceChoiceReason().isEmpty() ? transmitSliceChoiceReason() : access.heldReason);
+    const bool pending = m_flagRequestSlice == id && m_sliceChooser && m_sliceChooser->isPending();
+    const bool radioPtt = m_stationClient && m_stationClient->knowsTransmitHolder()
+        && m_stationClient->transmitState()->keyed()
+        && m_stationClient->transmitState()->holderSource() == QStringLiteral("radioPtt")
+        && m_stationClient->transmitState()->txSliceId() == id;
+    if (!offer.heldReason.isEmpty()) { reason = offer.heldReason; }
+    else if (offer.offered && pending) { reason = tr("Asking the Core…"); }
+    else if (radioPtt) { reason = VfoWidget::inUseByRadioText(); }
+    offer.enabled = !radioPtt && ((offer.offered && !pending && (!permitted || listening))
+                                  || (permitted && !listening));
+    offer.effectiveWords = offer.enabled ? offer.toolTip : reason;
+    return offer;
+}
+
+void MainWindow::applyTxBadgeOffer(VfoWidget* flag) const
+{
+    if (!flag) { return; }
+    const TxSliceAction action = txSliceAction(flag->sliceIndex());
+    flag->setTxBadgeOffer({action.offered, action.toolTip, action.heldReason});
+}
+
+void MainWindow::activateTransmitSlice(int sliceId, bool controlledOnly)
+{
+    // A delivered old letter intent must still name a controlled slice.
+    // Flags retain their Take control path for a listened slice.
+    if (controlledOnly && !windowControlsSlice(sliceId)) { return; }
+    const TxSliceAction action = txSliceAction(sliceId);
+    if (!action.enabled) {
+        if (desktopHosting() && !action.heldReason.isEmpty()) {
+            showToast(action.heldReason, ToastSeverity::Info, 3000);
+        }
+        return;
+    }
+    if (action.offered) { startTxBadgeTake(sliceId); }
+    else {
+        abandonTxBadgeTake();
+        requestTransmitSlice(sliceId);
+    }
+}
+
+quint64 MainWindow::txSliceIncarnation(int sliceId) const
+{
+    if (desktopHosting() && m_radioModel->sliceOwnership()) {
+        return m_radioModel->sliceOwnership()->incarnation(sliceId);
+    }
+    if (StationClient* client = sliceAccessClient()) {
+        if (const auto entry = client->sliceAccess()->entry(sliceId)) { return entry->incarnation; }
+    }
+    return 0;
+}
+
+bool MainWindow::txTakeTargetValid(int sliceId, SliceModel* target, quint64 incarnation,
+                                  bool requireControl) const
+{
+    return target && m_radioModel && m_radioModel->sliceById(sliceId) == target
+        && txSliceIncarnation(sliceId) == incarnation
+        && (!requireControl || windowControlsSlice(sliceId));
 }
 
 void MainWindow::startTxBadgeTake(int sliceId)
 {
     // A new click replaces a take still waiting.
     abandonTxBadgeTake();
-    VfoWidget* flag = m_vfoWidgetsBySlice.value(sliceId);
-    if (!m_radioModel || !flag || !flag->txBadgeOffer().offered) { return; }
+    // The old hosting dialog's rejected handler must run before the new
+    // take enters Transmit; otherwise it abandons the replacement intent.
+    const QPointer<MainWindow> self(this);
+    if (m_desktopTakeDialog) { m_desktopTakeDialog->close(); }
+    if (!self) { return; }
+    const TxSliceAction action = txSliceAction(sliceId);
+    if (!m_radioModel || !action.offered || !action.enabled) { return; }
     m_txBadgeTakeSlice = sliceId;
-    if (!flag->isListening()) {
+    m_txBadgeTarget = m_radioModel->sliceById(sliceId);
+    m_txBadgeIncarnation = txSliceIncarnation(sliceId);
+    m_txBadgeTakingSlice = !windowControlsSlice(sliceId);
+    if (windowControlsSlice(sliceId)) {
         takeTransmitForTxBadge(sliceId);
         return;
     }
@@ -15138,6 +15524,10 @@ void MainWindow::continueTxBadgeTake()
 
 void MainWindow::takeTransmitForTxBadge(int sliceId)
 {
+    if (!txTakeTargetValid(sliceId, m_txBadgeTarget, m_txBadgeIncarnation, false)) {
+        abandonTxBadgeTake();
+        return;
+    }
     m_txBadgeTakeSlice = sliceId;
     m_txBadgeTakeStage = TxBadgeStage::Transmit;
     if (windowHoldsTransmit()) {
@@ -15226,13 +15616,24 @@ void MainWindow::finishTxBadgeTakeIfHeld()
         return;
     }
     const int sliceId = m_txBadgeTakeSlice;
+    if (!txTakeTargetValid(sliceId, m_txBadgeTarget, m_txBadgeIncarnation, false)) {
+        abandonTxBadgeTake();
+        return;
+    }
+    // The Core answers slice.takeControl before publishing control. A
+    // flag's Case 3 waits for that word; a letter never takes slice control.
+    if (m_txBadgeTakingSlice && !windowControlsSlice(sliceId)) { return; }
+    m_txBadgeTakingSlice = false;
+    const QPointer<SliceModel> target = m_txBadgeTarget;
+    const quint64 incarnation = m_txBadgeIncarnation;
     abandonTxBadgeTake();
     const quint64 serial = m_txBadgeSerial;
     // Queued: the Core binds a new holder's transmit slice as the take
     // completes (a slice it took is not chosen for it, ruling Q8), and the
     // choice made here must come after that binding, not before it.
-    QTimer::singleShot(0, this, [this, sliceId, serial]() {
-        if (serial != m_txBadgeSerial || !m_radioModel || !m_radioModel->sliceById(sliceId)
+    QTimer::singleShot(0, this, [this, sliceId, serial, target, incarnation]() {
+        if (serial != m_txBadgeSerial
+            || !txTakeTargetValid(sliceId, target, incarnation, true)
             || !windowHoldsTransmit()) {
             return;
         }
@@ -15245,6 +15646,9 @@ void MainWindow::finishTxBadgeTakeIfHeld()
 void MainWindow::abandonTxBadgeTake()
 {
     m_txBadgeTakeSlice = -1;
+    m_txBadgeTarget.clear();
+    m_txBadgeIncarnation = 0;
+    m_txBadgeTakingSlice = false;
     m_txBadgeTakeStage = TxBadgeStage::None;
     m_txBadgeHostTakeId = 0;
     m_txBadgeCommandId = 0;
@@ -15263,6 +15667,7 @@ void MainWindow::abandonTxBadgeTake()
 
 void MainWindow::refreshFlagTransmitGates()
 {
+    if (m_txApplet) { m_txApplet->refreshTransmitSliceChoices(); }
     for (VfoWidget* flag : m_vfoWidgetsBySlice) {
         applyFlagTransmitGate(flag);
     }
@@ -15401,6 +15806,13 @@ void MainWindow::applyRemoteRoleGating()
     // Core's refusal of arming it stays the backstop).
     bool voxLine = m_remoteMedia == nullptr || m_remoteMedia->micLineOpen();
     QString voxReason = voxLine ? QString() : TxRefusals::micNotConnected().text;
+    if (m_stationClient && m_stationClient->remoteTransmit()) {
+        const auto* source = m_stationClient->remoteTransmit();
+        if (!source->micSourceSettled() || source->acceptedMicSource() == RemoteMicSource::RadioMic) {
+            voxLine = false;
+            voxReason = !source->micSourceSettled() ? source->micSourceReason() : remoteRadioVoxReason();
+        }
+    }
     // iPhone app plan Task 77 (rulings 7.7, 8.4): while another device
     // holds transmit, the transmitter's settings are its own, and VOX
     // follows the holder: every transmit control here is shown disabled

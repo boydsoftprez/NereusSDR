@@ -131,6 +131,28 @@ void SliceOwnership::endRemove(int sliceId)
     }
 }
 
+bool SliceOwnership::removalMatches(int sliceId, quint64 incarnation) const
+{
+    return incarnation != 0 && m_removing.contains(sliceId)
+        && m_incarnations.value(sliceId, 0) == incarnation;
+}
+
+bool SliceOwnership::cancelRemove(int sliceId, quint64 incarnation)
+{
+    if (!removalMatches(sliceId, incarnation)) { return false; }
+    const ActiveRxWatch watch(this);
+    m_removing.remove(sliceId);
+    emit activeChanged();
+    return true;
+}
+
+bool SliceOwnership::completeRemove(int sliceId, quint64 incarnation)
+{
+    if (!removalMatches(sliceId, incarnation)) { return false; }
+    endRemove(sliceId);
+    return true;
+}
+
 void SliceOwnership::setOrder(const QList<int>& sliceIds)
 {
     QList<int> order;
@@ -342,7 +364,7 @@ SliceOwnership::ActiveRxWatch::ActiveRxWatch(SliceOwnership* ownership)
 
 SliceOwnership::ActiveRxWatch::~ActiveRxWatch()
 {
-    if (--m_ownership->m_rxWatchDepth != 0) {
+    if (!m_ownership || --m_ownership->m_rxWatchDepth != 0) {
         return;
     }
     const QHash<QByteArray, int> before = std::exchange(m_ownership->m_rxBefore, {});
@@ -356,6 +378,7 @@ SliceOwnership::ActiveRxWatch::~ActiveRxWatch()
     std::sort(devices.begin(), devices.end());
     for (const QByteArray& device : std::as_const(devices)) {
         if (before.value(device, -1) != after.value(device, -1)) {
+            if (!m_ownership) { return; }
             emit m_ownership->activeRxChanged(device);
         }
     }
@@ -492,12 +515,17 @@ bool SliceOwnership::changeMark(int sliceId, const Mark& requested, const QByteA
     if (before.owner != next.owner) {
         revision = ++m_revisions[sliceId];
     }
+    // Adoption is observable; its owner/model may retire in any notification.
+    const QPointer<SliceOwnership> self(this);
     emit markChanged(sliceId, before.owner, before.heldFor);
+    if (!self) { return true; }
     if (revision != 0) {
         emit controlRevisionChanged(sliceId, revision);
+        if (!self) { return true; }
     }
     if (listenersOf(sliceId) != listenersBefore) {
         emit listenersChanged(sliceId);
+        if (!self) { return true; }
     }
     emit activeChanged();
     return true;
@@ -552,25 +580,46 @@ QList<int> SliceOwnership::returnHeld(const QByteArray& device)
     return ids;
 }
 
-QList<int> SliceOwnership::adoptUnowned(const QByteArray& device)
+QList<int> SliceOwnership::adoptUnowned(const QByteArray& device,
+                                       const std::function<bool()>& continueAdoption)
 {
     if (device.isEmpty()) {
         return {};
     }
+    const QPointer<SliceOwnership> self(this);
     const ActiveRxWatch watch(this);
     // Slice control plan Task 4 (ruling Q9): never a slice others still
     // listen to after its controller released it; control of that one
     // comes only from Take control.
     const QList<int> ids = unclaimed();
     const int wasActive = activeFor(QByteArray());
+    QList<int> adopted;
     for (int id : ids) {
+        // A rightful bootstrap/host can retire during the preceding mark.
+        // The optional predicate adds lifetime continuity to the established policy.
+        if (continueAdoption) {
+            const bool allowed = continueAdoption();
+            if (!self) { return {}; }
+            if (!allowed) { break; }
+        }
+        // Earlier notifications may explicitly claim/hold/remove this
+        // remaining slice. Q9 applies to its CURRENT mark for every caller.
+        if (!isLive(id) || !mark(id).owner.isEmpty() || !listenersOf(id).isEmpty()) { continue; }
         setOwner(id, device);
+        if (!self) { return {}; }
+        adopted.append(id);
     }
-    if (wasActive >= 0 && !m_chosen.contains(device)) {
+    if (continueAdoption) {
+        const bool allowed = continueAdoption();
+        if (!self) { return {}; }
+        if (!allowed) { return adopted; }
+    }
+    if (adopted.contains(wasActive) && mark(wasActive).owner == device
+        && !mark(wasActive).isHeld() && !m_chosen.contains(device)) {
         m_chosen.insert(device, wasActive);
         emit activeChanged();
     }
-    return ids;
+    return adopted;
 }
 
 // ── The active slice ────────────────────────────────────────────────────

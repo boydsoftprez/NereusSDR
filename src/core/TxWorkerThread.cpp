@@ -576,7 +576,9 @@ void TxWorkerThread::dispatchOneBlock()
     // keeps its own timing), and nothing is spliced while DEXP's hold,
     // decay or VOX turn-off counts (TxChannel::dexpTimingRunning): DEXP
     // counts them in the samples it processes, which runs on this thread.
-    RemoteMicFeed* const remoteFeed = m_remoteMicFeed.load(std::memory_order_acquire);
+    const bool radioMic = m_remoteRadioMicActive.load(std::memory_order_acquire);
+    RemoteMicFeed* const remoteFeed = radioMic ? nullptr
+        : m_remoteMicFeed.load(std::memory_order_acquire);
     const bool radePath = m_currentTxPath.load(std::memory_order_acquire) == TxPath::Rade;
     const RemoteMicFeed::Pull remotePull = remoteFeed != nullptr
         ? remoteFeed->pullBlock(m_remoteMicBuf.data(), kBlockFrames,
@@ -698,7 +700,7 @@ void TxWorkerThread::dispatchOneBlock()
                 m_radeMicFloat[static_cast<size_t>(i)] =
                     m_remoteMicBuf[static_cast<size_t>(i)];
             }
-        } else if (m_audioEngine != nullptr
+        } else if (!radioMic && m_audioEngine != nullptr
             && m_audioEngine->isVaxMicOverrideActive()) {
             const int got = m_audioEngine->pullVaxTxMic(
                 m_pcMicBuf.data(), kBlockFrames);
@@ -710,7 +712,7 @@ void TxWorkerThread::dispatchOneBlock()
             for (int i = n; i < kBlockFrames; ++i) {
                 m_radeMicFloat[static_cast<size_t>(i)] = 0.0f;
             }
-        } else if (m_audioEngine != nullptr
+        } else if (!radioMic && m_audioEngine != nullptr
                    && m_audioEngine->isPcMicSelected()) {
             const int got = m_audioEngine->pullTxMic(
                 m_pcMicBuf.data(), kBlockFrames);
@@ -959,7 +961,7 @@ void TxWorkerThread::dispatchOneBlock()
                 static_cast<double>(m_remoteMicBuf[static_cast<size_t>(i)]);
             m_in[static_cast<size_t>(2 * i + 1)] = 0.0;
         }
-    } else if (path != TxPath::Rade
+    } else if (!radioMic && path != TxPath::Rade
         && m_audioEngine != nullptr && m_audioEngine->isVaxMicOverrideActive()) {
         // VAX TX override (eager-borg-d64bed, 2026-05-06).  Mirrors the
         // PC mic override path below, but pulls from the VAX TX shared-
@@ -979,7 +981,7 @@ void TxWorkerThread::dispatchOneBlock()
             m_in[static_cast<size_t>(2 * i + 0)] = 0.0;
             m_in[static_cast<size_t>(2 * i + 1)] = 0.0;
         }
-    } else if (path != TxPath::Rade
+    } else if (!radioMic && path != TxPath::Rade
                && m_audioEngine != nullptr && m_audioEngine->isPcMicSelected()) {
         const int got = m_audioEngine->pullTxMic(m_pcMicBuf.data(), kBlockFrames);
         const int n   = std::clamp(got, 0, kBlockFrames);

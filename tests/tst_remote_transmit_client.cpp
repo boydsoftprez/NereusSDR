@@ -172,6 +172,140 @@ class TestRemoteTransmitClient : public QObject {
     Q_OBJECT
 
 private slots:
+    void micSourcePendingRefusedAndMalformedAckCannotKeyPreviousInput()
+    {
+        Recorder core;
+        RemoteTransmitClient client(core.sender());
+        client.setAvailable(true);
+        client.setMicSourceCapability(true);
+        QVERIFY(client.requestMicSource(RemoteMicSource::RadioMic));
+        const Sent request = core.sent.last();
+        client.setScreenKey(true);
+        QCOMPARE(core.sent.size(), 1);
+        QVERIFY(!client.micSourceSettled());
+        client.commandFinished(request.id, "tx.key", true, {}, {});
+        QVERIFY(!client.micSourceSettled());
+        client.commandFinished(request.id, request.verb, false, QStringLiteral("Refused"), {});
+        QCOMPARE(client.acceptedMicSource(), RemoteMicSource::ClientAudio);
+        client.setScreenKey(true);
+        QCOMPARE(core.sent.size(), 1);
+        QVERIFY(client.requestMicSource(RemoteMicSource::RadioMic));
+        const Sent malformed = core.sent.last();
+        client.commandFinished(malformed.id, malformed.verb, true, {},
+            {{0, "source", MirrorWireKind::Utf8, QStringLiteral("ClientAudio")}});
+        QVERIFY(!client.micSourceSettled());
+        client.setScreenKey(true);
+        QCOMPARE(core.sent.size(), 2);
+    }
+
+    void pendingSourceDoesNotBlockGeneratedStartsOrNonMicrophoneKeys()
+    {
+        Recorder core;
+        RemoteTransmitClient client(core.sender());
+        client.setAvailable(true);
+        client.setMicSourceCapability(true);
+        client.setMicrophoneRequirement([] { return false; }); // CW uses the existing non-microphone path
+        QVERIFY(client.requestMicSource(RemoteMicSource::RadioMic));
+        QVERIFY(client.micSourcePending());
+        const auto generated = [&](bool twoTone, quint32 epoch) {
+            const QByteArray verb = twoTone ? QByteArray("tx.twoTone") : QByteArray("tx.tune");
+            if (twoTone) { client.setTwoTone(true); } else { client.setTune(true); }
+            QCOMPARE(core.sent.last().verb, verb);
+            QVERIFY(core.argument(core.sent.size()-1, "on").toBool());
+            answerCopies(client, core.sent.last(), true, {}, epochValue(epoch));
+            if (twoTone) { client.setTwoTone(false); } else { client.setTune(false); }
+            QCOMPARE(core.sent.last().verb, verb);
+            QVERIFY(!core.argument(core.sent.size()-1, "on").toBool());
+            answerCopies(client, core.sent.last(), true, {}, {});
+            QVERIFY(client.micSourcePending());
+        };
+        generated(false, 8);
+        generated(true, 9);
+        client.setScreenKey(true);
+        QCOMPARE(core.sent.last().verb, QByteArray("tx.key"));
+        answerCopies(client, core.sent.last(), true, {}, epochValue(10));
+        client.setScreenKey(false);
+        QCOMPARE(core.sent.last().verb, QByteArray("tx.unkey"));
+        answerCopies(client, core.sent.last(), true, {}, {});
+        bool programAccepted = false;
+        client.keyForProgram([&](const RemoteTransmitClient::Answer& answer) {
+            programAccepted = answer.accepted;
+        });
+        QCOMPARE(core.sent.last().verb, QByteArray("tx.key"));
+        QCOMPARE(core.argument(core.sent.size()-1, "trigger").toString(), QStringLiteral("tci"));
+        answerCopies(client, core.sent.last(), true, {}, epochValue(11));
+        QVERIFY(programAccepted);
+        client.unkeyForProgram(11);
+        QCOMPARE(core.sent.last().verb, QByteArray("tx.unkey"));
+        QCOMPARE(core.argument(core.sent.size()-1, "epoch").toLongLong(), 11LL);
+        QVERIFY(client.micSourcePending());
+    }
+
+    void radioMicAcceptedAckKeepsKeyWatchAliveAndRejectsProgram()
+    {
+        Recorder core;
+        RemoteTransmitClient client(core.sender());
+        client.setAvailable(true);
+        client.setMicSourceCapability(true);
+        QVERIFY(client.requestMicSource(RemoteMicSource::RadioMic));
+        const Sent request = core.sent.last();
+        client.commandFinished(request.id, request.verb, true, {},
+            {{0, "source", MirrorWireKind::Utf8, QStringLiteral("RadioMic")}});
+        QVERIFY(client.micSourceSettled());
+        QCOMPARE(client.acceptedMicSource(), RemoteMicSource::RadioMic);
+        int keepalives = 0;
+        client.setSessionKeepalive([&](quint64, quint32) { ++keepalives; return true; });
+        client.setScreenKey(true);
+        QCOMPARE(core.sent.last().verb, QByteArray("tx.key"));
+        client.commandFinished(core.sent.last().id, "tx.key", true, {}, epochValue(7));
+        client.keepaliveTick();
+        QVERIFY(keepalives > 0);
+        bool programRefused = false;
+        client.keyForProgram([&](const RemoteTransmitClient::Answer& answer) {
+            programRefused = !answer.accepted && !answer.reason.isEmpty();
+        });
+        QVERIFY(programRefused);
+        client.setScreenKey(false);
+        QCOMPARE(core.sent.last().verb, QByteArray("tx.unkey"));
+    }
+
+    void reconnectRetiresOldSourceReplyAndRestoresClientAudio()
+    {
+        Recorder core;
+        RemoteTransmitClient client(core.sender());
+        client.setAvailable(true);
+        client.setMicSourceCapability(true);
+        QVERIFY(client.requestMicSource(RemoteMicSource::RadioMic));
+        const Sent old = core.sent.last();
+        client.setAvailable(false);
+        client.setAvailable(true);
+        client.setMicSourceCapability(true);
+        client.commandFinished(old.id, old.verb, true, {},
+            {{0, "source", MirrorWireKind::Utf8, QStringLiteral("RadioMic")}});
+        QCOMPARE(client.acceptedMicSource(), RemoteMicSource::ClientAudio);
+        QVERIFY(client.micSourceSettled());
+        client.setScreenKey(true);
+        QCOMPARE(core.sent.last().verb, QByteArray("tx.key"));
+    }
+
+    void sourceSenderReplacingSessionCannotInstallItsOldRequest()
+    {
+        RemoteTransmitClient* client = nullptr;
+        RemoteTransmitClient tx([&](const QByteArray&, const QList<MirrorUpdate>&) {
+            client->setAvailable(false);
+            client->setAvailable(true);
+            return quint32(99);
+        });
+        client = &tx;
+        tx.setAvailable(true);
+        tx.setMicSourceCapability(true);
+        QVERIFY(!tx.requestMicSource(RemoteMicSource::RadioMic));
+        tx.commandFinished(99, "tx.setMicSource", true, {},
+            {{0, "source", MirrorWireKind::Utf8, QStringLiteral("RadioMic")}});
+        QCOMPARE(tx.acceptedMicSource(), RemoteMicSource::ClientAudio);
+        QVERIFY(tx.micSourceSettled());
+    }
+
     void auxiliarySuccessStillSendsExistingChannelCopy()
     {
         Recorder core;

@@ -14,6 +14,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 - Diversity atomic reentry and slice-close/hydration lifetime
+//                 fences, J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01 - #299: replay anti-VOX run and detector tau to each new
 //                 transmit worker after reconnect. J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -1331,6 +1333,11 @@ warren@wpratt.com
 #include "core/StationTciController.h"
 #include "core/SliceOwnership.h"
 #include "core/session/SliceAccessPolicy.h"
+#include "core/session/StationServer.h"
+#include "core/session/SessionTransport.h"
+#include "core/session/SessionMessages.h"
+#include "core/session/DeviceSessionRegistry.h"
+#include "core/safety/StationSliceFreeze.h"
 #include "core/RfKitBandFollow.h"
 #include "core/PgxlStatusGauges.h"
 #include "models/AmplifierModel.h"
@@ -1599,6 +1606,16 @@ RadioModel::RadioModel(Role role, QObject* parent)
     // iPhone app Task 73 (R-IOS-02): whose each slice is. A change of owner
     // is saved with the restart manifest (ruling 5.3).
     m_sliceOwnership = new SliceOwnership(this);
+    connect(m_sliceOwnership, &SliceOwnership::controlRevisionChanged, this,
+            [this](int, quint64) { publishDiversityState(); });
+    connect(this, &RadioModel::sliceAdded, this, [this](int id) {
+        wireDiversitySlice(sliceById(id));
+        publishDiversityState();
+    });
+    connect(this, &RadioModel::sliceRemoved, this,
+            [this](int) { publishDiversityState(); });
+    connect(this, &RadioModel::connectionStateChanged, this,
+            [this](ConnectionState) { publishDiversityState(); });
     if (role == Role::Local) {
         connect(m_sliceOwnership, &SliceOwnership::markChanged, this,
                 [this](int, const QByteArray&, const QByteArray&) { scheduleSettingsSave(); });
@@ -2172,6 +2189,27 @@ RadioModel::RadioModel(Role role, QObject* parent)
     //udRX2StepAttData.Enabled = true; //[2.10.3.6]MW0LGE att_fixes  [console.cs:29648]
     // Display.TXAttenuatorOffset = 0; //[2.10.3.6]MW0LGE att_fixes  [console.cs:29659]
     m_moxController = new MoxController(this);
+    // Source commits only after admission, before the hardware-on fanout.
+    connect(m_moxController, &MoxController::txAboutToBegin, this, [this]() {
+        const auto& keyer = m_moxController->currentKeyer();
+        if (m_remoteRadioCandidate && keyer.deviceId == m_remoteRadioCandidate->device
+            && keyer.session == m_remoteRadioCandidate->owner
+            && remoteMicSelection(keyer.session, keyer.deviceId) == RemoteMicSource::RadioMic) {
+            m_remoteRadioKey = m_remoteRadioCandidate;
+            setRemoteRadioMicActive(true);
+        } else {
+            // A newly admitted non-Radio key supersedes a retained Radio
+            // drain/tail even when its old hardware-off timer was cancelled.
+            m_remoteRadioKey.reset();
+            setRemoteRadioMicActive(false);
+        }
+    });
+    connect(m_moxController, &MoxController::hardwareFlipped, this, [this](bool on) {
+        if (!on && m_remoteRadioKey) {
+            m_remoteRadioKey.reset();
+            setRemoteRadioMicActive(false);
+        }
+    });
 
     // iPhone app plan Task 36 (R-IOS-13): the remote microphone ring, on the
     // Core's model only. Its source follows who is keyed and MOX itself.
@@ -3565,25 +3603,13 @@ RadioModel::RadioModel(Role role, QObject* parent)
                 }
             }
 
-            // Autotune gate (deck item #2): TGXL autotune cmd was held
-            // for 150 ms post-grant so the TRANSMITTING frame on :4992
-            // and the `autotune` cmd on :9010 land on TGXL in the right
-            // order without a TCP-socket race.
-            if (!m_awaitingInterlockForAutotune) { return; }
-            if (!m_tgxlAutotuneInProgress) {
-                // Cycle was cancelled before grant; clear the gate.
+            // Arm before setTune: a grant can arrive synchronously.
+            // Actual lane completion, not this interlock frame, starts
+            // the carrier settle. The RF gate tracks either signal order.
+            if (m_tgxlAutotuneInProgress) {
                 m_awaitingInterlockForAutotune = false;
-                return;
+                scheduleTgxlAutotune();
             }
-            m_awaitingInterlockForAutotune = false;
-            qCInfo(lcConnection)
-                << "TGXL autotune: interlock TRANSMITTING confirmed (source="
-                << source << "), sending autotune in 150 ms";
-            QTimer::singleShot(150, this, [this]() {
-                if (m_tgxlAutotuneInProgress) {
-                    sendTgxlAutotuneCmd();
-                }
-            });
         });
     }
 
@@ -5323,7 +5349,7 @@ void RadioModel::followReceiveSliceWithStepAttenuator()
             return;
         }
         const auto drives = [this, slice] {
-            return slice->sliceIndex() == kStepAttReceiveSliceId || slice == txBoundSlice();
+            return slice == diversityTargetSlice() || slice == txBoundSlice();
         };
         connect(slice, &SliceModel::bandChanged, this, [this, drives](Band) {
             if (drives()) {
@@ -5373,7 +5399,7 @@ void RadioModel::syncStepAttenuatorToReceiveSlice()
     }
     // Receive band first: setBand also resets the transmit band, which the
     // transmit-bound slice then sets.
-    if (SliceModel* const receive = sliceById(kStepAttReceiveSliceId)) {
+    if (SliceModel* const receive = diversityTargetSlice()) {
         m_stepAttController->setBand(receive->band());
         // The 6 m LNA gain offset follows the receive band.
         refreshRxMeterOffset();
@@ -5399,8 +5425,9 @@ void RadioModel::syncStepAttenuatorAdcRouting()
         return;
     }
     const auto receiveAdc = [](int adc) { return adc == 0 || adc == 1; };
-    const SliceModel* const sliceA = sliceById(kStepAttReceiveSliceId);
-    int rx1Adc = sliceAdcIndex(kStepAttReceiveSliceId);
+    const SliceModel* const sliceA = diversityTargetSlice();
+    const int receiveSliceId = sliceA ? sliceA->sliceIndex() : kStepAttReceiveSliceId;
+    int rx1Adc = sliceAdcIndex(receiveSliceId);
     if (!receiveAdc(rx1Adc)) {
         rx1Adc = 0;
     }
@@ -5408,7 +5435,7 @@ void RadioModel::syncStepAttenuatorAdcRouting()
     Band rx2Band = sliceA ? sliceA->band() : Band::GEN;
     int rx2SliceId = std::numeric_limits<int>::max();
     for (const SliceModel* const slice : std::as_const(m_slices)) {
-        if (!slice || slice->sliceIndex() == kStepAttReceiveSliceId
+        if (!slice || slice->sliceIndex() == receiveSliceId
             || slice->sliceIndex() >= rx2SliceId) {
             continue;
         }
@@ -5419,7 +5446,7 @@ void RadioModel::syncStepAttenuatorAdcRouting()
             rx2SliceId = slice->sliceIndex();
         }
     }
-    const bool linked = diversityActive() && boardCapabilities().adcCount >= 2;
+    const bool linked = diversityPairAssigned() && boardCapabilities().adcCount >= 2;
     if (linked && rx2Adc < 0) {
         rx2Adc = rx1Adc == 0 ? 1 : 0;
     }
@@ -8164,6 +8191,7 @@ void RadioModel::wireTxWorkerRade(TxWorkerThread* worker)
 void RadioModel::installTxWorkerForTest(std::unique_ptr<TxWorkerThread> worker)
 {
     m_txWorker = std::move(worker);
+    if (m_txWorker) { m_txWorker->setRemoteRadioMicActive(m_remoteRadioMicActive); }
     wireTxWorkerRade(m_txWorker.get());
 }
 #endif
@@ -11013,6 +11041,8 @@ void RadioModel::activateBoundSliceChannels()
 
 void RadioModel::activateSliceChannel(SliceModel* slice)
 {
+    const QPointer<RadioModel> self(this);
+    const QPointer<SliceModel> target(slice);
     if (!m_wdspEngine || !slice || slice->streamIndex() < 0) {
         return;
     }
@@ -11028,7 +11058,7 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
     }
 
     // Sub-Epic I invariant: WDSP RX channel id == slice index.
-    RxChannel* ch = m_wdspEngine->rxChannel(slice->sliceIndex());
+    const QPointer<RxChannel> ch(m_wdspEngine->rxChannel(slice->sliceIndex()));
     if (!ch || ch->isActive()) {
         // Already live. Leave it alone: connectToRadio's WDSP-init lambda
         // gives Slice A's channel the full state push (NR, SNB, APF, squelch,
@@ -11046,15 +11076,24 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
     // channel is up, every one of those settings has a live per-slice push in
     // wireSliceSignals that resolves rxChannel(slice->sliceIndex()), so
     // operator changes reach the right slice either way.
+    const int targetId = slice->sliceIndex();
+    const auto current = [&] {
+        return self && target && ch && self->sliceById(targetId) == target.data();
+    };
     ch->setMode(slice->dspMode());
+    if (!current()) { return; }
     ch->setFilterFreqs(slice->filterLow(), slice->filterHigh());
+    if (!current()) { return; }
     ch->setAgcMode(slice->agcMode());
+    if (!current()) { return; }
     ch->setAgcTop(slice->rfGain());
+    if (!current()) { return; }
     // Seed AF gain before the channel runs a single block: WDSP initialises
     // panel.gain1 to 4.0 (+12 dB) in rxa.c:538, and setActive re-pushes
     // m_afGain anyway, but seeding first means the default never reaches the
     // mixer. Same reasoning as the Slice A block in connectToRadio.
     ch->setAfGain(slice->afGain() / 100.0);
+    if (!current()) { return; }
     // The offset the allocator resolved for this slice, plus RIT and DIG.
     // bindSliceToStream pushes it too, but a reconnect re-opens the channel
     // underneath an already-bound slice, so it has to be re-seeded here as
@@ -11064,6 +11103,7 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
     // Same single owner as every other origin write. The slice already holds
     // its stream term here, so the stored-origin form supplies the centre.
     pushNotchOrigin(slice, ch, slice->frequency() - slice->shiftOffsetHz());
+    if (!current()) { return; }
 
     // TNF design section 6.3: the notch set, the master run flag, the
     // auto-increase flag and the NBP tune frequency. syncNotchesToAllChannels
@@ -11073,9 +11113,12 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
     // for that case. No-op on retune, because the early return above already
     // fired.
     syncNotchesToChannel(ch, slice->sliceIndex());
+    if (!current()) { return; }
 
     applyNnrStateToChannel(slice, ch);
+    if (!current()) { return; }
     ch->setActive(true);
+    if (!current()) { return; }
 }
 
 // NereusSDR-original acceptance boundary for the WDSP 2.10 controls.
@@ -11083,6 +11126,9 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
 // the RxChannel while the SliceModel and its stable identity remain alive.
 void RadioModel::wireNnrSettings(SliceModel* slice)
 {
+    const QPointer<RadioModel> self(this);
+    const QPointer<SliceModel> target(slice);
+    const auto current = [&] { return self && target && currentSlicePublication(target.data()); };
     slice->setNnrSettingsApplier([this, slice](const NnrSettings& requested,
                                                QString* reason) -> std::optional<NnrSettings> {
         RxChannel* channel = m_wdspEngine ? m_wdspEngine->rxChannel(slice->sliceIndex()) : nullptr;
@@ -11195,8 +11241,10 @@ void RadioModel::wireNnrSettings(SliceModel* slice)
     // Follow-up item 1: the slice's saved choice was restored before this
     // refusal existed, so a saved NR3 is checked again now.
     turnOffNr3WithoutModel(slice);
+    if (!current()) { return; }
     // R-R3-49: and a saved DFNR the Core cannot run.
     turnOffDfnrWithoutModel(slice);
+    if (!current()) { return; }
     // And a saved MNR or BNR it cannot run.
     turnOffNrThatCannotRun(slice);
 }
@@ -11305,8 +11353,12 @@ void RadioModel::turnOffNrThatCannotRun(SliceModel* slice)
     }
     // Off always passes the selection applier; the reason is set after,
     // since setActiveNr clears it.
+    const QPointer<RadioModel> self(this);
+    const QPointer<SliceModel> target(slice);
+    const QString explanation = reason;
     slice->setActiveNr(NrSlot::Off);
-    slice->reportNnrEditResult(reason);
+    if (!self || !target || !currentSlicePublication(target.data())) { return; }
+    slice->reportNnrEditResult(explanation);
 }
 
 void RadioModel::onRxChannelDfnrUnavailable(bool modelMissing)
@@ -11324,8 +11376,12 @@ void RadioModel::turnOffDfnrWithoutModel(SliceModel* slice)
     }
     // As turnOffNr3WithoutModel: Off always passes the selection applier,
     // and the reason is set after, since setActiveNr clears it.
+    const QPointer<RadioModel> self(this);
+    const QPointer<SliceModel> target(slice);
+    const QString explanation = m_dspAssets->dfnrModelStatus();
     slice->setActiveNr(NrSlot::Off);
-    slice->reportNnrEditResult(m_dspAssets->dfnrModelStatus());
+    if (!self || !target || !currentSlicePublication(target.data())) { return; }
+    slice->reportNnrEditResult(explanation);
 }
 
 void RadioModel::turnOffNr3WithoutModel(SliceModel* slice)
@@ -11337,8 +11393,12 @@ void RadioModel::turnOffNr3WithoutModel(SliceModel* slice)
     // Off always passes the selection applier, which turns the receiver's
     // NR3 off too when a channel is open. The reason is set after, since
     // setActiveNr clears it.
+    const QPointer<RadioModel> self(this);
+    const QPointer<SliceModel> target(slice);
+    const QString explanation = nr3CannotRunReason();
     slice->setActiveNr(NrSlot::Off);
-    slice->reportNnrEditResult(nr3CannotRunReason());
+    if (!self || !target || !currentSlicePublication(target.data())) { return; }
+    slice->reportNnrEditResult(explanation);
 }
 
 bool RadioModel::setNnrDiagnosticMode(int sliceId, int testMode, int outputMode, QString* reason)
@@ -11420,9 +11480,19 @@ void RadioModel::applyNnrStateToChannel(SliceModel* slice, RxChannel* channel)
     }
     // Follow-up item 1 (R-R3-21): WDSP is never asked to run NR3 without a
     // usable NR3 model; the slice shows NR off with the reason instead.
+    const QPointer<RadioModel> self(this);
+    const QPointer<SliceModel> target(slice);
+    const QPointer<RxChannel> receiver(channel);
+    const int id = slice->sliceIndex();
+    const auto current = [&] {
+        return self && target && receiver && self->sliceById(id) == target.data();
+    };
     turnOffNr3WithoutModel(slice);
+    if (!current()) { return; }
     turnOffDfnrWithoutModel(slice);   // R-R3-49: likewise DFNR
+    if (!current()) { return; }
     turnOffNrThatCannotRun(slice);    // R-R3-49: and MNR or BNR
+    if (!current()) { return; }
 
     if (channel->controlLane() != nullptr) {
         // R-R3-39: the same steps as one receive-lane job
@@ -11439,15 +11509,19 @@ void RadioModel::applyNnrStateToChannel(SliceModel* slice, RxChannel* channel)
     // R-R3-40: a new or reopened channel starts with the slice's runtime
     // limit, applied by the tuning call below.
     channel->requestNnrLimit(slice->nnrLimit());
+    if (!current()) { return; }
     const bool tuningAccepted = channel->setNnrTuning(slice->nnrSettings(), &reason);
+    if (!current()) { return; }
     const bool nr3Blocked = slice->activeNr() == NrSlot::NR3 && m_dspAssets
         && !m_dspAssets->nr3Runnable();
     // A missing saved model must not enable a different model silently.
     // Retain the saved preference so the operator can repair the asset.
     if (!nr3Blocked && (tuningAccepted || slice->activeNr() != NrSlot::NNR)) {
         channel->setActiveNr(slice->activeNr());
+        if (!current()) { return; }
     } else {
         channel->setActiveNr(NrSlot::Off);
+        if (!current()) { return; }
     }
     NnrDiagnostics status = channel->nnrDiagnostics();
     if (!tuningAccepted) {
@@ -11718,6 +11792,13 @@ namespace {
 // place slices this way. Live operation can leave one pan on two receivers (a
 // slice tuned out of a shared window takes a new receiver, and a slice moved
 // to another pan keeps its own), and neither path may undo that.
+QList<QPointer<SliceModel>> sliceSnapshot(const QList<SliceModel*>& slices)
+{
+    QList<QPointer<SliceModel>> result;
+    for (SliceModel* slice : slices) { result.append(slice); }
+    return result;
+}
+
 int panStreamCovering(const SliceStreamAllocator& allocator,
                       const QList<int>& panStreams, double frequencyHz)
 {
@@ -11880,6 +11961,7 @@ QString RadioModel::closedSliceSentence(const SliceModel* slice, int channelLimi
 
 void RadioModel::installReceiveFallbackSlice()
 {
+    const QPointer<RadioModel> self(this);
     if (sliceById(0)) {
         return;
     }
@@ -11889,14 +11971,15 @@ void RadioModel::installReceiveFallbackSlice()
     const SliceModel defaults;
     const ReceiveSliceState seed{0, QStringLiteral("pan-0"),
                                  defaults.frequency(), defaults.dspMode(), {}, {}};
-    if (addSliceImpl(0, seed.panKey, &seed) >= 0) {
-        SliceModel* fallback = sliceById(0);
-        bindSliceToStream(fallback, fallback->frequency(), true);
-    }
+    const int created = addSliceImpl(0, seed.panKey, &seed);
+    if (!self || created < 0) { return; }
+    const QPointer<SliceModel> fallback(sliceById(created));
+    if (fallback) { bindSliceToStream(fallback, fallback->frequency(), true); }
 }
 
 void RadioModel::closeSlicesPastChannelLimit()
 {
+    const QPointer<RadioModel> self(this);
     // Receiver and transmit gaps plan Task 1 (R-R3-34, R-R3-27): a Core that
     // started before its radio was on can hold more slices than the board
     // that then connects supports, and so can a window that reconnects to a
@@ -11923,20 +12006,25 @@ void RadioModel::closeSlicesPastChannelLimit()
     });
     QStringList notes;
     QList<int> ids;
+    QList<QPointer<SliceModel>> victims;
     for (const SliceModel* slice : std::as_const(past)) {
         notes.prepend(closedSliceSentence(slice, channelLimit));
         ids.append(slice->sliceIndex());
+        victims.append(const_cast<SliceModel*>(slice));
     }
     const bool allClosed = past.size() == m_slices.size();
     if (allClosed) {
         installReceiveFallbackSlice();
+        if (!self) { return; }
     }
     // A saved layout is a per-radio record a temporary limit must not erase.
     if (m_receiveLayoutManaged && m_receiveLayoutOverridesCount) {
         m_receiveLayoutProtected = true;
     }
-    for (int id : std::as_const(ids)) {
-        removeSliceImpl(id, false);
+    for (const QPointer<SliceModel>& victim : std::as_const(victims)) {
+        if (!victim || sliceById(victim->sliceIndex()) != victim.data()) { continue; }
+        removeSliceImpl(victim->sliceIndex(), false);
+        if (!self) { return; }
     }
     qCWarning(lcConnection) << "Closed slices" << ids << "past the board's slice limit"
                             << channelLimit;
@@ -11948,12 +12036,14 @@ void RadioModel::closeSlicesPastChannelLimit()
 
 void RadioModel::bindUnboundSlices()
 {
+    const QPointer<RadioModel> self(this);
     if (m_receiveLayoutManaged && !m_receiveLayoutMac.isEmpty()) {
         if (m_receiveLayoutPendingAdmission) {
             bindReceiveLayoutSlices();
             return;
         }
         closeSlicesPastChannelLimit();
+        if (!self) { return; }
 
         // Recovery preserves live objects rather than re-running destructive
         // startup admission.  Still give the first member of each distinct
@@ -11962,7 +12052,8 @@ void RadioModel::bindUnboundSlices()
         // by its pan; if live tuning moved it outside those windows, claim a
         // fresh stream and retain the slice instead of deleting its identity.
         QHash<QString, QList<int>> recoveredPans;
-        for (SliceModel* slice : std::as_const(m_slices)) {
+        for (const QPointer<SliceModel>& slice : sliceSnapshot(m_slices)) {
+            if (!slice || sliceById(slice->sliceIndex()) != slice.data()) { continue; }
             if (!slice || slice->streamIndex() >= 0) {
                 continue;
             }
@@ -11973,6 +12064,8 @@ void RadioModel::bindUnboundSlices()
             const bool bound = matchingStream >= 0
                 ? bindSliceToStream(slice, slice->frequency(), false, matchingStream)
                 : bindSliceToStream(slice, slice->frequency(), true);
+            if (!self) { return; }
+            if (!slice || sliceById(slice->sliceIndex()) != slice.data()) { continue; }
             if (bound) {
                 QList<int>& panStreams = recoveredPans[pan];
                 if (!panStreams.contains(slice->streamIndex())) {
@@ -11983,15 +12076,18 @@ void RadioModel::bindUnboundSlices()
         return;
     }
     closeSlicesPastChannelLimit();
-    for (SliceModel* s : std::as_const(m_slices)) {
-        if (s && s->streamIndex() < 0) {
+    if (!self) { return; }
+    for (const QPointer<SliceModel>& s : sliceSnapshot(m_slices)) {
+        if (s && sliceById(s->sliceIndex()) == s.data() && s->streamIndex() < 0) {
             bindSliceToStream(s, s->frequency());
+            if (!self) { return; }
         }
     }
 }
 
 void RadioModel::bindReceiveLayoutSlices()
 {
+    const QPointer<RadioModel> self(this);
     if (m_streamAllocator.streamCount() <= 0) {
         return; // Discovery has not provided resources yet.
     }
@@ -12015,8 +12111,10 @@ void RadioModel::bindReceiveLayoutSlices()
     // is free.
     QHash<QString, QList<int>> restoredPans;
     QList<int> refusedIds;
+    QList<QPointer<SliceModel>> refusedSlices;
     QStringList refusals;
-    for (SliceModel* slice : std::as_const(m_slices)) {
+    for (const QPointer<SliceModel>& slice : sliceSnapshot(m_slices)) {
+            if (!slice || sliceById(slice->sliceIndex()) != slice.data()) { continue; }
         const int id = slice->sliceIndex();
         const QString pan = slice->panKey().isEmpty()
             ? QStringLiteral("pan-0") : slice->panKey();
@@ -12032,6 +12130,8 @@ void RadioModel::bindReceiveLayoutSlices()
                 bindSliceToStream(slice, slice->frequency(), true);
             }
         }
+        if (!self) { return; }
+        if (!slice || sliceById(id) != slice.data()) { continue; }
         if (idSupported && slice->streamIndex() >= 0) {
             QList<int>& panStreams = restoredPans[pan];
             if (!panStreams.contains(slice->streamIndex())) {
@@ -12040,6 +12140,7 @@ void RadioModel::bindReceiveLayoutSlices()
             continue;
         }
         refusedIds.append(id);
+        refusedSlices.append(slice);
         const QString letter(slice->sliceLetter());
         const QString mhz = QString::number(slice->frequency() / 1.0e6, 'f', 4);
         const QString mode = SliceModel::modeName(slice->dspMode());
@@ -12079,9 +12180,12 @@ void RadioModel::bindReceiveLayoutSlices()
     }
     if (allRefused && channelLimit > 0) {
         installReceiveFallbackSlice();
+        if (!self) { return; }
     }
-    for (int id : refusedIds) {
-        removeSliceImpl(id, false);
+    for (const QPointer<SliceModel>& victim : std::as_const(refusedSlices)) {
+        if (!victim || sliceById(victim->sliceIndex()) != victim.data()) { continue; }
+        removeSliceImpl(victim->sliceIndex(), false);
+        if (!self) { return; }
     }
     const QString state = allRefused ? QStringLiteral("fallback") : QStringLiteral("degraded");
     if (fromSavedLayout) {
@@ -12277,6 +12381,7 @@ bool RadioModel::streamCtunPinned(int streamIndex) const
 
 void RadioModel::setStreamCtunPinned(int streamIndex, bool pinned)
 {
+    const QPointer<RadioModel> self(this);
     if (streamIndex < 0 || streamIndex >= m_streamCtunPinned.size()) {
         return;
     }
@@ -12284,9 +12389,11 @@ void RadioModel::setStreamCtunPinned(int streamIndex, bool pinned)
         return;
     }
     m_streamCtunPinned[streamIndex] = pinned;
-    for (const int sliceId : slicesOnStream(streamIndex)) {
-        if (SliceModel* slice = sliceById(sliceId)) {
+    for (const QPointer<SliceModel>& slice : sliceSnapshot(m_slices)) {
+        if (slice && sliceById(slice->sliceIndex()) == slice.data()
+            && slice->streamIndex() == streamIndex) {
             slice->setStreamCtunPinned(pinned);
+            if (!self) { return; }
         }
     }
 }
@@ -12299,14 +12406,17 @@ quint64 RadioModel::streamEpoch(int streamIndex) const
 
 void RadioModel::setStreamEpoch(int streamIndex, quint64 epoch)
 {
+    const QPointer<RadioModel> self(this);
     if (streamIndex < 0 || streamIndex >= m_streamEpoch.size()
         || m_streamEpoch.at(streamIndex) == epoch) {
         return;
     }
     m_streamEpoch[streamIndex] = epoch;
-    for (const int sliceId : slicesOnStream(streamIndex)) {
-        if (SliceModel* slice = sliceById(sliceId)) {
+    for (const QPointer<SliceModel>& slice : sliceSnapshot(m_slices)) {
+        if (slice && sliceById(slice->sliceIndex()) == slice.data()
+            && slice->streamIndex() == streamIndex) {
             slice->setStreamEpoch(epoch);
+            if (!self) { return; }
         }
     }
 }
@@ -12325,11 +12435,13 @@ void RadioModel::claimStreamEpoch(int streamIndex)
 
 void RadioModel::retireStream(int streamIndex)
 {
+    const QPointer<RadioModel> self(this);
     if (streamIndex < 0 || streamIndex >= m_streamAllocator.streamCount()) {
         return;
     }
     m_streamAllocator.deactivateStream(streamIndex);
     setStreamCtunPinned(streamIndex, false);
+    if (!self) { return; }
     setStreamEpoch(streamIndex, 0);
 }
 
@@ -12580,8 +12692,13 @@ void RadioModel::applyStreamDspGeometry()
 
 void RadioModel::requestDdcAssignment()
 {
+    const QPointer<RadioModel> self(this);
     emit ddcAssignmentRequested();
+    if (!self) { return; }
     invokeCodecDdcAssignment();
+    // The assignment publishes Diversity synchronously. Its observer may
+    // retire this model before the Alex and VFO publication tail resumes.
+    if (!self) { return; }
 
     // Phase 3F: the Alex band-pass per chain is a function of which slices are
     // on which ADC, so it recomputes on exactly the events that change that
@@ -12589,6 +12706,7 @@ void RadioModel::requestDdcAssignment()
     // retune, removal) and it lines up with design §10's trigger matrix rows
     // for slice created / destroyed / retuned-across-band.
     republishAlexAdcSlices();
+    if (!self) { return; }
 
     // Plan Task 14: the VFO each hardware slot serves, for the OC band. The
     // same events move it: a bind, a removal, and every VFO tick
@@ -13405,6 +13523,7 @@ bool RadioModel::setStreamSampleRateClosing(int streamIndex, int rateHz,
 // ---------------------------------------------------------------------------
 void RadioModel::syncReceiverToStream(int streamIndex, bool live)
 {
+    const QPointer<RadioModel> self(this);
     if (!m_receiverManager || streamIndex < 0) { return; }
 
     if (!live) {
@@ -13421,7 +13540,9 @@ void RadioModel::syncReceiverToStream(int streamIndex, bool live)
         if (m_receiverManager->receiverConfig(streamIndex).receiverIndex >= 0) {
             break;
         }
-        if (m_receiverManager->createReceiver() < 0) {
+        const int created = m_receiverManager->createReceiver();
+        if (!self) { return; }
+        if (created < 0) {
             qCWarning(lcConnection)
                 << "Stream" << streamIndex
                 << "claimed but the receiver pool is full; its DDC will not"
@@ -13438,6 +13559,7 @@ void RadioModel::syncReceiverToStream(int streamIndex, bool live)
 // confirmed pan move to a free receiver uses (moveSlicesToStream).
 void RadioModel::activateStreamAt(int streamIndex, double centreHz)
 {
+    const QPointer<RadioModel> self(this);
     // Claim or move the DDC, then centre it on the slice.
     //
     // Preserve the stream's own rate when it is already live. A
@@ -13457,6 +13579,7 @@ void RadioModel::activateStreamAt(int streamIndex, double centreHz)
 
     if (!streamAlreadyLive) {
         claimStreamEpoch(streamIndex);
+        if (!self) { return; }
     }
     m_streamAllocator.activateStream(
         streamIndex, centreHz, rateForStream);
@@ -13465,6 +13588,7 @@ void RadioModel::activateStreamAt(int streamIndex, double centreHz)
     // setReceiverFrequency below tunes the DDC; this is what makes
     // ReceiverManager forward its samples.
     syncReceiverToStream(streamIndex, /*live=*/true);
+    if (!self) { return; }
 
     if (m_receiverManager) {
         // forceHardwareFrequency, not setReceiverFrequency: this arm only
@@ -13493,6 +13617,7 @@ void RadioModel::activateStreamAt(int streamIndex, double centreHz)
         m_receiverManager->forceHardwareFrequency(
             streamIndex,
             static_cast<quint64>(centreHz));
+        if (!self) { return; }
     }
     emit streamCentreChanged(
         streamIndex, centreHz,
@@ -13503,6 +13628,11 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
                                     bool preferOwnStream, int requiredStream)
 {
     if (!slice) { return false; }
+    const QPointer<RadioModel> self(this);
+    const QPointer<SliceModel> target(slice);
+    const int targetId = slice->sliceIndex();
+    const auto current = [&] { return self && target && self->sliceById(targetId) == target.data(); };
+    if (!current()) { return false; } // A prior snapshot member may already have left the roster.
 
     // Remote-daemon R2 Task 5: the daemon owns the DDC allocator; a
     // Role::Remote client must never place, retune or evict a stream of
@@ -13628,12 +13758,17 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     if (placement.outcome == Outcome::NewStream
         || placement.outcome == Outcome::RetunedStream) {
         activateStreamAt(placement.streamIndex, placement.newStreamCentreHz);
+        if (!current()) { return false; }
     }
 
     slice->setStreamIndex(placement.streamIndex);
+    if (!current()) { return false; }
     slice->setStreamCtunPinned(streamCtunPinned(placement.streamIndex));
+    if (!current()) { return false; }
     slice->setStreamEpoch(streamEpoch(placement.streamIndex));
+    if (!current()) { return false; }
     slice->setShiftOffsetHz(placement.shiftOffsetHz);
+    if (!current()) { return false; }
 
     // Phase 3F Sub-Epic J Task 6: joining an occupied window adopts its
     // blanker state; claiming an empty one keeps this slice's own. Without
@@ -13645,7 +13780,14 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     for (int idx : nbPeers) {
         SliceModel* peer = sliceById(idx);
         if (peer && peer != slice) {
-            slice->setNbMode(peer->nbMode());
+            const auto nbMode = peer->nbMode();
+            const auto threshold = peer->nb1Threshold();
+            const auto transition = peer->nb1TransitionMs();
+            const auto lead = peer->nb1LeadMs();
+            const auto lag = peer->nb1LagMs();
+            const auto nb2Mode = peer->nb2Mode();
+            slice->setNbMode(nbMode);
+            if (!current()) { return false; }
             // The NB1 / NB2 tuning knobs adopt for the same reason the mode
             // does: they configure the stream's single blanker (panb / pnob
             // per receiver, Thetis cmaster.h:74-82 [v2.10.3.15]), so a joiner
@@ -13653,11 +13795,16 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
             // that are not the ones in force. SNB is excluded: it is per WDSP
             // channel (rxa[channel].snba, wdsp/snb.c:621-670 [v2.10.3.15]),
             // so the joiner keeps its own.
-            slice->setNb1Threshold(peer->nb1Threshold());
-            slice->setNb1TransitionMs(peer->nb1TransitionMs());
-            slice->setNb1LeadMs(peer->nb1LeadMs());
-            slice->setNb1LagMs(peer->nb1LagMs());
-            slice->setNb2Mode(peer->nb2Mode());
+            slice->setNb1Threshold(threshold);
+            if (!current()) { return false; }
+            slice->setNb1TransitionMs(transition);
+            if (!current()) { return false; }
+            slice->setNb1LeadMs(lead);
+            if (!current()) { return false; }
+            slice->setNb1LagMs(lag);
+            if (!current()) { return false; }
+            slice->setNb2Mode(nb2Mode);
+            if (!current()) { return false; }
             break;
         }
     }
@@ -13670,6 +13817,7 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
         m_streamAllocator.streamSampleRateHz(placement.streamIndex);
     if (boundRateHz > 0) {
         slice->setSampleRateHz(boundRateHz);
+        if (!current()) { return false; }
     }
 
     // Push the offset into WDSP. RxChannel::setShiftFrequency is the Thetis
@@ -13702,14 +13850,18 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     if (previousStream >= 0 && previousStream != placement.streamIndex) {
         if (slicesOnStream(previousStream).isEmpty()) {
             retireStream(previousStream);
+            if (!current()) { return false; }
             // Symmetric with the claim above. A receiver left active for a
             // stream with no slices keeps a DDC in the routing table and in
             // the announced count that nothing is listening to.
             syncReceiverToStream(previousStream, /*live=*/false);
+            if (!current()) { return false; }
         }
         republishStreamBindings(previousStream);
+        if (!current()) { return false; }
     }
     republishStreamBindings(placement.streamIndex);
+    if (!current()) { return false; }
 
     // Phase 3F Sub-Epic I closeout, defect H1: a migration re-rates the slice
     // as surely as a rate change does. Moving from a 768 kHz stream to a
@@ -13719,6 +13871,7 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     // [WDSP v1.29]). No-op whenever everything already agrees, which is every
     // retune on a single-rate radio.
     applyStreamDspGeometry();
+    if (!current()) { return false; }
 
     // The slice now has a stream, which means RxDspWorker is about to start
     // fanning that stream's chunks at its WDSP channel. Switch the channel on
@@ -13730,9 +13883,11 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
     // input rate must agree with the stream feeding it before it runs its
     // first block (defect H1).
     activateSliceChannel(slice);
+    if (!current()) { return false; }
 
     // The active-DDC set may have changed, so the codec must recompute.
     requestDdcAssignment();
+    if (!current()) { return false; }
     return true;
 }
 
@@ -13741,8 +13896,10 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
 // R-R3-49: see the declaration. The audio thread's only view of the slices.
 void RadioModel::publishSliceAudioView()
 {
+    const QPointer<RadioModel> self(this);
     // RADE gaps (2026-09-30): the DSP worker follows the same slice set.
     publishRadeModeSlices();
+    if (!self) { return; }
     if (m_audioEngine == nullptr) {
         return;
     }
@@ -13822,6 +13979,7 @@ void RadioModel::endRadeStart(int sliceId, RadeStartFault fault)
 
 void RadioModel::refreshRadeReasons()
 {
+    const QPointer<RadioModel> self(this);
     if (m_role != Role::Local || m_radeStartHolds > 0) {
         return;
     }
@@ -13838,9 +13996,10 @@ void RadioModel::refreshRadeReasons()
             ++it;
         }
     }
-    for (SliceModel* slice : std::as_const(m_slices)) {
-        if (slice != nullptr) {
+    for (const QPointer<SliceModel>& slice : sliceSnapshot(m_slices)) {
+        if (slice && sliceById(slice->sliceIndex()) == slice.data()) {
             slice->setRadeReason(radeStartReason(slice));
+            if (!self) { return; }
         }
     }
 }
@@ -14187,6 +14346,39 @@ QString RadioModel::sliceCapReason(int cap) const
     return tr("%1 supports a maximum of %2").arg(radioLabel, slices);
 }
 
+// Publication identity is separate from command authority. A constructing
+// object may apply restored NR before joining the roster; a detached object
+// must never apply fields to the next incarnation with its ID.
+bool RadioModel::currentSlicePublication(SliceModel* slice) const
+{
+    const auto record = m_slicePublications.value(slice);
+    return record.object == slice && (record.constructing
+        || (sliceById(record.id) == slice && (!record.ready || m_role != Role::Local
+            || m_sliceOwnership->matches({record.id, record.incarnation}))));
+}
+
+void RadioModel::publishReadySlices(int id)
+{
+    const QPointer<RadioModel> self(this);
+    if (m_sliceRemovalBarriers.value(id) != 0) { return; }
+    // Snapshot values, never a container iterator across application callbacks.
+    const auto records = m_slicePublications.values();
+    for (const auto& record : records) {
+        if (!self) { return; }
+        if (record.id != id || !record.object || !record.ready || record.published
+            || sliceById(id) != record.object.data()
+            || (m_role == Role::Local
+                && !m_sliceOwnership->matches({id, record.incarnation}))) { continue; }
+        auto current = m_slicePublications.value(record.object.data());
+        if (current.serial != record.serial || !current.ready || current.published
+            || m_sliceRemovalBarriers.value(id)) { continue; }
+        current.published = true;
+        m_slicePublications.insert(record.object.data(), current);
+        emit sliceAdded(id);
+        if (!self) { return; }
+    }
+}
+
 int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
                              const ReceiveSliceState* restoreSeed, bool bindRestored)
 {
@@ -14195,7 +14387,9 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // frequency and mode like the startup hydration does, then binds at
     // once, as an ordinary new slice does, instead of waiting for
     // bindReceiveLayoutSlices.
+    const QPointer<RadioModel> self(this);
     auto* slice = new SliceModel(this);
+    const QPointer<SliceModel> added(slice);
     // Slice control plan Task 5: a change held back on a slice a remote
     // window only listens to is announced once, here, for the window.
     connect(slice, &SliceModel::listenerWriteHeld, this, [this, slice](const QString& reason) {
@@ -14251,7 +14445,17 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             ++index;
         }
     }
+    SlicePublication constructing{added, index};
+    constructing.serial = ++m_nextSlicePublicationSerial;
+    m_slicePublications.insert(slice, constructing);
+    const auto abandonConstruction = qScopeGuard([self, added, slice, serial = constructing.serial] {
+        if (self && self->m_slicePublications.value(slice).serial == serial
+            && (!added || self->sliceById(added->sliceIndex()) != added.data())) {
+            self->m_slicePublications.remove(slice);
+        }
+    });
     slice->setSliceIndex(index);
+    if (!self || !added) { return -1; }
     if (role() == Role::Local) {
         // iPhone app Task 74 (ruling 6.2): every change of the slice's
         // receiver reaches the anchors, from its first bind on.
@@ -14272,7 +14476,9 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         // first block reaches AudioEngine so the receiver starts on its own
         // output and VAX channel.
         slice->loadFromSettings();
+        if (!self || !added) { return -1; }
         wireNnrSettings(slice);
+        if (!self || !added) { return -1; }
     } else {
         // R-R3-44: a remote window's VAX channels are this computer's. The
         // slice keeps its channel through the window's store (set by
@@ -14314,6 +14520,7 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // sliceAdded handler; both carry the same value here.
     if (!initialPanId.isEmpty()) {
         slice->setPanKey(initialPanId);
+        if (!self || !added) { return -1; }
         slice->setProperty("initialPanId", initialPanId);
     }
     if (restoreSeed && bindRestored) {
@@ -14324,14 +14531,21 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         // settings copy was written there), then the saved frequency and
         // mode through the ordinary setters, as a new slice's seed is.
         slice->restoreFromSettings(bandFromFrequency(restoreSeed->frequencyHz));
+        if (!self || !added) { return -1; }
         slice->setFrequency(restoreSeed->frequencyHz);
+        if (!self || !added) { return -1; }
         slice->setDspMode(restoreSeed->dspMode);
-    } else if (restoreSeed && !slice->restoreReceiveState(restoreSeed->frequencyHz,
-                                                         restoreSeed->dspMode)) {
-        delete slice;
-        return -1;
+        if (!self || !added) { return -1; }
+    } else if (restoreSeed) {
+        const bool restored = slice->restoreReceiveState(restoreSeed->frequencyHz, restoreSeed->dspMode);
+        if (!self || !added) { return -1; }
+        if (!restored) { delete slice; return -1; }
     }
     m_slices.append(slice);
+    m_slicePublications[slice].constructing = false;
+    const auto currentAdded = [&] {
+        return self && added && self->sliceById(index) == added.data();
+    };
     // R-R3-49: rxBlockReady reads this slice through the published view
     // from here on, and follows its mute, route and VAX channel.
     connect(slice, &SliceModel::mutedChanged, this, [this](bool) { publishSliceAudioView(); });
@@ -14348,6 +14562,7 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     connect(slice, &SliceModel::dspModeChanged, this,
             [this](DSPMode) { publishRadeModeSlices(); });
     publishSliceAudioView();
+    if (!currentAdded()) { return -1; }
 
     // ── The transmitter needs a home the moment one exists ───────────────
     //
@@ -14365,6 +14580,7 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // MainWindow handler builds reads a settled binding).
     if (m_txSliceArbiter) {
         m_txSliceArbiter->syncToSliceList();
+        if (!currentAdded()) { return -1; }
     }
 
     // ── Phase 3F Sub-Epic I: bind to a DDC stream ───────────────────────
@@ -14394,8 +14610,12 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         }
     }
     if (!restoreSeed && seedFrom && seedFrom != slice) {
-        slice->setFrequency(seedFrom->frequency());
-        slice->setDspMode(seedFrom->dspMode());
+        const double seedFrequency = seedFrom->frequency();
+        const DSPMode seedMode = seedFrom->dspMode();
+        slice->setFrequency(seedFrequency);
+        if (!currentAdded()) { return -1; }
+        slice->setDspMode(seedMode);
+        if (!currentAdded()) { return -1; }
     }
 
     // ── Roll back a slice the allocator refused ─────────────────────────
@@ -14460,9 +14680,11 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // role guard returns ahead of that emit). A Role::Remote model must
     // behave the same way here regardless of how its pool got sized: the
     // slice survives unbound, exactly as it does before any pool exists.
-    if ((!restoreSeed || bindRestored)
-        && !bindSliceToStream(slice, slice->frequency(), openingANewPan)
-        && poolReady && role() == Role::Local) {
+    const bool placementAttempted = !restoreSeed || bindRestored;
+    const bool bound = !placementAttempted
+        || bindSliceToStream(slice, slice->frequency(), openingANewPan);
+    if (!currentAdded()) { return -1; }
+    if (!bound && poolReady && role() == Role::Local) {
         // bindSliceToStream already emitted sliceAddRejected with the
         // allocator's reason for this first-bind case, so the operator has
         // been told why; this only has to undo the half-built slice.
@@ -14490,10 +14712,12 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         }
         m_slices.removeAll(slice);
         publishSliceAudioView();
+        if (!self || !added) { return -1; }
         if (m_txSliceArbiter) {
             // The syncToSliceList above may have handed TX to this slice.
             // Re-run against the list it is no longer in.
             m_txSliceArbiter->syncToSliceList();
+            if (!self || !added) { return -1; }
         }
         delete slice;
         return -1;
@@ -14537,7 +14761,11 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         const int    previousStream = slice->streamIndex();
         const double previousShift  = slice->shiftOffsetHz();
 
+        const QPointer<RadioModel> self(this);
+        const QPointer<SliceModel> target(slice);
+        const int targetId = slice->sliceIndex();
         if (bindSliceToStream(slice, freq)) { return; }
+        if (!self || !target || sliceById(targetId) != target.data()) { return; }
 
         // Not a rejection: either the pool is not sized yet (disconnected)
         // or the slice has never been bound. Nothing to roll back to.
@@ -14550,7 +14778,11 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             m_streamAllocator.streamCentreHz(previousStream) + previousShift;
 
         m_rollingBackFrequency = true;
+        const auto rollback = qScopeGuard([self] {
+            if (self) { self->m_rollingBackFrequency = false; }
+        });
         slice->setFrequency(lastGoodHz);
+        if (!self || !target || sliceById(targetId) != target.data()) { return; }
         m_rollingBackFrequency = false;
 
         emit sliceRetuneRejected(
@@ -14797,17 +15029,22 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         // is its owner's active slice when the owner had none, and the
         // station-level one when there was none (the first slice).
         m_sliceOwnership->noteSliceAdded(index);
+        if (!currentAdded()) { return -1; }
         if (!m_activeSlice) {
             m_sliceOwnership->setActive(m_sliceOwnership->mark(index).owner, index);
+            if (!currentAdded()) { return -1; }
         }
         applyActiveSlices();
+        if (!currentAdded()) { return -1; }
     } else if (!m_activeSlice) {
         m_activeSlice = slice;
         // Mark the first slice as active so isActiveSlice() returns true for it.
         // AudioEngine::rxBlockReady (3M-1b E.4) reads this flag to gate the
         // per-slice RX-audio push during MOX.
         slice->setActive(true);
+        if (!currentAdded()) { return -1; }
         emitActiveSliceChanged(0);
+        if (!currentAdded()) { return -1; }
     }
 
     // Wire this slice's DSP controls to its OWN WDSP channel.
@@ -14828,7 +15065,12 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         }
     });
 
-    emit sliceAdded(index);
+    auto publication = m_slicePublications.value(slice);
+    publication.incarnation = m_sliceOwnership->incarnation(index);
+    publication.ready = true;
+    m_slicePublications.insert(slice, publication);
+    publishReadySlices(index);
+    if (!currentAdded()) { return -1; }
     if (m_receiveLayoutManaged) {
         scheduleSettingsSave(slice);
     }
@@ -14881,8 +15123,9 @@ bool RadioModel::closeUnclaimedSlice(int sliceId)
         || !m_sliceOwnership->unclaimed().contains(sliceId)) {
         return false;
     }
-    removeSliceImpl(sliceId, true, true);
-    return sliceById(sliceId) == nullptr;
+    const QPointer<RadioModel> self(this);
+    removeSliceImpl(sliceId, true, true, true);
+    return self && self->sliceById(sliceId) == nullptr;
 }
 
 bool RadioModel::hasTransmitSlice() const
@@ -14890,9 +15133,76 @@ bool RadioModel::hasTransmitSlice() const
     return txBoundSlice() != nullptr;
 }
 
-void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast)
+void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast, bool requireUnclaimed)
 {
-    const int position = m_slices.indexOf(sliceById(sliceId));
+    const QPointer<RadioModel> self(this);
+    const QPointer<SliceModel> originalVictim(sliceById(sliceId));
+    const quint64 originalIncarnation = m_sliceOwnership->incarnation(sliceId);
+    if (!originalVictim || m_sliceRemovalsInFlight.contains(originalVictim)) { return; }
+    bool inFlightRegistered = false;
+    const auto releaseFlight = qScopeGuard([self, originalVictim, &inFlightRegistered] {
+        if (self && inFlightRegistered) { self->m_sliceRemovalsInFlight.removeAll(originalVictim); }
+    });
+    const Role removalRole = m_role;
+    bool removalBegun = false;
+    bool detached = false;
+    bool announced = false;
+    bool publicationBarrier = false;
+    bool wasPublished = false;
+    // Scope completion touches only the original record/object. A notification
+    // may dispose the model or create a different incarnation with this ID.
+    const auto finishRemoval = qScopeGuard([self, originalVictim, originalIncarnation,
+                                           sliceId, persist, removalRole,
+                                           &removalBegun, &detached, &announced, &publicationBarrier, &wasPublished] {
+        if (!self || !removalBegun) { return; }
+        const auto releasePublication = qScopeGuard([self, sliceId, &publicationBarrier] {
+            if (!self || !publicationBarrier) { return; }
+            const int remaining = self->m_sliceRemovalBarriers.value(sliceId) - 1;
+            if (remaining > 0) { self->m_sliceRemovalBarriers.insert(sliceId, remaining); }
+            else { self->m_sliceRemovalBarriers.remove(sliceId); }
+            self->publishReadySlices(sliceId);
+        });
+        if (!detached) {
+            if (originalVictim && self->sliceById(sliceId) == originalVictim.data()) {
+                self->m_sliceOwnership->cancelRemove(sliceId, originalIncarnation);
+            } else {
+                self->m_sliceOwnership->completeRemove(sliceId, originalIncarnation);
+            }
+            return;
+        }
+        if (originalVictim) { originalVictim->deleteLater(); }
+        if (wasPublished && !announced) {
+            announced = true;
+            emit self->sliceRemoved(sliceId);
+            if (!self) { return; }
+        }
+        if (removalRole == Role::Local) {
+            self->m_sliceOwnership->completeRemove(sliceId, originalIncarnation);
+            if (!self) { return; }
+        }
+        if (self->m_receiveLayoutManaged && persist) { self->scheduleSettingsSave(); }
+    });
+    const auto currentVictim = [&]() {
+        if (!self || !originalVictim || self->m_role != removalRole) { return false; }
+        if (detached) {
+            return self->sliceById(sliceId) == nullptr
+                && (removalRole != Role::Local
+                    || self->m_sliceOwnership->removalMatches(sliceId, originalIncarnation));
+        }
+        if (self->sliceById(sliceId) != originalVictim.data()) { return false; }
+        if (removalRole == Role::Local) {
+            const bool sameRecord = removalBegun
+                ? self->m_sliceOwnership->removalMatches(sliceId, originalIncarnation)
+                : self->m_sliceOwnership->incarnation(sliceId) == originalIncarnation;
+            if (!sameRecord || (requireUnclaimed
+                && (!self->m_sliceOwnership->mark(sliceId).owner.isEmpty()
+                    || !self->m_sliceOwnership->listenersOf(sliceId).isEmpty()))) { return false; }
+        }
+        return self->m_slices.indexOf(originalVictim.data()) >= 0
+            && (self->m_slices.size() > 1 || mayCloseLast
+                || (removalRole == Role::Remote && self->m_stationMayCloseLastSlice));
+    };
+    int position = m_slices.indexOf(originalVictim.data());
     if (position < 0) {
         return;
     }
@@ -14910,15 +15220,29 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast)
         && !(m_role == Role::Remote && m_stationMayCloseLastSlice)) {
         return;
     }
-    // A later slice on this id was not restored from the saved layout.
-    m_receiveLayoutHydratedIds.remove(sliceId);
-
-    // External diversity has one stable source owner: Slice A (id 0). Stop
-    // while that object and its worker route are still intact, before list
-    // removal can make any positional lookup observe Slice B as "first".
-    if (sliceId == kExternalDiversityTargetSliceId) {
-        stopExternalDiversityRoute();
+    // Closing the requested owner stops/off while its route is intact.
+    // The transition notifies observers: they may retire the model, close
+    // this victim, reuse its id, or change the list and its last-slice gate.
+    if (sliceId == m_diversityTargetSliceId && !setDiversityTarget(-1)) {
+        return;
     }
+    if (!self || !originalVictim || sliceById(sliceId) != originalVictim.data()
+        || m_sliceOwnership->incarnation(sliceId) != originalIncarnation
+        || (requireUnclaimed && !m_sliceOwnership->unclaimed().contains(sliceId))) {
+        return;
+    }
+    position = m_slices.indexOf(originalVictim.data());
+    if (position < 0 || (m_slices.size() == 1 && !mayCloseLast
+        && !(m_role == Role::Remote && m_stationMayCloseLastSlice))) {
+        return;
+    }
+    // The initial off publication permits the existing nested close/recreate
+    // behavior. Acquire the same-object guard only after that boundary has
+    // revalidated this original victim, before later removal notifications.
+    m_sliceRemovalsInFlight.append(originalVictim);
+    inFlightRegistered = true;
+    // Only the original, still-current victim leaves the hydrated layout.
+    m_receiveLayoutHydratedIds.remove(sliceId);
 
     // Phase 3F Sub-Epic C Task 7: if the victim is currently TX-bound, hand
     // TX off to another slice BEFORE removal so the arbiter never observes
@@ -14931,6 +15255,7 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast)
         m_dirtySettingsSliceIds.remove(victim->sliceIndex());
         m_settingsSaveScheduled = true;
         flushPendingSettingsSave();
+        if (!currentVictim()) { return; }
     }
     {
         // RADE threads (2026-09-30): a closed slice takes its RADE decoder
@@ -14943,15 +15268,17 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast)
         const auto route = m_radeRxRoutes.constFind(victimId);
         if (route != m_radeRxRoutes.cend() && route->slice == victim) {
             retireRadeRxRoute(victimId, route->serial);
+            if (!currentVictim()) { return; }
         }
         if (m_wdspEngine && m_wdspEngine->radeChannel(victimId) != nullptr) {
             m_wdspEngine->destroyRadeChannel(victimId);
+            if (!currentVictim()) { return; }
         }
     }
     // Slice control plan Task 7: the last slice has no other slice to hand
     // transmit to; the binding is released once it has left the list.
     if (victim->isTxSlice() && m_txSliceArbiter && m_slices.size() > 1) {
-        const int fallbackPosition = (position == 0) ? 1 : 0;
+        const int fallbackPosition = (m_slices.indexOf(victim) == 0) ? 1 : 0;
         SliceModel* fallback = m_slices.at(fallbackPosition);
         // iPhone app plan Task 77 (ruling 8.12): the holder's transmit slice
         // closing moves transmit to another of the holder's slices. With
@@ -14971,6 +15298,7 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast)
             }
         }
         m_txSliceArbiter->requestHandoff(fallback->sliceIndex());
+        if (!currentVictim()) { return; }
     }
 
     for (auto it = m_widebandDemands.begin(); it != m_widebandDemands.end();) {
@@ -14985,12 +15313,22 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast)
     // active slice; its mark stays until sliceRemoved has been announced,
     // so what the Core sends about its removal still knows whose it was.
     if (role() == Role::Local) {
+        removalBegun = true;
         m_sliceOwnership->beginRemove(sliceId);
     }
+    if (!currentVictim()) { return; }
+    position = m_slices.indexOf(originalVictim.data());
+    ++m_sliceRemovalBarriers[sliceId];
+    publicationBarrier = true;
+    wasPublished = m_slicePublications.value(originalVictim.data()).published;
+    m_slicePublications.remove(originalVictim.data());
     SliceModel* slice = m_slices.takeAt(position);
+    detached = true;
+    removalBegun = true; // Remote removal also owns detached-object completion.
     // R-R3-49: the audio thread stops seeing this slice before it is
     // deleted; it never held a pointer to it.
     publishSliceAudioView();
+    if (!currentVictim()) { return; }
     // R-R3-40: a slice created later with this ID must not inherit this
     // one's load snapshot or measure from its baseline.
     m_dspLoadSampler.forget(sliceId);
@@ -15000,9 +15338,11 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast)
     // Reassert the invariant after the victim leaves the list.
     if (m_txSliceArbiter) {
         m_txSliceArbiter->syncToSliceList();
+        if (!currentVictim()) { return; }
         // Slice control plan Task 7: no slice left, so no transmit slice.
         if (m_slices.isEmpty()) {
             m_txSliceArbiter->releaseBinding();
+            if (!currentVictim()) { return; }
         }
     }
 
@@ -15019,52 +15359,64 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast)
     // streaming it. The WDSP channel stays open for reuse.
     const int freedStream = slice->streamIndex();
     slice->setStreamIndex(-1);
+    if (!currentVictim()) { return; }
     slice->setStreamCtunPinned(false);
+    if (!currentVictim()) { return; }
     slice->setStreamEpoch(0);
+    if (!currentVictim()) { return; }
     // ...and stop it running. Unbind is the counterpart of the bind-time
     // activation: Thetis pairs its enable (SetChannelState(..., 1, 0)) with
     // SetChannelState(..., 0, 0) on disable (console.cs:37398-37400
     // [v2.10.3.15]). The channel object survives for whichever slice takes
     // this id next; it just stops dispatching in the meantime.
     deactivateSliceChannel(sliceId);
+    if (!currentVictim()) { return; }
     if (freedStream >= 0 && slicesOnStream(freedStream).isEmpty()) {
         retireStream(freedStream);
+        if (!currentVictim()) { return; }
         // Same pairing as bindSliceToStream's two edges: a receiver left
         // active for a stream with no slices keeps a DDC in the routing
         // table, and in the announced receiver count, that nothing reads.
         syncReceiverToStream(freedStream, /*live=*/false);
+        if (!currentVictim()) { return; }
     }
     if (freedStream >= 0) {
         republishStreamBindings(freedStream);
+        if (!currentVictim()) { return; }
     }
     requestDdcAssignment();
+    if (!currentVictim()) { return; }
 
     if (role() == Role::Local) {
         // iPhone app Task 73: the owner's next slice becomes its active one,
         // and the station-level slice moves with it when this was it.
         slice->setActive(false);
+        if (!currentVictim()) { return; }
         applyActiveSlices();
+        if (!currentVictim()) { return; }
     } else if (m_activeSlice == slice) {
         // Clear the active flag before reassigning. The deleted slice's flag
         // is moot, but the new active slice needs to be marked.
         slice->setActive(false);
+        if (!currentVictim()) { return; }
         m_activeSlice = m_slices.isEmpty() ? nullptr : m_slices.first();
         if (m_activeSlice) {
             m_activeSlice->setActive(true);
+            if (!currentVictim()) { return; }
         }
         emitActiveSliceChanged(m_activeSlice ? 0 : -1);
+        if (!currentVictim()) { return; }
     }
 
     // Phase 3F Sub-Epic C Task 7: deleteLater() rather than delete to keep
     // any in-flight queued signals targeting this slice safe.
     slice->deleteLater();
-    emit sliceRemoved(sliceId);
-    if (role() == Role::Local) {
-        m_sliceOwnership->endRemove(sliceId);
+    if (wasPublished) {
+        announced = true;
+        emit sliceRemoved(sliceId);
+        if (!self) { return; }
     }
-    if (m_receiveLayoutManaged && persist) {
-        scheduleSettingsSave();
-    }
+    // Original-record completion and settings tail live in finishRemoval.
 }
 
 // Phase 3F Sub-Epic C Task 7: AetherSDR-faithful +RX entry point.
@@ -16025,8 +16377,13 @@ void RadioModel::applyActiveSlices()
     if (role() != Role::Local) {
         return;
     }
-    for (SliceModel* slice : std::as_const(m_slices)) {
+    const QPointer<RadioModel> self(this);
+    QList<QPointer<SliceModel>> slices;
+    for (SliceModel* slice : std::as_const(m_slices)) { slices.append(slice); }
+    for (const QPointer<SliceModel>& slice : std::as_const(slices)) {
+        if (!slice || !m_slices.contains(slice)) { continue; }
         slice->setActive(m_sliceOwnership->isActive(slice->sliceIndex()));
+        if (!self) { return; }
     }
     const int stationId = m_sliceOwnership->stationActiveSlice();
     SliceModel* next = stationId >= 0 ? sliceById(stationId) : nullptr;
@@ -16040,6 +16397,7 @@ void RadioModel::applyActiveSlices()
     }
     m_activeSlice = next;
     emitActiveSliceChanged(next ? static_cast<int>(m_slices.indexOf(next)) : -1);
+    if (!self) { return; }
     // Ruling 5.11: the FreeDV Reporter lists a RADE slice when there is
     // one, else the station-level slice.
     refreshFreedvReportedFrequency();
@@ -16081,9 +16439,11 @@ bool RadioModel::setActiveSliceByIdFor(const QByteArray& owner, int sliceId)
         || !SliceAccessPolicy::mayChange(*m_sliceOwnership, owner, sliceId)) {
         return false;
     }
+    const QPointer<RadioModel> self(this);
     m_sliceOwnership->setActive(owner, sliceId);
+    if (!self) { return false; }
     applyActiveSlices();
-    return true;
+    return !self.isNull();
 }
 
 bool RadioModel::setActiveRxFor(const QByteArray& device, int sliceId)
@@ -16151,6 +16511,10 @@ void RadioModel::setKeyedBy(const KeyedBy& keyedBy)
         return;
     }
     m_keyedBy = keyedBy;
+    if (m_remoteRadioKey && keyedBy.deviceId == m_remoteRadioKey->device
+        && m_moxController->currentKeyer().session == m_remoteRadioKey->owner) {
+        m_remoteRadioKey->epoch = keyedBy.epoch;
+    }
     // The Radio Status page's PTT source follows the key (a paired device's
     // key is Remote, its VOX key VOX; iPhone app plan Task 36).
     refreshRadioStatusPtt();
@@ -16161,6 +16525,67 @@ void RadioModel::setKeyedBy(const KeyedBy& keyedBy)
 
 // iPhone app plan Task 36 (R-IOS-13): the remote microphone source. Fix
 // wave C2: by device, with one writer at a time.
+void RadioModel::setRemoteMicSelection(const QString& owner, const QByteArray& device,
+                                       RemoteMicSource source)
+{
+    if (m_role == Role::Local && !owner.isEmpty() && !device.isEmpty()) {
+        m_remoteMicSelections.insert(owner, RemoteMicSelection{device, source});
+    }
+}
+
+RemoteMicSource RadioModel::remoteMicSelection(const QString& owner, const QByteArray& device) const
+{
+    const auto it = m_remoteMicSelections.constFind(owner);
+    return it != m_remoteMicSelections.cend() && it->device == device
+        ? it->source : RemoteMicSource::ClientAudio;
+}
+
+void RadioModel::forgetRemoteMicSession(const QString& owner)
+{
+    m_remoteMicSelections.remove(owner);
+    if (m_remoteRadioCandidate && m_remoteRadioCandidate->owner == owner) {
+        m_remoteRadioCandidate.reset();
+    }
+    // The admitted source outlives its session until hardware dekeys.
+}
+
+void RadioModel::beginRemoteRadioKeyAttempt(const QString& owner, const QByteArray& device,
+                                           quint32 commandId)
+{
+    if (remoteMicSelection(owner, device) == RemoteMicSource::RadioMic) {
+        m_remoteRadioCandidate = RemoteRadioKey{owner, device, commandId, 0};
+    }
+}
+
+void RadioModel::finishRemoteRadioKeyAttempt(const QString& owner, const QByteArray& device,
+                                            quint32 commandId, quint32 acceptedEpoch)
+{
+    if (!m_remoteRadioCandidate || m_remoteRadioCandidate->owner != owner
+        || m_remoteRadioCandidate->device != device || m_remoteRadioCandidate->commandId != commandId) {
+        return;
+    }
+    if (acceptedEpoch != 0 && m_remoteRadioKey && m_remoteRadioKey->owner == owner
+        && m_remoteRadioKey->device == device && m_remoteRadioKey->commandId == commandId) {
+        m_remoteRadioKey->epoch = acceptedEpoch;
+    }
+    m_remoteRadioCandidate.reset();
+}
+
+bool RadioModel::remoteRadioMicKeyActive(const QByteArray& device) const
+{
+    return m_remoteRadioMicActive && m_remoteRadioKey && m_remoteRadioKey->device == device
+        && m_moxController && m_moxController->currentKeyer().deviceId == device
+        && m_moxController->currentKeyer().session == m_remoteRadioKey->owner
+        && (m_remoteRadioKey->epoch == 0 || m_keyedBy.epoch == m_remoteRadioKey->epoch);
+}
+
+void RadioModel::setRemoteRadioMicActive(bool active)
+{
+    m_remoteRadioMicActive = active;
+    if (m_txWorker) { m_txWorker->setRemoteRadioMicActive(active); }
+    updateRemoteMicSource();
+}
+
 void RadioModel::openRemoteMicLine(const QByteArray& deviceId)
 {
     if (m_role != Role::Local || deviceId.isEmpty()) {
@@ -16255,7 +16680,8 @@ void RadioModel::updateRemoteMicSource()
     }
     const bool mox = m_moxController != nullptr && m_moxController->isMox();
     const QByteArray keyedDevice =
-        mox && remoteMicLineOpen(m_keyedBy.deviceId) ? m_keyedBy.deviceId : QByteArray();
+        mox && !m_remoteRadioMicActive && remoteMicLineOpen(m_keyedBy.deviceId)
+            ? m_keyedBy.deviceId : QByteArray();
     // A key that started on a device's line stays on the ring until it
     // ends, even if the line goes away meanwhile: the transmitter then
     // hears silence, never the station's own microphone.
@@ -16271,11 +16697,11 @@ void RadioModel::updateRemoteMicSource()
     // else, unkeyed, the VOX device's. While another key is on, none (that
     // key's audio is its own source).
     QByteArray writer = keyedDevice;
-    if (writer.isEmpty() && remoteMicLineOpen(m_remoteMicPrimingDevice)
+    if (!m_remoteRadioMicActive && writer.isEmpty() && remoteMicLineOpen(m_remoteMicPrimingDevice)
         && (!mox || m_keyedBy.isEmpty() || m_keyedBy.deviceId == m_remoteMicPrimingDevice)) {
         writer = m_remoteMicPrimingDevice;
     }
-    if (writer.isEmpty() && !mox) {
+    if (!m_remoteRadioMicActive && writer.isEmpty() && !mox) {
         writer = remoteVoxDevice();
     }
     const bool inUse = lineLostMidKey || !writer.isEmpty();
@@ -16393,7 +16819,9 @@ int RadioModel::restoreSliceFor(const QByteArray& owner, int sliceId,
 // let the two disagree about which slice just became active.
 void RadioModel::emitActiveSliceChanged(int index)
 {
+    const QPointer<RadioModel> self(this);
     emit activeSliceChanged(index);
+    if (!self) { return; }
     if (index >= 0 && index < m_slices.size() && m_slices.at(index) != nullptr) {
         emit activeSliceIdChanged(m_slices.at(index)->sliceIndex());
     } else {
@@ -17127,8 +17555,11 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     // Wisdom initialization below can deliver another queued selection while
     // this call still owns the model. Never retire/re-enter it from that loop.
     if (m_localConnectionSetupActive) { return; }
+    const QPointer<RadioModel> self(this);
     m_localConnectionSetupActive = true;
-    const auto finishSetup = qScopeGuard([this] { m_localConnectionSetupActive = false; });
+    const auto finishSetup = qScopeGuard([self] {
+        if (self) { self->m_localConnectionSetupActive = false; }
+    });
 
     // Tear down any existing connection
     if (m_connection) {
@@ -17490,6 +17921,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     // reconnect, teardownConnection released EVERY slice's binding, so this
     // is also where Slice B and friends come back.
     bindUnboundSlices();
+    if (!self) { return; }
 
     qCInfo(lcConnection) << "Sub-Epic I: streams=" << poolStreams
                          << "channels=" << poolSlices;
@@ -18575,6 +19007,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                 // iPhone app plan Task 36: the remote microphone ring,
                 // which outlives the worker.
                 m_txWorker->setRemoteMicFeed(m_remoteMicFeed.get());
+                m_txWorker->setRemoteRadioMicActive(m_remoteRadioMicActive);
                 // R-R3-39: the TX channel stays on this thread. Its setters
                 // post their WDSP calls to the transmit lane (applied even
                 // while no mic block arrives); the worker only runs the
@@ -20115,6 +20548,35 @@ SliceModel* RadioModel::txBoundSlice() const
     return sliceById(m_txSliceArbiter->txBoundSliceId());
 }
 
+QString RadioModel::micSourceChangeReason(MicSource desired) const
+{
+    if (m_role != Role::Remote) { return {}; }
+    if (!m_station) { return remoteMicLegacyReason(); }
+    if (auto* tx = m_station->remoteTransmit()) {
+        if (tx->micSourcePending()) { return tx->micSourceReason(); }
+        if (tx->micKeyDown() || tx->screenKeyDown() || tx->tuneAsked() || m_transmitModel.isMox()) {
+            return QStringLiteral("Release transmit before changing the microphone source.");
+        }
+    }
+    if (desired == MicSource::Radio && !m_station->remoteMicSourceAvailable()) {
+        return remoteMicLegacyReason();
+    }
+    return {};
+}
+
+bool RadioModel::requestMicSource(MicSource desired, std::function<void()> accepted)
+{
+    const QString reason = micSourceChangeReason(desired);
+    if (!reason.isEmpty()) { return false; }
+    if (m_role == Role::Remote) {
+        return m_station && m_station->requestMicSource(desired, std::move(accepted)).sent;
+    }
+    m_transmitModel.setMicSource(desired);
+    if (m_transmitModel.micSource() != desired) { return false; }
+    if (accepted) { accepted(); }
+    return true;
+}
+
 void RadioModel::installBandPlanMoxCheck()
 {
     if (!m_moxController) {
@@ -20334,6 +20796,18 @@ bool RadioModel::pcCaptureGatesKeying() const
     // now; the PC microphone is not read, so its readiness does not gate
     // the key and its loss does not release it.
     if (m_remoteMicInUse) {
+        return false;
+    }
+    const auto attempt = m_moxController ? m_moxController->keyAttemptIdentity() : std::nullopt;
+    if (attempt) {
+        if (m_remoteRadioCandidate && attempt->deviceId == m_remoteRadioCandidate->device
+            && attempt->session == m_remoteRadioCandidate->owner
+            && remoteMicSelection(attempt->session, attempt->deviceId) == RemoteMicSource::RadioMic) {
+            return false;
+        }
+    } else if (m_moxController && m_moxController->isMox()
+               && remoteRadioMicKeyActive(m_moxController->currentKeyer().deviceId)
+               && (m_remoteRadioKey->epoch == 0 || m_keyedBy.epoch == m_remoteRadioKey->epoch)) {
         return false;
     }
     // TCI audio: the TX worker takes TCI audio instead of the microphone
@@ -21938,45 +22412,11 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     });
 
     // Phase 3F Sub-Epic G Task 13: route SliceModel diversity state to
-    // WdspEngine's process-wide External Diversity owner.
-    //
+    // WdspEngine has one process-wide External Diversity owner. The
+    // coordinator is wired at slice creation, including before connect.
     // CRITICAL: WDSP pdiv[] is a 2-slot array (MAX_EXT_DIVS=2) keyed by
-    // External Diversity id (0 or 1), NOT the RXA channel id. For bench-
-    // minimum, route ONLY the stable Slice A id through DivId 0. Slice B and
-    // per-pan diversity defer to a follow-up when a proper DivId allocator
-    // lands.
-    connect(slice, &SliceModel::diversityEnabledChanged, this,
-            [this, slice](bool on) {
-        if (slice->sliceIndex() != kExternalDiversityTargetSliceId
-            || sliceById(kExternalDiversityTargetSliceId) != slice) {
-            return;
-        }
-        if (!on) {
-            stopExternalDiversityRoute();
-        }
-        // Recompute first on enable so source resolution uses the assignment
-        // that actually migrated Slice A onto DDC0/DDC1. On disable the route
-        // is already clear/stopped/destroyed before the wire state reverts.
-        refreshDdcAssignmentForRadioState();
-    });
-    connect(slice, &SliceModel::diversityPhaseDegChanged, this,
-            [this, slice](double /*deg*/) {
-        if (!m_externalDiversityRouteActive
-            || slice->sliceIndex() != kExternalDiversityTargetSliceId
-            || sliceById(kExternalDiversityTargetSliceId) != slice) {
-            return;
-        }
-        configureExternalDiversityRotation(slice);
-    });
-    connect(slice, &SliceModel::diversityGainDbChanged, this,
-            [this, slice](double /*db*/) {
-        if (!m_externalDiversityRouteActive
-            || slice->sliceIndex() != kExternalDiversityTargetSliceId
-            || sliceById(kExternalDiversityTargetSliceId) != slice) {
-            return;
-        }
-        configureExternalDiversityRotation(slice);
-    });
+    // External Diversity id (0 or 1), NOT the RXA channel id. All movable
+    // owners reuse DivId 0; no per-slice WDSP slot allocation.
 
     // Send initial frequency to radio (after connection init completes).
     // XIT offset applied here too so on-connect TX NCO matches the stored
@@ -22380,6 +22820,15 @@ void RadioModel::applyAlexAntennaForBand(Band band, bool isTx)
 // ---------------------------------------------------------------------------
 void RadioModel::republishAlexAdcSlices()
 {
+    const QPointer<RadioModel> self(this);
+    const auto participants = sliceSnapshot(m_slices);
+    const auto currentParticipants = [&] {
+        if (!self) { return false; }
+        for (const QPointer<SliceModel>& slice : participants) {
+            if (!slice || self->sliceById(slice->sliceIndex()) != slice.data()) { return false; }
+        }
+        return true;
+    };
     // Re-entrancy guard. notifySlicesOnAdc below recomputes, and a recompute
     // that lands on a new answer emits bpfStateChanged, which is wired back
     // here (see the connect in the constructor) so that an operator override
@@ -22402,7 +22851,7 @@ void RadioModel::republishAlexAdcSlices()
     }
     m_republishingAlexBpf = true;
     const QScopeGuard clearReentrancyGuard(
-        [this]() { m_republishingAlexBpf = false; });
+        [self = QPointer<RadioModel>(this)]() { if (self) { self->m_republishingAlexBpf = false; } });
 
     // Two chains: Alex0/ADC0 and Alex1/ADC1. AlexController is sized to match.
     constexpr int kAdcCount  = 2;
@@ -22439,7 +22888,7 @@ void RadioModel::republishAlexAdcSlices()
     // count and the receiver count are the same number. It never faces five
     // slices over two chains, so it never had to answer this. NereusSDR-
     // original policy, stated per the reporter's requirement.
-    const bool diversityPair = diversityActive() && chainCount >= 2;
+    const bool diversityPair = diversityPairAssigned() && chainCount >= 2;
 
     std::array<std::array<Band, kSliceSlots>, kAdcCount> bands;
     for (auto& perAdc : bands) { perAdc.fill(Band::Count); }
@@ -22570,7 +23019,11 @@ void RadioModel::republishAlexAdcSlices()
         const double hz = s->frequency();
         const Band   b  = bandFromFrequency(hz);
 
-        if (diversityPair) {
+        // Both coherent front ends serve the complete actual-live input
+        // demand, including a cohost on a different stream. Away and unbound
+        // slices were excluded above; no requested-only participant counts.
+        const bool pairSlice = diversityPair;
+        if (pairSlice) {
             for (int c = 0; c < chainCount; ++c) {
                 addToChain(c, b, hz);
                 countedSlices[static_cast<size_t>(c)].append(s);
@@ -22582,7 +23035,7 @@ void RadioModel::republishAlexAdcSlices()
 
         // The slot the connection knows this slice's receiver by, as
         // republishReceiverVfoFrequencies finds it.
-        if ((diversityPair || chain == 0) && m_receiverManager != nullptr) {
+        if ((pairSlice || chain == 0) && m_receiverManager != nullptr) {
             const ReceiverConfig cfg = m_receiverManager->receiverConfig(s->streamIndex());
             if (cfg.active && cfg.hardwareRx >= 0 && cfg.hardwareRx < 32) {
                 countedSlotsAdc0 |= (1u << cfg.hardwareRx);
@@ -22750,9 +23203,11 @@ void RadioModel::republishAlexAdcSlices()
             }
         }
         m_alexController.setSwitchBypass(0, chain0Switch, chain0Detail);
+        if (!currentParticipants()) { return; }
         // SetAlexHPFBits writes Alex0 only (netInterface.c:604-621
         // [v2.10.3.15]): chain 1 is never bypassed by these switches.
         m_alexController.setSwitchBypass(1, AlexController::SwitchBypass::None);
+        if (!currentParticipants()) { return; }
     }
 
     // Every chain AlexController models is notified, including one the board
@@ -22761,6 +23216,7 @@ void RadioModel::republishAlexAdcSlices()
     // previously connected two-chain radio.
     for (int adc = 0; adc < kAdcCount; ++adc) {
         m_alexController.notifySlicesOnAdc(adc, bands[adc]);
+        if (!currentParticipants()) { return; }
     }
 
     // Translate each chain's effective state into Thetis HPF bits.
@@ -22922,8 +23378,10 @@ void RadioModel::republishAlexAdcSlices()
             }
         }
         m_alexController.setLowPassHold(0, forcing, lowPassReason);
+        if (!currentParticipants()) { return; }
         // The low-pass is on ADC0's input only.
         m_alexController.setLowPassHold(1, -1, QString());
+        if (!currentParticipants()) { return; }
     }
 
     if (m_connection == nullptr) {
@@ -23717,9 +24175,12 @@ void RadioModel::prepareReceiveLayout(const QString& radioMac)
                                       tr("No saved layout; waiting to start the configured receivers."));
         return;
     }
+    const QPointer<RadioModel> self(this);
     QString error = layout.error;
-    if (layout.state == ReceiveLayoutStore::LoadState::Loaded
-        && hydrateReceiveLayout(mac, layout, &error)) {
+    const bool hydrated = layout.state == ReceiveLayoutStore::LoadState::Loaded
+        && hydrateReceiveLayout(mac, layout, &error);
+    if (!self) { return; }
+    if (hydrated) {
         m_receiveLayoutOverridesCount = true;
         setReceiveLayoutRestoreStatus(QStringLiteral("pending"),
                                       tr("Saved receivers loaded; waiting for radio resources."));
@@ -23903,7 +24364,9 @@ bool RadioModel::captureReceiveLayout(QString* error)
     }
     QString reason;
     if (ReceiveLayoutStore::stage(AppSettings::instance(), m_receiveLayoutMac,
-                                  slices, &reason, m_restoredRadeReceiveOwner)) {
+                                  slices, &reason, m_restoredRadeReceiveOwner,
+                                  m_diversityTargetSliceId >= 0
+                                      ? std::optional<int>(m_diversityTargetSliceId) : std::nullopt)) {
         if (error) {
             error->clear();
         }
@@ -23963,8 +24426,11 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
         return refuse(validationError);
     }
 
+    const QPointer<RadioModel> self(this);
     m_receiveLayoutHydrating = true;
-    const auto finishHydration = qScopeGuard([this] { m_receiveLayoutHydrating = false; });
+    const auto finishHydration = qScopeGuard([self] {
+        if (self) { self->m_receiveLayoutHydrating = false; }
+    });
     // Protect both scheduled and reentrant forced flushes. This stays closed
     // after passive hydration until the startup owner admits real resources.
     m_receiveLayoutPendingAdmission = true;
@@ -23979,7 +24445,8 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
         }
     }
 
-    const QList<SliceModel*> previous = m_slices;
+    QList<QPointer<SliceModel>> previous;
+    for (SliceModel* slice : std::as_const(m_slices)) { previous.append(slice); }
     QList<SliceModel*> restored;
     for (const ReceiveSliceState& state : layout.slices) {
         SliceModel* slice = sliceById(state.id);
@@ -24002,9 +24469,22 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
     // Create replacements first: normal removal keeps at least one slice.
     // Retire with all ordinary stream/RADE/arbiter cleanup, but do not save
     // provisional bootstrap preferences or flush the partial topology.
-    for (SliceModel* slice : previous) {
-        if (!restored.contains(slice)) {
+    QList<QPointer<SliceModel>> restoredIdentities;
+    for (SliceModel* slice : std::as_const(restored)) { restoredIdentities.append(slice); }
+    for (const QPointer<SliceModel>& slice : previous) {
+        if (slice && sliceById(slice->sliceIndex()) == slice.data() && !restored.contains(slice.data())) {
             removeSliceImpl(slice->sliceIndex(), false);
+            if (!self) { return false; }
+        }
+    }
+    // A close observer may have changed this roster while the old owner
+    // stopped. Never publish raw saved pointers over a different live list.
+    if (m_slices.size() != restoredIdentities.size()) {
+        return refuse(tr("Receive resources changed while restoring the layout."));
+    }
+    for (const QPointer<SliceModel>& slice : restoredIdentities) {
+        if (!slice || sliceById(slice->sliceIndex()) != slice.data()) {
+            return refuse(tr("Receive resources changed while restoring the layout."));
         }
     }
     m_slices = restored;
@@ -24037,13 +24517,17 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
             // owner change, which left the slice released to a listener
             // that ruling Q9 never lets adopt it: the lone device read
             // "Nobody controls" on its own slice.
+            if (!self) { return false; }
             const QList<QByteArray> listeners = m_sliceOwnership->listenersOf(state.id);
             for (const QByteArray& device : listeners) {
                 m_sliceOwnership->leave(device, state.id);
+                if (!self) { return false; }
             }
         }
+        if (!self) { return false; }
     }
     m_sliceOwnership->setOrder(order);
+    if (!self) { return false; }
     // Descriptor order is authoritative, so an unchanged active identity can
     // still have a different list position. Publish the final pair together.
     if (!m_activeSlice || !m_slices.contains(m_activeSlice)) {
@@ -24051,8 +24535,27 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
     } else {
         emitActiveSliceChanged(m_slices.indexOf(m_activeSlice));
     }
+    if (!self) { return false; }
+    {
+        const bool previousCommit = m_diversityCommitting;
+        m_diversityCommitting = true;
+        const auto committing = qScopeGuard([self, previousCommit] {
+            if (self) { self->m_diversityCommitting = previousCommit; }
+        });
+        const int savedDiversityOwner = layout.diversityOwnerId.value_or(-1);
+        m_diversityTargetSliceId = sliceById(savedDiversityOwner) ? savedDiversityOwner : -1;
+        QList<QPointer<SliceModel>> slices;
+        for (SliceModel* slice : std::as_const(m_slices)) { slices.append(slice); }
+        for (const QPointer<SliceModel>& slice : slices) {
+            if (!slice || sliceById(slice->sliceIndex()) != slice.data()) { return false; }
+            slice->setDiversityEnabled(slice->sliceIndex() == m_diversityTargetSliceId);
+            if (!self) { return false; }
+        }
+    }
+    publishDiversityState();
+    if (!self) { return false; }
     emit receiveLayoutHydrated();
-    return true;
+    return bool(self);
 }
 
 // Coalesce settings saves to avoid writing on every scroll tick.
@@ -25591,6 +26094,12 @@ void RadioModel::wireTxChannelKeying()
     disconnectTxChannelKeying();
     m_txKeyingChannel = m_txChannel;
     const quint64 keyingGeneration = m_txKeyingGeneration;
+    const QPointer<TxChannel> channel = m_txChannel;
+    m_txKeyingConnections.append(connect(m_txChannel, &TxChannel::rfGateOpened, this,
+            [this, channel, keyingGeneration](quint64 sequence) {
+                if (keyingGeneration != m_txKeyingGeneration) { return; }
+                onTgxlRfGateOpened(channel.data(), sequence);
+            }, Qt::QueuedConnection));
     // F.1 — txReady → setRunning(true), GATED on interlockGranted.
     // From Thetis console.cs:29595 [v2.10.3.13] — TX-on callsite after
     // Thread.Sleep(rf_delay) in chkMOX_CheckedChanged2.
@@ -30369,6 +30878,8 @@ bool RadioModel::startTgxlAutotuneFor(const KeyerIdentity& keyer, QString* reaso
     QString refusal;
     if (!m_tgxlConnection || !m_tgxlConnection->isConnected()) {
         refusal = QStringLiteral("No Tuner Genius is connected to the Core.");
+    } else if (!m_txChannel) {
+        refusal = tunerTuneEndedReason(TunerTuneEnd::CarrierNotStarted);
     } else if (m_tgxlAutotuneInProgress || m_isTuning) {
         refusal = QStringLiteral("The tuner is already tuning.");
     } else if (tgxlRfFlowing()) {
@@ -30438,6 +30949,10 @@ void RadioModel::finishTgxlAutotuneCycle(const QString& unkeyedReason)
     if (!m_tgxlAutotuneInProgress) {
         return;
     }
+    m_tgxlCarrierChannel.clear();
+    m_tgxlCarrierSequence = 0;
+    m_tgxlCarrierReady = false;
+    m_tgxlSettlePending = false;
     setTgxlAutotuneInProgress(false);
     // TGXL tune lane fix round (M5): a take still running for this cycle
     // keys nothing when it ends.
@@ -30644,7 +31159,7 @@ void RadioModel::endAmpChangeover()
             && m_moxController && m_moxController->isMox()) {
             qCInfo(lcConnection) << "RF-flow gate: the amplifier finished switching;"
                                     " starting TxChannel";
-            m_txChannel->setRunningAsync(true);
+            openTxRfGate();
         }
     }
     retryOwedAmpRestore();
@@ -30667,7 +31182,20 @@ void RadioModel::openTxRfGate()
                                 " switches";
         return;
     }
-    m_txChannel->setRunningAsync(true);
+    const bool tuningCycle = m_tgxlAutotuneInProgress && m_isTuning;
+    const quint64 cycle = m_tgxlCycleGeneration;
+    const QPointer<TxChannel> channel = m_txChannel;
+    if (tuningCycle) {
+        m_tgxlCarrierChannel = channel;
+        m_tgxlCarrierCycle = cycle;
+        m_tgxlCarrierReady = false;
+        m_tgxlSettlePending = false;
+    }
+    const quint64 sequence = channel->setRunningAsync(true);
+    if (tuningCycle && m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
+        && channel == m_txChannel && channel == m_tgxlCarrierChannel) {
+        m_tgxlCarrierSequence = sequence;
+    }
 }
 
 void RadioModel::onAmpHoldDeadline()
@@ -30782,6 +31310,12 @@ QString RadioModel::beginTgxlAutotune(bool fromHardware)
     // Matches TunerApplet autotune's existing safe behavior that JJ
     // confirmed works correctly.
 
+    if (!m_txChannel) {
+        const QString reason = tunerTuneEndedReason(TunerTuneEnd::CarrierNotStarted);
+        emit tuneRefused(reason);
+        return reason;
+    }
+
     // Snapshot PGXL state. m_ampOperate is the radio's view of PGXL's
     // operate-family state (IDLE / OPERATE / TRANSMIT_A / TRANSMIT_B).
     // iPhone app plan Task 77 fix wave: a restore still owed from the last
@@ -30795,6 +31329,13 @@ QString RadioModel::beginTgxlAutotune(bool fromHardware)
     const quint64 generation = ++m_tgxlCycleGeneration;
     m_tgxlAutotuneFromHardware = fromHardware;
     m_tgxlAutotuneTunerPress = tunerPress;
+    m_tgxlCarrierChannel.clear();
+    m_tgxlCarrierSequence = 0;
+    m_tgxlCarrierCycle = generation;
+    m_tgxlCarrierReady = false;
+    m_tgxlSettlePending = false;
+    m_tgxlCommandSent = false;
+    m_tgxlDeviceCycleSawTuning = m_tunerModel && m_tunerModel->isTuning();
     // Need to await STANDBY confirm? Only while it is operating now.
     m_pgxlStandbyPending = m_hasAmplifier && m_ampOperate;
 
@@ -30882,9 +31423,9 @@ QString RadioModel::beginTgxlAutotune(bool fromHardware)
 // The fix is the same event-driven pattern we use for the PGXL standby
 // confirmation: set a flag, wait for the signal, then proceed. The flag
 // is m_awaitingInterlockForAutotune, the signal is interlockGranted from
-// SmartSdrApiListener (wired in the ctor). A 1.5 s failsafe sends the
-// autotune anyway if interlockGranted never fires (e.g. amps all
-// disconnected mid-cycle before they could ACK).
+// SmartSdrApiListener (wired in the ctor). Actual TX-lane completion
+// then starts the precise carrier settle. Recovery uses the same final
+// eligibility checks, and a separate bound ends an unready cycle.
 void RadioModel::continueTgxlAutotuneAfterStandby()
 {
     if (receiveOnlyTxOperationsBlocked()) {
@@ -30946,6 +31487,7 @@ void RadioModel::continueTgxlAutotuneAfterStandby()
         gateCapture = connect(m_moxController, &MoxController::moxRefused, this,
                               [&gateRefusal](const TxRefusal& refusal) { gateRefusal = refusal; });
     }
+    m_awaitingInterlockForAutotune = !m_tgxlAutotuneFromHardware;
     if (!m_tgxlAutotuneDeviceId.isEmpty()) {
         // iPhone app plan Task 77: a device's cycle keys as that device,
         // through the keying gate (its session, the holder, the watchdog).
@@ -31004,86 +31546,127 @@ void RadioModel::continueTgxlAutotuneAfterStandby()
         finishTgxlAutotuneCycle(unkeyedReason);
         return;
     }
-    if (!m_tgxlAutotuneDeviceId.isEmpty() || m_tgxlAutotuneFromHardware) {
-        // iPhone app plan Task 77: a device's cycle has no Tuner page on the
-        // Core to watch the tuner, so the Core does what the local page
-        // does (TunerApplet's short watchdog and tuningChanged(false)): the
-        // carrier drops when the tuner finishes, and after 3 s when the
-        // tuner never started its sweep.
-        // TGXL tune lane (JJ's ruling): the tuner's front-panel cycle too,
-        // since it may now take transmit from another device and key.
-        m_tgxlDeviceCycleSawTuning = m_tunerModel && m_tunerModel->isTuning();
-        const QByteArray device = m_tgxlAutotuneDeviceId;
-        const quint64 cycle = m_tgxlCycleGeneration;
-        QTimer::singleShot(kTgxlDeviceCycleStartMs, this, [this, device, cycle]() {
-            if (m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
-                && m_tgxlAutotuneDeviceId == device && !m_tgxlDeviceCycleSawTuning) {
-                qCInfo(lcConnection) << "TGXL autotune: the tuner never started its sweep"
-                                        " for the cycle; dropping the carrier";
-                if (!device.isEmpty()) {
-                    cancelTgxlAutotuneFor(device);
-                } else if (m_isTuning) {
-                    // The carrier drops; manualMoxChanged(false) finishes
-                    // the cycle.
-                    setTune(false);
-                } else {
-                    finishTgxlAutotuneCycle();
-                }
+    // A separate readiness bound covers the lane/interlock/amp wait. The
+    // no-sweep watchdog begins only once the tuner can actually act.
+    const quint64 cycle = m_tgxlCycleGeneration;
+    QTimer::singleShot(kTgxlCarrierReadyMs, Qt::PreciseTimer, this, [this, cycle]() {
+        if (m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
+            && (!m_tgxlCarrierReady || (!m_tgxlAutotuneFromHardware && !m_tgxlCommandSent))) {
+            qCWarning(lcConnection) << "TGXL autotune: carrier readiness timed out";
+            // Invalidate pending lane work before publishing the ending.
+            if (m_tgxlCarrierChannel) {
+                m_tgxlCarrierChannel->closeRfGate();
+            }
+            finishTgxlAutotuneCycle(tunerTuneEndedReason(TunerTuneEnd::CarrierNotStarted));
+            // An ending observer may start another cycle synchronously.
+            if (cycle == m_tgxlCycleGeneration && m_isTuning) {
+                setTune(false);
+            }
+        }
+    });
+    if (!m_tgxlAutotuneFromHardware) {
+        // Recovery may retry eligibility, but never clears an interlock
+        // prerequisite or starts a sweep without the actual carrier gate.
+        QTimer::singleShot(1500, this, [this, cycle]() {
+            if (m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration) {
+                scheduleTgxlAutotune();
             }
         });
     }
+}
 
-    if (m_tgxlAutotuneFromHardware) {
-        // TGXL initiated this cycle via LAN PTT (`transmit tune on`); it's
-        // already sweeping its own relays and just needed the carrier.
-        // No `autotune` command to send and no interlock wait to gate on.
+bool RadioModel::tgxlCarrierEligible(quint64 cycle, TxChannel* channel,
+                                     quint64 sequence) const
+{
+    return m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
+        && cycle == m_tgxlCarrierCycle && channel && channel == m_txChannel
+        && channel == m_tgxlCarrierChannel && sequence == m_tgxlCarrierSequence
+        && channel->isRfGateOpenForSequence(sequence) && m_isTuning
+        && m_moxController && m_moxController->isMox() && m_txReadyReceived
+        && !m_awaitingInterlockForTx
+        && !m_pgxlStandbyPending && !ampChangingOver() && !m_rfHeldForAmp
+        && !m_transmitStopHold && !receiveOnlyTxOperationsBlocked()
+        && m_tgxlConnection && m_tgxlConnection->isConnected();
+}
+
+void RadioModel::onTgxlRfGateOpened(TxChannel* channel, quint64 sequence)
+{
+    if (!tgxlCarrierEligible(m_tgxlCycleGeneration, channel, sequence)
+        || m_tgxlCarrierReady) {
         return;
     }
+    // A generic RF interlock recovery may have opened the gate before
+    // the actual grant arrives. Record the completion now; software
+    // submission still requires that grant in schedule/send below.
+    m_tgxlCarrierReady = true;
+    if (m_tgxlAutotuneFromHardware) {
+        // The hardware is already sweeping; only its carrier/watchdog is
+        // ours. Never send an additional autotune for this origin.
+        armTgxlSweepStartWatchdog();
+    } else {
+        scheduleTgxlAutotune();
+    }
+}
 
-    // Arm the gate: when interlockGranted fires (TRANSMITTING was just
-    // broadcast to all clients including TGXL), the lambda in the ctor
-    // sends the autotune command after a small 50 ms TCP socket settle.
-    m_awaitingInterlockForAutotune = true;
-
-    // Failsafe: amps usually ACK in <100 ms (and the listener's lenient
-    // 500 ms timeout grants anyway). If 1500 ms elapses without
-    // interlockGranted firing -- e.g. every amp disconnected mid-cycle
-    // before it could ACK -- send the autotune anyway so the operator's
-    // TUNE isn't stranded. Mirrors the standby failsafe in startTgxl-
-    // Autotune (same 1.5 s budget, same "proceed with warning" semantic).
-    // Task 77 fix round 4: only for this cycle.
-    const quint64 generation = m_tgxlCycleGeneration;
-    QTimer::singleShot(1500, this, [this, generation]() {
-        if (generation != m_tgxlCycleGeneration) {
+void RadioModel::scheduleTgxlAutotune()
+{
+    if (m_tgxlAutotuneFromHardware || m_tgxlCommandSent || m_tgxlSettlePending
+        || m_awaitingInterlockForAutotune || !m_tgxlCarrierReady
+        || !tgxlCarrierEligible(m_tgxlCycleGeneration, m_tgxlCarrierChannel.data(),
+                                m_tgxlCarrierSequence)) {
+        return;
+    }
+    m_tgxlSettlePending = true;
+    const quint64 cycle = m_tgxlCycleGeneration;
+    const QPointer<TxChannel> channel = m_tgxlCarrierChannel;
+    const quint64 sequence = m_tgxlCarrierSequence;
+    QTimer::singleShot(kTgxlRfSettleMs, Qt::PreciseTimer, this,
+                      [this, cycle, channel, sequence]() {
+        if (cycle != m_tgxlCycleGeneration || channel != m_tgxlCarrierChannel
+            || sequence != m_tgxlCarrierSequence) {
             return;
         }
-        if (m_awaitingInterlockForAutotune && m_tgxlAutotuneInProgress) {
-            qCWarning(lcConnection)
-                << "TGXL autotune: interlockGranted didn't fire within"
-                   " 1.5 s, sending autotune anyway (failsafe)";
-            m_awaitingInterlockForAutotune = false;
-            sendTgxlAutotuneCmd();
-        }
+        m_tgxlSettlePending = false;
+        sendTgxlAutotuneCmd(cycle, channel.data(), sequence);
     });
 }
 
-// Send the `autotune` command on the TGXL :9010 control socket. Called
-// from the interlockGranted handler (event-driven path, normal case) or
-// from the 1.5 s failsafe timer in continueTgxlAutotuneAfterStandby
-// (degraded path, no interlock confirmation arrived).
-void RadioModel::sendTgxlAutotuneCmd()
+void RadioModel::sendTgxlAutotuneCmd(quint64 cycle, TxChannel* channel, quint64 sequence)
 {
-    if (receiveOnlyTxOperationsBlocked()) {
-        setTgxlAutotuneInProgress(false);
-        m_awaitingInterlockForAutotune = false;
-        setTune(false);
+    if (m_tgxlAutotuneFromHardware || m_tgxlCommandSent
+        || m_awaitingInterlockForAutotune || !m_tgxlCarrierReady
+        || !tgxlCarrierEligible(cycle, channel, sequence)) {
         return;
     }
-    if (m_tgxlConnection && m_tgxlConnection->isConnected()
-        && m_tgxlAutotuneInProgress) {
-        m_tgxlConnection->sendCommand(QStringLiteral("autotune"));
-        qCInfo(lcConnection) << "TGXL autotune: sent autotune cmd";
+    // Mark before the socket write: reentrant tuner replies cannot submit
+    // a second command or arm a second watchdog for this cycle.
+    m_tgxlCommandSent = true;
+    armTgxlSweepStartWatchdog();
+    m_tgxlConnection->sendCommand(QStringLiteral("autotune"));
+    qCInfo(lcConnection) << "TGXL autotune: sent autotune cmd after carrier settle";
+}
+
+void RadioModel::armTgxlSweepStartWatchdog()
+{
+    if (m_tgxlAutotuneDeviceId.isEmpty() && !m_tgxlAutotuneFromHardware) {
+        return;
     }
+    const QByteArray device = m_tgxlAutotuneDeviceId;
+    const quint64 cycle = m_tgxlCycleGeneration;
+    QTimer::singleShot(kTgxlDeviceCycleStartMs, Qt::PreciseTimer, this, [this, device, cycle]() {
+        if (m_tgxlAutotuneInProgress && cycle == m_tgxlCycleGeneration
+            && m_tgxlAutotuneDeviceId == device && !m_tgxlDeviceCycleSawTuning) {
+            qCInfo(lcConnection) << "TGXL autotune: the tuner never started its sweep;"
+                                    " dropping the carrier";
+            if (!device.isEmpty()) {
+                cancelTgxlAutotuneFor(device);
+            } else if (m_isTuning) {
+                setTune(false);
+            } else {
+                finishTgxlAutotuneCycle();
+            }
+        }
+    });
 }
 
 // Phase 3P-II Phase 4 Task 96: auto-recall TGXL tune memory on band change.
@@ -31176,6 +31759,11 @@ RadioModel::buildStreamConfigsForCodec() const
         // sit at shift offsets inside it (SliceModel::shiftOffsetHz, pushed
         // into WDSP by RxChannel::setShiftFrequency).
         const double centreHz = m_streamAllocator.streamCentreHz(st);
+        if (!std::isfinite(centreHz) || centreHz < 0
+            || centreHz >= static_cast<double>(std::numeric_limits<qint64>::max())) {
+            cfg.live = false;
+            continue;
+        }
         cfg.frequencyHz  = static_cast<qint64>(centreHz);
         cfg.bandIndex    = static_cast<int>(NereusSDR::bandFromFrequency(centreHz));
         cfg.sampleRateHz = m_streamAllocator.streamSampleRateHz(st);
@@ -31241,11 +31829,21 @@ NereusSDR::CodecContext RadioModel::currentCodecContext() const
     // production does. defaultRxAdcCtrl gates on the board's ADC count so a
     // 1-ADC SKU is never handed an ADC1 selector.
     ctx.adcCtrl = NereusSDR::defaultRxAdcCtrl(boardCapabilities().adcCount);
+    ctx.p1AdcCntrl = ctx.adcCtrl;
+    const QVariant p1Routing = AppSettings::instance().hardwareValue(
+        currentRadioMac(), QStringLiteral("p1AdcCntrl"));
+    if (p1Routing.isValid()) {
+        bool ok = false;
+        const int bits = p1Routing.toString().toInt(&ok, 0);
+        if (ok && bits >= 0 && bits <= 0x3fff) { ctx.p1AdcCntrl = quint16(bits); }
+    }
 
     // The model decides which Protocol 1 models keep slice B's DDC while
     // PureSignal transmits (P1CodecStandard::applyDdcAssignment). Seeded
     // before the test seam for the same reason as adcCtrl.
     ctx.model = m_hardwareProfile.model;
+    const SliceModel* diversityOwner = sliceById(m_diversityTargetSliceId);
+    ctx.diversityStream = diversityOwner ? diversityOwner->streamIndex() : 0;
 
     if (m_ddcCtxForTest) {
         ctx.mox           = m_ddcCtxMoxForTest;
@@ -31256,6 +31854,13 @@ NereusSDR::CodecContext RadioModel::currentCodecContext() const
     ctx.mox           = m_moxController ? m_moxController->isMox() : false;
     ctx.puresignalRun = (m_pureSignal && m_pureSignal->isPsEnabled());
     ctx.diversity     = diversityActive();
+    if (ctx.diversity && ctx.mox && ctx.puresignalRun && m_receiverManager
+        && m_receiverManager->p1Codec() && !m_receiverManager->p2Codec()) {
+        const auto streams = buildStreamConfigsForCodec();
+        const int live = int(std::count_if(streams.begin(), streams.end(),
+            [](const auto& stream) { return stream.live; }));
+        if (live > 2) { ctx.diversity = false; }
+    }
     return ctx;
 }
 
@@ -31280,9 +31885,481 @@ PureSignal* RadioModel::installPureSignalForTest(TxChannel* tx)
 }
 #endif
 
+// NereusSDR-original coordinated Diversity owner/state, 2026-10-01.
+void RadioModel::wireDiversitySlice(SliceModel* slice)
+{
+    if (!slice) { return; }
+    connect(slice, &SliceModel::diversityEnabledChanged, this, [this, slice](bool on) {
+        if (role() != Role::Local) { return; }
+        if (m_diversityCommitting) {
+            // A legacy flag write during a coordinated transition must not
+            // override its selected owner. Restore before any continuation;
+            // this emit can itself retire the model or slice.
+            const bool expected = slice->sliceIndex() == m_diversityTargetSliceId;
+            if (on != expected) { slice->setDiversityEnabled(expected); }
+            return;
+        }
+        const QPointer<RadioModel> self(this);
+        const QPointer<SliceModel> target(slice);
+        const int id = slice->sliceIndex();
+        const QString refusal = legacyDiversityRefusal(id, on);
+        if (!refusal.isEmpty()) {
+            const bool previous = m_diversityCommitting;
+            m_diversityCommitting = true;
+            const auto committing = qScopeGuard([self, previous] {
+                if (self) { self->m_diversityCommitting = previous; }
+            });
+            slice->setDiversityEnabled(id == m_diversityTargetSliceId);
+            return;
+        }
+        if (on || id == m_diversityTargetSliceId) {
+            QString reason;
+            if (!setDiversityTarget(on ? id : -1, &reason)) {
+                if (!self || !target) { return; }
+                const bool previous = m_diversityCommitting;
+                m_diversityCommitting = true;
+                const auto committing = qScopeGuard([self, previous] {
+                    if (self) { self->m_diversityCommitting = previous; }
+                });
+                target->setDiversityEnabled(id == m_diversityTargetSliceId);
+            }
+        }
+    });
+    const auto blendChanged = [this, slice]() {
+        if (m_externalDiversityRouteActive && slice->sliceIndex() == m_diversityTargetSliceId) {
+            configureExternalDiversityRotation(slice);
+        }
+        publishDiversityState(false);
+    };
+    connect(slice, &SliceModel::diversityPhaseDegChanged, this, blendChanged);
+    connect(slice, &SliceModel::diversityGainDbChanged, this, blendChanged);
+    connect(slice, &SliceModel::diversityFineNullEnabledChanged, this, blendChanged);
+    connect(slice, &SliceModel::diversityPatternChanged, this, [this]() { publishDiversityState(false); });
+    connect(slice, &SliceModel::frequencyChanged, this, [this]() { publishDiversityState(false); });
+    connect(slice, &SliceModel::bandChanged, this, [this]() { publishDiversityState(false); });
+    connect(slice, &SliceModel::streamIndexChanged, this, [this]() { publishDiversityState(); });
+}
+
+QString RadioModel::legacyDiversityRefusal(int sliceId, bool enabled) const
+{
+    // A legacy request can enable fixed A or stop the directly controlled
+    // live slice. It cannot affect a different owner or select a new letter.
+    if (enabled && (sliceId != 0 || (m_diversityTargetSliceId >= 0
+                                                  && m_diversityTargetSliceId != sliceId))) {
+        return QStringLiteral("Use the coordinated Diversity control to move Diversity.");
+    }
+    return {};
+}
+
+QString RadioModel::diversityEligibility(int sliceId, QString* code) const
+{
+    const auto refuse = [code](const char* token, const QString& text) {
+        if (code) { *code = QString::fromLatin1(token); }
+        return text;
+    };
+    if (code) { code->clear(); }
+    if (!boardCapabilities().hasDiversityReceiver) {
+        return refuse("hardwareUnavailable", QStringLiteral("This radio has no Diversity receiver pair."));
+    }
+    if (!isConnected()) {
+        return refuse("radioDisconnected", QStringLiteral("Connect the radio to use Diversity."));
+    }
+    const SliceModel* target = sliceById(sliceId);
+    if (!target || target->streamIndex() < 0 || target->streamIndex() >= 5) {
+        return refuse("resourcesUnavailable", QStringLiteral("That slice has no receiver available for Diversity."));
+    }
+    for (const SliceModel* slice : m_slices) {
+        if (!slice || slice->streamIndex() < 0) { continue; }
+        const double centre = m_streamAllocator.streamCentreHz(slice->streamIndex());
+        if (!std::isfinite(centre) || centre < 0
+            || centre >= double(std::numeric_limits<qint64>::max())) {
+            return refuse("resourcesUnavailable", QStringLiteral("That receiver frequency cannot be represented by the radio planner."));
+        }
+    }
+    // Admission plans the non-PS assignment too: a request accepted during
+    // a PS pause must be safe when PS ends. No writes or stream allocation.
+    auto ctx = currentCodecContext();
+    ctx.mox = false;
+    ctx.puresignalRun = false;
+    ctx.diversity = false;
+    const auto ordinary = computeDdcAssignmentForContext(ctx);
+    ctx.diversity = true;
+    ctx.diversityStream = target->streamIndex();
+    const auto paired = computeDdcAssignmentForContext(ctx);
+    int primary = -1;
+    int partner = -1;
+    if (!ordinary || !paired || !resolveExternalDiversitySources(*paired, target, primary, partner)) {
+        return refuse("resourcesUnavailable", QStringLiteral("The radio has no receiver pair available for that slice."));
+    }
+    const auto streams = buildStreamConfigsForCodec();
+    const auto adcAt = [](const DdcAssignment& a, int ddc) {
+        return ddc < 4 ? (a.adcCtrl1 >> (2 * ddc)) & 3 : (a.adcCtrl2 >> (2 * (ddc - 4))) & 3;
+    };
+    for (int st = 0; st < 5; ++st) {
+        if (!streams[st].live) { continue; }
+        const int before = ordinary->streamDdc[st];
+        const int after = paired->streamDdc[st];
+        if (after < 0 || paired->rate[after] != streams[st].sampleRateHz
+            || (st != target->streamIndex() && before >= 0
+                && adcAt(*ordinary, before) != adcAt(*paired, after))) {
+            return refuse("resourcesUnavailable", QStringLiteral("Diversity would take a receiver another slice is using."));
+        }
+    }
+    // Protocol 1 frames have one global rate. Never resample or change an
+    // unrelated receiver's requested rate to squeeze in a different owner.
+    const bool p1 = m_receiverManager && m_receiverManager->p1Codec()
+        && !m_receiverManager->p2Codec();
+    if (p1) {
+        for (const auto& stream : streams) {
+            if (stream.live && stream.sampleRateHz != streams[target->streamIndex()].sampleRateHz) {
+                return refuse("resourcesUnavailable", QStringLiteral("Diversity needs all receivers to use the same sample rate."));
+            }
+        }
+    }
+    return {};
+}
+
+SessionMessage RadioModel::invokeDiversityAsStationDevice(const SessionMessage& invoke)
+{
+    // No model state or association is read on the wrong thread.
+    if (QThread::currentThread() != thread()) {
+        return SessionMessages::commandResult(invoke.commandVerb, invoke.commandId, false,
+            QStringLiteral("The Core has no radio ready."), {});
+    }
+    return invokeAdmittedDiversityControl(invoke, m_diversityStationServer.data(), nullptr, true);
+}
+
+QString RadioModel::diversityControlRefusal(const QByteArray& requester, int sliceId,
+                                           const StationServer* server) const
+{
+    if (SliceAccessPolicy::mayChange(*m_sliceOwnership, requester, sliceId)) { return {}; }
+    // Keep hosted metadata and listener wording. Neither unclaimed slices
+    // nor a held-for requester are promoted to controller by this entry.
+    if (server) { return server->changeRefusal(requester, sliceId); }
+    const auto mark = m_sliceOwnership->mark(sliceId);
+    const QString holder = mark.subject().isEmpty()
+        || mark.subject() == SliceOwnership::stationDevice()
+        ? QStringLiteral("the Core") : QStringLiteral("another device");
+    if (m_sliceOwnership->isListening(requester, sliceId)) {
+        if (mark.owner.isEmpty()) {
+            return QStringLiteral("Nobody controls slice %1. Take control to change it.")
+                .arg(QString(QChar('A' + sliceId)));
+        }
+        return QStringLiteral("Slice %1 is controlled by %2. Take control to change it.")
+            .arg(QString(QChar('A' + sliceId)), holder);
+    }
+    return QStringLiteral("That slice belongs to %1. It can be changed only there.").arg(holder);
+}
+
+SessionMessage RadioModel::invokeAdmittedDiversityControl(const SessionMessage& invoke,
+    StationServer* server, SessionTransport* transport, bool stationEntry)
+{
+    if (QThread::currentThread() != thread() || m_role != Role::Local) {
+        return SessionMessages::commandResult(invoke.commandVerb, invoke.commandId, false,
+            QStringLiteral("The Core has no radio ready."), {});
+    }
+    bool offered = stationEntry;
+    bool includePattern = stationEntry;
+    QByteArray requester = stationEntry ? SliceOwnership::stationDevice() : QByteArray();
+    const QPointer<RadioModel> self(this);
+    const auto reply = [self, &invoke, &offered, &includePattern](bool accepted,
+        const QString& code, const QString& reason, const QList<QByteArray>& keys = {}) {
+        if (!self) {
+            return SessionMessages::commandResult(invoke.commandVerb, invoke.commandId, false,
+                QStringLiteral("The Core has no radio ready."), {});
+        }
+        QList<MirrorUpdate> values;
+        if (offered) {
+            values.append({0, "diversityState", MirrorWireKind::Utf8,
+                           self->diversityStateForPeer(includePattern)});
+            values.append({0, "reasonCode", MirrorWireKind::Utf8, code});
+        }
+        return SessionMessages::commandResult(invoke.commandVerb, invoke.commandId,
+                                             accepted, reason, keys, values);
+    };
+    if (invoke.kind != SessionMessageKind::CommandInvoke || invoke.commandVerb != "diversity.setTarget") {
+        return reply(false, "invalidRequest", QStringLiteral("The Core could not read this request."));
+    }
+    if (!stationEntry) {
+        if (!server || !transport) {
+            return reply(false, "unsupported", QStringLiteral("Update this app and Core to move Diversity between slices."));
+        }
+        // Read admission at common-body execution, from the actual live peer.
+        // There is no deferred authorization snapshot or caller identity hook.
+        const auto peer = server->peerFor(transport);
+        offered = peer.agreedMinor >= kRadioIdentitySessionProtocolMinor
+            && peer.features.value("diversityControl", 0) >= 1;
+        includePattern = peer.features.value("diversityPattern", 0) >= 1;
+        if (!offered || !server->peerHasSliceAccess(transport) || peer.sessionDeviceId.isEmpty()
+            || !peer.authenticated || !peer.snapshotComplete) {
+            return reply(false, "unsupported", QStringLiteral("Update this app and Core to move Diversity between slices."));
+        }
+        requester = peer.sessionDeviceId;
+        if (!server->isStationTransport(transport)) {
+            const auto current = server->m_deviceSessions->entry(requester);
+            if (!current || current->session != transport
+                || current->state != DeviceSessionRegistry::State::Listening) {
+                return reply(false, "sessionChanged", QStringLiteral("This connection is no longer current on the Core."));
+            }
+        }
+    }
+    if (server && server != m_diversityStationServer.data()) {
+        return reply(false, "sessionChanged", QStringLiteral("This connection is no longer current on the Core."));
+    }
+    QHash<QByteArray, qint64> integers;
+    bool enabled = false;
+    bool haveEnabled = false;
+    bool valid = invoke.arguments.size() == 8;
+    const QSet<QByteArray> names{"stateRevision", "sourceSliceId", "sourceIncarnation",
+        "sourceControlRevision", "targetSliceId", "targetIncarnation", "targetControlRevision"};
+    constexpr qint64 kMaxExactInteger = (qint64(1) << 53) - 1;
+    for (const MirrorUpdate& argument : invoke.arguments) {
+        if (argument.name == "enabled" && !haveEnabled && argument.kind == MirrorWireKind::Bool
+            && argument.value.typeId() == QMetaType::Bool) {
+            enabled = argument.value.toBool();
+            haveEnabled = true;
+        } else if (names.contains(argument.name) && !integers.contains(argument.name)
+            && argument.kind == MirrorWireKind::Int64 && argument.value.typeId() == QMetaType::LongLong
+            && argument.value.toLongLong() >= -1 && argument.value.toLongLong() <= kMaxExactInteger) {
+            integers.insert(argument.name, argument.value.toLongLong());
+        } else { valid = false; }
+    }
+    const auto participantShape = [&integers](const QByteArray& prefix) {
+        const qint64 id = integers.value(prefix + "SliceId", -2);
+        const qint64 incarnation = integers.value(prefix + "Incarnation", -1);
+        const qint64 revision = integers.value(prefix + "ControlRevision", -1);
+        return id == -1 ? incarnation == 0 && revision == 0
+            : id >= 0 && id < WdspEngine::kMaxSliceChannels && incarnation > 0 && revision > 0;
+    };
+    if (!valid || !haveEnabled || integers.size() != 7 || integers.value("stateRevision") < 0
+        || !participantShape("source") || !participantShape("target")
+        || enabled != (integers.value("targetSliceId") >= 0)) {
+        return reply(false, "invalidRequest", QStringLiteral("The Core could not read this request."));
+    }
+    // Authentication and the typed contract still precede this refusal.
+    // The flag notifications expose an intermediate snapshot; no nested
+    // admitted transaction may mutate that snapshot before commit completes.
+    if (m_diversityCommitting) {
+        return reply(false, "stateChanged", QStringLiteral("Diversity changed on the Core. Try again."));
+    }
+    const int source = int(integers.value("sourceSliceId"));
+    const int target = int(integers.value("targetSliceId"));
+    const QJsonObject state = QJsonDocument::fromJson(this->diversityState().toUtf8()).object();
+    const int live = state.value("live").isNull() ? -1 : state.value("live").toObject().value("sliceId").toInt(-1);
+    if (live != source || quint64(integers.value("stateRevision")) != this->diversityStateRevision()) {
+        return reply(false, "stateChanged", QStringLiteral("Diversity changed on the Core. Try again."));
+    }
+    const SliceOwnership* own = this->sliceOwnership();
+    for (const QByteArray& prefix : {QByteArray("source"), QByteArray("target")}) {
+        const int id = int(integers.value(prefix + "SliceId"));
+        if (id < 0) { continue; }
+        const SliceOwnership::SliceRef ref{id, quint64(integers.value(prefix + "Incarnation"))};
+        if (!own->matches(ref) || own->controlRevision(id) != quint64(integers.value(prefix + "ControlRevision"))) {
+            return reply(false, QString::fromLatin1(prefix) + "Changed",
+                  QStringLiteral("That slice changed on the Core. Try again."));
+        }
+        const QString refusal = diversityControlRefusal(requester, id, server);
+        if (!refusal.isEmpty()) {
+            return reply(false, QString::fromLatin1(prefix) + "ControlRequired", refusal);
+        }
+        const SliceModel* txSlice = txBoundSlice();
+        const bool stationKeyed = m_moxController && m_moxController->isMox()
+            && m_moxController->currentKeyer().isStation();
+        const TxRefusal frozen = server ? server->stationFreezeRefusal(id)
+            : StationSliceFreeze::refusal(id,
+                StationSliceFreeze::frozenSlice(stationKeyed, txSlice ? txSlice->sliceIndex() : -1),
+                TxRefusals::holderOnAir(QString(), true));
+        if (!frozen.isEmpty()) {
+            return reply(false, "onAir", frozen.text);
+        }
+    }
+    QString reason;
+    QString code;
+    if (target >= 0) {
+        reason = this->diversityEligibility(target, &code);
+        if (!reason.isEmpty()) {
+            return reply(false, code, reason);
+        }
+    }
+    // No observer or async suspension occurs between the final checks and
+    // commit. The coordinator performs no ownership/tuning/sample-rate writes.
+    if (!this->setDiversityTarget(target, &reason)) {
+        return reply(false, "resourcesUnavailable", reason);
+    }
+    QList<QByteArray> keys{"radio"};
+    if (source >= 0) { keys.append(QByteArray("slice:") + QByteArray::number(source)); }
+    if (target >= 0 && target != source) { keys.append(QByteArray("slice:") + QByteArray::number(target)); }
+    if (source >= 0 && target >= 0 && source != target) {
+        reason = QStringLiteral("Diversity moved from %1 to %2. Both slices paused briefly.")
+            .arg(QString(QChar('A' + source)), QString(QChar('A' + target)));
+    }
+    return reply(true, {}, reason, keys);
+}
+
+bool RadioModel::setDiversityTarget(int sliceId, QString* reason)
+{
+    if (reason) { reason->clear(); }
+    bool bypassAdmission = false;
+#ifdef NEREUS_BUILD_TESTS
+    bypassAdmission = m_diversityAdmissionBypassForTest;
+#endif
+    if (sliceId < -1 || sliceId >= WdspEngine::kMaxSliceChannels
+        || (sliceId >= 0 && !sliceById(sliceId))) {
+        if (reason) { *reason = QStringLiteral("That slice is no longer present."); }
+        return false;
+    }
+    if (sliceId >= 0) {
+        const QString refusal = diversityEligibility(sliceId);
+        if (!bypassAdmission && !refusal.isEmpty() && isConnected() && computeDdcAssignment()) {
+            if (reason) { *reason = refusal; }
+            return false;
+        }
+    }
+    if (sliceId == m_diversityTargetSliceId) { return true; }
+    // Internal close/legacy callers share the same atomic owner boundary.
+    // Equal-target calls above are harmless (including a repeated off).
+    if (m_diversityCommitting) {
+        if (reason) { *reason = QStringLiteral("Diversity changed on the Core. Try again."); }
+        return false;
+    }
+    const QPointer<RadioModel> self(this);
+    const auto stillAlive = [self, reason] {
+        if (self) { return true; }
+        if (reason) { *reason = QStringLiteral("The Core has no radio ready."); }
+        return false;
+    };
+    // Stop while the old target still exists. One WDSP slot, then a complete
+    // assignment, with no raw-leg fallback to any cohost during the move.
+    stopExternalDiversityRoute();
+    if (!stillAlive()) { return false; }
+    {
+        const bool previous = m_diversityCommitting;
+        m_diversityCommitting = true;
+        const auto committing = qScopeGuard([self, previous] {
+            if (self) { self->m_diversityCommitting = previous; }
+        });
+        m_diversityTargetSliceId = sliceId;
+        QList<QPointer<SliceModel>> slices;
+        slices.reserve(m_slices.size());
+        for (SliceModel* slice : std::as_const(m_slices)) {
+            slices.append(slice);
+        }
+        for (const QPointer<SliceModel>& slice : slices) {
+            if (slice) {
+                slice->setDiversityEnabled(slice->sliceIndex() == sliceId);
+                if (!stillAlive()) { return false; }
+            }
+        }
+    }
+    refreshDdcAssignmentForRadioState();
+    if (!stillAlive()) { return false; }
+    syncStepAttenuatorToReceiveSlice();
+    if (!stillAlive()) { return false; }
+    publishDiversityState();
+    if (!stillAlive()) { return false; }
+    scheduleSettingsSave();
+    return true;
+}
+
+QString RadioModel::diversityState() const
+{
+    return diversityStateForPeer(true);
+}
+
+QString RadioModel::diversityStateForPeer(bool includePattern) const
+{
+    QJsonArray targets;
+    QList<SliceModel*> ordered = m_slices;
+    std::sort(ordered.begin(), ordered.end(), [](const SliceModel* a, const SliceModel* b) {
+        return a->sliceIndex() < b->sliceIndex();
+    });
+    const auto identity = [this](const SliceModel* slice) {
+        const int id = slice->sliceIndex();
+        const QByteArray owner = m_sliceOwnership->mark(id).owner;
+        // Same wire representation as SliceAccess: raw paired ids are base64url,
+        // station and legacy token ids are already strings.
+        const QString ownerId = owner.size() == 32
+            ? QString::fromLatin1(owner.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals))
+            : QString::fromUtf8(owner);
+        return QJsonObject{{"sliceId", id}, {"incarnation", qint64(m_sliceOwnership->incarnation(id))},
+            {"controlRevision", qint64(m_sliceOwnership->controlRevision(id))},
+            {"controllerDeviceId", ownerId}};
+    };
+    for (const SliceModel* slice : ordered) {
+        if (slice->sliceIndex() < 0 || slice->sliceIndex() >= WdspEngine::kMaxSliceChannels) { continue; }
+        QJsonObject entry = identity(slice);
+        QString code;
+        const QString reason = diversityEligibility(slice->sliceIndex(), &code);
+        entry.insert("eligible", reason.isEmpty());
+        entry.insert("reasonCode", code);
+        entry.insert("reason", reason);
+        targets.append(entry);
+    }
+    const SliceModel* live = sliceById(m_diversityTargetSliceId);
+    const bool requested = live && live->diversityEnabled();
+    const bool running = requested && isConnected() && m_externalDiversityRouteActive;
+    QString code;
+    QString reason;
+    QJsonValue liveValue(QJsonValue::Null);
+    if (requested) {
+        QJsonObject entry = identity(live);
+        entry.insert("letter", QString(QChar('A' + live->sliceIndex())));
+        entry.insert("band", int(live->band()));
+        const double frequency = live->frequency();
+        entry.insert("frequencyHz", std::isfinite(frequency) && frequency >= 0 ? frequency : 0.0);
+        entry.insert("phaseDeg", live->diversityPhaseDeg());
+        entry.insert("gainDb", live->diversityGainDb());
+        entry.insert("fineNullEnabled", live->diversityFineNullEnabled());
+        entry.insert("pattern", includePattern ? QJsonValue(live->diversityPattern()) : QJsonValue(QJsonValue::Null));
+        liveValue = entry;
+        if (!running) {
+            reason = diversityEligibility(live->sliceIndex(), &code);
+            if (reason.isEmpty()) {
+                const auto ctx = currentCodecContext();
+                int primary = -1;
+                int partner = -1;
+                const auto assignment = computeDdcAssignment();
+                if (ctx.mox && ctx.puresignalRun && (!assignment
+                    || !resolveExternalDiversitySources(*assignment, live, primary, partner))) {
+                    code = QStringLiteral("pureSignalResources");
+                    reason = QStringLiteral("Diversity pauses while PureSignal transmits on this radio.");
+                } else {
+                    code = QStringLiteral("resourcesUnavailable");
+                    reason = QStringLiteral("Diversity is waiting for the receiver pair.");
+                }
+            }
+        }
+    }
+    const QJsonObject root{{"version", 1}, {"revision", qint64(m_diversityStateRevision)},
+        {"requested", requested}, {"running", running}, {"paused", requested && !running},
+        {"reasonCode", code}, {"reason", reason}, {"live", liveValue}, {"targets", targets}};
+    return QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+}
+
+void RadioModel::publishDiversityState(bool structural)
+{
+    if (m_diversityCommitting) { return; }
+    if (structural) {
+        QJsonObject shape = QJsonDocument::fromJson(diversityStateForPeer(false).toUtf8()).object();
+        shape.remove("revision");
+        QJsonObject live = shape.value("live").toObject();
+        for (const char* name : {"frequencyHz", "phaseDeg", "gainDb", "band", "fineNullEnabled", "pattern"}) {
+            live.remove(QLatin1String(name));
+        }
+        if (!shape.value("live").isNull()) { shape.insert("live", live); }
+        const QByteArray bytes = QJsonDocument(shape).toJson(QJsonDocument::Compact);
+        if (m_diversityStateShape != bytes) {
+            m_diversityStateShape = bytes;
+            constexpr quint64 maxJsonInteger = (quint64(1) << 53) - 1;
+            if (m_diversityStateRevision < maxJsonInteger) { ++m_diversityStateRevision; }
+        }
+    }
+    emit diversityStateChanged(diversityState());
+}
+
 SliceModel* RadioModel::diversityTargetSlice() const
 {
-    return sliceById(kExternalDiversityTargetSliceId);
+    return sliceById(m_diversityTargetSliceId >= 0 ? m_diversityTargetSliceId : 0);
 }
 
 bool RadioModel::diversityActive() const
@@ -31294,15 +32371,18 @@ bool RadioModel::diversityActive() const
     // the filter analysis thinks it did not, the two legs get different
     // preselectors and there is nothing coherent left to combine.
     //
-    // Slice A only, and that is a known limitation rather than a choice here:
-    // WDSP's pdiv[] is a 2-slot array keyed by External Diversity id, so
-    // Sub-Epic G gates the whole path to Slice A (RadioModel.cpp guard in
-    // wireSliceSignals). Resolve the stable Slice A id, not list position:
-    // removing A must not silently promote B into ownership.
     if (m_ddcCtxForTest) { return m_ddcCtxDivForTest; }
-    const SliceModel* target =
-        sliceById(kExternalDiversityTargetSliceId);
+    const SliceModel* target = sliceById(m_diversityTargetSliceId);
     return target && target->diversityEnabled();
+}
+
+bool RadioModel::diversityPairAssigned() const
+{
+    const auto assignment = computeDdcAssignment();
+    int primary = -1;
+    int partner = -1;
+    return diversityActive() && assignment
+        && resolveExternalDiversitySources(*assignment, diversityTargetSlice(), primary, partner);
 }
 
 bool RadioModel::resolveExternalDiversitySources(
@@ -31315,6 +32395,9 @@ bool RadioModel::resolveExternalDiversitySources(
         return false;
     }
 
+    // A PS-owned sync pair must never masquerade as the receive combiner.
+    // P1 can coexist only when its separate slots 3/4 carry PS.
+    if (assignment.psFwdDdc >= 0 && assignment.p1Diversity == 0) { return false; }
     const int stream = target->streamIndex();
     if (stream < 0 || stream >= 5) {
         return false;
@@ -31379,8 +32462,7 @@ void RadioModel::configureExternalDiversityRotation(
 void RadioModel::reconcileExternalDiversityRoute(
     const NereusSDR::DdcAssignment& assignment)
 {
-    SliceModel* target =
-        sliceById(kExternalDiversityTargetSliceId);
+    SliceModel* target = sliceById(m_diversityTargetSliceId);
     int primaryDdc = -1;
     int secondaryDdc = -1;
     const bool sourcesReady =
@@ -31469,6 +32551,7 @@ void RadioModel::reconcileExternalDiversityRoute(
                 m_externalDiversityPrimaryDdc = -1;
                 m_externalDiversitySecondaryDdc = -1;
                 m_externalDiversityChunkSize = 0;
+                publishDiversityState();
             }
         });
         return;
@@ -31804,12 +32887,14 @@ void RadioModel::reconcileWidebandDemand()
         return;
     }
     m_reconcilingWidebandDemand = true;
-    const auto reset = qScopeGuard([this] { m_reconcilingWidebandDemand = false; });
+    const QPointer<RadioModel> self(this);
+    const auto reset = qScopeGuard([self] { if (self) { self->m_reconcilingWidebandDemand = false; } });
     do {
         m_widebandDemandDirty = false;
         const auto state = widebandDemandState();
         for (int chain = 0; chain < int(state.bypass.size()); ++chain) {
             m_alexController.setWidebandActive(chain, state.bypass[chain]);
+            if (!self) { return; }
             if (m_widebandDemandDirty) {
                 break;
             }
@@ -31835,8 +32920,40 @@ void RadioModel::reconcileWidebandDemand()
 std::optional<NereusSDR::DdcAssignment> RadioModel::computeDdcAssignment() const
 {
     // NereusSDR-original glue. No Thetis equivalent at this abstraction layer.
-    const NereusSDR::CodecContext ctx = currentCodecContext();
+    auto ctx = currentCodecContext();
+    auto assignment = computeDdcAssignmentForContext(ctx);
+    if (ctx.diversity && !m_ddcCtxForTest && assignment) {
+        const auto streams = buildStreamConfigsForCodec();
+        auto ordinaryCtx = ctx;
+        ordinaryCtx.diversity = false;
+        const auto ordinary = computeDdcAssignmentForContext(ordinaryCtx);
+        const auto adcAt = [](const DdcAssignment& plan, int ddc) {
+            return ddc < 4 ? (plan.adcCtrl1 >> (2 * ddc)) & 3
+                           : (plan.adcCtrl2 >> (2 * (ddc - 4))) & 3;
+        };
+        bool losesReceiver = false;
+        for (int st = 0; st < int(streams.size()); ++st) {
+            if (!streams[st].live) { continue; }
+            const int after = assignment->streamDdc[st];
+            const int before = ordinary ? ordinary->streamDdc[st] : -1;
+            losesReceiver |= after < 0 || after >= int(assignment->rate.size())
+                || assignment->rate[after] != streams[st].sampleRateHz
+                || (st != ctx.diversityStream && before >= 0 && ordinary
+                    && adcAt(*ordinary, before) != adcAt(*assignment, after));
+        }
+        if (losesReceiver) {
+            // Resource changes after admission pause the requested owner;
+            // they never evict a receiver to make the pair fit.
+            ctx.diversity = false;
+            assignment = computeDdcAssignmentForContext(ctx);
+        }
+    }
+    return assignment;
+}
 
+std::optional<NereusSDR::DdcAssignment> RadioModel::computeDdcAssignmentForContext(
+    const NereusSDR::CodecContext& ctx) const
+{
     const std::array<NereusSDR::SliceConfig, 5> streams = buildStreamConfigsForCodec();
 
     // Codec source. The RadioConnection owns the codec and is authoritative
@@ -31886,6 +33003,7 @@ std::optional<NereusSDR::DdcAssignment> RadioModel::computeDdcAssignment() const
 
 void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment)
 {
+    const QPointer<RadioModel> self(this);
     // Phase 3F Sub-Epic I Task 7b: cache the codec's per-stream choice.
     // Idle streams keep the -1 sentinel, so an emptied stream leaves no
     // stale DDC behind for ddcForStream() to report.
@@ -31921,15 +33039,9 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
     // slots by position. Routing by frame slot fixes both, and keeps the HL2's
     // routing except in one state: slice B alone after slice A is removed
     // reads slot 1 (its own DDC, tuned to its own frequency), not slot 0.
-    if (m_receiverManager) {
-        const int streams = std::min(m_streamAllocator.streamCount(), 5);
-        for (int st = 0; st < streams; ++st) {
-            const int ddc = assignment.streamDdc[st];
-            if (ddc >= 0) {
-                m_receiverManager->setDdcMapping(st, ddc);
-            }
-        }
-    }
+    // The complete routing and activation map is published together below.
+    // Updating one stream at a time can replay frequencies while two streams
+    // temporarily name the same hardware slot during a Diversity move.
 
     // ── Defect D1: publish the ADC the codec actually chose ──────────────
     //
@@ -32000,18 +33112,24 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
     // right and simply never re-ran. Found by Codex on PR #318.
     if (adcRoutingMoved) {
         emit streamAdcRoutingChanged();
+        if (!self) { return; }
     }
 
     // Stamp every slice with both physical-routing coordinates of the stream
     // hosting it, so co-hosted slices agree. chainForStream reads the same
     // m_streamAdc entry just mirrored into ReceiverManager above and performs
     // the board-specific ADC-to-filter-chain fold in exactly one place.
-    for (SliceModel* s : std::as_const(m_slices)) {
-        if (!s) { continue; }
+    for (const QPointer<SliceModel>& s : sliceSnapshot(m_slices)) {
+        if (!s || sliceById(s->sliceIndex()) != s.data()) { continue; }
+        const int participantId = s->sliceIndex();
         const int st = s->streamIndex();
         const bool validStream = st >= 0 && st < 5;
         s->setDdcIndex(validStream ? assignment.streamDdc[st] : -1);
+        if (!self) { return; }
+        if (!s || sliceById(participantId) != s.data()) { continue; }
         s->setChainIndex(validStream ? chainForStream(st) : -1);
+        if (!self) { return; }
+        if (!s || sliceById(participantId) != s.data()) { continue; }
 
         // Codex review, PR #293: psPaused is what greys the pan and raises the
         // PS HOLD pill (PanadapterApplet reads slice->psPaused() to drive
@@ -32034,6 +33152,8 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
         // radio really has stopped streaming it in both cases, so greying is
         // right; only the pill's wording is narrower than the state it shows.
         s->setPsPaused(validStream && assignment.streamDdc[st] < 0);
+        if (!self) { return; }
+        if (!s || sliceById(participantId) != s.data()) { continue; }
     }
 
     // Codex review round 4, PR #293: every slice's chain has just been
@@ -32043,6 +33163,7 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
     // changed. Idempotent, so running it on every assignment costs nothing
     // when nothing moved.
     reconcileWidebandDemand();
+    if (!self) { return; }
 
     // ── Phase 3F Sub-Epic I closeout, defect F3 ─────────────────────────
     //
@@ -32101,6 +33222,7 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
     if (suspended != m_suspendedStreams) {
         m_suspendedStreams = suspended;
         emit streamsSuspended(suspended, describeSuspendedStreams(suspended));
+        if (!self) { return; }
     }
 
     // Phase 3F Sub-Epic I Task 7: reconcile ReceiverManager activation
@@ -32150,36 +33272,22 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
     // "feedIqData dropped" path instead, which is what should happen to
     // samples belonging to a receiver that does not currently exist.
     if (m_receiverManager) {
-        for (int st = 0; st < streamPoolSize(); ++st) {
-            const bool radioIsStreamingIt =
-                st < 5 && assignment.streamDdc[st] >= 0;
-            const int sliceCount = slicesOnStream(st).size();
-
-            // Both inputs to the decision, per stream. The two conditions
-            // fail for completely different reasons -- an unbound slice
-            // versus a codec that had nothing to say -- and the symptom is
-            // identical either way: an empty m_hwToLogical and every packet
-            // dropped in feedIqData. Logging only the outcome sent the first
-            // pass at the connect-time drop after the wrong one.
-            qCDebug(lcConnection).nospace()
-                << "publishDdcAssignment: stream " << st
-                << " slices=" << sliceCount
-                << " streamDdc=" << (st < 5 ? assignment.streamDdc[st] : -1)
-                << " -> " << ((sliceCount == 0 || !radioIsStreamingIt)
-                                  ? "deactivate" : "activate");
-
-            if (sliceCount == 0 || !radioIsStreamingIt) {
-                m_receiverManager->deactivateReceiver(st);
-            } else {
-                m_receiverManager->activateReceiver(st);
+        quint32 activeStreams = 0;
+        for (int st = 0; st < std::min(streamPoolSize(), 5); ++st) {
+            if (assignment.streamDdc[st] >= 0 && !slicesOnStream(st).isEmpty()) {
+                activeStreams |= 1u << st;
             }
         }
+        m_receiverManager->applyDdcMapping(m_streamDdc, activeStreams);
+        if (!self) { return; }
     }
 
     // The same complete assignment that selected the hardware DDCs owns the
     // paired worker route. Keeping this at the publish boundary prevents a
     // second source-selection policy from drifting from the wire state.
     reconcileExternalDiversityRoute(assignment);
+    if (!self) { return; }
+    publishDiversityState();
 }
 
 // Codex review round 7, PR #293. See RadioModel.h.
@@ -32257,6 +33365,7 @@ void RadioModel::refreshDdcAssignmentForRadioState()
 
 void RadioModel::invokeCodecDdcAssignment()
 {
+    const QPointer<RadioModel> self(this);
     const std::optional<NereusSDR::DdcAssignment> computed =
         computeDdcAssignment();
 
@@ -32308,7 +33417,9 @@ void RadioModel::invokeCodecDdcAssignment()
             buildStreamConfigsForCodec();
         m_receiverManager->setRx2Rate(streams[1].live ? streams[1].sampleRateHz
                                                       : 0);
+        if (!self) { return; }
         m_receiverManager->setRx2Enabled(streams[1].live);
+        if (!self) { return; }
     }
 
     // Wire push. P2 only: the P1 codec's DdcAssignment is computed above but
@@ -32391,11 +33502,8 @@ void RadioModel::invokeCodecDdcAssignment()
     // P2 push above: the flag is the connection thread's frame state.
     if (auto* p1conn = qobject_cast<NereusSDR::P1RadioConnection*>(m_connection)) {
         const QPointer<NereusSDR::P1RadioConnection> target(p1conn);
-        const bool lock = assignment.p1Diversity != 0;
-        QMetaObject::invokeMethod(p1conn, [target, lock]() {
-            if (target) {
-                target->setDiversity(lock);
-            }
+        QMetaObject::invokeMethod(p1conn, [target, assignment]() {
+            if (target) { target->applyDiversityAssignment(assignment); }
         });
     }
 

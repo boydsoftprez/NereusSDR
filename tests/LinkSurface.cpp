@@ -649,6 +649,7 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   // Phone wire batch: each slice's
                                   // diversityPattern.
                                   {"diversityPattern", 1},
+                                  {"diversityControl", 1},
                                   // Phone wire batch: radio's
                                   // logCategoryList.
                                   {"logCategoryList", 1},
@@ -693,7 +694,7 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"rx2Attenuator", 1},
                                   // Radio codec lane: radioMicVersion,
                                   // the catalogue's radio mic keys.
-                                  {"radioMic", 1},
+                                  {"radioMic", 2},
                                   // Shared-input filters, ruling (d):
                                   // rxFilterLowPassVersion and radio's
                                   // rxFilter0LowPass fields.
@@ -746,6 +747,7 @@ QJsonArray captureCapabilities()
     caps.band2mVersion = 1;
     // Phone wire batch: sent to a peer that declared diversityPattern.
     caps.diversityPatternVersion = 1;
+    caps.diversityControlVersion = 1;
     // Phone wire batch: sent to a peer that declared logCategoryList.
     caps.logCategoryListVersion = 1;
     // Phone wire batch: sent to a peer that declared radioModels.
@@ -777,7 +779,7 @@ QJsonArray captureCapabilities()
     // Level Cal 2: sent to a peer that declared rx2Attenuator.
     caps.rx2AttenuatorVersion = 1;
     // Radio codec lane: sent to a peer that declared radioMic.
-    caps.radioMicVersion = 1;
+    caps.radioMicVersion = 2;
     // Shared-input filters, ruling (d): sent to a peer that declared
     // rxFilterLowPass.
     caps.rxFilterLowPassVersion = 1;

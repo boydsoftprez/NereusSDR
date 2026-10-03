@@ -20,7 +20,9 @@
 //                    connected to the P1 fake radio, WDSP channels and all
 //   board            the static radio's model: "hermesLite2" (the HL2 on
 //                    Protocol 1, "Bench HL2") or "ananG2" (an ANAN-G2 on
-//                    Protocol 2, "Bench G2", same MAC) ("hermesLite2")
+//                    Protocol 2, "Bench G2", same MAC); "orionMkII" is
+//                    an offline Orion MkII codec planner without receiver
+//                    samples ("hermesLite2")
 //   slices           slices the model holds before the client connects (1)
 //   panadapters      panadapters it holds (0)
 //   coreAccessories  the Core owns its accessories (the amplifier, RF-Kit
@@ -283,6 +285,9 @@
 //               behaviour media.control's connectionId held to the app's
 //               own. J.J. Boyd (KG4VCF), with AI-assisted implementation
 //               via Anthropic Claude Code.
+//   2026-10-02: Diversity v1 producer corpus export and offline Orion MkII
+//               codec planning, with bounded app incarnation placeholders.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -327,6 +332,9 @@
 #include "models/SliceModel.h"
 
 #include "LinkFixtures.h"
+#include "MultiDeviceHarness.h"
+#include "core/ReceiverManager.h"
+#include "core/codec/P2CodecOrionMkII.h"
 #include "LinkVirtualClock.h"
 #include "OperatorWording.h"
 #include "fakes/ConnectableRadioModel.h"
@@ -446,6 +454,7 @@ struct Station {
     std::unique_ptr<AppSettings> settings;
     std::unique_ptr<StepAttenuatorController> stepAtt;
     std::unique_ptr<ConnectableRadioModel> harness;
+    std::unique_ptr<P2CodecOrionMkII> diversityCodec;
     std::unique_ptr<RadioModel> ownModel;
     RadioModel* model = nullptr;
     // otherConnections: the far ends of connections still connecting,
@@ -500,14 +509,21 @@ QString buildStation(const QJsonObject& setup, Station* station, quint16 major)
         // iPhone app Task 19: "board" picks the static radio's model.
         const QString board =
             setup.value(QStringLiteral("board")).toString(QStringLiteral("hermesLite2"));
-        if (board != QStringLiteral("hermesLite2") && board != QStringLiteral("ananG2")) {
-            return QStringLiteral("stationSetup.board must be \"hermesLite2\" or \"ananG2\"");
+        if (board != QStringLiteral("hermesLite2") && board != QStringLiteral("ananG2")
+            && board != QStringLiteral("orionMkII")) {
+            return QStringLiteral("stationSetup.board must be \"hermesLite2\", \"ananG2\" or \"orionMkII\"");
         }
         station->ownModel = std::make_unique<RadioModel>();
         station->model = station->ownModel.get();
         RadioInfo info;
         info.macAddress = QStringLiteral("AA:BB:CC:DD:EE:01");
-        if (board == QStringLiteral("ananG2")) {
+        if (board == QStringLiteral("orionMkII")) {
+            station->model->setBoardForTest(HPSDRHW::OrionMKII);
+            info.name = QStringLiteral("Bench Orion MkII");
+            info.boardType = HPSDRHW::OrionMKII;
+            info.protocol = ProtocolVersion::Protocol2;
+            station->diversityCodec = std::make_unique<P2CodecOrionMkII>();
+        } else if (board == QStringLiteral("ananG2")) {
             station->model->setHpsdrModelForTest(HPSDRModel::ANAN_G2);
             info.name = QStringLiteral("Bench G2");
             info.boardType = HPSDRHW::Saturn;
@@ -596,6 +612,11 @@ QString buildStation(const QJsonObject& setup, Station* station, quint16 major)
             model.alexControllerMutable().setRxAnt(static_cast<Band>(band), antenna);
         }
         model.enableBandTrackingForTest();
+    }
+    if (station->diversityCodec) {
+        // Offline codec planning only: no socket, worker or sample processing.
+        model.receiverManager()->setMaxReceivers(5);
+        model.receiverManager()->setP2Codec(station->diversityCodec.get());
     }
     const int slices = setup.value(QStringLiteral("slices")).toInt(1);
     while (model.slices().size() < slices) {
@@ -924,6 +945,10 @@ QStringList appConformanceProblems(const QString& id, const QJsonObject& fixture
                     challengeRecorded = true;
                     continue;
                 }
+                const bool diversityIdentity = (text == QStringLiteral("$capture:diversityIncarnation0")
+                    || text == QStringLiteral("$capture:diversityIncarnation1"))
+                    && path.endsWith(QStringLiteral(".incarnation"));
+                if (diversityIdentity) { continue; }
                 if (text.startsWith(QStringLiteral("$capture:"))
                     || text.startsWith(QStringLiteral("$string:"))
                     || text.startsWith(QStringLiteral("$uuid:"))
@@ -968,7 +993,13 @@ QStringList appConformanceProblems(const QString& id, const QJsonObject& fixture
             QList<QPair<QString, QString>> strings;
             collectStrings(message, QStringLiteral("$"), &strings);
             for (const auto& [path, text] : strings) {
-                if (text.startsWith(QLatin1Char('$')) && text != QStringLiteral("$ref:token")) {
+                const bool diversityIdentity = type == QStringLiteral("command.invoke")
+                    && message.value(QStringLiteral("verb")).toString() == QStringLiteral("diversity.setTarget")
+                    && (text == QStringLiteral("$ref:diversityIncarnation0")
+                        || text == QStringLiteral("$ref:diversityIncarnation1"))
+                    && path.startsWith(QStringLiteral("$.args[")) && path.endsWith(QStringLiteral(".value"));
+                if (text.startsWith(QLatin1Char('$')) && text != QStringLiteral("$ref:token")
+                    && !diversityIdentity) {
                     fail(index, QStringLiteral("a scripted message holds %1 at %2").arg(text, path));
                 }
             }
@@ -1180,6 +1211,7 @@ private slots:
     void sessionFixturesOverADataChannel();
     void aRejectedDataChannelStartReportsItsStage();
     void aFailedDataChannelEndsTheOpenWaitWithItsReason();
+    void exportDiversitySessionCorpus();
     void everyVerbIsInvokedRightAndWrong();
     void rightAndWrongLegsGetDifferentAnswers();
     void everyFixtureRunsOnTheStation();
@@ -1190,6 +1222,7 @@ private slots:
     void alteredFixturesFailReadably();
     void aDeferredOwnConnectionOpensAtItsStep();
     void jsonStringsMatchTheirShape();
+    void currentCoreHelloOfferRemainsStrict();
     void theVirtualClockKeepsALongTimersDueAsRealTimePasses();
     void theVirtualClockAloneFiresTheStationsTimers();
     void theVirtualClockTimesAStartByVirtualTimeOnly();
@@ -1498,6 +1531,206 @@ void TstLinkConformanceSession::runFixtureRow(bool overDataChannel)
     QVERIFY2(failure.isEmpty(), qPrintable(failure));
 }
 
+// Explicit regeneration writes outside the source corpus, then the normal
+// fixture runner verifies the reviewed files over both transports. The station
+// remains receive-only; a requested blend is authoritatively paused because the
+// static harness has no receiver worker, rather than inventing running samples.
+void TstLinkConformanceSession::exportDiversitySessionCorpus()
+{
+    const QString output = qEnvironmentVariable("NEREUS_LINK_DIVERSITY_REGEN_OUT");
+    if (output.isEmpty()) {
+        QSKIP("Set NEREUS_LINK_DIVERSITY_REGEN_OUT to an external directory to export");
+    }
+    QVERIFY(QDir().mkpath(output));
+    for (const QString& name : {QStringLiteral("diversity-control-pattern"),
+                               QStringLiteral("diversity-control-no-pattern")}) {
+        const bool pattern = name.endsWith(QStringLiteral("-pattern"))
+            && !name.endsWith(QStringLiteral("no-pattern"));
+        const QJsonObject setup{{"radio", "static"}, {"board", "orionMkII"},
+            {"receivers", 5}, {"slices", 1}, {"token", "none"},
+            {"pairedDevice", true}};
+        Station station;
+        const QString built = buildStation(setup, &station, kSessionProtocolMajor);
+        QVERIFY2(built.isEmpty(), qPrintable(built));
+        Device device("Conformance device", "phone", "Conformance");
+        QVERIFY(station.server->deviceStore()->add(device.record()));
+        LoopbackTransport client("conformance-client");
+        auto* end = new LoopbackTransport("conformance", station.server.get());
+        end->linkTo(&client);
+        const auto drain = [] {
+            for (int i = 0; i < 8; ++i) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+                QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            }
+        };
+        LinkVirtualClock clock(station.server.get(), drain);
+        const auto settle = [&] { const LinkVirtualClock::Hold hold(clock); drain(); clock.scan(); };
+        station.server->acceptTransport(end);
+        settle();
+        QJsonArray steps;
+        qsizetype consumed = 0;
+        // Only synthetic run-time identity and scratch paths are substituted.
+        // JSON strings use the existing $json form, retaining every state field.
+        QSet<int> recordedIncarnations;
+        std::function<QJsonValue(const QJsonValue&)> normalise;
+        normalise = [&](const QJsonValue& value) -> QJsonValue {
+            if (value.isArray()) {
+                QJsonArray out;
+                for (const QJsonValue& item : value.toArray()) { out.append(normalise(item)); }
+                return out;
+            }
+            if (value.isObject()) {
+                QJsonObject out;
+                const QJsonObject object = value.toObject();
+                for (auto it = object.begin(); it != object.end(); ++it) {
+                    if (it.key() == "incarnation" && object.contains("sliceId")) {
+                        const int id = object.value("sliceId").toInt();
+                        const QString key = QStringLiteral("diversityIncarnation%1").arg(id);
+                        out.insert(it.key(), (recordedIncarnations.contains(id)
+                            ? QStringLiteral("$ref:") : QStringLiteral("$capture:")) + key);
+                        recordedIncarnations.insert(id);
+                    } else if (it.key() == "challenge") { out.insert(it.key(), "$capture:challenge"); }
+                    else if (it.key() == "publicKey" || it.key() == "certBinding") {
+                        out.insert(it.key(), "$string");
+                    } else { out.insert(it.key(), normalise(it.value())); }
+                }
+                return out;
+            }
+            if (value.isString()) {
+                const QString text = value.toString();
+                if (text == device.id()) { return QStringLiteral("$ref:device:self"); }
+                QJsonParseError parse;
+                const QJsonDocument json = QJsonDocument::fromJson(text.toUtf8(), &parse);
+                if (parse.error == QJsonParseError::NoError && (json.isObject() || json.isArray())) {
+                    return QJsonObject{{"$json", normalise(json.isObject()
+                        ? QJsonValue(json.object()) : QJsonValue(json.array()))}};
+                }
+                if (text.contains(station.dir.path())) { return QStringLiteral("$string"); }
+            }
+            return value;
+        };
+        const auto collect = [&] {
+            const QList<QByteArray> received = client.received();
+            while (consumed < received.size()) {
+                QJsonObject message = normalise(QJsonDocument::fromJson(received[consumed++]).object()).toObject();
+                if (message.value("type") == "schema" && message.value("class") != "RadioModel") {
+                    message.insert("fields", "$any");
+                }
+                if (message.value("type") == "object.create" && message.value("class") != "RadioModel") {
+                    message.insert("properties", "$any");
+                }
+                steps.append(QJsonObject{{"from", "station"}, {"message", message}});
+            }
+        };
+        collect();
+        QHash<QByteArray, int> features{{"deviceAuth", 1}, {"sessionHolder", 1},
+            {"sliceAccess", 1}, {"diversityControl", 1}};
+        if (pattern) { features.insert("diversityPattern", 1); }
+        const auto send = [&](const SessionMessage& wire, QJsonObject expected, bool behaviour = false) {
+            steps.append(QJsonObject{{"from", "client"},
+                {"role", behaviour ? "behaviour" : "scripted"}, {"message", expected}});
+            client.sendText(SessionMessages::encode(wire));
+            settle(); collect();
+        };
+        const SessionMessage hello = SessionMessages::hello(kSessionProtocolMajor,
+            kSessionProtocolMinor, 0, "conformance", {kSessionProtocolMajor}, features);
+        QJsonObject helloExpected = QJsonDocument::fromJson(SessionMessages::encode(hello)).object();
+        helloExpected.insert("peer", "$string"); helloExpected.insert("settingsSchema", "$int");
+        helloExpected.insert("majors", "$majors");
+        send(hello, helloExpected, true);
+        const QJsonObject greeting = firstOfType(client.received(), "hello");
+        QString cert = station.server->certificateFingerprint(); cert.remove(':');
+        const SessionMessage auth = SessionMessages::authRequest(QString(), device.block(
+            StationIdentity::fromBase64Url(greeting.value("challenge").toString()),
+            QByteArray::fromHex(cert.toLatin1()), station.server->stationIdentity().publicKeySpki()));
+        const QJsonObject authExpected{{"type", "auth.request"}, {"token", ""}, {"device", "$device:signed"}};
+        send(auth, authExpected, true);
+        QVERIFY(admitted(&client));
+        const auto advance = [&] {
+            steps.append(QJsonObject{{"advanceMs", 100}});
+            const QString error = clock.advance(100);
+            QVERIFY2(error.isEmpty(), qPrintable(error));
+            settle(); collect();
+        };
+        advance();
+        quint32 commandId = 1900;
+        const auto invoke = [&](const QByteArray& verb, const QList<MirrorUpdate>& args) {
+            const SessionMessage command = SessionMessages::commandInvoke(verb, commandId++, args);
+            QJsonObject expected = QJsonDocument::fromJson(SessionMessages::encode(command)).object();
+            QJsonArray expectedArgs = expected.value("args").toArray();
+            if (verb == "diversity.setTarget") {
+                for (int i = 0; i < expectedArgs.size(); ++i) {
+                    QJsonObject arg = expectedArgs[i].toObject();
+                    const QString argName = arg.value("name").toString();
+                    if (argName == "sourceIncarnation" || argName == "targetIncarnation") {
+                        const qint64 incarnation = arg.value("value").toInteger();
+                        for (const SliceModel* slice : station.model->slices()) {
+                            const int id = slice->sliceIndex();
+                            if (incarnation == qint64(station.model->sliceOwnership()->incarnation(id))) {
+                                arg.insert("value", QStringLiteral("$ref:diversityIncarnation%1").arg(id));
+                            }
+                        }
+                        expectedArgs[i] = arg;
+                    }
+                }
+                expected.insert("args", expectedArgs);
+            }
+            send(command, expected);
+            return ofType(client.received(), "command.result").last();
+        };
+        const auto summary = [&] { return QJsonDocument::fromJson(station.model->diversityState().toUtf8()).object(); };
+        const auto arguments = [&](int source, int target) {
+            const SliceOwnership* own = station.model->sliceOwnership();
+            const auto identity = [own](int id, bool incarnation) -> qint64 {
+                return id < 0 ? 0 : qint64(incarnation ? own->incarnation(id) : own->controlRevision(id));
+            };
+            return QList<MirrorUpdate>{{0, "enabled", MirrorWireKind::Bool, target >= 0},
+                int64("stateRevision", summary().value("revision").toInteger()),
+                int64("sourceSliceId", source), int64("sourceIncarnation", identity(source, true)),
+                int64("sourceControlRevision", identity(source, false)), int64("targetSliceId", target),
+                int64("targetIncarnation", identity(target, true)), int64("targetControlRevision", identity(target, false))};
+        };
+        const QJsonObject initial = summary();
+        QVERIFY(!initial.value("requested").toBool());
+        QVERIFY(initial.value("live").isNull());
+        QVERIFY(invoke("addSlice", {{0, "initialPanId", MirrorWireKind::Utf8, QString()}}).value("accepted").toBool());
+        advance();
+        const auto enable = arguments(-1, 0);
+        QVERIFY(invoke("diversity.setTarget", enable).value("accepted").toBool());
+        const QJsonObject active = summary();
+        QVERIFY(active.value("requested").toBool());
+        QVERIFY(active.value("paused").toBool());
+        QCOMPARE(active.value("reasonCode").toString(), QStringLiteral("resourcesUnavailable"));
+        advance();
+        const QJsonObject beforeStale = summary();
+        QVERIFY(!invoke("diversity.setTarget", enable).value("accepted").toBool());
+        QCOMPARE(summary(), beforeStale);
+        advance();
+        QVERIFY(invoke("diversity.setTarget", arguments(0, 1)).value("accepted").toBool());
+        QCOMPARE(summary().value("live").toObject().value("sliceId").toInt(), 1);
+        advance();
+        const auto off = arguments(1, -1);
+        QVERIFY(invoke("diversity.setTarget", off).value("accepted").toBool());
+        QVERIFY(!summary().value("requested").toBool());
+        advance();
+        auto wrong = off; wrong[0].name = "conformanceWrongName";
+        const QJsonObject beforeMalformed = summary();
+        QVERIFY(!invoke("diversity.setTarget", wrong).value("accepted").toBool());
+        QCOMPARE(summary(), beforeMalformed);
+        advance();
+        QFile file(QDir(output).filePath(name + ".json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QByteArray bytes = "{\n    \"runs\": [\"station\", \"app\"],\n    \"stationSetup\": "
+            + QJsonDocument(setup).toJson(QJsonDocument::Compact) + ",\n    \"steps\": [\n";
+        for (int i = 0; i < steps.size(); ++i) {
+            bytes += "        " + QJsonDocument(steps[i].toObject()).toJson(QJsonDocument::Compact)
+                + (i + 1 == steps.size() ? "\n" : ",\n");
+        }
+        bytes += "    ]\n}\n";
+        QVERIFY(file.write(bytes) > 0);
+    }
+}
+
 void TstLinkConformanceSession::everyVerbIsInvokedRightAndWrong()
 {
     // Each verb in verbSpecs() is invoked by some session fixture with its
@@ -1596,8 +1829,10 @@ void TstLinkConformanceSession::rightAndWrongLegsGetDifferentAnswers()
                 continue;
             }
             const QJsonValue id = message.value(QStringLiteral("id"));
+            // Ranged app-owned IDs capture only the name, not the range.
             const QJsonValue refersTo = id.isString()
-                ? QJsonValue(id.toString().replace(QStringLiteral("$int:"), QStringLiteral("$ref:")))
+                    && id.toString().startsWith(QStringLiteral("$int:"))
+                ? QJsonValue(QStringLiteral("$ref:%1").arg(id.toString().section(QLatin1Char(':'), 1, 1)))
                 : id;
             QStringList answers;
             for (int j = i + 1; j < steps.size(); ++j) {
@@ -2193,6 +2428,48 @@ void TstLinkConformanceSession::aDeferredOwnConnectionOpensAtItsStep()
     QVERIFY2(LinkFixtures::checkSessionFormat(stray).contains(
                  QStringLiteral("openOwnConnection must be true, once")),
              qPrintable(LinkFixtures::checkSessionFormat(stray)));
+}
+
+void TstLinkConformanceSession::currentCoreHelloOfferRemainsStrict()
+{
+    const QJsonObject legacy{{QStringLiteral("type"), QStringLiteral("hello")},
+        {QStringLiteral("features"), QJsonObject{{QStringLiteral("deviceAuth"), 1},
+            {QStringLiteral("pairing"), 1}, {QStringLiteral("sessionHolder"), 1}}}};
+    const QJsonValue expected = LinkFixtures::currentCoreStationExpectation(legacy);
+    QJsonObject actual = expected.toObject();
+    QCOMPARE(actual.value(QStringLiteral("features")).toObject()
+                 .value(QStringLiteral("radioMic")).toInt(), 2);
+    QVERIFY(LinkFixtures::match(expected, actual, nullptr).isEmpty());
+    for (int version : {0, 1, 3}) {
+        QJsonObject wrong = actual;
+        QJsonObject features = wrong.value(QStringLiteral("features")).toObject();
+        if (version == 0) { features.remove(QStringLiteral("radioMic")); }
+        else { features.insert(QStringLiteral("radioMic"), version); }
+        wrong.insert(QStringLiteral("features"), features);
+        QVERIFY(LinkFixtures::match(expected, wrong, nullptr)
+                    .contains(QStringLiteral("radioMic")));
+    }
+    QJsonObject extra = actual;
+    QJsonObject features = extra.value(QStringLiteral("features")).toObject();
+    features.insert(QStringLiteral("unexpected"), 1);
+    extra.insert(QStringLiteral("features"), features);
+    QVERIFY(LinkFixtures::match(expected, extra, nullptr)
+                .contains(QStringLiteral("unexpected")));
+
+    QJsonObject explicitOlder = actual;
+    features.remove(QStringLiteral("unexpected"));
+    features.insert(QStringLiteral("radioMic"), 1);
+    explicitOlder.insert(QStringLiteral("features"), features);
+    QCOMPARE(LinkFixtures::currentCoreStationExpectation(explicitOlder), QJsonValue(explicitOlder));
+    QVERIFY(!LinkFixtures::match(explicitOlder, actual, nullptr).isEmpty());
+    QJsonObject other = legacy;
+    other.insert(QStringLiteral("type"), QStringLiteral("capabilities"));
+    QCOMPARE(LinkFixtures::currentCoreStationExpectation(other), QJsonValue(other));
+    const QJsonObject bare{{QStringLiteral("type"), QStringLiteral("hello")}};
+    QCOMPARE(LinkFixtures::currentCoreStationExpectation(bare), QJsonValue(bare));
+    const QJsonObject noIdentity{{QStringLiteral("type"), QStringLiteral("hello")},
+        {QStringLiteral("features"), QJsonObject{{QStringLiteral("pairing"), 1}}}};
+    QCOMPARE(LinkFixtures::currentCoreStationExpectation(noIdentity), QJsonValue(noIdentity));
 }
 
 void TstLinkConformanceSession::jsonStringsMatchTheirShape()

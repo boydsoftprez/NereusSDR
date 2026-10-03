@@ -6,6 +6,9 @@
         <file alias="getting-started.md">resources/help/getting-started.md</file>
     </qresource>
     <qresource prefix="/meters">
+        <file alias="anan-approved-clean.jpg">resources/meters/anan-approved-clean.jpg</file>
+        <file alias="anan-approved-hubs.jpg">resources/meters/anan-approved-hubs.jpg</file>
+        <file alias="anan-approved-lettering.jpg">resources/meters/anan-approved-lettering.jpg</file>
         <file alias="ananMM.png">resources/meters/ananMM.png</file>
         <file alias="cross-needle.png">resources/meters/cross-needle.png</file>
         <file alias="cross-needle-bg.png">resources/meters/cross-needle-bg.png</file>

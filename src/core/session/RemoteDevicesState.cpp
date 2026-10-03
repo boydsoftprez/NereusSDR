@@ -19,6 +19,9 @@
 //               Claude Code.
 // =================================================================
 
+// 2026-10-01: Authenticated Core address inventory and reconnect learning.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+
 #include "core/session/RemoteDevicesState.h"
 
 #include <QJsonArray>
@@ -108,6 +111,9 @@ void RemoteDevicesState::applyObject(const QByteArray& objectKey,
                 emit pairedDevicesChanged();
             } else if (u.name == "stationLabel") {
                 m_coreInfo.stationLabel = u.value.toString();
+                infoChanged = true;
+            } else if (u.name == "coreAddresses") {
+                m_coreInfo.coreAddresses = u.value.toString();
                 infoChanged = true;
             } else if (u.name == "claimed") {
                 m_coreInfo.claimed = u.value.toBool();

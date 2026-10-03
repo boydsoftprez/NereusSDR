@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02  J.J. Boyd / KG4VCF. Real window/fake Core TX-letter Take
+//                regressions: cancellation, current refusal, unchanged RX
+//                history, and target lifetime. AI-assisted via OpenAI Codex.
 //   2026-09-23  J.J. Boyd / KG4VCF  R3 remote window harness plan, Task 2.
 //                                    AI-assisted transformation via
 //                                    Anthropic Claude Code.
@@ -117,6 +120,15 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDir>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QToolTip>
+#include <QSharedPointer>
+#include <QStyleFactory>
+#include "gui/styles/AppTheme.h"
 #include <QCheckBox>
 #include <QRadioButton>
 #include <QScopeGuard>
@@ -143,6 +155,7 @@
 #include <cmath>
 #include <memory>
 #include <optional>
+#include <utility>
 
 #include "TestFunctionGroups.h"
 #include "core/safety/TxRefusal.h"
@@ -158,7 +171,11 @@
 #include "core/session/StationCapabilities.h"
 #include "core/session/IStationLink.h"
 #include "core/session/StationClient.h"
+#include "core/session/MirrorSchema.h"
+#include "core/session/SessionMessages.h"
 #include "core/session/SliceAccessMirror.h"
+#include "core/session/SliceAccessSet.h"
+#include "core/session/TransmitStateFacade.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/MainWindow.h"
 #include "gui/MoxDisplayController.h"
@@ -203,6 +220,26 @@
 #include "gui/SliceChooser.h"
 #include "gui/widgets/RxDashboard.h"
 #include "gui/widgets/StatusToast.h"
+
+namespace NereusSDR {
+class TxLetterTakeWindowAccess {
+public:
+    static bool retireFlag(MainWindow& window, int sliceId)
+    {
+        VfoWidget* flag = window.m_vfoWidgetsBySlice.value(sliceId, nullptr);
+        SpectrumWidget* spectrum = flag
+            ? qobject_cast<SpectrumWidget*>(flag->parentWidget()) : nullptr;
+        if (!spectrum || spectrum->vfoWidget(sliceId) != flag) { return false; }
+        // Remove MainWindow's observer before the spectrum's owning remove:
+        // both maps agree, floating buttons are destroyed by production's
+        // removeVfoWidget, and Qt disconnects the retired flag's callbacks.
+        window.m_vfoWidgetsBySlice.remove(sliceId);
+        spectrum->removeVfoWidget(sliceId);
+        return !window.m_vfoWidgetsBySlice.contains(sliceId)
+            && spectrum->vfoWidget(sliceId) == nullptr;
+    }
+};
+} // namespace NereusSDR
 
 using namespace NereusSDR;
 using NereusSDR::Test::RemoteWindowHarness;
@@ -302,10 +339,80 @@ SliceChooser* openChooser(RemoteWindowHarness& h)
     return h.window()->findChild<SliceChooser*>();
 }
 
+// Optional private offscreen evidence from the same functional fixtures.
+bool captureTxLetterEvidence(RemoteWindowHarness& h, QWidget* surface, const QString& name)
+{
+    const QString destination = qEnvironmentVariable("NEREUS_TX_LETTER_EVIDENCE");
+    if (destination.isEmpty()) { return true; }
+    if (!surface || !QDir().mkpath(destination)) { return false; }
+    const QPointer<QWidget> alive = surface;
+    const auto queued = QSharedPointer<bool>::create(false);
+    QMetaObject::invokeMethod(surface, [queued]() { *queued = true; }, Qt::QueuedConnection);
+    if (!QTest::qWaitFor([&]() { return *queued || alive.isNull(); }, 3000) || !alive) {
+        return false;
+    }
+    surface->ensurePolished();
+    if (TxApplet* applet = qobject_cast<TxApplet*>(surface)) {
+        // New buttons use Qt's deferred layout/show path. Observe actual
+        // visible, distinct geometry before the first unheld row is grabbed.
+        if (!QTest::qWaitFor([applet]() {
+            QRect previous;
+            const auto buttons = applet->transmitSliceButtons();
+            if (buttons.isEmpty()) { return false; }
+            for (QPushButton* button : buttons) {
+                const QRect geometry = button->geometry();
+                if (!button->isVisible() || geometry.y() == 0 || geometry.width() <= 0
+                    || previous.intersects(geometry)) { return false; }
+                previous = geometry;
+            }
+            return true;
+        }, 3000)) { return false; }
+    }
+    const QPixmap pixels = surface->grab();
+    if (pixels.isNull() || !pixels.save(QDir(destination).filePath(name + ".png"))) {
+        return false;
+    }
+    QJsonArray letters;
+    if (TxApplet* applet = h.window()->findChild<TxApplet*>()) {
+        for (QPushButton* button : applet->transmitSliceButtons()) {
+            letters.append(QJsonObject{{"letter", button->text()},
+                                       {"sliceId", button->property("sliceId").toInt()},
+                                       {"enabled", button->isEnabled()},
+                                       {"visible", button->isVisible()},
+                                       {"checked", button->isChecked()},
+                                       {"toolTip", button->toolTip()},
+                                       {"x", button->x()}, {"y", button->y()},
+                                       {"width", button->width()}, {"height", button->height()}});
+        }
+    }
+    const QJsonObject state{{"platform", QGuiApplication::platformName()},
+                            {"theme", QStringLiteral("production Fusion/AppTheme")},
+                            {"width", pixels.width()}, {"height", pixels.height()},
+                            {"letters", letters},
+                            {"holdsTransmitHere", h.client()->holdsTransmitHere()},
+                            {"txSliceId", h.station().txSliceArbiter()->txBoundSliceId()},
+                            {"activeRx", h.remoteModel()->activeSlice()->sliceIndex()},
+                            {"mox", h.station().mox()}, {"tune", h.station().isTune()},
+                            {"mirroredKeyed", h.client()->transmitState()->keyed()}};
+    QFile record(QDir(destination).filePath(name + ".json"));
+    return record.open(QIODevice::WriteOnly)
+        && record.write(QJsonDocument(state).toJson()) > 0;
+}
+
 VfoWidget* flagFor(RemoteWindowHarness& h, int sliceId)
 {
     for (VfoWidget* flag : h.window()->findChildren<VfoWidget*>()) {
         if (flag->sliceIndex() == sliceId) { return flag; }
+    }
+    return nullptr;
+}
+
+QPushButton* txLetterFor(RemoteWindowHarness& h, int sliceId)
+{
+    TxApplet* applet = h.window()->findChild<TxApplet*>();
+    if (!applet) { return nullptr; }
+    for (QPushButton* button : applet->transmitSliceButtons()) {
+        if (button->property("sliceId").toInt() == sliceId) { return button; }
     }
     return nullptr;
 }
@@ -807,7 +914,9 @@ private slots:
         QCOMPARE(h.controls()->statusText(), QStringLiteral("Core disconnected"));
         QCOMPARE(h.titleSegment()->state(), ConnectionState::Disconnected);
         QCOMPARE(h.titleSegment()->remoteStatusText(), QStringLiteral("Core disconnected"));
-        QVERIFY(h.stationBlock()->radioName().contains(h.controls()->endpointText()));
+        // Core name is the headline; the attempted listener remains in Details.
+        QCOMPARE(h.stationBlock()->radioName(), QStringLiteral("Core name not reported"));
+        QVERIFY(h.stationBlock()->toolTip().contains(h.controls()->endpointText()));
         QCOMPARE(h.stationBlock()->hardwareLine(), QStringLiteral("Core disconnected"));
         QAction* connect = h.menuAction(QStringLiteral("&Radio"), QStringLiteral("&Connect"));
         QAction* disconnect = h.menuAction(QStringLiteral("&Radio"), QStringLiteral("&Disconnect"));
@@ -963,7 +1072,10 @@ private slots:
         QCOMPARE(h.remoteModel()->connectionState(), ConnectionState::Disconnected);
         QTest::qWait(kSettleMs);
 
-        QCOMPARE(h.stationBlock()->hardwareLine(), QStringLiteral("Radio offline"));
+        // The banner reports the live Core control connection independently
+        // of its offline radio; full Details retains the radio's availability.
+        QCOMPARE(h.stationBlock()->hardwareLine(), QStringLiteral("Core connected"));
+        QVERIFY(h.stationBlock()->toolTip().contains(QStringLiteral("Radio offline")));
         QCOMPARE(h.controls()->state(), ConnectionState::Connected);
         QCOMPARE(h.titleSegment()->remoteStatusText(), QStringLiteral("Core connected"));
         QCOMPARE(connectionsRequested.size(), 0);
@@ -1903,7 +2015,7 @@ private slots:
     // does. TX badge take (JJ's ruling): while this window does not hold
     // transmit the badge takes it first (at once when nobody holds it,
     // through the take question when another device does) and then makes
-    // the slice the TX slice; the letter row stays held. Nothing keys: the
+    // the slice the TX slice; the letter row offers the same take. Nothing keys: the
     // Core has no radio.
     void theFlagsTxButtonMovesTransmitLikeTheLetterRow()
     {
@@ -1950,6 +2062,8 @@ private slots:
         QTRY_COMPARE(client->capabilities().txRefusalReason, notPaired);
         QTRY_VERIFY(!badge->isEnabled());
         QCOMPARE(badge->toolTip(), notPaired);
+        QTRY_VERIFY(letterB() && !letterB()->isEnabled());
+        QCOMPARE(letterB()->toolTip(), notPaired);
         flag->simulateTxBadgeClick();
         QObject phoneSession;
         const QByteArray phone = admitPhone(h, phoneSession);
@@ -1974,17 +2088,17 @@ private slots:
 
         // A Core that permits this window's transmit (its radio up; the
         // bench Core has none, so the capability says so for it): another
-        // device holding transmit is what a take answers. The letter row is
-        // held with the Core's reason; the badge offers the take.
+        // device holding transmit is what a take answers. Both controls
+        // offer the same take in the same words.
         StationCapabilities granted = h.server().buildCapabilities();
         granted.txPermitted = true;
         h.pushCapabilities(granted);
         QTRY_VERIFY(client->capabilities().txPermitted);
-        QTRY_COMPARE(letterB()->toolTip(), TxRefusals::notHolder().text);
-        QVERIFY(!letterB()->isEnabled());
         QTRY_VERIFY(badge->isEnabled());
         QTRY_COMPARE(badge->toolTip(),
                      QStringLiteral("Take transmit from iPhone and make this the TX slice"));
+        QTRY_VERIFY(letterB() && letterB()->isEnabled());
+        QCOMPARE(letterB()->toolTip(), badge->toolTip());
 
         // Cancelled question: nothing moves.
         badge->click();
@@ -2039,6 +2153,449 @@ private slots:
         letterB()->click();
         QTRY_COMPARE(h.txSliceCommands(), QList<int>({1, 1}));
         QVERIFY(!h.station().mox());
+    }
+
+    // Physical-PTT metadata from a fake Core, with no MOX/PTT/key request.
+    // Raw Take is offered, but the real flag's effective gate freezes only
+    // the radio's current slice. The letter must preserve the same refusal.
+    void remoteTxLettersRespectPhysicalPttOnItsCurrentSlice()
+    {
+        RemoteWindowHarness h(sharingOptions(2, QStringLiteral("2v")));
+        QVERIFY(h.start());
+        h.server().setRemoteTransmitAllowed(true);
+        h.server().setTokenSessionsMayTransmitForTest(true);
+        QVERIFY(connectSharing(h));
+        StationClient* client = h.client();
+        StationCapabilities granted = h.server().buildCapabilities();
+        granted.txPermitted = true;
+        h.pushCapabilities(granted);
+        QTRY_VERIFY(client->capabilities().txPermitted);
+        TxSliceArbiter* arbiter = h.station().txSliceArbiter();
+        QVERIFY(arbiter);
+        const int current = arbiter->txBoundSliceId();
+        QVERIFY(current == 0 || current == 1);
+        const int other = current == 0 ? 1 : 0;
+        TransmitHolder* holder = h.server().transmitHolder();
+        const QByteArray radioId = SliceOwnership::stationDevice();
+        TransmitHolder::Holder radio;
+        radio.deviceId = radioId;
+        radio.name = QStringLiteral("Radio");
+        radio.shortName = QStringLiteral("Radio");
+        radio.kind = QStringLiteral("station");
+        radio.source = TransmitHolder::Source::RadioPtt;
+        holder->transferTo(radio, QStringLiteral("fake physical-PTT state"));
+        QTRY_VERIFY(holder->isHeldBy(radioId));
+        QTRY_COMPARE(client->transmitState()->holderSource(), QStringLiteral("radioPtt"));
+        QTRY_VERIFY(client->transmitHeldElsewhere());
+        QVERIFY(h.coreLink());
+        // Send the Core's mirrored state, deriving ordinals from the real
+        // schema instead of calling any radio/MOX/PTT key entry point.
+        const MirrorSchema& schema = MirrorSchema::forObject(client->transmitState());
+        QList<MirrorUpdate> updates;
+        for (const auto& value : {std::pair<QByteArray, QVariant>{"keyed", true},
+                                  std::pair<QByteArray, QVariant>{"txSliceId", current}}) {
+            const MirrorProperty* property = schema.byName(value.first);
+            QVERIFY(property);
+            updates.append({property->ordinal, property->name, property->kind, value.second});
+        }
+        QSignalSpy mox(h.station().moxController(), &MoxController::moxChanged);
+        h.coreLink()->sendDirect(SessionMessages::encode(
+            SessionMessages::delta(QByteArrayLiteral("txState"), updates)));
+        QTRY_VERIFY(client->transmitState()->keyed());
+        QTRY_COMPARE(client->transmitState()->txSliceId(), current);
+        VfoWidget* flag = flagFor(h, current);
+        QVERIFY(flag);
+        QTRY_VERIFY(flag->inUseByRadio());
+        QVERIFY(flag->txBadgeOffer().offered); // Raw eligibility is insufficient.
+        auto* badge = flag->findChild<QPushButton*>(QStringLiteral("VfoTxBadge"));
+        QVERIFY(badge);
+        QTRY_VERIFY(!badge->isEnabled());
+        QCOMPARE(badge->toolTip(), VfoWidget::inUseByRadioText());
+        QTRY_VERIFY(txLetterFor(h, current) && !txLetterFor(h, current)->isEnabled());
+        QCOMPARE(txLetterFor(h, current)->toolTip(), VfoWidget::inUseByRadioText());
+        const int active = h.remoteModel()->activeSlice()->sliceIndex();
+        const QStringList access = h.sliceAccessCommands();
+        QSignalSpy finished(client, &StationClient::deviceCommandFinished);
+        emit txLetterFor(h, current)->clicked(false); // A stale delivered intent.
+        bool drained = false;
+        QMetaObject::invokeMethod(h.window(), [&drained]() { drained = true; },
+                                  Qt::QueuedConnection);
+        QTRY_VERIFY(drained);
+        QVERIFY(h.window()->findChild<TakeTransmitDialog*>() == nullptr);
+        QVERIFY(finished.isEmpty());
+        QVERIFY(h.txSliceCommands().isEmpty());
+        QVERIFY(holder->isHeldBy(radioId));
+        QCOMPARE(arbiter->txBoundSliceId(), current);
+        QCOMPARE(h.remoteModel()->activeSlice()->sliceIndex(), active);
+        QCOMPARE(h.sliceAccessCommands(), access);
+
+        // Preserve the existing Take policy on the other controlled slice;
+        // freezing the radio's current frequency must not freeze this one.
+        QTRY_VERIFY(flagFor(h, other) && !flagFor(h, other)->inUseByRadio());
+        QTRY_VERIFY(txLetterFor(h, other) && txLetterFor(h, other)->isEnabled());
+        txLetterFor(h, other)->click();
+        QPointer<TakeTransmitDialog> question;
+        QTRY_VERIFY((question = h.window()->findChild<TakeTransmitDialog*>()) != nullptr);
+        QCOMPARE(question->questionLabel()->text(), QStringLiteral("Take transmit from Radio?"));
+        question->cancelButton()->click();
+        QTRY_VERIFY(question.isNull());
+        QVERIFY(finished.isEmpty());
+        QVERIFY(h.txSliceCommands().isEmpty());
+        QVERIFY(holder->isHeldBy(radioId));
+        QVERIFY(mox.isEmpty());
+        QVERIFY(!h.station().mox());
+        QVERIFY(!h.station().isTune());
+    }
+
+    // A typed access incarnation can change while the mirrored SliceModel
+    // survives. The old letter take must not select that new Core lifetime.
+    void remoteTxLetterPendingTakeRejectsChangedAccessIncarnation()
+    {
+        RemoteWindowHarness h(sharingOptions(2, QStringLiteral("2v")));
+        QVERIFY(h.start());
+        h.server().setRemoteTransmitAllowed(true);
+        h.server().setTokenSessionsMayTransmitForTest(true);
+        QVERIFY(connectSharing(h));
+        StationClient* client = h.client();
+        StationCapabilities granted = h.server().buildCapabilities();
+        granted.txPermitted = true;
+        h.pushCapabilities(granted);
+        QTRY_VERIFY(client->capabilities().txPermitted);
+        QObject phoneSession;
+        const QByteArray phone = admitPhone(h, phoneSession);
+        QVERIFY(!phone.isEmpty());
+        TransmitHolder::Holder phoneHolder;
+        phoneHolder.deviceId = phone;
+        phoneHolder.name = QStringLiteral("Living room iPhone");
+        phoneHolder.shortName = QStringLiteral("iPhone");
+        phoneHolder.kind = QStringLiteral("phone");
+        h.server().transmitHolder()->transferTo(phoneHolder, QStringLiteral("test"));
+        QTRY_VERIFY(client->transmitHeldElsewhere());
+        QTRY_VERIFY(txLetterFor(h, 1) && txLetterFor(h, 1)->isEnabled());
+        const QPointer<SliceModel> target = h.remoteModel()->sliceById(1);
+        QVERIFY(target);
+        QVERIFY(client->sliceAccess()->entry(1).has_value());
+        const quint64 original = client->sliceAccess()->entry(1)->incarnation;
+        txLetterFor(h, 1)->click();
+        QPointer<TakeTransmitDialog> question;
+        QTRY_VERIFY((question = h.window()->findChild<TakeTransmitDialog*>()) != nullptr);
+        h.coreLink()->holdSliceAccessUpdates();
+        // Model the Core's new authoritative access life through its real
+        // typed wire path. Hold old-life access refreshes from the bench
+        // Core so they cannot overwrite this deliberate replacement state.
+        const MirrorSchema& schema = MirrorSchema::forMetaObject(&SliceAccess::staticMetaObject);
+        const MirrorProperty* property = schema.byName(QByteArrayLiteral("incarnation"));
+        QVERIFY(property);
+        const quint64 replacement = original + 1;
+        const MirrorUpdate update{property->ordinal, property->name, property->kind,
+                                  QVariant::fromValue(qint64(replacement))};
+        h.coreLink()->sendDirect(SessionMessages::encode(
+            SessionMessages::delta(QByteArrayLiteral("access:1"), {update})));
+        QTRY_COMPARE(client->sliceAccess()->entry(1)->incarnation, replacement);
+        QCOMPARE(h.remoteModel()->sliceById(1), target.data());
+        QVERIFY(client->sliceAccess()->controlledHere(1));
+        QSignalSpy finished(client, &StationClient::deviceCommandFinished);
+        const bool acceptedQuestion = question && question->isVisible();
+        if (acceptedQuestion) {
+            question->takeButton()->click();
+            QTRY_VERIFY(client->holdsTransmitHere());
+        }
+        // Invalidation may cancel the question itself. In either case a
+        // later grant must not revive its stale selection.
+        if (!acceptedQuestion) {
+            h.server().transmitHolder()->release(phone, QStringLiteral("test hand-back"));
+            QTRY_VERIFY(!client->transmitHeldElsewhere());
+            QVERIFY(client->requestTakeTransmit(false, 0, false) != 0);
+        }
+        QTRY_VERIFY(client->holdsTransmitHere());
+        bool drained = false;
+        QMetaObject::invokeMethod(h.window(), [&drained]() { drained = true; },
+                                  Qt::QueuedConnection);
+        QTRY_VERIFY(drained);
+        QVERIFY(h.txSliceCommands().isEmpty());
+        for (const QList<QVariant>& answer : finished) {
+            QVERIFY(answer.at(0).toByteArray() != QByteArrayLiteral("tx.setTxSlice"));
+        }
+        QCOMPARE(h.remoteModel()->sliceById(1), target.data());
+        QCOMPARE(client->sliceAccess()->entry(1)->incarnation, replacement);
+        QVERIFY(!h.station().mox());
+        QVERIFY(!h.station().isTune());
+    }
+
+    // An old letter's delivered intent must not inherit the flag's Take
+    // control behavior after this window becomes only a listener.
+    void remoteStaleTxLetterNeverTakesControlOfAListenedSlice()
+    {
+        RemoteWindowHarness h(sharingOptions(2, QStringLiteral("2v")));
+        QVERIFY(h.start());
+        h.server().setRemoteTransmitAllowed(true);
+        h.server().setTokenSessionsMayTransmitForTest(true);
+        QVERIFY(connectSharing(h));
+        StationClient* client = h.client();
+        StationCapabilities granted = h.server().buildCapabilities();
+        granted.txPermitted = true;
+        h.pushCapabilities(granted);
+        QTRY_VERIFY(client->capabilities().txPermitted);
+        QObject phoneSession;
+        const QByteArray phone = admitPhone(h, phoneSession);
+        QVERIFY(!phone.isEmpty());
+        TransmitHolder::Holder phoneHolder;
+        phoneHolder.deviceId = phone;
+        phoneHolder.name = QStringLiteral("Living room iPhone");
+        phoneHolder.shortName = QStringLiteral("iPhone");
+        phoneHolder.kind = QStringLiteral("phone");
+        TransmitHolder* holder = h.server().transmitHolder();
+        holder->transferTo(phoneHolder, QStringLiteral("test"));
+        QTRY_VERIFY(client->transmitHeldElsewhere());
+        QTRY_VERIFY(txLetterFor(h, 1) && txLetterFor(h, 1)->isEnabled());
+        const QPointer<QPushButton> staleLetter = txLetterFor(h, 1);
+        const QStringList accessBefore = h.sliceAccessCommands();
+        const int boundBefore = h.station().txSliceArbiter()->txBoundSliceId();
+        QSignalSpy finished(client, &StationClient::deviceCommandFinished);
+        bool delivered = false;
+        QObject accessObserver;
+        connect(client->sliceAccess(), &SliceAccessMirror::changed, &accessObserver,
+                [client, staleLetter, &delivered](int id) {
+            if (id != 1 || delivered || client->sliceAccess()->controlledHere(1)) { return; }
+            delivered = true;
+            // Existing row rebuild uses deleteLater, so deliver the old
+            // button's intent at the authoritative access-change boundary,
+            // before its valid QObject retires. No dangling pointer fixture.
+            QVERIFY(staleLetter);
+            emit staleLetter->clicked(false);
+        });
+        h.station().sliceOwnership()->setOwner(1, phone);
+        QTRY_VERIFY(delivered);
+        QTRY_VERIFY(flagFor(h, 1) && flagFor(h, 1)->isListening());
+        QTRY_VERIFY(txLetterFor(h, 1) == nullptr);
+        bool drained = false;
+        QMetaObject::invokeMethod(h.window(), [&drained]() { drained = true; },
+                                  Qt::QueuedConnection);
+        QTRY_VERIFY(drained);
+        QVERIFY(h.window()->findChild<TakeTransmitDialog*>() == nullptr);
+        QCOMPARE(h.sliceAccessCommands(), accessBefore);
+        QVERIFY(h.txSliceCommands().isEmpty());
+        QVERIFY(finished.isEmpty());
+        QVERIFY(holder->isHeldBy(phone));
+        QCOMPARE(h.station().sliceOwnership()->mark(1).owner, phone);
+        QCOMPARE(h.station().txSliceArbiter()->txBoundSliceId(), boundBefore);
+        QVERIFY(!h.station().mox());
+        QVERIFY(!h.station().isTune());
+    }
+
+    void remoteTxLettersPreserveCurrentCoreRefusals_data()
+    {
+        QTest::addColumn<QString>("code");
+        QTest::addColumn<QString>("words");
+        QTest::addColumn<bool>("missingCapability");
+        for (const auto& refusal : {TxRefusals::notReady(), TxRefusals::deviceNotPaired(),
+                                   TxRefusals::stationReceiveOnly(), TxRefusals::txInhibited()}) {
+            QTest::newRow(qPrintable(refusal.text)) << QString::fromLatin1(refusal.code)
+                                                  << refusal.text << false;
+        }
+        QTest::newRow("missing-remote-tx") << QString() <<
+            QStringLiteral("Remote transmit controls are not available from this Core.") << true;
+    }
+
+    void remoteTxLettersPreserveCurrentCoreRefusals()
+    {
+        QFETCH(QString, code);
+        QFETCH(QString, words);
+        QFETCH(bool, missingCapability);
+        RemoteWindowHarness h(sharingOptions(2, QStringLiteral("2v")));
+        QVERIFY(h.start());
+        h.server().setRemoteTransmitAllowed(true);
+        h.server().setTokenSessionsMayTransmitForTest(true);
+        QVERIFY(connectSharing(h));
+        StationClient* client = h.client();
+        StationCapabilities granted = h.server().buildCapabilities();
+        granted.txPermitted = true;
+        h.pushCapabilities(granted);
+        QTRY_VERIFY(client->capabilities().txPermitted);
+        QTRY_VERIFY(flagFor(h, 1) && flagFor(h, 1)->txBadgeOffer().offered);
+        QTRY_VERIFY(txLetterFor(h, 1) && txLetterFor(h, 1)->isEnabled());
+        StationCapabilities refused = granted;
+        refused.txPermitted = false;
+        refused.txRefusalCode = code;
+        refused.txRefusalReason = missingCapability ? QString() : words;
+        if (missingCapability) { refused.remoteTxVersion = 0; }
+        h.pushCapabilities(refused);
+        QTRY_VERIFY(!client->capabilities().txPermitted);
+        auto* badge = flagFor(h, 1)->findChild<QPushButton*>(QStringLiteral("VfoTxBadge"));
+        QTRY_VERIFY(!badge->isEnabled());
+        QCOMPARE(badge->toolTip(), words);
+        QTRY_VERIFY(txLetterFor(h, 1) && !txLetterFor(h, 1)->isEnabled());
+        QCOMPARE(txLetterFor(h, 1)->toolTip(), words);
+        if (code == QString::fromLatin1(TxRefusals::notReady().code)
+            && !qEnvironmentVariableIsEmpty("NEREUS_TX_LETTER_EVIDENCE")) {
+            QVERIFY(captureTxLetterEvidence(h, h.window()->findChild<TxApplet*>(),
+                                            QStringLiteral("letters-refused")));
+            QPushButton* letter = txLetterFor(h, 1);
+            QToolTip::showText(letter->mapToGlobal(letter->rect().center()), letter->toolTip(),
+                               letter);
+            QPointer<QWidget> tooltip;
+            QTRY_VERIFY([&]() {
+                for (QWidget* widget : QApplication::topLevelWidgets()) {
+                    if (widget->windowType() == Qt::ToolTip && widget->isVisible()) {
+                        tooltip = widget;
+                        return true;
+                    }
+                }
+                return false;
+            }());
+            QVERIFY(captureTxLetterEvidence(h, tooltip, QStringLiteral("refusal-tooltip")));
+            QToolTip::hideText();
+        }
+        QSignalSpy finished(client, &StationClient::deviceCommandFinished);
+        const int boundBefore = h.station().txSliceArbiter()->txBoundSliceId();
+        // A stale delivered intent must recheck today's refusal even when
+        // it bypasses the button's disabled presentation.
+        emit txLetterFor(h, 1)->clicked(false);
+        bool queueDrained = false;
+        QMetaObject::invokeMethod(h.window(), [&queueDrained]() { queueDrained = true; },
+                                  Qt::QueuedConnection);
+        QTRY_VERIFY(queueDrained);
+        QVERIFY(h.window()->findChild<TakeTransmitDialog*>() == nullptr);
+        QVERIFY(finished.isEmpty());
+        QVERIFY(h.txSliceCommands().isEmpty());
+        QCOMPARE(h.station().txSliceArbiter()->txBoundSliceId(), boundBefore);
+        QCOMPARE(h.server().transmitHolder()->state(), TransmitHolder::State::Unheld);
+        QVERIFY(!h.station().mox());
+        QVERIFY(!h.station().isTune());
+    }
+
+    void remoteTxLettersTakeThenSelectOnTheCoreWithoutKeying_data()
+    {
+        QTest::addColumn<bool>("heldElsewhere");
+        QTest::addColumn<bool>("absentFlag");
+        QTest::newRow("nobody-holds") << false << false;
+        QTest::newRow("phone-holds") << true << false;
+        QTest::newRow("nobody-holds-no-flag") << false << true;
+        QTest::newRow("phone-holds-no-flag") << true << true;
+    }
+
+    void remoteTxLettersTakeThenSelectOnTheCoreWithoutKeying()
+    {
+        QFETCH(bool, heldElsewhere);
+        QFETCH(bool, absentFlag);
+        RemoteWindowHarness h(sharingOptions(2, QStringLiteral("2v")));
+        QVERIFY(h.start());
+        h.server().setRemoteTransmitAllowed(true);
+        h.server().setTokenSessionsMayTransmitForTest(true);
+        QVERIFY(connectSharing(h));
+        StationClient* client = h.client();
+        StationCapabilities granted = h.server().buildCapabilities();
+        granted.txPermitted = true;
+        h.pushCapabilities(granted);
+        QTRY_VERIFY(client->capabilities().txPermitted);
+        TransmitHolder* holder = h.server().transmitHolder();
+        const QByteArray self = QByteArrayLiteral("token:1");
+        QObject phoneSession;
+        const QByteArray phone = admitPhone(h, phoneSession);
+        QVERIFY(!phone.isEmpty());
+        if (heldElsewhere) {
+            TransmitHolder::Holder phoneHolder;
+            phoneHolder.deviceId = phone;
+            phoneHolder.name = QStringLiteral("Living room iPhone");
+            phoneHolder.shortName = QStringLiteral("iPhone");
+            phoneHolder.kind = QStringLiteral("phone");
+            holder->transferTo(phoneHolder, QStringLiteral("test"));
+            QTRY_VERIFY(client->transmitHeldElsewhere());
+        } else {
+            QTRY_VERIFY(holder->state() == TransmitHolder::State::Unheld);
+        }
+        TxSliceArbiter* arbiter = h.station().txSliceArbiter();
+        QVERIFY(arbiter);
+        const int boundBefore = arbiter->txBoundSliceId();
+        const int activeBefore = h.remoteModel()->activeSlice()->sliceIndex();
+        const int rxBefore = h.station().sliceOwnership()->activeRxFor(self);
+        const QString panBefore = h.station().sliceById(1)->panKey();
+        const double frequencyBefore = h.station().sliceById(1)->frequency();
+        const int streamBefore = h.station().sliceById(1)->streamIndex();
+        const quint64 epochBefore = h.station().sliceById(1)->streamEpoch();
+        const QStringList accessBefore = h.sliceAccessCommands();
+        QSignalSpy finished(client, &StationClient::deviceCommandFinished);
+        QSignalSpy mox(h.station().moxController(), &MoxController::moxChanged);
+        bool everKeyed = false;
+        QObject keyObserver;
+        connect(holder, &TransmitHolder::changed, &keyObserver, [holder, &everKeyed]() {
+            everKeyed = everKeyed || (holder->holder() && holder->holder()->keyed);
+        });
+        QTRY_VERIFY(flagFor(h, 1) && flagFor(h, 1)->txBadgeOffer().offered);
+        QTRY_VERIFY(txLetterFor(h, 1) && txLetterFor(h, 1)->isEnabled());
+        QCOMPARE(txLetterFor(h, 1)->toolTip(), flagFor(h, 1)->txBadgeOffer().toolTip);
+        if (!absentFlag) {
+            QVERIFY(captureTxLetterEvidence(h, h.window()->findChild<TxApplet*>(),
+                heldElsewhere ? QStringLiteral("letters-other-holder")
+                              : QStringLiteral("letters-unheld")));
+        }
+        QPointer<VfoWidget> originalFlag = flagFor(h, 1);
+        if (absentFlag) {
+            QVERIFY(TxLetterTakeWindowAccess::retireFlag(*h.window(), 1));
+            QVERIFY(originalFlag.isNull());
+            QVERIFY(flagFor(h, 1) == nullptr);
+            QVERIFY(h.remoteModel()->sliceById(1));
+            QVERIFY(client->sliceAccess()->controlledHere(1));
+        }
+        QVERIFY(!client->holdsTransmitHere());
+
+        if (heldElsewhere) {
+            txLetterFor(h, 1)->click();
+            QPointer<TakeTransmitDialog> question;
+            QTRY_VERIFY((question = h.window()->findChild<TakeTransmitDialog*>()) != nullptr);
+            QCOMPARE(question->questionLabel()->text(), QStringLiteral("Take transmit from iPhone?"));
+            QCOMPARE(txLetterFor(h, 1)->isChecked(), h.remoteModel()->sliceById(1)->isTxSlice());
+            question->cancelButton()->click();
+            QTRY_VERIFY(question.isNull());
+            bool cancellationDrained = false;
+            QMetaObject::invokeMethod(h.window(), [&cancellationDrained]() {
+                cancellationDrained = true;
+            }, Qt::QueuedConnection);
+            QTRY_VERIFY(cancellationDrained);
+            QVERIFY(holder->isHeldBy(phone));
+            QCOMPARE(arbiter->txBoundSliceId(), boundBefore);
+            QVERIFY(h.txSliceCommands().isEmpty());
+            QVERIFY(finished.isEmpty());
+        }
+        txLetterFor(h, 1)->click();
+        if (heldElsewhere) {
+            QPointer<TakeTransmitDialog> question;
+            QTRY_VERIFY((question = h.window()->findChild<TakeTransmitDialog*>()) != nullptr);
+            if (!absentFlag) {
+                QVERIFY(captureTxLetterEvidence(h, question, QStringLiteral("take-confirmation")));
+            }
+            question->takeButton()->click();
+            QTRY_VERIFY(question.isNull());
+        } else {
+            QVERIFY(h.window()->findChild<TakeTransmitDialog*>() == nullptr);
+        }
+        QTRY_VERIFY(client->holdsTransmitHere());
+        QVERIFY(holder->isHeldBy(self));
+        QTRY_COMPARE(h.txSliceCommands(), QList<int>({1}));
+        QTRY_COMPARE(arbiter->txBoundSliceId(), 1);
+        QTRY_VERIFY(h.remoteModel()->sliceById(1)->isTxSlice());
+        QTRY_VERIFY(txLetterFor(h, 1)->isChecked());
+        if (!absentFlag && !heldElsewhere) {
+            QVERIFY(captureTxLetterEvidence(h, h.window()->findChild<TxApplet*>(),
+                                            QStringLiteral("letters-selected")));
+        }
+        QTRY_COMPARE(finished.count(), 2);
+        QCOMPARE(finished.at(0).at(0).toByteArray(), QByteArrayLiteral("tx.take"));
+        QCOMPARE(finished.at(1).at(0).toByteArray(), QByteArrayLiteral("tx.setTxSlice"));
+        for (const QList<QVariant>& answer : finished) { QVERIFY(answer.at(2).toBool()); }
+        QCOMPARE(h.sliceAccessCommands(), accessBefore);
+        QCOMPARE(h.remoteModel()->activeSlice()->sliceIndex(), activeBefore);
+        QCOMPARE(h.station().sliceOwnership()->activeRxFor(self), rxBefore);
+        QCOMPARE(h.station().sliceById(1)->panKey(), panBefore);
+        QCOMPARE(h.station().sliceById(1)->frequency(), frequencyBefore);
+        QCOMPARE(h.station().sliceById(1)->streamIndex(), streamBefore);
+        QCOMPARE(h.station().sliceById(1)->streamEpoch(), epochBefore);
+        QVERIFY(!everKeyed);
+        QVERIFY(mox.isEmpty());
+        QVERIFY(!h.station().mox());
+        QVERIFY(!h.station().isTune());
+        QVERIFY(!h.remoteModel()->mox());
+        QVERIFY(!h.remoteModel()->isTune());
     }
 
     // TX badge take fix round 1: a window the Core lets transmit (the
@@ -2690,6 +3247,12 @@ int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
     app.setAttribute(Qt::AA_Use96Dpi, true);
+    if (!qEnvironmentVariableIsEmpty("NEREUS_TX_LETTER_EVIDENCE")) {
+        // The same bootstrap as main.cpp; capture real production styling.
+        app.setStyle(QStyleFactory::create("Fusion"));
+        applyDarkPalette(app);
+        applyAppBaselineQss(app);
+    }
     TestRemoteWindowHarness test;
     QTEST_SET_MAIN_SOURCE_PATH
     // Load findings 4: about 37 s on a quiet computer, past ctest's 120 s

@@ -1,0 +1,1 @@
+{"kind":"BarPreset","flavor":"Mic","x":0.12,"y":0.15,"w":0.81,"h":0.23,"bindingId":47,"minValue":-30,"maxValue":12,"label":"Custom Mic | peak","barColor":"#ff123456","backdropColor":"#ff223344","redThreshold":-2.5,"future":{"keep":"exact"}}

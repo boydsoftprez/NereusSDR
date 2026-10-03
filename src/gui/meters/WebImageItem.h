@@ -73,6 +73,9 @@ public:
     explicit WebImageItem(QObject* parent = nullptr);
     ~WebImageItem() override;
 
+    void setFetchEnabled(bool enabled);
+    bool fetchEnabled() const { return m_fetchEnabled; }
+
     void setUrl(const QString& url);
     QString url() const { return m_url; }
 
@@ -96,6 +99,7 @@ private:
     int     m_refreshInterval{300}; // seconds
     QColor  m_fallbackColor{0x20, 0x20, 0x20};
     QImage  m_image;
+    bool    m_fetchEnabled{true};
     bool    m_fetchInProgress{false};
 
     QNetworkAccessManager* m_nam{nullptr};

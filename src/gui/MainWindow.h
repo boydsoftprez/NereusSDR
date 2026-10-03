@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
+//                Take and select action, with current access and target
+//                lifetime checks. AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -251,6 +256,7 @@ class DiversityDialog;
 // Whether moc would accept the elaborated form in a return position was
 // not tested; the forward declaration is the form that is known to work.
 class SetupDialog;
+struct CoreSettingsContext;
 class RemoteMediaController;
 // Phase 3J-2 H1: Tools menu modeless singletons.
 class SpotHubDialog;
@@ -326,6 +332,11 @@ public:
     void startInitialConnection();
     void retireForSessionSwitch();
     void setConnectionPickerManaged(bool managed);
+    /// Present Settings for a saved Core without changing the window's session.
+    void openCoreSettings(const QString& targetId);
+    /// Presentation facts for this window; no saved-entry or session ownership.
+    CoreSettingsContext coreSettingsSnapshot() const;
+    void setSavedCoreName(const QString& name);
     RadioModel* radioModel() const { return m_radioModel; }
     // Caller owns the controller and model; local windows only.
     void setDesktopStationController(DesktopStationController* controller);
@@ -962,6 +973,9 @@ private slots:
     // `only`: just that item (one added while the window runs).
     void refreshContainerControls(MeterItem* only = nullptr);
     void refreshContainer(class ContainerWidget* container, MeterItem* only = nullptr);
+    void refreshContainerMeter(class ContainerWidget* container, MeterWidget* meter, MeterItem* only, const QJsonObject& context, bool frequencyOnly = false);
+    QString containerSessionId() const;
+    int containerControlRxSource(const ContainerWidget* container) const;
     // Tuning: only the VFO display and band items of the containers on
     // `slice` (frequency and band).
     void refreshContainerFrequency(SliceModel* slice);
@@ -1011,6 +1025,9 @@ private slots:
     void pushSpectrumCalToPans();
 
 private:
+#ifdef NEREUS_BUILD_TESTS
+    friend class TxLetterTakeWindowAccess;
+#endif
     // Parity Task 21 (R-IOS-18, B6.2, B6.3): the Core's radio from a remote
     // window: Setup > This Core opened on what the menu asked for.
     enum class ThisCoreFocus { ChangeRadio, EditRadio, ForgetRadio };
@@ -1375,6 +1392,7 @@ private:
     // TCI and the VAX channels.
     ReceiverStopNotices m_receiverStopNotices;
     class RemoteTelemetryController* m_remoteTelemetry{nullptr};
+    QString m_savedCoreName;
     class RemoteConnectionController* m_remoteConnection{nullptr};
     class RemoteConnectionPanel* m_remoteConnectionPanel{nullptr};
     /// R-R3-38: the stop message over the content of a remote window.
@@ -1674,7 +1692,7 @@ private:
     void resetDefaultLayout();
 
     // Meter system (Phase 3G-2)
-    MeterWidget* m_meterWidget{nullptr};
+    QPointer<MeterWidget> m_meterWidget;
     MeterPoller* m_meterPoller{nullptr};
     void populateDefaultMeter();
 
@@ -1796,7 +1814,20 @@ private:
     // then makes the slice the TX slice. Two requests in sequence: a slice
     // take never carries transmit (ruling Q8). Nothing keys.
     enum class TxBadgeStage { None, Slice, Transmit };
-    // What the flag's badge offers now (VfoWidget::TxBadgeOffer).
+    struct TxSliceAction {
+        bool offered{false};
+        QString toolTip;
+        QString heldReason;
+        bool enabled{false};
+        QString effectiveWords;
+    };
+    TxSliceAction txSliceAction(int sliceId) const;
+    void activateTransmitSlice(int sliceId, bool controlledOnly);
+    quint64 txSliceIncarnation(int sliceId) const;
+    bool txTakeTargetValid(int sliceId, SliceModel* target, quint64 incarnation,
+                           bool requireControl) const;
+    // The flag and letter share current eligibility; neither widget is
+    // authority for the action or the pending target's Core lifetime.
     void applyTxBadgeOffer(VfoWidget* flag) const;
     // Whether this window holds transmit: the station device's hold in a
     // hosting window, the Core's word in a remote one, always on its own.
@@ -1822,6 +1853,10 @@ private:
     int m_flagRequestSlice{-1};
     // TX badge take: the slice a badge click is taking, and its stage.
     int m_txBadgeTakeSlice{-1};
+    QPointer<SliceModel> m_txBadgeTarget;
+    quint64 m_txBadgeIncarnation{0};
+    // A flag's slice.takeControl answer can precede its access delta.
+    bool m_txBadgeTakingSlice{false};
     TxBadgeStage m_txBadgeTakeStage{TxBadgeStage::None};
     // The badge's own take of transmit: the hosting take's id, the remote
     // tx.take's command id, and whether it was granted. Only that take's

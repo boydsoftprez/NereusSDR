@@ -124,6 +124,7 @@
 #include "core/MoxController.h"
 #include "core/TxChannel.h"
 #include "core/session/IStationLink.h"
+#include "core/session/RemoteTransmitClient.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 #include "gui/StyleConstants.h"
@@ -1034,7 +1035,9 @@ void PhoneCwApplet::wireControls()
         // UI -> Model
         connect(m_vaxBtn, &QPushButton::toggled, this, [this, &tx](bool on) {
             if (m_updatingFromModel || !m_transmitPermitted) { return; }
-            tx.toggleVaxSource(on);
+            m_model->requestMicSource(on ? MicSource::Vax : tx.previousNonVaxMicSource());
+            QSignalBlocker blocker(m_vaxBtn);
+            m_vaxBtn->setChecked(tx.micSource() == MicSource::Vax);
         });
         // Model -> UI (mirrors button to model so external changes - profile
         // load, future combo wiring, MMIO - keep the checked state honest).
@@ -1206,6 +1209,14 @@ void PhoneCwApplet::wireControls()
             this, [this](bool) { showMicSourceFromModel(); });
     connect(m_model, &RadioModel::currentRadioChanged,
             this, [this](const RadioInfo&) { refreshMicSourceItems(); });
+    connect(m_model, &RadioModel::remoteMicSourceStateChanged, this, [this]() {
+        refreshMicSourceItems();
+        updateTransmitControlAvailability();
+    });
+    connect(&tx, &TransmitModel::moxChanged, this, [this](bool) {
+        refreshMicSourceItems();
+        updateTransmitControlAvailability();
+    });
     refreshMicSourceItems();
 
     // ── #13 AM carrier level ↔ TransmitModel::amCarrierLevel (R-R3-21) ──────
@@ -1405,7 +1416,9 @@ void PhoneCwApplet::updateTransmitControlAvailability()
     // The keying gate: the mic source and VAX.
     for (QWidget* control : {static_cast<QWidget*>(m_micSourceCombo),
                              static_cast<QWidget*>(m_vaxBtn)}) {
-        gate(control, m_transmitPermitted, m_transmitPermissionReason);
+        const QString sourceReason = m_model ? m_model->micSourceChangeReason(MicSource::Pc) : QString();
+        gate(control, m_transmitPermitted && sourceReason.isEmpty(),
+             !m_transmitPermitted ? m_transmitPermissionReason : sourceReason);
     }
     // R-R3-49 (parity Task 3): the mic profile.
     gate(m_micProfileCombo, m_txProfilePermitted, m_txProfileReason);
@@ -1512,8 +1525,10 @@ void PhoneCwApplet::refreshMicSourceItems()
     for (const Row& row : rows) {
         QStandardItem* item = items->item(static_cast<int>(row.input));
         if (!item) { continue; }
-        item->setEnabled(row.available);
-        item->setToolTip(row.available ? row.note : row.why);
+        const QString sourceReason = m_model->micSourceChangeReason(
+            row.input == MicInput::Pc ? MicSource::Pc : MicSource::Radio);
+        item->setEnabled(row.available && sourceReason.isEmpty());
+        item->setToolTip(!sourceReason.isEmpty() ? sourceReason : row.available ? row.note : row.why);
     }
     showMicSourceFromModel();
 }
@@ -1544,28 +1559,17 @@ void PhoneCwApplet::showMicSourceFromModel()
 void PhoneCwApplet::applyMicInput(MicInput input)
 {
     if (!m_model) { return; }
-    TransmitModel& tx = m_model->transmitModel();
-    const HPSDRHW hw = m_model->boardCapabilities().board;
-    switch (input) {
-    case MicInput::Pc:
-        tx.setMicSource(MicSource::Pc);
-        break;
-    case MicInput::Mic:
-        if (isSaturnFamily(hw)) { tx.setMicXlr(false); }
-        if (isHermesFamily(hw)) { tx.setLineIn(false); }
-        tx.setMicSource(MicSource::Radio);
-        break;
-    case MicInput::Balanced:
-        tx.setMicXlr(true);
-        tx.setMicSource(MicSource::Radio);
-        break;
-    case MicInput::Line:
-        tx.setLineIn(true);
-        tx.setMicSource(MicSource::Radio);
-        break;
-    case MicInput::Accessory:
-        break;  // disabled item: no radio here has one
-    }
+    if (input == MicInput::Accessory) { return; }
+    const QPointer<PhoneCwApplet> self(this);
+    m_model->requestMicSource(input == MicInput::Pc ? MicSource::Pc : MicSource::Radio,
+        [self, input]() {
+            if (!self || !self->m_model || input == MicInput::Pc) { return; }
+            auto& tx = self->m_model->transmitModel();
+            const HPSDRHW hw = self->m_model->boardCapabilities().board;
+            if (isSaturnFamily(hw)) { tx.setMicXlr(input == MicInput::Balanced); }
+            if (isHermesFamily(hw)) { tx.setLineIn(input == MicInput::Line); }
+            self->showMicSourceFromModel();
+        });
     // The model may coerce (HL2 has no jack): show what it settled on.
     showMicSourceFromModel();
 }

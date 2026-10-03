@@ -1,10 +1,16 @@
 // no-port-check: NereusSDR-original. Desktop host presentation over a borrowed local model.
+// Modification history (NereusSDR):
+//   2026-10-02  J.J. Boyd / KG4VCF. Real window/fake Core TX-letter Take
+//                regressions: cancellation, current refusal, unchanged RX
+//                history, and target lifetime. AI-assisted via OpenAI Codex.
+
 #include "gui/HostingSliceActions.h"
 #include "gui/MainWindow.h"
 
 #include "core/FFTRouter.h"
 #include "core/TxSliceArbiter.h"
 #include "core/AppSettings.h"
+#include "core/MoxController.h"
 #include "core/SliceOwnership.h"
 #include "core/TciServer.h"
 #include "core/TwoToneController.h"
@@ -101,6 +107,16 @@ VfoWidget* flagFor(MainWindow& window, int id)
 {
     for (VfoWidget* flag : window.findChildren<VfoWidget*>()) {
         if (flag->sliceIndex() == id) { return flag; }
+    }
+    return nullptr;
+}
+
+QPushButton* txLetterFor(MainWindow& window, int id)
+{
+    TxApplet* applet = window.findChild<TxApplet*>();
+    if (!applet) { return nullptr; }
+    for (QPushButton* button : applet->transmitSliceButtons()) {
+        if (button->property("sliceId").toInt() == id) { return button; }
     }
     return nullptr;
 }
@@ -2035,6 +2051,199 @@ private slots:
         QCOMPARE(ownership->activeRxFor(station), aId);
         QCOMPARE(ownership->activeFor(station), activeBefore);
         QCOMPARE(model->activeSlice() ? model->activeSlice()->sliceIndex() : -1, modelActiveBefore);
+        controller.stop();
+    }
+
+    // JJ's approved TX-letter take: every controlled letter takes through
+    // the flag's confirmation, then selects authoritatively. No key or RX
+    // selection occurs, including cancellation and a current refusal.
+    void hostTxLettersTakeTransmitThenSelectWithoutKeying()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        RadioModel* model = window.radioModel();
+        model->setBoardForTest(HPSDRHW::Saturn);
+        model->configureStreamPool(5, 5, 192000);
+        model->setConnectionStateForTest(ConnectionState::Connected);
+        QList<int> controlled;
+        for (int i = 0; i < 4; ++i) {
+            const int id = model->addSlice(QStringLiteral("pan-0"));
+            QVERIFY(id >= 0);
+            controlled.append(id);
+        }
+        DesktopStationController controller(model, optionsFor(settings, directory.path()));
+        window.setDesktopStationController(&controller);
+        QVERIFY(controller.start(true));
+        StationServer* server = controller.server();
+        QVERIFY(server);
+        TransmitHolder* holder = server->transmitHolder();
+        QObject phoneSession;
+        const DeviceSessionRegistry::Entry phone =
+            admitPhone(*server, phoneSession, QByteArrayLiteral("phone-device-id-for-tx-letters-01"));
+        QVERIFY(!phone.deviceId.isEmpty());
+        TransmitHolder::KeyRequest phoneKey;
+        phoneKey.deviceId = phone.deviceId;
+        QCOMPARE(holder->askKey(phoneKey).verdict, KeyingVerdict::Admit);
+        const QByteArray station = SliceOwnership::stationDevice();
+        SliceOwnership* ownership = model->sliceOwnership();
+        TxSliceArbiter* arbiter = model->txSliceArbiter();
+        QVERIFY(arbiter);
+        const int boundBefore = arbiter->txBoundSliceId();
+        const int target = controlled.last();
+        const int activeBefore = model->activeSlice()->sliceIndex();
+        const int rxBefore = ownership->activeRxFor(station);
+        const auto markBefore = ownership->mark(target);
+        bool everKeyed = false;
+        QObject keyObserver;
+        connect(holder, &TransmitHolder::changed, &keyObserver, [holder, &everKeyed]() {
+            everKeyed = everKeyed || (holder->holder() && holder->holder()->keyed);
+        });
+        QSignalSpy mox(model->moxController(), &MoxController::moxChanged);
+        VfoWidget* flag = flagFor(window, target);
+        QVERIFY(flag && flag->txBadgeOffer().offered);
+        QTRY_VERIFY(txLetterFor(window, target) && txLetterFor(window, target)->isEnabled());
+        QCOMPARE(txLetterFor(window, target)->toolTip(), flag->txBadgeOffer().toolTip);
+
+        // Recheck the offer on click, even if the displayed button is old.
+        holder->runWithKeyingBlocked([&window, target] { txLetterFor(window, target)->click(); });
+        QVERIFY(window.findChild<TakeTransmitDialog*>() == nullptr);
+        QCOMPARE(toastsSaying(window, TxRefusals::changingHands().text), 1);
+        QVERIFY(holder->isHeldBy(phone.deviceId));
+        QCOMPARE(arbiter->txBoundSliceId(), boundBefore);
+
+        txLetterFor(window, target)->click();
+        QPointer<TakeTransmitDialog> question = window.findChild<TakeTransmitDialog*>();
+        QVERIFY(question);
+        QCOMPARE(question->questionLabel()->text(), QStringLiteral("Take transmit from iPhone?"));
+        QCOMPARE(txLetterFor(window, target)->isChecked(), boundBefore == target);
+        question->cancelButton()->click();
+        QTRY_VERIFY(question.isNull());
+        QVERIFY(holder->isHeldBy(phone.deviceId));
+        QCOMPARE(arbiter->txBoundSliceId(), boundBefore);
+
+        txLetterFor(window, target)->click();
+        question = window.findChild<TakeTransmitDialog*>();
+        QVERIFY(question);
+        question->takeButton()->click();
+        QTRY_VERIFY(question.isNull());
+        QTRY_VERIFY(holder->isHeldBy(station));
+        QTRY_COMPARE(arbiter->txBoundSliceId(), target);
+        QTRY_VERIFY(txLetterFor(window, target)->isChecked());
+        QCOMPARE(ownership->mark(target).owner, markBefore.owner);
+
+        // All A/B/C/D use the same immediate take when nobody holds TX.
+        for (int id : controlled) {
+            holder->release(station, QStringLiteral("test hand-back"));
+            QTRY_VERIFY(holder->state() == TransmitHolder::State::Unheld);
+            QTRY_VERIFY(txLetterFor(window, id) && txLetterFor(window, id)->isEnabled());
+            txLetterFor(window, id)->click();
+            QVERIFY(window.findChild<TakeTransmitDialog*>() == nullptr);
+            QTRY_VERIFY(holder->isHeldBy(station));
+            QTRY_COMPARE(arbiter->txBoundSliceId(), id);
+            QTRY_VERIFY(txLetterFor(window, id)->isChecked());
+        }
+        QCOMPARE(model->activeSlice()->sliceIndex(), activeBefore);
+        QCOMPARE(ownership->activeRxFor(station), rxBefore);
+        QVERIFY(!everKeyed);
+        QVERIFY(mox.isEmpty());
+        QVERIFY(!model->mox());
+        QVERIFY(!model->isTune());
+        controller.stop();
+    }
+
+    void hostTxLetterPendingTargetMustStillBeTheSameControlledSlice_data()
+    {
+        QTest::addColumn<QString>("change");
+        QTest::addColumn<bool>("viaFlag");
+        for (const QString& change : {QStringLiteral("deleted"), QStringLiteral("reused-id"),
+                                     QStringLiteral("lost-control"),
+                                     QStringLiteral("new-letter-replaces-old")}) {
+            QTest::newRow(qPrintable(change)) << change << false;
+            QTest::newRow(qPrintable(change + QStringLiteral("-flag"))) << change << true;
+        }
+    }
+
+    void hostTxLetterPendingTargetMustStillBeTheSameControlledSlice()
+    {
+        QFETCH(QString, change);
+        QFETCH(bool, viaFlag);
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        RadioModel* model = window.radioModel();
+        model->setBoardForTest(HPSDRHW::Saturn);
+        model->configureStreamPool(5, 5, 192000);
+        model->setConnectionStateForTest(ConnectionState::Connected);
+        const int aId = model->addSlice(QStringLiteral("pan-0"));
+        const int bId = model->addSlice(QStringLiteral("pan-0"));
+        QVERIFY(aId >= 0 && bId >= 0);
+        DesktopStationController controller(model, optionsFor(settings, directory.path()));
+        window.setDesktopStationController(&controller);
+        QVERIFY(controller.start(true));
+        StationServer* server = controller.server();
+        QObject phoneSession;
+        const DeviceSessionRegistry::Entry phone =
+            admitPhone(*server, phoneSession, QByteArrayLiteral("phone-device-id-for-tx-letters-02"));
+        QVERIFY(!phone.deviceId.isEmpty());
+        TransmitHolder* holder = server->transmitHolder();
+        TransmitHolder::KeyRequest key;
+        key.deviceId = phone.deviceId;
+        QCOMPARE(holder->askKey(key).verdict, KeyingVerdict::Admit);
+        QTRY_VERIFY(txLetterFor(window, bId) && txLetterFor(window, bId)->isEnabled());
+        if (viaFlag) { flagFor(window, bId)->simulateTxBadgeClick(); }
+        else { txLetterFor(window, bId)->click(); }
+        QPointer<TakeTransmitDialog> oldQuestion = window.findChild<TakeTransmitDialog*>();
+        QVERIFY(oldQuestion);
+        const quint64 incarnation = model->sliceOwnership()->incarnation(bId);
+        if (change == QLatin1String("new-letter-replaces-old")) {
+            txLetterFor(window, aId)->click();
+            QTRY_VERIFY(oldQuestion.isNull() || !oldQuestion->isVisible());
+        } else if (change == QLatin1String("lost-control")) {
+            model->sliceOwnership()->setOwner(bId, phone.deviceId);
+            QTRY_VERIFY(txLetterFor(window, bId) == nullptr);
+        } else {
+            model->removeSlice(bId);
+            QVERIFY(model->sliceById(bId) == nullptr);
+            if (change == QLatin1String("reused-id")) {
+                QCOMPARE(model->addSlice(QStringLiteral("pan-0")), bId);
+                QVERIFY(model->sliceOwnership()->incarnation(bId) != incarnation);
+            }
+        }
+        QSignalSpy selected(model, &RadioModel::txSliceSelected);
+        QSignalSpy mox(model->moxController(), &MoxController::moxChanged);
+        TakeTransmitDialog* question = nullptr;
+        for (TakeTransmitDialog* candidate : window.findChildren<TakeTransmitDialog*>()) {
+            if (candidate->isVisible()) { question = candidate; }
+        }
+        if (question) { question->takeButton()->click(); }
+        // Whether invalidation cancelled the question or only its queued
+        // selection, an unrelated later grant must not revive the old target.
+        if (!holder->isHeldBy(SliceOwnership::stationDevice())) {
+            holder->release(phone.deviceId, QStringLiteral("test hand-back"));
+            QTRY_VERIFY(holder->state() == TransmitHolder::State::Unheld);
+            QCOMPARE(controller.requestTakeTransmit().state,
+                     DesktopStationController::RequestState::Pending);
+        }
+        QTRY_VERIFY(holder->isHeldBy(SliceOwnership::stationDevice()));
+        bool queueDrained = false;
+        QMetaObject::invokeMethod(&window, [&queueDrained]() { queueDrained = true; },
+                                  Qt::QueuedConnection);
+        QTRY_VERIFY(queueDrained);
+        if (change == QLatin1String("new-letter-replaces-old")) {
+            QCOMPARE(selected.count(), 1);
+            QCOMPARE(selected.first().first().toInt(), aId);
+            QCOMPARE(model->txSliceArbiter()->txBoundSliceId(), aId);
+        } else {
+            QVERIFY(selected.isEmpty());
+        }
+        QVERIFY(mox.isEmpty());
+        QVERIFY(!model->mox());
+        QVERIFY(!model->isTune());
         controller.stop();
     }
 

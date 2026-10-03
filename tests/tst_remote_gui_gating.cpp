@@ -46,6 +46,8 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Committed container button lifecycle fixtures by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-08-08 -- New test file for remote-daemon R2 Task 20. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
@@ -228,6 +230,9 @@
 #include <QDoubleSpinBox>
 #include <QCheckBox>
 #include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/meters/AntennaButtonItem.h"
 #include "gui/meters/BandButtonItem.h"
@@ -2065,6 +2070,9 @@ private slots:
     {
         const QString txReason = QStringLiteral("Remote transmit is unavailable");
         RadioModel remote(RadioModel::Role::Remote);
+        // An older client/Core path retains this computer's PC/VAX choices;
+        // the radio input still requires the negotiated source command.
+        StationClient client(&remote, nullptr);
         SetupDialog dialog(&remote);
         dialog.setTransmitPermitted(false, txReason);
 
@@ -2128,6 +2136,22 @@ private slots:
         // microphone groups'.
         dialog.setTransmitPermitted(true);
         QVERIFY(page->micSourceGroup()->isEnabled());
+        QRadioButton* pc = nullptr;
+        QRadioButton* vax = nullptr;
+        QRadioButton* radio = nullptr;
+        for (QRadioButton* button : page->micSourceGroup()->findChildren<QRadioButton*>()) {
+            if (button->text() == QStringLiteral("PC Mic")) { pc = button; }
+            if (button->text().startsWith(QStringLiteral("VAX TX"))) { vax = button; }
+            if (button->text() == QStringLiteral("Radio Mic")) { radio = button; }
+        }
+        QVERIFY(pc && vax && radio);
+        QVERIFY(pc->isEnabled());
+        QVERIFY(vax->isEnabled());
+        QVERIFY(!radio->isEnabled());
+        vax->click();
+        QCOMPARE(tx.micSource(), MicSource::Vax);
+        pc->click();
+        QCOMPARE(tx.micSource(), MicSource::Pc);
         QVERIFY(!page->micGainSlider()->isEnabled());
         dialog.setTransmitSettingsPermitted(true, QString(), 3);
         QVERIFY(page->micGainSlider()->isEnabled());
@@ -4846,25 +4870,35 @@ private slots:
 
         struct Box {
             ContainerWidget* container{nullptr};
-            OtherButtonItem* buttons{nullptr};
-            BandButtonItem* bands{nullptr};
+            QPointer<OtherButtonItem> buttons;
+            QPointer<BandButtonItem> bands;
         };
         // A container set to `rxSource` holding function and band buttons,
         // wired as ContainerManager wires restored items.
-        const auto addBox = [](MainWindow* window, int rxSource) {
-            Box box;
-            auto* manager = window->findChild<ContainerManager*>();
-            if (!manager) { return box; }
-            box.container = manager->createContainer(rxSource, DockMode::Floating);
-            auto* meter = new MeterWidget();
-            box.container->setContent(meter);
-            box.buttons = new OtherButtonItem();
-            box.bands = new BandButtonItem();
-            meter->addItem(box.buttons);
-            box.container->wireInteractiveItem(box.buttons);
-            meter->addItem(box.bands);
-            box.container->wireInteractiveItem(box.bands);
+        const auto readBox = [](ContainerManager* manager, ContainerWidget* container) {
+            Box box; box.container = container;
+            if (auto* host = manager->contentHost(container->id())) {
+                for (const auto& row : host->entryRows()) {
+                    if (auto* item = qobject_cast<OtherButtonItem*>(row.item.data())) { box.buttons = item; }
+                    if (auto* item = qobject_cast<BandButtonItem*>(row.item.data())) { box.bands = item; }
+                }
+            }
             return box;
+        };
+        const auto addBox = [&readBox](MainWindow* window, int rxSource) {
+            auto* manager = window->findChild<ContainerManager*>();
+            if (!manager) { return Box{}; }
+            auto* container = manager->createContainer(rxSource, DockMode::Floating);
+            auto document = manager->workspaceStore()->snapshot();
+            OtherButtonItem buttons; BandButtonItem bands;
+            for (auto& record : document.containers) {
+                if (record.id == container->id()) {
+                    record.contents = {manager->contentRegistry()->captureMeterItem(buttons),
+                                       manager->contentRegistry()->captureMeterItem(bands)};
+                }
+            }
+            if (manager->commitWorkspace(document, document.revision).status != CommitStatus::Saved) { return Box{}; }
+            return readBox(manager, container);
         };
         const auto toastSaying = [](MainWindow* window, const QString& text) {
             for (StatusToast* toast : window->findChildren<StatusToast*>()) {
@@ -4890,7 +4924,7 @@ private slots:
             QVERIFY(model->setActiveSliceById(1));
             QCOMPARE(model->activeSlice(), b);
 
-            const Box box = addBox(window, 1);
+            Box box = addBox(window, 1);
             QVERIFY(box.container && box.buttons && box.bands);
 
             // The band buttons light slice A's band, not the active slice's.
@@ -4926,7 +4960,14 @@ private slots:
             QVERIFY(toastSaying(window, ContainerButtonDispatcher::noRadioTransmitReason()));
 
             // Set to slice C, which is not open: unavailable, and says so.
-            box.container->setRxSource(3);
+            auto* manager = window->findChild<ContainerManager*>();
+            auto document = manager->workspaceStore()->snapshot();
+            for (auto& record : document.containers) {
+                if (record.id == box.container->id()) { record.config["rxSource"] = 3; }
+            }
+            QCOMPARE(manager->commitWorkspace(document, document.revision).status, CommitStatus::Saved);
+            box = readBox(manager, box.container);
+            QVERIFY(box.buttons && box.bands);
             QVERIFY(!box.buttons->isButtonAvailable(Id::Anf));
             QCOMPARE(box.bands->activeBand(), -1);
             emit box.container->otherButtonClicked(int(Id::Anf));
@@ -5022,7 +5063,7 @@ private slots:
             station.moxController()->setMoxCheck({});
             station.moxController()->setMox(true);
             QTRY_VERIFY(window->radioModel()->isCoreOnAir());
-            QVERIFY(box.buttons->isButtonAvailable(Id::Mon));
+            QVERIFY2(box.buttons->isButtonAvailable(Id::Mon), qPrintable(box.buttons->buttonUnavailableReason(box.buttons->indexOf(Id::Mon))));
             // R-R3-49 (parity Task 7): PS-A keeps its own reason, not the air.
             QCOMPARE(box.buttons->buttonUnavailableReason(box.buttons->indexOf(Id::PsA)),
                      QStringLiteral("PureSignal needs a connected radio that supports it."));

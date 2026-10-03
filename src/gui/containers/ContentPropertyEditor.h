@@ -1,0 +1,34 @@
+#pragma once
+// no-port-check: NereusSDR-original draft content property adapter.
+#include "ContainerContentRegistry.h"
+#include <functional>
+#include <memory>
+class QLabel;
+namespace NereusSDR {
+class MeterItem;
+class ContentPropertyEditor : public QWidget {
+    Q_OBJECT
+public:
+    explicit ContentPropertyEditor(ContainerContentRegistry& registry, QWidget* parent=nullptr);
+    ~ContentPropertyEditor() override;
+    void setEntry(const ContentEntry& entry);
+    void setLayoutPolicy(ContentLayout policy) {m_policy=policy;}
+    void setContainerDefaults(const QJsonObject& defaults);
+signals:
+    void entryEdited(const ContentEntry& entry);
+private:
+    QWidget* control(const QString& key, const QJsonValue& value, int channel=-1);
+    void captureRenderer();
+    void publish();
+    QJsonValue effectiveProperty(const QString& key, int channel) const;
+    bool property(const QString& key, const QJsonValue& value, int channel=-1);
+    ContainerContentRegistry& m_registry;
+    ContentEntry m_entry;
+    QJsonObject m_defaults;
+    ContentLayout m_policy=ContentLayout::LegacyCanvas;
+    std::unique_ptr<MeterItem> m_item;
+    ContentEntry m_original, m_hydrated;
+    QLabel* m_error=nullptr;
+    bool m_loading=false;
+};
+}

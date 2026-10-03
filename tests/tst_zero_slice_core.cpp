@@ -12,6 +12,8 @@
 //   2026-09-30: RADE threads: the zero-slice RADE check wires a real
 //               channel and sees its route and decoder go. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-03: dynamic Diversity target and real software route lifecycle,
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 //
 // The model side of a Core with no slice: the claims rule's close of an
@@ -36,6 +38,9 @@
 #include "core/ReceiverManager.h"
 #include "core/SliceOwnership.h"
 #include "core/TxSliceArbiter.h"
+#include "core/codec/P2CodecSaturn.h"
+#include "core/session/SessionMessages.h"
+#include "models/RxDspWorker.h"
 #define private public
 #include "core/P1RadioConnection.h"
 #include "core/TciServer.h"
@@ -199,18 +204,64 @@ private slots:
     // started again for a later new slice unless asked.
     void externalDiversityStopsAtZeroAndStaysOff()
     {
+        RxDspWorker worker;
+        P2CodecSaturn codec;
         ZeroCore core;
+        core.model.setBoardForTest(HPSDRHW::Saturn);
+        core.model.receiverManager()->setP2Codec(&codec);
+        core.model.attachDspWorkerForTest(&worker);
+        worker.setEngines(core.model.wdspEngine(), nullptr);
+        worker.setBufferSizes(64, 64);
+        // Real lane/worker route lifecycle with the established offline WDSP
+        // API seam; no DSP sample processing, radio socket or RF.
+        core.model.wdspEngine()->setExternalDiversityApiForTest({
+            +[](int, int, int, int) {}, +[](int) {},
+            +[](int, int, double**, double*) {}, +[](int, int) {},
+            +[](int, int) {}, +[](int, int) {}, +[](int, int, double*, double*) {}});
         const int a = core.model.addSlice();
-        QCOMPARE(a, RadioModel::kExternalDiversityTargetSliceId);
-        core.model.m_externalDiversityRouteActive = true;
-        core.model.m_externalDiversityPrimaryDdc = 2;
+        QVERIFY(a >= 0);
+        auto* own = core.model.sliceOwnership();
+        own->setOwner(a, SliceOwnership::stationDevice());
+        QVERIFY(core.model.diversityEligibility(a).isEmpty());
+        const auto integer = [](const QByteArray& name, qint64 number) {
+            return MirrorUpdate{0, name, MirrorWireKind::Int64, number};
+        };
+        const auto enable = SessionMessages::commandInvoke("diversity.setTarget", 901,
+            {{0, "enabled", MirrorWireKind::Bool, true},
+             integer("stateRevision", qint64(core.model.diversityStateRevision())),
+             integer("sourceSliceId", -1), integer("sourceIncarnation", 0),
+             integer("sourceControlRevision", 0), integer("targetSliceId", a),
+             integer("targetIncarnation", qint64(own->incarnation(a))),
+             integer("targetControlRevision", qint64(own->controlRevision(a)))});
+        QVERIFY(core.model.invokeDiversityAsStationDevice(enable).accepted);
+        QVERIFY(core.model.waitForReceiveLaneForTest());
+        QVERIFY(core.model.sliceById(a)->diversityEnabled());
+        QCOMPARE(core.model.diversityTargetSlice(), core.model.sliceById(a));
+        QVERIFY(core.model.m_externalDiversityRouteActive);
+        QVERIFY(core.model.m_externalDiversityPrimaryDdc >= 0);
+        const auto oldIncarnation = own->incarnation(a);
+        // The claims close remains inadmissible while a device controls it.
+        QVERIFY(!core.model.closeUnclaimedSlice(a));
+        own->setOwner(a, {});
+        QVERIFY(own->leave(SliceOwnership::stationDevice(), a));
+        QVERIFY(own->unclaimed().contains(a));
         QVERIFY(core.model.closeUnclaimedSlice(a));
+        QVERIFY(core.model.waitForReceiveLaneForTest());
+        QVERIFY(core.model.slices().isEmpty());
+        QVERIFY(core.model.diversityTargetSlice() == nullptr);
         QVERIFY(!core.model.m_externalDiversityRouteActive);
         QCOMPARE(core.model.m_externalDiversityPrimaryDdc, -1);
 
         const int b = core.model.addSlice();
-        QCOMPARE(b, RadioModel::kExternalDiversityTargetSliceId);
+        QCOMPARE(b, a); // Actual freed id is reused, with a fresh identity.
+        QVERIFY(own->incarnation(b) != oldIncarnation);
         QVERIFY(!core.model.sliceById(b)->diversityEnabled());
+        // The legacy blend editor may resolve A while off; requested owner
+        // and authoritative summary remain empty after reuse.
+        QCOMPARE(core.model.m_diversityTargetSliceId, -1);
+        const auto state = QJsonDocument::fromJson(core.model.diversityState().toUtf8()).object();
+        QVERIFY(!state.value("requested").toBool());
+        QVERIFY(state.value("live").isNull());
         QVERIFY(!core.model.m_externalDiversityRouteActive);
     }
 

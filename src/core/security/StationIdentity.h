@@ -81,6 +81,11 @@ public:
                                                const QString& fileName,
                                                const QString& whose);
 
+    /// Read an existing P-256 private key only. Never creates directories/files,
+    /// changes permissions, overwrites or regenerates a missing/invalid key.
+    static StationIdentity loadExistingKeyFile(const QString& profileDir,
+                                              const QString& fileName, const QString& whose);
+
     /// Part C fix wave (R1-M5): an existing secret file (a key, the paired
     /// devices) that other users can read or write, restored from a backup
     /// at 0644 say, is set back to mode 0600 when it is loaded; a warning

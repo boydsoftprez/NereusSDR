@@ -3472,6 +3472,7 @@ bool DaemonMediaController::handleAudio(const QJsonObject& control)
     // iPhone app plan Task 23: a bitrate in the measured table becomes this
     // device's; any other is refused with its reason, and the running one
     // stays. A request without one keeps the device's earlier choice.
+    const int previousBitrate = audioStreamBitrate();
     m_audioBitrateRefusal.clear();
     if (hasBitrate) {
         if (isMeasuredOpusBitrate(requestedBitrate)) {
@@ -3482,7 +3483,16 @@ bool DaemonMediaController::handleAudio(const QJsonObject& control)
     }
     // An accepted control is a fresh audio context even if it leaves actual
     // capture unavailable pending peer readiness or station reconnect.
+    const QPointer<DaemonMediaController> self(this);
+    MediaPeer* const peer = m_peer.get();
+    const quint64 epoch = m_epoch;
     reconcileAudio();
+    if (!self || m_peer.get() != peer || m_epoch != epoch) { return true; }
+    // A main-only rate request (including a muted main stream) also moves
+    // this device's existing headphones encoder; receiver streams stay48.
+    if (previousBitrate != audioStreamBitrate() && m_headphones.revision != 0) {
+        reconcileHeadphonesAudio();
+    }
     return true;
 }
 
@@ -4148,6 +4158,14 @@ void DaemonMediaController::reconcileHeadphonesAudio()
     // receiver stream carry on untouched.
     stopHeadphonesAudioCapture();
     m_headphonesRouted = headphonesMixNeeded();
+    if (m_headphones.sender && m_headphones.encoderBitrate != audioStreamBitrate()) {
+        // A synchronous RTP recipient can change this rate inside the old
+        // sender's packetReady emission. As on session reset, let its drain
+        // return before the event loop reclaims the stopped sender.
+        DaemonAudioSender* const sender = m_headphones.sender.release();
+        sender->disconnect(this);
+        sender->deleteLater();
+    }
     const std::optional<RemoteAudioOffReason> blockedBy = headphonesBlockedBy();
     const AdmittedAudioProfile admitted = admitProfile(m_headphones.requestedProfile);
     m_headphones.activeProfile = admitted.active;
@@ -4155,12 +4173,13 @@ void DaemonMediaController::reconcileHeadphonesAudio()
     bool actualEnabled = false;
     if (!blockedBy) {
         if (!m_headphones.sender) {
-            // Opus at the speakers' mix's setting (audio_bitrate), not the
+            // Opus at this device's speakers' mix target, not the
             // receiver streams' rate, or lossless: the session's one quality
             // choice. Parented, so a sender retired with
             // deleteLater() is still reclaimed with this controller.
             OpusAudioCodecConfig codecConfig;
-            codecConfig.bitrate = m_audioTargetBitrate;
+            codecConfig.bitrate = audioStreamBitrate();
+            m_headphones.encoderBitrate = codecConfig.bitrate;
             m_headphones.sender = std::make_unique<DaemonAudioSender>(
                 m_radioModel->audioEngine(), codecConfig, this);
             m_headphones.sender->setSliceSource(DaemonAudioSource::kHeadphonesMix);

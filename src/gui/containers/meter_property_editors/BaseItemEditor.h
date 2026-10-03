@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Effective contextual draft properties and portable settings by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -98,6 +100,7 @@ public:
     // item's current state. Passing nullptr clears the binding and
     // disables the editor.
     virtual void setItem(MeterItem* item);
+    void setGeometryEditable(bool editable);
     MeterItem* item() const { return m_item; }
 
 signals:

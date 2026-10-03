@@ -424,6 +424,14 @@ nereus_add_test(tst_ps3_session fakes/LoopbackTransport.cpp EXTRA_LABELS session
 nereus_add_test(tst_dsp_asset_dialog EXTRA_LABELS gui)
 nereus_add_test(tst_dsp_asset_service EXTRA_LABELS core)
 nereus_add_test(tst_ps3_lifecycle EXTRA_LABELS core)
+if(TARGET wdsp_static)
+    # Native unkey must finish its paced down-slew/flush before the 100 ms fallback.
+    nereus_add_test(tst_ps3_tx_lane_deadlock WdspPsRampProbe.c CORE_ONLY REALTIME EXTRA_LABELS core)
+    set_source_files_properties(WdspPsRampProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_include_directories(tst_ps3_tx_lane_deadlock PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_ps3_tx_lane_deadlock PRIVATE WDSP_STATIC_BUILD)
+    target_compile_definitions(wdsp_static PRIVATE NEREUS_WDSP_PS_TEST_ACCESS)
+endif()
 nereus_add_test(tst_ps3_settings_persistence EXTRA_LABELS models)
 nereus_add_test(tst_nnr_settings EXTRA_LABELS models)
 nereus_add_test(tst_nnr_controls EXTRA_LABELS gui)
@@ -554,10 +562,25 @@ nereus_add_test(tst_radio_model_slice_state_restored)
 # SliceModel::dspModeChanged, and MoxController::txAboutToBegin so SSB
 # MOX no longer requires a prior TUN press to seed TXA mode + bp0.
 nereus_add_test(tst_radio_model_push_tx_mode_and_bandpass)
+nereus_add_test(tst_container_legacy_import)
 nereus_add_test(tst_container_persistence)
+nereus_add_test(tst_container_arrangement)
+nereus_add_test(tst_container_workspace_integration)
+nereus_add_test(tst_container_meter_native NATIVE_WINDOW)
+nereus_add_test(tst_container_chrome NATIVE_WINDOW)
+nereus_add_test(tst_container_document)
+nereus_add_test(tst_container_workspace_store)
+nereus_add_test(tst_container_edit_session)
+nereus_add_test(tst_container_exchange)
+nereus_add_test(tst_container_settings_workflow NATIVE_WINDOW)
+nereus_add_test(tst_container_preview NATIVE_WINDOW)
 # R-R3-49: container title bar and filter passband use native hand cursors
 # (Qt 6.11.0 crashes drawing SizeAllCursor on macOS).
 nereus_add_test(tst_native_cursors EXTRA_LABELS gui)
+nereus_add_test(tst_meter_composite_dispatch)
+nereus_add_test(tst_meter_bar_face NATIVE_WINDOW)
+nereus_add_test(tst_meter_composite_presets NATIVE_WINDOW)
+nereus_add_test(tst_meter_dynamics)
 nereus_add_test(tst_meter_item_bar)
 nereus_add_test(tst_reading_name)
 nereus_add_test(tst_meter_item_scale)
@@ -7801,6 +7824,8 @@ target_compile_definitions(tst_remote_tx_antennas PRIVATE NEREUS_BUILD_TESTS)
 
 # R-R3-38: client-only saved Core credentials and coherent CLI selection.
 nereus_add_test(tst_core_target_store)
+nereus_add_test(tst_core_address_probe fakes/LoopbackTransport.cpp)
+nereus_add_test(tst_cores_setup_page fakes/LoopbackTransport.cpp)
 nereus_add_test(tst_station_startup_selection)
 nereus_add_test(tst_gui_session_coordinator)
 target_compile_definitions(tst_gui_session_coordinator PRIVATE NEREUS_BUILD_TESTS)
@@ -7883,7 +7908,7 @@ else()
     set(NEREUS_TEST_PYTHON python3)
 endif()
 
-nereus_add_test(tst_gui_connection_controller)
+nereus_add_test(tst_gui_connection_controller fakes/LoopbackTransport.cpp)
 target_compile_definitions(tst_gui_connection_controller PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
@@ -7957,6 +7982,18 @@ add_executable(nereus_floor_probe EXCLUDE_FROM_ALL
     tools/floor/WsRelayPrototype.cpp)
 target_link_libraries(nereus_floor_probe PRIVATE NereusCore)
 set_target_properties(nereus_floor_probe PROPERTIES AUTOMOC ON)
+# The poll registry regression uses a separate test-only vendor archive.
+# No fixture fault injection or observer is present in shipping Core/RTC.
+nereus_add_test(tst_juice_poll_liveness CORE_ONLY EXTRA_LABELS session)
+if(TEST tst_juice_poll_liveness)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/fakes/juice-poll/Instrument.cmake")
+    # Keep standard sharding, sandbox, labels and aggregate registration, but
+    # avoid loading Core's separate libjuice registry into this direct fixture.
+    set_property(TARGET tst_juice_poll_liveness PROPERTY LINK_LIBRARIES
+        Qt6::Test Qt6::Core nereus_juice_poll_fixture)
+    set_property(TARGET tst_juice_poll_liveness PROPERTY DISABLE_PRECOMPILE_HEADERS ON)
+endif()
+
 # Task 56: the Core's compiled vendor sources contain the exact reviewed
 # relay cleanup patches, including libjuice's public and internal headers.
 # This check and the next are plain add_test() calls, not nereus_add_test(),
@@ -8458,6 +8495,7 @@ nereus_add_test(tst_support_bundle EXTRA_LABELS session)
 # Remote-window parity Task 22 (R-R3-49): the log sink no logging thread
 # waits on, a stuck writer included. Temporary files only.
 nereus_add_test(tst_log_sink EXTRA_LABELS core)
+nereus_add_test(tst_log_retention EXTRA_LABELS core)
 # Fix wave (2026-09-30): a fatal message reaches the log file before Qt
 # aborts. Runs the fatal in a child process of the same binary.
 nereus_add_test(tst_core_init_fatal_log EXTRA_LABELS core)
@@ -9763,6 +9801,17 @@ nereus_add_test(tst_display_setup_binding)
 # upstream source to cite.
 nereus_add_test(tst_display_applet)
 
+# Core Settings: signed rename admission and fresh retained listener candidates.
+nereus_add_test(tst_core_connection_candidates)
+nereus_add_test(tst_core_rename fakes/LoopbackTransport.cpp)
+nereus_add_test(tst_core_settings_host fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_core_connection_candidates PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
+# Coordinated movable Diversity and source/target authority, no hardware.
+nereus_add_test(tst_diversity_control fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+nereus_add_test(tst_diversity_local_admission fakes/LoopbackTransport.cpp EXTRA_LABELS models session)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
@@ -9777,6 +9826,9 @@ nereus_add_test(tst_display_applet)
 # The GLOBAL property NEREUS_ALL_TESTS is appended to by every
 # nereus_add_test() call above.  add_custom_target then bundles them
 # into a single buildable target.
+nereus_add_test(tst_container_content_host)
+nereus_add_test(tst_container_content_host_native NATIVE_WINDOW)
+
 get_property(_all_tests GLOBAL PROPERTY NEREUS_ALL_TESTS)
 add_custom_target(all_tests DEPENDS ${_all_tests})
 

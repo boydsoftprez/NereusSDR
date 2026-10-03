@@ -40,9 +40,11 @@
 
 #include "MultiDeviceHarness.h"
 
+
 #include "core/PttSource.h"
 #include "core/RadioStatus.h"
 #include "core/TwoToneController.h"
+#include "core/TxChannel.h"
 #include "core/session/RemoteKeying.h"
 #include "core/safety/RemoteTxWatchdog.h"
 
@@ -73,6 +75,15 @@ QJsonObject invokeAs(LoopbackTransport* app, const QByteArray& verb, quint32 id,
     const bool answered = QTest::qWaitFor([&find]() { return !find().isEmpty(); }, 5000);
     Q_UNUSED(answered);
     return find();
+}
+
+QList<QJsonObject> resultsWithId(LoopbackTransport* app, quint32 id)
+{
+    QList<QJsonObject> results;
+    for (const QJsonObject& result : ofType(app->received(), QStringLiteral("command.result"))) {
+        if (result.value(QStringLiteral("id")).toInteger() == id) { results.append(result); }
+    }
+    return results;
 }
 
 QJsonValue valueOf(const QJsonObject& result, const QString& name)
@@ -124,13 +135,15 @@ struct Pair {
     TransmitHolder* holder{nullptr};
     quint32 nextId{700};
 
-    Pair()
+    explicit Pair(bool radioSource = false)
     {
         allowTransmit(core);
         core.pair(a);
         core.pair(b);
-        appA = core.signIn(a, kTransmitter);
-        appB = core.signIn(b, kTransmitter);
+        auto features = kTransmitter;
+        if (radioSource) { features.insert("radioMic", 2); }
+        appA = core.signIn(a, features);
+        appB = core.signIn(b, features);
         mox = core.model->moxController();
         holder = core.server->transmitHolder();
     }
@@ -173,6 +186,838 @@ class TstRemoteKeying : public QObject {
 
 private slots:
     void initTestCase() { qRegisterMetaType<NereusSDR::TxRefusal>(); }
+
+    // Radio input belongs to this authenticated session. A source selection
+    // acknowledges its accepted value without changing the Core's own input,
+    // taking transmit, or pressing any transmit button.
+    void radioMicSelectionIsAcknowledgedWithoutChangingCoreInputOrKeying()
+    {
+        Core core;
+        allowTransmit(core);
+        core.model->setPcCaptureAllowed(false);
+        core.model->transmitModel().setMicSource(MicSource::Pc);
+        Device a;
+        core.pair(a);
+        auto features = kTransmitter;
+        features.insert(QByteArrayLiteral("radioMic"), 2);
+        LoopbackTransport* app = core.signIn(a, features);
+        QVERIFY(admitted(app));
+
+        const QJsonObject radio = core.invoke(
+            app, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))});
+        QVERIFY2(accepted(radio), qPrintable(describe(radio)));
+        QCOMPARE(radio.value(QStringLiteral("verb")).toString(),
+                 QStringLiteral("tx.setMicSource"));
+        const QJsonArray wantedRadio{
+            QJsonObject{{QStringLiteral("ordinal"), 0},
+                        {QStringLiteral("name"), QStringLiteral("source")},
+                        {QStringLiteral("kind"), QStringLiteral("utf8")},
+                        {QStringLiteral("value"), QStringLiteral("RadioMic")}}};
+        QCOMPARE(radio.value(QStringLiteral("values")).toArray(), wantedRadio);
+        const auto version = latestCapabilityIf(app->received(), QStringLiteral("radioMicVersion"));
+        QVERIFY2(version.has_value(), "Radio source selection needs a negotiated capability.");
+        QCOMPARE(version->toInteger(), qint64(2));
+        QCOMPARE(core.model->transmitModel().micSource(), MicSource::Pc);
+        QVERIFY(!core.model->moxController()->isMox());
+        QCOMPARE(core.server->transmitHolder()->state(), TransmitHolder::State::Unheld);
+
+        const QJsonObject client = core.invoke(
+            app, "tx.setMicSource", {utf8("source", QStringLiteral("ClientAudio"))});
+        QVERIFY2(accepted(client), qPrintable(describe(client)));
+        const QJsonArray wantedClient{
+            QJsonObject{{QStringLiteral("ordinal"), 0},
+                        {QStringLiteral("name"), QStringLiteral("source")},
+                        {QStringLiteral("kind"), QStringLiteral("utf8")},
+                        {QStringLiteral("value"), QStringLiteral("ClientAudio")}}};
+        QCOMPARE(client.value(QStringLiteral("values")).toArray(), wantedClient);
+        QCOMPARE(core.model->transmitModel().micSource(), MicSource::Pc);
+        QVERIFY(!core.model->moxController()->isMox());
+        QCOMPARE(core.server->transmitHolder()->state(), TransmitHolder::State::Unheld);
+    }
+
+    // A selected radio input must not need the desktop's microphone line or
+    // wait for its RTP buffer. Returning to ClientAudio restores that gate.
+    void radioMicPttKeysWithoutClientMicrophoneButClientAudioStillNeedsIt()
+    {
+        Core core;
+        allowTransmit(core);
+        int primeCalls = 0;
+        RemoteKeying::MicUplink closedLine;
+        closedLine.carriesMic = [](const QByteArray&) { return false; };
+        closedLine.prime = [&primeCalls](const QByteArray&, std::function<void(bool)> done) {
+            ++primeCalls;
+            done(false);
+        };
+        closedLine.endPriming = [](const QByteArray&) {};
+        core.server->remoteKeying()->setMicUplink(closedLine);
+        Device a;
+        core.pair(a);
+        auto features = kTransmitter;
+        features.insert(QByteArrayLiteral("radioMic"), 2);
+        LoopbackTransport* app = core.signIn(a, features);
+        QVERIFY(admitted(app));
+        QVERIFY(!core.model->remoteMicLineOpen(a.key.fingerprint()));
+        QVERIFY(core.model->sliceById(0) != nullptr);
+        QCOMPARE(core.model->sliceById(0)->dspMode(), DSPMode::USB);
+
+        // Send both commands before checking source acceptance: on the old
+        // Core this test diagnoses the voice-key refusal, independently of
+        // the preceding source command's missing implementation.
+        const QJsonObject source = core.invoke(
+            app, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))});
+        const QJsonObject key = core.invoke(app, "tx.key", trigger("screen"));
+        const QString diagnostic = QStringLiteral("source=%1; key=%2")
+                                       .arg(describe(source), describe(key));
+        QVERIFY2(accepted(key), qPrintable(diagnostic));
+        QVERIFY2(accepted(source), qPrintable(describe(source)));
+        QCOMPARE(valueOf(source, QStringLiteral("source")).toString(), QStringLiteral("RadioMic"));
+        QVERIFY(epochOf(key) > 0);
+        QVERIFY(core.model->moxController()->isMox());
+        QVERIFY(core.server->transmitHolder()->isHeldBy(a.key.fingerprint()));
+        QCOMPARE(core.model->moxController()->currentKeyer().deviceId, a.key.fingerprint());
+        QCOMPARE(core.model->keyedBy().deviceId, a.key.fingerprint());
+        QCOMPARE(core.model->keyedBy().epoch, static_cast<quint32>(epochOf(key)));
+        QCOMPARE(primeCalls, 0);
+        QVERIFY(!core.server->remoteKeying()->keyPending());
+        QVERIFY(!core.model->remoteMicInUse());
+        QVERIFY(core.model->remoteMicWriter().isEmpty());
+        QVERIFY(!core.model->remoteMicLineOpen(a.key.fingerprint()));
+
+        const QJsonObject unkey = core.invoke(app, "tx.unkey", {int64("epoch", epochOf(key))});
+        QVERIFY2(accepted(unkey), qPrintable(describe(unkey)));
+        QTRY_VERIFY(!core.model->moxController()->isMox());
+        const QJsonObject client = core.invoke(
+            app, "tx.setMicSource", {utf8("source", QStringLiteral("ClientAudio"))});
+        QVERIFY2(accepted(client), qPrintable(describe(client)));
+        QCOMPARE(valueOf(client, QStringLiteral("source")).toString(), QStringLiteral("ClientAudio"));
+        const QJsonObject blocked = core.invoke(app, "tx.key", trigger("screen"));
+        QVERIFY2(refusedWith(blocked, TxRefusals::micNotConnected()), qPrintable(describe(blocked)));
+        QVERIFY(!core.model->moxController()->isMox());
+        QCOMPARE(primeCalls, 0);
+        QVERIFY(!core.server->remoteKeying()->keyPending());
+    }
+
+    void anotherSessionOfSameDeviceCannotInheritRadioKeyEpoch()
+    {
+        Pair p(true);
+        QVERIFY(accepted(p.send(p.appA, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))})));
+        const auto key = p.send(p.appA, "tx.key", trigger("screen"));
+        QVERIFY(accepted(key));
+        RemoteKeying::Command other;
+        other.verb = RemoteKeying::Verb::Key;
+        other.deviceId = p.a.key.fingerprint();
+        other.session = QStringLiteral("station:different-owner");
+        other.commandId = 7001;
+        other.trigger = "screen";
+        const auto result = p.core.server->remoteKeying()->handle(other);
+        QVERIFY(!result.accepted);
+        QCOMPARE(p.core.model->keyedBy().epoch, static_cast<quint32>(epochOf(key)));
+        QVERIFY(p.core.model->remoteRadioMicKeyActive(p.a.key.fingerprint()));
+    }
+
+    void sourceDisarmingVoxRechecksReentrantKeyBeforeCommit()
+    {
+        Pair p(true);
+        const auto first = p.send(p.appA, "tx.key", trigger("screen"));
+        QVERIFY(accepted(first));
+        QVERIFY(accepted(p.send(p.appA, "tx.unkey", {int64("epoch", epochOf(first))})));
+        QTRY_COMPARE(p.mox->state(), MoxState::Rx);
+        QVERIFY(p.armVoxForA());
+        bool called = false;
+        QJsonObject nested;
+        const auto observation = connect(p.core.server.get(), &StationServer::voxArmedByChanged, this,
+                [&](const QByteArray& device) {
+            if (device.isEmpty() && !called) {
+                called = true;
+                nested = p.send(p.appA, "tx.key", trigger("screen"));
+            }
+        });
+        const auto source = p.send(p.appA, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))});
+        QVERIFY(called);
+        QVERIFY2(accepted(nested), qPrintable(describe(nested)));
+        QVERIFY(!accepted(source));
+        QCOMPARE(valueOf(source, QStringLiteral("source")).toString(), QStringLiteral("ClientAudio"));
+        QVERIFY(p.mox->isMox());
+        QVERIFY(!p.core.model->remoteRadioMicKeyActive(p.a.key.fingerprint()));
+        disconnect(observation);
+    }
+
+    void nestedRadioKeyCannotReplaceOuterSourceOrPendingEpoch()
+    {
+        Pair p(true);
+        p.core.model->transmitModel().setMicSource(MicSource::Pc);
+        QVERIFY(accepted(p.send(p.appA, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))})));
+        QVERIFY(accepted(p.send(p.appB, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))})));
+        RemoteKeying::MicUplink noMic;
+        noMic.carriesMic = [](const QByteArray&) { return false; };
+        p.core.server->remoteKeying()->setMicUplink(noMic);
+        bool nested = false;
+        bool outerExempt = false;
+        QJsonObject nestedReply;
+        p.mox->setMoxCheck([&]() {
+            if (!nested) {
+                nested = true;
+                nestedReply = p.send(p.appB, "tx.key", trigger("screen"));
+                outerExempt = !p.core.model->pcCaptureGatesKeyingForTest();
+            }
+            safety::BandPlanGuard::MoxCheckResult result;
+            result.ok = !p.core.model->pcCaptureGatesKeyingForTest();
+            result.reason = QStringLiteral("Computer capture required");
+            return result;
+        });
+        const auto key = p.send(p.appA, "tx.key", trigger("screen"));
+        QVERIFY2(accepted(key), qPrintable(describe(key)));
+        QVERIFY(!accepted(nestedReply));
+        QVERIFY(outerExempt);
+        QVERIFY(p.core.model->remoteRadioMicKeyActive(p.a.key.fingerprint()));
+        QVERIFY(!p.core.model->remoteRadioMicKeyActive(p.b.key.fingerprint()));
+        QCOMPARE(p.core.model->keyedBy().deviceId, p.a.key.fingerprint());
+        QVERIFY(!p.core.server->remoteKeying()->keyPending());
+    }
+
+    void refusedSynchronousAdmissionEndsItsPendingRetryWindow_data()
+    {
+        QTest::addColumn<QByteArray>("verb");
+        QTest::newRow("radio-voice") << QByteArray("tx.key");
+        QTest::newRow("generated-tune") << QByteArray("tx.tune");
+    }
+
+    void refusedSynchronousAdmissionEndsItsPendingRetryWindow()
+    {
+        QFETCH(QByteArray, verb);
+        Pair p(true);
+        QVERIFY(accepted(p.send(p.appA, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))})));
+        auto* keying = p.core.server->remoteKeying();
+        bool pendingAtPrecheck = false;
+        bool endedWithoutPending = false;
+        QSignalSpy ended(keying, &RemoteKeying::pendingKeyEnded);
+        const auto observation = connect(keying, &RemoteKeying::pendingKeyEnded, this, [&]() {
+            endedWithoutPending = !keying->keyPending();
+        });
+        p.mox->setMoxCheck([&]() {
+            pendingAtPrecheck = pendingAtPrecheck || keying->keyPending();
+            safety::BandPlanGuard::MoxCheckResult result;
+            result.ok = false;
+            result.reason = QStringLiteral("Refused synchronous admission");
+            return result;
+        });
+        const auto cleanup = qScopeGuard([&]() { disconnect(observation); p.mox->setMoxCheck({}); });
+        const auto result = p.send(p.appA, verb, verb == "tx.key" ? trigger("screen")
+                                  : QList<MirrorUpdate>{boolean("on", true)});
+        QVERIFY(!accepted(result));
+        QVERIFY(pendingAtPrecheck);
+        QVERIFY(!keying->keyPending());
+        // StationServer's owed amplifier restore waits on this existing
+        // completion signal. A refused synchronous attempt never produces
+        // a MOX-off event, so its pending window must notify the retry path.
+        QCOMPARE(ended.count(), 1);
+        QVERIFY(endedWithoutPending);
+        QVERIFY(!p.mox->isMox());
+        p.mox->setMoxCheck({});
+        QVERIFY(accepted(p.send(p.appA, "tx.setMicSource", {utf8("source", QStringLiteral("ClientAudio"))})));
+    }
+
+    void twoToneRefusalDefersItsPendingEndUntilAdmissionRetires()
+    {
+        Pair p(true);
+        TxChannel channel(1);
+        auto* tt = p.core.model->twoToneController();
+        tt->setTxChannel(&channel);
+        tt->setSliceModel(p.core.model->sliceById(0));
+        tt->setSettleDelaysMs(0, 0);
+        auto* keying = p.core.server->remoteKeying();
+        int checks = 0;
+        bool pendingDuringRefusal = false;
+        bool endedWithoutPending = false;
+        QSignalSpy ended(keying, &RemoteKeying::pendingKeyEnded);
+        const auto observation = connect(keying, &RemoteKeying::pendingKeyEnded, this, [&]() {
+            endedWithoutPending = !keying->keyPending();
+        });
+        p.mox->setMoxCheck([&]() {
+            safety::BandPlanGuard::MoxCheckResult result;
+            result.ok = ++checks == 1; // admit the generator; refuse its own later MOX attempt
+            if (!result.ok) {
+                pendingDuringRefusal = keying->keyPending();
+                result.reason = QStringLiteral("Two-tone key refused after generator admission");
+            }
+            return result;
+        });
+        const auto cleanup = qScopeGuard([&]() {
+            disconnect(observation);
+            p.mox->setMoxCheck({});
+            tt->setActive(false);
+            tt->setTxChannel(nullptr);
+            p.mox->setMox(false);
+        });
+        const auto start = p.send(p.appA, "tx.twoTone", {boolean("on", true)});
+        QVERIFY(!accepted(start));
+        QVERIFY(checks > 1);
+        QVERIFY(pendingDuringRefusal);
+        QVERIFY(!tt->isActive());
+        QVERIFY(!tt->isActivationInFlight());
+        QVERIFY(!p.mox->isMox());
+        QVERIFY(!keying->keyPending());
+        QCOMPARE(ended.count(), 1); // synchronous generator cleanup and scope exit coalesce
+        QVERIFY(endedWithoutPending);
+        p.mox->setMoxCheck({});
+        QVERIFY(accepted(p.send(p.appA, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))})));
+    }
+
+    void nestedExplicitRefusalPreservesOuterRadioAdmissionAndNextLocalIsolation()
+    {
+        Pair p(true);
+        QVERIFY(accepted(p.send(p.appA, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))})));
+        int outerChecks = 0;
+        bool nestedRefused = false;
+        bool restoredAttempt = false;
+        bool sourceBeforeHardware = false;
+        QString outerSession;
+        KeyerIdentity other;
+        other.deviceId = QByteArray("other-explicit-keyer");
+        other.session = QStringLiteral("station:other-explicit");
+        p.mox->setMoxCheck([&]() {
+            const auto attempt = p.mox->keyAttemptIdentity();
+            safety::BandPlanGuard::MoxCheckResult result;
+            if (attempt && attempt->deviceId == other.deviceId) {
+                nestedRefused = true;
+                result.ok = false;
+                result.reason = QStringLiteral("Nested explicit request refused");
+                return result;
+            }
+            if (attempt && attempt->deviceId == p.a.key.fingerprint()) { outerSession = attempt->session; }
+            if (++outerChecks == 2) {
+                p.mox->setMox(true, other);
+                const auto restored = p.mox->keyAttemptIdentity();
+                restoredAttempt = restored && restored->deviceId == p.a.key.fingerprint()
+                    && restored->session == attempt->session;
+            }
+            result.ok = true;
+            return result;
+        });
+        const auto observation = connect(p.mox, &MoxController::hardwareFlipped, this, [&](bool on) {
+            if (on) { sourceBeforeHardware = p.core.model->remoteRadioMicKeyActive(p.a.key.fingerprint()); }
+        });
+        const auto cleanup = qScopeGuard([&]() {
+            disconnect(observation);
+            p.mox->setMoxCheck({});
+            p.mox->setMox(false);
+        });
+        const quint32 before = p.core.model->keyingEpoch();
+        const auto key = p.send(p.appA, "tx.key", trigger("screen"));
+        QVERIFY(nestedRefused);
+        QVERIFY(restoredAttempt);
+        QVERIFY2(accepted(key), qPrintable(describe(key)));
+        QCOMPARE(p.mox->currentKeyer().deviceId, p.a.key.fingerprint());
+        QVERIFY(!outerSession.isEmpty());
+        QCOMPARE(p.mox->currentKeyer().session, outerSession);
+        QVERIFY(sourceBeforeHardware);
+        QCOMPARE(p.core.model->keyedBy().epoch, before+1);
+        QCOMPARE(epochOf(key), qint64(before+1));
+        QVERIFY(!p.mox->keyAttemptIdentity());
+        QVERIFY(accepted(p.send(p.appA, "tx.unkey", {int64("epoch", epochOf(key))})));
+        QTRY_COMPARE(p.mox->state(), MoxState::Rx);
+        disconnect(observation);
+        p.mox->setMoxCheck({});
+        p.holder->release(p.a.key.fingerprint(), QStringLiteral("following local key"));
+        p.core.model->transmitModel().setMicSource(MicSource::Pc);
+        p.mox->setMoxCheck([&]() {
+            safety::BandPlanGuard::MoxCheckResult result;
+            result.ok = !p.core.model->pcCaptureGatesKeyingForTest();
+            result.reason = QStringLiteral("Local PC capture is unavailable");
+            return result;
+        });
+        p.mox->setMox(true);
+        QVERIFY(!p.mox->isMox());
+        QVERIFY(!p.core.model->remoteRadioMicKeyActive(p.a.key.fingerprint()));
+    }
+
+    void nestedGeneratedStartCannotReplaceOuterRadioAdmission_data()
+    {
+        QTest::addColumn<QByteArray>("verb");
+        QTest::addColumn<bool>("otherSession");
+        for (const QByteArray& verb : {QByteArray("tx.tune"), QByteArray("tx.twoTone")}) {
+            QTest::newRow((verb+"/same-session").constData()) << verb << false;
+            QTest::newRow((verb+"/other-session").constData()) << verb << true;
+        }
+    }
+
+    void nestedGeneratedStartCannotReplaceOuterRadioAdmission()
+    {
+        QFETCH(QByteArray, verb);
+        QFETCH(bool, otherSession);
+        Pair p(true);
+        TxChannel channel(1); // no WDSP channel/radio; enough to enable the genuine two-tone controller
+        auto* tt = p.core.model->twoToneController();
+        QVERIFY(tt);
+        tt->setTxChannel(&channel);
+        tt->setSliceModel(p.core.model->sliceById(0));
+        tt->setSettleDelaysMs(0, 0);
+        QVERIFY(accepted(p.send(p.appA, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))})));
+        bool entered = false;
+        QJsonObject nested;
+        QSignalSpy tuneChanges(&p.core.model->transmitModel(), &TransmitModel::tuneChanged);
+        QSignalSpy tones(tt, &TwoToneController::twoToneActiveChanged);
+        p.mox->setMoxCheck([&]() {
+            if (!entered) {
+                entered = true;
+                nested = p.send(otherSession ? p.appB : p.appA, verb, {boolean("on", true)});
+            }
+            safety::BandPlanGuard::MoxCheckResult result;
+            result.ok = true;
+            return result;
+        });
+        const auto cleanup = qScopeGuard([&]() {
+            p.mox->setMoxCheck({});
+            tt->setActive(false);
+            tt->setTxChannel(nullptr);
+            p.mox->setMox(false);
+        });
+        const quint32 before = p.core.model->keyingEpoch();
+        const auto outer = p.send(p.appA, "tx.key", trigger("screen"));
+        QVERIFY(entered);
+        QVERIFY2(!accepted(nested), qPrintable(describe(nested)));
+        QVERIFY(!p.core.model->isTune());
+        QVERIFY(!tt->isActivationInFlight());
+        QVERIFY(!tt->isActive());
+        QCOMPARE(tuneChanges.count(), 0);
+        QCOMPARE(tones.count(), 0);
+        QVERIFY2(accepted(outer), qPrintable(describe(outer)));
+        QCOMPARE(p.core.model->keyedBy().trigger, QByteArray("screen"));
+        QCOMPARE(p.core.model->keyedBy().epoch, before+1);
+        QCOMPARE(p.mox->currentKeyer().deviceId, p.a.key.fingerprint());
+        QVERIFY(p.core.model->remoteRadioMicKeyActive(p.a.key.fingerprint()));
+        QVERIFY(!p.core.server->remoteKeying()->keyPending());
+        p.mox->setMoxCheck({});
+        QVERIFY(accepted(p.send(p.appA, "tx.unkey", {int64("epoch", epochOf(outer))})));
+        QTRY_COMPARE(p.mox->state(), MoxState::Rx);
+        // The same generated request works when it is an ordinary start,
+        // and its own off still works; the guard must cover admission only.
+        const auto normal = p.send(p.appA, verb, {boolean("on", true)});
+        QVERIFY2(accepted(normal), qPrintable(describe(normal)));
+        QTRY_VERIFY(p.mox->isMox());
+        QVERIFY(accepted(p.send(p.appA, verb, {boolean("on", false)})));
+        QTRY_COMPARE(p.mox->state(), MoxState::Rx);
+        tt->setTxChannel(nullptr);
+    }
+
+    // Outer requests/replays use the authenticated wire. Only callback
+    // copies enter RemoteKeying directly with that exact session identity:
+    // the server's pre-existing nested-dispatch routing is a separate seam.
+    void primingCompletionCopyReceivesTheWaitingKeysAuthoritativeEpoch()
+    {
+        Pair p;
+        constexpr quint32 id = 6500;
+        std::function<void(bool)> finish;
+        int primes = 0;
+        int primingEnds = 0;
+        RemoteKeying::MicUplink mic;
+        mic.carriesMic = [](const QByteArray&) { return true; };
+        mic.prime = [&](const QByteArray&, std::function<void(bool)> done) {
+            ++primes;
+            finish = std::move(done);
+        };
+        mic.endPriming = [&](const QByteArray&) { ++primingEnds; };
+        auto* keying = p.core.server->remoteKeying();
+        keying->setMicUplink(mic);
+        const auto request = SessionMessages::encode(SessionMessages::commandInvoke("tx.key", id, trigger("screen")));
+        p.appA->sendText(request);
+        QTRY_VERIFY(finish);
+        QVERIFY(resultsWithId(p.appA, id).isEmpty());
+        QSignalSpy starts(p.mox, &MoxController::txAboutToBegin);
+        int checks = 0;
+        bool copied = false;
+        bool enteredWhilePending = false;
+        std::optional<RemoteKeying::Result> duplicate;
+        p.mox->setMoxCheck([&]() {
+            ++checks;
+            if (!copied) {
+                copied = true;
+                const auto identity = p.mox->keyAttemptIdentity();
+                if (identity) {
+                    RemoteKeying::Command copy;
+                    copy.verb = RemoteKeying::Verb::Key;
+                    copy.deviceId = identity->deviceId;
+                    copy.session = identity->session;
+                    copy.commandId = id;
+                    copy.trigger = "screen";
+                    enteredWhilePending = keying->keyPending();
+                    keying->handle(copy, [&](const RemoteKeying::Result& result) { duplicate = result; });
+                }
+            }
+            safety::BandPlanGuard::MoxCheckResult result;
+            result.ok = true;
+            return result;
+        });
+        const auto cleanup = qScopeGuard([&]() { p.mox->setMoxCheck({}); p.mox->setMox(false); });
+        finish(true);
+        QTRY_COMPARE(resultsWithId(p.appA, id).size(), 1);
+        const auto original = resultsWithId(p.appA, id).first();
+        QVERIFY(enteredWhilePending);
+        QVERIFY2(accepted(original), qPrintable(describe(original)));
+        QVERIFY(duplicate.has_value());
+        QVERIFY(duplicate->accepted);
+        QCOMPARE(qint64(duplicate->epoch), epochOf(original));
+        QVERIFY(duplicate->refusal.isEmpty());
+        QVERIFY(duplicate->reason.isEmpty());
+        QCOMPARE(epochOf(original), qint64(p.core.model->keyedBy().epoch));
+        QCOMPARE(primes, 1);
+        QCOMPARE(primingEnds, 1);
+        QCOMPARE(starts.count(), 1);
+        QCOMPARE(checks, 2); // ordinary initial and commit checks; no duplicate admission
+        QCOMPARE(invokeAs(p.appA, "tx.key", id, trigger("screen"), 2), original);
+        QCOMPARE(starts.count(), 1);
+    }
+
+    void activeTwoToneCopyReceivesTheGeneratedCommandsAuthoritativeEpoch()
+    {
+        Pair p;
+        constexpr quint32 id = 6501;
+        TxChannel channel(1);
+        auto* tt = p.core.model->twoToneController();
+        QVERIFY(tt);
+        tt->setTxChannel(&channel);
+        tt->setSliceModel(p.core.model->sliceById(0));
+        tt->setSettleDelaysMs(0, 0);
+        auto* keying = p.core.server->remoteKeying();
+        int activeSignals = 0;
+        int checks = 0;
+        bool enteredWhilePending = false;
+        bool copyChangedAdmission = false;
+        std::optional<RemoteKeying::Result> duplicate;
+        p.mox->setMoxCheck([&]() {
+            ++checks;
+            safety::BandPlanGuard::MoxCheckResult result;
+            result.ok = true;
+            return result;
+        });
+        const auto observation = connect(tt, &TwoToneController::twoToneActiveChanged, this, [&](bool active) {
+            if (!active) { return; }
+            ++activeSignals;
+            RemoteKeying::Command copy;
+            copy.verb = RemoteKeying::Verb::TwoTone;
+            copy.deviceId = tt->keyer().deviceId;
+            copy.session = tt->keyer().session;
+            copy.commandId = id;
+            const int beforeChecks = checks;
+            enteredWhilePending = keying->keyPending();
+            keying->handle(copy, [&](const RemoteKeying::Result& result) { duplicate = result; });
+            copyChangedAdmission = checks != beforeChecks;
+        });
+        QSignalSpy starts(p.mox, &MoxController::txAboutToBegin);
+        const auto cleanup = qScopeGuard([&]() {
+            disconnect(observation);
+            p.mox->setMoxCheck({});
+            tt->setActive(false);
+            tt->setTxChannel(nullptr);
+            p.mox->setMox(false);
+        });
+        const auto original = invokeAs(p.appA, "tx.twoTone", id, {boolean("on", true)});
+        QCOMPARE(activeSignals, 1);
+        QVERIFY(enteredWhilePending);
+        QVERIFY(!copyChangedAdmission);
+        QVERIFY2(accepted(original), qPrintable(describe(original)));
+        QVERIFY(duplicate.has_value());
+        QVERIFY(duplicate->accepted);
+        QCOMPARE(qint64(duplicate->epoch), epochOf(original));
+        QVERIFY(duplicate->refusal.isEmpty());
+        QVERIFY(duplicate->reason.isEmpty());
+        QCOMPARE(epochOf(original), qint64(p.core.model->keyedBy().epoch));
+        QCOMPARE(starts.count(), 1);
+        QCOMPARE(invokeAs(p.appA, "tx.twoTone", id, {boolean("on", true)}, 2), original);
+        QCOMPARE(activeSignals, 1);
+        QCOMPARE(starts.count(), 1);
+    }
+
+    void rememberedLiveKeyCopySurvivesAnotherGeneratedAdmission()
+    {
+        Pair p;
+        constexpr quint32 id = 6502;
+        const auto original = invokeAs(p.appA, "tx.key", id, trigger("screen"));
+        QVERIFY2(accepted(original), qPrintable(describe(original)));
+        TxChannel channel(1);
+        auto* tt = p.core.model->twoToneController();
+        QVERIFY(tt);
+        tt->setTxChannel(&channel);
+        tt->setSliceModel(p.core.model->sliceById(0));
+        tt->setSettleDelaysMs(0, 0);
+        bool replayed = false;
+        bool unchangedLiveKey = false;
+        int checks = 0;
+        bool copyChangedAdmission = false;
+        bool enteredWhilePending = false;
+        QList<RemoteKeying::Result> duplicates;
+        p.mox->setMoxCheck([&]() {
+            ++checks;
+            safety::BandPlanGuard::MoxCheckResult result;
+            result.ok = true;
+            return result;
+        });
+        auto* keying = p.core.server->remoteKeying();
+        // This existing gate precedes the generator's legitimate release.
+        // The ordinary outer wire still authenticates its session/device.
+        keying->setSessionGate([&](const RemoteKeying::Command& command) {
+            if (command.verb == RemoteKeying::Verb::TwoTone && command.on && !replayed) {
+                replayed = true;
+                const auto before = p.core.model->keyedBy();
+                const int beforeChecks = checks;
+                RemoteKeying::Command copy = command;
+                copy.verb = RemoteKeying::Verb::Key;
+                copy.commandId = id;
+                copy.trigger = "screen";
+                enteredWhilePending = keying->keyPending();
+                for (int i = 0; i < 2; ++i) {
+                    keying->handle(copy, [&](const RemoteKeying::Result& result) { duplicates.append(result); });
+                }
+                const auto after = p.core.model->keyedBy();
+                unchangedLiveKey = p.mox->isMox() && after.deviceId == before.deviceId
+                    && after.epoch == before.epoch && after.trigger == before.trigger;
+                copyChangedAdmission = checks != beforeChecks;
+            }
+            return TxRefusal{};
+        });
+        const auto cleanup = qScopeGuard([&]() {
+            keying->setSessionGate({});
+            p.mox->setMoxCheck({});
+            tt->setActive(false);
+            tt->setTxChannel(nullptr);
+            p.mox->setMox(false);
+        });
+        const auto generated = p.send(p.appA, "tx.twoTone", {boolean("on", true)});
+        QVERIFY(replayed);
+        QVERIFY(enteredWhilePending);
+        QVERIFY(unchangedLiveKey);
+        QVERIFY(!copyChangedAdmission);
+        QCOMPARE(duplicates.size(), 2);
+        for (const auto& duplicate : duplicates) {
+            QVERIFY(duplicate.accepted);
+            QCOMPARE(qint64(duplicate.epoch), epochOf(original));
+            QVERIFY(duplicate.refusal.isEmpty());
+            QVERIFY(duplicate.reason.isEmpty());
+        }
+        QVERIFY2(accepted(generated), qPrintable(describe(generated)));
+        QVERIFY(epochOf(generated) > epochOf(original));
+        QCOMPARE(p.core.model->keyedBy().trigger, QByteArray("twoTone"));
+        // The old epoch has now legitimately ended; its later wire replay
+        // follows the existing keyEnded contract and starts nothing.
+        QVERIFY(refusedWith(invokeAs(p.appA, "tx.key", id, trigger("screen"), 2), TxRefusals::keyEnded()));
+    }
+
+    void generatedReplyTeardownDropsRemainingCopiesAndForgetsItsCache_data()
+    {
+        QTest::addColumn<bool>("forgetInOriginal");
+        QTest::newRow("original-reply") << true;
+        QTest::newRow("first-joined-reply") << false;
+    }
+
+    void generatedReplyTeardownDropsRemainingCopiesAndForgetsItsCache()
+    {
+        QFETCH(bool, forgetInOriginal);
+        Pair p;
+        const auto voice = p.send(p.appA, "tx.key", trigger("screen"));
+        QVERIFY(accepted(voice));
+        const auto identity = p.mox->currentKeyer(); // exact authenticated owner established by the wire
+        QVERIFY(accepted(p.send(p.appA, "tx.unkey", {int64("epoch", epochOf(voice))})));
+        QTRY_COMPARE(p.mox->state(), MoxState::Rx);
+        TxChannel channel(1);
+        auto* tt = p.core.model->twoToneController();
+        QVERIFY(tt);
+        tt->setTxChannel(&channel);
+        tt->setSliceModel(p.core.model->sliceById(0));
+        tt->setSettleDelaysMs(0, 0);
+        auto* keying = p.core.server->remoteKeying();
+        RemoteKeying::Command command;
+        command.verb = RemoteKeying::Verb::TwoTone;
+        command.deviceId = identity.deviceId;
+        command.session = identity.session;
+        command.commandId = p.nextId++;
+        int originals = 0;
+        int firstCopies = 0;
+        int remainingCopies = 0;
+        std::optional<RemoteKeying::Result> original;
+        bool firstAccepted = false;
+        const auto observation = connect(tt, &TwoToneController::twoToneActiveChanged, this, [&](bool active) {
+            if (!active) { return; }
+            keying->handle(command, [&](const RemoteKeying::Result& result) {
+                ++firstCopies;
+                firstAccepted = result.accepted;
+                if (!forgetInOriginal) { keying->forgetSession(command.session); }
+            });
+            keying->handle(command, [&](const RemoteKeying::Result&) { ++remainingCopies; });
+        });
+        const auto cleanup = qScopeGuard([&]() {
+            disconnect(observation);
+            tt->setActive(false);
+            tt->setTxChannel(nullptr);
+            p.mox->setMox(false);
+        });
+        keying->handle(command, [&](const RemoteKeying::Result& result) {
+            ++originals;
+            original = result;
+            if (forgetInOriginal) { keying->forgetSession(command.session); }
+        });
+        QCOMPARE(originals, 1);
+        QVERIFY(original.has_value());
+        QVERIFY(original->accepted);
+        QCOMPARE(firstCopies, forgetInOriginal ? 0 : 1);
+        if (!forgetInOriginal) { QVERIFY(firstAccepted); }
+        QCOMPARE(remainingCopies, 0);
+        disconnect(observation);
+        tt->setActive(false);
+        QTRY_COMPARE(p.mox->state(), MoxState::Rx);
+        // A forgotten result cannot be reinserted by scope cleanup. Once
+        // the old generated key ends this id is fresh, not cached keyEnded.
+        const auto fresh = keying->handle(command);
+        QVERIFY(fresh.accepted);
+        QVERIFY(fresh.epoch > original->epoch);
+    }
+
+    void malformedSourceReservesItsIdUntilThatAuthenticatedSessionEnds()
+    {
+        Pair p(true);
+        constexpr quint32 id = 6100;
+        const auto badArgs = QList<MirrorUpdate>{utf8("source", QStringLiteral("radio"))};
+        const quint32 before = p.core.model->keyingEpoch();
+        const auto original = invokeAs(p.appA, "tx.setMicSource", id, badArgs);
+        QVERIFY(!accepted(original));
+        QCOMPARE(invokeAs(p.appA, "tx.setMicSource", id, badArgs, 2), original);
+        const auto corrected = invokeAs(p.appA, "tx.setMicSource", id,
+                                        {utf8("source", QStringLiteral("RadioMic"))}, 3);
+        QVERIFY(!accepted(corrected));
+        const auto otherSource = invokeAs(p.appA, "tx.setMicSource", id,
+                                          {utf8("source", QStringLiteral("ClientAudio"))}, 4);
+        QVERIFY(!accepted(otherSource));
+        const auto key = invokeAs(p.appA, "tx.key", id, trigger("screen"), 5);
+        QVERIFY(!accepted(key));
+        QVERIFY(!p.mox->isMox());
+        QCOMPARE(p.core.model->keyingEpoch(), before);
+        RemoteKeying::MicUplink closedMic;
+        closedMic.carriesMic = [](const QByteArray&) { return false; };
+        p.core.server->remoteKeying()->setMicUplink(closedMic);
+        // A different request id proves malformed/reused invocations did not
+        // quietly change the session's default ClientAudio selection.
+        const auto unchanged = invokeAs(p.appA, "tx.key", id+1, trigger("screen"));
+        QVERIFY2(refusedWith(unchanged, TxRefusals::micNotConnected()), qPrintable(describe(unchanged)));
+        QVERIFY(!p.mox->isMox());
+        QCOMPARE(p.core.model->keyingEpoch(), before);
+        p.appA->closeLink(QStringLiteral("fresh authenticated session"));
+        auto features = kTransmitter;
+        features.insert("radioMic", 2);
+        auto* fresh = p.core.signIn(p.a, features);
+        QVERIFY(admitted(fresh));
+        const auto newSource = invokeAs(fresh, "tx.setMicSource", id,
+                                        {utf8("source", QStringLiteral("RadioMic"))});
+        QVERIFY2(accepted(newSource), qPrintable(describe(newSource)));
+        QVERIFY(!p.mox->isMox());
+    }
+
+    void sourceCommandRequiresV2AndExactArguments()
+    {
+        for (const int version : {0, 1, 2}) {
+            Core core;
+            allowTransmit(core);
+            Device a;
+            core.pair(a);
+            auto features = kTransmitter;
+            if (version) { features.insert("radioMic", version); }
+            auto* app = core.signIn(a, features);
+            QVERIFY(admitted(app));
+            const auto offered = latestCapabilityIf(app->received(), QStringLiteral("radioMicVersion"));
+            QCOMPARE(offered.has_value(), version > 0);
+            if (offered) { QCOMPARE(offered->toInteger(), qint64(version)); }
+            const auto result = core.invoke(app, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))});
+            QCOMPARE(accepted(result), version == 2);
+            if (version == 2) {
+                for (const QList<MirrorUpdate>& args : QList<QList<MirrorUpdate>>{
+                    {}, {utf8("source", QStringLiteral("radio"))}, {boolean("source", true)},
+                    {utf8("source", QStringLiteral("RadioMic")), utf8("extra", QStringLiteral("x"))}}) {
+                    const auto invalid = core.invoke(app, "tx.setMicSource", args);
+                    QVERIFY(!accepted(invalid));
+                }
+            }
+            QVERIFY(!core.model->moxController()->isMox());
+        }
+    }
+
+    void sourceRefusedWhileKeyedAndOldCopyCannotOverwriteNewChoice()
+    {
+        Pair p(true);
+        const auto radio = invokeAs(p.appA, "tx.setMicSource", 6000,
+                                    {utf8("source", QStringLiteral("RadioMic"))});
+        QVERIFY2(accepted(radio), qPrintable(describe(radio)));
+        const auto key = p.send(p.appA, "tx.key", trigger("screen"));
+        QVERIFY2(accepted(key), qPrintable(describe(key)));
+        const auto blocked = p.send(p.appA, "tx.setMicSource",
+                                    {utf8("source", QStringLiteral("ClientAudio"))});
+        QVERIFY(!accepted(blocked));
+        QCOMPARE(valueOf(blocked, QStringLiteral("source")).toString(), QStringLiteral("RadioMic"));
+        QVERIFY(p.mox->isMox());
+        QVERIFY(accepted(p.send(p.appA, "tx.unkey", {int64("epoch", epochOf(key))})));
+        QTRY_COMPARE(p.mox->state(), MoxState::Rx);
+        const auto client = p.send(p.appA, "tx.setMicSource", {utf8("source", QStringLiteral("ClientAudio"))});
+        QVERIFY(accepted(client));
+        const auto copy = invokeAs(p.appA, "tx.setMicSource", 6000,
+                                  {utf8("source", QStringLiteral("RadioMic"))}, 2);
+        QCOMPARE(copy, radio);
+        const auto reused = invokeAs(p.appA, "tx.key", 6000, trigger("screen"), 3);
+        QVERIFY(!accepted(reused));
+        QVERIFY(!p.mox->isMox());
+        RemoteKeying::MicUplink noMic;
+        noMic.carriesMic = [](const QByteArray&) { return false; };
+        p.core.server->remoteKeying()->setMicUplink(noMic);
+        const auto retry = p.send(p.appA, "tx.key", trigger("screen"));
+        QVERIFY2(refusedWith(retry, TxRefusals::micNotConnected()), qPrintable(describe(retry)));
+        QVERIFY(!p.mox->isMox());
+    }
+
+    void sourceCannotReplaceClientAudioKeyWaitingForPriming()
+    {
+        Pair p(true);
+        std::function<void(bool)> finish;
+        RemoteKeying::MicUplink mic;
+        mic.carriesMic = [](const QByteArray&) { return true; };
+        mic.prime = [&](const QByteArray&, std::function<void(bool)> done) { finish = std::move(done); };
+        p.core.server->remoteKeying()->setMicUplink(mic);
+        const quint32 id = p.nextId++;
+        p.appA->sendText(SessionMessages::encode(SessionMessages::commandInvoke("tx.key", id, trigger("screen"))));
+        QTRY_VERIFY(p.core.server->remoteKeying()->keyPending());
+        QVERIFY(!p.mox->isMox());
+        const auto selection = p.send(p.appA, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))});
+        QVERIFY(!accepted(selection));
+        QCOMPARE(valueOf(selection, QStringLiteral("source")).toString(), QStringLiteral("ClientAudio"));
+        QVERIFY(!p.mox->isMox());
+        QVERIFY(finish);
+        finish(false);
+        QTRY_VERIFY(!p.core.server->remoteKeying()->keyPending());
+        QVERIFY(accepted(p.send(p.appA, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))})));
+    }
+
+    void radioInputRejectsRemoteVoiceProgramAndVoxButLinkLossStillStops()
+    {
+        Pair p(true);
+        QVERIFY(accepted(p.send(p.appA, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))})));
+        const auto key = p.send(p.appA, "tx.key", trigger("screen"));
+        QVERIFY(accepted(key));
+        p.core.server->remoteMicStarved(p.a.key.fingerprint(), true);
+        QVERIFY(p.mox->isMox());
+        p.core.server->remoteMicStarved(p.a.key.fingerprint(), false);
+        QVERIFY(accepted(p.send(p.appA, "tx.unkey", {int64("epoch", epochOf(key))})));
+        QTRY_COMPARE(p.mox->state(), MoxState::Rx);
+        const auto program = p.send(p.appA, "tx.key", trigger("tci"));
+        QVERIFY(!accepted(program));
+        QCOMPARE(program.value(QStringLiteral("reason")).toString(), remoteRadioProgramReason());
+        p.core.model->openRemoteMicLine(p.a.key.fingerprint());
+        const quint32 id = p.nextId++;
+        p.appA->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
+            "transmit", {boolean("voxEnabled", true)}, id)));
+        QTRY_VERIFY(!propertyResult(p.appA, id).isEmpty());
+        const auto vox = propertyResult(p.appA, id).value(QStringLiteral("results")).toArray().first().toObject();
+        QVERIFY(!accepted(vox));
+        QCOMPARE(vox.value(QStringLiteral("reason")).toString(), remoteRadioVoxReason());
+        const auto second = p.send(p.appA, "tx.key", trigger("screen"));
+        QVERIFY(accepted(second));
+        p.appA->closeLink(QStringLiteral("Radio source link lost"));
+        QTRY_VERIFY(!p.mox->isMox());
+    }
 
     // ---- Refusals, holders and gates first --------------------------------------
 

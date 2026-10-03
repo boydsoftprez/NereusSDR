@@ -9,6 +9,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -93,6 +99,10 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "core/WdspTypes.h"
+#include "MeterItem.h"
+#include <QElapsedTimer>
+#include <QJsonObject>
+#include <QHash>
 
 #include <functional>  // std::function for setRxOffsetSource (RXOffset port)
 
@@ -103,6 +113,7 @@ mw0lge@grange-lane.co.uk
 
 namespace NereusSDR {
 
+class MmioEndpoint;
 class RxChannel;
 class TxChannel;
 class MeterWidget;
@@ -154,6 +165,14 @@ namespace MeterBinding {
     constexpr int TxAlcGroup     = 110;  // TXA_ALC_GROUP
     constexpr int TxCfc          = 111;  // TXA_CFC_AV
     constexpr int TxCfcGain      = 112;  // TXA_CFC_GAIN
+
+    // GUI-only additions: independent stage peaks from existing TxChannel cache.
+    constexpr int TxMicPeak      = 113;
+    constexpr int TxAlcPeak      = 114;
+    constexpr int TxCompPeak     = 115;
+    constexpr int TxEqPeak       = 116;
+    constexpr int TxLevelerPeak  = 117;
+    constexpr int TxCfcPeak      = 118;
 
     // Hardware readings (200+)
     constexpr int HwVolts        = 200;  // PA supply voltage
@@ -211,6 +230,10 @@ public:
     // no-reading value (-400).
     static std::function<double(const SliceModel*)> panMaxBinSource(
         std::function<SpectrumWidget*(const QString& panKey)> spectrumFor);
+    // 2026-10-02 KG4VCF, Codex: retain key-based callers while allowing a
+    // remote window to resolve an empty Core pan key by its actual slice host.
+    static std::function<double(const SliceModel*)> panMaxBinSourceForSlice(
+        std::function<SpectrumWidget*(const SliceModel* slice)> spectrumFor);
 
     // R-R3-13 / R-R3-49 (remote-window parity Task 15): whether the Core
     // sends its ADC and AGC readings on its slices (meterReadingsVersion 1).
@@ -282,6 +305,35 @@ public:
 
     void addTarget(MeterWidget* widget);
     void removeTarget(MeterWidget* widget);
+    // Registers at most one target. Empty context is the legacy active RX;
+    // otherwise the JSON source identity is resolved only by the GUI adapter.
+    // A changed context clears old input/history before same-context replay.
+    void setTargetContext(MeterWidget* widget, const QJsonObject& context);
+    void setSMeterContext(const QJsonObject& context) { m_sMeterContext = context; }
+    SMeterWidget* smeterForTest() const;
+    // One cached-source lookup per context/binding per existing timer frame.
+    // No new channel/subscription/WDSP read belongs in this callback. Return
+    // kNoMeterReadingDbm for absent slices; setter changes invalidate RX replay.
+    void setRxReadingSource(std::function<double(const QJsonObject&, int)> source);
+    // Current GUI window identity; explicit foreign sessions cannot consume
+    // window-global TX/PA/hardware caches, independent of RX slice availability.
+    void setSessionIdSource(std::function<QString()> source);
+    // Seeds state, availability and current samples without registering or
+    // polling the widget. Read-only previews then listen to readingUpdated,
+    // frameAdvanced, and bindingAvailabilityChanged.
+    void replayReadings(MeterWidget* widget, const QJsonObject& context) const;
+    void copyCachedReadings(MeterWidget* widget, const QJsonObject& context) const;
+    bool inTx() const { return m_inTx; }
+    QString bindingUnavailableReason(int binding) const { return m_availability.value(binding); }
+    MeterItem::BindingSupport bindingSupport(int binding) const
+    { return m_bindingSupport.value(binding, MeterItem::BindingSupport::Unknown); }
+    // Explicit shared presentation settings for hosts/previews. Legacy hosts
+    // that set these on MeterWidget are also sampled at replacement.
+    // Shared settings are retained even with no live target. Task6 hosts
+    // should use these setters when changing global units or PA rating.
+    void setUnitMode(MeterItem::MeterUnit unit);
+    void rescalePowerMeters(int watts);
+    static const QList<int>& remoteTxPeakBindingsNotSent();
 
     // ── Polling interval (Task 3.1, MultimeterPage wire-up) ──────────────────
     // setIntervalMs / intervalMs: new preferred interface used by MultimeterPage.
@@ -335,6 +387,12 @@ public:
     void setRxOffsetSource(std::function<double()> source);
 
 signals:
+    void frameAdvanced(qint64 monotonicMs);
+    void bindingAvailabilityChanged(int bindingId, const QString& reason);
+    void bindingSupportChanged(int bindingId, MeterItem::BindingSupport support);
+    void readingUpdated(const QJsonObject& context, int bindingId, double value);
+    // MMIO identities never share the radio-binding cache/feed.
+    void mmioReadingUpdated(const QUuid& guid, const QString& variable, double value, const QString& reason);
     void remoteSliceLevelUpdated(int sliceId, double dbm);
     /// R-R3-21: each transmit reading pollTxMeters() hands the meters
     /// (bindingId is a MeterBinding Tx* id), for controls outside a meter
@@ -380,6 +438,9 @@ private:
 
 #ifdef NEREUS_BUILD_TESTS
 public:
+    void setMmioEndpointSourceForTest(std::function<MmioEndpoint*(const QUuid&)> source) { m_mmioEndpointLookup = std::move(source); }
+    void setMonotonicSourceForTest(std::function<qint64()> source) { m_monotonicSource = std::move(source); }
+    int targetCountForTest() const { return m_targets.size(); }
     // Test seam: what pollTxMeters() does when every WDSP meter reads
     // `rawValue`.
     void handOutTxReadingForTest(int bindingId, double rawValue)
@@ -398,6 +459,8 @@ private:
     //   SignalAverage        -> GetRXAMeter(ch, RXA_S_AV)  (enum 1)
     //   MaxBin               -> GetDetectMaxBin(disp=0)
     void pollSMeter();
+    void pollAdaptedSMeter();
+    QJsonObject m_sMeterContext;
     void pollRemoteRxMeters();
     // Task 39: the ALC and MIC readings from the Core's transmit state.
     void pollRemoteTxMeters();
@@ -413,6 +476,42 @@ private:
     // From Thetis udDisplayMeterAvg (display.cs) [v2.10.3.13].
     int    m_avgWindow{1};
 
+    struct MmioReading { double value; QString reason; MeterItem::BindingSupport support; };
+    QHash<QString, MmioReading> m_mmioReadings;
+    MmioReading mmioReading(const MeterItem* item) const;
+    void replayMmioReading(MeterWidget* widget, MeterItem* item) const;
+#ifdef NEREUS_BUILD_TESTS
+    std::function<MmioEndpoint*(const QUuid&)> m_mmioEndpointLookup;
+#endif
+    void publishContextReading(const QJsonObject& context, int binding, double value);
+    void publishGlobalReading(int binding, double value);
+    void publishAvailability(int binding, const QString& reason);
+    void publishSupport(int binding, MeterItem::BindingSupport support);
+    void refreshBindingSupport();
+    void refreshGlobalSession();
+    bool acceptsGlobalReading(const QJsonObject& context) const;
+    QString globalAvailability(const QJsonObject& context, int binding) const;
+    void invalidateReadings(bool rx, bool tx, bool hardware);
+    void pollContextReadings();
+    void invalidateTxAudioReadings();
+    void rememberPresentation(const MeterWidget* widget);
+    QHash<MeterWidget*, QJsonObject> m_targetContexts;
+    QHash<QByteArray, QHash<int, double>> m_contextReadings;
+    QHash<QByteArray, QJsonObject> m_knownContexts;
+    QHash<int, double> m_globalReadings;
+    QHash<int, QString> m_availability;
+    QHash<int, MeterItem::BindingSupport> m_bindingSupport;
+    QString m_supportIdentity;
+    QVector<QMetaObject::Connection> m_supportConnections;
+    std::function<double(const QJsonObject&, int)> m_rxReadingSource;
+    std::function<QString()> m_sessionIdSource;
+    QString m_cachedSessionId;
+    QElapsedTimer m_clock;
+    std::function<qint64()> m_monotonicSource;
+    MeterItem::MeterUnit m_unitMode{MeterItem::MeterUnit::dBm};
+    int m_powerScale{0};
+    QMetaObject::Connection m_rxDestroyed, m_txDestroyed, m_paDestroyed, m_statusDestroyed;
+    QVector<QMetaObject::Connection> m_remoteConnections;
     QTimer m_timer;
     QPointer<RxChannel> m_rxChannel;
     bool m_localRxReadingAvailable{true};
@@ -435,7 +534,7 @@ private:
     // m_radioStatus is a non-owning raw pointer (RadioModel owns the object).
     // m_powerConn holds the single connection to RadioStatus::powerChanged;
     // disconnected on re-set or when status is nullptr.
-    RadioStatus*            m_radioStatus{nullptr};
+    QPointer<RadioStatus>   m_radioStatus;
     QMetaObject::Connection m_powerConn;
 
     // SMeterWidget + WdspEngine (Task 41, Phase 3P-II).
