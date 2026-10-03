@@ -149,7 +149,10 @@ The graphs show configured curves; they are not measurements of the complete aud
 
 Applets and complete meter objects share one container system. Move them with dotted grips or menu commands, reorder stacks, float them and return them to remembered homes. Container settings offer draft previews, Apply/Cancel, reload and conflict handling.
 
-Portable container/object exchange preserves customized legacy records, unknown objects and external MMIO bindings. Migration retains recovery data. Complete composite meter faces use source-aware readings, and unavailable measurements are presented as unavailable. The accepted new ANAN face will be described here only after its renderer, calibration and review are complete.
+Portable container/object exchange preserves customized legacy records, unknown objects and external MMIO bindings. Migration retains recovery data. Complete composite meter faces use source-aware readings, and unavailable measurements are presented as unavailable. The ANAN multimeter gains approved Nereus artwork, calibrated live/peak/history
+needles and responsive named, unit-bearing readouts. Supported, unsupported
+and unknown readings stay distinct, and receive/transmit transitions clear
+stale readings. Compact labels and peaks fit within the meter glass.
 
 ## Modes, audio and accessories
 
