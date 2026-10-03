@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 : shared SpectrumLayout for CPU/GPU panel paint and hit
+//                 geometry (issues #141/#147). J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-09-30 : m_fftFillHasData, whether the fill buffer holds the current
 //                 trace's fill now that the fill is written only while pan
 //                 fill is on (GUI memory leak). J.J. Boyd (KG4VCF),
@@ -2310,6 +2313,16 @@ protected:
     void leaveEvent(QEvent* event) override;
 
 private:
+    struct SpectrumLayout {
+        int contentHeight;
+        QRect spectrum;
+        QRect divider;
+        QRect frequency;
+        QRect waterfall;
+        QRect waterfallChrome; // Full width for right-edge history/LIVE controls.
+    };
+    SpectrumLayout spectrumLayout() const;
+
     // Phase 3F Sub-Epic F Task 6: latest wideband bins per ADC.  Each entry
     // is sized 8192 (kOutputBins from WidebandFftEngine) when populated;
     // empty until the first widebandSpectrumReady arrives.  m_extendedMode
@@ -2508,8 +2521,7 @@ private:
     // The SINGLE notch geometry source.  Both paint call sites pass this
     // rect, and the interaction layer's pixel hit test builds from it, so
     // hit boxes cannot drift away from the drawn markers.  Reproduces the
-    // paint sites' own specRect construction on both render paths through
-    // specHFromHeight, which already encodes the GPU/CPU layout split.
+    // shared spectrumLayout() rectangle on both render paths.
     QRect notchSpecRect() const;
 
     // ---- TNF / notch interaction (design section 7) ----

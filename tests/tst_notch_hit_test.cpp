@@ -97,18 +97,13 @@ int expectX(double hz)
     return 0 + static_cast<int>(frac * kPanW);
 }
 
-// The two render paths lay the spectrum row out differently, and
-// specHFromHeight (src/gui/SpectrumWidget.cpp:5984-5993) already encodes
-// that split.  Restated here so notchSpecRect() is pinned against the
-// formula the paint sites use rather than against itself.
+// Both painters reserve the fixed chrome before splitting the remaining
+// spectrum/waterfall height. Pin the production notch rectangle against
+// that public layout contract rather than against the layout helper itself.
 int expectSpecH(int widgetH)
 {
-#ifdef NEREUS_GPU_SPECTRUM
     const int contentH = widgetH - (kFreqScaleHForTest + kDividerHForTest);
     return static_cast<int>(contentH * kSpectrumFracForTest);
-#else
-    return static_cast<int>(widgetH * kSpectrumFracForTest);
-#endif
 }
 
 // Left edge column of a 200 Hz notch centred on `freqHz`.  The edge lines
