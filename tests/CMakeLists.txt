@@ -424,6 +424,14 @@ nereus_add_test(tst_ps3_session fakes/LoopbackTransport.cpp EXTRA_LABELS session
 nereus_add_test(tst_dsp_asset_dialog EXTRA_LABELS gui)
 nereus_add_test(tst_dsp_asset_service EXTRA_LABELS core)
 nereus_add_test(tst_ps3_lifecycle EXTRA_LABELS core)
+if(TARGET wdsp_static)
+    # Native unkey must finish its paced down-slew/flush before the 100 ms fallback.
+    nereus_add_test(tst_ps3_tx_lane_deadlock WdspPsRampProbe.c CORE_ONLY REALTIME EXTRA_LABELS core)
+    set_source_files_properties(WdspPsRampProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_include_directories(tst_ps3_tx_lane_deadlock PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_ps3_tx_lane_deadlock PRIVATE WDSP_STATIC_BUILD)
+    target_compile_definitions(wdsp_static PRIVATE NEREUS_WDSP_PS_TEST_ACCESS)
+endif()
 nereus_add_test(tst_ps3_settings_persistence EXTRA_LABELS models)
 nereus_add_test(tst_nnr_settings EXTRA_LABELS models)
 nereus_add_test(tst_nnr_controls EXTRA_LABELS gui)
@@ -7778,6 +7786,8 @@ target_compile_definitions(tst_remote_tx_antennas PRIVATE NEREUS_BUILD_TESTS)
 
 # R-R3-38: client-only saved Core credentials and coherent CLI selection.
 nereus_add_test(tst_core_target_store)
+nereus_add_test(tst_core_address_probe fakes/LoopbackTransport.cpp)
+nereus_add_test(tst_cores_setup_page fakes/LoopbackTransport.cpp)
 nereus_add_test(tst_station_startup_selection)
 nereus_add_test(tst_gui_session_coordinator)
 target_compile_definitions(tst_gui_session_coordinator PRIVATE NEREUS_BUILD_TESTS)
@@ -7860,7 +7870,7 @@ else()
     set(NEREUS_TEST_PYTHON python3)
 endif()
 
-nereus_add_test(tst_gui_connection_controller)
+nereus_add_test(tst_gui_connection_controller fakes/LoopbackTransport.cpp)
 target_compile_definitions(tst_gui_connection_controller PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
@@ -9739,6 +9749,14 @@ nereus_add_test(tst_display_setup_binding)
 # applet bound to a consolidating display-settings model, so there is no
 # upstream source to cite.
 nereus_add_test(tst_display_applet)
+
+# Core Settings: signed rename admission and fresh retained listener candidates.
+nereus_add_test(tst_core_connection_candidates)
+nereus_add_test(tst_core_rename fakes/LoopbackTransport.cpp)
+nereus_add_test(tst_core_settings_host fakes/LoopbackTransport.cpp)
+target_compile_definitions(tst_core_connection_candidates PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)

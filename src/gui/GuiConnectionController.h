@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original. R-R3-38 operator target selection.
+// 2026-10-01: Authenticated Core address inventory and reconnect learning.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+
 #pragma once
 
 #include "core/RadioDiscovery.h"
@@ -16,6 +19,9 @@
 
 namespace NereusSDR {
 class RemoteConnectionController;
+class StationClient;
+class CoreSettingsHost;
+class ClientDeviceIdentity;
 
 // Application-scoped connection UI. Selecting/editing a row never replaces
 // the live session; an explicit Connect queues retirement after the originating
@@ -28,6 +34,12 @@ public:
     void start(const StationStartupRequest&);
     void shutdown();
     GuiSessionCoordinator* sessions() { return &m_sessions; }
+    CoreTargetStore& coreTargetStore() { return m_store; }
+    bool coreTargetStoreLoaded() const { return m_storeLoaded; }
+    static RemoteStationOptions connectionOptionsForTarget(const SavedCoreTarget& target);
+    /// Authenticated learned service metadata is separate from selected credentials.
+    static bool authenticatedSelectionMatchesSaved(const StationStartupSelection& selection,
+                                                   const SavedCoreTarget& target);
     ConnectionSelector* selector() const { return m_selector.get(); }
 
     /// iPhone app Task 18 (R-IOS-08): a Core on this network as the
@@ -42,6 +54,7 @@ public:
     static QString lanCoreNextStep(const StationLanAnnouncement& advertised);
     /// A saved Core as listed under Your Cores when it is not the live one.
     static ConnectionTargetRow savedCoreRow(const SavedCoreTarget& target, bool storeLoaded);
+    static QString savedCoreDetails(const SavedCoreTarget& target);
     /// True when a saved Core has what a sign-in needs: its identity (a
     /// paired Core), or a token and a pin (or the bench flag).
     static bool isReadyToConnect(const RemoteStationOptions& connection);
@@ -72,6 +85,10 @@ private:
     StationPairingClient* pairingClient();
     bool choose(const StationStartupSelection&, bool startConnection);
 
+    bool observationLeaseCurrent(StationClient* client) const;
+    QString m_windowTargetId;
+    quint64 m_windowTargetIncarnation = 0;
+    quint64 m_windowCoordinatorGeneration = 0;
     CoreTargetStore m_store;
     GuiSessionCoordinator m_sessions;
     StationLanDiscovery m_lan;
@@ -86,5 +103,8 @@ private:
     bool m_storeLoaded = false;
     bool m_shuttingDown = false;
     QTimer m_negativeExpiryTimer;
+    std::shared_ptr<const ClientDeviceIdentity> m_existingDeviceIdentity;
+    std::unique_ptr<CoreSettingsHost> m_coreSettings;
+    QByteArray m_pendingConnectionIdentity;
 };
 } // namespace NereusSDR

@@ -513,7 +513,7 @@
         {
             "kind": "i64",
             "name": "radioMicVersion",
-            "value": 1
+            "value": 2
         },
         {
             "kind": "i64",
@@ -1700,6 +1700,19 @@
             "capabilityVersion": 1,
             "minMinor": 11,
             "verb": "tx.setTxSlice"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "source",
+                    "optional": false
+                }
+            ],
+            "capability": "radioMicVersion",
+            "capabilityVersion": 2,
+            "minMinor": 11,
+            "verb": "tx.setMicSource"
         },
         {
             "arguments": [

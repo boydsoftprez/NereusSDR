@@ -72,6 +72,13 @@ AudioDevicesPage::AudioDevicesPage(RadioModel* model, QWidget* parent)
     m_txInputCard->setTitle(QStringLiteral("TX Input (Microphone)"));
     contentLayout()->insertWidget(2, m_txInputCard);
 
+    auto* radioSpeakerNote = new QLabel(QStringLiteral(
+        "The radio speaker plays receiving slices automatically. Slice AF level and mute "
+        "affect it. This computer's speaker device and master volume control this computer."), this);
+    radioSpeakerNote->setObjectName(QStringLiteral("radioSpeakerExplanation"));
+    radioSpeakerNote->setWordWrap(true);
+    contentLayout()->addWidget(radioSpeakerNote);
+
     // ── Microphone status + Retry (R-R3-36) ───────────────────────────────
     auto* statusRow = new QWidget(this);
     auto* statusLayout = new QHBoxLayout(statusRow);

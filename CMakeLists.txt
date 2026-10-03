@@ -1618,6 +1618,10 @@ set(GUI_SOURCES
     src/gui/RemoteDiagnosticsDialog.cpp
     src/gui/RemoteConnectionController.cpp
     src/gui/CoreTargetStore.cpp
+    src/gui/CoreAddressProbe.cpp
+    src/gui/CoreAddressController.cpp
+    src/gui/CoreRenameController.cpp
+    src/gui/CoreSettingsHost.cpp
     src/gui/StationStartupSelection.cpp
     src/gui/StationServiceManager.cpp
     src/gui/StationLanSelection.cpp
@@ -1901,6 +1905,7 @@ set(GUI_SOURCES
     src/gui/setup/FourO3APage.cpp
     # Parity Task 21 (R-IOS-18): Setup > This Core in a remote window.
     src/gui/setup/ThisCorePage.cpp
+    src/gui/setup/CoresSetupPage.cpp
     src/gui/setup/RfKitPage.cpp
     src/gui/setup/TciLogWindow.cpp
     src/gui/setup/KeyboardSetupPages.cpp

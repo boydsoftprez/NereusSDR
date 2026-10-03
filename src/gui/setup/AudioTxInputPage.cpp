@@ -38,6 +38,7 @@
 #include "core/BoardCapabilities.h"
 #include "core/AudioEngine.h"
 #include "core/session/IStationLink.h"
+#include "core/session/RemoteTransmitClient.h"
 #include "gui/HGauge.h"
 
 #include <QAbstractButton>
@@ -269,6 +270,14 @@ AudioTxInputPage::AudioTxInputPage(RadioModel* model, QWidget* parent)
     }
     refreshCaptureStatus();
 
+    if (model) {
+        connect(model, &RadioModel::remoteMicSourceStateChanged,
+                this, [this]() { applyHeldControlGate(); });
+        connect(&model->transmitModel(), &TransmitModel::moxChanged,
+                this, [this](bool) { applyHeldControlGate(); });
+    }
+    applyHeldControlGate();
+
     // Set up the VU timer (10 ms refresh, stopped until Test Mic is pressed).
     m_vuTimer = new QTimer(this);
     m_vuTimer->setInterval(10);
@@ -431,6 +440,27 @@ void AudioTxInputPage::applyHeldControlGate()
     gateTransmitControls({m_micSourceGroup},
         m_heldTransmitPermitted && m_heldStationAvailable,
         m_heldStationAvailable ? m_heldTransmitReason : m_heldStationReason);
+    if (model() && !model()->ownsLocalDsp()) {
+        const QString common = model()->micSourceChangeReason(MicSource::Pc);
+        if (m_heldTransmitPermitted && m_heldStationAvailable && !common.isEmpty()) {
+            gateTransmitControls({m_micSourceGroup}, false, common);
+        }
+        const QString radioReason = model()->micSourceChangeReason(MicSource::Radio);
+        m_radioMicBtn->setEnabled(radioReason.isEmpty() && model()->boardCapabilities().radioMicSelectable());
+        m_radioMicBtn->setToolTip(radioReason.isEmpty()
+            ? (m_radioMicNeedsAddOn ? RadioModel::radioMicAddOnNote() : QString()) : radioReason);
+        QString status = radioReason;
+        if (auto* source = model()->stationLink() ? model()->stationLink()->remoteTransmit() : nullptr) {
+            if (!source->micSourceSettled()) {
+                status = source->micSourceReason();
+            } else if (source->acceptedMicSource() == RemoteMicSource::RadioMic) {
+                status = QStringLiteral("Radio microphone at the Core (no microphone stream from this computer). ")
+                    + remoteRadioVoxReason() + QStringLiteral(" ") + remoteRadioProgramReason();
+            }
+        }
+        m_micSelectionStatusLabel->setText(status);
+        m_micSelectionStatusLabel->setVisible(!status.isEmpty());
+    }
     gateTransmitControls({m_micGainSlider, m_micGainLabel,
                           m_hermesGroup, m_orionGroup, m_saturnGroup},
         m_heldSettingsPermitted && m_heldStationAvailable,
@@ -485,6 +515,11 @@ void AudioTxInputPage::buildPage(bool radioMicSelectable, HPSDRHW hw)
         srcLayout->addWidget(m_radioMicNoteLabel);
     }
     srcLayout->addWidget(m_vaxMicBtn);
+    m_micSelectionStatusLabel = new QLabel(srcGrp);
+    m_micSelectionStatusLabel->setObjectName(QStringLiteral("remoteMicSelectionStatus"));
+    m_micSelectionStatusLabel->setWordWrap(true);
+    m_micSelectionStatusLabel->hide();
+    srcLayout->addWidget(m_micSelectionStatusLabel);
 
     contentLayout()->insertWidget(0, srcGrp);
 
@@ -785,9 +820,10 @@ void AudioTxInputPage::onMicSourceButtonToggled(int id, bool checked)
     if (!model()) { return; }
 
     const MicSource source = static_cast<MicSource>(id);
-    model()->transmitModel().setMicSource(source);
-    updatePcMicGroupVisibility(source);
-    updateRadioMicGroupVisibility(source, m_hw);
+    model()->requestMicSource(source);
+    // The requested choice becomes visible only after the Core's answer.
+    onModelMicSourceChanged(model()->transmitModel().micSource());
+    applyHeldControlGate();
 }
 
 // ---------------------------------------------------------------------------

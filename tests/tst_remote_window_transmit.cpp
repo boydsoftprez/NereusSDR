@@ -94,6 +94,9 @@
 //               again, keepalives stop) on each end before its carrier
 //               keyed. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-02: provide a real test-only TX channel for the pre-carrier
+//               tune-ended cases and verify gate cleanup. J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include <QtTest>
@@ -122,7 +125,9 @@
 #include "core/TgxlConnection.h"
 #include "core/TciBinaryFrame.h"
 #include "core/TciServer.h"
+#include "core/TxChannel.h"
 #include "core/TxSliceArbiter.h"
+#include "core/WdspEngine.h"
 #include "core/safety/TransmitHolder.h"
 #include "core/safety/TxRefusal.h"
 #include "core/meters/TxMeterPump.h"
@@ -137,6 +142,11 @@
 #include "gui/RemoteMediaController.h"
 #include "gui/RemoteTransmitForwarder.h"
 #include "gui/applets/TxApplet.h"
+#include "gui/applets/PhoneCwApplet.h"
+#include "gui/setup/AudioTxInputPage.h"
+#include "gui/styles/AppTheme.h"
+#include <QRadioButton>
+#include <QComboBox>
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/MeterWidget.h"
@@ -387,6 +397,90 @@ private slots:
         QFile::remove(path + QStringLiteral(".bak"));
     }
 
+    void radioSourceControlsWaitForCoreAckAndLeaveCorePcPreferenceAlone_data()
+    {
+        QTest::addColumn<bool>("balanced");
+        QTest::newRow("mic-jack") << false;
+        QTest::newRow("balanced") << true;
+    }
+
+    void radioSourceControlsWaitForCoreAckAndLeaveCorePcPreferenceAlone()
+    {
+        QFETCH(bool, balanced);
+        const QPalette previousPalette = qApp->palette();
+        const QString previousQss = qApp->styleSheet();
+        const auto restoreTheme = qScopeGuard([previousPalette, previousQss]() {
+            qApp->setPalette(previousPalette);
+            qApp->setStyleSheet(previousQss);
+        });
+        if (!qEnvironmentVariable("NEREUS_RADIO_CAPTURE_DIR").isEmpty()) {
+            applyDarkPalette(*qApp);
+            applyAppBaselineQss(*qApp);
+        }
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        h.station.transmitModel().setMicSourceLocked(false);
+        h.station.transmitModel().setMicSource(MicSource::Pc);
+        h.station.transmitModel().setMicXlr(balanced);
+        h.connectSession();
+        QTRY_VERIFY(h.client.isHandshakeComplete());
+        QVERIFY(h.client.remoteMicSourceAvailable());
+        QTRY_COMPARE(h.remote.transmitModel().micXlr(), balanced);
+        h.remote.transmitModel().setMicSourceLocked(false);
+        h.remote.transmitModel().setMicSource(MicSource::Pc);
+        AudioTxInputPage page(&h.remote);
+        TxApplet badgeApplet(&h.remote);
+        PhoneCwApplet phone(&h.remote);
+        // This standalone applet needs the authenticated permission binding
+        // supplied by MainWindow::applyRemoteRoleGating in the actual window.
+        const bool permitted = h.client.isHandshakeComplete()
+            && h.client.remoteTransmitAvailable() && h.client.capabilities().txPermitted;
+        QVERIFY(permitted);
+        phone.setTransmitPermitted(permitted, h.client.transmitPermissionReason());
+        auto* combo = phone.findChild<QComboBox*>();
+        for (auto* candidate : phone.findChildren<QComboBox*>()) {
+            if (candidate->accessibleName() == QStringLiteral("Microphone source")) { combo = candidate; }
+        }
+        QVERIFY(combo);
+        QVERIFY(combo->isEnabled());
+        QLabel* badge = nullptr;
+        for (auto* label : badgeApplet.findChildren<QLabel*>()) {
+            if (label->accessibleName() == QStringLiteral("Mic source indicator")) { badge = label; }
+        }
+        QVERIFY(badge);
+        auto* clientEnd = h.stationLink->peerForTest();
+        clientEnd->setHoldsOutgoing(true);
+        page.radioMicButton()->click();
+        QVERIFY(h.client.remoteTransmit()->micSourcePending());
+        QCOMPARE(h.remote.transmitModel().micSource(), MicSource::Pc);
+        QCOMPARE(badge->text(), QStringLiteral("PC mic"));
+        QCOMPARE(combo->currentIndex(), 4);
+        QVERIFY(!page.radioMicButton()->isEnabled());
+        QVERIFY(!combo->isEnabled());
+        clientEnd->setHoldsOutgoing(false);
+        QTRY_VERIFY(h.client.remoteTransmit()->micSourceSettled());
+        QCOMPARE(h.remote.transmitModel().micSource(), MicSource::Radio);
+        QCOMPARE(h.station.transmitModel().micSource(), MicSource::Pc);
+        QCOMPARE(badge->text(), QStringLiteral("Radio mic"));
+        QVERIFY(badge->toolTip().contains(QStringLiteral("Core")));
+        QCOMPARE(combo->currentIndex(), balanced ? 1 : 0);
+        QCOMPARE(h.station.transmitModel().micXlr(), balanced);
+        QVERIFY(page.radioMicButton()->isChecked());
+        QVERIFY(combo->isEnabled());
+        if (const QString captures = qEnvironmentVariable("NEREUS_RADIO_CAPTURE_DIR"); !captures.isEmpty()) {
+            page.resize(640, 760);
+            page.show();
+            QCoreApplication::processEvents();
+            QVERIFY(page.grab().save(captures + QStringLiteral("/radio-microphone-accepted.png")));
+        }
+        combo->activated(4);
+        QTRY_COMPARE(h.remote.transmitModel().micSource(), MicSource::Pc);
+        QCOMPARE(badge->text(), QStringLiteral("PC mic"));
+        QVERIFY(!page.radioMicButton()->isChecked());
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // ---- The hello --------------------------------------------------------
 
     // The window's own hello declares remoteTx 1, so the Core tells it
@@ -484,6 +578,16 @@ private slots:
         const auto restoreHandler =
             qScopeGuard([]() { qInstallMessageHandler(g_unopenedSocketsPrevious); });
         Test::RemoteAudioSessionHarness h;
+        // A connected Core has a TX channel. These ends all begin while
+        // PGXL standby is pending, so its real gate stays closed: no WDSP
+        // channel or radio is initialized, and readiness is not forged.
+        TxChannel carrier{WdspEngine::kTxChannelId};
+        h.station.injectTxChannelForTest(&carrier);
+        h.station.wireTxChannelKeyingForTest();
+        const auto detachCarrier = qScopeGuard([&]() {
+            carrier.closeRfGate();
+            h.station.injectTxChannelForTest(nullptr);
+        });
         h.pairWindow = true;
         h.makeTransmitReady();
         h.openFakeMicrophoneLine();
@@ -502,6 +606,7 @@ private slots:
         QVERIFY(tx->tuneAsked());
         QVERIFY(tx->keepaliveRunning());
         QVERIFY(!coreMox->isMox());
+        QVERIFY(!carrier.isRfGateOpen());
         QVERIFY(!h.remote.tunePressAsksOn(true));   // a press now asks off
 
         switch (how) {
@@ -545,6 +650,7 @@ private slots:
         } else {
             QVERIFY(!coreMox->isMox());
         }
+        QTRY_VERIFY(!carrier.isRfGateOpen());
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 

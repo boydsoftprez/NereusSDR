@@ -28,6 +28,7 @@
 #include "core/session/media/DaemonMediaController.h"
 #include "core/settings/SettingsProxy.h"
 #include "gui/MainWindow.h"
+#include "gui/GuiConnectionController.h"
 #include "gui/RemoteAudioStatus.h"
 #include "gui/RemoteConnectionController.h"
 #include "gui/RemoteDiagnosticsDialog.h"
@@ -997,6 +998,61 @@ private slots:
         QCOMPARE(delays().constLast(), 1 * kUnitMs);
         controls.disconnectFromStation();
         QVERIFY(!client.isReconnectPending());
+    }
+
+    void pairedLearnedListenersAllowServiceOffConnection()
+    {
+        RadioModel remote(RadioModel::Role::Remote);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        RemoteStationOptions options;
+        options.identityFingerprint = QByteArray(32, 'k');
+        options.rendezvousId = QStringLiteral("abcdefghijklmnopqrstuvwxyz");
+        options.reachFromAnywhere = false;
+        options.coreAddresses = {QStringLiteral("wss://[2001:db8::5]:47912")};
+        RemoteConnectionController controls(&client, &remote, options);
+        QVERIFY(GuiConnectionController::isReadyToConnect(options));
+        QVERIFY(controls.canConnect());
+        controls.connectToStation();
+        QCOMPARE(client.cachedAddresses(), QList<QUrl>{QUrl(options.coreAddresses.first())});
+        QVERIFY(client.serviceRoute().servers.isEmpty());
+        QVERIFY(!client.connectionAttempt().tries.isEmpty());
+        QCOMPARE(client.connectionAttempt().tries.first().path, StationConnectionAttempt::Path::Direct);
+        QCOMPARE(options.url, QString());
+        controls.disconnectFromStation();
+        // Existing service availability never overrides authenticated direct listeners.
+        for (const int version : {-1, 0, 1}) {
+            RemoteStationOptions gated = options;
+            gated.reachFromAnywhere = true;
+            gated.controlChannelVersion = version;
+            gated.negativeControlObservedMs = QDateTime::currentMSecsSinceEpoch();
+            QVERIFY(GuiConnectionController::isReadyToConnect(gated));
+            RemoteConnectionController next(&client, &remote, gated);
+            QVERIFY(next.canConnect());
+        }
+        AppSettings::instance().setValue(QStringLiteral("RemoteAccessServers"), QStringLiteral("https://invalid.test"));
+        QVERIFY(configuredRemoteAccessServers().isEmpty());
+        RemoteStationOptions unavailable = options;
+        unavailable.reachFromAnywhere = true;
+        QVERIFY(GuiConnectionController::isReadyToConnect(unavailable));
+        RemoteConnectionController withDirect(&client, &remote, unavailable);
+        QVERIFY(withDirect.canConnect());
+        for (const QByteArray& identity : {QByteArray(), QByteArray(31, 'k')}) {
+            RemoteStationOptions invalid = options;
+            invalid.identityFingerprint = identity;
+            QVERIFY(!GuiConnectionController::isReadyToConnect(invalid));
+            RemoteConnectionController blocked(&client, &remote, invalid);
+            QVERIFY(!blocked.canConnect());
+        }
+        for (int fault = 0; fault < 3; ++fault) {
+            RemoteStationOptions invalid = options;
+            if (fault == 0) { invalid.allowUnpinned = true; }
+            if (fault == 1) { invalid.token = QStringLiteral("fixture-token"); }
+            if (fault == 2) { invalid.coreAddresses.clear(); }
+            QVERIFY(!GuiConnectionController::isReadyToConnect(invalid));
+            RemoteConnectionController blocked(&client, &remote, invalid);
+            QVERIFY(!blocked.canConnect());
+        }
     }
 
     void displayedEndpointExcludesCredentials()

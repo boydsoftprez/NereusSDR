@@ -30,6 +30,11 @@
 
 namespace NereusSDR {
 
+// Desktop policy, adapted from the accepted phone AudioQualityModel (d9a9bf849).
+// The wire profile remains Opus or Lossless.
+enum class RemoteAudioQualityChoice { High, SaveData, Lossless };
+QString remoteAudioQualityChoiceName(RemoteAudioQualityChoice choice);
+
 /// R-R3-23: why the Core runs Opus although this computer chose Lossless.
 enum class RemoteAudioQualityReason {
     CoreCannotSend,        // the Core has no lossless audio (an older Core)
@@ -85,6 +90,14 @@ struct RemoteAudioStatus {
     // first accepted context. losslessEncoder is set only while lossless
     // audio is on. qualityReason says why Lossless was chosen and Opus runs.
     RemoteAudioProfile chosenProfile = RemoteAudioProfile::Opus;
+    RemoteAudioQualityChoice chosenQuality = RemoteAudioQualityChoice::High;
+    QString saveDataUnavailableReason;
+    QString losslessUnavailableReason;
+    QString bitrateRefusal;
+    std::optional<QString> headphonesFormat;
+    // The local microphone encoder and independently negotiated line, never
+    // inferred from the receive encoder's profile.
+    QString microphoneFormat = QStringLiteral("Not available on this connection");
     bool profileChoiceAvailable = false;
     std::optional<RemoteAudioProfile> runningProfile;
     std::optional<PcmEncoderProfile> losslessEncoder;

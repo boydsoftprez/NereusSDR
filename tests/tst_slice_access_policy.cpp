@@ -653,6 +653,20 @@ private slots:
             {QStringLiteral("src/core/session/PureSignalSessionFacade.cpp|"
                             "PureSignalSessionFacade::refreshStatus"),
              QStringLiteral("not a slice")},
+            // These owners identify the exact admitted radio-mic session,
+            // device and key epoch; slice access still uses the policy.
+            {QStringLiteral("src/models/RadioModel.cpp|RadioModel::setTxAnalyzer"),
+             QStringLiteral("radio-mic key session correlation in the admission callback")},
+            {QStringLiteral("src/models/RadioModel.cpp|RadioModel::setKeyedBy"),
+             QStringLiteral("radio-mic key epoch correlation")},
+            {QStringLiteral("src/models/RadioModel.cpp|RadioModel::forgetRemoteMicSession"),
+             QStringLiteral("retiring a radio-mic session")},
+            {QStringLiteral("src/models/RadioModel.cpp|RadioModel::finishRemoteRadioKeyAttempt"),
+             QStringLiteral("matching the radio-mic admission attempt")},
+            {QStringLiteral("src/models/RadioModel.cpp|RadioModel::remoteRadioMicKeyActive"),
+             QStringLiteral("matching the admitted radio-mic key")},
+            {QStringLiteral("src/models/RadioModel.cpp|RadioModel::pcCaptureGatesKeying"),
+             QStringLiteral("matching a radio-mic candidate before the PC capture preflight")},
         };
         static const QRegularExpression comparison(QStringLiteral(
             "(?:\\.|->)owner\\b\\s*(?:==|!=)|(?:==|!=)\\s*[\\w\\.\\->\\(\\)\\[\\]]*(?:\\.|->)owner\\b"));

@@ -535,6 +535,8 @@ public:
 
     // The keyer of the key now on (station() while unkeyed).
     const KeyerIdentity& currentKeyer() const noexcept { return m_currentKeyer; }
+    /// Identity of this exact admission check; absent outside a key attempt.
+    std::optional<KeyerIdentity> keyAttemptIdentity() const { return m_keyAttemptIdentity; }
 
     // The last refusal, as moxRefused sent it.
     const TxRefusal& lastRefusal() const noexcept { return m_lastRefusal; }
@@ -1834,6 +1836,8 @@ private:
     OtherDeviceHoldsFn m_otherDeviceHolds;
     bool m_lastAdmitTook{false};   // TGXL tune lane: see lastAdmitTook()
     KeyerIdentity m_currentKeyer{KeyerIdentity::station(PttMode::None)};
+    std::optional<KeyerIdentity> m_keyAttemptIdentity;
+    void setMoxImpl(bool on);
     KeyerIdentity m_admittedKeyer{KeyerIdentity::station(PttMode::None)};
     // Task 35: setTune(true, keyer) in progress, and for whom.
     KeyerIdentity m_tuneKeyer{KeyerIdentity::station(PttMode::Manual)};

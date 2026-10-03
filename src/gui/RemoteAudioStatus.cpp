@@ -177,6 +177,16 @@ QString remoteAudioCodecText(const RemoteAudioStatus& status)
         .arg(profile.audioBandwidthHz / 1000);
 }
 
+QString remoteAudioQualityChoiceName(RemoteAudioQualityChoice choice)
+{
+    switch (choice) {
+    case RemoteAudioQualityChoice::High: return QStringLiteral("High");
+    case RemoteAudioQualityChoice::SaveData: return QStringLiteral("Save data");
+    case RemoteAudioQualityChoice::Lossless: return QStringLiteral("Lossless");
+    }
+    return {};
+}
+
 QString remoteAudioProfileName(RemoteAudioProfile profile)
 {
     return profile == RemoteAudioProfile::Lossless ? QStringLiteral("Lossless")
@@ -299,13 +309,20 @@ QString formatRemoteAudioDetails(const RemoteAudioStatus& status,
     if (status.problem) {
         lines << QStringLiteral("Problem: %1").arg(remoteAudioProblemText(*status.problem));
     }
-    if (status.profileChoiceAvailable || status.chosenProfile == RemoteAudioProfile::Lossless) {
-        lines << QStringLiteral("Audio quality: %1").arg(remoteAudioQualityText(status));
-        if (status.qualityReason) {
-            lines << remoteAudioQualityReasonText(*status.qualityReason);
-        }
+    const QString requested = status.chosenProfile == RemoteAudioProfile::Lossless
+        ? QStringLiteral("Lossless") : remoteAudioQualityChoiceName(status.chosenQuality);
+    lines << QStringLiteral("Requested quality: %1").arg(requested);
+    if (status.qualityReason) {
+        lines << remoteAudioQualityReasonText(*status.qualityReason);
     }
-    lines << QStringLiteral("Audio format: %1").arg(remoteAudioCodecText(status));
+    if (!status.bitrateRefusal.isEmpty()) {
+        lines << status.bitrateRefusal;
+    }
+    lines << QStringLiteral("Current receive format: %1").arg(remoteAudioCodecText(status));
+    if (status.headphonesFormat) {
+        lines << QStringLiteral("Current headphones format: %1").arg(*status.headphonesFormat);
+    }
+    lines << QStringLiteral("Current microphone format: %1").arg(status.microphoneFormat);
     lines << QStringLiteral("Output: %1 (selected)").arg(status.selectedOutput);
 
     const bool showHealth = status.state != State::NotConnected

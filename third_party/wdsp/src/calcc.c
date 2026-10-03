@@ -107,6 +107,11 @@ warren@pratt.one
 // The "No NereusSDR-level edits" line in the historical record above
 // describes the retired May 2026 Thetis vendor only, not this file.
 
+// 2026-10-02 — NereusSDR by J.J. Boyd (KG4VCF), AI-assisted via OpenAI
+// Codex: CALCC installs correction under its update lock, transfers curve
+// ownership, then releases the lock across audio-dependent IQC waits.
+// Completion and stop retire only the captured calculation epoch.
+
 #define _CRT_SECURE_NO_WARNINGS
 #include "comm.h"
 #include "extrapolate.h"
@@ -2022,6 +2027,7 @@ void __cdecl doPSCorrChange(void* arg)
 			case 3:
 			{
 				uint64_t request_epoch;
+				int accepted = 0;
 				EnterCriticalSection(&txa[a->channel].calcc.cs_update);
 				request_epoch = a->calc_request_epoch;
 				LeaveCriticalSection(&txa[a->channel].calcc.cs_update);
@@ -2031,31 +2037,58 @@ void __cdecl doPSCorrChange(void* arg)
 					!_InterlockedAnd(&a->stopping, 1) &&
 					!_InterlockedAnd(&a->correction_suspended, 1))
 				{
-					int accepted;
 					if (!_InterlockedAnd(&a->ctrl.running, 1))
 					{
-						accepted = SetTXAiqcStartChecked(a->channel, a->m_spline, &a->m_calavg, a->m_prev_y,
+						accepted = InstallTXAiqcStartChecked(a->channel, a->m_spline, &a->m_calavg, a->m_prev_y,
 							a->c_spline, &a->c_calavg, a->c_prev_y,
 							a->s_spline, &a->s_calavg, a->s_prev_y,
 							&a->correction_suspended);
 					}
 					else
 					{
-						accepted = SetTXAiqcSwapChecked(a->channel, a->m_spline, &a->m_calavg, a->m_prev_y,
+						accepted = InstallTXAiqcSwapChecked(a->channel, a->m_spline, &a->m_calavg, a->m_prev_y,
 							a->c_spline, &a->c_calavg, a->c_prev_y,
 							a->s_spline, &a->s_calavg, a->s_prev_y,
 							&a->correction_suspended);
 					}
 					if (accepted)
 					{
-						InterlockedBitTestAndSet(&a->ctrl.running, 0);
 						a->m_spline = NULL;
 						a->c_spline = NULL;
 						a->s_spline = NULL;
 					}
 				}
+				// no-port-check: installation above keeps CALCC -> IQC lock order
+				// and transfers the curves immediately. Audio must never be awaited
+				// with cs_update held: the status/Off/start lane needs that lock.
+				while (accepted && request_epoch == a->correction_epoch &&
+					!_InterlockedAnd(&a->stopping, 1) &&
+					!_InterlockedAnd(&a->correction_suspended, 1))
+				{
+					int run = 0, busy = 0;
+					if (!GetPSCorrectionState(a->channel, &run, &busy) || !busy)
+						break;
+					LeaveCriticalSection(&txa[a->channel].calcc.cs_update);
+					Sleep(1);
+					EnterCriticalSection(&txa[a->channel].calcc.cs_update);
+				}
+				// Off may be followed immediately by rearm, clearing suspension.
+				// The captured epoch remains invalid even after that flag clears.
+				if (request_epoch == a->correction_epoch &&
+					!_InterlockedAnd(&a->stopping, 1) &&
+					!_InterlockedAnd(&a->correction_suspended, 1))
+				{
+					if (accepted) InterlockedBitTestAndSet(&a->ctrl.running, 0);
+					InterlockedBitTestAndSet(&a->ctrl.calcdone, 0);
+				}
+				else if (a->calc_request_epoch == request_epoch)
+				{
+					// Calc and the wait are over; LRESET can now free any curves
+					// not accepted by IQC. No stale completion may reach LCALC.
+					a->ctrl.calcinprogress = 0;
+					InterlockedBitTestAndReset(&a->ctrl.calcdone, 0);
+				}
 				LeaveCriticalSection(&txa[a->channel].calcc.cs_update);
-				InterlockedBitTestAndSet(&a->ctrl.calcdone, 0);
 				break;
 			}
 
@@ -2425,10 +2458,32 @@ int CancelPSFileOperation (int channel, int kind)
 	return accepted;
 }
 
+#ifdef NEREUS_WDSP_PS_TEST_ACCESS
+// no-port-check: read-only native test observability. Compiled only when
+// the test target opts in; no calibration, timing or ownership is changed.
+int GetPSCalculationStateForTest(int channel, int* running, int* done,
+	int* in_progress, int* owns_curves)
+{
+	CALCC a = txa[channel].calcc.p;
+	EnterCriticalSection(&txa[channel].calcc.cs_update);
+	*running = _InterlockedAnd(&a->ctrl.running, 1) ? 1 : 0;
+	*done = _InterlockedAnd(&a->ctrl.calcdone, 1) ? 1 : 0;
+	*in_progress = a->ctrl.calcinprogress;
+	*owns_curves = a->m_spline != NULL || a->c_spline != NULL || a->s_spline != NULL;
+	LeaveCriticalSection(&txa[channel].calcc.cs_update);
+	return 1;
+}
+#endif
+
 static void prepare_correction_stop_locked(CALCC a)
 {
 	InterlockedBitTestAndSet(&a->correction_suspended, 0);
 	++a->correction_epoch;
+	// A done publication under cs_update proves the worker no longer owns
+	// CALCC's temporary curves. Retire it here if LCALC has not consumed it;
+	// unfinished work keeps calcinprogress until its epoch-aware retirement.
+	if (InterlockedBitTestAndReset(&a->ctrl.calcdone, 0))
+		a->ctrl.calcinprogress = 0;
 	if (a->file_status[1].pending &&
 		!_InterlockedAnd(&a->file_cancel_requested[1], 1))
 	{
@@ -2454,8 +2509,8 @@ int RequestPSCorrectionStop (int channel)
 	if (channel < 0 || channel >= MAX_CHANNELS) return 0;
 	a = txa[channel].calcc.p;
 	if (a == 0 || txa[channel].iqc.p == 0) return 0;
-	// See StopPSCorrectionQuiescent: this publication also releases a calc
-	// worker waiting for an audio transition while it owns cs_update.
+	// Publish cancellation before the lock; a calc wait observes suspension
+	// and the immutable epoch, without holding cs_update across audio.
 	InterlockedBitTestAndSet(&a->correction_suspended, 0);
 	EnterCriticalSection(&txa[channel].calcc.cs_update);
 	if (_InterlockedAnd(&a->stopping, 1))
@@ -2477,9 +2532,9 @@ int StopPSCorrectionQuiescent (int channel)
 	if (channel < 0 || channel >= MAX_CHANNELS) return 0;
 	a = txa[channel].calcc.p;
 	if (a == 0 || txa[channel].iqc.p == 0) return 0;
-	// Publish suspension before waiting for cs_update. A calculation worker
-	// may hold that lock while waiting for an IQC ramp which cannot drain once
-	// TXA is quiescent; its checked wait observes this flag and releases.
+	// Publish suspension before waiting for cs_update. Calculation installs
+	// under that lock, then releases it for IQC's audio-dependent ramp wait.
+	// Suspension and the epoch fence that wait when TXA is quiescent.
 	InterlockedBitTestAndSet(&a->correction_suspended, 0);
 	EnterCriticalSection(&txa[channel].calcc.cs_update);
 	if (_InterlockedAnd(&a->stopping, 1))

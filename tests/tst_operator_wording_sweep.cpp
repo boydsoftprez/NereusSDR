@@ -693,7 +693,8 @@ private slots:
         RemoteAudioDelayReport delay;
         delay.measurable = true;
         const QString details = formatRemoteAudioDetails(status, {}, delay);
-        QVERIFY(details.contains(QStringLiteral("Audio format: Not reported by this Core")));
+        QVERIFY(details.contains(QStringLiteral("Requested quality: Lossless")));
+        QVERIFY(details.contains(QStringLiteral("Current receive format: Not reported by this Core")));
         for (const QString& line : details.split(QLatin1Char('\n'))) {
             QVERIFY2(OperatorWording::isPlain(line), qPrintable(line));
         }

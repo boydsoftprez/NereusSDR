@@ -1,15 +1,20 @@
 // no-port-check: NereusSDR-original. R3 Core session presentation and actions.
+// 2026-10-01: Authenticated Core address inventory and reconnect learning.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+
 #include "RemoteConnectionController.h"
 #include "core/AppSettings.h"
 #include "core/session/RemoteDevicesState.h"
 #include "core/session/RendezvousClient.h"
 #include "core/session/StationClient.h"
+#include "core/session/PathRacer.h"
 #include "gui/OperatorReasonText.h"
 #include "gui/RemoteAudioStatus.h"
 #include "gui/RemoteMediaController.h"
 #include "gui/StyleConstants.h"
 #include "models/RadioModel.h"
 #include <QComboBox>
+#include <QStandardItemModel>
 #include <QDateTime>
 #include <QDialogButtonBox>
 #include <QHBoxLayout>
@@ -114,27 +119,48 @@ RemoteConnectionController::RemoteConnectionController(
 
 QString RemoteConnectionController::endpointText() const
 {
-    if (m_options.url.isEmpty() && !m_options.rendezvousId.isEmpty()) {
-        return tr("Remote access");
+    if ((!m_client || !m_client->isHandshakeComplete())
+        && m_options.url.isEmpty() && !m_options.rendezvousId.isEmpty()) {
+        return m_options.hasAuthenticatedDirectAddresses() ? tr("No configured address") : tr("Remote access");
     }
-    const QUrl url(m_options.url);
+    const QUrl url(m_client && m_client->isHandshakeComplete()
+                       ? m_client->connectedUrl() : QUrl(m_options.url));
+    if (m_client && m_client->isHandshakeComplete() && url.isEmpty()) {
+        if (m_client->pathRank() == PathRacer::ServiceRelayed || m_client->pathRank() == PathRacer::Floor) {
+            return tr("Remote access relay (no direct Core address)");
+        }
+        return tr("Remote access service (no direct Core address)");
+    }
     // Never display URL user-info/query/fragment or the pairing token.
     QString host = url.host();
     if (host.contains(QLatin1Char(':'))) { host = QLatin1Char('[') + host + QLatin1Char(']'); }
     return url.port() >= 0 ? host + QLatin1Char(':') + QString::number(url.port()) : host;
 }
 
+std::optional<RemoteStationOptions> RemoteConnectionController::currentOptions() const
+{
+    if (!m_currentOptionsSource) { return m_options; }
+    const auto current = m_currentOptionsSource();
+    if (!current || QUrl(current->url) != QUrl(m_options.url) || current->token != m_options.token
+        || current->fingerprint != m_options.fingerprint || current->allowUnpinned != m_options.allowUnpinned
+        || current->identityFingerprint != m_options.identityFingerprint
+        || current->reachFromAnywhere != m_options.reachFromAnywhere) { return std::nullopt; }
+    return current;
+}
+
 bool RemoteConnectionController::canConnect() const
 {
-    if (!m_client || !m_options.isValidRemoteTarget() || m_client->isConnectionActive()) {
+    const QPointer<const RemoteConnectionController> self(this);
+    const auto reasonSource = m_admissionUnavailableReasonSource;
+    const QString admission = reasonSource ? reasonSource() : QString();
+    if (!self || !admission.isEmpty()) { return false; }
+    const auto options = currentOptions();
+    if (!m_client || !options || !options->isValidRemoteTarget() || m_client->isConnectionActive()) {
         return false;
     }
-    if (m_options.url.isEmpty()) {
-        return m_options.reachFromAnywhere
-            && m_options.serviceConnectRefusal().isEmpty()
-            && !configuredRemoteAccessServers().isEmpty();
-    }
-    return true;
+    return !options->url.isEmpty() || options->hasAuthenticatedDirectAddresses()
+        || (options->reachFromAnywhere && options->serviceConnectRefusal().isEmpty()
+            && !configuredRemoteAccessServers().isEmpty());
 }
 
 bool RemoteConnectionController::canDisconnect() const
@@ -188,6 +214,11 @@ QString RemoteConnectionController::detailText() const
 {
     QString text = tr("Core: %1\n%2\n%3")
         .arg(endpointText(), statusText(), radioText());
+    const QPointer<const RemoteConnectionController> self(this);
+    const auto reasonSource = m_admissionUnavailableReasonSource;
+    const QString admissionReason = reasonSource ? reasonSource() : QString();
+    if (!self) { return text; }
+    if (!admissionReason.isEmpty()) { text += QLatin1Char('\n') + admissionReason; }
     if (m_options.url.isEmpty()) {
         if (!m_options.reachFromAnywhere) {
             text += tr("\nTurn on remote access for this Core in Connections to connect.");
@@ -348,54 +379,49 @@ void RemoteConnectionController::takeBack()
 
 void RemoteConnectionController::connectToStation()
 {
+    // Materialize retained listeners before readiness, including manual-only Cores.
+    const auto options = currentOptions();
+    if (!options) { return; }
+    m_options = *options;
     if (!canConnect()) { return; }
     m_operatorDisconnected = false;
     m_retryAttempt = 0;
-    // iPhone app plan Task 27: where the Core was last reached, first. The
-    // store's current list (fix wave): the one this window was made with is
-    // stale once a connection here has remembered an address.
-    if (m_currentOptionsSource) {
-        if (const std::optional<RemoteStationOptions> current = m_currentOptionsSource()) {
-            m_options.cachedAddresses = current->cachedAddresses;
-            m_options.rendezvousId = current->rendezvousId;
-            m_options.relayAllowed = current->relayAllowed;
-            m_options.controlChannelVersion = current->controlChannelVersion;
-            m_options.negativeControlObservedMs = current->negativeControlObservedMs;
+    const QPointer<RemoteConnectionController> self(this);
+    m_client->setCandidateSource([self]() -> std::optional<StationClient::ConnectionCandidates> {
+        if (!self) { return std::nullopt; }
+        const auto current = self->currentOptions();
+        if (!current || !current->isValidRemoteTarget()) { return std::nullopt; }
+        StationClient::ConnectionCandidates candidates;
+        QStringList addresses = current->cachedAddresses;
+        if (current->identityFingerprint.size() == 32 && !current->allowUnpinned) {
+            addresses = current->directCandidates + addresses + current->coreAddresses;
         }
-    }
-    QList<QUrl> cached;
-    for (const QString& address : std::as_const(m_options.cachedAddresses)) {
-        cached.append(QUrl(address));
-    }
-    m_client->setCachedAddresses(cached);
-    // iPhone app plan Task 29 (R-IOS-16; link section 21.1): a paired Core
-    // is raced through the internet service beside its addresses, unless
-    // the operator turned that off for it.
-    StationClient::ServiceRoute route;
-    if (!m_options.identityFingerprint.isEmpty() && m_options.reachFromAnywhere
-        && !m_options.rendezvousId.isEmpty()) {
-        route.servers = configuredRemoteAccessServers();
-        route.rendezvousId = m_options.rendezvousId;
-        route.relayAllowed = m_options.relayAllowed != 0;
-        route.controlChannelVersion = m_options.effectiveControlChannelVersion(
-            QDateTime::currentMSecsSinceEpoch());
-        const QPointer<RemoteConnectionController> self(this);
-        const RemoteStationOptions fallback = m_options;
-        route.currentControlChannelVersion = [self, fallback] {
-            if (self && self->m_currentOptionsSource) {
-                if (const auto current = self->m_currentOptionsSource()) {
-                    return current->effectiveControlChannelVersion(
-                        QDateTime::currentMSecsSinceEpoch());
-                }
+        for (const QString& address : addresses) {
+            const QUrl url(address);
+            if (RemoteStationOptions::isValidStationUrl(address) && !candidates.addresses.contains(url)) {
+                candidates.addresses.append(url);
             }
-            const RemoteStationOptions& options = self ? self->m_options : fallback;
-            return options.effectiveControlChannelVersion(QDateTime::currentMSecsSinceEpoch());
-        };
-    }
-    m_client->setServiceRoute(route);
-    m_client->connectToStation(QUrl(m_options.url), m_options.token,
-                               m_options.fingerprint, m_options.allowUnpinned,
-                               m_options.identityFingerprint);
+        }
+        if (current->identityFingerprint.size() == 32 && !current->allowUnpinned
+            && current->reachFromAnywhere && !current->rendezvousId.isEmpty()) {
+            candidates.service.servers = configuredRemoteAccessServers();
+            candidates.service.rendezvousId = current->rendezvousId;
+            candidates.service.relayAllowed = current->relayAllowed != 0;
+            candidates.service.controlChannelVersion = current->effectiveControlChannelVersion(
+                QDateTime::currentMSecsSinceEpoch());
+            candidates.service.currentControlChannelVersion = [self] {
+                const auto fresh = self ? self->currentOptions() : std::nullopt;
+                return fresh ? fresh->effectiveControlChannelVersion(QDateTime::currentMSecsSinceEpoch()) : 0;
+            };
+        }
+        return candidates;
+    });
+    // Legacy pinned/token clients retain their existing ordered address behavior.
+    QList<QUrl> cached;
+    for (const QString& address : m_options.cachedAddresses) { cached.append(QUrl(address)); }
+    m_client->setCachedAddresses(cached);
+    m_client->connectToStation(QUrl(m_options.url), m_options.token, m_options.fingerprint,
+                               m_options.allowUnpinned, m_options.identityFingerprint);
     emit changed();
 }
 
@@ -462,6 +488,7 @@ RemoteConnectionPanel::RemoteConnectionPanel(RemoteConnectionController* control
     QLabel* audioDetails = nullptr;
     QPushButton* retryButton = nullptr;
     QComboBox* qualityChoice = nullptr;
+    QLabel* qualityUnavailable = nullptr;
     if (media) {
         audioDetails = new QLabel(this);
         audioDetails->setObjectName(QStringLiteral("remoteAudioDetails"));
@@ -476,25 +503,38 @@ RemoteConnectionPanel::RemoteConnectionPanel(RemoteConnectionController* control
         auto* qualityLabel = new QLabel(tr("Audio quality:"), this);
         qualityChoice = new QComboBox(this);
         qualityChoice->setObjectName(QStringLiteral("remoteAudioQuality"));
-        qualityChoice->addItem(tr("Opus"), QVariant::fromValue(int(RemoteAudioProfile::Opus)));
-        qualityChoice->addItem(tr("Lossless"), QVariant::fromValue(int(RemoteAudioProfile::Lossless)));
-        qualityChoice->setToolTip(tr("Opus is compressed and needs 24 to 48 kbit/s. Lossless "
-                                     "plays the Core's audio unchanged, for digital modes, "
-                                     "and needs about 1.6 Mbit/s. If the network cannot carry "
-                                     "it, audio stays on Opus. Saved on this computer."));
+        qualityChoice->addItem(tr("High — 48 kbps"), int(RemoteAudioQualityChoice::High));
+        qualityChoice->addItem(tr("Save data — 24 kbps"), int(RemoteAudioQualityChoice::SaveData));
+        qualityChoice->addItem(tr("Lossless"), int(RemoteAudioQualityChoice::Lossless));
+        qualityChoice->setToolTip(tr("High and Save data are compressed. Lossless plays the Core's "
+                                     "audio unchanged and needs about 1.6 Mbit/s. If the network "
+                                     "cannot carry it, audio stays on Opus. Saved on this computer."));
         qualityLabel->setBuddy(qualityChoice);
         qualityRow->addWidget(qualityLabel);
         qualityRow->addWidget(qualityChoice, 1);
         layout->addLayout(qualityRow);
         qualityChoice->setCurrentIndex(
-            qualityChoice->findData(int(media->audioProfileChoice())));
+            qualityChoice->findData(int(media->audioQualityChoice())));
         QPointer<RemoteMediaController> choiceMedia(media);
         connect(qualityChoice, &QComboBox::currentIndexChanged, this,
                 [qualityChoice, choiceMedia](int index) {
             if (!choiceMedia || index < 0) { return; }
-            choiceMedia->setAudioProfileChoice(
-                static_cast<RemoteAudioProfile>(qualityChoice->itemData(index).toInt()));
+            choiceMedia->setAudioQualityChoice(
+                static_cast<RemoteAudioQualityChoice>(qualityChoice->itemData(index).toInt()));
         });
+        // QComboBox emits activated even when the selected row is chosen
+        // again, so a saved Lossless request can retry its failed link trial.
+        connect(qualityChoice, &QComboBox::activated, this, [qualityChoice, choiceMedia](int index) {
+            if (choiceMedia && index >= 0
+                && qualityChoice->itemData(index).toInt() == int(RemoteAudioQualityChoice::Lossless)
+                && choiceMedia->audioStatus().qualityReason == RemoteAudioQualityReason::NetworkTooSlow) {
+                choiceMedia->setAudioQualityChoice(RemoteAudioQualityChoice::Lossless);
+            }
+        });
+        qualityUnavailable = new QLabel(this);
+        qualityUnavailable->setObjectName(QStringLiteral("remoteAudioQualityUnavailable"));
+        qualityUnavailable->setWordWrap(true);
+        layout->addWidget(qualityUnavailable);
         retryButton = new QPushButton(tr("Retry audio"), this);
         retryButton->setObjectName(QStringLiteral("retryRemoteAudio"));
         retryButton->setAutoDefault(false);
@@ -527,7 +567,7 @@ RemoteConnectionPanel::RemoteConnectionPanel(RemoteConnectionController* control
 
     if (media) {
         QPointer<RemoteMediaController> guardedMedia(media);
-        m_refreshAudio = [this, guardedMedia, audioDetails, retryButton, qualityChoice] {
+        m_refreshAudio = [this, guardedMedia, audioDetails, retryButton, qualityChoice, qualityUnavailable] {
             if (!guardedMedia) { return; }
             // R-R3-43: and each receiver stream apps on this computer use.
             const QString text = formatRemoteAudioDetails(guardedMedia->audioStatus(),
@@ -540,9 +580,26 @@ RemoteConnectionPanel::RemoteConnectionPanel(RemoteConnectionController* control
             {
                 const QSignalBlocker blocker(qualityChoice);
                 qualityChoice->setCurrentIndex(
-                    qualityChoice->findData(int(guardedMedia->audioProfileChoice())));
+                    qualityChoice->findData(int(guardedMedia->audioQualityChoice())));
             }
-            if (textChanged) { fitHeightToContent(); }
+            QStringList reasons;
+            auto* rows = qobject_cast<QStandardItemModel*>(qualityChoice->model());
+            for (int index = 0; index < qualityChoice->count(); ++index) {
+                const auto choice = static_cast<RemoteAudioQualityChoice>(qualityChoice->itemData(index).toInt());
+                const QString reason = guardedMedia->audioQualityUnavailableReason(choice);
+                if (rows) {
+                    rows->item(index)->setEnabled(reason.isEmpty());
+                    rows->item(index)->setToolTip(reason);
+                }
+                if (!reason.isEmpty()) {
+                    reasons << QStringLiteral("%1: %2").arg(remoteAudioQualityChoiceName(choice), reason);
+                }
+            }
+            const QString unavailableText = reasons.join(QLatin1Char('\n'));
+            const bool reasonChanged = qualityUnavailable->text() != unavailableText;
+            qualityUnavailable->setText(unavailableText);
+            qualityUnavailable->setVisible(!unavailableText.isEmpty());
+            if (textChanged || reasonChanged) { fitHeightToContent(); }
         };
         connect(media, &RemoteMediaController::audioStatusChanged, this,
                 [this] { m_refreshAudio(); });

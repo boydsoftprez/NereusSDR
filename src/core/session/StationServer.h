@@ -2573,6 +2573,17 @@ private:
     ResultKey resultKeyOf(const SessionMessage& result) const;
     /// Whether `result` is the last its command sends (its route goes).
     static bool isLastResult(const SessionMessage& result);
+    static bool answersEveryKeyingCopy(const QByteArray& verb);
+    bool hasReplySession(SessionTransport* transport, quint64 sessionId) const;
+    void consumeKeyingReply(const ResultKey& key);
+    struct InvokeFrame {
+        InvokeFrame* parent = nullptr;
+        QPointer<SessionTransport> transport;
+        ResultKey key;
+        bool resultSent = false;
+        bool terminalResultSent = false;
+        std::optional<std::pair<QString, QString>> pendingEnd;
+    };
     struct DeferredProceed {
         QPointer<SessionTransport> transport;
         QByteArray proceedVerb;
@@ -2687,8 +2698,9 @@ private:
     // The connection whose command.invoke is being dispatched, and the end
     // it is owed once its result has been sent (a self-revoke, or a token
     // session retiring the token).
-    SessionTransport* m_dispatchingTransport = nullptr;
-    std::optional<std::pair<QString, QString>> m_pendingEnd;
+    QHash<QString, QHash<quint32, QPair<QByteArray, SessionMessage>>> m_micSourceReplies;
+    QPointer<SessionTransport> m_dispatchingTransport;
+    InvokeFrame* m_invokeFrame = nullptr;
     QByteArray m_certSha256;
     QByteArray m_certBinding;
     bool m_pairingLanClickAllowed = true;
@@ -2744,7 +2756,8 @@ private:
     /// station device's share: the owner, requester and sharing set for
     /// it, the refusals, the confirm step, the dispatcher, and a result
     /// still owed routed back to it.
-    void runInvoke(SessionTransport* transport, const SessionMessage& message);
+    std::optional<std::pair<QString, QString>>
+    runInvoke(SessionTransport* transport, const SessionMessage& message);
     struct SettingsExportJob {
         SettingsBackupTransferSource source;
         QByteArray transferId;
@@ -2788,13 +2801,13 @@ private:
     DisplayDemandProvider m_displayDemand;
     /// During promoteToSession()'s attach: the session its burst is for.
     quint64 m_nextSessionId = 0;
-    /// Command results owed to a session other than the one being
-    /// dispatched now (a result that arrives on a later turn), by the
-    /// session, verb and id (fix wave I1). A route is erased once its last
-    /// result is delivered (a PureSignal action's completed or failed
-    /// phase; any other command's one result), or when its session ends.
+    /// Command results owed to their authenticated session, by session,
+    /// verb and id (fix wave I1). Deferred routes end at the command's last
+    /// result or session end; keying routes count each received copy below.
     QHash<ResultKey, QPointer<SessionTransport>> m_resultRoutes;
-    bool m_resultSentInDispatch = false;
+    // Section 18.6 answers every received keying copy. Transfer commands
+    // (tx.take) and PureSignal phase routes retain their own single route.
+    QHash<ResultKey, quint64> m_keyingReplyCounts;
     std::unique_ptr<ConnectedDevicesFacade> m_connectedDevices;
     // iPhone app plan Task 34: who holds transmit, and who may transmit.
     std::unique_ptr<TransmitHolder> m_transmitHolder;

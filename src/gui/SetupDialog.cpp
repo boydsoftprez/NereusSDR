@@ -201,6 +201,7 @@
 // Hardware
 #include "setup/HardwarePage.h"
 #include "setup/ThisCorePage.h"
+#include "setup/CoresSetupPage.h"
 #include "setup/HardwareDdcRoutingPage.h"
 // PA (Setup IA reshape Phase 2 — placeholder pages, content lands in Phase 3+)
 #include "setup/PaSetupPages.h"
@@ -341,9 +342,10 @@ SetupDialog::SetupDialog(RadioModel* model, QWidget* parent)
     m_tree->setFixedWidth(200);
     m_tree->setStyleSheet(
         "QTreeWidget { background: #131326; color: #c8d8e8; border: none; "
-        "font-size: 12px; selection-background-color: #00b4d8; }"
-        "QTreeWidget::item { padding: 4px 8px; }"
-        "QTreeWidget::item:hover { background: #1a2a3a; }");
+        "font-size: 12px; selection-background-color: #00b4d8; selection-color:#0f0f1a; }"
+        "QTreeWidget::item { padding: 2px 8px; min-height:17px; }"
+        "QTreeWidget::item:hover { background: #1a2a3a; }"
+        "QTreeWidget::item:selected { background:#00b4d8; color:#0f0f1a; }");
 
     // Stacked widget for page content
     m_stack = new QStackedWidget;
@@ -400,6 +402,9 @@ SetupDialog::SetupDialog(RadioModel* model, QWidget* parent)
     splitter->addWidget(pageContainer);
     splitter->setStretchFactor(0, 0);
     splitter->setStretchFactor(1, 1);
+    splitter->setSizes({200, 699});
+    splitter->setCollapsible(0, false);
+    splitter->setCollapsible(1, false);
 
     layout->addWidget(splitter, 1);
 
@@ -599,6 +604,71 @@ QTreeWidgetItem* SetupDialog::registerPage(QTreeWidgetItem* parent,
         item->setToolTip(0, m_transmitReason);
     }
     return item;
+}
+
+void SetupDialog::setCoreTargets(CoreTargetStore* store)
+{
+    // A canonical store is immutable for a realized page's lifetime. Replacing
+    // it retires the old page/controller before any old result can repaint.
+    if (store == m_coreTargets) { return; }
+    m_coreTargets = store;
+    for (PageEntry& entry : m_pages) {
+        if (entry.label != QStringLiteral("Your Cores") || !entry.widget) { continue; }
+        QWidget* previous = entry.widget;
+        if (auto* page = qobject_cast<CoresSetupPage*>(previous)) { page->cancelOperations(); }
+        const bool visible = m_stack->currentWidget() == previous;
+        m_stack->removeWidget(previous);
+        for (PageEntry& registered : m_pages) {
+            if (registered.widget && registered.widget != previous) {
+                registered.stackIndex = m_stack->indexOf(registered.widget);
+            }
+        }
+        previous->hide();
+        previous->deleteLater();
+        entry.widget = nullptr;
+        entry.stackIndex = -1;
+        entry.factory = [this]() -> QWidget* {
+            auto* page = new CoresSetupPage(m_coreTargets, m_model);
+            page->setContext(m_coreSettingsContext);
+            if (!m_inspectedCoreTarget.isEmpty()) { page->inspectTarget(m_inspectedCoreTarget); }
+            connect(page, &CoresSetupPage::connectionDetailsRequested,
+                    this, &SetupDialog::coreConnectionDetailsRequested);
+            connect(page, &CoresSetupPage::diagnosticsRequested,
+                    this, &SetupDialog::coreDiagnosticsRequested);
+            if (m_coresPageBinder) { m_coresPageBinder(page); }
+            return page;
+        };
+        if (visible) {
+            const int index = static_cast<int>(&entry - m_pages.data());
+            if (QWidget* replacement = realizePage(index)) { m_stack->setCurrentWidget(replacement); }
+        }
+    }
+}
+
+void SetupDialog::setCoreSettingsContext(const CoreSettingsContext& context)
+{
+    m_coreSettingsContext = context;
+    for (const PageEntry& entry : m_pages) {
+        if (auto* page = qobject_cast<CoresSetupPage*>(entry.widget)) { page->setContext(context); }
+    }
+}
+
+void SetupDialog::setCoresPageBinder(std::function<void(CoresSetupPage*)> binder)
+{
+    m_coresPageBinder = std::move(binder);
+    if (!m_coresPageBinder) { return; }
+    for (const PageEntry& entry : m_pages) {
+        if (auto* page = qobject_cast<CoresSetupPage*>(entry.widget)) { m_coresPageBinder(page); }
+    }
+}
+
+void SetupDialog::inspectCoreTarget(const QString& id)
+{
+    m_inspectedCoreTarget = id;
+    selectPage(QStringLiteral("Your Cores"));
+    for (const PageEntry& entry : m_pages) {
+        if (auto* page = qobject_cast<CoresSetupPage*>(entry.widget)) { page->inspectTarget(id); page->refreshTargets(); }
+    }
 }
 
 void SetupDialog::setRemoteStationPageBinder(
@@ -1353,6 +1423,19 @@ void SetupDialog::buildTree()
     }
 
     tick("General");
+
+    QTreeWidgetItem* cores = addCategory("Cores");
+    registerPage(cores, "Your Cores", SetupScope::ThisComputer, [this]() -> QWidget* {
+        auto* page = new CoresSetupPage(m_coreTargets, m_model);
+        page->setContext(m_coreSettingsContext);
+        if (!m_inspectedCoreTarget.isEmpty()) { page->inspectTarget(m_inspectedCoreTarget); }
+        connect(page, &CoresSetupPage::connectionDetailsRequested,
+                this, &SetupDialog::coreConnectionDetailsRequested);
+        connect(page, &CoresSetupPage::diagnosticsRequested,
+                this, &SetupDialog::coreDiagnosticsRequested);
+        if (m_coresPageBinder) { m_coresPageBinder(page); }
+        return page;
+    });
 
     // ── Hardware ─────────────────────────────────────────────────────────────
     QTreeWidgetItem* hardware = addCategory("Hardware");

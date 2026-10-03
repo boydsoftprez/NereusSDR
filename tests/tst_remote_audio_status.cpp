@@ -172,6 +172,34 @@ class TstRemoteAudioStatus final : public QObject {
     Q_OBJECT
 
 private slots:
+    // A fallback must not describe requested Lossless as active L16, nor
+    // claim 48 kbps when an older Core actually answers with 24.
+    void diagnosticsSeparateRequestedQualityFromCurrentFormat()
+    {
+        RemoteAudioStatus status;
+        status.state = RemoteAudioStatus::State::Playing;
+        status.detailNegotiated = true;
+        status.profileChoiceAvailable = true;
+        status.chosenProfile = RemoteAudioProfile::Lossless;
+        status.runningProfile = RemoteAudioProfile::Opus;
+        status.encoder = defaultProfile();
+        status.qualityReason = RemoteAudioQualityReason::NetworkTooSlow;
+        const QString details = formatRemoteAudioDetails(status, {});
+        QVERIFY(details.contains(QStringLiteral("Requested quality: Lossless")));
+        QVERIFY(details.contains(QStringLiteral("Current receive format: Opus stereo, 24\u00A0kbit/s target")));
+        QVERIFY(details.contains(QStringLiteral("Current microphone format:")));
+        QVERIFY(details.contains(QStringLiteral("The network could not carry lossless audio")));
+        QVERIFY(!details.contains(QStringLiteral("Current receive format: Lossless")));
+        status.bitrateRefusal = QStringLiteral("The Core refused this requested audio bitrate.");
+        status.headphonesFormat = QStringLiteral("Opus stereo, 48 kbps target");
+        status.microphoneFormat = QStringLiteral("Opus mono, 24 kbps target (not sending)");
+        const QString separate = formatRemoteAudioDetails(status, {});
+        QVERIFY(separate.contains(status.bitrateRefusal));
+        QVERIFY(separate.contains(QStringLiteral("Current headphones format: Opus stereo, 48 kbps target")));
+        QVERIFY(separate.contains(QStringLiteral("Current microphone format: Opus mono, 24 kbps target (not sending)")));
+        QVERIFY(separate.contains(QStringLiteral("Current receive format: Opus stereo, 24\u00A0kbit/s target")));
+    }
+
     void derivationFollowsThePrecedenceTable_data()
     {
         QTest::addColumn<bool>("mediaSession");
@@ -489,8 +517,9 @@ private slots:
         const RemoteAudioReceiverTelemetry playback;
         QCOMPARE(formatRemoteAudioDetails(status, playback), QStringLiteral(
             "Remote audio: Playing\n"
-            "Audio quality: Lossless\n"
-            "Audio format: Lossless stereo, 16-bit, 1536\u00A0kbit/s, 4\u00A0ms packets\n"
+            "Requested quality: Lossless\n"
+            "Current receive format: Lossless stereo, 16-bit, 1536\u00A0kbit/s, 4\u00A0ms packets\n"
+            "Current microphone format: Not available on this connection\n"
             "Output: System default (selected)\n"
             "Arrival jitter: not measured\n"
             "Missing packets: none received\n"
@@ -504,21 +533,21 @@ private slots:
         status.qualityReason = RemoteAudioQualityReason::CoreNotAllowed;
         QVERIFY(formatRemoteAudioDetails(status, playback).startsWith(QStringLiteral(
             "Remote audio: Playing\n"
-            "Audio quality: Opus\n"
+            "Requested quality: Lossless\n"
             "This Core does not allow lossless audio.\n"
-            "Audio format: Opus stereo, 24\u00A0kbit/s target")));
+            "Current receive format: Opus stereo, 24\u00A0kbit/s target")));
 
         // The link trial failed.
         status.qualityReason = RemoteAudioQualityReason::NetworkTooSlow;
         QVERIFY(formatRemoteAudioDetails(status, playback).contains(QStringLiteral(
-            "Audio quality: Opus\n"
+            "Requested quality: Lossless\n"
             "The network could not carry lossless audio; staying on Opus.\n")));
 
         // Before the Core reports what it runs: the choice.
         status.runningProfile.reset();
         status.qualityReason.reset();
         QVERIFY(formatRemoteAudioDetails(status, playback).contains(
-            QStringLiteral("Audio quality: Lossless (chosen)\n")));
+            QStringLiteral("Requested quality: Lossless\n")));
 
         // An older Core with Lossless chosen: the choice shows, and why it
         // cannot be had.
@@ -526,7 +555,7 @@ private slots:
         status.runningProfile = RemoteAudioProfile::Opus;
         status.qualityReason = RemoteAudioQualityReason::CoreCannotSend;
         QVERIFY(formatRemoteAudioDetails(status, playback).contains(QStringLiteral(
-            "Audio quality: Opus\nThis Core cannot send lossless audio.\n")));
+            "Requested quality: Lossless\nThis Core cannot send lossless audio.\n")));
 
         QCOMPARE(remoteAudioProfileName(RemoteAudioProfile::Opus), QStringLiteral("Opus"));
         QCOMPARE(remoteAudioProfileName(RemoteAudioProfile::Lossless), QStringLiteral("Lossless"));
@@ -1062,7 +1091,9 @@ private slots:
             playback.reorderQueuedMs = 80.0;
             QCOMPARE(formatRemoteAudioDetails(status, playback), QStringLiteral(
                 "Remote audio: Playing\n"
-                "Audio format: Opus stereo, 24\u00A0kbit/s target, 40\u00A0ms packets, audio up to 8\u00A0kHz\n"
+                "Requested quality: High\n"
+                "Current receive format: Opus stereo, 24\u00A0kbit/s target, 40\u00A0ms packets, audio up to 8\u00A0kHz\n"
+                "Current microphone format: Not available on this connection\n"
                 "Output: System default (selected)\n"
                 "Arrival jitter: 3\u00A0ms\n"
                 "Missing packets: 2 of 100\n"
@@ -1084,7 +1115,9 @@ private slots:
             playback.speakerQueuedMs = 12.0;
             QCOMPARE(formatRemoteAudioDetails(status, playback), QStringLiteral(
                 "Remote audio: Playing\n"
-                "Audio format: Not reported by this Core\n"
+                "Requested quality: High\n"
+                "Current receive format: Not reported by this Core\n"
+                "Current microphone format: Not available on this connection\n"
                 "Output: System default (selected)\n"
                 "Arrival jitter: 1\u00A0ms\n"
                 "Missing packets: 0 of 50\n"
@@ -1108,7 +1141,9 @@ private slots:
             QCOMPARE(formatRemoteAudioDetails(status, playback), QStringLiteral(
                 "Remote audio: Playback problem on this computer\n"
                 "Problem: The speaker device stopped playing audio.\n"
-                "Audio format: Audio is off\n"
+                "Requested quality: High\n"
+                "Current receive format: Audio is off\n"
+                "Current microphone format: Not available on this connection\n"
                 "Output: USB DAC (selected)\n"
                 "Arrival jitter: 0\u00A0ms\n"
                 "Missing packets: 7 of 200\n"
@@ -1135,7 +1170,9 @@ private slots:
             QCOMPARE(formatRemoteAudioDetails(status, playback), QStringLiteral(
                 "Remote audio: Muted on this computer\n"
                 "Problem: The speaker device stopped playing audio.\n"
-                "Audio format: Opus stereo, 24\u00A0kbit/s target, 40\u00A0ms packets, audio up to 8\u00A0kHz\n"
+                "Requested quality: High\n"
+                "Current receive format: Opus stereo, 24\u00A0kbit/s target, 40\u00A0ms packets, audio up to 8\u00A0kHz\n"
+                "Current microphone format: Not available on this connection\n"
                 "Output: System default (selected)"));
         }
 
@@ -1150,7 +1187,9 @@ private slots:
             RemoteAudioReceiverTelemetry playback;
             QCOMPARE(formatRemoteAudioDetails(status, playback), QStringLiteral(
                 "Remote audio: Waiting for audio from Core\n"
-                "Audio format: Audio is off\n"
+                "Requested quality: High\n"
+                "Current receive format: Audio is off\n"
+                "Current microphone format: Not available on this connection\n"
                 "Output: System default (selected)\n"
                 "Arrival jitter: not measured\n"
                 "Missing packets: none received\n"

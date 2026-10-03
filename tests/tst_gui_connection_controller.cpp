@@ -29,6 +29,7 @@
 #include "core/security/PairingWindow.h"
 #include "core/RadioDiscovery.h"
 #include "core/session/StationClient.h"
+#include "core/session/RemoteDevicesState.h"
 #include "core/session/StationServer.h"
 #include "gui/ConnectionSelector.h"
 #include "core/session/StationRendezvous.h"
@@ -42,6 +43,9 @@
 #include "fakes/MainWindowTestSettings.h"
 #include "fakes/UpgradedCoreToken.h"
 #include "RendezvousTestHarness.h"
+#include "fakes/LoopbackTransport.h"
+#include "core/session/PathRacer.h"
+#include "core/session/StationDevicesFacade.h"
 
 using namespace NereusSDR;
 
@@ -155,6 +159,8 @@ private slots:
     void disconnectCancelsRetryWithoutUsingHighlightedB();
     void connectionsDisconnectReopensConnectionsOnceWithoutDialling();
     void aManualReconnectReadsTheStoresLastAddresses();
+    void savedRowShowsLastAuthenticatedAddress();
+    void verifiedPathWinnerIsKeptWithoutAnotherSnapshot();
     void persistentLocalChoiceReturnsToEmbeddedCoreWithoutRadioAutoconnect();
     void savedCoreEditsDoNotChangeCurrentTupleBeforeConnect();
     void corruptStartupDocumentShowsIdleLocalAndNotice();
@@ -393,6 +399,99 @@ void TestGuiConnectionController::connectionsDisconnectReopensConnectionsOnceWit
     controller.shutdown();
 }
 
+void TestGuiConnectionController::verifiedPathWinnerIsKeptWithoutAnotherSnapshot()
+{
+    LoopbackCores cores;
+    QVERIFY(cores.start());
+    const SavedCoreTarget saved = cores.firstTarget();
+    QVERIFY(installTargets({saved}, saved.id));
+    GuiConnectionController controller;
+    controller.start({});
+    auto* client = controller.sessions()->window()->findChild<StationClient*>();
+    QVERIFY(client);
+    QTRY_VERIFY(client->isHandshakeComplete());
+    QSignalSpy snapshots(client, &StationClient::stateSnapshotApplied);
+    QSignalSpy moved(client, &StationClient::pathChanged);
+    auto* stationB = new Test::LoopbackTransport(QStringLiteral("station B"));
+    auto* clientB = new Test::LoopbackTransport(QStringLiteral("client B"));
+    stationB->linkTo(clientB);
+    QSignalSpy hello(clientB, &SessionTransport::textReceived);
+    cores.firstServer.acceptTransport(stationB);
+    QTRY_VERIFY(!hello.isEmpty());
+    const QUrl provedUrl(QStringLiteral("wss://192.0.2.8:47911"));
+    QVERIFY(client->moveSessionForTest(clientB, PathRacer::ThisNetwork, provedUrl));
+    QTRY_COMPARE(moved.size(), 1);
+    QCOMPARE(snapshots.size(), 0);
+    QCOMPARE(client->connectedUrl(), provedUrl);
+    CoreTargetStore persisted(AppSettings::instance());
+    QVERIFY(persisted.load());
+    QCOMPARE(persisted.target(saved.id)->connection.cachedAddresses.first(), provedUrl.toString());
+    auto* wrongStation = new Test::LoopbackTransport(QStringLiteral("wrong station"));
+    auto* wrongClient = new Test::LoopbackTransport(QStringLiteral("wrong client"));
+    wrongStation->linkTo(wrongClient);
+    QSignalSpy wrongHello(wrongClient, &SessionTransport::textReceived);
+    cores.secondServer.acceptTransport(wrongStation);
+    QTRY_VERIFY(!wrongHello.isEmpty());
+    QVERIFY(client->moveSessionForTest(wrongClient, PathRacer::ThisNetwork,
+                                    QUrl(QStringLiteral("wss://192.0.2.99:47910"))));
+    QTRY_VERIFY(!client->upgradeUnderWayForTest());
+    QCOMPARE(moved.size(), 1);
+    QCOMPARE(client->connectedUrl(), provedUrl);
+    CoreTargetStore rejected(AppSettings::instance());
+    QVERIFY(rejected.load());
+    QCOMPARE(rejected.target(saved.id)->connection.cachedAddresses.first(), provedUrl.toString());
+    controller.selector()->forgetRequested(QStringLiteral("saved:") + saved.id);
+    client->pathChanged(); // A late notification must not recreate a forgotten entry.
+    CoreTargetStore forgotten(AppSettings::instance());
+    QVERIFY(forgotten.load());
+    QVERIFY(!forgotten.target(saved.id));
+    QVERIFY(client->isHandshakeComplete());
+    controller.shutdown();
+}
+
+void TestGuiConnectionController::savedRowShowsLastAuthenticatedAddress()
+{
+    SavedCoreTarget saved = savedTarget(QStringLiteral("address"), QStringLiteral("My Core"), 47910, QStringLiteral("fake"));
+    saved.connection.cachedAddresses = {QStringLiteral("wss://192.0.2.8:47911")};
+    const auto row = GuiConnectionController::savedCoreRow(saved, true);
+    QCOMPARE(row.name, QStringLiteral("My Core"));
+    QCOMPARE(row.address, QStringLiteral("192.0.2.8:47911 (last worked)"));
+    QCOMPARE(saved.connection.url, QStringLiteral("ws://127.0.0.1:47910"));
+    saved.connection.coreAddresses = {QStringLiteral("wss://[2001:db8::5]:47912")};
+    CoreTargetEditor editor(saved);
+    auto* address = editor.findChild<QLineEdit*>(QStringLiteral("coreTargetEditorAddress"));
+    QVERIFY(address);
+    address->setText(QStringLiteral("wss://192.0.2.10:47910"));
+    QVERIFY(editor.target().connection.coreAddresses.isEmpty());
+    QVERIFY(editor.target().connection.cachedAddresses.isEmpty());
+    const QString detail = GuiConnectionController::savedCoreDetails(saved);
+    if (!qEnvironmentVariableIsEmpty("NEREUS_ADDRESS_EXAMPLE_DIR")) {
+        ConnectionSelector example;
+        example.resize(720, 700);
+        example.setTargets({GuiConnectionController::savedCoreRow(saved, true)});
+        example.setNotice(detail);
+        example.show();
+        QTRY_VERIFY(example.isVisible());
+        QVERIFY(example.grab().save(qEnvironmentVariable("NEREUS_ADDRESS_EXAMPLE_DIR") + QStringLiteral("/saved-address-details.png")));
+        SavedCoreTarget full = saved;
+        full.connection.identityFingerprint = QByteArray(32, 'k');
+        full.connection.cachedAddresses = {QStringLiteral("wss://192.0.2.8:47911"), QStringLiteral("wss://192.0.2.9:47912"),
+            QStringLiteral("wss://192.0.2.10:47913"), QStringLiteral("wss://192.0.2.11:47914")};
+        full.connection.coreAddresses.clear();
+        for (int i = 1; i <= 8; ++i) { full.connection.coreAddresses.append(QStringLiteral("wss://[2001:db8::%1]:47910").arg(i)); }
+        example.setTargets({GuiConnectionController::savedCoreRow(full, true)});
+        example.setNotice(GuiConnectionController::savedCoreDetails(full));
+        QApplication::processEvents();
+        QVERIFY(example.grab().save(qEnvironmentVariable("NEREUS_ADDRESS_EXAMPLE_DIR") + QStringLiteral("/full-address-details.png")));
+        qInfo() << "Full inventory dialog dimensions" << example.size();
+    }
+    QVERIFY(detail.contains(QStringLiteral("Name on this computer: My Core")));
+    QVERIFY(detail.contains(QStringLiteral("Configured address: 127.0.0.1:47910")));
+    QVERIFY(detail.contains(QStringLiteral("Last worked: 192.0.2.8:47911")));
+    QVERIFY(detail.contains(QStringLiteral("authenticated Core (may not be reachable)")));
+    QVERIFY(!detail.contains(QStringLiteral("fake")));
+}
+
 // iPhone app plan Task 27 fix wave: a connect remembers where the Core
 // was reached in the store, and a manual reconnect in the same window
 // passes the store's current list, not the one the window was made with.
@@ -417,6 +516,13 @@ void TestGuiConnectionController::aManualReconnectReadsTheStoresLastAddresses()
         QVERIFY2(Test::Rendezvous::waitForHandshake(*client, 5000, &handshakeWhy),
                  qPrintable(handshakeWhy));
     }
+    QVERIFY(!client->signedInWithDeviceKey());
+    QCOMPARE(client->capabilities().coreAddressesVersion, 0);
+    client->remoteDevices()->applyObject(QByteArrayLiteral("devices"),
+        {{9, QByteArrayLiteral("coreAddresses"), MirrorWireKind::Utf8, QString::fromUtf8("{\"addresses\":[\"[2001:db8::5]:47912\"]}")}});
+    CoreTargetStore unsupported(AppSettings::instance());
+    QVERIFY(unsupported.load());
+    QVERIFY(unsupported.target(saved.id)->connection.coreAddresses.isEmpty());
     const QStringList remembered{saved.connection.url};
     QTRY_VERIFY([&] {
         CoreTargetStore store(AppSettings::instance());
@@ -547,6 +653,7 @@ void TestGuiConnectionController::codeOnlyDialogPairsThroughMailboxAndOpensRemot
     LocalService service;
     QVERIFY2(service.start(), qPrintable(service.startFailure()));
     Core core;
+    core.server->devicesFacade()->setCoreAddresses(QString::fromUtf8("{\"addresses\":[\"[2001:db8::4]:47914\"]}"));
     StationRendezvous rendezvous(core.server.get(), {service.url()}, true);
     QSignalSpy nameplates(rendezvous.client(), &RendezvousClient::nameplateClaimed);
     QVERIFY(rendezvous.start());
@@ -644,6 +751,61 @@ void TestGuiConnectionController::codeOnlyDialogPairsThroughMailboxAndOpensRemot
     QCOMPARE(persisted.targets().first().connection.identityFingerprint,
              selected.connection.identityFingerprint);
     QVERIFY(persisted.targets().first().connection.url.isEmpty());
+    QCOMPARE(persisted.targets().first().connection.coreAddresses,
+             QStringList{QStringLiteral("wss://[2001:db8::4]:47914")});
+    QVERIFY(client->signedInWithDeviceKey());
+    QVERIFY(client->agreedMinor() >= 11);
+    QCOMPARE(client->capabilities().coreAddressesVersion, 1);
+    auto* controls = controller.sessions()->window()->findChild<RemoteConnectionController*>();
+    QVERIFY(controls);
+    QVERIFY(controls->endpointText().contains(QStringLiteral("Remote access")));
+    QVERIFY(client->connectedUrl().isEmpty());
+    if (!qEnvironmentVariableIsEmpty("NEREUS_ADDRESS_EXAMPLE_DIR")) {
+        controller.showConnections();
+        controller.selector()->detailsRequested(QStringLiteral("saved:") + selected.savedId);
+        QApplication::processEvents();
+        QVERIFY(controller.selector()->grab().save(qEnvironmentVariable("NEREUS_ADDRESS_EXAMPLE_DIR") + QStringLiteral("/active-service-details.png")));
+    }
+    const QString firstList = QString::fromUtf8("{\"addresses\":[\"[2001:db8::5]:47912\"]}");
+    core.server->devicesFacade()->setCoreAddresses(firstList);
+    QTRY_VERIFY([&] {
+        CoreTargetStore current(AppSettings::instance());
+        return current.load() && current.target(selected.savedId)->connection.coreAddresses
+            == QStringList{QStringLiteral("wss://[2001:db8::5]:47912")};
+    }());
+    CoreTargetStore learned(AppSettings::instance());
+    QVERIFY(learned.load());
+    QVERIFY(learned.target(selected.savedId)->connection.cachedAddresses.isEmpty());
+    QCOMPARE(client->cachedAddresses(), QList<QUrl>{QUrl(QStringLiteral("wss://[2001:db8::5]:47912"))});
+    // An addressless service session must include its newly authenticated
+    // list on automatic retry, without waiting for a manual reconnect.
+    client->setReconnectBackoffUnitMs(1);
+    client->disconnectFromStation(QStringLiteral("station link lost"), true);
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (const auto& attempt : client->connectionAttempt().tries) {
+            if (attempt.path == StationConnectionAttempt::Path::Direct) { return true; }
+        }
+        return false;
+    }(), 5000);
+    {
+        QString why;
+        QVERIFY2(waitForHandshake(*client, kServiceConnectBudgetMs, &why), qPrintable(why));
+    }
+    core.server->devicesFacade()->setCoreAddresses(QString::fromUtf8("{\"addresses\":[]}"));
+    QTRY_COMPARE(client->remoteDevices()->coreInfo().coreAddresses, QString::fromUtf8("{\"addresses\":[]}"));
+    CoreTargetStore retainedAddresses(AppSettings::instance());
+    QVERIFY(retainedAddresses.load());
+    QCOMPARE(retainedAddresses.target(selected.savedId)->connection.coreAddresses, learned.target(selected.savedId)->connection.coreAddresses);
+    core.server->devicesFacade()->setCoreAddresses(QStringLiteral("malformed"));
+    QTRY_COMPARE(client->remoteDevices()->coreInfo().coreAddresses, QStringLiteral("malformed"));
+    CoreTargetStore malformed(AppSettings::instance());
+    QVERIFY(malformed.load());
+    QCOMPARE(malformed.target(selected.savedId)->connection.coreAddresses, learned.target(selected.savedId)->connection.coreAddresses);
+    // Keep later service-only reconnect fixture local: no dialing advertised
+    // documentation endpoints. Real list/race composition tested separately.
+    SavedCoreTarget reset = *retainedAddresses.target(selected.savedId);
+    reset.connection.coreAddresses.clear();
+    QVERIFY(retainedAddresses.upsert(reset));
     controller.shutdown();
     QTRY_VERIFY_WITH_TIMEOUT(!core.server->hasAuthenticatedSession(), 10000);
 

@@ -107,6 +107,7 @@
         {"id": "session-verbs-session-leave", "file": "sessions/verbs-session-leave.json", "kind": "session", "requires": {"sessionHolderVersion": 1}},
         {"id": "session-verbs-tx-set-tx-slice", "file": "sessions/verbs-tx-set-tx-slice.json", "kind": "session", "requires": {"remoteTxVersion": 1}},
         {"id": "session-unheld-key", "file": "sessions/unheld-key.json", "kind": "session", "requires": {"remoteTxVersion": 1}},
+        {"id": "session-radio-mic-source", "file": "sessions/radio-mic-source.json", "kind": "session", "requires": {"remoteTxVersion": 1, "radioMicVersion": 2}},
         {"id": "session-key-without-microphone", "file": "sessions/key-without-microphone.json", "kind": "session", "requires": {"remoteTxVersion": 1}},
         {"id": "session-tx-keepalive", "file": "sessions/tx-keepalive.json", "kind": "session", "requires": {"remoteTxVersion": 1}},
         {"id": "session-grace-transmit-held", "file": "sessions/grace-transmit-held.json", "kind": "session", "requires": {"remoteTxVersion": 1, "sessionHolderVersion": 1}},

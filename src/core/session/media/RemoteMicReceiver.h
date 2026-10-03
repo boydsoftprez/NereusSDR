@@ -131,7 +131,7 @@ struct RemoteMicConfig {
     /// (RemoteMicEncoder), within the line's offered maxaveragebitrate
     /// (LibDataChannelMediaTransport.h kMicLineMaxAverageBitrate, 48
     /// kbit/s, the ceiling set for the phone's microphone).
-    static constexpr int kOpusBitrate = 24'000;
+    static constexpr int kOpusBitrate = 48'000;
     /// The transmit pump's block (TxWorkerThread::kBlockFrames).
     static constexpr int kPumpBlockFrames = 64;
 
@@ -589,7 +589,7 @@ private:
     std::vector<float> m_stereoScratch;
 };
 
-/// Opus mono 48 kHz, 20 ms frames, 24 kbit/s, in-band FEC: the microphone
+/// Opus mono 48 kHz, 20 ms frames, 48 or 24 kbit/s, in-band FEC: the microphone
 /// line as a desktop remote window sends it.
 class RemoteMicEncoder {
 public:
@@ -604,6 +604,11 @@ public:
     QByteArray encode(const float* mono, quint16 sequence, quint32 timestamp,
                       quint32 ssrc);
     void reset();
+    /// Set the desktop quality's target, retaining the established voice/FEC
+    /// profile. A reset preserves this target across media reconnects.
+    void setBitrate(int bitrate);
+    /// Queried from the local encoder; zero when it could not start.
+    int targetBitrate() const;
 
 private:
     struct State;

@@ -36,6 +36,8 @@
 //   2026-09-27: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-02: cover adopted-session retry ownership by J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via OpenAI Codex.
 // =================================================================
 
 #include <QtTest>
@@ -527,6 +529,36 @@ private slots:
         QCOMPARE(window.client->connectedUrl(),
                  QUrl(QStringLiteral("wss://127.0.0.1:%1").arg(port)));
         window.client->disconnectFromStation(QStringLiteral("test done"));
+    }
+
+    void adoptedSessionDoesNotReuseEarlierPairedRaceRoutes()
+    {
+        LocalService service;
+        QVERIFY2(service.start(), qPrintable(service.startFailure()));
+        Core core;
+        StationRendezvous rendezvous(core.server.get(), {service.url()}, true);
+        QSignalSpy registered(rendezvous.client(), &RendezvousClient::registered);
+        QVERIFY(rendezvous.start());
+        QTRY_COMPARE_WITH_TIMEOUT(registered.size(), 1, 10000);
+        Window window(core);
+        window.route(service, rendezvous.client()->stationId());
+        window.client->connectToStation(QUrl(), QString(), QString(), false, identityOf(core));
+        QString handshakeWhy;
+        QVERIFY2(waitForHandshake(*window.client, kServiceConnectBudgetMs, &handshakeWhy),
+                 qPrintable(handshakeWhy));
+        QVERIFY(window.client->connectedUrl().isEmpty());
+        QVERIFY(!window.client->serviceRoute().servers.isEmpty());
+        window.client->disconnectFromStation(QStringLiteral("operator closed prior Core"), false);
+
+        // This adopted link owns no dial target. A different identity must
+        // never inherit the previous paired Core's service route on loss.
+        QSignalSpy scheduled(window.client.get(), &StationClient::reconnectScheduled);
+        auto* adopted = new LoopbackTransport(QStringLiteral("adopted link"));
+        window.client->startSession(adopted, QString(), QString(), QByteArray(32, 'x'));
+        window.client->disconnectFromStation(QStringLiteral("station link lost"), true);
+        QCOMPARE(scheduled.size(), 0);
+        QVERIFY(!window.client->isReconnectPending());
+        QVERIFY(window.client->serviceRoute().servers.isEmpty());
     }
 
     // Task 29 fix wave (review Important 2): the window's upgrade
