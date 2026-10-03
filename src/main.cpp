@@ -22,6 +22,11 @@
 #include "NereusBuildTag.h"
 
 #include <QApplication>
+#if defined(Q_OS_MAC)
+#include "gui/QtCocoaAccessibilityOwnershipGuard.h"
+#include <QLoggingCategory>
+Q_LOGGING_CATEGORY(lcMainAccessibility, "nereus.gui.accessibility")
+#endif
 #include <QCommandLineOption>
 #include <QMetaObject>
 #include <csignal>
@@ -102,6 +107,13 @@ int main(int argc, char* argv[])
     }
 
     QApplication app(argc, argv);
+#if defined(Q_OS_MAC)
+    QString accessibilityRejection;
+    if (!installQtCocoaAccessibilityOwnershipGuard(&accessibilityRejection)) {
+        qCWarning(lcMainAccessibility).noquote() << "NereusSDR startup refused:" << accessibilityRejection;
+        return EXIT_FAILURE;
+    }
+#endif
     app.setApplicationName("NereusSDR");
     app.setApplicationVersion(NEREUSSDR_VERSION);
     app.setOrganizationName("NereusSDR");
