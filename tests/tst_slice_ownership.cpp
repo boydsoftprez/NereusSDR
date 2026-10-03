@@ -117,6 +117,58 @@ class TstSliceOwnership : public QObject {
     Q_OBJECT
 
 private slots:
+    // 2026-10-02 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+    void adoptionNotificationMayRetireItsModel_data()
+    {
+        QTest::addColumn<int>("notification");
+        QTest::newRow("mark") << 0;
+        QTest::newRow("revision") << 1;
+        QTest::newRow("listeners") << 2;
+        QTest::newRow("active") << 3;
+        QTest::newRow("activeRx") << 4;
+    }
+    void adoptionNotificationMayRetireItsModel()
+    {
+        QFETCH(int, notification);
+        auto model = std::make_unique<RadioModel>();
+        const int a = model->addSlice(QStringLiteral("pan-0"));
+        const int b = model->addSlice(QStringLiteral("pan-0"));
+        QVERIFY(a >= 0 && b >= 0);
+        QPointer<RadioModel> observed(model.get());
+        QPointer<SliceOwnership> ownership(model->sliceOwnership());
+        bool retired = false;
+        const auto retire = [&] { if (!retired) { retired = true; model.reset(); } };
+        switch (notification) {
+        case 0: connect(ownership, &SliceOwnership::markChanged, this, retire); break;
+        case 1: connect(ownership, &SliceOwnership::controlRevisionChanged, this, retire); break;
+        case 2: connect(ownership, &SliceOwnership::listenersChanged, this, retire); break;
+        case 3: connect(ownership, &SliceOwnership::activeChanged, this, retire); break;
+        case 4: connect(ownership, &SliceOwnership::activeRxChanged, this, retire); break;
+        }
+        ownership->adoptUnowned(SliceOwnership::stationDevice());
+        QVERIFY(retired);
+        QVERIFY(!observed);
+        QVERIFY(!ownership);
+    }
+
+    void defaultAdoptionDoesNotOverwriteAReentrantlyHeldRemainingSlice()
+    {
+        SliceOwnership own;
+        own.noteSliceAdded(0);
+        own.noteSliceAdded(1);
+        connect(&own, &SliceOwnership::markChanged, this,
+                [&](int id, const QByteArray&, const QByteArray&) {
+            if (id == 0) { own.hold(1, kB); }
+        });
+        const auto adopted = own.adoptUnowned(SliceOwnership::stationDevice());
+        QCOMPARE(adopted, QList<int>{0});
+        QCOMPARE(own.mark(0).owner, SliceOwnership::stationDevice());
+        QCOMPARE(own.mark(1).heldFor, kB);
+        QCOMPARE(own.controlRevision(0), quint64(2));
+        QCOMPARE(own.controlRevision(1), quint64(2));
+        QCOMPARE(own.activeFor(SliceOwnership::stationDevice()), 0);
+    }
+
     void initTestCase()
     {
         AppSettings::setProfileOverride(

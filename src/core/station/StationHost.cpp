@@ -5,6 +5,7 @@
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"
 #include "core/SliceOwnership.h"
+#include "core/station/StationSliceOwnershipPolicy.h"
 #include "core/daemon/DaemonTelemetryController.h"
 #include "core/daemon/HostTelemetrySampler.h"
 #include "core/session/DeviceSessionRegistry.h"
@@ -160,32 +161,11 @@ bool StationHost::start()
         server->setStationDeviceWords(cfg.hostingDevice->name,
                                       cfg.hostingDevice->shortName);
         if (!server || !model) { return false; }
-        const QPointer<SliceOwnership> ownership(model->sliceOwnership());
-        if (ownership) {
-            const QList<int> adopted = ownership->adoptUnowned(stationId);
-            if (!server || !model || !ownership) { return false; }
-            if (!adopted.isEmpty()) {
-                const int active = ownership->activeFor(stationId);
-                if (!model) { return false; }
-                model->setActiveSliceByIdFor(stationId, active);
-            }
-        }
-        if (!server || !model) { return false; }
-        // The desktop may begin hosting before its radio has made Slice A.
-        // A later unscoped local slice is still the hosting window's, never
-        // a free slice for the first external peer to adopt.
-        connect(model.data(), &RadioModel::sliceAdded, server.data(),
-                [model, stationId](int) {
-                    if (!model) { return; }
-                    const QPointer<SliceOwnership> ownership(model->sliceOwnership());
-                    if (!ownership) { return; }
-                    const QList<int> adopted = ownership->adoptUnowned(stationId);
-                    if (!model || !ownership) { return; }
-                    if (!adopted.isEmpty()) {
-                        const int active = ownership->activeFor(stationId);
-                        if (model) { model->setActiveSliceByIdFor(stationId, active); }
-                    }
-                });
+        const QPointer<StationHost> self(this);
+        StationSliceOwnershipPolicy::activate(model, server, [self, server, generation] {
+            return self && server && !self->m_quiescing && self->m_generation == generation;
+        });
+        if (!self || !server || !model) { return false; }
     }
 #ifdef NEREUS_BUILD_TESTS
     if (m_serverCreatedForTest) { m_serverCreatedForTest(m_stationServer.get()); }

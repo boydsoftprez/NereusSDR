@@ -1137,12 +1137,13 @@ void SliceModel::setDiversityEnabled(bool on)
 //
 // Behaviour mirrors the rest of the Sub-Epic A setters: emit-on-change so the
 // future DiversityDialog (T8-T10) and the RadioModel signal wire (T13) only
-// fire downstream work when the value actually moves. Domain clamping is the
-// caller's responsibility for now; the spinner ranges in DiversityDialog
-// will enforce 0..360 / -20..+20 at the UI edge.
+// fire downstream work when the value actually moves. Reject nonfinite scalars and clamp to the
+// same 0..360 / -20..+20 domains used by DiversityDialog.
 
 void SliceModel::setDiversityPhaseDeg(double deg)
 {
+    if (!std::isfinite(deg)) { return; }
+    deg = std::clamp(deg, 0.0, 360.0);
     if (holdsListenerWrite(diversityPhaseDeg(), deg)) { return; }
     if (m_diversityPhaseDeg != deg) {
         m_diversityPhaseDeg = deg;
@@ -1153,6 +1154,8 @@ void SliceModel::setDiversityPhaseDeg(double deg)
 
 void SliceModel::setDiversityGainDb(double db)
 {
+    if (!std::isfinite(db)) { return; }
+    db = std::clamp(db, -20.0, 20.0);
     if (holdsListenerWrite(diversityGainDb(), db)) { return; }
     if (m_diversityGainDb != db) {
         m_diversityGainDb = db;

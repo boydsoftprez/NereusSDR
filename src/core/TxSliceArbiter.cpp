@@ -41,12 +41,22 @@
 //                                    Anthropic Claude Code.
 // =================================================================
 #include "core/TxSliceArbiter.h"
+#include <QPointer>
 #include "models/SliceModel.h"
 #include "core/MoxController.h"
 #include "core/AppSettings.h"
 #include "core/safety/UnkeyGate.h"
 
 namespace NereusSDR {
+namespace {
+QList<QPointer<SliceModel>> arbiterSliceSnapshot(const QVector<SliceModel*>& slices)
+{
+    QList<QPointer<SliceModel>> result;
+    for (SliceModel* slice : slices) { result.append(slice); }
+    return result;
+}
+}
+
 
 TxSliceArbiter::TxSliceArbiter(QObject* parent) : QObject(parent) {}
 
@@ -67,10 +77,14 @@ void TxSliceArbiter::setTransmitAccess(TransmitAccess mayTransmit, ActiveLookup 
 
 bool TxSliceArbiter::requestHandoff(int sliceId, const QByteArray& requester)
 {
+    const QPointer<TxSliceArbiter> self(this);
     // iPhone app plan Task 77 (ruling 8.10): the holder's verb, for its own
     // slices. A slice another owner has, or one the requester only listens
     // to (slice control plan Task 2), is refused before anything moves.
-    if (m_mayTransmit && !m_mayTransmit(requester, sliceId)) {
+    const TransmitAccess mayTransmit = m_mayTransmit;
+    const bool allowed = !mayTransmit || mayTransmit(requester, sliceId);
+    if (!self) { return false; }
+    if (!allowed) {
         emit handoffBlocked(sliceId, QStringLiteral("That slice is another device's."));
         return false;
     }
@@ -79,17 +93,23 @@ bool TxSliceArbiter::requestHandoff(int sliceId, const QByteArray& requester)
 
 bool TxSliceArbiter::pendingMayLand(int sliceId, const QByteArray& requester) const
 {
+    const QPointer<const TxSliceArbiter> self(this);
+    const TransmitAccess mayTransmit = m_mayTransmit;
+    const HolderLookup lookupHolder = m_holder;
     // Slice control fix wave (Critical 1): control of the slice may have
     // passed while the move waited for the unkey. The flag lands only on a
     // slice the holder, and the device that asked, may still transmit on.
-    if (!m_mayTransmit) {
+    if (!mayTransmit) {
         return true;
     }
-    const QByteArray holder = m_holder ? m_holder() : QByteArray();
-    if (!holder.isEmpty() && !m_mayTransmit(holder, sliceId)) {
+    const QByteArray holder = lookupHolder ? lookupHolder() : QByteArray();
+    if (!self) { return false; }
+    if (!holder.isEmpty() && !mayTransmit(holder, sliceId)) {
         return false;
     }
-    return requester.isEmpty() || m_mayTransmit(requester, sliceId);
+    if (!self) { return false; }
+    const bool allowed = requester.isEmpty() || mayTransmit(requester, sliceId);
+    return self && allowed;
 }
 
 bool TxSliceArbiter::bindForHolder(const QByteArray& holder, int preferredSliceId)
@@ -143,6 +163,7 @@ SliceModel* TxSliceArbiter::txBoundSlice() const
 // ---------------------------------------------------------------------------
 void TxSliceArbiter::syncToSliceList()
 {
+    const QPointer<TxSliceArbiter> self(this);
     // Remote-daemon R2 Task 5: on a remote client which slice transmits
     // is the daemon's decision, mirrored in by a later task, so this
     // whole method -- the initial-bind arm's setTxSlice(true) at the
@@ -163,7 +184,7 @@ void TxSliceArbiter::syncToSliceList()
         return;
     }
 
-    SliceModel* firstFlagged = nullptr;
+    QPointer<SliceModel> firstFlagged;
     int flaggedCount = 0;
     for (SliceModel* s : *m_slices) {
         if (s && s->isTxSlice()) {
@@ -188,15 +209,17 @@ void TxSliceArbiter::syncToSliceList()
         // this is a guard against a future second writer rather than a live
         // path. Keep the slice the stable ID already names if it is flagged,
         // otherwise the first flagged slice, and clear the rest.
-        SliceModel* keep = txBoundSlice();
+        QPointer<SliceModel> keep(txBoundSlice());
         if (!keep || !keep->isTxSlice()) {
             keep = firstFlagged;
         }
-        for (SliceModel* slice : *m_slices) {
-            if (slice && slice != keep) {
+        for (const QPointer<SliceModel>& slice : arbiterSliceSnapshot(*m_slices)) {
+            if (slice && sliceWithId(slice->sliceIndex()) == slice.data() && slice != keep) {
                 slice->setTxSlice(false);
+                if (!self) { return; }
             }
         }
+        if (!keep || sliceWithId(keep->sliceIndex()) != keep.data() || !keep->isTxSlice()) { return; }
         m_txBoundSliceId = keep->sliceIndex();
         return;
     }
@@ -208,19 +231,27 @@ void TxSliceArbiter::syncToSliceList()
     // slice A, per design §6 "Restore on launch": "If that slice doesn't
     // exist post-restore (e.g. operator deleted it last session), default to
     // Slice A."
-    SliceModel* slice = txBoundSlice();
+    QPointer<SliceModel> slice(txBoundSlice());
     // iPhone app plan Task 77 (ruling 8.13): with a holder that owns
     // slices, the first bind is among them: the restored id when it is
     // one of them, otherwise the holder's active slice.
-    const QByteArray holder = m_holder ? m_holder() : QByteArray();
-    if (!holder.isEmpty() && m_mayTransmit) {
-        if (slice == nullptr || !m_mayTransmit(holder, slice->sliceIndex())) {
-            const int active = m_active ? m_active(holder) : -1;
-            if (SliceModel* own = sliceWithId(active); own && m_mayTransmit(holder, active)) {
-                slice = own;
-            }
+    const HolderLookup lookupHolder = m_holder;
+    const TransmitAccess mayTransmit = m_mayTransmit;
+    const ActiveLookup lookupActive = m_active;
+    const QByteArray holder = lookupHolder ? lookupHolder() : QByteArray();
+    if (!self) { return; }
+    if (!holder.isEmpty() && mayTransmit) {
+        if (slice == nullptr || !mayTransmit(holder, slice->sliceIndex())) {
+            if (!self) { return; }
+            const int active = lookupActive ? lookupActive(holder) : -1;
+            if (!self) { return; }
+            const QPointer<SliceModel> own(sliceWithId(active));
+            const bool allowed = own && mayTransmit(holder, active);
+            if (!self) { return; }
+            if (allowed && own && sliceWithId(active) == own.data()) { slice = own; }
         }
     }
+    if (!self) { return; }
     if (!slice) {
         for (SliceModel* candidate : *m_slices) {
             if (candidate) {
@@ -229,16 +260,20 @@ void TxSliceArbiter::syncToSliceList()
             }
         }
     }
-    if (!slice) { return; }
+    if (!self || !slice || sliceWithId(slice->sliceIndex()) != slice.data()) { return; }
 
     // RF-safe, same guard requestHandoff uses. Unreachable on the true first
     // bind (nothing to key from before a slice exists); present for the
     // degenerate keyed-but-unbound case.
     if (m_mox && m_mox->isMox()) {
         m_mox->setMox(false);
+        if (!self) { return; }
     }
 
+    if (!slice || sliceWithId(slice->sliceIndex()) != slice.data()) { return; }
     slice->setTxSlice(true);
+    if (!self) { return; }
+    if (!slice || sliceWithId(slice->sliceIndex()) != slice.data() || !slice->isTxSlice()) { return; }
     m_txBoundSliceId = slice->sliceIndex();
     // oldId -1: there was no previous binding, so this is not a handoff.
     // Subscribers that treat it as one (status-bar "TX > Slice X" toast)
@@ -253,6 +288,7 @@ bool TxSliceArbiter::requestHandoff(int sliceId)
 
 bool TxSliceArbiter::requestHandoffFrom(int sliceId, const QByteArray& requester)
 {
+    const QPointer<TxSliceArbiter> self(this);
     // Remote-daemon R2 Task 5: same reasoning as syncToSliceList() above.
     // A local operator TX-slice click funnels through here; on a remote
     // client that click is a later task's job to forward to the daemon
@@ -267,7 +303,7 @@ bool TxSliceArbiter::requestHandoffFrom(int sliceId, const QByteArray& requester
     // misdirect whatever UI reacts to it.
     if (m_remote) { return false; }
 
-    SliceModel* target = nullptr;
+    QPointer<SliceModel> target;
     if (m_slices) {
         for (SliceModel* slice : *m_slices) {
             if (slice && slice->sliceIndex() == sliceId) {
@@ -283,7 +319,9 @@ bool TxSliceArbiter::requestHandoffFrom(int sliceId, const QByteArray& requester
 
     // iPhone app plan Task 77 (ruling 8.11): the flag never moves while
     // the station device is keyed; the freeze ends with the press.
-    if (!target->isTxSlice() && isFrozen()) {
+    const bool frozen = !target->isTxSlice() && isFrozen();
+    if (!self || !target || sliceWithId(sliceId) != target.data()) { return false; }
+    if (frozen) {
         emit handoffBlocked(sliceId, QStringLiteral("The radio is on the air."));
         return false;
     }
@@ -291,7 +329,7 @@ bool TxSliceArbiter::requestHandoffFrom(int sliceId, const QByteArray& requester
     if (target->isTxSlice()) {
         m_txBoundSliceId = sliceId;
         setPending(-1, QByteArray());   // a waiting move to elsewhere is dropped
-        return true;  // already TX-bound, no-op
+        return self;  // already TX-bound, no-op
     }
 
     // RF-safe handoff: drop MOX before changing TX-bound slice.
@@ -306,23 +344,30 @@ bool TxSliceArbiter::requestHandoffFrom(int sliceId, const QByteArray& requester
     if (keyed && m_unkeyGate) {
         const bool alreadyWaiting = m_pendingHandoffId >= 0;
         setPending(sliceId, requester);
+        if (!self) { return false; }
         if (!alreadyWaiting) {
             m_unkeyGate->unkey(QStringLiteral("The transmit slice moved."), this,
-                               [this](UnkeyOutcome) {
+                               [this, self](UnkeyOutcome) {
+                if (!self) { return; }
                 const int pending = m_pendingHandoffId;
                 const QByteArray requester = m_pendingRequester;
                 const QByteArray askedHolder = m_pendingHolder;
                 setPending(-1, QByteArray());
-                SliceModel* next = sliceWithId(pending);
+                if (!self) { return; }
+                const QPointer<SliceModel> next(sliceWithId(pending));
                 if (!next || next->isTxSlice()) {
                     return;
                 }
                 // Slice control fix wave (Critical 1): checked again now,
                 // so a slice another device took while the key ended never
                 // carries this holder's transmit.
-                if (!pendingMayLand(pending, requester)) {
+                const bool mayLand = pendingMayLand(pending, requester);
+                if (!self || !next || sliceWithId(pending) != next.data()) { return; }
+                if (!mayLand) {
                     // Fix wave, round 2: say what changed hands.
-                    const QByteArray holderNow = m_holder ? m_holder() : QByteArray();
+                    const HolderLookup lookupHolder = m_holder;
+                    const QByteArray holderNow = lookupHolder ? lookupHolder() : QByteArray();
+                    if (!self) { return; }
                     const bool transmitPassed = holderNow != askedHolder;
                     emit handoffBlocked(
                         pending, transmitPassed
@@ -339,19 +384,23 @@ bool TxSliceArbiter::requestHandoffFrom(int sliceId, const QByteArray& requester
     }
     if (m_mox && m_mox->isMox()) {
         m_mox->setMox(false);
+        if (!self) { return false; }
         // Without a gate the flag moves now; MOX is already off in the
         // controller, the hardware at the end of the TX-to-RX walk.
     }
+    if (!target || sliceWithId(sliceId) != target.data()) { return false; }
     flipTo(target);
     return true;
 }
 
 void TxSliceArbiter::releaseBinding()
 {
+    const QPointer<TxSliceArbiter> self(this);
     if (m_remote) {
         return;
     }
     setPending(-1, QByteArray());
+    if (!self) { return; }
     const int old = m_txBoundSliceId;
     if (old < 0) {
         return;
@@ -363,7 +412,8 @@ void TxSliceArbiter::releaseBinding()
     const bool keyed = m_mox && (m_mox->isMox() || m_mox->state() != MoxState::Rx);
     if (keyed && m_unkeyGate) {
         m_unkeyGate->unkey(QStringLiteral("The transmit slice closed."), this,
-                           [this, old](UnkeyOutcome) {
+                           [this, self, old](UnkeyOutcome) {
+            if (!self) { return; }
             // A new binding or a slice on the same id meanwhile: nothing
             // to end.
             if (m_txBoundSliceId != old || sliceWithId(old) != nullptr) {
@@ -376,6 +426,7 @@ void TxSliceArbiter::releaseBinding()
     }
     if (m_mox && m_mox->isMox()) {
         m_mox->setMox(false);
+        if (!self) { return; }
     }
     m_txBoundSliceId = -1;
     emit txBoundSliceChanged(old, -1);
@@ -383,10 +434,14 @@ void TxSliceArbiter::releaseBinding()
 
 void TxSliceArbiter::setPending(int sliceId, const QByteArray& requester)
 {
+    const QPointer<TxSliceArbiter> self(this);
     m_pendingRequester = requester;
     // Fix wave, round 2: who held transmit when the move was asked, so a
     // dropped move can say whether transmit or the slice changed hands.
-    m_pendingHolder = sliceId >= 0 && m_holder ? m_holder() : QByteArray();
+    const HolderLookup lookupHolder = m_holder;
+    const QByteArray holder = sliceId >= 0 && lookupHolder ? lookupHolder() : QByteArray();
+    if (!self) { return; }
+    m_pendingHolder = holder;
     if (m_pendingHandoffId == sliceId) {
         return;
     }
@@ -409,10 +464,12 @@ SliceModel* TxSliceArbiter::sliceWithId(int sliceId) const
 
 void TxSliceArbiter::flipTo(SliceModel* target)
 {
+    const QPointer<TxSliceArbiter> self(this);
+    const QPointer<SliceModel> victim(target);
     const int sliceId = target->sliceIndex();
     int oldId = m_txBoundSliceId;
     if (!txBoundSlice()) {
-        for (SliceModel* slice : *m_slices) {
+        for (const QPointer<SliceModel>& slice : arbiterSliceSnapshot(*m_slices)) {
             if (slice && slice->isTxSlice()) {
                 oldId = slice->sliceIndex();
                 break;
@@ -423,13 +480,17 @@ void TxSliceArbiter::flipTo(SliceModel* target)
     // The ID cache may have been restored before the live flags were
     // normalised, so clear every other slice rather than trusting one
     // positional predecessor.
-    for (SliceModel* slice : *m_slices) {
-        if (slice && slice != target) {
+    for (const QPointer<SliceModel>& slice : arbiterSliceSnapshot(*m_slices)) {
+        if (slice && sliceWithId(slice->sliceIndex()) == slice.data() && slice != victim) {
             slice->setTxSlice(false);
+            if (!self) { return; }
         }
     }
+    if (!victim || sliceWithId(sliceId) != victim.data()) { return; }
     target->setTxSlice(true);
+    if (!self) { return; }
 
+    if (!victim || sliceWithId(sliceId) != victim.data()) { return; }
     m_txBoundSliceId = sliceId;
     emit txBoundSliceChanged(oldId, sliceId);
 }

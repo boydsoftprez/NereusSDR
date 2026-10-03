@@ -91,6 +91,33 @@ private slots:
         QCOMPARE(ddcPhaseWord(buf, 1), ddcPhaseWord(buf, 2));
     }
 
+    void p2_codec_owned_pair_never_follows_an_unrelated_ddc2_retune()
+    {
+        P2RadioConnection conn(nullptr);
+        conn.setBoardForTest(HPSDRHW::OrionMKII);
+        DdcAssignment assignment;
+        assignment.ddcEnable = 1 | 4;
+        assignment.syncEnable = 2;
+        assignment.rate[0] = assignment.rate[1] = 96000;
+        assignment.rate[2] = 192000;
+        assignment.adcCtrl1 = 4;
+        conn.applyDdcAssignment(assignment);
+        conn.setReceiverFrequency(0, 14200000);
+        conn.setReceiverFrequency(2, 7100000);
+        quint8 buf[kHighPriorityLen] = {};
+        conn.composeCmdHighPriorityForTest(buf);
+        QCOMPARE(ddcPhaseWord(buf, 1), ddcPhaseWord(buf, 0));
+        QVERIFY(ddcPhaseWord(buf, 0) != ddcPhaseWord(buf, 2));
+        conn.setReceiverFrequency(0, 14205000);
+        conn.composeCmdHighPriorityForTest(buf);
+        QCOMPARE(ddcPhaseWord(buf, 1), ddcPhaseWord(buf, 0));
+        const auto unrelated = ddcPhaseWord(buf, 2);
+        conn.setReceiverFrequency(2, 7150000);
+        conn.composeCmdHighPriorityForTest(buf);
+        QCOMPARE(ddcPhaseWord(buf, 1), ddcPhaseWord(buf, 0));
+        QVERIFY(ddcPhaseWord(buf, 2) != unrelated);
+    }
+
     // Hermes class: DDC1 is RX2's receiver, tuned on its own.
     void p2_hermes_class_ddc1_stays_rx2()
     {

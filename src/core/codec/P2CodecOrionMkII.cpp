@@ -1327,26 +1327,33 @@ DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
         // Same rule as the PS branch above, and the two upstream blocks quoted
         // directly above this one say it twice: DDCEnable = DDC0, SyncEnable =
         // DDC1, for both the no-mox and the mox diversity paths.
-        a.ddcEnable &= ~0x04;                       // clear DDC2
+        const int target = ctx.diversityStream;
+        if (target < 0 || target >= 5 || !slices[target].live) {
+            return a;
+        }
+        const int formerDdc = a.streamDdc[target];
+        if (formerDdc < 0 || formerDdc >= int(a.rate.size())) { return a; }
+        a.ddcEnable &= ~(1 << formerDdc);           // release target's former DDC
         a.ddcEnable |= 0x01;                        // set DDC0 only
         a.syncEnable |= 0x02;                       // DDC1 syncs to DDC0
-        if (slices[0].live) {
+        if (slices[target].live) {
             // From Thetis console.cs:8237-8238 [v2.10.3.15]: Rate[0]=Rate[1]=rx1_rate
             // [2.10.3.13]MW0LGE p1 !
-            a.rate[0] = slices[0].sampleRateHz;
-            a.rate[1] = slices[0].sampleRateHz;
-            a.rate[2] = 0;
-            // Phase 3F Sub-Epic I Task 7b: stream 0's DDC moved from DDC2 to
+            a.rate[0] = slices[target].sampleRateHz;
+            a.rate[1] = slices[target].sampleRateHz;
+            a.rate[formerDdc] = 0;
+            // Phase 3F Sub-Epic I Task 7b, generalized: target stream moved to
             // the DDC0/DDC1 diversity sync pair set above; republish DDC0
             // as the pair's primary so streamDdc stays consistent with
             // ddcEnable (same convention as psFwdDdc for the PS pair).
-            a.streamDdc[0] = 0;
+            a.streamDdc[target] = 0;
         }
-        // adcCtrl1 stays as rx_adc_ctrl1 & 0xff (no PS override here)
-        // nDdc: was incremented for DDC2 above; swap to DDC0+DDC1 (net delta = +1)
-        // Remove DDC2 count, add DDC0+DDC1 count.
-        if (slices[0].live) {
-            --a.nDdc;    // remove the DDC2 slot counted for Slice A
+        // The physical coherent pair samples opposite ADCs, regardless of
+        // the target's old DDC's antenna selector. Unrelated DDCs stay intact.
+        a.adcCtrl1 = (a.adcCtrl1 & ~0x0f) | 0x04;
+        // Swap the target's counted DDC for DDC0+DDC1 (net delta = +1).
+        if (slices[target].live) {
+            --a.nDdc;    // remove the target's former slot
             a.nDdc += 2; // add DDC0 + DDC1
         } else {
             a.nDdc += 2;

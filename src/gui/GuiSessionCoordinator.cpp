@@ -12,6 +12,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QScopedValueRollback>
+#include <utility>
 #include <QScopeGuard>
 #include <QTimer>
 
@@ -126,10 +127,15 @@ bool GuiSessionCoordinator::replace(const StationStartupSelection& selection,
                                     bool startConnection, QString* error)
 {
     if (!canReplace(selection, error)) { return false; }
-    const QScopedValueRollback<bool> replacing(m_replacing, true);
+    const QPointer<GuiSessionCoordinator> self(this);
+    const bool previousReplacing = std::exchange(m_replacing, true);
+    const auto replacing = qScopeGuard([self, previousReplacing] {
+        if (self) { self->m_replacing = previousReplacing; }
+    });
     if (m_desktopRuntime && !m_desktopRuntime->prepareForRetirement(false, error)) {
         return false;
     }
+    if (!self) { return false; }
     const bool quitOnClose = QApplication::quitOnLastWindowClosed();
     QApplication::setQuitOnLastWindowClosed(false);
     const auto restoreQuit = qScopeGuard([quitOnClose] {
@@ -138,6 +144,7 @@ bool GuiSessionCoordinator::replace(const StationStartupSelection& selection,
 
     ++m_generation;
     retireWindow();
+    if (!self) { return false; }
     m_selection = selection;
     if (selection.connection.isRemote()) {
         m_proxy = std::make_unique<SettingsProxy>();
@@ -149,7 +156,9 @@ bool GuiSessionCoordinator::replace(const StationStartupSelection& selection,
                                            MainWindow::ConnectionStartup::Deferred);
     m_window->setConnectionPickerManaged(true);
     m_window->installEventFilter(this);
+    const QPointer<MainWindow> installedWindow(m_window.get());
     if (m_desktopConfigured && !selection.connection.isRemote()) { installDesktopStation(); }
+    if (!self || !installedWindow || m_window.get() != installedWindow) { return false; }
     const quint64 generation = m_generation;
     connect(m_window.get(), &MainWindow::connectionsRequested, this, [this, generation] {
         // Queued events survive disconnect. An old window must not open a
@@ -157,7 +166,9 @@ bool GuiSessionCoordinator::replace(const StationStartupSelection& selection,
         if (generation == m_generation && m_window) { emit connectionsRequested(); }
     }, Qt::QueuedConnection);
     m_window->show();
+    if (!self || !installedWindow || m_window.get() != installedWindow) { return false; }
     emit windowChanged(m_window.get());
+    if (!self || !installedWindow || m_window.get() != installedWindow) { return false; }
     if (startConnection) { m_window->startInitialConnection(); }
     return true;
 }
@@ -251,7 +262,11 @@ void GuiSessionCoordinator::installDesktopStation()
     connect(model->discovery(), &RadioDiscovery::radioUpdated, this, refresh);
     connect(model->discovery(), &RadioDiscovery::radioLost, this, refresh);
     refreshStationRadios();
+    const QPointer<GuiSessionCoordinator> self(this);
+    const QPointer<RadioModel> localModel(model);
     m_desktopRuntime->restore();
+    if (!self || !localModel || generation != m_generation || !m_window
+        || m_window->radioModel() != localModel) { return; }
     // Initial host ownership adoption is part of the startup seed. Every
     // subsequent edit must be accounted for before handing this model away.
     model->beginStationHandoverEditTracking();

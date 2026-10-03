@@ -77,7 +77,9 @@ private slots:
         QCOMPARE(meta.indexOfProperty("levelCalSucceeded"), index + 7);
         QCOMPARE(meta.indexOfProperty("rxFilter0LowPassReason"), index + 8);
         QCOMPARE(meta.indexOfProperty("rxFilter0LowPassSlice"), index + 9);
-        QCOMPARE(index, meta.propertyCount() - 10);
+        QCOMPARE(meta.indexOfProperty("diversityState"), index + 10);
+        QCOMPARE(meta.indexOfProperty("diversityState") - meta.propertyOffset(), 37);
+        QCOMPARE(index, meta.propertyCount() - 11);
         RadioModel model;
         QCOMPARE(model.logCategoryList(), LogManager::instance().categoryListJson());
     }

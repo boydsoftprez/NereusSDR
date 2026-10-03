@@ -352,6 +352,7 @@ struct StationCapabilities {
     /// on a Core with a radio model; any other peer's capabilities and
     /// slices are today's.
     int diversityPatternVersion = 0;
+    int diversityControlVersion = 0;
     /// Phone wire batch: 1 means `radio` carries `logCategoryList`, every
     /// logging category with its label. Sent after diversityPatternVersion,
     /// only to a peer at minor 11 whose hello declared logCategoryList 1,

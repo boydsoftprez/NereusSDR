@@ -1181,6 +1181,7 @@ const MirrorPolicy::Entry kEntries[] = {
     // (StationServer::fitPeerOnlyProperties).
     { "RadioModel", "rxFilter0LowPassReason", MirrorDirection::Outbound },
     { "RadioModel", "rxFilter0LowPassSlice", MirrorDirection::Outbound },
+    { "RadioModel", "diversityState", MirrorDirection::Outbound },
 
     // ---- PanadapterModel (4 entries) ----
     { "PanadapterModel", "centerFrequency", MirrorDirection::Bidirectional },
@@ -1254,6 +1255,7 @@ const QList<MirrorPolicy::FeatureGate>& MirrorPolicy::featureGates()
         // Diversity dialog pattern, to a peer that declared
         // diversityPattern 1 (StationServer::fitPeerOnlyProperties).
         {"SliceModel", "diversityPattern", "diversityPattern", 1},
+        {"RadioModel", "diversityState", "diversityControl", 1},
         // Phone wire batch (logCategoryListVersion 1): radio's logging
         // categories with their labels, to a peer that declared
         // logCategoryList 1 (StationServer::fitPeerOnlyProperties).

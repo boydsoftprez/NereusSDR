@@ -7952,6 +7952,18 @@ add_executable(nereus_floor_probe EXCLUDE_FROM_ALL
     tools/floor/WsRelayPrototype.cpp)
 target_link_libraries(nereus_floor_probe PRIVATE NereusCore)
 set_target_properties(nereus_floor_probe PROPERTIES AUTOMOC ON)
+# The poll registry regression uses a separate test-only vendor archive.
+# No fixture fault injection or observer is present in shipping Core/RTC.
+nereus_add_test(tst_juice_poll_liveness CORE_ONLY EXTRA_LABELS session)
+if(TEST tst_juice_poll_liveness)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/fakes/juice-poll/Instrument.cmake")
+    # Keep standard sharding, sandbox, labels and aggregate registration, but
+    # avoid loading Core's separate libjuice registry into this direct fixture.
+    set_property(TARGET tst_juice_poll_liveness PROPERTY LINK_LIBRARIES
+        Qt6::Test Qt6::Core nereus_juice_poll_fixture)
+    set_property(TARGET tst_juice_poll_liveness PROPERTY DISABLE_PRECOMPILE_HEADERS ON)
+endif()
+
 # Task 56: the Core's compiled vendor sources contain the exact reviewed
 # relay cleanup patches, including libjuice's public and internal headers.
 # This check and the next are plain add_test() calls, not nereus_add_test(),
@@ -9766,6 +9778,9 @@ nereus_add_test(tst_core_settings_host fakes/LoopbackTransport.cpp)
 target_compile_definitions(tst_core_connection_candidates PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
+# Coordinated movable Diversity and source/target authority, no hardware.
+nereus_add_test(tst_diversity_control fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+nereus_add_test(tst_diversity_local_admission fakes/LoopbackTransport.cpp EXTRA_LABELS models session)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)

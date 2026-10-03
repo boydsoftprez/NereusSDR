@@ -1,6 +1,7 @@
 // no-port-check: NereusSDR-original desktop Remote Access runtime.
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "gui/GuiDesktopStationRuntime.h"
+#include "core/station/StationSliceOwnershipPolicy.h"
 
 #include "core/AppSettings.h"
 #include "core/ConnectionState.h"
@@ -232,6 +233,20 @@ void GuiDesktopStationRuntime::fail(const QString& reason)
 bool GuiDesktopStationRuntime::restore()
 {
     QString reason;
+    // Local ownership is the established station policy, independent of
+    // listener configuration and Run Core. No identity/session is provisioned.
+    if (!ownershipAvailable(&reason) || m_retiring || m_lifecycleBusy) {
+        if (reason.isEmpty()) { reason = tr("A Core change is in progress."); }
+        fail(reason);
+        return false;
+    }
+    const QPointer<GuiDesktopStationRuntime> self(this);
+    const QPointer<RadioModel> model(m_model);
+    StationSliceOwnershipPolicy::activate(model, this, [self] {
+        return self && !self->m_retiring && !self->m_lifecycleBusy
+            && self->ownershipAvailable();
+    });
+    if (!self || !model) { return false; }
     if (!available(&reason)) { fail(reason); return false; }
     m_keepRunning = m_settings->value(QLatin1String(kKeep), false).toBool();
     if (!m_settings->value(QLatin1String(kRun), false).toBool()) {
