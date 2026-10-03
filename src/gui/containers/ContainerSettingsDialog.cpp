@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -1741,7 +1743,10 @@ void ContainerSettingsDialog::applyToContainer()
             if (m_rxSourceCombo->currentData().toInt()!=d.config.value("rxSource").toInt(1)) { d.config["rxSource"]=m_rxSourceCombo->currentData().toInt(); }
             d.config["showOnRx"]=m_showOnRxCheck->isChecked(); d.config["showOnTx"]=m_showOnTxCheck->isChecked();
             if (m_lockCheck) { d.locked=m_lockCheck->isChecked(); }
-            if (m_hideTitleCheck) { d.header=m_hideTitleCheck->isChecked()?HeaderMode::Hidden:HeaderMode::Always; }
+            if (m_hideTitleCheck) {
+                if(m_hideTitleCheck->isChecked()) {d.header=HeaderMode::Hidden;}
+                else if(d.header==HeaderMode::Hidden) {d.header=HeaderMode::Always;}
+            }
             if (m_minimisesCheck) { d.config["containerMinimises"]=m_minimisesCheck->isChecked(); }
             if (m_autoHeightCheck) { d.autoHeight=m_autoHeightCheck->isChecked(); }
             if (m_hidesWhenRxNotUsedCheck) { d.config["hidesWhenRxNotUsed"]=m_hidesWhenRxNotUsedCheck->isChecked(); }

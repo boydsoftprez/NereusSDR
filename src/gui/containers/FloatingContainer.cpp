@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -206,6 +208,17 @@ void FloatingContainer::restoreGeometry()
     }
 }
 
+QRect FloatingContainer::clampedGeometry(const QRect &geometry, const QRect &available,
+                                         const QSize &minimum)
+{
+    const int w = qMax(minimum.width(), qMin(geometry.width(), available.width()));
+    const int h = qMax(minimum.height(), qMin(geometry.height(), available.height()));
+    return QRect(
+        qBound(available.left(), geometry.x(), qMax(available.left(), available.right() - w + 1)),
+        qBound(available.top(), geometry.y(), qMax(available.top(), available.bottom() - h + 1)), w,
+        h);
+}
+
 void FloatingContainer::ensureVisiblePosition(QWidget* anchor)
 {
     // A frameless Qt::Window with no explicit position defaults to (0,0)
@@ -219,7 +232,7 @@ void FloatingContainer::ensureVisiblePosition(QWidget* anchor)
 
     bool onScreen = false;
     for (QScreen* s : QGuiApplication::screens()) {
-        if (s && s->availableGeometry().intersects(g)) {
+        if (s && s->availableGeometry().contains(g)) {
             onScreen = true;
             break;
         }
@@ -242,7 +255,7 @@ void FloatingContainer::ensureVisiblePosition(QWidget* anchor)
                                : QRect(100, 100, 800, 600);
 
     const int w = qMax(g.width(),  minW > 0 ? minW : 260);
-    const int h = qMax(g.height(), minH > 24 ? minH : 300);
+    const int h = qMax(g.height(), minH);
 
     int x = anchorRect.isValid()
         ? anchorRect.center().x() - w / 2
@@ -251,10 +264,11 @@ void FloatingContainer::ensureVisiblePosition(QWidget* anchor)
         ? anchorRect.center().y() - h / 2
         : avail.y() + (avail.height() - h) / 2;
 
-    x = qBound(avail.x(), x, avail.right()  - w);
-    y = qBound(avail.y(), y, avail.bottom() - h);
-
-    setGeometry(x, y, w, h);
+    const QSize minimum =
+        qMax(minimumSizeHint().width(), minW) > 0
+            ? QSize(qMax(minimumSizeHint().width(), minW), qMax(minimumSizeHint().height(), minH))
+            : QSize(minW, minH);
+    setGeometry(clampedGeometry(QRect(x, y, w, h), avail, minimum));
     qCDebug(lcContainer) << "FloatingContainer: repositioned to visible area"
                           << QRect(x, y, w, h) << "on screen" << (screen ? screen->name() : QStringLiteral("(null)"));
 }

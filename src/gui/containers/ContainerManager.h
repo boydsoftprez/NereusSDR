@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -88,6 +90,8 @@ enum class DockMode;
 using ContainerContentFactory =
     std::function<QWidget*(const QString& id, int rxSource)>;
 
+class ContainerArrangeController;
+
 class ContainerManager : public QObject {
     Q_OBJECT
 
@@ -102,6 +106,8 @@ public:
     ContainerContentHost* contentHost(const QString& id) const;
     void reconcileWorkspace(const WorkspaceDocument& document);
     CommitResult commitWorkspace(const WorkspaceDocument& document, quint64 expectedRevision);
+    void setTransmitting(bool transmitting);
+    ContainerArrangeController* arrangeController() const { return m_arrange; }
     QString storageError() const { return m_storageError; }
     bool isReconciling() const { return m_reconciling; }
 
@@ -178,9 +184,12 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 private:
     bool commitDockMode(const QString& id, DockMode mode);
+    ContainerArrangeController* m_arrange = nullptr;
     QPointer<ContainerWorkspaceStore> m_store;
     QPointer<ContainerContentRegistry> m_registry;
     bool m_reconciling = false;
+    bool m_transmitting = false;
+    bool effectiveVisible(const ContainerDocument& document) const;
     QString m_storageError;
     QTimer m_geometryCommit;
     void setMeterFloating(ContainerWidget* container, FloatingContainer* form);

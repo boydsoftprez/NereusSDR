@@ -392,32 +392,37 @@ Also produce `duplicateEntry(const QString& entryId, const QString& destinationI
 int insertionIndex) -> ArrangeResult`; reject singleton entries and regenerate
 meter identity while preserving complete config/extensions.
 
-- [ ] Write tests asserting `[A,B,C]` → move A to end → `[B,C,A]` while internal
+- [x] Write tests asserting `[A,B,C]` → move A to end → `[B,C,A]` while internal
   paint order stays identical; invalid/canceled drop leaves encoded document
   unchanged. Move across containers updates both once; locked targets reject.
   Duplicate singleton rejected; duplicate meter gets new ID and equal config.
-- [ ] Test a pop-out shell with objects from two destinations plus a newly created
+- [x] Test a pop-out shell with objects from two destinations plus a newly created
   object: close returns each to its own remembered stable neighbors; missing
   destination/new object returns to main; shell removed only after successful
   commit. Normal floating close hides. Container deletion returns singleton
   views without destroying their connections. Fake session records zero keying
   or settings requests for every arranging command.
-- [ ] Test Reveal mouse/focus cycles keep content geometry unchanged; Hidden has
+- [x] Test Reveal mouse/focus cycles keep content geometry unchanged; Hidden has
   reachable recovery via menu/Shift; lock blocks resize/drag but not recovery.
   Clamp off-screen geometry on monitor removal; honor current minima 260×24 and
   content minima, anchors, auto-height and RX/TX visibility.
-- [ ] Build/run both new targets; expect absent drag/chrome/atomic return to fail.
-- [ ] Implement top-left dotted grip, Nereus MIME carrying stable entry ID and
+- [x] Build/run both new targets; expect absent drag/chrome/atomic return to fail.
+- [x] Implement top-left dotted grip, Nereus MIME carrying stable entry ID and
   workspace revision, insertion indicator and equivalent menu commands. Reject
   stale/cross-workspace drops before mutation. Record return neighbors whenever
   an entry enters a pop-out shell, including subsequent moves. Preserve hidden
   positions. Route old floating applet actions through this controller.
-- [ ] Implement reserved header extent, hover/focus reveal, hidden recovery and
+- [x] Implement reserved header extent, hover/focus reveal, hidden recovery and
   resize affordance; no essential face/control is covered. Build/run new tests,
   `tst_applet_float_dock`, `tst_container_persistence`, `tst_native_cursors`.
   Show native mixed-container reorder/pop-out/return and hover behavior; record
   native Windows/Linux checks still outstanding if unavailable locally.
-- [ ] Commit: `feat: arrange and return container objects from dotted grips`.
+- [x] Commit: `feat: arrange and return container objects from dotted grips`.
+
+Task 7 evidence: native Cocoa/Metal rendering and Qt-delivered drop/menu
+interactions are verified; physical pointer-grip drag/Escape remains pending
+because the Mac is locked. Windows/Linux interactions and physical monitor
+removal remain Task 10 benches. Full details are in the validation appendix.
 
 ### Task 8: Draft transactions and safe prominent preview
 

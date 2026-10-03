@@ -10,6 +10,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -144,6 +146,7 @@ public:
     // centered on the anchor's screen. No-op when geometry is already on
     // a screen and not at (0,0).
     void ensureVisiblePosition(QWidget* anchor);
+    static QRect clampedGeometry(const QRect& geometry, const QRect& available, const QSize& minimum);
 
 signals:
     void aboutToClose();

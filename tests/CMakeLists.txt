@@ -564,6 +564,8 @@ nereus_add_test(tst_radio_model_slice_state_restored)
 nereus_add_test(tst_radio_model_push_tx_mode_and_bandpass)
 nereus_add_test(tst_container_legacy_import)
 nereus_add_test(tst_container_persistence)
+nereus_add_test(tst_container_arrangement)
+nereus_add_test(tst_container_chrome NATIVE_WINDOW)
 nereus_add_test(tst_container_document)
 nereus_add_test(tst_container_workspace_store)
 # R-R3-49: container title bar and filter passband use native hand cursors

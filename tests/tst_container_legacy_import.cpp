@@ -21,6 +21,12 @@ using namespace NereusSDR;
 class TstContainerLegacyImport : public QObject {
     Q_OBJECT
 private slots:
+    void noControlsPromotesCanonicalHidden() {
+        QTemporaryDir dir; AppSettings settings(dir.filePath("settings"));
+        QStringList fields={"old","1","1","1","300","200","False","0","0","LEFT","False","True","#0f0f1a","True","True","","False","False","True","True","False","False","False","FLOATING","True"};
+        settings.setValue("ContainerIdList","old");settings.setValue("ContainerData_old",fields.join('|'));
+        const auto result=LegacyContainerImporter::fromSettings(settings);QVERIFY(result.ok);QCOMPARE(result.document.containers[0].header,HeaderMode::Hidden);QVERIFY(result.document.containers[0].config["noControls"].toBool());
+    }
     void rawFirstAndDeterministic() {
         QTemporaryDir dir; AppSettings settings(dir.filePath("settings"));
         QFile fixture(QFINDTESTDATA("fixtures/containers/custom.nscontainer"));

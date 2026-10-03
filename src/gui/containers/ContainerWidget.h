@@ -11,6 +11,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -239,6 +241,12 @@ public:
 
     // Title-bar visibility toggle — from Thetis chkContainerNoTitle
     // (setup.cs:24447). Persistent.
+    bool geometryInteractionActive() const { return m_dragging || m_resizing; }
+    void setPopOutShell(bool shell);
+    void setHeaderMode(HeaderMode mode);
+    HeaderMode headerMode() const { return m_headerMode; }
+    bool chromeVisible() const;
+    void recoverChrome();
     bool isTitleBarVisible() const { return m_titleBarVisible; }
     void setTitleBarVisible(bool visible);
 
@@ -289,6 +297,11 @@ public slots:
     void setBoardCapabilities(const NereusSDR::BoardCapabilities& caps);
 
 signals:
+    void geometryInteractionStarted();
+    void geometryInteractionFinished();
+    void returnContainerRequested();
+    void hideContainerRequested();
+    void headerModeRequested(HeaderMode mode);
     void floatRequested();
     void dockRequested();
     void settingsRequested();
@@ -325,11 +338,13 @@ public:
     void setTopMost();
 
 protected:
+    void contextMenuEvent(QContextMenuEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void leaveEvent(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    void updateChrome();
     void buildUI();
     void updateTitleBar();
     void updateTitle();
@@ -390,6 +405,13 @@ private:
     QPoint m_delta;
 
     // --- UI elements ---
+    QWidget* m_headerSlot{nullptr};
+    HeaderMode m_headerMode{HeaderMode::Always};
+    bool m_structuredChrome{false};
+    bool m_popOutShell{false};
+    bool m_hoverChrome{false};
+    bool m_recoverChrome{false};
+    bool m_shiftChrome{false};
     QWidget* m_titleBar{nullptr};
     QWidget* m_contentHolder{nullptr};
     QWidget* m_content{nullptr};

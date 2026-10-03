@@ -16,6 +16,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
@@ -26,6 +28,7 @@
 // =================================================================
 
 #include "AppletPanelWidget.h"
+#include "gui/containers/ContainerArrangeController.h"
 #include "AppletWidget.h"
 #include "AppletFloatingWindow.h"
 #include "core/AppSettings.h"
@@ -282,14 +285,40 @@ void AppletPanelWidget::restoreFloatState(AppletWidget* applet)
     });
 }
 
+void AppletPanelWidget::setArrangeController(ContainerArrangeController *controller)
+{
+    m_arrange = controller;
+}
 bool AppletPanelWidget::isAppletFloating(AppletWidget* applet) const
 {
+    if (m_arrange && applet) {
+        for (const auto &c : m_arrange->workspaceSnapshot().containers) {
+            for (const auto &e : c.contents) {
+                if (e.typeId == QStringLiteral("applet:") + applet->appletId()) {
+                    return c.dockMode == DockMode::Floating;
+                }
+            }
+        }
+        return false;
+    }
     return applet && m_floating.contains(applet);
 }
 
 void AppletPanelWidget::floatApplet(AppletWidget* applet)
 {
-    if (m_managedWorkspace) { return; }
+    if (m_managedWorkspace) {
+        if (m_arrange && applet) {
+            for (const auto &c : m_arrange->workspaceSnapshot().containers) {
+                for (const auto &e : c.contents) {
+                    if (e.typeId == QStringLiteral("applet:") + applet->appletId()) {
+                        m_arrange->popOut(e.id);
+                        return;
+                    }
+                }
+            }
+        }
+        return;
+    }
     if (!applet || !m_applets.contains(applet) || m_floating.contains(applet)) { return; }
     QWidget* wrapper = m_wrappers.value(applet, nullptr);
     if (!wrapper) { return; }
@@ -321,7 +350,19 @@ void AppletPanelWidget::floatApplet(AppletWidget* applet)
 
 void AppletPanelWidget::dockApplet(AppletWidget* applet)
 {
-    if (m_managedWorkspace) { return; }
+    if (m_managedWorkspace) {
+        if (m_arrange && applet) {
+            for (const auto &c : m_arrange->workspaceSnapshot().containers) {
+                for (const auto &e : c.contents) {
+                    if (e.typeId == QStringLiteral("applet:") + applet->appletId()) {
+                        m_arrange->returnEntry(e.id);
+                        return;
+                    }
+                }
+            }
+        }
+        return;
+    }
     if (!applet) { return; }
     AppletFloatingWindow* win = m_floating.take(applet);
     if (!win) { return; }

@@ -10,6 +10,7 @@
 class QVBoxLayout;
 class QMenu;
 namespace NereusSDR {
+class ContainerArrangeController;
 class ContainerContentRegistry;
 class MeterWidget;
 class MeterItem;
@@ -35,11 +36,25 @@ public:
     ContainerDocument captureDocument() const;
     void releaseViews(); // synchronous native meter teardown before window reparent
     void setBannerMenu(QMenu* menu);
+    void setArrangeController(ContainerArrangeController* controller);
+    void addContentsMenu(QMenu& menu);
+    int insertionIndex(const QPoint& position) const;
+    int preferredContentHeight() const;
+    QRect gripGeometry(const QString& entryId) const;
     static QJsonObject effectiveContext(const ContainerDocument& document, const ContentEntry& entry);
 signals:
     void meterSurfaceReady(MeterWidget* meter, const QJsonObject& context);
     void reconciled();
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 private:
+    void updateGrips();
+    void addEntryActions(QMenu& menu, const QString& entryId);
+    QPointer<ContainerArrangeController> m_arrange;
+    QVector<QPointer<QWidget>> m_grips;
+    QWidget* m_indicator = nullptr;
+    QPoint m_dragStart;
+    QString m_pressedEntry;
     ContainerContentRegistry& m_registry;
     ContainerDocument m_document;
     QVector<EntryRow> m_rows;

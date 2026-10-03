@@ -3,6 +3,17 @@
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include "ContainerContentHost.h"
+#include "ContainerArrangeController.h"
+#include "ContainerWorkspaceStore.h"
+#include <QDrag>
+#include <QMimeData>
+#include <QMouseEvent>
+#include <QContextMenuEvent>
+#include <QDropEvent>
+#include <QApplication>
+#include <QPainter>
+#include <QTimer>
+#include <QSet>
 #include "ContainerContentRegistry.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/MeterItem.h"
@@ -25,6 +36,11 @@ ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, Q
     m_body = new QWidget(scroll); m_layout = new QVBoxLayout(m_body);
     scroll->setWidget(m_body); root->addWidget(scroll);
     m_layout->setContentsMargins(0, 0, 8, 0);
+    scroll->viewport()->setAcceptDrops(true);
+    scroll->viewport()->installEventFilter(this);
+    m_body->installEventFilter(this);
+    m_indicator=new QWidget(m_body);m_indicator->setObjectName(QStringLiteral("containerInsertionLine"));
+    m_indicator->setStyleSheet(QStringLiteral("background:#00b4d8;"));m_indicator->setAttribute(Qt::WA_TransparentForMouseEvents);m_indicator->hide();
     m_layout->setSpacing(0);
 }
 ContainerContentHost::~ContainerContentHost() { releaseViews(); }
@@ -57,6 +73,7 @@ void ContainerContentHost::releaseViews()
         if (meter) { meter->hide(); meter->setParent(nullptr); delete meter.data(); }
     }
     m_meters.clear(); m_rows.clear();
+    for(const auto& grip:m_grips) {if(grip) {delete grip.data();}} m_grips.clear();
     while (QLayoutItem* child = m_layout->takeAt(0)) {
         if (child->widget()) { delete child->widget(); }
         delete child;
@@ -125,7 +142,9 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
             }
             if (row.widget) { row.widget->setVisible(view && claim ? row.effectiveVisible : entry.visible); }
         }
-        emit reconciled(); return;
+        updateGrips();
+        emit reconciled();
+        return;
     }
     releaseViews(); m_document = document;
     if (m_bannerMenu) {
@@ -157,7 +176,20 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         } else {
             run->setMinimumHeight(160);
         }
-        if (document.layout == ContentLayout::LegacyCanvas) { m_layout->insertWidget(0,run); } else { m_layout->addWidget(run); }
+        if (document.layout == ContentLayout::LegacyCanvas) {
+            auto items = run->items();
+            std::sort(items.begin(), items.end(), [](MeterItem *a, MeterItem *b) {
+                if (a->zOrder() != b->zOrder()) {
+                    return a->zOrder() < b->zOrder();
+                }
+                return a->property("containerEntryId").toString() <
+                       b->property("containerEntryId").toString();
+            });
+            run->replaceItems(items);
+            m_layout->insertWidget(0, run);
+        } else {
+            m_layout->addWidget(run);
+        }
         run->setProperty("containerSourceContext", runContext);
         emit meterSurfaceReady(run, runContext);
         run = nullptr; runRows.clear(); runHeight = 0;
@@ -235,7 +267,8 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
     finalRun = true; finishRun(); m_layout->addStretch();
     m_generation = m_registry.generation(); m_materialized = true;
     int minimumWidth=0; for (auto* meter : meterSurfaces()) { minimumWidth=qMax(minimumWidth,meter->minimumWidth()); }
-    setMinimumWidth(minimumWidth ? minimumWidth+8 : 0);
+    setMinimumWidth(minimumWidth ? minimumWidth + (m_arrange ? 28 : 8) : 0);
+    updateGrips();
     emit reconciled();
 }
 QVector<MeterWidget*> ContainerContentHost::meterSurfaces() const
@@ -249,6 +282,13 @@ QRect ContainerContentHost::entryBoundary(const QString& id) const
     for (const auto& row : m_rows) {
         if (row.entryId != id || !row.widget) { continue; }
         const QPoint origin = row.widget->mapTo(const_cast<ContainerContentHost*>(this), QPoint(0, 0));
+        if (row.item && m_document.layout == ContentLayout::LegacyCanvas) {
+            return QRectF(origin.x() + row.item->x() * row.widget->width(),
+                          origin.y() + row.item->y() * row.widget->height(),
+                          row.item->itemWidth() * row.widget->width(),
+                          row.item->itemHeight() * row.widget->height())
+                .toAlignedRect();
+        }
         return row.item ? QRect(origin + QPoint(0, row.offset), QSize(row.widget->width(), row.height)) : QRect(origin, row.widget->size());
     }
     return {};
@@ -289,3 +329,264 @@ ContainerDocument ContainerContentHost::captureDocument() const
     return document;
 }
 }
+
+namespace NereusSDR
+{
+namespace
+{
+class EntryGrip final : public QWidget
+{
+  public:
+    explicit EntryGrip(QWidget *parent) : QWidget(parent)
+    {
+        setFixedSize(18, 22);
+        setCursor(Qt::OpenHandCursor);
+        setToolTip(QObject::tr("Drag to arrange; right-click for Move, Pop out and Return"));
+    }
+
+  protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setPen(Qt::NoPen);
+        p.setBrush(underMouse() ? QColor("#00b4d8") : QColor("#8090a0"));
+        for (int x : {5, 11}) {
+            for (int y : {5, 11, 17}) {
+                p.drawEllipse(QPoint(x, y), 1, 1);
+            }
+        }
+    }
+};
+} // namespace
+void ContainerContentHost::setArrangeController(ContainerArrangeController *controller)
+{
+    m_arrange = controller;
+    m_layout->setContentsMargins(controller ? 20 : 0, 0, 8, 0);
+}
+void ContainerContentHost::updateGrips()
+{
+    if (!m_arrange) {
+        return;
+    }
+    if (m_grips.size() != m_rows.size()) {
+        for (const auto &grip : m_grips) {
+            if (grip) {
+                delete grip.data();
+            }
+        }
+        m_grips.clear();
+        for (const auto &row : m_rows) {
+            auto *grip = new EntryGrip(m_body);
+            grip->setObjectName(QStringLiteral("entryGrip_") + row.entryId);
+            grip->setProperty("entryGripId", row.entryId);
+            grip->installEventFilter(this);
+            m_grips.append(grip);
+            if (row.widget) {
+                row.widget->installEventFilter(this);
+            }
+        }
+    }
+    for (int i = 0; i < m_rows.size(); ++i) {
+        if (!m_grips[i]) {
+            continue;
+        }
+        const QRect boundary = entryBoundary(m_rows[i].entryId);
+        m_grips[i]->move(0, m_body->mapFrom(this, boundary.topLeft()).y());
+        m_grips[i]->setVisible(m_rows[i].widget && m_rows[i].widget->isVisible() &&
+                               boundary.height() > 0);
+        m_grips[i]->raise();
+        m_grips[i]->setCursor(m_document.locked ? Qt::ArrowCursor : Qt::OpenHandCursor);
+    }
+}
+int ContainerContentHost::preferredContentHeight() const
+{
+    int height = 0;
+    QSet<QWidget *> seen;
+    for (const auto &row : m_rows) {
+        if (!row.widget || !row.effectiveVisible || seen.contains(row.widget)) {
+            continue;
+        }
+        seen.insert(row.widget);
+        height += qBound(row.widget->minimumHeight(), row.widget->sizeHint().height(),
+                         row.widget->maximumHeight());
+    }
+    return qMax(24, height + (m_bannerMenu ? 22 : 0));
+}
+QRect ContainerContentHost::gripGeometry(const QString &id) const
+{
+    for (const auto &grip : m_grips) {
+        if (grip && grip->property("entryGripId").toString() == id) {
+            return QRect(grip->mapTo(const_cast<ContainerContentHost *>(this), QPoint()),
+                         grip->size());
+        }
+    }
+    return {};
+}
+int ContainerContentHost::insertionIndex(const QPoint &position) const
+{
+    for (int i = 0; i < m_rows.size(); ++i) {
+        const QRect boundary = entryBoundary(m_rows[i].entryId);
+        if (m_rows[i].widget && m_rows[i].widget->isVisible() &&
+            position.y() < boundary.center().y()) {
+            return i;
+        }
+    }
+    return m_rows.size();
+}
+void ContainerContentHost::addEntryActions(QMenu &menu, const QString &id)
+{
+    if (!m_arrange) {
+        return;
+    }
+    int index = -1;
+    for (int i = 0; i < m_document.contents.size(); ++i) {
+        if (m_document.contents[i].id == id) {
+            index = i;
+            break;
+        }
+    }
+    if (index < 0) {
+        return;
+    }
+    const auto invoke = [](const ArrangeResult &result) {
+        if (!result.ok) {
+            qWarning() << result.error;
+        }
+    };
+    auto *up = menu.addAction(tr("Move Up"), this, [this, id, index, invoke] {
+        invoke(m_arrange->move(id, m_document.id, index - 1));
+    });
+    up->setEnabled(!m_document.locked && index > 0);
+    auto *down = menu.addAction(tr("Move Down"), this, [this, id, index, invoke] {
+        invoke(m_arrange->move(id, m_document.id, index + 2));
+    });
+    down->setEnabled(!m_document.locked && index + 1 < m_document.contents.size());
+    auto *destinations = menu.addMenu(tr("Move to Container"));
+    // The controller/store owns the latest destination catalog; the host carries
+    // only committed presentation state and never serializes live projected rows.
+    const auto workspace = m_arrange->workspaceSnapshot();
+    for (const auto &c : workspace.containers) {
+        if (c.id == m_document.id) {
+            continue;
+        }
+        auto *action =
+            destinations->addAction(c.name.isEmpty() ? c.id : c.name, this, [this, id, c, invoke] {
+                invoke(m_arrange->move(id, c.id, c.contents.size()));
+            });
+        action->setEnabled(!m_document.locked && !c.locked);
+    }
+    auto *pop =
+        menu.addAction(tr("Pop Out"), this, [this, id, invoke] { invoke(m_arrange->popOut(id)); });
+    pop->setEnabled(!m_document.locked);
+    auto *back = menu.addAction(tr("Return to remembered container"), this,
+                                [this, id, invoke] { invoke(m_arrange->returnEntry(id)); });
+    back->setEnabled(!m_document.locked);
+    if (m_arrange->canDuplicate(m_document.contents[index])) {
+        auto *duplicate = menu.addAction(tr("Duplicate meter"), this, [this, id, index, invoke] {
+            invoke(m_arrange->duplicateEntry(id, m_document.id, index + 1));
+        });
+        duplicate->setEnabled(!m_document.locked);
+    }
+}
+void ContainerContentHost::addContentsMenu(QMenu &menu)
+{
+    auto *contents = menu.addMenu(tr("Contents"));
+    for (const auto &e : m_document.contents) {
+        auto *entry = contents->addMenu(e.name.isEmpty() ? e.id : e.name);
+        addEntryActions(*entry, e.id);
+    }
+}
+bool ContainerContentHost::eventFilter(QObject *watched, QEvent *event)
+{
+    if (!m_arrange) {
+        return QWidget::eventFilter(watched, event);
+    }
+    if (event->type() == QEvent::Resize || event->type() == QEvent::LayoutRequest ||
+        event->type() == QEvent::Show) {
+        QTimer::singleShot(0, this, &ContainerContentHost::updateGrips);
+    }
+    auto *widget = qobject_cast<QWidget *>(watched);
+    if (!widget) {
+        return false;
+    }
+    const QString id = widget->property("entryGripId").toString();
+    if (!id.isEmpty()) {
+        if (event->type() == QEvent::ContextMenu) {
+            auto *context = static_cast<QContextMenuEvent *>(event);
+            QMenu menu(this);
+            addEntryActions(menu, id);
+            menu.exec(context->globalPos());
+            return true;
+        }
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            if (mouse->button() == Qt::LeftButton && !m_document.locked) {
+                m_dragStart = mouse->position().toPoint();
+                m_pressedEntry = id;
+                return true;
+            }
+        }
+        if (event->type() == QEvent::MouseButtonRelease) {
+            m_pressedEntry.clear();
+        }
+        if (event->type() == QEvent::MouseMove && !m_pressedEntry.isEmpty()) {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            if ((mouse->buttons() & Qt::LeftButton) &&
+                (mouse->position().toPoint() - m_dragStart).manhattanLength() >=
+                    QApplication::startDragDistance()) {
+                const QString entry = m_pressedEntry;
+                m_pressedEntry.clear();
+                QDrag drag(this);
+                auto *mime = new QMimeData;
+                mime->setData(ContainerArrangeController::kMimeType, m_arrange->mimeData(entry));
+                drag.setMimeData(mime);
+                drag.exec(Qt::MoveAction);
+                // IgnoreAction includes Escape, invalid/blocked targets and outside
+                // drops: cancellation never creates a pop-out or writes geometry.
+                m_indicator->hide();
+                return true;
+            }
+        }
+    }
+    if (event->type() == QEvent::DragLeave) {
+        m_indicator->hide();
+        return true;
+    }
+    if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove ||
+        event->type() == QEvent::Drop) {
+        auto *drop = static_cast<QDropEvent *>(event);
+        const QByteArray data = drop->mimeData()->data(ContainerArrangeController::kMimeType);
+        if (!m_arrange->validateDrop(data, m_document.id).ok) {
+            drop->ignore();
+            m_indicator->hide();
+            return true;
+        }
+        const QPoint position = widget->mapTo(this, drop->position().toPoint());
+        const int index = insertionIndex(position);
+        if (event->type() == QEvent::Drop) {
+            m_indicator->hide();
+            const auto result = m_arrange->drop(data, m_document.id, index);
+            if (result.ok) {
+                drop->setDropAction(Qt::MoveAction);
+                drop->accept();
+            } else {
+                drop->ignore();
+            }
+            return true;
+        }
+        int y = 0;
+        if (index < m_rows.size()) {
+            y = entryBoundary(m_rows[index].entryId).top();
+        } else if (!m_rows.isEmpty()) {
+            y = entryBoundary(m_rows.last().entryId).bottom() + 1;
+        }
+        m_indicator->setGeometry(0, m_body->mapFrom(this, QPoint(0, y)).y(), m_body->width(), 2);
+        m_indicator->show();
+        m_indicator->raise();
+        drop->setDropAction(Qt::MoveAction);
+        drop->accept();
+        return true;
+    }
+    return QWidget::eventFilter(watched, event);
+}
+} // namespace NereusSDR

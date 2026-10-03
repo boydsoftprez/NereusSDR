@@ -433,3 +433,98 @@ empty-primary-pan-key MaxBin resolver and remote/TX frame-stamped DSS path;
 mutable corrections have not been imported. Adapter routing is tested, and a
 missing source result remains unavailable; final carry acceptance and broad gates
 belong to Task 10 after the controller integrates a signed correction packet.
+
+
+## Task 7 — arrangement and reserved chrome (2026-10-02)
+
+Implemented from BASE `6030de86d39dae1cef81aae4e35df8cbc4de769f` on
+`codex/containers-and-objects`, by gpt-6.1-sol / high, with sole product/build/Git
+ownership and no additional agents. Token usage and original task elapsed time
+are unknown. No attached hardware, radio discovery/connection, private face timer,
+DSP/model/Core behavior, operator profile, push or deployment was used.
+
+The controller changes a complete working document, validates it, then uses one
+revision CAS; only committed snapshots reconcile. Per-live-controller identity,
+revision and stable entry ID reject stale/foreign MIME even with shared settings.
+IgnoreAction/Escape is cancellation; explicit menu Pop Out creates shells. Stable
+neighbor returns preserve live survivor order and linked historical groups; stale,
+self/missing/cyclic anchors recover deterministically with diagnostics. Complete
+ReturnLocation and opaque config/extensions survive. Metadata-free new shell rows
+return in their current shell order. Normal floating close hides even when locked;
+locked structural returns/moves/resize are rejected. Singleton views remain borrowed,
+while supported primitive and complete-face duplicates get new entry identity.
+
+Ordinary Move retains explicit entry context and lets inherited source context use
+the destination defaults. New pop-out shells copy source default axes
+(sessionId/sliceId/rxSource), preserving an inherited Slice B source without
+rewriting the entry's explicit/inherited choice. Shell hops retain normal-home
+metadata. The legacy one-time applet migration now records predecessor in beforeId
+and successor in afterId.
+
+Grips occupy a reserved left gutter beside native meter leaves. Host entry order
+and canvas paint order remain separate; legacy grip boundaries use actual item
+rectangles and legacy paint lists are ordered by retained paintOrder/stable identity.
+Reveal and Hidden reserve header extent; hover/focus/Shift/menu recovery never
+moves content, and same-mode commits preserve explicit Hidden recovery. Old
+noControls migrates to canonical Hidden, retaining original raw/config; subsequent
+Always/Reveal edits govern recovery. Shell toolbar Return closes through the atomic
+controller; Hide retains placement. AppletPanel managed float/dock routes use the
+same controller. Final geometry persists after gestures; screen clamp, content
+minima, auto-height, overlay anchors and read-only RX/TX visibility are covered.
+The transitional settings Apply keeps Reveal when its legacy hide checkbox is
+unchanged; the full editor remains Task 8.
+
+Reference decision: studied Aether AppletPanel.cpp at approved 5766bb13 (drag
+threshold, scroll insertion line, explicit drag-only title area). The new mixed
+host/transaction/gutter implementation is original Nereus code, with stricter
+workspace identity/revision and singleton/native-surface ownership. No new upstream
+code was copied; existing notices/inline tags and provenance remain intact.
+
+Dedicated graphs retain Ninja, RelWithDebInfo, Qt /opt/homebrew, ccache, both LTO
+switches OFF; GPU ON in build-containers, OFF in build-cpu. Actual CPU capacity is
+18 logical CPUs; this task used -j4 and serialized each graph/native run. Explicit
+named targets were built before every ctest run. Required and affected targets:
+`tst_container_arrangement`, `tst_container_chrome`, `tst_applet_float_dock`,
+`tst_container_persistence`, `tst_native_cursors`, `tst_container_content_host`,
+`tst_container_content_host_native`, `tst_mini_display_composition`,
+`tst_container_legacy_import`. Final accepted build/test logs and actual exit
+statuses are in the ignored crew report directory, `task-7-*-accepted.log`.
+
+Meaningful coverage includes 17 return-order/failure boundaries, same-number/shared
+store foreign drags, stale/invalid positions, locked structural commands, complete
+primitive/face duplication, shell hops, deleted sources, multiple destinations,
+opaque/hidden entries, metadata-free shell order, failed saved bytes/singleton
+parents, zero fake station settings requests, managed applet float/dock, native
+explicit control connections, exact live poll target counts, synchronous native
+surface retirement, actual Metal frameSubmitted/readback, reserved geometry,
+Hidden same-mode recovery, lock resize events, auto-height, screen/pane minima,
+anchors and no-save RX/TX visibility. Task 6 native Main shutdown and surviving-model
+regressions and mini descendants remain meaningful and pass in the affected run.
+
+Native images under `.crew/2026-10-02-containers-and-objects-plan/task-7-captures/gpu`
+show 01 mixed grips (full window plus direct container grab), 02 insertion line,
+03 reordered (full/direct), 04 popped applet, 05 compact mixed pop-out, 06 returned,
+07 Reveal focus, 08 Hidden, 09 recovered Hidden and 10 custom legacy canvas.
+Matching CPU images are separate. Native QWidget captures plus Metal readback
+were visually inspected; the gutter does not cover scales or explicit controls.
+These are implemented native artifacts, not mockups.
+
+Initial `task-7-build-before.log` failed on the missing controller interface;
+subsequent compile failures and native focus/auto-height stages are retained in
+`task-7-build-controller.log`, `task-7-build-chrome.log`, `task-7-tests-chrome.log`
+and `task-7-tests-focus.log`. They were repaired without weakening valid assertions.
+Focus-state tests establish Qt's active-window state explicitly because native
+activation is unavailable on this locked desktop. `cua.getState` reports the Mac
+locked and automatic unlock unavailable. Delivered native Qt drag/drop/menu events
+are verified; physical QDrag pointer/Escape, Windows GPU/native interactions,
+Linux native interactions and physical monitor-removal benches remain pending.
+No cross-platform/hardware or full-suite success is claimed. Final broad gates and
+the controller's pending signed Settings correction packet remain Task 10 work.
+
+Final focused results: GPU 9/9, exit 0, 14.35 seconds; CPU 9/9, exit 0,
+8.79 seconds. The subsequent GPU arrangement-only data-driven saved-write,
+external-revision and invalid-external-document failure boundaries also pass
+(1/1, exit 0, 0.56 seconds); product source is unchanged from the GPU nine-target
+run. Both accepted chrome binaries include the retained custom caption fixture.
+R1 GUI access and test-registration checks pass with exit 0. Broad gates remain
+Task 10.

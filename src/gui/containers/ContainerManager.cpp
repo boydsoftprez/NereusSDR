@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -55,6 +57,11 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ContainerManager.h"
+#include "ContainerArrangeController.h"
+#include <QGuiApplication>
+#include <QScreen>
+#include <QApplication>
+#include <QSplitterHandle>
 #include "ContainerWidget.h"
 #include "ContainerSettingsDialog.h"
 #include "FloatingContainer.h"
@@ -105,6 +112,34 @@ ContainerManager::ContainerManager(QWidget* dockParent, QSplitter* splitter,
     m_geometryCommit.setSingleShot(true);
     m_geometryCommit.setInterval(200);
     connect(&m_geometryCommit, &QTimer::timeout, this, &ContainerManager::saveState);
+    connect(qApp, &QGuiApplication::screenRemoved, this, [this](QScreen *) {
+        if (!m_store) {
+            return;
+        }
+        // Screen changes are recovered through one document transaction. A
+        // failed save therefore leaves live geometry and retained bytes intact.
+        auto draft = m_store->snapshot();
+        for (auto &d : draft.containers) {
+            if (d.dockMode != DockMode::Floating) {
+                continue;
+            }
+            QScreen *screen = QGuiApplication::screenAt(d.geometry.center());
+            if (!screen) {
+                screen = QGuiApplication::primaryScreen();
+            }
+            if (!screen) {
+                continue;
+            }
+            auto *c = container(d.id);
+            const QSize minimum =
+                c ? c->minimumSizeHint().expandedTo(QSize(260, 24)) : QSize(260, 24);
+            d.geometry = FloatingContainer::clampedGeometry(d.geometry, screen->availableGeometry(),
+                                                            minimum);
+        }
+        if (draft != m_store->snapshot()) {
+            commitWorkspace(draft, draft.revision);
+        }
+    });
     qCDebug(lcContainer) << "ContainerManager created";
 }
 
@@ -126,8 +161,13 @@ void ContainerManager::setWorkspaceAdapter(ContainerWorkspaceStore* store, Conta
 {
     if (m_store) { disconnect(m_store, nullptr, this, nullptr); }
     if (m_registry) { disconnect(m_registry, nullptr, this, nullptr); }
+    if (m_arrange) {
+        delete m_arrange;
+        m_arrange = nullptr;
+    }
     m_store = store; m_registry = registry;
     if (!store || !registry) { return; }
+    m_arrange = new ContainerArrangeController(*store, this, this);
     m_storageError = store->loadError();
     connect(store, &ContainerWorkspaceStore::committed, this, [this] { reconcileWorkspace(m_store->snapshot()); });
     connect(registry, &ContainerContentRegistry::runtimeChanged, this, [this] {
@@ -163,8 +203,43 @@ CommitResult ContainerManager::commitWorkspace(const WorkspaceDocument& document
     else { m_storageError.clear(); }
     return result;
 }
+bool ContainerManager::effectiveVisible(const ContainerDocument &document) const
+{
+    return document.visible && document.config.value("enabled").toBool(true) &&
+           !document.config.value("hiddenByMacro").toBool(false) &&
+           document.config.value(m_transmitting ? "showOnTx" : "showOnRx").toBool(true);
+}
+void ContainerManager::setTransmitting(bool transmitting)
+{
+    m_transmitting = transmitting;
+    if (!m_store) {
+        return;
+    }
+    for (const auto &document : m_store->snapshot().containers) {
+        if (auto *c = container(document.id)) {
+            (c->isFloating() ? c->window() : c)->setVisible(effectiveVisible(document));
+        }
+    }
+}
 bool ContainerManager::eventFilter(QObject* watched, QEvent* event)
 {
+    if (qobject_cast<QSplitterHandle *>(watched) &&
+        (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove ||
+         event->type() == QEvent::MouseButtonRelease)) {
+        for (auto *c : m_containers) {
+            if (c->isPanelDocked() && c->isLocked()) {
+                return true;
+            }
+        }
+    }
+    if (auto *c = qobject_cast<ContainerWidget *>(watched); c && c->geometryInteractionActive()) {
+        return false;
+    }
+    if (auto *form = qobject_cast<FloatingContainer *>(watched)) {
+        if (auto *c = container(form->id()); c && c->geometryInteractionActive()) {
+            return false;
+        }
+    }
     if (m_store && !m_reconciling && m_storageError.isEmpty()
         && (event->type() == QEvent::Move || event->type() == QEvent::Resize)) {
         if (qobject_cast<ContainerWidget*>(watched) || qobject_cast<FloatingContainer*>(watched)) {
@@ -214,7 +289,30 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             form->installEventFilter(this); c->installEventFilter(this);
             m_containers[d.id] = c; m_floatingForms[d.id] = form;
             wireContainer(c);
-            connect(form, &FloatingContainer::aboutToClose, this, [this, id = d.id] { setContainerVisible(id, false); });
+            connect(form, &FloatingContainer::aboutToClose, this, [this, id = d.id] {
+                const auto result = m_arrange->closeContainer(id);
+                if (!result.ok) {
+                    emit workspaceError(result.error);
+                }
+            });
+            connect(c, &ContainerWidget::returnContainerRequested, this, [this, id = d.id] {
+                const auto result = m_arrange->closeContainer(id);
+                if (!result.ok) {
+                    emit workspaceError(result.error);
+                }
+            });
+            connect(c, &ContainerWidget::hideContainerRequested, this,
+                    [this, id = d.id] { setContainerVisible(id, false); });
+            connect(c, &ContainerWidget::headerModeRequested, this,
+                    [this, id = d.id](HeaderMode mode) {
+                        auto draft = m_store->snapshot();
+                        for (auto &value : draft.containers) {
+                            if (value.id == id) {
+                                value.header = mode;
+                            }
+                        }
+                        commitWorkspace(draft, draft.revision);
+                    });
         }
         auto* host = contentHost(d.id);
         const bool reparent = fresh || c->dockMode() != d.dockMode;
@@ -228,7 +326,8 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         }
         c->setDockMode(d.dockMode); c->setNotes(d.name); c->setRxSource(d.config.value("rxSource").toInt(1));
         c->setAxisLock(d.anchor); c->setLocked(d.locked); c->setAutoHeight(d.autoHeight);
-        c->setTitleBarVisible(d.header != HeaderMode::Hidden);
+        c->setPopOutShell(d.popOutShell);
+        c->setHeaderMode(d.header);
         c->setContainerEnabled(d.config.value("enabled").toBool(true));
         c->setShowOnRx(d.config.value("showOnRx").toBool(true)); c->setShowOnTx(d.config.value("showOnTx").toBool(true));
         c->setContainerMinimises(d.config.value("containerMinimises").toBool(false));
@@ -252,10 +351,33 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             connect(host, &ContainerContentHost::reconciled, this, &ContainerManager::workspaceReconciled);
             c->setContent(host);
         }
+        host->setArrangeController(m_arrange);
         host->reconcile(d);
-        if (d.dockMode == DockMode::Floating) { c->show(); form->setVisible(d.visible); }
-        else { c->setVisible(d.visible); }
+        if (d.autoHeight && d.dockMode != DockMode::PanelDocked) {
+            QWidget *target = d.dockMode == DockMode::Floating ? static_cast<QWidget *>(form) : c;
+            target->resize(qMax(target->width(), c->minimumSizeHint().width()),
+                           host->preferredContentHeight() + ContainerWidget::kTitleBarHeight);
+        }
+        if (d.dockMode == DockMode::Floating) {
+            form->ensureVisiblePosition(m_dockParent);
+        } else if (d.dockMode == DockMode::OverlayDocked && m_dockParent) {
+            c->setGeometry(FloatingContainer::clampedGeometry(
+                c->geometry(), m_dockParent->rect(),
+                c->minimumSizeHint().expandedTo(QSize(260, 24))));
+            c->storeLocation();
+        }
+        if (d.dockMode == DockMode::Floating) {
+            c->show();
+            form->setVisible(effectiveVisible(d));
+        } else {
+            c->setVisible(effectiveVisible(d));
+        }
         if (fresh) { emit containerAdded(d.id); }
+    }
+    if (m_splitter) {
+        for (auto *handle : m_splitter->findChildren<QSplitterHandle *>()) {
+            handle->installEventFilter(this);
+        }
     }
     emit workspaceReconciled();
 }
@@ -263,12 +385,29 @@ bool ContainerManager::commitDockMode(const QString& id, DockMode mode)
 {
     if (!m_store || m_reconciling) { return false; }
     WorkspaceDocument document = m_store->snapshot();
-    for (auto& d : document.containers) { if (d.id == id) { d.dockMode = mode; commitWorkspace(document, document.revision); return true; } }
+    for (auto &d : document.containers) {
+        if (d.id == id) {
+            if (d.locked) {
+                emit workspaceError(tr("Arrangement is locked"));
+                return true;
+            }
+            d.dockMode = mode;
+            commitWorkspace(document, document.revision);
+            return true;
+        }
+    }
     return true;
 }
 
 void ContainerManager::wireContainer(ContainerWidget* container)
 {
+    connect(container, &ContainerWidget::geometryInteractionStarted, this,
+            [this] { m_geometryCommit.stop(); });
+    connect(container, &ContainerWidget::geometryInteractionFinished, this, [this] {
+        if (m_store && !m_reconciling) {
+            m_geometryCommit.start();
+        }
+    });
     connect(container, &QObject::destroyed, this, [this, id=container->id()] { m_containers.remove(id); });
     connect(container, &ContainerWidget::floatRequested, this, [this, container]() {
         floatContainer(container->id());
@@ -452,13 +591,11 @@ ContainerWidget* ContainerManager::createContainer(int rxSource, DockMode mode)
 void ContainerManager::destroyContainer(const QString& id)
 {
     if (m_store && !m_reconciling) {
-        WorkspaceDocument document = m_store->snapshot();
-        if (document.mainContainerId == id) { return; }
-        QVector<ContentEntry> singletons;
-        for (const auto& d : document.containers) { if (d.id == id) { for (const auto& e : d.contents) { if (e.typeId.startsWith("applet:")) { singletons.append(e); } } } }
-        document.containers.removeIf([&](const auto& d) { return d.id == id; });
-        for (auto& d : document.containers) { if (d.id == document.mainContainerId) { d.contents += singletons; } }
-        commitWorkspace(document, document.revision); return;
+        const auto result = m_arrange->removeContainer(id);
+        if (!result.ok) {
+            emit workspaceError(result.error);
+        }
+        return;
     }
     // From Thetis MeterManager.cs:6533-6579
     // Upstream inline attribution preserved verbatim (MeterManager.cs:6563):

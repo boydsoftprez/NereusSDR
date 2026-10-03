@@ -11,6 +11,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
@@ -7094,6 +7096,8 @@ void MainWindow::buildUI()
     auto* contentRegistry = new ContainerContentRegistry(this);
     auto* workspaceStore = new ContainerWorkspaceStore(AppSettings::instance(), this);
     m_containerManager->setWorkspaceAdapter(workspaceStore, contentRegistry);
+    m_containerManager->setTransmitting(m_radioModel->isTransmitting());
+    connect(m_radioModel,&RadioModel::transmittingChanged,m_containerManager,&ContainerManager::setTransmitting);
     connect(m_containerManager, &ContainerManager::workspaceError, this, [this](const QString& error) {
         showToast(tr("Container layout is read-only: %1").arg(error), ToastSeverity::Warning, 6000);
     });
@@ -7135,7 +7139,7 @@ void MainWindow::buildUI()
             for (int i = c.contents.size()-1; i >= 0; --i) {
                 auto entry = c.contents[i];
                 if (!entry.typeId.startsWith("applet:") || !entry.config.value("floating").toBool()) { continue; }
-                entry.returnLocation = ReturnLocation{c.id, i+1<c.contents.size()?c.contents[i+1].id:QString(), i>0?c.contents[i-1].id:QString(),{}};
+                entry.returnLocation = ReturnLocation{c.id, i>0?c.contents[i-1].id:QString(), i+1<c.contents.size()?c.contents[i+1].id:QString(),{}};
                 ContainerDocument shell; shell.id = QUuid::createUuid().toString(QUuid::WithoutBraces); shell.name = entry.name;
                 shell.layout = ContentLayout::VerticalStack; shell.dockMode = DockMode::Floating; shell.popOutShell = true;
                 shell.config["legacyAppletFloatGeometry"] = entry.config.value("floatGeometry");
@@ -9151,6 +9155,7 @@ void MainWindow::populateDefaultMeter()
     // S-meter lookup and connections; document hosts own the displayed views.
     m_appletPanel = new AppletPanelWidget(this);
     m_appletPanel->setManagedWorkspace(true);
+    m_appletPanel->setArrangeController(m_containerManager->arrangeController());
     m_appletPanel->hide();
     auto* panel = m_appletPanel;
 

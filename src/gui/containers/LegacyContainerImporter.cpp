@@ -34,7 +34,9 @@ ContainerDocument container(const QString& id, const QString& metadata, const QS
             const int anchor = anchors.indexOf(fields[9].toUpper()); result.anchor = static_cast<AxisLock>(anchor < 0 ? 1 : anchor);
             result.autoHeight = truth(fields.value(17)); result.locked = truth(fields.value(20));
             result.visible = (fields.size() <= 14 || truth(fields[14])) && !truth(fields.value(22));
-            result.header = fields.size() > 24 && !truth(fields[24]) ? HeaderMode::Hidden : HeaderMode::Always;
+            // Canonical header owns structured recovery; retain the old flag/raw
+            // record but do not let it override later Always/Reveal edits.
+            result.header = truth(fields.value(13)) || (fields.size() > 24 && !truth(fields[24])) ? HeaderMode::Hidden : HeaderMode::Always;
             result.config = {{QStringLiteral("rxSource"),rx},{QStringLiteral("sliceId"),rx-1},
                 {QStringLiteral("deltaX"),fields[7].toInt()},{QStringLiteral("deltaY"),fields[8].toInt()},
                 {QStringLiteral("pinOnTop"),truth(fields[10])},{QStringLiteral("border"),truth(fields[11])},

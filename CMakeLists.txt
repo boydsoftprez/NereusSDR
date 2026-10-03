@@ -1746,6 +1746,8 @@ set(GUI_SOURCES
     src/gui/containers/ContainerDocumentCodec.cpp
     src/gui/containers/ContainerContentRegistry.h
     src/gui/containers/ContainerContentRegistry.cpp
+    src/gui/containers/ContainerArrangeController.h
+    src/gui/containers/ContainerArrangeController.cpp
     src/gui/containers/ContainerContentHost.h
     src/gui/containers/ContainerContentHost.cpp
     src/gui/containers/ContainerSourceAdapter.h
