@@ -445,6 +445,114 @@ jobs:
           path: nereusd_*.deb
           retention-days: 7
 
+  build-deb-trixie:
+    needs: prepare
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_ref }}
+          persist-credentials: false
+      - name: Build and verify Debian 13 arm64 Core package
+        shell: bash
+        env:
+          NEREUS_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          docker pull --platform linux/arm64 rust:1.94.1-trixie
+          builder=$(docker image inspect --format '{{index .RepoDigests 0}}' rust:1.94.1-trixie)
+          [[ "$builder" =~ @sha256:[0-9a-f]{64}$ ]]
+          printf '%s\n' "$builder" > station-builder-image.txt
+          docker run --rm --platform linux/arm64 \
+            -e NEREUS_VERSION \
+            -v "$PWD:/workspace" -w /workspace \
+            "$builder" /bin/bash packaging/station-image/build-trixie-deb.sh
+          package="station-output/nereusd_${NEREUS_VERSION}_arm64_trixie.deb"
+          bash packaging/station-image/verify-package.sh "$package" "$NEREUS_VERSION"
+      - name: Install and smoke test in a fresh Debian 13 runtime
+        shell: bash
+        env:
+          NEREUS_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker pull --platform linux/arm64 debian:trixie-slim
+          runtime=$(docker image inspect --format '{{index .RepoDigests 0}}' debian:trixie-slim)
+          [[ "$runtime" =~ @sha256:[0-9a-f]{64}$ ]]
+          printf '%s\n' "$runtime" > station-runtime-image.txt
+          # Only the package is mounted: build dependencies and staged libraries
+          # cannot mask missing runtime dependencies or installed RUNPATH errors.
+          docker run --rm -i --platform linux/arm64 \
+            -e NEREUS_VERSION -e DEBIAN_FRONTEND=noninteractive \
+            -v "$PWD/station-output:/packages:ro" \
+          "$runtime" /bin/bash -s <<'SH'
+          set -euo pipefail
+          # shellcheck source=/dev/null
+          . /etc/os-release
+          test "$ID" = debian && test "$VERSION_CODENAME" = trixie
+          test "$(dpkg --print-architecture)" = arm64
+          test "$(uname -m)" = aarch64
+          # Block service starts while exercising the package maintainer scripts.
+          printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d
+          chmod 0755 /usr/sbin/policy-rc.d
+          apt-get update
+          apt-get install -y --no-install-recommends "/packages/nereusd_${NEREUS_VERSION}_arm64_trixie.deb"
+          test "$(dpkg-query -W -f='${Status}' nereusd)" = 'install ok installed'
+          test "$(dpkg-query -W -f='${Version}' nereusd)" = "$NEREUS_VERSION"
+          env -u LD_LIBRARY_PATH ldd /usr/bin/nereusd > /tmp/nereusd-ldd.txt
+          cat /tmp/nereusd-ldd.txt
+          if grep -q 'not found' /tmp/nereusd-ldd.txt; then
+            exit 1
+          fi
+          env -u LD_LIBRARY_PATH timeout 30s /usr/bin/nereusd --help > /tmp/nereusd-help.txt
+          grep -q 'NereusSDR headless daemon' /tmp/nereusd-help.txt
+          env -u LD_LIBRARY_PATH timeout 30s /usr/bin/nereusd --version > /tmp/nereusd-version.txt
+          cat /tmp/nereusd-version.txt
+          # CMake owns the base product version; RC suffixes identify the package.
+          grep -Fxq "nereusd ${NEREUS_VERSION%%-*}" /tmp/nereusd-version.txt
+          SH
+      - name: Record Trixie package provenance
+        shell: bash
+        env:
+          NEREUS_VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_ref }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          mkdir -p station-provenance
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          version = os.environ["NEREUS_VERSION"]
+          package = Path(f"station-output/nereusd_{version}_arm64_trixie.deb")
+          manifest = {
+              "source_sha": os.environ["SOURCE_SHA"],
+              "version": version,
+              "os": "Debian 13 (trixie), arm64",
+              "builder_image": Path("station-builder-image.txt").read_text().strip(),
+              "runtime_image": Path("station-runtime-image.txt").read_text().strip(),
+              "cpu_baseline": "ARMv8-A (Raspberry Pi 4 Cortex-A72)",
+              "package": package.name,
+              "package_sha256": hashlib.sha256(package.read_bytes()).hexdigest(),
+              "dfnr": json.loads(Path("station-output/dfnr-provenance.json").read_text()),
+          }
+          Path(f"station-provenance/nereusd_{version}_arm64_trixie.provenance.json").write_text(
+              json.dumps(manifest, indent=2) + "\n")
+          PY
+      - name: Upload Trixie package and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-arm64-trixie
+          path: |
+            station-output/nereusd_${{ needs.prepare.outputs.version }}_arm64_trixie.deb
+            station-provenance/nereusd_${{ needs.prepare.outputs.version }}_arm64_trixie.provenance.json
+          if-no-files-found: error
+          retention-days: 7
+
   build-macos:
     needs: prepare
     strategy:
@@ -1255,7 +1363,7 @@ jobs:
 
   sign-and-publish:
     if: ${{ !inputs.verify_only }}
-    needs: [prepare, build-linux, build-deb, build-macos, build-windows]
+    needs: [prepare, build-linux, build-deb, build-deb-trixie, build-macos, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -1279,6 +1387,7 @@ jobs:
             -name '*.pkg' -o \
             -name '*.zip' -o \
             -name '*.deb' -o \
+            -name '*_arm64_trixie.provenance.json' -o \
             -name '*-setup.exe' -o \
             -name 'release_notes.md' \
           \) -exec cp {} artifacts/ \;
@@ -1326,7 +1435,7 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         working-directory: artifacts
         run: |
-          for f in *.AppImage *.deb *.dmg *.pkg *.zip *.exe *.tar.gz SHA256SUMS.txt; do
+          for f in *.AppImage *.deb *.dmg *.pkg *.zip *.exe *.tar.gz *_arm64_trixie.provenance.json SHA256SUMS.txt; do
             [ -f "$f" ] || continue
             gpg --batch --yes --pinentry-mode loopback \
               --passphrase "$GPG_PASSPHRASE" \
@@ -1353,6 +1462,7 @@ jobs:
             $PRERELEASE_FLAG \
             artifacts/*.AppImage \
             artifacts/*.deb \
+            artifacts/*_arm64_trixie.provenance.json \
             artifacts/*.dmg \
             artifacts/*.pkg \
             artifacts/*.zip \

@@ -23,6 +23,23 @@ stale for Cargo 1.94.1; `DeepFilterNet-Cargo.lock` is a checked-in refresh made
 with that toolchain. No DeepFilterNet prebuilt library is accepted. The package
 check requires the model at the daemon's runtime search path.
 
+The release workflow also builds this Core package independently, using the
+same source ref and release version as the other release artifacts. Its
+`nereusd_<version>_arm64_trixie.deb` is the Debian 13 package for 64-bit
+Raspberry Pi OS Lite or Armbian trixie systems whose repositories satisfy the
+declared dependencies. The separate `nereusd_<version>_arm64.deb` is built
+on Ubuntu 24.04 and must not be assumed compatible with trixie. The release
+job pins each container invocation to its pulled image digest, verifies the
+package, and installs it with `apt` in a fresh Debian trixie runtime container.
+It checks library resolution and `nereusd --help` / `--version` without
+starting a service or connecting a radio. A matching
+`nereusd_<version>_arm64_trixie.provenance.json` records the source SHA,
+package SHA-256, builder and runtime image digests, CPU baseline and DFNR
+provenance; it is attached to the release and covered by the signed checksums.
+The release workflow's `verify_only` dispatch builds and checks these artifacts
+without signing or publishing. Runtime-container checks do not prove boot,
+audio, or radio behavior on a Pi or Rock board.
+
 The workflow needs GitHub Actions `ubuntu-24.04-arm` capacity, Docker, working
 Debian and Raspberry Pi package mirrors, crates.io, `sudo`, loop devices, and enough disk
 space for the Rust build, pi-gen's rootfs copies and image export (tens of
