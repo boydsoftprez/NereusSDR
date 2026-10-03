@@ -88,6 +88,8 @@ public:
     QString serialize() const;
     static ItemGroup* deserialize(const QString& data, QObject* parent = nullptr);
 
+    static ItemGroup* createCompletePreset(const QString& typeId, QObject* parent=nullptr);
+
     // Preset factory: creates a horizontal bar meter with scale + readout.
     // Layout within group: top 20% label+readout, mid 28% bar, bottom 46% scale.
     // Colors from AetherSDR: cyan bar (#00b4d8), red zone (#ff4444), dark bg (#0f0f1a).

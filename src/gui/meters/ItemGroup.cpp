@@ -110,6 +110,13 @@ ItemGroup::ItemGroup(const QString& name, QObject* parent)
 {
 }
 
+ItemGroup* ItemGroup::createCompletePreset(const QString& typeId,QObject* parent) {
+    ContainerContentRegistry registry; const ContentEntry entry=registry.makeEntry(typeId);
+    ItemGroup* group=new ItemGroup(entry.name,parent);
+    if(MeterItem* face=registry.createMeterItem(entry,group)) { group->addItem(face); }
+    return group;
+}
+
 ItemGroup::~ItemGroup()
 {
     qDeleteAll(m_items);

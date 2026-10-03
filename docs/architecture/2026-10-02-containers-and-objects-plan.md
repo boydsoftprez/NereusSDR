@@ -320,22 +320,22 @@ Register existing bar variants through BarPresetItem for COMP, CFC/CFC gain,
 Leveler/gain, AGC/gain, ALC gain/group, EQ, Signal/Avg/Max Bin, ADC/ADC max and
 PBSNR; do not derive their scales from Mic/ALC.
 
-- [ ] Add table-driven fixtures per existing palette entry: round-trip customized
+- [x] Add table-driven fixtures per existing palette entry: round-trip customized
   configuration, required bindings, units, TX gates, no-reading behavior and
   preview dimensions. Assert power scale handles QRP through normal PA maxima;
   needle and range/history trajectories use their own independently cited oracle.
-- [ ] Build/run `tst_meter_composite_presets`; expect missing/incorrect recovered
+- [x] Build/run `tst_meter_composite_presets`; expect missing/incorrect recovered
   factories or primitive-only scale/reset to fail.
-- [ ] Study each family's own Thetis implementation; fill matrix with source
+- [x] Study each family's own Thetis implementation; fill matrix with source
   version/lines, channel list, calibration, cadence/reset and exposed properties.
   Recover selected code with attribution; make each offered setting effective.
   Keep custom/primitive objects editable without forced promotion. Preserve
   VFO/clock/model wiring through current main interfaces and GUI ownership.
-- [ ] Build/run new target plus `tst_meter_presets`, `tst_vfo_mode_containers`,
+- [x] Build/run new target plus `tst_meter_presets`, `tst_vfo_mode_containers`,
   `tst_smeter_widget_scale`, `tst_smeter_widget_peak_hold`. Expected pass. Capture
   representative family faces in CPU/GPU and show the visual comparison before
   revising any appearance beyond the approved direction.
-- [ ] Commit: `feat: restore complete configurable meter objects`.
+- [x] Commit: `feat: restore complete configurable meter objects`.
 
 ### Task 6: Mixed hosts and singleton lifecycle on current main
 

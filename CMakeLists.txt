@@ -1795,6 +1795,28 @@ set(GUI_SOURCES
     src/gui/meters/MeterWidget.cpp
     src/gui/meters/presets/BarPresetItem.cpp
     src/gui/meters/presets/BarPresetItem.h
+    src/gui/meters/presets/CompositePresetItem.cpp
+    src/gui/meters/presets/CompositePresetItem.h
+    src/gui/meters/presets/SMeterPresetItem.cpp
+    src/gui/meters/presets/SMeterPresetItem.h
+    src/gui/meters/presets/PowerSwrPresetItem.cpp
+    src/gui/meters/presets/PowerSwrPresetItem.h
+    src/gui/meters/presets/AnanMultiMeterItem.cpp
+    src/gui/meters/presets/AnanMultiMeterItem.h
+    src/gui/meters/presets/CrossNeedleItem.cpp
+    src/gui/meters/presets/CrossNeedleItem.h
+    src/gui/meters/presets/MagicEyePresetItem.cpp
+    src/gui/meters/presets/MagicEyePresetItem.h
+    src/gui/meters/presets/SignalTextPresetItem.cpp
+    src/gui/meters/presets/SignalTextPresetItem.h
+    src/gui/meters/presets/HistoryGraphPresetItem.cpp
+    src/gui/meters/presets/HistoryGraphPresetItem.h
+    src/gui/meters/presets/VfoDisplayPresetItem.cpp
+    src/gui/meters/presets/VfoDisplayPresetItem.h
+    src/gui/meters/presets/ClockPresetItem.cpp
+    src/gui/meters/presets/ClockPresetItem.h
+    src/gui/meters/presets/ContestPresetItem.cpp
+    src/gui/meters/presets/ContestPresetItem.h
     src/gui/meters/presets/PresetGeometry.h
     src/gui/meters/MeterDynamics.cpp
     src/gui/meters/MeterDynamics.h

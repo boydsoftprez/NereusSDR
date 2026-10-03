@@ -233,6 +233,7 @@ public:
     virtual void setValue(double v) { m_value = v; }
     virtual QSet<int> readingBindings() const { return m_bindingId >= 0 ? QSet<int>{m_bindingId} : QSet<int>{}; }
     virtual void pushBindingValue(int binding, double value) { if (binding == m_bindingId) { setValue(value); } }
+    virtual bool takeStaticPresentationChange() { return false; }
     virtual bool advanceMeter(qint64 monotonicMs) { Q_UNUSED(monotonicMs); return false; }
     virtual void resetForTxTransition(bool inTx);
     virtual void setPowerScale(int watts);
@@ -246,7 +247,7 @@ public:
     bool isNoReading(double v) const
     {
         return !bindingUnavailableReason(m_bindingId).isEmpty()
-            || (isNoReadingBinding(m_bindingId) && isNoMeterReading(v));
+            || (!hasMmioBinding() && isNoReadingBinding(m_bindingId) && isNoMeterReading(v));
     }
 
     int zOrder() const { return m_zOrder; }

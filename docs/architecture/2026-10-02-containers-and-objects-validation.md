@@ -277,3 +277,59 @@ minimum434/larger/falling/unavailable frames and animation. Scale cache is
 face-local and DPR-aware; styles/threshold colors have independent pixel checks.
 Detailed final scoped evidence and exit statuses are recorded in the Task4 report.
 No transmitter operation, Core/model/DSP/wire edit or Windows/Linux runtime claim.
+
+
+## Task 5 complete palette (2026-10-02)
+
+Native macOS cocoa verification used build-cpu (GPU OFF) and build-containers
+(GPU ON, Metal API2), Qt DPR2, synthetic GUI readings only. Required targets were
+built explicitly (EXCLUDE_FROM_ALL). No Core/model/DSP/wire changes or hardware
+operations. The10-test focused set comprises meter_composite_presets,
+meter_presets, vfo_mode_containers, smeter_widget_scale,
+smeter_widget_peak_hold, meter_bar_face, meter_composite_dispatch,
+meter_item_no_reading, container_legacy_import and other_button_item.
+
+Evidence in `.crew/2026-10-02-containers-and-objects-plan/`:
+- task-5-build-cpu-final.log and task-5-build-gpu-final.log: exit0.
+- task-5-tests-cpu-final.log and task-5-tests-gpu-final.log: other9 passed;
+  composite failed an added static scale comparison while its RX scale was
+  hidden in TX. Transitioning the fixture to RX preserves the assertion.
+- task-5-build-{cpu,gpu}-native-final-2.log and
+  task-5-tests-{cpu,gpu}-native-final-2.log: exit0; affected composite rerun passes.
+- task-5-native-{cpu,gpu}-final.log: saved complete native output,10 QtTest
+  passes,0 failures,0 skips; GPU frameSubmitted and grabFramebuffer, API2.
+
+Earlier failed evidence is retained. A real GPU configured-backdrop mismatch
+(task-5-tests-gpu-verified.log exit8) led to the consume-once static presentation
+hook. The first hook compile failed on GPU-only members in CPU; the corrected
+hook reuses existing invalidateReadingLayers(true). Effective configuration,
+PA scaling, ANAN display groups/S9 calibration, Bar title and stable-data VFO
+setters now alter native pixels; equal state does not continuously dirty static
+presentation. Primitive and composite clocks repaint with no radio samples.
+Independent numeric/color checks include source-calibrated marker96.75000009216W
+and alpha128 red over gray32 yielding144/16/16. Family tests cover customized
+round trips, unknown fields, atomic rejection, bindings/units, remote channel
+absence, poller replay/TX eviction/disconnect, numeric MMIO-400, QRP1–500W,
+source smoothing/history/angular geometry and actual existing control routes.
+
+Captures `.crew/task-5-captures/{cpu,gpu}/<family>-{360,640}-{0,11,customized}.png`
+cover Power/SWR, Cross, ANAN, Eye, SignalText, History, VFO, Clock, Contest and EQ.
+CPU controller inspection accepted corrected Contest sizing, separated ANAN
+labels and human-readable titles. Durable copies are in the task5 subdirectory
+of `/Users/j.j.boyd/.codex/visualizations/2026/10/02/01a0fe3c-4f4b-7c10-b84c-16c14521e8dd`.
+See matrix for exact editor/descendant invalidation interfaces and source versus
+local composition boundaries. Full historical whole-face schema promotion,
+Task6 live descendant wiring, ADC magnitude provider, remote independent peaks,
+Windows/Linux/hardware verification remain outside this scoped completion.
+
+
+Final visual inspection exposed a separate background DPR allocation defect:
+logical-resolution background textures blurred static labels/arcs at DPR2 while
+dynamic overlay remained sharp. Background image/texture now use physical pixel
+size and image DPR, recreated on size or DPR changes with minimum64 pixels;
+logical drawing coordinates are unchanged. Native title pixels compare against
+an independent DPR-painted reference (channel tolerance2, under1% mismatches).
+`task-5-build-{cpu,gpu}-dpr-final.log` and
+`task-5-tests-{cpu,gpu}-dpr-final.log`: exit0, directly affected composite+bar2/2.
+Full raw native output is saved as `task-5-native-{cpu,gpu}-dpr-final.log`.
+Earlier other8 focused targets remain passing; no broader rerun was needed.

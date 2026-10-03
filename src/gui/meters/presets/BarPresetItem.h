@@ -55,6 +55,9 @@ public:
     void configureAsAlc();
     void configureAsCustom(int bindingId, double minV, double maxV, const QString& label);
     QString typeId() const;
+    static QStringList variants();
+    bool configureVariant(const QString& flavor);
+    void setAboveS9Frequency(bool above) { if(m_aboveS9!=above) { m_aboveS9=above; m_scaleCache={}; m_staticDirty=true; } }
     Layer renderLayer() const override { return Layer::Background; }
     bool participatesIn(Layer layer) const override;
     void paint(QPainter&, int, int) override;
@@ -64,6 +67,7 @@ public:
     void setValue(double value) override { pushBindingValue(bindingId(), value); }
     void setBindingUnavailable(int, const QString&) override;
     bool advanceMeter(qint64) override;
+    bool takeStaticPresentationChange() override { const bool dirty=m_staticDirty; m_staticDirty=false; return dirty; }
     void resetForTxTransition(bool) override;
     QString serialize() const override;
     bool deserialize(const QString&) override;
@@ -91,6 +95,12 @@ private:
     int m_interval = 100, m_historyMs = 2000, m_ignoreMs = 2000, m_rowHeight = 72;
     MeterDynamics m_primary, m_average;
     QJsonObject m_unknown;
+    bool m_staticDirty = true;
+    QColor m_lowFill = Qt::white;
+    double m_calMinimum = -30, m_calMaximum = 12;
+    double m_attack = .8, m_release = .1, m_middle = 0, m_middlePosition = .665;
+    bool m_aboveS9 = false;
+    QList<double> m_major{-20,-10,0,4,8,12}, m_minor{-25,-15,-5,2,6,10};
     QImage m_scaleCache;
     QRect m_scaleRect;
 };

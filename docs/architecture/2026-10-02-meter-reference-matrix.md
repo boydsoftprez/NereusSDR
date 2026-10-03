@@ -199,3 +199,96 @@ rows, cocoa platform, DPI72/DPR2. Pixel assertions run even without export flags
 Artifacts/logs are in `.crew/task-4-captures/{cpu,gpu}` and the Task4 report.
 Controller inspected/accepted CPU and GPU milestone images. Windows/Linux and
 hardware parity are not claimed; remaining family verification belongs to Task5.
+
+
+## Task 5 complete palette and host/editor contract (2026-10-02)
+
+Source pin: Thetis v2.10.3.15, MeterManager.cs and Common.cs. The saved family
+and bar audits in `.crew/2026-10-02-containers-and-objects-plan/` contain the
+complete independent knot tables and constructor evidence. Recovery15de6fbecf
+supplies local composition ideas; it is not a calibration oracle. The primary
+SMeterWidget singleton and old ItemGroup needle presets retain their appearance.
+`meter.sMeter` is an explicitly additional S-meter bar. `createCompletePreset`
+is a registry adapter, without a second factory or serializer.
+
+| Stable family | Binding channels / actual units | Source defaults and calibration evidence |
+|---|---|---|
+| sMeter / signal / signalAvg / signalMaxBin | SignalAvg1 / SignalPeak0 / SignalAvg1 / SignalMaxBin7, dBm | 22846–22939; -133/-73/-13→0/.5/.99; .8/.2, history4000 |
+| powerSwr | Power100 W, SWR102 ratio | 25198–25338; power0/5/10/50/100/120→0/.1875/.375/.5625/.75/.99; SWR1/1.5/2/3/5→0/.25/.5/.75/.99; .8/.1, history2000 |
+| crossNeedle | Power100 / reflected101 W | 24153–24259 exact15/19-point tables; .2/.1, history4000, source0/0 initialization; reflected counterclockwise |
+| ananMulti | SignalAvg1 dBm, Volts200 V, Amps201 A, Power100 W, SWR102, AlcGain109 dB, AlcGroup110 dB | 23797–24084 exact per-channel knots; signal .8/.2 history4000 RX; Volts/Amps .2/.2 history500; PA/ALC .2/.1 history4000 TX; power+SWR group1, compression2, ALCgroup3, Amps4 |
+| magicEye | SignalAvg1 dBm | 23572–23618,37249–37368,33977–34010; -127/-73/-13→0/.85/1; .2/.05, closed ellipse, horizontal slits and above-S9 overlap |
+| signalText | SignalAvg1 dBm / S / µV | 23018–23031; .8/.2 history4000; Common.cs888–934 actual S buckets and frequency offset; backdrop/peak/recent range |
+| comp / eq / leveler / cfc | Independent peaks115/116/117/118 and averages104/106/107/111, dB | 24414–25089; -30/0/12→0/.665/.99; .8/.1 history2000; CFC average history clamps to one cadence |
+| alcGain / cfcGain / levelerGain |109/112/108 dB | 24588–25003;0/20/25→0/.8/.99; .8/.1 history2000 |
+| alcGroup |110 dB | 24796–24856;-30/0/25→0/.5/.99; .8/.1 history2000 |
+| agc / agcGain |5+6 /4 dB | 23222–23373;-125/0/125→0/.5/.99 or-50/100/125→0/.857/.99; .2/.05 history4000; average one cadence |
+| adc / adcMax |2+3 dBFS / unavailable raw magnitude | 22940–23150;-120/-20/0→0/.8333/.99 or0/25000/32768→0/.8333/.99; .2/.05 history4000; ADCmax has no sanctioned provider and cannot substitute AdcPeak |
+| pbSnr |8 dB | 23151–23221;0/50/60→0/.8333/.99; .2/.05 history4000; segments, hidden range, peak hold |
+| customBar | Explicit configured binding/MMIO, configured units | 23374–23465; editable linear range, .8/.2 history4000; missing/non-numeric MMIO is unavailable |
+| historyGraph | Configured cached binding, default SignalAvg1 dBm | Nereus origin, source borrowing documented: shared-frame smoothed samples, capacity300 and timestamp60s expiry, automatic/manual axis; not Thetis dual-axis parity |
+| vfoDisplay / clock / contest | Live cached slice setters / wall clock / functional current primitives | Nereus composition; VFO preserves Hz and starts unavailable. Clock has local/UTC/Both, date and12/24h. Contest owns BandButtonItem, ModeButtonItem, VfoDisplayItem, ClockItem |
+
+All ordinary dynamics use caller cadence100ms by default and ignore-history2000ms.
+Composite clock uses shared250ms cadence; primitive ClockItem uses shared second
+boundaries. Neither starts a private timer. History expiry follows Task3's
+missed-frame adaptation. Power curves round raw to2 decimals before multiplying
+by100/PA rating (41048–41055); QRP1/5 through500W numeric oracles pass. Needle
+pivot is rectangle center+offset*size; radii use width/2*lengthFactor*radiusRatio
+(40754–40928). Code-native coherent cream needle scales replace unverified April
+ANAN art; the unrelated image is not treated as source calibration. Source table
+positions remain exact. Minimum sizes are width360 for ANAN/Cross/Contest and260
+otherwise; family heights144/300/260/180/120/120/120/120/280 respectively.
+
+Complete composite schema1 exposes `configuration`, atomic `applyConfiguration`,
+`editableFields`, and per-index `editableChannelFields`. Offered common controls
+are geometry, faceHeight and RX/TX fade. Painting families offer backdrop/title,
+font and readout controls; PA/needle families offer recent peak and high color.
+Eye/Signal/History offer an editable title. ANAN offers displayGroup. History
+adds capacity/time, units and axis range/automatic scale. Clock adds mode/date,
+24-hour display and distinct time/date/title colors. VFO adds retained primitive
+record and frequency/mode/filter/band colors; Contest adds band/mode primitive
+records. Channel schema offers binding, attack/decay, cadence/ignore interval and
+color. PA/needle/Signal channels add history duration/visibility/color and hold;
+PA/needle channels add name/units/visibility; needle channels add shadow, pivot
+and radii, length/stroke, RX/TX gates and display group. Source normalization,
+direction and knot tables are locked. Unsupported known edits are rejected;
+unknown nested data is retained. Task9 must use these per-face lists rather than
+generic channel storage keys. Bar configuration uses Task4's full effective API,
+with each variant's own locked calibration; retained min/max values on standard
+faces remain reset/history data, not calibration controls.
+
+`MeterItem::takeStaticPresentationChange()` is consume-once. MeterWidget consumes
+it during `advanceMeters` through existing `invalidateReadingLayers(true)`.
+Bar/composite applyConfiguration, PA scale, S9-frequency and display-group edits
+mark static presentation once; numeric equal samples do not continuously dirty
+backgrounds. `setFrequency(qint64)`, `setModeLabel`, `setBandLabel` and
+`setUnavailableText` mark dynamic presentation only on actual changes, so model
+state repaints with steady or absent radio readings. Task6 should call
+`markPresentationDirty()` after changing other internal child presentation.
+`internalItems()` and typed accessors expose descendants for Task6 context,
+identity, availability and existing dispatcher wiring. Composite forwards mouse
+press/release/move/wheel through correctly translated child geometry. Inert preview
+blocks descendant signals and disables button actions without subscriptions.
+Existing slice ownership/listening/held policy remains in ContainerButtonDispatcher.
+
+Known standard complete families recognize replay-400 as absent, including
+floored Mic/ALC averages, PBSNR and physically impossible PA/SWR. Remote independent
+peak channels remain explicitly unavailable while useful averages/gains survive.
+MMIO numeric-400 uses configured range semantics; explicit absence reasons clear
+it. Legacy primitive TX zero semantics are unchanged. Registry keeps original
+legacyRecord bytes, named properties/unknown fields, numeric primitive overrides
+and exact unchanged imported geometry. Unrepresentable old whole-face JSON without
+schema1/channels remains raw and explanatory unavailable; it is not silently
+promoted or given source defaults. Task8/9 must distinguish recoverability from
+complete historical visual promotion.
+
+Independent fixtures cover all new available catalog entries, customized round
+trips, atomic invalid edits, binding channels/units, absence/replay, source knots,
+rise/release/history, TX groups, PA ratings and angular geometry. Native cocoa CPU
+and actual Metal QRhi frameSubmitted/grabFramebuffer verify360/640 family frames,
+marker calibration/alpha colors, effective properties, source-only VFO updates,
+clock without radio samples, consume-once static edits and physical-DPR static
+background title pixels. Background allocation and DPR-change rebuilding use
+physical texture dimensions while painters retain logical coordinates. Capture/log references
+and platform limits are in the validation appendix and Task5 report.

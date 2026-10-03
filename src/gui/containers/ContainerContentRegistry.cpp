@@ -5,6 +5,16 @@
 #include <QUuid>
 #include <QJsonDocument>
 #include "gui/meters/presets/BarPresetItem.h"
+#include "gui/meters/presets/PowerSwrPresetItem.h"
+#include "gui/meters/presets/AnanMultiMeterItem.h"
+#include "gui/meters/presets/CrossNeedleItem.h"
+#include "gui/meters/presets/MagicEyePresetItem.h"
+#include "gui/meters/presets/SignalTextPresetItem.h"
+#include "gui/meters/presets/HistoryGraphPresetItem.h"
+#include "gui/meters/presets/VfoDisplayPresetItem.h"
+#include "gui/meters/presets/ClockPresetItem.h"
+#include "gui/meters/presets/ContestPresetItem.h"
+#include "gui/meters/presets/SMeterPresetItem.h"
 #include <memory>
 #include <cmath>
 #include "gui/meters/SpacerItem.h"
@@ -33,6 +43,18 @@
 namespace NereusSDR {
 namespace {
 std::unique_ptr<MeterItem> allocate(const QString& type) {
+    if(type=="meter.powerSwr" || type=="PowerSwrPreset") { return std::make_unique<PowerSwrPresetItem>(); }
+    if(type=="meter.ananMulti" || type=="AnanMM") { return std::make_unique<AnanMultiMeterItem>(); }
+    if(type=="meter.crossNeedle" || type=="CrossNeedle") { return std::make_unique<CrossNeedleItem>(); }
+    if(type=="meter.magicEye" || type=="MagicEyePreset") { return std::make_unique<MagicEyePresetItem>(); }
+    if(type=="meter.signalText" || type=="SignalTextPreset") { return std::make_unique<SignalTextPresetItem>(); }
+    if(type=="meter.historyGraph" || type=="HistoryGraphPreset") { return std::make_unique<HistoryGraphPresetItem>(); }
+    if(type=="meter.vfoDisplay" || type=="VfoDisplayPreset") { return std::make_unique<VfoDisplayPresetItem>(); }
+    if(type=="meter.clock" || type=="ClockPreset") { return std::make_unique<ClockPresetItem>(); }
+    if(type=="meter.contest" || type=="ContestPreset") { return std::make_unique<ContestPresetItem>(); }
+    if(type=="meter.sMeter" || type=="SMeterPreset") { return std::make_unique<SMeterPresetItem>(); }
+    if(type=="meter.spacer") { return std::make_unique<SpacerItem>(); }
+    for(const QString& variant:BarPresetItem::variants()) { QString name=variant; name[0]=name[0].toLower(); if(type=="meter."+name) { auto face=std::make_unique<BarPresetItem>(); face->configureVariant(variant); return face; } }
     if (type == QLatin1String("meter.mic") || type == QLatin1String("meter.alc") || type == QLatin1String("meter.customBar") || type == QLatin1String("BarPreset")) {
         auto face=std::make_unique<BarPresetItem>();
         if(type==QLatin1String("meter.mic")) { face->configureAsMic(); }
@@ -86,6 +108,18 @@ const char* kEntryProperty = "containerContentEntry";
 }
 QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     QVector<ContentDescriptor> result;
+    result.append({QStringLiteral("meter.powerSwr"),QStringLiteral("Power / SWR"),false,true,{}});
+    result.append({QStringLiteral("meter.ananMulti"),QStringLiteral("ANAN multi meter"),false,true,{}});
+    result.append({QStringLiteral("meter.crossNeedle"),QStringLiteral("Cross needle"),false,true,{}});
+    result.append({QStringLiteral("meter.magicEye"),QStringLiteral("Magic eye"),false,true,{}});
+    result.append({QStringLiteral("meter.signalText"),QStringLiteral("Signal text"),false,true,{}});
+    result.append({QStringLiteral("meter.historyGraph"),QStringLiteral("Signal history"),false,true,{}});
+    result.append({QStringLiteral("meter.vfoDisplay"),QStringLiteral("VFO display"),false,true,{}});
+    result.append({QStringLiteral("meter.clock"),QStringLiteral("Clock"),false,true,{}});
+    result.append({QStringLiteral("meter.contest"),QStringLiteral("Contest controls"),false,true,{}});
+    result.append({QStringLiteral("meter.sMeter"),QStringLiteral("S-meter bar (additional)"),false,true,{}});
+    result.append({QStringLiteral("meter.spacer"),QStringLiteral("Spacer"),false,true,{}});
+    for(const QString& variant:BarPresetItem::variants()) { QString name=variant; name[0]=name[0].toLower(); result.append({"meter."+name,variant+" bar",false,variant!="AdcMax",variant=="AdcMax"?QStringLiteral("ADC maximum magnitude has no sanctioned reading provider"):QString()}); }
     result.append({QStringLiteral("meter.mic"),QStringLiteral("Mic"),false,true,{}});
     result.append({QStringLiteral("meter.alc"),QStringLiteral("ALC"),false,true,{}});
     result.append({QStringLiteral("meter.customBar"),QStringLiteral("Custom bar face"),false,true,{}});
@@ -154,6 +188,7 @@ ContentEntry ContainerContentRegistry::makeEntry(const QString& typeId) const {
     }
     const auto item = allocate(typeId);
     if (const auto* face=qobject_cast<const BarPresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->configuration()); }
+    if (const auto* face=qobject_cast<const CompositePresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->configuration()); }
     if (item) { entry.config.insert(QStringLiteral("legacyRecord"), item->serialize()); entry.canvasRect = QRectF(item->x(),item->y(),item->itemWidth(),item->itemHeight()); entry.paintOrder = item->zOrder(); }
     return entry;
 }
@@ -177,14 +212,19 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     if (web) { web->setFetchEnabled(false); }
     const QString raw = entry.config.value(QStringLiteral("legacyRecord")).toString();
     auto* face=qobject_cast<BarPresetItem*>(item.get());
-    if (face) {
+    auto* composite=qobject_cast<CompositePresetItem*>(item.get());
+    if(composite) {
+        if(!raw.isEmpty() && !composite->deserialize(raw)) { return nullptr; }
+        if(!composite->applyConfiguration(entry.config.value(QStringLiteral("properties")).toObject())) { return nullptr; }
+        composite->setPreviewInert(mode!=ContentRenderMode::Live);
+    } else if (face) {
         if(!raw.isEmpty() && !face->deserialize(raw)) { return nullptr; }
         if(!face->applyConfiguration(entry.config.value(QStringLiteral("properties")).toObject())) { return nullptr; }
     } else if (!raw.isEmpty()) {
-        if (!validBaseFields(raw) || raw.section(QLatin1Char('|'), 0, 0) != entry.typeId || !item->deserialize(raw)) { return nullptr; }
+        if (!validBaseFields(raw) || raw.section(QLatin1Char('|'), 0, 0) != (entry.typeId=="meter.spacer" ? QStringLiteral("SPACER") : entry.typeId) || !item->deserialize(raw)) { return nullptr; }
     }
     const QJsonObject overrides = entry.config.value(QStringLiteral("overrides")).toObject();
-    if (!face && !overrides.isEmpty()) {
+    if (!face && !composite && !overrides.isEmpty()) {
         QStringList fields = item->serialize().split(QLatin1Char('|'));
         for (auto it = overrides.begin(); it != overrides.end(); ++it) {
             bool ok = false; const int index = it.key().toInt(&ok);
@@ -220,13 +260,16 @@ ContentEntry ContainerContentRegistry::captureMeterItem(const MeterItem& item, c
     ContentEntry entry = prior.id.isEmpty() ? item.property(kEntryProperty).value<ContentEntry>() : prior;
     const QString serialized = item.serialize();
     const auto* face=qobject_cast<const BarPresetItem*>(&item);
+    const auto* composite=qobject_cast<const CompositePresetItem*>(&item);
     if (face && entry.typeId.isEmpty()) { entry=makeEntry(face->typeId()); entry.config.insert(QStringLiteral("legacyRecord"),serialized); }
+    if(composite && entry.typeId.isEmpty()) { entry=makeEntry(composite->typeId()); entry.config.insert(QStringLiteral("legacyRecord"),serialized); }
     if (entry.typeId.isEmpty()) { entry = makeEntry(serialized.section(QLatin1Char('|'),0,0)); entry.config.insert(QStringLiteral("legacyRecord"), serialized); }
     if (entry.id.isEmpty()) { entry.id = QUuid::createUuid().toString(QUuid::WithoutBraces); }
     if(face) { entry.config.insert(QStringLiteral("properties"),face->configuration()); entry.extensions.remove(QStringLiteral("unavailableReason")); }
+    if(composite) { entry.config.insert(QStringLiteral("properties"),composite->configuration()); entry.extensions.remove(QStringLiteral("unavailableReason")); }
     auto baseline = allocate(entry.typeId);
     if (auto* web = qobject_cast<WebImageItem*>(baseline.get())) { web->setFetchEnabled(false); }
-    if (!face && baseline && baseline->deserialize(entry.config.value(QStringLiteral("legacyRecord")).toString())) {
+    if (!face && !composite && baseline && baseline->deserialize(entry.config.value(QStringLiteral("legacyRecord")).toString())) {
         const QStringList before = baseline->serialize().split(QLatin1Char('|'));
         const QStringList after = serialized.split(QLatin1Char('|'));
         QJsonObject overrides = entry.config.value(QStringLiteral("overrides")).toObject();

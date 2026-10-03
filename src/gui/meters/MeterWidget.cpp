@@ -318,6 +318,7 @@ void MeterWidget::advanceMeters(qint64 monotonicMs)
 {
     for (MeterItem* item : m_items) {
         if (item->advanceMeter(monotonicMs)) { invalidateItemLayers(item); }
+        if (item->takeStaticPresentationChange()) { invalidateReadingLayers(true); }
     }
 }
 
@@ -814,8 +815,9 @@ void MeterWidget::initBackgroundPipeline()
     m_bgVbo = r->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, sizeof(kMeterQuadData));
     m_bgVbo->create();
 
-    const int w = qMax(width(), 64);
-    const int h = qMax(height(), 64);
+    const qreal dpr = devicePixelRatioF();
+    const int w = qMax(qRound(width() * dpr), 64);
+    const int h = qMax(qRound(height() * dpr), 64);
     m_bgGpuTex = r->newTexture(QRhiTexture::RGBA8, QSize(w, h));
     m_bgGpuTex->create();
 
@@ -854,6 +856,7 @@ void MeterWidget::initBackgroundPipeline()
 
     // Initialize backing QImage
     m_bgImage = QImage(w, h, QImage::Format_RGBA8888);
+    m_bgImage.setDevicePixelRatio(dpr);
     m_bgDirty = true;
 }
 
@@ -1003,9 +1006,11 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     // ---- Pipeline 1: Background ----
     // Repaint if dirty (size change or items changed)
     {
-        const QSize bgSize(qMax(w, 64), qMax(h, 64));
-        if (m_bgImage.size() != bgSize) {
+        const qreal dpr = devicePixelRatioF();
+        const QSize bgSize(qMax(qRound(w * dpr), 64), qMax(qRound(h * dpr), 64));
+        if (m_bgImage.size() != bgSize || !qFuzzyCompare(m_bgImage.devicePixelRatio(), dpr)) {
             m_bgImage = QImage(bgSize, QImage::Format_RGBA8888);
+            m_bgImage.setDevicePixelRatio(dpr);
             m_bgGpuTex->setPixelSize(bgSize);
             m_bgGpuTex->create();
             m_bgSrb->setBindings({
