@@ -248,3 +248,32 @@ test; `task-3-tests-delivery.log` passes13/13, exit0, including both new targets
 eight required existing meter/TX regressions, R1, and the affected Task2 importer/
 preset regressions. `task-3-registration-final.log` exit0; `git diff --check` exit0.
 Normal signed/DCO commit hooks and signature evidence are in the Task3 report.
+
+
+## Task 4 — complete Mic/ALC faces (2026-10-02)
+
+Native source-based faces replace the recovered cached-background/generic2% peak
+implementation. Independent trace/calibration and actual-renderer pixel checks
+cover motion, history expiry, peak hold, channel absence and minimum width.
+`config.properties` named JSON overlays preserve original legacyRecord/unknown
+nested data separately from primitive field-index overrides. See meter-reference
+matrix Task4 appendix for exact API/config and intentional presentation departures.
+
+The first compile failed on a missing parent argument in test factory calls
+(task-4-build-initial.log exit1); corrected to the exact registry signature.
+Native pixel RED (task-4-native-gpu-corrected.log exit8) exposed double-alpha
+composition in the existing QRhi overlay: premultiplied QImage + SrcAlpha. Correct
+One source blend makes the independent128-alpha color oracle pass on both native
+CPU and Metal. A delivery run (task-4-tests-final.log exit8) also caught float
+rounding of preserved historical canvas geometry and a synthetic fixture that
+retained a new-face explicit properties overlay when replacing its raw record.
+Exact unchanged document geometry is retained; the historical fixture now models
+an imported record with no explicit overlay. Assertions were preserved.
+
+CPU/GPU captures: `.crew/task-4-captures/{cpu,gpu}/face-{260,434,640}-NNN.png`
+and `mic-alc.gif`.65 frames/100ms, rows72, cocoaDPI72/DPR2. GPUactual Metal API2,
+frameSubmitted + grabFramebuffer, no skips. Controller inspected accepted
+minimum434/larger/falling/unavailable frames and animation. Scale cache is
+face-local and DPR-aware; styles/threshold colors have independent pixel checks.
+Detailed final scoped evidence and exit statuses are recorded in the Task4 report.
+No transmitter operation, Core/model/DSP/wire edit or Windows/Linux runtime claim.

@@ -373,7 +373,7 @@ QString MeterWidget::serializeItems() const
         QString current = record.item->serialize();
         const QStringList rawFields = record.raw.split(QLatin1Char('|'));
         const int knownCount = current.split(QLatin1Char('|')).size();
-        if (rawFields.size() > knownCount) { current += QLatin1Char('|') + rawFields.mid(knownCount).join(QLatin1Char('|')); }
+        if (!record.raw.trimmed().startsWith(QLatin1Char('{')) && rawFields.size() > knownCount) { current += QLatin1Char('|') + rawFields.mid(knownCount).join(QLatin1Char('|')); }
         lines.append(current); emitted.insert(record.item);
     }
     for (const MeterItem* item : m_items) { if (!emitted.contains(item)) { lines.append(item->serialize()); } }
@@ -951,7 +951,9 @@ void MeterWidget::initOverlayPipeline()
     // Alpha blending for overlay compositing
     QRhiGraphicsPipeline::TargetBlend blend;
     blend.enable = true;
-    blend.srcColor = QRhiGraphicsPipeline::SrcAlpha;
+    // QPainter overlay images already contain premultiplied RGB.
+    // Multiply only the destination by remaining alpha, matching CPU composition.
+    blend.srcColor = QRhiGraphicsPipeline::One;
     blend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
     blend.srcAlpha = QRhiGraphicsPipeline::One;
     blend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;

@@ -283,23 +283,23 @@ const QString& label) -> void`; register `meter.mic`, `meter.alc`,
 `meter.customBar` with complete structured configuration. Each exposes all
 internal bindings through `readingBindings()`; composition has one content ID.
 
-- [ ] Write source-derived peak/average traces independently; assert calibration
+- [x] Write source-derived peak/average traces independently; assert calibration
   maps -30/0/+12 to 0/.665/.99, history tracks a recent minimum/maximum, and peak
   hold is independently configurable. Test history expiry while input is equal,
   clipped extrema, no reading, RX/TX changes and minimum supported face size.
-- [ ] Build/run `tst_meter_bar_face`; expect wrong old generic-decay/history
+- [x] Build/run `tst_meter_bar_face`; expect wrong old generic-decay/history
   behavior to fail. Reference Thetis MeterManager lines cited in the design;
   trace oracle must be independent of the C++ implementation under test.
-- [ ] Implement selected composition/dynamics from those references, not the old
+- [x] Implement selected composition/dynamics from those references, not the old
   loosely matched 2% decay. Store title/color, history, peak hold, line/tattletale,
   units and sizing properties only when they affect rendering. Preserve current
   main's correct TX binding mappings/floors. Update background/geometry/overlay
   invalidation so dynamic faces actually repaint in both renderers.
-- [ ] Build/run `tst_meter_bar_face`, `tst_meter_item_scale`,
+- [x] Build/run `tst_meter_bar_face`, `tst_meter_item_scale`,
   `tst_compression_reading`, `tst_multimeter_timing`; expected pass. Capture native
   CPU and GPU frames/short animation at accepted study sizes plus minimum size;
   compare indicators and scale alignment to the accepted study, not just numbers.
-- [ ] Show the implemented Mic/ALC face and animation at this milestone. Record
+- [x] Show the implemented Mic/ALC face and animation at this milestone. Record
   source matrix, any deliberate departures and required attribution/provenance.
   Commit: `feat: render complete Mic and ALC meter faces`.
 

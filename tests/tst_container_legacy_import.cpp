@@ -211,7 +211,7 @@ private slots:
         QVERIFY(guard); QCOMPARE(widget.items().size(),1); QCOMPARE(widget.items().first(),bar);
         QCOMPARE(bar->parent(),&widget);
     }
-    void historicalJsonRemainsNamedAndUnavailable() {
+    void historicalJsonRemainsNamedAndSupported() {
         QFile fixture(QFINDTESTDATA("fixtures/containers/historical-custom.json")); QVERIFY(fixture.open(QIODevice::ReadOnly));
         const QByteArray bytes = fixture.readAll();
         const auto result = LegacyContainerImporter::fromContainerFile(bytes); QVERIFY2(result.ok,qPrintable(result.error));
@@ -219,7 +219,7 @@ private slots:
         QCOMPARE(entry.typeId,QString("BarPreset")); QVERIFY(entry.name.contains("Custom Mic | peak"));
         QCOMPARE(entry.canvasRect,QRectF(.12,.15,.81,.23));
         QCOMPARE(entry.config.value("legacyRecord").toString().toUtf8(),bytes);
-        ContainerContentRegistry registry; QVERIFY(!registry.createMeterItem(entry,nullptr));
+        ContainerContentRegistry registry; std::unique_ptr<MeterItem> face(registry.createMeterItem(entry,nullptr)); QVERIFY(face);
         const QString primitive = registry.makeEntry("BAR").config.value("legacyRecord").toString();
         const auto mixed = LegacyContainerImporter::fromClipboard(primitive+"\n"+QString::fromUtf8(bytes)+"\nUNKNOWN|exact");
         QVERIFY(mixed.ok); QCOMPARE(mixed.document.containers.first().contents.size(),3);

@@ -61,6 +61,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ItemGroup.h"
+#include <QJsonDocument>
 #include "MeterWidget.h"
 #include "MeterPoller.h"
 
@@ -178,7 +179,7 @@ QString ItemGroup::serialize() const
         QString current = record.item->serialize();
         const QStringList fields = record.raw.split(QLatin1Char('|'));
         const int knownCount = current.split(QLatin1Char('|')).size();
-        if (fields.size() > knownCount) { current += QLatin1Char('|')+fields.mid(knownCount).join(QLatin1Char('|')); }
+        if (!record.raw.trimmed().startsWith(QLatin1Char('{')) && fields.size() > knownCount) { current += QLatin1Char('|')+fields.mid(knownCount).join(QLatin1Char('|')); }
         records.append(current); emitted.insert(record.item);
     }
     for (const MeterItem* item : m_items) { if (!emitted.contains(item)) { records.append(item->serialize()); } }
@@ -218,7 +219,7 @@ ItemGroup* ItemGroup::deserialize(const QString& data, QObject* parent)
     for (int i = 0; i < count; ++i) {
         const QString& itemData = lines[7 + i];
         ContentEntry entry;
-        entry.typeId = itemData.section(QLatin1Char('|'),0,0);
+        entry.typeId = itemData.trimmed().startsWith(QLatin1Char('{')) ? QJsonDocument::fromJson(itemData.toUtf8()).object().value(QStringLiteral("kind")).toString() : itemData.section(QLatin1Char('|'),0,0);
         entry.config.insert(QStringLiteral("legacyRecord"),itemData);
         entry.paintOrder = itemData.section(QLatin1Char('|'),6,6).toInt();
         MeterItem* item = ContainerContentRegistry().createMeterItem(entry,group);

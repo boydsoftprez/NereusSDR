@@ -3,6 +3,8 @@
 #include "gui/meters/MeterItem.h"
 #include "core/UnbuiltFeatureList.h"
 #include <QUuid>
+#include <QJsonDocument>
+#include "gui/meters/presets/BarPresetItem.h"
 #include <memory>
 #include <cmath>
 #include "gui/meters/SpacerItem.h"
@@ -31,6 +33,12 @@
 namespace NereusSDR {
 namespace {
 std::unique_ptr<MeterItem> allocate(const QString& type) {
+    if (type == QLatin1String("meter.mic") || type == QLatin1String("meter.alc") || type == QLatin1String("meter.customBar") || type == QLatin1String("BarPreset")) {
+        auto face=std::make_unique<BarPresetItem>();
+        if(type==QLatin1String("meter.mic")) { face->configureAsMic(); }
+        if(type==QLatin1String("meter.alc")) { face->configureAsAlc(); }
+        return face;
+    }
     if (type == QLatin1String("BAR")) { return std::make_unique<BarItem>(); }
     if (type == QLatin1String("SOLID")) { return std::make_unique<SolidColourItem>(); }
     if (type == QLatin1String("IMAGE")) { return std::make_unique<ImageItem>(); }
@@ -78,6 +86,9 @@ const char* kEntryProperty = "containerContentEntry";
 }
 QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     QVector<ContentDescriptor> result;
+    result.append({QStringLiteral("meter.mic"),QStringLiteral("Mic"),false,true,{}});
+    result.append({QStringLiteral("meter.alc"),QStringLiteral("ALC"),false,true,{}});
+    result.append({QStringLiteral("meter.customBar"),QStringLiteral("Custom bar face"),false,true,{}});
     result.append({QStringLiteral("BAR"), QStringLiteral("Bar"), false, true, {}});
     result.append({QStringLiteral("SOLID"), QStringLiteral("SolidColour"), false, true, {}});
     result.append({QStringLiteral("IMAGE"), QStringLiteral("Image"), false, true, {}});
@@ -142,6 +153,7 @@ ContentEntry ContainerContentRegistry::makeEntry(const QString& typeId) const {
         if (descriptor.typeId == typeId) { entry.name = descriptor.title; break; }
     }
     const auto item = allocate(typeId);
+    if (const auto* face=qobject_cast<const BarPresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->configuration()); }
     if (item) { entry.config.insert(QStringLiteral("legacyRecord"), item->serialize()); entry.canvasRect = QRectF(item->x(),item->y(),item->itemWidth(),item->itemHeight()); entry.paintOrder = item->zOrder(); }
     return entry;
 }
@@ -164,11 +176,15 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     auto* web = qobject_cast<WebImageItem*>(item.get());
     if (web) { web->setFetchEnabled(false); }
     const QString raw = entry.config.value(QStringLiteral("legacyRecord")).toString();
-    if (!raw.isEmpty()) {
+    auto* face=qobject_cast<BarPresetItem*>(item.get());
+    if (face) {
+        if(!raw.isEmpty() && !face->deserialize(raw)) { return nullptr; }
+        if(!face->applyConfiguration(entry.config.value(QStringLiteral("properties")).toObject())) { return nullptr; }
+    } else if (!raw.isEmpty()) {
         if (!validBaseFields(raw) || raw.section(QLatin1Char('|'), 0, 0) != entry.typeId || !item->deserialize(raw)) { return nullptr; }
     }
     const QJsonObject overrides = entry.config.value(QStringLiteral("overrides")).toObject();
-    if (!overrides.isEmpty()) {
+    if (!face && !overrides.isEmpty()) {
         QStringList fields = item->serialize().split(QLatin1Char('|'));
         for (auto it = overrides.begin(); it != overrides.end(); ++it) {
             bool ok = false; const int index = it.key().toInt(&ok);
@@ -203,11 +219,14 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
 ContentEntry ContainerContentRegistry::captureMeterItem(const MeterItem& item, const ContentEntry& prior) const {
     ContentEntry entry = prior.id.isEmpty() ? item.property(kEntryProperty).value<ContentEntry>() : prior;
     const QString serialized = item.serialize();
+    const auto* face=qobject_cast<const BarPresetItem*>(&item);
+    if (face && entry.typeId.isEmpty()) { entry=makeEntry(face->typeId()); entry.config.insert(QStringLiteral("legacyRecord"),serialized); }
     if (entry.typeId.isEmpty()) { entry = makeEntry(serialized.section(QLatin1Char('|'),0,0)); entry.config.insert(QStringLiteral("legacyRecord"), serialized); }
     if (entry.id.isEmpty()) { entry.id = QUuid::createUuid().toString(QUuid::WithoutBraces); }
+    if(face) { entry.config.insert(QStringLiteral("properties"),face->configuration()); entry.extensions.remove(QStringLiteral("unavailableReason")); }
     auto baseline = allocate(entry.typeId);
     if (auto* web = qobject_cast<WebImageItem*>(baseline.get())) { web->setFetchEnabled(false); }
-    if (baseline && baseline->deserialize(entry.config.value(QStringLiteral("legacyRecord")).toString())) {
+    if (!face && baseline && baseline->deserialize(entry.config.value(QStringLiteral("legacyRecord")).toString())) {
         const QStringList before = baseline->serialize().split(QLatin1Char('|'));
         const QStringList after = serialized.split(QLatin1Char('|'));
         QJsonObject overrides = entry.config.value(QStringLiteral("overrides")).toObject();
@@ -217,7 +236,11 @@ ContentEntry ContainerContentRegistry::captureMeterItem(const MeterItem& item, c
         }
         entry.config.insert(QStringLiteral("overrides"), overrides);
     }
-    entry.canvasRect = QRectF(item.x(),item.y(),item.itemWidth(),item.itemHeight());
+    // Retain exact imported double geometry when the float-based renderer did
+    // not edit it; hydration alone must not round the document coordinates.
+    if(entry.canvasRect.isNull() || float(entry.canvasRect.x())!=item.x() || float(entry.canvasRect.y())!=item.y() || float(entry.canvasRect.width())!=item.itemWidth() || float(entry.canvasRect.height())!=item.itemHeight()) {
+        entry.canvasRect = QRectF(item.x(),item.y(),item.itemWidth(),item.itemHeight());
+    }
     entry.paintOrder = item.zOrder();
     entry.context.insert(QStringLiteral("bindingId"),item.bindingId());
     entry.context.insert(QStringLiteral("mmioGuid"),item.mmioGuid().toString(QUuid::WithoutBraces));
