@@ -2,11 +2,14 @@
 // parent ID, and incompatible/intercepted methods must never be overwritten.
 // JJ Boyd (KG4VCF), 2026-10-03, with OpenAI Codex assistance.
 #include "gui/QtCocoaAccessibilityOwnershipGuard.h"
+#include "gui/ConnectionSelector.h"
 #include "gui/QtCocoaAccessibilityOwnershipGuard_p.h"
 #include <QApplication>
 #include <QAccessible>
 #include <QPushButton>
 #include <QTreeWidget>
+#include <QPersistentModelIndex>
+#include <QSignalSpy>
 #include <QtTest>
 #include <memory>
 #include <thread>
@@ -90,6 +93,78 @@ private slots:
         QVERIFY(deallocUnchanged);
         QVERIFY(foreignUnchanged);
         QVERIFY(!reason.isEmpty());
+    }
+
+    void connectionRefreshAfterNativeTableRebuild()
+    {
+        QString reason;
+        QVERIFY2(installQtCocoaAccessibilityOwnershipGuard(&reason), qPrintable(reason));
+        QAccessible::setActive(true);
+        NereusSDR::ConnectionSelector selector;
+        NereusSDR::ConnectionTargetRow first{QStringLiteral("first"),
+            NereusSDR::ConnectionTargetKind::SavedCore, QStringLiteral("First"),
+            QStringLiteral("Test"), QStringLiteral("private"), QStringLiteral("Idle")};
+        NereusSDR::ConnectionTargetRow selected = first;
+        selected.key = QStringLiteral("selected");
+        selected.name = QStringLiteral("Selected");
+        selector.setTargets({first, selected});
+        selector.setSelectedKey(selected.key);
+        auto* tree = selector.findChild<QTreeWidget*>(QStringLiteral("connectionSelectorTargets"));
+        QVERIFY(tree);
+        tree->resize(820, 400);
+        tree->doItemsLayout();
+        QTreeWidgetItem* selectedItem = tree->currentItem();
+        const QPersistentModelIndex selectedIndex = tree->indexFromItem(selectedItem);
+        QSignalSpy connectSpy(&selector, &NereusSDR::ConnectionSelector::connectRequested);
+        QSignalSpy resetSpy(tree->model(), &QAbstractItemModel::modelReset);
+        QAccessibleInterface* table = QAccessible::queryAccessibleInterface(tree);
+        const QAccessible::Id tableId = QAccessible::uniqueId(table);
+        Class cls = NSClassFromString(@"QMacAccessibilityElement");
+        id element = [cls elementWithId:tableId];
+        const QList<QAccessibleInterface*> cells = table->selectionInterface()->selectedItems();
+        QCOMPARE(cells.size(), 4);
+        QList<QAccessible::Id> oldIds;
+        for (QAccessibleInterface* cell : cells) {
+            oldIds.append(QAccessible::uniqueId(cell));
+        }
+        tree->doItemsLayout();
+        NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+        [element updateTableModel];
+        NSArray* native = [element accessibilitySelectedChildren];
+        QCOMPARE(native.count, NSUInteger(4));
+        for (id child in native) {
+            QVERIFY([child qtInterface]);
+        }
+        [element updateTableModel];
+        [pool drain];
+        // Qt 6.11 Cocoa frees real cell interfaces with its old native rows,
+        // leaving their IDs in QAccessibleTable's independent child cache.
+        for (QAccessible::Id identifier : oldIds) {
+            QVERIFY(!QAccessible::accessibleInterface(identifier));
+        }
+        QCOMPARE(QAccessible::accessibleInterface(tableId), table);
+        QVERIFY(!selector.isVisible());
+
+        selector.setTargets({selected});
+
+        QCOMPARE(selector.selectedKey(), selected.key);
+        QCOMPARE(tree->currentItem(), selectedItem);
+        QVERIFY(selectedIndex.isValid());
+        QCOMPARE(tree->itemFromIndex(selectedIndex), selectedItem);
+        QCOMPARE(resetSpy.count(), 0);
+        QCOMPARE(connectSpy.count(), 0);
+        tree->doItemsLayout();
+        NSAutoreleasePool* freshPool = [[NSAutoreleasePool alloc] init];
+        NSArray* fresh = [element accessibilitySelectedChildren];
+        QCOMPARE(fresh.count, NSUInteger(4));
+        for (id child in fresh) {
+            QAccessibleInterface* cell = [child qtInterface];
+            QVERIFY(cell && cell->isValid());
+        }
+        [freshPool drain];
+        selector.setTargets({});
+        QVERIFY(selector.selectedKey().isEmpty());
+        QVERIFY(table->selectionInterface()->selectedItems().isEmpty());
     }
 
     void selectedChildrenLifecycle()
