@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original native grips, reserved chrome and ownership regressions.
 // Modification history (NereusSDR):
+//   2026-10-03 — Deterministic widget-local hover delivery by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest>
 #include <QTemporaryDir>
@@ -13,6 +15,7 @@
 #include <QDrag>
 #include <QTimer>
 #include <QScreen>
+#include <QMouseEvent>
 #include "core/AppSettings.h"
 #include "gui/containers/ContainerArrangeController.h"
 #include "gui/containers/ContainerContentHost.h"
@@ -82,7 +85,13 @@ class TstContainerChrome : public QObject
         QCoreApplication::processEvents();
         QCOMPARE(content.geometry(), geometry);
         QCOMPARE(content.mapTo(&c, QPoint()), position);
-        QTest::mouseMove(&c, QPoint(10, 10));
+        // Deliver the hover to this fixture without depending on the
+        // physical pointer or another native window owning desktop focus.
+        const QPoint hoverPosition(10, 10);
+        QMouseEvent hover(QEvent::MouseMove, hoverPosition,
+                          c.mapToGlobal(hoverPosition), Qt::NoButton,
+                          Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(&c, &hover);
         QVERIFY(c.chromeVisible());
         QCOMPARE(content.mapTo(&c, QPoint()), position);
         c.setNoControls(true);
