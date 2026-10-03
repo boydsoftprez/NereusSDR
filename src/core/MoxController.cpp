@@ -25,6 +25,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-01 - #299: document direct anti-VOX replay to new workers while
+//                 keeping controller setters idempotent. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-25 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
@@ -2602,10 +2605,9 @@ void MoxController::setAntiVoxRun(bool run)
 // re-runs the recompute helpers so the late-wired TxChannel receives the
 // current values.  See the header comment block for the full motivation.
 //
-// Anti-VOX tau and anti-VOX run are NOT covered here because their TM ->
-// MoxController connects are deferred to wireConnectionSignals
-// (RadioModel.cpp:5025/5051) and the explicit re-push there
-// (RadioModel.cpp:5043/5070) already lands after TxWorkerThread is wired.
+// Anti-VOX tau and run are replayed directly to each new TxWorkerThread
+// in RadioModel::wireConnectionSignals. Their normal setters remain
+// idempotent because this controller survives reconnects.
 // ---------------------------------------------------------------------------
 void MoxController::primeWdspState()
 {

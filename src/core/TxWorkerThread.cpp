@@ -110,6 +110,9 @@
 //   2026-09-30 : RADE threads by J.J. Boyd (KG4VCF): the RADE branch emits
 //                 radeMicBlockReady only while keyed (setRadeMicKeyed).
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-01: Issue #269: reopen a stopped mic cadence source before
+//                 restarting the pump. J.J. Boyd (KG4VCF), AI-assisted
+//                 implementation via OpenAI Codex.
 // =================================================================
 
 // no-port-check: NereusSDR-original file.  The Thetis cmbuffs.c /
@@ -318,6 +321,12 @@ void TxWorkerThread::startPump()
             << ", micSource ="   << static_cast<const void*>(m_micSource)
             << "); pump NOT started.";
         return;
+    }
+    // Issue #269: stopPump closes the microphone cadence source. A live
+    // receiver reconfiguration reuses it, so restart it before the run-loop
+    // can observe its stopped gate and exit. Leave a live source untouched.
+    if (!m_micSource->isRunning()) {
+        m_micSource->start();
     }
     qCInfo(lcTxWorker) << "startPump: launching worker thread"
                        << "blockFrames=" << kBlockFrames

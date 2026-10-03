@@ -3899,6 +3899,13 @@ target_compile_definitions(tst_radio_model_link_lost_unkey PRIVATE NEREUS_BUILD_
 nereus_add_test(tst_amp_changeover_gate)
 target_compile_definitions(tst_amp_changeover_gate PRIVATE NEREUS_BUILD_TESTS)
 
+# Related to #300: reconnect and repeated keying wiring deliver each phase
+# once; an earlier session's interlock failsafe cannot key its replacement.
+nereus_add_test(tst_radio_model_keying_reconnect)
+if(TARGET tst_radio_model_keying_reconnect)
+    target_compile_definitions(tst_radio_model_keying_reconnect PRIVATE NEREUS_BUILD_TESTS)
+endif()
+
 # ── iPhone app plan Task 38 (R-IOS-04, D29): the transmit time-out ─────────
 # TxTimeOutTimer (Thetis TimeOutTimerManager) with an injected clock and
 # pinger: the MOX time-out from the rising edge, the ping time-out, the
@@ -7296,6 +7303,10 @@ endif()
 #         sections 8.1 and 8.2.
 nereus_add_test(tst_notch_hit_test)
 
+# Issues #141/#147: actual paint and mouse behavior share the GPU layout
+# on both CPU-only and GPU spectrum builds.
+nereus_add_test(tst_spectrum_layout_parity)
+
 # ── PR #291 Codex review fixes ────────────────────────────────────────────
 # Capture-path helpers behind the native-rate mic resampling path.  The
 # defects only appear on a device whose native rate differs from the
@@ -7398,6 +7409,25 @@ nereus_add_test(tst_daemon_settings_profile)
 # named "WisdomThread" is ever live, and exposes ConnectableRadioModel
 # (tests/fakes/ConnectableRadioModel.{h,cpp}) as the reusable helper Tasks
 # 3, 12 and 20 build on.
+# Regression: actual TX state replay through RadioModel and the P1 fake.
+if(WDSP_FOUND)
+    nereus_add_test(tst_hl2_tune_magnitude_replay
+        fakes/P1FakeRadio.cpp fakes/ConnectableRadioModel.cpp WdspHl2TuneProbe.c)
+    set_source_files_properties(WdspHl2TuneProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    if(TARGET tst_hl2_tune_magnitude_replay)
+        target_include_directories(tst_hl2_tune_magnitude_replay PRIVATE ${FFTW3_INCLUDE_DIRS})
+        target_compile_definitions(tst_hl2_tune_magnitude_replay PRIVATE NEREUS_BUILD_TESTS WDSP_STATIC_BUILD)
+    endif()
+
+    nereus_add_test(tst_antivox_reconnect_replay
+        fakes/P1FakeRadio.cpp fakes/ConnectableRadioModel.cpp WdspAntiVoxReplayProbe.c)
+    set_source_files_properties(WdspAntiVoxReplayProbe.c PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    if(TARGET tst_antivox_reconnect_replay)
+        target_include_directories(tst_antivox_reconnect_replay PRIVATE ${FFTW3_INCLUDE_DIRS})
+        target_compile_definitions(tst_antivox_reconnect_replay PRIVATE NEREUS_BUILD_TESTS WDSP_STATIC_BUILD)
+    endif()
+endif()
+
 nereus_add_test(tst_connectable_radio_model
     fakes/P1FakeRadio.cpp
     fakes/ConnectableRadioModel.cpp)

@@ -220,6 +220,56 @@ private slots:
         QCOMPARE(w.isRunning(), false);
     }
 
+    // Issue #269: stopPump closes the cadence source. Restarting the pump
+    // must reopen it and process fresh microphone blocks, including a second
+    // restart. Omitting the source restart makes the real thread exit early.
+    void restartPump_resumesMicrophoneBlocks()
+    {
+        AudioEngine engine;
+        TxChannel ch(kChannelId, kBufSize, kBufSize);
+        MockConnection conn;
+        ch.setConnection(&conn);
+        ch.setRunning(true);
+        TxMicSource src;
+        src.start();
+        TxWorkerThread worker;
+        worker.setTxChannel(&ch);
+        worker.setAudioEngine(&engine);
+        worker.setMicSource(&src);
+        std::vector<float> samples(kBufSize, 0.25f);
+        for (int cycle = 0; cycle < 3; ++cycle) {
+            worker.startPump();
+            QTRY_VERIFY_WITH_TIMEOUT(worker.isRunning(), 500);
+            QVERIFY(src.isRunning());
+            src.inbound(samples.data(), kBufSize);
+            QTRY_COMPARE_WITH_TIMEOUT(conn.callCount.load(), cycle + 1, 1000);
+            worker.stopPump();
+            QVERIFY(!worker.isRunning());
+            QVERIFY(!src.isRunning());
+        }
+    }
+
+    // Starting an already-live source must not reset its queued audio.
+    void startPump_keepsAlreadyRunningMicrophoneBlocks()
+    {
+        AudioEngine engine;
+        TxChannel ch(kChannelId, kBufSize, kBufSize);
+        MockConnection conn;
+        ch.setConnection(&conn);
+        ch.setRunning(true);
+        TxMicSource src;
+        src.start();
+        std::vector<float> samples(kBufSize, 0.25f);
+        src.inbound(samples.data(), kBufSize);
+        TxWorkerThread worker;
+        worker.setTxChannel(&ch);
+        worker.setAudioEngine(&engine);
+        worker.setMicSource(&src);
+        worker.startPump();
+        QTRY_COMPARE_WITH_TIMEOUT(conn.callCount.load(), 1, 1000);
+        worker.stopPump();
+    }
+
     // ── 4. One inbound block → tickForTest fires exactly one fexchange0 ─────
     void tickForTest_drivesOneSendTxIq_whenBlockAvailable()
     {
