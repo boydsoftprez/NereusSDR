@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-03 — Draw ANAN selector once in the static layer by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-02 — Native complete faces by J.J. Boyd (KG4VCF), with AI-assisted
@@ -427,7 +429,7 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
         font.setPixelSize(qBound(10,int(outer.width()/30),14)); p.setFont(font);
         p.fillRect(QRectF(outer.left(),outer.bottom()-35,outer.width(),35),color(m_config,"backdropColor")); p.setPen(color(m_config,"lowColor")); p.drawText(QRectF(outer.left()+6,outer.bottom()-35,outer.width()-12,32),Qt::AlignCenter,readings.join("   "));
     }
-    if(m_face==Face::Anan && m_tx) { p.setPen(color(m_config,"lowColor")); p.drawText(QRectF(outer.right()-100,outer.top()+2,96,22),Qt::AlignCenter,QStringList{"","Power/SWR","Compression","ALC group","Amps"}.value(m_config["displayGroup"].toInt())+" ▾"); }
+    if(background && m_face==Face::Anan && m_tx) { p.setPen(color(m_config,"lowColor")); p.drawText(QRectF(outer.right()-100,outer.top()+2,96,22),Qt::AlignCenter,QStringList{"","Power/SWR","Compression","ALC group","Amps"}.value(m_config["displayGroup"].toInt())+" ▾"); }
 }
 void CompositePresetItem::paintEye(QPainter& p,const QRectF& outer) {
     const QRectF r=outer.adjusted(outer.width()*.22,28,-outer.width()*.22,-12); const auto& channel=m_channels.first();

@@ -651,3 +651,72 @@ submission/framebuffer readback and CPU QWidget rendering are asserted. No opera
 profile, connected hardware, duplicate singleton, extra poll target or action is used.
 Physical pointer/QDragEscape/monitor tests remain pending locked-Mac access;
 Windows/Linux and broad all_tests/RT/end-to-end benches belong to Task 10.
+
+## Task 10 — integration and final recovery evidence (2026-10-03)
+
+`tests/tst_container_workspace_integration.cpp` follows actual legacy settings
+migration into a two-container draft, Apply, move/Pop Out, AppSettings disk reload
+and shell Return. Names, MMIO GUID/variable/context, opaque raw entries, original
+legacy backup, stable order and late singleton identity survive. Its station
+backend spy specifically proves zero station-setting writes. An unavailable-control
+case retains exact Voice/Discord records in the committed workspace through Apply,
+float/dock and reload, with no live host items. A cached-source case uses
+a cached Remote RadioModel/SliceModel, actual ContainerSourceAdapter, MeterPoller
+and TransmitState: disconnect/rebuild/reconnect, stale-cache refusal, explicit
+foreign-session TX refusal, matching-session recovery and TX-off reset. No
+transport, RF, local DSP or operator profile is started.
+
+`tests/tst_container_meter_native.cpp` uses parentless native meter construction
+before host attachment and destroys surfaces before owners. Matching CPU/Metal
+frames cover ten families, dark/light surrounds and width260/434/640 with declared
+family minima respected (composite minima are360 where required). Existing
+Task4/5 numeric dynamics/channel and DPR reference oracles remain in the final
+combined graph. New traces exercise native dynamic redraw, static configuration
+invalidation and leaf reconstruction. Actual Retina DPR2 is observed; an additional
+DPR1 fixture covers four selected rows in both products, without claiming a physical
+monitor move. Final captures are in task-10-captures/{cpu,gpu}-delivery and
+{cpu,gpu}-dpr1-delivery (60 DPR2 rows and four DPR1 rows per product).
+
+The real TxApplet fixture counts sanctioned MOX/Tune/two-tone handlers and watches
+TransmitModel power/mic/filter/key-state signals after setup. Repeated move,
+Pop Out/Return and floating/docking preserve its exact widget pointer and emit no
+requests or parameter changes. The actual visible grip must have nonempty geometry
+and remain outside the TX controls. The native TX/microphone capture includes the
+real applet, not a control mock. Qt fixture events do not prove physical pointer
+QDrag/Escape behavior on the locked desktop.
+
+Native QA exposed an actual ANAN selector defect: paintNeedles painted the group
+label in both static and dynamic layers with different fonts, causing overlapping
+Power/SWR text. A transparent dynamic-layer image regression first failed; the
+selector now paints once in the static background. Current corrected native
+frames and layer test replace early images. Upstream geometry/calibration and
+comments are preserved, with modification history/provenance updated.
+
+The first complete 1099-test ordinary run exposed five failing targets. Product
+repairs restore the closed-slice letter, narrow frequency-only refresh to preserve
+unrelated mode/filter button state, and use plain operator wording. Persistence
+fixtures now commit entries through the workspace API and check inert raw retention
+instead of bypassing ownership or deleting retired records. The remote MON fixture
+keeps all availability, state and on-air checks using real committed host items;
+its old bare widget could become stale during geometry reconciliation.
+
+### Reference and recovery decisions
+
+| Reference | Final decision | Evidence |
+| --- | --- | --- |
+| Main dd53 primitive meter/poller APIs | Unmodified common benchmark fixture against actual product libraries | Paired metadata/result artifacts; never emulate main with current binary |
+| Accepted Thetis v2.10.3.15 families, Task4/5 source audits | Keep calibrated face geometry/channels; fix only duplicate Nereus selector layer | Native layer regression and matching current CPU/Metal frames |
+| Accepted Aether 5766bb13 grip/placement study | Explicit separate grip gutter and atomic document arrangement | Actual TX grip bounds, existing chrome/drop/controller native tests |
+| Old15de/April50c recovery material | Keep original raw payload/unknown metadata; no wholesale source transplant | Full migration→Apply→restart→Return test plus exchange/legacy gates |
+| Core5d accepted Settings/logger/pan carries | Retain actual slice-host MaxBin and session gating; no mutable peer copy | Final combined pan/source/session tests |
+
+Focused help is `resources/help/containers.md`, linked from getting-started. It
+documents actual arrange/menu actions, Apply/Cancel/conflict Reload, singleton
+Move, Return/Hide/remove, Hidden recovery/lock, source availability and portable
+exchange/recovery. The unfinished global Help action is not enabled.
+
+Final combined build/tests, paired timings, raw exits/counts and source/binary
+identities are recorded in `.crew/2026-10-02-containers-and-objects-plan/task-10-report.md`.
+Physical pointer/QDragEscape, monitor removal and Windows/Linux native/GPU benches
+remain pending. Root owns whole-branch independent review after the signed
+Task10 checkpoint; this appendix does not label that review passed.

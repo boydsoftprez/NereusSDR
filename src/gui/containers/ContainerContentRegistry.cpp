@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-03 — Plain preview and unavailable explanations by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include "ContainerContentRegistry.h"
@@ -269,7 +271,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
         if (descriptor.typeId == QLatin1String("CLICKBOX")) { feature = UnbuiltFeature::ContainerClickBox; }
         if (descriptor.typeId == QLatin1String("VOICERECPLAY")) { feature = UnbuiltFeature::Voice; }
         if (feature && !UnbuiltFeatures::isBuilt(*feature)) {
-            descriptor.available = false; descriptor.unavailableReason = QStringLiteral("This capability is not built yet");
+            descriptor.available = false; descriptor.unavailableReason = QStringLiteral("This capability is not built");
         }
     }
     for (auto& d : result) {
@@ -368,7 +370,7 @@ QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWid
     auto* tile=new QWidget(parent); auto* layout=new QVBoxLayout(tile);
     tile->setMinimumHeight(64); tile->setStyleSheet("background:#172534;color:#c8d8e8;border:1px solid #203040;");
     const QString reason=entry.extensions.contains("unavailableReason") ? entry.extensions.value("unavailableReason").toString() : !isAvailable(entry.typeId) ? unavailableReason(entry.typeId)
-        : (entry.typeId.startsWith("applet:") ? (entry.typeId=="applet:s_meter" ? tr("Existing S-meter view. Source changes take effect on Apply; preview controls are disabled.") : tr("Existing applet view with its current window controller. Controls are disabled in this preview."))
+        : (entry.typeId.startsWith("applet:") ? (entry.typeId=="applet:s_meter" ? tr("Existing S-meter view. Source changes take effect on Apply; preview controls are disabled.") : tr("This applet keeps its current radio and slice. Preview controls are disabled."))
         : tr("Unsupported configuration; original data retained."));
     auto* title=new QLabel(entry.name+QStringLiteral(" — ")+reason,tile); title->setWordWrap(true); layout->addWidget(title);
     if (auto* view=singletonView(entry.typeId); view && view->isVisible() && isAvailable(entry.typeId)) {

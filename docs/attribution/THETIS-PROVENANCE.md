@@ -514,3 +514,8 @@ portable document envelopes and collision-safe recovery; it copies no new
 upstream implementation. ContentPropertyEditor and the SignalTextItemEditor
 Qt adapter are original GUI plumbing, marked `no-port-check`. Global signal
 units remain the existing multimeter preference rather than a per-item override.
+
+Task 10 native integration (2026-10-03): `CompositePresetItem.cpp` draws the
+Nereus ANAN group selector only in its static background layer. This prevents
+duplicate label painting in the dynamic layer; upstream source geometry,
+channels, calibration, notices and inline comments remain unchanged.

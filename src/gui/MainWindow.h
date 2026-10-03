@@ -973,7 +973,7 @@ private slots:
     // `only`: just that item (one added while the window runs).
     void refreshContainerControls(MeterItem* only = nullptr);
     void refreshContainer(class ContainerWidget* container, MeterItem* only = nullptr);
-    void refreshContainerMeter(class ContainerWidget* container, MeterWidget* meter, MeterItem* only, const QJsonObject& context);
+    void refreshContainerMeter(class ContainerWidget* container, MeterWidget* meter, MeterItem* only, const QJsonObject& context, bool frequencyOnly = false);
     QString containerSessionId() const;
     int containerControlRxSource(const ContainerWidget* container) const;
     // Tuning: only the VFO display and band items of the containers on

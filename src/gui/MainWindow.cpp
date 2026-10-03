@@ -11,6 +11,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Preserve closed-slice names and narrow tuning refreshes by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
@@ -13250,7 +13252,7 @@ void MainWindow::refreshContainer(ContainerWidget* c, MeterItem* only)
         }
     }
 }
-void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, MeterItem* only, const QJsonObject& context)
+void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, MeterItem* only, const QJsonObject& context, bool frequencyOnly)
 {
     if (m_shuttingDown || !meter || !m_radioModel || !m_containerButtons) { return; }
     const bool unsupported = only && only->property("containerUnsupportedSource").toBool();
@@ -13314,7 +13316,9 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         // none of its last state. The buttons light nothing and say why
         // when clicked; the VFO display says the slice is not open.
         const QString notOpen = unsupported ? only->property("unsupportedSourceReason").toString() :
-            tr("%1 is not open").arg(ContainerWidget::sliceNameForRxSource(rxSource));
+            tr("%1 is not open").arg(ContainerWidget::sliceNameForRxSource(
+                context.contains("sliceId") ? context.value("sliceId").toInt(-1)+1 :
+                context.value("rxSource").toInt(c ? c->rxSource() : 0)));
         const auto applyNoSlice = [&](MeterItem* item) {
             if (auto* face = qobject_cast<CompositePresetItem*>(item)) { face->setUnavailableText(notOpen); }
             if (applyAlways(item)) { return; }
@@ -13389,6 +13393,14 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
             face->setModeLabel(modeName); face->setBandLabel(bandLabel(band));
             face->setAboveS9Frequency(slice->frequency() > 30000000.0);
         }
+        if (frequencyOnly) {
+            if (auto* bandItem = qobject_cast<BandButtonItem*>(item)) { m_containerButtons->applyBand(bandItem, rxSource); }
+            if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
+                vfo->setFrequency(static_cast<int64_t>(std::llround(slice->frequency())));
+                vfo->setBandLabel(bandLabel(band));
+            }
+            return;
+        }
         if (applyAlways(item)) { return; }
         if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
             m_containerButtons->applySliceAvailability(box, rxSource);
@@ -13429,8 +13441,20 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
 
 void MainWindow::refreshContainerFrequency(SliceModel* slice)
 {
-    if (m_shuttingDown || !slice) { return; }
-    refreshContainerControls();
+    if (m_shuttingDown || !slice || !m_containerManager) { return; }
+    for (ContainerWidget* c : m_containerManager->allContainers()) {
+        for (MeterWidget* meter : contentMeters(c->content())) {
+            const QVariant surfaceContext = meter->property("containerSourceContext");
+            for (MeterItem* root : meter->items()) {
+                const QVariant entryContext = root->property("containerSourceContext");
+                const QJsonObject context = entryContext.isValid() ? entryContext.toJsonObject() :
+                    (surfaceContext.isValid() ? surfaceContext.toJsonObject() : QJsonObject{{"sliceId", c->rxSource()-1}});
+                if (ContainerSourceAdapter::slice(m_radioModel, context, windowRxSlice(), containerSessionId()) == slice) {
+                    refreshContainerMeter(c, meter, root, context, true);
+                }
+            }
+        }
+    }
 }
 
 void MainWindow::onContainerOtherButtonClicked(ContainerWidget* c, int buttonId)

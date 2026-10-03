@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Plain meter-data-source tooltip by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
@@ -399,7 +401,7 @@ void ContainerSettingsDialog::buildLayout()
     if (m_editSession) {
         m_btnPreset->hide();m_btnCopySettings->hide();m_btnPasteSettings->hide();
         m_highlightCheck->setEnabled(false);m_highlightCheck->setToolTip(tr("Highlight is a live arrangement aid; drafts use the preview."));
-        m_btnMmio->setEnabled(false); m_btnMmio->setToolTip(tr("Edit external endpoints in application settings."));
+        m_btnMmio->setEnabled(false); m_btnMmio->setToolTip(tr("Edit meter data sources in application settings."));
         for (auto* edit : findChildren<QLineEdit*>()) { connect(edit,&QLineEdit::textChanged,this,[this]{ updatePreview(); }); }
         for (auto* check : findChildren<QCheckBox*>()) { connect(check,&QCheckBox::toggled,this,[this]{ updatePreview(); }); }
         connect(m_rxSourceCombo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this]{ updatePreview(); });

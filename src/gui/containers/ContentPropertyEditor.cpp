@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
+// Modification history (NereusSDR):
+//   2026-10-03 — Plain applet source explanations by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 #include "ContentPropertyEditor.h"
 #include "ContainerSettingsDialog.h"
 #include "meter_property_editors/BaseItemEditor.h"
@@ -197,7 +200,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     if((composite && composite->typeId()=="meter.clock") || entry.typeId=="CLOCK") {
         advanced->setEnabled(false);advanced->setToolTip(tr("This clock uses local time independently of radio and MMIO sources. Stored context is retained."));
     } else if(applet && entry.typeId!="applet:s_meter") {
-        advanced->setEnabled(false);advanced->setToolTip(tr("This applet uses its existing window controller. Stored source context is retained."));
+        advanced->setEnabled(false);advanced->setToolTip(tr("This applet keeps its current radio and slice. Saved source choices are retained."));
     } else if(!m_item && !applet) {advanced->setEnabled(false);advanced->setToolTip(tr("Unsupported content retains its stored bindings."));}
     auto* source=new QComboBox(advanced); source->setObjectName("contentSlice");
     const int inherited=m_defaults.contains("sliceId")?m_defaults["sliceId"].toInt():m_defaults["rxSource"].toInt(1)-1;

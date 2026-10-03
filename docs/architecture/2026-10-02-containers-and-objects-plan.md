@@ -510,14 +510,14 @@ Fix implementation defects in the owning files, not through test weakening.
 **Interfaces:** Consume all prior contracts; add no alternate serializer,
 poller, singleton factory or persistence path.
 
-- [ ] Write integration tests for migration → edit → Apply → arrange/pop-out →
+- [x] Write integration tests for migration → edit → Apply → arrange/pop-out →
   restart → return, retaining names/config/MMIO/unknown entries and ordering.
   Cover remote disconnect/reconnect, late host, stale cache, TX transitions and
   singleton pointer stability; assert no layout action produces radio requests.
-- [ ] Build/run integration and native meter targets; expect any remaining
+- [x] Build/run integration and native meter targets; expect any remaining
   lifecycle/renderer defects to fail. Repair against the document contracts;
   rerun failed owners and integration after each fix.
-- [ ] Configure `build-cpu` separately with GPU OFF; build/run meter-face and
+- [x] Configure `build-cpu` separately with GPU OFF; build/run meter-face and
   composite-preset tests there. Capture matching CPU/GPU native frames at minimum,
   study and normal sizes, light/dark surrounding themes and relevant DPI. Check
   rise/release/history/peak hold, all channels, invalidation and reparenting.
