@@ -27,10 +27,6 @@ static bool s_initialized = false;
 static int s_initializeRunCount = 0;
 #endif
 
-// Relocated from src/main.cpp (R1 Task 8). Owns the same file the custom
-// Qt message handler below writes through.
-static QFile* s_logFile = nullptr;
-
 // Redact PII from log messages before writing to file.
 // Patterns: IP addresses, MAC addresses.
 //
@@ -128,35 +124,12 @@ bool initialize(const QString& profile)
     const QString logDir = AppSettings::resolveConfigDir(profile);
     QDir().mkpath(logDir);
 
-    const QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
-    const QString logPath = logDir + "/nereussdr-" + timestamp + ".log";
-
-    // Prune old log files (keep newest 4 + the one we're about to create = 5)
-    {
-        QDir dir(logDir);
-        QStringList logs = dir.entryList({"nereussdr-*.log"}, QDir::Files, QDir::Name);
-        while (logs.size() >= 5) {
-            dir.remove(logs.takeFirst());
-        }
-    }
-
-    s_logFile = new QFile(logPath);
-    if (s_logFile->open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        s_logFile->setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-        // Remote-window parity Task 22: the sink's writer thread writes the
-        // file and stderr; the handler never does I/O on the logging thread.
-        LogSink::instance().setOutputs(s_logFile, true);
-        LogSink::instance().start();
-        qInstallMessageHandler(messageHandler);
-
-        const QString symlink = logDir + "/nereussdr.log";
-        QFile::remove(symlink);
-        QFile::link(logPath, symlink);
-    } else {
-        fprintf(stderr, "Warning: could not open log file %s\n", logPath.toLocal8Bit().constData());
-        delete s_logFile;
-        s_logFile = nullptr;
-    }
+    // The sink owns the bounded per-profile files and their writer lock.
+    // A failed file setup still leaves stderr and the recent record stream
+    // available; logging must never prevent the Core from starting.
+    LogSink::instance().setRotatingOutput(logDir, true);
+    LogSink::instance().start();
+    qInstallMessageHandler(messageHandler);
 
     // Load XML settings
     AppSettings::instance().load();
@@ -221,12 +194,6 @@ void shutdown()
     // file before it closes.
     LogSink::instance().stop();
     LogSink::instance().setOutputs(nullptr, false);
-    if (s_logFile) {
-        s_logFile->close();
-        // Intentionally leaked: Qt may still try to log between here and
-        // __cxa_finalize; the default handler routes to stderr, which is
-        // safe.
-    }
 }
 
 #ifdef NEREUS_BUILD_TESTS

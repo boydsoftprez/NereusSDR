@@ -8447,6 +8447,7 @@ nereus_add_test(tst_support_bundle EXTRA_LABELS session)
 # Remote-window parity Task 22 (R-R3-49): the log sink no logging thread
 # waits on, a stuck writer included. Temporary files only.
 nereus_add_test(tst_log_sink EXTRA_LABELS core)
+nereus_add_test(tst_log_retention EXTRA_LABELS core)
 # Fix wave (2026-09-30): a fatal message reaches the log file before Qt
 # aborts. Runs the fatal in a child process of the same binary.
 nereus_add_test(tst_core_init_fatal_log EXTRA_LABELS core)

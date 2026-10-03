@@ -70,11 +70,15 @@ void CoreSettingsHost::setExistingDeviceIdentity(std::shared_ptr<const ClientDev
             const QPointer<CoresSetupPage> origin = route->page;
             m_routes.erase(route);
             if (m_active && m_active->request == exact) { m_active.reset(); }
+            const bool accepted = outcome == CoreRenameController::Outcome::Accepted
+                || outcome == CoreRenameController::Outcome::AcceptedLocalSaveFailed;
+            const QPointer<CoreSettingsHost> self(this);
             if (origin) {
-                origin->finishRename(exact, outcome == CoreRenameController::Outcome::Accepted
-                    || outcome == CoreRenameController::Outcome::AcceptedLocalSaveFailed, reason);
+                origin->finishRename(exact, accepted, reason);
             }
+            if (!self) { return; }
             refresh();
+            if (self && accepted) { emit coreNamePresentationChanged(); }
         });
     refresh();
 }
@@ -132,7 +136,9 @@ void CoreSettingsHost::bindDialog(SetupDialog* dialog)
     for (const auto& bound : m_dialogs) { if (bound == dialog) { return; } }
     m_dialogs.append(dialog);
     dialog->setCoreTargets(&m_store);
-    dialog->setCoreSettingsContext(currentContext());
+    const CoreSettingsContext context = currentContext();
+    dialog->setCoreSettingsContext(context);
+    dialog->setCoreAudioContext(context);
     const QPointer<CoreSettingsHost> self(this);
     dialog->setCoresPageBinder([self](CoresSetupPage* page) { if (self) { self->bindPage(page); } });
 }
@@ -203,7 +209,10 @@ void CoreSettingsHost::refresh()
     m_dialogs.removeIf([](const QPointer<SetupDialog>& dialog) { return dialog.isNull(); });
     // Lazy factories get fresh current facts; per-page rename authority remains page-specific.
     for (const auto& dialog : m_dialogs) {
-        if (dialog && !dialog->findChild<CoresSetupPage*>()) { dialog->setCoreSettingsContext(context); }
+        if (dialog) {
+            dialog->setCoreAudioContext(context);
+            if (!dialog->findChild<CoresSetupPage*>()) { dialog->setCoreSettingsContext(context); }
+        }
     }
 }
 bool CoreSettingsHost::requestCurrent(const CoreRenameController::Request& request) const
@@ -247,7 +256,7 @@ void CoreSettingsHost::cancelPage(CoresSetupPage* page, quint64 operationId)
 void CoreSettingsHost::retireBindings()
 {
     m_retiring = true;
-    for (const auto& dialog : m_dialogs) { if (dialog) { dialog->setCoresPageBinder({}); } }
+    for (const auto& dialog : m_dialogs) { if (dialog) { dialog->setCoresPageBinder({}); dialog->setCoreAudioContext({}); } }
     for (const PageState& state : m_pages) {
         if (state.page) {
             disconnect(state.page, nullptr, this, nullptr);

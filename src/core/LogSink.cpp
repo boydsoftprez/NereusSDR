@@ -25,12 +25,220 @@
 
 #include <QByteArray>
 #include <QFile>
+#include <QFileInfo>
+#include <QDir>
+#include <QDateTime>
+#include <QLockFile>
+#include <QSaveFile>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 #include <QScopeGuard>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 
 namespace NereusSDR {
+
+// Only the drain thread accesses these files. A profile lock prevents a
+// second process from trimming or pruning logs that this writer still owns.
+class BoundedLogFile {
+public:
+    bool open(const QString& directory, qint64 maxBytes, int maxFiles)
+    {
+        m_directory = QDir(QDir(directory).absolutePath());
+        m_maxBytes = maxBytes;
+        m_maxFiles = maxFiles;
+        if (maxBytes < 64 || maxFiles < 2 || !QDir().mkpath(directory)) {
+            return fail("could not prepare log directory or retention limits");
+        }
+        m_lock = std::make_unique<QLockFile>(m_directory.filePath("nereussdr-log.lock"));
+        // A live process keeps ownership regardless of the lock's age.
+        m_lock->setStaleLockTime(0);
+        if (!m_lock->tryLock(0)) {
+            return fail("profile log writer already owned or lock unavailable");
+        }
+        for (const QString& name : names()) {
+            if (!trimLegacy(m_directory.filePath(name))) {
+                return fail("could not bound a closed legacy log");
+            }
+        }
+        m_writable = rotate();
+        return m_writable;
+    }
+
+    void write(const QByteArray& record)
+    {
+        if (!m_writable || !m_file) { return; }
+        QByteArray bytes = record;
+        if (bytes.size() > m_maxBytes) {
+            const QByteArray marker("\n[log] oversized log entry truncated.\n");
+            qsizetype end = static_cast<qsizetype>(m_maxBytes - marker.size());
+            // Keep the beginning (timestamp/severity) and a complete UTF-8
+            // code point; the full original still goes to stderr/recent.
+            while (end > 0 && (static_cast<unsigned char>(bytes.at(end)) & 0xc0) == 0x80) {
+                --end;
+            }
+            bytes = bytes.left(end) + marker;
+        }
+        if (m_file->size() > m_maxBytes - bytes.size()) {
+            if (!rotate()) {
+                m_writable = false;
+                return;
+            }
+        }
+        if (m_file->write(bytes) != bytes.size()) {
+            m_writable = false;
+            fail("log write failed; file output disabled");
+        }
+    }
+
+    void flush()
+    {
+        if (m_file && m_file->isOpen() && !m_file->flush()) {
+            m_writable = false;
+            fail("log flush failed; file output disabled");
+        }
+    }
+
+private:
+    QStringList names() const
+    {
+        return m_directory.entryList({"nereussdr-*.log"},
+                                     QDir::Files | QDir::NoSymLinks, QDir::Name);
+    }
+
+    bool fail(const char* reason) const
+    {
+        // Do not recurse through Qt's handler while holding the drain lock.
+        std::fprintf(stderr, "Warning: %s (%s)\n", reason,
+                     m_directory.path().toLocal8Bit().constData());
+        return false;
+    }
+
+    bool trimLegacy(const QString& path)
+    {
+        QFile source(path);
+        if (source.size() <= m_maxBytes) { return true; }
+        if (!source.open(QIODevice::ReadOnly)) { return false; }
+        const QByteArray marker("[log] earlier log bytes truncated.\n");
+        const qint64 tailSize = m_maxBytes - marker.size();
+        if (!source.seek(source.size() - tailSize)) { return false; }
+        QByteArray tail = source.read(tailSize);
+        if (tail.size() != tailSize) { return false; }
+        // The seek can land inside a UTF-8 code point. Discard only its
+        // continuation bytes, preserving the newest diagnostics.
+        qsizetype start = 0;
+        while (start < tail.size() && (static_cast<unsigned char>(tail.at(start)) & 0xc0) == 0x80) {
+            ++start;
+        }
+        source.close();
+        QSaveFile replacement(path);
+        // QSaveFile's atomic rename keeps the old diagnostic if disk I/O
+        // fails; never fall back to in-place truncation.
+        replacement.setDirectWriteFallback(false);
+        if (!replacement.open(QIODevice::WriteOnly)) { return false; }
+        replacement.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+        const QByteArray bounded = marker + tail.mid(start);
+        return replacement.write(bounded) == bounded.size() && replacement.commit();
+    }
+
+    bool rotate()
+    {
+        if (m_file && !m_file->flush()) { return fail("could not flush log before rotation"); }
+        const QString aliasPath = m_directory.filePath(
+#ifdef Q_OS_WIN
+            "nereussdr.log.lnk"
+#else
+            "nereussdr.log"
+#endif
+        );
+        QString lastGoodPath = m_file ? m_file->fileName() : QFileInfo(aliasPath).symLinkTarget();
+        if (lastGoodPath.isEmpty()) {
+            const QStringList previous = names();
+            if (!previous.isEmpty()) { lastGoodPath = m_directory.filePath(previous.last()); }
+        }
+        auto next = std::make_unique<QFile>();
+        const QString prefix = "nereussdr-" +
+            QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss-zzz");
+        // NewOnly avoids truncating a same-millisecond log on restart.
+        bool opened = false;
+        for (int attempt = 0; attempt < 1000; ++attempt) {
+            next->setFileName(m_directory.filePath(prefix +
+                QString("-%1.log").arg(++m_serial, 6, 10, QLatin1Char('0'))));
+            if (next->open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+                opened = true;
+                break;
+            }
+            if (!QFile::exists(next->fileName())) { break; }
+        }
+        if (!opened) { return fail("could not open next log; file output disabled"); }
+        const auto abandon = qScopeGuard([&]() {
+            if (next) {
+                const QString path = next->fileName();
+                next->close();
+                QFile::remove(path);
+            }
+        });
+        if (!next->setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
+            return fail("could not set next log permissions");
+        }
+        QStringList files = names();
+        while (files.size() > m_maxFiles) {
+            // Preserve the last good file during runtime AND startup,
+            // even when a clock change made its filename sort oldest.
+            auto oldest = std::find_if(files.begin(), files.end(), [&](const QString& name) {
+                const QString path = m_directory.filePath(name);
+                return path != next->fileName() && path != lastGoodPath;
+            });
+            if (oldest == files.end() || !m_directory.remove(*oldest)) {
+                return fail("could not prune old log; file output disabled");
+            }
+            files.erase(oldest);
+        }
+        QString alias = m_directory.filePath("nereussdr.log");
+#ifdef Q_OS_WIN
+        // QFile::link uses shortcuts on Windows. Preserve the same .lnk
+        // alias CoreInit used, without losing file logging on that platform.
+        alias += ".lnk";
+#endif
+        const QString pendingAlias = alias +
+#ifdef Q_OS_WIN
+            ".new.lnk";
+#else
+            ".new";
+#endif
+        QFile::remove(pendingAlias);
+        if (!QFile::link(next->fileName(), pendingAlias)) {
+            return fail("could not prepare current log alias");
+        }
+        // Replace the previous link atomically, preserving it on failure.
+#ifdef Q_OS_WIN
+        const bool aliasReplaced = MoveFileExW(
+            reinterpret_cast<LPCWSTR>(pendingAlias.utf16()),
+            reinterpret_cast<LPCWSTR>(alias.utf16()), MOVEFILE_REPLACE_EXISTING) != 0;
+#else
+        const auto pendingBytes = QFile::encodeName(pendingAlias);
+        const auto aliasBytes = QFile::encodeName(alias);
+        const bool aliasReplaced = std::rename(pendingBytes.constData(), aliasBytes.constData()) == 0;
+#endif
+        if (!aliasReplaced) {
+            QFile::remove(pendingAlias);
+            return fail("could not replace current log alias");
+        }
+        m_file = std::move(next); // closes the previous file after success
+        return true;
+    }
+
+    QDir m_directory;
+    qint64 m_maxBytes = 0;
+    int m_maxFiles = 0;
+    quint64 m_serial = 0;
+    bool m_writable = false;
+    std::unique_ptr<QLockFile> m_lock;
+    std::unique_ptr<QFile> m_file;
+};
 
 namespace {
 
@@ -138,8 +346,22 @@ bool LogSink::take(QString* line)
 void LogSink::setOutputs(QFile* file, bool toStderr)
 {
     const std::lock_guard<std::mutex> lock(m_drainMutex);
+    m_rotatingFile.reset();
     m_file = file;
     m_toStderr = toStderr;
+}
+
+bool LogSink::setRotatingOutput(const QString& directory, bool toStderr,
+                                qint64 maxBytes, int maxFiles)
+{
+    const std::lock_guard<std::mutex> lock(m_drainMutex);
+    m_file = nullptr;
+    m_rotatingFile.reset();
+    m_toStderr = toStderr;
+    auto output = std::make_unique<BoundedLogFile>();
+    if (!output->open(directory, maxBytes, maxFiles)) { return false; }
+    m_rotatingFile = std::move(output);
+    return true;
 }
 
 void LogSink::start()
@@ -223,14 +445,18 @@ void LogSink::drainLocked()
             m_beforeWrite();
         }
         const QByteArray utf8 = text.toUtf8();
-        if (m_file != nullptr && m_file->isOpen()) {
+        if (m_rotatingFile) {
+            m_rotatingFile->write(utf8);
+        } else if (m_file != nullptr && m_file->isOpen()) {
             m_file->write(utf8);
         }
         if (m_toStderr) {
             std::fwrite(utf8.constData(), 1, static_cast<std::size_t>(utf8.size()), stderr);
         }
     }
-    if (m_file != nullptr && m_file->isOpen()) {
+    if (m_rotatingFile) {
+        m_rotatingFile->flush();
+    } else if (m_file != nullptr && m_file->isOpen()) {
         m_file->flush();
     }
     if (m_toStderr) {

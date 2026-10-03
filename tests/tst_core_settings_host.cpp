@@ -10,6 +10,17 @@
 #include <QCryptographicHash>
 #include <QTemporaryDir>
 #include "gui/CoreSettingsHost.h"
+#include "gui/setup/CoreAudioSetupPage.h"
+#include "gui/RemoteMediaController.h"
+#include "gui/RemoteAudioWidget.h"
+#include <QComboBox>
+#include <QTimer>
+#include <QWheelEvent>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QAbstractItemView>
+#include <QScopeGuard>
+#include "gui/widgets/GuardedSlider.h"
 #include "core/security/ClientDeviceIdentity.h"
 #include "core/security/DeviceAuthenticator.h"
 #include "core/session/RemoteDevicesState.h"
@@ -18,6 +29,8 @@
 #include "core/session/StationClient.h"
 #include "gui/GuiConnectionController.h"
 #include "gui/MainWindow.h"
+#include "models/RadioModel.h"
+#include "models/TransmitModel.h"
 #include "gui/RemoteConnectionController.h"
 #include "gui/SetupDialog.h"
 #include "gui/setup/CoresSetupPage.h"
@@ -63,7 +76,7 @@ struct HostFixture {
     quint64 generation = 17;
     int temporaryCount = 0;
     bool validProof = false;
-    void attach(StationClient& client) {
+    void attach(StationClient& client, bool enrollment = false, bool preserveDevice = false) {
         auto* near = new Test::LoopbackTransport(QStringLiteral("host fake client"));
         auto* peer = new Test::LoopbackTransport(QStringLiteral("host signed fake Core"), &client);
         near->linkTo(peer);
@@ -91,8 +104,9 @@ struct HostFixture {
                     peer->sendText(SessionMessages::encode(SessionMessages::snapshotComplete()));
                 } else if (message.kind == SessionMessageKind::CommandInvoke) { commands.append(message); }
             });
-        client.setDeviceIdentity(device, QStringLiteral("Existing fake computer"));
-        client.startSession(near, {}, {}, core.fingerprint());
+        if (!preserveDevice) { client.setDeviceIdentity(device, QStringLiteral("Existing fake computer")); }
+        client.startSession(near, enrollment ? QStringLiteral("legacy-token") : QString(),
+            enrollment ? QString::fromLatin1(certificate.toHex(':').toUpper()) : QString(), enrollment ? QByteArray() : core.fingerprint());
         SessionMessage hello = SessionMessages::hello(kSessionProtocolMajor, kSessionProtocolMinor, 0,
             QStringLiteral("Untrusted hello name"), LinkVersion::supportedMajors(), {{QByteArrayLiteral("deviceAuth"), 1}});
         hello.challenge = StationIdentity::toBase64Url(challenge);
@@ -433,6 +447,317 @@ private slots:
         QTRY_VERIFY(client.isHandshakeComplete());
         QVERIFY(f.validProof);
         QVERIFY(!client.lastError().contains(QStringLiteral("Old temporary")));
+    }
+    void sharedCoreAudioDestinationExistsWithoutDialingOrChangingSelection() {
+        CoreTargetStore initial(AppSettings::instance());
+        QVERIFY(initial.load()); QVERIFY(initial.upsert(saved(QStringLiteral("one"), 'a')));
+        QVERIFY(initial.select(QStringLiteral("one")));
+        GuiConnectionController controller; controller.start({});
+        MainWindow* window = controller.sessions()->window();
+        const quint64 generation = controller.sessions()->generation();
+        QPointer<SetupDialog> dialog;
+        connect(window, &MainWindow::setupDialogCreated, window,
+                [&dialog](SetupDialog* created) { dialog = created; });
+        window->openCoreSettings(QStringLiteral("one")); QVERIFY(dialog);
+        auto* tree = dialog->findChild<QTreeWidget*>(); QVERIFY(tree);
+        bool found = false;
+        for (QTreeWidgetItemIterator item(tree); *item; ++item) {
+            if ((*item)->text(0) == QStringLiteral("Audio with the Core") && (*item)->parent()
+                && (*item)->parent()->text(0) == QStringLiteral("Cores")) { found = true; }
+        }
+        QVERIFY2(found, "Cores must register the shared current-window Audio destination");
+        dialog->selectPage(QStringLiteral("Audio with the Core"));
+        auto* audioPage = dialog->findChild<CoreAudioSetupPage*>(); QVERIFY(audioPage);
+        auto* quality = audioPage->findChild<QComboBox*>(QStringLiteral("remoteAudioQuality")); QVERIFY(quality);
+        QCOMPARE(quality->count(), 3);
+        QVERIFY(hasText(*audioPage, QStringLiteral("No authenticated Core")));
+        dialog->coreConnectionDetailsRequested();
+        auto* panel = window->findChild<RemoteConnectionPanel*>(); QVERIFY(panel);
+        auto* otherQuality = panel->findChild<QComboBox*>(QStringLiteral("remoteAudioQuality")); QVERIFY(otherQuality);
+        quality->setCurrentIndex(1);
+        QCOMPARE(window->findChild<RemoteMediaController*>()->audioQualityChoice(), RemoteAudioQualityChoice::SaveData);
+        QCOMPARE(otherQuality->currentIndex(), 1);
+        otherQuality->setCurrentIndex(0);
+        QCOMPARE(quality->currentIndex(), 0);
+        auto* timer = audioPage->findChild<QTimer*>(QStringLiteral("remoteAudioPanelTimer")); QVERIFY(timer);
+        QVERIFY(timer->isActive());
+        dialog->selectPage(QStringLiteral("Your Cores")); QVERIFY(!timer->isActive());
+        QCOMPARE(controller.sessions()->generation(), generation);
+        QCOMPARE(controller.coreTargetStore().selectedId(), QStringLiteral("one"));
+        QVERIFY(!window->findChild<StationClient*>()->isConnectionActive());
+        controller.shutdown();
+    }
+    void closedAudioQualityWheelNeverChangesComputerPreference_data() {
+        QTest::addColumn<bool>("focused"); QTest::addColumn<bool>("locked");
+        QTest::newRow("focused-unlocked") << true << false;
+        QTest::newRow("unfocused-unlocked") << false << false;
+        QTest::newRow("focused-locked") << true << true;
+        QTest::newRow("unfocused-locked") << false << true;
+    }
+    void closedAudioQualityWheelNeverChangesComputerPreference() {
+        QFETCH(bool, focused); QFETCH(bool, locked);
+        const bool previousLock = ControlsLock::isLocked();
+        const auto restore = qScopeGuard([previousLock] { ControlsLock::setLocked(previousLock); });
+        ControlsLock::setLocked(locked);
+        CoreTargetStore initial(AppSettings::instance());
+        QVERIFY(initial.load()); QVERIFY(initial.upsert(saved(QStringLiteral("one"), 'a')));
+        QVERIFY(initial.select(QStringLiteral("one")));
+        GuiConnectionController controller; controller.start({});
+        MainWindow* window = controller.sessions()->window();
+        QPointer<SetupDialog> dialog;
+        connect(window, &MainWindow::setupDialogCreated, window, [&dialog](SetupDialog* d) { dialog = d; });
+        window->openCoreSettings(QStringLiteral("one")); QVERIFY(dialog);
+        dialog->resize(820, 600); dialog->selectPage(QStringLiteral("Audio with the Core"));
+        dialog->raise(); dialog->activateWindow(); QApplication::setActiveWindow(dialog);
+        auto* page = dialog->findChild<CoreAudioSetupPage*>(); QVERIFY(page);
+        auto* quality = page->findChild<QComboBox*>(QStringLiteral("remoteAudioQuality")); QVERIFY(quality);
+        auto* media = window->findChild<RemoteMediaController*>(); QVERIFY(media);
+        media->setAudioQualityChoice(RemoteAudioQualityChoice::High);
+        auto* scroll = page->findChild<QScrollArea*>(); QVERIFY(scroll);
+        // Disconnected facts are short; reserve tall content to exercise the real scroll parent.
+        scroll->widget()->setMinimumHeight(900);
+        QCoreApplication::processEvents();
+        QVERIFY(scroll->verticalScrollBar()->maximum() > 0);
+        scroll->verticalScrollBar()->setValue(0);
+        QCoreApplication::processEvents();
+        QApplication::setActiveWindow(dialog);
+        if (focused) { quality->setFocus(Qt::OtherFocusReason); } else { dialog->findChild<QTreeWidget*>()->setFocus(); }
+        QVERIFY2(quality->hasFocus() == focused, qPrintable(QStringLiteral("focus=%1 expected=%2 visible=%3 enabled=%4 pagevisible=%5 focuswidget=%6")
+            .arg(quality->hasFocus()).arg(focused).arg(quality->isVisible()).arg(quality->isEnabled()).arg(page->isVisible())
+            .arg(QApplication::focusWidget() ? QApplication::focusWidget()->objectName() : QStringLiteral("none"))));
+        const QVariant preference = AppSettings::instance().value(QLatin1String(RemoteMediaController::kAudioProfileSettingKey));
+        const RemoteAudioStatus status = media->audioStatus();
+        const quint64 packets = media->micPacketsSent();
+        QWheelEvent wheel(QPointF(quality->rect().center()), QPointF(quality->mapToGlobal(quality->rect().center())),
+            QPoint(), QPoint(0, -120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(quality, &wheel);
+        QCOMPARE(media->audioQualityChoice(), RemoteAudioQualityChoice::High);
+        QCOMPARE(quality->currentIndex(), 0);
+        QCOMPARE(AppSettings::instance().value(QLatin1String(RemoteMediaController::kAudioProfileSettingKey)), preference);
+        QCOMPARE(media->audioStatus(), status); QCOMPARE(media->micPacketsSent(), packets);
+        QVERIFY(!wheel.isAccepted());
+        // sendEvent is synthetic; Qt native delivery forwards the ignored wheel.
+        QWheelEvent forwarded(QPointF(scroll->viewport()->rect().center()),
+            QPointF(scroll->viewport()->mapToGlobal(scroll->viewport()->rect().center())), QPoint(), QPoint(0, -120),
+            Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(scroll->viewport(), &forwarded);
+        QVERIFY2(scroll->verticalScrollBar()->value() > 0, "Scroll container must consume the ignored wheel gesture");
+        QVERIFY(!window->findChild<StationClient*>()->isConnectionActive());
+        controller.shutdown();
+    }
+    void audioQualityIntentionalSelectionKeepsExistingControlsLockBehavior_data() {
+        QTest::addColumn<bool>("locked");
+        QTest::newRow("unlocked") << false; QTest::newRow("locked") << true;
+    }
+    void audioQualityIntentionalSelectionKeepsExistingControlsLockBehavior() {
+        QFETCH(bool, locked);
+        const bool previous = ControlsLock::isLocked();
+        const auto restore = qScopeGuard([previous] { ControlsLock::setLocked(previous); });
+        ControlsLock::setLocked(locked);
+        CoreTargetStore initial(AppSettings::instance()); QVERIFY(initial.load());
+        QVERIFY(initial.upsert(saved(QStringLiteral("one"), 'a'))); QVERIFY(initial.select(QStringLiteral("one")));
+        GuiConnectionController controller; controller.start({}); MainWindow* window = controller.sessions()->window();
+        QPointer<SetupDialog> dialog;
+        connect(window, &MainWindow::setupDialogCreated, window, [&dialog](SetupDialog* d) { dialog = d; });
+        window->openCoreSettings(QStringLiteral("one")); dialog->selectPage(QStringLiteral("Audio with the Core"));
+        auto* quality = dialog->findChild<CoreAudioSetupPage*>()->findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        auto* media = window->findChild<RemoteMediaController*>(); QVERIFY(quality && media);
+        media->setAudioQualityChoice(RemoteAudioQualityChoice::High);
+        QCoreApplication::processEvents(); QApplication::setActiveWindow(dialog); quality->setFocus();
+        QTest::mouseClick(quality, Qt::LeftButton); QTRY_VERIFY(quality->view()->isVisible());
+        QTest::keyClick(quality->view(), Qt::Key_Down); QTest::keyClick(quality->view(), Qt::Key_Return);
+        QTRY_COMPARE(media->audioQualityChoice(), RemoteAudioQualityChoice::SaveData);
+        QCOMPARE(AppSettings::instance().value(QLatin1String(RemoteMediaController::kAudioProfileSettingKey)).toString(), QStringLiteral("SaveData"));
+        quality->setFocus(); QTest::keyClick(quality, Qt::Key_Up);
+        QCOMPARE(media->audioQualityChoice(), RemoteAudioQualityChoice::High);
+        controller.shutdown();
+    }
+    void acceptedCoreRenamePropagatesSavedRowWithoutChangingLegacyAlias() {
+        HostFixture f; QVERIFY(f.init(false));
+        auto target = saved(QStringLiteral("one"), 'a');
+        target.connection.identityFingerprint = f.core.fingerprint(); target.label = QStringLiteral("My local alias");
+        CoreTargetStore initial(AppSettings::instance()); QVERIFY(initial.load());
+        QVERIFY(initial.upsert(target)); QVERIFY(initial.select(target.id));
+        GuiConnectionController controller; controller.start({}); MainWindow* window = controller.sessions()->window();
+        auto* client = window->findChild<StationClient*>(); QVERIFY(client);
+        f.attach(*client, false, true); QTRY_VERIFY(client->deviceAdminAvailable());
+        QPointer<SetupDialog> dialog;
+        connect(window, &MainWindow::setupDialogCreated, window, [&dialog](SetupDialog* d) { dialog = d; });
+        window->openCoreSettings(target.id); QVERIFY(dialog);
+        auto* page = dialog->findChild<CoresSetupPage*>(); QVERIFY(page);
+        submit(*page, QStringLiteral("KG4VCF/True_Renamed_Core")); QTRY_COMPARE(f.renames().size(), 1);
+        f.answer(f.renames().last(), true);
+        QTRY_VERIFY(controller.coreTargetStore().target(target.id)->lastKnownCoreName.has_value());
+        const auto accepted = *controller.coreTargetStore().target(target.id);
+        auto* tree = controller.selector()->findChild<QTreeWidget*>(); QVERIFY(tree);
+        QTRY_VERIFY_WITH_TIMEOUT(!tree->findItems(QStringLiteral("KG4VCF/True_Renamed_Core"),
+            Qt::MatchContains | Qt::MatchRecursive, 0).isEmpty(), 1000);
+        QCOMPARE(accepted.label, target.label); QCOMPARE(accepted.connection.identityFingerprint, target.connection.identityFingerprint);
+        QCOMPARE(accepted.connection.cachedAddresses, target.connection.cachedAddresses); QCOMPARE(accepted.manualAddresses, target.manualAddresses);
+        controller.shutdown();
+    }
+    void savedRowUsesTrustedCoreNameAndKeepsLegacyAliasExplicit() {
+        SavedCoreTarget target = saved(QStringLiteral("one"), 'a');
+        target.label = QStringLiteral("My local alias");
+        target.lastKnownCoreName = AuthenticatedCoreName{QStringLiteral("KG4VCF/True_Core"), target.connection.identityFingerprint, 1};
+        const ConnectionTargetRow row = GuiConnectionController::savedCoreRow(target, true);
+        QVERIFY2(row.name.contains(QStringLiteral("KG4VCF/True_Core")), "Saved rows must propagate the trusted Core-wide name");
+        QVERIFY(row.name.contains(QStringLiteral("last known")));
+        QCOMPARE(target.label, QStringLiteral("My local alias"));
+        QVERIFY(GuiConnectionController::savedCoreDetails(target).contains(QStringLiteral("Name on this computer: My local alias")));
+        for (const bool wrongIdentity : {false, true}) {
+            auto untrusted = target;
+            if (wrongIdentity) { untrusted.lastKnownCoreName->pairedIdentity = QByteArray(32, 'b'); }
+            else { untrusted.lastKnownCoreName->name = QStringLiteral("invalid name"); }
+            const auto fallback = GuiConnectionController::savedCoreRow(untrusted, true);
+            QVERIFY(!fallback.name.contains(QStringLiteral("True_Core")));
+            QVERIFY(fallback.name.contains(QStringLiteral("My local alias")));
+            QVERIFY(fallback.name.contains(QStringLiteral("local name")));
+        }
+        target.lastKnownCoreName.reset(); target.label.clear();
+        QVERIFY(GuiConnectionController::savedCoreRow(target, true).name.contains(QStringLiteral("host.invalid")));
+    }
+    void enrolledLegacySameRowConnectCreatesFreshCanonicalSession_data() {
+        QTest::addColumn<QString>("refusal");
+        QTest::newRow("recover") << QString();
+        QTest::newRow("active-TX-mirror") << QStringLiteral("tx");
+        QTest::newRow("failed-durable-select") << QStringLiteral("save");
+        QTest::newRow("failed-canonical-reload") << QStringLiteral("load");
+    }
+    void enrolledLegacySameRowConnectCreatesFreshCanonicalSession() {
+        QFETCH(QString, refusal);
+        HostFixture f; QVERIFY(f.init(false));
+        auto target = saved(QStringLiteral("legacy"), 'a');
+        target.connection.identityFingerprint.clear(); target.connection.token = QStringLiteral("legacy-token");
+        target.connection.fingerprint = QString::fromLatin1(QByteArray(32, 'c').toHex(':').toUpper());
+        CoreTargetStore initial(AppSettings::instance()); QVERIFY(initial.load());
+        QVERIFY(initial.upsert(target)); QVERIFY(initial.select(target.id));
+        GuiConnectionController controller; controller.start({});
+        MainWindow* oldWindow = controller.sessions()->window();
+        QPointer<StationClient> oldClient = oldWindow->findChild<StationClient*>(); QVERIFY(oldClient);
+        const auto device = oldClient->existingDeviceIdentity(); QVERIFY(device && device->isValid());
+        const quint64 generation = controller.sessions()->generation();
+        const quint64 oldIncarnation = controller.coreTargetStore().targetIncarnation(target.id);
+        f.attach(*oldClient, true, true);
+        QTRY_VERIFY(oldClient->isHandshakeComplete()); QVERIFY(f.validProof);
+        QCOMPARE(controller.sessions()->generation(), generation); QCOMPARE(controller.sessions()->window(), oldWindow);
+        QCOMPARE(controller.coreTargetStore().target(target.id)->connection.identityFingerprint, f.core.fingerprint());
+        QVERIFY(controller.coreTargetStore().targetIncarnation(target.id) != oldIncarnation);
+        oldClient->disconnectFromStation(QStringLiteral("explicit fixture disconnect"), false);
+        QVERIFY(!oldClient->isConnectionActive());
+        QVERIFY(!oldWindow->findChild<RemoteConnectionController*>()->canConnect()); // Old trust lease stays retired.
+        controller.selector()->setSelectedKey(QStringLiteral("saved:") + target.id);
+        auto* connectButton = push(*controller.selector(), "connectionSelectorConnect"); QVERIFY(connectButton);
+        QVERIFY2(connectButton->isEnabled(), "Explicit same-row Connect must recover through a fresh canonical session");
+        QSignalSpy changed(controller.sessions(), &GuiSessionCoordinator::windowChanged);
+        connect(controller.sessions(), &GuiSessionCoordinator::windowChanged, &controller, [&](MainWindow* next) {
+            if (!next) { return; }
+            auto* fresh = next->findChild<StationClient*>(); QVERIFY(fresh);
+            QCOMPARE(fresh->existingDeviceIdentity(), device);
+            f.attach(*fresh, false, true);
+        });
+        if (!refusal.isEmpty()) {
+            if (refusal == QLatin1String("tx")) {
+                // Mirrored fake remote state only: no MoxController or hardware keying.
+                oldWindow->radioModel()->transmitModel().setMox(true);
+            } else if (refusal == QLatin1String("save")) {
+                // Hold the canonical store loaded, but make its durable settings path unwritable.
+                const QString path = AppSettings::instance().filePath();
+                QVERIFY(QFile::rename(path, path + QStringLiteral(".fixture-original")));
+                QVERIFY(QDir().mkdir(path));
+            } else {
+                AppSettings::instance().setValue(QStringLiteral("ConnectionTargets/V3"), QStringLiteral("bad JSON"));
+                QVERIFY(!controller.coreTargetStore().load());
+                QCOMPARE(controller.coreTargetStore().targetIncarnation(target.id), quint64(0));
+            }
+            // Also protects a queued request whose row became unavailable after rendering.
+            controller.selector()->connectRequested(QStringLiteral("saved:") + target.id);
+            bool processed = false; QTimer::singleShot(0, &controller, [&] { processed = true; });
+            QTRY_VERIFY(processed);
+            QCOMPARE(controller.sessions()->generation(), generation); QCOMPARE(changed.size(), 0);
+            QCOMPARE(controller.sessions()->window(), oldWindow); QVERIFY(oldClient && !oldClient->isConnectionActive());
+            if (refusal == QLatin1String("tx")) { oldWindow->radioModel()->transmitModel().setMox(false); }
+            if (refusal == QLatin1String("save")) {
+                const QString path = AppSettings::instance().filePath(); QVERIFY(QDir().rmdir(path));
+                QVERIFY(QFile::rename(path + QStringLiteral(".fixture-original"), path));
+            }
+            controller.shutdown(); return;
+        }
+        oldClient->remoteDevices()->applyObject("devices", {{2, "stationLabel", MirrorWireKind::Utf8,
+            QStringLiteral("KG4VCF/Stale_Lease")}});
+        QVERIFY(!controller.coreTargetStore().target(target.id)->lastKnownCoreName);
+        connectButton->click();
+        QTRY_COMPARE(controller.sessions()->generation(), generation + 1);
+        QCOMPARE(changed.size(), 1); QVERIFY(oldClient.isNull());
+        StationClient* fresh = controller.sessions()->window()->findChild<StationClient*>(); QVERIFY(fresh);
+        QTRY_VERIFY(fresh->isHandshakeComplete()); QVERIFY(f.validProof); QVERIFY(fresh->signedInWithDeviceKey());
+        QCOMPARE(controller.sessions()->selection().savedId, target.id);
+        QCOMPARE(controller.sessions()->selection().connection.identityFingerprint, f.core.fingerprint());
+        controller.shutdown();
+    }
+    void groupedAudioFactsPreserveIndependentReceiveMicrophoneAndAppFormats() {
+        RemoteAudioStatus status;
+        status.state = RemoteAudioStatus::State::Playing;
+        status.detailNegotiated = true;
+        status.encoder = OpusEncoderProfile{};
+        status.encoder->targetBitrate = 24000;
+        status.microphoneFormat = QStringLiteral("Radio microphone at the Core (no microphone stream from this computer)");
+        RemoteReceiverAudioStatus receiver; receiver.sliceId = 2;
+        receiver.state = RemoteReceiverAudioStatus::State::Receiving;
+        receiver.runningProfile = RemoteAudioProfile::Opus; receiver.encoder = OpusEncoderProfile{};
+        receiver.encoder->targetBitrate = 48000; status.receivers.append(receiver);
+        RemoteAudioReceiverTelemetry health; health.expectedPackets = 20; health.missingPackets = 2;
+        health.concealedPackets = 3; health.arrivalJitterMs = 6; health.speakerQueuedMs = 8; health.jitterHoldMs = 60;
+        const auto sections = formatRemoteAudioDetailSections(status, health);
+        QVERIFY(sections.receive.contains(QStringLiteral("24\u00A0kbit/s target")));
+        QVERIFY(sections.receive.contains(QStringLiteral("Missing packets: 2 of 20")));
+        QVERIFY(sections.receive.contains(QStringLiteral("Gaps filled: 3")));
+        QVERIFY(sections.receive.contains(QStringLiteral("Network buffer: 60")));
+        QVERIFY(!sections.receive.contains(QStringLiteral("Radio microphone")));
+        QVERIFY(sections.microphone.contains(QStringLiteral("no microphone stream from this computer")));
+        QVERIFY(sections.apps.contains(QStringLiteral("Receiver C for apps: Receiving, Opus 48")));
+        QVERIFY(!sections.apps.contains(QStringLiteral("24")));
+        const QString full = formatRemoteAudioDetails(status, health);
+        QVERIFY(full.indexOf(QStringLiteral("Current microphone format")) < full.indexOf(QStringLiteral("Output:")));
+    }
+    void bottomBannerUsesAuthenticatedCoreNameBeforeConnectionAddress() {
+        HostFixture f; QVERIFY(f.init(false));
+        CoreTargetStore initial(AppSettings::instance()); QVERIFY(initial.load());
+        auto target = saved(QStringLiteral("one"), 'a');
+        target.connection.identityFingerprint = f.core.fingerprint();
+        QVERIFY(initial.upsert(target)); QVERIFY(initial.select(target.id));
+        GuiConnectionController controller; controller.start({});
+        MainWindow* window = controller.sessions()->window(); QVERIFY(window);
+        StationClient* client = window->findChild<StationClient*>(); QVERIFY(client);
+        f.attach(*client);
+        QTRY_VERIFY_WITH_TIMEOUT(client->isHandshakeComplete(), 1000);
+        client->remoteDevices()->applyObject("devices", {{2, "stationLabel", MirrorWireKind::Utf8,
+            QStringLiteral("KG4VCF/Authenticated_Core")}});
+        auto* label = window->findChild<QLabel*>(QStringLiteral("StationBlock_Label")); QVERIFY(label);
+        QTRY_COMPARE_WITH_TIMEOUT(label->text(), QStringLiteral("KG4VCF/Authenticated_Core"), 1000);
+        QVERIFY(!label->text().contains(QStringLiteral("Untrusted hello")));
+        client->remoteDevices()->applyObject("devices", {{2, "stationLabel", MirrorWireKind::Utf8,
+            QStringLiteral("KG4VCF/Renamed_Core")}});
+        QTRY_COMPARE_WITH_TIMEOUT(label->text(), QStringLiteral("KG4VCF/Renamed_Core"), 1000);
+        QVERIFY(controller.coreTargetStore().target(QStringLiteral("one"))->lastKnownCoreName);
+        QCOMPARE(controller.coreTargetStore().target(QStringLiteral("one"))->lastKnownCoreName->name, QStringLiteral("KG4VCF/Renamed_Core"));
+        QVERIFY(controller.coreTargetStore().upsert(saved(QStringLiteral("two"), 'b')));
+        const quint64 generation = controller.sessions()->generation();
+        QPointer<SetupDialog> dialog;
+        connect(window, &MainWindow::setupDialogCreated, window, [&dialog](SetupDialog* created) { dialog = created; });
+        window->openCoreSettings(QStringLiteral("two")); QVERIFY(dialog);
+        auto* cores = dialog->findChild<CoresSetupPage*>(); QVERIFY(cores);
+        QVERIFY(cores->findChild<QLabel*>(QStringLiteral("actualCoreName"))->text() != QStringLiteral("KG4VCF/Renamed_Core"));
+        cores->audioRequested();
+        auto* audio = dialog->findChild<CoreAudioSetupPage*>(); QVERIFY(audio);
+        QVERIFY(hasText(*audio, QStringLiteral("This window’s Core: KG4VCF/Renamed_Core")));
+        QCOMPARE(controller.sessions()->generation(), generation);
+        QCOMPARE(controller.coreTargetStore().selectedId(), QStringLiteral("one"));
+        client->disconnectFromStation(QStringLiteral("fixture disconnected"));
+        QTRY_VERIFY_WITH_TIMEOUT(label->text().contains(QStringLiteral("last known")), 1000);
+        QVERIFY(label->text().contains(QStringLiteral("KG4VCF/Renamed_Core")));
+        QVERIFY(hasText(*audio, QStringLiteral("No authenticated Core connection")));
+        controller.shutdown();
     }
     void lazyDialogUsesCanonicalStoreWithoutChangingSession() {
         CoreTargetStore initial(AppSettings::instance());

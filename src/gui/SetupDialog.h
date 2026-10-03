@@ -45,6 +45,8 @@ class SettingsProxy;
 class RemoteStationPage;
 class CoreTargetStore;
 class CoresSetupPage;
+class RemoteMediaController;
+class RemoteTelemetryController;
 
 // R-R3-21 / R-R3-23: what a Setup page's settings belong to. Every page
 // registration names one; registerPage() has no default, so a new page
@@ -89,6 +91,8 @@ public:
     void setCoreSettingsContext(const CoreSettingsContext& context);
     void setCoresPageBinder(std::function<void(CoresSetupPage*)> binder);
     void inspectCoreTarget(const QString& id);
+    void setCoreAudioSources(RemoteMediaController* media, RemoteTelemetryController* telemetry);
+    void setCoreAudioContext(const CoreSettingsContext& context);
     // The Remote Access page is lazy; apply the current runtime binder now or when built.
     void setRemoteStationPageBinder(std::function<void(RemoteStationPage*)> binder);
     // Hosted desktop: receive controls follow this window's owned selection.
@@ -398,6 +402,9 @@ private:
     CoreSettingsContext m_coreSettingsContext;
     QString m_inspectedCoreTarget;
     std::function<void(CoresSetupPage*)> m_coresPageBinder;
+    QPointer<RemoteMediaController> m_coreAudioMedia;
+    QPointer<RemoteTelemetryController> m_coreAudioTelemetry;
+    CoreSettingsContext m_coreAudioContext;
     std::function<void(RemoteStationPage*)> m_remoteStationPageBinder;
 
     // Phase 3J-1 bench fix (2026-05-11): store the TciServer page reference

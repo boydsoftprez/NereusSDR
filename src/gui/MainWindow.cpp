@@ -3888,6 +3888,8 @@ void MainWindow::ensureRemoteSession()
                 refreshRemoteConnectionUi();
             }
         });
+        connect(m_stationClient->remoteDevices(), &RemoteDevicesState::coreInfoChanged,
+                this, &MainWindow::refreshRemoteConnectionUi);
         connect(m_stationClient, &StationClient::pathChanged,
                 this, &MainWindow::refreshRemoteConnectionUi);
         connect(m_remoteMedia, &RemoteMediaController::networkPathChanged,
@@ -4193,7 +4195,7 @@ void MainWindow::showRemoteConnectionPanel()
 {
     if (!m_remoteConnection) { return; }
     if (!m_remoteConnectionPanel) {
-        m_remoteConnectionPanel = new RemoteConnectionPanel(m_remoteConnection, this, m_remoteMedia);
+        m_remoteConnectionPanel = new RemoteConnectionPanel(m_remoteConnection, this, m_remoteMedia, m_remoteTelemetry);
     }
     m_remoteConnectionPanel->show();
     m_remoteConnectionPanel->raise();
@@ -4263,11 +4265,32 @@ void MainWindow::refreshRemoteConnectionUi()
         }
     }
     if (m_stationBlock) {
-        m_stationBlock->setRadioName(tr("Core %1").arg(m_remoteConnection->endpointText()));
-        m_stationBlock->setHardwareLine(
-            m_remoteConnection->state() == ConnectionState::Connected
-                ? m_remoteConnection->radioText() : m_remoteConnection->statusText(), {});
-        m_stationBlock->setToolTip(m_remoteConnection->detailText());
+        const CoreSettingsContext context = coreSettingsSnapshot();
+        const QString reported = context.authenticated ? context.coreName.trimmed() : QString();
+        const QString name = !reported.isEmpty() ? reported
+            : !m_savedCoreName.isEmpty() ? tr("%1 (last known)").arg(m_savedCoreName)
+            : tr("Core name not reported");
+        m_stationBlock->setRadioName(name);
+        const auto compactPath = [](const std::optional<NetworkPathSnapshot>& path) {
+            if (!path) { return tr("path unknown"); }
+            const QString kind = path->kind == NetworkPathSnapshot::Kind::Direct ? tr("direct")
+                : path->kind == NetworkPathSnapshot::Kind::Relayed ? tr("via relay") : tr("path unknown");
+            QHostAddress peer;
+            return peer.setAddress(path->remoteAddress)
+                ? QStringLiteral("%1 %2").arg(kind, peer.toString()) : kind;
+        };
+        const bool current = context.authenticated;
+        const auto control = current && m_stationClient->transport()
+            ? m_stationClient->transport()->networkPathSnapshot() : std::optional<NetworkPathSnapshot>{};
+        const auto media = current && m_remoteMedia ? m_remoteMedia->currentNetworkPath() : std::optional<NetworkPathSnapshot>{};
+        m_stationBlock->setConnectionLines(current ? tr("Controls %1").arg(compactPath(control))
+            : m_remoteConnection->statusText(), current ? tr("Audio/display %1 · %2").arg(compactPath(media),
+                m_remoteMedia ? remoteAudioBannerWord(m_remoteMedia->audioStatus().state) : tr("unavailable")) : QString());
+        m_stationBlock->setToolTip(name + QLatin1Char('\n') + context.controls
+            + QLatin1Char('\n') + context.audioAndDisplay + QLatin1Char('\n')
+            + m_remoteConnection->detailText() + QLatin1Char('\n')
+            + tr("Radio: %1\nListener: %2\nReached through: %3")
+                .arg(context.radio, context.listener, context.reachedThrough));
         if (m_chromeBar && m_chromeBarWidget) {
             m_chromeBar->setNaturalWidth(m_stationBlock, m_stationBlock->sizeHint().width());
             m_chromeBar->relayout(m_chromeBarWidget->width());
@@ -9175,8 +9198,22 @@ void MainWindow::populateDefaultMeter()
                 [this]() {
                     return m_stationClient && m_stationClient->isHandshakeComplete();
                 },
-                MeterPoller::panMaxBinSource([this](const QString& panKey) -> SpectrumWidget* {
-                    return m_panStack ? m_panStack->spectrum(panKey) : nullptr;
+                MeterPoller::panMaxBinSourceForSlice([this](const SliceModel* slice) -> SpectrumWidget* {
+                    if (!slice || !m_panStack || slice->streamIndex() < 0
+                        || markerOnlyPlacement(slice->sliceIndex())) {
+                        return nullptr;
+                    }
+                    // 2026-10-02 KG4VCF, Codex: restore the TX carry's inherited
+                    // resolver. Empty Core keys use this slice's actual host,
+                    // never the active pan or another receiver's retained trace.
+                    PanadapterApplet* pan = m_panStack->panadapter(windowPanFor(slice));
+                    SliceModel* displayed = pan
+                        ? m_radioModel->sliceById(pan->activeSliceIndex()) : nullptr;
+                    if (!displayed || displayed->streamIndex() != slice->streamIndex()
+                        || displayed->streamEpoch() != slice->streamEpoch()) {
+                        return nullptr;
+                    }
+                    return pan->spectrumWidget();
                 }));
             // R-R3-13 / R-R3-49 (parity Task 15): the ADC and AGC meters
             // read the Core's slice readings when it sends them.
@@ -14811,12 +14848,19 @@ void MainWindow::openNetworkDiagnostics()
     dlg->show();
 }
 
+void MainWindow::setSavedCoreName(const QString& name)
+{
+    if (m_savedCoreName == name) { return; }
+    m_savedCoreName = name;
+    refreshRemoteConnectionUi();
+}
+
 CoreSettingsContext MainWindow::coreSettingsSnapshot() const
 {
     CoreSettingsContext context;
     context.connectionDetailsAvailable = m_remoteConnection != nullptr;
     context.diagnosticsAvailable = m_radioModel != nullptr;
-    context.audioAvailable = false; // The shared audio leaf is bound in the later audio slice.
+    context.audioAvailable = m_remoteMedia != nullptr;
     context.stationSettingsAvailable = stationSettingsAvailable();
     context.stationSettingsReason = stationSettingsReason();
     context.listener = tr("Not reported");
@@ -14914,6 +14958,8 @@ SetupDialog* MainWindow::createSetupDialog()
     if (const QString holderReason = desktopVoxHolderReason(); !holderReason.isEmpty()) {
         dialog->setVoxPermitted(false, holderReason);
     }
+    dialog->setCoreAudioSources(m_remoteMedia, m_remoteTelemetry);
+    dialog->setCoreAudioContext(coreSettingsSnapshot());
     dialog->setStationSettingsAvailable(stationSettingsAvailable(), stationSettingsReason());
     seedReceiverAudioNote(dialog, [this] { return receiverAudioNoteFor(m_remoteMedia); });
     dialog->setAttribute(Qt::WA_DeleteOnClose);

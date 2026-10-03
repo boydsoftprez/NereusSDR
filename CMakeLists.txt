@@ -1621,6 +1621,8 @@ set(GUI_SOURCES
     src/gui/CoreAddressProbe.cpp
     src/gui/CoreAddressController.cpp
     src/gui/CoreRenameController.cpp
+    src/gui/RemoteAudioWidget.cpp
+    src/gui/setup/CoreAudioSetupPage.cpp
     src/gui/CoreSettingsHost.cpp
     src/gui/StationStartupSelection.cpp
     src/gui/StationServiceManager.cpp
@@ -3194,6 +3196,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             EXCLUDE_FROM_ALL)
     install(FILES packaging/nereusd.conf.sample
             DESTINATION "${CMAKE_INSTALL_DATADIR}/nereusd"
+            COMPONENT nereusd
+            EXCLUDE_FROM_ALL)
+    # Source-stage installers for both ARM stations use the same bounded
+    # artifact cleanup. Ship the helper with every daemon stage so a fresh
+    # install does not depend on a separately provisioned maintenance file.
+    install(PROGRAMS scripts/radxa/prune-core-artifacts.py
+            DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/nereusd"
             COMPONENT nereusd
             EXCLUDE_FROM_ALL)
 endif()

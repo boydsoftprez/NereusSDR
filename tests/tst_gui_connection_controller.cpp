@@ -454,7 +454,7 @@ void TestGuiConnectionController::savedRowShowsLastAuthenticatedAddress()
     SavedCoreTarget saved = savedTarget(QStringLiteral("address"), QStringLiteral("My Core"), 47910, QStringLiteral("fake"));
     saved.connection.cachedAddresses = {QStringLiteral("wss://192.0.2.8:47911")};
     const auto row = GuiConnectionController::savedCoreRow(saved, true);
-    QCOMPARE(row.name, QStringLiteral("My Core"));
+    QCOMPARE(row.name, QStringLiteral("My Core (local name)"));
     QCOMPARE(row.address, QStringLiteral("192.0.2.8:47911 (last worked)"));
     QCOMPARE(saved.connection.url, QStringLiteral("ws://127.0.0.1:47910"));
     saved.connection.coreAddresses = {QStringLiteral("wss://[2001:db8::5]:47912")};

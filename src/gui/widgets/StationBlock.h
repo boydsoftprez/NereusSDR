@@ -32,6 +32,8 @@ public:
     // stale board name.
     void setHardwareLine(const QString& model, const QString& firmware);
     QString hardwareLine() const noexcept { return m_hardwareLine; }
+    void setConnectionLines(const QString& controls, const QString& audio);
+    QSize sizeHint() const override;
 
 signals:
     void clicked();
@@ -39,14 +41,19 @@ signals:
 
 protected:
     void mousePressEvent(QMouseEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     void applyStyle();
+    void updateElision();
 
     QString  m_radioName;
     QLabel*  m_label{nullptr};
     QString  m_hardwareLine;
     QLabel*  m_hardwareLabel{nullptr};
+    bool m_corePresentation = false;
+    QString m_audioLine;
+    QLabel* m_audioLabel{nullptr};
 };
 
 } // namespace NereusSDR

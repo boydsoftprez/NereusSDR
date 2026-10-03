@@ -914,7 +914,9 @@ private slots:
         QCOMPARE(h.controls()->statusText(), QStringLiteral("Core disconnected"));
         QCOMPARE(h.titleSegment()->state(), ConnectionState::Disconnected);
         QCOMPARE(h.titleSegment()->remoteStatusText(), QStringLiteral("Core disconnected"));
-        QVERIFY(h.stationBlock()->radioName().contains(h.controls()->endpointText()));
+        // Core name is the headline; the attempted listener remains in Details.
+        QCOMPARE(h.stationBlock()->radioName(), QStringLiteral("Core name not reported"));
+        QVERIFY(h.stationBlock()->toolTip().contains(h.controls()->endpointText()));
         QCOMPARE(h.stationBlock()->hardwareLine(), QStringLiteral("Core disconnected"));
         QAction* connect = h.menuAction(QStringLiteral("&Radio"), QStringLiteral("&Connect"));
         QAction* disconnect = h.menuAction(QStringLiteral("&Radio"), QStringLiteral("&Disconnect"));
@@ -1070,7 +1072,10 @@ private slots:
         QCOMPARE(h.remoteModel()->connectionState(), ConnectionState::Disconnected);
         QTest::qWait(kSettleMs);
 
-        QCOMPARE(h.stationBlock()->hardwareLine(), QStringLiteral("Radio offline"));
+        // The banner reports the live Core control connection independently
+        // of its offline radio; full Details retains the radio's availability.
+        QCOMPARE(h.stationBlock()->hardwareLine(), QStringLiteral("Core connected"));
+        QVERIFY(h.stationBlock()->toolTip().contains(QStringLiteral("Radio offline")));
         QCOMPARE(h.controls()->state(), ConnectionState::Connected);
         QCOMPARE(h.titleSegment()->remoteStatusText(), QStringLiteral("Core connected"));
         QCOMPARE(connectionsRequested.size(), 0);
