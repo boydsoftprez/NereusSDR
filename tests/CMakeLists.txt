@@ -9738,6 +9738,7 @@ nereus_add_test(tst_display_applet)
 # Core Settings: signed rename admission and fresh retained listener candidates.
 nereus_add_test(tst_core_connection_candidates)
 nereus_add_test(tst_core_rename fakes/LoopbackTransport.cpp)
+nereus_add_test(tst_core_settings_host fakes/LoopbackTransport.cpp)
 target_compile_definitions(tst_core_connection_candidates PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")

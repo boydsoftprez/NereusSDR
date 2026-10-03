@@ -711,6 +711,8 @@ public:
     /// A temporary rename rechecks desktop exclusion immediately before auth.
     void setAdmissionGuard(std::function<bool()> guard) { m_admissionGuard = std::move(guard); }
     QByteArray deviceIdentityFingerprint() const;
+    /// Returns only the key already installed by ordinary initialization; never loads/creates.
+    std::shared_ptr<const ClientDeviceIdentity> existingDeviceIdentity() const { return m_deviceIdentity; }
     explicit StationClient(RadioModel* radioModel, SettingsProxy* settingsProxy,
                            QObject* parent = nullptr,
                            const QList<quint16>& supportedMajors =
@@ -819,6 +821,8 @@ public:
     /// Only ordinary initial/retry races consume this; nullopt retires the saved lease.
     using CandidateSource = std::function<std::optional<ConnectionCandidates>()>;
     void setCandidateSource(CandidateSource source) { m_candidateSource = std::move(source); }
+    void setCandidateUnavailableReasonSource(std::function<QString()> source)
+    { m_candidateUnavailableReasonSource = std::move(source); }
     /// The paired Core's hello proves it: its identity key is the one
     /// `expectedIdentity` fingerprints and its certificate binding verifies
     /// for `certSha256`, the certificate that connection presented (link
@@ -1884,6 +1888,7 @@ private:
     const SessionPurpose m_sessionPurpose;
     std::function<bool()> m_admissionGuard;
     CandidateSource m_candidateSource;
+    std::function<QString()> m_candidateUnavailableReasonSource;
     quint64 m_connectionRequestGeneration = 0;
     QPointer<RadioModel> m_radioModel;
     quint32 m_hygieneValidateId{0};

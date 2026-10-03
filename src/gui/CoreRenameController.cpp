@@ -30,6 +30,10 @@ CoreRenameController::CoreRenameController(CoreTargetStore& store, SessionSource
     });
 }
 CoreRenameController::~CoreRenameController() {
+    // QObject destroys children after derived members; disconnect retirement observers first.
+    for (const Drain& drain : m_draining) {
+        if (drain.client) { disconnect(drain.client, &QObject::destroyed, this, nullptr); }
+    }
     ++m_generation;
     m_timer.stop();
     if (m_operation) {
@@ -55,6 +59,12 @@ void CoreRenameController::inspectTarget(const QString& id) {
 }
 bool CoreRenameController::ownsTemporaryAdmission(const QByteArray& identity) const {
     if (m_operation && m_operation->temporary && m_operation->request.pairedIdentity == identity) { return true; }
+    for (const Drain& drain : m_draining) {
+        if (drain.client && drain.pairedIdentity == identity) { return true; }
+    }
+    return false;
+}
+bool CoreRenameController::ownsDrainingAdmission(const QByteArray& identity) const {
     for (const Drain& drain : m_draining) {
         if (drain.client && drain.pairedIdentity == identity) { return true; }
     }
@@ -156,6 +166,8 @@ void CoreRenameController::rename(const Request& request) {
         }
     }
     m_operation->temporary = true;
+    emit temporaryAdmissionChanged();
+    if (!self || generation != m_generation || !m_operation) { return; }
     const TemporaryFactory factory = m_factory;
     std::unique_ptr<StationClient> temporary = factory ? factory()
         : std::make_unique<StationClient>(nullptr, nullptr, nullptr, LinkVersion::supportedMajors(), StationClient::SessionPurpose::RenameOnly);
@@ -312,6 +324,10 @@ void CoreRenameController::cleanup(StationClient* client, const QByteArray& iden
     // Only an owned temporary client reaches here. Retirement precedes leave.
     m_draining.removeIf([](const Drain& old) { return old.client.isNull(); });
     m_draining.append({client, identity});
+    connect(client, &QObject::destroyed, this, [this, client] {
+        m_draining.removeIf([client](const Drain& drain) { return !drain.client || drain.client == client; });
+        emit temporaryAdmissionChanged();
+    });
     client->setAdmissionGuard([] { return false; });
     const QPointer<StationClient> guarded(client);
     const auto close = [guarded] {
@@ -330,5 +346,6 @@ void CoreRenameController::cleanup(StationClient* client, const QByteArray& iden
     QTimer::singleShot(qMax(1, m_limits.cleanupMs), client, close);
     *command = client->leaveSession();
     if (*command == 0) { close(); }
+    emit temporaryAdmissionChanged();
 }
 } // namespace NereusSDR

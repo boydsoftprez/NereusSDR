@@ -8483,7 +8483,11 @@ void StationClient::startRace()
         const auto candidates = source();
         if (!self || request != m_connectionRequestGeneration) { return; }
         if (!candidates) {
-            const QString reason = QStringLiteral("The saved Core changed; choose it again to connect.");
+            const auto reasonSource = m_candidateUnavailableReasonSource;
+            const QString suppliedReason = reasonSource ? reasonSource() : QString();
+            if (!self || request != m_connectionRequestGeneration) { return; }
+            const QString reason = suppliedReason.isEmpty()
+                ? QStringLiteral("The saved Core changed; choose it again to connect.") : suppliedReason;
             const bool active = m_sessionActive;
             disconnectFromStation(reason);
             m_dialPlan.clear();

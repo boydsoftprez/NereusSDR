@@ -20,6 +20,8 @@
 namespace NereusSDR {
 class RemoteConnectionController;
 class StationClient;
+class CoreSettingsHost;
+class ClientDeviceIdentity;
 
 // Application-scoped connection UI. Selecting/editing a row never replaces
 // the live session; an explicit Connect queues retirement after the originating
@@ -101,5 +103,8 @@ private:
     bool m_storeLoaded = false;
     bool m_shuttingDown = false;
     QTimer m_negativeExpiryTimer;
+    std::shared_ptr<const ClientDeviceIdentity> m_existingDeviceIdentity;
+    std::unique_ptr<CoreSettingsHost> m_coreSettings;
+    QByteArray m_pendingConnectionIdentity;
 };
 } // namespace NereusSDR

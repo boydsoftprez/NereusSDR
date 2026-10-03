@@ -72,6 +72,8 @@ public:
     /// a saved one); the options' own list is used then.
     using CurrentOptionsSource = std::function<std::optional<RemoteStationOptions>()>;
     void setCurrentOptionsSource(CurrentOptionsSource source);
+    void setAdmissionUnavailableReasonSource(std::function<QString()> source)
+    { m_admissionUnavailableReasonSource = std::move(source); }
 public slots:
     void connectToStation();
     void disconnectFromStation();
@@ -100,6 +102,7 @@ private:
     int m_retryAttempt = 0;
     int m_retryDelayMs = 0;
     CurrentOptionsSource m_currentOptionsSource;
+    std::function<QString()> m_admissionUnavailableReasonSource;
 };
 
 // A small modeless view of the configured Core. Full station selection and

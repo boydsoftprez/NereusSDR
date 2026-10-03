@@ -251,6 +251,7 @@ class DiversityDialog;
 // Whether moc would accept the elaborated form in a return position was
 // not tested; the forward declaration is the form that is known to work.
 class SetupDialog;
+struct CoreSettingsContext;
 class RemoteMediaController;
 // Phase 3J-2 H1: Tools menu modeless singletons.
 class SpotHubDialog;
@@ -328,6 +329,8 @@ public:
     void setConnectionPickerManaged(bool managed);
     /// Present Settings for a saved Core without changing the window's session.
     void openCoreSettings(const QString& targetId);
+    /// Presentation facts for this window; no saved-entry or session ownership.
+    CoreSettingsContext coreSettingsSnapshot() const;
     RadioModel* radioModel() const { return m_radioModel; }
     // Caller owns the controller and model; local windows only.
     void setDesktopStationController(DesktopStationController* controller);

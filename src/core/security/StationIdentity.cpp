@@ -186,6 +186,38 @@ bool StationIdentity::keepOwnerOnly(const QString& path)
 #endif
 }
 
+StationIdentity StationIdentity::loadExistingKeyFile(const QString& profileDir,
+                                                     const QString& fileName,
+                                                     const QString& whose)
+{
+    const OpenSslErrorScope openSslErrors;
+    StationIdentity identity;
+    identity.m_keyPath = QDir(profileDir).filePath(fileName);
+    QFile file(identity.m_keyPath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        identity.m_lastError = QStringLiteral("%1 identity key %2 could not be read: %3")
+                                   .arg(whose, identity.m_keyPath, file.errorString());
+        return identity;
+    }
+    const QByteArray pem = file.read(kMaxKeyFileBytes);
+    file.close();
+    BioPtr bio(BIO_new_mem_buf(pem.constData(), static_cast<int>(pem.size())), &BIO_free);
+    EVP_PKEY* raw = bio ? PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr)
+                        : nullptr;
+    EvpPkeyPtr key(raw, &EVP_PKEY_free);
+    if (!key || !isP256Key(key.get())) {
+        // Never regenerated over: a new key is a new Core, and every
+        // paired device would have to pair again.
+        identity.m_lastError =
+            QStringLiteral("%1 identity key %2 is not a P-256 private key")
+                .arg(whose, identity.m_keyPath);
+        return identity;
+    }
+    identity.m_spki = spkiOf(key.get());
+    identity.m_key.reset(key.release(), &EVP_PKEY_free);
+    return identity;
+}
+
 StationIdentity StationIdentity::loadOrCreateKeyFile(const QString& profileDir,
                                                      const QString& fileName,
                                                      const QString& whose)
@@ -205,28 +237,7 @@ StationIdentity StationIdentity::loadOrCreateKeyFile(const QString& profileDir,
     QFile file(identity.m_keyPath);
     if (file.exists()) {
         keepOwnerOnly(identity.m_keyPath);
-        if (!file.open(QIODevice::ReadOnly)) {
-            identity.m_lastError = QStringLiteral("%1 identity key %2 could not be read: %3")
-                                       .arg(whose, identity.m_keyPath, file.errorString());
-            return identity;
-        }
-        const QByteArray pem = file.read(kMaxKeyFileBytes);
-        file.close();
-        BioPtr bio(BIO_new_mem_buf(pem.constData(), static_cast<int>(pem.size())), &BIO_free);
-        EVP_PKEY* raw = bio ? PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr)
-                            : nullptr;
-        EvpPkeyPtr key(raw, &EVP_PKEY_free);
-        if (!key || !isP256Key(key.get())) {
-            // Never regenerated over: a new key is a new Core, and every
-            // paired device would have to pair again.
-            identity.m_lastError =
-                QStringLiteral("%1 identity key %2 is not a P-256 private key")
-                    .arg(whose, identity.m_keyPath);
-            return identity;
-        }
-        identity.m_spki = spkiOf(key.get());
-        identity.m_key.reset(key.release(), &EVP_PKEY_free);
-        return identity;
+        return loadExistingKeyFile(profileDir, fileName, whose);
     }
 
     EvpPkeyPtr key(EVP_PKEY_Q_keygen(nullptr, nullptr, "EC", "P-256"), &EVP_PKEY_free);

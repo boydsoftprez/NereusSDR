@@ -833,6 +833,7 @@ void CoresSetupPage::finishRename(const CoreRenameRequest& request, bool accepte
             ? tr("The Core accepted its new name. Core identity and address history are unchanged.") : reason);
     } else {
         m_nameError->setText(reason);
+        m_status->setText(reason); // Remains visible if the host retires rename authority while closing.
         m_nameInput->setFocus();
     }
 }

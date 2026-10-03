@@ -50,7 +50,10 @@ public:
     bool pending() const { return m_operation.has_value(); }
     /// Ordinary Connect must respect this lease through temporary close retirement.
     bool ownsTemporaryAdmission(const QByteArray& pairedIdentity) const;
+    bool ownsDrainingAdmission(const QByteArray& pairedIdentity) const;
 signals:
+    /// Lease transitions, including actual QObject retirement after close.
+    void temporaryAdmissionChanged();
     /// Terminal notification is queued; cleanup/retirement precedes callbacks.
     void finished(NereusSDR::CoreRenameController::Request request,
                   NereusSDR::CoreRenameController::Outcome outcome,

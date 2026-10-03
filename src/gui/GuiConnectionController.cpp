@@ -23,6 +23,9 @@
 #include "gui/ConnectionPanel.h"
 #include "gui/ConnectionSelector.h"
 #include "gui/CoreTargetEditor.h"
+#include "gui/CoreSettingsHost.h"
+#include "gui/SetupDialog.h"
+#include "gui/RemoteMediaController.h"
 #include "gui/MainWindow.h"
 #include "gui/OperatorReasonText.h"
 #include "gui/StationLanSelection.h"
@@ -111,6 +114,52 @@ bool selectionMatchesSaved(const StationStartupSelection& selection, const Saved
 GuiConnectionController::GuiConnectionController(QObject* parent)
     : QObject(parent), m_store(AppSettings::instance()), m_lan(this), m_selector(std::make_unique<ConnectionSelector>())
 {
+    m_coreSettings = std::make_unique<CoreSettingsHost>(m_store, [this] {
+        MainWindow* window = m_sessions.window();
+        CoreSettingsContext context = window ? window->coreSettingsSnapshot() : CoreSettingsContext{};
+        const auto target = m_store.target(m_windowTargetId);
+        const bool current = target && m_windowTargetIncarnation != 0
+            && m_store.targetIncarnation(m_windowTargetId) == m_windowTargetIncarnation
+            && m_windowCoordinatorGeneration == m_sessions.generation()
+            && authenticatedSelectionMatchesSaved(m_sessions.selection(), *target)
+            && context.authenticated && context.pairedIdentity.size() == 32
+            && context.pairedIdentity == target->connection.identityFingerprint && !target->connection.allowUnpinned;
+        context.targetId = m_windowTargetId;
+        context.epoch ^= m_sessions.generation() << 32;
+        if (!current) {
+            context.authenticated = false;
+            context.coreName.clear();
+            context.controls = tr("Path unavailable");
+            context.audioAndDisplay = tr("Path unavailable");
+            context.reachedThrough = tr("Not known");
+            context.listener = tr("Not reported");
+            context.radio.clear();
+            context.stationSettingsAvailable = false;
+            context.stationSettingsReason = tr("This saved Core is not the authenticated Core in this window.");
+        }
+        return context;
+    }, [this](const QByteArray& requested) {
+        CoreRenameController::Snapshot snapshot;
+        snapshot.generation = m_sessions.generation();
+        snapshot.deviceIdentity = m_existingDeviceIdentity ? m_existingDeviceIdentity->fingerprint() : QByteArray();
+        MainWindow* window = m_sessions.window();
+        StationClient* client = window ? window->findChild<StationClient*>() : nullptr;
+        if (requested.size() == 32 && client
+            && (m_sessions.selection().connection.identityFingerprint == requested
+                || client->stationIdentityFingerprint() == requested)) {
+            snapshot.client = client;
+            snapshot.sameCoreActive = client->isConnectionActive() || client->isReconnectPending();
+        }
+        snapshot.sameCoreActive = snapshot.sameCoreActive
+            || (requested.size() == 32 && m_pendingConnectionIdentity == requested);
+        return snapshot;
+    });
+    connect(m_coreSettings.get(), &CoreSettingsHost::admissionChanged, this, &GuiConnectionController::refresh);
+    connect(m_selector.get(), &ConnectionSelector::manageCoreRequested, this, [this](const QString& key) {
+        MainWindow* window = m_sessions.window();
+        if (!m_shuttingDown && m_coreSettings && window && key.startsWith(QLatin1String("saved:"))
+            && m_store.target(key.mid(6))) { window->openCoreSettings(key.mid(6)); }
+    });
     m_negativeExpiryTimer.setSingleShot(true);
     connect(&m_negativeExpiryTimer, &QTimer::timeout, this, &GuiConnectionController::refresh);
     connect(&m_lan, &StationLanDiscovery::changed, this, &GuiConnectionController::refresh);
@@ -156,6 +205,9 @@ void GuiConnectionController::start(const StationStartupRequest& request)
     QString error;
     m_storeLoaded = m_store.load(&error);
     if (m_storeLoaded) { observeNetworkGeneration(); }
+    // Startup may reuse a paired key already on disk; Settings itself never loads or creates one.
+    m_existingDeviceIdentity = ClientDeviceIdentity::existingForThisProfile();
+    if (m_existingDeviceIdentity) { m_coreSettings->setExistingDeviceIdentity(m_existingDeviceIdentity); }
     const auto selected = m_storeLoaded ? resolveStationStartup(request, m_store, &error)
                                         : std::nullopt;
     // A corrupt address book or bad CLI must not start the old local radio
@@ -174,6 +226,8 @@ void GuiConnectionController::shutdown()
     m_shuttingDown = true;
     ++m_request;
     m_selector->hide();
+    m_selector->setCoreManagementAvailable(false);
+    m_coreSettings.reset();
     if (m_pairing) { m_pairing->cancel(); }
     m_lan.stop();
     m_sessions.shutdown();
@@ -181,6 +235,8 @@ void GuiConnectionController::shutdown()
 
 void GuiConnectionController::attachWindow(MainWindow* window)
 {
+    m_selector->setCoreManagementAvailable(false);
+    if (m_coreSettings) { m_coreSettings->retireBindings(); }
     for (const QMetaObject::Connection& connection : m_windowConnections) {
         QObject::disconnect(connection);
     }
@@ -205,6 +261,16 @@ void GuiConnectionController::attachWindow(MainWindow* window)
     };
     m_windowConnections.append(connect(model, &RadioModel::connectionStateChanged, this, update));
     m_windowConnections.append(connect(model, &RadioModel::infoChanged, this, update));
+    m_windowConnections.append(connect(model, &RadioModel::stationLinkStateChanged, this, update));
+    m_windowConnections.append(connect(window, &MainWindow::setupDialogCreated, this,
+        [this, generation](SetupDialog* dialog) {
+            if (!m_shuttingDown && m_coreSettings && generation == m_sessions.generation()) { m_coreSettings->bindDialog(dialog); }
+        }));
+    for (SetupDialog* dialog : window->findChildren<SetupDialog*>()) { m_coreSettings->bindDialog(dialog); }
+    m_selector->setCoreManagementAvailable(true);
+    if (auto* media = window->findChild<RemoteMediaController*>()) {
+        m_windowConnections.append(connect(media, &RemoteMediaController::networkPathChanged, this, update));
+    }
     const auto found = [this, generation](const RadioInfo& radio) {
         if (generation != m_sessions.generation() || m_shuttingDown) { return; }
         m_radios.insert(radio.macAddress, radio);
@@ -220,6 +286,11 @@ void GuiConnectionController::attachWindow(MainWindow* window)
             refresh();
         }));
     if (m_remoteControls) {
+        const QByteArray pairedIdentity = m_sessions.selection().connection.identityFingerprint;
+        const QPointer<GuiConnectionController> host(this);
+        m_remoteControls->setAdmissionUnavailableReasonSource([host, pairedIdentity] {
+            return host && host->m_coreSettings ? host->m_coreSettings->admissionUnavailableReason(pairedIdentity) : QString();
+        });
         m_windowConnections.append(connect(m_remoteControls, &RemoteConnectionController::changed,
                                             this, update));
         // iPhone app plan Task 27 fix wave: a reconnect in this window reads
@@ -235,6 +306,7 @@ void GuiConnectionController::attachWindow(MainWindow* window)
                 if (!self || generation != self->m_sessions.generation() || !self->m_storeLoaded) {
                     return std::nullopt;
                 }
+                if (self->m_coreSettings && self->m_coreSettings->ownsTemporaryAdmission(trusted.identityFingerprint)) { return std::nullopt; }
                 self->observeNetworkGeneration();
                 const auto target = self->m_store.target(savedId);
                 if (!target || incarnation == 0 || self->m_store.targetIncarnation(savedId) != incarnation
@@ -254,6 +326,16 @@ void GuiConnectionController::attachWindow(MainWindow* window)
             });
     }
     if (auto* client = window->findChild<StationClient*>()) {
+        const auto key = client->existingDeviceIdentity();
+        if (key && key->isValid()) {
+            m_existingDeviceIdentity = key;
+            m_coreSettings->setExistingDeviceIdentity(key);
+        }
+        const QByteArray pairedIdentity = m_sessions.selection().connection.identityFingerprint;
+        const QPointer<GuiConnectionController> host(this);
+        client->setCandidateUnavailableReasonSource([host, pairedIdentity] {
+            return host && host->m_coreSettings ? host->m_coreSettings->admissionUnavailableReason(pairedIdentity) : QString();
+        });
         const QString nameTargetId = m_sessions.selection().savedId;
         const quint64 nameIncarnation = m_store.targetIncarnation(nameTargetId);
         const QByteArray nameIdentity = m_sessions.selection().connection.identityFingerprint;
@@ -303,6 +385,7 @@ void GuiConnectionController::refresh()
 {
     if (m_shuttingDown) { return; }
     observeNetworkGeneration();
+    if (m_coreSettings) { m_coreSettings->refresh(); }
     m_negativeExpiryTimer.stop();
     qint64 nextExpiry = 0;
     const qint64 wallNow = QDateTime::currentMSecsSinceEpoch();
@@ -362,6 +445,10 @@ void GuiConnectionController::refresh()
             else if (!current.savedAddressBeforeDiscovery.isEmpty()) { row.state += tr(", using the LAN address"); }
         }
         row.connectable = !exact || !m_remoteControls || m_remoteControls->canConnect();
+        if (m_coreSettings && m_coreSettings->ownsTemporaryAdmission(target.connection.identityFingerprint)) {
+            row.connectable = false;
+            row.state = m_coreSettings->admissionUnavailableReason(target.connection.identityFingerprint);
+        }
         rows.append(row);
     }
     for (const StationLanEndpoint& endpoint : m_lan.endpoints()) {
@@ -587,14 +674,36 @@ void GuiConnectionController::scan()
 void GuiConnectionController::queueConnect(const QString& key)
 {
     const quint64 request = ++m_request;
+    m_pendingConnectionIdentity.clear();
+    if (key.startsWith(QLatin1String("saved:"))) {
+        const auto target = m_store.target(key.mid(6));
+        if (target) { m_pendingConnectionIdentity = target->connection.identityFingerprint; }
+    } else if (key == QLatin1String("current")) {
+        m_pendingConnectionIdentity = m_sessions.selection().connection.identityFingerprint;
+    } else if (key.startsWith(QLatin1String("lan:"))) {
+        for (const auto& endpoint : m_lan.endpoints()) {
+            if (key == QStringLiteral("lan:") + endpoint.key()) {
+                const auto saved = matchingSavedCores(endpoint, m_store.targets());
+                if (saved.size() == 1) { m_pendingConnectionIdentity = saved.first().connection.identityFingerprint; }
+            }
+        }
+    }
+    if (m_coreSettings) { m_coreSettings->refresh(); }
     QTimer::singleShot(0, this, [this, key, request] {
-        if (!m_shuttingDown && request == m_request) { connectTarget(key); }
+        if (!m_shuttingDown && request == m_request) {
+            m_pendingConnectionIdentity.clear();
+            connectTarget(key);
+            refresh();
+        }
     });
 }
 
 bool GuiConnectionController::choose(const StationStartupSelection& choice, bool startConnection)
 {
     QString error;
+    const QString admission = m_coreSettings
+        ? m_coreSettings->admissionUnavailableReason(choice.connection.identityFingerprint) : QString();
+    if (startConnection && !admission.isEmpty()) { m_selector->setNotice(admission); return false; }
     if (!m_sessions.canReplace(choice, &error)) {
         m_selector->setNotice(error);
         return false;

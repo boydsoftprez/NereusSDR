@@ -801,6 +801,7 @@ warren@wpratt.com
 #include "gui/HostingSliceActions.h"
 #include "gui/LevelCalGridFollowGuard.h"
 #include "core/session/RemoteDevicesState.h"
+#include "core/session/PathRacer.h"
 #include "ConnectionPanel.h"
 #include "NetworkDiagnosticsDialog.h"
 #include "OperatorReasonText.h"
@@ -13532,6 +13533,10 @@ void MainWindow::wireSetupDialog(SetupDialog* dialog)
     }
     connect(dialog, &SetupDialog::connectionsRequested,
             this, &MainWindow::connectionRequestedByOperator);
+    connect(dialog, &SetupDialog::coreConnectionDetailsRequested,
+            this, &MainWindow::showRemoteConnectionPanel);
+    connect(dialog, &SetupDialog::coreDiagnosticsRequested,
+            this, &MainWindow::openNetworkDiagnostics);
     if (m_txApplet) {
         connect(dialog, &SetupDialog::cfcDialogRequested,
                 m_txApplet, &TxApplet::requestOpenCfcDialog);
@@ -14633,6 +14638,45 @@ void MainWindow::openNetworkDiagnostics()
         m_radioModel, m_radioModel->audioEngine(), this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->show();
+}
+
+CoreSettingsContext MainWindow::coreSettingsSnapshot() const
+{
+    CoreSettingsContext context;
+    context.connectionDetailsAvailable = m_remoteConnection != nullptr;
+    context.diagnosticsAvailable = m_radioModel != nullptr;
+    context.audioAvailable = false; // The shared audio leaf is bound in the later audio slice.
+    context.stationSettingsAvailable = stationSettingsAvailable();
+    context.stationSettingsReason = stationSettingsReason();
+    context.listener = tr("Not reported");
+    context.controls = tr("Path unavailable");
+    context.audioAndDisplay = tr("Path unavailable");
+    context.reachedThrough = tr("Not known");
+    if (!m_stationClient) { return context; }
+    context.epoch = m_stationClient->sessionEpoch(); // Host replaces this source stamp with a UI epoch.
+    context.pairedIdentity = m_stationClient->stationIdentityFingerprint();
+    context.authenticated = m_stationClient->isHandshakeComplete() && m_stationClient->signedInWithDeviceKey();
+    if (!context.authenticated) { return context; }
+    context.coreName = m_stationClient->remoteDevices()->coreInfo().stationLabel;
+    context.radio = m_remoteConnection ? m_remoteConnection->radioText() : tr("Radio unknown");
+    const auto controls = m_stationClient->transport()
+        ? m_stationClient->transport()->networkPathSnapshot() : std::optional<NetworkPathSnapshot>{};
+    context.controls = ConnectionSegment::routeText(controls);
+    context.audioAndDisplay = ConnectionSegment::routeText(m_remoteMedia
+        ? m_remoteMedia->currentNetworkPath() : std::optional<NetworkPathSnapshot>{});
+    const int rank = m_stationClient->pathRank();
+    if (rank == PathRacer::ThisNetwork) { context.reachedThrough = tr("This network"); }
+    else if (rank == PathRacer::Direct) { context.reachedThrough = tr("A direct address"); }
+    else if (rank >= PathRacer::ServiceDirect) { context.reachedThrough = tr("Remote access introduction"); }
+    // A diagnostic socket/ICE peer is never reusable listener evidence.
+    const QUrl listener = m_stationClient->connectedUrl();
+    QHostAddress numeric;
+    if (rank >= PathRacer::ThisNetwork && rank <= PathRacer::Direct
+        && listener.scheme() == QStringLiteral("wss")
+        && listener.port() > 0 && listener.port() <= 65535 && numeric.setAddress(listener.host())) {
+        context.listener = numeric.toString();
+    }
+    return context;
 }
 
 void MainWindow::openCoreSettings(const QString& targetId)

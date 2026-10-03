@@ -149,6 +149,10 @@ std::optional<RemoteStationOptions> RemoteConnectionController::currentOptions()
 
 bool RemoteConnectionController::canConnect() const
 {
+    const QPointer<const RemoteConnectionController> self(this);
+    const auto reasonSource = m_admissionUnavailableReasonSource;
+    const QString admission = reasonSource ? reasonSource() : QString();
+    if (!self || !admission.isEmpty()) { return false; }
     const auto options = currentOptions();
     if (!m_client || !options || !options->isValidRemoteTarget() || m_client->isConnectionActive()) {
         return false;
@@ -209,6 +213,11 @@ QString RemoteConnectionController::detailText() const
 {
     QString text = tr("Core: %1\n%2\n%3")
         .arg(endpointText(), statusText(), radioText());
+    const QPointer<const RemoteConnectionController> self(this);
+    const auto reasonSource = m_admissionUnavailableReasonSource;
+    const QString admissionReason = reasonSource ? reasonSource() : QString();
+    if (!self) { return text; }
+    if (!admissionReason.isEmpty()) { text += QLatin1Char('\n') + admissionReason; }
     if (m_options.url.isEmpty()) {
         if (!m_options.reachFromAnywhere) {
             text += tr("\nTurn on remote access for this Core in Connections to connect.");
