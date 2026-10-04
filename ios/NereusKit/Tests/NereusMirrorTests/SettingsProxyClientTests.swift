@@ -315,7 +315,8 @@ import Testing
     }
 
     @Test func theAppsOwnRemovalComesBackWithAnEmptyOrigin() async {
-        let proxy = connected(["DisplaySpectrumFps": "30", "CWPitch": "600"])
+        let clock = ManualLinkClock()
+        let proxy = connected(["DisplaySpectrumFps": "30", "CWPitch": "600"], clock: clock)
         await proxy.remove("DisplaySpectrumFps")
         #expect(proxy.value("DisplaySpectrumFps") == nil)
         #expect(sent.messages.last == .settingsRemove(LinkMessage.SettingsRemove(key: "DisplaySpectrumFps")))

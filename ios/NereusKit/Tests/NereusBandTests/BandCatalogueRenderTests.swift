@@ -51,7 +51,7 @@ import UniformTypeIdentifiers
     }
 
     @Test(arguments: shots)
-    func theCoresCatalogueDrawsTheDefaultPlanAndPalette(_ shot: Shot) throws {
+    func theCoresCatalogueDrawsTheDefaultPlanAndPalette(_ shot: Shot) async throws {
         let catalog = try Self.catalogue()
         var settings = BandDisplaySettings.desktopDefaults
         settings.bandPlanSize = shot.size
@@ -99,6 +99,7 @@ import UniformTypeIdentifiers
             state.receive(frame: next, manualLevels: settings.manualLevels)
             state.receive(extras: BandFixtures.extras(for: next, levels: (-126, -66)), manualLevels: settings.manualLevels)
             frame = next
+            await Task.yield()
         }
         let image = try target.render(renderer, frame: frame, history: state.history, extras: state.frameExtras,
                                       overlays: overlays)

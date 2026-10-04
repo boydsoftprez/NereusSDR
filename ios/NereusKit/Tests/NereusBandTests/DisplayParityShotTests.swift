@@ -76,7 +76,7 @@ import Testing
     ]
 
     @Test(arguments: scenes)
-    func theSceneDrawsAsTheDesktopsDoes(_ scene: Scene) throws {
+    func theSceneDrawsAsTheDesktopsDoes(_ scene: Scene) async throws {
         let catalog = try BandCatalogueRenderTests.catalogue()
         var settings = BandDisplaySettings.desktopDefaults
         settings.bandPlanSize = .off
@@ -126,6 +126,7 @@ import Testing
                                                       levels: (-125, -65)),
                           manualLevels: settings.manualLevels)
             frame = next
+            await Task.yield()
         }
         if scene.more == 2 {
             overlays.peakHold = trace.indices.map { sample in
