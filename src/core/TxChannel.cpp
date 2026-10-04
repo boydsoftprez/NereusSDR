@@ -67,6 +67,9 @@ warren@wpratt.com
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 - Match the static WDSP API's Windows storage linkage when
+//                 reading TXA internals. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via OpenAI Codex.
 //   2026-04-25 — TxChannel C++ wrapper implemented by J.J. Boyd (KG4VCF)
 //                 during 3M-1a Task C.2, with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -416,8 +419,26 @@ warren@wpratt.com
 // txa[channel].stagename.p->run directly because no GetTXA*Run API exists.
 // From Thetis wdsp/TXA.h:165 [v2.10.3.13] — extern struct _txa txa[];
 #ifdef HAVE_WDSP
+#ifdef Q_OS_WIN
+// Keep platform and FFTW attributes intact before adapting WDSP exports.
+// comm.h:34-37,51 includes these dependencies before the internal headers.
+#include <Windows.h>
+#include <process.h>
+#include <intrin.h>
+#include <avrt.h>
+#include "../../third_party/wdsp/src/fftw3.h"
+// WDSP is linked statically (third_party/wdsp/CMakeLists.txt:169), but
+// amsq.h:75 and other internal headers hardcode dllexport. Suppress only
+// that attribute to match wdsp_api.h; preserve dllimport and alignment.
+#pragma push_macro("dllexport")
+#undef dllexport
+#define dllexport
+#endif
 extern "C" {
 #include "../../third_party/wdsp/src/TXA.h"
+#ifdef Q_OS_WIN
+#pragma pop_macro("dllexport")
+#endif
 
 // Phase 3M-1c TX pump v3: VOX defensive guards.  Need to read pdexp[id]
 // to detect whether create_dexp has been called for the channel.
