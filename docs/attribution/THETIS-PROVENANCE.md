@@ -26,6 +26,14 @@ Template variant (see `HEADER-TEMPLATES.md`):
 
 | NereusSDR file | Thetis source | Line ranges | Type | Variant | Notes |
 | --- | --- | --- | --- | --- | --- |
+| src/core/cat/CatStreamFramer.h | Project Files/Source/Console/CAT/TCPIPcatServer.cs | 275-296 [v2.10.3.15 @3759d096] | port | project-level | Catalogue-derived 41-byte request cap, one oversize event and discard through the next terminator; CR/LF only between frames. Payload case and spaces preserved. Adapts source 255-byte residual reset/global newline stripping; exact author/inspiration notice and project GPL attribution. |
+| src/core/cat/CatStreamFramer.cpp | Project Files/Source/Console/CAT/TCPIPcatServer.cs | 275-296 [v2.10.3.15 @3759d096] | port | project-level | Catalogue-derived 41-byte request cap, one oversize event and discard through the next terminator; CR/LF only between frames. Payload case and spaces preserved. Adapts source 255-byte residual reset/global newline stripping; exact author/inspiration notice and project GPL attribution. |
+| src/core/cat/CatTcpTransport.h | Project Files/Source/Console/CAT/TCPIPcatServer.cs | 107-120,358-380,505-535 [v2.10.3.15 @3759d096] | port | project-level | Main-thread Qt listener/client lifecycle, bounded reads, separate output/queue caps and truthful bound state/counts. Detached deferred socket close survives callback parent deletion and restart; no new thread. Exact author/inspiration notice and project GPL attribution. |
+| src/core/cat/CatTcpTransport.cpp | Project Files/Source/Console/CAT/TCPIPcatServer.cs | 107-120,358-380,505-535 [v2.10.3.15 @3759d096] | port | project-level | Main-thread Qt listener/client lifecycle, bounded reads, separate output/queue caps and truthful bound state/counts. Detached deferred socket close survives callback parent deletion and restart; no new thread. Exact author/inspiration notice and project GPL attribution. |
+| src/core/cat/CatSession.h | Project Files/Source/Console/CAT/TCPIPcatServer.cs | 164-238,308-346 [v2.10.3.15 @3759d096] | port | project-level | Per-TCP-session idempotent canonical GUID sets; shared GUIDs across clients and no serial/PTY registrations. Existing strict-width canonical router framing retained. Frozen binding and original transmit ownership unchanged; exact author/inspiration notice and project GPL attribution. |
+| src/core/cat/CatSession.cpp | Project Files/Source/Console/CAT/TCPIPcatServer.cs | 164-238,308-346 [v2.10.3.15 @3759d096] | port | project-level | Per-TCP-session idempotent canonical GUID sets; shared GUIDs across clients and no serial/PTY registrations. Existing strict-width canonical router framing retained. Frozen binding and original transmit ownership unchanged; exact author/inspiration notice and project GPL attribution. |
+| src/core/cat/CatReporter.h | Project Files/Source/Console/console.cs | 7923-7929,39744-39753,45358-45363,45830-45833,45851-45853,51317-51350,53886,53916-53953,53987-54019 [v2.10.3.15 @3759d096] | port | thetis-samphire | Source global AI and configured TCP/serial1–4 routes; settled raw model Hz independently of getter RTTY offset. Bound A/B and actual arbiter selection normalized per channel. Source 200 ms interval, one Qt timer, separate FA/FB/ZZSW keys and latest/duplicate coalescing. Per-message target validation, current clients at due time and last-disconnect/stop cleanup. Exact console notices/dual licence and relocated owning comments. |
+| src/core/cat/CatReporter.cpp | Project Files/Source/Console/console.cs | 7923-7929,39744-39753,45358-45363,45830-45833,45851-45853,51317-51350,53886,53916-53953,53987-54019 [v2.10.3.15 @3759d096] | port | thetis-samphire | Source global AI and configured TCP/serial1–4 routes; settled raw model Hz independently of getter RTTY offset. Bound A/B and actual arbiter selection normalized per channel. Source 200 ms interval, one Qt timer, separate FA/FB/ZZSW keys and latest/duplicate coalescing. Per-message target validation, current clients at due time and last-disconnect/stop cleanup. Exact console notices/dual licence and relocated owning comments. |
 | tests/data/cat/requests.json | Project Files/Source/Console/CAT/CATCommands.cs; CAT/CATParser.cs; setup.cs; console.cs | Per-fixture SourceRange [v2.10.3.15 @3759d096] | reference | multi-source | Source-derived requests/static replies and approved adaptations; verbatim notices in tests/data/cat/HEADERS.md. All 783 current fixtures materialized and executed by Task7 production coverage; owning-family execution labels retained separately. |
 | tests/data/cat/compatibility.csv | Project Files/Source/Console/CAT/CATCommands.cs; CAT/CATParser.cs; setup.cs; console.cs | Per-fixture SourceRange [v2.10.3.15 @3759d096] | reference | multi-source | Source-derived requests/static replies and approved adaptations; verbatim notices in tests/data/cat/HEADERS.md. All 783 current fixtures materialized and executed by Task7 production coverage; owning-family execution labels retained separately. |
 | src/core/cat/CatConfiguration.h | Project Files/Source/Console/setup.cs; setup.Designer.cs; console.cs | 351-355,384,5911,5924; 59363,59417,59482,59587-59596; 2335,17707 [v2.10.3.15 @3759d096] | port | thetis-samphire | CAT serial/rig/AI/RTTY preference defaults; setup and console headers preserved verbatim including dual licences; Designer has no per-file header. Inert service/listener defaults are Nereus adaptations. |
@@ -572,3 +580,26 @@ new station/operator MOX accepted by a cancellation callback. The scoped signal
 connection disconnects on every exit; the native admission paths remain in
 charge. This is NereusSDR-original adaptation by J.J. Boyd (KG4VCF), AI-assisted
 via OpenAI Codex, using the existing Task4 accepted-intent contract.
+
+### 2026-10-04 CAT TCP and automatic information (Task 8)
+
+Native Qt sockets/framing replace the upstream client/listener threads. Request
+recovery uses the active catalogue cap (41 bytes including terminator), emits one
+error and discards through the next terminator; CR/LF are accepted only between
+frames. Valid reply width and bounded pending output are independent of that cap.
+The welcome identifies NereusSDR and defaults off. GUID routing allows the same
+canonical GUID on several current clients; registration does not grant authority.
+The router's existing strict width/single canonical frame corrections remain,
+including serial/PTY replies without TCP registration side effects.
+
+AI uses the source global configuration and raw frequency events, preserving the
+source distinction from CAT query RTTY offsets. Actual model/arbiter changes are
+read after synchronous setters settle. Independent per-channel FA/FB/ZZSW keys
+retain both bound VFO updates during the source 200 ms interval. Pending sends
+revalidate the relevant target, frozen incarnation and current route/client set;
+removing B never suppresses a surviving A (or the reverse). Disconnecting the
+last eligible route clears its pending state. All native closes cancel owned
+transmit claims before socket closure; detached old transport/session snapshots
+cannot affect a callback-started replacement run. Socket disposal is deferred
+and detached before abort, preventing parent deletion inside Qt abort callbacks.
+Physical serial, PTY, UI and requesting-serial ZZZZ close remain later stages.

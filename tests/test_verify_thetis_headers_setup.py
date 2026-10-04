@@ -10,6 +10,9 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts/verify-thetis-headers.py
 spec = importlib.util.spec_from_file_location("verify_thetis_headers", SCRIPT)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+inventory_spec = importlib.util.spec_from_file_location("compliance_inventory", SCRIPT.with_name("compliance-inventory.py"))
+inventory = importlib.util.module_from_spec(inventory_spec)
+inventory_spec.loader.exec_module(inventory)
 
 
 class SetupJsonHeaderTest(unittest.TestCase):
@@ -75,6 +78,55 @@ class CatDataHeaderTest(unittest.TestCase):
             self.assertTrue(module.check_required_markers(path, markers))
             sidecar.unlink()
             self.assertTrue(module.check_required_markers(path, markers))
+
+
+class CatTcpNoticeTest(unittest.TestCase):
+    source = "Project Files/Source/Console/CAT/TCPIPcatServer.cs"
+    notice = ("//=================================================================\n"
+              "// MW0LGE 2022\n"
+              "//=================================================================\n\n"
+              "// inspiration from https://www.codeproject.com/Articles/5733/A-TCP-IP-Server-written-in-C\n"
+              "//\n")
+    attribution = ("// Ported from Thetis Project Files/Source/Console/CAT/TCPIPcatServer.cs\n"
+                   "// Upstream source has an author/inspiration notice; project-level GNU General Public License applies.\n"
+                   "// Modification history (NereusSDR):\n")
+
+    def test_exact_tcp_notice_and_source_pass(self):
+        with TemporaryDirectory() as root, patch.object(module, "REPO", Path(root)):
+            path = Path(root) / "src/core/cat/CatTcpTransport.cpp"
+            path.parent.mkdir(parents=True)
+            path.write_text(self.notice + self.attribution)
+            self.assertEqual(module.check_required_markers(path, module.MARKERS_BY_KIND["thetis"], self.source), [])
+
+    def test_inventory_uses_same_exact_notice_rule(self):
+        with TemporaryDirectory() as root, patch.object(inventory, "REPO", Path(root)):
+            relative = "src/core/cat/CatSession.cpp"
+            path = Path(root) / relative
+            path.parent.mkdir(parents=True)
+            path.write_text(self.notice + self.attribution)
+            self.assertEqual(inventory._verify_markers(relative, "thetis-port"), [])
+            path.write_text(self.notice.replace("MW0LGE 2022", "MW0LGE 2023") + self.attribution)
+            self.assertTrue(inventory._verify_markers(relative, "thetis-port"))
+            path.write_text(self.notice + self.attribution)
+            with patch.object(inventory, "THETIS_SOURCE_CELLS", {relative: self.source + "; console.cs"}):
+                self.assertTrue(inventory._verify_markers(relative, "thetis-port"))
+
+    def test_missing_mutated_or_wrong_source_notice_fails(self):
+        with TemporaryDirectory() as root, patch.object(module, "REPO", Path(root)):
+            path = Path(root) / "src/core/cat/CatTcpTransport.cpp"
+            path.parent.mkdir(parents=True)
+            for text in (self.attribution,
+                         self.notice.replace("MW0LGE 2022", "MW0LGE 2023") + self.attribution,
+                         self.notice + self.attribution.replace(self.source, "CAT/TCPIPcatServer.cs"),
+                         self.notice + self.attribution.replace("project-level GNU General Public License applies.", ""),
+                         self.notice + self.attribution + "// Ported from Thetis console.cs\n"):
+                path.write_text(text)
+                self.assertTrue(module.check_required_markers(path, module.MARKERS_BY_KIND["thetis"]))
+            path.write_text(self.notice + self.attribution)
+            self.assertTrue(module.check_required_markers(path, module.MARKERS_BY_KIND["thetis"], self.source + "; console.cs"))
+            other = path.with_name("Other.cpp")
+            other.write_text(self.notice + self.attribution)
+            self.assertTrue(module.check_required_markers(other, module.MARKERS_BY_KIND["thetis"]))
 
 
 if __name__ == "__main__":

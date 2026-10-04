@@ -4,6 +4,7 @@
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"
 #include "models/RadioModel.h"
+#include <utility>
 namespace NereusSDR {
 CatService::CatService(RadioModel& model, QObject* parent)
     : QObject(parent), m_model(&model), m_adapter(model), m_txCoordinator(model), m_settings(AppSettings::instance()), m_rxCommands(m_adapter, m_txCoordinator, m_settings), m_dspCommands(m_adapter), m_txCommands(m_adapter,m_txCoordinator,m_settings), m_globalCommands(m_adapter,m_settings), m_parser(m_catalog)
@@ -20,6 +21,7 @@ CatService::CatService(RadioModel& model, QObject* parent)
     for (const QByteArray& code : CatGlobalCommands::codes()) {
         m_router.registerHandler(code, [this](const CatRequest& request, CatSessionContext& context) { return m_globalCommands.execute(request, context); });
     }
+    m_reporter = std::make_unique<CatReporter>(*this, model);
     for (int channel = 1; channel <= 4; ++channel) { m_channels[channel - 1].config.channel = channel; }
     connect(&model, &RadioModel::connectionStateChanged, this, [this](ConnectionState state) {
         if (state == ConnectionState::Disconnected || state == ConnectionState::LinkLost) {
@@ -86,35 +88,121 @@ void CatService::startConfigured()
         endpoint.configured = true;
         QString reason;
         if (!CatSettings::validate(endpoint.config, &reason)) { setState(channel, reason); continue; }
-        const bool enabled = endpoint.config.tcpEnabled || endpoint.config.serialEnabled || endpoint.config.ptyEnabled || endpoint.config.rigctldEnabled;
-        setState(channel, enabled ? QStringLiteral("Transport backend unavailable") : QStringLiteral("Disabled"));
+        startChannel(channel);
     }
+}
+void CatService::startChannel(int channel)
+{
+    Channel& endpoint = m_channels[channel - 1];
+    if (!m_started || m_destroying) { return; }
+    if (endpoint.config.tcpEnabled) {
+        const auto tcp = std::make_shared<CatTcpTransport>();
+        endpoint.tcp = tcp;
+        const std::weak_ptr<CatTcpTransport> weak(tcp);
+        const QPointer<CatService> self(this);
+        const quint64 generation = m_lifecycleGeneration;
+        connect(tcp.get(), &CatTcpTransport::clientAccepted, this, [this, self, weak, channel, generation](QTcpSocket* socket) {
+            const auto transport = weak.lock();
+            if (!self || !transport || generation != m_lifecycleGeneration || !m_started
+                || m_channels[channel - 1].tcp != transport) { return; }
+            const quint64 opened = createTransportSession(channel, CatTransportKind::Tcp,
+                [weak](quint64 id, const QByteArray& bytes) { const auto owner = weak.lock(); return owner && owner->writeBytes(id, bytes); },
+                [weak](quint64 id) { const auto owner = weak.lock(); if (owner) { owner->closeSession(id); } });
+            if (!opened || !transport->attachSession(opened, socket)) {
+                if (self) { closeSession(opened); }
+                return;
+            }
+            if (!self || generation != m_lifecycleGeneration || !session(opened)) { return; }
+            if (globalConfig().sendWelcome) { sendToSession(opened, "#NereusSDR TCP/IP Cat#;"); }
+        });
+        connect(tcp.get(), &CatTcpTransport::bytesReceived, this, [this, weak](quint64 id, const QByteArray& bytes) {
+            const auto transport = weak.lock();
+            if (transport) { processBytes(id, bytes); }
+        });
+        connect(tcp.get(), &CatTcpTransport::closeRequested, this, [this, weak](quint64 id) {
+            const auto transport = weak.lock();
+            if (transport) { closeSession(id); }
+        });
+        connect(tcp.get(), &CatTcpTransport::clientCountChanged, this, [this, weak, channel, generation](int count) {
+            const auto transport = weak.lock();
+            if (transport && generation == m_lifecycleGeneration && m_channels[channel - 1].tcp == transport) {
+                emit clientCountChanged(channel, count);
+            }
+        });
+        if (!tcp->start(QHostAddress(endpoint.config.tcpBindAddress), static_cast<quint16>(endpoint.config.tcpPort))) {
+            setState(channel, QStringLiteral("TCP error: ") + tcp->errorString()); return;
+        }
+        setState(channel, QStringLiteral("Listening")); return;
+    }
+    const bool otherEnabled = endpoint.config.serialEnabled || endpoint.config.ptyEnabled || endpoint.config.rigctldEnabled;
+    setState(channel, otherEnabled ? QStringLiteral("Transport backend unavailable") : QStringLiteral("Disabled"));
+}
+void CatService::stopChannel(int channel)
+{
+    // Private transport lifecycle for later serial/PTY and live channel configuration.
+    const auto tcp = std::exchange(m_channels[channel - 1].tcp, {});
+    const QPointer<CatService> self(this);
+    const quint64 generation = m_lifecycleGeneration;
+    const QList<quint64> ids = sessionIds(channel);
+    for (quint64 id : ids) {
+        closeSession(id);
+        if (!self || generation != m_lifecycleGeneration) { return; }
+    }
+    if (tcp) { tcp->stop(); }
+    if (!self || generation != m_lifecycleGeneration) { return; }
+    setState(channel, QStringLiteral("Stopped"));
 }
 void CatService::stopAll()
 {
     const QPointer<CatService> self(this);
     const quint64 generation = ++m_lifecycleGeneration;
     m_started = false;
-    const QList<quint64> ids = m_sessions.keys();
-    // Detach every old session before callbacks can start a replacement run.
-    m_sessions.clear();
+    const auto sessions = std::exchange(m_sessions, {});
+    std::array<std::shared_ptr<CatTcpTransport>, 4> transports;
+    for (int index = 0; index < 4; ++index) { transports[index] = std::exchange(m_channels[index].tcp, {}); }
+    // Detach old sessions, registrations, buffers and pending reports before cancellation callbacks.
+    m_reporter->reset();
+    for (const auto& current : sessions) { current->clearRuntime(); }
     m_txCoordinator.cancelAll();
+    // Old hooks own only detached transports. Even callback deletion/restart cannot close a replacement run.
+    for (const auto& current : sessions) { current->closeTransport(); }
+    for (const auto& transport : transports) { if (transport) { transport->stop(); } }
     if (!self) { return; }
-    for (quint64 id : ids) {
+    for (quint64 id : sessions.keys()) {
         emit sessionClosed(id);
         if (!self) { return; }
     }
     if (generation != m_lifecycleGeneration) { return; }
     for (int channel = 1; channel <= 4; ++channel) {
+        emit clientCountChanged(channel, 0);
+        if (!self || generation != m_lifecycleGeneration) { return; }
         setState(channel, QStringLiteral("Stopped"));
         if (!self || generation != m_lifecycleGeneration) { return; }
     }
 }
 bool CatService::isListening(int channel) const
 {
-    Q_UNUSED(channel);
-    // Native transport implementation belongs to Tasks 8–10.
-    return false;
+    return validChannel(channel) && m_channels[channel - 1].tcp && m_channels[channel - 1].tcp->isListening();
+}
+int CatService::clientCount(int channel) const
+{
+    return validChannel(channel) && m_channels[channel - 1].tcp ? m_channels[channel - 1].tcp->clientCount() : 0;
+}
+QHostAddress CatService::boundAddress(int channel) const
+{
+    return isListening(channel) ? m_channels[channel - 1].tcp->boundAddress() : QHostAddress();
+}
+quint16 CatService::boundPort(int channel) const
+{
+    return isListening(channel) ? m_channels[channel - 1].tcp->boundPort() : 0;
+}
+QList<quint64> CatService::sessionIds(int channel) const
+{
+    QList<quint64> ids;
+    for (const auto& current : m_sessions) {
+        if (current->context().channel == channel) { ids.append(current->context().sessionId); }
+    }
+    return ids;
 }
 QString CatService::channelState(int channel) const { return validChannel(channel) ? m_channels[channel - 1].state : QStringLiteral("Invalid channel"); }
 CatGlobalConfig CatService::globalConfig() const { return m_settings.global(); }
@@ -138,20 +226,32 @@ bool CatService::applyGlobalConfig(const CatGlobalConfig& config)
     if (!m_settings.setGlobal(config) || !self) { return false; }
     emit globalConfigurationChanged(); return true;
 }
-quint64 CatService::openSession(int channel, CatTransportKind transport)
+quint64 CatService::createTransportSession(int channel, CatTransportKind kind,
+    std::function<bool(quint64, const QByteArray&)> write, std::function<void(quint64)> close)
 {
     if (m_destroying || !m_started || !validChannel(channel)) { return 0; }
-    // Only the in-process tester exists until actual transports are supplied.
-    if (transport != CatTransportKind::Tester) { return 0; }
+    const quint64 id = ++m_nextSessionId;
+    const auto current = std::make_shared<CatSession>(id, channel, kind, channelConfig(channel).binding);
+    current->setOutputHooks([write = std::move(write), id](const QByteArray& bytes) { return write && write(id, bytes); },
+        [close = std::move(close), id] { if (close) { close(id); } });
+    m_sessions.insert(id, current);
+    return id;
+}
+quint64 CatService::openSession(int channel, CatTransportKind transport)
+{
+    if (m_destroying || !m_started || !validChannel(channel) || transport != CatTransportKind::Tester) { return 0; }
     const quint64 id = ++m_nextSessionId;
     m_sessions.insert(id, std::make_shared<CatSession>(id, channel, transport, channelConfig(channel).binding));
     return id;
 }
 void CatService::closeSession(quint64 id)
 {
-    if (!m_sessions.remove(id)) { return; }
+    const auto current = m_sessions.take(id);
+    if (!current) { return; }
     const QPointer<CatService> self(this);
+    current->clearRuntime(); m_reporter->sessionsChanged(current->context().channel);
     m_txCoordinator.cancelSession(id);
+    current->closeTransport();
     if (!self) { return; }
     emit sessionClosed(id);
 }
@@ -168,6 +268,50 @@ QByteArray CatService::processFrame(quint64 id, const QByteArray& frame)
     const quint64 generation = m_lifecycleGeneration;
     const CatCommandResult result = m_router.execute(request, current->context());
     if (!self || generation != m_lifecycleGeneration || !m_started || m_sessions.value(id) != current) { return "?;"; }
+    current->applyGuidResult(request, result);
     return m_parser.format(*m_catalog.find(request.code), request, result, current->context());
+}
+void CatService::processBytes(quint64 id, const QByteArray& bytes)
+{
+    const auto current = m_sessions.value(id);
+    if (m_destroying || !m_started || !current) { return; }
+    const QPointer<CatService> self(this);
+    const quint64 generation = m_lifecycleGeneration;
+    const QList<QByteArray> frames = current->framer().feed(bytes);
+    for (const QByteArray& frame : frames) {
+        if (!self || generation != m_lifecycleGeneration || !m_started || m_sessions.value(id) != current) { return; }
+        // Empty framer entry is one oversize event; no unbounded noise is logged.
+        if (!frame.isEmpty()) {
+            emit messageLogged(current->context().channel, true, frame);
+            if (!self || generation != m_lifecycleGeneration || m_sessions.value(id) != current) { return; }
+        }
+        const QByteArray result = frame.isEmpty() ? QByteArray("?;") : processFrame(id, frame);
+        if (!self || generation != m_lifecycleGeneration || !m_started || m_sessions.value(id) != current) { return; }
+        if (!result.isEmpty()) { sendToSession(id, result); }
+        if (!self) { return; }
+    }
+}
+void CatService::sendToSession(quint64 id, const QByteArray& bytes)
+{
+    const auto current = m_sessions.value(id);
+    if (m_destroying || !m_started || !current || bytes.isEmpty()) { return; }
+    const QPointer<CatService> self(this);
+    const quint64 generation = m_lifecycleGeneration;
+    const bool accepted = current->writeBytes(bytes);
+    if (!self || generation != m_lifecycleGeneration || m_sessions.value(id) != current) { return; }
+    if (!accepted) { closeSession(id); return; }
+    emit messageLogged(current->context().channel, false, bytes);
+}
+void CatService::sendToGuid(const QUuid& guid, const QByteArray& bytes)
+{
+    // Current session snapshots, not a GUID-to-single-owner map. GUIDs are routing labels.
+    const QList<quint64> ids = m_sessions.keys();
+    const QPointer<CatService> self(this);
+    const quint64 generation = m_lifecycleGeneration;
+    for (quint64 id : ids) {
+        const auto current = m_sessions.value(id);
+        if (current && current->transport() == CatTransportKind::Tcp && current->hasGuid(guid)) { sendToSession(id, bytes); }
+        if (!self || generation != m_lifecycleGeneration) { return; }
+    }
 }
 } // namespace NereusSDR

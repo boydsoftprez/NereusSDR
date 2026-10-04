@@ -963,6 +963,9 @@ set(CORE_SOURCES
     src/core/cat/CatTxCommands.cpp
     src/core/cat/CatGlobalCommands.cpp
     src/core/cat/CatService.cpp
+    src/core/cat/CatStreamFramer.cpp
+    src/core/cat/CatTcpTransport.cpp
+    src/core/cat/CatReporter.cpp
     src/core/cat/CatParser.cpp
     src/core/cat/CatCommandRouter.cpp
     src/core/cat/CatCommandCatalog.cpp

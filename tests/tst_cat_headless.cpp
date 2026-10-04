@@ -1,6 +1,7 @@
 // no-port-check: NereusSDR-original CAT policy/lifecycle regression tests.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest>
+#include <QTcpServer>
 #include "core/AppSettings.h"
 #include "core/cat/CatService.h"
 #define private public
@@ -36,10 +37,11 @@ private slots:
         QCOMPARE(service->processFrame(session, "ZZEM;"), QByteArray("ZZEM1;"));
         service->stopAll(); service->stopAll(); QVERIFY(!service->isStarted());
         QCOMPARE(service->processFrame(session, "ZZEM;"), QByteArray("?;"));
-        config.tcpEnabled = true; config.tcpPort = 13013;
+        QTcpServer occupied; QVERIFY(occupied.listen(QHostAddress::LocalHost, 0));
+        config.tcpEnabled = true; config.tcpPort = occupied.serverPort();
         QVERIFY(service->applyChannelConfig(1, config));
         service->startConfigured(); QVERIFY(!service->isListening(1));
-        QVERIFY(service->channelState(1).contains("unavailable", Qt::CaseInsensitive));
+        QVERIFY(service->channelState(1).startsWith("TCP error:"));
         service->stopAll();
         RadioModel remote(RadioModel::Role::Remote);
         QVERIFY(remote.catService()); remote.catService()->startConfigured();
