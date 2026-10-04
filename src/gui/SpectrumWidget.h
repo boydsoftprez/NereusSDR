@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 : Opt-in numeric diagnostics for actual waterfall rows and
+//                 applied Core extras. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex. No display behavior changes.
 //   2026-10-04 : retain each 2D waterfall row's RF window so TX history
 //                 aligns on the restored RX axis without resampling the
 //                 saved RX rows. J.J. Boyd (KG4VCF), AI-assisted via
@@ -266,6 +269,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/RemoteSpectrumCapture.h"
 
 #include <QElapsedTimer>
+#include <QPointer>
 #include <QWidget>
 #include <QVector>
 #include <QImage>
@@ -324,6 +328,8 @@ class TestDssRowTee;
 namespace NereusSDR {
 
 class BandPlanManager;
+class PanadapterStack;
+class RemoteMediaController;
 class SpectrumOverlayMenu;
 class VfoWidget;
 class ImdOverlay;  // Phase 3M-4 Task 12 — two-tone IMD overlay analytical core
@@ -1897,6 +1903,7 @@ public slots:
     void applyNativeWindowIsolationPolicy();
 
 private:
+    friend class RemoteMediaController; // Private opt-in display provenance only.
     bool m_shutdownPrepared {false};
 
 public:
@@ -2656,6 +2663,8 @@ private:
     // [v2.10.3.13] (waterfall_data[i] indexed by pixel).
     void   pushWaterfallRow(const QVector<float>& wfPixelsDbm);
     QRgb   dbmToRgb(float dbm) const;
+    void traceWaterfallState(const QVector<float>& calibratedPixelsDbm,
+                             const QRgb* scanline, int width, qint64 rowTimeMs);
 
     // 3D Speed (Task 24): folds up to effectiveDssRowDivider() waterfall
     // rows into one 3D row by per-column peak-hold before handing the
@@ -2948,12 +2957,20 @@ private:
     // oldest first, each with the RF window it was captured at. The ticker
     // draws one a tick, two while more than two wait (a late burst plays out
     // instead of being squeezed into one row).
+    // NereusSDR-original diagnostic metadata; it never selects or changes a row.
+    struct WaterfallRowDiagnostics {
+        std::optional<quint32> encoderSequence;
+        int presentationKind{-1}; // RemoteDisplayPresenter::Kind; -1 when unavailable.
+        int sliceId{-1};
+        quint64 bindingStreamEpoch{0};
+    };
     struct RemoteWaterfallRow {
         QVector<float> pixelsDbm;
         QVector<float> wideDbm;
         double centreHz{0.0};
         double spanHz{0.0};
         NereusSDR::RemoteSpectrumCapture capture;
+        WaterfallRowDiagnostics diagnostics;
     };
     QList<RemoteWaterfallRow> m_remoteRowQueue;
     quint64 m_remoteRowsDropped{0};
@@ -2978,6 +2995,21 @@ private:
     // The Core's waterfall AGC levels (setCoreWaterfallLevelsAvailable).
     bool  m_coreWfLevelsAvailable{false};
     std::optional<std::pair<float, float>> m_coreWfLevels;
+    struct WaterfallExtrasDiagnostics {
+        quint32 endpointId{0};
+        quint32 contextGeneration{0};
+        quint32 encoderSequence{0};
+    };
+    std::optional<WaterfallExtrasDiagnostics> m_wfExtrasDiagnostics;
+    QPointer<PanadapterStack> m_wfDiagnosticStack;
+    QString m_wfDiagnosticPanId;
+    int m_wfDiagnosticSliceId{-1};
+    quint64 m_wfDiagnosticStreamEpoch{0};
+    WaterfallRowDiagnostics m_pendingWfRowDiagnostics;
+    QElapsedTimer m_wfDiagnosticLogClock;
+    QString m_wfDiagnosticLastState;
+    QString m_wfDiagnosticFirstChangedRow;
+    quint64 m_wfDiagnosticCollapsedChanges{0};
     bool  m_clarityActive{false};     // Phase 3G-9c: suppresses legacy AGC when Clarity drives thresholds
     // NF-AGC: Task 2.8 — auto-track thresholds to noise floor + offset.
     bool  m_wfNfAgcEnabled{false};
