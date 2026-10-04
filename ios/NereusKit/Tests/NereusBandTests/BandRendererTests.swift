@@ -3,6 +3,7 @@
 
 import CoreGraphics
 import Foundation
+import LinkTestSupport
 import Metal
 import NereusMedia
 import NereusModels
@@ -744,14 +745,19 @@ final class Offscreen {
     }
 
     func render(_ renderer: BandRenderer, frame: DisplayFrame?, history: WaterfallHistory, extras: DisplayExtras?,
-                overlays: BandOverlays) throws -> Image {
+                overlays: BandOverlays, diagnostic: HostedDiagnosticReceipts? = nil) throws -> Image {
         // The renderer commits on its own queue: wait for it before reading.
-        renderer.draw(frame: frame, history: history, extras: extras, overlays: overlays, into: texture)?
-            .waitUntilCompleted()
-        return try read()
+        diagnostic?.mark("renderer.draw entry")
+        let commandBuffer = renderer.draw(frame: frame, history: history, extras: extras, overlays: overlays, into: texture)
+        diagnostic?.mark("renderer.draw returned")
+        diagnostic?.mark("render command-buffer wait entry")
+        commandBuffer?.waitUntilCompleted()
+        diagnostic?.mark("render command-buffer wait returned")
+        return try read(diagnostic: diagnostic)
     }
 
-    func read() throws -> Image {
+    func read(diagnostic: HostedDiagnosticReceipts? = nil) throws -> Image {
+        diagnostic?.mark("blit setup entry")
         guard let commands = queue.makeCommandBuffer(), let blit = commands.makeBlitCommandEncoder() else {
             throw BandRenderer.SetupError.noDevice
         }
@@ -760,8 +766,12 @@ final class Offscreen {
                   destinationOffset: 0, destinationBytesPerRow: texture.width * 4,
                   destinationBytesPerImage: texture.width * texture.height * 4)
         blit.endEncoding()
+        diagnostic?.mark("blit commit entry")
         commands.commit()
+        diagnostic?.mark("blit commit returned")
+        diagnostic?.mark("blit command-buffer wait entry")
         commands.waitUntilCompleted()
+        diagnostic?.mark("blit command-buffer wait returned")
         let bytes = [UInt8](UnsafeRawBufferPointer(start: buffer.contents(), count: buffer.length))
         return Image(width: texture.width, height: texture.height, bgra: bytes)
     }

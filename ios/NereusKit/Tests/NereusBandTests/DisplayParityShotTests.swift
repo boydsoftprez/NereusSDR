@@ -3,6 +3,7 @@
 
 import CoreGraphics
 import Foundation
+import LinkTestSupport
 import NereusMedia
 import NereusModels
 import Testing
@@ -77,6 +78,10 @@ import Testing
 
     @Test(arguments: scenes)
     func theSceneDrawsAsTheDesktopsDoes(_ scene: Scene) throws {
+        let diagnostic = HostedDiagnosticReceipts(scene.name)
+        diagnostic.mark("body entry")
+        defer { diagnostic.mark("body exit"); diagnostic.export() }
+        diagnostic.mark("catalogue/layout setup entry")
         let catalog = try BandCatalogueRenderTests.catalogue()
         var settings = BandDisplaySettings.desktopDefaults
         settings.bandPlanSize = .off
@@ -105,11 +110,13 @@ import Testing
                                     catalog: catalog)
         let layout = BandLayout(size: CGSize(width: Self.width, height: Self.height), scale: Self.shotScale,
                                 settings: settings)
+        diagnostic.mark("catalogue/layout setup returned")
         var state = BandState(waterfallLines: layout.waterfallLines, expectsExtras: true)
         state.levelAdjustment = settings.waterfallAdjustment
         var frame: DisplayFrame?
         var trace: [Float] = []
         let first = Self.newest - layout.waterfallLines + 1
+        diagnostic.mark("history entry; rows \(layout.waterfallLines)")
         for index in first...Self.newest {
             trace = Self.line(Self.width, index: index)
             let next = BandFixtures.frame(trace: trace, sequence: UInt32(index - first + 1))
@@ -127,6 +134,7 @@ import Testing
                           manualLevels: settings.manualLevels)
             frame = next
         }
+        diagnostic.mark("history returned")
         if scene.more == 2 {
             overlays.peakHold = trace.indices.map { sample in
                 (max(0, sample - 3)...min(trace.count - 1, sample + 3)).map { trace[$0] }.max()! + 3
@@ -137,10 +145,14 @@ import Testing
             overlays.markers = [SliceMarkers.Marker(sliceId: 0, centerHz: hz, passbandHz: (hz + 100)...(hz + 2_900),
                                                     style: SliceMarkers.style(for: "#00B4D8", selected: true))]
         }
+        diagnostic.mark("offscreen construction entry")
         let target = try Offscreen(width: Self.width, height: Self.height)
+        diagnostic.mark("offscreen construction returned")
+        diagnostic.mark("renderer construction entry")
         let renderer = try BandRenderer(device: target.device)
+        diagnostic.mark("renderer construction returned")
         let image = try target.render(renderer, frame: frame, history: state.history, extras: state.frameExtras,
-                                      overlays: overlays)
+                                      overlays: overlays, diagnostic: diagnostic)
         // The waterfall's top line was coloured after Color Gain and Black Level.
         #expect(state.history.currentLevels.map { abs($0.lowDbm - (-116.6)) < 0.01 } == true)
         #expect(image.width == Self.width)

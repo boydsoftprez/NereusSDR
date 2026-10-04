@@ -3,6 +3,7 @@
 
 import Foundation
 import LinkSessionTestSupport
+import LinkTestSupport
 import Testing
 @testable import NereusLink
 
@@ -31,11 +32,18 @@ import Testing
         let station = ScriptedStation()
         private let lock = NSLock()
         private var made: [SlowOpeningTransport] = []
-        private let creation = TestPhase<SlowOpeningTransport>()
+        let diagnostic: HostedDiagnosticReceipts
+        private let creation: TestPhase<SlowOpeningTransport>
+        init(_ name: String = "slow station") {
+            diagnostic = HostedDiagnosticReceipts(name)
+            creation = TestPhase(receipts: diagnostic, label: "factory creation")
+        }
 
         var factory: LinkTransportFactory {
             { [self] endpoint, trust in
-                let slow = SlowOpeningTransport(station.factory(endpoint, trust))
+                diagnostic.mark("factory caller entry")
+                defer { diagnostic.mark("factory caller returned") }
+                let slow = SlowOpeningTransport(station.factory(endpoint, trust), diagnostic: diagnostic)
                 lock.withLock { made.append(slow) }
                 creation.finish(.success(slow))
                 return slow
@@ -45,6 +53,8 @@ import Testing
         var latest: SlowOpeningTransport? { lock.withLock { made.last } }
 
         func opening() async throws -> SlowOpeningTransport {
+            diagnostic.mark("opening observer entry")
+            defer { diagnostic.mark("opening observer returned") }
             let deadline = ContinuousClock.now + .seconds(10)
             let transport = try await creation.wait(until: deadline)
             try await transport.openingEntry.wait(until: deadline)
@@ -68,10 +78,16 @@ import Testing
     }
 
     @Test func aCoreSlowToOpenThenSilentEndsAtTheSameBound() async throws {
-        let slow = SlowStation()
+        let slow = SlowStation("aCoreSlowToOpenThenSilentEndsAtTheSameBound")
+        slow.diagnostic.mark("body entry")
+        defer { slow.diagnostic.mark("body exit"); slow.diagnostic.export() }
         let clock = ManualLinkClock()
         let session = Self.session(clock: clock, trust: slow.station.trust, factory: slow.factory)
-        let connecting = Task { await session.connect() }
+        let connecting = Task {
+            slow.diagnostic.mark("connecting task body entry")
+            await session.connect()
+            slow.diagnostic.mark("connecting task body returned")
+        }
         let transport: SlowOpeningTransport
         do { transport = try await slow.opening() }
         catch {
@@ -93,10 +109,16 @@ import Testing
     }
 
     @Test func aCoreThatNeverOpensEndsAtTheSameBound() async throws {
-        let slow = SlowStation()
+        let slow = SlowStation("aCoreThatNeverOpensEndsAtTheSameBound")
+        slow.diagnostic.mark("body entry")
+        defer { slow.diagnostic.mark("body exit"); slow.diagnostic.export() }
         let clock = ManualLinkClock()
         let session = Self.session(clock: clock, trust: slow.station.trust, factory: slow.factory)
-        let connecting = Task { await session.connect() }
+        let connecting = Task {
+            slow.diagnostic.mark("connecting task body entry")
+            await session.connect()
+            slow.diagnostic.mark("connecting task body returned")
+        }
         let transport: SlowOpeningTransport
         do { transport = try await slow.opening() }
         catch {
@@ -152,10 +174,16 @@ import Testing
     }
 
     @Test func aNormalConnectAfterASlowOpeningIsUnaffected() async throws {
-        let slow = SlowStation()
+        let slow = SlowStation("aNormalConnectAfterASlowOpeningIsUnaffected")
+        slow.diagnostic.mark("body entry")
+        defer { slow.diagnostic.mark("body exit"); slow.diagnostic.export() }
         let clock = ManualLinkClock()
         let session = Self.session(clock: clock, trust: slow.station.trust, factory: slow.factory)
-        let connecting = Task { await session.connect() }
+        let connecting = Task {
+            slow.diagnostic.mark("connecting task body entry")
+            await session.connect()
+            slow.diagnostic.mark("connecting task body returned")
+        }
         let transport: SlowOpeningTransport
         do { transport = try await slow.opening() }
         catch {
@@ -343,6 +371,9 @@ import Testing
     }
 
     @Test func fixturePhaseAlreadyExpiredRegistrationStaysFailedAfterLateEntry() async throws {
+        let diagnostic = HostedDiagnosticReceipts("captured append order control")
+        let beforeAwaits = HostedDiagnosticReceipts.capture("captured before existing awaits")
+        defer { diagnostic.export() }
         let expired = TestPhase<Void>()
         await #expect(throws: TestPhase<Void>.Failure.noEntry) {
             try await expired.wait(until: ContinuousClock.now - .seconds(1))
@@ -351,11 +382,20 @@ import Testing
         await #expect(throws: TestPhase<Void>.Failure.noEntry) {
             try await expired.wait(until: ContinuousClock.now + .seconds(10))
         }
+        diagnostic.mark("after existing awaits")
+        diagnostic.append(beforeAwaits)
     }
 
     @Test func fixturePhaseExpiryAlsoSettlesAnAlreadyRegisteredObserver() async throws {
-        let phase = TestPhase<Void>()
-        let earlier = Task { try await phase.wait(until: ContinuousClock.now + .seconds(10)) }
+        let diagnostic = HostedDiagnosticReceipts("phase expiry observers")
+        diagnostic.mark("body entry")
+        defer { diagnostic.mark("body exit"); diagnostic.export() }
+        let phase = TestPhase<Void>(receipts: diagnostic, label: "earlier phase")
+        let earlier = Task {
+            diagnostic.mark("earlier task body entry")
+            defer { diagnostic.mark("earlier task body exit") }
+            return try await phase.wait(until: ContinuousClock.now + .seconds(10))
+        }
         defer { earlier.cancel() }
         let entryDeadline = ContinuousClock.now + .seconds(2)
         while phase.pendingWaiterCount == 0 && ContinuousClock.now < entryDeadline { await Task.yield() }
@@ -364,8 +404,10 @@ import Testing
             try await phase.wait(until: ContinuousClock.now - .seconds(1))
         }
         phase.finish(.success(()))
-        let settled = TestPhase<Bool>()
+        let settled = TestPhase<Bool>(receipts: diagnostic, label: "final observer phase")
         let observer = Task {
+            diagnostic.mark("final observer task body entry")
+            defer { diagnostic.mark("final observer task body exit") }
             do { try await earlier.value; settled.finish(.success(false)) }
             catch { settled.finish(.success(error as? TestPhase<Void>.Failure == .noEntry)) }
         }
@@ -418,12 +460,15 @@ final class SlowOpeningTransport: LinkTransport, @unchecked Sendable {
     private let inner: any LinkTransport
     private let lock = NSLock()
     private var waiter: CheckedContinuation<Void, Error>?
-    let openingEntry = TestPhase<Void>()
+    let openingEntry: TestPhase<Void>
+    private let diagnostic: HostedDiagnosticReceipts?
     private var released = false
     private var closed = false
 
-    init(_ inner: any LinkTransport) {
+    init(_ inner: any LinkTransport, diagnostic: HostedDiagnosticReceipts? = nil) {
         self.inner = inner
+        self.diagnostic = diagnostic
+        openingEntry = TestPhase(receipts: diagnostic, label: "transport opening entry")
     }
 
     /// Waits, up to 10 s of real time, for the transport `latest` names to
@@ -453,6 +498,8 @@ final class SlowOpeningTransport: LinkTransport, @unchecked Sendable {
     }
 
     func open(onEvent: @escaping @Sendable (LinkTransportEvent) async -> Void) async throws -> Data {
+        diagnostic?.mark("transport open caller entry")
+        defer { diagnostic?.mark("transport open caller exit") }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let outcome = lock.withLock { () -> Bool? in
                 if closed {

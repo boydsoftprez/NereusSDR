@@ -13,8 +13,21 @@ import Testing
     private let sent = SentMessages()
     private static let origin = "phone-under-test"
 
-    private func connected(_ snapshot: [String: String] = [:]) -> SettingsProxyClient {
-        let proxy = SettingsProxyClient(origin: Self.origin, send: sent.sender)
+    private func connected(_ snapshot: [String: String] = [:], diagnostic: HostedDiagnosticReceipts? = nil) -> SettingsProxyClient {
+        let sender = sent.sender
+        let clock: any LinkClock
+        if let diagnostic { clock = HostedObservedLinkClock(diagnostic) }
+        else { clock = SystemLinkClock() }
+        let proxy: SettingsProxyClient
+        if let diagnostic {
+            proxy = SettingsProxyClient(origin: Self.origin, send: { message in
+            diagnostic.mark("fake sender entry")
+            defer { diagnostic.mark("fake sender returned") }
+            try await sender(message)
+            }, clock: clock)
+        } else {
+            proxy = SettingsProxyClient(origin: Self.origin, send: sent.sender)
+        }
         proxy.handle(.stateChanged(.receivingSnapshot))
         proxy.apply(FixtureReplay.accepted)
         proxy.apply(Self.snapshot(snapshot))
@@ -315,8 +328,13 @@ import Testing
     }
 
     @Test func theAppsOwnRemovalComesBackWithAnEmptyOrigin() async {
-        let proxy = connected(["DisplaySpectrumFps": "30", "CWPitch": "600"])
+        let diagnostic = HostedDiagnosticReceipts("Settings own removal")
+        diagnostic.mark("body entry")
+        defer { diagnostic.mark("body exit"); diagnostic.export() }
+        let proxy = connected(["DisplaySpectrumFps": "30", "CWPitch": "600"], diagnostic: diagnostic)
+        diagnostic.mark("first removal entry")
         await proxy.remove("DisplaySpectrumFps")
+        diagnostic.mark("first removal returned")
         #expect(proxy.value("DisplaySpectrumFps") == nil)
         #expect(sent.messages.last == .settingsRemove(LinkMessage.SettingsRemove(key: "DisplaySpectrumFps")))
         // Removal echoes carry origin "", the app's own included.
@@ -324,12 +342,21 @@ import Testing
         #expect(proxy.value("DisplaySpectrumFps") == nil)
 
         // A removal, then a write before the removal's echo: the write stays.
+        diagnostic.mark("second removal entry")
         await proxy.remove("CWPitch")
+        diagnostic.mark("second removal returned")
+        diagnostic.mark("startWrite caller entry")
         let write = await startWrite(proxy, "CWPitch", "700")
+        diagnostic.mark("startWrite settled message observed")
+        diagnostic.mark("removal echo apply entry")
         proxy.apply(Self.value("CWPitch", nil, origin: ""))
+        diagnostic.mark("removal echo apply returned")
         #expect(proxy.value("CWPitch") == "700")
+        diagnostic.mark("write echo apply entry")
         proxy.apply(Self.value("CWPitch", "700", origin: Self.origin))
+        diagnostic.mark("write echo apply returned")
         #expect(await write.value == .accepted)
+        diagnostic.mark("write outcome observed")
     }
 
     @Test func aLateRadiosSnapshotMergesAndANewSessionsReplaces() {

@@ -13,13 +13,22 @@ import Testing
 @Suite struct MirrorStoreTests {
     private let sent = SentMessages()
 
-    private func store(clock: any LinkClock = SystemLinkClock()) -> MirrorStore {
-        MirrorStore(send: sent.sender, clock: clock)
+    private func store(clock: any LinkClock = SystemLinkClock(), diagnostic: HostedDiagnosticReceipts? = nil) -> MirrorStore {
+        guard let diagnostic else { return MirrorStore(send: sent.sender, clock: clock) }
+        let sender = sent.sender
+        return MirrorStore(send: { message in
+            diagnostic.mark("fake sender entry")
+            defer { diagnostic.mark("fake sender returned") }
+            try await sender(message)
+        }, clock: clock)
     }
 
     /// A store that has taken the whole connect sequence of `fixture`.
-    private func replayed(_ fixture: String = "session-connect-connectable") throws -> MirrorStore {
-        let store = store()
+    private func replayed(_ fixture: String = "session-connect-connectable", diagnostic: HostedDiagnosticReceipts? = nil) throws -> MirrorStore {
+        let clock: any LinkClock
+        if let diagnostic { clock = HostedObservedLinkClock(diagnostic) }
+        else { clock = SystemLinkClock() }
+        let store = store(clock: clock, diagnostic: diagnostic)
         for message in try FixtureReplay.stationMessages(fixture) {
             store.apply(message)
         }
@@ -382,18 +391,26 @@ import Testing
     }
 
     @Test func aRefusedWriteKeepsTheCoresValueAndReason() async throws {
-        let store = try replayed()
+        let diagnostic = HostedDiagnosticReceipts("MirrorStore refused write")
+        diagnostic.mark("body entry")
+        defer { diagnostic.mark("body exit"); diagnostic.export() }
+        let store = try replayed(diagnostic: diagnostic)
         let slice = try #require(store.object("slice:0"))
+        diagnostic.mark("startWrite caller entry")
         let (task, write) = try await startWrite(store, "slice:0", "signalStrengthDbm", .double(-50))
+        diagnostic.mark("startWrite settled message observed")
         // The store sends it; the Core decides.
         #expect(write.properties.first?.name == "signalStrengthDbm")
         let reason = "The station sets this itself; it cannot be changed from here."
+        diagnostic.mark("Core refusal apply entry")
         store.apply(.propertyResult(LinkMessage.PropertyResult(key: "slice:0", writeId: write.writeId ?? 0, results: [
             LinkMessage.PropertyResult.Result(property: "signalStrengthDbm", accepted: false, reason: reason,
                                               value: LinkMessage.PropertyEntry(ordinal: 15, name: "signalStrengthDbm",
                                                                                value: .f64(-140))),
         ])))
+        diagnostic.mark("Core refusal apply returned")
         let outcome = await task.value
+        diagnostic.mark("write outcome observed")
         #expect(!outcome.accepted)
         #expect(outcome.reason == reason)
         #expect(outcome.value == .double(-140))
@@ -801,5 +818,24 @@ import Testing
         #expect(read.host?.memoryTotalKiB == 4_000_000)
         #expect(read.receivers == [StationMetrics.Receiver(sliceId: 0, inputDelayMs: 4, skippedInputMs: 0,
                                                            loadPercent: 35.5)])
+    }
+}
+
+/// Delegate to the unchanged real clock; observing an action does not add a
+/// timer, change its delay, or change cancellation ownership.
+struct HostedObservedLinkClock: LinkClock {
+    private let base = SystemLinkClock()
+    let diagnostic: HostedDiagnosticReceipts
+    init(_ diagnostic: HostedDiagnosticReceipts) { self.diagnostic = diagnostic }
+    var nowMilliseconds: Int64 { base.nowMilliseconds }
+    func schedule(after delay: Duration, _ action: @escaping @Sendable () async -> Void) -> any LinkTimer {
+        diagnostic.mark("real timer schedule entry; delay \(delay)")
+        let timer = base.schedule(after: delay) {
+            diagnostic.mark("real timer action entry")
+            await action()
+            diagnostic.mark("real timer action returned")
+        }
+        diagnostic.mark("real timer schedule returned")
+        return timer
     }
 }

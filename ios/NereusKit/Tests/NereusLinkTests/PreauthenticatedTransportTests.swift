@@ -3,6 +3,7 @@
 
 import Foundation
 import LinkSessionTestSupport
+import LinkTestSupport
 import Testing
 @testable import NereusLink
 
@@ -11,10 +12,16 @@ import Testing
         private var continuation: CheckedContinuation<Void, Never>?
         private var didEnter = false
         private var released = false
-        let entry = TestPhase<Void>()
+        let entry: TestPhase<Void>
+        private let diagnostic: HostedDiagnosticReceipts?
+        init(diagnostic: HostedDiagnosticReceipts? = nil) {
+            self.diagnostic = diagnostic
+            entry = TestPhase(receipts: diagnostic, label: "signer entry")
+        }
         var entered: Bool { didEnter }
         func authRequest(stationHello: LinkMessage.Hello, certificateSHA256: Data) async throws
             -> LinkMessage.AuthRequest {
+            diagnostic?.mark("signer authRequest caller entry")
             await withCheckedContinuation {
                 continuation = $0
                 didEnter = true
@@ -250,13 +257,21 @@ import Testing
     }
 
     @Test func closingWhileAuthenticationIsSuspendedSendsNothing() async throws {
+        let diagnostic = HostedDiagnosticReceipts("signer suspended no send")
+        diagnostic.mark("body entry")
+        defer { diagnostic.mark("body exit"); diagnostic.export() }
         let inner = Immediate()
         let lease = PreauthenticatedTransport(inner)
         _ = try await lease.inspect(clock: ManualLinkClock(), deadline: .seconds(30))
-        let signer = SuspendedAuthenticator()
+        let signer = SuspendedAuthenticator(diagnostic: diagnostic)
         let session = StationSession(trust: .certificate(pinSHA256: inner.digest),
                                      authenticator: signer, clock: ManualLinkClock(), transport: { lease })
-        let connecting = Task { await session.connect() }
+        let connecting = Task {
+            diagnostic.mark("connecting task body entry")
+            await session.connect()
+            diagnostic.mark("connecting task body returned")
+        }
+        diagnostic.mark("signer observer wait entry")
         do {
             try await signer.entry.wait(until: ContinuousClock.now + .seconds(2))
         } catch {
@@ -268,6 +283,7 @@ import Testing
             await session.disconnect()
             throw error
         }
+        diagnostic.mark("signer observer wait returned")
         #expect(await signer.entered)
         lease.close()
         await signer.resume()

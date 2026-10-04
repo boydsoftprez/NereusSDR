@@ -16,6 +16,7 @@ name: iOS
 
 on:
   push:
+    branches-ignore: ['codex/kit-hosted-observation-2026-10-04']
     paths:
       - 'ios/**'
       - 'tests/data/link/**'

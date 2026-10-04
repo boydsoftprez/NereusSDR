@@ -52,6 +52,10 @@ import UniformTypeIdentifiers
 
     @Test(arguments: shots)
     func theCoresCatalogueDrawsTheDefaultPlanAndPalette(_ shot: Shot) throws {
+        let diagnostic = HostedDiagnosticReceipts(shot.name)
+        diagnostic.mark("body entry")
+        defer { diagnostic.mark("body exit"); diagnostic.export() }
+        diagnostic.mark("catalogue/layout setup entry")
         let catalog = try Self.catalogue()
         var settings = BandDisplaySettings.desktopDefaults
         settings.bandPlanSize = shot.size
@@ -76,8 +80,13 @@ import UniformTypeIdentifiers
         #expect(classed.text(scale: scale) { widths($0) < widths(full) } == classed.label)
         #expect(classed.text(scale: scale) { _ in false } == nil)
 
+        diagnostic.mark("offscreen construction entry")
         let target = try Offscreen(width: shot.width, height: shot.height)
+        diagnostic.mark("offscreen construction returned")
+        diagnostic.mark("renderer construction entry")
         let renderer = try BandRenderer(device: target.device)
+        diagnostic.mark("renderer construction returned")
+        diagnostic.mark("catalogue/layout setup returned")
         var state = BandState(waterfallLines: layout.waterfallLines, expectsExtras: true)
         let samples = shot.width
         var generator = SeededGenerator(seed: 7)
@@ -85,6 +94,7 @@ import UniformTypeIdentifiers
         let stations: [(hz: Double, dbm: Float, widthHz: Double)] = [(7_236_400, -72, 2_400), (7_249_000, -84, 2_600),
                                                                       (7_259_500, -98, 400)]
         var frame: DisplayFrame?
+        diagnostic.mark("history entry; rows \(layout.waterfallLines)")
         for sequence in 1...layout.waterfallLines {
             let trace = (0..<samples).map { index -> Float in
                 let hz = geometry.hz(forTraceSample: index, traceSamples: samples)
@@ -100,8 +110,9 @@ import UniformTypeIdentifiers
             state.receive(extras: BandFixtures.extras(for: next, levels: (-126, -66)), manualLevels: settings.manualLevels)
             frame = next
         }
+        diagnostic.mark("history returned")
         let image = try target.render(renderer, frame: frame, history: state.history, extras: state.frameExtras,
-                                      overlays: overlays)
+                                      overlays: overlays, diagnostic: diagnostic)
         // The default plan's colour is on the strip, dimmed by its licence class.
         let piece = try #require(strip.pieces.first)
         let expected = try #require(BandPlanStrip.fill(colour: piece.colour, licence: piece.licence))
