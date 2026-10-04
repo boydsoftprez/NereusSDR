@@ -54,7 +54,7 @@ bool CatTxCoordinator::targetValid() const
 }
 bool CatTxCoordinator::requestPtt(quint64 id, int sliceId)
 { return requestTransmit(id, sliceId, CatTransmitKind::Ptt); }
-void CatTxCoordinator::releasePtt(quint64 id) { releaseTransmit(id); }
+void CatTxCoordinator::releasePtt(quint64 id) { releaseTransmit(id,CatTransmitKind::Ptt); }
 bool CatTxCoordinator::requestTxSelection(quint64 id, int sliceId)
 {
     if (!id || m_tag || m_requestInFlight || m_releasing || !idle()) { return false; }
@@ -162,6 +162,12 @@ void CatTxCoordinator::releaseTransmit(quint64 id)
 {
     if (!m_claims.remove(id)) { return; }
     if (m_claims.isEmpty()) { retire(true); }
+}
+void CatTxCoordinator::releaseTransmit(quint64 id,CatTransmitKind kind)
+{
+    // A command-specific OFF only releases that operation's claim. The
+    // existing retire path still verifies activation generation and keyer.
+    if (m_kind == kind) { releaseTransmit(id); }
 }
 void CatTxCoordinator::cancelSession(quint64 id) { releaseTransmit(id); }
 void CatTxCoordinator::cancelAll() { retire(true); }

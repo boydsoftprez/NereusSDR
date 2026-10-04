@@ -68,7 +68,7 @@ private slots:
             QVERIFY(!fixture.value("precondition").toString().isEmpty());
             const QString form = fixture.value("form").toString();
             QVERIFY(form == "Get" || form == "Set");
-            if (descriptor->active) {
+            if (descriptor->active && !fixture.value("validationReject").toBool()) {
                 const int width = form == "Get" ? descriptor->getWidth : descriptor->setWidth;
                 QVERIFY(width >= 0);
                 QCOMPARE(request.size(), code.size() + width + 1);

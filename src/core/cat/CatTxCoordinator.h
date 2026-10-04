@@ -18,8 +18,10 @@ public:
     bool requestTxSelection(quint64 sessionId, int sliceId);
     bool requestTransmit(quint64 sessionId, int sliceId, CatTransmitKind kind);
     void releaseTransmit(quint64 sessionId);
+    void releaseTransmit(quint64 sessionId, CatTransmitKind kind);
     void cancelSession(quint64 sessionId);
     void cancelAll();
+    quint64 currentRequestTag() const { return m_tag; }
 private:
     bool idle() const;
     bool targetValid() const;

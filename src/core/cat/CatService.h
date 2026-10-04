@@ -6,6 +6,8 @@
 #include "CatSettings.h"
 #include "CatRxCommands.h"
 #include "CatDspCommands.h"
+#include "CatTxCommands.h"
+#include "CatGlobalCommands.h"
 #include "CatSession.h"
 #include "CatParser.h"
 #include "CatCommandRouter.h"
@@ -55,6 +57,8 @@ private:
     CatSettings m_settings;
     CatRxCommands m_rxCommands;
     CatDspCommands m_dspCommands;
+    CatTxCommands m_txCommands;
+    CatGlobalCommands m_globalCommands;
     CatCommandCatalog m_catalog;
     CatParser m_parser;
     CatCommandRouter m_router;

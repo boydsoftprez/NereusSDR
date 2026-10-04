@@ -74,10 +74,8 @@ private slots:
         QVERIFY(replacement && service->session(replacement));
         QCOMPARE(service->channelState(4), QString("Disabled"));
         const quint64 next = service->openSession(1, CatTransportKind::Tester);
-        QVERIFY(service->router().registerHandler("ID", [&](const CatRequest&, CatSessionContext&) {
-            service->stopAll(); return CatCommandResult{CatResultKind::Payload, "019"};
-        }));
-        QCOMPARE(service->processFrame(next, "ID;"), QByteArray("?;"));
+        connect(service, &CatService::globalConfigurationChanged, &model, [&] { service->stopAll(); });
+        QCOMPARE(service->processFrame(next, "ZZID;"), QByteArray("?;"));
         QVERIFY(!service->isStarted());
     }
     void callbackDestroysModel()
@@ -90,10 +88,8 @@ private slots:
         service->startConfigured(); QVERIFY(!model);
         model = std::make_unique<RadioModel>(); service = model->catService(); service->startConfigured();
         const quint64 session = service->openSession(1, CatTransportKind::Tester);
-        QVERIFY(service->router().registerHandler("ID", [&](const CatRequest&, CatSessionContext&) {
-            model.reset(); return CatCommandResult{CatResultKind::Payload, "019"};
-        }));
-        QCOMPARE(service->processFrame(session, "ID;"), QByteArray("?;")); QVERIFY(!model);
+        connect(service, &CatService::globalConfigurationChanged, service, [&] { model.reset(); });
+        QCOMPARE(service->processFrame(session, "ZZID;"), QByteArray("?;")); QVERIFY(!model);
     }
     void retirementCannotRestart()
     {

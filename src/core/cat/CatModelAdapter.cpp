@@ -5,6 +5,8 @@
 #include "core/session/SliceAccessPolicy.h"
 #include "core/safety/StationSliceFreeze.h"
 #include "core/MoxController.h"
+#include "core/RxChannel.h"
+#include <cmath>
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 namespace NereusSDR {
@@ -69,5 +71,22 @@ bool CatModelAdapter::revalidateWrite(const CatWriteToken& token) const
 bool CatModelAdapter::mayChangeGlobalDsp(QString* reason) const
 {
     return m_model && m_model->ownsLocalDsp() && !m_model->stationOnAirRefusal(reason);
+}
+bool CatModelAdapter::readRxMeter(const CatBinding& binding, CatVfo vfo, RxMeterType type, double& value) const
+{
+    const SliceModel* slice=resolveSlice(binding,vfo);
+    if (!slice || !mayRead(binding,vfo) || !m_model->isConnected()
+        || m_model->moxController()->isMox()) { return false; }
+    const RxChannel* channel=m_model->rxChannelForSlice(slice->sliceIndex());
+    if (!channel || !channel->isActive() || !channel->isWdspReady()) { return false; }
+    // Existing lane getter requests refresh before checking the cold cache.
+    // CoreSliceMeterPump uses this same pipeline; no GUI or polling thread.
+    const double raw=channel->getMeter(type);
+    if (!channel->meterReadingReady() || !std::isfinite(raw)) { return false; }
+    value=raw;
+    if (type == RxMeterType::SignalPeak || type == RxMeterType::SignalAvg) {
+        value+=m_model->rxMeterOffsetDbForSlice(slice->sliceIndex());
+    }
+    return std::isfinite(value);
 }
 } // namespace NereusSDR

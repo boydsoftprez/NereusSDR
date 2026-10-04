@@ -6,13 +6,19 @@
 #include "models/RadioModel.h"
 namespace NereusSDR {
 CatService::CatService(RadioModel& model, QObject* parent)
-    : QObject(parent), m_model(&model), m_adapter(model), m_txCoordinator(model), m_settings(AppSettings::instance()), m_rxCommands(m_adapter, m_txCoordinator, m_settings), m_dspCommands(m_adapter), m_parser(m_catalog)
+    : QObject(parent), m_model(&model), m_adapter(model), m_txCoordinator(model), m_settings(AppSettings::instance()), m_rxCommands(m_adapter, m_txCoordinator, m_settings), m_dspCommands(m_adapter), m_txCommands(m_adapter,m_txCoordinator,m_settings), m_globalCommands(m_adapter,m_settings), m_parser(m_catalog)
 {
     for (const QByteArray& code : CatRxCommands::codes()) {
         m_router.registerHandler(code, [this](const CatRequest& request, CatSessionContext& context) { return m_rxCommands.execute(request, context); });
     }
     for (const QByteArray& code : CatDspCommands::codes()) {
         m_router.registerHandler(code, [this](const CatRequest& request, CatSessionContext& context) { return m_dspCommands.execute(request, context); });
+    }
+    for (const QByteArray& code : CatTxCommands::codes()) {
+        m_router.registerHandler(code, [this](const CatRequest& request, CatSessionContext& context) { return m_txCommands.execute(request, context); });
+    }
+    for (const QByteArray& code : CatGlobalCommands::codes()) {
+        m_router.registerHandler(code, [this](const CatRequest& request, CatSessionContext& context) { return m_globalCommands.execute(request, context); });
     }
     for (int channel = 1; channel <= 4; ++channel) { m_channels[channel - 1].config.channel = channel; }
     connect(&model, &RadioModel::connectionStateChanged, this, [this](ConnectionState state) {

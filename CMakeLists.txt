@@ -960,6 +960,8 @@ set(CORE_SOURCES
     src/core/cat/CatTxCoordinator.cpp
     src/core/cat/CatRxCommands.cpp
     src/core/cat/CatDspCommands.cpp
+    src/core/cat/CatTxCommands.cpp
+    src/core/cat/CatGlobalCommands.cpp
     src/core/cat/CatService.cpp
     src/core/cat/CatParser.cpp
     src/core/cat/CatCommandRouter.cpp

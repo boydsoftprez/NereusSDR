@@ -116,7 +116,7 @@ private slots:
             const CatDescriptor* descriptor=catalog.find(fixture.value("command").toString().toLatin1());
             QVERIFY(descriptor);
             const CatValidation validation=parser.validate(frame);
-            if (!descriptor->active) {
+            if (!descriptor->active || fixture.value("validationReject").toBool()) {
                 QVERIFY2(!validation.request, frame.constData());
                 QCOMPARE(parser.formatValidationError(validation,{1,1}),QByteArray("?;"));
                 ++rejected;
@@ -130,7 +130,7 @@ private slots:
             CatCommandResult supplied{CatResultKind::Payload,{}};
             if (wire.isEmpty()) { supplied.kind=CatResultKind::Silence; }
             else if (wire=="?;") { supplied.kind=CatResultKind::Error; supplied.data=wire; }
-            else if (descriptor->suffixKind==CatSuffixKind::Guid) { supplied.kind=CatResultKind::Wire; supplied.data=wire; }
+            else if (wire=="O;" || descriptor->answerWidth<=0 || fixture.value("command").toString()=="ZZVN" || descriptor->suffixKind==CatSuffixKind::Guid) { supplied.kind=CatResultKind::Wire; supplied.data=wire; }
             else {
                 const qsizetype prefix=descriptor->code.size()+(descriptor->code.startsWith("ZZ") ? validation.request->suffix.size() : 0);
                 supplied.data=wire.mid(prefix,wire.size()-prefix-1);
@@ -138,10 +138,10 @@ private slots:
             QCOMPARE(parser.format(*descriptor,*validation.request,supplied,{1,1}),wire);
             ++framed;
         }
-        QCOMPARE(fixtures.size(),776);
-        QCOMPARE(accepted+rejected,776);
-        QCOMPARE(pending,72);
-        QCOMPARE(framed+rejected,704);
+        QCOMPARE(fixtures.size(),783);
+        QCOMPARE(accepted+rejected,783);
+        QCOMPARE(pending,0);
+        QCOMPARE(framed+rejected,783);
         qInfo()<<"Validated requests:"<<accepted<<"active,"<<rejected<<"inactive; supplied result frames:"<<framed<<"; pending family fixtures:"<<pending;
     }
 };

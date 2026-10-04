@@ -2241,7 +2241,7 @@
   },
   {
     "code": "ZZSN",
-    "outcome": "Unavailable",
+    "outcome": "Faithful",
     "family": "CAT serial identity",
     "suffixKind": "Numeric",
     "precedence": "SetFirst"

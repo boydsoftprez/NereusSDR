@@ -2,6 +2,7 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #pragma once
 #include "CatTypes.h"
+#include "core/WdspTypes.h"
 #include <QPointer>
 namespace NereusSDR {
 class RadioModel; class SliceModel; class TransmitModel;
@@ -21,6 +22,7 @@ public:
     CatWriteToken prepareWrite(const CatBinding&, CatVfo, const QByteArray& property) const;
     bool revalidateWrite(const CatWriteToken&) const;
     bool mayChangeGlobalDsp(QString* reason = nullptr) const;
+    bool readRxMeter(const CatBinding&, CatVfo, RxMeterType, double& value) const;
 private:
     QPointer<RadioModel> m_model;
 };

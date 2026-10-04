@@ -21,6 +21,16 @@ Current contracts: `/tmp/nereus-cat-tx-contracts.json`, 172 active commands; met
 - **VAC/VAX** remains an explicit unavailable topology adaptation. Current `StationVaxFacade.h:14-28` describes four output channels/single TX level; `DaemonApp.cpp:273` disables VAX outputs. `AudioEngine.cpp:3141-3154` RX gain0..1 cannot represent source positive40dB; TX gain3170-3176 still has no pull-side consumer (`AudioEngine.h:993-994,1497-1501`). No guessed pair mapping or driver/cable index. Current remote VAX routing is real but does not establish source two-VAC-pair equivalence.
 - **CPU** now has a real Linux host sampler (`core/daemon/HostTelemetrySampler.h:31-54,100-136`, optional system/process percentages; cached900ms, absent initial/platform data). ZZCU remains unavailable because no existing model exposes source-selected 0.8/0.2-smoothed CPUPercSmoothed (`console.cs:26258-26274`). This is an exact-capability limit, not the old incorrect no-sampler claim; no fabricated cross-platform CPU0.
 
+## Task 7 implementation confirmation (2026-10-04)
+
+The completed registry adds 27 TX and 145 global handlers to the 177 accepted Task5/6/router handlers: exactly 349 active commands; all 70 inactive descriptors remain unregistered. The owning Task7 subset is Faithful15, Adapted34, SourceInert39, Unavailable84. Across all419 mapping rows the corrected totals are Faithful15, Adapted163, SourceInert42, Unavailable129, Inactive70. The earlier research subset/counts above describe its historical extraction scope.
+
+ZZSN reads actual configured CAT setup text; invalid nine-character representability returns explicit `O;`. PS uses actual connected-state readback and disconnect only; no discovery/connect policy. ZZTP uses the sorted real profile bank and `selectTxProfileForStation(..., false)`. ZZEB validates all eleven gains and the ten-band prefix before changing any existing EQ value or frequency. Ordinary live TX settings use existing local/station ownership; tester VOX enable is refused before audio or keying state changes. PureSignal single calibration additionally requires its existing `runCalibrationProcessing()` capability (PureSignal.cpp:473-475), so disabled processing cannot be acknowledged as an action.
+
+RX meter reads call the existing lane getter before rejecting a cold cache. Actual active/WDSP/cache readiness, rather than a numeric floor sentinel, decides availability; WDSP meter.c:96-99 also calculates finite -400 for genuine zero-input measurements. Signal peak/average receive the resolved slice's native calibration; ADC selectors remain typed peak/average. TX selector4 uses ALC average through the existing `calculateTxMeter` sign convention and source -20 floor; selectors5/7/8 format actual connected RadioStatus watts/SWR. ZZXN/ZZXO require a real routed frontend; unavailable whole composites remain errors. ZZZZ becomes an orderly current-serial-endpoint operation in Task9; at Task7's tester-only stage it explicitly refuses rather than closing unrelated sessions.
+
+PS0's cancellation continuation snapshots the actual CAT request tag and accepted MOX generation. A scoped requestAccepted observation permits only the exact owned nonzero tag's OFF; newer station, foreign, or same-tag ON intents invalidate the old disconnect. It also revalidates issuing session identity, binding incarnations, object lifetimes and existing native authority after callbacks. An initial operator state with no CAT claim remains an intentional global disconnect. The request-tag accessor is a read-only existing-state diagnostic, not admission policy.
+
 ## TX ownership and existing fences
 
 `RadioModel::ownsLocalDsp()` at `RadioModel.h:1228` is the authority predicate; Role::Local includes desktop hardware owner and daemon. Role::Remote is a GUI mirror and must create no CAT listener or model-writing service. No CAT extension to the station remote protocol is within scope.
@@ -646,15 +656,9 @@ New live readback RadioModel.h1637-1644/cpp8330-8347; RadioConnection.h252-253 c
 
 ### CAT serial identity
 
-Commands: `ZZSN`. Outcomes: Unavailable.
+Commands: `ZZSN`. Outcome: Faithful configured CAT preference.
 
-Pinned source: ZZSN 6343-6350 [v2.10.3.15].
-
-Target: None: no functional production binding.
-
-Source Setup txtZZSN is configured9-char text;RadioInfo exposes no hardware serial,Flex derived accessory serial is synthetic incompatible shape. No fabricated serial
-
-`ZZSN`: ?; for read form; no mutation Set/action: ?; for set/action form; no mutation Scale: None.
+Thetis CATCommands.cs:6343-6350, setup.cs:4012-4015 and setup.Designer.cs:59476-59484 [v2.10.3.15] prove that SerialNumber reads editable setup text, default `0000-0000`. It is not a hardware serial API. Read actual CatGlobalConfig.serialNumber, require nine characters, and return the normal ZZSN frame. No setter exists in the pinned XML. Invalid configured length explicitly returns `O;` without mutation, correcting the upstream extended formatter's unframed payload defect without padding/truncating fabricated text. This corrects the former unavailable classification: Faithful15 and Unavailable129, other outcomes unchanged.
 
 ### TX filter display
 
