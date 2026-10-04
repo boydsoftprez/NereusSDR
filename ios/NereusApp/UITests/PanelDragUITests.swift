@@ -42,7 +42,7 @@ final class PanelDragUITests: XCTestCase {
         XCTAssertEqual(flag.frame.minX, before.minX, accuracy: 1, "the band moved under the panel")
 
         // Outside the panel the band still closes it on a tap and pans on a drag.
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.12)).tap()
+        try outsidePanelCoordinate(app, panel: panel).tap()
         XCTAssertTrue(panel.waitForNonExistence(timeout: 10))
         XCTAssertEqual(flag.frame.minX, before.minX, accuracy: 1, "the tap moved the band")
         let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.45))
@@ -140,6 +140,63 @@ final class PanelDragUITests: XCTestCase {
             toolbar.buttons[button].tap()
             XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), sheetId)
         }
+    }
+
+    /// An entire 44pt target on the actual band, clear of the panel and its controls.
+    @MainActor
+    private func outsidePanelCoordinate(_ app: XCUIApplication, panel: XCUIElement) throws -> XCUICoordinate {
+        let band = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Band"))
+        let catcher = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Close the menu"))
+        XCTAssertEqual(band.count, 1, "The actual band touch surface exists once")
+        XCTAssertEqual(catcher.count, 1, "The open panel's dismissal catcher exists once")
+        let bandElement = band.firstMatch
+        let bandFrame = bandElement.frame
+        let viewport = bandFrame.intersection(app.windows.firstMatch.frame).intersection(catcher.firstMatch.frame)
+        XCTAssertTrue(panel.exists && catcher.firstMatch.isHittable)
+        let flags = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier MATCHES %@", "flag[A-Z]+"))
+            .allElementsBoundByIndex
+        XCTAssertFalse(flags.isEmpty, "The band's whole flags supply their actual frames")
+        var obstacles = [panel.frame] + flags.map(\.frame)
+        for flag in flags {
+            let letter = String(flag.identifier.dropFirst(4))
+            for id in ["flagClose", "flagLock", "flagMore"] {
+                let button = app.buttons[id + letter]
+                if button.exists { obstacles.append(button.frame) }
+            }
+        }
+        for id in ["toolbar", "toolbarSideways", "toolbarIPad", "Sections", "connectionSummary",
+                   "ptt", "dbmRaise", "dbmLower", "sharingChip", "sharingNote"] {
+            let element = app.descendants(matching: .any)[id]
+            if element.exists { obstacles.append(element.frame) }
+        }
+        // Hidden tabs stay alive; only their hittable buttons can cover this band.
+        for button in app.buttons.allElementsBoundByIndex where button.isHittable && button.label != "Close the menu" {
+            obstacles.append(button.frame)
+        }
+        var clear = [viewport]
+        for obstacle in obstacles {
+            clear = clear.flatMap { rect -> [CGRect] in
+                let covered = rect.intersection(obstacle)
+                guard !covered.isNull && !covered.isEmpty else { return [rect] }
+                return [
+                    CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: covered.minY - rect.minY),
+                    CGRect(x: rect.minX, y: covered.maxY, width: rect.width, height: rect.maxY - covered.maxY),
+                    CGRect(x: rect.minX, y: covered.minY, width: covered.minX - rect.minX, height: covered.height),
+                    CGRect(x: covered.maxX, y: covered.minY, width: rect.maxX - covered.maxX, height: covered.height),
+                ].filter { $0.width >= 44 && $0.height >= 44 }
+            }
+        }
+        let available = try XCTUnwrap(clear.filter { $0.width >= 44 && $0.height >= 44 }
+            .max { $0.width * $0.height < $1.width * $1.height },
+            "The measured band has a 44pt target clear of the panel, flags and controls: viewport=\(viewport), obstacles=\(obstacles)")
+        // Half a 44pt target clears every measured edge, as in the TX viewport tests.
+        let target = CGRect(x: available.midX - 22, y: available.midY - 22, width: 44, height: 44)
+        XCTAssertTrue(viewport.contains(target), "The whole target is inside the band, window and catcher")
+        XCTAssertTrue(obstacles.allSatisfy { !$0.intersects(target) }, "The whole target avoids panels, flags, buttons and chrome")
+        print("Panel outside tap: target=\(target), band=\(bandFrame), panel=\(panel.frame), catcher=\(catcher.firstMatch.frame)")
+        return bandElement.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: target.midX - bandFrame.minX, dy: target.midY - bandFrame.minY))
     }
 
     /// Slice A's flag is on the band; if not, the screen is written (with
