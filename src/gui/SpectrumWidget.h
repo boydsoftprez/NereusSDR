@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 : retain each 2D waterfall row's RF window so TX history
+//                 aligns on the restored RX axis without resampling the
+//                 saved RX rows. J.J. Boyd (KG4VCF), AI-assisted via
+//                 OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Opt-in numeric RX history diagnostics.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-02 : shared SpectrumLayout for CPU/GPU panel paint and hit
@@ -452,10 +456,9 @@ public:
     /// spectrum returns to the panadapter without losing waterfall
     /// scrollback continuity".
     ///
-    /// No reprojection either. Transmit rows and receive rows describe
-    /// different windows, and mapping one onto the other and back is lossy
-    /// in both directions; leaving the plane alone keeps the receive
-    /// history exactly as it was. Found by Codex on PR #317.
+    /// Transmit rows and receive rows describe different windows. Keep
+    /// each captured row intact and project only the live viewport, so
+    /// returning to RX restores its history without repeated resampling.
     void setDisplayWindowPreservingHistory(double centerHz, double bandwidthHz);
 
     /// Render already-detected transmit pixels, bypassing the receive
@@ -2483,6 +2486,7 @@ private:
     int   waterfallStripWidth() const;
     void  ensureWaterfallHistory();
     void  rebuildWaterfallViewport();
+    void  rebuildWaterfallViewport(double centerHz, double bandwidthHz);
     void  setWaterfallLive(bool live);
     void  appendHistoryRow(const QRgb* rowData, qint64 timestampMs);
     int   waterfallHistoryCapacityRows() const;
@@ -2748,6 +2752,11 @@ private:
     // From AetherSDR SpectrumWidget.h:493-502 [@0cd4559]
     QImage          m_waterfallHistory;            // RGB32 ring buffer
     QVector<qint64> m_wfHistoryTimestamps;         // parallel; per-row wall-clock ms
+    struct WaterfallRowWindow {
+        double centerHz{0.0};
+        double bandwidthHz{0.0};
+    };
+    QVector<WaterfallRowWindow> m_wfHistoryWindows; // original RF window per row
     int             m_wfHistoryWriteRow{0};        // LIFO; index 0 = newest
     mutable QElapsedTimer m_historyTraceViewportClock;
     int             m_wfHistoryRowCount{0};        // saturates at capacity

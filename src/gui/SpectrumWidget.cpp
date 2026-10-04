@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04  J.J. Boyd / KG4VCF. Keep 2D TX history aligned on the
+//                 restored RX frequency axis using each row's capture
+//                 window. Original history pixels stay intact.
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Opt-in numeric RX history diagnostics.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-02 J.J. Boyd / KG4VCF : issues #141/#147: CPU paint, GPU
@@ -1845,6 +1849,7 @@ void SpectrumWidget::setDisplayWindowPreservingHistory(double centerHz,
         return;
     }
     applyViewWindow(centerHz, bandwidthHz);
+    rebuildWaterfallViewport();
     update();
 }
 
@@ -6281,6 +6286,9 @@ void SpectrumWidget::ensureWaterfallHistory()
     if (desiredSize.width() <= 0 || desiredSize.height() <= 0) {
         return;
     }
+    if (m_wfHistoryWindows.size() != desiredSize.height()) {
+        m_wfHistoryWindows.resize(desiredSize.height());
+    }
 
     if (m_waterfallHistory.size() == desiredSize) {
         return;
@@ -6301,6 +6309,7 @@ void SpectrumWidget::ensureWaterfallHistory()
         newHistory = QImage(desiredSize, QImage::Format_RGB32);
         newHistory.fill(Qt::black);
         m_wfHistoryTimestamps = QVector<qint64>(desiredSize.height(), 0);
+        m_wfHistoryWindows = QVector<WaterfallRowWindow>(desiredSize.height());
         m_wfHistoryWriteRow = 0;
         m_wfHistoryRowCount = 0;
         m_wfHistoryOffsetRows = 0;
@@ -6326,6 +6335,7 @@ void SpectrumWidget::appendHistoryRow(const QRgb* rowData, qint64 timestampMs)
     if (m_wfHistoryWriteRow >= 0
         && m_wfHistoryWriteRow < m_wfHistoryTimestamps.size()) {
         m_wfHistoryTimestamps[m_wfHistoryWriteRow] = timestampMs;
+        m_wfHistoryWindows[m_wfHistoryWriteRow] = {m_centerHz, m_bandwidthHz};
     }
     if (m_wfHistoryRowCount < h) {
         ++m_wfHistoryRowCount;
@@ -6341,9 +6351,21 @@ void SpectrumWidget::appendHistoryRow(const QRgb* rowData, qint64 timestampMs)
 // From AetherSDR SpectrumWidget.cpp:670-705 [@0cd4559]
 void SpectrumWidget::rebuildWaterfallViewport()
 {
+    rebuildWaterfallViewport(m_centerHz, m_bandwidthHz);
+}
+
+// NereusSDR-original: captured RX and TX rows can have different RF
+// windows. Rebuild from their original pixels, never from an already
+// projected viewport, so returning to an earlier window is lossless.
+void SpectrumWidget::rebuildWaterfallViewport(double centerHz, double bandwidthHz)
+{
     if (m_waterfall.isNull()) {
         return;
     }
+    // resizeEvent replaces the live image before its debounced history
+    // resize. Window/MOX changes can rebuild in that interval; synchronize
+    // the source width before copying or indexing any history scanline.
+    ensureWaterfallHistory();
 
     traceRxHistoryEvent(RxHistoryEvent::ViewportRebuild);
     m_wfHistoryOffsetRows = std::clamp(
@@ -6365,7 +6387,24 @@ void SpectrumWidget::rebuildWaterfallViewport()
         const QRgb* src = reinterpret_cast<const QRgb*>(
             m_waterfallHistory.constScanLine(rowIndex));
         auto* dst = reinterpret_cast<QRgb*>(m_waterfall.scanLine(y));
-        std::memcpy(dst, src, rowWidthBytes);
+        const WaterfallRowWindow window = m_wfHistoryWindows.value(rowIndex);
+        if (window.bandwidthHz <= 0.0 || bandwidthHz <= 0.0
+            || (qFuzzyCompare(window.centerHz, centerHz)
+                && qFuzzyCompare(window.bandwidthHz, bandwidthHz))) {
+            std::memcpy(dst, src, rowWidthBytes);
+        } else {
+            const double startHz = centerHz - bandwidthHz / 2.0;
+            const double capturedStartHz = window.centerHz - window.bandwidthHz / 2.0;
+            const int width = m_waterfall.width();
+            for (int x = 0; x < width; ++x) {
+                const double hz = startHz + (x + 0.5) * bandwidthHz / width;
+                const double capturedX = (hz - capturedStartHz)
+                                       / window.bandwidthHz * width;
+                if (capturedX >= 0.0 && capturedX < width) {
+                    dst[x] = src[int(capturedX)];
+                }
+            }
+        }
     }
 
     // Force GPU full re-upload — the per-row delta path can't follow a
@@ -6453,6 +6492,7 @@ void SpectrumWidget::clearWaterfallHistory()
     }
     m_wfWriteRow = 0;
     std::fill(m_wfHistoryTimestamps.begin(), m_wfHistoryTimestamps.end(), 0);
+    std::fill(m_wfHistoryWindows.begin(), m_wfHistoryWindows.end(), WaterfallRowWindow{});
     m_wfHistoryWriteRow = 0;
     m_wfHistoryRowCount = 0;
     m_wfHistoryOffsetRows = 0;
@@ -6843,6 +6883,13 @@ void SpectrumWidget::reprojectWaterfall(double oldCenterHz, double oldBandwidthH
 
     traceRxHistoryEvent(RxHistoryEvent::RfReproject, -1, 0, {},
                          oldCenterHz, oldBandwidthHz, newCenterHz, newBandwidthHz);
+    if (!m_waterfallHistory.isNull() && m_wfHistoryRowCount > 0) {
+        // Different RX/TX windows coexist in this ring. Project each row
+        // from its captured window; stretching the whole history image
+        // would relabel the TX rows and irreversibly crop the RX rows.
+        rebuildWaterfallViewport(newCenterHz, newBandwidthHz);
+        return;
+    }
     const double oldStartHz = oldCenterHz - oldBandwidthHz / 2.0;
     const double oldEndHz   = oldCenterHz + oldBandwidthHz / 2.0;
     const double newStartHz = newCenterHz - newBandwidthHz / 2.0;
@@ -8257,6 +8304,7 @@ void SpectrumWidget::loadTransmitSpan()
     m_rxViewBandwidthHz = m_bandwidthHz;
     if (m_txViewBandwidthHz > 0.0) { m_bandwidthHz = m_txViewBandwidthHz; }
     m_txSpanLoaded = true;
+    rebuildWaterfallViewport();
 }
 
 void SpectrumWidget::restoreReceiveSpan()
@@ -8268,6 +8316,7 @@ void SpectrumWidget::restoreReceiveSpan()
         m_bandwidthHz = m_rxViewBandwidthHz;
     }
     m_txSpanLoaded = false;
+    rebuildWaterfallViewport();
 }
 
 void SpectrumWidget::resetPeaksForDuplexChange()

@@ -26,9 +26,14 @@
 //     pumps them. The samples the siphon handed the analyzer are read back
 //     out of its input ring and every block must be there once, in order.
 //
-// The tone is -600 Hz (cw_pitch below the carrier, LSB) at 0.99999, Thetis's
-// MAX_TONE_MAG. The pixel 66 Hz either side of the peak, and every pixel
+// The synthetic tones are +/-600 Hz to verify the carrier-relative axis
+// for USB and LSB; the TX channel tone is -600 Hz (LSB). Both use 0.99999,
+// Thetis's MAX_TONE_MAG. The pixel 66 Hz either side of the peak, and every pixel
 // beyond it out to the window's edge, must be at least 90 dB down.
+//
+// Modification history (NereusSDR):
+//   2026-10-04 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//                 Verify both USB and LSB analyzer frequency orientation.
 
 #include <QtTest/QtTest>
 #include "RealtimeTestLoad.h"
@@ -213,8 +218,16 @@ private slots:
     void cleanup() { RealtimeTestLoad::printLoadAverageIfFailed(); }
 
     // Case 1: a continuous synthetic tone straight into Spectrum0.
+    void syntheticToneHasNoSkirt_data()
+    {
+        QTest::addColumn<double>("toneHz");
+        QTest::newRow("USB above carrier") << 600.0;
+        QTest::newRow("LSB below carrier") << -600.0;
+    }
+
     void syntheticToneHasNoSkirt()
     {
+        QFETCH(double, toneHz);
         const int block = WdspEngine::kTxDspBufferSize;   // the TX channel's dsp_size
         TxAnalyzer analyzer(kDisp);
         configureForTune(analyzer, block);
@@ -227,7 +240,7 @@ private slots:
         //   out[2i] = +mag*cos(phs), out[2i+1] = -mag*sin(phs)
         std::vector<double> buf(static_cast<std::size_t>(2 * block));
         double phs = 0.0;
-        const double delta = 2.0 * std::numbers::pi * kToneHz / kDspRate;
+        const double delta = 2.0 * std::numbers::pi * toneHz / kDspRate;
         const auto feedOne = [&]() {
             for (int i = 0; i < block; ++i) {
                 buf[static_cast<std::size_t>(2 * i)] = TxChannel::kMaxToneMag * std::cos(phs);
@@ -242,7 +255,7 @@ private slots:
         QVERIFY(grabFrame(kDisp, args.nPix, 5, pix, feedOne));
         const Skirt s = measure(pix, args);
         qInfo("synthetic: %s", describe(s).constData());
-        QVERIFY2(std::abs(s.peakHz - kToneHz) < 3.0 * hzPerPixel(args), describe(s).constData());
+        QVERIFY2(std::abs(s.peakHz - toneHz) < 3.0 * hzPerPixel(args), describe(s).constData());
         QVERIFY2(s.at66LowDb <= -kRequiredDownDb && s.at66HighDb <= -kRequiredDownDb,
                  describe(s).constData());
         QVERIFY2(s.worstBeyondDb <= -kRequiredDownDb, describe(s).constData());

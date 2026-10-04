@@ -3,6 +3,9 @@
 // =================================================================
 //
 // Phase 3M-1c chunk I (I.1-I.5) — TwoToneController activation handler.
+// Modification history (NereusSDR):
+//   2026-10-04 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//                 Cover two-tone sideband selection after a TX handoff.
 //
 // Verifies:
 //   I.1.A — setActive(true) when not powered → no MOX engaged, no TXPostGen
@@ -44,10 +47,13 @@
 #include "core/MoxController.h"
 #include "core/TxChannel.h"
 #include "core/TxInterlockPolicy.h"
+#include "core/TxSliceArbiter.h"
+#include "core/AppSettings.h"
 #include "core/safety/BandPlanGuard.h"
 #include "core/WdspTypes.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
+#include "models/RadioModel.h"
 
 using namespace NereusSDR;
 using namespace NereusSDR::safety;
@@ -499,6 +505,79 @@ private slots:
 
         QCOMPARE(tc.findCall(QStringLiteral("setTxPostGenTTFreq1")).arg1, 700.0);
         QCOMPARE(tc.findCall(QStringLiteral("setTxPostGenTTFreq2")).arg1, 1900.0);
+    }
+
+    void setActive_afterTxHandoff_usesBoundSideband_data()
+    {
+        QTest::addColumn<int>("rememberedMode");
+        QTest::addColumn<int>("boundMode");
+        QTest::addColumn<bool>("pulsed");
+        QTest::addColumn<double>("sign");
+        QTest::newRow("continuous USB after LSB") << static_cast<int>(DSPMode::LSB)
+            << static_cast<int>(DSPMode::USB) << false << 1.0;
+        QTest::newRow("continuous LSB after USB") << static_cast<int>(DSPMode::USB)
+            << static_cast<int>(DSPMode::LSB) << false << -1.0;
+        QTest::newRow("pulsed USB after LSB") << static_cast<int>(DSPMode::LSB)
+            << static_cast<int>(DSPMode::USB) << true << 1.0;
+        QTest::newRow("pulsed LSB after USB") << static_cast<int>(DSPMode::USB)
+            << static_cast<int>(DSPMode::LSB) << true << -1.0;
+    }
+
+    void setActive_afterTxHandoff_usesBoundSideband()
+    {
+        QFETCH(int, rememberedMode);
+        QFETCH(int, boundMode);
+        QFETCH(bool, pulsed);
+        QFETCH(double, sign);
+
+        AppSettings::instance().clear();
+        RecordingTxChannel tc(kTxChannelId);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+        const int firstId = model.addSlice();
+        const int secondId = model.addSlice();
+        QVERIFY(firstId >= 0 && secondId >= 0);
+        SliceModel* const remembered = model.sliceById(firstId);
+        SliceModel* const bound = model.sliceById(secondId);
+        QVERIFY(remembered && bound);
+        remembered->setDspMode(static_cast<DSPMode>(rememberedMode));
+        bound->setDspMode(static_cast<DSPMode>(boundMode));
+
+        TwoToneController* const ctrl = model.twoToneController();
+        QVERIFY(ctrl);
+        ctrl->setTxChannel(&tc);
+        ctrl->setMoxController(&mox);
+        ctrl->setSettleDelaysMs(0, 0);
+        ctrl->setPowerOn(true);
+        // Reproduce the connect-time selection, then move only the TX
+        // binding. The operator can keep looking at the first slice.
+        ctrl->setSliceModel(remembered);
+        QVERIFY(model.txSliceArbiter()->requestHandoff(secondId));
+        QCOMPARE(model.txBoundSlice(), bound);
+        QCOMPARE(model.activeSlice(), remembered);
+
+        TransmitModel& tx = model.transmitModel();
+        tx.setTwoToneInvert(true);
+        tx.setTwoTonePulsed(pulsed);
+        tx.setTwoToneFreq1(700);
+        tx.setTwoToneFreq2(1900);
+        tx.setTwoToneFreq2Delay(0);
+        ctrl->setActive(true);
+        QTRY_VERIFY(ctrl->isActive());
+
+        const QString firstSetter = pulsed
+            ? QStringLiteral("setTxPostGenTTPulseToneFreq1")
+            : QStringLiteral("setTxPostGenTTFreq1");
+        const QString secondSetter = pulsed
+            ? QStringLiteral("setTxPostGenTTPulseToneFreq2")
+            : QStringLiteral("setTxPostGenTTFreq2");
+        QCOMPARE(tc.findCall(firstSetter).arg1, sign * 700.0);
+        QCOMPARE(tc.findCall(secondSetter).arg1, sign * 1900.0);
+        ctrl->stopNow();
+        ctrl->setTxChannel(nullptr);
+        ctrl->setMoxController(nullptr);
     }
 
     // ── I.2: Freq2Delay > 0 → Mag2 starts at 0, applied after delay ──────
