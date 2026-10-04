@@ -1,4 +1,5 @@
 // no-port-check: NereusSDR-original. R-R3-38 complete station-session ownership.
+// 2026-10-04 - Include the setup signal type for Qt 6.4; JJ Boyd, OpenAI Codex.
 #include "gui/GuiSessionCoordinator.h"
 
 #include "core/AppSettings.h"
@@ -7,6 +8,7 @@
 #include "core/station/StationRadios.h"
 #include "gui/GuiDesktopStationRuntime.h"
 #include "gui/MainWindow.h"
+#include "gui/SetupDialog.h"
 #include "models/RadioModel.h"
 
 #include <QApplication>

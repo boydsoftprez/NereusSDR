@@ -7,6 +7,8 @@
 #include <QPaintDevice>
 #include <QDir>
 #include <QWidget>
+#include <QMouseEvent>
+#include <limits>
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/HistoryGraphItem.h"
@@ -16,6 +18,7 @@
 #include "gui/meters/SignalTextItem.h"
 #include "gui/meters/NeedleScalePwrItem.h"
 #include "gui/meters/BandButtonItem.h"
+#include "gui/containers/ContainerContentRegistry.h"
 using namespace NereusSDR;
 namespace {
 // Observe actual QPainter text output at the paint-device boundary. This avoids
@@ -80,6 +83,71 @@ private:
 class TestResponsiveMeterFonts : public QObject {
     Q_OBJECT
 private slots:
+    void nonfiniteButtonCellsAreNotPainted_data() {
+        QTest::addColumn<float>("ratio");
+        QTest::newRow("finite-ratio-overflow") << std::numeric_limits<float>::max();
+        QTest::newRow("infinite-ratio") << std::numeric_limits<float>::infinity();
+        QTest::newRow("nan-ratio") << std::numeric_limits<float>::quiet_NaN();
+    }
+    void nonfiniteButtonCellsAreNotPainted() {
+        QFETCH(float,ratio);
+        BandButtonItem buttons; buttons.setColumns(1); buttons.setVisibleBits(1);
+        buttons.setHeightRatio(ratio);
+        const QString saved=buttons.serialize();
+        TextPaintDevice device(QSize(100,100),1); QPainter painter(&device);
+        buttons.paint(painter,100,100); painter.end();
+        QCOMPARE(device.texts().size(),0);
+        QCOMPARE(device.strokes().size(),0);
+        QMouseEvent press(QEvent::MouseButtonPress,QPointF(10,10),QPointF(10,10),
+                          Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+        QVERIFY(!buttons.handleMousePress(&press,100,100));
+        QCOMPARE(buttons.serialize(),saved);
+    }
+    void zeroWidthContestDoesNotPaintButtonLabels() {
+        CompositePresetItem face(CompositePresetItem::Face::Contest);
+        face.setRect(0,0,0,1);
+        const QString saved=face.serialize();
+        TextPaintDevice device(QSize(360,280),1); QPainter painter(&device);
+        face.paint(painter,360,280); painter.end();
+        for(const auto& text:device.texts()) {
+            QVERIFY(text.value!=face.bandButtons()->button(0).text);
+        }
+        QCOMPARE(face.serialize(),saved);
+    }
+    void fractionalLegacyButtonEdgeKeepsImportedRecord() {
+        ContainerContentRegistry registry;
+        auto entry=registry.makeEntry("BANDBTNS");
+        const QString raw="BANDBTNS|0|0|1|1|-1|0|6|0|1|future-tail";
+        entry.config["legacyRecord"]=raw;
+        entry.extensions["opaque"]=QJsonObject{{"keep",true}};
+        entry.canvasRect=QRectF(0,0,1.0000000000000002,1);
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr));
+        auto* buttons=qobject_cast<BandButtonItem*>(item.get()); QVERIFY(buttons);
+        buttons->setHeightRatio(1.5f);
+        const auto before=registry.captureMeterItem(*buttons,entry);
+        QSignalSpy clicked(buttons,&ButtonBoxItem::buttonClicked);
+        TextPaintDevice device(QSize(21,100),1); QPainter painter(&device);
+        buttons->paint(painter,21,100); painter.end();
+        QVERIFY(!device.strokes().isEmpty());
+        // The established float cell ends at y=6.934999942779541. These
+        // neighbouring positions catch promotion of its stored geometry.
+        for(const auto& hit:{QPair<double,bool>{6.93499990,true},{6.93500000,false}}) {
+            const QPointF point(1.5,hit.first);
+            QMouseEvent press(QEvent::MouseButtonPress,point,point,
+                              Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+            QCOMPARE(buttons->handleMousePress(&press,21,100),hit.second);
+            QMouseEvent release(QEvent::MouseButtonRelease,point,point,
+                                Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+            buttons->handleMouseRelease(&release,21,100);
+            QCOMPARE(clicked.count(),1);
+        }
+        const auto after=registry.captureMeterItem(*buttons,entry);
+        QCOMPARE(after,before);
+        QCOMPARE(after.config["legacyRecord"].toString(),raw);
+        QCOMPARE(after.extensions,entry.extensions);
+        QCOMPARE(after.canvasRect.width(),entry.canvasRect.width());
+        QCOMPARE(buttons->heightRatio(),1.5f);
+    }
     void contestPaintPreservesImportedChildren() {
         CompositePresetItem face(CompositePresetItem::Face::Contest);
         QJsonObject config=face.configuration();

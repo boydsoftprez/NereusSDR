@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Preserve button-grid float precision and omit nonfinite
+//                 transient cells by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Invalidate cached interaction frames by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
@@ -69,8 +71,17 @@ mw0lge@grange-lane.co.uk
 #include <QMouseEvent>
 #include <QtMath>
 #include <QVariant>
+#include <cmath>
 
 namespace NereusSDR {
+namespace {
+bool hasFiniteButtonGeometry(const QRectF& rect)
+{
+    return std::isfinite(rect.x()) && std::isfinite(rect.y())
+        && std::isfinite(rect.width()) && std::isfinite(rect.height())
+        && std::isfinite(rect.right()) && std::isfinite(rect.bottom());
+}
+}
 
 ButtonBoxItem::ButtonBoxItem(QObject* parent)
     : MeterItem(parent)
@@ -195,7 +206,10 @@ QRectF ButtonBoxItem::buttonRect(int index, const QRectF& area) const
     const bool singleControl = m_columns == 1 && m_visibleBits != 0
         && (m_visibleBits & (m_visibleBits - 1)) == 0
         && property("containerSingleControl").toBool();
-    const float cellH = singleControl ? area.height() * (1.0f - pad) : cellW * m_heightRatio;
+    // Keep the legacy float product and the existing viewport narrowing;
+    // both selected arms stay float without a needless qreal round trip.
+    const float cellH = singleControl
+        ? static_cast<float>(area.height() * (1.0f - pad)) : cellW * m_heightRatio;
     const float bw = cellW - (m_margin + m_borderWidth) * area.width();
     const float bh = cellH - (m_margin + m_borderWidth) * (singleControl ? area.height() : area.width());
 
@@ -214,7 +228,8 @@ int ButtonBoxItem::buttonAt(const QPointF& pos, int widgetW, int widgetH) const
     const QRectF area = pixelRect(widgetW, widgetH);
     for (int i = 0; i < m_buttonCount; ++i) {
         if (isButtonShown(i)) {
-            if (buttonRect(i, area).contains(pos)) {
+            const QRectF rect = buttonRect(i, area);
+            if (hasFiniteButtonGeometry(rect) && rect.contains(pos)) {
                 return i;
             }
         }
@@ -238,6 +253,7 @@ void ButtonBoxItem::paint(QPainter& p, int widgetW, int widgetH)
     for (int i = 0; i < m_buttonCount; ++i) {
         if (!isButtonShown(i)) { continue; }
         const QRectF rect = buttonRect(i, area);
+        if (!hasFiniteButtonGeometry(rect)) { continue; }
         paintButton(p, i, rect);
     }
 }
