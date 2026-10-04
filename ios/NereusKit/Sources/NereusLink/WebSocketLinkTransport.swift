@@ -44,6 +44,8 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
     private let openDeadline: Duration
     private let proxyResolver: SystemProxyResolver
     private let traffic: TrafficCounter
+    /// Isolated diagnostic branch only: fixed labels/numeric stages, no payloads or policy effects.
+    private let observeOpening: (@Sendable (String) -> Void)?
     private let queue = DispatchQueue(label: "NereusSDR.link.websocket")
 
     // Everything below is read and written under `lock`.
@@ -82,16 +84,19 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
     }
 
     init(endpoint: StationEndpoint, trust: StationTrust, openDeadline: Duration,
-         proxyResolver: SystemProxyResolver, traffic: TrafficCounter = .shared) {
+         proxyResolver: SystemProxyResolver, traffic: TrafficCounter = .shared,
+         observeOpening: (@Sendable (String) -> Void)? = nil) {
         self.endpoint = endpoint
         self.trust = trust
         self.openDeadline = openDeadline
         self.proxyResolver = proxyResolver
         self.traffic = traffic
+        self.observeOpening = observeOpening
     }
 
     public func open(onEvent: @escaping @Sendable (LinkTransportEvent) async -> Void) async throws -> Data {
         let startedAt = ContinuousClock().now
+        observeOpening?("native open entry")
         guard endpoint.port != 0 else {
             throw LinkTransportError.failed("no port")
         }
@@ -107,8 +112,9 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
             throw LinkTransportError.failed("not a Core address")
         }
         let task = Task { [self] in
-            try await SystemProxyWebSocketOpening.run(
-                target: url, timeout: openDeadline, startedAt: startedAt, resolver: proxyResolver
+            observeOpening?("native opening task entry")
+            return try await SystemProxyWebSocketOpening.run(
+                target: url, timeout: openDeadline, startedAt: startedAt, resolver: proxyResolver, observe: observeOpening
             ) { route, remaining in
                 try await self.openAttempt(route: route, timeout: remaining, events: continuation)
             }
@@ -127,9 +133,11 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
             defer { lock.withLock { openingTask = nil } }
             do {
                 let digest = try await task.value
+                observeOpening?("native opening task value returned")
                 if lock.withLock({ finished }) { throw LinkTransportError.failed("closed") }
                 return digest
             } catch {
+                observeOpening?("native opening task value threw " + Self.observedError(error))
                 let wasClosed = lock.withLock { finished }
                 close()
                 if wasClosed || Task.isCancelled || error is CancellationError {
@@ -148,6 +156,7 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
     private func openAttempt(route: SystemProxyRoute, timeout: Duration,
                              events continuation: AsyncStream<LinkTransportEvent>.Continuation) async throws -> Data {
         let deadline = ContinuousClock().now + timeout
+        observeOpening?("native attempt entry; budget \(timeout)")
         guard let port = NWEndpoint.Port(rawValue: endpoint.port) else { throw LinkTransportError.failed("no port") }
         let id = lock.withLock { () -> Int in
             attemptID += 1
@@ -180,7 +189,8 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
         let target = Self.url(for: endpoint) ?? .hostPort(host: NWEndpoint.Host(endpoint.host), port: port)
         let connection = NWConnection(to: target, using: parameters)
 
-        return try await withTaskCancellationHandler {
+        do {
+        let digest = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (opening: CheckedContinuation<Data, Error>) in
                 let alreadyClosed = lock.withLock { () -> Bool in
                     if finished || Task.isCancelled {
@@ -193,28 +203,43 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
                     self.opening = opening
                     return false
                 }
+                observeOpening?("native continuation installation; closed \(alreadyClosed)")
                 if alreadyClosed {
                     continuation.finish()
+                    observeOpening?("native continuation resume closed-before-opening entry")
                     opening.resume(throwing: LinkTransportError.failed("closed before opening"))
+                    observeOpening?("native continuation resume closed-before-opening returned")
                     return
                 }
                 connection.stateUpdateHandler = { [weak self] state in
+                    if let observe = self?.observeOpening { observe("native state callback " + Self.observedState(state)) }
                     self?.stateChanged(state, on: connection)
                 }
+                observeOpening?("native NW start entry")
                 connection.start(queue: queue)
+                observeOpening?("native NW start returned")
                 let remaining = deadline - ContinuousClock().now
+                observeOpening?("native attempt remaining \(remaining)")
                 guard remaining > .zero else {
+                    observeOpening?("native attempt remaining expired")
                     failAttempt(.noReply, on: connection)
                     return
                 }
                 let (seconds, attoseconds) = remaining.components
                 let nanoseconds = Int(seconds) * 1_000_000_000 + Int(attoseconds / 1_000_000_000)
+                observeOpening?("native attempt timer armed; nanoseconds \(nanoseconds)")
                 queue.asyncAfter(deadline: .now() + .nanoseconds(nanoseconds)) { [weak self] in
                     self?.openDeadlinePassed(on: connection)
                 }
             }
         } onCancel: {
             failAttempt(.failed("cancelled"), on: connection)
+        }
+        observeOpening?("native attempt await returned")
+        return digest
+        } catch {
+            observeOpening?("native attempt await threw " + Self.observedError(error))
+            throw error
         }
     }
 
@@ -340,6 +365,7 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
     }
 
     public func close() {
+        observeOpening?("native close entry")
         let (connection, opening, task) = lock.withLock { () -> (NWConnection?, CheckedContinuation<Data, Error>?, Task<Data, Error>?) in
             finished = true
             let taken = (self.connection, self.opening, self.openingTask)
@@ -354,8 +380,11 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
             events = nil
             return taken
         }
+        observeOpening?("native close took continuation \(opening != nil)")
         task?.cancel()
+        if opening != nil { observeOpening?("native continuation resume closed entry") }
         opening?.resume(throwing: LinkTransportError.failed("closed"))
+        if opening != nil { observeOpening?("native continuation resume closed returned") }
         guard let connection else {
             return
         }
@@ -393,7 +422,9 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
 
     /// The opening is still in progress at the deadline: nothing answered.
     private func openDeadlinePassed(on connection: NWConnection) {
+        observeOpening?("native attempt timer fired")
         let pending = lock.withLock { self.connection === connection && self.opening != nil }
+        observeOpening?("native attempt timer pending \(pending)")
         guard pending else {
             return
         }
@@ -426,7 +457,9 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
     }
 
     private func stateChanged(_ state: NWConnection.State, on connection: NWConnection) {
-        guard lock.withLock({ self.connection === connection && !finished }) else { return }
+        let live = lock.withLock({ self.connection === connection && !finished })
+        observeOpening?("native state live \(live)")
+        guard live else { return }
         let route = lock.withLock { activeRoute }
         switch state {
         case .ready:
@@ -443,12 +476,16 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
             guard let digest else {
                 // No certificate was presented; the Core cannot be checked.
                 Self.logger.warning("The Core presented no certificate; closing before reading anything")
+                observeOpening?("native continuation resume no-certificate entry")
                 opening.resume(throwing: LinkTransportError.failed("no certificate presented"))
+                observeOpening?("native continuation resume no-certificate returned")
                 finish(on: connection)
                 connection.cancel()
                 return
             }
+            observeOpening?("native continuation resume ready entry")
             opening.resume(returning: digest)
+            observeOpening?("native continuation resume ready returned")
             receiveNext(on: connection)
         case .waiting(let error):
             // A ready session stays with session policy; only an unopened
@@ -487,6 +524,7 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
     /// the Core presented was not the pinned one, and as a refused local
     /// network when iOS would not let the app try.
     private func failAttempt(_ reason: LinkTransportError, on connection: NWConnection) {
+        observeOpening?("native failAttempt entry " + Self.observedError(reason))
         let (opening, digest) = lock.withLock { () -> (CheckedContinuation<Data, Error>?, Data?) in
             guard self.connection === connection && !established else { return (nil, nil) }
             let taken = self.opening
@@ -495,15 +533,57 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
             self.activeRoute = nil
             return (taken, presentedSHA256)
         }
+        observeOpening?("native failAttempt took continuation \(opening != nil)")
         guard let opening else {
             return
         }
         if let digest, case .certificate(let pin) = trust, !CertificatePin.matches(digest, pin: pin) {
+            observeOpening?("native continuation resume certificate-mismatch entry")
             opening.resume(throwing: LinkTransportError.certificateMismatch)
+            observeOpening?("native continuation resume certificate-mismatch returned")
         } else {
+            observeOpening?("native continuation resume failure entry")
             opening.resume(throwing: reason)
+            observeOpening?("native continuation resume failure returned")
         }
         connection.cancel()
+    }
+
+    /// Diagnostic-only categories never render associated error strings or endpoint data.
+    private static func observedError(_ error: Error) -> String {
+        if let error = error as? LinkTransportError {
+            switch error {
+            case .refused: return "refused"
+            case .noReply: return "noReply"
+            case .certificateMismatch: return "certificateMismatch"
+            case .unreachable: return "unreachable"
+            case .localNetworkDenied: return "localNetworkDenied"
+            default: return "transportOther"
+            }
+        }
+        if let error = error as? SystemProxyError { return "proxy-" + String(describing: error) }
+        if error is CancellationError { return "cancelled" }
+        return "other"
+    }
+
+    private static func observedState(_ state: NWConnection.State) -> String {
+        func code(_ error: NWError) -> String {
+            switch error {
+            case .posix(let value): return "posix \(value.rawValue)"
+            case .dns(let value): return "dns \(value)"
+            case .tls(let value): return "tls \(value)"
+            @unknown default: return "unknownError"
+            }
+        }
+        switch state {
+        case .setup: return "setup"
+        case .preparing: return "preparing"
+        case .ready: return "ready"
+        case .waiting(let error): return "waiting " + code(error)
+        case .failed(let error): return "failed " + code(error)
+        case .cancelled: return "cancelled"
+        @unknown default: return "unknownState"
+        }
     }
 
     /// Why an opening failed, as the attempt record words it: on a direct

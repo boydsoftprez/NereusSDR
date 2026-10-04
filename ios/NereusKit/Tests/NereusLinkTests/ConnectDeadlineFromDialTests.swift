@@ -342,7 +342,9 @@ import Testing
         let client = try PairingClient(identity: try Self.device(), name: "Shack iPhone", kind: .phone, clock: clock,
                                        transportFactory: { endpoint, trust in
                                            made.keep(ReceiptTransport(WebSocketLinkTransport(endpoint: endpoint, trust: trust,
-                                                                            openDeadline: .seconds(600)), receipts: receipts))
+                                                                            openDeadline: .seconds(600),
+                                                                            proxyResolver: SystemProxyResolver(),
+                                                                            observeOpening: receipts.mark), receipts: receipts))
                                        })
         let pairing = Task {
             do {

@@ -331,7 +331,8 @@ import Testing
         let diagnostic = HostedDiagnosticReceipts("Settings own removal")
         diagnostic.mark("body entry")
         defer { diagnostic.mark("body exit"); diagnostic.export() }
-        let proxy = connected(["DisplaySpectrumFps": "30", "CWPitch": "600"], diagnostic: diagnostic)
+        let clock = ManualLinkClock()
+        let proxy = connected(["DisplaySpectrumFps": "30", "CWPitch": "600"], clock: clock, diagnostic: diagnostic)
         diagnostic.mark("first removal entry")
         await proxy.remove("DisplaySpectrumFps")
         diagnostic.mark("first removal returned")
@@ -389,6 +390,38 @@ import Testing
     }
 
     // MARK: Held until the Core answers (JJ, 2026-10-01; StationClient.cpp:1040-1068)
+
+    /// Delegates to the accepted manual authority clock; observation never advances it.
+    private struct ObservedManualClock: LinkClock {
+        let base: ManualLinkClock
+        let diagnostic: HostedDiagnosticReceipts
+        var nowMilliseconds: Int64 { base.nowMilliseconds }
+        func schedule(after delay: Duration, _ action: @escaping @Sendable () async -> Void) -> any LinkTimer {
+            diagnostic.mark("manual timer schedule entry; delay \(delay)")
+            let timer = base.schedule(after: delay) {
+                diagnostic.mark("manual timer action entry")
+                await action()
+                diagnostic.mark("manual timer action returned")
+            }
+            diagnostic.mark("manual timer schedule returned")
+            return timer
+        }
+    }
+
+    private func connected(_ snapshot: [String: String], clock: ManualLinkClock,
+                           diagnostic: HostedDiagnosticReceipts) -> SettingsProxyClient {
+        let sender = sent.sender
+        let proxy = SettingsProxyClient(origin: Self.origin, send: { message in
+            diagnostic.mark("fake sender entry")
+            defer { diagnostic.mark("fake sender returned") }
+            try await sender(message)
+        }, clock: ObservedManualClock(base: clock, diagnostic: diagnostic))
+        proxy.handle(.stateChanged(.receivingSnapshot))
+        proxy.apply(FixtureReplay.accepted)
+        proxy.apply(Self.snapshot(snapshot))
+        proxy.handle(.stateChanged(.ready))
+        return proxy
+    }
 
     private func connected(_ snapshot: [String: String], clock: ManualLinkClock) -> SettingsProxyClient {
         let proxy = SettingsProxyClient(origin: Self.origin, send: sent.sender, clock: clock)

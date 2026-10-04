@@ -51,7 +51,7 @@ import UniformTypeIdentifiers
     }
 
     @Test(arguments: shots)
-    func theCoresCatalogueDrawsTheDefaultPlanAndPalette(_ shot: Shot) throws {
+    func theCoresCatalogueDrawsTheDefaultPlanAndPalette(_ shot: Shot) async throws {
         let diagnostic = HostedDiagnosticReceipts(shot.name)
         diagnostic.mark("body entry")
         defer { diagnostic.mark("body exit"); diagnostic.export() }
@@ -109,6 +109,7 @@ import UniformTypeIdentifiers
             state.receive(frame: next, manualLevels: settings.manualLevels)
             state.receive(extras: BandFixtures.extras(for: next, levels: (-126, -66)), manualLevels: settings.manualLevels)
             frame = next
+            await Task.yield()
         }
         diagnostic.mark("history returned")
         let image = try target.render(renderer, frame: frame, history: state.history, extras: state.frameExtras,

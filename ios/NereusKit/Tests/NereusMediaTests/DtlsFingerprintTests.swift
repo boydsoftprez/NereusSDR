@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import Foundation
+import LinkTestSupport
 import NereusLink
 import Testing
 @testable import NereusMedia
@@ -14,13 +15,16 @@ import Testing
 /// since libdatachannel's log is process-wide.
 @Suite(.serialized) struct DtlsFingerprintTests {
     @Test func aDataChannelPeerWithAWrongFingerprintInTheOfferNeverOpensItsChannel() async throws {
-        let log = LogLines()
+        let diagnostic = HostedDiagnosticReceipts("DTLS wrong fingerprint")
+        diagnostic.mark("body entry")
+        defer { diagnostic.mark("body exit"); diagnostic.export() }
+        let log = LogLines(diagnostic: diagnostic)
         RtcBridge.setLogSink { log.append($0) }
         defer { RtcBridge.setLogSink(nil) }
 
-        let pair = try DataChannelTestPair(wrongFingerprint: true)
+        let pair = try DataChannelTestPair(wrongFingerprint: true, diagnostic: diagnostic)
         defer { pair.close() }
-        try await Self.waitUntil("the answerer to fail") {
+        try await Self.waitUntil("the answerer to fail", diagnostic: diagnostic) {
             pair.answererStates.contains(.failed) || pair.answererStates.contains(.closed)
         }
 
@@ -36,13 +40,16 @@ import Testing
     }
 
     @Test func aDataChannelPeerWithTheMatchingFingerprintConnects() async throws {
-        let log = LogLines()
+        let diagnostic = HostedDiagnosticReceipts("DTLS matching fingerprint")
+        diagnostic.mark("body entry")
+        defer { diagnostic.mark("body exit"); diagnostic.export() }
+        let log = LogLines(diagnostic: diagnostic)
         RtcBridge.setLogSink { log.append($0) }
         defer { RtcBridge.setLogSink(nil) }
 
-        let pair = try DataChannelTestPair(wrongFingerprint: false)
+        let pair = try DataChannelTestPair(wrongFingerprint: false, diagnostic: diagnostic)
         defer { pair.close() }
-        try await Self.waitUntil("the answerer's channel to open") {
+        try await Self.waitUntil("the answerer's channel to open", diagnostic: diagnostic) {
             !pair.answererChannels.opened.isEmpty
         }
         #expect(pair.answererStates.contains(.connected))
@@ -53,7 +60,7 @@ import Testing
         pair.offerer.countTraffic(on: pair.offererChannel, as: .control)
         let before = TrafficCounter.shared.readingByKind
         try pair.offerer.send(Data("ping".utf8), on: pair.offererChannel)
-        try await Self.waitUntil("the message to arrive") {
+        try await Self.waitUntil("the message to arrive", diagnostic: diagnostic) {
             pair.answererMessages.contains(Data("ping".utf8))
         }
         let counted = TrafficCounter.shared.readingByKind.since(before)
@@ -68,15 +75,20 @@ import Testing
     }
 
     private static func waitUntil(_ what: String, timeout: Duration = .seconds(10),
+                                  diagnostic: HostedDiagnosticReceipts? = nil,
                                   _ condition: () -> Bool) async throws {
         let clock = ContinuousClock()
         let deadline = clock.now + timeout
+        diagnostic?.mark("wait entry " + what)
+        defer { diagnostic?.mark("wait caller resumed " + what) }
         while !condition() {
             guard clock.now < deadline else {
+                diagnostic?.mark("wait deadline expired " + what)
                 throw TimedOut(description: "timed out waiting for \(what)")
             }
             try await Task.sleep(for: .milliseconds(10))
         }
+        diagnostic?.mark("wait condition satisfied " + what)
     }
 }
 
@@ -84,9 +96,16 @@ import Testing
 private final class LogLines: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: [String] = []
+    private let diagnostic: HostedDiagnosticReceipts?
+    init(diagnostic: HostedDiagnosticReceipts? = nil) { self.diagnostic = diagnostic }
 
     func append(_ line: String) {
+        let captured: HostedDiagnosticReceipts.Captured?
+        if line.contains("Invalid fingerprint") { captured = HostedDiagnosticReceipts.capture("process-wide unattributed Invalid fingerprint") }
+        else if line.contains("DTLS handshake finished") { captured = HostedDiagnosticReceipts.capture("process-wide unattributed DTLS handshake finished") }
+        else { captured = nil }
         lock.withLock { stored.append(line) }
+        if let captured { diagnostic?.append(captured) }
     }
 
     var lines: [String] {

@@ -3,6 +3,7 @@
 
 import Darwin
 import Foundation
+import LinkTestSupport
 import Network
 import Testing
 @testable import NereusLink
@@ -37,12 +38,19 @@ import Testing
 
     /// A port nothing listens on, on this computer: its connection is refused.
     @Test func aPortNothingListensOnIsRefused() async throws {
+        let diagnostic = HostedDiagnosticReceipts("refused port native opening")
+        diagnostic.mark("body entry; reservation entry")
+        defer { diagnostic.mark("body exit"); diagnostic.export() }
         let reservation = try RefusedPortReservation()
+        diagnostic.mark("reservation returned")
         defer { reservation.close() }
         try #require(reservation.port != 0)
         let transport = WebSocketLinkTransport(endpoint: StationEndpoint(host: "127.0.0.1", port: reservation.port),
-                                               trust: .pairing, openDeadline: .seconds(10))
+                                               trust: .pairing, openDeadline: .seconds(10),
+                                               proxyResolver: SystemProxyResolver(), observeOpening: diagnostic.mark)
         await #expect(throws: LinkTransportError.refused) {
+            diagnostic.mark("test open caller entry")
+            defer { diagnostic.mark("test open caller resumed") }
             _ = try await transport.open { _ in }
         }
     }

@@ -77,7 +77,7 @@ import Testing
     ]
 
     @Test(arguments: scenes)
-    func theSceneDrawsAsTheDesktopsDoes(_ scene: Scene) throws {
+    func theSceneDrawsAsTheDesktopsDoes(_ scene: Scene) async throws {
         let diagnostic = HostedDiagnosticReceipts(scene.name)
         diagnostic.mark("body entry")
         defer { diagnostic.mark("body exit"); diagnostic.export() }
@@ -133,6 +133,7 @@ import Testing
                                                       levels: (-125, -65)),
                           manualLevels: settings.manualLevels)
             frame = next
+            await Task.yield()
         }
         diagnostic.mark("history returned")
         if scene.more == 2 {

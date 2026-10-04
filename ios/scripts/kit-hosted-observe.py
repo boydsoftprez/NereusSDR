@@ -16,6 +16,10 @@ BASE = 'd2ca3475e30556494a70bd78a0c72eee32aa9a9c'
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'ios/NereusKit'
 
+# Reviewed diagnostic production scope. All other production remains the frozen base.
+DIAGNOSTIC_PRODUCTION_PATHS = frozenset(('ios/NereusKit/Sources/NereusLink/WebSocketLinkTransport.swift', 'ios/NereusKit/Sources/NereusLink/SystemProxyWebSocketOpening.swift'))
+DIAGNOSTIC_PRODUCTION_HASHES = {'ios/NereusKit/Sources/NereusLink/WebSocketLinkTransport.swift': 'd95e9916f8529f6ddecf695b6b541a0c7c4a7ff535fcede464f085bff417785a', 'ios/NereusKit/Sources/NereusLink/SystemProxyWebSocketOpening.swift': '4887e2abc83d0c1b41a954283a40ffb31856214c0c04a7da6d359cee4edff226'}
+
 
 def stamp():
     return {'utc': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'monotonic': time.monotonic()}
@@ -231,21 +235,30 @@ def source_manifest():
             if p.is_file() and '.build' not in p.parts and '.swiftpm' not in p.parts}
 
 
+def production_hash_mismatches(expected, actual, approved):
+    # No broad Sources exception, missing file, or newly introduced file is admitted.
+    if set(approved) != DIAGNOSTIC_PRODUCTION_PATHS or not set(approved).issubset(expected):
+        return ['invalid diagnostic production allowlist paths']
+    if any(len(value) != 64 or any(c not in '0123456789abcdef' for c in value) for value in approved.values()):
+        return ['invalid diagnostic production allowlist hashes']
+    return sorted(name for name in set(expected) | set(actual)
+                  if name not in expected or name not in actual
+                  or actual[name] != approved.get(name, expected.get(name)))
+
+
 def production_matches_base(manifest):
     names = subprocess.check_output(['git', 'ls-tree', '-r', '--name-only', BASE,
                                     'ios/NereusKit/Sources', 'ios/NereusKit/Package.swift',
                                     'ios/scripts/swift-test.sh'], cwd=ROOT, text=True).splitlines()
-    mismatches = []
-    for name in names:
-        blob = subprocess.check_output(['git', 'show', BASE + ':' + name], cwd=ROOT)
-        actual = manifest.get(name) or digest(ROOT / name)
-        if hashlib.sha256(blob).hexdigest() != actual:
-            mismatches.append(name)
-    # Additional source files would change the product too.
-    expected_sources = {n for n in names if '/Sources/' in n}
-    actual_sources = {n for n in manifest if '/Sources/' in n}
-    mismatches.extend(sorted(actual_sources - expected_sources))
-    return mismatches
+    expected = {name: hashlib.sha256(subprocess.check_output(['git', 'show', BASE + ':' + name], cwd=ROOT)).hexdigest()
+                for name in names}
+    actual_sources = {name for name in manifest if '/Sources/' in name}
+    actual = {}
+    for name in set(names) | actual_sources:
+        path = ROOT / name
+        if name in manifest: actual[name] = manifest[name]
+        elif path.is_file(): actual[name] = digest(path)
+    return production_hash_mismatches(expected, actual, DIAGNOSTIC_PRODUCTION_HASHES)
 
 
 def products():
@@ -345,7 +358,11 @@ def main():
     write_json(out, 'source-before.json', before)
     unchanged = production_matches_base(before)
     receipt = {'start': stamp(), 'argv': ['ios/scripts/swift-test.sh'], 'source_count': len(before),
-               'base': BASE, 'production_mismatches': unchanged, 'samples': [], 'owned_processes': [],
+               'base': BASE, 'production_mismatches': unchanged,
+               'approved_diagnostic_production_hashes': dict(DIAGNOSTIC_PRODUCTION_HASHES),
+               'diagnostic_production_hashes_before': {name: before.get(name) for name in DIAGNOSTIC_PRODUCTION_PATHS},
+               'original_production_hashes': {name: hashlib.sha256(subprocess.check_output(['git', 'show', BASE + ':' + name], cwd=ROOT)).hexdigest() for name in DIAGNOSTIC_PRODUCTION_PATHS},
+               'samples': [], 'owned_processes': [],
                'processor_count': os.cpu_count(), 'load_before': os.getloadavg(),
                'python_monotonic_clock_info': vars(time.get_clock_info('monotonic'))}
     try:
@@ -559,6 +576,7 @@ def main():
             cleanup_owned(proc, known, receipt, helper, products())
         after = source_manifest()
         write_json(out, 'source-after.json', after)
+        receipt['diagnostic_production_hashes_after'] = {name: after.get(name) for name in DIAGNOSTIC_PRODUCTION_PATHS}
         receipt['sources_equal'] = before == after
         receipt['products_after'] = products()
         receipt['end'] = stamp()
