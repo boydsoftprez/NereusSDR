@@ -143,7 +143,7 @@ jobs:
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-pulseaudio gstreamer1.0-gl \
             libgstreamer-gl1.0-0 libgstreamer-plugins-base1.0-0 \
-            libfuse2 file desktop-file-utils \
+            libfuse2 file desktop-file-utils xvfb \
             libfftw3-dev imagemagick \
             libasound2-dev libjack-jackd2-dev \
             libpipewire-0.3-dev \
@@ -363,14 +363,16 @@ jobs:
           test -f squashfs-root/usr/lib/libNereusSDRLib.so
           test -f squashfs-root/usr/lib/libNereusCore.so
           cmp packaging/linux/AppRun squashfs-root/AppRun
-          # Exercise the extracted package through AppRun, without the SDK
-          # or build-tree library/plugin paths masking a missing dependency.
-          env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH \
-            QT_QPA_PLATFORM=offscreen "./$LDAI_OUTPUT" --version > desktop-version.txt
+          # Exercise the package through AppRun without SDK/build-tree paths.
+          # linuxdeploy's Qt plugin bundles xcb by default, so use that real
+          # desktop platform on Xvfb rather than an unbundled offscreen plugin.
+          xvfb-run -a env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH \
+            -u QT_QPA_PLATFORM_PLUGIN_PATH QT_QPA_PLATFORM=xcb \
+            "./$LDAI_OUTPUT" --version > desktop-version.txt
           VERSION="${{ needs.prepare.outputs.version }}"
           grep -Fxq "NereusSDR ${VERSION%%-*}" desktop-version.txt
           env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH \
-            QT_QPA_PLATFORM=offscreen "./$LDAI_OUTPUT" --nereus-station --help > station-help.txt
+            "./$LDAI_OUTPUT" --nereus-station --help > station-help.txt
           grep -q 'NereusSDR headless daemon' station-help.txt
 
       - name: Upload AppImage artifact
