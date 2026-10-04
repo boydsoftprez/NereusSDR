@@ -7,6 +7,8 @@
 // (see https://github.com/ten9876/AetherSDR/blob/main/LICENSE).
 //
 // Modification history (NereusSDR):
+//   2026-10-03  J.J. Boyd / KG4VCF  Keep UTC handling compatible with Qt 6.4.
+//                                    AI tooling: OpenAI Codex.
 //   2026-09-26  J.J. Boyd / KG4VCF  Parity Task 19 (R-IOS-25): mintIndex()
 //                                    for spots a remote window shows from
 //                                    the Core, outside the dedup cache.
@@ -114,7 +116,7 @@ void SpotModel::applySpotStatus(int index, const QMap<QString, QString>& kvs)
             bool ok;
             qint64 ts = val.toLongLong(&ok);
             if (ok)
-                spot.timestamp = QDateTime::fromSecsSinceEpoch(ts, QTimeZone::UTC);
+                spot.timestamp = QDateTime::fromSecsSinceEpoch(ts, Qt::UTC);
         }
         else if (key == "lifetime_seconds")
             spot.lifetimeSeconds = val.toInt();

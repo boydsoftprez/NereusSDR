@@ -24,7 +24,7 @@ private slots:
     {
         QTemporaryDir dir;
         const QString path = dir.filePath(QStringLiteral("VALog.txt"));
-        QDateTime now = QDateTime(QDate(2026, 9, 29), QTime(10, 0, 0), QTimeZone::UTC);
+        QDateTime now = QDateTime(QDate(2026, 9, 29), QTime(10, 0, 0), Qt::UTC);
         VoltsAmpsLog log;
         log.setFilePath(path);
         log.setClock([&now]() { return now; });

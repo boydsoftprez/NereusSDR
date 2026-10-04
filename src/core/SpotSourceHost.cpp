@@ -128,6 +128,8 @@
 // */
 //
 // Modification history (NereusSDR):
+//   2026-10-03  J.J. Boyd / KG4VCF  Keep UTC handling compatible with Qt 6.4.
+//                                    AI tooling: OpenAI Codex.
 //   2026-09-26  J.J. Boyd / KG4VCF  Created (parity Task 19, R-IOS-25,
 //                                    R-R3-49). AI-assisted via Anthropic
 //                                    Claude Code.
@@ -270,7 +272,7 @@ QJsonObject SpotSourceHost::spotRecordFields(const SpotData& spot, const DxccCol
     const qint64 hz = static_cast<qint64>(std::llround(mhz * 1.0e6));
     const QDateTime when = spot.timestamp.isValid()
         ? spot.timestamp
-        : QDateTime::fromMSecsSinceEpoch(spot.addedMs, QTimeZone::UTC);
+        : QDateTime::fromMSecsSinceEpoch(spot.addedMs, Qt::UTC);
     QString colour;
     int priority = 0;
     if (dxcc != nullptr && dxcc->isEnabled() && !spot.callsign.isEmpty() && mhz > 0.0) {

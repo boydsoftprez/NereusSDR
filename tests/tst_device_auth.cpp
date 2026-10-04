@@ -818,7 +818,7 @@ private slots:
     void aPairedDeviceSignsInAndIsSeen()
     {
         Core core(false);
-        QDateTime clock(QDate(2026, 9, 24), QTime(12, 0), QTimeZone::UTC);
+        QDateTime clock(QDate(2026, 9, 24), QTime(12, 0), Qt::UTC);
         core.server->deviceStore()->setClock([&clock]() { return clock; });
         Device phone;
         QVERIFY(core.server->deviceStore()->add(phone.record()));

@@ -1146,6 +1146,7 @@ change shows as surface drift and as a change to this table.
 | `txEqCurveVersion` | 2 |
 | `band2mVersion` | 1 |
 | `diversityPatternVersion` | 1 |
+| `diversityControlVersion` | 1 |
 | `logCategoryListVersion` | 1 |
 | `radioModelsVersion` | 0 |
 | `coreAddressesVersion` | 1 |
@@ -2429,24 +2430,25 @@ older window sees only the values it was built for.
 | 86 | `txEqCurveVersion` | `i64` |
 | 87 | `band2mVersion` | `i64` |
 | 88 | `diversityPatternVersion` | `i64` |
-| 89 | `logCategoryListVersion` | `i64` |
-| 90 | `radioModelsVersion` | `i64` |
-| 91 | `coreAddressesVersion` | `i64` |
-| 92 | `audioQualityVersion` | `i64` |
-| 93 | `stationTciSettingsVersion` | `i64` |
-| 94 | `adcAttenuatorVersion` | `i64` |
-| 95 | `paProfileVersion` | `i64` |
-| 96 | `radeStatusVersion` | `i64` |
-| 97 | `txInhibitReasonVersion` | `i64` |
-| 98 | `paTransmitBandVersion` | `i64` |
-| 99 | `sliceAccessVersion` | `i64` |
-| 100 | `mediaDirectVersion` | `i64` |
-| 101 | `mediaStunUrls` | `utf8` |
-| 102 | `rx2AttenuatorVersion` | `i64` |
-| 103 | `radioMicVersion` | `i64` |
-| 104 | `rxFilterLowPassVersion` | `i64` |
-| 105 | `radeReasonVersion` | `i64` |
-| 106 | `coreBuildInfo` | `utf8` |
+| 89 | `diversityControlVersion` | `i64` |
+| 90 | `logCategoryListVersion` | `i64` |
+| 91 | `radioModelsVersion` | `i64` |
+| 92 | `coreAddressesVersion` | `i64` |
+| 93 | `audioQualityVersion` | `i64` |
+| 94 | `stationTciSettingsVersion` | `i64` |
+| 95 | `adcAttenuatorVersion` | `i64` |
+| 96 | `paProfileVersion` | `i64` |
+| 97 | `radeStatusVersion` | `i64` |
+| 98 | `txInhibitReasonVersion` | `i64` |
+| 99 | `paTransmitBandVersion` | `i64` |
+| 100 | `sliceAccessVersion` | `i64` |
+| 101 | `mediaDirectVersion` | `i64` |
+| 102 | `mediaStunUrls` | `utf8` |
+| 103 | `rx2AttenuatorVersion` | `i64` |
+| 104 | `radioMicVersion` | `i64` |
+| 105 | `rxFilterLowPassVersion` | `i64` |
+| 106 | `radeReasonVersion` | `i64` |
+| 107 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -2668,7 +2670,7 @@ An enum property lists the values its domain allows.
 | 8 | `hardwarePeakOverride` | `f64` | bidirectional |  |
 | 9 | `lastLoadError` | `utf8` | outbound |  |
 
-**RadioModel** (37 properties)
+**RadioModel** (38 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -2709,6 +2711,7 @@ An enum property lists the values its domain allows.
 | 34 | `levelCalSucceeded` | `bool` | outbound |  |
 | 35 | `rxFilter0LowPassReason` | `utf8` | outbound |  |
 | 36 | `rxFilter0LowPassSlice` | `i64` | outbound |  |
+| 37 | `diversityState` | `utf8` | outbound |  |
 
 **RfKitModel** (30 properties)
 
@@ -5829,6 +5832,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `confirm.cancel` | `id` i64 | `sessionHolderVersion` | 1 | 11 |
 | `notice.takeBack` | `id` i64 | `sessionHolderVersion` | 1 | 11 |
 | `session.pathTicket` | none | `controlSwitchVersion` | 1 | 11 |
+| `diversity.setTarget` | `enabled` bool, `stateRevision` i64, `sourceSliceId` i64, `sourceIncarnation` i64, `sourceControlRevision` i64, `targetSliceId` i64, `targetIncarnation` i64, `targetControlRevision` i64 | `diversityControlVersion` | 1 | 11 |
 | `slice.listen` | `sliceId` i64, `incarnation` i64 | `sliceAccessVersion` | 1 | 11 |
 | `slice.stopListening` | `sliceId` i64, `incarnation` i64 | `sliceAccessVersion` | 1 | 11 |
 | `slice.takeControl` | `sliceId` i64, `incarnation` i64, `controlRevision` i64 | `sliceAccessVersion` | 1 | 11 |

@@ -624,8 +624,8 @@ jobs:
           # framework and Cocoa plugin support this row before compiling.
           test -f "$QT_ROOT_DIR/lib/cmake/Qt6/Qt6Config.cmake"
           test -x "$QT_ROOT_DIR/bin/macdeployqt"
-          lipo -verify_arch "${{ matrix.arch }}" "$QT_ROOT_DIR/lib/QtCore.framework/Versions/A/QtCore"
-          lipo -verify_arch "${{ matrix.arch }}" "$QT_ROOT_DIR/plugins/platforms/libqcocoa.dylib"
+          lipo "$QT_ROOT_DIR/lib/QtCore.framework/Versions/A/QtCore" -verify_arch "${{ matrix.arch }}"
+          lipo "$QT_ROOT_DIR/plugins/platforms/libqcocoa.dylib" -verify_arch "${{ matrix.arch }}"
 
       - name: Build FFTW from source for x86_64 (both precisions)
         if: matrix.arch == 'x86_64'
