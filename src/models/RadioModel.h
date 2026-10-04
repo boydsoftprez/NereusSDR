@@ -719,6 +719,7 @@ class SliceMeterPump;
 // translation unit that touches RadioModel.h.
 class WidebandFftEngine;
 // 3M-1a G.1: forward declarations for TX-side components.
+class CatService;
 class MoxController;
 struct KeyerIdentity;
 class TxChannel;
@@ -2010,6 +2011,8 @@ public:
 
     // Sub-models
     MeterModel&       meterModel()       { return m_meterModel; }
+    // Inert model-owned CAT service; policy-ready lifecycle callers start it.
+    CatService* catService() const { return m_catService; }
     TransmitModel&    transmitModel()    { return m_transmitModel; }
 
     // Slice management (client-side — radio has no slice concept)
@@ -7872,6 +7875,9 @@ private:
     // accessor and docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md
     // Task 6.
     TxSliceArbiter* m_txSliceArbiter{nullptr};
+
+    // Qt child, stopped before transmit/model retirement.
+    CatService* m_catService{nullptr};
     UnkeyGate* m_unkeyGate{nullptr};   // Task 34, Qt-parented to this
 
     // Phase 3F Sub-Epic D Task 13: receiver -> pan FFT fan-out router.

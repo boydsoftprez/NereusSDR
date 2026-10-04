@@ -94,7 +94,9 @@ CatCommandResult CatCommandRouter::execute(const CatRequest& request, CatSession
         // No family exists yet: explicit unavailable result, never success.
         return {CatResultKind::Error, "?;", kFeatureNotAvailable};
     }
-    return (*handler)(request, session);
+    // A synchronous handler may retire the owning service/router.
+    const Handler activeHandler = *handler;
+    return activeHandler(request, session);
 }
 QList<QByteArray> CatCommandRouter::registeredCodes() const
 {

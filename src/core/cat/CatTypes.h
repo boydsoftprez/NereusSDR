@@ -50,7 +50,7 @@ struct CatBinding {
 struct CatRequest { QByteArray code; QByteArray suffix; CatForm form; };
 struct CatCommandResult { CatResultKind kind; QByteArray data; int verboseErrorCode{0}; };
 struct CatValidation { std::optional<CatRequest> request; QByteArray error; int verboseErrorCode{0}; QByteArray errorCommand; };
-struct CatSessionContext { quint64 sessionId; int channel; bool verboseErrors{false}; };
+struct CatSessionContext { quint64 sessionId; int channel; bool verboseErrors{false}; bool transmitAllowed{true}; };
 // From Thetis CAT/CATParser.cs:475-500 [v2.10.3.15]. Negative widths disable forms.
 struct CatDescriptor {
     QByteArray code;

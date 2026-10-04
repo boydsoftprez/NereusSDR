@@ -1245,6 +1245,7 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+#include "core/cat/CatService.h"
 #include "RadioModel.h"
 #include "core/session/RemoteDevicesState.h"
 #include "core/AmModulationAnalyzer.h"
@@ -2424,6 +2425,8 @@ RadioModel::RadioModel(Role role, QObject* parent)
     // (already copied into m_role above) shadows the role() accessor
     // inside this function body.
     m_txSliceArbiter->setRemote(m_role == Role::Remote);
+    // Construction stays inert until the station policy and restored slices are ready.
+    m_catService = new CatService(*this, this);
     // iPhone app plan Task 77 (ruling 8.13): whose each slice is, each
     // owner's active slice and who holds transmit, for tx.setTxSlice, the
     // bind at a change of holder and the first bind.
@@ -4460,6 +4463,7 @@ RadioModel::RadioModel(Role role, QObject* parent)
 
 RadioModel::~RadioModel()
 {
+    if (m_catService) { m_catService->beginRetirement(); }
     // R-R3-48: the station TCI server holds this model's slices and
     // receivers; stop it while they still exist.
     m_rfKitBandFollow.reset();

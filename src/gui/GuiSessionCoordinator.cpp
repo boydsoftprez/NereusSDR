@@ -1,5 +1,6 @@
 // no-port-check: NereusSDR-original. R-R3-38 complete station-session ownership.
 // 2026-10-04 - Include the setup signal type for Qt 6.4; JJ Boyd, OpenAI Codex.
+#include "core/cat/CatService.h"
 #include "gui/GuiSessionCoordinator.h"
 
 #include "core/AppSettings.h"
@@ -177,6 +178,13 @@ bool GuiSessionCoordinator::replace(const StationStartupSelection& selection,
 
 void GuiSessionCoordinator::retireWindow()
 {
+    const QPointer<GuiSessionCoordinator> self(this);
+    const quint64 generation = m_generation;
+    const QPointer<MainWindow> window(m_window.get());
+    if (window && window->radioModel()->catService()) {
+        window->radioModel()->catService()->stopAll();
+        if (!self || generation != m_generation || m_window.get() != window) { return; }
+    }
     m_hostedStartupPending = false;
     m_hostedRadioRecovery = false;
     m_hostedRadioAttempted = false;
@@ -266,11 +274,14 @@ void GuiSessionCoordinator::installDesktopStation()
     refreshStationRadios();
     const QPointer<GuiSessionCoordinator> self(this);
     const QPointer<RadioModel> localModel(model);
-    m_desktopRuntime->restore();
+    const bool restored = m_desktopRuntime->restore();
     if (!self || !localModel || generation != m_generation || !m_window
         || m_window->radioModel() != localModel) { return; }
     // Initial host ownership adoption is part of the startup seed. Every
     // subsequent edit must be accounted for before handing this model away.
+    if (restored) { model->catService()->startConfigured(); }
+    if (!self || !localModel || generation != m_generation || !m_window
+        || m_window->radioModel() != localModel) { return; }
     model->beginStationHandoverEditTracking();
 }
 

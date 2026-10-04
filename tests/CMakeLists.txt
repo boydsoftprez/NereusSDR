@@ -9881,3 +9881,7 @@ endif()
 nereus_add_test(tst_cat_catalog CORE_ONLY)
 
 nereus_add_test(tst_cat_parser CORE_ONLY)
+
+nereus_add_test(tst_cat_bindings CORE_ONLY)
+nereus_add_test(tst_cat_settings CORE_ONLY)
+nereus_add_test(tst_cat_headless CORE_ONLY)

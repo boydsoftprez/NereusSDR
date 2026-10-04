@@ -153,6 +153,7 @@
 //               Anthropic Claude Code.
 // =================================================================
 
+#include "core/cat/CatService.h"
 #include "core/daemon/DaemonApp.h"
 #include "core/station/StationRadios.h"
 #include "core/station/StationHost.h"
@@ -458,6 +459,11 @@ bool DaemonApp::start(const DaemonConfig& cfg)
     // edits must be tracked even if layout writeback awaits radio admission.
     m_radioModel->beginStationHandoverEditTracking();
     m_stationHost->start();
+    const QPointer<DaemonApp> catStartSelf(this);
+    const QPointer<RadioModel> catStartModel(m_radioModel.get());
+    m_radioModel->catService()->startConfigured();
+    if (!catStartSelf || !catStartModel || m_radioModel.get() != catStartModel
+        || runGeneration != m_radioRecoveryGeneration) { return false; }
 
     // Parity Task 19 (R-IOS-25; remote design section 6.4): the station's
     // spot sources (DX cluster, RBN, POTA, PSK Reporter) whose Auto-Connect
@@ -484,6 +490,12 @@ void DaemonApp::stop()
     // else goes, as beginStationRelease() does, so a SIGTERM never tears
     // the model down under a key.
     if (m_radioModel) {
+        const QPointer<DaemonApp> catStopSelf(this);
+        const QPointer<RadioModel> catStopModel(m_radioModel.get());
+        const quint64 catStopGeneration = m_radioRecoveryGeneration;
+        m_radioModel->catService()->stopAll();
+        if (!catStopSelf || !catStopModel || m_radioModel.get() != catStopModel
+            || catStopGeneration != m_radioRecoveryGeneration) { return; }
 #ifdef NEREUS_BUILD_TESTS
         if (m_stopAllTxForTest) {
             m_stopAllTxForTest();
@@ -598,6 +610,12 @@ void DaemonApp::beginStationRelease()
 {
     m_stationReleaseRadioRecoveryWasEnabled = m_radioRecoveryEnabled;
     if (m_radioModel) {
+        const QPointer<DaemonApp> catStopSelf(this);
+        const QPointer<RadioModel> catStopModel(m_radioModel.get());
+        const quint64 catStopGeneration = m_radioRecoveryGeneration;
+        m_radioModel->catService()->stopAll();
+        if (!catStopSelf || !catStopModel || m_radioModel.get() != catStopModel
+            || catStopGeneration != m_radioRecoveryGeneration) { return; }
 #ifdef NEREUS_BUILD_TESTS
         if (m_stopAllTxForTest) {
             m_stopAllTxForTest();
@@ -627,6 +645,14 @@ DaemonApp::StationReleaseRecoveryResult DaemonApp::recoverFailedStationRelease()
     // RadioModel; start() reuses the retained options, identity and model.
     m_stationHost->stop();
     if (!m_stationHost->start()) {
+        return StationReleaseRecoveryResult::Unavailable;
+    }
+    const QPointer<DaemonApp> catRecoverySelf(this);
+    const QPointer<RadioModel> catRecoveryModel(m_radioModel.get());
+    const quint64 catRecoveryGeneration = m_radioRecoveryGeneration;
+    m_radioModel->catService()->startConfigured();
+    if (!catRecoverySelf || !catRecoveryModel || m_radioModel.get() != catRecoveryModel
+        || catRecoveryGeneration != m_radioRecoveryGeneration) {
         return StationReleaseRecoveryResult::Unavailable;
     }
     if (m_stationReleaseRadioRecoveryWasEnabled) {
