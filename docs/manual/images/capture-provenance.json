@@ -1,0 +1,258 @@
+{
+  "capture_date": "2026-10-02",
+  "manual_source": "d1608a3de75e5c307187966110f2e51e8ecb0d17",
+  "captures": [
+    {
+      "file": "iphone-welcome-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/audioquality-acceptance-v1-20261001-210754-8850/shots/01-welcome.png",
+      "sha256": "f30a7c39a95460985c62a435dddd024842deddd72538103f9a460908e210b0ed",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "build": "46591d6cd62a916a6eef83e65d12fc655259b44d",
+      "kind": "native-SwiftUI-hosting-fixture",
+      "state": "Simulated Core/test data; synthetic waterfall where present"
+    },
+    {
+      "file": "iphone-shared-slices-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/audioquality-acceptance-v1-20261001-210754-8850/shots/listening.png",
+      "sha256": "44aa47104255be91cb17e920c926d38d54c7e29355186f244bdcfad8f0523ab4",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "build": "46591d6cd62a916a6eef83e65d12fc655259b44d",
+      "kind": "native-SwiftUI-hosting-fixture",
+      "state": "Simulated Core/test data; synthetic waterfall where present"
+    },
+    {
+      "file": "iphone-sound-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/audioquality-acceptance-v1-20261001-210754-8850/shots/sound-panel.png",
+      "sha256": "9cd9f8e256db7272ef39efc925b1649ce1771ea8ef6e9909f53c513c463157eb",
+      "dimensions": [
+        1320,
+        2868
+      ],
+      "build": "46591d6cd62a916a6eef83e65d12fc655259b44d",
+      "kind": "full-app-XCUIApplication",
+      "state": "Simulator route, without live Core audio"
+    },
+    {
+      "file": "iphone-tools-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/audioquality-acceptance-v1-20261001-210754-8850/shots/tools-tab.png",
+      "sha256": "b8980e691e94b1056dc44aeba9c6cd66f14da47353b36257cc9fdae79d6ddf8b",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "build": "46591d6cd62a916a6eef83e65d12fc655259b44d",
+      "kind": "native-SwiftUI-hosting-fixture",
+      "state": "Simulated Core/test data; synthetic waterfall where present"
+    },
+    {
+      "file": "iphone-spot-hub-landscape-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/audioquality-acceptance-v1-20261001-210754-8850/shots/tools-spot-hub-landscape.png",
+      "sha256": "b74fd66115fbe44a38303c3dc7f4ded1f0ad0067e5bcc9d26c26c05b840743bf",
+      "dimensions": [
+        2622,
+        1206
+      ],
+      "build": "46591d6cd62a916a6eef83e65d12fc655259b44d",
+      "kind": "native-SwiftUI-hosting-fixture",
+      "state": "Simulated Core/test data; synthetic waterfall where present"
+    },
+    {
+      "file": "iphone-devices-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/audioquality-acceptance-v1-20261001-210754-8850/shots/setup-devices.png",
+      "sha256": "9d67f35b7148720188232b65145369480cdbe27a510395670b0c73a1bedb18dc",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "build": "46591d6cd62a916a6eef83e65d12fc655259b44d",
+      "kind": "native-SwiftUI-hosting-fixture",
+      "state": "Simulated Core/test data; synthetic waterfall where present"
+    },
+    {
+      "file": "iphone-navigation-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/audioquality-acceptance-v1-20261001-210754-8850/shots/setup-navigation.png",
+      "sha256": "b457c8f7cd648cda4381e02ec00263050b8c451c9176dee092ec94801b6194f7",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "build": "46591d6cd62a916a6eef83e65d12fc655259b44d",
+      "kind": "native-SwiftUI-hosting-fixture",
+      "state": "Simulated Core/test data; synthetic waterfall where present"
+    },
+    {
+      "file": "iphone-data-use-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/audioquality-acceptance-v1-20261001-210754-8850/shots/setup-data-use.png",
+      "sha256": "df7160a6bf897c53809ec1f03bae946ecfc18317ed9e906f1e586753948d95a0",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "build": "46591d6cd62a916a6eef83e65d12fc655259b44d",
+      "kind": "native-SwiftUI-hosting-fixture",
+      "state": "Simulated Core/test data; synthetic waterfall where present"
+    },
+    {
+      "file": "iphone-radio-landscape-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/audioquality-acceptance-v1-20261001-210754-8850/shots/radio-tab-landscape.png",
+      "sha256": "9fddcf446b0cc7850eba3c7d7a919712563caa08f9c0fa531eea877364b05e81",
+      "dimensions": [
+        2622,
+        1206
+      ],
+      "build": "46591d6cd62a916a6eef83e65d12fc655259b44d",
+      "kind": "native-SwiftUI-hosting-fixture",
+      "state": "Simulated Core/test data; synthetic waterfall where present"
+    },
+    {
+      "file": "iphone-mic-muted-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/audioquality-acceptance-v1-20261001-210754-8850/shots/mic-muted-portrait.png",
+      "sha256": "311f8669ce04a916e238db53ca20b9f5d0a4fda4b351156ef742fc847f262346",
+      "dimensions": [
+        1206,
+        2622
+      ],
+      "build": "46591d6cd62a916a6eef83e65d12fc655259b44d",
+      "kind": "native-SwiftUI-hosting-fixture",
+      "state": "Simulated Core/test data; synthetic waterfall where present"
+    },
+    {
+      "file": "ipad-applet-column-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/2026-09-23-iphone-app-plan/native-txpanel-resume-focused-20261002-v1/ipad/shots/native-txpanel-ipad-full-column.png",
+      "sha256": "d47959ece9f5f51c2382e9bb706fd70b0054ef2bccabe3b5213c136ff117f850",
+      "dimensions": [
+        2064,
+        2752
+      ],
+      "build": "accepted source 0da733c21bc64bdeef40717eaa48cfe259862b97; kit ledger 4be63a9d6fd6d168fe6be2e176d419e113834096",
+      "kind": "full-app-XCUIApplication",
+      "state": "Test scenario, missing Core readings; layout illustration only"
+    },
+    {
+      "file": "desktop-audio-devices-original.png",
+      "source": "Native CUA app screenshot, 2 October 2026",
+      "sha256": "8eedc07e08abb18741ce8cccb7d983600d144e879376b4289d1a409cfee16b76",
+      "dimensions": [
+        1800,
+        1364
+      ],
+      "build": "codex/all-prs-radxa-gui@c1991b2d42ea; title 0.5.2; radxa_5c_r3",
+      "kind": "running-desktop-app",
+      "state": "Receive; no keying or calibration; tool statuses as pictured"
+    },
+    {
+      "file": "desktop-cfc-original.png",
+      "source": "Native CUA app screenshot, 2 October 2026",
+      "sha256": "3808fac63f9157b602ad88f547c533531050f3b696d44c3a63fde3815ff3fb40",
+      "dimensions": [
+        1682,
+        1464
+      ],
+      "build": "codex/all-prs-radxa-gui@c1991b2d42ea; title 0.5.2; radxa_5c_r3",
+      "kind": "running-desktop-app",
+      "state": "Receive; no keying or calibration; tool statuses as pictured"
+    },
+    {
+      "file": "desktop-freedv-source-original.png",
+      "source": "Native CUA app screenshot, 2 October 2026",
+      "sha256": "be9b74eb82f651accce0c2439a4016895df2ab34c2306937e7f7cf7cde0c60cc",
+      "dimensions": [
+        1520,
+        1344
+      ],
+      "build": "codex/all-prs-radxa-gui@c1991b2d42ea; title 0.5.2; radxa_5c_r3",
+      "kind": "running-desktop-app",
+      "state": "Receive; no keying or calibration; tool statuses as pictured"
+    },
+    {
+      "file": "desktop-overview-original.png",
+      "source": "Native CUA app screenshot, 2 October 2026",
+      "sha256": "e50ec094b0bab11de7badcfee4cec29834827c8b32166b8e9de11443ba1a68cc",
+      "dimensions": [
+        3020,
+        1794
+      ],
+      "build": "codex/all-prs-radxa-gui@c1991b2d42ea; title 0.5.2; radxa_5c_r3",
+      "kind": "running-desktop-app",
+      "state": "Receive; no keying or calibration; tool statuses as pictured"
+    },
+    {
+      "file": "desktop-puresignal-original.png",
+      "source": "Native CUA app screenshot, 2 October 2026",
+      "sha256": "e35acb2a0ab01f06e069de3c2a29b86aa0dd92528ec7cf9cd96e808ce5eee5a3",
+      "dimensions": [
+        1552,
+        1038
+      ],
+      "build": "codex/all-prs-radxa-gui@c1991b2d42ea; title 0.5.2; radxa_5c_r3",
+      "kind": "running-desktop-app",
+      "state": "Receive; no keying or calibration; tool statuses as pictured"
+    },
+    {
+      "file": "desktop-spot-hub-original.png",
+      "source": "Native CUA app screenshot, 2 October 2026",
+      "sha256": "d8509a241eb37643da243164ab0652cc5305c9b389b486f177b873c22636df85",
+      "dimensions": [
+        1520,
+        1344
+      ],
+      "build": "codex/all-prs-radxa-gui@c1991b2d42ea; title 0.5.2; radxa_5c_r3",
+      "kind": "running-desktop-app",
+      "state": "Receive; no keying or calibration; tool statuses as pictured"
+    },
+    {
+      "file": "desktop-tci-server-original.png",
+      "source": "Native CUA app screenshot, 2 October 2026",
+      "sha256": "56062a15f20eb7fdb122092b9914bc463d58198f09dbfb49f88e70197709d7e5",
+      "dimensions": [
+        1800,
+        1364
+      ],
+      "build": "codex/all-prs-radxa-gui@c1991b2d42ea; title 0.5.2; radxa_5c_r3",
+      "kind": "running-desktop-app",
+      "state": "Receive; no keying or calibration; tool statuses as pictured"
+    },
+    {
+      "file": "desktop-tx-eq-original.png",
+      "source": "Native CUA app screenshot, 2 October 2026",
+      "sha256": "18c306c0474377378fcaf8bd966c5fa9a8ccfcafc1e24822c015033862af9821",
+      "dimensions": [
+        2016,
+        886
+      ],
+      "build": "codex/all-prs-radxa-gui@c1991b2d42ea; title 0.5.2; radxa_5c_r3",
+      "kind": "running-desktop-app",
+      "state": "Receive; no keying or calibration; tool statuses as pictured"
+    },
+    {
+      "file": "desktop-tx-profile-original.png",
+      "source": "Native CUA app screenshot, 2 October 2026",
+      "sha256": "7712058a44f6099f5fa5336cfd08c1a742b4b16223872fffbc2eb71cec4ceef3",
+      "dimensions": [
+        1800,
+        1364
+      ],
+      "build": "codex/all-prs-radxa-gui@c1991b2d42ea; title 0.5.2; radxa_5c_r3",
+      "kind": "running-desktop-app",
+      "state": "Receive; no keying or calibration; tool statuses as pictured"
+    },
+    {
+      "file": "desktop-vax-original.png",
+      "source": "Native CUA app screenshot, 2 October 2026",
+      "sha256": "d2b5ccd03cff15a5424c79ced00af3c95130e42aad706b64561ba895bff413ba",
+      "dimensions": [
+        1800,
+        1364
+      ],
+      "build": "codex/all-prs-radxa-gui@c1991b2d42ea; title 0.5.2; radxa_5c_r3",
+      "kind": "running-desktop-app",
+      "state": "Receive; no keying or calibration; tool statuses as pictured"
+    }
+  ]
+}

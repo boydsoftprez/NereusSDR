@@ -2,6 +2,9 @@
 
 **A cross-platform SDR console for OpenHPSDR radios**
 
+[User manual working draft](docs/manual/README.md): desktop and iPhone/iPad
+operation with explicit source-build and live-verification limits.
+
 > [!IMPORTANT]
 > **Release candidate: 2026.10.0, the first calendar-versioned release.**
 > This brings together the work since 0.5.2: independent receivers, remote
