@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-04: Genuine delayed allocation results across peer promotion,
+//               retired display release and survivor rendering regression.
+//               Synchronous stack teardown at the overdue release boundary.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Unkeyed TX-letter shared-pan history
 //                 lifecycle regression. AI-assisted via OpenAI Codex.
 //   2026-09-25: iPhone app plan Task 36 (R-IOS-13): the microphone uplink.
@@ -310,6 +314,20 @@ public:
     }
     QList<QByteArray> held;
     bool passNext = false;
+};
+
+class StackTeardownControlTransport final : public Test::LoopbackTransport {
+public:
+    StackTeardownControlTransport() : LoopbackTransport(QStringLiteral("client")) {}
+    void sendText(const QByteArray& wire) override
+    {
+        if (beforeUnsubscribe && wire.contains("\"op\":\"unsubscribe\"")) {
+            const std::function<void()> callback = std::exchange(beforeUnsubscribe, {});
+            callback();
+        }
+        LoopbackTransport::sendText(wire);
+    }
+    std::function<void()> beforeUnsubscribe;
 };
 
 QJsonObject lastControl(const QSignalSpy& spy, const QString& op)
@@ -4116,6 +4134,265 @@ private slots:
         stationLink->releaseHeld();
         QTRY_COMPARE(controller.activeEndpointCount(), 0);
         QCOMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 1);
+    }
+
+    void retiredPendingDisplayAfterPeerReplacementReleasesBeforeSurvivorGrowth_data()
+    {
+        QTest::addColumn<bool>("removePan");
+        QTest::newRow("slice-rebind") << false;
+        QTest::newRow("pan-removal") << true;
+    }
+
+    void retiredPendingDisplayAfterPeerReplacementReleasesBeforeSurvivorGrowth()
+    {
+        QFETCH(bool, removePan);
+        // A genuine accepted result is held on the old media connection,
+        // then delivered after both production controllers promote a peer.
+        // Closing that endpoint must eventually release its reservation;
+        // it cannot leave the surviving pan behind a permanent pending gate.
+        AppSettings& appSettings = AppSettings::instance();
+        const QString fpsKey = QStringLiteral("DisplaySpectrumFps");
+        const bool hadFps = appSettings.contains(fpsKey);
+        const QVariant savedFps = appSettings.value(fpsKey);
+        appSettings.setValue(fpsKey, QStringLiteral("10"));
+        const auto restoreFps = qScopeGuard([&] {
+            if (hadFps) { appSettings.setValue(fpsKey, savedFps); }
+            else { appSettings.remove(fpsKey); }
+        });
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int firstId = station.addSlice();
+        const int survivorId = station.addSlice();
+        QVERIFY(station.sliceById(firstId));
+        QVERIFY(station.sliceById(survivorId));
+        const int stream = station.sliceById(survivorId)->streamIndex();
+        const double centre = station.streamCentreHz(stream);
+        StationServer server(&station, settings, Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        QVERIFY(server.setDisplayBudgetLimits({10'000'000, 10'000'000, 1}));
+        QList<QPointer<DisplayTransport>> sourcePeers;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourcePeers](QObject* owner) -> IMediaTransport* {
+                auto* transport = new DisplayTransport(owner);
+                sourcePeers.append(transport);
+                return transport;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        PanadapterApplet* applet = stack.addPanadapter(QStringLiteral("pan-0"));
+        applet->setActiveSliceIndex(firstId);
+        SpectrumWidget* widget = applet->spectrumWidget();
+        widget->setDisplayWindowPreservingHistory(centre, 48000);
+        widget->setWfUpdatePeriodMs(20);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        qint64 nowMs = 0;
+        QList<QPointer<DisplayTransport>> sinkPeers;
+        RemoteMediaController controller(&client, &remote, &stack, nullptr,
+            [&sinkPeers](QObject* owner) -> IMediaTransport* {
+                auto* transport = new DisplayTransport(owner);
+                sinkPeers.append(transport);
+                return transport;
+            }, [&nowMs] { return nowMs; }, 10'000);
+        QSignalSpy outbound(&server, &StationServer::mediaControlReceived);
+        QSignalSpy inbound(&client, &StationClient::mediaControlReceived);
+        auto* stationLink = new HoldingAllocationResultTransport;
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.remoteDisplayBudgetLimits().has_value());
+        QTRY_COMPARE(sourcePeers.size(), 1);
+        QTRY_COMPARE(sinkPeers.size(), 1);
+        sourcePeers.first()->other = sinkPeers.first();
+        sourcePeers.first()->activate();
+        sinkPeers.first()->activate();
+        QTRY_COMPARE(stationLink->held.size(), 1);
+        stationLink->releaseHeld();
+        QTRY_VERIFY(showsDisplay(controller, applet));
+        const DisplayBudgetCharge originalCharge = daemon.acceptedDisplayCharge();
+        const QJsonObject original = lastControl(outbound, QStringLiteral("subscribe"));
+        const quint32 retiredEndpoint = quint32(original.value(QStringLiteral("endpointId")).toDouble());
+        QVERIFY(retiredEndpoint != 0);
+
+        // The Core really accepted a larger reservation than the GUI knows.
+        appSettings.setValue(fpsKey, QStringLiteral("30"));
+        QTRY_COMPARE(countControl(outbound, QStringLiteral("subscribe")), 2);
+        QTRY_COMPARE(stationLink->held.size(), 1);
+        QVERIFY(daemon.acceptedDisplayCharge().applicationBytesPerSecond
+                > originalCharge.applicationBytesPerSecond);
+        const QJsonObject pending = lastControl(outbound, QStringLiteral("subscribe"));
+        const quint32 pendingRevision = quint32(pending.value(QStringLiteral("revision")).toDouble());
+        const QString oldConnection = controller.mediaConnectionId();
+        QVERIFY(controller.replaceConnection());
+        QTRY_COMPARE(sourcePeers.size(), 2);
+        QTRY_COMPARE(sinkPeers.size(), 2);
+        sourcePeers.last()->other = sinkPeers.last();
+        sourcePeers.last()->activate();
+        sinkPeers.last()->activate();
+        QTRY_VERIFY_WITH_TIMEOUT(controller.mediaConnectionId() != oldConnection
+                                && !controller.replacingConnection(),
+                                DaemonMediaController::kReplaceOverlapMs + 3000);
+        // No identities or result fields are manufactured: this is the
+        // original Core reply, now fenced out by the promoted connection.
+        stationLink->releaseHeld();
+        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")), 2);
+        const QJsonObject oldResult = lastControl(inbound, QStringLiteral("allocation-result"));
+        QCOMPARE(oldResult.value(QStringLiteral("connectionId")).toString(), oldConnection);
+        QCOMPARE(quint32(oldResult.value(QStringLiteral("revision")).toDouble()), pendingRevision);
+        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 2);
+
+        QPointer<SpectrumWidget> retiredWidget(widget);
+        if (removePan) {
+            stack.removePanadapter(QStringLiteral("pan-0"));
+            QTRY_VERIFY(retiredWidget.isNull());
+            applet = stack.addPanadapter(QStringLiteral("pan-0"));
+            widget = applet->spectrumWidget();
+            widget->setDisplayWindowPreservingHistory(centre, 48000);
+            widget->setWfUpdatePeriodMs(20);
+        }
+        applet->setActiveSliceIndex(survivorId);
+        QTimer* subscriptionTimer = nullptr;
+        for (QTimer* timer : controller.findChildren<QTimer*>()) {
+            if (timer->interval() == 100) { subscriptionTimer = timer; break; }
+        }
+        QVERIFY(subscriptionTimer);
+        QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
+        QCOMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 0);
+        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 2);
+        QVERIFY(widget->renderedPixels().isEmpty());
+
+        nowMs = 10'000;
+        QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
+        QTRY_COMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 1);
+        const QJsonObject release = lastControl(outbound, QStringLiteral("unsubscribe"));
+        QCOMPARE(release.value(QStringLiteral("connectionId")).toString(), controller.mediaConnectionId());
+        QCOMPARE(quint32(release.value(QStringLiteral("endpointId")).toDouble()), retiredEndpoint);
+        QCOMPARE(quint32(release.value(QStringLiteral("revision")).toDouble()), pendingRevision + 1);
+        QTRY_COMPARE(stationLink->held.size(), 1);
+        QTRY_COMPARE(daemon.activeEndpointCount(), 0);
+        // Until the authoritative release result arrives, the old larger
+        // reservation is uncertain. No survivor growth may pass that gate.
+        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 2);
+        nowMs = 20'000;
+        QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
+        QCOMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 1);
+        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 2);
+        stationLink->releaseHeld();
+        QTRY_COMPARE(countControl(outbound, QStringLiteral("subscribe")), 3);
+        const QJsonObject survivor = lastControl(outbound, QStringLiteral("subscribe"));
+        QVERIFY(survivor.value(QStringLiteral("endpointId")) != original.value(QStringLiteral("endpointId")));
+        QCOMPARE(survivor.value(QStringLiteral("sliceId")).toInt(), survivorId);
+        QTRY_COMPARE(stationLink->held.size(), 1);
+        stationLink->releaseHeld();
+        QTRY_COMPARE(controller.activeEndpointCount(), 1);
+        QTRY_COMPARE(daemon.activeEndpointCount(), 1);
+        QTRY_VERIFY(showsDisplay(controller, applet));
+        // A genuine late result for the tombstoned endpoint cannot undo
+        // the new binding, even after its own reservation was confirmed.
+        stationLink->passNextAllocationResult();
+        QVERIFY(server.sendMediaControl(oldResult, server.mediaSessionEpoch()));
+        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")), 5);
+        QCOMPARE(controller.activeEndpointCount(), 1);
+        QCOMPARE(daemon.activeEndpointCount(), 1);
+
+        QVector<float> iq(2048, 0.001f);
+        QTRY_VERIFY_WITH_TIMEOUT((QMetaObject::invokeMethod(&station, "rawIqDataForStream",
+            Qt::DirectConnection, Q_ARG(int, stream), Q_ARG(QVector<float>, iq)),
+            !widget->renderedPixels().isEmpty() && widget->waterfallHistoryRowsForTest() > 0), 5000);
+        QVERIFY(!station.mox() && !remote.mox());
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    void overdueRetirementSendSurvivesSynchronousStackDestruction()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = station.addSlice();
+        QVERIFY(station.sliceById(sliceId));
+        StationServer server(&station, settings, Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        QVERIFY(server.setDisplayBudgetLimits({10'000'000, 10'000'000, 1}));
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        auto stack = std::make_unique<PanadapterStack>();
+        PanadapterApplet* applet = stack->addPanadapter(QStringLiteral("pan-0"));
+        applet->setActiveSliceIndex(sliceId);
+        applet->spectrumWidget()->setDisplayWindowPreservingHistory(
+            station.streamCentreHz(station.sliceById(sliceId)->streamIndex()), 48000);
+        qint64 nowMs = 0;
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController controller(&client, &remote, stack.get(), nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            }, [&nowMs] { return nowMs; }, 10'000);
+        QSignalSpy outbound(&server, &StationServer::mediaControlReceived);
+        auto* stationLink = new HoldingAllocationResultTransport;
+        auto* clientLink = new StackTeardownControlTransport;
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.remoteDisplayBudgetLimits().has_value());
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QTRY_COMPARE(stationLink->held.size(), 1);
+        QPointer<PanadapterApplet> retiredApplet(applet);
+        stack->removePanadapter(QStringLiteral("pan-0"));
+        QTRY_VERIFY(retiredApplet.isNull());
+        QCOMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 0);
+        const QString connectionId = controller.mediaConnectionId();
+        QPointer<RemoteMediaController> controllerLifetime(&controller);
+        QPointer<PanadapterStack> stackLifetime(stack.get());
+        bool identitySurvived = false;
+        clientLink->beforeUnsubscribe = [&] {
+            stack.reset();
+            identitySurvived = stackLifetime.isNull() && controllerLifetime
+                && client.mediaAvailable() && controller.mediaConnectionId() == connectionId;
+            qInfo() << "Stack destroyed during overdue release; controller and media identity survived:"
+                    << identitySurvived;
+        };
+        QTimer* subscriptionTimer = nullptr;
+        for (QTimer* timer : controller.findChildren<QTimer*>()) {
+            if (timer->interval() == 100) { subscriptionTimer = timer; break; }
+        }
+        QVERIFY(subscriptionTimer);
+        nowMs = 10'000;
+        QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
+        QVERIFY(identitySurvived);
+        QVERIFY(stackLifetime.isNull());
+        QVERIFY(controllerLifetime);
+        QTRY_COMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 1);
+        QTRY_COMPARE(stationLink->held.size(), 2);
+        stationLink->releaseHeld();
+        QTRY_COMPARE(controller.activeEndpointCount(), 0);
+        QTRY_COMPARE(daemon.activeEndpointCount(), 0);
+        nowMs = 20'000;
+        QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
+        QCOMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 1);
+        QVERIFY(!station.mox() && !remote.mox());
+        client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
     void matchingSourceRetirementClearsAcceptedReservationDuringPendingUpdate()
