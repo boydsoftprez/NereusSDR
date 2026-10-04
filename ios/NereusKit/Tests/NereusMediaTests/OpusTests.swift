@@ -269,7 +269,21 @@ import COpus
         }
     }
 
-    @Test func microphoneRoundTripKeepsASine() throws {
+    /// Keep the fixed-range max fold's incumbent/candidate order and first tie.
+    /// Swift 6.3 Sequence.max(by:) supplies the behavior basis; each full
+    /// comparison finishes before yielding to the other test tasks.
+    static func sineDelay(frameSamples: Int, less: (Int, Int) -> Bool) async -> Int {
+        var delay = 0
+        for candidate in 1..<frameSamples {
+            if less(delay, candidate) {
+                delay = candidate
+            }
+            await Task.yield()
+        }
+        return delay
+    }
+
+    @Test func microphoneRoundTripKeepsASine() async throws {
         let profile = OpusEncoder.Profile.microphone
         let encoder = try OpusEncoder(profile: profile)
         let decoder = try OpusDecoder(channels: 1)
@@ -308,9 +322,9 @@ import COpus
             return 10 * log10(signal / max(noise, .leastNonzeroMagnitude))
         }
         let window = profile.sampleRate / 10
-        let delay = (0..<profile.frameSamples).max {
+        let delay = await Self.sineDelay(frameSamples: profile.frameSamples) {
             snr(delay: $0, count: window) < snr(delay: $1, count: window)
-        } ?? 0
+        }
         let best = snr(delay: delay, count: input.count - settle - profile.frameSamples)
         #expect(best >= 20, "SNR \(best) dB at a delay of \(delay) samples")
     }

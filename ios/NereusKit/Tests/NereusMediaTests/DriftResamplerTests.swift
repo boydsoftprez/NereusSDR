@@ -14,7 +14,7 @@ import Testing
     /// Runs `input` (interleaved stereo) through `resampler`, `chunk`
     /// output frames at a time, until the input runs dry, and returns the
     /// frames made from input.
-    static func resample(_ input: [Float], with resampler: DriftResampler, chunk: Int) -> [Float] {
+    static func resample(_ input: [Float], with resampler: DriftResampler, chunk: Int) async -> [Float] {
         var output: [Float] = []
         var read = 0
         let buffer = UnsafeMutablePointer<Float>.allocate(capacity: chunk * 2)
@@ -31,6 +31,8 @@ import Testing
                 return frames
             }
             output.append(contentsOf: UnsafeBufferPointer(start: buffer, count: made * 2))
+            // Keep each render and append together before suspending.
+            await Task.yield()
             if made < chunk {
                 return output
             }
@@ -38,32 +40,41 @@ import Testing
     }
 
     /// The largest step between successive frames, over both channels.
-    static func largestStep(_ samples: [Float]) -> Float {
+    static func largestStep(_ samples: [Float]) async -> Float {
         var largest: Float = 0
         for index in 2..<samples.count {
             largest = max(largest, abs(samples[index] - samples[index - 2]))
+            if (index - 1) % 512 == 0 {
+                await Task.yield()
+            }
         }
         return largest
     }
 
-    @Test func heldAtOnePointZeroZeroZeroTwoForSixtySecondsTheLengthIsRightAndSmooth() {
+    @Test func heldAtOnePointZeroZeroZeroTwoForSixtySecondsTheLengthIsRightAndSmooth() async {
         let frames = 60 * 48_000
         var input = [Float](repeating: 0, count: frames * 2)
         for frame in 0..<frames {
             let t = Double(frame) / 48_000
             input[frame * 2] = Float(0.5 * sin(2 * .pi * 1_000 * t))
             input[frame * 2 + 1] = Float(0.25 * sin(2 * .pi * 3_100 * t + 1))
+            // Both channels of this generation chunk are committed.
+            if (frame + 1) % 256 == 0 {
+                await Task.yield()
+            }
         }
         let resampler = DriftResampler(channels: 2, inputChunkFrames: 256)
         resampler.setRatio(1.0002)
         #expect(resampler.ratio == 1.0002)
-        let output = Self.resample(input, with: resampler, chunk: 509)
+        let output = await Self.resample(input, with: resampler, chunk: 509)
         // 1.0002 output frames per input frame.
         let expected = Double(frames) * 1.0002
         #expect(abs(Double(output.count / 2) - expected) <= 1, "\(output.count / 2) against \(expected)")
         // Straight-line interpolation between neighbours: no output step
         // is larger than the input's largest.
-        #expect(Self.largestStep(output) <= Self.largestStep(input) + 1e-6)
+        let outputStep = await Self.largestStep(output)
+        let inputStep = await Self.largestStep(input)
+        #expect(outputStep <= inputStep + 1e-6)
         // The first frame is the first input frame.
         #expect(output[0] == input[0] && output[1] == input[1])
     }
