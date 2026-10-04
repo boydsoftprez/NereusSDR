@@ -112,6 +112,10 @@ warren@pratt.one
 // ownership, then releases the lock across audio-dependent IQC waits.
 // Completion and stop retire only the captured calculation epoch.
 
+// 2026-10-03 - NereusSDR by J.J. Boyd (KG4VCF), AI-assisted via OpenAI
+// Codex: preserve both display geometry checks in the default MSVC C mode
+// using preprocessor errors instead of C11-only assertions.
+
 #define _CRT_SECURE_NO_WARNINGS
 #include "comm.h"
 #include "extrapolate.h"
@@ -401,10 +405,12 @@ void print_EQ_Samples(CALCC a);
 
 #define DISP_PTS                  512            
 
-_Static_assert(SAMPLE_NBUCKS * 256 == PS3_MAX_DISPLAY_SAMPLES,
-	"PureSignal sample geometry changed");
-_Static_assert(DISP_PTS == PS3_DISPLAY_CORRECTION_POINTS,
-	"PureSignal correction geometry changed");
+#if SAMPLE_NBUCKS * 256 != PS3_MAX_DISPLAY_SAMPLES
+#error "PureSignal sample geometry changed"
+#endif
+#if DISP_PTS != PS3_DISPLAY_CORRECTION_POINTS
+#error "PureSignal correction geometry changed"
+#endif
 
 
 typedef struct _cpt
