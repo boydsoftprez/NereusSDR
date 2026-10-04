@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original complete-entry draft workflow regressions.
 #include <QtTest>
+#include <QPainter>
+#include "gui/meters/OtherButtonItem.h"
+#include "gui/containers/meter_property_editors/OtherButtonItemEditor.h"
+#include "gui/containers/ContainerContentHost.h"
+#include "gui/containers/ContainerControlCatalog.h"
 #include <QTemporaryDir>
 #include <QSplitter>
 #include <QScrollArea>
@@ -41,6 +46,175 @@ using namespace NereusSDR;
 class TstContainerSettingsWorkflow:public QObject {
  Q_OBJECT
 private slots:
+ void individualControlCatalogCreatesOrdinaryIndependentEntries() {
+    ContainerContentRegistry registry;
+    const QList<QPair<QString, OtherButtonItem::ButtonId>> actions = {
+        {"mox",OtherButtonItem::ButtonId::Mox},{"tune",OtherButtonItem::ButtonId::Tun},
+        {"monitor",OtherButtonItem::ButtonId::Mon},{"twoTone",OtherButtonItem::ButtonId::TwoTon},
+        {"pureSignal",OtherButtonItem::ButtonId::PsA},{"anf",OtherButtonItem::ButtonId::Anf},
+        {"snb",OtherButtonItem::ButtonId::Snb},{"mnf",OtherButtonItem::ButtonId::Mnf},
+        {"peak",OtherButtonItem::ButtonId::PeakHold},{"ctun",OtherButtonItem::ButtonId::Ctun},
+        {"vax1",OtherButtonItem::ButtonId::Vac1},{"vax2",OtherButtonItem::ButtonId::Vac2},
+        {"mute",OtherButtonItem::ButtonId::Mute},{"binaural",OtherButtonItem::ButtonId::Bin},
+        {"duplex",OtherButtonItem::ButtonId::Dup}};
+    int shortcuts=0;for(const auto& descriptor:registry.descriptors()) {if(descriptor.typeId.startsWith("control.")) {++shortcuts;}}
+    QCOMPARE(shortcuts,15);
+    for(const auto& action:actions) {
+        const auto entry=registry.makeEntry("control."+action.first);
+        QCOMPARE(entry.typeId,QString("OTHERBTNS"));
+        const auto copy=registry.makeEntry("control."+action.first);QVERIFY(copy.id!=entry.id);
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr));
+        auto* other=qobject_cast<OtherButtonItem*>(item.get());QVERIFY(other);
+        QCOMPARE(other->visibleBits(),uint32_t(1u<<int(action.second)));QCOMPARE(other->columns(),1);
+        QSignalSpy command(other,&OtherButtonItem::otherButtonClicked);
+        const auto captured=registry.captureMeterItem(*other);QCOMPARE(captured.id,entry.id);QCOMPARE(captured.typeId,QString("OTHERBTNS"));
+        QCOMPARE(command.count(),0);QVERIFY(registry.validateEntry(captured).isEmpty());
+    }
+ }
+ void otherEditorExplicitChoiceAndVisibilityKeepLegacyData() {
+    ContainerContentRegistry registry;auto entry=registry.makeEntry("OTHERBTNS");
+    const uint32_t originalBits=(1u<<int(OtherButtonItem::ButtonId::Mox))|(1u<<int(OtherButtonItem::ButtonId::Tun))|(1u<<int(OtherButtonItem::ButtonId::Rx2));
+    const QString raw=QString("OTHERBTNS|0.17|0.21|0.57|0.23|2|7|6|%1|future-tail").arg(originalBits);
+    entry.config["legacyRecord"]=raw;entry.config["future"]=QJsonObject{{"opaque",true}};entry.config["overrides"]=QJsonObject{{"7","3"}};
+    std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr));auto* other=qobject_cast<OtherButtonItem*>(item.get());QVERIFY(other);
+    OtherButtonItemEditor editor;QSignalSpy changed(&editor,&BaseItemEditor::propertyChanged);QSignalSpy command(other,&OtherButtonItem::otherButtonClicked);editor.setItem(other);
+    QCOMPARE(changed.count(),0);QCOMPARE(other->visibleBits(),originalBits);QCOMPARE(other->columns(),3);
+    auto* choice=editor.findChild<QComboBox*>("otherSingleControl");QVERIFY(choice);QCOMPARE(choice->currentData().toInt(),-1);
+    auto* tune=editor.findChild<QCheckBox*>("otherVisible_3");QVERIFY(tune);tune->setChecked(false);
+    QCOMPARE(other->visibleBits(),originalBits & ~(1u<<int(OtherButtonItem::ButtonId::Tun)));
+    QVERIFY(other->visibleBits() & (1u<<int(OtherButtonItem::ButtonId::Rx2)));
+    choice->setCurrentIndex(choice->findData(int(OtherButtonItem::ButtonId::Mox)));
+    QCOMPARE(other->visibleBits(),1u<<int(OtherButtonItem::ButtonId::Mox));QCOMPARE(other->columns(),1);QCOMPARE(command.count(),0);
+    const auto captured=registry.captureMeterItem(*other,entry);QCOMPARE(captured.config["legacyRecord"].toString(),raw);QCOMPARE(captured.config["future"],entry.config["future"]);
+    std::unique_ptr<MeterItem> restored(registry.createMeterItem(captured,nullptr));auto* single=qobject_cast<OtherButtonItem*>(restored.get());QVERIFY(single);QCOMPARE(single->visibleBits(),other->visibleBits());QCOMPARE(single->columns(),1);
+ }
+ void individualPreviewAndLiveHitTestingUseExistingAction() {
+    ContainerContentRegistry registry;const auto entry=registry.makeEntry("control.mox");
+    for(const auto mode:{ContentRenderMode::Preview,ContentRenderMode::Live}) {
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr,mode));auto* other=qobject_cast<OtherButtonItem*>(item.get());QVERIFY(other);other->setRect(0,0,1,1);
+        QSignalSpy command(other,&OtherButtonItem::otherButtonClicked);QSignalSpy refused(other,&ButtonBoxItem::unavailableButtonClicked);
+        QMouseEvent press(QEvent::MouseButtonPress,QPointF(55,20),QPointF(55,20),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease,QPointF(55,20),QPointF(55,20),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+        other->handleMousePress(&press,112,44);other->handleMouseRelease(&release,112,44);
+        QCOMPARE(command.count(),mode==ContentRenderMode::Live?1:0);
+        if(mode==ContentRenderMode::Live) {QCOMPARE(command.at(0).at(0).toInt(),int(OtherButtonItem::ButtonId::Mox));other->setButtonAvailable(OtherButtonItem::ButtonId::Mox,false,"Transmit is unavailable");other->handleMousePress(&press,112,44);other->handleMouseRelease(&release,112,44);QCOMPARE(command.count(),1);QCOMPARE(refused.count(),1);}
+    }
+ }
+ void replacementWarningFitsNativePicker_data() {
+    QTest::addColumn<bool>("narrowProperties");QTest::newRow("current-picker")<<false;QTest::newRow("narrow-properties")<<true;
+ }
+ void replacementWarningFitsNativePicker() {
+    QFETCH(bool,narrowProperties);
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);
+    WorkspaceDocument document;document.mainContainerId="A";ContainerDocument container;container.id="A";container.contents={registry.makeEntry("OTHERBTNS")};document.containers={container};QCOMPARE(manager.commitWorkspace(document,0).status,CommitStatus::Saved);
+    ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);dialog.findChild<QListWidget*>("containerDraftContents")->setCurrentRow(0);dialog.resize(1400,1000);dialog.show();dialog.activateWindow();QCoreApplication::processEvents();
+    auto* choice=dialog.findChild<QComboBox*>("otherSingleControl");QVERIFY(choice);QLabel* warning=nullptr;
+    for(auto* label:dialog.findChildren<QLabel*>()) {if(label->text().startsWith("Choosing a single control replaces")) {warning=label;break;}}QVERIFY(warning);
+    QScrollArea* properties=nullptr;for(QWidget* parent=choice->parentWidget();parent;parent=parent->parentWidget()) {if((properties=qobject_cast<QScrollArea*>(parent))) {break;}}QVERIFY(properties);
+    if(narrowProperties) {properties->setFixedWidth(380);}QCoreApplication::processEvents();properties->ensureWidgetVisible(warning,20,20);QCoreApplication::processEvents();
+    const QString captures=qEnvironmentVariable("TASK_CONTROL_CAPTURE_DIR");if(!captures.isEmpty()) {QVERIFY(QDir().mkpath(captures));QVERIFY(dialog.grab().save(captures+(narrowProperties?"/replacement-warning-narrow.png":"/replacement-warning-current.png")));}
+    const int requiredHeight=warning->heightForWidth(warning->width());qInfo()<<"warning geometry"<<warning->geometry()<<"required wrapped height"<<requiredHeight<<"Properties viewport"<<properties->viewport()->size();
+    QVERIFY2(requiredHeight>0,"The complete replacement warning must report its wrapped text height");QVERIFY2(warning->height()>=requiredHeight,"Allocated paragraph height clips the replacement warning");
+    const QRect warningInViewport(warning->mapTo(properties->viewport(),QPoint()),warning->size());QVERIFY(properties->viewport()->rect().contains(warningInViewport));
+    const QRect choiceInViewport(choice->mapTo(properties->viewport(),QPoint()),choice->size());QVERIFY(properties->viewport()->rect().contains(choiceInViewport));
+    if(narrowProperties) {QVERIFY(properties->viewport()->width()<400);}
+    const auto original=store.snapshot();dialog.reject();QCOMPARE(store.snapshot(),original);
+ }
+ void individualCatalogDraftAddApplyCancelAndFreeGeometry() {
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);
+    WorkspaceDocument document;document.mainContainerId="A";ContainerDocument container;container.id="A";container.layout=ContentLayout::FreeCanvas;
+    auto existing=registry.makeEntry("TEXT");existing.setFreeCanvasRect(QRectF(-5,10,250,30));container.contents={existing};document.containers={container};QCOMPARE(manager.commitWorkspace(document,0).status,CommitStatus::Saved);const auto original=store.snapshot();
+    auto addMox=[](ContainerSettingsDialog& dialog) {
+        auto* list=dialog.findChild<QListWidget*>("containerAvailableContents");if(!list) {return false;}
+        for(int i=0;i<list->count();++i) {if(list->item(i)->data(Qt::UserRole).toString()=="control.mox") {list->setCurrentRow(i);for(auto* button:dialog.findChildren<QPushButton*>()) {if(button->text()==QStringLiteral("Add →")) {button->click();return true;}}return false;}}
+        return false;
+    };
+    {ContainerSettingsDialog cancel(manager.container("A"),nullptr,&manager);QVERIFY(addMox(cancel));QCOMPARE(cancel.editSession()->draft().containers[0].contents.size(),2);cancel.reject();QCOMPARE(store.snapshot(),original);}
+    ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);QVERIFY(addMox(dialog));
+    auto draft=dialog.editSession()->draft();const auto created=draft.containers[0].contents.last();QCOMPARE(created.typeId,QString("OTHERBTNS"));QCOMPARE(created.name,QString("MOX"));QCOMPARE(created.freeCanvasRect(),std::optional<QRectF>(QRectF(0,60,112,44)));QCOMPARE(draft.containers[0].contents.first(),existing);
+    const QString captures=qEnvironmentVariable("TASK_CONTROL_CAPTURE_DIR");
+    if(!captures.isEmpty()) {
+        QVERIFY(QDir().mkpath(captures));dialog.resize(1400,1000);dialog.show();dialog.activateWindow();QCoreApplication::processEvents();
+        auto* picker=dialog.findChild<QComboBox*>("otherSingleControl");QVERIFY(picker);QCOMPARE(picker->currentData().toInt(),int(OtherButtonItem::ButtonId::Mox));
+        for(QWidget* ancestor=picker->parentWidget();ancestor;ancestor=ancestor->parentWidget()) {if(auto* scroll=qobject_cast<QScrollArea*>(ancestor)) {scroll->verticalScrollBar()->setValue(picker->mapTo(scroll->widget(),QPoint()).y()-20);break;}}
+        auto* available=dialog.findChild<QListWidget*>("containerAvailableContents");for(int row=0;row<available->count();++row) {if(available->item(row)->data(Qt::UserRole).toString()=="control.mox") {available->setCurrentRow(row);available->scrollToItem(available->item(row));break;}}
+        QCoreApplication::processEvents();QVERIFY(dialog.grab().save(captures+"/individual-control-picker.png"));
+    }
+    QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);ContainerWorkspaceStore reloaded(settings);QVERIFY(reloaded.load().ok);QCOMPARE(reloaded.snapshot().containers[0].contents.last().config,created.config);
+    const auto saved=store.snapshot();QVERIFY(addMox(dialog));QCOMPARE(dialog.editSession()->draft().containers[0].contents.size(),3);dialog.reject();QCOMPARE(store.snapshot(),saved);
+    draft=store.snapshot();draft.containers[0].locked=true;QCOMPARE(manager.commitWorkspace(draft,draft.revision).status,CommitStatus::Saved);ContainerSettingsDialog locked(manager.container("A"),nullptr,&manager);QVERIFY(addMox(locked));QCOMPARE(locked.editSession()->draft().containers[0].contents.size(),2);
+ }
+ void singleControlPaintAndHitBoundsFollowViewport() {
+    ContainerContentRegistry registry;auto entry=registry.makeEntry("OTHERBTNS");entry.config["legacyRecord"]=QString("OTHERBTNS|0|0|1|1|0|0|1|%1").arg(1u<<int(OtherButtonItem::ButtonId::Mox));
+    std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr));auto* other=qobject_cast<OtherButtonItem*>(item.get());QVERIFY(other);QSignalSpy clicked(other,&OtherButtonItem::otherButtonClicked);
+    for(const QSize& size:{QSize(64,32),QSize(112,44),QSize(220,70)}) {
+        QImage image(size,QImage::Format_ARGB32_Premultiplied);image.fill(Qt::transparent);QPainter painter(&image);other->paint(painter,size.width(),size.height());painter.end();
+        QVERIFY(image.pixelColor(size.width()/2,size.height()/2).alpha()>0);
+        // The native cell ends before the viewport's bottom padding; paint and hit testing use that same edge.
+        QVERIFY(image.pixelColor(size.width()/2,size.height()-1).alpha()<200);
+        QMouseEvent press(QEvent::MouseButtonPress,QPointF(size.width()/2,size.height()-0.1),QPointF(size.width()/2,size.height()-0.1),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease,QPointF(size.width()/2,size.height()-0.1),QPointF(size.width()/2,size.height()-0.1),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+        other->handleMousePress(&press,size.width(),size.height());other->handleMouseRelease(&release,size.width(),size.height());QCOMPARE(clicked.count(),0);
+    }
+ }
+ void individualControlStackUsesUsableCompactViewport() {
+    ContainerContentRegistry registry;ContainerContentHost host(registry);ContainerDocument document;document.id="A";document.layout=ContentLayout::VerticalStack;document.contents={registry.makeEntry("control.mox"),registry.makeEntry("control.tune")};host.reconcile(document);host.resize(420,200);host.show();QCoreApplication::processEvents();
+    QCOMPARE(host.entryRows().size(),2);QCOMPARE(host.entryRows()[0].height,44);QCOMPARE(host.entryRows()[1].height,44);QCOMPARE(host.meterSurfaces().first()->height(),88);
+ }
+ void canvasNumericResizeUsesLiveControlMinimum_data() {
+    QTest::addColumn<QString>("creationId");
+    QTest::addColumn<QString>("legacyRecord");
+    QTest::addColumn<QSize>("expectedMinimum");
+    for(const auto& control:supportedContainerControls()) {
+        QTest::newRow(qPrintable(control.creationId))<<control.creationId<<QString()<<QSize(64,32);
+    }
+    const uint32_t mox=1u<<int(OtherButtonItem::ButtonId::Mox);
+    const uint32_t tune=1u<<int(OtherButtonItem::ButtonId::Tun);
+    const uint32_t rx2=1u<<int(OtherButtonItem::ButtonId::Rx2);
+    QTest::newRow("legacy-single")<<QString("OTHERBTNS")<<QString("OTHERBTNS|0|0|1|1|0|0|1|%1").arg(mox)<<QSize(64,32);
+    QTest::newRow("legacy-group-one-column")<<QString("OTHERBTNS")<<QString("OTHERBTNS|0|0|1|1|0|0|1|%1").arg(mox|tune)<<QSize(24,24);
+    QTest::newRow("legacy-single-two-columns")<<QString("OTHERBTNS")<<QString("OTHERBTNS|0|0|1|1|0|0|2|%1").arg(mox)<<QSize(24,24);
+    QTest::newRow("unsupported-single-action")<<QString("OTHERBTNS")<<QString("OTHERBTNS|0|0|1|1|0|0|1|%1").arg(rx2)<<QSize(24,24);
+    QTest::newRow("ordinary-text")<<QString("TEXT")<<QString()<<QSize(24,24);
+ }
+ void canvasNumericResizeUsesLiveControlMinimum() {
+    QFETCH(QString,creationId);QFETCH(QString,legacyRecord);QFETCH(QSize,expectedMinimum);
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
+    WorkspaceDocument document;document.mainContainerId="A";ContainerDocument container;container.id="A";container.layout=ContentLayout::FreeCanvas;
+    auto entry=registry.makeEntry(creationId);if(!legacyRecord.isEmpty()) {entry.config["legacyRecord"]=legacyRecord;}
+    const QRectF importedRect(10.5,20.25,24,24);entry.setFreeCanvasRect(importedRect);container.contents={entry};document.containers={container};
+    QCOMPARE(manager.commitWorkspace(document,0).status,CommitStatus::Saved);const auto saved=store.snapshot();
+    ContainerContentHost live(registry);live.reconcile(container);QCOMPARE(live.entryRows().size(),1);
+    QCOMPARE(live.entryRows().first().widget->property("freeCanvasMinimum").toSizeF(),QSizeF(expectedMinimum));
+    QCOMPARE(live.captureDocument().contents.first().freeCanvasRect(),std::optional<QRectF>(importedRect));
+    ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);
+    auto* list=dialog.findChild<QListWidget*>("containerDraftContents");QVERIFY(list);list->setCurrentRow(0);
+    auto* preview=dialog.findChild<ContainerPreviewWidget*>();QVERIFY(preview);
+    QCOMPARE(preview->resolvedFreeCanvasRect(entry.id),importedRect);
+    auto* width=dialog.findChild<QDoubleSpinBox*>("canvasWidth");auto* height=dialog.findChild<QDoubleSpinBox*>("canvasHeight");QVERIFY(width);QVERIFY(height);
+    QCOMPARE(width->value(),24.);QCOMPARE(height->value(),24.);
+    // Exact imported sizes survive projection; only explicit resize edits use the live minimum.
+    width->setValue(12);height->setValue(12);
+    const QRectF resized(10.5,20.25,expectedMinimum.width(),expectedMinimum.height());
+    QCOMPARE(dialog.editSession()->draft().containers.first().contents.first().freeCanvasRect(),std::optional<QRectF>(resized));
+    QCOMPARE(width->value(),double(expectedMinimum.width()));QCOMPARE(height->value(),double(expectedMinimum.height()));
+    QCOMPARE(preview->freeCanvasMinimum(entry.id),QSizeF(expectedMinimum));QCOMPARE(preview->resolvedFreeCanvasRect(entry.id),resized);
+    QCOMPARE(store.snapshot(),saved);
+    QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+    QCOMPARE(store.snapshot().containers.first().contents.first().freeCanvasRect(),std::optional<QRectF>(resized));
+ }
+ void singleControlPreviewStackUsesCompactHeightWithoutChangingGroups() {
+    ContainerContentRegistry registry;MeterPoller poller;ContainerPreviewWidget preview(registry,poller);
+    ContainerDocument document;document.id="A";document.layout=ContentLayout::VerticalStack;
+    document.contents={registry.makeEntry("control.mox"),registry.makeEntry("control.tune"),registry.makeEntry("OTHERBTNS")};
+    preview.setDocument(document);preview.resize(420,240);preview.show();QCoreApplication::processEvents();
+    QCOMPARE(preview.entryBoundary(document.contents[0].id).height(),44);
+    QCOMPARE(preview.entryBoundary(document.contents[1].id).height(),44);
+    QCOMPARE(preview.entryBoundary(document.contents[2].id).height(),80);
+ }
  void initTestCase() {AppSettings::setProfileOverride(QStringLiteral("task10-settings-%1").arg(QCoreApplication::applicationPid()));AppSettings::instance().clear();}
  void cleanupTestCase() {QFile::remove(AppSettings::instance().filePath());}
  void selectionRemainsReadableWithAndWithoutFocus_data() {

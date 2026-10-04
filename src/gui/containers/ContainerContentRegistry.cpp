@@ -1,10 +1,13 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-03 — Canonical independent control creation shortcuts by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Plain preview and unavailable explanations by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include "ContainerContentRegistry.h"
+#include "ContainerControlCatalog.h"
 #include "gui/meters/MeterItem.h"
 #include "core/UnbuiltFeatureList.h"
 #include <QUuid>
@@ -132,7 +135,7 @@ ContainerContentRegistry::~ContainerContentRegistry()
         disconnect(it.value(), nullptr, this, nullptr);
         // Registry borrows the constructed view. Return parked/hosted views to
         // their original construction owner before removing the parking widget.
-        it.value()->hide(); it.value()->setParent(m_originalParents.value(it.value()));
+        restoreNativeConstraints(it.value()); it.value()->hide(); it.value()->setParent(m_originalParents.value(it.value()));
     }
     delete m_parking;
 }
@@ -154,12 +157,15 @@ void ContainerContentRegistry::attachSingleton(const QString& typeId, QWidget* w
     if (m_singletons.value(typeId) && widget) { return; }
     QWidget* previous = m_singletons.value(typeId);
     disconnect(m_destroyConnections.take(typeId));
-    if (previous) { returnBorrowedView(previous); m_originalParents.remove(previous); }
+    if (previous) { returnBorrowedView(previous); m_originalParents.remove(previous); m_nativeSizes.remove(previous); }
     m_singletons[typeId] = widget; m_attachedIdentities[typeId] = widget;
     if (widget) {
+        // Retain the native constraint contract once, before any container projection.
+        // Free Canvas clears presentation constraints without changing edit minima.
+        m_nativeSizes[widget]={widget->minimumSize(),widget->maximumSize(),widget->sizeHint(),widget->minimumSizeHint().expandedTo(widget->minimumSize()).expandedTo(QSize(24,24))};
         if (!m_originalParents.contains(widget)) { m_originalParents[widget] = widget->parentWidget(); }
         m_destroyConnections[typeId] = connect(widget, &QObject::destroyed, this, [this, typeId, widget] {
-            m_originalParents.remove(widget);
+            m_originalParents.remove(widget); m_nativeSizes.remove(widget);
             if (m_attachedIdentities.value(typeId) != widget) { return; }
             m_singletons.remove(typeId); m_attachedIdentities.remove(typeId);
             ++m_generation; emit runtimeChanged();
@@ -168,13 +174,19 @@ void ContainerContentRegistry::attachSingleton(const QString& typeId, QWidget* w
     ++m_generation; emit runtimeChanged();
 }
 QWidget* ContainerContentRegistry::singletonView(const QString& typeId) const { return m_singletons.value(typeId); }
+QSize ContainerContentRegistry::singletonCanvasMinimum(const QString& typeId) const {return m_nativeSizes.value(singletonView(typeId)).editMinimum.expandedTo(QSize(24,24));}
+QSize ContainerContentRegistry::singletonCanvasSizeHint(const QString& typeId) const {return m_nativeSizes.value(singletonView(typeId)).hint.expandedTo(QSize(320,80));}
+void ContainerContentRegistry::restoreNativeConstraints(QWidget* widget) {
+    if(widget && m_nativeSizes.contains(widget)) {const auto sizes=m_nativeSizes.value(widget);widget->setMinimumSize(sizes.minimum);widget->setMaximumSize(sizes.maximum);}
+}
 void ContainerContentRegistry::returnBorrowedView(QWidget* widget)
 {
-    if (widget && m_originalParents.contains(widget)) { widget->hide(); widget->setParent(m_originalParents.value(widget)); }
+    if (widget && m_originalParents.contains(widget)) { restoreNativeConstraints(widget); widget->hide(); widget->setParent(m_originalParents.value(widget)); }
 }
 void ContainerContentRegistry::parkSingleton(QWidget* widget)
 {
     if (widget) {
+        restoreNativeConstraints(widget);
         if (!m_parking) { m_parking = new QWidget(); m_parking->hide(); }
         widget->hide(); widget->setParent(m_parking);
     }
@@ -246,6 +258,9 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     result.append({QStringLiteral("ANTENNABTNS"), QStringLiteral("AntennaButton"), false, true, {}});
     result.append({QStringLiteral("TUNESTEPBTNS"), QStringLiteral("TuneStepButton"), false, true, {}});
     result.append({QStringLiteral("OTHERBTNS"), QStringLiteral("OtherButton"), false, true, {}});
+    for (const auto& control : supportedContainerControls()) {
+        result.append({control.creationId, control.title, false, true, {}});
+    }
     result.append({QStringLiteral("VOICERECPLAY"), QStringLiteral("VoiceRecordPlay"), false, true, {}});
     result.append({QStringLiteral("VFO"), QStringLiteral("VfoDisplay"), false, true, {}});
     result.append({QStringLiteral("CLOCK"), QStringLiteral("Clock"), false, true, {}});
@@ -287,6 +302,17 @@ ContentEntry ContainerContentRegistry::makeEntry(const QString& typeId) const {
     entry.name = typeId + QStringLiteral(" (unavailable)");
     for (const auto& descriptor : descriptors()) {
         if (descriptor.typeId == catalogType(typeId)) { entry.name = descriptor.title; break; }
+    }
+    for (const auto& control : supportedContainerControls()) {
+        if (typeId != control.creationId) { continue; }
+        OtherButtonItem item;
+        item.setColumns(1);
+        item.setVisibleBits(1u << int(control.buttonId));
+        entry.typeId = QStringLiteral("OTHERBTNS");
+        entry.config.insert(QStringLiteral("legacyRecord"), item.serialize());
+        entry.canvasRect = QRectF(item.x(), item.y(), item.itemWidth(), item.itemHeight());
+        entry.paintOrder = item.zOrder();
+        return entry;
     }
     const auto item = allocate(typeId);
     if (const auto* face=qobject_cast<const BarPresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->configuration()); }
@@ -349,6 +375,8 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     // Raw legacy geometry is authoritative until capture supplies an explicit rect.
     if (!entry.canvasRect.isNull()) { item->setRect(entry.canvasRect.x(), entry.canvasRect.y(), entry.canvasRect.width(), entry.canvasRect.height()); }
     item->setZOrder(entry.paintOrder);
+    // Presentation only: a one-cell native control follows its actual viewport.
+    item->setProperty("containerSingleControl", isSingleContainerControl(item.get()));
     ContentEntry remembered = entry;
     if (remembered.id.isEmpty()) { remembered.id = QUuid::createUuid().toString(QUuid::WithoutBraces); }
     if (remembered.name.isEmpty()) { remembered.name = makeEntry(entry.typeId).name; }

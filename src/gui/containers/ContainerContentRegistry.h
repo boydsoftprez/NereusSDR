@@ -24,6 +24,8 @@ public:
     ~ContainerContentRegistry() override;
     void attachSingleton(const QString& typeId, QWidget* liveWidget);
     QWidget* singletonView(const QString& typeId) const;
+    QSize singletonCanvasMinimum(const QString& typeId) const;
+    QSize singletonCanvasSizeHint(const QString& typeId) const;
     void setAvailable(const QString& typeId, bool available, const QString& reason = {});
     bool isAvailable(const QString& typeId) const;
     QString unavailableReason(const QString& typeId) const;
@@ -43,6 +45,9 @@ public:
 signals:
     void runtimeChanged();
 private:
+    struct NativeSizes { QSize minimum, maximum, hint, editMinimum; };
+    QHash<QWidget*,NativeSizes> m_nativeSizes;
+    void restoreNativeConstraints(QWidget*);
     QHash<QString, QPointer<QWidget>> m_singletons;
     QHash<QWidget*, QPointer<QWidget>> m_originalParents;
     QHash<QString, QWidget*> m_attachedIdentities;

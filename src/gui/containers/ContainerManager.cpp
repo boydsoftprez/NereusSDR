@@ -364,8 +364,9 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         host->reconcile(d);
         if (d.autoHeight && d.dockMode != DockMode::PanelDocked) {
             QWidget *target = d.dockMode == DockMode::Floating ? static_cast<QWidget *>(form) : c;
-            target->resize(qMax(target->width(), c->minimumSizeHint().width()),
-                           host->preferredContentHeight() + ContainerWidget::kTitleBarHeight);
+            int height=host->preferredContentHeight()+ContainerWidget::kTitleBarHeight;
+            if(d.layout==ContentLayout::FreeCanvas && target->screen()) {height=qMin(height,target->screen()->availableGeometry().height());}
+            target->resize(qMax(target->width(), c->minimumSizeHint().width()),height);
         }
         if (d.dockMode == DockMode::Floating) {
             form->ensureVisiblePosition(m_dockParent);

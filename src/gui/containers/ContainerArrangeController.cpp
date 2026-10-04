@@ -8,6 +8,7 @@
 #include "ContainerContentRegistry.h"
 #include "gui/meters/MeterItem.h"
 #include <memory>
+#include <cmath>
 #include <QUuid>
 #include <QJsonDocument>
 #include <QLoggingCategory>
@@ -312,6 +313,16 @@ ArrangeResult ContainerArrangeController::moveDraft(WorkspaceDocument& d, const 
     d.containers[target].contents.insert(insertion, entry);
     d.containers[target].visible = true;
     return {true,{}};
+}
+ArrangeResult ContainerArrangeController::placeFreeCanvas(const QString& entryId,const QRectF& rect,const QRectF& original)
+{
+    auto document=m_store.snapshot();const auto [c,e]=locate(document,entryId);
+    if(c<0 || document.containers[c].layout!=ContentLayout::FreeCanvas) {return failure(tr("The free Canvas placement is no longer available."));}
+    auto& container=document.containers[c];auto& entry=container.contents[e];
+    if(container.locked) {return failure(tr("Arrangement is locked."));}
+    if(entry.freeCanvasRect().has_value() && entry.freeCanvasRect().value()!=original) {return failure(tr("The object placement changed during this gesture."));}
+    if(!std::isfinite(rect.x()) || !std::isfinite(rect.y()) || !std::isfinite(rect.width()) || !std::isfinite(rect.height()) || rect.width()<0 || rect.height()<0) {return failure(tr("Invalid object geometry."));}
+    entry.setFreeCanvasRect(rect);return commit(document);
 }
 ArrangeResult ContainerArrangeController::move(const QString& id,const QString& destination,int insertion)
 {

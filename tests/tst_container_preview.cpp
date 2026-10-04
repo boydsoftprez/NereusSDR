@@ -4,6 +4,7 @@
 #include <QSignalSpy>
 #include <QDir>
 #include <QLineEdit>
+#include <QLabel>
 #include <QListWidget>
 #include <QSplitter>
 #include <QCheckBox>
@@ -42,6 +43,87 @@ class TstContainerPreview : public QObject {
         config["attack"]=1; config["decay"]=1; config["ignoreHistoryMs"]=0; entry.config["properties"]=config; return entry;
     }
 private slots:
+    void nativeFreeLeafCompositionPreflight() {
+        ContainerContentRegistry registry;
+        QWidget root;
+        root.resize(800,520);
+        auto a=registry.makeEntry("meter.ananMulti");
+        auto b=registry.makeEntry("meter.sMeter");
+        a.context["sliceId"]=0; b.context["sliceId"]=1;
+        auto* first=qobject_cast<MeterWidget*>(registry.createPreview(a,&root));
+        auto* second=qobject_cast<MeterWidget*>(registry.createPreview(b,&root));
+        QVERIFY(first && second);
+        for(auto* meter:{first,second}) {meter->setAttribute(Qt::WA_TransparentForMouseEvents,false);for(auto* item:meter->items()) {item->clearStackMetadata();item->setRect(0,0,1,1);}}
+        first->setGeometry(20,20,560,280); second->setGeometry(260,160,320,160);
+        auto* native=new QLabel("Borrowed native QWidget fixture",&root);native->setStyleSheet("background:#203040;color:white;");native->setGeometry(480,300,280,100);
+        second->raise();native->raise();root.show();
+#ifdef NEREUS_GPU_SPECTRUM
+        QSignalSpy framesA(first,&QRhiWidget::frameSubmitted),framesB(second,&QRhiWidget::frameSubmitted);
+        first->update();second->update();
+        QTRY_VERIFY_WITH_TIMEOUT(framesA.count()>0 && framesB.count()>0,4000);
+        const QImage faceA=first->grabFramebuffer(),faceB=second->grabFramebuffer();
+#else
+        const QImage faceA=first->grab().toImage(),faceB=second->grab().toImage();
+#endif
+        QVERIFY(!faceA.isNull() && !faceB.isNull());
+        QCOMPARE(root.childAt(300,210),static_cast<QWidget*>(second));
+        QCOMPARE(root.childAt(500,330),static_cast<QWidget*>(native));
+        const QString capture=qEnvironmentVariable("CANVAS_CAPTURE_DIR");
+        if(!capture.isEmpty()) {QVERIFY(QDir().mkpath(capture));QVERIFY(faceA.save(capture+"/preflight-anan.png"));QVERIFY(faceB.save(capture+"/preflight-s.png"));QVERIFY(root.grab().save(capture+"/preflight-overlap.png"));}
+    }
+    void freeCanvasKeepsNativeLeafViewportsAndScrolls()
+    {
+        ContainerContentRegistry registry; MeterPoller poller;
+        ContainerDocument d; d.id="free-native"; d.layout=static_cast<ContentLayout>(2);
+        auto a=registry.makeEntry("meter.signalText"),b=registry.makeEntry("meter.sMeter");
+        a.context["sliceId"]=0; b.context["sliceId"]=1;
+        a.extensions["freeCanvasRect"]=QJsonArray{20.125,30.25,460.5,180.75};
+        b.extensions["freeCanvasRect"]=QJsonArray{270.25,330.5,320.75,160.5};
+        d.contents={a,b};
+        QScrollArea viewport; viewport.setWidgetResizable(true);
+        auto* preview=new ContainerPreviewWidget(registry,poller); viewport.setWidget(preview);
+        preview->setDocument(d); viewport.resize(300,220);viewport.show();
+        auto meters=preview->findChildren<MeterWidget*>();QCOMPARE(meters.size(),2);
+        if(meters[0]->property("freeCanvasEntryId").toString()!=a.id) {std::swap(meters[0],meters[1]);}
+        QTRY_VERIFY(viewport.verticalScrollBar()->maximum()>0);
+        QVERIFY(qAbs(meters[0]->width()-460.5)<=1);QVERIFY(qAbs(meters[0]->height()-180.75)<=1);
+        QVERIFY(qAbs(meters[1]->height()-160.5)<=1);
+        const auto before=meters[0]->geometry();viewport.resize(220,180);QCoreApplication::processEvents();
+        QCOMPARE(meters[0]->geometry(),before);
+        QCOMPARE(preview->document(),d);QCOMPARE(poller.targetCountForTest(),0);
+    }
+    void freeCanvasGripResizeEscapeAndLock()
+    {
+        ContainerContentRegistry registry;MeterPoller poller;ContainerPreviewWidget preview(registry,poller);
+        ContainerDocument d;d.id="gestures";d.layout=static_cast<ContentLayout>(2);
+        auto a=registry.makeEntry("meter.signal"),b=registry.makeEntry("meter.sMeter");
+        const QJsonArray exact{10.1234567890123,20.9876543210987,460.567890123456,180.123456789012};
+        a.extensions["freeCanvasRect"]=exact;b.extensions["freeCanvasRect"]=QJsonArray{30.,260.,320.,160.};d.contents={a,b};
+        preview.setDocument(d);preview.resize(800,600);preview.show();QCoreApplication::processEvents();
+        auto* grip=preview.findChild<QWidget*>("freeCanvasGrip_"+a.id);QVERIFY(grip);
+        auto* corner=preview.findChild<QWidget*>("freeCanvasResize_"+a.id);QVERIFY(corner);
+        auto* meter=preview.findChildren<MeterWidget*>().first();QPointer<MeterWidget> stable=meter;
+        auto drag=[](QWidget* handle,QPoint delta,bool cancel=false) {
+            const QPoint start=handle->rect().center();const QPoint global=handle->mapToGlobal(start);
+            QTest::mousePress(handle,Qt::LeftButton,Qt::NoModifier,start);
+            QMouseEvent move(QEvent::MouseMove,start+delta,global+delta,Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+            QApplication::sendEvent(handle,&move);
+            if(cancel) {QTest::keyClick(handle,Qt::Key_Escape);}
+            else {QTest::mouseRelease(handle,Qt::LeftButton,Qt::NoModifier,start+delta);}
+        };
+        drag(grip,{37,19});
+        auto rect=preview.document().contents[0].extensions["freeCanvasRect"].toArray();
+        QCOMPARE(rect[0].toDouble(),exact[0].toDouble()+37);QCOMPARE(rect[1].toDouble(),exact[1].toDouble()+19);
+        QCOMPARE(rect[2],exact[2]);QCOMPARE(rect[3],exact[3]);QCOMPARE(preview.document().contents[1],b);
+        QCOMPARE(preview.findChildren<MeterWidget*>().first(),stable.data());
+        const auto moved=preview.document();drag(corner,{43,29});
+        rect=preview.document().contents[0].extensions["freeCanvasRect"].toArray();
+        QCOMPARE(rect[0],moved.contents[0].extensions["freeCanvasRect"].toArray()[0]);
+        QCOMPARE(rect[2].toDouble(),exact[2].toDouble()+43);QCOMPARE(rect[3].toDouble(),exact[3].toDouble()+29);
+        const auto resized=preview.document();drag(grip,{-300,12},true);QCOMPARE(preview.document(),resized);
+        auto locked=resized;locked.locked=true;preview.setDocument(locked);drag(grip,{20,20});drag(corner,{20,20});QCOMPARE(preview.document(),locked);
+        QCOMPARE(poller.targetCountForTest(),0);
+    }
     void largeSignalFontFitsTitleReadingAndPeak() {
         ContainerContentRegistry registry; auto entry=registry.makeEntry("meter.signalText");
         auto properties=entry.config.value("properties").toObject(); properties["fontSize"]=56; properties["faceHeight"]=120; entry.config["properties"]=properties;

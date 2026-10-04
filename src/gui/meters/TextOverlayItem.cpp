@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -62,6 +64,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "TextOverlayItem.h"
+#include "ResponsiveText.h"
 
 // From Thetis clsTextOverlay (MeterManager.cs:18746+)
 
@@ -168,8 +171,10 @@ void TextOverlayItem::paint(QPainter& p, int widgetW, int widgetH)
 
     // Step 4: draw line 1
     if (!resolved1.isEmpty()) {
-        QFont font1(m_fontFamily1, static_cast<int>(m_fontSize1));
+        QFont font1(m_fontFamily1);
         font1.setBold(m_fontBold1);
+        font1=fitObjectText(font1,m_fontSize1*objectTextScale(rect,{260,120}),resolved1,m_scrollX!=0?QRectF(lineRect1.left(),lineRect1.top(),1e9,lineRect1.height()):QRectF(lineRect1),true,
+            m_scrollX!=0?Qt::TextSingleLine:Qt::TextWordWrap,p.device());
         p.setFont(font1);
 
         if (m_showTextBack1 && lineRect1.isValid()) {
@@ -208,8 +213,10 @@ void TextOverlayItem::paint(QPainter& p, int widgetW, int widgetH)
 
     // Step 5: draw line 2
     if (!resolved2.isEmpty()) {
-        QFont font2(m_fontFamily2, static_cast<int>(m_fontSize2));
+        QFont font2(m_fontFamily2);
         font2.setBold(m_fontBold2);
+        font2=fitObjectText(font2,m_fontSize2*objectTextScale(rect,{260,120}),resolved2,m_scrollX!=0?QRectF(lineRect2.left(),lineRect2.top(),1e9,lineRect2.height()):QRectF(lineRect2),true,
+            m_scrollX!=0?Qt::TextSingleLine:Qt::TextWordWrap,p.device());
         p.setFont(font2);
 
         if (m_showTextBack2 && lineRect2.isValid()) {

@@ -23,6 +23,8 @@ struct ContentEntry {
     int paintOrder = 0;
     bool visible = true;
     std::optional<ReturnLocation> returnLocation;
+    std::optional<QRectF> freeCanvasRect() const;
+    void setFreeCanvasRect(const QRectF&);
     bool operator==(const ContentEntry&) const = default;
 };
 
@@ -39,6 +41,8 @@ struct ContainerDocument {
     bool autoHeight = false;
     bool popOutShell = false;
     QJsonObject config, extensions;
+    QSizeF freeCanvasExtent() const;
+    void setFreeCanvasExtent(const QSizeF&);
     bool operator==(const ContainerDocument&) const = default;
 };
 

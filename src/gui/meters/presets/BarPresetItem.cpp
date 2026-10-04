@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-02 — Native complete faces by J.J. Boyd (KG4VCF), with AI-assisted
 // transformation via OpenAI Codex.
 /*  MeterManager.cs
@@ -138,10 +140,11 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
     const PresetGeometry g(pixelRect(width,height));
     const auto pos=[&](double value) { return g.left+g.width*calibratedPosition(value); };
     p.save(); p.setClipRect(g.face); p.setRenderHint(QPainter::Antialiasing,false);
-    QFont font=p.font(); font.setPixelSize(13); p.setFont(font);
+    QFont font=p.font(); font.setPixelSize(qMax(1,qRound(13*g.scale))); p.setFont(font);
     if(layer==Layer::Background) {
-        p.fillRect(g.face,m_background); font.setPixelSize(16); p.setFont(font); p.setPen(m_title);
-        p.drawText(QRectF(g.left,g.face.top()+2,g.width,22),Qt::AlignCenter,m_label);
+        p.fillRect(g.face,m_background); p.setPen(m_title);
+        const double start=m_showValue?.32:0,end=m_showPeakValue?.68:1;
+        drawObjectText(p,QRectF(g.left+g.width*start,g.face.top()+2*g.scale,g.width*(end-start),22*g.scale),m_label,16*g.scale);
     } else if(layer==Layer::OverlayDynamic) {
         // From Thetis MeterManager.cs:37424-37674 [v2.10.3.15]
         // History precedes the secondary marker; PostDrawItem redraws primary last.
@@ -170,32 +173,38 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
         // The static scale is cached separately from moving bars on both backends.
         const qreal dpr=p.device()->devicePixelRatioF();
         const QSize scaleSize(qRound(g.face.width()*dpr),qRound(g.face.height()*dpr));
-        if(m_scaleCache.size()!=scaleSize || m_scaleCache.devicePixelRatio()!=dpr || m_scaleRect!=pixelRect(width,height)) {
+        if(m_scaleCache.size()!=scaleSize || m_scaleCache.devicePixelRatio()!=dpr || m_scaleRect!=pixelRect(width,height) || m_scaleFont!=font) {
             m_scaleCache=QImage(scaleSize,QImage::Format_ARGB32_Premultiplied); m_scaleCache.setDevicePixelRatio(dpr); m_scaleCache.fill(Qt::transparent);
-            m_scaleRect=pixelRect(width,height); QPainter scale(&m_scaleCache); scale.setFont(font); scale.translate(-g.face.topLeft());
+            m_scaleRect=pixelRect(width,height); m_scaleFont=font; QPainter scale(&m_scaleCache); scale.setFont(font); scale.translate(-g.face.topLeft());
             // From Thetis MeterManager.cs:33393-33871,33872-33958 [v2.10.3.15]
             const double high=m_redThreshold;
             scale.setPen(QPen(Qt::white,2)); scale.drawLine(QPointF(g.left,g.baseline),QPointF(pos(high),g.baseline));
             scale.setPen(QPen(Qt::red,2)); scale.drawLine(QPointF(pos(high),g.baseline),QPointF(g.left+g.width*.99,g.baseline));
             const QList<double> minor=m_flavor=="Custom" ? QList<double>{} : m_minor;
             const QList<double> major=m_flavor=="Custom" ? QList<double>{m_minimum,(m_minimum+m_maximum)/2,m_maximum} : m_major;
-            for(double value:minor) { scale.setPen(QPen(value>high ? Qt::red : Qt::white,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-6)); }
+            for(double value:minor) { scale.setPen(QPen(value>high ? Qt::red : Qt::white,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-6*g.scale)); }
             for(double value:major) {
-                scale.setPen(QPen(value>high ? Qt::red : Qt::white,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-12));
-                const double x=pos(value); QRectF text(x-22,g.baseline-32,44,18);
-                if(value==m_maximum) { text.moveRight(g.left+g.width); }
-                scale.drawText(text,value==m_maximum ? Qt::AlignRight|Qt::AlignVCenter : Qt::AlignCenter,QString::number(value,'g',4));
+                scale.setPen(QPen(value>high ? Qt::red : Qt::white,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-12*g.scale));
+                const double x=pos(value);
+                const int index=major.indexOf(value);
+                const double before=index==0?g.left:pos(major[index-1]);
+                const double after=index+1==major.size()?g.left+g.width:pos(major[index+1]);
+                const double labelWidth=qMin(44*g.scale,qMax(0.0,qMin(index==0?after-x:2*(x-before),index+1==major.size()?x-before:2*(after-x))*.48));
+                QRectF text(x-labelWidth/2,g.baseline-32*g.scale,labelWidth,18*g.scale);
+                if(text.left()<g.left) { text.moveLeft(g.left); }
+                if(text.right()>g.left+g.width) { text.moveRight(g.left+g.width); }
+                drawObjectText(scale,text,QString::number(value,'g',4),13*g.scale,value==m_maximum ? Qt::AlignRight|Qt::AlignVCenter : Qt::AlignCenter);
             }
         }
         p.drawImage(g.face.topLeft(),m_scaleCache);
         if(m_peakHold && m_primary.hasReading()) { marker(m_primary.maxHistory(),Qt::red,3); }
         if(m_primary.hasReading()) { marker(m_primary.value(),m_marker,3); }
-        font.setPixelSize(16); p.setFont(font);
+        p.setFont(font);
         const auto formatted=[&](double value) { if(m_flavor.startsWith("Signal")) { return CompositePresetItem::formatSignalReading(value,m_unitMode,m_aboveS9,m_showDecimal); } if(m_flavor=="PbSnr" && m_unitMode==MeterUnit::S) { return QStringLiteral("S%1").arg(value/6,0,'f',1); } return QString::number(value,'f',1)+(m_units.isEmpty()?QString():QStringLiteral(" ")+m_units); };
         p.setPen(m_marker);
-        if(m_showValue) { p.drawText(QRectF(g.left,g.face.top()+2,g.width*.32,22),Qt::AlignLeft|Qt::AlignVCenter,m_primary.hasReading()?formatted(m_primary.value()):QStringLiteral("--")); }
+        if(m_showValue) { drawObjectText(p,QRectF(g.left,g.face.top()+2*g.scale,g.width*.32-2*g.scale,22*g.scale),m_primary.hasReading()?formatted(m_primary.value()):QStringLiteral("--"),16*g.scale,Qt::AlignLeft|Qt::AlignVCenter); }
         p.setPen(Qt::red);
-        if(m_showPeakValue) { p.drawText(QRectF(g.left+g.width*.68,g.face.top()+2,g.width*.32,22),Qt::AlignRight|Qt::AlignVCenter,m_primary.hasReading()?formatted(m_primary.maxHistory()):QStringLiteral("--")); }
+        if(m_showPeakValue) { drawObjectText(p,QRectF(g.left+g.width*.68+2*g.scale,g.face.top()+2*g.scale,g.width*.32-2*g.scale,22*g.scale),m_primary.hasReading()?formatted(m_primary.maxHistory()):QStringLiteral("--"),16*g.scale,Qt::AlignRight|Qt::AlignVCenter); }
     }
     p.restore();
 }

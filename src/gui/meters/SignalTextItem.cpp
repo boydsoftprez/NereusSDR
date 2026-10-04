@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -115,6 +117,7 @@ mw0lge@grange-lane.co.uk
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 #include "SignalTextItem.h"
+#include "ResponsiveText.h"
 
 // From Thetis clsSignalText (MeterManager.cs:20286-20540)
 
@@ -295,7 +298,11 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
         p.setPen(m_colour);
 
         const QString text = valueText();
-        p.drawText(rect, Qt::AlignCenter, text);
+        const double top=m_showPeakValue && m_peakHold?rect.height()/3.0:0;
+        const double bottom=m_showType?rect.height()*2/3.0:rect.height();
+        const QRectF main(rect.left(),rect.top()+top,rect.width(),bottom-top);
+        p.setFont(fitObjectText(mainFont,clampedSize,text,main,true,Qt::TextSingleLine,p.device()));
+        p.drawText(main,Qt::AlignCenter,text);
     }
 
     // Step 4: units label below value in small font
@@ -315,6 +322,7 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
         // Position in lower portion of rect
         const QRect labelRect(rect.left(), rect.top() + rect.height() * 2 / 3,
                                rect.width(), rect.height() / 3);
+        p.setFont(fitObjectText(smallFont,smallSize,unitsLabel,labelRect,true,Qt::TextSingleLine,p.device()));
         p.drawText(labelRect, Qt::AlignHCenter | Qt::AlignBottom, unitsLabel);
     }
 
@@ -329,6 +337,7 @@ void SignalTextItem::paint(QPainter& p, int widgetW, int widgetH)
         const QString peakText = peakValueText();
         const QRect peakRect(rect.left(), rect.top(),
                               rect.width(), rect.height() / 3);
+        p.setFont(fitObjectText(peakFont,peakSize,peakText,peakRect,true,Qt::TextSingleLine,p.device()));
         p.drawText(peakRect, Qt::AlignRight | Qt::AlignTop, peakText);
     }
 

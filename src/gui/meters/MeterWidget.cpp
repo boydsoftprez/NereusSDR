@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Invalidate handled interaction layers by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
@@ -585,7 +587,7 @@ void MeterWidget::mousePressEvent(QMouseEvent* event)
         MeterItem* item = m_items[i];
         if (itemFeatureBuilt(item) && item->hitTest(pos, w, h)) {
             if (item->handleMousePress(event, w, h)) {
-                update();
+                invalidatePresentation(item);
                 return;
             }
         }
@@ -603,7 +605,7 @@ void MeterWidget::mouseReleaseEvent(QMouseEvent* event)
         MeterItem* item = m_items[i];
         if (itemFeatureBuilt(item) && item->hitTest(pos, w, h)) {
             if (item->handleMouseRelease(event, w, h)) {
-                update();
+                invalidatePresentation(item);
                 return;
             }
         }
@@ -621,7 +623,7 @@ void MeterWidget::mouseMoveEvent(QMouseEvent* event)
         MeterItem* item = m_items[i];
         if (itemFeatureBuilt(item) && item->hitTest(pos, w, h)) {
             if (item->handleMouseMove(event, w, h)) {
-                update();
+                invalidatePresentation(item);
                 return;
             }
         }

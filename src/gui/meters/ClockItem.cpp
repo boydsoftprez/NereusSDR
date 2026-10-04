@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -53,6 +55,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ClockItem.h"
+#include "ResponsiveText.h"
 #include <QPainter>
 #include <QDateTime>
 
@@ -92,28 +95,18 @@ void ClockItem::paint(QPainter& p, int widgetW, int widgetH)
     const int typeSize = qMax(7, rect.height() / 6);
 
     auto drawClock = [&](const QRect& r, const QDateTime& dt, const QString& typeLabel) {
-        int yOff = r.top();
-        if (m_showType) {
-            QFont typeFont = p.font();
-            typeFont.setPixelSize(typeSize);
-            p.setFont(typeFont);
-            p.setPen(m_typeTitleColour);
-            p.drawText(QRect(r.left(), yOff, r.width(), typeSize + 2), Qt::AlignCenter, typeLabel);
-            yOff += typeSize + 2;
-        }
-        QFont timeFont = p.font();
-        timeFont.setPixelSize(timeSize);
-        timeFont.setBold(true);
-        p.setFont(timeFont);
-        p.setPen(m_timeColour);
-        p.drawText(QRect(r.left(), yOff, r.width(), timeSize + 2), Qt::AlignCenter, dt.toString(timeFmt));
-        yOff += timeSize + 2;
-        QFont dateFont = p.font();
-        dateFont.setPixelSize(dateSize);
-        dateFont.setBold(false);
-        p.setFont(dateFont);
-        p.setPen(m_dateColour);
-        p.drawText(QRect(r.left(), yOff, r.width(), dateSize + 2), Qt::AlignCenter, dt.toString(dateFmt));
+        const double total=timeSize+dateSize+(m_showType?typeSize:0);
+        double top=r.top();
+        const auto role=[&](const QString& text,double requested,const QColor& ink,bool bold) {
+            const double height=r.height()*requested/total;
+            const QRectF box(r.left(),top,r.width(),height);
+            QFont font=p.font(); font.setBold(bold);
+            p.setFont(fitObjectText(font,requested,text,box,false,Qt::TextSingleLine,p.device())); p.setPen(ink);
+            p.drawText(box,Qt::AlignCenter,text); top+=height;
+        };
+        if(m_showType) { role(typeLabel,typeSize,m_typeTitleColour,false); }
+        role(dt.toString(timeFmt),timeSize,m_timeColour,true);
+        role(dt.toString(dateFmt),dateSize,m_dateColour,false);
     };
 
     drawClock(localRect, now, QStringLiteral("Local"));

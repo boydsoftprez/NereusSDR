@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -53,6 +55,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "NeedleScalePwrItem.h"
+#include "ResponsiveText.h"
 
 // From Thetis clsNeedleScalePwrItem (MeterManager.cs:14888+)
 // From Thetis renderNeedleScale (MeterManager.cs:31645-31850)
@@ -151,7 +154,14 @@ void NeedleScalePwrItem::paint(QPainter& p, int widgetW, int widgetH)
         // From Thetis renderNeedleScale (MeterManager.cs:31710) — use low colour for labels
         p.setPen(m_lowColour);
 
-        p.drawText(QRect(px - 30, py - 10, 60, 20), Qt::AlignCenter, text);
+        const double scale=objectTextScale(rect,{260,120});
+        QRectF label(px-30*scale,py-10*scale,60*scale,20*scale);
+        if(label.left()<rect.left()) { label.moveLeft(rect.left()); }
+        if(label.right()>rect.right()) { label.moveRight(rect.right()); }
+        if(label.top()<rect.top()) { label.moveTop(rect.top()); }
+        if(label.bottom()>rect.bottom()) { label.moveBottom(rect.bottom()); }
+        p.setFont(fitObjectText(font,fontSizeEm,text,label,true,Qt::TextSingleLine,p.device()));
+        p.drawText(label,Qt::AlignCenter,text);
     }
 
     p.setRenderHint(QPainter::Antialiasing, false);

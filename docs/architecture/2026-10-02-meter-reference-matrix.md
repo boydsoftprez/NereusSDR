@@ -188,6 +188,19 @@ study, while segment fill uses source block/gap sizing and low/high colors. Sour
 family calibration remains locked. Timestamp history expiry is Task3's documented
 adaptation for missed shared GUI frames, without inventing intermediate samples.
 
+2026-10-03 authorized typography follow-up: native Bar and non-ANAN complete
+faces now scale lettering and role geometry with each logical object's
+`min(width/referenceWidth, height/referenceHeight)`, followed by measured width
+and height fitting. Stable references are Bar260×72, Power/SWR260×144,
+Cross360×260, Eye260×180, History/Signal/Clock260×120 and Contest360×280.
+This supersedes the fixed-font presentation adaptation above. Saved fontSize
+remains calibration, effective fonts are paint-only, and DPR is applied by Qt.
+Titles, readings and peaks have separate regions; labels retain all scale
+values. Fixed primitive History/TextOverlay use260×120 and Dial uses a120×120
+square reference. Existing responsive primitive requests retain their unit and
+scaling policy and gain measured fitting. ANAN source lettering/art/readouts
+and the already-responsive VFO remain outside this follow-up.
+
 Independent oracle: `tests/fixtures/meters/mic-alc-source-trace.csv`; tests cover
 calibration/clipping, separate primary/average recurrence, equal-input history
 expiry, availability and transitions, atomic invalid edits, real property effects,

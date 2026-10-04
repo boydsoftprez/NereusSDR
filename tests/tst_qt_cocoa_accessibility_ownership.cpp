@@ -4,6 +4,16 @@
 #include "gui/QtCocoaAccessibilityOwnershipGuard.h"
 #include "gui/ConnectionSelector.h"
 #include "gui/QtCocoaAccessibilityOwnershipGuard_p.h"
+#include "core/AppSettings.h"
+#include "gui/containers/ContainerContentHost.h"
+#include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContainerEditSession.h"
+#include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContainerSettingsDialog.h"
+#include "gui/meters/OtherButtonItem.h"
+#include <QLineEdit>
+#include <QSplitter>
+#include <QTemporaryDir>
 #include "gui/applets/RxApplet.h"
 #include "core/BoardCapabilities.h"
 #include "core/StepAttenuatorFacade.h"
@@ -256,6 +266,125 @@ private slots:
             QVERIFY(cell && cell->isValid());
             [freshPool drain];
         }
+    }
+
+    void containerDropdownSelectionAfterNativeTableRebuild()
+    {
+        QString reason;
+        QVERIFY2(installQtCocoaAccessibilityOwnershipGuard(&reason), qPrintable(reason));
+        QAccessible::setActive(true);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        NereusSDR::AppSettings settings(dir.filePath(QStringLiteral("settings")));
+        NereusSDR::ContainerWorkspaceStore store(settings);
+        NereusSDR::ContainerContentRegistry registry;
+        QWidget root;
+        QSplitter splitter(&root);
+        NereusSDR::ContainerManager manager(&root, &splitter);
+        manager.setWorkspaceAdapter(&store, &registry);
+        NereusSDR::WorkspaceDocument document;
+        document.mainContainerId = QStringLiteral("A");
+        NereusSDR::ContainerDocument first;
+        first.id = QStringLiteral("A");
+        first.name = QStringLiteral("First");
+        first.layout = NereusSDR::ContentLayout::VerticalStack;
+        first.contents = {registry.makeEntry(QStringLiteral("control.mox"))};
+        NereusSDR::ContainerDocument second;
+        second.id = QStringLiteral("B");
+        second.name = QStringLiteral("Second");
+        second.layout = NereusSDR::ContentLayout::VerticalStack;
+        second.contents = {registry.makeEntry(QStringLiteral("meter.clock"))};
+        document.containers = {first, second};
+        QCOMPARE(manager.commitWorkspace(document, 0).status, NereusSDR::CommitStatus::Saved);
+        const NereusSDR::WorkspaceDocument original = store.snapshot();
+        const QVariant saved = settings.value(QStringLiteral("ContainerWorkspace"));
+        auto* control = qobject_cast<NereusSDR::OtherButtonItem*>(
+            manager.contentHost(first.id)->entryRows().first().item.data());
+        QVERIFY(control);
+        QSignalSpy commands(control, &NereusSDR::OtherButtonItem::otherButtonClicked);
+        QSignalSpy commits(&store, &NereusSDR::ContainerWorkspaceStore::committed);
+        QSignalSpy reconciles(&manager, &NereusSDR::ContainerManager::workspaceReconciled);
+        NereusSDR::ContainerSettingsDialog dialog(manager.container(first.id), nullptr, &manager);
+        auto* combo = dialog.findChild<QComboBox*>(QStringLiteral("containerDraftSelection"));
+        auto* title = dialog.findChild<QLineEdit*>(QStringLiteral("containerDraftTitle"));
+        QVERIFY(combo && title && dialog.editSession());
+        QCOMPARE(combo->currentData().toString(), first.id);
+        title->setText(QStringLiteral("Draft first"));
+        QSignalSpy comboChanges(combo, &QComboBox::currentIndexChanged);
+        QSignalSpy modelResets(combo->model(), &QAbstractItemModel::modelReset);
+        QAbstractItemView* view = combo->view();
+        view->resize(300, 200);
+        view->doItemsLayout();
+        QAccessibleInterface* table = QAccessible::queryAccessibleInterface(view);
+        QVERIFY(table && table->tableInterface() && table->selectionInterface());
+        const QAccessible::Id tableId = QAccessible::uniqueId(table);
+        Class cls = NSClassFromString(@"QMacAccessibilityElement");
+        id element = [cls elementWithId:tableId];
+        QVERIFY(element);
+        QVERIFY(!dialog.isVisible());
+        QVERIFY(!view->isVisible());
+
+        int switches = 0;
+        for (const QString& selectedId : {second.id, first.id, second.id}) {
+            view->setCurrentIndex(combo->model()->index(combo->currentIndex(), 0));
+            const QList<QAccessibleInterface*> selected = table->selectionInterface()->selectedItems();
+            QCOMPARE(selected.size(), 1);
+            const QAccessible::Id oldId = QAccessible::uniqueId(selected.first());
+            NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+            [element updateTableModel];
+            NSArray* rows = [element accessibilityRows];
+            QCOMPARE(rows.count, NSUInteger(2));
+            NSArray* native = [[rows objectAtIndex:combo->currentIndex()] accessibilityChildren];
+            QCOMPARE(native.count, NSUInteger(1));
+            QAccessibleInterface* promoted = [[native firstObject] qtInterface];
+            QVERIFY(promoted);
+            QCOMPARE(QAccessible::uniqueId(promoted), oldId);
+            [element updateTableModel];
+            [pool drain];
+            // Expire an actual Cocoa popup cell, retaining the independent
+            // QAccessibleTable cache that RowsRemoved visits during clear.
+            QVERIFY(!QAccessible::accessibleInterface(oldId));
+            QCOMPARE(QAccessible::accessibleInterface(tableId), table);
+            qInfo() << "Expired container dropdown cell ID before selection:" << oldId;
+
+            // Exercise onContainerDropdownChanged through its real signal;
+            // selecting directly through the dialog would miss this path.
+            combo->setCurrentIndex(combo->findData(selectedId));
+
+            ++switches;
+            QCOMPARE(comboChanges.count(), switches);
+            QCOMPARE(combo->currentData().toString(), selectedId);
+            QCOMPARE(combo->count(), 2);
+            QVERIFY(combo->isEnabled());
+            QCOMPARE(combo->itemText(combo->findData(first.id)), QStringLiteral("Draft first"));
+            QCOMPARE(combo->itemText(combo->findData(second.id)), QStringLiteral("Second"));
+            QCOMPARE(title->text(), selectedId == first.id ? QStringLiteral("Draft first") : QStringLiteral("Second"));
+            NereusSDR::WorkspaceDocument expectedDraft = original;
+            expectedDraft.containers[0].name = QStringLiteral("Draft first");
+            QCOMPARE(dialog.editSession()->draft(), expectedDraft);
+            QVERIFY(dialog.editSession()->hasPendingChanges());
+            QCOMPARE(store.snapshot(), original);
+            QCOMPARE(settings.value(QStringLiteral("ContainerWorkspace")), saved);
+            QCOMPARE(commits.count(), 0);
+            QCOMPARE(reconciles.count(), 0);
+            QCOMPARE(commands.count(), 0);
+            QCOMPARE(modelResets.count(), 0);
+            QCOMPARE(QAccessible::accessibleInterface(tableId), table);
+            view->doItemsLayout();
+            view->setCurrentIndex(combo->model()->index(combo->currentIndex(), 0));
+            NSAutoreleasePool* freshPool = [[NSAutoreleasePool alloc] init];
+            NSArray* fresh = [element accessibilitySelectedChildren];
+            QCOMPARE(fresh.count, NSUInteger(1));
+            QAccessibleInterface* cell = [[fresh firstObject] qtInterface];
+            QVERIFY(cell && cell->isValid());
+            [freshPool drain];
+        }
+        dialog.reject();
+        QCOMPARE(store.snapshot(), original);
+        QCOMPARE(settings.value(QStringLiteral("ContainerWorkspace")), saved);
+        QCOMPARE(commits.count(), 0);
+        QCOMPARE(reconciles.count(), 0);
+        QCOMPARE(commands.count(), 0);
     }
 
     void selectedChildrenLifecycle()

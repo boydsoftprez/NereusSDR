@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Describe saved control scope in user words by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-03 — Refuse foreign-session container function controls by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Keep each pan's tuning STEP on its resolved slice by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Preserve closed-slice names and narrow tuning refreshes by
@@ -12911,6 +12915,20 @@ void MainWindow::openSetup(const QString& pageKey)
 
 namespace {
 
+// Global function controls may work without a slice, but must never cross an
+// explicit session boundary. Refresh and click use the same per-item context.
+QString containerFunctionScopeReason(const QJsonObject& context, const QString& currentSessionId)
+{
+    if (!context.contains("sessionId")) { return {}; }
+    const QJsonValue session = context.value("sessionId");
+    if (!session.isString()) { return QObject::tr("This control has invalid saved radio settings"); }
+    const QString sessionId = session.toString();
+    if (!sessionId.isEmpty() && sessionId != currentSessionId) {
+        return QObject::tr("This control belongs to another radio");
+    }
+    return {};
+}
+
 // A panel can contain a header meter and additional meter widgets in its
 // scroll body. All of their visible FilterDisplays share the slice producer.
 QList<MeterWidget*> contentMeters(QWidget* content)
@@ -13342,7 +13360,19 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
     // slice that is not open on the ones that do).
     const auto applyAlways = [&](MeterItem* item) {
         if (auto* other = qobject_cast<OtherButtonItem*>(item)) {
-            m_containerButtons->apply(other, rxSource);
+            QString scopeReason = containerFunctionScopeReason(context, containerSessionId());
+            if (item->property("containerUnsupportedSource").toBool()) {
+                scopeReason = item->property("unsupportedSourceReason").toString();
+                if (scopeReason.isEmpty()) { scopeReason = tr("This control has an unsupported source"); }
+            }
+            if (!scopeReason.isEmpty()) {
+                for (int index = 0; index < other->buttonCount(); ++index) {
+                    other->button(index).on = false;
+                    other->ButtonBoxItem::setButtonAvailable(index, false, scopeReason);
+                }
+            } else {
+                m_containerButtons->apply(other, rxSource);
+            }
             return true;
         }
         if (auto* band = qobject_cast<BandButtonItem*>(item)) {
@@ -13502,6 +13532,16 @@ void MainWindow::refreshContainerFrequency(SliceModel* slice)
 void MainWindow::onContainerOtherButtonClicked(ContainerWidget* c, int buttonId)
 {
     if (!c || !m_containerButtons) { return; }
+    const QVariant routed = c->property("containerDispatchContext");
+    if (routed.isValid() && routed.metaType() != QMetaType::fromType<QJsonObject>()) {
+        showContainerButtonReason(tr("This control has an invalid source context"));
+        return;
+    }
+    const QString scopeReason = containerFunctionScopeReason(routed.toJsonObject(), containerSessionId());
+    if (!scopeReason.isEmpty()) {
+        showContainerButtonReason(scopeReason);
+        return;
+    }
     const QString reason = m_containerButtons->click(
         static_cast<OtherButtonItem::ButtonId>(buttonId), containerControlRxSource(c));
     showContainerButtonReason(reason);

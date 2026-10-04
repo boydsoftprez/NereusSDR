@@ -65,6 +65,6 @@ enum class DockMode {
 };
 
 enum class HeaderMode { Always, Reveal, Hidden };
-enum class ContentLayout { LegacyCanvas, VerticalStack };
+enum class ContentLayout { LegacyCanvas = 0, VerticalStack = 1, FreeCanvas = 2 };
 
 } // namespace NereusSDR

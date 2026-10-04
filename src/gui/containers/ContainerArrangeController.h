@@ -19,6 +19,7 @@ class ContainerArrangeController : public QObject
     explicit ContainerArrangeController(ContainerWorkspaceStore& store,
                                         ContainerManager* manager = nullptr,
                                         QObject* parent = nullptr);
+    ArrangeResult placeFreeCanvas(const QString& entryId,const QRectF& rect,const QRectF& original);
     ArrangeResult move(const QString& entryId, const QString& destinationId, int insertionIndex);
     ArrangeResult popOut(const QString& entryId);
     ArrangeResult returnEntry(const QString& entryId);
