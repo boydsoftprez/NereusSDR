@@ -125,7 +125,7 @@ jobs:
         run: |
           xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
             -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO build
+            build
 
       - name: Build for devices
         # Unsigned: CI holds no signing identity.
@@ -138,4 +138,4 @@ jobs:
         run: |
           xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
-            CODE_SIGNING_ALLOWED=NO test
+            test
