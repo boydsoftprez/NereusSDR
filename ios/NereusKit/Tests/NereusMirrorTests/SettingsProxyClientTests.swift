@@ -351,7 +351,7 @@ import Testing
     }
 
     @Test func aWriteThatCannotBeSentOrLosesItsLinkIsReported() async {
-        let proxy = connected(["CWPitch": "600"])
+        let proxy = connected(["CWPitch": "600"], clock: ManualLinkClock())
         sent.refuseAll()
         #expect(await proxy.write("CWPitch", "650") == .notSent)
         #expect(proxy.value("CWPitch") == "600")

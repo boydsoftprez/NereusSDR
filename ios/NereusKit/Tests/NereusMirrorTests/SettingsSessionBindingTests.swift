@@ -98,7 +98,7 @@ private final class MutableSettingsRoute: @unchecked Sendable {
         let hold = SendHold()
         let route = MutableSettingsRoute()
         let proxy = SettingsProxyClient(origin: "phone", send: route.send,
-                                        captureSender: { route.capture(hold: hold) })
+                                        captureSender: { route.capture(hold: hold) }, clock: ManualLinkClock())
         proxy.handle(.stateChanged(.receivingSnapshot))
         proxy.apply(FixtureReplay.accepted)
         proxy.apply(.settingsSnapshot(.init(properties: [])))
@@ -198,7 +198,7 @@ private final class MutableSettingsRoute: @unchecked Sendable {
         let hold = SendHold()
         let route = MutableSettingsRoute()
         let proxy = SettingsProxyClient(send: route.send,
-                                        captureSender: { route.capture(hold: hold, failOld: true) })
+                                        captureSender: { route.capture(hold: hold, failOld: true) }, clock: ManualLinkClock())
         authenticate(proxy, value: "600")
         let old = Task { await proxy.write("CWPitch", "650") }
         await hold.waitUntilEntered()
