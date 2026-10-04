@@ -12087,43 +12087,6 @@ void MainWindow::buildStatusBar()
     m_systemTileSep = makeSep();
     hbox->addWidget(m_systemTileSep);
 
-    // Phase 3P-II Task 21: TGXL presence chip. Registered with m_chromeBar
-    // at rung 2 (design §6), so it folds under width pressure, but
-    // presence is not a fold concept -- it is reported to the controller
-    // via setItemAvailable, straight from the signal that changes it, per
-    // ChromeBarController::setItemAvailable's own doc comment. Hidden
-    // (available=false) until TunerModel::presenceChanged fires true;
-    // text reflects operate/bypass/standby state via stateChanged.
-    m_tgxlChip = new QLabel(QStringLiteral("TGXL"), barWidget);
-    m_tgxlChip->setStyleSheet(QStringLiteral(
-        "QLabel { background:#1a3a5a; border:1px solid #205070; "
-        "padding:1px 8px; border-radius:3px; color:#88e0ff; }"));
-    m_tgxlChip->setVisible(false);
-    hbox->addWidget(m_tgxlChip);
-
-    connect(m_radioModel->tunerModel(), &TunerModel::presenceChanged,
-            this, [this](bool present) {
-        if (!m_chromeBar || !m_chromeBarWidget) { return; }
-        m_chromeBar->setItemAvailable(m_tgxlChip, present);
-        m_chromeBar->relayout(m_chromeBarWidget->width());
-    });
-    connect(m_radioModel->tunerModel(), &TunerModel::stateChanged,
-            this, [this]() {
-        TunerModel* t = m_radioModel->tunerModel();
-        QString s = t->isOperate()
-                    ? (t->isBypass() ? QStringLiteral("BYPS")
-                                     : QStringLiteral("OPER"))
-                    : QStringLiteral("SBY");
-        m_tgxlChip->setText(QStringLiteral("TGXL ") + s);
-        // TGXL / TGXL OPER / TGXL BYPS / TGXL SBY are different widths
-        // (Task A8 fix round 1 finding 4); report the new one.
-        if (m_chromeBar && m_chromeBarWidget) {
-            m_chromeBar->setNaturalWidth(m_tgxlChip,
-                                         m_tgxlChip->sizeHint().width());
-            m_chromeBar->relayout(m_chromeBarWidget->width());
-        }
-    });
-
     // Helper: SystemTile's content just changed width (a reading gained or
     // lost digits, a row appeared/disappeared). Report the new width to
     // m_chromeBar and let it re-decide — content-change sites call
@@ -12499,7 +12462,6 @@ void MainWindow::buildStatusBar()
     bar.overflowChip     = m_overflowChip;
     bar.systemTile       = m_systemTile;
     bar.systemTileSep    = m_systemTileSep;
-    bar.tgxlChip         = m_tgxlChip;
     bar.catIndicator     = m_catIndicator;
     bar.catSep           = m_catSep;
     bar.tciIndicator     = m_tciIndicator;
@@ -12539,10 +12501,9 @@ void MainWindow::buildStatusBar()
     // this, availability defaults to true (addItem's default) and the
     // FIRST relayout() -- which always runs a full pass, since
     // m_foldedThrough starts at -1 -- would force-show a blank PSA
-    // indicator and stray "TGXL" / "CH 1" tiles, and RxDashboard's four
+    // indicator and a stray "CH 1" tile, and RxDashboard's four
     // toggle pills would pop up empty on every cold launch.
     m_chromeBar->setItemAvailable(m_psaIndicator, false);
-    m_chromeBar->setItemAvailable(m_tgxlChip, false);
     m_chromeBar->setItemAvailable(m_chain1IndicatorWidget, false);
     m_chromeBar->setItemAvailable(m_overflowChip, false);
     // R-R3-49: items whose feature is not built yet never show. Reported as

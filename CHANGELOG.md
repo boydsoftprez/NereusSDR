@@ -175,11 +175,17 @@ their readouts remain unavailable; they do not create measurements or history.
 - The radio's speaker/headphone output carries the receive mix and appropriate monitor audio. Hardware microphone boost, input selection/gain, tip/ring, bias and XLR controls follow board capabilities.
 - Level Cal and preamp behavior receive further Thetis-based calibration corrections.
 - **RF-Kit RF2K-S** monitoring/control joins the accessory system. PGXL/TGXL operation follows Core authority, with connection recovery and carrier-ready tuner sequencing.
+- Remove the TGXL chip from the bottom status bar to free banner space; tuner controls remain in their existing applet.
 - RADE sends and decodes FreeDV-format end-of-over callsigns when FreeDV Reporter is enabled and flushes held speech before ending an over.
 
 ## Reliability fixes
 
 - Restart TX microphone pumping after live receiver reconfiguration (#331).
+- Keep the selected PC microphone’s level meter active while receiving in a remote desktop window. Preview audio is drained locally and never queued for a later PTT.
+- Preserve each waterfall row’s original RF window, so retained transmit history aligns correctly when returning to the receive display without losing the saved receive rows.
+- Match local NF-AGC precedence in remote windows when both waterfall AGC options are enabled.
+- Recover the remote transmit display when joining an already keyed station, and resolve missing or stale Core pan keys through the receiver’s unique host in the window.
+- Follow the transmit-bound receiver’s sideband for two-tone operation after a transmit handoff, even when a different receiver remains selected.
 - Keep the DEXP threshold marker across restarts (#332).
 - Keep HL2 tune power independent across repeated TUNE cycles (#333).
 - Replay saved anti-VOX state to replacement transmit workers (#334).
@@ -188,7 +194,7 @@ their readouts remain unavailable; they do not create measurements or history.
 - Keep each pan's displayed and wheel-tuning STEP bound to its selected receiver, including selection changes and replacement receivers.
 - Release a retired display whose pending subscribe result was lost across a media handover, retaining its reservation until the Core confirms release. New and surviving spectra/waterfalls can then resume; synchronous display-stack destruction is also guarded. Live late-reply and missing-release-acknowledgement behavior retains its existing rules.
 - Preserve fresh remote VAX audio that arrives after the pump checks for input. Startup and resumed streams no longer lose that block during inactive-source cleanup; quiet stale data is still discarded.
-- Correct Qt 6.11 Cocoa accessibility failures found during native evaluation: shared element ownership, stale connection-list child caches, an expired preamp-combo child cache when board capabilities refresh after reconnect, and an expired container-dropdown child cache when switching the Settings selection. The fixes preserve selection, preamp choices and connection behavior; release Mac packages use a pinned Qt 6.8 SDK and must pass a real Cocoa startup check.
+- Correct Qt 6.11 Cocoa accessibility failures found during native evaluation: shared element ownership, stale connection-list child caches, an expired preamp-combo child cache when board capabilities refresh after reconnect, and an expired container-dropdown child cache when switching the Settings selection, and expired audio device, buffer and TX Input dropdown child caches during refresh. The fixes preserve selection, preamp choices and connection behavior; release Mac packages use a pinned Qt 6.8 SDK and must pass a real Cocoa startup check.
 
 Further work addresses receiver/channel lifetimes, media recovery, stale session replies, audio-ring overruns, microphone stalls, shared-device authority and reconnect teardown. The reconnect fixes above are narrower than the original acoustic/startup and intermittent-crash reports; the requested retests for #235, #299 and #300 remain open.
 

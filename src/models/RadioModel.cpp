@@ -17,6 +17,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 - Two-tone sideband follows the transmit-bound slice at
+//                 connect and handoff. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex. NereusSDR-original binding fix.
 //   2026-10-03 - Diversity atomic reentry and slice-close/hydration lifetime
 //                 fences, J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01 - #299: replay anti-VOX run and detector tau to each new
@@ -2484,6 +2487,12 @@ RadioModel::RadioModel(Role role, QObject* parent)
             pushTxFrequencyFromTxSlice();
         }
         pushTxModeAndBandpass();
+        // From Thetis setup.cs:11096-11100 [v2.10.3.15] — two-tone
+        // inversion reads the transmitter's current DSP mode. The slice
+        // driving that mode is the TX binding, even when another is active.
+        if (m_twoToneController) {
+            m_twoToneController->setSliceModel(txBoundSlice());
+        }
         applyTxAntennaFromBoundSlice();
         if (m_moxController) {
             if (SliceModel* const bound = txBoundSlice()) {
@@ -17685,15 +17694,15 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
         loadSliceState(m_activeSlice);
     }
 
-    // ── 3M-1c L.2: TwoToneController active-slice mode source ────────────────
+    // ── 3M-1c L.2: TwoToneController transmit-slice mode source ────────────
     //
     // The controller reads SliceModel::dspMode() during setActive(true) for
     // the LSB-family invert-tones branch (TwoToneController.cpp step 4 /
     // setup.cs:11058-11062 [v2.10.3.13]).  Wire it to the freshly-added
-    // active slice; if active slice changes later (3F multi-pan), the
-    // setActiveSlice path will need to refresh this pointer too.
+    // transmit-bound slice; txBoundSliceChanged refreshes this pointer on
+    // handoff, matching the source of the TX mode and filter.
     if (m_twoToneController) {
-        m_twoToneController->setSliceModel(m_activeSlice);
+        m_twoToneController->setSliceModel(txBoundSlice());
     }
 
     // Activate receiver (this sends hardwareReceiverCountChanged to RadioConnection)

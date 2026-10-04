@@ -106,6 +106,7 @@ private slots:
     void uppercase_trx_key_ends_with_the_app_data();
     void uppercase_trx_key_ends_with_the_app();
     void desktop_host_uppercase_trx_goes_through_ptt_admission();
+    void desktop_host_holder_and_program_ownership_data();
     void desktop_host_holder_and_program_ownership();
     void desktop_host_owned_two_three_broadcasts_logical_receivers();
     void stopped_server_queues_no_rx2_lines();
@@ -491,8 +492,16 @@ void TestTciTxMutex::desktop_host_reentrant_stop_cannot_take_audio()
     app.close();
 }
 
+void TestTciTxMutex::desktop_host_holder_and_program_ownership_data()
+{
+    QTest::addColumn<int>("keyUpDelayMs");
+    QTest::newRow("default-handoff") << MoxController::kKeyUpDelayMs;
+    QTest::newRow("delayed-handoff") << 1000;
+}
+
 void TestTciTxMutex::desktop_host_holder_and_program_ownership()
 {
+    QFETCH(int, keyUpDelayMs);
     RadioModel radio;
     const int foreignSlice = radio.addSlice(QStringLiteral("pan-0"));
     const int ownSlice = radio.addSlice(QStringLiteral("pan-0"));
@@ -587,6 +596,11 @@ void TestTciTxMutex::desktop_host_holder_and_program_ownership()
     app.sendTextMessage(QStringLiteral("trx:0,false;"));
     QTest::qWait(100);
     QVERIFY(radio.mox());
+    // A holder transfer can be accepted while its RF-safe slice handoff
+    // waits for the TX-to-RX walk. Exercise both normal and delayed walks.
+    radio.moxController()->setTimerIntervals(MoxController::kRfDelayMs,
+        MoxController::kMoxDelayMs, MoxController::kSpaceDelayMs, keyUpDelayMs,
+        MoxController::kPttOutDelayMs, MoxController::kBreakInDelayMs);
     radio.moxController()->setMox(false, foreignKeyer);
     QTRY_VERIFY_WITH_TIMEOUT(!radio.mox(), 3000);
 
@@ -596,11 +610,32 @@ void TestTciTxMutex::desktop_host_holder_and_program_ownership()
     QVERIFY(holder.isHeldBy(SliceOwnership::stationDevice()));
     radio.setTransmitHolder(SliceOwnership::stationDevice());
     QVERIFY(radio.txSliceArbiter()->bindForHolder(SliceOwnership::stationDevice(), ownSlice));
-    radio.moxController()->setMoxCheck([]() {
+    // bindForHolder() may have queued the move; only its completed binding
+    // makes the station's desktop TCI receiver ready for a key request.
+    QTRY_COMPARE_WITH_TIMEOUT(radio.txSliceArbiter()->txBoundSliceId(), ownSlice, 3000);
+    QCOMPARE(radio.txSliceArbiter()->pendingHandoffSliceId(), -1);
+    QSignalSpy rejected(radio.moxController(), &MoxController::moxRejected);
+    int checkCalls = 0;
+    radio.moxController()->setMoxCheck([&checkCalls]() {
+        ++checkCalls;
         return safety::BandPlanGuard::MoxCheckResult{false, QStringLiteral("test block")};
     });
+    const int refusalTextMark = int(text.count());
     app.sendTextMessage(QStringLiteral("trx:0,true,tci;"));
-    QTest::qWait(100);
+    // Observe this request's custom refusal before clearing the check.
+    // A fixed wait could let an early not-ready refusal miss this scenario.
+    QTRY_VERIFY_WITH_TIMEOUT(!rejected.isEmpty(), 3000);
+    QCOMPARE(rejected.last().at(0).toString(), QStringLiteral("test block"));
+    QVERIFY(checkCalls > 0);
+    const auto hasRefusalReply = [&text, refusalTextMark]() {
+        for (int index = refusalTextMark; index < text.count(); ++index) {
+            if (text.at(index).at(0).toString().contains(QStringLiteral("trx:0,false;"))) {
+                return true;
+            }
+        }
+        return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(hasRefusalReply(), 3000);
     QVERIFY(!radio.mox());
     QCOMPARE(server.activeTxClientCount(), 0);
     radio.moxController()->setMoxCheck({});

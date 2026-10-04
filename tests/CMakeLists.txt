@@ -9239,7 +9239,7 @@ nereus_add_test(tst_remote_transmit_client EXTRA_LABELS session)
 # the window's microphone is a test bus.
 if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_remote_window_transmit
-        fakes/LoopbackTransport.cpp)
+        fakes/LoopbackTransport.cpp fakes/FakeCaptureChild.cpp)
     target_link_libraries(tst_remote_window_transmit PRIVATE Qt6::WebSockets)
 endif()
 

@@ -35,7 +35,6 @@ private:
         g.catSep           = w(14);
         g.tciIndicator     = w(60);
         g.tciSep           = w(14);
-        g.tgxlChip         = w(62);
         g.systemTile       = w(60);
         g.systemTileSep    = w(14);
         g.safetyGroup      = w(200);
@@ -108,10 +107,10 @@ private slots:
         ChromeBarController c;
         ChromeBarWidgets g = makeWidgets();
         registerChromeBarItems(c, g);
-        // Design section 6: system tile, then TGXL, then the CAT/TCI pair,
+        // System tile, then the CAT/TCI pair,
         // then the chain tags, then the RX pills, then the placeholders.
         const QList<QWidget*> order = {
-            g.systemTile, g.tgxlChip, g.catIndicator, g.chain0,
+            g.systemTile, g.catIndicator, g.chain0,
             g.pillByRung[5], g.placeholderGroup
         };
         QList<int> foldWidth;
@@ -144,24 +143,20 @@ private slots:
     void nullWidgetsAreSkippedNotCrashed() {
         // Defensive case: addItem's null-skip guard, exercised here in
         // case a future caller does not construct every widget. NOT how
-        // production represents a single-ADC SKU or a tuner-absent board
-        // -- MainWindow::buildStatusBar constructs chain1 and tgxlChip
+        // production represents a single-ADC SKU
+        // -- MainWindow::buildStatusBar constructs chain1
         // unconditionally and gates their visibility live via
         // setItemAvailable, never by leaving the field null
         // (final-fix-wave finding 8).
         ChromeBarController c;
         ChromeBarWidgets g = makeWidgets();
         g.chain1 = nullptr;
-        g.tgxlChip = nullptr;
         registerChromeBarItems(c, g);
         c.relayout(1512);
         QVERIFY(!g.panButton->isHidden());
 
-        // Stronger than "didn't crash": the gap left by two unregistered
-        // rungs (2, 4) must not wedge the ladder for anything else. Sweep
-        // down and confirm a still-registered item folds normally, and
-        // that tgxlChip's label can never surface -- it cannot fold if it
-        // was never on the ladder to begin with.
+        // The null chain must not wedge the ladder for anything else.
+        // Sweep down and confirm a still-registered item folds normally.
         bool systemTileFolded = false;
         for (int width = 2400; width >= 300; --width) {
             c.relayout(width);
@@ -169,7 +164,7 @@ private slots:
             if (g.systemTile->isHidden()) { systemTileFolded = true; }
         }
         QVERIFY2(systemTileFolded,
-                "ladder never folded systemTile with two rungs unregistered");
+                "ladder never folded systemTile with chain1 unregistered");
     }
 };
 QTEST_MAIN(TstChromeBarItems)

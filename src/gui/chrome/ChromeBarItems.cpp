@@ -72,8 +72,6 @@ void registerChromeBarItems(ChromeBarController& c, const ChromeBarWidgets& w)
 
     add(c, w.systemTile, w.systemTileSep, 1,
         QCoreApplication::translate("ChromeBar", "PA / CPU"));
-    add(c, w.tgxlChip, nullptr, 2,
-        QCoreApplication::translate("ChromeBar", "TGXL"));
 
     // CAT and TCI share rung 3 so they fold as a pair, avoiding a
     // "TCI but no CAT" half-state.
