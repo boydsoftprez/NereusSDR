@@ -68,6 +68,23 @@ mw0lge@grange-lane.co.uk
 // its original terms and is not affected by this dual-licensing statement in any way.        //
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
+/*   Additions to detect G2 XDMA:
+ *   Copyright (C) 2026 -  Martinus Stroomer, CT1IQI
+ *
+ * Purpose: This source code supports use of the xdma interface on a Saturn board,
+ * as used in the Apache-Labs 'Anan G2' Software Defined Radio (SDR).
+ *
+ * Credits:
+ * The documentation provided by the designers of Saturn was used.
+ * Code written in C for the G2 in the applications P2app and piHPSDR has
+ * been extensively re-used and adapted to fit the Nereus-SDR application.   
+ * Main authors of Saturn's SDR design, documentation, and code support in
+ * p2app and piHPSDR applications are:   
+ * Laurence Barker, G8NJJ
+ * Rick Koch, N1GP
+ * John Melton, G0ORX
+ * Christoph van Wüllen, DL1YCF.
+ */
 
 #include "RadioDiscovery.h"
 #include <QThread>
@@ -85,7 +102,27 @@ mw0lge@grange-lane.co.uk
 #include <sys/socket.h>
 #endif
 
+#include <sys/stat.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <iostream>
+#include <string>
+#include "saturn/SaturnXdma.h"
+
+#define FIRMWARE_MIN_MINOR            8  // Minimum FPGA "minor" software version that this software can run
+#define FIRMWARE_MAX_MINOR            18 // Maximum FPGA "minor" software version that this software can run
+#define FIRMWARE_MIN_MAJOR            1  // Minimum FPGA "major" software version that this software can run
+#define FIRMWARE_MAX_MAJOR            1  // Minimum FPGA "major" software version that this software can run
+#define SATURNPRODUCTID               1  // Saturn, any version
+#define SATURNGOLDENCONFIGID          3  // "golden" configuration id
+#define SATURNPRIMARYCONFIGID         4  // "primary" configuration id
+// #define VADDRUSERVERSIONREG   0x4004  // user defined version register; not used in NereusSDR
+#define VADDRSWVERSIONREG        0XC000  // user defined s/w version register
+#define VADDRPRODVERSIONREG      0XC004  // user defined product version register
+
 namespace NereusSDR {
+
+RadioInfo info;
 
 // --- RadioInfo static helpers ---
 
@@ -260,6 +297,140 @@ QList<RadioInfo> RadioDiscovery::discoveredRadios() const
 }
 
 // ---------------------------------------------------------------------------
+// parseG2XDMA — extract RadioInfo from a XDMA discovery response.
+//
+// ---------------------------------------------------------------------------
+bool RadioDiscovery::parseG2XDMA(RadioInfo& out)
+{
+    struct stat sb;
+    
+    if (stat("/dev/xdma0_user", &sb) == 0 && S_ISCHR(sb.st_mode)) {
+        out = RadioInfo{};
+        bool act_pihpsdr = false, act_p2app = false;
+        out.protocol  = ProtocolVersion::G2XDMA;
+        out.iface     = IfaceVersion::XDMA;
+        FILE *fp;
+        char path[1035];
+        fp = popen("lsof /dev/xdma0_user", "r");
+
+        if (fp == NULL) {
+            qCDebug(lcDiscovery) << "Failed to detect whether /dev/xdma0_user in use";
+            return false;
+        }
+
+        while (fgets(path, sizeof(path), fp) != NULL) {
+            if (strstr(path, "pihpsdr") != NULL)
+                act_pihpsdr = true;
+            if (strstr(path, "p2app") != NULL)
+                act_p2app = true;
+        }
+        pclose(fp);
+        out.inUse      = act_pihpsdr || act_p2app;
+        out.port       = 0;
+        out.address    = QHostAddress::AnyIPv4; // 0.0.0.0 reached via XDMA, not IP
+        out.macAddress = "41:6E:61:6E:47:32";   // hex ascii "AnanG2"
+      
+        if (out.inUse)
+            return true; // xdma occupied and cannot be used by Nereus-SDR
+
+        // connect xdma and get FPGA details
+        if (openXDMADriver() == 0)
+            return false;
+
+        bool goodConfig = true;
+        bool incompatible = true;
+        //
+        // Only proceed with initializing Saturn registers when it has been
+        // established here that a known Saturn board has been discovered.
+        // Documentation as provided in p2app and pihpsdr:
+        //     FpgaMajorVersion   SW[31:25], only valid if MinorVersion >= 18
+        //     FPGA_SWID          SW[24:20]
+        //     FpgaMinorVersion   SW[19:4]
+        //     FPGA_ClockInfo     SW[3:0]
+        //     FPGA_ProdID        PR[31:16]
+        //     SaturnPcbVersion   PR[15:0]
+        //
+        quint32 SoftwareInformation = regRead(VADDRSWVERSIONREG);
+        quint32 ProductInformation  = regRead(VADDRPRODVERSIONREG);
+        // quint32 UserVersion         = regRead(VADDRUSERVERSIONREG);
+        quint32 FPGA_ClockInfo      = (SoftwareInformation      ) & 0xF;     //  4 clock bits
+        quint32 FpgaMajorVersion    = (SoftwareInformation >> 25) & 0x7F;    //  7 bit major sw version
+        quint32 FPGA_SWID           = (SoftwareInformation >> 20) & 0x1F;    //  5 bit software ID
+        quint32 FPGA_ProdID         = (ProductInformation  >> 16) & 0xFFFF;  // 16 bit product ID
+
+        quint32 FpgaMinorVersion = (SoftwareInformation >>  4) & 0xFFFF; // 16 bit minor sw version
+
+        //
+        // Initially, MajorVersions did not exist
+        //
+        if (FpgaMinorVersion < 18) {
+            FpgaMajorVersion = 0;
+        }
+
+        if (FPGA_ProdID != SATURNPRODUCTID) {
+        qCDebug(lcDiscovery) << "SATURN ProdID does not match";
+            goodConfig = false;
+        }
+
+        if (FPGA_SWID != SATURNGOLDENCONFIGID && FPGA_SWID != SATURNPRIMARYCONFIGID) {
+            qCDebug(lcDiscovery) << "SATURN SWID does not match";
+            goodConfig = false;
+        }
+
+        if (FPGA_ClockInfo != 0xF) {
+            qCDebug(lcDiscovery) << "SATURN clocks missing";
+            goodConfig = false;  // not all clocks are present
+        }
+
+        if (!goodConfig) {
+            //
+            // This may indicate that the XDMA driver is not connected to a known Saturn board
+            //
+            closeXDMADriver();
+            return false;
+        }
+
+        if (FpgaMajorVersion == 0 && FpgaMinorVersion >= FIRMWARE_MIN_MINOR && FpgaMinorVersion <= FIRMWARE_MAX_MINOR) {
+            incompatible = false;
+        }
+
+        if (FpgaMajorVersion >= FIRMWARE_MIN_MAJOR && FpgaMajorVersion <=  FIRMWARE_MAX_MAJOR) {
+            incompatible = false;
+        }
+
+        if (incompatible) {
+            qCDebug(lcDiscovery) << "Incompatible Saturn FPGA firmware version"
+            << "FPGA major: " << std::to_string(FpgaMajorVersion) << "\n"
+            << "FPGA minor: " << std::to_string(FpgaMinorVersion) << "\n"
+            << "FIRMWARE_MIN_MAJOR" << std::to_string(FIRMWARE_MIN_MAJOR) << "\n"
+            << "FIRMWARE_MAX_MAJOR" << std::to_string(FIRMWARE_MAX_MAJOR) << "\n"
+            << "FIRMWARE_MIN_MINOR" << std::to_string(FIRMWARE_MIN_MINOR) << "\n"
+            << "FIRMWARE_MAX_MINOR" << std::to_string(FIRMWARE_MAX_MINOR) << "\n";
+            return false;
+        }
+
+        out.boardType            = HPSDRHW::Saturn; 
+        out.pcbVersion           = (ProductInformation & 0xFFFF);        // 16 bit board ID
+        out.firmwareVersion      = FpgaMinorVersion;
+        out.maxReceivers         = RadioInfo::maxReceiversForBoard(out.boardType);
+        out.adcCount             = RadioInfo::adcCountForBoard(out.boardType);
+        out.name                 = QString::fromLatin1(BoardCapsTable::forBoard(out.boardType).displayName);
+        out.hasDiversityReceiver = true;
+        out.hasPureSignal        = true; 
+        out.maxSampleRate        = 1536000;
+
+        qCDebug(lcDiscovery) << "XDMA response from" << out.macAddress
+                             << "board:" << BoardCapsTable::forBoard(out.boardType).displayName
+                             << "fw:" << out.firmwareVersion;
+        
+        closeXDMADriver();
+        return true;
+    } else {
+        return false;        
+    }
+}
+
+// ---------------------------------------------------------------------------
 // parseP1Reply — extract RadioInfo from a P1 discovery response.
 // From Thetis clsRadioDiscovery.cs parseDiscoveryReply() P1 branch (line ~1155).
 //
@@ -289,6 +460,7 @@ bool RadioDiscovery::parseP1Reply(const QByteArray& bytes, const QHostAddress& s
 
     out = RadioInfo{};
     out.protocol  = ProtocolVersion::Protocol1;
+    out.iface     = IfaceVersion::IP;
     out.inUse     = (b2 == 0x03);
     out.port      = 1024;
 
@@ -408,6 +580,7 @@ bool RadioDiscovery::parseP2Reply(const QByteArray& bytes, const QHostAddress& s
 
     out = RadioInfo{};
     out.protocol  = ProtocolVersion::Protocol2;
+    out.iface     = IfaceVersion::IP;
     out.inUse     = (b4 == 0x03);
     out.port      = 1024;
 
@@ -525,6 +698,26 @@ static QByteArray buildP1DiscoveryProbe()
 
 void RadioDiscovery::scanAllNics()
 {
+    bool parsed = false;
+    // Global MAC de-duplication across all NICs for this scan cycle
+    QSet<QString> seenThisScan;
+
+    // test whether a native xdma interface is present
+    // On an Anan G2 this gives direct access to the SDR's FPGA
+    qCWarning(lcDiscovery) << "Looking for /dev/xdma* based saturn devices";
+    parsed = parseG2XDMA(info);
+    if (parsed) {
+         if (!m_radios.contains(info.macAddress)) {
+             m_radios.insert(info.macAddress, info);
+             qCDebug(lcDiscovery) << "Discovered:" << info.name
+                                  << "Protocol XDMA";
+             emit radioDiscovered(info);
+         } else {
+             m_radios[info.macAddress] = info;
+             emit radioUpdated(info);
+         }
+    }
+
     // From Thetis clsRadioDiscovery.cs buildDiscoveryPacketP1()
     QByteArray p1Packet = buildP1DiscoveryProbe();
 
@@ -536,11 +729,7 @@ void RadioDiscovery::scanAllNics()
     const int attempts        = qMax(1, timing.attemptsPerNic);
     const int quietBeforeStop = qMax(1, timing.quietPollsBeforeResend);
     const int pollMs          = qMax(10, timing.pollTimeoutMs);
-
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-
-    // Global MAC de-duplication across all NICs for this scan cycle
-    QSet<QString> seenThisScan;
 
     const auto interfaces = QNetworkInterface::allInterfaces();
     for (const QNetworkInterface& iface : interfaces) {
@@ -644,8 +833,7 @@ void RadioDiscovery::scanAllNics()
                         continue;
                     }
 
-                    RadioInfo info;
-                    bool parsed = false;
+                    parsed = false;
 
                     const quint8 firstByte = static_cast<quint8>(data[0]);
                     if (firstByte == 0xEF) {
@@ -722,6 +910,17 @@ void RadioDiscovery::probeAddress(const QHostAddress& addr,
                                   quint16 port,
                                   std::chrono::milliseconds timeout)
 {
+    auto* timer = new QTimer(this);
+    timer->setSingleShot(true);
+    if (RadioDiscovery::parseG2XDMA(info)) {
+        m_radios.insert(info.macAddress, info);
+        m_lastSeen.insert(info.macAddress, QDateTime::currentMSecsSinceEpoch());
+        emit radioDiscovered(info);
+        timer->stop();
+        timer->deleteLater();
+        return;
+    }
+    
     // Same post-disconnect quiet period as startDiscovery(): a unicast probe
     // at a radio mid-stop-transition is the same race as a broadcast one.
     // Defer the whole call; the caller's timeout starts when the probe is
@@ -735,9 +934,6 @@ void RadioDiscovery::probeAddress(const QHostAddress& addr,
 
     auto* sock = new QUdpSocket(this);
     sock->bind(QHostAddress::AnyIPv4, 0);
-
-    auto* timer = new QTimer(this);
-    timer->setSingleShot(true);
 
     auto cleanup = [sock, timer]() {
         timer->stop();
@@ -756,7 +952,6 @@ void RadioDiscovery::probeAddress(const QHostAddress& addr,
             quint16 srcPort = 0;
             sock->readDatagram(buf.data(), buf.size(), &src, &srcPort);
 
-            RadioInfo info;
             if (parseP1Reply(buf, src, info) || parseP2Reply(buf, src, info)) {
                 m_radios.insert(info.macAddress, info);
                 m_lastSeen.insert(info.macAddress, QDateTime::currentMSecsSinceEpoch());

@@ -94,7 +94,24 @@ mw0lge@grange-lane.co.uk
 // its original terms and is not affected by this dual-licensing statement in any way.        //
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
-
+/*   Additions to detect G2 XDMA:
+ *   Copyright (C) 2026 -  Martinus Stroomer, CT1IQI
+ *
+ * Purpose: This source code supports use of the xdma interface on a Saturn board,
+ * as used in the Apache-Labs 'Anan G2' Software Defined Radio (SDR).
+ *
+ * Credits:
+ * The documentation provided by the designers of Saturn was used.
+ * Code written in C for the G2 in the applications P2app and piHPSDR has
+ * been extensively re-used and adapted to fit the Nereus-SDR application.   
+ * Main authors of Saturn's SDR design, documentation, and code support in
+ * p2app and piHPSDR applications are:   
+ * Laurence Barker, G8NJJ
+ * Rick Koch, N1GP
+ * John Melton, G0ORX
+ * Christoph van Wüllen, DL1YCF.
+ */
+ 
 #include "ConnectionPanel.h"
 #include "AddCustomRadioDialog.h"
 #include "models/RadioModel.h"
@@ -333,10 +350,11 @@ void ConnectionPanel::buildUI()
             << QStringLiteral("Name")        // Col 1 — clsDiscoveredRadioPicker.cs:112 "Hardware"
             << QStringLiteral("Board")       // Col 2 — HPSDRHW board type name
             << QStringLiteral("Protocol")    // Col 3 — clsDiscoveredRadioPicker.cs:143 "Protocol"
-            << QStringLiteral("IP")          // Col 4 — clsDiscoveredRadioPicker.cs:119 "IP"
-            << QStringLiteral("Last Seen")   // Col 5 — relative last-seen time (was MAC)
-            << QStringLiteral("Firmware")    // Col 6 — clsDiscoveredRadioPicker.cs:151 "Version"
-            << QStringLiteral("In-Use");     // Col 7 — ucRadioList.cs:101 RadioIsBusy
+            << QStringLiteral("Interface")   // Col 4 — interfaced via IP or XDMA
+            << QStringLiteral("IP")          // Col 5 — clsDiscoveredRadioPicker.cs:119 "IP"
+            << QStringLiteral("Last Seen")   // Col 6 — relative last-seen time (was MAC)
+            << QStringLiteral("Firmware")    // Col 7 — clsDiscoveredRadioPicker.cs:151 "Version"
+            << QStringLiteral("In-Use");     // Col 8 — ucRadioList.cs:101 RadioIsBusy
     m_radioTable->setHorizontalHeaderLabels(headers);
 
     // Source: clsDiscoveredRadioPicker.cs:87 — FullRowSelect
@@ -353,7 +371,8 @@ void ConnectionPanel::buildUI()
     m_radioTable->setColumnWidth(ColStatus,    44);  // wide enough for 14px pill + margins
     m_radioTable->setColumnWidth(ColName,     180);
     m_radioTable->setColumnWidth(ColBoard,    100);
-    m_radioTable->setColumnWidth(ColProtocol,  60);
+    m_radioTable->setColumnWidth(ColProtocol,  70);
+    m_radioTable->setColumnWidth(ColIface,     75);
     m_radioTable->setColumnWidth(ColIp,       130);
     m_radioTable->setColumnWidth(ColLastSeen, 100);
     m_radioTable->setColumnWidth(ColFirmware,  70);
@@ -419,11 +438,13 @@ void ConnectionPanel::buildUI()
 
     // Info row 2: IP + MAC
     auto* infoRow2 = new QHBoxLayout();
+    m_detailIfaceLabel  = new QLabel(m_detailGroup);
     m_detailIpLabel  = new QLabel(m_detailGroup);
     m_detailMacLabel = new QLabel(m_detailGroup);
-    for (auto* lbl : {m_detailIpLabel, m_detailMacLabel}) {
+    for (auto* lbl : {m_detailIfaceLabel, m_detailIpLabel, m_detailMacLabel}) {
         lbl->setStyleSheet(QStringLiteral("QLabel { color: #8090a0; font-size: 12px; }"));
     }
+    infoRow2->addWidget(m_detailIfaceLabel);
     infoRow2->addWidget(m_detailIpLabel);
     infoRow2->addWidget(m_detailMacLabel);
     infoRow2->addStretch();
@@ -871,9 +892,21 @@ void ConnectionPanel::populateRow(int row, const RadioInfo& info)
         default:                         boardStr = QStringLiteral("Unknown");     break;
     }
 
-    // Protocol string — ucRadioList.cs:1342 "Protocol-1" / "Protocol-2"
-    const QString protoStr = (info.protocol == ProtocolVersion::Protocol2)
-                             ? QStringLiteral("P2") : QStringLiteral("P1");
+    // Protocol string — ucRadioList.cs:1342 "Protocol-1" / "Protocol-2" / "XDMA"
+    QString protoStr;
+    switch (info.protocol) {
+        case ProtocolVersion::Protocol1: protoStr = QStringLiteral("P1");      break;
+        case ProtocolVersion::Protocol2: protoStr = QStringLiteral("P2");      break;
+        case ProtocolVersion::G2XDMA:    protoStr = QStringLiteral("G2XDMA");    break;
+        default:                         protoStr = QStringLiteral("Unknown"); break;
+    }
+
+    QString ifaceStr;
+    switch (info.iface) {
+        case IfaceVersion::IP:   ifaceStr = QStringLiteral("IP");      break;
+        case IfaceVersion::XDMA: ifaceStr = QStringLiteral("XDMA");    break;
+        default:                 ifaceStr = QStringLiteral("Unknown"); break;
+    }
 
     // In-use string — ucRadioList.cs:101 RadioIsBusy
     const QString inUseStr = info.inUse
@@ -898,6 +931,7 @@ void ConnectionPanel::populateRow(int row, const RadioInfo& info)
     m_radioTable->setItem(row, ColName,     makeItem(name));
     m_radioTable->setItem(row, ColBoard,    makeItem(boardStr));
     m_radioTable->setItem(row, ColProtocol, makeItem(protoStr));
+    m_radioTable->setItem(row, ColIface,    makeItem(ifaceStr));
     m_radioTable->setItem(row, ColIp,       makeItem(info.address.toString()));
     m_radioTable->setItem(row, ColLastSeen, makeItem(lastSeenStr));
     m_radioTable->setItem(row, ColFirmware, makeItem(QString::number(info.firmwareVersion)));
@@ -1012,8 +1046,17 @@ void ConnectionPanel::onRadioDiscovered(const RadioInfo& info)
     setStatusText(QStringLiteral("Found %1 radio(s)").arg(m_radioTable->rowCount()));
     updateButtonStates();
 
-    qCDebug(lcDiscovery) << "Panel: radio discovered" << info.displayName()
-                         << info.address.toString();
+    switch (info.iface) {
+        case IfaceVersion::XDMA:
+            qCDebug(lcDiscovery) << "Panel: radio discovered" << info.displayName()
+                                 << "Interface: XDMA";
+        break;
+        case IfaceVersion::IP:
+        default: 
+            qCDebug(lcDiscovery) << "Panel: radio discovered" << info.displayName()
+                                 << "Interface: UDP/IP" 
+                                 << "IP Address: " << info.address.toString();
+    }
 }
 
 void ConnectionPanel::onRadioUpdated(const RadioInfo& info)
@@ -1442,9 +1485,22 @@ void ConnectionPanel::updateDetailPanel()
     m_detailBoardLabel->setText(QStringLiteral("Board: %1 (0x%2)")
         .arg(boardName)
         .arg(static_cast<int>(info.boardType), 2, 16, QLatin1Char('0')));
-    m_detailProtoLabel->setText(QStringLiteral("Protocol: P%1")
-        .arg(info.protocol == ProtocolVersion::Protocol2 ? 2 : 1));
+    QString protoStr;
+    switch (info.protocol) {
+        case ProtocolVersion::Protocol1: protoStr = QStringLiteral("P1");      break;
+        case ProtocolVersion::Protocol2: protoStr = QStringLiteral("P2");      break;
+        case ProtocolVersion::G2XDMA:    protoStr = QStringLiteral("G2XDMA");  break;
+        default:                         protoStr = QStringLiteral("Unknown"); break;
+    }
+    m_detailProtoLabel->setText(QStringLiteral("Protocol: %1").arg(protoStr));
     m_detailFwLabel->setText(QStringLiteral("Firmware: %1").arg(info.firmwareVersion));
+    QString ifaceStr;    
+    switch (info.iface) {
+        case IfaceVersion::IP:   ifaceStr = QStringLiteral("UDP/IP");  break;
+        case IfaceVersion::XDMA: ifaceStr = QStringLiteral("XDMA");    break;
+        default:                 ifaceStr = QStringLiteral("Unknown"); break;
+    }
+    m_detailIfaceLabel->setText(QStringLiteral("Iface: %1").arg(ifaceStr));  
     m_detailIpLabel->setText(QStringLiteral("IP: %1").arg(info.address.toString()));
     m_detailMacLabel->setText(QStringLiteral("MAC: %1").arg(info.macAddress));
 

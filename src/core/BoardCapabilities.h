@@ -240,6 +240,8 @@ struct BoardCapabilities {
     // the apply-caps call.
     HPSDRHW         board{HPSDRHW::Unknown};
     ProtocolVersion protocol;
+    bool hasAltProtocol {false};
+    ProtocolVersion altProtocol;
 
     int  adcCount;
 

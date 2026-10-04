@@ -7,6 +7,7 @@
 #include "RadioConnection.h"
 #include "P1RadioConnection.h"
 #include "P2RadioConnection.h"
+#include "G2XdmaRadioConnection.h"
 #include "LogCategories.h"
 
 #include <algorithm>
@@ -23,12 +24,17 @@ RadioConnection::~RadioConnection() = default;
 std::unique_ptr<RadioConnection> RadioConnection::create(const RadioInfo& info)
 {
     switch (info.protocol) {
-    case ProtocolVersion::Protocol2: {
-        auto conn = std::make_unique<P2RadioConnection>();
-        return conn;
-    }
-    case ProtocolVersion::Protocol1:
-        return std::make_unique<P1RadioConnection>();
+        case ProtocolVersion::Protocol2: {
+            auto conn = std::make_unique<P2RadioConnection>();
+            return conn;
+        }
+        case ProtocolVersion::Protocol1: {
+            return std::make_unique<P1RadioConnection>();
+        }
+        case ProtocolVersion::G2XDMA: {
+            auto conn = std::make_unique<G2XdmaRadioConnection>();
+            return conn;
+        }
     }
     qCWarning(lcConnection) << "Unknown protocol version:" << static_cast<int>(info.protocol);
     return nullptr;

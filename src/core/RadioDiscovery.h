@@ -55,7 +55,24 @@ mw0lge@grange-lane.co.uk
 // its original terms and is not affected by this dual-licensing statement in any way.        //
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
-
+/*   Additions to detect G2 XDMA:
+ *   Copyright (C) 2026 -  Martinus Stroomer, CT1IQI
+ *
+ * Purpose: This source code supports use of the xdma interface on a Saturn board,
+ * as used in the Apache-Labs 'Anan G2' Software Defined Radio (SDR).
+ *
+ * Credits:
+ * The documentation provided by the designers of Saturn was used.
+ * Code written in C for the G2 in the applications P2app and piHPSDR has
+ * been extensively re-used and adapted to fit the Nereus-SDR application.   
+ * Main authors of Saturn's SDR design, documentation, and code support in
+ * p2app and piHPSDR applications are:   
+ * Laurence Barker, G8NJJ
+ * Rick Koch, N1GP
+ * John Melton, G0ORX
+ * Christoph van Wüllen, DL1YCF.
+ */
+ 
 #include "HpsdrModel.h"
 
 #include <QObject>
@@ -77,7 +94,14 @@ namespace NereusSDR {
 // Protocol version supported by the radio.
 enum class ProtocolVersion : int {
     Protocol1 = 1,
-    Protocol2 = 2
+    Protocol2 = 2,
+    G2XDMA = 3
+};
+
+// Interface version supported by the radio.
+enum class IfaceVersion : int {
+    IP = 0,
+    XDMA = 1
 };
 
 // Information about a discovered OpenHPSDR radio.
@@ -90,7 +114,9 @@ struct RadioInfo {
 
     // Hardware
     HPSDRHW boardType{HPSDRHW::Unknown};
+    IfaceVersion iface;	                 // Interface 0: IP || 1: XDMA
     int firmwareVersion{0};
+    int pcbVersion{0};
     int adcCount{1};                     // Derived from boardType (1 or 2)
     int maxReceivers{4};                 // Board-dependent max simultaneous RX
     // The receiver count the radio itself reported in discovery byte 20,
@@ -242,6 +268,7 @@ public:
     // Public static parsers — exposed for unit-testing in Task 5.
     // Both return true on a valid discovery reply and populate 'out'.
     // From Thetis clsRadioDiscovery.cs parseDiscoveryReply() P1/P2 branches.
+    static bool parseG2XDMA(RadioInfo& out);
     static bool parseP1Reply(const QByteArray& bytes, const QHostAddress& source, RadioInfo& out);
     static bool parseP2Reply(const QByteArray& bytes, const QHostAddress& source, RadioInfo& out);
 

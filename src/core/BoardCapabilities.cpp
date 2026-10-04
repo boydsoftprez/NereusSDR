@@ -1141,6 +1141,8 @@ const BoardCapabilities kHermesLiteRxOnly = {
 const BoardCapabilities kSaturn = {
     .board            = HPSDRHW::Saturn,
     .protocol         = ProtocolVersion::Protocol2,
+    .hasAltProtocol   = true,
+    .altProtocol      = ProtocolVersion::G2XDMA,
     .adcCount         = 2,
     // Two driven RX filter chains. ANAN_G2 and ANAN_G2_1K both resolve here
     // (clsHardwareSpecific.cs:164-177 [v2.10.3.15]) and both are in the
@@ -1208,6 +1210,8 @@ const BoardCapabilities kSaturn = {
 const BoardCapabilities kSaturnMKII = {
     .board            = HPSDRHW::SaturnMKII,
     .protocol         = ProtocolVersion::Protocol2,
+    .hasAltProtocol   = true,
+    .altProtocol      = ProtocolVersion::G2XDMA,
     .adcCount         = 2,
     // Two driven RX filter chains, taken from the physical board rather than
     // from upstream list membership: HPSDRHW.SaturnMKII appears once in all

@@ -1900,6 +1900,26 @@ set(GUI_SOURCES
 )
 
 # --------------------------------------------------------------------------
+# Option to run native in an Anan G2 SDR as host.
+# The G2 has a Compute Module and Linux OS (UNIX).
+# The SDR's FPGA can be reached via XDMA.
+# This option will add the use of the XDMA interface to
+# radio discovery and communication 
+# --------------------------------------------------------------------------
+option(ENABLE_XDMA "Build with XDMA interface" ON)
+if(ENABLE_XDMA AND UNIX)
+    set(SATURN_DIR ${CMAKE_SOURCE_DIR}/src/core/saturn)
+    if(EXISTS "${SATURN_DIR}/SaturnXdma.h")
+        add_compile_definitions(XDMA_FOUND=1)
+        list(APPEND CORE_SOURCES src/core/saturn/SaturnXdma.cpp)
+        list(APPEND CORE_SOURCES src/core/G2XdmaRadioConnection.cpp)
+        message(STATUS "XDMA source code found — XDMA enabled")
+    else()
+        message(STATUS "XDMA source not found at ${SATURN_DIR} — use of XDMA disabled")
+    endif()
+endif()
+
+# --------------------------------------------------------------------------
 # Resources
 # --------------------------------------------------------------------------
 qt_add_resources(RESOURCES resources.qrc)

@@ -55,7 +55,24 @@ mw0lge@grange-lane.co.uk
 // its original terms and is not affected by this dual-licensing statement in any way.        //
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
-
+/*   Additions to detect G2 XDMA:
+ *   Copyright (C) 2026 -  Martinus Stroomer, CT1IQI
+ *
+ * Purpose: This source code supports use of the xdma interface on a Saturn board,
+ * as used in the Apache-Labs 'Anan G2' Software Defined Radio (SDR).
+ *
+ * Credits:
+ * The documentation provided by the designers of Saturn was used.
+ * Code written in C for the G2 in the applications P2app and piHPSDR has
+ * been extensively re-used and adapted to fit the Nereus-SDR application.   
+ * Main authors of Saturn's SDR design, documentation, and code support in
+ * p2app and piHPSDR applications are:   
+ * Laurence Barker, G8NJJ
+ * Rick Koch, N1GP
+ * John Melton, G0ORX
+ * Christoph van Wüllen, DL1YCF.
+ */
+ 
 #include "core/RadioDiscovery.h"
 #include "core/RadioConnection.h"
 #include "core/HardwareProfile.h"
@@ -89,11 +106,12 @@ class RadioModel;
 //   Col 0  ●  — state pill (Online/Stale/Offline/Connected)
 //   Col 1  Name — displayName() from BoardCapsTable
 //   Col 2  Board — HPSDRHW name
-//   Col 3  Protocol — P1 / P2
-//   Col 4  IP — radio IP address
-//   Col 5  Last Seen — relative age ("just now", "4 m ago", etc.)
-//   Col 6  Firmware — firmware version integer
-//   Col 7  In-Use — "free" / "in use"
+//   Col 3 Protocol — P1 / P2 / G2XDMA
+//   Col 4 Interface — IP / XDMA
+//   Col 5 IP — radio IP address
+//   Col 6 Last Seen — relative age ("just now", "4 m ago", etc.)
+//   Col 7 Firmware — firmware version integer
+//   Col 8 In-Use — "free" / "in use"
 //
 // Color coding:
 //   Green row  : online + free
@@ -203,6 +221,7 @@ private:
     QLabel*      m_detailBoardLabel{nullptr};
     QLabel*      m_detailProtoLabel{nullptr};
     QLabel*      m_detailFwLabel{nullptr};
+    QLabel*      m_detailIfaceLabel{nullptr};
     QLabel*      m_detailIpLabel{nullptr};
     QLabel*      m_detailMacLabel{nullptr};
     QComboBox*   m_modelCombo{nullptr};
@@ -234,12 +253,13 @@ private:
         ColStatus   = 0,  // state pill dot
         ColName     = 1,  // Hardware name
         ColBoard    = 2,  // Board type
-        ColProtocol = 3,  // P1/P2
-        ColIp       = 4,  // IP address
-        ColLastSeen = 5,  // relative last-seen time (was ColMac)
-        ColFirmware = 6,  // Firmware version
-        ColInUse    = 7,  // "free" / "in use"
-        ColCount    = 8
+        ColProtocol = 3,  // P1/P2/G2XDMA
+        ColIface    = 4,  // IP / XDMA
+        ColIp       = 5,  // IP address
+        ColLastSeen = 6,  // relative last-seen time (was ColMac)
+        ColFirmware = 7,  // Firmware version
+        ColInUse    = 8,  // "free" / "in use"
+        ColCount    = 9
     };
 };
 
