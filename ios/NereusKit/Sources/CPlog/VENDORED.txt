@@ -1,0 +1,10 @@
+plog, vendored into NereusSDR for iOS
+
+Commit:   94899e0b926ac1b0f4750bfbd495167b4a6ae9ef
+Archive:  https://codeload.github.com/SergiusTheBest/plog/tar.gz/94899e0b926ac1b0f4750bfbd495167b4a6ae9ef
+SHA-256:  92a08bce559b5f28aa88d3fd9071567414b9f43a83fe2a05a6dd14f1da536072
+Licence:  MIT (see LICENSE)
+Files:    28, copied unchanged from the archive
+
+Written by ios/scripts/vendor-sources.sh plog. Do not edit
+these files; change the pin in that script and run it again.

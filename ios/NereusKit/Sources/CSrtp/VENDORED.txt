@@ -1,0 +1,11 @@
+libsrtp, vendored into NereusSDR for iOS
+
+Commit:   24b3bf8f19b6f5ab4cd2bcceb4f4064efca86fd5
+Archive:  https://codeload.github.com/cisco/libsrtp/tar.gz/24b3bf8f19b6f5ab4cd2bcceb4f4064efca86fd5
+SHA-256:  063478e368d7cd13d04a908d152a46f90bfa728c4b324be6d413b0b92728207c
+Licence:  BSD-3-Clause (see LICENSE)
+Files:    44, copied unchanged from the archive
+          and config/config.h, written by the script
+
+Written by ios/scripts/vendor-sources.sh libsrtp. Do not edit
+these files; change the pin in that script and run it again.

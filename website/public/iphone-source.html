@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Source code · NereusSDR for iPhone and iPad</title>
+  <meta name="description" content="The complete source code of NereusSDR for iPhone and iPad, free of charge: where it is, which build came from which source, and how to get it.">
+  <link rel="canonical" href="https://nereussdr.com/iphone-source">
+  <meta name="theme-color" content="#0b1020">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400..600&amp;family=Atkinson+Hyperlegible+Next:ital,wght@0,300..700;1,400&amp;family=Saira:wdth,wght@100..125,300..700&amp;display=swap">
+  <link rel="stylesheet" href="/assets/css/site.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="wrap nav__inner">
+      <a class="brand" href="/" aria-label="NereusSDR home">
+        <img src="/assets/img/nereus-64.png" width="34" height="34" alt="">
+        <span class="brand__word">Nereus<b>SDR</b></span>
+      </a>
+    </div>
+  </header>
+
+  <main id="main" class="section">
+    <div class="wrap">
+      <article class="doc">
+        <p class="eyebrow">iPhone and iPad app</p>
+        <h1>The source code, <strong>free to everyone.</strong></h1>
+        <p class="doc__lede">
+          NereusSDR for iPhone and iPad is free software under the GNU General Public License,
+          version 3 or later, with an additional permission that lets it be distributed through the
+          App Store and TestFlight. That permission comes with a promise: the complete source code of
+          every version we distribute is available to everyone who has it, free of charge.
+        </p>
+
+        <h2>Where it is</h2>
+        <p>
+          The source is in the NereusSDR repository on GitHub,
+          <a href="https://github.com/boydsoftprez/NereusSDR">github.com/boydsoftprez/NereusSDR</a>,
+          in the <code>ios</code> folder. That folder holds everything needed to build the app:
+        </p>
+        <ul>
+          <li>the app and its Live Activity widget (<code>ios/NereusApp</code>, <code>ios/NereusActivity</code>, <code>ios/Shared</code>);</li>
+          <li>NereusKit, the app's link, media and display modules (<code>ios/NereusKit</code>);</li>
+          <li>the third-party libraries the app includes, at the exact versions it uses, with their licences
+            (<code>ios/THIRD-PARTY.md</code> lists each one, where it came from and its checksum);</li>
+          <li>the project description and build scripts (<code>ios/project.yml</code>, <code>ios/scripts</code>);</li>
+          <li>the licence and its App Store permission (<code>ios/LICENSE</code>).</li>
+        </ul>
+
+        <h2>Which source made your copy</h2>
+        <p>
+          In the app, open <b>Setup</b>, then <b>About this app</b>. The top of the page shows the
+          version and build number.
+        </p>
+        <ul>
+          <li>
+            A test build also shows a build line such as <code>claude/iphone-app@cbabbd5bc</code>.
+            The characters after the <code>@</code> are the start of the commit it was built from.
+            Open <code>https://github.com/boydsoftprez/NereusSDR/commit/</code> followed by those
+            characters to see that exact source.
+          </li>
+          <li>
+            A build with no build line was made from a commit that carries a tag in the repository.
+            The <a href="https://github.com/boydsoftprez/NereusSDR/tags">tags page</a> lists them.
+          </li>
+        </ul>
+
+        <h2>How to get it</h2>
+        <p>
+          On GitHub, open the commit or tag for your build and choose <b>Browse files</b>, then
+          <b>Code</b>, <b>Download ZIP</b>. Or use git:
+        </p>
+        <div class="code code--solo">
+          <pre><code>git clone https://github.com/boydsoftprez/NereusSDR.git
+cd NereusSDR
+git checkout &lt;commit or tag&gt;</code></pre>
+        </div>
+        <p>
+          <code>ios/README.md</code> explains how to build and test the app. Building needs a Mac
+          with Xcode and XcodeGen.
+        </p>
+        <p>
+          If you cannot download it, ask on the
+          <a href="https://github.com/boydsoftprez/NereusSDR/issues">issue tracker</a> and we will
+          send you the source for your version, free of charge.
+        </p>
+
+        <h2>Your rights</h2>
+        <p>
+          You may run, study, change and share the app under the GNU General Public License,
+          version 3 or later. The additional permission for the App Store is at the end of
+          <code>ios/LICENSE</code>. The software comes with no warranty; sections 15 and 16 of the
+          licence explain this in full.
+        </p>
+
+        <p class="doc__note">
+          This page covers the iPhone and iPad app. The desktop NereusSDR application and the Core are
+          in the same repository under their own licence; see its
+          <a href="https://github.com/boydsoftprez/NereusSDR/blob/main/LICENSE">LICENSE</a> file.
+          The app's privacy policy is on <a href="/iphone-privacy">its own page</a>.
+        </p>
+      </article>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap">
+      <div class="footer__base">
+        <p class="footer__sig">Maintained by J.J. Boyd ~ KG4VCF</p>
+        <p><a href="/">Home</a> · <a href="/iphone-source">iPhone app source</a> · <a href="/iphone-privacy">iPhone app privacy</a></p>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

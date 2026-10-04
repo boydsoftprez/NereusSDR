@@ -9,7 +9,7 @@ captures and live operating checks. Passing one does not establish the others.
 
 - Original independently reviewed source baseline: `d1608a3de75e5c307187966110f2e51e8ecb0d17`.
 - Bounded desktop reconciliation: `df6590ff12aeffb7a73f46acc37ca3824dfe3901`, tree `48a41523ce4562c2cad5c7e8be316009e275a913`, the 2026.10 candidate inspected on 4 October.
-- The candidate tree has no `ios/` source. Native app chapters retain their earlier development/source-verified scope; delivery and release acceptance are separate.
+- The consolidated candidate includes the accepted signed mobile checkpoint `8e1c06198bf2023cf846cddb5296ef952cc9812c`, tree `6db2011dfac47bf68f36b3fedd672d91acfb51df`, plus the six reviewed logging-privacy annotations from signed `1f6f2be0a4bd8a40d2c62a0b53f17b062dcf58c6` (mobile marketing version 2026.9.0; tested preview build 5801). Native app chapters retain their earlier development/source-verified scope; delivery and release acceptance are separate.
 - Desktop captures: `codex/all-prs-radxa-gui@c1991b2d42ea`, title version 0.5.2.
 - Phone simulator capture source: `46591d6cd62a916a6eef83e65d12fc655259b44d`.
 - iPad simulator build identities and per-image provenance: [capture inventory](images/README.md).

@@ -1,0 +1,15 @@
+libdatachannel, vendored into NereusSDR for iOS
+
+Tag:      v0.24.5
+Archive:  https://codeload.github.com/paullouisageneau/libdatachannel/tar.gz/refs/tags/v0.24.5
+SHA-256:  454537c3cd526bed935d847bb2dff4046f266eef84d43b2a5f2f2f293c0026f4
+Licence:  MPL-2.0 (see LICENSE)
+Files:    134, copied from the archive, then patched by
+          ios/patches/libdatachannel/0001-mbedtls-fingerprint-mismatch-fails-handshake.patch
+          ios/patches/libdatachannel/0002-c-api-deferred-gathering-and-remote-fingerprint.patch
+          ios/patches/libdatachannel/0003-retain-juice-agent-through-turn-release.patch
+          ios/patches/libdatachannel/0004-ice-agent-lifetime-completion.patch
+          and include/module.modulemap, written by the script
+
+Written by ios/scripts/vendor-sources.sh libdatachannel. Do not edit
+these files; change the pin or the patches and run it again.

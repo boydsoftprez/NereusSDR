@@ -1,0 +1,79 @@
+libdatachannel v0.24.5: retain candidate resources through actual ICE destruction
+
+NereusSDR for iOS patch, applied after 0003 by ios/scripts/vendor-sources.sh.
+MPL-2.0, like the covered files it changes. 2026-09-27.
+
+The creation-time lifetime is shared by Configuration, IceTransport and its
+retiring agent. Configuration covers late/concurrent ICE creation; the agent
+owner covers asynchronous teardown and TURN retirement. The C callback consumes
+its pointer on both success and failure and runs once at final release.
+
+diff --git a/include/rtc/configuration.hpp b/include/rtc/configuration.hpp
+index f2cb135..2d51d5e 100644
+--- a/include/rtc/configuration.hpp
++++ b/include/rtc/configuration.hpp
+@@ -66,0 +67,3 @@ struct RTC_CPP_EXPORT Configuration {
++	// NereusSDR: keep external candidate resources alive through agent destruction.
++	shared_ptr<void> iceTransportLifetime;
++
+diff --git a/include/rtc/rtc.h b/include/rtc/rtc.h
+index 1bb097d..9c2c1ef 100644
+--- a/include/rtc/rtc.h
++++ b/include/rtc/rtc.h
+@@ -205,0 +206,9 @@ RTC_C_EXPORT int rtcCreatePeerConnection(const rtcConfiguration *config); // ret
++// NereusSDR: consumes user_ptr when onDestroyed is non-null, on success AND failure.
++// Calls onDestroyed(user_ptr) exactly once after the peer configuration and every ICE
++// agent (including deferred TURN retirement) have been destroyed. May run before this
++// call returns on failure. The callback must not throw, block, or call RTC APIs; dispatch
++// such work to another executor. It does not use rtcSetUserPointer's registry lifetime.
++typedef void(RTC_API *rtcPeerDestroyedCallbackFunc)(void *user_ptr);
++RTC_C_EXPORT int rtcCreatePeerConnectionWithLifetime(const rtcConfiguration *config,
++    rtcPeerDestroyedCallbackFunc onDestroyed, void *user_ptr);
++
+diff --git a/src/capi.cpp b/src/capi.cpp
+index 3dd349e..464be24 100644
+--- a/src/capi.cpp
++++ b/src/capi.cpp
+@@ -396 +396,6 @@ int rtcCreatePeerConnection(const rtcConfiguration *config) {
+-	return wrap([config] {
++	return rtcCreatePeerConnectionWithLifetime(config, nullptr, nullptr);
++}
++
++int rtcCreatePeerConnectionWithLifetime(const rtcConfiguration *config,
++                                       rtcPeerDestroyedCallbackFunc onDestroyed, void *user_ptr) {
++	return wrap([config, onDestroyed, user_ptr] {
+@@ -397,0 +403,4 @@ int rtcCreatePeerConnection(const rtcConfiguration *config) {
++		// Install ownership before parsing anything that can reject the configuration.
++		// shared_ptr also invokes its deleter if allocating the control block fails.
++		if (onDestroyed)
++			c.iceTransportLifetime = shared_ptr<void>(user_ptr, onDestroyed);
+diff --git a/src/impl/icetransport.cpp b/src/impl/icetransport.cpp
+index 4700f77..2cd02be 100644
+--- a/src/impl/icetransport.cpp
++++ b/src/impl/icetransport.cpp
+@@ -51,2 +51,2 @@ public:
+-	RetiringJuiceAgent(owner agent, init_token token)
+-	    : mAgent(std::move(agent)), mToken(std::move(token)) {}
++	RetiringJuiceAgent(owner agent, init_token token, shared_ptr<void> lifetime)
++	    : mToken(std::move(token)), mLifetime(std::move(lifetime)), mAgent(std::move(agent)) {}
+@@ -68,0 +69 @@ private:
++		mLifetime.reset();
+@@ -72 +73 @@ private:
+-	owner mAgent;
++	// Reverse destruction order also protects exceptional/unexecuted tasks.
+@@ -73,0 +75,2 @@ private:
++	shared_ptr<void> mLifetime;
++	owner mAgent;
+@@ -91 +94 @@ IceTransport::IceTransport(const Configuration &config, candidate_callback candi
+-      mAgent(nullptr, nullptr) {
++      mLifetime(config.iceTransportLifetime), mAgent(nullptr, nullptr) {
+@@ -225 +228,2 @@ IceTransport::~IceTransport() {
+-	auto retiring = std::make_shared<RetiringJuiceAgent>(std::move(mAgent), std::move(token));
++	auto retiring = std::make_shared<RetiringJuiceAgent>(std::move(mAgent), std::move(token),
++	                                                    std::move(mLifetime));
+diff --git a/src/impl/icetransport.hpp b/src/impl/icetransport.hpp
+index 5d74aab..86c752c 100644
+--- a/src/impl/icetransport.hpp
++++ b/src/impl/icetransport.hpp
+@@ -83,0 +84 @@ private:
++	shared_ptr<void> mLifetime; // declared before mAgent: destroyed after it on constructor failure

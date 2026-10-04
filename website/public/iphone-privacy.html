@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy · NereusSDR for iPhone and iPad</title>
+  <meta name="description" content="NereusSDR for iPhone and iPad collects no data: no analytics, no advertising, no tracking. What the app sends goes to your own station.">
+  <link rel="canonical" href="https://nereussdr.com/iphone-privacy">
+  <meta name="theme-color" content="#0b1020">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400..600&amp;family=Atkinson+Hyperlegible+Next:ital,wght@0,300..700;1,400&amp;family=Saira:wdth,wght@100..125,300..700&amp;display=swap">
+  <link rel="stylesheet" href="/assets/css/site.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="wrap nav__inner">
+      <a class="brand" href="/" aria-label="NereusSDR home">
+        <img src="/assets/img/nereus-64.png" width="34" height="34" alt="">
+        <span class="brand__word">Nereus<b>SDR</b></span>
+      </a>
+    </div>
+  </header>
+
+  <main id="main" class="section">
+    <div class="wrap">
+      <article class="doc">
+        <p class="eyebrow">iPhone and iPad app</p>
+        <h1>Privacy: <strong>we collect nothing.</strong></h1>
+        <p class="doc__lede">
+          NereusSDR for iPhone and iPad collects no data. It has no analytics, no advertising, no
+          crash reporter and no tracking, and it has no accounts. What the app sends goes to your own
+          station.
+        </p>
+
+        <h2>Where your data goes</h2>
+        <ul>
+          <li>
+            <b>To your own Core.</b> The app is a console for a NereusSDR Core that you run at your
+            station. The phone's name and its public key when you pair, its sign-in, the changes you
+            make, and your voice while you transmit all go to that Core and nowhere else.
+          </li>
+          <li>
+            <b>Through the remote access service, when you are away.</b> To reach your Core from
+            outside your home network, the app goes through the NereusSDR remote access service at
+            <code>rv.nereussdr.com</code>. The service and its relays keep connection state in memory.
+            Their system logs record connection events and data-use counts, without audio or commands.
+            The TURN relay can log a Core identifier or a requested destination address when it refuses
+            a request. Your audio and your commands are encrypted from the phone to your Core, so the
+            relay cannot read them.
+          </li>
+          <li>
+            <b>Support files only where you send them.</b> The Support Bundle page makes a file of
+            this phone's log and your Core's bundle and hands it to the share sheet. You choose where
+            it goes; the app sends it nowhere itself.
+          </li>
+          <li>
+            <b>Links open only when you tap them.</b> Links such as this page open in your browser
+            when you tap them, and not otherwise.
+          </li>
+        </ul>
+
+        <h2>What stays on the phone</h2>
+        <p>
+          The phone keeps the Cores you have paired with and its own signing key. The key lives in the
+          phone's Secure Enclave where it has one, and in the iOS Keychain otherwise. None of it leaves
+          the phone, apart from the public half of the key, which your Core keeps so it knows this phone.
+        </p>
+
+        <h2>Permissions the app asks for</h2>
+        <ul>
+          <li><b>Microphone:</b> to send your voice to your station while you transmit, and to show your microphone level when you open that meter. The level stays on the phone.</li>
+          <li><b>Local network:</b> to find your Core on your Wi-Fi and connect straight to it.</li>
+          <li><b>Bluetooth:</b> to find and connect to Bluetooth push-to-talk buttons.</li>
+        </ul>
+
+        <h2>Apple</h2>
+        <p>
+          If you choose to share crash reports or TestFlight feedback with developers in your iPhone's
+          settings, Apple collects and passes them on under Apple's own privacy policy. The app itself
+          sends nothing to us.
+        </p>
+
+        <h2>Questions</h2>
+        <p>
+          Ask on the project's <a href="https://github.com/boydsoftprez/NereusSDR/issues">issue tracker</a>.
+          The app's source is public, so anyone can check what it does: see
+          <a href="/iphone-source">the source code page</a>.
+        </p>
+
+        <p class="doc__note">
+          This policy covers NereusSDR for iPhone and iPad. The desktop NereusSDR application and the
+          Core are free software you run yourself, and they send nothing to us either.
+        </p>
+      </article>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap">
+      <div class="footer__base">
+        <p class="footer__sig">Maintained by J.J. Boyd ~ KG4VCF</p>
+        <p><a href="/">Home</a> · <a href="/iphone-source">iPhone app source</a> · <a href="/iphone-privacy">iPhone app privacy</a></p>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

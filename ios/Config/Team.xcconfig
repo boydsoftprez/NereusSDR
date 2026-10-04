@@ -1,0 +1,7 @@
+// NereusSDR for iOS: the Apple developer team that signs the app
+//
+// The team ID in JJ Boyd's Developer ID certificate. It is not a secret: it
+// appears in every signed build. Signing for a device also needs an Apple
+// Development identity and a profile for the app IDs; simulator builds and
+// CI pass CODE_SIGNING_ALLOWED=NO.
+DEVELOPMENT_TEAM = 8A7A7MZZ52

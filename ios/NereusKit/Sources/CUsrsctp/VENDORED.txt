@@ -1,0 +1,10 @@
+usrsctp, vendored into NereusSDR for iOS
+
+Commit:   fec583d54493f879d2ae44a743423bf8a04371ab
+Archive:  https://codeload.github.com/paullouisageneau/usrsctp/tar.gz/fec583d54493f879d2ae44a743423bf8a04371ab
+SHA-256:  e5c114afe73c9a0ec419fab5f5b3f63f3ce57b09b90d06ea85e63dca8aed3e7c
+Licence:  BSD-3-Clause (see LICENSE.md)
+Files:    62, copied unchanged from the archive
+
+Written by ios/scripts/vendor-sources.sh usrsctp. Do not edit
+these files; change the pin in that script and run it again.
