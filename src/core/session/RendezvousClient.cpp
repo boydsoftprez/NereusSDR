@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04: Qt 6.4 WebSocket error-signal compatibility. J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-26: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
@@ -451,7 +453,11 @@ void RendezvousClient::connectTo(int serverIndex)
             onDisconnected();
         }
     });
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     connect(socket, &QWebSocket::errorOccurred, this,
+#else
+    connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error), this,
+#endif
             [this, generation](QAbstractSocket::SocketError error) {
         if (generation != m_generation) {
             return;

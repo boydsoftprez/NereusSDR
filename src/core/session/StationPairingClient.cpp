@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04: Qt 6.4 WebSocket error-signal compatibility. J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
@@ -438,7 +440,11 @@ void StationPairingClient::begin(bool lan, const QString& normalisedCode, const 
                 fail(NetworkTrouble::proxyNeedsLoginWords());
             }
         });
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
         connect(ws->socket(), &QWebSocket::errorOccurred, this,
+#else
+        connect(ws->socket(), QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error), this,
+#endif
                 [this, attempt, ws](QAbstractSocket::SocketError error) {
             if (attempt == m_attempt && m_state != State::Idle) {
                 fail(StationClient::connectionFailureReason(error, ws->socket()->errorString(),

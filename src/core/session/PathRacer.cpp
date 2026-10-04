@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04: Qt 6.4 WebSocket error-signal compatibility. J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-27: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
@@ -694,7 +696,11 @@ void DirectPathRung::start()
     auto proxyLogin = std::make_shared<bool>(false);
     connect(socket, &QWebSocket::proxyAuthenticationRequired, this,
             [proxyLogin](const QNetworkProxy&, QAuthenticator*) { *proxyLogin = true; });
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     connect(socket, &QWebSocket::errorOccurred, this,
+#else
+    connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error), this,
+#endif
             [this, transport, proxyLogin](QAbstractSocket::SocketError error) {
         if (m_done || m_transport != transport) {
             return;

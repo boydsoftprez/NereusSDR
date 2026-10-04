@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original direct watch transport regression.
+// Modification history (NereusSDR):
+//   2026-10-04: Qt 6.4 WebSocket error-signal compatibility. J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest/QtTest>
 
 #include <QAbstractSocket>
@@ -634,7 +637,11 @@ private slots:
                          [&client](quint64, const QString&) { delete client.data(); });
         client->setBinaryWriterForTesting(
             [](QWebSocket* socket, const QByteArray&) -> qint64 {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
                 socket->errorOccurred(QAbstractSocket::NetworkError);
+#else
+                socket->error(QAbstractSocket::NetworkError);
+#endif
                 return -1;
             });
         QVERIFY(client->openDirect(peer.url(), peer.pin(), ticket(), 90));
@@ -662,7 +669,11 @@ private slots:
         client.setBinaryWriterForTesting(
             [&client](QWebSocket* socket, const QByteArray&) -> qint64 {
                 client.setBinaryWriterForTesting({});
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
                 socket->errorOccurred(QAbstractSocket::NetworkError);
+#else
+                socket->error(QAbstractSocket::NetworkError);
+#endif
                 return -1;
             });
         QVERIFY(client.openDirect(peer.url(), peer.pin(), ticket(), 94));
@@ -700,7 +711,11 @@ private slots:
         client.setBinaryWriterForTesting(
             [&client](QWebSocket* socket, const QByteArray&) -> qint64 {
                 client.setBinaryWriterForTesting({});
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
                 socket->errorOccurred(QAbstractSocket::NetworkError);
+#else
+                socket->error(QAbstractSocket::NetworkError);
+#endif
                 return -1;
             });
         QVERIFY(!client.sendKeepalive(2, 3));
@@ -731,7 +746,11 @@ private slots:
                          [&client](quint64, const QString&) { delete client.data(); });
         client->setBinaryWriterForTesting(
             [](QWebSocket* socket, const QByteArray&) -> qint64 {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
                 socket->errorOccurred(QAbstractSocket::NetworkError);
+#else
+                socket->error(QAbstractSocket::NetworkError);
+#endif
                 return -1;
             });
         QVERIFY(!client->sendKeepalive(4, 5));

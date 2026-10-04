@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04: Qt 6.4 WebSocket error-signal compatibility. J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30  J.J. Boyd / KG4VCF  Fix wave GUI-I6: a Tune Power change
 //                                    is marked on its way until the Core
 //                                    answers it (TransmitModel).
@@ -1744,7 +1746,11 @@ void StationClient::dialStation(const QUrl& url, const QString& token,
                     m_lastError = NetworkTrouble::proxyNeedsLoginWords();
                 }
             });
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     connect(socket, &QWebSocket::errorOccurred, this,
+#else
+    connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error), this,
+#endif
             [this, socket, transportGuard, host = url.host()](QAbstractSocket::SocketError error) {
                 if (transportGuard.isNull() || transportGuard.data() != this->transport()) {
                     return;

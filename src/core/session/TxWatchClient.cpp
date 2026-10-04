@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original direct auxiliary watch transport.
+// Modification history (NereusSDR):
+//   2026-10-04: Qt 6.4 WebSocket error-signal compatibility. J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 #include "core/session/TxWatchClient.h"
 
 #include "core/safety/RemoteTxWatchdog.h"
@@ -232,7 +235,11 @@ bool TxWatchClient::openDirect(const QUrl& verifiedPrimaryUrl,
             finish(QStringLiteral("watch disconnected"));
         }
     });
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     connect(socket, &QWebSocket::errorOccurred, this,
+#else
+    connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error), this,
+#endif
             [this, socket, generation](QAbstractSocket::SocketError) {
         if (current(socket, generation)) {
             finish(QStringLiteral("watch connection failed"));
