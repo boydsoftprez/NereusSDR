@@ -52,3 +52,23 @@ checks and fresh LastTest logs are retained locally under
 signed freeze identity and subsequent full/platform evidence. This document
 records focused corrections and does not assert integrated acceptance or
 publication.
+
+The same reviewer's first scoped rereview addressed F1, F3, F4 and F5 but
+identified an introduced F2 lifecycle regression. An early RADE exit callback
+could leave the existing decoder and route while a nested setter observed the
+intermediate non-RADE mode. The signed `27dd27b` attempt and interrupted full
+build remain preserved. A narrow closure reconciles native RADE cleanup with
+the actual retained engine channel; role/deferred admission and the existing
+destroy/create/wire/start paths remain unchanged. Eight live parent/engine
+regressions fail before this closure and pass afterward: both callsign and sync
+boundaries, final AM, either RADE sideband and changes away and back. They prove
+old decoder retirement, actual worker route count, new active replacement,
+unchanged RxChannel identity, newest filter values and accepted notification
+counts. The standalone deletion, no-op, ABA and filter lifecycle regressions
+remain required. Targeted same-reviewer F2 closure and final gates are pending.
+
+Current closure focused validation passes 10/10 CTests with 466 Qt passes,
+zero failures and the same two expected capture/Linux-client skips. Current
+application/headless-daemon build, exact notice audit and all 16 compliance
+commands pass. Final combined/platform gates and reviewer acceptance remain
+pending.

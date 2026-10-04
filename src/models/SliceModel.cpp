@@ -414,7 +414,14 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
     //      no longer associated with the old caller's transmission.
     // Trigger: oldMode was a RADE sideband AND mode actually changed
     // (we're already inside the modeChanged guard).
-    if (isRade(oldMode) && !m_lastRadeRxCallsign.isEmpty()) {
+    // An early callback can commit a non-RADE mode before the old decoder
+    // retires. A nested setter must still complete that actual lifecycle.
+    auto* radio = qobject_cast<RadioModel*>(parent());
+    const bool retainedRade = radio != nullptr && radio->role() != RadioModel::Role::Remote
+        && !m_radeStartDeferredToAdmission && radio->wdspEngine() != nullptr
+        && radio->wdspEngine()->radeChannel(m_sliceIndex) != nullptr;
+    const bool oldRadeState = isRade(oldMode) || retainedRade;
+    if (oldRadeState && !m_lastRadeRxCallsign.isEmpty()) {
         m_lastRadeRxCallsign.clear();
         const QString callsign = m_lastRadeRxCallsign;
         emit lastRadeRxCallsignChanged(callsign);
@@ -423,7 +430,7 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
     // The same two cases end the old decoder (it is destroyed below),
     // and the VFO flag drops its sync dot (VfoWidget::setRadeActive):
     // the next decoder reports its own sync.
-    if (isRade(oldMode)) {
+    if (oldRadeState) {
         setRadeSynced(false);
         if (!currentMode()) { return; }
     }
@@ -433,11 +440,10 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
     // fire would just re-emit lastRadeRxCallsignChanged("") and
     // snrDbChanged(NaN) needlessly.  Also stop on RADE_U <-> RADE_L
     // swaps for the same reason.
-    if (isRade(oldMode) && m_radeIdleClearTimer) {
+    if (oldRadeState && m_radeIdleClearTimer) {
         m_radeIdleClearTimer->stop();
     }
 
-    auto* radio = qobject_cast<RadioModel*>(parent());
     // Remote-daemon R2 Task 5: the only model-to-engine reach-through
     // in src/models outside RadioModel itself. Gate BEFORE any
     // channel creation, not merely before the resulting emit --
@@ -454,7 +460,9 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
         // admission instead (m_radeStartDeferredToAdmission).
         if (engine != nullptr && !m_radeStartDeferredToAdmission) {
             const int channelId = m_sliceIndex;
-            const bool oldIsRade = isRade(oldMode);
+            // Reconcile the owned decoder, rather than an intermediate logical
+            // old mode left by a superseded early notification continuation.
+            const bool oldIsRade = engine->radeChannel(channelId) != nullptr;
             const bool newIsRade = isRade(newMode);
 
             // RADE reason (2026-09-30): each start below is bracketed
