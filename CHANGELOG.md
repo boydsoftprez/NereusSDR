@@ -12,6 +12,31 @@ meter objects.
 
 This is the first release using **calendar versions**. `2026.10.0` means the first release in October 2026. Another release that month will be `2026.10.1`; the first release in November will be `2026.11.0`. Releases continue to ship when ready. Existing releases keep their original numbers.
 
+## Native Thetis CAT and separate Hamlib control
+
+Four configured channels now expose Thetis CAT over TCP, optional Qt SerialPort
+and macOS/Linux PTYs. A separate four-channel rigctld dialect shares the same
+stable A/B slices and transmit ownership. Native local Setup, CAT applet/status,
+bounded log and isolated tester expose actual listening/errors. Defaults keep
+listeners and welcome off; remote-role consoles direct configuration to the
+local authoritative host.
+
+The 419-descriptor catalogue has 349 active registrations, 70 inactive entries
+and 783 production-executed fixtures. Missing recording, CWX, VAC, memory,
+GUI-only and dedicated controller operations retain explicit refusal contracts;
+complete accounting does not mean full Thetis functional parity. Disconnect,
+reconfiguration and observed PTY peer loss cancel only the matching CAT claim,
+preserving a newer operator intent. Initially asserted CTS/DSR must release
+before a fresh assertion can request transmit.
+
+[The verification packet](docs/architecture/thetis-cat-verification/README.md)
+records current macOS builds/tests, Linux Core CAT and official Hamlib 4.7 model
+interop, and no-SerialPort coverage. Windows compilation, Linux native GUI/x86,
+physical modem pins/cables, other logger/digital-mode clients and RF/RX-audio
+bench remain pending. This is local implementation evidence; final integrated
+review and release publication are separate. Historical release notes below
+retain their original status.
+
 ## The Core and GUI can run in different places
 
 The **Core** owns the radio connection and station state. It runs receiver
@@ -209,7 +234,7 @@ Keep existing settings and profiles; let the application perform its migrations.
 
 This remains an alpha release. Software and package checks will be reported from the exact final commit; they do not substitute for every radio, operating system or on-air acceptance matrix.
 
-Cross-radio TNF listening, NNR quality, PureSignal RF improvement, RADE on-air interoperability, sustained SBC operation, accessory bench matrices and remaining native UI interactions retain their recorded pending status until exact evidence closes them. CW transmit, FM pre-emphasis, CAT/rigctld, skin import and WAV/IQ recording are not advertised as delivered here. The legacy PS-RX/PS-TX spectrum view remains explicitly unavailable. High-resolution trackpad gesture handling remains under review.
+Cross-radio TNF listening, NNR quality, PureSignal RF improvement, RADE on-air interoperability, sustained SBC operation, accessory bench matrices and remaining native UI interactions retain their recorded pending status until exact evidence closes them. CW transmit, FM pre-emphasis, skin import and WAV/IQ recording remain future work. Native CAT/rigctld scope and remaining acceptance are recorded above. The legacy PS-RX/PS-TX spectrum view remains explicitly unavailable. High-resolution trackpad gesture handling remains under review.
 
 Final artifact list, signatures, checksums and installation links will come from the completed release workflow. Source archives and dependency notices accompany the binary distribution.
 

@@ -1,7 +1,7 @@
 # Thetis CAT compatibility and setup design
 
 - Date: 2026-10-04
-- Status: approved by JJ on 2026-10-04; implementation plan reconciled to the requested Core Controller tip; implementation has not started.
+- Status: approved by JJ on 2026-10-04; Tasks 1–13 implemented locally and Task 14 software verification completed, with measured results recorded in [the acceptance report](thetis-cat-verification/README.md). Integrated lead review, shipping and unperformed platform/bench checks remain pending.
 - Nereus implementation baseline: Core Controller candidate `27716f5d6700e1e7d1808acfe478756249828e8c`, requested by JJ on 2026-10-04.
 - Source baseline: Thetis v2.10.3.15, commit `3759d096`.
 - Author: J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
@@ -11,8 +11,10 @@
 Logging software, digital-mode programs and control hardware should be able to
 control NereusSDR using the standard and extended CAT commands provided by the
 configured Thetis upstream. The maintainer approved proceeding with the proposed
-full command-layer and serial/TCP setup design on 2026-10-04. This document makes
-the architectural choices concrete for review before implementation planning.
+full command-layer and serial/TCP setup design on 2026-10-04. The original
+design choices below remain as the approved planning context;
+the [execution ledger](thetis-cat-verification/progress.md) records the delivered
+implementation and deliberate source corrections.
 
 Preserve Thetis wire behavior where the underlying capability exists. Adapt its
 global Console and two-VFO assumptions to NereusSDR's independently modeled
@@ -23,8 +25,9 @@ Do not describe catalogue coverage as full functional parity.
 ## Source findings and alternatives
 
 The existing Phase 3K roadmap calls for four slice-bound rigctld channels, TCP
-CAT and CAT configuration. Current `CatApplet`, `CatSerialPortsPage` and the
-Tools CAT action are placeholders. The CAT PTT entry point already exists in
+CAT and CAT configuration. At the design baseline, `CatApplet`,
+`CatSerialPortsPage` and the Tools CAT action were placeholders; Tasks 11 and 13
+make them reachable. The CAT PTT entry point already exists in
 `MoxController::onCatPtt`.
 
 Thetis sources under `Project Files/Source/Console/` establish:
@@ -255,8 +258,10 @@ inactive, upstream inert behavior, or unavailable underlying capability.
 Unavailable active commands need an exact tested rejection/readback contract;
 do not pretend success with a stored value that has no effect.
 
-`ZZMX` is active and implemented at `CATCommands.cs:4394` but missing from parser
-dispatch: plan its handler registration as an upstream correction. `ZZDY` is a
+`ZZMX` is active and dispatched at `CATParser.cs:965-967`; the original
+missing-dispatch finding was a whitespace-sensitive extraction error. Its
+Nereus memory-store workflow is unavailable and returns the explicit contract.
+`ZZDY` is a
 commented-out parser case, not another dispatch defect. `AN` is explicitly
 inactive in the pinned XML; do not enable it based on an older Nereus design.
 `ZZFX` (`CATCommands.cs:3054`) and `ZZTS` (`:6881`) have disabled hardware

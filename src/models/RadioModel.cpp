@@ -17,6 +17,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04: Preserve native untyped Tune OFF release alongside guarded
+//                CAT cancellation, by J.J. Boyd (KG4VCF), AI-assisted via
+//                OpenAI Codex.
 //   2026-10-04: CAT accepted-intent tags and guarded cycle lifetimes,
 //                NereusSDR-original, by J.J. Boyd (KG4VCF), AI-assisted
 //                via OpenAI Codex.
@@ -27012,7 +27015,14 @@ void RadioModel::setTune(bool on)
         // Deciding between them needs instrumentation on this path, not
         // another reorder. Do not re-apply (a) without evidence.
         if (m_moxController) {
-            m_moxController->setTune(false, requester);
+            // Native OFF callers already enforce their release authority and may
+            // stop a remote/device tune. Preserve that untyped stop contract;
+            // an explicit keyer (including guarded CAT cancellation) stays typed.
+            if (m_tuneKeyer != nullptr) {
+                m_moxController->setTune(false, requester);
+            } else {
+                m_moxController->setTune(false);
+            }
             if (!lifetime || !tuneCycleCurrent(serial)) { return; }
         }
 

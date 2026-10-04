@@ -831,6 +831,10 @@ const QStringList& unkeyEventLogText()
 const QList<ReasonSource>& reasonSources()
 {
     static const QList<ReasonSource> sources{
+        // Local CAT configuration failures are shown by the Setup page.
+        // Scan the validator's four own sentences, including lambda failure calls.
+        {"src/core/cat/CatSettings.cpp", {QStringLiteral("validate")}, {}, 4, {},
+         {QStringLiteral("text")}},
         // Shared radio-mic refusals reach Core replies as well as the window.
         {"src/core/session/RemoteMicSource.h",
          {QStringLiteral("remoteRadioVoxReason"), QStringLiteral("remoteRadioProgramReason"),
@@ -2064,13 +2068,19 @@ struct ForwardingSite {
     const char* file;
     const char* function;
     const char* callee;
+    const char* calleeFile;
+    const char* calleeFunction;
 };
 
 const QList<ForwardingSite>& forwardingSites()
 {
     static const QList<ForwardingSite> sites{
-        {"src/core/RxChannel.cpp", "setNnrTuning", "NnrAdapter::apply"},
-        {"src/core/RxChannel.cpp", "setNnrDiagnostics", "NnrAdapter::setDiagnostics"},
+        {"src/core/RxChannel.cpp", "setNnrTuning", "NnrAdapter::apply",
+         "src/core/dsp/NnrAdapter.cpp", ""},
+        {"src/core/RxChannel.cpp", "setNnrDiagnostics", "NnrAdapter::setDiagnostics",
+         "src/core/dsp/NnrAdapter.cpp", ""},
+        {"src/core/cat/CatModelAdapter.cpp", "mayChangeGlobalDsp",
+         "m_model->stationOnAirRefusal", "src/models/RadioModel.cpp", "stationOnAirRefusal"},
     };
     return sites;
 }
@@ -2505,13 +2515,11 @@ private slots:
                                             .arg(QLatin1String(site.file),
                                                  QLatin1String(site.function),
                                                  QLatin1String(site.callee))));
-            const QString calleeClass =
-                QString::fromLatin1(site.callee).section(QStringLiteral("::"), 0, 0);
-            QVERIFY2(scanned(QStringLiteral("src/core/dsp/%1.cpp").arg(calleeClass), QString()),
-                     site.callee);
+            QVERIFY2(scanned(QString::fromLatin1(site.calleeFile),
+                             QString::fromLatin1(site.calleeFunction)), site.callee);
             ++checked;
         }
-        QCOMPARE(checked, 2);
+        QCOMPARE(checked, 3);
     }
 
     void notchConstantsArePlain()

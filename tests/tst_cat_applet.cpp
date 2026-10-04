@@ -4,6 +4,7 @@
 #include <memory>
 #include <QPushButton>
 #include <QLabel>
+#include <QComboBox>
 #include <QTcpServer>
 #include "gui/applets/CatApplet.h"
 #include "models/RadioModel.h"
@@ -31,6 +32,24 @@ private slots:
         RadioModel remote(RadioModel::Role::Remote); CatApplet remoteApplet(&remote); auto* remoteTcp=remoteApplet.findChild<QPushButton*>("catTcpButton");
         QVERIFY(!remoteTcp->isEnabled()); QVERIFY(remoteTcp->toolTip().contains("local host"));
         bool vax=false,iq=false; for (QPushButton* button:applet.findChildren<QPushButton*>()) { vax=vax || button->text()=="VAX"; iq=iq || button->text()=="IQ"; } QVERIFY(vax && iq);
+    }
+    void unavailableAudioControlsKeepTheirReasons() {
+        AppSettings::instance().clear(); RadioModel model; CatApplet applet(&model);
+        int retained=0;
+        for (QPushButton* button:applet.findChildren<QPushButton*>()) {
+            if (button->text()=="VAX" || button->text()=="IQ") {
+                ++retained; QVERIFY(!button->isEnabled());
+                QVERIFY(button->toolTip().contains("CAT applet"));
+                QVERIFY(!button->toolTip().contains("not built"));
+            }
+        }
+        QCOMPARE(retained,2);
+        QComboBox* rates=applet.findChild<QComboBox*>(); QVERIFY(rates);
+        QCOMPARE(rates->count(),3); QVERIFY(!rates->isEnabled());
+        QVERIFY(rates->toolTip().contains("I/Q audio output"));
+        CatEndpointConfig config=model.catService()->channelConfig(1);
+        config.ptyDialect="Rigctld"; QVERIFY(model.catService()->reconfigureChannel(1,config));
+        QVERIFY(applet.findChild<QPushButton*>("catPtyButton")->toolTip().contains("Rigctld PTY"));
     }
     void configurationCallbackMayDeleteApplet() {
         AppSettings::instance().clear(); RadioModel model; CatService& service=*model.catService();

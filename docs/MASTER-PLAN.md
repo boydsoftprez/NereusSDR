@@ -199,7 +199,7 @@ scheduling and single-receiver limitations are not current release status.
 ### Remaining work after the 2026.10 release
 
 - CW transmit, sidetone, firmware keyer and QSK/break-in.
-- FM pre-emphasis, CAT/rigctld, legacy skin import and WAV/IQ recording.
+- FM pre-emphasis, legacy skin import and WAV/IQ recording.
 - Remaining native UI interactions and radio/accessory/on-air acceptance rows.
 - Sustained remote Core and SBC operation, and original-report reconnect retests.
 
@@ -1017,7 +1017,9 @@ Bench verification: matrix at `docs/architecture/phase3r-verification/README.md`
 ### Phase 3K: CAT/rigctld + TCP Server
 **Goal:** External radio control for logging and contest software.
 
-The [Thetis CAT design](architecture/2026-10-04-thetis-cat-design.md) was approved on 2026-10-04. The [implementation plan](architecture/2026-10-04-thetis-cat-plan.md) and [419-command planning matrix](architecture/cat/2026-10-04-command-mapping.csv) are reconciled to Core Controller candidate `27716f5d`; implementation has not started.
+The [approved design](architecture/2026-10-04-thetis-cat-design.md) and [implementation plan](architecture/2026-10-04-thetis-cat-plan.md) are implemented locally against qualified Core `27716f5d`. Four stable slice-bound Thetis channels, native TCP/optional serial/POSIX PTY, live local Setup/applet/status/log/tester and a separate four-channel Hamlib rigctld dialect are delivered. All 419 descriptors have explicit contracts; 349 active registrations execute 783 production fixtures, with 129 unavailable outcomes. This establishes catalogue accounting, not full functional Thetis parity.
+
+[Verification and limitations](architecture/thetis-cat-verification/README.md) and the [accepted execution ledger](architecture/thetis-cat-verification/progress.md) record rebuilt macOS gates, current Linux Core CAT/official Hamlib 4.7 execution and optional-dependency checks. Windows compilation, Linux GUI/x86, physical serial/PTT, other logging/digital-mode clients and radio/RF/RX-audio bench remain pending. Final integrated review and publication belong to the separately authorized lead/shipping lane.
 
 Scope:
 - Complete pinned Thetis descriptor inventory with explicit supported, adapted, inert, inactive or unavailable contracts

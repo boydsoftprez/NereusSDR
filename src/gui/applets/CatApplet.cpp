@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Retain disabled virtual-audio/IQ controls with precise
+//                 capability reasons and a dialect-neutral initial PTY tooltip.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-18 — Ported/adapted in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -144,7 +147,7 @@ void CatApplet::buildUI()
 
         vbox->addLayout(row);
         m_ptyBtn->setObjectName("catPtyButton");
-        m_ptyBtn->setToolTip(tr("Enable Thetis PTY for CAT1. Configure all four channels individually in Setup → CAT & Network."));
+        m_ptyBtn->setToolTip(tr("Enable PTY for CAT1. Configure all four channels individually in Setup → CAT & Network."));
     }
 
     vbox->addWidget(divider());
@@ -166,6 +169,7 @@ void CatApplet::buildUI()
 
         vbox->addLayout(row);
         NyiOverlay::markNyi(m_vaxBtn, QStringLiteral("3-VAX"));
+        m_vaxBtn->setToolTip(tr("This CAT applet does not control virtual audio."));
     }
 
     // --- Control 4: VAX IQ enable + rate combo ---
@@ -190,6 +194,9 @@ void CatApplet::buildUI()
 
         NyiOverlay::markNyi(m_iqBtn,       QStringLiteral("3-VAX"));
         NyiOverlay::markNyi(m_iqRateCombo, QStringLiteral("3-VAX"));
+        const QString iqReason=tr("This CAT applet does not provide I/Q audio output.");
+        m_iqBtn->setToolTip(iqReason);
+        m_iqRateCombo->setToolTip(iqReason);
     }
 
     vbox->addStretch();

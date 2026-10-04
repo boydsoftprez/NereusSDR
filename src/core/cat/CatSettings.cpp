@@ -49,6 +49,8 @@
 // Modification history (NereusSDR):
 // 2026-10-04 - CAT preference validation and serialization by J.J. Boyd
 //              (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-04 - Use operator slice-selection wording in validation by
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Serialization is Nereus-original; source constants retain their contract.
 
 #include "CatSettings.h"
@@ -142,7 +144,7 @@ bool CatSettings::validate(const CatEndpointConfig& config, QString* reason)
     const auto fail = [reason](const QString& text) { if (reason) { *reason = text; } return false; };
     if (config.channel < 1 || config.channel > 4 || config.binding.primarySliceId < -1
         || (config.binding.secondarySliceId && *config.binding.secondarySliceId < 0)) {
-        return fail(QStringLiteral("Invalid CAT channel or slice identity."));
+        return fail(QStringLiteral("Invalid CAT channel or slice selection."));
     }
     if (config.tcpPort < 0 || config.tcpPort > 65535 || (config.tcpEnabled && config.tcpPort == 0)
         || config.rigctldPort < 0 || config.rigctldPort > 65535 || (config.rigctldEnabled && config.rigctldPort == 0)

@@ -249,6 +249,11 @@ records a specific hardware check; feature acceptance remains recorded separatel
   DX Cluster, RBN, WSJT-X, DXLab, POTA, FreeDV Reporter and PSK Reporter sources;
   spots with click-to-tune and a live FreeDV station view. RADE supports
   end-of-over callsigns when FreeDV Reporter is enabled.
+- **Native CAT control.** Four stable slice-bound Thetis CAT channels over TCP,
+  optional serial and macOS/Linux PTYs; separate four-channel Hamlib rigctld,
+  local Setup, status, log and tester. All listeners start disabled. The
+  [compatibility report](docs/architecture/thetis-cat-verification/README.md)
+  lists explicit unsupported capabilities and platform/client/bench limits.
 - **Accessories and hardware controls.** PGXL, TGXL and RF-Kit RF2K-S;
   Core-authoritative accessory operation, tuner sequencing, step attenuator,
   preamp/Level Cal corrections, ADC overload indication and per-radio controls.
@@ -258,8 +263,8 @@ records a specific hardware check; feature acceptance remains recorded separatel
 
 ## Roadmap and acceptance
 
-CW transmit/keyer/QSK, FM pre-emphasis, CAT/rigctld, legacy skin import and
-WAV/IQ recording remain future work. Disabled actions retain an explanation;
+CW transmit/keyer/QSK, FM pre-emphasis, legacy skin import and WAV/IQ
+recording remain future work. Disabled actions retain an explanation;
 being represented by an applet or Setup page does not establish implementation.
 The iPhone/iPad app has an independent release process and calendar counter.
 

@@ -270,7 +270,7 @@ actually exercises RX2.
 | 3F: Multi-Panadapter | DDC assignment (incl. PS states), FFTRouter, PanadapterStack, enable RX2 | Planned |
 | 3H: Skins | Thetis-inspired skin format, 4-pan, legacy import | Planned |
 | **3J-1: TCI Server** | **TCI WebSocket server + 6 setup group boxes + 2 applets + bottom-bar indicator + Tools/View menu integration + matrix-driven verification harness with ~80 rows + init burst golden + 17 unit tests** | **Complete (shipped v0.5.0)** |
-| 3K: CAT/rigctld | [Approved Thetis design and implementation plan](../architecture/2026-10-04-thetis-cat-plan.md); complete 419-descriptor planning matrix; native CAT plus separate 4-channel rigctld | Planned; design approved, implementation not started |
+| 3K: CAT/rigctld | Four stable slice-bound Thetis channels; native TCP/optional serial/POSIX PTY, live local Setup/status/log/tester and separate four-channel Hamlib. 419 contracts, 349 active registrations, 783 production fixtures; [verification and limits](../architecture/thetis-cat-verification/README.md). | Implemented locally against Core `27716f5d`; final integrated review and shipping pending. Windows/Linux GUI and physical serial/RF/RX-audio bench pending. |
 | 3L: HL2 ChannelMaster.dll port | HL2 IoBoardHl2 I2C-over-ep2 wire encoding, bandwidth monitor full port | Planned |
 | 3M: Recording | WAV record/playback, I/Q record, scheduled | Planned |
 | **3N: Packaging** | **Consolidated `release.yml` (prepare → build×3 → sign-and-publish), `/release` skill, GPG-signed alpha builds: Linux AppImage ×2 archs, macOS Apple Silicon DMG, Windows portable ZIP + NSIS installer** | **Complete** |
