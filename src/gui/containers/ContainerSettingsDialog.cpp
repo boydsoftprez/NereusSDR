@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Reset Qt 6.11 Cocoa popup accessibility cache before
+//                 draft dropdown refresh by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-03 — Compact independent control creation geometry by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Explicit readable dropdown selection by J.J. Boyd
@@ -206,6 +209,7 @@ mw0lge@grange-lane.co.uk
 #include "ContainerPreviewWidget.h"
 #include "../ComboStyle.h"
 #include "LegacyContainerImporter.h"
+#include <QAccessible>
 #include <QSignalBlocker>
 #include <QScrollArea>
 #include <QVBoxLayout>
@@ -2048,7 +2052,25 @@ void ContainerSettingsDialog::reject()
 void ContainerSettingsDialog::refreshDraftDropdown()
 {
     if (!m_editSession || !m_containerDropdown) { return; }
-    const QSignalBlocker blocker(m_containerDropdown); m_containerDropdown->clear();
+    const QSignalBlocker blocker(m_containerDropdown);
+#if defined(Q_OS_MAC)
+    if (QGuiApplication::platformName() == QStringLiteral("cocoa")
+        && qVersion() == QStringLiteral("6.11.0")) {
+        // Qt6.11 Cocoa expires promoted popup cells with its old native
+        // rows (qcocoaaccessibilityelement.mm:219-226,257-267,342-362),
+        // but QAccessibleTable retains their IDs and dereferences them on
+        // RowsRemoved (itemviews.cpp:696-741). Clear only that accessibility
+        // cache through the public API before the combo mutates its model.
+        QAbstractItemView* view = m_containerDropdown->view();
+        QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(view);
+        if (accessible != nullptr && accessible->tableInterface() != nullptr) {
+            QAccessibleTableModelChangeEvent reset(
+                view, QAccessibleTableModelChangeEvent::ModelReset);
+            accessible->tableInterface()->modelChange(&reset);
+        }
+    }
+#endif
+    m_containerDropdown->clear();
     for (const auto& c : m_editSession->draft().containers) { m_containerDropdown->addItem(c.name.isEmpty()?c.id.left(8):c.name,c.id); }
     m_containerDropdown->setCurrentIndex(m_containerDropdown->findData(m_selectedId));
     m_containerDropdown->setEnabled(m_containerDropdown->count()>1);
