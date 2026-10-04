@@ -19,6 +19,7 @@ public:
 signals:
     void entrySelected(const QString&);
     void geometryEdited(const QString&,const QRectF&);
+    void geometryRestored(const QString&,const QJsonValue&,bool present);
     void geometryCommitted(const QString&,const QRectF&,const QRectF& original);
     void entryContextMenuRequested(const QString&,const QPoint& globalPosition);
 protected:
@@ -34,6 +35,8 @@ private:
     ContainerDocument m_document;
     QPointF m_origin, m_press;
     QRectF m_original;
+    QJsonValue m_originalGeometry;
+    bool m_originalGeometryPresent=false;
     QSizeF m_extent;
     QString m_selected, m_active;
     QPointer<QWidget> m_capture;

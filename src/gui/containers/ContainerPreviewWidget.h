@@ -17,9 +17,12 @@ public:
     ContainerDocument seededFromStack() const;
     ContainerDocument convertedLegacyPositions() const;
     QRect entryBoundary(const QString&) const;
+    QRectF resolvedFreeCanvasRect(const QString&) const;
+    QSizeF freeCanvasMinimum(const QString&) const;
     void selectEntry(const QString&);
     const ContainerDocument& document() const { return m_document; }
 signals:
+    void freeCanvasGeometryRestored(const ContentEntry&);
     void freeCanvasRectEdited(const QString&,const QRectF&);
     void entrySelected(const QString&);
     void presentationRequested(MeterWidget*, const QJsonObject&);

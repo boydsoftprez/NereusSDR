@@ -132,7 +132,7 @@ ContainerContentRegistry::~ContainerContentRegistry()
         disconnect(it.value(), nullptr, this, nullptr);
         // Registry borrows the constructed view. Return parked/hosted views to
         // their original construction owner before removing the parking widget.
-        it.value()->hide(); it.value()->setParent(m_originalParents.value(it.value()));
+        restoreNativeConstraints(it.value()); it.value()->hide(); it.value()->setParent(m_originalParents.value(it.value()));
     }
     delete m_parking;
 }
@@ -154,12 +154,15 @@ void ContainerContentRegistry::attachSingleton(const QString& typeId, QWidget* w
     if (m_singletons.value(typeId) && widget) { return; }
     QWidget* previous = m_singletons.value(typeId);
     disconnect(m_destroyConnections.take(typeId));
-    if (previous) { returnBorrowedView(previous); m_originalParents.remove(previous); }
+    if (previous) { returnBorrowedView(previous); m_originalParents.remove(previous); m_nativeSizes.remove(previous); }
     m_singletons[typeId] = widget; m_attachedIdentities[typeId] = widget;
     if (widget) {
+        // Retain the native constraint contract once, before any container projection.
+        // Free Canvas clears presentation constraints without changing edit minima.
+        m_nativeSizes[widget]={widget->minimumSize(),widget->maximumSize(),widget->sizeHint(),widget->minimumSizeHint().expandedTo(widget->minimumSize()).expandedTo(QSize(24,24))};
         if (!m_originalParents.contains(widget)) { m_originalParents[widget] = widget->parentWidget(); }
         m_destroyConnections[typeId] = connect(widget, &QObject::destroyed, this, [this, typeId, widget] {
-            m_originalParents.remove(widget);
+            m_originalParents.remove(widget); m_nativeSizes.remove(widget);
             if (m_attachedIdentities.value(typeId) != widget) { return; }
             m_singletons.remove(typeId); m_attachedIdentities.remove(typeId);
             ++m_generation; emit runtimeChanged();
@@ -168,13 +171,19 @@ void ContainerContentRegistry::attachSingleton(const QString& typeId, QWidget* w
     ++m_generation; emit runtimeChanged();
 }
 QWidget* ContainerContentRegistry::singletonView(const QString& typeId) const { return m_singletons.value(typeId); }
+QSize ContainerContentRegistry::singletonCanvasMinimum(const QString& typeId) const {return m_nativeSizes.value(singletonView(typeId)).editMinimum.expandedTo(QSize(24,24));}
+QSize ContainerContentRegistry::singletonCanvasSizeHint(const QString& typeId) const {return m_nativeSizes.value(singletonView(typeId)).hint.expandedTo(QSize(320,80));}
+void ContainerContentRegistry::restoreNativeConstraints(QWidget* widget) {
+    if(widget && m_nativeSizes.contains(widget)) {const auto sizes=m_nativeSizes.value(widget);widget->setMinimumSize(sizes.minimum);widget->setMaximumSize(sizes.maximum);}
+}
 void ContainerContentRegistry::returnBorrowedView(QWidget* widget)
 {
-    if (widget && m_originalParents.contains(widget)) { widget->hide(); widget->setParent(m_originalParents.value(widget)); }
+    if (widget && m_originalParents.contains(widget)) { restoreNativeConstraints(widget); widget->hide(); widget->setParent(m_originalParents.value(widget)); }
 }
 void ContainerContentRegistry::parkSingleton(QWidget* widget)
 {
     if (widget) {
+        restoreNativeConstraints(widget);
         if (!m_parking) { m_parking = new QWidget(); m_parking->hide(); }
         widget->hide(); widget->setParent(m_parking);
     }

@@ -26,6 +26,7 @@
 #include "gui/containers/ContainerSettingsDialog.h"
 #include "gui/containers/ContainerPreviewWidget.h"
 #include "gui/containers/ContentPropertyEditor.h"
+#include "gui/containers/FreeCanvasSurface.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/presets/BarPresetItem.h"
@@ -47,6 +48,46 @@ ContentEntry signal(ContainerContentRegistry& registry,int source) {
 class TstFreeCanvas final : public QObject {
     Q_OBJECT
 private slots:
+    void importedSmallAndZeroNativeMetersStayExact() {
+        ContainerContentRegistry registry;MeterPoller poller;ContainerDocument c;c.id="small";c.layout=ContentLayout::FreeCanvas;
+        for(const QSizeF size:{QSizeF(40,30),QSizeF(0,0),QSizeF(460.123456789,100.987654321)}) {auto e=signal(registry,0);e.setFreeCanvasRect(QRectF(QPointF(-2.123456789,30),size));c.contents.append(e);}
+        ContainerContentHost host(registry);host.reconcile(c);ContainerPreviewWidget preview(registry,poller);preview.setDocument(c);host.show();preview.show();QCoreApplication::processEvents();
+        for(const auto& e:c.contents) {
+            auto* live=host.findChild<FreeCanvasSurface*>();auto* draft=preview.findChild<FreeCanvasSurface*>();QVERIFY(live && draft);
+            const QSize size(qRound(e.freeCanvasRect()->width()),qRound(e.freeCanvasRect()->height()));QCOMPARE(live->entryBoundary(e.id).size(),size);QCOMPARE(draft->entryBoundary(e.id).size(),size);
+            auto* corner=live->findChild<QWidget*>("freeCanvasResize_"+e.id);QVERIFY(corner);QCOMPARE(corner->pos(),live->entryBoundary(e.id).bottomRight()+QPoint(1,1));
+        }
+        for(int i=0;i<c.contents.size();++i) {QCOMPARE(host.captureDocument().contents[i].freeCanvasRect(),c.contents[i].freeCanvasRect());QCOMPARE(host.captureDocument().contents[i].canvasRect,c.contents[i].canvasRect);}const auto parsed=ContainerDocumentCodec::decode(ContainerDocumentCodec::encode(WorkspaceDocument{1,0,c.id,{c},{}}));QVERIFY(parsed.ok);QCOMPARE(parsed.document.containers[0],c);
+        auto* resize=preview.findChild<QWidget*>("freeCanvasResize_"+c.contents[0].id);QTest::keyClick(resize,Qt::Key_Left);
+        auto* face=qobject_cast<BarPresetItem*>(preview.findChildren<MeterWidget*>()[0]->items()[0]);QVERIFY(face);QVERIFY(preview.document().contents[0].freeCanvasRect()->width()>=face->minimumFaceSize().width());
+    }
+    void escapeRestoresExactAbsentOpaqueAndPreciseDraftGeometry() {
+        for(const QJsonValue value:{QJsonValue(),QJsonValue(QJsonObject{{"future","opaque"}}),QJsonValue("opaque"),QJsonValue(QJsonArray{-10.1234567890123,20.9876543210987,460.123456789012,100.987654321098})}) {
+            QTemporaryDir dir;AppSettings settings(dir.filePath("settings.xml"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
+            ContainerDocument c;c.id="A";c.layout=ContentLayout::FreeCanvas;auto e=signal(registry,0);e.canvasRect=QRectF(-.1,.2,.3,.4);e.extensions["other"]=QJsonObject{{"keep",true}};if(!value.isNull()) {e.extensions["freeCanvasRect"]=value;}c.contents={e};WorkspaceDocument d;d.mainContainerId=c.id;d.containers={c};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);
+            ContainerSettingsDialog dialog(manager.container(c.id),nullptr,&manager);dialog.resize(1300,1000);dialog.show();QCoreApplication::processEvents();const auto before=dialog.editSession()->draft();const auto live=store.snapshot();auto* grip=dialog.findChild<ContainerPreviewWidget*>()->findChild<QWidget*>("freeCanvasGrip_"+e.id);QVERIFY(grip);
+            QTest::mousePress(grip,Qt::LeftButton);QTest::keyClick(grip,Qt::Key_Escape);QCOMPARE(dialog.editSession()->draft(),before);QVERIFY(!dialog.editSession()->hasPendingChanges());
+            gesture(grip,{30,20},true);QCOMPARE(dialog.editSession()->draft(),before);QVERIFY(!dialog.editSession()->hasPendingChanges());QCOMPARE(store.snapshot(),live);
+            QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);QCOMPARE(store.snapshot().containers[0],c);dialog.reject();
+        }
+    }
+    void numericFallbackEditsPreserveOtherResolvedAxes() {
+        for(bool opaque:{false,true}) {
+            QTemporaryDir dir;AppSettings settings(dir.filePath("settings.xml"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
+            ContainerDocument c;c.id="A";c.layout=ContentLayout::FreeCanvas;auto a=signal(registry,0),b=registry.makeEntry("meter.clock");b.extensions["other"]="preserved";b.canvasRect=QRectF(-.1,.2,.3,.4);if(opaque) {b.extensions["freeCanvasRect"]=QJsonObject{{"opaque",true}};}c.contents={a,b};WorkspaceDocument d;d.mainContainerId=c.id;d.containers={c};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);
+            ContainerSettingsDialog dialog(manager.container(c.id),nullptr,&manager);dialog.resize(1300,1000);dialog.show();QCoreApplication::processEvents();auto* preview=dialog.findChild<ContainerPreviewWidget*>();auto* scene=preview->findChild<FreeCanvasSurface*>();const QRectF resolved=scene->logicalRect(b.id);QVERIFY(resolved.y()>0);
+            dialog.findChild<QListWidget*>("containerDraftContents")->setCurrentRow(1);auto* editor=dialog.findChild<ContentPropertyEditor*>();QVERIFY(editor);QCOMPARE(editor->findChild<QDoubleSpinBox*>("canvasY")->value(),resolved.y());QCOMPARE(dialog.editSession()->draft().containers[0],c);
+            editor->findChild<QDoubleSpinBox*>("canvasX")->setValue(57.25);const auto changed=dialog.editSession()->draft().containers[0].contents[1];QCOMPARE(changed.freeCanvasRect()->y(),resolved.y());QCOMPARE(changed.freeCanvasRect()->width(),resolved.width());QCOMPARE(changed.freeCanvasRect()->height(),resolved.height());QCOMPARE(changed.canvasRect,b.canvasRect);QCOMPARE(changed.extensions["other"],b.extensions["other"]);QCOMPARE(dialog.editSession()->draft().containers[0].contents[0],a);dialog.reject();
+        }
+    }
+    void nativeAppletMinimumSurvivesReconcileAndAllEditRoutes() {
+        QTemporaryDir dir;AppSettings settings(dir.filePath("settings.xml"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;QWidget root,owner;auto* native=new QLabel("Native",&owner);native->setMinimumSize(220,120);native->setMaximumSize(700,400);registry.attachSingleton("applet:rx",native);QPointer<QWidget> identity=native;
+        {QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);ContainerDocument c;c.id="A";c.layout=ContentLayout::FreeCanvas;auto e=registry.makeEntry("applet:rx");e.setFreeCanvasRect(QRectF(20,30,40,30));c.contents={e};WorkspaceDocument d;d.mainContainerId=c.id;d.containers={c};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);root.show();QCoreApplication::processEvents();QCOMPARE(native->size(),QSize(40,30));auto* host=manager.contentHost(c.id);auto* grip=host->findChild<QWidget*>("freeCanvasGrip_"+e.id);gesture(grip,{10,10});QCOMPARE(native->property("freeCanvasMinimum").toSizeF(),QSizeF(220,120));
+            auto* corner=host->findChild<QWidget*>("freeCanvasResize_"+e.id);gesture(corner,{-100,-100});QCOMPARE(native->size(),QSize(220,120));QTest::keyClick(corner,Qt::Key_Left,Qt::ShiftModifier);QCOMPARE(native->size(),QSize(220,120));QCOMPARE(registry.singletonView("applet:rx"),identity.data());QCOMPARE(poller.targetCountForTest(),0);
+            ContainerSettingsDialog dialog(manager.container(c.id),nullptr,&manager);dialog.resize(1300,1000);dialog.show();QCoreApplication::processEvents();auto* preview=dialog.findChild<ContainerPreviewWidget*>();auto* draftCorner=preview->findChild<QWidget*>("freeCanvasResize_"+e.id);gesture(draftCorner,{-100,-100});QCOMPARE(preview->document().contents[0].freeCanvasRect()->size(),QSizeF(220,120));dialog.findChild<QListWidget*>("containerDraftContents")->setCurrentRow(0);auto* editor=dialog.findChild<ContentPropertyEditor*>();QVERIFY(editor);editor->findChild<QDoubleSpinBox*>("canvasWidth")->setValue(1);editor->findChild<QDoubleSpinBox*>("canvasHeight")->setValue(1);QCOMPARE(dialog.editSession()->draft().containers[0].contents[0].freeCanvasRect()->size(),QSizeF(220,120));dialog.reject();
+            auto stack=store.snapshot();stack.containers[0].layout=ContentLayout::VerticalStack;QCOMPARE(manager.commitWorkspace(stack,stack.revision).status,CommitStatus::Saved);auto free=store.snapshot();free.containers[0].layout=ContentLayout::FreeCanvas;QCOMPARE(manager.commitWorkspace(free,free.revision).status,CommitStatus::Saved);QCOMPARE(native->property("freeCanvasMinimum").toSizeF(),QSizeF(220,120));ContainerArrangeController arrange(store,&manager);QVERIFY(arrange.popOut(e.id).ok);QVERIFY(arrange.returnEntry(e.id).ok);QCOMPARE(registry.singletonView("applet:rx"),identity.data());QCOMPARE(native->property("freeCanvasMinimum").toSizeF(),QSizeF(220,120));}
+        QCOMPARE(native->minimumSize(),QSize(220,120));QCOMPARE(native->maximumSize(),QSize(700,400));registry.parkSingleton(native);QCOMPARE(native->minimumSize(),QSize(220,120));registry.returnBorrowedView(native);QCOMPARE(native->parentWidget(),&owner);QCOMPARE(native->minimumSize(),QSize(220,120));QCOMPARE(native->maximumSize(),QSize(700,400));
+    }
     void nativeContextsBorrowedOwnershipAndCommittedGestures() {
         QTemporaryDir dir;AppSettings settings(dir.filePath("settings.xml"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
         QWidget root,owner;QVBoxLayout layout(&root);QSplitter splitter(&root);layout.addWidget(&splitter);root.resize(820,650);

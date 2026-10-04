@@ -12,6 +12,7 @@ public:
     explicit ContentPropertyEditor(ContainerContentRegistry& registry, QWidget* parent=nullptr);
     ~ContentPropertyEditor() override;
     void setEntry(const ContentEntry& entry);
+    void setCanvasPresentation(const QRectF& rect,const QSizeF& minimum) {m_resolvedRect=rect;m_editMinimum=minimum;}
     void setLayoutPolicy(ContentLayout policy) {m_policy=policy;}
     void setGeometryLocked(bool locked);
     void updateFreeCanvasRect(const QString& id,const QRectF& rect);
@@ -27,6 +28,8 @@ private:
     ContainerContentRegistry& m_registry;
     ContentEntry m_entry;
     QJsonObject m_defaults;
+    QRectF m_resolvedRect=QRectF(0,0,320,80);
+    QSizeF m_editMinimum=QSizeF(24,24);
     ContentLayout m_policy=ContentLayout::LegacyCanvas;
     std::unique_ptr<MeterItem> m_item;
     ContentEntry m_original, m_hydrated;

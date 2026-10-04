@@ -43,7 +43,7 @@ void ContentPropertyEditor::setGeometryLocked(bool locked)
 }
 void ContentPropertyEditor::updateFreeCanvasRect(const QString& id,const QRectF& rect)
 {
-    if(m_entry.id!=id) {return;}m_entry.setFreeCanvasRect(rect);
+    if(m_entry.id!=id) {return;}m_resolvedRect=rect;m_entry.setFreeCanvasRect(rect);
     const double values[]{rect.x(),rect.y(),rect.width(),rect.height()};
     const QStringList keys{"canvasX","canvasY","canvasWidth","canvasHeight"};
     for(int i=0;i<4;++i) {if(auto* field=findChild<QDoubleSpinBox*>(keys[i])) {const QSignalBlocker blocker(field);field->setValue(values[i]);}}
@@ -163,17 +163,17 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     if(m_policy==ContentLayout::FreeCanvas) {
         auto* group=new QGroupBox(tr("Canvas position and size — logical pixels"),this);group->setObjectName("canvasGeometry");group->setEnabled(!m_geometryLocked);
         auto* fields=new QFormLayout(group);root->addWidget(group);
-        const QRectF rect=entry.freeCanvasRect().value_or(QRectF(0,0,320,80));
+        const QRectF rect=entry.freeCanvasRect().value_or(m_resolvedRect);
         const double values[]{rect.x(),rect.y(),rect.width(),rect.height()};
         const QStringList keys{"canvasX","canvasY","canvasWidth","canvasHeight"},labels{tr("X"),tr("Y"),tr("Width"),tr("Height")};
-        QSize minimum(24,24);
+        QSize minimum=m_editMinimum.toSize().expandedTo(QSize(24,24));
         if(auto* face=qobject_cast<CompositePresetItem*>(m_item.get())) {minimum=face->minimumFaceSize();}
         if(auto* face=qobject_cast<BarPresetItem*>(m_item.get())) {minimum=face->minimumFaceSize();}
         for(int axis=0;axis<4;++axis) {
             auto* field=new QDoubleSpinBox(group);field->setObjectName(keys[axis]);field->setDecimals(13);field->setRange(-QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);field->setValue(values[axis]);field->setKeyboardTracking(false);fields->addRow(labels[axis],field);
             connect(field,qOverload<double>(&QDoubleSpinBox::valueChanged),this,[this,axis,minimum](double value){
                 if(m_geometryLocked || m_loading) {return;}
-                QRectF geometry=m_entry.freeCanvasRect().value_or(QRectF(0,0,320,80));
+                QRectF geometry=m_entry.freeCanvasRect().value_or(m_resolvedRect);
                 if(axis==0) {geometry.moveLeft(value);}if(axis==1) {geometry.moveTop(value);}
                 if(axis==2) {geometry.setWidth(qMax(double(minimum.width()),value));}if(axis==3) {geometry.setHeight(qMax(double(minimum.height()),value));}
                 updateFreeCanvasRect(m_entry.id,geometry);publish();

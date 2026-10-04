@@ -311,7 +311,8 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
             QWidget* singleton=m_registry.singletonView(entry.typeId);const bool claim=m_registry.claimSingleton(entry.typeId,entry.id);
             if(singleton && claim) {
                 singleton->setProperty("singletonTypeId",entry.typeId);singleton->setParent(m_canvas);
-                const QSize minimum=singleton->minimumSizeHint().expandedTo(singleton->minimumSize()).expandedTo(QSize(24,24));
+                const QSize minimum=m_registry.singletonCanvasMinimum(entry.typeId);
+                singleton->setProperty("freeCanvasHint",m_registry.singletonCanvasSizeHint(entry.typeId));
                 singleton->setProperty("freeCanvasMinimum",QSizeF(minimum));singleton->setMinimumSize(0,0);singleton->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
                 row.widget=singleton;
             } else {
@@ -335,6 +336,8 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                     if(auto* face=qobject_cast<CompositePresetItem*>(item)) {
                         minimum=face->minimumFaceSize();for(auto* child:face->internalItems()) {child->setProperty("containerSourceContext",row.context);child->setProperty("containerEntryId",entry.id);}
                     }
+                    // Exact imports may be smaller than edit minima, including zero.
+                    meter->setMinimumSize(0,0);meter->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
                     meter->setProperty("freeCanvasMinimum",QSizeF(minimum));meter->setProperty("containerSourceContext",row.context);
                     meter->addItem(item);meter->setParent(m_canvas);row.widget=meter.get();row.item=item;
                     emit meterSurfaceReady(meter.release(),row.context);

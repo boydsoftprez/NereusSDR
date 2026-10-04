@@ -413,6 +413,11 @@ void ContainerSettingsDialog::buildLayout()
             for(auto& c:draft.containers) {if(c.id!=m_selectedId || c.locked) {continue;}for(auto& entry:c.contents) {if(entry.id==id) {entry.setFreeCanvasRect(rect);}}}
             m_editSession->setDraft(draft);if(m_contentEditor) {m_contentEditor->updateFreeCanvasRect(id,rect);}updateDraftStatus();
         });
+        connect(m_preview,&ContainerPreviewWidget::freeCanvasGeometryRestored,this,[this](const ContentEntry& restored){
+            auto draft=m_editSession->draft();
+            for(auto& c:draft.containers) {if(c.id!=m_selectedId) {continue;}for(auto& entry:c.contents) {if(entry.id==restored.id) {if(restored.extensions.contains("freeCanvasRect")) {entry.extensions["freeCanvasRect"]=restored.extensions.value("freeCanvasRect");}else {entry.extensions.remove("freeCanvasRect");}}}}
+            m_editSession->setDraft(draft);onItemSelectionChanged();updateDraftStatus();
+        });
         connect(m_preview,&ContainerPreviewWidget::entrySelected,this,[this](const QString& id){
             for(const auto& c:m_editSession->draft().containers) {if(c.id==m_selectedId) {for(int i=0;i<c.contents.size();++i) {if(c.contents[i].id==id) {m_itemList->setCurrentRow(i);return;}}}}
         });
@@ -1247,7 +1252,7 @@ void ContainerSettingsDialog::onItemSelectionChanged()
         for(const auto& c:m_editSession->draft().containers) { if(c.id!=m_selectedId || row<0 || row>=c.contents.size()) {continue;}
             const auto entry=c.contents[row];if(m_preview) {m_preview->selectEntry(entry.id);}
             auto* scroll=new QScrollArea(m_propertyStack); scroll->setWidgetResizable(true);
-            m_contentEditor=new ContentPropertyEditor(*m_manager->contentRegistry()); m_contentEditor->setLayoutPolicy(c.layout); m_contentEditor->setGeometryLocked(c.locked); m_contentEditor->setContainerDefaults(c.config); m_contentEditor->setEntry(entry);
+            m_contentEditor=new ContentPropertyEditor(*m_manager->contentRegistry()); m_contentEditor->setLayoutPolicy(c.layout); m_contentEditor->setGeometryLocked(c.locked); m_contentEditor->setContainerDefaults(c.config); if(m_preview && c.layout==ContentLayout::FreeCanvas) {m_contentEditor->setCanvasPresentation(m_preview->resolvedFreeCanvasRect(entry.id),m_preview->freeCanvasMinimum(entry.id));} m_contentEditor->setEntry(entry);
             styleSelectorPopups(m_contentEditor);
             scroll->setWidget(m_contentEditor); m_currentTypeEditor=scroll; m_propertyStack->addWidget(scroll); m_propertyStack->setCurrentWidget(scroll);
             findChild<QPushButton*>("duplicateContent")->setEnabled(!entry.typeId.startsWith("applet:") && !c.locked);

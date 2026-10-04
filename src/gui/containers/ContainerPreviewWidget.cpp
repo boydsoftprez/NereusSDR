@@ -29,6 +29,9 @@ ContainerPreviewWidget::ContainerPreviewWidget(ContainerContentRegistry& registr
         for(auto& entry:m_document.contents) {if(entry.id==id) {entry.setFreeCanvasRect(rect);break;}}
         emit freeCanvasRectEdited(id,rect);
     });
+    connect(m_canvas,&FreeCanvasSurface::geometryRestored,this,[this](const QString& id,const QJsonValue& value,bool present){
+        for(auto& entry:m_document.contents) {if(entry.id==id) {if(present) {entry.extensions["freeCanvasRect"]=value;}else {entry.extensions.remove("freeCanvasRect");}emit freeCanvasGeometryRestored(entry);break;}}
+    });
     connect(&poller,&MeterPoller::frameAdvanced,this,&ContainerPreviewWidget::advance);
     connect(&poller,&MeterPoller::bindingAvailabilityChanged,this,[this]{
         if(!m_poller) { return; }
@@ -85,6 +88,12 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
         }
         if(view) { retained.insert(view); if(auto* meter=qobject_cast<MeterWidget*>(view)) { reusedMeters.insert(meter); } }
         else { view=m_registry->createPreview(entry,this); }
+        if(document.layout==ContentLayout::FreeCanvas && entry.typeId.startsWith("applet:")) {
+            view->setProperty("freeCanvasMinimum",QSizeF(m_registry->singletonCanvasMinimum(entry.typeId)));
+            view->setProperty("freeCanvasHint",m_registry->singletonCanvasSizeHint(entry.typeId));
+            if(view->layout()) {view->layout()->setSizeConstraint(QLayout::SetNoConstraint);}
+            view->setMinimumSize(0,0);view->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
+        }
         m_views[entry.id]=view; if(document.layout!=ContentLayout::FreeCanvas) {m_layout->addWidget(view);}
         if (auto* meter=qobject_cast<MeterWidget*>(view)) {
             int height=80;QSize minimum(24,24);
@@ -115,6 +124,8 @@ QRect ContainerPreviewWidget::entryBoundary(const QString& id) const
     QWidget* view=m_views.value(id);if(!view) {return {};}
     return QRect(view->mapTo(const_cast<ContainerPreviewWidget*>(this),QPoint()),view->size());
 }
+QRectF ContainerPreviewWidget::resolvedFreeCanvasRect(const QString& id) const {return m_canvas->logicalRect(id);}
+QSizeF ContainerPreviewWidget::freeCanvasMinimum(const QString& id) const {const auto view=m_views.value(id);return view?view->property("freeCanvasMinimum").toSizeF().expandedTo(QSizeF(24,24)):QSizeF(24,24);}
 void ContainerPreviewWidget::selectEntry(const QString& id) {m_canvas->selectEntry(id);}
 ContainerDocument ContainerPreviewWidget::seededFromStack() const
 {

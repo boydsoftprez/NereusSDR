@@ -68,7 +68,7 @@ void FreeCanvasSurface::project(const ContainerDocument& document,const QHash<QS
         auto& leaf=m_leaves[entry.id];leaf.view=view;leaf.order=entry.paintOrder;view->setProperty("freeCanvasEntryId",entry.id);
         if(view->parentWidget()!=this) {view->setParent(this);}
         view->installEventFilter(this);
-        const QSize hint=view->sizeHint().expandedTo(QSize(320,80));
+        const QSize hint=(view->property("freeCanvasHint").isValid()?view->property("freeCanvasHint").toSize():view->sizeHint()).expandedTo(QSize(320,80));
         if(m_active!=entry.id) {leaf.rect=entry.freeCanvasRect().value_or(QRectF(0,fallbackY,hint.width(),hint.height()));}
         fallbackY=leaf.rect.bottom()+kMargin;
         view->setVisible(entry.visible && (!view->property("freeCanvasEffectiveVisible").isValid() || view->property("freeCanvasEffectiveVisible").toBool()));
@@ -115,12 +115,16 @@ void FreeCanvasSurface::mouseMoveEvent(QMouseEvent* event) {
     updateReveal(hover);QWidget::mouseMoveEvent(event);
 }
 void FreeCanvasSurface::changeRect(const QString& id,const QRectF& rect) {
-    if(!m_leaves.contains(id)) {return;}m_leaves[id].rect=rect;placeViews();emit geometryEdited(id,rect);
+    if(!m_leaves.contains(id)) {return;}m_leaves[id].rect=rect;for(auto& entry:m_document.contents) {if(entry.id==id) {entry.setFreeCanvasRect(rect);break;}}placeViews();emit geometryEdited(id,rect);
 }
 void FreeCanvasSurface::finishGesture(bool cancel) {
     if(m_active.isEmpty()) {return;}
     const QString id=m_active;const QRectF original=m_original;
-    if(cancel) {changeRect(id,original);}
+    if(cancel) {
+        m_leaves[id].rect=original;
+        for(auto& entry:m_document.contents) {if(entry.id==id) {if(m_originalGeometryPresent) {entry.extensions["freeCanvasRect"]=m_originalGeometry;}else {entry.extensions.remove("freeCanvasRect");}break;}}
+        emit geometryRestored(id,m_originalGeometry,m_originalGeometryPresent);
+    }
     if(m_capture) {m_capture->releaseMouse();}m_capture=nullptr;m_active.clear();placeViews();updateReveal();
     if(!cancel && logicalRect(id)!=original) {emit geometryCommitted(id,logicalRect(id),original);}
 }
@@ -158,6 +162,7 @@ bool FreeCanvasSurface::eventFilter(QObject* watched,QEvent* event) {
         if(mouse->button()==Qt::LeftButton) {
             selectEntry(id);emit entrySelected(id);
             if(m_document.locked) {return true;}
+            for(const auto& entry:m_document.contents) {if(entry.id==id) {m_originalGeometryPresent=entry.extensions.contains("freeCanvasRect");m_originalGeometry=entry.extensions.value("freeCanvasRect");break;}}
             m_active=id;m_resizing=handle->property("canvasResize").toBool();m_original=logicalRect(id);m_press=mouse->globalPosition();m_capture=handle;
             // Consuming a child's press requires explicit capture: observed in
             // AetherSDR TitleBar.cpp:585-588 [@1e0718a], no upstream logic ported.
