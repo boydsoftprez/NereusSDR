@@ -2,6 +2,8 @@
 
 ## [Unreleased] - First calendar release
 
+> Alpha testers: start with the [2026.10.0 smoke-test and upgrade guide](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/debugging/v2026.10.0-alpha-tester-smoketest.md).
+
 2026.10.0 brings together the work since 0.5.2: independent receivers, a shared
 station Core, remote desktop and native iPhone/iPad operation, IPv6-aware
 remote access, WDSP 2.10 with NNR and PureSignal 3, a new 3D display, native
@@ -114,7 +116,7 @@ session contracts serve desktop and native mobile consoles.
 A dedicated Debian 13/Trixie ARM64 Core package accompanies the Ubuntu
 packages. It reuses the native ARMv8-A builder and locked DFNR source build,
 with a fresh-runtime package/CLI check and recorded source/package provenance.
-The [short SBC install guide](docs/guides/install-core-sbc.md) covers flashing
+The [short SBC install guide](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/guides/install-core-sbc.md) covers flashing
 a 64-bit Raspberry Pi OS Lite or compatible Armbian Trixie image, installing
 the package with `apt`, starting the service and pairing a desktop or phone.
 
@@ -170,6 +172,7 @@ stale readings. Compact labels and peaks fit within the meter glass.
 - Replay saved anti-VOX state to replacement transmit workers (#334).
 - Fence transmit keying callbacks to the current radio session (#335).
 - Align spectrum painting and mouse geometry in CPU and GPU builds (#336).
+- Keep each pan's displayed and wheel-tuning STEP bound to its selected receiver, including selection changes and replacement receivers.
 - Correct two Qt 6.11 Cocoa accessibility failures found during native evaluation: shared element ownership and stale connection-list child caches. The fixes preserve selection and connection behavior; release Mac packages use a pinned Qt 6.8 SDK and must pass a real Cocoa startup check.
 
 Further work addresses receiver/channel lifetimes, media recovery, stale session replies, audio-ring overruns, microphone stalls, shared-device authority and reconnect teardown. The reconnect fixes above are narrower than the original acoustic/startup and intermittent-crash reports; the requested retests for #235, #299 and #300 remain open.
@@ -194,7 +197,7 @@ This remains an alpha release. Software and package checks will be reported from
 Cross-radio TNF listening, NNR quality, PureSignal RF improvement, RADE on-air interoperability, sustained SBC operation, accessory bench matrices and remaining native UI interactions retain their recorded pending status until exact evidence closes them. CW transmit, FM pre-emphasis, CAT/rigctld, skin import and WAV/IQ recording are not advertised as delivered here. The legacy PS-RX/PS-TX spectrum view remains explicitly unavailable. Free
 Canvas placement/dragging/resizing and individual Thetis button objects
 remain planned container work; the accepted movement/reordering features
-operate through the implemented grips, menus and stacks.
+operate through the implemented grips, menus and stacks. High-resolution trackpad gesture handling remains under review.
 
 Final artifact list, signatures, checksums and installation links will come from the completed release workflow. Source archives and dependency notices accompany the binary distribution.
 

@@ -197,6 +197,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_INSTALL_LIBDIR=lib \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             $CMAKE_EXTRA
@@ -319,6 +320,10 @@ jobs:
             find AppDir build -name 'libNereusSDRLib.so*' >&2
             exit 1
           fi
+          if [ ! -f AppDir/usr/lib/libNereusCore.so ]; then
+            echo "ERROR: libNereusCore.so missing from AppDir/usr/lib after cmake --install" >&2
+            exit 1
+          fi
           # R-R3-36: the microphone capture helper installs beside NereusSDR
           # in the default component; linuxdeploy then resolves its libraries
           # along with the rest of AppDir/usr/bin.
@@ -343,6 +348,7 @@ jobs:
             echo "ERROR: libNereusSDRLib.so vanished from AppDir during linuxdeploy" >&2
             exit 1
           fi
+          test -f AppDir/usr/lib/libNereusCore.so
           # R-R3-39: WDSP links libfftw3_threads (FFTW's thread-safe
           # planner); linuxdeploy traces it from the NEEDED entries like
           # libfftw3. Assert it, as above.
@@ -354,8 +360,17 @@ jobs:
           chmod +x "$LDAI_OUTPUT"
           "./$LDAI_OUTPUT" --appimage-extract >/dev/null
           test -x squashfs-root/usr/bin/nereusd
+          test -f squashfs-root/usr/lib/libNereusSDRLib.so
+          test -f squashfs-root/usr/lib/libNereusCore.so
           cmp packaging/linux/AppRun squashfs-root/AppRun.wrapped
-          QT_QPA_PLATFORM=offscreen "./$LDAI_OUTPUT" --nereus-station --help > station-help.txt
+          # Exercise the extracted package through AppRun, without the SDK
+          # or build-tree library/plugin paths masking a missing dependency.
+          env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH \
+            QT_QPA_PLATFORM=offscreen "./$LDAI_OUTPUT" --version > desktop-version.txt
+          VERSION="${{ needs.prepare.outputs.version }}"
+          grep -Fxq "NereusSDR ${VERSION%%-*}" desktop-version.txt
+          env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH \
+            QT_QPA_PLATFORM=offscreen "./$LDAI_OUTPUT" --nereus-station --help > station-help.txt
           grep -q 'NereusSDR headless daemon' station-help.txt
 
       - name: Upload AppImage artifact
