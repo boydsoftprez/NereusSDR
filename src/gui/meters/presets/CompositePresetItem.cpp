@@ -1090,6 +1090,7 @@ void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer l
         layoutChildren(width,height);
         for(MeterItem* child:internalItems()) { if(child!=m_clock) { child->paint(p,width,height); } }
         if(m_clock) {
+            p.setFont(font);
             const QRectF clock(m_clock->x()*width,m_clock->y()*height,m_clock->itemWidth()*width,m_clock->itemHeight()*height); const QString mode=m_config["clockMode"].toString(); const QDateTime utc=QDateTime::currentDateTimeUtc(); p.setPen(m_clock->timeColour());
             const auto display=[&](QDateTime time,QString title,QRectF rect) {
                 const QString fmt=m_config["show24Hour"].toBool()?"HH:mm:ss":"hh:mm:ss AP";

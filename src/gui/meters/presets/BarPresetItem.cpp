@@ -191,8 +191,8 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
                 const double after=index+1==major.size()?g.left+g.width:pos(major[index+1]);
                 const double labelWidth=qMin(44*g.scale,qMax(0.0,qMin(index==0?after-x:2*(x-before),index+1==major.size()?x-before:2*(after-x))*.48));
                 QRectF text(x-labelWidth/2,g.baseline-32*g.scale,labelWidth,18*g.scale);
-                if(index==0) { text.moveLeft(g.left); }
-                if(value==m_maximum) { text.moveRight(g.left+g.width); }
+                if(text.left()<g.left) { text.moveLeft(g.left); }
+                if(text.right()>g.left+g.width) { text.moveRight(g.left+g.width); }
                 drawObjectText(scale,text,QString::number(value,'g',4),13*g.scale,value==m_maximum ? Qt::AlignRight|Qt::AlignVCenter : Qt::AlignCenter);
             }
         }

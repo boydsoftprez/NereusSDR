@@ -25,13 +25,14 @@ public:
     struct Text { QString value; double pixels; QRectF bounds; QFont font; };
     QVector<Text> texts;
     QVector<QPainterPath> strokes;
+    QVector<QImage> images;
     explicit TextPaintEngine(int dpr):QPaintEngine(AllFeatures),m_dpr(dpr) {}
     bool begin(QPaintDevice* device) override { setPaintDevice(device); setActive(true); return true; }
     bool end() override { setActive(false); return true; }
     void updateState(const QPaintEngineState&) override {}
     Type type() const override { return User; }
     void drawPixmap(const QRectF&,const QPixmap&,const QRectF&) override {}
-    void drawImage(const QRectF&,const QImage&,const QRectF&,Qt::ImageConversionFlags) override {}
+    void drawImage(const QRectF&,const QImage& image,const QRectF&,Qt::ImageConversionFlags) override {images.append(image);}
     void drawPath(const QPainterPath& path) override {recordStroke(path);}
     void drawLines(const QLineF* lines,int count) override {
         for(int i=0;i<count;++i) {QPainterPath path;path.moveTo(lines[i].p1());path.lineTo(lines[i].p2());recordStroke(path);}
@@ -57,6 +58,7 @@ public:
     QPaintEngine* paintEngine() const override { return &m_engine; }
     const QVector<TextPaintEngine::Text>& texts() const { return m_engine.texts; }
     const QVector<QPainterPath>& strokes() const { return m_engine.strokes; }
+    const QVector<QImage>& images() const { return m_engine.images; }
 protected:
     int metric(PaintDeviceMetric key) const override {
         switch(key) {
@@ -189,6 +191,67 @@ private slots:
                 int black=0;
                 for(int y=box.top();y<=box.bottom();++y) {for(int x=box.left();x<=box.right();++x) {const QColor c=image.pixelColor(x,y);if(c.red()<10 && c.green()<10 && c.blue()<10) {++black;}}}
                 QVERIFY2(black==0,qPrintable(text.value+" is covered by a needle"));
+            }
+        }
+    }
+    void cachedBarMajorLabelTracksItsTick() {
+        for(const QString& flavor:{QString("Mic"),QString("Alc"),QString("Comp"),QString("Eq"),QString("Leveler"),QString("Cfc")}) {
+            BarPresetItem bar;
+            if(flavor=="Mic") {bar.configureAsMic();} else if(flavor=="Alc") {bar.configureAsAlc();} else {QVERIFY(bar.configureVariant(flavor));}
+            const QString saved=bar.serialize();
+            for(QSize size:{QSize(260,72),QSize(520,144),QSize(640,72)}) {
+                for(int dpr:{1,2}) {
+                    TextPaintDevice device(size,dpr);QPainter painter(&device);bar.paint(painter,size.width(),size.height());painter.end();
+                    QCOMPARE(device.images().size(),1);const QImage& raster=device.images().first();
+                    const auto white=[&](int x,int y) {const QColor c=raster.pixelColor(x,y);return c.alpha()>64 && c.red()>80 && qAbs(c.red()-c.green())<5 && qAbs(c.green()-c.blue())<5;};
+                    // Locate the actual cached scale baseline and tall major tick
+                    // strokes. Their raster positions, not a copied calibration
+                    // formula, are the oracle for the first interior label.
+                    int baseline=-1,longest=0;
+                    for(int y=0;y<raster.height();++y) {
+                        int count=0;for(int x=0;x<raster.width();++x) {if(white(x,y)) {++count;}}
+                        if(count>longest) {longest=count;baseline=y;}
+                    }
+                    QVERIFY(baseline>=0);const double unit=size.height()/72.0*dpr;
+                    QVector<double> ticks;int start=-1;
+                    const int tickRow=baseline-qRound(8*unit);
+                    for(int x=0;x<=raster.width();++x) {
+                        const bool ink=x<raster.width() && white(x,tickRow);
+                        if(ink && start<0) {start=x;}
+                        if(!ink && start>=0) {ticks.append((start+x-1)/2.0);start=-1;}
+                    }
+                    QVERIFY(ticks.size()>=2);int left=raster.width(),right=-1;
+                    const int stop=qRound((ticks[0]+ticks[1])/2);
+                    for(int y=baseline-qRound(32*unit);y<baseline-qRound(14*unit);++y) {
+                        for(int x=0;x<stop;++x) {if(white(x,y)) {left=qMin(left,x);right=qMax(right,x);}}
+                    }
+                    QVERIFY(right>=left);const double center=(left+right)/2.0;
+                    QVERIFY2(qAbs(center-ticks[0])<=3*unit,qPrintable(QString("%1 %2x%3 DPR%4: label center%5, actual tick%6").arg(flavor).arg(size.width()).arg(size.height()).arg(dpr).arg(center).arg(ticks[0])));
+                    QCOMPARE(bar.serialize(),saved);
+                }
+            }
+        }
+    }
+    void clockRolesPreserveOwningFontStyle() {
+        for(auto kind:{CompositePresetItem::Face::Clock,CompositePresetItem::Face::Contest}) {
+            for(const QString& family:{QString("Arial"),QString("Courier")}) {
+                for(auto weight:{QFont::Light,QFont::DemiBold}) {
+                    CompositePresetItem face(kind);
+                    QFont owning(family);owning.setWeight(weight);owning.setItalic(true);
+                    QVERIFY(face.applyConfiguration({{"importedFont",QJsonObject{{"family",family},{"weight",int(weight)},{"italic",true}}}}));
+                    const QString saved=face.serialize();
+                    for(QSize size:{QSize(360,280),QSize(720,560),QSize(720,120),QSize(260,360)}) {
+                        for(int dpr:{1,2}) {
+                            TextPaintDevice device(size,dpr);QPainter painter(&device);painter.setFont(owning);face.paint(painter,size.width(),size.height());painter.end();
+                            int clocks=0;
+                            for(const auto& text:device.texts()) {
+                                if(text.value!="Local" && text.value!="UTC" && !text.value.contains(':') && !QRegularExpression("^\\d{4}-\\d{2}-\\d{2}$").match(text.value).hasMatch()) {continue;}
+                                ++clocks;QCOMPARE(text.font.family(),family);QCOMPARE(text.font.weight(),weight);QCOMPARE(text.font.italic(),true);
+                            }
+                            QCOMPARE(clocks,6);QCOMPARE(face.serialize(),saved);
+                        }
+                    }
+                }
             }
         }
     }
