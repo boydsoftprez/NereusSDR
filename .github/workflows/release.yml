@@ -362,7 +362,7 @@ jobs:
           test -x squashfs-root/usr/bin/nereusd
           test -f squashfs-root/usr/lib/libNereusSDRLib.so
           test -f squashfs-root/usr/lib/libNereusCore.so
-          cmp packaging/linux/AppRun squashfs-root/AppRun.wrapped
+          cmp packaging/linux/AppRun squashfs-root/AppRun
           # Exercise the extracted package through AppRun, without the SDK
           # or build-tree library/plugin paths masking a missing dependency.
           env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH \
@@ -664,8 +664,9 @@ jobs:
           make install
           make distclean
 
-          # Pass 2 — single precision (libfftw3f)
-          ./configure --enable-single --enable-shared --disable-doc \
+          # Pass 2 — single precision (libfftw3f), with libfftw3f_threads:
+          # display FFTs require fftwf_make_planner_thread_safe.
+          ./configure --enable-single --enable-shared --enable-threads --disable-doc \
             --prefix="$PREFIX" CFLAGS="$CFLAGS" --host=x86_64-apple-darwin
           make -j$(sysctl -n hw.ncpu)
           make install
@@ -677,6 +678,8 @@ jobs:
           test -f "$PREFIX/lib/libfftw3.dylib"         || { echo "::error::libfftw3 (double) not installed"; exit 1; }
           test -f "$PREFIX/lib/libfftw3_threads.dylib" || { echo "::error::libfftw3_threads (double) not installed"; exit 1; }
           test -f "$PREFIX/lib/libfftw3f.dylib"        || { echo "::error::libfftw3f (single) not installed"; exit 1; }
+          test -f "$PREFIX/lib/libfftw3f_threads.dylib" || { echo "::error::libfftw3f_threads (single) not installed"; exit 1; }
+          lipo "$PREFIX/lib/libfftw3f_threads.dylib" -verify_arch x86_64
 
       - name: Build OpenSSL from source for x86_64
         if: matrix.arch == 'x86_64'
