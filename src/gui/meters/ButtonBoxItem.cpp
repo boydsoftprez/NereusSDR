@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Invalidate cached interaction frames by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Bounded container single-control viewport sizing by
@@ -78,10 +80,19 @@ ButtonBoxItem::ButtonBoxItem(QObject* parent)
     m_clickTimer.setInterval(100);
     connect(&m_clickTimer, &QTimer::timeout, this, [this]() {
         m_clickedIndex = -1;
+        m_interactionDirty = true;
     });
 }
 
 ButtonBoxItem::~ButtonBoxItem() = default;
+
+bool ButtonBoxItem::advanceMeter(qint64 monotonicMs)
+{
+    Q_UNUSED(monotonicMs);
+    const bool changed = m_interactionDirty;
+    m_interactionDirty = false;
+    return changed;
+}
 
 void ButtonBoxItem::setButtonCount(int count)
 {

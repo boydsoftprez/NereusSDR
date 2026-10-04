@@ -76,7 +76,15 @@ private slots:
         const bool before=model->transmitModel().monEnabled();QSignalSpy changed(&model->transmitModel(),&TransmitModel::monEnabledChanged);
         QTest::mouseClick(monMeter,Qt::LeftButton,Qt::NoModifier,QPoint(55,20));
         QCOMPARE(changed.count(),1);QCOMPARE(model->transmitModel().monEnabled(),!before);QVERIFY(mon->buttonState(OtherButtonItem::ButtonId::Mon));
-        QTRY_COMPARE_WITH_TIMEOUT(monMeter->grab().toImage().pixelColor(10,20),mon->button(mon->indexOf(OtherButtonItem::ButtonId::Mon)).onColour,500);
+        const auto buttonPixel=[&] {
+#ifdef NEREUS_GPU_SPECTRUM
+            const QImage frame=monMeter->grabFramebuffer();
+#else
+            const QImage frame=monMeter->grab().toImage();
+#endif
+            return frame.pixelColor(QPoint(10,20)*monMeter->devicePixelRatioF());
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(buttonPixel(),mon->button(mon->indexOf(OtherButtonItem::ButtonId::Mon)).onColour,500);
         capture(monMeter,"single-monitor-on");capture(qobject_cast<MeterWidget*>(host->entryRows()[0].widget.data()),"single-mox-unavailable");capture(qobject_cast<MeterWidget*>(host->entryRows()[3].widget.data()),"legacy-other-buttons");
         auto* moxItem=qobject_cast<OtherButtonItem*>(host->entryRows()[0].item.data());QVERIFY(moxItem);QVERIFY(!moxItem->isButtonAvailable(OtherButtonItem::ButtonId::Mox));QSignalSpy command(moxItem,&OtherButtonItem::otherButtonClicked);
         QTest::mouseClick(qobject_cast<MeterWidget*>(host->entryRows()[0].widget.data()),Qt::LeftButton,Qt::NoModifier,QPoint(55,20));QCOMPARE(command.count(),0);QVERIFY(!model->isTune());
