@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import Foundation
+import LinkTestSupport
 import Testing
 @testable import NereusMedia
 
@@ -273,23 +274,44 @@ private final class SendLog: @unchecked Sendable {
     /// schedule, and nothing after it closes. Nothing here depends on how
     /// busy the computer is: each check waits for the thread to reach a
     /// known point.
-    @Test func theHostClockWakesAtItsDeadline() throws {
+    @Test func theHostClockWakesAtItsDeadline() async throws {
+        let diagnostic = HostedDiagnosticReceipts("theHostClockWakesAtItsDeadline")
+        diagnostic.mark("body entry")
+        defer { diagnostic.mark("body exit after cleanup"); diagnostic.export() }
         let time = VirtualTime()
-        let clock = HostSendClock(now: { time.now }, waitUntil: { time.wait(until: $0) })
-        defer { clock.close() }
+        let clock = HostSendClock(now: { time.now }, waitUntil: {
+            diagnostic.mark("host worker wait entry")
+            time.wait(until: $0)
+            diagnostic.mark("host worker wait returned")
+        })
+        defer {
+            diagnostic.mark("defer clock close entry")
+            clock.close()
+            diagnostic.mark("defer clock close returned")
+        }
         let ran = RanAt()
         let deadline = clock.now + 30 * Self.millisecond
         clock.schedule(at: deadline - 10 * Self.millisecond) { ran.mark(0) }
-        clock.schedule(at: deadline) { ran.mark(clock.now) }
+        clock.schedule(at: deadline) {
+            diagnostic.mark("latest scheduled work entry")
+            ran.mark(clock.now)
+            diagnostic.mark("latest scheduled work returned")
+        }
         // Past the first deadline, short of the second: the thread goes on
         // to wait for the second, and nothing has run.
         time.advance(to: deadline - 5 * Self.millisecond)
-        #expect(time.waits(for: deadline), "the thread waits for the latest schedule's deadline")
+        #expect(await BlockingFixtureWait.run("latest deadline wait", diagnostic: diagnostic) {
+            time.waits(for: deadline)
+        }, "the thread waits for the latest schedule's deadline")
         #expect(ran.times.isEmpty, "nothing runs before its deadline, and the replaced work never")
         time.advance(to: deadline)
-        #expect(ran.wait(forCount: 1))
+        #expect(await BlockingFixtureWait.run("scheduled mark wait", diagnostic: diagnostic) {
+            ran.wait(forCount: 1)
+        })
         #expect(ran.times == [deadline], "the second schedule replaced the first and ran at its deadline")
+        diagnostic.mark("explicit clock close entry")
         clock.close()
+        diagnostic.mark("explicit clock close returned")
         // Refused as it is made: nothing can run it later.
         clock.schedule(at: clock.now) { ran.mark(1) }
         time.advance(to: deadline + 100 * Self.millisecond)
