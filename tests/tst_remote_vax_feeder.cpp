@@ -42,6 +42,8 @@
 //                                    reference here, is told to carry the
 //                                    window's slices again. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-04  J.J. Boyd / KG4VCF  Pump-snapshot ingress regressions.
+//                                    AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include <QtTest>
@@ -848,6 +850,97 @@ private slots:
         feeder.pump();
         QCOMPARE(feeder.stats().state, RemoteVaxFeederStats::State::Idle);
         QCOMPARE(written + stats.droppedFrames, quint64(21 * kOpusFrames));
+    }
+
+    void audioArrivingDuringThePumpIsKept_data()
+    {
+        QTest::addColumn<bool>("stopped");
+        QTest::newRow("first block") << false;
+        QTest::newRow("first block after Core stop") << true;
+    }
+
+    void audioArrivingDuringThePumpIsKept()
+    {
+        QFETCH(bool, stopped);
+        quint64 written = 0;
+        RemoteVaxFeeder* active = nullptr;
+        bool deliver = true;
+        const std::vector<float> block = toneBlock(0, kOpusFrames, 1000.0, 0.1);
+        VaxOutputPort port;
+        // Playback timing is queried after the pump snapshots arrivals.
+        // Delivering here models the receive worker completing a block
+        // between that snapshot and draining the hand-off ring.
+        port.pacing = [&]() -> std::optional<IAudioBus::OutputPacing> {
+            if (deliver) {
+                deliver = false;
+                active->receiverAudioBlock(0, block.data(), kOpusFrames);
+            }
+            return std::nullopt;
+        };
+        port.write = [&written](const float*, int frames) { written += quint64(frames); return true; };
+        RemoteVaxFeeder feeder(1, port, [] { return qint64(0); });
+        active = &feeder;
+        feeder.setSourceSlice(0);
+        if (stopped) {
+            feeder.receiverAudioStopped(0, QStringLiteral("slice-stopped"));
+        }
+        feeder.pump();
+        QCOMPARE(written, quint64(0));
+        QCOMPARE(feeder.stats().receivedFrames, quint64(kOpusFrames));
+        QCOMPARE(feeder.stats().handoffFrames, kOpusFrames);
+        feeder.pump();
+        QCOMPARE(written, quint64(kOpusFrames));
+        QCOMPARE(feeder.stats().handoffFrames, 0);
+        QCOMPARE(feeder.stats().state, RemoteVaxFeederStats::State::Playing);
+        QVERIFY(feeder.lastStopReason().isEmpty());
+    }
+
+    void aQuietPrefixIsDroppedWithoutDroppingNewAudio()
+    {
+        qint64 now = 0;
+        RemoteVaxFeeder* active = nullptr;
+        bool deliver = false;
+        std::vector<float> written;
+        const std::vector<float> oldBlock(std::size_t(kOpusFrames) * 2, 0.25f);
+        const std::vector<float> otherBlock(480 * 2, 0.125f);
+        const std::vector<float> freshBlock(std::size_t(kOpusFrames) * 2, 0.5f);
+        VaxOutputPort port;
+        port.pacing = [&]() -> std::optional<IAudioBus::OutputPacing> {
+            if (deliver) {
+                deliver = false;
+                active->receiverAudioBlock(0, freshBlock.data(), kOpusFrames);
+            }
+            return std::nullopt;
+        };
+        port.write = [&written](const float* stereo, int frames) {
+            written.insert(written.end(), stereo, stereo + frames * 2);
+            return true;
+        };
+        RemoteVaxFeeder feeder(1, port, [&now] { return now; });
+        active = &feeder;
+        feeder.setSourceSlices({0, 1});
+        feeder.receiverAudioBlock(0, oldBlock.data(), kOpusFrames);
+        feeder.receiverAudioBlock(1, otherBlock.data(), 480);
+        feeder.pump();
+        QCOMPARE(written.size(), std::size_t(480 * 2));
+        QCOMPARE(feeder.stats().handoffFrames, 1440);
+        for (float sample : written) {
+            QCOMPARE(sample, 0.375f);
+        }
+
+        // Both slices go quiet with 1440 old frames waiting for slice 1.
+        // Slice 0 resumes after the next pump snapshots its old arrivals.
+        now = RemoteVaxFeeder::kQuietNs + 1;
+        deliver = true;
+        feeder.pump();
+        QCOMPARE(written.size(), std::size_t(480 * 2));
+        QCOMPARE(feeder.stats().handoffFrames, kOpusFrames);
+        feeder.pump();
+        QCOMPARE(written.size(), std::size_t(2400 * 2));
+        QCOMPARE(feeder.stats().handoffFrames, 0);
+        for (std::size_t i = 480 * 2; i < written.size(); ++i) {
+            QCOMPARE(written[i], 0.5f);
+        }
     }
 
     // The worker thread pumps on its own and stops cleanly.
