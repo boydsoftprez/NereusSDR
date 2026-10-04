@@ -301,7 +301,7 @@ Tune/two-tone accepted repeats observe then adopt the existing cycle identity wi
 
 ## Task 12: Integration invariants and platform checks
 
-**Files:** Create `tests/tst_cat_integration.cpp`, verification fixtures/report at `docs/architecture/thetis-cat-verification/README.md`; modify test registration and `.github/workflows/ci.yml` only if new targets are not already covered by existing registration/sharding.
+**Files:** Create `tests/tst_cat_integration.cpp`, verification fixtures/report at `docs/architecture/thetis-cat-verification/README.md`; modify test registration and `.github/workflows/ci.yml` only for uncovered new target registration/sharding or a confirmed narrow optional SerialPort compile-coverage gap. Keep SerialPort optional; CI configuration is not execution evidence.
 
 **Interfaces:** Use existing public CAT/service/model interfaces; no new runtime test-only API beyond the documented transport injection and reporter flush seams.
 
