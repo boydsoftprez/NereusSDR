@@ -9905,3 +9905,6 @@ nereus_add_test(tst_cat_pty CORE_ONLY)
 # Native CAT setup and applet controls.
 nereus_add_test(tst_cat_setup)
 nereus_add_test(tst_cat_applet)
+
+# Production TCP -> CAT parser -> model/connection intent and ownership gates.
+nereus_add_test(tst_cat_integration CORE_ONLY)

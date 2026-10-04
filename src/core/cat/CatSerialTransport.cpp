@@ -24,6 +24,8 @@
 // Modification history (NereusSDR):
 // 2026-10-04 - Qt serial transport and sampled input pins by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
+// 2026-10-04 - Native Linux HUP observation by J.J. Boyd (KG4VCF),
+//              AI-assisted via OpenAI Codex; NereusSDR-original mechanics.
 #include "CatSerialTransport.h"
 #include "CatSettings.h"
 #include "core/LogCategories.h"
@@ -31,17 +33,52 @@
 #include <QScopeGuard>
 #ifdef HAVE_SERIALPORT
 #include <QSerialPort>
+#if defined(Q_OS_LINUX)
+#include <poll.h>
+#include <cerrno>
+#include <cstring>
+#endif
 #endif
 namespace NereusSDR {
 namespace {
 // Nereus event-loop scheduling and output bounds, not DSP parameters.
 constexpr int kPinSamplingIntervalMs = 20;
+#if defined(Q_OS_LINUX) && defined(HAVE_SERIALPORT)
+constexpr int kSerialDisconnectObservationMs = 20;
+#endif
 constexpr qsizetype kMaximumPendingBytes = 256 * 1024;
 constexpr qsizetype kMaximumOutputBytes = 64 * 1024;
 #ifdef HAVE_SERIALPORT
 class NativeSerialDevice final : public CatSerialDevice {
 public:
     NativeSerialDevice() : m_port(std::make_unique<QSerialPort>().release(), [](QSerialPort* port) { port->deleteLater(); }) {
+#if defined(Q_OS_LINUX)
+        // Our Linux/Qt 6.8 PTY regression gets HUP without a Qt device error.
+        // Observe actual HUP/ERR without consuming input
+        // or mistaking an ordinary empty read for a disappearance.
+        m_disconnectTimer.setInterval(kSerialDisconnectObservationMs);
+        connect(&m_disconnectTimer, &QTimer::timeout, this, [this] {
+            const auto port = m_port;
+            if (m_opening) { return; }
+            QString error;
+            pollfd descriptor{static_cast<int>(port->handle()), 0, 0};
+            if (!port->isOpen() || descriptor.fd < 0) {
+                error = "Serial device no longer open";
+            } else {
+                const int result = ::poll(&descriptor, 1, 0);
+                if (result < 0 && errno != EINTR) {
+                    error = "Serial descriptor poll: " + QString::fromLocal8Bit(std::strerror(errno));
+                } else if (result > 0 && (descriptor.revents & (POLLHUP | POLLERR | POLLNVAL))) {
+                    error = "Serial device disconnected";
+                }
+            }
+            if (!error.isEmpty()) {
+                m_disconnectTimer.stop();
+                emit errorOccurred(error);
+                // The callback may close, restart or delete this device.
+            }
+        });
+#endif
         connect(m_port.get(), &QSerialPort::readyRead, this, &CatSerialDevice::readyRead);
         connect(m_port.get(), &QSerialPort::bytesWritten, this, &CatSerialDevice::bytesWritten);
         connect(m_port.get(), &QSerialPort::errorOccurred, this, [this](QSerialPort::SerialPortError code) {
@@ -90,9 +127,15 @@ public:
             error = "Serial driver did not accept the configured format"; port->close(); return false;
         }
         port->setReadBufferSize(64 * 1024);
+#if defined(Q_OS_LINUX)
+        m_disconnectTimer.start();
+#endif
         return true;
     }
     void close() override {
+#if defined(Q_OS_LINUX)
+        m_disconnectTimer.stop();
+#endif
         // Native handle has no QObject parent and stays alive across synchronous Qt callbacks.
         const auto port = m_port;
         port->close();
@@ -118,6 +161,9 @@ public:
 private:
     std::shared_ptr<QSerialPort> m_port;
     bool m_opening{false};
+#if defined(Q_OS_LINUX)
+    QTimer m_disconnectTimer;
+#endif
 };
 #endif
 }

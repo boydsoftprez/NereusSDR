@@ -136,6 +136,43 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 3000); QVERIFY(!transport->isOpen()); QVERIFY(!transport->errorString().isEmpty());
 #endif
     }
+    void nativeErrorCallbackLifecycle_data() {
+        QTest::addColumn<bool>("destroy");
+        QTest::newRow("delete-on-native-loss") << true;
+        QTest::newRow("restart-on-native-loss") << false;
+    }
+    void nativeErrorCallbackLifecycle() {
+#if defined(HAVE_SERIALPORT) && (defined(Q_OS_MAC) || defined(Q_OS_LINUX))
+        QFETCH(bool, destroy);
+        int first = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK); QVERIFY(first >= 0);
+        const auto closeFirst = qScopeGuard([&] { if (first >= 0) { ::close(first); } });
+        QCOMPARE(grantpt(first), 0); QCOMPARE(unlockpt(first), 0);
+        CatEndpointConfig original; original.serialEnabled = true; original.serialDevice = QString::fromLocal8Bit(ptsname(first));
+        const int second = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK); QVERIFY(second >= 0);
+        const auto closeSecond = qScopeGuard([&] { ::close(second); });
+        QCOMPARE(grantpt(second), 0); QCOMPARE(unlockpt(second), 0);
+        CatEndpointConfig replacement = original; replacement.serialDevice = QString::fromLocal8Bit(ptsname(second));
+        auto transport = std::make_unique<CatSerialTransport>(); QVERIFY(transport->start(original));
+        int errors = 0;
+        QObject observer;
+        connect(transport.get(), &CatSerialTransport::failed, &observer, [&](const QString&) {
+            ++errors;
+            if (destroy) { transport.reset(); }
+            else { QVERIFY(transport->start(replacement)); }
+        });
+        QCOMPARE(::close(first), 0); first = -1;
+        QTRY_COMPARE_WITH_TIMEOUT(errors, 1, 3000);
+        if (destroy) { QVERIFY(!transport); }
+        else {
+            QVERIFY(transport->isOpen()); QByteArray received;
+            QObject receivedObserver;
+            connect(transport.get(), &CatSerialTransport::bytesReceived, &receivedObserver, [&](const QByteArray& bytes) { received += bytes; });
+            QCOMPARE(::write(second, "fresh", 5), ssize_t(5));
+            QTRY_COMPARE_WITH_TIMEOUT(received, QByteArray("fresh"), 3000);
+            transport->stop(); QVERIFY(!transport->isOpen());
+        }
+#endif
+    }
     void nativeByteLifecycle() {
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
         const int master = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);

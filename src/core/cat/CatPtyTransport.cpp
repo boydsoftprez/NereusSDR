@@ -121,6 +121,16 @@ void CatPtyTransport::losePeer() {
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
     // Drop both kernel queues as well as our tail before a later slave opener can inherit bytes.
     if (::tcflush(m_master->value, TCIOFLUSH) != 0) { fail(systemError("PTY flush after peer loss")); return; }
+#if defined(Q_OS_LINUX)
+    // Linux master tcflush leaves the linked slave's input queue intact. A
+    // transient handle to our own slave purges that old outbound tail before
+    // notifying the service. Close it now: it must never anchor a peer/session.
+    {
+        Descriptor slave(::open(m_path.toLocal8Bit().constData(), O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC));
+        if (slave.value < 0) { fail(systemError("PTY slave open after peer loss")); return; }
+        if (::tcflush(slave.value, TCIOFLUSH) != 0) { fail(systemError("PTY slave flush after peer loss")); return; }
+    }
+#endif
 #endif
     emit peerClosed(id);
 }
