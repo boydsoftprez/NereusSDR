@@ -31,7 +31,7 @@ void registerChromeBarItems(ChromeBarController& c, const ChromeBarWidgets& w)
     add(c, w.safetyGroup,  nullptr, 0, QString());
 
     // psaIndicator is registered at rung 0 (never folds on width) so its
-    // ~154 px (two QLabel minimumWidth pins, PsaIndicatorWidget.cpp) is
+    // compact stacked banner width (PsaIndicatorWidget.cpp) is
     // counted in the width budget on every PS-capable, PS-armed board --
     // omitting it entirely under-counts the budget on exactly that bench
     // (Task A8 fix round 1 finding 2). Its ARMED/unarmed state is not a

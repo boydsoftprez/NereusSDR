@@ -655,8 +655,9 @@ private slots:
 
     void setTxChannel_lateBindingDoesNotCrash()
     {
-        PureSignal ps(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
         TxChannel tx(kTxChannelId);
+        // The bound channel must outlive its coordinator, including teardown.
+        PureSignal ps(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
         ps.setTxChannel(&tx);
         // After binding, singleCalibrate now routes through tx's setPSControl.
         ps.singleCalibrate();

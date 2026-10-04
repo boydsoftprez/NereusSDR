@@ -456,7 +456,9 @@ Ps3ActionResult PureSignalSessionFacade::executeAction(Ps3Action action,
     if (!stop && action != Ps3Action::SetTwoTone && action != Ps3Action::SaveCorrection) {
         for (const PendingOperation& previous : std::as_const(m_pending)) {
             if (previous.action != Ps3Action::SetTwoTone
-                && previous.action != Ps3Action::SaveCorrection) {
+                && previous.action != Ps3Action::SaveCorrection
+                && !(action == Ps3Action::StartAutomatic
+                    && previous.action == Ps3Action::Single)) {
                 return fail(QStringLiteral("A PureSignal operation is still pending. "
                                            "Wait for completion or use Off to cancel it."));
             }
@@ -526,6 +528,15 @@ Ps3ActionResult PureSignalSessionFacade::executeAction(Ps3Action action,
         if (!m_coordinator->applyAcceptedSettingsToEngine()
             || !m_coordinator->resumeAutomaticCalibrationPreference()) {
             return fail(QStringLiteral("Automatic calibration could not start in the current radio state."));
+        }
+        // A Single request may wait indefinitely for a full amplitude sweep.
+        // The explicit Auto mode change replaces that request; it must not
+        // depend on Single producing a correction first.
+        for (quint32 id : m_pending.keys()) {
+            if (m_pending.value(id).action == Ps3Action::Single) {
+                finishOperation(id, Ps3ActionPhase::Failed,
+                    QStringLiteral("Automatic calibration replaced the single calibration request."));
+            }
         }
         break;
     case Ps3Action::ApplyCurrentCorrection:

@@ -164,8 +164,13 @@ private slots:
             QStringLiteral("PsAppletFeedbackDbLabel"));
         QVERIFY(feedback && correction && iterations && feedbackLabel);
         QVERIFY(qAbs(feedback->value() - 150.0 * 100.0 / 255.0) < 0.1);
-        QCOMPARE(correction->value(), 0.8125);
+        QCOMPARE(correction->value(), 100.0);
         QVERIFY(!correction->isUnavailable());
+        auto* correctionLabel = applet.findChild<QLabel*>("PsAppletCorrectionDbLabel");
+        QVERIFY(correctionLabel);
+        QCOMPARE(correctionLabel->text(), QStringLiteral("Correction: Applied"));
+        // Scalar telemetry remains available without an added gain/phase display.
+        QCOMPARE(harness.facade->statusSnapshot().correctionGainAtPeak, 0.8125);
         QCOMPARE(iterations->text(), QStringLiteral("Calibrations: 7 / 9 attempts"));
         QCOMPARE(feedbackLabel->text(), QStringLiteral("Feedback: 150 (raw)"));
         QVERIFY(button(applet, "PsAppletSaveBtn")->isEnabled());
@@ -177,7 +182,7 @@ private slots:
         }
     }
 
-    void olderCoreOrInvalidOptionalTelemetryNeverInventsCorrectionReadings()
+    void correctionStatusDoesNotDependOnOptionalGainTelemetry()
     {
         RemotePs3Harness harness;
         PureSignalApplet applet(&harness.radio);
@@ -197,8 +202,9 @@ private slots:
         QVERIFY(harness.facade->applyRemoteProperty("statusJson", legacy));
         QVERIFY(harness.facade->statusSnapshot().correctionsApplied);
         QVERIFY(!harness.facade->statusSnapshot().correctionSummaryValid);
-        QVERIFY(correction->isUnavailable());
-        QCOMPARE(label->text(), QStringLiteral("Corr @peak: — (Applied)"));
+        QVERIFY(!correction->isUnavailable());
+        QCOMPARE(correction->value(), 100.0);
+        QCOMPARE(label->text(), QStringLiteral("Correction: Applied"));
         QVERIFY(!label->text().contains("0.6121"));
         const QString invalid = statusJson([](QJsonObject& object) {
             object["correctionsApplied"] = true;
@@ -212,7 +218,9 @@ private slots:
         QVERIFY(harness.facade->applyRemoteProperty("statusJson", invalid));
         QVERIFY(!harness.facade->statusSnapshot().correctionSummaryValid);
         QVERIFY(!harness.facade->statusSnapshot().pairedInputValid);
-        QVERIFY(correction->isUnavailable());
+        QVERIFY(!correction->isUnavailable());
+        QCOMPARE(correction->value(), 100.0);
+        QCOMPARE(label->text(), QStringLiteral("Correction: Applied"));
     }
 
     void pureSignalApplet_isReadOnlyWithoutRemoteActuationPermission()
@@ -295,6 +303,27 @@ private slots:
         psa->click();
         QCOMPARE(harness.requests.size(), 2);
         QCOMPARE(harness.requests.last().action, Ps3Action::OffReset);
+    }
+
+    void txApplet_psaRepeatedRefusalsRestoreAuthoritativeState()
+    {
+        RemotePs3Harness harness;
+        TxApplet applet(&harness.radio);
+        BoardCapabilities capabilities{};
+        capabilities.board = HPSDRHW::OrionMKII;
+        capabilities.hasPureSignal = true;
+        applet.setBoardCapabilities(capabilities);
+        applet.setTransmitPermitted(true);
+        auto* psa = button(applet, "TxAppletPsaBtn");
+        QVERIFY(psa);
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            psa->click();
+            const CapturedRequest request = harness.requests.last();
+            QCOMPARE(request.action, Ps3Action::StartAutomatic);
+            harness.facade->receiveRemoteActionResult(request.id, "ps3.automatic",
+                Ps3ActionPhase::Failed, QStringLiteral("A calibration is pending."), {});
+            QVERIFY(!psa->isChecked());
+        }
     }
 
     // Fix round 1 (minor 5): with no radio connected the board is not

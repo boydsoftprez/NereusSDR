@@ -12,6 +12,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — User-approved single stacked PureSignal3 / Feedback banner,
+//                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
 //   2026-10-04 — Live Core status and passive numeric correction readouts,
 //                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
 
@@ -216,9 +218,9 @@ private:
 
     RadioModel*  m_radioModel{nullptr};
 
-    QLabel* m_lblFb{nullptr};
-    QLabel* m_lblPs{nullptr};
-    QLabel* m_lblCorrPeak{nullptr};
+    QLabel* m_lblPsFeedback{nullptr};
+    QString m_feedbackText;
+    QString m_calibrationDetail;
 
     // State (mirrors ucInfoBar.cs members from lines 802-806 + 1186
     // [v2.10.3.13]).  Phase 3M-4 bench-fix Round 2 dropped the

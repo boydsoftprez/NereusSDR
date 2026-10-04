@@ -362,6 +362,15 @@ void PureSignal::startAutomaticCalibration()
         return;
     }
     retirePendingRestoreOperation();
+    // From Thetis PSForm.cs:670-674 [v2.10.3.15]: SingleCalibrate accepts
+    // _autoON as a mode change. Retire a not-yet-polled Single request too,
+    // so it cannot switch this explicit Auto request back to Single later.
+    m_singleCalON = false;
+    m_performingSingleCal = false;
+    m_performingSingleCalRetries = 0;
+    if (m_cmdState == CommandState::TurnOnSingleCalibrate) {
+        m_cmdState = CommandState::TurnOnAutoCalibrate;
+    }
     m_autoON = true;
     m_OFF = false;
     m_aaLastSeenAttemptCount = m_calAttempts.load();

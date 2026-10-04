@@ -220,17 +220,15 @@ void PureSignalApplet::buildUI()
         "PureSignal feedback level. Right-click to open PureSignal..."));
     vbox->addWidget(m_feedbackGauge);
 
-    // --- Control 4: measured AmpView endpoint gain (0..2 x) ---
+    // --- Control 4: existing correction status gauge ---
     m_correctionGauge = new HGauge(this);
     m_correctionGauge->setObjectName(QStringLiteral("PsAppletCorrectionGauge"));
-    // Same 0..2 gain scale as the existing AmpView gain plot.
-    m_correctionGauge->setRange(0.0, 2.0);
-    m_correctionGauge->setYellowStart(2.0);
-    m_correctionGauge->setRedStart(2.0);
-    m_correctionGauge->setTitle(QStringLiteral("Corr @peak"));
-    m_correctionGauge->setUnit(QStringLiteral("x"));
+    m_correctionGauge->setRange(0.0, 100.0);
+    m_correctionGauge->setYellowStart(80.0);
+    m_correctionGauge->setRedStart(95.0);
+    m_correctionGauge->setTitle(QStringLiteral("Correction"));
     m_correctionGauge->setToolTip(tr(
-        "AmpView correction gain at the full-scale envelope endpoint. Right-click to open PureSignal..."));
+        "PureSignal correction status. Right-click to open PureSignal..."));
     vbox->addWidget(m_correctionGauge);
 
     // --- Control 5+6+7: Save / Restore / Two-tone row ---
@@ -465,23 +463,16 @@ void PureSignalApplet::refreshFromFacade()
     const double feedback = std::clamp(status.feedbackLevel * 100.0 / 255.0,
                                        0.0, 100.0);
     m_feedbackGauge->setValue(feedback);
-    const bool measuredCorrection = available && status.correctionsApplied
-        && status.correctionSummaryValid;
-    m_correctionGauge->setUnavailable(!measuredCorrection);
-    m_correctionGauge->setValue(measuredCorrection ? status.correctionGainAtPeak : 0.0);
+    m_correctionGauge->setValue(status.correctionsApplied ? 100.0 : 0.0);
     m_iterations->setText(
         tr("Calibrations: %1 / %2 attempts").arg(status.successfulCalibrations)
             .arg(status.attemptedCalibrations));
     m_feedbackDb->setText(
         available ? tr("Feedback: %1 (raw)").arg(status.feedbackLevel)
                   : tr("Feedback: —"));
-    m_correctionDb->setText(measuredCorrection
-        ? tr("Corr @peak: %1x (%2 dB)\nPhase span: %3°")
-            .arg(status.correctionGainAtPeak, 0, 'f', 4)
-            .arg(20.0 * std::log10(status.correctionGainAtPeak), 0, 'f', 2)
-            .arg(status.correctionPhaseSpanDegrees, 0, 'f', 2)
-        : status.correctionsApplied ? tr("Corr @peak: — (Applied)")
-                                    : tr("Corr @peak: — (Off)"));
+    m_correctionDb->setText(
+        status.correctionsApplied ? tr("Correction: Applied")
+                                  : tr("Correction: Off"));
 
     // Control-state facts: vendored WDSP 2.10 calcc.c:2115-2127
     // [@b02d5bac]. Keep unknown states visible rather than guessing.

@@ -16910,7 +16910,7 @@ int MainWindow::panLayoutLimitFor(const RadioModel* model)
 // pureSignalCoordinatorReady can all share one truth-source.
 //
 // m_psaIndicator is registered with m_chromeBar at rung 0 so its width
-// (two QLabel minimumWidth pins, ~154 px) is counted in the fold budget
+// (one compact stacked banner) is counted in the fold budget
 // on every PS-capable, PS-armed board (Task A8 fix round 1 finding 2).
 // The armed fact itself is reported via setItemAvailable, not a direct
 // setVisible call, per ChromeBarController::setItemAvailable's own doc
@@ -16926,7 +16926,6 @@ void MainWindow::updatePsaIndicatorVisibility()
         || psStatus.psEnabled || psStatus.correctionsApplied);
     if (m_chromeBar && m_chromeBarWidget) {
         m_chromeBar->setItemAvailable(m_psaIndicator, caps && armed);
-        m_chromeBar->setNaturalWidth(m_psaIndicator, m_psaIndicator->sizeHint().width());
         m_chromeBar->relayout(m_chromeBarWidget->width());
     }
 }
