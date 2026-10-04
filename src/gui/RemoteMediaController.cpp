@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-04: Release explicitly retired displays whose subscribe result
+//               expired across media replacement; retain uncertain charge
+//               until the release result and guard synchronous stack teardown.
+//               J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-02: Carry accepted capture metadata to delayed display presentation.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Opt-in numeric RX binding retirement
@@ -4508,12 +4513,48 @@ void RemoteMediaController::refreshBudgetSubscriptions()
     if (!limits) { return; }
     const qint64 now = d->allocationClock();
 
+    QList<quint32> overdueRetirements;
     for (auto& [id, binding] : d->bindings) {
         if (binding.pending && !binding.pending->timedOut
             && now - binding.pending->sentAtMs >= d->allocationAckTimeoutMs) {
             binding.pending->timedOut = true;
             qCWarning(lcRemoteMedia) << "Remote display allocation acknowledgement stalled"
                                     << id << binding.pending->revision;
+        }
+        if (binding.retiring && binding.pending && binding.pending->timedOut
+            && binding.pending->kind == Private::Binding::PendingKind::Subscribe) {
+            overdueRetirements.append(id);
+        }
+    }
+    const QPointer<MediaPeer> retirementPeer = d->peer;
+    const quint32 retirementEpoch = d->epoch;
+    const QString retirementConnectionId = d->connectionId;
+    for (quint32 endpointId : overdueRetirements) {
+        auto found = d->bindings.find(endpointId);
+        if (found == d->bindings.end()) { continue; }
+        Private::Binding& binding = found->second;
+        if (!binding.retiring || !binding.pending || !binding.pending->timedOut
+            || binding.pending->kind != Private::Binding::PendingKind::Subscribe) {
+            continue;
+        }
+        // A delayed reply from the old media peer cannot reconcile a closed
+        // display after promotion. Its newer explicit release can. Keep the
+        // largest possible reservation until Core confirms zero charge;
+        // the pending barrier below still blocks every display increase.
+        const DisplayBudgetCharge uncertainCharge =
+            maximumCharge(binding.acceptedCharge, binding.pending->charge);
+        ++binding.revision;
+        if (binding.revision == 0) { ++binding.revision; }
+        const quint32 revision = binding.revision;
+        binding.pending = Private::Binding::Pending{
+            Private::Binding::PendingKind::Unsubscribe, revision, {}, uncertainCharge,
+            QStringLiteral("retire"), now, false};
+        send({{QStringLiteral("op"), QStringLiteral("unsubscribe")},
+              {QStringLiteral("endpointId"), static_cast<qint64>(endpointId)},
+              {QStringLiteral("revision"), static_cast<qint64>(revision)}});
+        if (!self || d->peer != retirementPeer || d->epoch != retirementEpoch
+            || d->connectionId != retirementConnectionId || !d->model || !d->stack) {
+            return;
         }
     }
     if (d->pendingPs3 && !d->pendingPs3->timedOut
