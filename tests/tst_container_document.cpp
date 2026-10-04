@@ -65,6 +65,18 @@ private slots:
         QCOMPARE(int(DockMode::Floating), 2);
         QCOMPARE(int(AxisLock::BottomLeft), 7);
     }
+    void freeCanvasKeepsPrecisePlacementAndLegacyRecord()
+    {
+        auto doc=sample();
+        doc.containers[0].layout=static_cast<ContentLayout>(2);
+        auto& entry=doc.containers[0].contents[0];
+        entry.extensions["freeCanvasRect"]=QJsonArray{-17.1234567890123,22.9876543210987,460.123456789012,113.987654321098};
+        const auto decoded=ContainerDocumentCodec::decode(ContainerDocumentCodec::encode(doc));
+        QVERIFY2(decoded.ok,qPrintable(decoded.error));
+        QCOMPARE(decoded.document,doc);
+        QCOMPARE(int(ContentLayout::LegacyCanvas),0);
+        QCOMPARE(int(ContentLayout::VerticalStack),1);
+    }
     void unknownFieldsKeepTheirOriginalNesting()
     {
         const QByteArray json = ContainerDocumentCodec::encode(sample());

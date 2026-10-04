@@ -1754,6 +1754,7 @@ set(GUI_SOURCES
     src/gui/containers/ContainerEditSession.h
     src/gui/containers/ContainerEditSession.cpp
     src/gui/containers/ContainerPreviewWidget.h
+    src/gui/containers/FreeCanvasSurface.cpp
     src/gui/containers/ContainerPreviewWidget.cpp
     src/gui/containers/ContainerContentHost.h
     src/gui/containers/ContainerContentHost.cpp

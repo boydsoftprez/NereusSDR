@@ -13,6 +13,8 @@ public:
     ~ContentPropertyEditor() override;
     void setEntry(const ContentEntry& entry);
     void setLayoutPolicy(ContentLayout policy) {m_policy=policy;}
+    void setGeometryLocked(bool locked);
+    void updateFreeCanvasRect(const QString& id,const QRectF& rect);
     void setContainerDefaults(const QJsonObject& defaults);
 signals:
     void entryEdited(const ContentEntry& entry);
@@ -29,6 +31,6 @@ private:
     std::unique_ptr<MeterItem> m_item;
     ContentEntry m_original, m_hydrated;
     QLabel* m_error=nullptr;
-    bool m_loading=false;
+    bool m_loading=false, m_geometryLocked=false;
 };
 }

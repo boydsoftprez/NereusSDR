@@ -24,6 +24,7 @@
 #include <QHBoxLayout>
 #include <QSignalBlocker>
 #include <QRegularExpression>
+#include <limits>
 #include "gui/meters/MeterPoller.h"
 namespace NereusSDR {
 ContentPropertyEditor::ContentPropertyEditor(ContainerContentRegistry& registry,QWidget* parent):QWidget(parent),m_registry(registry) {}
@@ -35,6 +36,17 @@ void ContentPropertyEditor::setContainerDefaults(const QJsonObject& defaults)
         source->setItemText(0,tr("Container default — Slice %1").arg(QChar('A'+inherited)));
     }
     if(auto* session=findChild<QLineEdit*>("sessionId")) {session->setPlaceholderText(tr("Container default — %1").arg(defaults["sessionId"].toString(tr("current session"))));}
+}
+void ContentPropertyEditor::setGeometryLocked(bool locked)
+{
+    m_geometryLocked=locked;if(auto* group=findChild<QGroupBox*>("canvasGeometry")) {group->setEnabled(!locked);}
+}
+void ContentPropertyEditor::updateFreeCanvasRect(const QString& id,const QRectF& rect)
+{
+    if(m_entry.id!=id) {return;}m_entry.setFreeCanvasRect(rect);
+    const double values[]{rect.x(),rect.y(),rect.width(),rect.height()};
+    const QStringList keys{"canvasX","canvasY","canvasWidth","canvasHeight"};
+    for(int i=0;i<4;++i) {if(auto* field=findChild<QDoubleSpinBox*>(keys[i])) {const QSignalBlocker blocker(field);field->setValue(values[i]);}}
 }
 ContentPropertyEditor::~ContentPropertyEditor()=default;
 void ContentPropertyEditor::publish()
@@ -148,6 +160,29 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     connect(visible,&QCheckBox::toggled,this,[this](bool value){m_entry.visible=value;publish();});
     m_item.reset(m_registry.createMeterItem(entry,nullptr,ContentRenderMode::Preview));
     if(m_item) {m_hydrated=m_registry.captureMeterItem(*m_item,entry);}
+    if(m_policy==ContentLayout::FreeCanvas) {
+        auto* group=new QGroupBox(tr("Canvas position and size — logical pixels"),this);group->setObjectName("canvasGeometry");group->setEnabled(!m_geometryLocked);
+        auto* fields=new QFormLayout(group);root->addWidget(group);
+        const QRectF rect=entry.freeCanvasRect().value_or(QRectF(0,0,320,80));
+        const double values[]{rect.x(),rect.y(),rect.width(),rect.height()};
+        const QStringList keys{"canvasX","canvasY","canvasWidth","canvasHeight"},labels{tr("X"),tr("Y"),tr("Width"),tr("Height")};
+        QSize minimum(24,24);
+        if(auto* face=qobject_cast<CompositePresetItem*>(m_item.get())) {minimum=face->minimumFaceSize();}
+        if(auto* face=qobject_cast<BarPresetItem*>(m_item.get())) {minimum=face->minimumFaceSize();}
+        for(int axis=0;axis<4;++axis) {
+            auto* field=new QDoubleSpinBox(group);field->setObjectName(keys[axis]);field->setDecimals(13);field->setRange(-QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);field->setValue(values[axis]);field->setKeyboardTracking(false);fields->addRow(labels[axis],field);
+            connect(field,qOverload<double>(&QDoubleSpinBox::valueChanged),this,[this,axis,minimum](double value){
+                if(m_geometryLocked || m_loading) {return;}
+                QRectF geometry=m_entry.freeCanvasRect().value_or(QRectF(0,0,320,80));
+                if(axis==0) {geometry.moveLeft(value);}if(axis==1) {geometry.moveTop(value);}
+                if(axis==2) {geometry.setWidth(qMax(double(minimum.width()),value));}if(axis==3) {geometry.setHeight(qMax(double(minimum.height()),value));}
+                updateFreeCanvasRect(m_entry.id,geometry);publish();
+            });
+        }
+        auto* layer=new QSpinBox(group);layer->setObjectName("canvasLayer");layer->setRange(std::numeric_limits<int>::min(),std::numeric_limits<int>::max());layer->setValue(entry.paintOrder);fields->addRow(tr("Layer — larger is in front"),layer);
+        connect(layer,qOverload<int>(&QSpinBox::valueChanged),this,[this](int value){if(!m_geometryLocked) {m_entry.paintOrder=value;if(m_item) {m_item->setZOrder(value);}publish();}});
+        auto* note=new QLabel(tr("The viewport scrolls when it is smaller than the objects. Resizing the window keeps saved object positions and sizes."),group);note->setWordWrap(true);fields->addRow(note);
+    }
     QString reason=entry.extensions.value("unavailableReason").toString();
     if(reason.isEmpty() && !m_registry.isAvailable(entry.typeId)) { reason=m_registry.unavailableReason(entry.typeId); }
     if(!reason.isEmpty() || (!m_item && !entry.typeId.startsWith("applet:"))) {

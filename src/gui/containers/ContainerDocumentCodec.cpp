@@ -345,7 +345,7 @@ QString ContainerDocumentCodec::validate(const WorkspaceDocument& document)
             return QStringLiteral("Container IDs must be nonempty and unique: %1").arg(container.id);
         }
         containerIds.insert(container.id);
-        if (int(container.layout) < 0 || int(container.layout) > int(ContentLayout::VerticalStack)
+        if (int(container.layout) < 0 || int(container.layout) > int(ContentLayout::FreeCanvas)
             || int(container.dockMode) < 0 || int(container.dockMode) > int(DockMode::Floating)
             || int(container.anchor) < 0 || int(container.anchor) > int(AxisLock::BottomLeft)
             || int(container.header) < 0 || int(container.header) > int(HeaderMode::Hidden)) {

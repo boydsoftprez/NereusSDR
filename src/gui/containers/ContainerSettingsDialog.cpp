@@ -408,6 +408,14 @@ void ContainerSettingsDialog::buildLayout()
         label->setStyleSheet(kSectionHeaderStyle); root->addWidget(label);
         auto* scroll=new QScrollArea(this); scroll->setWidgetResizable(true); scroll->setMinimumHeight(260);
         m_preview=new ContainerPreviewWidget(*m_manager->contentRegistry(),*m_manager->previewPoller());
+        connect(m_preview,&ContainerPreviewWidget::freeCanvasRectEdited,this,[this](const QString& id,const QRectF& rect){
+            auto draft=m_editSession->draft();
+            for(auto& c:draft.containers) {if(c.id!=m_selectedId || c.locked) {continue;}for(auto& entry:c.contents) {if(entry.id==id) {entry.setFreeCanvasRect(rect);}}}
+            m_editSession->setDraft(draft);if(m_contentEditor) {m_contentEditor->updateFreeCanvasRect(id,rect);}updateDraftStatus();
+        });
+        connect(m_preview,&ContainerPreviewWidget::entrySelected,this,[this](const QString& id){
+            for(const auto& c:m_editSession->draft().containers) {if(c.id==m_selectedId) {for(int i=0;i<c.contents.size();++i) {if(c.contents[i].id==id) {m_itemList->setCurrentRow(i);return;}}}}
+        });
         connect(m_preview,&ContainerPreviewWidget::presentationRequested,m_manager,&ContainerManager::previewPresentationRequested);
         scroll->setWidget(m_preview); root->addWidget(scroll,1);
     }
@@ -1058,7 +1066,21 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
         auto* modes=new QHBoxLayout;outer->addLayout(modes);
         m_headerCombo=new QComboBox(bar); m_headerCombo->setObjectName("containerHeader");
         m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Always)); m_headerCombo->addItem(tr("Reveal on hover / focus"),int(HeaderMode::Reveal)); m_headerCombo->addItem(tr("Hidden — recovery menu"),int(HeaderMode::Hidden));
-        m_layoutCombo=new QComboBox(bar); m_layoutCombo->setObjectName("containerLayout"); m_layoutCombo->addItem(tr("Canvas"),int(ContentLayout::LegacyCanvas)); m_layoutCombo->addItem(tr("Vertical stack"),int(ContentLayout::VerticalStack));
+        m_layoutCombo=new QComboBox(bar); m_layoutCombo->setObjectName("containerLayout"); m_layoutCombo->addItem(tr("Canvas"),int(ContentLayout::FreeCanvas)); m_layoutCombo->addItem(tr("Vertical stack"),int(ContentLayout::VerticalStack)); m_layoutCombo->addItem(tr("Saved legacy canvas"),int(ContentLayout::LegacyCanvas));
+        m_layoutCombo->setToolTip(tr("Canvas lets each object move and resize independently and scrolls to retain its logical size. Saved legacy canvas preserves imported normalized compositions."));
+        auto* canvasActions=new QHBoxLayout;outer->addLayout(canvasActions);
+        auto* seed=makeBtn(tr("Start from stacked layout"),bar);seed->setObjectName("seedFreeCanvas");canvasActions->addWidget(seed);
+        auto* savedPositions=makeBtn(tr("Use saved legacy positions"),bar);savedPositions->setObjectName("convertLegacyCanvas");canvasActions->addWidget(savedPositions);canvasActions->addStretch();
+        connect(seed,&QPushButton::clicked,this,[this]{
+            saveCurrentDraft();auto draft=m_editSession->draft();
+            for(auto& c:draft.containers) {if(c.id!=m_selectedId || c.locked || !m_preview) {continue;}auto stack=c;stack.layout=ContentLayout::VerticalStack;m_preview->setDocument(stack);c=m_preview->seededFromStack();}
+            m_editSession->setDraft(draft);loadCurrentDraft();
+        });
+        connect(savedPositions,&QPushButton::clicked,this,[this]{
+            saveCurrentDraft();auto draft=m_editSession->draft();
+            for(auto& c:draft.containers) {if(c.id==m_selectedId && !c.locked && m_preview) {m_preview->setDocument(c);c=m_preview->convertedLegacyPositions();}}
+            m_editSession->setDraft(draft);loadCurrentDraft();
+        });
         m_placementCombo=new QComboBox(bar); m_placementCombo->setObjectName("containerPlacement"); m_placementCombo->addItem(tr("Panel"),int(DockMode::PanelDocked));m_placementCombo->addItem(tr("Overlay"),int(DockMode::OverlayDocked));m_placementCombo->addItem(tr("Floating"),int(DockMode::Floating));
         modes->addWidget(new QLabel(tr("Header:"),bar));modes->addWidget(m_headerCombo);modes->addWidget(m_layoutCombo);modes->addWidget(m_placementCombo);
         m_anchorCombo=new QComboBox(bar);m_anchorCombo->setObjectName("containerAnchor");
@@ -1223,9 +1245,9 @@ void ContainerSettingsDialog::onItemSelectionChanged()
         if(m_currentTypeEditor) { m_propertyStack->removeWidget(m_currentTypeEditor); delete m_currentTypeEditor; m_currentTypeEditor=nullptr; m_contentEditor=nullptr; }
         const int row=m_itemList->currentRow();
         for(const auto& c:m_editSession->draft().containers) { if(c.id!=m_selectedId || row<0 || row>=c.contents.size()) {continue;}
-            const auto entry=c.contents[row];
+            const auto entry=c.contents[row];if(m_preview) {m_preview->selectEntry(entry.id);}
             auto* scroll=new QScrollArea(m_propertyStack); scroll->setWidgetResizable(true);
-            m_contentEditor=new ContentPropertyEditor(*m_manager->contentRegistry()); m_contentEditor->setLayoutPolicy(c.layout); m_contentEditor->setContainerDefaults(c.config); m_contentEditor->setEntry(entry);
+            m_contentEditor=new ContentPropertyEditor(*m_manager->contentRegistry()); m_contentEditor->setLayoutPolicy(c.layout); m_contentEditor->setGeometryLocked(c.locked); m_contentEditor->setContainerDefaults(c.config); m_contentEditor->setEntry(entry);
             styleSelectorPopups(m_contentEditor);
             scroll->setWidget(m_contentEditor); m_currentTypeEditor=scroll; m_propertyStack->addWidget(scroll); m_propertyStack->setCurrentWidget(scroll);
             findChild<QPushButton*>("duplicateContent")->setEnabled(!entry.typeId.startsWith("applet:") && !c.locked);
@@ -1519,10 +1541,17 @@ void ContainerSettingsDialog::addNewItem(const QString& typeTag)
             int index=0;for(const auto& c:draft.containers) {if(c.id==m_selectedId) {index=c.contents.size();}}
             const auto result=ContainerArrangeController::moveDraft(draft,entry.id,m_selectedId,index);
             if(!result.ok) {m_transactionStatus->setText(result.error);return;}
+            for(auto& c:draft.containers) {if(c.id==m_selectedId && c.layout==ContentLayout::FreeCanvas) {
+                double bottom=0;for(const auto& sibling:c.contents) {if(sibling.id!=entry.id) {if(auto rect=sibling.freeCanvasRect()) {bottom=qMax(bottom,rect->bottom());}}}
+                for(auto& moved:c.contents) {if(moved.id==entry.id && !moved.freeCanvasRect()) {moved.setFreeCanvasRect(QRectF(0,bottom+20,320,160));}}
+            }}
             m_editSession->setDraft(draft);loadCurrentDraft();return;
         }
         entry=m_manager->contentRegistry()->makeEntry(typeTag);
-        for(auto& c:draft.containers) { if(c.id==m_selectedId) {if(c.locked) {m_transactionStatus->setText(tr("Arrangement is locked."));return;} c.contents.append(entry); if(typeTag.startsWith("applet:")) {c.layout=ContentLayout::VerticalStack;} break; } }
+        for(auto& c:draft.containers) { if(c.id==m_selectedId) {if(c.locked) {m_transactionStatus->setText(tr("Arrangement is locked."));return;} c.contents.append(entry); if(c.layout==ContentLayout::FreeCanvas) {
+            double bottom=0;for(const auto& sibling:c.contents) {if(auto rect=sibling.freeCanvasRect()) {bottom=qMax(bottom,rect->bottom());}}
+            c.contents.last().setFreeCanvasRect(QRectF(0,bottom+20,qMax(320,m_preview?m_preview->width():320),160));
+        } else if(typeTag.startsWith("applet:")) {c.layout=ContentLayout::VerticalStack;} break; } }
         m_editSession->setDraft(draft); loadCurrentDraft(); m_itemList->setCurrentRow(m_itemList->count()-1); return;
     }
 
@@ -1746,8 +1775,11 @@ void ContainerSettingsDialog::populateItemList()
 void ContainerSettingsDialog::updatePreview()
 {
     if (m_editSession && !m_loadingDraft) {
+        const auto oldLayout=m_preview?m_preview->document().layout:ContentLayout::LegacyCanvas;
         saveCurrentDraft();updateDraftStatus();
-        if(m_preview) { for(const auto& c:m_editSession->draft().containers) { if(c.id==m_selectedId) { m_preview->setDocument(c); if(m_contentEditor) {m_contentEditor->setContainerDefaults(c.config);} break; } } }
+        if(m_preview) { for(const auto& c:m_editSession->draft().containers) { if(c.id==m_selectedId) { m_preview->setDocument(c); if(m_layoutCombo) {m_layoutCombo->setEnabled(!c.locked);}
+        for(const QString& action:{QString("seedFreeCanvas"),QString("convertLegacyCanvas")}) {if(auto* button=findChild<QPushButton*>(action)) {button->setEnabled(!c.locked);}}
+        if(m_contentEditor) {m_contentEditor->setGeometryLocked(c.locked);m_contentEditor->setContainerDefaults(c.config);if(oldLayout!=c.layout) {onItemSelectionChanged();}} break; } } }
         return;
     }
     // Phase 3G-6 block 3 commit 11: live preview removed. In-place
@@ -2035,6 +2067,8 @@ void ContainerSettingsDialog::loadCurrentDraft()
         m_showOnRxCheck->setChecked(c.config.value("showOnRx").toBool(true));
         m_showOnTxCheck->setChecked(c.config.value("showOnTx").toBool(true));
         if(m_lockCheck) { m_lockCheck->setChecked(c.locked); }
+        for(const QString& action:{QString("seedFreeCanvas"),QString("convertLegacyCanvas")}) {if(auto* button=findChild<QPushButton*>(action)) {button->setEnabled(!c.locked);}}
+        if(m_layoutCombo) {m_layoutCombo->setEnabled(!c.locked);}
         if(m_hideTitleCheck) { m_hideTitleCheck->setChecked(c.header==HeaderMode::Hidden); }
         if(m_minimisesCheck) { m_minimisesCheck->setChecked(c.config.value("containerMinimises").toBool()); }
         if(m_autoHeightCheck) { m_autoHeightCheck->setChecked(c.autoHeight); }
@@ -2096,7 +2130,14 @@ void ContainerSettingsDialog::saveCurrentDraft()
             if (m_autoHeightCheck) { d.autoHeight=m_autoHeightCheck->isChecked(); }
             if (m_hidesWhenRxNotUsedCheck && m_hidesWhenRxNotUsedCheck->isEnabled()) { setBool("hidesWhenRxNotUsed",m_hidesWhenRxNotUsedCheck->isChecked()); }
             if(m_headerCombo) {d.header=static_cast<HeaderMode>(m_headerCombo->currentData().toInt());}
-            if(m_layoutCombo) {d.layout=static_cast<ContentLayout>(m_layoutCombo->currentData().toInt());}
+            if(m_layoutCombo) {
+                const auto desired=static_cast<ContentLayout>(m_layoutCombo->currentData().toInt());
+                if(!d.locked && desired!=d.layout) {
+                    bool saved=false;for(const auto& entry:d.contents) {if(entry.freeCanvasRect()) {saved=true;break;}}
+                    if(desired==ContentLayout::FreeCanvas && d.layout==ContentLayout::VerticalStack && !saved && m_preview) {m_preview->setDocument(d);d=m_preview->seededFromStack();}
+                    else {d.layout=desired;}
+                } else if(d.locked && desired!=d.layout) {const QSignalBlocker blocker(m_layoutCombo);m_layoutCombo->setCurrentIndex(m_layoutCombo->findData(int(d.layout)));}
+            }
             if(m_anchorCombo) {d.anchor=static_cast<AxisLock>(m_anchorCombo->currentData().toInt());}
             if(m_placementCombo) {d.dockMode=static_cast<DockMode>(m_placementCombo->currentData().toInt());}
             break;

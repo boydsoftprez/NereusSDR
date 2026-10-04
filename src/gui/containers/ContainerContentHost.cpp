@@ -5,6 +5,9 @@
 #include "ContainerContentHost.h"
 #include "ContainerArrangeController.h"
 #include "ContainerWorkspaceStore.h"
+#include "FreeCanvasSurface.h"
+#include <QLoggingCategory>
+Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <QDrag>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -26,12 +29,13 @@
 #include <QJsonArray>
 #include <QScrollArea>
 #include <algorithm>
+#include <memory>
 namespace NereusSDR {
 ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, QWidget* parent)
     : QWidget(parent), m_registry(registry)
 {
     auto* root = new QVBoxLayout(this); root->setContentsMargins(0,0,0,0);
-    auto* scroll = new QScrollArea(this); scroll->setFrameShape(QFrame::NoFrame);
+    auto* scroll = new QScrollArea(this);m_scroll=scroll; scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidgetResizable(true); scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_body = new QWidget(scroll); m_layout = new QVBoxLayout(m_body);
     scroll->setWidget(m_body); root->addWidget(scroll);
@@ -42,6 +46,13 @@ ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, Q
     m_indicator=new QWidget(m_body);m_indicator->setObjectName(QStringLiteral("containerInsertionLine"));
     m_indicator->setStyleSheet(QStringLiteral("background:#00b4d8;"));m_indicator->setAttribute(Qt::WA_TransparentForMouseEvents);m_indicator->hide();
     m_layout->setSpacing(0);
+    m_canvas=new FreeCanvasSurface(m_body);m_canvas->hide();
+    connect(m_canvas,&FreeCanvasSurface::geometryCommitted,this,[this](const QString& id,const QRectF& rect,const QRectF& original){
+        if(!m_arrange) {return;}
+        const auto result=m_arrange->placeFreeCanvas(id,rect,original);
+        if(!result.ok) {qCWarning(lcFreeCanvas)<<result.error;m_canvas->project(m_document,[this]{QHash<QString,QPointer<QWidget>> views;for(const auto& row:m_rows) {views[row.entryId]=row.widget;}return views;}());}
+    });
+    connect(m_canvas,&FreeCanvasSurface::entryContextMenuRequested,this,[this](const QString& id,const QPoint& position){QMenu menu(this);addEntryActions(menu,id);if(!menu.isEmpty()) {menu.exec(position);}});
 }
 ContainerContentHost::~ContainerContentHost() { releaseViews(); }
 QJsonObject ContainerContentHost::effectiveContext(const ContainerDocument& document, const ContentEntry& entry)
@@ -63,7 +74,7 @@ QJsonObject ContainerContentHost::effectiveContext(const ContainerDocument& docu
 void ContainerContentHost::releaseViews()
 {
     for (const auto& row : std::as_const(m_rows)) {
-        if (row.widget && row.widget->parentWidget() == m_body && !row.item && !row.widget->property("singletonTypeId").toString().isEmpty()) {
+        if (row.widget && !row.item && !row.widget->property("singletonTypeId").toString().isEmpty()) {
             if (m_registry.singletonView(row.widget->property("singletonTypeId").toString()) == row.widget) { m_registry.parkSingleton(row.widget); }
             else { m_registry.returnBorrowedView(row.widget); }
         }
@@ -72,10 +83,14 @@ void ContainerContentHost::releaseViews()
     for (const auto& meter : std::as_const(m_meters)) {
         if (meter) { meter->hide(); meter->setParent(nullptr); delete meter.data(); }
     }
-    m_meters.clear(); m_rows.clear();
+    m_meters.clear();
+    if(m_document.layout==ContentLayout::FreeCanvas) {
+        for(const auto& row:std::as_const(m_rows)) {if(row.widget && row.widget->parentWidget()==m_canvas) {delete row.widget.data();}}
+    }
+    m_rows.clear();m_canvas->clearViews();m_canvas->hide();
     for(const auto& grip:m_grips) {if(grip) {delete grip.data();}} m_grips.clear();
     while (QLayoutItem* child = m_layout->takeAt(0)) {
-        if (child->widget()) { delete child->widget(); }
+        if (child->widget() && child->widget()!=m_canvas) { delete child->widget(); }
         delete child;
     }
     m_materialized = false;
@@ -98,7 +113,12 @@ bool ContainerContentHost::needsReconcile(const ContainerDocument& document) con
         if (entry.id!=prior.id || entry.typeId!=prior.typeId) { return true; }
         // Singleton preference/source metadata can update its row independently.
         if (entry.typeId.startsWith("applet:")) { continue; }
-        if (entry!=prior || effectiveContext(document,entry) != effectiveContext(m_document,prior)) { return true; }
+        ContentEntry comparable=entry,previous=prior;
+        if(document.layout==ContentLayout::FreeCanvas) {
+            comparable.extensions.remove("freeCanvasRect");previous.extensions.remove("freeCanvasRect");
+            comparable.paintOrder=previous.paintOrder;comparable.visible=previous.visible;comparable.name=previous.name;
+        }
+        if (comparable!=previous || effectiveContext(document,entry) != effectiveContext(m_document,prior)) { return true; }
         if (m_registry.isAvailable(entry.typeId) !=
             std::any_of(m_rows.cbegin(),m_rows.cend(),[&](const EntryRow& row){ return row.entryId==entry.id && row.effectiveVisible; }) && entry.visible) { return true; }
     }
@@ -106,6 +126,8 @@ bool ContainerContentHost::needsReconcile(const ContainerDocument& document) con
 }
 void ContainerContentHost::reconcile(const ContainerDocument& document)
 {
+    m_scroll->setHorizontalScrollBarPolicy(document.layout==ContentLayout::FreeCanvas?Qt::ScrollBarAsNeeded:Qt::ScrollBarAlwaysOff);
+    if(document.layout==ContentLayout::FreeCanvas) {reconcileFreeCanvas(document);return;}
     if (!needsReconcile(document)) {
         m_document = document;
         // Late singleton attachment/capability changes never reset meter history.
@@ -271,6 +293,72 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
     updateGrips();
     emit reconciled();
 }
+void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document)
+{
+    if(m_document.layout!=ContentLayout::FreeCanvas) {releaseViews();}
+    const auto prior=m_document;const auto oldRows=m_rows;
+    m_rows.clear();m_meters.clear();QSet<QWidget*> retained;
+    QHash<QString,QPointer<QWidget>> views;
+    m_document=document;setMinimumWidth(0);
+    if(m_layout->indexOf(m_canvas)<0) {m_layout->addWidget(m_canvas);}
+    m_canvas->show();
+    for(const auto& entry:document.contents) {
+        EntryRow row;row.entryId=entry.id;row.context=effectiveContext(document,entry);
+        row.effectiveVisible=entry.visible && m_registry.isAvailable(entry.typeId);
+        const EntryRow* old=nullptr;
+        for(const auto& candidate:oldRows) {if(candidate.entryId==entry.id) {old=&candidate;break;}}
+        if(entry.typeId.startsWith("applet:")) {
+            QWidget* singleton=m_registry.singletonView(entry.typeId);const bool claim=m_registry.claimSingleton(entry.typeId,entry.id);
+            if(singleton && claim) {
+                singleton->setProperty("singletonTypeId",entry.typeId);singleton->setParent(m_canvas);
+                const QSize minimum=singleton->minimumSizeHint().expandedTo(singleton->minimumSize()).expandedTo(QSize(24,24));
+                singleton->setProperty("freeCanvasMinimum",QSizeF(minimum));singleton->setMinimumSize(0,0);singleton->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
+                row.widget=singleton;
+            } else {
+                if(old && old->widget && old->widget->property("singletonTypeId").toString().isEmpty()) {row.widget=old->widget;}
+                else {row.widget=new QLabel(m_canvas);}
+                if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+(claim?tr("waiting for its live view"):tr("duplicate singleton placement; original data retained")));}
+            }
+        } else if(row.effectiveVisible) {
+            ContentEntry current=entry;current.extensions.remove("freeCanvasRect");current.paintOrder=0;
+            for(auto previous:prior.contents) {
+                previous.extensions.remove("freeCanvasRect");previous.paintOrder=0;
+                if(old && old->item && previous==current && effectiveContext(prior,previous)==row.context) {row.widget=old->widget;row.item=old->item;break;}
+            }
+            if(!row.item) {
+                auto meter=std::make_unique<MeterWidget>();
+                if(auto* item=m_registry.createMeterItem(entry,meter.get())) {
+                    item->clearStackMetadata();item->setRect(0,0,1,1);
+                    item->setProperty("containerEntryId",entry.id);item->setProperty("containerSourceContext",row.context);
+                    QSize minimum(24,24);
+                    if(auto* face=qobject_cast<BarPresetItem*>(item)) {minimum=face->minimumFaceSize();}
+                    if(auto* face=qobject_cast<CompositePresetItem*>(item)) {
+                        minimum=face->minimumFaceSize();for(auto* child:face->internalItems()) {child->setProperty("containerSourceContext",row.context);child->setProperty("containerEntryId",entry.id);}
+                    }
+                    meter->setProperty("freeCanvasMinimum",QSizeF(minimum));meter->setProperty("containerSourceContext",row.context);
+                    meter->addItem(item);meter->setParent(m_canvas);row.widget=meter.get();row.item=item;
+                    emit meterSurfaceReady(meter.release(),row.context);
+                }
+            }
+            if(row.item) {row.item->setZOrder(entry.paintOrder);}
+            if(auto* meter=qobject_cast<MeterWidget*>(row.widget.data())) {m_meters.append(meter);}
+        }
+        if(!row.widget) {
+            if(old && old->widget && !old->item && old->widget->property("singletonTypeId").toString().isEmpty()) {row.widget=old->widget;}
+            else {row.widget=new QLabel(m_canvas);}
+            if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+m_registry.unavailableReason(entry.typeId));}
+        }
+        row.widget->setProperty("freeCanvasEffectiveVisible",!row.widget->property("singletonTypeId").toString().isEmpty()?row.effectiveVisible:entry.visible);
+        retained.insert(row.widget);views[entry.id]=row.widget;m_rows.append(row);
+    }
+    for(const auto& row:oldRows) {
+        if(!row.widget || retained.contains(row.widget)) {continue;}
+        if(!row.widget->property("singletonTypeId").toString().isEmpty()) {m_registry.returnBorrowedView(row.widget);}
+        else {delete row.widget.data();}
+    }
+    auto sceneDocument=document;sceneDocument.locked=document.locked || !m_arrange;
+    m_canvas->project(sceneDocument,views);m_generation=m_registry.generation();m_materialized=true;emit reconciled();
+}
 QVector<MeterWidget*> ContainerContentHost::meterSurfaces() const
 {
     QVector<MeterWidget*> result;
@@ -279,6 +367,10 @@ QVector<MeterWidget*> ContainerContentHost::meterSurfaces() const
 }
 QRect ContainerContentHost::entryBoundary(const QString& id) const
 {
+    if(m_document.layout==ContentLayout::FreeCanvas) {
+        const QRect boundary=m_canvas->entryBoundary(id);
+        return boundary.isNull()?QRect():QRect(m_canvas->mapTo(const_cast<ContainerContentHost*>(this),boundary.topLeft()),boundary.size());
+    }
     for (const auto& row : m_rows) {
         if (row.entryId != id || !row.widget) { continue; }
         const QPoint origin = row.widget->mapTo(const_cast<ContainerContentHost*>(this), QPoint(0, 0));
@@ -308,7 +400,7 @@ ContainerDocument ContainerContentHost::captureDocument() const
             const QJsonObject oldOverrides = entry.config.value("overrides").toObject();
             const QJsonObject oldProperties = entry.config.value("properties").toObject();
             entry = m_registry.captureMeterItem(*row.item, entry);
-            if (document.layout == ContentLayout::VerticalStack) {
+            if (document.layout != ContentLayout::LegacyCanvas) {
                 entry.canvasRect = canvas;
                 for (const QString& key : {QStringLiteral("stackSlot"),QStringLiteral("slotLocalY"),QStringLiteral("slotLocalH")}) {
                     if (oldContext.contains(key)) { entry.context[key]=oldContext[key]; } else { entry.context.remove(key); }
@@ -365,7 +457,7 @@ void ContainerContentHost::setArrangeController(ContainerArrangeController *cont
 }
 void ContainerContentHost::updateGrips()
 {
-    if (!m_arrange) {
+    if (!m_arrange || m_document.layout==ContentLayout::FreeCanvas) {
         return;
     }
     if (m_grips.size() != m_rows.size()) {
@@ -400,6 +492,7 @@ void ContainerContentHost::updateGrips()
 }
 int ContainerContentHost::preferredContentHeight() const
 {
+    if(m_document.layout==ContentLayout::FreeCanvas) {return m_canvas->contentHeight()+(m_bannerMenu?22:0);}
     int height = 0;
     QSet<QWidget *> seen;
     for (const auto &row : m_rows) {
@@ -414,6 +507,7 @@ int ContainerContentHost::preferredContentHeight() const
 }
 QRect ContainerContentHost::gripGeometry(const QString &id) const
 {
+    if(m_document.layout==ContentLayout::FreeCanvas) {auto* grip=m_canvas->findChild<QWidget*>("freeCanvasGrip_"+id);return grip?QRect(grip->mapTo(const_cast<ContainerContentHost*>(this),QPoint()),grip->size()):QRect();}
     for (const auto &grip : m_grips) {
         if (grip && grip->property("entryGripId").toString() == id) {
             return QRect(grip->mapTo(const_cast<ContainerContentHost *>(this), QPoint()),

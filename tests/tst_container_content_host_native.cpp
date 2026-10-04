@@ -79,6 +79,15 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(cadence.count()>2,1000);
         auto* signalFace=qobject_cast<BarPresetItem*>(host->entryRows()[2].item.data()); QVERIFY(signalFace); QVERIFY(!signalFace->hasPrimaryReading());
         capture(clockMeter,"offline-clock");
+        // Native Free Canvas must preserve independent contexts and the existing
+        // borrowed S-meter, including the real GUI source adapter below.
+        d=store->snapshot();d.containers[0].layout=ContentLayout::FreeCanvas;
+        const QRectF placements[]{QRectF(20,20,480,130),QRectF(20,170,420,180),QRectF(20,370,480,72),QRectF(20,460,560,250),QRectF(20,740,560,250)};
+        for(int i=0;i<d.containers[0].contents.size();++i) {d.containers[0].contents[i].setFreeCanvasRect(placements[i]);}
+        QCOMPARE(manager->commitWorkspace(d,d.revision).status,CommitStatus::Saved);
+        host=manager->contentHost(id);QCOMPARE(host->meterSurfaces().size(),4);QCOMPARE(poller->targetCountForTest(),4);
+        QCOMPARE(registry->singletonView("applet:s_meter"),singleton.data());
+        clockMeter=host->meterSurfaces()[0];capture(clockMeter,"free-canvas-clock");
         auto* model=window->radioModel(); model->setBoardForTest(HPSDRHW::Saturn); model->configureStreamPool(5,5,192000);
         model->setConnectionStateForTest(ConnectionState::Connected); while(model->slices().size()<2) { QVERIFY(model->addSlice()>=0); }
         auto* a=model->sliceById(0); auto* b=model->sliceById(1); QVERIFY(a && b);

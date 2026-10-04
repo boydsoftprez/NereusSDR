@@ -8,12 +8,14 @@
 #include <QPointer>
 #include <QVector>
 class QVBoxLayout;
+class QScrollArea;
 class QMenu;
 namespace NereusSDR {
 class ContainerArrangeController;
 class ContainerContentRegistry;
 class MeterWidget;
 class MeterItem;
+class FreeCanvasSurface;
 class ContainerContentHost : public QWidget {
     Q_OBJECT
 public:
@@ -48,6 +50,7 @@ signals:
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 private:
+    void reconcileFreeCanvas(const ContainerDocument&);
     void updateGrips();
     void addEntryActions(QMenu& menu, const QString& entryId);
     QPointer<ContainerArrangeController> m_arrange;
@@ -61,6 +64,8 @@ private:
     QVector<QPointer<MeterWidget>> m_meters;
     QVBoxLayout* m_layout = nullptr;
     QWidget* m_body = nullptr;
+    QScrollArea* m_scroll = nullptr;
+    FreeCanvasSurface* m_canvas = nullptr;
     quint64 m_generation = 0;
     bool m_materialized = false;
     QPointer<QMenu> m_bannerMenu;
