@@ -12,6 +12,9 @@
 // size the list lacks is added, so an unrelated edit never rewrites them.
 // The input card offers 4096 and 8192 samples like the TX Input page.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-04: reset Qt6.11 Cocoa's popup accessibility cache before
+// replacing device rows or retained device/buffer entries.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "DeviceCard.h"
@@ -22,9 +25,12 @@
 #include "gui/UnbuiltFeatures.h"
 
 #include <QCheckBox>
+#include <QAbstractItemView>
+#include <QAccessible>
 #include <QComboBox>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QSignalBlocker>
@@ -133,8 +139,32 @@ static const QList<int> kInputBufferSizes = { 64, 128, 256, 512, 1024, 2048, 409
 // this role, so the next load removes it before adding its own.
 static constexpr int kKeptEntryRole = Qt::UserRole + 1;
 
+static void resetPopupAccessibilityCache(QComboBox* combo)
+{
+#if defined(Q_OS_MAC)
+    if (QGuiApplication::platformName() == QStringLiteral("cocoa")
+        && qVersion() == QStringLiteral("6.11.0")) {
+        // Qt6.11 Cocoa expires promoted popup cells with its old native
+        // rows (qcocoaaccessibilityelement.mm:219-226,257-267,342-362),
+        // but QAccessibleTable retains their IDs and dereferences them on
+        // RowsRemoved/RowsInserted (itemviews.cpp:645-741). Reset only the
+        // accessibility cache before clearing or replacing retained entries.
+        QAbstractItemView* view = combo->view();
+        QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(view);
+        if (accessible != nullptr && accessible->tableInterface() != nullptr) {
+            QAccessibleTableModelChangeEvent reset(
+                view, QAccessibleTableModelChangeEvent::ModelReset);
+            accessible->tableInterface()->modelChange(&reset);
+        }
+    }
+#else
+    Q_UNUSED(combo);
+#endif
+}
+
 static void removeKeptEntries(QComboBox* combo)
 {
+    resetPopupAccessibilityCache(combo);
     for (int i = combo->count() - 1; i >= 0; --i) {
         if (combo->itemData(i, kKeptEntryRole).toBool()) {
             combo->removeItem(i);
@@ -427,6 +457,7 @@ void DeviceCard::populateDeviceCombo()
     QSignalBlocker blocker(m_deviceCombo);
     const QString prevName = m_deviceCombo->currentData().toString();
 
+    resetPopupAccessibilityCache(m_deviceCombo);
     m_deviceCombo->clear();
     m_deviceCombo->addItem(QStringLiteral("(platform default)"), QString());
 

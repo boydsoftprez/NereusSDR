@@ -25,6 +25,9 @@
 //   Orion group disabled on the Red Pitaya; Line In Gain in 1.5 dB steps.
 //
 // Written by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-04: reset Qt6.11 Cocoa's popup accessibility cache before
+// refreshing the PC Mic device list. J.J. Boyd (KG4VCF),
+// AI-assisted via OpenAI Codex.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; no Thetis logic ported here.
@@ -42,10 +45,13 @@
 #include "gui/HGauge.h"
 
 #include <QAbstractButton>
+#include <QAbstractItemView>
+#include <QAccessible>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHideEvent>
 #include <QLabel>
@@ -708,6 +714,23 @@ void AudioTxInputPage::populateDeviceCombo(int hostApiIndex)
     if (!m_deviceCombo) { return; }
 
     QSignalBlocker blk(m_deviceCombo);
+#if defined(Q_OS_MAC)
+    if (QGuiApplication::platformName() == QStringLiteral("cocoa")
+        && qVersion() == QStringLiteral("6.11.0")) {
+        // Qt6.11 Cocoa expires promoted popup cells with its old native
+        // rows (qcocoaaccessibilityelement.mm:219-226,257-267,342-362),
+        // but QAccessibleTable retains their IDs and dereferences them on
+        // RowsRemoved (itemviews.cpp:696-741). Clear only that accessibility
+        // cache through the public API before the combo mutates its model.
+        QAbstractItemView* view = m_deviceCombo->view();
+        QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(view);
+        if (accessible != nullptr && accessible->tableInterface() != nullptr) {
+            QAccessibleTableModelChangeEvent reset(
+                view, QAccessibleTableModelChangeEvent::ModelReset);
+            accessible->tableInterface()->modelChange(&reset);
+        }
+    }
+#endif
     m_deviceCombo->clear();
 
     if (hostApiIndex < 0) {

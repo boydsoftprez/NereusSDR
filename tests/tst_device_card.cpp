@@ -29,9 +29,14 @@
 #include <QSignalSpy>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QAccessible>
+#include <QAbstractItemView>
+#include <QSignalBlocker>
+#include <QStandardPaths>
 
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
+#include "core/audio/PortAudioBus.h"
 #include "gui/setup/DeviceCard.h"
 
 using namespace NereusSDR;
@@ -378,6 +383,65 @@ private slots:
         QCOMPARE(bufferCombo->findData(QVariant::fromValue(5000)), -1);
         QCOMPARE(bufferCombo->count(), listedBuffers);
         QCOMPARE(bufferCombo->currentData().toInt(), 256);
+    }
+
+    void driverRefreshWithQueriedAccessibleDeviceKeepsConfiguration_data()
+    {
+        QTest::addColumn<bool>("input");
+        QTest::newRow("input") << true;
+        QTest::newRow("output") << false;
+    }
+
+    void driverRefreshWithQueriedAccessibleDeviceKeepsConfiguration()
+    {
+        QFETCH(bool, input);
+        QVERIFY(QStandardPaths::isTestModeEnabled());
+        QVERIFY(PortAudioBus::portAudioBarredForTestRun());
+        QAccessible::setActive(true);
+        const QString prefix = input ? QStringLiteral("audio/TxInput")
+                                     : QStringLiteral("audio/Speakers");
+        AudioDeviceConfig config;
+        config.deviceName = QStringLiteral("Absent test audio device");
+        config.bufferSamples = 3000;
+        config.saveToSettings(prefix);
+        DeviceCard card(prefix, input ? DeviceCard::Role::Input : DeviceCard::Role::Output, false);
+        const QList<QComboBox*> combos = card.findChildren<QComboBox*>();
+        QVERIFY(!combos.isEmpty());
+        QComboBox* driver = combos.first();
+        QComboBox* device = nullptr;
+        for (QComboBox* combo : combos) {
+            if (combo->findText(QStringLiteral("(platform default)")) >= 0) {
+                device = combo;
+            }
+        }
+        QVERIFY(device);
+        {
+            QSignalBlocker blocker(driver);
+            driver->addItem(QStringLiteral("Test audio API"), 0);
+        }
+        QSignalSpy changes(&card, &DeviceCard::configChanged);
+        for (int iteration = 0; iteration < 3; ++iteration) {
+            QAccessibleInterface* table = QAccessible::queryAccessibleInterface(device->view());
+            QVERIFY(table && table->tableInterface());
+            QAccessibleInterface* selected = table->tableInterface()->cellAt(device->currentIndex(), 0);
+            QVERIFY(selected && selected->isValid());
+            QCOMPARE(selected->text(QAccessible::Name), QStringLiteral("Absent test audio device (not available)"));
+
+            driver->setCurrentIndex(driver->currentIndex() == 0 ? 1 : 0);
+
+            QCOMPARE(changes.count(), iteration + 1);
+            QCOMPARE(device->count(), 2);
+            QCOMPARE(device->currentData().toString(), config.deviceName);
+            QCOMPARE(card.currentConfig().deviceName, config.deviceName);
+            QCOMPARE(card.currentConfig().bufferSamples, 3000);
+            const AudioDeviceConfig saved = AudioDeviceConfig::loadFromSettings(prefix);
+            QCOMPARE(saved.deviceName, config.deviceName);
+            QCOMPARE(saved.bufferSamples, 3000);
+            table = QAccessible::queryAccessibleInterface(device->view());
+            selected = table->tableInterface()->cellAt(device->currentIndex(), 0);
+            QVERIFY(selected && selected->isValid());
+            QCOMPARE(selected->text(QAccessible::Name), device->currentText());
+        }
     }
 
     // The input card offers the TX Input page's larger buffers.

@@ -364,7 +364,7 @@ struct RemoteWindow {
         return QTest::qWaitFor([this] {
             SliceModel* tx = remote.sliceById(txSliceId);
             return daemon->activeEndpointCount() == 2 && tx != nullptr
-                && tx->panKey() == QStringLiteral("two");
+                && tx->panKey() == station.sliceById(txSliceId)->panKey();
         }, 5000);
     }
 
@@ -644,6 +644,88 @@ private slots:
 
     // ── A remote window ────────────────────────────────────────────────────
 
+    void remoteTransmitUsesAssociatedHostWhenPanKeyDoesNotResolve_data()
+    {
+        QTest::addColumn<QString>("corePanKey");
+        QTest::newRow("primary slice without a pan key") << QString();
+        QTest::newRow("slice with a stale pan key") << QStringLiteral("retired-pan");
+    }
+
+    void remoteTransmitUsesAssociatedHostWhenPanKeyDoesNotResolve()
+    {
+        QFETCH(QString, corePanKey);
+        RemoteWindow window(/*withAnalyzer=*/true);
+        window.station.sliceById(window.txSliceId)->setPanKey(corePanKey);
+        window.stack.panadapter(QStringLiteral("two"))->addSlice(window.txSliceId);
+        window.stack.panadapter(QStringLiteral("one"))->addSlice(window.otherSliceId);
+        window.stack.setActivePan(QStringLiteral("one"));
+        QVERIFY(window.connect());
+        QCOMPARE(window.remote.sliceById(window.txSliceId)->panKey(), corePanKey);
+        QCOMPARE(window.stack.activePanId(), QStringLiteral("one"));
+        QVERIFY(window.receiveDraws(QStringLiteral("two")));
+        SpectrumWidget* one = window.pan(QStringLiteral("one"));
+        SpectrumWidget* two = window.pan(QStringLiteral("two"));
+        const PanState before = PanState::of(two);
+        QSignalSpy contexts(window.gui.get(), &RemoteMediaController::transmitContextReceived);
+
+        window.key(true);
+        QTRY_VERIFY(window.controller->isKeyed());
+        QCOMPARE(window.controller->transmitPanId(), QStringLiteral("two"));
+        QVERIFY(two->m_moxOverlay);
+        QVERIFY(!one->m_moxOverlay);
+        QVERIFY(two->m_txExternalWaterfall);
+        QVERIFY(window.gui->isPanTransmitting(QStringLiteral("two")));
+        QVERIFY(!window.gui->isPanTransmitting(QStringLiteral("one")));
+        QVERIFY(riseTwoDrawsTransmit(window, contexts, -30.0f));
+        // The Core's waterfall plane reaches the hosted widget as well as
+        // its trace; its TX row must advance the live waterfall history.
+        const int rowsBefore = two->waterfallHistoryRowsForTest();
+        QTRY_VERIFY_WITH_TIMEOUT(([&] {
+            const auto context = contexts.last().at(1).value<SpectrumContextMessage>();
+            window.emitPlanes(-30.0f, context.traceSamples);
+            window.feed();
+            return two->waterfallHistoryRowsForTest() > rowsBefore;
+        }()), 5000);
+
+        window.key(false);
+        QTRY_VERIFY(!window.controller->isKeyed());
+        QVERIFY(!window.gui->isPanTransmitting(QStringLiteral("two")));
+        QCOMPARE(PanState::of(two), before);
+        QVERIFY(window.receiveDraws(QStringLiteral("two")));
+    }
+
+    void remoteTransmitWithoutUniqueAssociatedHostDoesNotUseActivePan_data()
+    {
+        QTest::addColumn<bool>("ambiguousHost");
+        QTest::newRow("no actual host") << false;
+        QTest::newRow("multiple actual hosts") << true;
+    }
+
+    void remoteTransmitWithoutUniqueAssociatedHostDoesNotUseActivePan()
+    {
+        QFETCH(bool, ambiguousHost);
+        RemoteWindow window(/*withAnalyzer=*/true);
+        window.station.sliceById(window.txSliceId)->setPanKey(QString());
+        window.stack.panadapter(QStringLiteral("one"))->addSlice(window.otherSliceId);
+        if (ambiguousHost) {
+            window.stack.panadapter(QStringLiteral("one"))->addSlice(window.txSliceId);
+            window.stack.panadapter(QStringLiteral("two"))->addSlice(window.txSliceId);
+        }
+        window.stack.setActivePan(QStringLiteral("one"));
+        QVERIFY(window.connect());
+        QCOMPARE(window.stack.panadapter(QStringLiteral("two"))->associatedSlices()
+                     .contains(window.txSliceId), ambiguousHost);
+        window.key(true);
+        QTRY_VERIFY(window.controller->isKeyed());
+        QVERIFY(window.controller->transmitPanId().isEmpty());
+        QVERIFY(!window.pan(QStringLiteral("one"))->m_moxOverlay);
+        QVERIFY(!window.pan(QStringLiteral("two"))->m_moxOverlay);
+        QVERIFY(!window.gui->isPanTransmitting(QStringLiteral("one")));
+        QVERIFY(!window.gui->isPanTransmitting(QStringLiteral("two")));
+        window.key(false);
+        QTRY_VERIFY(!window.controller->isKeyed());
+    }
+
     void remoteRiseDrawsTheTransmitDisplayAndFallRestores()
     {
         RemoteWindow window(/*withAnalyzer=*/true);
@@ -702,6 +784,36 @@ private slots:
         // Receive frames draw again (once the Core's receive context lands).
         QVERIFY(window.receiveDraws(QStringLiteral("two")));
         QCOMPARE(two->m_refLevel, before.refLevel);
+    }
+
+    void remoteJoinWhileAlreadyKeyedShowsTransmitDisplay()
+    {
+        RemoteWindow window(/*withAnalyzer=*/true);
+        SpectrumWidget* one = window.pan(QStringLiteral("one"));
+        SpectrumWidget* two = window.pan(QStringLiteral("two"));
+        QSignalSpy contexts(window.gui.get(), &RemoteMediaController::transmitContextReceived);
+        // Initial transmit state arrives before the slice mirrors. Complete
+        // the rise once the snapshot supplies the TX slice and its pan key.
+        window.key(true);
+        QVERIFY(window.station.isTransmitting());
+        QVERIFY(window.connect());
+        QTRY_VERIFY(window.controller->isKeyed());
+        QTRY_COMPARE(window.client->transmitState()->txSliceId(), window.txSliceId);
+        QCOMPARE(window.controller->transmitPanId(), QStringLiteral("two"));
+        QVERIFY(two->m_moxOverlay);
+        QVERIFY(!one->m_moxOverlay);
+        QVERIFY(two->m_txExternalWaterfall);
+        QVERIFY(window.gui->isPanTransmitting(QStringLiteral("two")));
+        QVERIFY(!window.gui->isPanTransmitting(QStringLiteral("one")));
+        QVERIFY(riseTwoDrawsTransmit(window, contexts, -30.0f));
+
+        window.key(false);
+        QTRY_VERIFY(!window.controller->isKeyed());
+        QVERIFY(window.controller->transmitPanId().isEmpty());
+        QVERIFY(!two->m_moxOverlay);
+        QVERIFY(!two->m_txExternalWaterfall);
+        QVERIFY(!window.gui->isPanTransmitting(QStringLiteral("two")));
+        QVERIFY(window.receiveDraws(QStringLiteral("two")));
     }
 
     void olderCoreHoldsThePanAndSaysWhy()

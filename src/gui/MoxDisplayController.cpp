@@ -20,6 +20,10 @@
 //                 connecting reach every pan of the window, local or
 //                 remote. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-04 : Resolve a remote slice's actual window host when its Core
+//                 pan key does not name a window pan, and complete a rise
+//                 once the initial TX slice snapshot follows the keyed state.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "gui/MoxDisplayController.h"
@@ -193,6 +197,15 @@ void MoxDisplayController::note(const QString& call)
 void MoxDisplayController::setKeyed(bool keyed, int txSliceId)
 {
     if (keyed == m_keyed) {
+        // The Core mirrors TX state before the slice objects. Joining an
+        // already-keyed station can therefore try the rise with no slice
+        // yet. Complete it once the snapshot is ready, without moving a pan
+        // already taken over (even one whose widget was destroyed during
+        // this key).
+        if (keyed && m_panId.isEmpty()) {
+            rise(txSliceId);
+            applyHighSwr();
+        }
         return;
     }
     m_keyed = keyed;
@@ -255,15 +268,32 @@ void MoxDisplayController::rise(int txSliceId)
     //
     // Deliberately NOT MainWindow::spectrumForSlice(): that helper falls
     // back to activeSpectrumWidget() when the pan does not resolve, which
-    // would paint the transmit trace onto an unrelated pan. A slice pointing
-    // at a pan that no longer exists is a bug worth leaving visible, not one
-    // worth covering with a plausible picture in the wrong place.
+    // would paint the transmit trace onto an unrelated pan. A Core's slice
+    // can have an empty key, or name a pan absent from this window; its
+    // actual hosted-slice association is evidence of where to show it.
     SliceModel* txSlice = m_model ? m_model->sliceById(txSliceId) : nullptr;
     if (txSlice == nullptr || m_pans.isNull()) {
         return;
     }
-    const QString panId = txSlice->panKey();
+    QString panId = txSlice->panKey();
     SpectrumWidget* sw = m_pans->spectrum(panId);
+    if (sw == nullptr) {
+        PanadapterApplet* host = nullptr;
+        for (PanadapterApplet* applet : m_pans->allApplets()) {
+            if (applet == nullptr || !applet->associatedSlices().contains(txSliceId)) {
+                continue;
+            }
+            // An ambiguous host must not pick whichever QHash entry wins.
+            if (host != nullptr) {
+                return;
+            }
+            host = applet;
+        }
+        if (host != nullptr) {
+            panId = host->panId();
+            sw = host->spectrumWidget();
+        }
+    }
     if (sw == nullptr) {
         return;
     }
@@ -643,6 +673,9 @@ void MoxDisplayController::followStation(StationClient* client)
         });
     }
     connect(m_model, &RadioModel::transmittingChanged, this, follow);
+    // txState precedes the slice mirrors in the initial snapshot. By this
+    // point their IDs, pan keys and window placements can resolve the rise.
+    connect(client, &StationClient::stateSnapshotApplied, this, follow);
 }
 
 } // namespace NereusSDR
