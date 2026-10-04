@@ -85,7 +85,8 @@ The combined work links/bundles:
 - **AetherSDR**-derived Qt6 scaffolding (GPL-3.0) — see
   `licenses/aethersdr.txt`
 - **Qt 6** (LGPL-3.0, dynamic linking) — see `licenses/qt6.txt`
-- **FFTW3** (GPL-2.0-or-later, static on Windows / system on Linux+macOS)
+- **FFTW3** (GPL-2.0-or-later, dynamic; bundled DLLs on Windows, dylibs on macOS,
+  shared libraries in desktop AppImages; system dependency for daemon `.deb` packages)
   — see `licenses/fftw3.txt`
 - **WDSP** (GPL-2.0-or-later, static) — see `licenses/wdsp.txt`
 
@@ -95,18 +96,25 @@ all per-dependency notices listed above, and a written source offer at
 `licenses/SOURCE-OFFER.txt` covering GPLv3 §6(a) (primary: this release
 page) and §6(b) (fallback: 3-year offer via email).
 
-Corresponding source for every binary on this release page is provided
-on the same medium:
+The following source archives accompany the binaries on this release page;
+the written source offer below applies independently:
 
 - **NereusSDR** itself — `NereusSDR-@VERSION@-source.tar.gz` (this release).
   Equivalent to a `git archive` of the tag commit. This archive also
   contains the vendored WDSP sources (`third_party/wdsp/`) and the
   FFTW3 Windows binary-plus-header tree (`third_party/fftw3/`).
-- **FFTW3** (GPLv2-or-later) — `fftw-3.3.5.tar.gz` (this release).
-  Exact upstream archive used to build the bundled `libfftw3f-3.dll`
-  shipped in the Windows installer and portable ZIP. Upstream:
-  <https://fftw.org/pub/fftw/fftw-3.3.5.tar.gz>. Provenance:
-  `docs/attribution/FFTW3-PROVENANCE.md` in the source archive.
+- **FFTW3** (GPLv2-or-later) — versioned upstream archives on this release:
+  `fftw-3.3.5.tar.gz` (Windows DLLs), `fftw-3.3.8.tar.gz` (x86_64 AppImage
+  upstream base), `fftw-3.3.10.tar.gz` (Intel macOS build and ARM AppImage
+  upstream base), and `fftw-3.3.11.tar.gz` (Apple Silicon Homebrew upstream
+  base). Ubuntu package sources, including their patches and build recipes,
+  are in `fftw-ubuntu-source.tar.gz`: the `.dsc`, `.orig.tar.gz`, and
+  `.debian.tar.xz` files for `3.3.8-2ubuntu8` and `3.3.10-1ubuntu3`.
+  Upstream: <https://fftw.org/pub/fftw/>; Ubuntu:
+  <https://archive.ubuntu.com/ubuntu/pool/main/f/fftw3/>.
+  Homebrew's exact bottle recipe revision was not captured by the packaging
+  logs; its upstream base is supplied here and the existing source offer
+  applies. Provenance: `docs/attribution/FFTW3-PROVENANCE.md`.
 - **Qt 6** (LGPLv3) — dynamically linked on all platforms; replace the
   bundled Qt 6 libraries with your own modified build per
   `licenses/qt6.txt`. Linux: `libQt6*.so.6` in the AppImage's
@@ -119,7 +127,7 @@ on the same medium:
   `docs/attribution/WDSP-PROVENANCE.md` in the source archive.
 
 A written 3-year source offer applies independently per
-`licenses/SOURCE-OFFER.txt`; contact <kg4vcf@gmail.com> to invoke it.
+`licenses/SOURCE-OFFER.txt`; contact <jj@skyrunner.net> to invoke it.
 
 ## Reporting Issues
 

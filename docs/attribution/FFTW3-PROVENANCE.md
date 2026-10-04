@@ -2,15 +2,17 @@
 
 FFTW3 (Matteo Frigo & Steven G. Johnson's FFT library) is vendored as
 pre-built binaries in `third_party/fftw3/` for Windows targets only.
-Linux and macOS builds link against the system FFTW3 package provided
-by the distribution / Homebrew.
+Desktop AppImages bundle distribution-provided FFTW shared libraries.
+macOS release apps bundle dylibs: Intel builds FFTW from upstream source,
+while Apple Silicon uses Homebrew. Daemon `.deb` packages use installed
+system FFTW dependencies.
 
 ## Upstream
 
 - **Authors:** Matteo Frigo, Steven G. Johnson (Massachusetts Institute of Technology)
 - **Canonical repository:** https://github.com/FFTW/fftw3
 - **Upstream homepage:** https://fftw.org/
-- **Version in NereusSDR:** 3.3.5 (determined from DLL string `fftw-3.3.5 fftwf_wisdom` embedded in `libfftw3f-3.dll`)
+- **Windows vendored version:** 3.3.5 (determined from DLL string `fftw-3.3.5 fftwf_wisdom` embedded in `libfftw3f-3.dll`)
 - **Binary source:** https://fftw.org/install/windows.html (pre-built 64-bit DLLs)
 - **Vendored file tree:**
   - `third_party/fftw3/include/fftw3.h` — public C header
@@ -53,18 +55,40 @@ statically patches FFTW3 symbols.
 
 ## Binary distribution
 
-`libfftw3f-3.dll` ships inside:
+Windows installer and portable ZIP packages ship both `libfftw3-3.dll`
+(double precision, fetched from the upstream 3.3.5 binary ZIP during build)
+and `libfftw3f-3.dll` (single precision, vendored in the source tree).
+Windows import libraries link to those runtime DLLs.
 
-- The NereusSDR Windows NSIS installer (Phase 3N `release.yml` artifact)
-- The NereusSDR Windows portable ZIP (Phase 3N `release.yml` artifact)
+Release source mapping:
 
-GPLv2 §3 corresponding-source availability is satisfied by the public
-upstream download page at https://fftw.org/install/windows.html and by
-the upstream git repository at https://github.com/FFTW/fftw3. NereusSDR
-release notes point recipients to these locations; the
-`THIRD-PARTY-LICENSES.txt` bundled with each release artifact (Phase 4,
-Task 12 of the 2026-04-18 audit plan) carries a verbatim copy of this
-provenance notice.
+| Package | FFTW input | Accompanying source |
+| --- | --- | --- |
+| Windows installer / ZIP | Upstream DLLs 3.3.5 | `fftw-3.3.5.tar.gz` |
+| Intel macOS app | Upstream source build 3.3.10, shared double/float with threads | `fftw-3.3.10.tar.gz`; configure steps in `.github/workflows/release.yml` |
+| Apple Silicon macOS app | Homebrew FFTW 3.3.11 | `fftw-3.3.11.tar.gz` upstream base; existing written source offer |
+| x86_64 desktop AppImage | Ubuntu `3.3.8-2ubuntu8` | `fftw-3.3.8.tar.gz` upstream base plus `fftw-ubuntu-source.tar.gz` |
+| ARM desktop AppImage | Ubuntu `3.3.10-1ubuntu3` | `fftw-3.3.10.tar.gz` upstream base plus `fftw-ubuntu-source.tar.gz` |
+| Daemon `.deb` | Distribution-installed runtime dependency | Distribution package source; no FFTW library bundled in the `.deb` |
+
+The Ubuntu bundle retains each package's signed `.dsc`, its original source
+archive, and `.debian.tar.xz` containing patches and build recipes. Downloads
+are verified against the SHA256 values in the `.dsc`. Ubuntu's 3.3.10 orig
+archive differs from the fftw.org archive, so both are retained verbatim.
+Source: <https://archive.ubuntu.com/ubuntu/pool/main/f/fftw3/>.
+
+The Apple Silicon packaging log records the 3.3.11 Homebrew bottle version,
+but does not establish an immutable formula revision for that bottle.
+The upstream archive is its source base, not a claim that the exact Homebrew
+bottle recipe has been captured. Source requests remain covered by the
+existing `licenses/SOURCE-OFFER.txt` offer.
+
+All four upstream archives and the Ubuntu source bundle accompany the
+release binaries and pass through the existing SHA256 checksum and detached
+signature pipeline. Upstream archives: <https://fftw.org/pub/fftw/>.
+Bundled notices are `licenses/fftw3.txt`, `licenses/fftw3-notices.txt`,
+`licenses/GPLv2.txt`, and `licenses/SOURCE-OFFER.txt` (inside each platform's
+license directory).
 
 ## Attribution Chain
 

@@ -1453,16 +1453,53 @@ jobs:
             "${TAG}" > "artifacts/NereusSDR-${VERSION}-source.tar.gz"
 
       - name: Fetch FFTW3 corresponding source (GPLv2 §3 / GPLv3 §6)
-        # The Windows installer + portable ZIP bundle a prebuilt
-        # libfftw3f-3.dll. FFTW is GPLv2-or-later, so the binary
-        # distribution must be accompanied by the corresponding source on
-        # the same medium (a GitHub Release IS the medium). Ship the exact
-        # upstream source archive used to build the bundled DLL alongside
-        # the installer artifacts so recipients receive both atomically.
+        # Keep versioned upstream sources plus Ubuntu patches/build recipes
+        # beside the bundled DLLs, dylibs and AppImage shared libraries.
+        # The existing tar.gz checksum/sign/upload steps cover these files.
         run: |
-          curl -fsSL "https://fftw.org/pub/fftw/fftw-3.3.5.tar.gz" \
-            -o "artifacts/fftw-3.3.5.tar.gz"
-          ls -la artifacts/fftw-3.3.5.tar.gz
+          set -euo pipefail
+          for VERSION in 3.3.5 3.3.8 3.3.10 3.3.11; do
+            curl -fsSL "https://fftw.org/pub/fftw/fftw-${VERSION}.tar.gz" \
+              -o "artifacts/fftw-${VERSION}.tar.gz"
+          done
+          (cd artifacts && sha256sum -c - <<'CHECKSUMS'
+          8ecfe1b04732ec3f5b7d279fdb8efcad536d555f9d1e8fabd027037d45ea8bcf  fftw-3.3.5.tar.gz
+          6113262f6e92c5bd474f2875fa1b01054c4ad5040f6b0da7c03c98821d9ae303  fftw-3.3.8.tar.gz
+          56c932549852cddcfafdab3820b0200c7742675be92179e59e6215b340e26467  fftw-3.3.10.tar.gz
+          5630c24cdeb33b131612f7eb4b1a9934234754f9f388ff8617458d0be6f239a1  fftw-3.3.11.tar.gz
+          CHECKSUMS
+          )
+          SOURCE_DIR="$(mktemp -d)"
+          trap 'rm -rf "$SOURCE_DIR"' EXIT
+          mkdir -p "$SOURCE_DIR/fftw-ubuntu-source"
+          cd "$SOURCE_DIR/fftw-ubuntu-source"
+          UBUNTU_POOL="https://archive.ubuntu.com/ubuntu/pool/main/f/fftw3"
+          for PACKAGE_VERSION in 3.3.8-2ubuntu8 3.3.10-1ubuntu3; do
+            DSC="fftw3_${PACKAGE_VERSION}.dsc"
+            curl -fsSL "$UBUNTU_POOL/$DSC" -o "$DSC"
+            grep -Fx "Version: $PACKAGE_VERSION" "$DSC"
+            awk '/^Checksums-Sha256:/ { hashes = 1; next }
+                 hashes && /^ / { print $1 "  " $3; next }
+                 hashes { exit }' "$DSC" > "$DSC.sha256"
+            test "$(wc -l < "$DSC.sha256")" -eq 2
+            printf '%s\n' "fftw3_${PACKAGE_VERSION%%-*}.orig.tar.gz" \
+              "fftw3_${PACKAGE_VERSION}.debian.tar.xz" | LC_ALL=C sort > expected-files.txt
+            awk '{ print $2 }' "$DSC.sha256" | LC_ALL=C sort > actual-files.txt
+            cmp expected-files.txt actual-files.txt
+            while read -r HASH FILE; do
+              case "$FILE" in
+                fftw3_${PACKAGE_VERSION%%-*}.orig.tar.gz|fftw3_${PACKAGE_VERSION}.debian.tar.xz) ;;
+                *) echo "Unexpected FFTW source filename: $FILE" >&2; exit 1 ;;
+              esac
+              curl -fsSL "$UBUNTU_POOL/$FILE" -o "$FILE"
+            done < "$DSC.sha256"
+            sha256sum -c "$DSC.sha256"
+          done
+          rm expected-files.txt actual-files.txt
+          # Ubuntu's .dsc preserves its own signature and SHA256 metadata;
+          # the release signs the containing archive via the existing flow.
+          tar czf "$GITHUB_WORKSPACE/artifacts/fftw-ubuntu-source.tar.gz" \
+            -C "$SOURCE_DIR" fftw-ubuntu-source
 
       - name: Generate SHA256SUMS
         working-directory: artifacts
