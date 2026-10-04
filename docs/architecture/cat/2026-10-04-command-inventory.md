@@ -32,3 +32,5 @@ The corrected inventory matches source parser semantics: 349 active / 70 inactiv
 The runtime catalogue test must cover this exact whitespace case.
 
 Overlapping research ownership was reconciled explicitly: RX evidence owns buffer HA/HR/HU and quick-memory/transverter decisions; TX evidence owns TX-meter selector, MIDI and global reporting decisions. The combined matrix takes the finalized agreeing contracts and includes all other lead-owned mode/display rows. Negative-width forms remain disabled regardless of outcome.
+
+Implementation-source correction: `CATParser.cs:965-967` dispatches `ZZMX` through `case"ZZMX":`. The earlier scanner required whitespace and incorrectly reported an upstream omission. This is an extraction error, not a source defect; the unavailable Nereus memory-store contract is unchanged.

@@ -122,9 +122,17 @@ private slots:
         QFile source(QStringLiteral(":/cat/CATStructs.xml"));
         QVERIFY(source.open(QIODevice::ReadOnly));
         const QByteArray xml = source.readAll();
+        const QByteArray disabled = QByteArray(xml).replace("<nsetparms>4</nsetparms>", "<nsetparms>-2</nsetparms>");
+        file.resize(0);
+        file.seek(0);
+        QCOMPARE(file.write(disabled), disabled.size());
+        file.flush();
+        CatCommandCatalog disabledCatalog(file.fileName());
+        QVERIFY(disabledCatalog.isValid());
+        QCOMPARE(disabledCatalog.find("AG")->setWidth, -2);
         for (const QByteArray& invalid : {QByteArray(xml).replace("code=\"AC\"", "code=\"AG\""),
                                        QByteArray(xml).replace("<active>false</active>", "<active>invalid</active>"),
-                                       QByteArray(xml).replace("<nsetparms>3</nsetparms>", "<nsetparms>-2</nsetparms>")}) {
+                                       QByteArray(xml).replace("<nsetparms>3</nsetparms>", "<nsetparms>32768</nsetparms>")}) {
             file.resize(0);
             file.seek(0);
             QCOMPARE(file.write(invalid), invalid.size());

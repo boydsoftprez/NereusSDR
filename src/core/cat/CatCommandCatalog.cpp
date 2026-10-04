@@ -115,7 +115,7 @@ bool CatCommandCatalog::load(const QString& path)
                 bool ok = false;
                 // From Thetis CAT/CATParser.cs:491-497 [v2.10.3.15]: Convert.ToInt16.
                 const int width = text.toInt(&ok);
-                if (!ok || width < -1 || width > std::numeric_limits<qint16>::max()) { xml.raiseError(QStringLiteral("Invalid descriptor width")); break; }
+                if (!ok || width < std::numeric_limits<qint16>::min() || width > std::numeric_limits<qint16>::max()) { xml.raiseError(QStringLiteral("Invalid descriptor width")); break; }
                 if (name == QStringLiteral("nsetparms")) { descriptor.setWidth = width; }
                 if (name == QStringLiteral("ngetparms")) { descriptor.getWidth = width; }
                 if (name == QStringLiteral("nansparms")) { descriptor.answerWidth = width; }
