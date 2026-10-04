@@ -11,6 +11,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Keep each pan's tuning STEP on its resolved slice by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Preserve closed-slice names and narrow tuning refreshes by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
@@ -5864,6 +5866,43 @@ void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
                                            const QString& panId)
 {
     if (!sw || !m_radioModel) { return; }
+
+    // STEP belongs to the slice this pan tunes, just like the destination
+    // below. Re-resolve it on every refresh: a queued notification from a
+    // former selection or a replaced Core slice must never write its old
+    // STEP into this pan. Widget context retires all watchers with the pan;
+    // sender destruction retires each slice's watcher with that slice.
+    const auto refreshStep = [this, sw, panId]() {
+        if (m_shuttingDown) { return; }
+        if (SliceModel* slice = sliceForPan(panId)) {
+            sw->setStepSize(slice->stepHz());
+        }
+    };
+    const auto watchStep = [this, sw, refreshStep](int sliceId) {
+        if (m_shuttingDown || !m_radioModel) { return; }
+        if (SliceModel* slice = m_radioModel->sliceById(sliceId)) {
+            connect(slice, &SliceModel::stepHzChanged, sw,
+                    [refreshStep](int) { refreshStep(); });
+        }
+        refreshStep();
+    };
+    for (SliceModel* slice : m_radioModel->slices()) {
+        if (slice) { watchStep(slice->sliceIndex()); }
+    }
+    connect(m_radioModel, &RadioModel::sliceAdded, sw, watchStep);
+    connect(m_radioModel, &RadioModel::sliceRemoved, sw,
+            [refreshStep](int) { refreshStep(); });
+    connect(m_radioModel, &RadioModel::sliceStateRestored, sw,
+            [refreshStep](int) { refreshStep(); });
+    connect(m_radioModel, &RadioModel::activeSliceChanged, sw,
+            [refreshStep](int) { refreshStep(); });
+    connect(m_radioModel, &RadioModel::currentRadioChanged, sw,
+            [refreshStep](const RadioInfo&) { refreshStep(); });
+    if (PanadapterApplet* applet = m_panStack ? m_panStack->panadapter(panId) : nullptr) {
+        connect(applet, &PanadapterApplet::activeSliceChanged, sw,
+                [refreshStep](const QString&, int) { refreshStep(); });
+    }
+    refreshStep();
 
     // Click on the spectrum tunes this pan's slice.
     connect(sw, &SpectrumWidget::frequencyClicked, this,
