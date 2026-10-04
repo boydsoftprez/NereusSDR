@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 import unittest
 
 
@@ -30,6 +31,50 @@ class SetupJsonHeaderTest(unittest.TestCase):
             self.assertEqual(module.check_required_markers(unnamed, markers), markers)
             (setup / "HEADERS.md").unlink()
             self.assertEqual(module.check_required_markers(named, markers), markers)
+
+
+class CatDataHeaderTest(unittest.TestCase):
+    def test_allowlisted_cat_data_requires_named_sidecar_and_markers(self):
+        with TemporaryDirectory() as root, patch.object(module, "REPO", Path(root)):
+            for relative in ("resources/cat/CommandContracts.json", "tests/data/cat/requests.json", "tests/data/cat/compatibility.csv"):
+                path = Path(root) / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("data")
+                sidecar = path.parent / "HEADERS.md"
+                if sidecar.exists():
+                    sidecar.unlink()
+                markers = module.MARKERS_BY_KIND["thetis"]
+                self.assertEqual(module.check_required_markers(path, markers), markers)
+                full = " ".join(markers)
+                sidecar.write_text(full)
+                self.assertEqual(module.check_required_markers(path, markers), markers)
+                sidecar.write_text(full + f" `{path.name}`")
+                self.assertEqual(module.check_required_markers(path, markers), [])
+                sidecar.write_text(full.replace("Copyright (C)", "") + f" `{path.name}`")
+                self.assertEqual(module.check_required_markers(path, markers), ["Copyright (C)"])
+                other = path.with_name("not-allowlisted.json")
+                other.write_text("{}")
+                sidecar.write_text(full + f" `{other.name}`")
+                self.assertEqual(module.check_required_markers(other, markers), markers)
+
+    def test_exact_xml_requires_project_license_and_no_header_statement(self):
+        with TemporaryDirectory() as root, patch.object(module, "REPO", Path(root)):
+            path = Path(root) / "resources/cat/CATStructs.xml"
+            path.parent.mkdir(parents=True)
+            path.write_text("<catstructs/>")
+            sidecar = path.parent / "HEADERS.md"
+            markers = module.MARKERS_BY_KIND["thetis"]
+            full = " ".join(m for m in markers if m != "Copyright (C)")
+            no_header = "Upstream source has no top-of-file GPL header — project-level LICENSE applies"
+            sidecar.write_text(full + " `CATStructs.xml` " + no_header)
+            self.assertEqual(module.check_required_markers(path, markers), [])
+            for marker in [*filter(lambda m: m != "Copyright (C)", markers), no_header]:
+                sidecar.write_text((full + " `CATStructs.xml` " + no_header).replace(marker, ""))
+                self.assertIn(marker, module.check_required_markers(path, markers))
+            sidecar.write_text(full + " `another.xml` " + no_header)
+            self.assertTrue(module.check_required_markers(path, markers))
+            sidecar.unlink()
+            self.assertTrue(module.check_required_markers(path, markers))
 
 
 if __name__ == "__main__":

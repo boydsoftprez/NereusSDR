@@ -9876,3 +9876,6 @@ if(_label_names)
     endforeach()
     message(STATUS "NereusSDR: per-label test targets: ${_label_names}")
 endif()
+
+# Thetis CAT catalogue, also available to the headless Core.
+nereus_add_test(tst_cat_catalog CORE_ONLY)

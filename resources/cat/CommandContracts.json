@@ -1,0 +1,2935 @@
+[
+  {
+    "code": "AC",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "AG",
+    "outcome": "Adapted",
+    "family": "Master AF",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "AI",
+    "outcome": "Adapted",
+    "family": "Automatic reporting",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "AL",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "AM",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "AN",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "AR",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "AS",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "BC",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "BD",
+    "outcome": "Adapted",
+    "family": "Band",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "BP",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "BU",
+    "outcome": "Adapted",
+    "family": "Band",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "BY",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "CA",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "CG",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "CH",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "CI",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "CM",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "CN",
+    "outcome": "Unavailable",
+    "family": "FM TX parameters",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "CT",
+    "outcome": "Unavailable",
+    "family": "FM TX parameters",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "DC",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "DN",
+    "outcome": "Adapted",
+    "family": "Step tuning",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "DQ",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "EX",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "FA",
+    "outcome": "Adapted",
+    "family": "Frequency",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "FB",
+    "outcome": "Adapted",
+    "family": "Frequency",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "FC",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "FD",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "FR",
+    "outcome": "SourceInert",
+    "family": "Receiver selection",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "FS",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "FT",
+    "outcome": "Adapted",
+    "family": "Split",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "FW",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "GT",
+    "outcome": "Adapted",
+    "family": "AGC mode",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ID",
+    "outcome": "Faithful",
+    "family": "Rig identification",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "IF",
+    "outcome": "Adapted",
+    "family": "Transceiver status",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "IS",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "KS",
+    "outcome": "Unavailable",
+    "family": "CWX",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "KY",
+    "outcome": "Unavailable",
+    "family": "CWX",
+    "suffixKind": "Text",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "LK",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "LM",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "LT",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "MC",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "MD",
+    "outcome": "Adapted",
+    "family": "RX",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "MF",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "MG",
+    "outcome": "Adapted",
+    "family": "Mic gain",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ML",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "MO",
+    "outcome": "Faithful",
+    "family": "TX monitor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "MR",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "MU",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "MW",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "NB",
+    "outcome": "Adapted",
+    "family": "Noise blanker",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "NL",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "NR",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "NT",
+    "outcome": "Adapted",
+    "family": "RX DSP toggle",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "OF",
+    "outcome": "Unavailable",
+    "family": "FM TX parameters",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "OI",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "OS",
+    "outcome": "Unavailable",
+    "family": "FM TX parameters",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "PA",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "PB",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "PC",
+    "outcome": "Adapted",
+    "family": "TX power",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "PI",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "PK",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "PL",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "PM",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "PR",
+    "outcome": "SourceInert",
+    "family": "Legacy processor compatibility",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "PS",
+    "outcome": "Adapted",
+    "family": "Connection power",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "QC",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "QI",
+    "outcome": "Unavailable",
+    "family": "Quick memory",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "QR",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "RA",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "RC",
+    "outcome": "Adapted",
+    "family": "Incremental tuning clear",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "RD",
+    "outcome": "Adapted",
+    "family": "Incremental tuning step",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "RG",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "RL",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "RM",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "RT",
+    "outcome": "Adapted",
+    "family": "RIT enable",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "RU",
+    "outcome": "Adapted",
+    "family": "Incremental tuning step",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "RX",
+    "outcome": "Adapted",
+    "family": "TX ownership",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "SA",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "SB",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "SC",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "SD",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "SH",
+    "outcome": "Adapted",
+    "family": "Filter code",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "SI",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "SL",
+    "outcome": "Adapted",
+    "family": "Filter code",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "SM",
+    "outcome": "Adapted",
+    "family": "Signal meter",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "SQ",
+    "outcome": "Adapted",
+    "family": "Squelch threshold",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "SR",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "SS",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ST",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "SU",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "SV",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "TC",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "TD",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "TI",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "TN",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "TO",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "TS",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "TX",
+    "outcome": "Adapted",
+    "family": "TX ownership",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "TY",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "UL",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "UP",
+    "outcome": "Adapted",
+    "family": "Step tuning",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "VD",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "VG",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "VR",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "VX",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "XT",
+    "outcome": "Adapted",
+    "family": "XIT enable",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZAP",
+    "outcome": "Adapted",
+    "family": "RX DSP toggle",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZAT",
+    "outcome": "Adapted",
+    "family": "APF tune",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZAB",
+    "outcome": "Unavailable",
+    "family": "APF gain / bandwidth / type",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZAA",
+    "outcome": "Unavailable",
+    "family": "APF gain / bandwidth / type",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMD",
+    "outcome": "Adapted",
+    "family": "RX",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSF",
+    "outcome": "Adapted",
+    "family": "Filter center / width",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZST",
+    "outcome": "Adapted",
+    "family": "Step",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZBS",
+    "outcome": "Adapted",
+    "family": "Band",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSP",
+    "outcome": "Adapted",
+    "family": "Split",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVS",
+    "outcome": "Unavailable",
+    "family": "VFO copy / swap",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNE",
+    "outcome": "Adapted",
+    "family": "NR selector",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNF",
+    "outcome": "Adapted",
+    "family": "NR selector",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNG",
+    "outcome": "Adapted",
+    "family": "NR4 reduction",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNH",
+    "outcome": "Adapted",
+    "family": "NR4 reduction",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNR",
+    "outcome": "Adapted",
+    "family": "Noise reduction",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNS",
+    "outcome": "Adapted",
+    "family": "Noise reduction",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNL",
+    "outcome": "Adapted",
+    "family": "NB1 threshold",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNB",
+    "outcome": "Adapted",
+    "family": "Noise blanker",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNM",
+    "outcome": "SourceInert",
+    "family": "NB2 threshold",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNN",
+    "outcome": "Adapted",
+    "family": "RX DSP toggle",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNO",
+    "outcome": "Adapted",
+    "family": "RX DSP toggle",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNV",
+    "outcome": "Adapted",
+    "family": "Noise reduction",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNW",
+    "outcome": "Adapted",
+    "family": "Noise reduction",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZPL",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZGT",
+    "outcome": "Adapted",
+    "family": "AGC mode",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZGU",
+    "outcome": "Adapted",
+    "family": "AGC mode",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFI",
+    "outcome": "Unavailable",
+    "family": "Filter preset identity",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZIS",
+    "outcome": "Unavailable",
+    "family": "Filter width / shift state",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMA",
+    "outcome": "Adapted",
+    "family": "Slice mute",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZTU",
+    "outcome": "Adapted",
+    "family": "Tune ownership",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZBI",
+    "outcome": "Adapted",
+    "family": "Binaural",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZCP",
+    "outcome": "Faithful",
+    "family": "TX compressor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZPA",
+    "outcome": "Adapted",
+    "family": "Primary RF frontend",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDM",
+    "outcome": "Unavailable",
+    "family": "Display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVL",
+    "outcome": "Adapted",
+    "family": "Lock cycle",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZUP",
+    "outcome": "Unavailable",
+    "family": "External PA OC gate",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZUS",
+    "outcome": "Faithful",
+    "family": "PureSignal single calibration",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZUT",
+    "outcome": "Adapted",
+    "family": "Two-tone ownership",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZUX",
+    "outcome": "Adapted",
+    "family": "Lock",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZUY",
+    "outcome": "Adapted",
+    "family": "Lock",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZQR",
+    "outcome": "Unavailable",
+    "family": "Quick memory",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZRF",
+    "outcome": "Adapted",
+    "family": "Incremental tuning offset",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSO",
+    "outcome": "Adapted",
+    "family": "Squelch enable",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDA",
+    "outcome": "Unavailable",
+    "family": "Display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZXF",
+    "outcome": "Adapted",
+    "family": "Incremental tuning offset",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZXC",
+    "outcome": "Adapted",
+    "family": "Incremental tuning clear",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZCS",
+    "outcome": "Unavailable",
+    "family": "CW keyer/display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZBG",
+    "outcome": "Unavailable",
+    "family": "Band-group UI",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZCL",
+    "outcome": "Unavailable",
+    "family": "CW keyer/display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMG",
+    "outcome": "Adapted",
+    "family": "Mic gain",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVN",
+    "outcome": "Adapted",
+    "family": "Application version",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZID",
+    "outcome": "Faithful",
+    "family": "Rig identification reset",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZAG",
+    "outcome": "Adapted",
+    "family": "Master AF",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSQ",
+    "outcome": "Adapted",
+    "family": "Squelch threshold",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZCU",
+    "outcome": "Unavailable",
+    "family": "CPU telemetry",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZIF",
+    "outcome": "Adapted",
+    "family": "Transceiver status",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZQM",
+    "outcome": "Unavailable",
+    "family": "Quick memory",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSM",
+    "outcome": "Adapted",
+    "family": "Signal meter",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZIT",
+    "outcome": "Unavailable",
+    "family": "Filter width / shift state",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZIU",
+    "outcome": "Unavailable",
+    "family": "Filter width / shift state",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMR",
+    "outcome": "Unavailable",
+    "family": "Meter display mode",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMT",
+    "outcome": "Unavailable",
+    "family": "TX meter display selector",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZRM",
+    "outcome": "Adapted",
+    "family": "RX/TX meter",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZTH",
+    "outcome": "Adapted",
+    "family": "TX filter",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZTL",
+    "outcome": "Adapted",
+    "family": "TX filter",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZXT",
+    "outcome": "Unavailable",
+    "family": "X2TR",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZAR",
+    "outcome": "Adapted",
+    "family": "AGC threshold",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZBR",
+    "outcome": "SourceInert",
+    "family": "BCI reject",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSR",
+    "outcome": "SourceInert",
+    "family": "Spur reduction",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZCT",
+    "outcome": "Faithful",
+    "family": "TX compressor level",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVE",
+    "outcome": "Faithful",
+    "family": "VOX enable",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVG",
+    "outcome": "Faithful",
+    "family": "VOX sensitivity",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZXH",
+    "outcome": "Adapted",
+    "family": "VOX hang",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZXN",
+    "outcome": "Adapted",
+    "family": "Combined RX status",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZXO",
+    "outcome": "Adapted",
+    "family": "Combined RX status",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZXV",
+    "outcome": "Unavailable",
+    "family": "Combined VFO status",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZGE",
+    "outcome": "Faithful",
+    "family": "DEXP enable",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZGL",
+    "outcome": "Unavailable",
+    "family": "Legacy noise gate level",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZCI",
+    "outcome": "Unavailable",
+    "family": "CW keyer/display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZCM",
+    "outcome": "Unavailable",
+    "family": "CW keyer/display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZCN",
+    "outcome": "Adapted",
+    "family": "CTUN",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZCO",
+    "outcome": "Adapted",
+    "family": "CTUN",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZCF",
+    "outcome": "Unavailable",
+    "family": "CW keyer/display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZCB",
+    "outcome": "Unavailable",
+    "family": "CW keyer/display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZCD",
+    "outcome": "Unavailable",
+    "family": "CW keyer/display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVA",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZTF",
+    "outcome": "Unavailable",
+    "family": "TX filter display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZPS",
+    "outcome": "Adapted",
+    "family": "Connection power",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMO",
+    "outcome": "Faithful",
+    "family": "TX monitor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZTX",
+    "outcome": "Adapted",
+    "family": "TX ownership",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZPC",
+    "outcome": "Adapted",
+    "family": "TX power",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFA",
+    "outcome": "Adapted",
+    "family": "Frequency",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFB",
+    "outcome": "Adapted",
+    "family": "Frequency",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFT",
+    "outcome": "Adapted",
+    "family": "TX frequency",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSD",
+    "outcome": "Adapted",
+    "family": "Step",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSU",
+    "outcome": "Adapted",
+    "family": "Step",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZQK",
+    "outcome": "Unavailable",
+    "family": "CW keyer/display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZQS",
+    "outcome": "Unavailable",
+    "family": "Quick memory",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZXS",
+    "outcome": "Adapted",
+    "family": "XIT enable",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZRC",
+    "outcome": "Adapted",
+    "family": "Incremental tuning clear",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZRT",
+    "outcome": "Adapted",
+    "family": "RIT enable",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZZB",
+    "outcome": "Unavailable",
+    "family": "Zero beat",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNT",
+    "outcome": "Adapted",
+    "family": "RX DSP toggle",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNU",
+    "outcome": "Adapted",
+    "family": "RX DSP toggle",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZPD",
+    "outcome": "Unavailable",
+    "family": "Display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZPZ",
+    "outcome": "Unavailable",
+    "family": "Display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZPO",
+    "outcome": "Unavailable",
+    "family": "Display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZER",
+    "outcome": "Unavailable",
+    "family": "RX EQ",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZET",
+    "outcome": "Faithful",
+    "family": "TX EQ enable",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMU",
+    "outcome": "Unavailable",
+    "family": "RX1 extra subreceiver MultiRX",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMS",
+    "outcome": "Unavailable",
+    "family": "RX1 extra subreceiver MultiRX",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZTP",
+    "outcome": "Adapted",
+    "family": "TX profile",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNA",
+    "outcome": "Adapted",
+    "family": "Noise blanker",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZBD",
+    "outcome": "Adapted",
+    "family": "Band",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZBU",
+    "outcome": "Adapted",
+    "family": "Band",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSA",
+    "outcome": "Adapted",
+    "family": "Step tuning",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSB",
+    "outcome": "Adapted",
+    "family": "Step tuning",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZKS",
+    "outcome": "Unavailable",
+    "family": "CWX",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZKY",
+    "outcome": "Unavailable",
+    "family": "CWX",
+    "suffixKind": "Text",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZPK",
+    "outcome": "Inactive",
+    "family": "Inactive descriptor",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFL",
+    "outcome": "Adapted",
+    "family": "Filter edge",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFH",
+    "outcome": "Adapted",
+    "family": "Filter edge",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFR",
+    "outcome": "Adapted",
+    "family": "Filter edge",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFS",
+    "outcome": "Adapted",
+    "family": "Filter edge",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZHA",
+    "outcome": "Unavailable",
+    "family": "Audio backend buffer size",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZHR",
+    "outcome": "Adapted",
+    "family": "RX DSP buffer configuration",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZHT",
+    "outcome": "Adapted",
+    "family": "TX DSP buffer configuration",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFM",
+    "outcome": "Adapted",
+    "family": "Legacy model indicator",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZEA",
+    "outcome": "Unavailable",
+    "family": "RX EQ",
+    "suffixKind": "Equalizer",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZEB",
+    "outcome": "Adapted",
+    "family": "TX EQ gains",
+    "suffixKind": "Equalizer",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVB",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVC",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVD",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVF",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZUA",
+    "outcome": "Unavailable",
+    "family": "Transverter enumeration",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOA",
+    "outcome": "Adapted",
+    "family": "Antenna routing",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOB",
+    "outcome": "SourceInert",
+    "family": "Legacy peripheral compatibility",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOC",
+    "outcome": "Adapted",
+    "family": "Antenna routing",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOD",
+    "outcome": "SourceInert",
+    "family": "Legacy peripheral compatibility",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOE",
+    "outcome": "SourceInert",
+    "family": "Legacy peripheral compatibility",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOF",
+    "outcome": "SourceInert",
+    "family": "Legacy peripheral compatibility",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMN",
+    "outcome": "Unavailable",
+    "family": "Full filter preset table",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZAI",
+    "outcome": "Adapted",
+    "family": "Automatic reporting",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDX",
+    "outcome": "Unavailable",
+    "family": "Phone DX",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWA",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWB",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWC",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWD",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWE",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWF",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWG",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWH",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWJ",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWK",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWL",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWM",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWN",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWO",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWP",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWQ",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWR",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWS",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZZZ",
+    "outcome": "Adapted",
+    "family": "Endpoint lifecycle",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZTS",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex temperature",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZRA",
+    "outcome": "Adapted",
+    "family": "CAT RTTY reporting preference",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZRB",
+    "outcome": "Adapted",
+    "family": "CAT RTTY reporting preference",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZRH",
+    "outcome": "Adapted",
+    "family": "CAT RTTY reporting preference",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZRL",
+    "outcome": "Adapted",
+    "family": "CAT RTTY reporting preference",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZTI",
+    "outcome": "Faithful",
+    "family": "TX inhibit",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZHU",
+    "outcome": "Adapted",
+    "family": "RX DSP buffer configuration",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZHV",
+    "outcome": "Adapted",
+    "family": "CW TX source-inert setter/RX buffer query",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZHW",
+    "outcome": "Adapted",
+    "family": "RX DSP buffer configuration",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZHX",
+    "outcome": "Adapted",
+    "family": "TX DSP buffer configuration",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZRD",
+    "outcome": "Adapted",
+    "family": "Incremental tuning step",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZRU",
+    "outcome": "Adapted",
+    "family": "Incremental tuning step",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZXD",
+    "outcome": "Adapted",
+    "family": "Incremental tuning step",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZXU",
+    "outcome": "Adapted",
+    "family": "Incremental tuning step",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZRX",
+    "outcome": "Adapted",
+    "family": "Primary RF frontend",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZRY",
+    "outcome": "Adapted",
+    "family": "Secondary RF frontend",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZTO",
+    "outcome": "Adapted",
+    "family": "Tune power",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVH",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZRS",
+    "outcome": "Unavailable",
+    "family": "Receiver enable",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOG",
+    "outcome": "SourceInert",
+    "family": "Legacy peripheral compatibility",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOH",
+    "outcome": "SourceInert",
+    "family": "Legacy peripheral compatibility",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFX",
+    "outcome": "SourceInert",
+    "family": "FlexWire inert write",
+    "suffixKind": "Text",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFY",
+    "outcome": "SourceInert",
+    "family": "FlexWire inert write",
+    "suffixKind": "Text",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOJ",
+    "outcome": "SourceInert",
+    "family": "Legacy peripheral compatibility",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFV",
+    "outcome": "SourceInert",
+    "family": "FlexWire inert read",
+    "suffixKind": "Text",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFW",
+    "outcome": "SourceInert",
+    "family": "FlexWire inert read",
+    "suffixKind": "Text",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSW",
+    "outcome": "Adapted",
+    "family": "TX selection toggle",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSG",
+    "outcome": "Adapted",
+    "family": "Step tuning",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSH",
+    "outcome": "Adapted",
+    "family": "Step tuning",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVI",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVM",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVO",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZRV",
+    "outcome": "Adapted",
+    "family": "Primary input voltage",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZBY",
+    "outcome": "Unavailable",
+    "family": "Application lifecycle",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZAC",
+    "outcome": "Adapted",
+    "family": "Step",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZAD",
+    "outcome": "Adapted",
+    "family": "Explicit step tuning",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZAU",
+    "outcome": "Adapted",
+    "family": "Explicit step tuning",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZAY",
+    "outcome": "Unavailable",
+    "family": "APF gain / bandwidth / type",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZAE",
+    "outcome": "Adapted",
+    "family": "Step tuning",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZAF",
+    "outcome": "Adapted",
+    "family": "Step tuning",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZBE",
+    "outcome": "Adapted",
+    "family": "Step tuning",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZBF",
+    "outcome": "Adapted",
+    "family": "Step tuning",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZBM",
+    "outcome": "Adapted",
+    "family": "Explicit step tuning",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZBP",
+    "outcome": "Adapted",
+    "family": "Explicit step tuning",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZKM",
+    "outcome": "Unavailable",
+    "family": "CWX",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZBT",
+    "outcome": "Adapted",
+    "family": "Band",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZME",
+    "outcome": "Adapted",
+    "family": "RX",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMF",
+    "outcome": "Unavailable",
+    "family": "Controller text",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFJ",
+    "outcome": "Unavailable",
+    "family": "Filter preset identity",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDU",
+    "outcome": "Unavailable",
+    "family": "DDUtil compound status",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSN",
+    "outcome": "Unavailable",
+    "family": "CAT serial identity",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVJ",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZBA",
+    "outcome": "Adapted",
+    "family": "Band",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZBB",
+    "outcome": "Adapted",
+    "family": "Band",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZTV",
+    "outcome": "Unavailable",
+    "family": "RX1 subreceiver frequency",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZTM",
+    "outcome": "Adapted",
+    "family": "TX monitor level",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWT",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWU",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWV",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZWW",
+    "outcome": "SourceInert",
+    "family": "Legacy Flex mixer",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOL",
+    "outcome": "Adapted",
+    "family": "Digital offset",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOU",
+    "outcome": "Adapted",
+    "family": "Digital offset",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSY",
+    "outcome": "Unavailable",
+    "family": "VFO synchronization / QuickSplit",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZPB",
+    "outcome": "Adapted",
+    "family": "Secondary RF frontend",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZNC",
+    "outcome": "Adapted",
+    "family": "Noise blanker",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZND",
+    "outcome": "Adapted",
+    "family": "Noise blanker",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDB",
+    "outcome": "Unavailable",
+    "family": "Diversity input selection / gains",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDC",
+    "outcome": "Unavailable",
+    "family": "Diversity input selection / gains",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDD",
+    "outcome": "Adapted",
+    "family": "Diversity phase",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDE",
+    "outcome": "Adapted",
+    "family": "Diversity enable",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDF",
+    "outcome": "Unavailable",
+    "family": "Diversity form visibility",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDG",
+    "outcome": "Unavailable",
+    "family": "Diversity input selection / gains",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDH",
+    "outcome": "Unavailable",
+    "family": "Diversity input selection / gains",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZAS",
+    "outcome": "Adapted",
+    "family": "AGC threshold",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZPY",
+    "outcome": "Unavailable",
+    "family": "Display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZLA",
+    "outcome": "Adapted",
+    "family": "Slice AF",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZLB",
+    "outcome": "Adapted",
+    "family": "Slice audio pan",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZLC",
+    "outcome": "Unavailable",
+    "family": "RX1 extra subreceiver audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZLD",
+    "outcome": "Unavailable",
+    "family": "RX1 extra subreceiver audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZPE",
+    "outcome": "Unavailable",
+    "family": "Display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZKO",
+    "outcome": "Unavailable",
+    "family": "CWX",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZLE",
+    "outcome": "Adapted",
+    "family": "Slice AF",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZLF",
+    "outcome": "Adapted",
+    "family": "Slice audio pan",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZIO",
+    "outcome": "SourceInert",
+    "family": "Installed-options inert",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZEM",
+    "outcome": "Adapted",
+    "family": "Verbose CAT errors",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOS",
+    "outcome": "Unavailable",
+    "family": "FM TX parameters",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOT",
+    "outcome": "Unavailable",
+    "family": "FM TX parameters",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZTA",
+    "outcome": "Unavailable",
+    "family": "FM TX parameters",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZTB",
+    "outcome": "Unavailable",
+    "family": "FM TX parameters",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZFD",
+    "outcome": "Unavailable",
+    "family": "FM TX parameters",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMV",
+    "outcome": "Unavailable",
+    "family": "Radio channel memory",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMW",
+    "outcome": "Unavailable",
+    "family": "Radio channel memory",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMX",
+    "outcome": "Unavailable",
+    "family": "Radio channel memory",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMY",
+    "outcome": "Unavailable",
+    "family": "Radio channel memory",
+    "suffixKind": "Text",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMZ",
+    "outcome": "Unavailable",
+    "family": "Radio channel memory",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSV",
+    "outcome": "Adapted",
+    "family": "Squelch enable",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSX",
+    "outcome": "Adapted",
+    "family": "Secondary squelch threshold",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZML",
+    "outcome": "Adapted",
+    "family": "RX",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSS",
+    "outcome": "Unavailable",
+    "family": "CWX",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDP",
+    "outcome": "Unavailable",
+    "family": "Display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDQ",
+    "outcome": "Unavailable",
+    "family": "Display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDR",
+    "outcome": "Unavailable",
+    "family": "Display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDN",
+    "outcome": "Unavailable",
+    "family": "Display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZDO",
+    "outcome": "Unavailable",
+    "family": "Display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZMB",
+    "outcome": "Adapted",
+    "family": "Slice mute",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZLG",
+    "outcome": "Unavailable",
+    "family": "Auto mute on other-VFO TX",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZLH",
+    "outcome": "Unavailable",
+    "family": "Auto mute on other-VFO TX",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZLI",
+    "outcome": "Faithful",
+    "family": "PureSignal auto calibration",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOV",
+    "outcome": "SourceInert",
+    "family": "Legacy peripheral compatibility",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOW",
+    "outcome": "SourceInert",
+    "family": "Legacy peripheral compatibility",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVK",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVQ",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVR",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVT",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVU",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVV",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVW",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVX",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZYA",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZYB",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVP",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVY",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZVZ",
+    "outcome": "Unavailable",
+    "family": "VAC audio",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZYC",
+    "outcome": "Unavailable",
+    "family": "FM TX parameters",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZYR",
+    "outcome": "Unavailable",
+    "family": "Display focus",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOX",
+    "outcome": "Unavailable",
+    "family": "Aries controller",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZOZ",
+    "outcome": "Unavailable",
+    "family": "Aries controller",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZZA",
+    "outcome": "Unavailable",
+    "family": "Ganymede controller",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZZD",
+    "outcome": "Unavailable",
+    "family": "Andromeda controller",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZZE",
+    "outcome": "Unavailable",
+    "family": "Andromeda controller",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZZS",
+    "outcome": "Unavailable",
+    "family": "Andromeda controller",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZZP",
+    "outcome": "Unavailable",
+    "family": "Andromeda controller",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZZU",
+    "outcome": "Unavailable",
+    "family": "Andromeda controller",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZSZ",
+    "outcome": "Adapted",
+    "family": "Step snap",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZZT",
+    "outcome": "Unavailable",
+    "family": "Display",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZZQ",
+    "outcome": "Adapted",
+    "family": "Auto AGC",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZZR",
+    "outcome": "Adapted",
+    "family": "Auto AGC",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZZN",
+    "outcome": "Unavailable",
+    "family": "MIDI integration",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZZO",
+    "outcome": "Unavailable",
+    "family": "MIDI integration",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZZM",
+    "outcome": "Faithful",
+    "family": "Physical model identity",
+    "suffixKind": "Numeric",
+    "precedence": "GetFirst"
+  },
+  {
+    "code": "ZZZV",
+    "outcome": "Adapted",
+    "family": "Application version",
+    "suffixKind": "Numeric",
+    "precedence": "GetFirst"
+  },
+  {
+    "code": "ZZZW",
+    "outcome": "Unavailable",
+    "family": "MIDI integration",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZXA",
+    "outcome": "Unavailable",
+    "family": "Hardware audio amplifier",
+    "suffixKind": "Numeric",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZGA",
+    "outcome": "Adapted",
+    "family": "Directed-client registration",
+    "suffixKind": "Guid",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZGR",
+    "outcome": "Adapted",
+    "family": "Directed-client registration",
+    "suffixKind": "Guid",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZJP",
+    "outcome": "Unavailable",
+    "family": "Recording/playback",
+    "suffixKind": "Text",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZJQ",
+    "outcome": "Unavailable",
+    "family": "Recording/playback",
+    "suffixKind": "Text",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZJR",
+    "outcome": "Unavailable",
+    "family": "Recording/playback",
+    "suffixKind": "Text",
+    "precedence": "SetFirst"
+  },
+  {
+    "code": "ZZJS",
+    "outcome": "Unavailable",
+    "family": "Recording/playback",
+    "suffixKind": "Text",
+    "precedence": "SetFirst"
+  }
+]

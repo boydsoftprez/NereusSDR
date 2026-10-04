@@ -234,15 +234,41 @@ def list_wdsp_sources():
     return out
 
 
+CAT_SHARED_HEADER_PATHS = {
+    "resources/cat/CATStructs.xml",
+    "resources/cat/CommandContracts.json",
+    "tests/data/cat/requests.json",
+    "tests/data/cat/compatibility.csv",
+}
+CAT_XML_NO_HEADER = (
+    "Upstream source has no top-of-file GPL header — project-level LICENSE applies"
+)
+
+
+def cat_shared_header_path(path: Path) -> Optional[str]:
+    try:
+        relative = path.relative_to(REPO).as_posix()
+    except ValueError:
+        return None
+    return relative if relative in CAT_SHARED_HEADER_PATHS else None
+
+
 def check_required_markers(path: Path, markers):
     head = attribution_header_text(path)
+    if (cat_shared_header_path(path) == "resources/cat/CATStructs.xml"
+            and markers == MARKERS_BY_KIND["thetis"]):
+        # The exact upstream XML has no header. Never invent copyright:
+        # require the documented project licence notice in its named sidecar.
+        markers = [m for m in markers if m != "Copyright (C)"] + [CAT_XML_NO_HEADER]
+        head = " ".join(head.split())
     return [m for m in markers if m not in head]
 
 
 def attribution_header_text(path: Path) -> str:
-    """JSON Setup resources share a verbatim upstream header in HEADERS.md."""
-    if (path.suffix == ".json" and path.parent.name == "setup"
-            and path.parent.parent.name == "resources"):
+    """Setup JSON and explicitly allowlisted CAT data use named sidecars."""
+    if (cat_shared_header_path(path) or
+            (path.suffix == ".json" and path.parent.name == "setup"
+             and path.parent.parent.name == "resources")):
         headers = path.parent / "HEADERS.md"
         if not headers.is_file():
             return ""
