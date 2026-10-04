@@ -74,6 +74,9 @@
 //               lines that now follow it (they never carry "transmit I/Q"),
 //               and the first over's underrun is placed in one. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-03: run the scripted capture child in this test executable so
+//               sharded builds do not need a sibling test. J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -93,14 +96,16 @@
 #include "core/session/media/RemoteMicReceiver.h"
 
 #include "fakes/FakeAudioBus.h"
+#include "fakes/FakeCaptureChild.h"
 
+#include <QApplication>
 #include <QElapsedTimer>
-#include <QDir>
 #include <QScopeGuard>
 #include <QStandardPaths>
 
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <numbers>
 #include <vector>
 
@@ -792,11 +797,7 @@ void TestTxWorkerRemoteRing::radioAdmissionRefusesReentrantSourceSelectionWithRe
     auto* mox = model->moxController();
     model->transmitModel().setMicSource(MicSource::Pc);
     CaptureSupervisor::Options options;
-    QString child = QStringLiteral("tst_capture_admission");
-#ifdef Q_OS_WIN
-    child += QStringLiteral(".exe");
-#endif
-    options.program = QDir(QCoreApplication::applicationDirPath()).filePath(child);
+    options.program = QCoreApplication::applicationFilePath();
     options.arguments = {QStringLiteral("--fake-capture-child"), QStringLiteral("ready")};
     model->audioEngine()->setCaptureSupervisorOptionsForTest(options);
     auto lease = model->audioEngine()->acquireCaptureDemand(CaptureSupervisor::Demand::LocalSession);
@@ -1708,5 +1709,17 @@ void TestTxWorkerRemoteRing::aKeyAtTheCoreLogsNoMicrophoneLine()
     QCOMPARE(g_unkeyLines.size(), 0);
 }
 
-QTEST_MAIN(TestTxWorkerRemoteRing)
+int main(int argc, char* argv[])
+{
+    if (argc > 2 && std::strcmp(argv[1], "--fake-capture-child") == 0) {
+        return NereusSDR::Test::runFakeCaptureChild(QString::fromLocal8Bit(argv[2]));
+    }
+    // Keep QTEST_MAIN's QApplication and test coordinate setup; the fake
+    // child must dispatch before creating a GUI application.
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TestTxWorkerRemoteRing test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    return QTest::qExec(&test, argc, argv);
+}
 #include "tst_tx_worker_remote_ring.moc"

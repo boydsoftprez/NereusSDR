@@ -9046,8 +9046,10 @@ nereus_add_test(tst_remote_mic_receiver)
 # transmitter: the pump's branch in the normal and RADE paths, the Core's
 # microphone line, keying on a filled buffer (micNotReady), VOX from the
 # device, and the monitor in the remote audio.
+# The scripted capture helper self-execs, including in a sharded build.
 nereus_add_test(tst_tx_worker_remote_ring
     fakes/LoopbackTransport.cpp
+    fakes/FakeCaptureChild.cpp
     EXTRA_LABELS session)
 target_compile_definitions(tst_tx_worker_remote_ring PRIVATE NEREUS_BUILD_TESTS)
 
