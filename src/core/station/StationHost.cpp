@@ -540,16 +540,39 @@ bool StationHost::publishDisplayBudget(const std::optional<DisplayLoadDecision>&
     if (!decision || !m_stationServer) {
         return false;
     }
+    const std::optional<DisplayBudgetLimits> previous
+        = m_stationServer->configuredDisplayBudgetLimits();
     if (!m_stationServer->setDisplayBudgetLimits(decision->limits, decision->reason)) {
         qCWarning(lcApp) << "DaemonApp: display budget generation"
                           << decision->limits.generation << "was not accepted";
         return false;
     }
-    qCInfo(lcApp).nospace() << "DaemonApp: display budget "
-                            << (decision->reason == DisplayBudgetReason::CoreBusy
-                                    ? "lowered, Core busy" : "restored")
-                            << ": " << decision->limits.applicationBytesPerSecond
-                            << " bytes/s, " << decision->limits.spectrumSampleUnitsPerSecond
+    // CoreBusy describes a retained cut, including a partial rollback or
+    // a raised device floor. Numerical direction is a separate observation.
+    QString direction = QStringLiteral("initialized");
+    if (previous) {
+        const bool raised = decision->limits.applicationBytesPerSecond
+                                > previous->applicationBytesPerSecond
+            || decision->limits.spectrumSampleUnitsPerSecond
+                                > previous->spectrumSampleUnitsPerSecond;
+        const bool lowered = decision->limits.applicationBytesPerSecond
+                                < previous->applicationBytesPerSecond
+            || decision->limits.spectrumSampleUnitsPerSecond
+                                < previous->spectrumSampleUnitsPerSecond;
+        direction = raised && lowered ? QStringLiteral("changed")
+            : raised ? QStringLiteral("raised")
+            : lowered ? QStringLiteral("lowered") : QStringLiteral("unchanged");
+    }
+    qCInfo(lcApp).noquote().nospace() << "DaemonApp: display budget " << direction
+                            << " (reason " << displayBudgetReasonWireName(decision->reason)
+                            << "): "
+                            << (previous ? QString::number(previous->applicationBytesPerSecond)
+                                         : QStringLiteral("unset"))
+                            << " -> " << decision->limits.applicationBytesPerSecond
+                            << " bytes/s, "
+                            << (previous ? QString::number(previous->spectrumSampleUnitsPerSecond)
+                                         : QStringLiteral("unset"))
+                            << " -> " << decision->limits.spectrumSampleUnitsPerSecond
                             << " samples/s (generation " << decision->limits.generation << ")";
     return true;
 }
