@@ -46,6 +46,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Acknowledge PS3 calibration reset before AutoAtt changes,
+//                 with causal TX status and cancellation drain. J.J. Boyd
+//                 (KG4VCF), with OpenAI Codex assistance.
 //   2026-05-06 — Created by J.J. Boyd (KG4VCF) for Phase 3M-4 Task 7
 //                 PureSignal coordinator, with AI-assisted source-first
 //                 protocol via Anthropic Claude Code.
@@ -424,7 +427,7 @@ public:
     // could in principle be tested with a stubbed GetInfo (PSForm.cs:1076-
     // 1085 [v2.10.3.13] — GetInfo is the only call that touches WDSP, the
     // rest of timer1code operates on the cached _info / _oldInfo arrays).
-    void processNewInfo(const int newInfo[16]);
+    void processNewInfo(const int newInfo[16], std::uint64_t controlSerial = 0);
 
 public slots:
     void onMoxChanged(bool mox);
@@ -556,6 +559,7 @@ private:
     void startAutomaticCalibration();
     void requestOperationalStop();
     void requestNativeCorrectionStop();
+    void cancelAutoAttenuation();
     // R-R3-39: the TX channel's lane reports; the TX delay on the lane (or
     // at once without one); the applied delay as either path reports it.
     void connectTxChannelSignals();
@@ -606,6 +610,9 @@ private:
     int m_saveAutoOn{0};
     int m_saveSingleCalOn{0};
     int m_deltaDb{0};
+    std::uint64_t m_infoControlSerial{0};
+    std::uint64_t m_aaResetControlSerial{0};
+    bool m_aaCancelPending{false};
 
     // Phase 3M-4 Task 17 fix: track calCount across autoAttentionTick
     // invocations so we only act ONCE per calcc cycle (mirrors Thetis

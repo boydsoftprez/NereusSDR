@@ -67,6 +67,9 @@ warren@wpratt.com
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Acknowledge PS3 calibration reset before AutoAtt changes,
+//                 with causal TX status and cancellation drain. J.J. Boyd
+//                 (KG4VCF), with OpenAI Codex assistance.
 //   2026-04-25 — Stub created by J.J. Boyd (KG4VCF) during 3M-1a Task C.1.
 //   2026-04-25 — Full class body (31-stage TXA pipeline wrapper, stageRunning
 //                 introspection) added by J.J. Boyd (KG4VCF) during 3M-1a
@@ -2320,8 +2323,10 @@ public:
 
     /// Read the 16-int CALCC info status array.  `info16` MUST point to
     /// at least int[16].  Wraps GetPSInfo.
+    /// False means unavailable; outputs remain untouched. The optional serial
+    /// identifies the latest setPSControl applied before this native snapshot.
     /// From Thetis wdsp/calcc.c:922 [v2.10.3.13].
-    void getPSInfo(int* info16);
+    bool getPSInfo(int* info16, std::uint64_t* controlSerial = nullptr);
 
     /// Set the calcc reset gate.  Wraps SetPSReset(channelId, reset ? 1 : 0).
     /// From Thetis wdsp/calcc.c:932 [v2.10.3.13].
@@ -2341,10 +2346,12 @@ public:
 
     /// Set all four CALCC control gates atomically (held under cs_update).
     /// Wraps SetPSControl(channelId, reset, mancal, automode, turnon).
+    /// Returns its request serial; a later status serial proves lane acceptance,
+    /// while the native engine state separately acknowledges reset completion.
     /// Thetis ForcePS pattern (PSForm.cs ForcePS [v2.10.3.13]) calls
     /// `SetPSControl(_txachannel, 1, 0, 0, 0)` to force the engine to LRESET.
     /// From Thetis wdsp/calcc.c:966 [v2.10.3.13].
-    void setPSControl(int reset, int mancal, int automode, int turnon);
+    std::uint64_t setPSControl(int reset, int mancal, int automode, int turnon);
 
     /// Set the loop-delay seconds (sample count = rate * delay).
     /// Wraps SetPSLoopDelay.
@@ -2976,6 +2983,7 @@ private:
     mutable std::atomic<int> m_dspSizeCache{0};
     struct PsCache {
         bool available{false};
+        std::uint64_t controlSerial{0};
         int info[16]{};
         double hwPeak{0.0};
         double maxTx{0.0};
@@ -2991,6 +2999,8 @@ private:
     };
     mutable std::mutex m_psCacheMutex;
     mutable PsCache m_psCache;
+    std::atomic<std::uint64_t> m_psControlRequestSerial{0};
+    std::atomic<std::uint64_t> m_psControlAppliedSerial{0};
     mutable std::int64_t m_lastPsccRefreshNs{0};   // lane only
     mutable std::mutex m_displayCacheMutex;
     mutable std::vector<double> m_cfcDisplayCache;

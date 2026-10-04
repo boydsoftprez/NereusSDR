@@ -672,8 +672,8 @@ QJsonObject requestFor(SpectrumWidget* widget, SliceModel* slice,
         // (the line's floor plus the offset, 60 dB above it) and sends the
         // levels beside each frame.
         request.insert(QStringLiteral("waterfallLevels"), QJsonObject{
-            {QStringLiteral("mode"), widget->wfAgcEnabled() ? QStringLiteral("agc")
-                                                            : QStringLiteral("noiseFloorAgc")},
+            {QStringLiteral("mode"), widget->waterfallNFAGCEnabled() ? QStringLiteral("noiseFloorAgc")
+                                                                     : QStringLiteral("agc")},
             {QStringLiteral("lowDbm"), double(widget->wfLowThreshold())},
             {QStringLiteral("highDbm"), double(widget->wfHighThreshold())},
             {QStringLiteral("offsetDb"), widget->waterfallAGCOffsetDb()}});

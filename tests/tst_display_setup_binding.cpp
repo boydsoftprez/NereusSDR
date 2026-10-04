@@ -30,6 +30,8 @@
 #include <QSlider>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QScopeGuard>
+#include "core/AppSettings.h"
 
 #include "core/FFTEngine.h"
 #include "gui/SpectrumWidget.h"
@@ -56,6 +58,7 @@ private slots:
     // ---- WaterfallDefaultsPage: Colour Scheme ----
     void waterfallColorScheme_pushReachesModelAndWidget();
     void waterfallColorScheme_loadReadsModel();
+    void waterfallModes_normalUiAndRestoreKeepBothEnabled();
 
     // ---- SpectrumDefaultsPage: Fill Alpha ----
     void spectrumFillAlpha_pushReachesModelAndWidget();
@@ -236,6 +239,63 @@ void TestDisplaySetupBinding::waterfallColorScheme_loadReadsModel()
     auto* combo = page.findChild<QComboBox*>(QStringLiteral("wfColorSchemeCombo"));
     QVERIFY(combo != nullptr);
     QCOMPARE(combo->currentIndex(), 5);
+}
+
+// Independent toggles must remain reachable through Setup and persistence.
+void TestDisplaySetupBinding::waterfallModes_normalUiAndRestoreKeepBothEnabled()
+{
+    AppSettings& settings = AppSettings::instance();
+    QMap<QString, QVariant> saved;
+    for (const QString& key : settings.allKeys()) { saved.insert(key, settings.value(key)); }
+    const auto restore = qScopeGuard([&] {
+        settings.clear();
+        for (auto it = saved.cbegin(); it != saved.cend(); ++it) { settings.setValue(it.key(), it.value()); }
+    });
+    settings.clear();
+    const auto check = [](WaterfallDefaultsPage& page, const QString& id) -> QCheckBox* {
+        for (QCheckBox* box : page.findChildren<QCheckBox*>()) {
+            if (box->property("nereusSetupId").toString() == id) { return box; }
+        }
+        return nullptr;
+    };
+    {
+        RadioModel model;
+        SpectrumWidget widget;
+        widget.loadSettings();
+        model.setSpectrumWidget(&widget);
+        const auto detach = qScopeGuard([&] { model.setSpectrumWidget(nullptr); });
+        WaterfallDefaultsPage page(&model);
+        QCheckBox* agc = check(page, QStringLiteral("display.waterfallDefaults.agc"));
+        QCheckBox* nf = check(page, QStringLiteral("display.waterfallDefaults.nfAgc"));
+        QVERIFY(agc && nf);
+        QVERIFY(agc->isChecked());
+        QVERIFY(!nf->isChecked());
+        QVERIFY(!widget.wfUseSpectrumMinMax());
+        QVERIFY(nf->isEnabled());
+        nf->click();
+        QVERIFY(agc->isChecked() && nf->isChecked());
+        QVERIFY(widget.wfAgcEnabled() && widget.waterfallNFAGCEnabled());
+        widget.saveSettings();
+        QCOMPARE(settings.value(QStringLiteral("DisplayWfAgc")).toString(), QStringLiteral("True"));
+        QCOMPARE(settings.value(QStringLiteral("WaterfallNFAGCEnabled")).toString(), QStringLiteral("True"));
+    }
+    // Pan 1's AGC key is explicit; its absent NF key independently inherits pan 0.
+    settings.setValue(QStringLiteral("DisplayWfAgc_1"), QStringLiteral("True"));
+    QVERIFY(!settings.contains(QStringLiteral("WaterfallNFAGCEnabled_1")));
+    for (int pan : {0, 1}) {
+        RadioModel model;
+        SpectrumWidget widget;
+        widget.setPanIndex(pan);
+        widget.loadSettings();
+        model.setSpectrumWidget(&widget);
+        const auto detach = qScopeGuard([&] { model.setSpectrumWidget(nullptr); });
+        WaterfallDefaultsPage page(&model);
+        QCheckBox* agc = check(page, QStringLiteral("display.waterfallDefaults.agc"));
+        QCheckBox* nf = check(page, QStringLiteral("display.waterfallDefaults.nfAgc"));
+        QVERIFY(agc && nf);
+        QVERIFY(agc->isChecked() && nf->isChecked());
+        QVERIFY(widget.wfAgcEnabled() && widget.waterfallNFAGCEnabled());
+    }
 }
 
 // SpectrumDefaultsPage::loadFromRenderer() early-returns unless BOTH
