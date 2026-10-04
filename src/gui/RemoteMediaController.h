@@ -367,7 +367,9 @@ public:
     // microphone chosen in Audio > Devices, packets sent) while this window
     // holds transmit, its own key is down, or it has VOX armed (the Core's
     // VOX on, and this session permitted to transmit), and never otherwise:
-    // no capture, no packet. Opus mono 20 ms frames; the lossless format
+    // no packet. Local PC microphone preview keeps capture open while its
+    // microphone line is open, draining PCM without sending while unkeyed.
+    // Opus mono 20 ms frames; the lossless format
     // instead while the operator chose lossless audio and the line agreed
     // it. A program keying through this window's TCI server is sent in
     // place of the microphone while its audio comes.
