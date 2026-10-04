@@ -1559,7 +1559,7 @@ CatCommandResult CatGlobalCommands::execute(const CatRequest& request,CatSession
         return payload(reading.rightJustified(width,' '));
     }
     // From Thetis CAT/CATCommands.cs:8552-8556 [v2.10.3.15].
-    // Only Tester exists at this phase; no serial endpoint can be closed yet.
+    // The service consumes current serial ZZZZ at the command boundary; other transports reject it.
     if (code == "ZZZZ") { return error(); }
     return error();
 }

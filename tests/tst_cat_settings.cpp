@@ -10,6 +10,25 @@ using namespace NereusSDR;
 class TstCatSettings : public QObject {
     Q_OBJECT
 private slots:
+    void optionalSerialFailurePreservesConfiguration() {
+        for (const QString& key : AppSettings::instance().allKeys()) {
+            if (key.startsWith("Cat/")) { AppSettings::instance().remove(key); }
+        }
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        RadioModel model; CatService& service = *model.catService();
+        CatEndpointConfig config; config.serialEnabled = true; config.serialDevice = directory.filePath("absent.serial");
+        config.serialBaud = 9600; config.serialDataBits = 7; config.serialParity = "Odd"; config.serialStopBits = "2";
+        QVERIFY(service.applyChannelConfig(1, config)); service.startConfigured();
+        QVERIFY(!service.isListening(1)); QVERIFY(service.channelState(1).startsWith("Serial error:"));
+#ifndef HAVE_SERIALPORT
+        QVERIFY(service.channelState(1).contains("dependency unavailable"));
+#endif
+        const QList<CatEndpointConfig> restored = CatSettings::load(AppSettings::instance(), model);
+        QVERIFY(restored[0].serialEnabled); QCOMPARE(restored[0].serialDevice, config.serialDevice);
+        QCOMPARE(restored[0].serialBaud, 9600); QCOMPARE(restored[0].serialDataBits, 7);
+        QCOMPARE(restored[0].serialParity, QString("Odd")); QCOMPARE(restored[0].serialStopBits, QString("2"));
+        QVERIFY(service.sessionIds(1).isEmpty()); service.stopAll();
+    }
     void defaultsAndRoundTrip()
     {
         QTemporaryDir directory;

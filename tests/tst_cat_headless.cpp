@@ -21,6 +21,19 @@ private slots:
             if (key.startsWith("Cat/")) { settings.remove(key); }
         }
     }
+    void serialRestorationRemainsInertWithoutDependency() {
+#ifndef HAVE_SERIALPORT
+        AppSettings::instance().setValue("Cat/Channels/1/SerialEnabled", "True");
+        AppSettings::instance().setValue("Cat/Channels/1/SerialDevice", "test-owned-unavailable");
+        RadioModel model; CatService& service = *model.catService();
+        QSignalSpy connection(&model, &RadioModel::connectionStateChanged);
+        QSignalSpy mox(model.moxController(), &MoxController::moxChanged);
+        service.startConfigured(); QVERIFY(service.isStarted()); QVERIFY(!service.isListening(1));
+        QVERIFY(service.channelState(1).contains("dependency unavailable"));
+        QCOMPARE(connection.size(), 0); QCOMPARE(mox.size(), 0); QVERIFY(service.sessionIds(1).isEmpty());
+        QVERIFY(service.channelConfig(1).serialEnabled); service.stopAll();
+#endif
+    }
     void localAndRemoteLifetime()
     {
         RadioModel local;

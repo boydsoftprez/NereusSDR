@@ -965,6 +965,7 @@ set(CORE_SOURCES
     src/core/cat/CatService.cpp
     src/core/cat/CatStreamFramer.cpp
     src/core/cat/CatTcpTransport.cpp
+    src/core/cat/CatSerialTransport.cpp
     src/core/cat/CatReporter.cpp
     src/core/cat/CatParser.cpp
     src/core/cat/CatCommandRouter.cpp

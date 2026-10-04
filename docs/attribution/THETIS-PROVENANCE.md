@@ -28,6 +28,10 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | --- | --- | --- | --- | --- | --- |
 | src/core/cat/CatStreamFramer.h | Project Files/Source/Console/CAT/TCPIPcatServer.cs | 275-296 [v2.10.3.15 @3759d096] | port | project-level | Catalogue-derived 41-byte request cap, one oversize event and discard through the next terminator; CR/LF only between frames. Payload case and spaces preserved. Adapts source 255-byte residual reset/global newline stripping; exact author/inspiration notice and project GPL attribution. |
 | src/core/cat/CatStreamFramer.cpp | Project Files/Source/Console/CAT/TCPIPcatServer.cs | 275-296 [v2.10.3.15 @3759d096] | port | project-level | Catalogue-derived 41-byte request cap, one oversize event and discard through the next terminator; CR/LF only between frames. Payload case and spaces preserved. Adapts source 255-byte residual reset/global newline stripping; exact author/inspiration notice and project GPL attribution. |
+| src/core/cat/CatSerialTransport.h | Project Files/Source/Console/CAT/SDRSerialPortII.cs | 91,234-241,265-268 [v2.10.3.15 @3759d096] | port | GPL-2.0-or-later | Main-thread QSerialPort byte/configuration lifecycle with explicit checked formats and composite CTS/DSR sampling; independent bounded output and injected device seam. |
+| src/core/cat/CatSerialTransport.cpp | Project Files/Source/Console/CAT/SDRSerialPortII.cs | 91,234-241,265-268 [v2.10.3.15 @3759d096] | port | GPL-2.0-or-later | Main-thread QSerialPort byte/configuration lifecycle with explicit checked formats and composite CTS/DSR sampling; independent bounded output and injected device seam. |
+| src/core/cat/CatService.h | Project Files/Source/Console/CAT/SerialPortPTT.cs , Project Files/Source/Console/CAT/CATCommands.cs | SerialPortPTT.cs:84-93; CATCommands.cs:8552-8556 [v2.10.3.15 @3759d096] | port | GPL-2.0-or-later | Adapted composite input PTT to release-armed dedicated claims on frozen bindings and actual selected TX target; current requesting serial ZZZZ orderly close. |
+| src/core/cat/CatService.cpp | Project Files/Source/Console/CAT/SerialPortPTT.cs , Project Files/Source/Console/CAT/CATCommands.cs | SerialPortPTT.cs:84-93; CATCommands.cs:8552-8556 [v2.10.3.15 @3759d096] | port | GPL-2.0-or-later | Adapted composite input PTT to release-armed dedicated claims on frozen bindings and actual selected TX target; current requesting serial ZZZZ orderly close. |
 | src/core/cat/CatTcpTransport.h | Project Files/Source/Console/CAT/TCPIPcatServer.cs | 107-120,358-380,505-535 [v2.10.3.15 @3759d096] | port | project-level | Main-thread Qt listener/client lifecycle, bounded reads, separate output/queue caps and truthful bound state/counts. Detached deferred socket close survives callback parent deletion and restart; no new thread. Exact author/inspiration notice and project GPL attribution. |
 | src/core/cat/CatTcpTransport.cpp | Project Files/Source/Console/CAT/TCPIPcatServer.cs | 107-120,358-380,505-535 [v2.10.3.15 @3759d096] | port | project-level | Main-thread Qt listener/client lifecycle, bounded reads, separate output/queue caps and truthful bound state/counts. Detached deferred socket close survives callback parent deletion and restart; no new thread. Exact author/inspiration notice and project GPL attribution. |
 | src/core/cat/CatSession.h | Project Files/Source/Console/CAT/TCPIPcatServer.cs | 164-238,308-346 [v2.10.3.15 @3759d096] | port | project-level | Per-TCP-session idempotent canonical GUID sets; shared GUIDs across clients and no serial/PTY registrations. Existing strict-width canonical router framing retained. Frozen binding and original transmit ownership unchanged; exact author/inspiration notice and project GPL attribution. |
@@ -603,3 +607,13 @@ transmit claims before socket closure; detached old transport/session snapshots
 cannot affect a callback-started replacement run. Socket disposal is deferred
 and detached before abort, preventing parent deletion inside Qt abort callbacks.
 Physical serial, PTY, UI and requesting-serial ZZZZ close remain later stages.
+
+### 2026-10-04 CAT physical serial and input PTT (Task 9)
+
+Qt serial events replace upstream serial callbacks/polling threads. Legacy RTS and
+DTR labels sample input CTS and DSR. The composite source OR is preserved, while
+startup/reopen require every selected input released before accepting an assertion.
+One dedicated session claim uses the existing native transmit coordinator and the
+actual selected target inside a frozen channel binding. Shared CAT pin sources reuse
+the open handle; separate physical PTT owns an exclusive device. Serial ZZZZ closes
+only its requesting endpoint instead of the upstream first serial port.
