@@ -1246,14 +1246,54 @@ jobs:
           # linking the wrong copy silently.
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DNEREUS_GPU_SPECTRUM=ON \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md \
             -DOPENSSL_ROOT_DIR="$(pwd)/build/vcpkg_installed/x64-windows-static-md"
 
       - name: Build
+        id: windows_build
         shell: bash
         run: cmake --build build -j${NUMBER_OF_PROCESSORS}
+
+      # Keep failed-link evidence on the runner before it is discarded. This
+      # does not change the build result or the signed release asset inventory.
+      - name: Record failed Windows link diagnostics
+        if: ${{ failure() && steps.windows_build.outcome == 'failure' }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path windows-link-diagnostics | Out-Null
+          Select-String -Path build/CMakeCache.txt -Pattern '^CMAKE_(BUILD_TYPE|CXX_COMPILER|MSVC_RUNTIME_LIBRARY|CXX_FLAGS|C_FLAGS)' |
+            ForEach-Object { $_.Line } |
+            Set-Content windows-link-diagnostics/cmake-flags.txt
+          Get-ChildItem build/CMakeFiles/nereus_library_pch.dir -Recurse -Filter cmake_pch.cxx.obj |
+            ForEach-Object {
+              & dumpbin /symbols $_.FullName > windows-link-diagnostics/pch-symbols.txt
+              & dumpbin /directives $_.FullName > windows-link-diagnostics/pch-directives.txt
+            }
+          if (Test-Path build/NereusCore.lib) {
+            & dumpbin /linkermember:1 build/NereusCore.lib > windows-link-diagnostics/core-import-members.txt
+          }
+
+      - name: Upload failed Windows link diagnostics
+        if: ${{ failure() && steps.windows_build.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-link-diagnostics
+          path: |
+            windows-link-diagnostics/
+            build/CMakeFiles/NereusCore.dir/exports.def
+            build/CMakeFiles/NereusCore.dir/exports.def.objs
+            build/CMakeFiles/NereusCore.rsp
+            build/CMakeFiles/NereusSDRLib.dir/exports.def
+            build/CMakeFiles/NereusSDRLib.dir/exports.def.objs
+            build/CMakeFiles/NereusSDRLib.rsp
+            build/CMakeFiles/nereus_library_pch.dir/**/cmake_pch.cxx.obj
+            build/compile_commands.json
+            build/CMakeFiles/rules.ninja
+            build/build.ninja
+          retention-days: 7
 
       - name: Test
         working-directory: build
