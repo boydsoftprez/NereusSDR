@@ -122,6 +122,7 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
 QRect ContainerPreviewWidget::entryBoundary(const QString& id) const
 {
     QWidget* view=m_views.value(id);if(!view) {return {};}
+    if(m_document.layout==ContentLayout::FreeCanvas) {const QRect boundary=m_canvas->entryBoundary(id);return QRect(m_canvas->mapTo(const_cast<ContainerPreviewWidget*>(this),boundary.topLeft()),boundary.size());}
     return QRect(view->mapTo(const_cast<ContainerPreviewWidget*>(this),QPoint()),view->size());
 }
 QRectF ContainerPreviewWidget::resolvedFreeCanvasRect(const QString& id) const {return m_canvas->logicalRect(id);}

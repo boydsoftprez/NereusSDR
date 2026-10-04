@@ -6,6 +6,8 @@
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QContextMenuEvent>
+#include <QWindow>
+#include <QTimer>
 #include <algorithm>
 #include <cmath>
 namespace NereusSDR {
@@ -88,7 +90,32 @@ void FreeCanvasSurface::placeViews() {
     for(const QString& id:ids) {
         auto& leaf=m_leaves[id];if(!leaf.view) {continue;}
         const QRect rect(pixels(leaf.rect.x()+m_origin.x()),pixels(leaf.rect.y()+m_origin.y()),qMax(0,pixels(leaf.rect.width())),qMax(0,pixels(leaf.rect.height())));
-        leaf.view->setGeometry(rect);leaf.view->raise();
+        leaf.view->setGeometry(rect);
+    }
+    syncPresentation();queuePresentationSync();
+}
+QRect FreeCanvasSurface::projectedBoundary(QWidget* view) const {
+    if(view->isVisibleTo(this)) {
+        QWindow* window=view->windowHandle();QWidget* nativeParent=view->nativeParentWidget();
+        if(window && window->isVisible() && nativeParent) {
+            // A native child window reports geometry relative to its native parent, which can differ from the QWidget parent.
+            const QRect geometry=window->geometry();return QRect(mapFrom(nativeParent,geometry.topLeft()),geometry.size());
+        }
+    }
+    return view->geometry();
+}
+void FreeCanvasSurface::queuePresentationSync() {
+    if(m_presentationSyncQueued) {return;}m_presentationSyncQueued=true;
+    QTimer::singleShot(0,this,[this]{m_presentationSyncQueued=false;syncPresentation();});
+}
+void FreeCanvasSurface::syncPresentation() {
+    QSize extent(pixels(m_extent.width()),pixels(m_extent.height()));
+    auto ids=m_leaves.keys();
+    std::sort(ids.begin(),ids.end(),[this](const QString& a,const QString& b){return m_leaves[a].order==m_leaves[b].order?a<b:m_leaves[a].order<m_leaves[b].order;});
+    for(const QString& id:ids) {
+        auto& leaf=m_leaves[id];if(!leaf.view) {continue;}
+        const QRect rect=projectedBoundary(leaf.view);leaf.view->raise();
+        extent=extent.expandedTo(QSize(rect.x()+rect.width()+kMargin,rect.y()+rect.height()+kMargin));
         leaf.grip->move(rect.x()-kGripWidth,rect.y());leaf.corner->move(rect.x()+rect.width(),rect.y()+rect.height());
         const bool visible=leaf.view->isVisibleTo(this) && leaf.rect.width()>0 && leaf.rect.height()>0;
         leaf.grip->setVisible(visible);leaf.corner->setVisible(visible);
@@ -96,9 +123,10 @@ void FreeCanvasSurface::placeViews() {
         leaf.corner->setCursor(m_document.locked?Qt::ArrowCursor:Qt::SizeFDiagCursor);
         leaf.grip->raise();leaf.corner->raise();
     }
+    m_extent=QSizeF(extent);setMinimumSize(extent);
 }
 QRectF FreeCanvasSurface::logicalRect(const QString& id) const {return m_leaves.value(id).rect;}
-QRect FreeCanvasSurface::entryBoundary(const QString& id) const {const auto leaf=m_leaves.value(id);return leaf.view?leaf.view->geometry():QRect();}
+QRect FreeCanvasSurface::entryBoundary(const QString& id) const {const auto leaf=m_leaves.value(id);return leaf.view?projectedBoundary(leaf.view):QRect();}
 int FreeCanvasSurface::contentHeight() const {return pixels(m_extent.height());}
 void FreeCanvasSurface::selectEntry(const QString& id) {m_selected=id;updateReveal();}
 void FreeCanvasSurface::updateReveal(const QString& hover) {
@@ -111,7 +139,7 @@ void FreeCanvasSurface::updateReveal(const QString& hover) {
 void FreeCanvasSurface::mouseMoveEvent(QMouseEvent* event) {
     QString hover;
     auto ids=m_leaves.keys();std::sort(ids.begin(),ids.end(),[this](const QString& a,const QString& b){return m_leaves[a].order==m_leaves[b].order?a>b:m_leaves[a].order>m_leaves[b].order;});
-    for(const QString& id:ids) {const auto& leaf=m_leaves[id];if(leaf.view && leaf.view->isVisibleTo(this) && leaf.view->geometry().adjusted(-kGripWidth,0,kCornerSize,kCornerSize).contains(event->position().toPoint())) {hover=id;break;}}
+    for(const QString& id:ids) {const auto& leaf=m_leaves[id];if(leaf.view && leaf.view->isVisibleTo(this) && projectedBoundary(leaf.view).adjusted(-kGripWidth,0,kCornerSize,kCornerSize).contains(event->position().toPoint())) {hover=id;break;}}
     updateReveal(hover);QWidget::mouseMoveEvent(event);
 }
 void FreeCanvasSurface::changeRect(const QString& id,const QRectF& rect) {
@@ -135,6 +163,7 @@ bool FreeCanvasSurface::eventFilter(QObject* watched,QEvent* event) {
         const QString leafId=handle->property("freeCanvasEntryId").toString();
         if(!leafId.isEmpty() && (event->type()==QEvent::Enter || event->type()==QEvent::FocusIn)) {updateReveal(leafId);}
         if(event->type()==QEvent::Leave) {updateReveal();}
+        if(!leafId.isEmpty() && (event->type()==QEvent::Show || event->type()==QEvent::Move || event->type()==QEvent::Resize)) {queuePresentationSync();}
         return false;
     }
     if(event->type()==QEvent::ContextMenu) {

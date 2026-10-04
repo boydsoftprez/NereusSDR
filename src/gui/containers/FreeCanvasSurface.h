@@ -28,6 +28,9 @@ protected:
 private:
     struct Leaf { QPointer<QWidget> view, grip, corner; QRectF rect; int order=0; };
     void placeViews();
+    QRect projectedBoundary(QWidget*) const;
+    void syncPresentation();
+    void queuePresentationSync();
     void updateReveal(const QString& hover={});
     void changeRect(const QString&,const QRectF&);
     void finishGesture(bool cancel);
@@ -40,6 +43,6 @@ private:
     QSizeF m_extent;
     QString m_selected, m_active;
     QPointer<QWidget> m_capture;
-    bool m_resizing=false;
+    bool m_resizing=false, m_presentationSyncQueued=false;
 };
 }

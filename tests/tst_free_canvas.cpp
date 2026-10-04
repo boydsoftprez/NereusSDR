@@ -12,6 +12,7 @@
 #include <QCheckBox>
 #include <QPushButton>
 #include <QLabel>
+#include <QWindow>
 #include <QJsonArray>
 #include <QMouseEvent>
 #include "core/AppSettings.h"
@@ -48,14 +49,46 @@ ContentEntry signal(ContainerContentRegistry& registry,int source) {
 class TstFreeCanvas final : public QObject {
     Q_OBJECT
 private slots:
+    void nativeProjectionPresentationSurvivesReconcile_data() {
+        QTest::addColumn<bool>("checkMargin");QTest::newRow("physical-boundary")<<false;QTest::newRow("full-scroll-margin")<<true;
+    }
+    void nativeProjectionPresentationSurvivesReconcile() {
+        QFETCH(bool,checkMargin);
+        ContainerContentRegistry registry;MeterPoller poller;ContainerDocument c;c.id="projection";c.layout=ContentLayout::FreeCanvas;
+        auto e=signal(registry,0);e.setFreeCanvasRect(QRectF(1.123456789,1.123456789,461.123456789,100.987654321));e.extensions["opaque"]=QJsonObject{{"future",true}};c.contents={e};
+        ContainerContentHost host(registry);host.reconcile(c);ContainerPreviewWidget preview(registry,poller);preview.setDocument(c);
+        // Exercise actual native QWidget projection also in the CPU graph; QRhi leaves are already native.
+        host.meterSurfaces()[0]->setAttribute(Qt::WA_NativeWindow);preview.findChildren<MeterWidget*>()[0]->setAttribute(Qt::WA_NativeWindow);
+        host.show();preview.show();QCoreApplication::processEvents();
+        QPointer<MeterWidget> liveIdentity=host.meterSurfaces()[0],draftIdentity=preview.findChildren<MeterWidget*>()[0];
+        host.reconcile(c);auto changed=c;changed.name="Presentation refresh";preview.setDocument(changed);preview.setDocument(c);QCoreApplication::processEvents();
+        QCOMPARE(host.meterSurfaces()[0],liveIdentity.data());QCOMPARE(preview.findChildren<MeterWidget*>()[0],draftIdentity.data());QCOMPARE(host.captureDocument().contents[0].extensions,e.extensions);QCOMPARE(host.captureDocument().contents[0].canvasRect,e.canvasRect);QCOMPARE(preview.document(),c);
+        for(QWidget* widget:{static_cast<QWidget*>(&host),static_cast<QWidget*>(&preview)}) {
+            auto* scene=widget->findChild<FreeCanvasSurface*>();auto* meter=widget->findChildren<MeterWidget*>()[0];QVERIFY(scene && meter);
+            // Native QWindow size is the physical projection, independently of QWidget's requested crect.
+            const QRect physical(scene->mapFromGlobal(meter->mapToGlobal(QPoint())),meter->windowHandle()?meter->windowHandle()->size():meter->size());
+            auto* corner=scene->findChild<QWidget*>("freeCanvasResize_"+e.id);QVERIFY(corner);
+            QCOMPARE(scene->mapFromGlobal(corner->mapToGlobal(QPoint())),physical.bottomRight()+QPoint(1,1));
+            if(checkMargin) {QVERIFY(scene->minimumWidth()>=physical.x()+physical.width()+20);QVERIFY(scene->minimumHeight()>=physical.y()+physical.height()+20);}
+            else {QCOMPARE(scene->entryBoundary(e.id),physical);const QRect exposed=widget==&host?host.entryBoundary(e.id):preview.entryBoundary(e.id);QCOMPARE(exposed,QRect(scene->mapTo(widget,physical.topLeft()),physical.size()));}
+        }
+    }
     void importedSmallAndZeroNativeMetersStayExact() {
         ContainerContentRegistry registry;MeterPoller poller;ContainerDocument c;c.id="small";c.layout=ContentLayout::FreeCanvas;
         for(const QSizeF size:{QSizeF(40,30),QSizeF(0,0),QSizeF(460.123456789,100.987654321)}) {auto e=signal(registry,0);e.setFreeCanvasRect(QRectF(QPointF(-2.123456789,30),size));c.contents.append(e);}
-        ContainerContentHost host(registry);host.reconcile(c);ContainerPreviewWidget preview(registry,poller);preview.setDocument(c);host.show();preview.show();QCoreApplication::processEvents();
+        ContainerContentHost host(registry);host.reconcile(c);ContainerPreviewWidget preview(registry,poller);preview.setDocument(c);
+        QWidget referenceRoot;referenceRoot.resize(800,500);QHash<QString,QPointer<MeterWidget>> references;
+        // Construct references before Show and retain them under a separate native root, independent from dynamic additions to the actual Canvas.
+        for(const auto& e:c.contents) {auto* reference=new MeterWidget(&referenceRoot);reference->setMinimumSize(0,0);reference->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);const QSize size(qRound(e.freeCanvasRect()->width()),qRound(e.freeCanvasRect()->height()));reference->setGeometry(QRect(QPoint(20,50),size));if(size.isEmpty()) {reference->hide();}references[e.id]=reference;}
+        host.show();preview.show();referenceRoot.show();QCoreApplication::processEvents();
         for(const auto& e:c.contents) {
             auto* live=host.findChild<FreeCanvasSurface*>();auto* draft=preview.findChild<FreeCanvasSurface*>();QVERIFY(live && draft);
-            const QSize size(qRound(e.freeCanvasRect()->width()),qRound(e.freeCanvasRect()->height()));QCOMPARE(live->entryBoundary(e.id).size(),size);QCOMPARE(draft->entryBoundary(e.id).size(),size);
-            auto* corner=live->findChild<QWidget*>("freeCanvasResize_"+e.id);QVERIFY(corner);QCOMPARE(corner->pos(),live->entryBoundary(e.id).bottomRight()+QPoint(1,1));
+            auto* reference=references.value(e.id).data();QVERIFY(reference);
+            // Qt6.11 native integer QSize projection can round101 to102 at factor.5 (qhighdpiscaling_p.h:130,157).
+            // Compare an unconstrained native control; persisted logical doubles below remain exact.
+            const QSize size=reference->windowHandle() && reference->windowHandle()->isVisible()?reference->windowHandle()->size():reference->size();
+            QCOMPARE(live->entryBoundary(e.id).size(),size);QCOMPARE(draft->entryBoundary(e.id).size(),size);
+            auto* corner=live->findChild<QWidget*>("freeCanvasResize_"+e.id);QVERIFY(corner);QCOMPARE(live->mapFromGlobal(corner->mapToGlobal(QPoint())),live->entryBoundary(e.id).bottomRight()+QPoint(1,1));
         }
         for(int i=0;i<c.contents.size();++i) {QCOMPARE(host.captureDocument().contents[i].freeCanvasRect(),c.contents[i].freeCanvasRect());QCOMPARE(host.captureDocument().contents[i].canvasRect,c.contents[i].canvasRect);}const auto parsed=ContainerDocumentCodec::decode(ContainerDocumentCodec::encode(WorkspaceDocument{1,0,c.id,{c},{}}));QVERIFY(parsed.ok);QCOMPARE(parsed.document.containers[0],c);
         auto* resize=preview.findChild<QWidget*>("freeCanvasResize_"+c.contents[0].id);QTest::keyClick(resize,Qt::Key_Left);
