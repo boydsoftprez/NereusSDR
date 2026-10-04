@@ -11,6 +11,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Describe saved control scope in user words by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Refuse foreign-session container function controls by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Keep each pan's tuning STEP on its resolved slice by
@@ -12919,10 +12921,10 @@ QString containerFunctionScopeReason(const QJsonObject& context, const QString& 
 {
     if (!context.contains("sessionId")) { return {}; }
     const QJsonValue session = context.value("sessionId");
-    if (!session.isString()) { return QObject::tr("This control has an invalid session source"); }
+    if (!session.isString()) { return QObject::tr("This control has invalid saved radio settings"); }
     const QString sessionId = session.toString();
     if (!sessionId.isEmpty() && sessionId != currentSessionId) {
-        return QObject::tr("This control belongs to another station session");
+        return QObject::tr("This control belongs to another radio");
     }
     return {};
 }
