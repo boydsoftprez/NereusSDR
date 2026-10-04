@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original native grips, reserved chrome and ownership regressions.
 // Modification history (NereusSDR):
+//   2026-10-03 - Check the Linux compositing window for embedded QRhi meters
+//                 by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Deterministic widget-local hover delivery by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -40,7 +42,15 @@ class TstContainerChrome : public QObject
                 continue;
             }
 #ifdef NEREUS_GPU_SPECTRUM
+#ifdef Q_OS_LINUX
+            // Embedded OpenGL QRhi widgets render into textures composited by
+            // their top-level window; they need not have a native child window.
+            // Qt QRhiWidget docs: https://doc.qt.io/qt-6/qrhiwidget.html
+            QVERIFY(meter->window()->windowHandle());
+#else
+            // Metal and D3D meter leaves explicitly request WA_NativeWindow.
             QVERIFY(meter->windowHandle());
+#endif
 #ifdef Q_OS_MAC
             QCOMPARE(meter->windowHandle()->surfaceType(), QSurface::MetalSurface);
 #endif
