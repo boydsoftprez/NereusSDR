@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -66,6 +68,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "HistoryGraphItem.h"
+#include "ResponsiveText.h"
 
 // From Thetis clsHistoryItem (MeterManager.cs:16149+)
 
@@ -266,7 +269,8 @@ void HistoryGraphItem::paintGrid(QPainter& p, const QRect& rect)
     }
 
     QFont labelFont;
-    labelFont.setPixelSize(9);
+    const double scale=objectTextScale(rect,{260,120});
+    labelFont.setPixelSize(qMax(1,qRound(9*scale)));
     p.setFont(labelFont);
     p.setPen(QColor(0x80, 0x90, 0xa0));
 
@@ -283,8 +287,10 @@ void HistoryGraphItem::paintGrid(QPainter& p, const QRect& rect)
             const float labelVal = yMax - fraction * (yMax - yMin);
             const QString labelText = QString::number(static_cast<double>(labelVal), 'f', 1);
             p.setPen(QColor(0x80, 0x90, 0xa0));
-            const QRect textRect(rect.left() + 2, y - 8, 40, 12);
-            p.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, labelText);
+            QRectF textRect(rect.left()+2*scale,y-8*scale,40*scale,12*scale);
+            if(textRect.top()<rect.top()) { textRect.moveTop(rect.top()); }
+            if(textRect.bottom()>rect.bottom()) { textRect.moveBottom(rect.bottom()); }
+            drawObjectText(p,textRect,labelText,9*scale,Qt::AlignLeft|Qt::AlignVCenter);
         }
     }
 }

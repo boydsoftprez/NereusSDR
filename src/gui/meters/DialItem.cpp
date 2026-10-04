@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -53,6 +55,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "DialItem.h"
+#include "ResponsiveText.h"
 
 // From Thetis clsDialDisplay (MeterManager.cs:15399+)
 // renderDialDisplay() (MeterManager.cs:33750-33899)
@@ -123,7 +126,8 @@ void DialItem::paintStatic(QPainter& p, const QRect& dialRect)
     // Quadrants: 0=top-left(VFOA), 1=top-right(VFOB),
     //            2=bottom-left(ACCEL), 3=bottom-right(LOCK)
     QFont labelFont;
-    labelFont.setPixelSize(9);
+    const double scale=objectTextScale(dialRect,{120,120});
+    labelFont.setPixelSize(qMax(1,qRound(9*scale)));
     p.setFont(labelFont);
     p.setPen(m_textColour);
     p.setBrush(Qt::NoBrush);
@@ -135,19 +139,19 @@ void DialItem::paintStatic(QPainter& p, const QRect& dialRect)
 
     // Top-left quadrant — "VFOA"
     const QRect tlRect(l, t, hw, hh);
-    p.drawText(tlRect, Qt::AlignCenter, QStringLiteral("VFOA"));
+    drawObjectText(p,tlRect,QStringLiteral("VFOA"),9*scale);
 
     // Top-right quadrant — "VFOB"
     const QRect trRect(l + hw, t, hw, hh);
-    p.drawText(trRect, Qt::AlignCenter, QStringLiteral("VFOB"));
+    drawObjectText(p,trRect,QStringLiteral("VFOB"),9*scale);
 
     // Bottom-left quadrant — "ACCEL"
     const QRect blRect(l, t + hh, hw, hh);
-    p.drawText(blRect, Qt::AlignCenter, QStringLiteral("ACCEL"));
+    drawObjectText(p,blRect,QStringLiteral("ACCEL"),9*scale);
 
     // Bottom-right quadrant — "LOCK"
     const QRect brRect(l + hw, t + hh, hw, hh);
-    p.drawText(brRect, Qt::AlignCenter, QStringLiteral("LOCK"));
+    drawObjectText(p,brRect,QStringLiteral("LOCK"),9*scale);
 }
 
 // ---------------------------------------------------------------------------

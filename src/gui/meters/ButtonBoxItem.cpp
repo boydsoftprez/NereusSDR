@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -57,6 +59,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ButtonBoxItem.h"
+#include "ResponsiveText.h"
 
 #include <QPainter>
 #include <QMouseEvent>
@@ -252,6 +255,7 @@ void ButtonBoxItem::paintButton(QPainter& p, int index, const QRectF& rect)
         QFont font = p.font();
         font.setPixelSize(qMax(8, static_cast<int>(rect.height() * 0.4)));
         font.setBold(true);
+        font=fitObjectText(font,font.pixelSize(),btn.text,rect,false,Qt::TextSingleLine,p.device());
         p.setFont(font);
         p.setPen(textCol);
         p.drawText(rect, Qt::AlignCenter, btn.text);

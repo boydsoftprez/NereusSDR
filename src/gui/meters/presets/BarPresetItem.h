@@ -46,6 +46,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterDynamics.h"
 #include <QJsonObject>
+#include <QFont>
 namespace NereusSDR {
 class BarPresetItem : public MeterItem {
     Q_OBJECT
@@ -103,5 +104,6 @@ private:
     QList<double> m_major{-20,-10,0,4,8,12}, m_minor{-25,-15,-5,2,6,10};
     QImage m_scaleCache;
     QRect m_scaleRect;
+    QFont m_scaleFont;
 };
 }

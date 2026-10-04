@@ -5,6 +5,8 @@
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-03 — Retain dim calibrated parked ANAN pointers without fabricating
 //                 readings by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Fit compact source lettering inside rounded glass by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Readable minimum ANAN readout fonts and measured row reflow by
@@ -113,6 +115,7 @@ mw0lge@grange-lane.co.uk
 
 #include "CompositePresetItem.h"
 #include "AnanFaceRenderer.h"
+#include "../ResponsiveText.h"
 #include "gui/meters/MeterPoller.h"
 #include "core/LogCategories.h"
 #include "gui/meters/BandButtonItem.h"
@@ -134,6 +137,27 @@ mw0lge@grange-lane.co.uk
 #include <cmath>
 namespace NereusSDR {
 namespace {
+// Runtime child placement is a view of a composite face, not an edit to the
+// imported primitive records. Save only layout state; live readings, colors,
+// button state and event effects remain on their existing children.
+class TransientChildLayout {
+public:
+    TransientChildLayout(const QVector<MeterItem*>& children,ButtonBoxItem* bands,ButtonBoxItem* modes)
+        : m_bands(bands),m_modes(modes),m_bandRatio(bands?bands->heightRatio():0),m_modeRatio(modes?modes->heightRatio():0) {
+        for(MeterItem* child:children) { m_rectangles.append({child,{child->x(),child->y(),child->itemWidth(),child->itemHeight()}}); }
+    }
+    ~TransientChildLayout() {
+        for(const SavedRect& saved:m_rectangles) { saved.item->setRect(saved.rect.x(),saved.rect.y(),saved.rect.width(),saved.rect.height()); }
+        if(m_bands) { m_bands->setHeightRatio(m_bandRatio); }
+        if(m_modes) { m_modes->setHeightRatio(m_modeRatio); }
+    }
+private:
+    struct SavedRect { MeterItem* item; QRectF rect; };
+    QVector<SavedRect> m_rectangles;
+    ButtonBoxItem* m_bands;
+    ButtonBoxItem* m_modes;
+    float m_bandRatio,m_modeRatio;
+};
 // From Thetis MeterManager.cs:23814-23829 [v2.10.3.15]
 const QMap<double,QPointF> kSignal{{-127,QPointF(0.076,0.31)},{-121,QPointF(0.131,0.272)},{-115,QPointF(0.189,0.254)},{-109,QPointF(0.233,0.211)},{-103,QPointF(0.284,0.207)},{-97,QPointF(0.326,0.177)},{-91,QPointF(0.374,0.177)},{-85,QPointF(0.414,0.151)},{-79,QPointF(0.459,0.168)},{-73,QPointF(0.501,0.142)},{-63,QPointF(0.564,0.172)},{-53,QPointF(0.63,0.164)},{-43,QPointF(0.695,0.203)},{-33,QPointF(0.769,0.211)},{-23,QPointF(0.838,0.272)},{-13,QPointF(0.926,0.31)}};
 // From Thetis MeterManager.cs:23855-23857 [v2.10.3.15]
@@ -537,33 +561,58 @@ bool CompositePresetItem::applyConfiguration(const QJsonObject& edit) {
 void CompositePresetItem::paintBar(QPainter& p,const QRectF& r,int index) {
     if(!m_channels[index].config["visible"].toBool()) { return; }
     const Channel& channel=m_channels[index]; const auto& c=channel.config;
-    const double left=r.left()+18,right=r.right()-18,top=r.top()+28,base=r.bottom()-14;
+    const double scale=objectTextScale(r,{260,72}),size=m_config["fontSize"].toInt()*scale;
+    const double left=r.left()+18*scale,right=r.right()-18*scale,top=r.top()+28*scale,base=r.bottom()-14*scale;
     const auto pos=[&](double value) { return left+(right-left)*calibratedPoint(index,value).x(); };
-    QFont f=p.font(); f.setPixelSize(qBound(10,m_config["fontSize"].toInt(),20)); p.setFont(f); p.setPen(color(m_config,"titleColor")); if(m_config["showTitle"].toBool()) { p.drawText(r.adjusted(18,2,-18,0),Qt::AlignTop|Qt::AlignHCenter,channel.name); }
+    p.setPen(color(m_config,"titleColor")); if(m_config["showTitle"].toBool()) {
+        const double start=m_config["showReadout"].toBool()?.32:0,end=m_config["showPeakValue"].toBool()?.68:1;
+        drawObjectText(p,QRectF(left+(right-left)*start,r.top()+2*scale,(right-left)*(end-start),22*scale),channel.name,size);
+    }
     if(c["showHistory"].toBool() && channel.dynamics.hasReading()) { p.fillRect(QRectF(pos(channel.dynamics.minHistory()),top,pos(channel.dynamics.maxHistory())-pos(channel.dynamics.minHistory()),base-top),color(c,"historyColor")); }
     p.setPen(QPen(color(m_config,"lowColor"),2)); p.drawLine(QPointF(left,base),QPointF(right,base));
     for(auto it=channel.calibration.begin();it!=channel.calibration.end();++it) {
         const double raw=c["normalisePower"].toBool() ? it.key()*m_powerScale/100.0 : it.key(); const double x=pos(raw);
-        p.drawLine(QPointF(x,base),QPointF(x,base-10)); QRectF label(x-22,base-30,44,18); if(it==channel.calibration.begin()) { label.moveLeft(left); } else if(it.key()==channel.calibration.lastKey()) { label.moveRight(right); }
-        p.drawText(label,Qt::AlignCenter,QString::number(raw,'g',4));
+        p.drawLine(QPointF(x,base),QPointF(x,base-10*scale)); QRectF label(x-22*scale,base-30*scale,44*scale,18*scale); if(it==channel.calibration.begin()) { label.moveLeft(left); } else if(it.key()==channel.calibration.lastKey()) { label.moveRight(right); }
+        drawObjectText(p,label,QString::number(raw,'g',4),size);
     }
     if(channel.dynamics.hasReading()) {
         if(c["peakHold"].toBool()) { p.setPen(QPen(color(m_config,"highColor"),3)); p.drawLine(QPointF(pos(channel.dynamics.maxHistory()),top),QPointF(pos(channel.dynamics.maxHistory()),base)); }
         p.setPen(QPen(color(c,"color"),3)); p.drawLine(QPointF(pos(channel.dynamics.value()),top),QPointF(pos(channel.dynamics.value()),base));
     }
     const auto reading=[&](double value) { return QString::number(value,'f',1)+(channel.units.isEmpty()?QString():" "+channel.units); };
-    p.setPen(color(c,"color")); if(m_config["showReadout"].toBool()) { p.drawText(r.adjusted(18,2,-18,0),Qt::AlignLeft|Qt::AlignTop,channel.dynamics.hasReading()?reading(channel.dynamics.value()):"--"); }
-    p.setPen(color(m_config,"highColor")); if(m_config["showPeakValue"].toBool()) { p.drawText(r.adjusted(18,2,-18,0),Qt::AlignRight|Qt::AlignTop,channel.dynamics.hasReading()?reading(channel.dynamics.maxHistory()):"--"); }
+    p.setPen(color(c,"color")); if(m_config["showReadout"].toBool()) { drawObjectText(p,QRectF(left,r.top()+2*scale,(right-left)*.32-2*scale,22*scale),channel.dynamics.hasReading()?reading(channel.dynamics.value()):"--",size,Qt::AlignLeft|Qt::AlignVCenter); }
+    p.setPen(color(m_config,"highColor")); if(m_config["showPeakValue"].toBool()) { drawObjectText(p,QRectF(left+(right-left)*.68+2*scale,r.top()+2*scale,(right-left)*.32-2*scale,22*scale),channel.dynamics.hasReading()?reading(channel.dynamics.maxHistory()):"--",size,Qt::AlignRight|Qt::AlignVCenter); }
 }
 void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool background) {
     if(m_face==Face::Anan) { paintAnan(p,outer,background); return; }
+    const double scale=objectTextScale(outer,{360,260}),size=m_config["fontSize"].toInt()*scale;
     const double aspect=m_face==Face::Cross ? .782 : .512;
-    const double width=qMin(outer.width()-24,(outer.height()-42)/aspect);
-    const QRectF r(outer.center().x()-width/2,outer.top()+25,width,width*aspect);
-    QFont font=p.font(); font.setPixelSize(qBound(10,qMin(m_config["fontSize"].toInt(),int(width/28)),20)); p.setFont(font);
+    const double width=qMax(0.0,qMin(outer.width()-24*scale,(outer.height()-73*scale)/aspect));
+    const QRectF r(outer.center().x()-width/2,outer.top()+25*scale,width,width*aspect);
+    QFont font=p.font();
     if(background) {
-        p.setPen(color(m_config,"titleColor")); if(m_config["showTitle"].toBool()) { p.drawText(outer.adjusted(4,2,-4,0),Qt::AlignHCenter|Qt::AlignTop,m_config["title"].toString()); }
+        p.setPen(color(m_config,"titleColor")); if(m_config["showTitle"].toBool()) { drawObjectText(p,QRectF(outer.left()+4*scale,outer.top()+2*scale,outer.width()-8*scale,22*scale),m_config["title"].toString(),size); }
     }
+    QPainterPath marks;
+    if(background) {
+        for(int i=0;i<m_channels.size();++i) {
+            if(!channelVisible(i)) {continue;}
+            const Channel& channel=m_channels[i];QPainterPath arc;bool first=true;
+            const QPointF pivot=needlePivot(i,r);
+            for(auto it=channel.calibration.cbegin();it!=channel.calibration.cend();++it) {
+                const double raw=channel.config["normalisePower"].toBool()?it.key()*m_powerScale/100.0:it.key();
+                const QPointF tip=needleTip(i,raw,r),delta=tip-pivot;
+                const QPointF direction=delta/qMax(.001,std::hypot(delta.x(),delta.y()));
+                if(first) {arc.moveTo(tip);first=false;} else {arc.lineTo(tip);}
+                marks.moveTo(tip);marks.lineTo(tip-direction*(7*scale));
+            }
+            marks.addPath(arc);
+        }
+    }
+    QPainterPathStroker stroker;stroker.setWidth(3*scale);
+    const QPainterPath markInk=stroker.createStroke(marks);
+    QVector<QRectF> labelRegions;
+    const QRectF body(outer.left(),outer.top()+25*scale,outer.width(),outer.height()-69*scale);
     for(int i=0;i<m_channels.size();++i) {
         if(!channelVisible(i)) { continue; } const Channel& channel=m_channels[i]; const QJsonObject& c=channel.config;
         const QPointF pivot=needlePivot(i,r); const double stroke=c["strokeWidth"].toDouble()*std::hypot(r.width(),r.height())/450;
@@ -573,18 +622,43 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
                 const double raw=c["normalisePower"].toBool()?it.key()*m_powerScale/100.0:it.key()-(m_aboveS9 && (channel.binding==MeterBinding::SignalPeak || channel.binding==MeterBinding::SignalAvg)?20:0);
                 const QPointF tip=needleTip(i,raw,r); if(n==0) { arc.moveTo(tip); } else { arc.lineTo(tip); }
                 const QPointF direction=(tip-pivot)/std::hypot(tip.x()-pivot.x(),tip.y()-pivot.y());
-                p.setPen(QPen(color(m_config,"lowColor"),1.5)); p.drawLine(tip,tip-direction*7);
+                p.setPen(QPen(color(m_config,"lowColor"),1.5)); p.drawLine(tip,tip-direction*(7*scale));
                 // Sparse labels keep all supported minimum sizes readable.
                 if(n==0 || n==channel.calibration.size()-1 || (channel.calibration.size()>3 && (i==0 && m_face==Face::Anan ? it.key()==-73 : c["normalisePower"].toBool() ? it.key()==50 : n==channel.calibration.size()/2))) {
-                    const QPointF label=tip+direction*(m_face==Face::Anan && i==4 ? -20 : 13); p.drawText(QRectF(label.x()-25,label.y()-10,50,20),Qt::AlignCenter,QString::number(raw,'g',4));
+                    const QPointF label=tip+direction*((m_face==Face::Anan && i==4 ? -20 : 13)*scale);
+                    QRectF box(label.x()-25*scale,label.y()-10*scale,50*scale,20*scale);
+                    const QString value=QString::number(raw,'g',4);
+                    const QFont finalFont=fitObjectText(p.font(),size,value,box,false,Qt::TextSingleLine,p.device());
+                    const QFontMetricsF metrics(finalFont,p.device());
+                    const QRectF ink=metrics.tightBoundingRect(value);
+                    const auto region=[&](const QRectF& candidate) {
+                        return QRectF(candidate.center().x()-ink.width()/2-2*scale,candidate.center().y()-ink.height()/2-2*scale,ink.width()+4*scale,ink.height()+4*scale);
+                    };
+                    const auto clear=[&](const QRectF& candidate) {
+                        const QRectF bounds=region(candidate);
+                        return body.contains(bounds) && !markInk.intersects(bounds) &&
+                            std::none_of(labelRegions.cbegin(),labelRegions.cend(),[&](const QRectF& prior) {return prior.intersects(bounds);});
+                    };
+                    bool placed=clear(box);
+                    // Keep every required mark; search the nearest clear position
+                    // around its calibrated location rather than dropping a value.
+                    for(int distance=8;distance<=96 && !placed;distance+=8) {
+                        for(const QPointF& offset:{QPointF(0,-1),QPointF(1,0),QPointF(-1,0),QPointF(0,1),QPointF(.707,-.707),QPointF(-.707,-.707),QPointF(.707,.707),QPointF(-.707,.707)}) {
+                            const QRectF candidate=box.translated(offset*(distance*scale));
+                            if(clear(candidate)) {box=candidate;placed=true;break;}
+                        }
+                    }
+                    labelRegions.append(region(box));
+                    p.setFont(finalFont);p.drawText(box,Qt::AlignCenter,value);
                 }
             }
             p.setPen(QPen(color(m_config,"lowColor"),1.5)); p.drawPath(arc);
-            const double y=outer.bottom()-18-(m_face==Face::Anan && i==1 ? 16 : 0);
-            if(m_config["showReadout"].toBool()) { p.drawText(QRectF(outer.left()+8,y,outer.width()-16,18),Qt::AlignCenter,channel.name+" ("+channel.units+")"); }
+            const double y=outer.bottom()-44*scale-(m_face==Face::Anan && i==1 ? 16*scale : 0);
+            if(m_config["showReadout"].toBool()) { drawObjectText(p,QRectF(outer.left()+outer.width()*i/m_channels.size()+4*scale,y,outer.width()/m_channels.size()-8*scale,18*scale),channel.name+" ("+channel.units+")",size); }
             continue;
         }
         if(!channel.dynamics.hasReading()) { continue; }
+        p.save();p.setClipRect(body,Qt::IntersectClip);
         // From Thetis MeterManager.cs:40780-40855 [v2.10.3.15] — recent smoothed min/max fan.
         // adds the closing line
         if(c["showHistory"].toBool()) {
@@ -599,12 +673,16 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
             p.setPen(QPen(needle,stroke)); p.drawLine(pivot,tip);
         };
         if(c["peakHold"].toBool()) { draw(channel.dynamics.maxHistory(),color(m_config,"highColor")); } draw(channel.dynamics.value(),color(c,"color"));
+        p.restore();
     }
     if(!background && m_config["showReadout"].toBool()) {
         QStringList readings;
         for(int i=0;i<m_channels.size();++i) { if(channelVisible(i)) { const auto& c=m_channels[i]; readings.append(c.name+": "+(c.dynamics.hasReading()?QString::number(c.dynamics.value(),'f',1)+" "+c.units:QStringLiteral("--"))+(m_config["showPeakValue"].toBool()&&c.dynamics.hasReading()?QStringLiteral(" [%1]").arg(c.dynamics.maxHistory(),0,'f',1):QString())); } }
-        font.setPixelSize(qBound(10,int(outer.width()/30),14)); p.setFont(font);
-        p.fillRect(QRectF(outer.left(),outer.bottom()-35,outer.width(),35),color(m_config,"backdropColor")); p.setPen(color(m_config,"lowColor")); p.drawText(QRectF(outer.left()+6,outer.bottom()-35,outer.width()-12,32),Qt::AlignCenter,readings.join("   "));
+        p.setFont(font);
+        p.fillRect(QRectF(outer.left(),outer.bottom()-26*scale,outer.width(),26*scale),color(m_config,"backdropColor")); p.setPen(color(m_config,"lowColor"));
+        for(int i=0;i<readings.size();++i) {
+            drawObjectText(p,QRectF(outer.left()+outer.width()*i/readings.size()+4*scale,outer.bottom()-26*scale,outer.width()/readings.size()-8*scale,24*scale),readings[i],size*14/18);
+        }
     }
     if(background && m_face==Face::Anan && m_tx) { p.setPen(color(m_config,"lowColor")); p.drawText(QRectF(outer.right()-100,outer.top()+2,96,22),Qt::AlignCenter,QStringList{"","Power/SWR","Compression","ALC group","Amps"}.value(m_config["displayGroup"].toInt())+" ▾"); }
 }
@@ -925,7 +1003,8 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
     }
 }
 void CompositePresetItem::paintEye(QPainter& p,const QRectF& outer) {
-    const QRectF r=outer.adjusted(outer.width()*.22,28,-outer.width()*.22,-12); const auto& channel=m_channels.first();
+    const double scale=objectTextScale(outer,{260,180});
+    const QRectF r=outer.adjusted(outer.width()*.22,28*scale,-outer.width()*.22,-24*scale); const auto& channel=m_channels.first();
     const QColor bright=color(channel.config,"color"),closed(int(bright.red()*.35),int(bright.green()*.35),int(bright.blue()*.35)),dim(int(bright.red()*.75),int(bright.green()*.75),int(bright.blue()*.75));
     // From Thetis MeterManager.cs:37249-37368 [v2.10.3.15] — closed ellipse and bright above-S9 overlap.
     // scale percX for overlap hard coded for now
@@ -942,18 +1021,19 @@ void CompositePresetItem::paintEye(QPainter& p,const QRectF& outer) {
     // adds the closing line
     QPainterPath slit; slit.moveTo(r.center()+QPointF(0,r.height()*.03)); slit.lineTo(r.center()+QPointF(r.width()*.4,0)); slit.lineTo(r.center()-QPointF(0,r.height()*.03)); slit.lineTo(r.center()-QPointF(r.width()*.4,0)); slit.closeSubpath(); p.fillPath(slit,closed);
     p.setBrush(QColor(32,32,32)); p.setPen(Qt::NoPen); p.drawEllipse(r.center(),r.width()/6,r.width()/6);
-    if(m_config["showReadout"].toBool()) { QFont f=p.font(); f.setPixelSize(12); p.setFont(f); p.setPen(color(m_config,"lowColor")); p.drawText(QRectF(outer.left(),outer.bottom()-18,outer.width(),18),Qt::AlignCenter,channel.dynamics.hasReading()?signalReadout(channel.dynamics.value()):QStringLiteral("--")); }
+    if(m_config["showReadout"].toBool()) { p.setPen(color(m_config,"lowColor")); drawObjectText(p,QRectF(outer.left(),outer.bottom()-22*scale,outer.width(),20*scale),channel.dynamics.hasReading()?signalReadout(channel.dynamics.value()):QStringLiteral("--"),m_config["fontSize"].toInt()*scale*12/18); }
 }
 void CompositePresetItem::paintHistory(QPainter& p,const QRectF& outer) {
-    const QRectF r=outer.adjusted(44,28,-14,-22); double low=m_config["minValue"].toDouble(),high=m_config["maxValue"].toDouble();
+    const double scale=objectTextScale(outer,{260,120}),size=m_config["fontSize"].toInt()*scale*11/18;
+    const QRectF r=outer.adjusted(44*scale,28*scale,-14*scale,-22*scale); double low=m_config["minValue"].toDouble(),high=m_config["maxValue"].toDouble();
     if(m_config["autoScale"].toBool() && !m_samples.isEmpty()) { low=m_samples.first().value; high=low; for(const Sample& s:m_samples) { low=qMin(low,s.value); high=qMax(high,s.value); } low-=3; high+=3; }
-    QFont f=p.font(); f.setPixelSize(11); p.setFont(f); p.setPen(color(m_config,"lowColor"));
-    for(int n=0;n<=4;++n) { const double y=r.bottom()-r.height()*n/4; p.drawLine(QPointF(r.left(),y),QPointF(r.right(),y)); p.drawText(QRectF(outer.left(),y-8,40,16),Qt::AlignRight,QString::number(low+(high-low)*n/4,'f',0)); }
-    p.drawText(QRectF(r.left(),r.bottom()+3,r.width(),18),Qt::AlignCenter,QStringLiteral("Recent %1 s · %2").arg(m_config["historyMs"].toInt()/1000).arg(m_config["units"].toString()));
+    p.setPen(color(m_config,"lowColor"));
+    for(int n=0;n<=4;++n) { const double y=r.bottom()-r.height()*n/4; p.drawLine(QPointF(r.left(),y),QPointF(r.right(),y)); drawObjectText(p,QRectF(outer.left(),y-8*scale,40*scale,16*scale),QString::number(low+(high-low)*n/4,'f',0),size,Qt::AlignRight|Qt::AlignVCenter); }
+    drawObjectText(p,QRectF(r.left(),r.bottom()+3*scale,r.width(),18*scale),QStringLiteral("Recent %1 s · %2").arg(m_config["historyMs"].toInt()/1000).arg(m_config["units"].toString()),size);
     QPainterPath path; bool first=true; const qint64 latest=m_samples.isEmpty()?0:m_samples.last().time;
     for(const Sample& s:m_samples) { QPointF point(r.right()-(latest-s.time)*r.width()/m_config["historyMs"].toDouble(),r.bottom()-qBound(0.0,(s.value-low)/(high-low),1.0)*r.height()); if(first) { path.moveTo(point); first=false; } else { path.lineTo(point); } }
     p.setPen(QPen(color(m_channels.first().config,"color"),2)); p.drawPath(path);
-    if(m_config["showReadout"].toBool()) { p.drawText(QRectF(r.left(),outer.top()+2,r.width(),22),Qt::AlignRight,m_channels.first().dynamics.hasReading()?QString::number(m_channels.first().dynamics.value(),'f',1)+" "+m_config["units"].toString():QStringLiteral("--")); }
+    if(m_config["showReadout"].toBool()) { drawObjectText(p,QRectF(outer.left()+outer.width()*.66,outer.top()+2*scale,outer.width()*.34-4*scale,22*scale),m_channels.first().dynamics.hasReading()?QString::number(m_channels.first().dynamics.value(),'f',1)+" "+m_config["units"].toString():QStringLiteral("--"),size,Qt::AlignRight|Qt::AlignVCenter); }
 }
 void CompositePresetItem::layoutChildren(int width,int height) {
     const QRectF r=pixelRect(width,height); const auto place=[&](MeterItem* child,double y,double h) { if(child) { child->setRect(r.left()/width,(r.top()+r.height()*y)/height,r.width()/width,r.height()*h/height); } };
@@ -970,14 +1050,26 @@ void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer l
     const QRectF r=pixelRect(width,height); p.save(); p.setClipRect(r); p.setRenderHint(QPainter::Antialiasing,true);
     if((m_tx && m_config["fadeTx"].toBool()) || (!m_tx && m_config["fadeRx"].toBool())) { p.setOpacity(.25); }
     QFont font=p.font(); font.setPixelSize(m_config["fontSize"].toInt()); p.setFont(font);
+    const double textScale=m_face==Face::Anan?1:objectTextScale(r,{m_face==Face::Cross || m_face==Face::Contest?360.:260.,
+        m_face==Face::PowerSwr?144.:m_face==Face::Cross?260.:m_face==Face::Contest?280.:m_face==Face::Eye?180.:120.});
+    const double textSize=m_config["fontSize"].toInt()*textScale;
+    const bool signal=m_face==Face::SignalText;
+    const double contentHeight=qMax(0.0,r.height()-12*textScale);
+    const double titleWeight=m_config["showTitle"].toBool()?m_config["fontSize"].toInt():0;
+    const double mainWeight=m_config["showReadout"].toBool()?m_config["fontSize"].toInt():0;
+    const double peakWeight=m_config["showPeakValue"].toBool()?14:0;
+    const double totalWeight=qMax(1.0,titleWeight+mainWeight+peakWeight);
+    const double signalTitleHeight=contentHeight*titleWeight/totalWeight;
+    const double signalPeakHeight=contentHeight*peakWeight/totalWeight;
     if(layer==Layer::Background) {
         const QColor backdrop=color(m_config,"backdropColor");
         p.fillRect(r,m_face==Face::Anan && backdrop==QColor("#fff1eee2")?QColor(8,14,20):backdrop);
         if(m_face==Face::Anan || m_face==Face::Cross) { paintNeedles(p,r,true); }
         else if(m_config["showTitle"].toBool() && !m_vfo && !m_clock && m_face!=Face::PowerSwr) {
             p.setPen(color(m_config,"titleColor"));
-            const QRectF title=m_face==Face::SignalText ? QRectF(r.left()+4,r.top()+2,r.width()-8,QFontMetrics(font).height()) : r.adjusted(4,2,-4,0);
-            p.drawText(title,Qt::AlignTop|Qt::AlignHCenter,m_config["title"].toString());
+            const QRectF title=signal ? QRectF(r.left()+4*textScale,r.top()+2*textScale,r.width()-8*textScale,signalTitleHeight) :
+                QRectF(r.left()+4*textScale,r.top()+2*textScale,(m_face==Face::History && m_config["showReadout"].toBool()?r.width()*.66:r.width())-8*textScale,22*textScale);
+            drawObjectText(p,title,m_config["title"].toString(),textSize);
         }
     } else if(layer==Layer::OverlayDynamic) {
         if(m_face==Face::PowerSwr) { for(int i=0;i<2;++i) { paintBar(p,QRectF(r.left(),r.top()+r.height()*i/2,r.width(),r.height()/2),i); } }
@@ -986,30 +1078,29 @@ void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer l
         if(m_face==Face::History) { paintHistory(p,r); }
         if(m_face==Face::SignalText) {
             const Channel& c=m_channels.first();
-            const int titleHeight=m_config["showTitle"].toBool()?QFontMetrics(font).height():0;
-            QFont peakFont=font; peakFont.setPixelSize(14);
-            const int peakHeight=m_config["showPeakValue"].toBool()?QFontMetrics(peakFont).height():0;
-            const QRectF main(r.left()+8,r.top()+2+titleHeight,r.width()-16,r.height()-12-titleHeight-peakHeight);
+            const QRectF main(r.left()+8*textScale,r.top()+2*textScale+signalTitleHeight,r.width()-16*textScale,contentHeight-signalTitleHeight-signalPeakHeight);
             p.setPen(color(c.config,"color"));
-            if(m_config["showReadout"].toBool()) { p.drawText(main,Qt::AlignCenter,c.dynamics.hasReading()?signalReadout(c.dynamics.value()):"--"); }
-            font.setPixelSize(14); p.setFont(font); p.setPen(color(m_config,"lowColor"));
-            if(m_config["showPeakValue"].toBool()) { p.drawText(QRectF(r.left()+8,r.bottom()-8-peakHeight,r.width()-16,peakHeight),Qt::AlignBottom|Qt::AlignHCenter,"Peak "+(c.dynamics.hasReading()?signalReadout(c.dynamics.maxHistory()):QStringLiteral("--"))); }
-            if(c.config["showHistory"].toBool() && c.dynamics.hasReading()) { const double a=calibratedPoint(0,c.dynamics.minHistory()).x(),b=calibratedPoint(0,c.dynamics.maxHistory()).x(); p.fillRect(QRectF(r.left()+r.width()*a,r.bottom()-3,r.width()*(b-a),3),color(c.config,"historyColor")); }
-            if(c.config["peakHold"].toBool() && c.dynamics.hasReading()) { const double x=r.left()+r.width()*calibratedPoint(0,c.dynamics.maxHistory()).x(); p.setPen(QPen(color(c.config,"color"),2)); p.drawLine(QPointF(x,r.bottom()-8),QPointF(x,r.bottom())); }
+            if(m_config["showReadout"].toBool()) { drawObjectText(p,main,c.dynamics.hasReading()?signalReadout(c.dynamics.value()):"--",textSize); }
+            p.setPen(color(m_config,"lowColor"));
+            if(m_config["showPeakValue"].toBool()) { drawObjectText(p,QRectF(r.left()+8*textScale,r.bottom()-10*textScale-signalPeakHeight,r.width()-16*textScale,signalPeakHeight),"Peak "+(c.dynamics.hasReading()?signalReadout(c.dynamics.maxHistory()):QStringLiteral("--")),14*textScale); }
+            if(c.config["showHistory"].toBool() && c.dynamics.hasReading()) { const double a=calibratedPoint(0,c.dynamics.minHistory()).x(),b=calibratedPoint(0,c.dynamics.maxHistory()).x(); p.fillRect(QRectF(r.left()+r.width()*a,r.bottom()-3*textScale,r.width()*(b-a),3*textScale),color(c.config,"historyColor")); }
+            if(c.config["peakHold"].toBool() && c.dynamics.hasReading()) { const double x=r.left()+r.width()*calibratedPoint(0,c.dynamics.maxHistory()).x(); p.setPen(QPen(color(c.config,"color"),2)); p.drawLine(QPointF(x,r.bottom()-8*textScale),QPointF(x,r.bottom())); }
         }
+        const TransientChildLayout childLayout(internalItems(),m_bands,m_modes);
         layoutChildren(width,height);
         for(MeterItem* child:internalItems()) { if(child!=m_clock) { child->paint(p,width,height); } }
         if(m_clock) {
-            const QRectF clock(m_clock->x()*width,m_clock->y()*height,m_clock->itemWidth()*width,m_clock->itemHeight()*height); const QString mode=m_config["clockMode"].toString(); const QDateTime utc=QDateTime::currentDateTimeUtc(); font.setPixelSize(qBound(12,qMin(m_config["fontSize"].toInt(),int(clock.height()/4)),22)); p.setFont(font); p.setPen(m_clock->timeColour());
+            const QRectF clock(m_clock->x()*width,m_clock->y()*height,m_clock->itemWidth()*width,m_clock->itemHeight()*height); const QString mode=m_config["clockMode"].toString(); const QDateTime utc=QDateTime::currentDateTimeUtc(); p.setPen(m_clock->timeColour());
             const auto display=[&](QDateTime time,QString title,QRectF rect) {
                 const QString fmt=m_config["show24Hour"].toBool()?"HH:mm:ss":"hh:mm:ss AP";
                 const bool titleOn=m_config["showTitle"].toBool(),dateOn=m_config["showDate"].toBool();
                 const int lines=1+int(titleOn)+int(dateOn); const double lineHeight=rect.height()/lines;
-                QFont clockFont=font; clockFont.setPixelSize(qBound(10,qMin(m_config["fontSize"].toInt(),int(lineHeight)-2),22)); p.setFont(clockFont);
+                // Child clock roles use the owning face scale, then measured fitting.
+                // Contest already assigns a compact child rectangle; do not multiply twice.
                 double top=rect.top();
-                if(titleOn) { p.setPen(m_clock->typeTitleColour()); p.drawText(QRectF(rect.left(),top,rect.width(),lineHeight),Qt::AlignCenter,title); top+=lineHeight; }
-                p.setPen(m_clock->timeColour()); p.drawText(QRectF(rect.left(),top,rect.width(),lineHeight),Qt::AlignCenter,time.toString(fmt)); top+=lineHeight;
-                if(dateOn) { p.setPen(m_clock->dateColour()); p.drawText(QRectF(rect.left(),top,rect.width(),lineHeight),Qt::AlignCenter,time.toString("yyyy-MM-dd")); }
+                if(titleOn) { p.setPen(m_clock->typeTitleColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight),title,textSize); top+=lineHeight; }
+                p.setPen(m_clock->timeColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight),time.toString(fmt),textSize); top+=lineHeight;
+                if(dateOn) { p.setPen(m_clock->dateColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight),time.toString("yyyy-MM-dd"),textSize); }
             };
             if(mode=="Both") { display(utc.toLocalTime(),"Local",QRectF(clock.left(),clock.top(),clock.width()/2,clock.height())); display(utc,"UTC",QRectF(clock.center().x(),clock.top(),clock.width()/2,clock.height())); } else { display(mode=="UTC"?utc:utc.toLocalTime(),mode,clock); }
         }
@@ -1017,11 +1108,11 @@ void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer l
     p.restore();
 }
 bool CompositePresetItem::handleMousePress(QMouseEvent* event,int w,int h) {
-    if(m_inert) { return false; } layoutChildren(w,h);
+    if(m_inert) { return false; } const TransientChildLayout childLayout(internalItems(),m_bands,m_modes); layoutChildren(w,h);
     if(m_face==Face::Anan && m_tx && ananGroupControlRect(w,h).contains(event->position())) { m_config["displayGroup"]=(m_config["displayGroup"].toInt()+1)%5; markPresentationDirty(true); return true; }
     for(MeterItem* child:internalItems()) { if(child->hitTest(event->position(),w,h) && child->handleMousePress(event,w,h)) { return true; } } return false;
 }
-bool CompositePresetItem::handleMouseRelease(QMouseEvent* e,int w,int h) { if(m_inert) { return false; } layoutChildren(w,h); bool result=false; for(MeterItem* child:internalItems()) { result=child->handleMouseRelease(e,w,h)||result; } return result; }
-bool CompositePresetItem::handleMouseMove(QMouseEvent* e,int w,int h) { if(m_inert) { return false; } layoutChildren(w,h); bool result=false; for(MeterItem* child:internalItems()) { result=child->handleMouseMove(e,w,h)||result; } return result; }
-bool CompositePresetItem::handleWheel(QWheelEvent* e,int w,int h) { if(m_inert) { return false; } layoutChildren(w,h); for(MeterItem* child:internalItems()) { if(child->hitTest(e->position(),w,h) && child->handleWheel(e,w,h)) { return true; } } return false; }
+bool CompositePresetItem::handleMouseRelease(QMouseEvent* e,int w,int h) { if(m_inert) { return false; } const TransientChildLayout childLayout(internalItems(),m_bands,m_modes); layoutChildren(w,h); bool result=false; for(MeterItem* child:internalItems()) { result=child->handleMouseRelease(e,w,h)||result; } return result; }
+bool CompositePresetItem::handleMouseMove(QMouseEvent* e,int w,int h) { if(m_inert) { return false; } const TransientChildLayout childLayout(internalItems(),m_bands,m_modes); layoutChildren(w,h); bool result=false; for(MeterItem* child:internalItems()) { result=child->handleMouseMove(e,w,h)||result; } return result; }
+bool CompositePresetItem::handleWheel(QWheelEvent* e,int w,int h) { if(m_inert) { return false; } const TransientChildLayout childLayout(internalItems(),m_bands,m_modes); layoutChildren(w,h); for(MeterItem* child:internalItems()) { if(child->hitTest(e->position(),w,h) && child->handleWheel(e,w,h)) { return true; } } return false; }
 } // namespace NereusSDR
