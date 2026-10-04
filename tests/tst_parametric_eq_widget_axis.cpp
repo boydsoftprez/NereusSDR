@@ -66,6 +66,7 @@ public:
 class TestParametricEqAxis : public QObject {
     Q_OBJECT
 private slots:
+    void editorPresentationContract();
     // Linear axis -- 0..4000 Hz.
     void linearXFromFreqMidpoint();
     void linearFreqFromXRoundtrip();
@@ -306,6 +307,16 @@ void TestParametricEqAxis::enforceOrderingSortsByFreq() {
     QCOMPARE(w.pointsConst().back().frequencyHz,  4000.0);
     QCOMPARE(w.pointsConst().front().bandId, 1);
     QCOMPARE(w.pointsConst().back().bandId,  10);
+}
+
+void TestParametricEqAxis::editorPresentationContract() {
+    ParametricEqAxisTester a, b;
+    a.resize(800, 400); b.resize(800, 400);
+    a.setDbMin(0); a.setDbMax(16);
+    b.setDbMin(-24); b.setDbMax(24);
+    a.setMinimumPlotGutters(100, 50); b.setMinimumPlotGutters(100, 50);
+    QCOMPARE(a.plotRect().left(), b.plotRect().left());
+    QCOMPARE(a.plotRect().right(), b.plotRect().right());
 }
 
 QTEST_MAIN(TestParametricEqAxis)

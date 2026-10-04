@@ -6,6 +6,8 @@
 #include <QPushButton>
 #include <QLineEdit>
 #include <QLabel>
+#include <QFontMetricsF>
+#include <QStatusBar>
 #include <QDir>
 #include <QCryptographicHash>
 #include <QTemporaryDir>
@@ -739,6 +741,19 @@ private slots:
         client->remoteDevices()->applyObject("devices", {{2, "stationLabel", MirrorWireKind::Utf8,
             QStringLiteral("KG4VCF/Renamed_Core")}});
         QTRY_COMPARE_WITH_TIMEOUT(label->text(), QStringLiteral("KG4VCF/Renamed_Core"), 1000);
+        // The footer must allocate each visible row's nominal font box. A
+        // fixed footer could squeeze the Core name below its intrinsic minimum
+        // after the two connection-path rows became visible.
+        for (const char* name : {"StationBlock_Label", "StationBlock_ControlPath", "StationBlock_AudioPath"}) {
+            auto* row = window->findChild<QLabel*>(QString::fromLatin1(name));
+            QVERIFY(row); QVERIFY(row->isVisible());
+            QTRY_VERIFY2_WITH_TIMEOUT(row->contentsRect().height() >= row->minimumSizeHint().height(),
+                qPrintable(QStringLiteral("%1: contents %2, minimum %3, parent %4 / hint %5 / minimum %6")
+                    .arg(row->objectName()).arg(row->contentsRect().height()).arg(row->minimumSizeHint().height())
+                    .arg(row->parentWidget()->height()).arg(row->parentWidget()->sizeHint().height())
+                    .arg(row->parentWidget()->minimumSizeHint().height())), 1000);
+            QVERIFY2(row->contentsRect().height() >= QFontMetricsF(row->font()).height(), name);
+        }
         QVERIFY(controller.coreTargetStore().target(QStringLiteral("one"))->lastKnownCoreName);
         QCOMPARE(controller.coreTargetStore().target(QStringLiteral("one"))->lastKnownCoreName->name, QStringLiteral("KG4VCF/Renamed_Core"));
         QVERIFY(controller.coreTargetStore().upsert(saved(QStringLiteral("two"), 'b')));
@@ -756,6 +771,9 @@ private slots:
         client->disconnectFromStation(QStringLiteral("fixture disconnected"));
         QTRY_VERIFY_WITH_TIMEOUT(label->text().contains(QStringLiteral("last known")), 1000);
         QVERIFY(label->text().contains(QStringLiteral("KG4VCF/Renamed_Core")));
+        // Removing the audio row must restore the original two-row baseline,
+        // rather than retaining the larger authenticated banner allocation.
+        QTRY_COMPARE_WITH_TIMEOUT(window->statusBar()->height(), 46, 1000);
         QVERIFY(hasText(*audio, QStringLiteral("No authenticated Core connection")));
         controller.shutdown();
     }

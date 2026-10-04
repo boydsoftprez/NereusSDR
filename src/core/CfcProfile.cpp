@@ -1,3 +1,5 @@
+// 2026-10-02 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+// accept native Thetis PascalCase snapshots alongside the current Core format.
 // CFC paired-profile codec (NereusSDR).
 // Ported from Thetis frmCFCConfig.cs:333-392,492-557 and
 // ucParametricEq.cs:1353-1452 [v2.10.3.15].
@@ -51,6 +53,7 @@ mw0lge@grange-lane.co.uk
 #include "core/ParaEqEnvelope.h"
 
 #include <QJsonArray>
+#include <QHash>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -64,9 +67,28 @@ namespace {
 constexpr qsizetype kMaxEncodedChars = 16 * 1024;
 constexpr qsizetype kMaxDecodedBytes = 64 * 1024;
 
+// Native edit snapshots preserve Thetis PascalCase names. Current Core and
+// remote clients retain the established snake_case paired-curve contract.
+QJsonValue curveValue(const QJsonObject& o, const char* key)
+{
+    const QString snake = QString::fromLatin1(key);
+    if (o.contains(snake)) { return o.value(snake); }
+    static const QHash<QString, QString> names{
+        {QStringLiteral("band_count"), QStringLiteral("BandCount")},
+        {QStringLiteral("parametric_eq"), QStringLiteral("ParametricEQ")},
+        {QStringLiteral("global_gain_db"), QStringLiteral("GlobalGainDb")},
+        {QStringLiteral("frequency_min_hz"), QStringLiteral("FrequencyMinHz")},
+        {QStringLiteral("frequency_max_hz"), QStringLiteral("FrequencyMaxHz")},
+        {QStringLiteral("points"), QStringLiteral("Points")},
+        {QStringLiteral("frequency_hz"), QStringLiteral("FrequencyHz")},
+        {QStringLiteral("gain_db"), QStringLiteral("GainDb")},
+        {QStringLiteral("q"), QStringLiteral("Q")}};
+    return o.value(names.value(snake));
+}
+
 bool number(const QJsonObject& o, const char* key, double lo, double hi, double& out)
 {
-    const QJsonValue v = o.value(QLatin1String(key));
+    const QJsonValue v = curveValue(o, key);
     if (!v.isDouble()) { return false; }
     const double n = v.toDouble();
     if (!std::isfinite(n) || n < lo || n > hi) { return false; }
@@ -83,9 +105,9 @@ bool curve(const QString& json, double gainMin, double gainMax,
     const QJsonDocument document = QJsonDocument::fromJson(json.toUtf8(), &error);
     if (error.error != QJsonParseError::NoError || !document.isObject()) { return false; }
     const QJsonObject root = document.object();
-    const QJsonValue countValue = root.value(QStringLiteral("band_count"));
-    const QJsonValue flagValue = root.value(QStringLiteral("parametric_eq"));
-    const QJsonValue pointsValue = root.value(QStringLiteral("points"));
+    const QJsonValue countValue = curveValue(root, "band_count");
+    const QJsonValue flagValue = curveValue(root, "parametric_eq");
+    const QJsonValue pointsValue = curveValue(root, "points");
     if (!countValue.isDouble() || !flagValue.isBool() || !pointsValue.isArray()) { return false; }
     const int count = countValue.toInt(-1);
     const QJsonArray points = pointsValue.toArray();

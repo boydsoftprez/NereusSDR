@@ -506,6 +506,8 @@ column 2 (not column 1) so the header-verifier script does not scan them.
 | Setup → Network → TCI Server page — NereusSDR-original Setup UI; 6 group boxes, 17 AppSettings keys | src/gui/setup/CatNetworkSetupPages.cpp | NereusSDR-native Setup page; TCI server settings surfaced from Thetis frmOptions/TCIServer section but no .Designer.cs code ported |
 | Same as .cpp | src/gui/setup/CatNetworkSetupPages.h | NereusSDR-original Setup page header; see .cpp |
 
+| src/core/CfcEditProfile.h | Project Files/Source/Console/frmCFCConfig.cs; Project Files/Source/Console/ucParametricEq.cs | 333-392; 492-575; 1460-1486 | port | thetis-samphire | Typed CFC two-curve state and codec; validated 5/10/18 bands; Thetis PascalCase JSON and gzip envelope, legacy Nereus snake_case reads [v2.10.3.15] |
+| src/core/CfcEditProfile.cpp | Project Files/Source/Console/frmCFCConfig.cs; Project Files/Source/Console/ucParametricEq.cs | 333-392; 492-575; 1460-1486 | port | thetis-samphire | Two complete graphs; saved Hz3/dB1/Q2 precision; preserve opaque unknown blobs in model; stacked verbatim headers [v2.10.3.15] |
 ### 2026-10-02 Containers and Objects Task 9
 
 The container settings and existing BaseItemEditor/CompositePresetItem adapters

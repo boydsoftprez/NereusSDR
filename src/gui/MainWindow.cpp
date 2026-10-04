@@ -9219,12 +9219,13 @@ void MainWindow::populateDefaultMeter()
                         || markerOnlyPlacement(slice->sliceIndex())) {
                         return nullptr;
                     }
-                    // 2026-10-02 KG4VCF, Codex: restore the TX carry's inherited
-                    // resolver. Empty Core keys use this slice's actual host,
-                    // never the active pan or another receiver's retained trace.
+                    // Core's primary slice may have no panKey. Use its actual
+                    // window host, as subscriptions do, never the active pan.
                     PanadapterApplet* pan = m_panStack->panadapter(windowPanFor(slice));
                     SliceModel* displayed = pan
                         ? m_radioModel->sliceById(pan->activeSliceIndex()) : nullptr;
+                    // Co-hosted slices may measure the same receiver trace;
+                    // a marker for a different receiver may not borrow it.
                     if (!displayed || displayed->streamIndex() != slice->streamIndex()
                         || displayed->streamEpoch() != slice->streamEpoch()) {
                         return nullptr;
@@ -11559,9 +11560,11 @@ QString MainWindow::tnfAddRejectedNotice(const QString& reason)
 
 void MainWindow::buildStatusBar()
 {
-    // AetherSDR double-height status bar (46px fixed height, 3-section layout)
+    // Keep the double-height baseline while allowing the layout's intrinsic
+    // minimum to fit all three Core banner rows with their resolved fonts.
     QStatusBar* sb = statusBar();
-    sb->setFixedHeight(46);
+    sb->setMinimumHeight(46);
+    sb->installEventFilter(this);
     sb->setSizeGripEnabled(false);
     sb->setStyleSheet(QStringLiteral(
         "QStatusBar { background: #0a0a14; border-top: 1px solid #203040; }"
@@ -14705,6 +14708,13 @@ void MainWindow::resizeEvent(QResizeEvent* event)
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    if (auto* bar = qobject_cast<QStatusBar*>(watched); bar && event->type() == QEvent::LayoutRequest) {
+        // An explicit baseline minimum suppresses QLayout's automatic minimum
+        // propagation. Retain the baseline, but follow the actual row/font
+        // minima when the connected Core adds its third banner line.
+        bar->setMinimumHeight(std::max(46, bar->minimumSizeHint().height()));
+    }
+
     if (!m_shuttingDown
         && (qobject_cast<ContainerWidget*>(watched)
             || qobject_cast<MeterWidget*>(watched))
@@ -15256,6 +15266,14 @@ void MainWindow::requestTransmitSlice(int sliceId)
 {
     if (!m_radioModel || !transmitSliceChoiceReason().isEmpty()) {
         return;
+    }
+    if (qEnvironmentVariableIntValue("NEREUS_TRACE_RX_HISTORY") == 1) {
+        const SliceModel* requested = m_radioModel->sliceById(sliceId);
+        // Fixed numeric event correlates the operator's choice with history
+        // boundaries. It does not record payloads or change the request.
+        qCInfo(lcSpectrum).nospace() << "RX_HISTORY reason=16 slice=" << sliceId
+            << " source=" << (requested ? requested->streamIndex() : -1)
+            << " epoch=" << (requested ? requested->streamEpoch() : 0);
     }
     if (!m_radioModel->ownsLocalDsp()) {
         if (m_stationClient) { m_stationClient->requestTxSlice(sliceId); }

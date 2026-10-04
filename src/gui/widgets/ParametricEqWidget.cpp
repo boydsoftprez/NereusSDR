@@ -10,6 +10,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Native editor presentation, width gestures and exact runtime
+//                 snapshots by J.J. Boyd (KG4VCF), assisted by OpenAI Codex.
 //   2026-04-30 — Reimplemented in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.  Phase 3M-3a-ii follow-up
@@ -76,6 +78,10 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ParametricEqWidget.h"
+#include "gui/StyleConstants.h"
+#include <QDataStream>
+#include <QSet>
+#include <QScopeGuard>
 
 #include "core/ParaEqCurve.h"
 
@@ -104,6 +110,190 @@ mw0lge@grange-lane.co.uk
 #include <limits>
 
 namespace NereusSDR {
+
+// NereusSDR-native editor conveniences. The handles describe the existing
+// configured Gaussian, using the same FWHM and minimum as responseDbAtFrequency.
+void ParametricEqWidget::setEditorPresentationEnabled(bool enabled) {
+    if (m_editorPresentationEnabled == enabled) { return; }
+    cancelEditGesture();
+    m_editorPresentationEnabled = enabled;
+    if (enabled) { setAccessibleName(tr("Configured equalizer curve")); }
+    update();
+}
+
+void ParametricEqWidget::setMinimumPlotGutters(int leftPx, int rightPx) {
+    m_minimumPlotLeft = std::max(0, leftPx);
+    m_minimumPlotRight = std::max(0, rightPx);
+    update();
+}
+
+QRectF ParametricEqWidget::plotRect() const { return computePlotRect(); }
+
+void ParametricEqWidget::beginEditGesture() {
+    if (!m_editGestureStarted) {
+        m_editGestureStarted = true;
+        emit editStarted();
+    }
+}
+
+void ParametricEqWidget::cancelEditGesture() {
+    m_draggingPoint = false;
+    m_draggingGlobalGain = false;
+    m_widthDragSide = 0;
+    m_widthDragBandId = -1;
+    m_dragIndex = -1;
+    m_dragDirtyPoint = false;
+    m_dragDirtyGlobalGain = false;
+    m_dragDirtySelectedIndex = false;
+    // Authoritative replacement abandons the gesture, without a commit signal
+    // that could dispatch the old state back into the model.
+    m_editGestureStarted = false;
+    unsetCursor();
+    update();
+}
+
+QPointF ParametricEqWidget::editorPointPosition(const QRect& plot, int index) const {
+    const EqPoint& point = m_points.at(index);
+    const double marginX = std::min(12.0, (plot.width()-1) / 2.0);
+    const double marginY = std::min(12.0, (plot.height()-1) / 2.0);
+    return QPointF(clamp(xFromFreq(plot, point.frequencyHz), plot.left()+marginX, plot.right()-marginX),
+                   clamp(yFromDb(plot, point.gainDb), plot.top()+marginY, plot.bottom()-marginY));
+}
+
+QPoint ParametricEqWidget::widthHandlePosition(const QRect& plot, int side) const {
+    const EqPoint& point = m_points.at(m_selectedIndex);
+    const double span = m_frequencyMaxHz - m_frequencyMinHz;
+    const double halfWidth = std::max(span / (3.0 * clamp(point.q, m_qMin, m_qMax)), span / 6000.0) / 2.0;
+    const int x = qRound(xFromFreq(plot, clamp(point.frequencyHz + side * halfWidth,
+                                              m_frequencyMinHz, m_frequencyMaxHz)));
+    const int leftX = qRound(xFromFreq(plot, clamp(point.frequencyHz - halfWidth,
+                                                  m_frequencyMinHz, m_frequencyMaxHz)));
+    const int rightX = qRound(xFromFreq(plot, clamp(point.frequencyHz + halfWidth,
+                                                   m_frequencyMinHz, m_frequencyMaxHz)));
+    const int centerY = qRound(yFromDb(plot, point.gainDb));
+    const int primaryY = qBound(plot.top() + 6, centerY + (centerY > plot.bottom()-28 ? -22 : 22), plot.bottom()-6);
+    const int secondaryY = primaryY > plot.bottom()-28 ? primaryY-22 : primaryY+22;
+    return QPoint(qBound(plot.left(), x, plot.right()), side < 0 && rightX-leftX < 18 ? secondaryY : primaryY);
+}
+
+int ParametricEqWidget::hitTestWidthHandle(const QRect& plot, QPoint pt) const {
+    if (!m_editorPresentationEnabled || !m_parametricEq || m_selectedIndex < 0
+        || m_selectedIndex >= m_points.size()) { return 0; }
+    for (int side : {-1, 1}) {
+        const QPoint delta = pt - widthHandlePosition(plot, side);
+        if (qAbs(delta.x()) <= 8 && qAbs(delta.y()) <= 8) { return side; }
+    }
+    return 0;
+}
+
+void ParametricEqWidget::drawWidthHandles(QPainter& g, const QRect& plot) {
+    if (!m_editorPresentationEnabled || !m_parametricEq || m_selectedIndex < 0
+        || m_selectedIndex >= m_points.size()) { return; }
+    g.save();
+    g.setPen(QPen(QColor(Style::kAccent), 1.5));
+    g.setBrush(QColor(Style::kPanelBg));
+    const EqPoint& point = m_points.at(m_selectedIndex);
+    const QPointF center(xFromFreq(plot, point.frequencyHz), yFromDb(plot, point.gainDb));
+    for (int side : {-1, 1}) {
+        const QPoint handle = widthHandlePosition(plot, side);
+        g.drawLine(center, handle);
+        g.drawRoundedRect(QRectF(handle.x()-5, handle.y()-5, 10, 10), 2, 2);
+    }
+    g.restore();
+}
+
+// NereusSDR-original exact editor loading, following the endpoint contract in
+// Thetis ucParametricEq.cs:1542-1565,3280-3281 [v2.10.3.15]. Legacy JSON stays unchanged.
+bool ParametricEqWidget::setEditorCurveState(const EqJsonState& curve) {
+    QByteArray state;
+    QDataStream stream(&state, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << quint32(0x4e455145) << quint16(1) << qint32(curve.bandCount)
+           << curve.frequencyMinHz << curve.frequencyMaxHz << m_dbMin << m_dbMax
+           << m_qMin << m_qMax << curve.globalGainDb << curve.parametricEq << m_logScale
+           << m_minPointSpacingHz << m_allowPointReorder << quint32(curve.points.size());
+    for (int i = 0; i < curve.points.size(); ++i) {
+        const EqPoint& point = curve.points[i];
+        stream << qint32(point.bandId > 0 ? point.bandId : i + 1) << point.bandColor
+               << point.frequencyHz << point.gainDb << point.q;
+    }
+    return restoreEditState(state);
+}
+
+QByteArray ParametricEqWidget::saveEditState() const {
+    QByteArray state;
+    QDataStream stream(&state, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << quint32(0x4e455145) << quint16(1) << qint32(m_bandCount)
+           << m_frequencyMinHz << m_frequencyMaxHz << m_dbMin << m_dbMax
+           << m_qMin << m_qMax << m_globalGainDb << m_parametricEq << m_logScale
+           << m_minPointSpacingHz << m_allowPointReorder << quint32(m_points.size());
+    for (const EqPoint& point : m_points) {
+        stream << qint32(point.bandId) << point.bandColor << point.frequencyHz << point.gainDb << point.q;
+    }
+    return state;
+}
+
+bool ParametricEqWidget::restoreEditState(const QByteArray& state) {
+    QDataStream stream(state);
+    stream.setVersion(QDataStream::Qt_6_0);
+    quint32 magic = 0, size = 0;
+    quint16 version = 0;
+    qint32 count = 0;
+    double fMin = 0, fMax = 0, dMin = 0, dMax = 0, qMin = 0, qMax = 0, global = 0, spacing = 0;
+    bool parametric = false, logarithmic = false, reorder = false;
+    stream >> magic >> version >> count >> fMin >> fMax >> dMin >> dMax
+           >> qMin >> qMax >> global >> parametric >> logarithmic >> spacing >> reorder >> size;
+    const auto finite = [](double value) { return std::isfinite(value); };
+    if (stream.status() != QDataStream::Ok || magic != 0x4e455145 || version != 1
+        || count < 2 || count > 256 || size != quint32(count)
+        || !finite(fMin) || !finite(fMax) || fMax <= fMin
+        || !finite(dMin) || !finite(dMax) || dMax <= dMin
+        || !finite(qMin) || !finite(qMax) || qMin <= 0 || qMax < qMin
+        || !finite(global) || global < dMin || global > dMax
+        || !finite(spacing) || spacing < 0) { return false; }
+    QVector<EqPoint> points;
+    QSet<int> ids;
+    for (quint32 i = 0; i < size; ++i) {
+        EqPoint point;
+        qint32 id = 0;
+        stream >> id >> point.bandColor >> point.frequencyHz >> point.gainDb >> point.q;
+        point.bandId = id;
+        if (stream.status() != QDataStream::Ok || id <= 0 || ids.contains(id)
+            || !finite(point.frequencyHz) || point.frequencyHz < fMin || point.frequencyHz > fMax
+            || !finite(point.gainDb) || point.gainDb < dMin || point.gainDb > dMax
+            || !finite(point.q) || point.q < qMin || point.q > qMax
+            || (!points.isEmpty() && point.frequencyHz < points.last().frequencyHz)) { return false; }
+        ids.insert(id);
+        points.append(point);
+    }
+    if (!stream.atEnd() || points.first().frequencyHz != fMin || points.last().frequencyHz != fMax) { return false; }
+    const int selectedId = m_selectedIndex >= 0 && m_selectedIndex < m_points.size()
+                               ? m_points.at(m_selectedIndex).bandId : -1;
+    const bool changed = saveEditState() != state;
+    cancelEditGesture();
+    m_bandCount = count;
+    m_frequencyMinHz = fMin;
+    m_frequencyMaxHz = fMax;
+    m_dbMin = dMin;
+    m_dbMax = dMax;
+    m_qMin = qMin;
+    m_qMax = qMax;
+    m_globalGainDb = global;
+    m_parametricEq = parametric;
+    m_logScale = logarithmic;
+    m_minPointSpacingHz = spacing;
+    m_allowPointReorder = reorder;
+    m_points = points;
+    m_selectedIndex = indexFromBandId(selectedId);
+    if (changed) {
+        raisePointsChanged(false);
+        raiseGlobalGainChanged(false);
+        raiseSelectedIndexChanged(false);
+    }
+    update();
+    return true;
+}
 
 // From Thetis ucParametricEq.cs:254-274 [v2.10.3.13] -- _default_band_palette.
 // 18 RGB triples, verbatim.  Ports byte-for-byte; do not reorder, recolor, or trim.
@@ -346,8 +536,8 @@ double ParametricEqWidget::dbFromY(const QRect& plot, int y) const {
 // From Thetis ucParametricEq.cs:2042-2059 [v2.10.3.13].
 QRect ParametricEqWidget::computePlotRect() const {
     QRect r = rect();
-    int left   = computedPlotMarginLeft();
-    int right  = computedPlotMarginRight();
+    int left   = std::max(computedPlotMarginLeft(), m_minimumPlotLeft);
+    int right  = std::max(computedPlotMarginRight(), m_minimumPlotRight);
     int bottom = computedPlotMarginBottom();
     int x = r.x() + left;
     int y = r.y() + m_plotMarginTop;
@@ -414,6 +604,11 @@ int ParametricEqWidget::hitTestPoint(const QRect& plot, QPoint pt) const {
         const auto& p = m_points.at(i);
         float x = xFromFreq(plot, p.frequencyHz);
         float y = yFromDb(plot, p.gainDb);
+        if (m_editorPresentationEnabled) {
+            const QPointF marker = editorPointPosition(plot, i);
+            x = marker.x();
+            y = marker.y();
+        }
         double dx = double(pt.x()) - double(x);
         double dy = double(pt.y()) - double(y);
         double d2 = dx * dx + dy * dy;
@@ -802,7 +997,7 @@ void ParametricEqWidget::paintEvent(QPaintEvent* /*event*/) {
     QRect client = rect();
     if (client.width() < 2 || client.height() < 2) return;
 
-    g.fillRect(client, QColor(25, 25, 25));   // BackColor (ucParametricEq.cs:443)
+    g.fillRect(client, m_editorPresentationEnabled ? QColor(Style::kAppBg) : QColor(25, 25, 25));   // BackColor (ucParametricEq.cs:443)
 
     QRect plot = computePlotRect();
     if (plot.width() < 2 || plot.height() < 2) return;
@@ -814,6 +1009,7 @@ void ParametricEqWidget::paintEvent(QPaintEvent* /*event*/) {
 
     if (m_showBandShading) drawBandShading(g, plot);
     drawCurve (g, plot);
+    drawWidthHandles(g, plot);
     drawPoints(g, plot);
 
     g.restore();
@@ -827,11 +1023,11 @@ void ParametricEqWidget::paintEvent(QPaintEvent* /*event*/) {
 
 // From Thetis ucParametricEq.cs:2061-2117 [v2.10.3.13].
 void ParametricEqWidget::drawGrid(QPainter& g, const QRect& plot) {
-    g.fillRect(plot, QColor(18, 18, 18));
+    g.fillRect(plot, m_editorPresentationEnabled ? QColor(Style::kPanelBg) : QColor(18, 18, 18));
 
     drawBarChart(g, plot);
 
-    QPen gridPen(QColor(45, 45, 45), 1.0);
+    QPen gridPen(m_editorPresentationEnabled ? QColor(Style::kBorderSubtle) : QColor(45, 45, 45), 1.0);
     g.setPen(gridPen);
 
     if (m_logScale) {
@@ -960,6 +1156,7 @@ void ParametricEqWidget::drawBandShading(QPainter& g, const QRect& plot) {
         float baselineY = yFromDb(plot, 0.0);
 
         for (int band = 0; band < m_points.size(); ++band) {
+            if (m_editorPresentationEnabled && band != m_selectedIndex) { continue; }
             const EqPoint& p = m_points.at(band);
             if (std::fabs(p.gainDb) < 0.000001) continue;
 
@@ -978,6 +1175,10 @@ void ParametricEqWidget::drawBandShading(QPainter& g, const QRect& plot) {
                                  m_bandShadeColor.green(),
                                  m_bandShadeColor.blue(),
                                  m_bandShadeAlpha);
+            }
+            if (m_editorPresentationEnabled) {
+                const QColor accent(Style::kAccent);
+                fillCol = QColor(accent.red(), accent.green(), accent.blue(), m_bandShadeAlpha);
             }
 
             QPolygonF poly;
@@ -1074,9 +1275,16 @@ void ParametricEqWidget::drawBandShading(QPainter& g, const QRect& plot) {
             c0 = m_bandShadeColor;
             c1 = m_bandShadeColor;
         }
+        if (m_editorPresentationEnabled) {
+            c0 = QColor(Style::kAccent);
+            c1 = c0;
+        }
 
-        QColor a0(c0.red(), c0.green(), c0.blue(), m_bandShadeAlpha);
-        QColor a1(c1.red(), c1.green(), c1.blue(), m_bandShadeAlpha);
+        const int alpha = m_editorPresentationEnabled
+                              && (m_selectedIndex < 0 || (i != m_selectedIndex && i != m_selectedIndex + 1))
+                              ? 0 : m_bandShadeAlpha;
+        QColor a0(c0.red(), c0.green(), c0.blue(), alpha);
+        QColor a1(c1.red(), c1.green(), c1.blue(), alpha);
 
         QLinearGradient grad(QPointF(x0, 0.0), QPointF(x1, 0.0));
         grad.setColorAt(0.0, a0);
@@ -1118,7 +1326,7 @@ void ParametricEqWidget::drawCurve(QPainter& g, const QRect& plot) {
         pts.append(QPointF(x, y));
     }
 
-    QPen curvePen(Qt::white, 2.0);
+    QPen curvePen(m_editorPresentationEnabled ? QColor(Style::kAccent) : QColor(Qt::white), m_editorPresentationEnabled ? 2.5 : 2.0);
     g.setPen(curvePen);
     g.setBrush(Qt::NoBrush);
     g.drawPolyline(pts.constData(), pts.size());
@@ -1153,22 +1361,34 @@ void ParametricEqWidget::drawPoints(QPainter& g, const QRect& plot) {
 
         float x = xFromFreq(plot, p.frequencyHz);
         float y = yFromDb  (plot, p.gainDb);
+        if (m_editorPresentationEnabled) {
+            const QPointF marker = editorPointPosition(plot, i);
+            x = marker.x();
+            y = marker.y();
+        }
 
         bool selected = (i == m_selectedIndex);
 
-        QColor dotCol = getPointDisplayColor(i);
-
-        float r = float(m_pointRadius);
+        float r = float(m_editorPresentationEnabled ? 10 : m_pointRadius);
         if (selected) r = r + 1.0f;
+        if (m_editorPresentationEnabled) {
+            // Opt-in native styling leaves the stored band palette untouched.
+            g.setPen(QPen(QColor(selected ? Style::kAccent : Style::kTextSecondary), 1.5));
+            g.setBrush(selected ? QBrush(QColor(Style::kAccent)) : QBrush(Qt::NoBrush));
+            g.drawEllipse(QPointF(x, y), r, r);
+            g.setPen(QColor(selected ? Style::kPanelBg : Style::kTextPrimary));
+            g.drawText(QRectF(x-r, y-r, 2*r, 2*r), Qt::AlignCenter, QString::number(p.bandId));
+        } else {
+            QColor dotCol = getPointDisplayColor(i);
+            g.setBrush(QBrush(dotCol));
+            g.setPen(Qt::NoPen);
+            g.drawEllipse(QPointF(x, y), r, r);
 
-        g.setBrush(QBrush(dotCol));
-        g.setPen(Qt::NoPen);
-        g.drawEllipse(QPointF(x, y), r, r);
-
-        QPen outline(QColor(35, 35, 35), 1.0);
-        g.setPen(outline);
-        g.setBrush(Qt::NoBrush);
-        g.drawEllipse(QPointF(x, y), r, r);
+            QPen outline(QColor(35, 35, 35), 1.0);
+            g.setPen(outline);
+            g.setBrush(Qt::NoBrush);
+            g.drawEllipse(QPointF(x, y), r, r);
+        }
 
         if (m_showDotReadings && m_draggingPoint && i == m_dragIndex) {
             drawDotReading(g, plot, p, x, y, r);
@@ -1259,14 +1479,20 @@ void ParametricEqWidget::drawDotReading(QPainter& g, const QRect& plot,
 
 // From Thetis ucParametricEq.cs:2505-2599 [v2.10.3.13].
 void ParametricEqWidget::drawAxisScales(QPainter& g, const QRect& plot) {
-    QPen   tickPen(m_axisTickColor, 1.0);
-    QBrush textBrush(m_axisTextColor);
+    QPen   tickPen(m_editorPresentationEnabled ? QColor(Style::kBorderSubtle) : m_axisTickColor, 1.0);
+    QBrush textBrush(m_editorPresentationEnabled ? QColor(Style::kTextSecondary) : m_axisTextColor);
 
     g.setPen(tickPen);
 
     QFontMetrics fm(font());
 
     double stepDb  = getYAxisStepDb();
+    // Native editor labels adapt to short plots; keep the configured step
+    // and legacy renderer unchanged, including their grid/axis math.
+    const int labelGap = fm.height() + 2;
+    if (m_editorPresentationEnabled && m_dbMax > m_dbMin) {
+        while (stepDb * plot.height() / (m_dbMax - m_dbMin) < labelGap) { stepDb *= 2; }
+    }
     double startDb = std::ceil(m_dbMin / stepDb) * stepDb;
 
     bool drewMin = false;
@@ -1287,6 +1513,9 @@ void ParametricEqWidget::drawAxisScales(QPainter& g, const QRect& plot) {
     };
 
     for (double db = startDb; db <= m_dbMax + 0.000001; db += stepDb) {
+        if (m_editorPresentationEnabled && db > m_dbMin + 0.000001 && db < m_dbMax - 0.000001
+            && (std::fabs(yFromDb(plot, db) - yFromDb(plot, m_dbMin)) < labelGap
+                || std::fabs(yFromDb(plot, db) - yFromDb(plot, m_dbMax)) < labelGap)) { continue; }
         if (std::fabs(db - m_dbMin) < 0.000001) drewMin = true;
         if (std::fabs(db - m_dbMax) < 0.000001) drewMax = true;
         drawDbLabel(db);
@@ -1329,7 +1558,7 @@ void ParametricEqWidget::drawAxisScales(QPainter& g, const QRect& plot) {
 
 // From Thetis ucParametricEq.cs:2645-2651 [v2.10.3.13].
 void ParametricEqWidget::drawBorder(QPainter& g, const QRect& plot) {
-    QPen border(QColor(70, 70, 70), 1.0);
+    QPen border(m_editorPresentationEnabled ? QColor(Style::kBorderSubtle) : QColor(70, 70, 70), 1.0);
     g.setPen(border);
     g.setBrush(Qt::NoBrush);
     g.drawRect(plot);
@@ -1526,7 +1755,7 @@ void ParametricEqWidget::updateBarChartPeakTimerState() {
 
 // From Thetis ucParametricEq.cs:1997-2000 [v2.10.3.13].
 bool ParametricEqWidget::isDraggingNow() const {
-    return m_draggingGlobalGain || m_draggingPoint;
+    return m_draggingGlobalGain || m_draggingPoint || m_widthDragSide != 0;
 }
 
 // From Thetis ucParametricEq.cs:3334-3338 [v2.10.3.13].
@@ -1569,6 +1798,7 @@ void ParametricEqWidget::setGlobalGainDb(double db) {
     double v = clamp(db, m_dbMin, m_dbMax);
     if (qAbs(v - m_globalGainDb) < 0.000001) return;
 
+    if (m_draggingGlobalGain) { beginEditGesture(); }
     m_globalGainDb = v;
 
     if (m_draggingGlobalGain) m_dragDirtyGlobalGain = true;
@@ -1636,6 +1866,19 @@ void ParametricEqWidget::mousePressEvent(QMouseEvent* event) {
         }
     }
 
+    const int side = hitTestWidthHandle(plot, event->pos());
+    if (side != 0) {
+        m_widthDragSide = side;
+        m_widthDragBandId = m_points.at(m_selectedIndex).bandId;
+        m_dragIndex = m_selectedIndex;
+        m_widthPressPosition = event->pos();
+        m_widthPressQ = m_points.at(m_selectedIndex).q;
+        m_widthPressHz = freqFromX(plot, event->pos().x());
+        const double span = m_frequencyMaxHz - m_frequencyMinHz;
+        m_widthPressHalfWidth = std::max(span / (3.0 * clamp(m_widthPressQ, m_qMin, m_qMax)), span / 6000.0) / 2.0;
+        m_dragDirtyPoint = false;
+        return;
+    }
     setSelectedIndex(-1);
     update();
 }
@@ -1655,6 +1898,27 @@ void ParametricEqWidget::mouseMoveEvent(QMouseEvent* event) {
     QRect plot = computePlotRect();
     QPoint pt = event->pos();
 
+    if (m_widthDragSide != 0) {
+        const int index = indexFromBandId(m_widthDragBandId);
+        if (index < 0) { return; }
+        EqPoint& point = m_points[index];
+        // Apply pointer motion to the virtual (unclipped) Gaussian width.
+        // Drawing a clipped handle must not make the first pixel jump Q.
+        const double distance = m_widthPressHalfWidth + m_widthDragSide * (freqFromX(plot, pt.x()) - m_widthPressHz);
+        const double span = m_frequencyMaxHz - m_frequencyMinHz;
+        const double q = pt.x() == m_widthPressPosition.x() ? m_widthPressQ
+            : (distance > 0.0 ? clamp(span / (6.0 * distance), m_qMin, m_qMax) : m_qMax);
+        if (qAbs(q - point.q) > 0.000001) {
+            beginEditGesture();
+            point.q = q;
+            m_dragIndex = index;
+            m_dragDirtyPoint = true;
+            raisePointsChanged(true);
+            raisePointDataChanged(index, point, true);
+            update();
+        }
+        return;
+    }
     if (m_draggingGlobalGain) {
         double db = dbFromY(plot, pt.y());
         setGlobalGainDb(db);
@@ -1702,11 +1966,13 @@ void ParametricEqWidget::mouseMoveEvent(QMouseEvent* event) {
         bool changed = false;
 
         if (qAbs(p.frequencyHz - freq) > 0.000001) {
+            beginEditGesture();
             p.frequencyHz = freq;
             changed = true;
         }
 
         if (qAbs(p.gainDb - gain) > 0.000001) {
+            beginEditGesture();
             p.gainDb = gain;
             changed = true;
         }
@@ -1764,7 +2030,7 @@ void ParametricEqWidget::mouseMoveEvent(QMouseEvent* event) {
         wantHand = true;
     } else if (plot.contains(pt)) {
         int idx = hitTestPoint(plot, pt);
-        if (idx >= 0) wantHand = true;
+        if (idx >= 0 || hitTestWidthHandle(plot, pt) != 0) wantHand = true;
     }
 
     if (wantHand) {
@@ -1776,13 +2042,15 @@ void ParametricEqWidget::mouseMoveEvent(QMouseEvent* event) {
 
 // From Thetis ucParametricEq.cs:1803-1844 [v2.10.3.13].
 void ParametricEqWidget::mouseReleaseEvent(QMouseEvent* /*event*/) {
-    bool wasDraggingPoint    = m_draggingPoint;
+    bool wasDraggingPoint    = m_draggingPoint || m_widthDragSide != 0;
     bool wasDraggingGlobal   = m_draggingGlobalGain;
     int dragIdx              = m_dragIndex;
     bool pointDirty          = m_dragDirtyPoint;
     bool globalDirty         = m_dragDirtyGlobalGain;
     bool selectedDirty       = m_dragDirtySelectedIndex;
 
+    m_widthDragSide          = 0;
+    m_widthDragBandId        = -1;
     m_draggingGlobalGain     = false;
     m_draggingPoint          = false;
     m_dragIndex              = -1;
@@ -1809,6 +2077,10 @@ void ParametricEqWidget::mouseReleaseEvent(QMouseEvent* /*event*/) {
         raiseSelectedIndexChanged(false);
     }
 
+    if (m_editGestureStarted) {
+        m_editGestureStarted = false;
+        emit editFinished();
+    }
     update();
 }
 
@@ -1826,6 +2098,12 @@ void ParametricEqWidget::mouseReleaseEvent(QMouseEvent* /*event*/) {
 // 120.0, 1.0 are verbatim from C#.
 void ParametricEqWidget::wheelEvent(QWheelEvent* event) {
     bool dragging = isDraggingNow();
+    const auto finish = qScopeGuard([this, dragging] {
+        if (!dragging && m_editGestureStarted) {
+            m_editGestureStarted = false;
+            emit editFinished();
+        }
+    });
 
     QRect plot = computePlotRect();
     QPoint pt  = event->position().toPoint();
@@ -1835,7 +2113,11 @@ void ParametricEqWidget::wheelEvent(QWheelEvent* event) {
 
     if (m_selectedIndex < 0 || m_selectedIndex >= m_points.size()) {
         if (hitTestGlobalGainHandle(plot, pt)) {
-            setGlobalGainDb(clamp(m_globalGainDb + (steps * 0.5), m_dbMin, m_dbMax));
+            const double gain = clamp(m_globalGainDb + (steps * 0.5), m_dbMin, m_dbMax);
+            if (qAbs(gain - m_globalGainDb) > 0.000001) {
+                beginEditGesture();
+                setGlobalGainDb(gain);
+            }
         }
         return;
     }
@@ -1880,6 +2162,7 @@ void ParametricEqWidget::wheelEvent(QWheelEvent* event) {
         }
 
         if (qAbs(freq - p.frequencyHz) > 0.000001) {
+            beginEditGesture();
             p.frequencyHz = freq;
 
             if (m_allowPointReorder) {
@@ -1928,6 +2211,7 @@ void ParametricEqWidget::wheelEvent(QWheelEvent* event) {
     if (!m_parametricEq) {
         double gain = clamp(p.gainDb + (steps * 0.5), m_dbMin, m_dbMax);
         if (qAbs(gain - p.gainDb) > 0.000001) {
+            beginEditGesture();
             p.gainDb = gain;
             raisePointsChanged(false);
             if (qAbs(p.frequencyHz - oldF) > 0.000001
@@ -1943,6 +2227,7 @@ void ParametricEqWidget::wheelEvent(QWheelEvent* event) {
     if (shift) {
         double gain = clamp(p.gainDb + (steps * 0.5), m_dbMin, m_dbMax);
         if (qAbs(gain - p.gainDb) > 0.000001) {
+            beginEditGesture();
             p.gainDb = gain;
             raisePointsChanged(false);
             if (qAbs(p.frequencyHz - oldF) > 0.000001
@@ -1959,6 +2244,7 @@ void ParametricEqWidget::wheelEvent(QWheelEvent* event) {
     double qv = clamp(p.q * factor, m_qMin, m_qMax);
 
     if (qAbs(qv - p.q) > 0.000001) {
+        beginEditGesture();
         p.q = qv;
         raisePointsChanged(dragging);
         if (qAbs(p.frequencyHz - oldF) > 0.000001
@@ -2564,6 +2850,7 @@ bool ParametricEqWidget::loadFromJson(const QString& json) {
     const double newFreqMin = state.frequencyMinHz;
     const double newFreqMax = state.frequencyMaxHz;
 
+    if (m_editorPresentationEnabled) { cancelEditGesture(); }
     bool anyChanged = false;
 
     if (bandCount != m_points.size()) {

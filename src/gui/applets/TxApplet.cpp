@@ -2803,8 +2803,8 @@ void TxApplet::setTwoToneController(TwoToneController* controller)
 //
 // Open (or raise) the modeless TxCfcDialog.  Lazy-creates the dialog on first
 // call so the construction cost is only paid when the user actually opens
-// CFC settings.  The dialog is parented to this applet's top-level window so
-// it floats freely; modal flag is forced false in TxCfcDialog's ctor.  We
+// CFC settings. The modeless dialog is owned by this retained applet, so
+// returning it from a disposable floating container preserves the editor. We
 // don't deleteLater() the dialog on close — keep it alive across opens for
 // fast re-show, mirroring the TxEqDialog singleton pattern.
 //
@@ -2814,6 +2814,11 @@ void TxApplet::setTwoToneController(TwoToneController* controller)
 //     openCfcDialogRequested signal to this slot.
 //   - Future Tools menu item → connects to this slot.
 // ---------------------------------------------------------------------------
+TxCfcDialog* TxApplet::cfcDialog() const
+{
+    return m_cfcDialog.data();
+}
+
 void TxApplet::requestOpenCfcDialog()
 {
     // R-R3-49 (parity Task 4): opens in a remote window too, greyed with
@@ -2821,11 +2826,10 @@ void TxApplet::requestOpenCfcDialog()
     if (!m_model) { return; }
 
     if (!m_cfcDialog) {
-        QWidget* host = window();
         m_cfcDialog = new TxCfcDialog(
             &m_model->transmitModel(),
             m_model->txChannel(),
-            host ? host : static_cast<QWidget*>(this));
+            this);
         // Setup publication (CFC band editor): a remote window sends the
         // whole table to a Core that takes it, and hears the answer. The
         // link is looked up on every call, so a dialog built before the
@@ -2853,9 +2857,9 @@ void TxApplet::requestOpenCfcDialog()
                     return result;
                 });
             connect(m_model, &RadioModel::stationCommandFinished,
-                    m_cfcDialog, &TxCfcDialog::onStationCommandFinished);
+                    m_cfcDialog.data(), &TxCfcDialog::onStationCommandFinished);
             QPointer<TxCfcDialog> dialog(m_cfcDialog);
-            connect(m_model, &RadioModel::stationLinkStateChanged, m_cfcDialog,
+            connect(m_model, &RadioModel::stationLinkStateChanged, m_cfcDialog.data(),
                     [model, dialog] {
                         if (!dialog) { return; }
                         const IStationLink* link = model ? model->stationLink() : nullptr;

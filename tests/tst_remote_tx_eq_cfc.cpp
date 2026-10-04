@@ -43,6 +43,7 @@
 
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
@@ -848,15 +849,14 @@ void TstRemoteTxEqCfc::remoteEqDialogShowsAndChangesTheCoresValues()
     QTRY_COMPARE(band6->value(), 2);
 
     // The Legacy box and the parametric panel.
-    QCheckBox* legacy = dlg.legacyToggle();
+    QAbstractButton* legacy = dlg.modeSelector()->button(0);
     QVERIFY(legacy && legacy->isChecked());
-    legacy->setChecked(false);
+    dlg.modeSelector()->button(1)->click();
     QTRY_VERIFY(!coreTx.txEqUseLegacy());
     QCOMPARE(dlg.panelStack()->currentIndex(), 1);
-    auto* bandSel = dlg.findChild<QSpinBox*>(QStringLiteral("TxEqParaSelectedBandSpin"));
     auto* gain = dlg.findChild<QDoubleSpinBox*>(QStringLiteral("TxEqParaGainSpin"));
-    QVERIFY(bandSel && gain);
-    bandSel->setValue(4);
+    QVERIFY(gain);
+    dlg.parametricWidget()->setSelectedIndex(3);
     gain->setValue(6.5);
     const QString blob = windowTx.txEqParaEqData();
     QVERIFY(!blob.isEmpty());
@@ -886,10 +886,10 @@ void TstRemoteTxEqCfc::remoteEqDialogShowsAndChangesTheCoresValues()
     QCOMPARE(dlg.settingsReasonLabel()->text(), kOnAir);
     // A dialog built while it is closed starts greyed.
     TxEqDialog later(&s.window);
-    QVERIFY(!later.legacyToggle()->isEnabled());
+    QVERIFY(!later.modeSelector()->button(0)->isEnabled());
     TxEqDialog::setSettingsPermitted(true, QString());
     QVERIFY(legacy->isEnabled());
-    QVERIFY(later.legacyToggle()->isEnabled());
+    QVERIFY(later.modeSelector()->button(0)->isEnabled());
     QVERIFY(!dlg.settingsReasonLabel()->isVisibleTo(&dlg));
 }
 
@@ -1065,7 +1065,7 @@ void TstRemoteTxEqCfc::localWindowPushesTheSameCurvesAsBefore()
     // Into the parametric panel with nothing saved: Thetis's GetDefaults
     // (ParaEQTXData's setter for a blank value), ten flat points from 0 to
     // 4000 Hz with Q 4, until the panel saves a curve.
-    dlg.legacyToggle()->setChecked(false);
+    dlg.modeSelector()->button(1)->click();
     QVERIFY(!tx.txEqUseLegacy());
     QTest::qWait(150);   // the parametric curve's 100 ms tick (group B fix wave)
     std::vector<double> f;
@@ -1079,7 +1079,7 @@ void TstRemoteTxEqCfc::localWindowPushesTheSameCurvesAsBefore()
     QVERIFY(sameCurve(channel.lastTxEqProfileQForTest(), {0, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4}));
 
     // A parametric edit: every point of the widget's curve, with Q.
-    dlg.findChild<QSpinBox*>(QStringLiteral("TxEqParaSelectedBandSpin"))->setValue(6);
+    dlg.parametricWidget()->setSelectedIndex(5);
     dlg.findChild<QDoubleSpinBox*>(QStringLiteral("TxEqParaGainSpin"))->setValue(-3.5);
     QTest::qWait(150);   // the parametric curve's 100 ms tick (group B fix wave)
     widgetProfile(*dlg.parametricWidget(), f, g, q);
@@ -1090,6 +1090,7 @@ void TstRemoteTxEqCfc::localWindowPushesTheSameCurvesAsBefore()
     QCOMPARE(q.size(), std::size_t{11});
     // Five bands: five points, no sampling.
     dlg.findChild<QRadioButton*>(QStringLiteral("TxEqParaBands5Radio"))->setChecked(true);
+    dlg.findChild<QPushButton*>(QStringLiteral("TxEqCountApplyBtn"))->click();
     QCOMPARE(dlg.parametricWidget()->bandCount(), 5);
     QTest::qWait(150);   // the parametric curve's 100 ms tick (group B fix wave)
     widgetProfile(*dlg.parametricWidget(), f, g, q);
@@ -1107,7 +1108,7 @@ void TstRemoteTxEqCfc::localWindowPushesTheSameCurvesAsBefore()
     QCOMPARE(channel.lastTxEqProfileFForTest().size(), std::size_t{6});
 
     // Back to the legacy panel: the ten-band curve again.
-    dlg.legacyToggle()->setChecked(true);
+    dlg.modeSelector()->button(0)->click();
     QVERIFY(tx.txEqUseLegacy());
     QVERIFY(sameCurve(channel.lastTxEqProfileGForTest(), legacyGains(tx)));
 
@@ -1566,9 +1567,11 @@ void TstRemoteTxEqCfc::remoteCfcDialogSendsTheTableAsOneCommand()
     QTRY_COMPARE(s.txChannel.lastTxCfcPrecompDbForTest(), 11.0);
 
     dlg->bands18Radio()->setChecked(true);
+    dlg->findChild<QPushButton*>(QStringLiteral("TxCfcApplyBands"))->click();
     QTRY_COMPARE(coreBandCount(coreTx), 18);
     QTRY_COMPARE(s.window.transmitModel().cfcParaEqData(), coreTx.cfcParaEqData());
     dlg->bands5Radio()->setChecked(true);
+    dlg->findChild<QPushButton*>(QStringLiteral("TxCfcApplyBands"))->click();
     QTRY_COMPARE(coreBandCount(coreTx), 5);
     // One command each for the precomp and the two band counts.
     const int beforeBurst = cfcTraffic(s.coreEnd).commands;
@@ -1656,6 +1659,7 @@ void TstRemoteTxEqCfc::remoteCfcDialogKeepsThePropertyWriteForAnOlderCore()
     dlg->precompSpin()->setValue(12.0);
     QTRY_COMPARE(coreTx.cfcPrecompDb(), 12);
     dlg->bands18Radio()->setChecked(true);
+    dlg->findChild<QPushButton*>(QStringLiteral("TxCfcApplyBands"))->click();
     QTRY_COMPARE(coreBandCount(coreTx), 18);
     const CfcTraffic traffic = cfcTraffic(s.coreEnd);
     QCOMPARE(traffic.commands, 0);

@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-01  J.J. Boyd / KG4VCF. Unkeyed TX-letter shared-pan history
+//                 lifecycle regression. AI-assisted via OpenAI Codex.
 //   2026-09-25: iPhone app plan Task 36 (R-IOS-13): the microphone uplink.
 //               The media start carries remoteTxVersion only to a Core that
 //               takes this computer's microphone; the window sends its
@@ -71,6 +73,10 @@
 #include <QTemporaryDir>
 #include <QScopeGuard>
 #include <QTimer>
+#include <QPushButton>
+#include "core/TxSliceArbiter.h"
+#include "core/safety/TransmitHolder.h"
+#include "gui/applets/TxApplet.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -1991,6 +1997,163 @@ private slots:
         // captured before the switch.
         QTRY_VERIFY_WITH_TIMEOUT((feed(), !widget->renderedPixels().isEmpty()), 10000);
         client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // JJ's reported trigger is the TX applet's unkeyed A/B letters, not
+    // active receive-slice selection. Exercise actual media subscriptions.
+    void unkeyedTransmitLettersKeepSharedReceiveHistory_data()
+    {
+        QTest::addColumn<bool>("threeD");
+        QTest::addColumn<bool>("budget");
+        QTest::newRow("3D stack") << true << false;
+        QTest::newRow("3D stack, display budget") << true << true;
+    }
+    void unkeyedTransmitLettersKeepSharedReceiveHistory()
+    {
+        QFETCH(bool, threeD);
+        QFETCH(bool, budget);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int firstId = station.addSlice();
+        auto* firstSlice = station.sliceById(firstId);
+        QVERIFY(firstSlice);
+        const int stream = firstSlice->streamIndex();
+        QVERIFY(stream >= 0);
+        const int secondId = station.addSlice();
+        auto* secondSlice = station.sliceById(secondId);
+        QVERIFY(secondSlice);
+        firstSlice->setFrequency(3650000);
+        secondSlice->setFrequency(3651000);
+        QVERIFY(station.moveSlicesToStream({firstId, secondId}, stream, 3650000));
+        const double centre = station.streamCentreHz(stream);
+        const quint64 streamEpoch = firstSlice->streamEpoch();
+        QCOMPARE(secondSlice->streamIndex(), stream);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        server.setRemoteTransmitAllowed(true);
+        server.setTokenSessionsMayTransmitForTest(true);
+        if (budget) {
+            QVERIFY(server.setDisplayBudgetLimits({10'000'000, 10'000'000, 1}));
+        }
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        client.setTokenSessionHolderForTest(QStringLiteral("token:1"));
+        client.declareFeatureForTest(QByteArrayLiteral("deviceAuth"), 1);
+        PanadapterStack stack;
+        auto* pan = stack.addPanadapter(QStringLiteral("pan"));
+        stack.setActivePan(QStringLiteral("pan"));
+        pan->addSlice(firstId);
+        pan->addSlice(secondId);
+        pan->setActiveSliceIndex(firstId);
+        auto* widget = pan->spectrumWidget();
+        widget->setDisplayWindowPreservingHistory(centre, 96000);
+        widget->setVfoFrequency(centre);
+        widget->setConnectionState(ConnectionState::Connected);
+        if (threeD) {
+            widget->setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode3D));
+        }
+        stack.resize(600, 700);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            });
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        sourceMedia->other = sinkMedia;
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QTRY_VERIFY(remote.sliceById(secondId)
+            && remote.sliceById(secondId)->streamIndex() == stream);
+        QCOMPARE(client.remoteDisplayBudgetLimits().has_value(), budget);
+        QVector<float> iq(2048, 0.001f);
+        const auto feed = [&] {
+            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+        };
+        const auto drawn = [&] {
+            return threeD ? widget->dssRowsPushedForTest()
+                          : widget->waterfallHistoryRowsForTest();
+        };
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), drawn() >= 5), 10000);
+        const int before = drawn();
+        const double viewCentre = widget->centerFrequency();
+
+        TransmitHolder::Holder self;
+        self.deviceId = QByteArrayLiteral("token:1");
+        self.name = QStringLiteral("History media bench");
+        server.transmitHolder()->transferTo(self, QStringLiteral("test"));
+        QTRY_VERIFY(client.holdsTransmitHere());
+        QVERIFY(client.sessionHolderAvailable());
+        QVERIFY(client.remoteTransmitAvailable());
+        TxApplet applet(&remote);
+        applet.setTransmitSliceChoices({}, [&client](int id) { client.requestTxSlice(id); });
+        QSignalSpy finished(&client, &StationClient::deviceCommandFinished);
+        const int active = pan->activeSliceIndex();
+        const double span = widget->bandwidth();
+        int minimum = before;
+        QTimer sampler;
+        QObject::connect(&sampler, &QTimer::timeout, &gui, [&]() {
+            minimum = std::min(minimum, drawn());
+        });
+        sampler.start(1);
+        for (int id : {firstId, secondId, firstId}) {
+            QPushButton* letter = nullptr;
+            for (QPushButton* button : applet.transmitSliceButtons()) {
+                if (button->property("sliceId").toInt() == id) { letter = button; }
+            }
+            QVERIFY(letter && letter->isEnabled());
+            finished.clear();
+            letter->click();
+            QTRY_VERIFY(!finished.isEmpty());
+            QCOMPARE(finished.last().at(0).toByteArray(), QByteArrayLiteral("tx.setTxSlice"));
+            QVERIFY2(finished.last().at(2).toBool(), qPrintable(finished.last().at(3).toString()));
+            QTRY_VERIFY(remote.sliceById(id)->isTxSlice());
+            QCOMPARE(station.txSliceArbiter()->txBoundSliceId(), id);
+            for (int i = 0; i < 8; ++i) {
+                QVERIFY2(drawn() >= before,
+                         qPrintable(QStringLiteral("history fell from %1 to %2")
+                                        .arg(before).arg(drawn())));
+                QVERIFY(!station.mox() && !remote.mox());
+                QCOMPARE(firstSlice->streamEpoch(), streamEpoch);
+                QCOMPARE(secondSlice->streamEpoch(), streamEpoch);
+                QCOMPARE(pan->activeSliceIndex(), active);
+                QCOMPARE(widget->centerFrequency(), viewCentre);
+                QCOMPARE(widget->bandwidth(), span);
+                feed();
+                QTest::qWait(25);
+            }
+            QCOMPARE(minimum, before);
+        }
+        sampler.stop();
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), drawn() > before), 10000);
+        // R-R3-21: this Core answers clock probes, so the new slice's trace
+        // is drawn at its time on the audio's clock, a little after rows
+        // captured before the switch.
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), !widget->renderedPixels().isEmpty()), 10000);
+        client.disconnectFromStation(QStringLiteral("test complete"));
+        // Genuine session retirement must still clear the old source.
+        QTRY_COMPARE(widget->dssRowsPushedForTest(), 0);
+        QCOMPARE(widget->waterfallHistoryRowsForTest(), 0);
     }
 
     // R-R3-19: a pan whose stream is its own still re-centres the Core on a

@@ -11,6 +11,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-01  J.J. Boyd / KG4VCF. Opt-in numeric RX history diagnostics.
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-02 : shared SpectrumLayout for CPU/GPU panel paint and hit
 //                 geometry (issues #141/#147). J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -259,6 +261,7 @@ mw0lge@grange-lane.co.uk
 
 #include "gui/RemoteSpectrumCapture.h"
 
+#include <QElapsedTimer>
 #include <QWidget>
 #include <QVector>
 #include <QImage>
@@ -518,6 +521,19 @@ public:
     /// (disconnect, replacement or rejection) uses clearRemoteSpectrum().
     void invalidateRemoteSpectrumFrame();
     void clearRemoteSpectrum();
+    // Opt-in diagnostic events; numeric fields only. No history policy changes.
+    enum class RxHistoryEvent {
+        RemoteFullClear = 1, Leave3D = 2, LiveImageResize = 3,
+        HistoryBufferReset = 4, WaterfallClear = 5, RfReproject = 6,
+        ViewportRebuild = 7, MediaRetired = 8, BudgetBindingRetired = 9,
+        LegacyBindingRetired = 10, LegacyBindingCreated = 11,
+        BudgetBindingCreated = 12, BindingPreserved = 13,
+        EndpointRejected = 14, FrameRenewal = 15
+    };
+    void traceRxHistoryEvent(RxHistoryEvent event, int sourceStream = -1,
+                             quint64 sourceEpoch = 0, QSize nextImageSize = {},
+                             double oldCentreHz = 0, double oldSpanHz = 0,
+                             double newCentreHz = 0, double newSpanHz = 0) const;
     bool remoteWidebandAvailable() const { return m_remoteWidebandAvailable; }
     bool remoteWidebandActive() const { return m_remoteWidebandActive; }
     void setCenterFrequency(double centerHz);
@@ -996,6 +1012,8 @@ public:
     void tickWaterfallForTest() { onWaterfallTick(); }
     // Parity Task 18 (B3.5): the waterfall's rewind history, in rows.
     int  waterfallHistoryRowsForTest() const { return m_wfHistoryRowCount; }
+    const QImage& liveWaterfallForTest() const { return m_waterfall; }
+    int liveWaterfallWriteRowForTest() const { return m_wfWriteRow; }
     // 3D Speed (Task 24) test seams.
     int  effectiveDssRowDividerForTest() const { return effectiveDssRowDivider(); }
     int  dssFoldCountForTest() const { return m_dssFoldCount; }
@@ -1004,9 +1022,6 @@ public:
     // automatic branch actually divides by kDssVisibleRows. Did not exist
     // before Task 24; there was no prior reason for a test to read it.
     int  waterfallHeightForTest() const { return m_waterfall.height(); }
-    // Accepted TX/Clarity fixture accessors; observe live history without altering it.
-    const QImage& liveWaterfallForTest() const { return m_waterfall; }
-    int liveWaterfallWriteRowForTest() const { return m_wfWriteRow; }
     // Forwards DssRenderer's own existing rowDataRing()/headRing() row
     // accessors (both already public and used by tst_dss_renderer_ring.cpp
     // against a standalone DssRenderer) so a test can read one column of
@@ -2734,6 +2749,7 @@ private:
     QImage          m_waterfallHistory;            // RGB32 ring buffer
     QVector<qint64> m_wfHistoryTimestamps;         // parallel; per-row wall-clock ms
     int             m_wfHistoryWriteRow{0};        // LIFO; index 0 = newest
+    mutable QElapsedTimer m_historyTraceViewportClock;
     int             m_wfHistoryRowCount{0};        // saturates at capacity
     int             m_wfHistoryOffsetRows{0};      // 0 = newest visible at top
     bool            m_wfLive{true};                // pause/live state

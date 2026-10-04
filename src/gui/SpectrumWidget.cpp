@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-01  J.J. Boyd / KG4VCF. Opt-in numeric RX history diagnostics.
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-02 J.J. Boyd / KG4VCF : issues #141/#147: CPU paint, GPU
 //                 paint and interaction use the existing GPU panel layout;
 //                 divider drag reserves the same chrome height.
@@ -1474,6 +1476,7 @@ void SpectrumWidget::updateSpectrumFromTxPixels(int receiverId,
 
 void SpectrumWidget::invalidateRemoteSpectrumFrame()
 {
+    traceRxHistoryEvent(RxHistoryEvent::FrameRenewal);
     m_remoteSpectrum = true;
     recomputeExtendedMode();
     m_remoteCodec = {};
@@ -1495,8 +1498,47 @@ void SpectrumWidget::invalidateRemoteSpectrumFrame()
     refreshRemoteTraceProjection();
 }
 
+void SpectrumWidget::traceRxHistoryEvent(RxHistoryEvent event, int sourceStream,
+                                          quint64 sourceEpoch, QSize nextImageSize,
+                                          double oldCentreHz, double oldSpanHz,
+                                          double newCentreHz, double newSpanHz) const
+{
+    if (qEnvironmentVariableIntValue("NEREUS_TRACE_RX_HISTORY") != 1) { return; }
+    if (event == RxHistoryEvent::RfReproject
+        && oldCentreHz == newCentreHz && oldSpanHz == newSpanHz) { return; }
+    if (event == RxHistoryEvent::ViewportRebuild) {
+        // Scrollback can rebuild on every frame. Keep its diagnostic sampled;
+        // destructive resets and binding/resize changes are always logged.
+        constexpr int kViewportTraceIntervalMs = 250;
+        if (m_historyTraceViewportClock.isValid()
+            && m_historyTraceViewportClock.elapsed() < kViewportTraceIntervalMs) { return; }
+        m_historyTraceViewportClock.start();
+    }
+    const auto numeric = [](double value) { return QString::number(value, 'g', 17); };
+    const bool rfChange = oldSpanHz > 0 && newSpanHz > 0;
+    const bool captured = m_dss.rowCount() > 0;
+    qCInfo(lcSpectrum).nospace().noquote()
+        << "RX_HISTORY reason=" << static_cast<int>(event)
+        << " pan=" << m_panIndex << " source=" << sourceStream << " epoch=" << sourceEpoch
+        << " dssRows=" << m_dss.rowCount() << " pushed=" << m_dssRowsPushed
+        << " rowGeneration=" << m_dss.rowGeneration()
+        << " historyRows=" << m_wfHistoryRowCount << " historyOffset=" << m_wfHistoryOffsetRows
+        << " cursor=" << m_wfWriteRow << " mode=" << static_cast<int>(m_spectrumRenderMode)
+        << " widgetW=" << width() << " widgetH=" << height()
+        << " liveW=" << m_waterfall.width() << " liveH=" << m_waterfall.height()
+        << " historyW=" << m_waterfallHistory.width() << " historyH=" << m_waterfallHistory.height()
+        << " nextW=" << nextImageSize.width() << " nextH=" << nextImageSize.height()
+        << " oldCentre=" << numeric(rfChange ? oldCentreHz : m_centerHz)
+        << " oldSpan=" << numeric(rfChange ? oldSpanHz : m_bandwidthHz)
+        << " newCentre=" << numeric(rfChange ? newCentreHz : m_centerHz)
+        << " newSpan=" << numeric(rfChange ? newSpanHz : m_bandwidthHz)
+        << " capturedCentre=" << numeric(captured ? m_dss.rowCenterMhzAtAge(0) * 1.0e6 : 0.0)
+        << " capturedSpan=" << numeric(captured ? m_dss.rowBandwidthMhzAtAge(0) * 1.0e6 : 0.0);
+}
+
 void SpectrumWidget::clearRemoteSpectrum()
 {
+    traceRxHistoryEvent(RxHistoryEvent::RemoteFullClear);
     invalidateRemoteSpectrumFrame();
     m_remoteWidebandAvailable = false;
     m_remoteWidebandActive = false;
@@ -3492,6 +3534,7 @@ void SpectrumWidget::setSpectrumRenderMode(int mode)
     if (m_spectrumRenderMode == next) { return; }
     m_spectrumRenderMode = next;
     if (next == SpectrumRenderMode::Mode2D) {
+        traceRxHistoryEvent(RxHistoryEvent::Leave3D);
         // Leaving 3D: drop the ring so re-entering starts clean rather than
         // showing a stack of rows captured at a frequency we have since left.
         m_dss.clear();
@@ -4766,6 +4809,7 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
     const int wfH = layout.waterfall.height();
     if (wfW > 0 && wfH > 0 && (m_waterfall.isNull() ||
         m_waterfall.width() != wfW || m_waterfall.height() != wfH)) {
+        traceRxHistoryEvent(RxHistoryEvent::LiveImageResize, -1, 0, QSize(wfW, wfH));
         // 2026-05-26 KG4VCF: unlock the previous waterfall before
         // QImage replacement frees it.  Aligned no-op when m_waterfall
         // was null.
@@ -6253,6 +6297,7 @@ void SpectrumWidget::ensureWaterfallHistory()
             desiredSize, Qt::IgnoreAspectRatio, Qt::FastTransformation);
     }
     if (newHistory.isNull() || newHistory.size() != desiredSize) {
+        traceRxHistoryEvent(RxHistoryEvent::HistoryBufferReset, -1, 0, desiredSize);
         newHistory = QImage(desiredSize, QImage::Format_RGB32);
         newHistory.fill(Qt::black);
         m_wfHistoryTimestamps = QVector<qint64>(desiredSize.height(), 0);
@@ -6300,6 +6345,7 @@ void SpectrumWidget::rebuildWaterfallViewport()
         return;
     }
 
+    traceRxHistoryEvent(RxHistoryEvent::ViewportRebuild);
     m_wfHistoryOffsetRows = std::clamp(
         m_wfHistoryOffsetRows, 0, maxWaterfallHistoryOffsetRows());
     m_waterfall.fill(Qt::black);
@@ -6391,6 +6437,7 @@ QRect SpectrumWidget::waterfallLiveButtonRect(const QRect& wfRect) const
 // see plan §authoring-time #3).
 void SpectrumWidget::clearWaterfallHistory()
 {
+    traceRxHistoryEvent(RxHistoryEvent::WaterfallClear);
     if (!m_waterfallHistory.isNull()) {
         m_waterfallHistory.fill(Qt::black);
     }
@@ -6794,6 +6841,8 @@ void SpectrumWidget::reprojectWaterfall(double oldCenterHz, double oldBandwidthH
         return;
     }
 
+    traceRxHistoryEvent(RxHistoryEvent::RfReproject, -1, 0, {},
+                         oldCenterHz, oldBandwidthHz, newCenterHz, newBandwidthHz);
     const double oldStartHz = oldCenterHz - oldBandwidthHz / 2.0;
     const double oldEndHz   = oldCenterHz + oldBandwidthHz / 2.0;
     const double newStartHz = newCenterHz - newBandwidthHz / 2.0;

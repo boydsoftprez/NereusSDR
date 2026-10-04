@@ -45,6 +45,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Native dual-mode editor and exact session history by
+//                 J.J. Boyd (KG4VCF), assisted by OpenAI Codex.
 //   2026-04-29 — Phase 3M-3a-i Batch 3 (Task A.1): created by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -160,12 +162,24 @@
 #include "core/AppSettings.h"
 #include "core/ParaEqCurve.h"
 #include "core/ParaEqEnvelope.h"
+#include "core/MicProfileManager.h"
+#include "core/TxChannel.h"
 #include "gui/StyleConstants.h"
 #include "gui/widgets/ParametricEqWidget.h"
+#include "gui/widgets/EqEditHistory.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 
 #include <QApplication>
+#include <QAbstractSpinBox>
+#include <QDataStream>
+#include <QGuiApplication>
+#include <QKeyEvent>
+#include <QLineEdit>
+#include <QScreen>
+#include <QScrollArea>
+#include <QScopedValueRollback>
+#include <QTimer>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -239,10 +253,6 @@ constexpr int    kMinFreqSpreadHz        = 1000;
 constexpr double kParaPreampMinDb        = -24.0;          // cs:685-689
 constexpr double kParaPreampMaxDb        =  24.0;          // cs:680-684
 
-// Selected-band spinbox (nudParaEQ_selected_band) —
-// eqform.cs:920-925 [v2.10.3.13] default 10 (one-based).
-constexpr int    kParaSelectedBandMin    =      1;
-constexpr int    kParaSelectedBandDefault = 10;
 
 } // namespace
 
@@ -278,15 +288,26 @@ TxEqDialog::TxEqDialog(RadioModel* radio, QWidget* parent)
                   + QString::fromLatin1(NereusSDR::Style::kComboStyle)
                   + QString::fromLatin1(NereusSDR::Style::kCheckBoxStyle)
                   + QString::fromLatin1(NereusSDR::Style::kRadioButtonStyle)
-                  + QString::fromLatin1(NereusSDR::Style::kButtonStyle));
+                  + QString::fromLatin1(NereusSDR::Style::kButtonStyle)
+                  + QStringLiteral("QPushButton:checked { border: 1px solid %1; color: %1; } ").arg(Style::kAccent));
 
+    m_history[0] = new EqEditHistory(this);
+    m_history[1] = new EqEditHistory(this);
     buildUi();
+    m_seedGraph = m_parametricWidget->saveEditState();
     wireSignals();
     syncFromModel();
+    updateEditRowFromSelection();
+    rebaseEditHistory();
     applySettingsPermitted();  // R-R3-49 (parity Task 4)
 }
 
-TxEqDialog::~TxEqDialog() = default;
+TxEqDialog::~TxEqDialog()
+{
+    // Finish focused numeric edits while selection/history members are alive;
+    // QDialog's base destructor otherwise hides after those members are gone.
+    hide();
+}
 
 TxEqDialog* TxEqDialog::instance(RadioModel* radio, QWidget* parent)
 {
@@ -306,38 +327,63 @@ void TxEqDialog::buildUi()
     QVBoxLayout* outer = new QVBoxLayout(this);
     outer->setContentsMargins(8, 8, 8, 8);
     outer->setSpacing(6);
-
-    // R-R3-49 (parity Task 4): why the controls are greyed, when they are.
     m_settingsReasonLabel = new QLabel(this);
     m_settingsReasonLabel->setObjectName(QStringLiteral("TxEqSettingsReason"));
     m_settingsReasonLabel->setWordWrap(true);
-    m_settingsReasonLabel->setVisible(false);
+    m_settingsReasonLabel->hide();
     outer->addWidget(m_settingsReasonLabel);
 
-    // ── chkLegacyEQ at top — eqform.cs:969-981 [v2.10.3.13].
-    // Default checked (cs:972-973 chkLegacyEQ.Checked = true).
-    // R-R3-49 (parity Task 4): the model's txEqUseLegacy decides.
-    m_legacyToggle = new QCheckBox(tr("Legacy EQ"), this);
-    m_legacyToggle->setObjectName(QStringLiteral("TxEqLegacyToggle"));
-    m_legacyToggle->setToolTip(tr(
-        "When checked, show the original 10-band slider EQ.  When unchecked, "
-        "show the parametric EQ — drag points on the curve to set frequency, "
-        "gain, and Q per band."));
-    m_legacyToggle->setChecked(m_radio ? m_radio->transmitModel().txEqUseLegacy() : true);
-    outer->addWidget(m_legacyToggle);
+    QHBoxLayout* modeRow = new QHBoxLayout;
+    m_modeSelector = new QButtonGroup(this);
+    m_modeSelector->setObjectName(QStringLiteral("TxEqModeSelector"));
+    const bool legacy = m_radio ? m_radio->transmitModel().txEqUseLegacy() : true;
+    for (int i = 0; i < 2; ++i) {
+        auto* button = new QPushButton(i == 0 ? tr("Graphic · Legacy") : tr("Parametric"), this);
+        button->setCheckable(true); button->setAutoDefault(false);
+        button->setAccessibleName(i == 0 ? tr("Graphic EQ mode") : tr("Parametric EQ mode"));
+        m_modeSelector->addButton(button, i); button->setChecked(i == (legacy ? 0 : 1));
+        modeRow->addWidget(button);
+    }
+    modeRow->addStretch();
+    m_undoBtn = new QPushButton(tr("Undo"), this); m_undoBtn->setObjectName(QStringLiteral("TxEqUndoBtn"));
+    m_redoBtn = new QPushButton(tr("Redo"), this); m_redoBtn->setObjectName(QStringLiteral("TxEqRedoBtn"));
+    m_undoBtn->setAutoDefault(false); m_redoBtn->setAutoDefault(false);
+    m_undoBtn->setToolTip(tr("Undo EQ edit (Ctrl+Z / Command+Z)"));
+    m_redoBtn->setToolTip(tr("Redo EQ edit (Ctrl+Shift+Z / Command+Shift+Z)"));
+    modeRow->addWidget(m_undoBtn); modeRow->addWidget(m_redoBtn);
+    outer->addLayout(modeRow);
+    m_enableChk = new QCheckBox(tr("Enable TX EQ"), this);
+    m_enableChk->setObjectName(QStringLiteral("TxEqEnableChk"));
+    auto* enableRow = new QHBoxLayout;
+    enableRow->addWidget(m_enableChk);
+    enableRow->addStretch();
+    auto* advancedToggle = new QPushButton(tr("Advanced ▸"), this);
+    advancedToggle->setObjectName(QStringLiteral("TxEqAdvancedToggle"));
+    advancedToggle->setCheckable(true); advancedToggle->setAutoDefault(false);
+    advancedToggle->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    enableRow->addWidget(advancedToggle);
+    outer->addLayout(enableRow);
+    m_advancedControls = new QWidget(this);
+    m_advancedControls->setObjectName(QStringLiteral("TxEqAdvancedControls"));
+    auto* advancedLayout = new QVBoxLayout(m_advancedControls);
+    advancedLayout->setContentsMargins(0, 0, 0, 0);
+    advancedLayout->setAlignment(Qt::AlignTop);
+    m_advancedScroll = new QScrollArea(this);
+    m_advancedScroll->setObjectName(QStringLiteral("TxEqAdvancedScroll"));
+    m_advancedScroll->setWidgetResizable(true);
+    m_advancedScroll->setFrameShape(QFrame::NoFrame);
+    m_advancedScroll->setWidget(m_advancedControls);
+    m_advancedScroll->hide();
+    outer->addWidget(m_advancedScroll);
+    connect(advancedToggle, &QPushButton::toggled, this, [this, advancedToggle](bool on) {
+        refreshAdvancedHeight();
+        m_advancedScroll->setVisible(on);
+        advancedToggle->setText(on ? tr("Advanced ▾") : tr("Advanced ▸"));
+    });
 
     // ── Top strip: Enable + WDSP filter combos ──────────────────────
     QHBoxLayout* topRow = new QHBoxLayout;
     topRow->setSpacing(10);
-
-    m_enableChk = new QCheckBox(tr("Enable TX EQ"), this);
-    m_enableChk->setObjectName(QStringLiteral("TxEqEnableChk"));
-    m_enableChk->setToolTip(
-        tr("Master enable for the TX equalizer.  When off the EQ stage "
-           "is bypassed in the TX DSP chain."));
-    topRow->addWidget(m_enableChk);
-
-    topRow->addSpacing(20);
 
     {
         QLabel* lbl = new QLabel(tr("Nc:"), this);
@@ -398,7 +444,7 @@ void TxEqDialog::buildUi()
     }
 
     topRow->addStretch(1);
-    outer->addLayout(topRow);
+    advancedLayout->addLayout(topRow);
 
     QFrame* sep = new QFrame(this);
     sep->setFrameShape(QFrame::HLine);
@@ -413,10 +459,18 @@ void TxEqDialog::buildUi()
     m_parametricPanel = buildParametricPanel();
     m_panelStack->addWidget(m_legacyPanel);       // index 0
     m_panelStack->addWidget(m_parametricPanel);   // index 1
-    m_panelStack->setCurrentIndex(m_legacyToggle->isChecked() ? 0 : 1);
+    m_panelStack->setCurrentIndex(legacy ? 0 : 1);
     outer->addWidget(m_panelStack, 1);
-
-    setMinimumWidth(720);
+    // Algorithm controls and the parametric range/log/live controls share
+    // one collapsible section, reachable in either mode.
+    auto* paraAdvanced = m_parametricPanel->findChild<QWidget*>(QStringLiteral("TxEqParaAdvancedControls"));
+    advancedLayout->addWidget(paraAdvanced);
+    paraAdvanced->setVisible(!legacy);
+    refreshAdvancedHeight();
+    for (auto* button : findChildren<QPushButton*>()) { button->setAutoDefault(false); }
+    setMinimumSize(500, 400);
+    const QSize available = screen() ? screen()->availableGeometry().size() : QSize(1280, 800);
+    resize(qMin(1000, available.width() - 40), qMin(720, available.height() - 60));
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -449,6 +503,7 @@ QWidget* buildBandColumn(const QString& headerLabel,
     QVBoxLayout* v = new QVBoxLayout(col);
     v->setContentsMargins(2, 2, 2, 2);
     v->setSpacing(3);
+    v->setAlignment(Qt::AlignTop);
 
     QLabel* hdr = new QLabel(headerLabel, col);
     hdr->setAlignment(Qt::AlignHCenter);
@@ -466,36 +521,42 @@ QWidget* buildBandColumn(const QString& headerLabel,
     s->setTickPosition(QSlider::TicksBothSides);
     s->setTickInterval(3);          // matches Thetis tbTXEQ0.TickFrequency = 3
     s->setPageStep(3);              // matches LargeChange = 3
-    s->setMinimumHeight(140);
+    s->setFixedHeight(180);
     s->setProperty(kBandIndexProp, bandIndex);
     // Batch 9 — apply the project vertical slider style.
-    s->setStyleSheet(NereusSDR::Style::sliderVStyle());
+    s->setStyleSheet(NereusSDR::Style::sliderVStyle() + QStringLiteral("QSlider::handle:vertical { height: 4px; border-radius: 1px; margin: 0 -6px; }"));
     v->addWidget(s, 1, Qt::AlignHCenter);
     *outSlider = s;
 
     QSpinBox* db = new QSpinBox(col);
     db->setRange(TransmitModel::kTxEqBandDbMin, TransmitModel::kTxEqBandDbMax);
-    db->setSuffix(QStringLiteral(" dB"));
+    db->setSuffix(QString());
+    db->setFixedWidth(62);
     db->setProperty(kBandIndexProp, bandIndex);
     // Batch 9 — apply the project spinbox style.
     db->setStyleSheet(NereusSDR::Style::kSpinBoxStyle);
     v->addWidget(db);
+    auto* dbUnit = new QLabel(QObject::tr("dB"), col); dbUnit->setAlignment(Qt::AlignHCenter); v->addWidget(dbUnit);
     *outDbSpin = db;
 
     if (outFreqSpin) {
         QSpinBox* hz = new QSpinBox(col);
         hz->setRange(TransmitModel::kTxEqFreqHzMin,
                      TransmitModel::kTxEqFreqHzMax);
-        hz->setSuffix(QStringLiteral(" Hz"));
+        hz->setSuffix(QString());
         hz->setProperty(kBandIndexProp, bandIndex);
         // Allow 4-digit + suffix room.
-        hz->setMinimumWidth(80);
+        hz->setFixedWidth(62);
+        hz->setButtonSymbols(QAbstractSpinBox::NoButtons);
         // Batch 9 — apply the project spinbox style.
         hz->setStyleSheet(NereusSDR::Style::kSpinBoxStyle);
         v->addWidget(hz);
+        auto* hzUnit = new QLabel(QObject::tr("Hz"), col); hzUnit->setAlignment(Qt::AlignHCenter); v->addWidget(hzUnit);
         *outFreqSpin = hz;
     }
 
+    if (!outFreqSpin) { v->addSpacing(db->sizeHint().height() + dbUnit->sizeHint().height() + 6); }
+    v->addStretch(1);
     return col;
 }
 
@@ -503,14 +564,20 @@ QWidget* buildBandColumn(const QString& headerLabel,
 
 QWidget* TxEqDialog::buildLegacyPanel()
 {
-    QWidget* panel = new QWidget(this);
-    panel->setObjectName(QStringLiteral("TxEqLegacyPanel"));
+    QWidget* root = new QWidget(this);
+    root->setObjectName(QStringLiteral("TxEqLegacyPanel"));
+    auto* rootLayout = new QVBoxLayout(root); rootLayout->setContentsMargins(0, 0, 0, 0);
+    auto* panelScroll = new QScrollArea(root); panelScroll->setWidgetResizable(true);
+    panelScroll->setFrameShape(QFrame::NoFrame); panelScroll->setObjectName(QStringLiteral("TxEqLegacyScroll"));
+    QWidget* panel = new QWidget(panelScroll);
+    panelScroll->setWidget(panel); rootLayout->addWidget(panelScroll);
     QVBoxLayout* legacy = new QVBoxLayout(panel);
     legacy->setContentsMargins(0, 0, 0, 0);
     legacy->setSpacing(6);
 
     // ── Band columns row (preamp + 10 bands + dB scale label) ───────
     QGroupBox* bandGroup = new QGroupBox(tr("TX EQ Bands"), panel);
+    bandGroup->setMaximumHeight(380);
     QHBoxLayout* bandRow = new QHBoxLayout(bandGroup);
     bandRow->setContentsMargins(8, 14, 8, 8);
     bandRow->setSpacing(2);
@@ -587,50 +654,50 @@ QWidget* TxEqDialog::buildLegacyPanel()
     }
 
     legacy->addWidget(bandGroup, 1);
-    return panel;
+    auto* reset = new QPushButton(tr("Reset curve"), panel);
+    reset->setObjectName(QStringLiteral("TxEqLegacyResetBtn")); reset->setAutoDefault(false);
+    connect(reset, &QPushButton::clicked, this, [this] {
+        beginEdit();
+        { QSignalBlocker a(m_preampSlider), b(m_preampSpin); m_preampSlider->setValue(0); m_preampSpin->setValue(0); }
+        for (int i = 0; i < 10; ++i) {
+            QSignalBlocker a(m_bandSliders[i]), b(m_bandSpins[i]);
+            m_bandSliders[i]->setValue(0); m_bandSpins[i]->setValue(0);
+        }
+        finishEdit();
+    });
+    legacy->addWidget(reset, 0, Qt::AlignLeft);
+    legacy->addStretch(1);
+    return root;
 }
 
 // ─────────────────────────────────────────────────────────────────────
 // Parametric panel build — From Thetis pnlParaEQ + pnlParaEQ2 +
 // ucParametricEq1 at eqform.cs:235-967 [v2.10.3.13].
 //
-// We map Thetis's two side-by-side panels (left: edit row + widget;
-// right: 5/10/18 + Low/High + Use Q + Live + Log) into a single
-// parametric panel with the widget centered and the right-column
-// controls flanking it on the right.  Edit row sits above the widget
-// per Thetis.
+// Native editor presentation keeps the configured graph above the selected
+// controls and preserves the existing Thetis values/ranges. Advanced controls
+// collapse; the independent band-button strip and numeric controls can scroll.
 // ─────────────────────────────────────────────────────────────────────
 
 QWidget* TxEqDialog::buildParametricPanel()
 {
-    QWidget* panel = new QWidget(this);
-    panel->setObjectName(QStringLiteral("TxEqParametricPanel"));
+    QWidget* root = new QWidget(this);
+    root->setObjectName(QStringLiteral("TxEqParametricPanel"));
+    QWidget* panel = root;
     QVBoxLayout* col = new QVBoxLayout(panel);
     col->setContentsMargins(0, 0, 0, 0);
     col->setSpacing(6);
 
+    QHBoxLayout* editRow = nullptr;
     // ── Edit row — eqform.cs:235-273 + 651-740 [v2.10.3.13].
     // Designer order: # / f / dB (gain) / Q / Preamp / Reset.
     {
         QHBoxLayout* row = new QHBoxLayout;
         row->setSpacing(6);
 
-        // # — nudParaEQ_selected_band (cs:920-925; default 10 one-based).
-        row->addWidget(new QLabel(tr("#"), panel));
-        m_paraSelectedBandSpin = new QSpinBox(panel);
-        m_paraSelectedBandSpin->setObjectName(
-            QStringLiteral("TxEqParaSelectedBandSpin"));
-        m_paraSelectedBandSpin->setRange(kParaSelectedBandMin,
-                                          kParaSelectedBandDefault);
-        m_paraSelectedBandSpin->setValue(kParaSelectedBandDefault);
-        m_paraSelectedBandSpin->setToolTip(tr(
-            "Selected band index (1-based).  Editing the f / Gain / Q "
-            "spinboxes updates this band's point on the curve."));
-        row->addWidget(m_paraSelectedBandSpin);
-
         // f — nudParaEQ_f (cs:267, max 20000 Hz).
         row->addSpacing(6);
-        row->addWidget(new QLabel(tr("f"), panel));
+        row->addWidget(new QLabel(tr("Frequency"), panel));
         m_paraFreqSpin = new QSpinBox(panel);
         m_paraFreqSpin->setObjectName(QStringLiteral("TxEqParaFreqSpin"));
         m_paraFreqSpin->setRange(0, 20000);
@@ -655,7 +722,7 @@ QWidget* TxEqDialog::buildParametricPanel()
 
         // Q — nudParaEQ_q (cs:269, range 0.2..20).
         row->addSpacing(6);
-        row->addWidget(new QLabel(tr("Q"), panel));
+        row->addWidget(new QLabel(tr("Width (Q)"), panel));
         m_paraQSpin = new QDoubleSpinBox(panel);
         m_paraQSpin->setObjectName(QStringLiteral("TxEqParaQSpin"));
         m_paraQSpin->setRange(kParaDefaultQMin, kParaDefaultQMax);
@@ -688,7 +755,7 @@ QWidget* TxEqDialog::buildParametricPanel()
             "Reset all parametric bands to a flat curve."));
         row->addWidget(m_paraResetBtn);
 
-        col->addLayout(row);
+        editRow = row;
     }
 
     // ── Widget + right column ──────────────────────────────────────
@@ -712,20 +779,23 @@ QWidget* TxEqDialog::buildParametricPanel()
     m_parametricWidget->setAxisTickLength(kParaDefaultAxisTickLength);
     m_parametricWidget->setShowAxisScales(true);            // cs:956
     m_parametricWidget->setShowBandShading(true);           // cs:957
-    m_parametricWidget->setShowDotReadings(true);           // cs:958
+    m_parametricWidget->setShowDotReadings(false);           // cs:958
     m_parametricWidget->setShowReadout(false);              // cs:959
     m_parametricWidget->setUsePerBandColours(true);         // cs:962
     m_parametricWidget->setAllowPointReorder(true);         // cs:930
     m_parametricWidget->setParametricEq(true);              // cs:952
     m_parametricWidget->setBandCount(10);                   // default 10-band
-    m_parametricWidget->setMinimumSize(400, 300);
+    m_parametricWidget->setMinimumSize(400, 180);
+    m_parametricWidget->setEditorPresentationEnabled(true);
     mainRow->addWidget(m_parametricWidget, 1);
 
     // Right column — eqform.cs:241-275 + 402-600 [v2.10.3.13]:
     //   Log scale + Use Q Factors + Live Update + warning icon
     //   + Low / High freq spinboxes
     //   + 5/10/18 band radios
-    QVBoxLayout* rightCol = new QVBoxLayout;
+    auto* paraAdvanced = new QWidget(panel);
+    paraAdvanced->setObjectName(QStringLiteral("TxEqParaAdvancedControls"));
+    QVBoxLayout* rightCol = new QVBoxLayout(paraAdvanced);
     rightCol->setSpacing(6);
 
     // chkLogScale — eqform.cs:468-478 (default unchecked).
@@ -742,7 +812,7 @@ QWidget* TxEqDialog::buildParametricPanel()
     m_paraUseQFactorsChk->setToolTip(tr(
         "Use Q factors per band when computing the EQ profile.  When off, "
         "the Q columns are ignored and the curve degenerates to flat-band."));
-    rightCol->addWidget(m_paraUseQFactorsChk);
+
 
     // chkPanaEQ_live + warning icon — eqform.cs:402-414 + 388-400.
     {
@@ -782,9 +852,10 @@ QWidget* TxEqDialog::buildParametricPanel()
         g->setHorizontalSpacing(6);
         g->setVerticalSpacing(4);
 
-        g->addWidget(new QLabel(tr("Low"),  panel), 0, 0);
-        m_paraLowSpin = new QSpinBox(panel);
+        g->addWidget(new QLabel(tr("Curve low"),  panel), 0, 0);
+        m_paraLowSpin = new QDoubleSpinBox(panel);
         m_paraLowSpin->setObjectName(QStringLiteral("TxEqParaLowSpin"));
+        m_paraLowSpin->setDecimals(3);
         m_paraLowSpin->setRange(kParaLowMinHz, kParaLowMaxHz);
         m_paraLowSpin->setValue(kParaLowDefaultHz);
         m_paraLowSpin->setSuffix(QStringLiteral(" Hz"));
@@ -796,19 +867,20 @@ QWidget* TxEqDialog::buildParametricPanel()
         // not per keystroke.
         m_paraLowSpin->setKeyboardTracking(false);
         m_paraLowSpin->setToolTip(tr(
-            "Lower edge of the visible parametric freq range (Hz).  "
+            "Lower edge of the configured curve range (Hz). Rescales all band frequencies.  "
             "Must be at least 1000 Hz below High."));
         g->addWidget(m_paraLowSpin, 0, 1);
 
-        g->addWidget(new QLabel(tr("High"), panel), 1, 0);
-        m_paraHighSpin = new QSpinBox(panel);
+        g->addWidget(new QLabel(tr("Curve high"), panel), 1, 0);
+        m_paraHighSpin = new QDoubleSpinBox(panel);
         m_paraHighSpin->setObjectName(QStringLiteral("TxEqParaHighSpin"));
+        m_paraHighSpin->setDecimals(3);
         m_paraHighSpin->setRange(kParaHighMinHz, kParaHighMaxHz);
         m_paraHighSpin->setValue(kParaHighDefaultHz);
         m_paraHighSpin->setSuffix(QStringLiteral(" Hz"));
         m_paraHighSpin->setKeyboardTracking(false);  // as Low above
         m_paraHighSpin->setToolTip(tr(
-            "Upper edge of the visible parametric freq range (Hz).  "
+            "Upper edge of the configured curve range (Hz). Rescales all band frequencies.  "
             "Must be at least 1000 Hz above Low."));
         g->addWidget(m_paraHighSpin, 1, 1);
 
@@ -821,7 +893,7 @@ QWidget* TxEqDialog::buildParametricPanel()
     // (panelTS1 wraps the three radios; default 10-band).
     {
         QGroupBox* grp = new QGroupBox(tr("Bands"), panel);
-        QVBoxLayout* gv = new QVBoxLayout(grp);
+        QHBoxLayout* gv = new QHBoxLayout(grp);
         gv->setContentsMargins(8, 14, 8, 8);
         gv->setSpacing(2);
 
@@ -846,18 +918,78 @@ QWidget* TxEqDialog::buildParametricPanel()
         m_bandCountGroup->addButton(m_paraBands5Radio,  5);
         m_bandCountGroup->addButton(m_paraBands10Radio, 10);
         m_bandCountGroup->addButton(m_paraBands18Radio, 18);
+        for (auto* radio : {m_paraBands5Radio, m_paraBands10Radio, m_paraBands18Radio}) {
+            radio->setToolTip(tr("Choose a count, then Apply to reset band frequencies, gains and widths. The checked count is currently applied."));
+        }
 
         gv->addWidget(m_paraBands5Radio);
         gv->addWidget(m_paraBands10Radio);
         gv->addWidget(m_paraBands18Radio);
-        rightCol->addWidget(grp);
+        col->insertWidget(0, grp);
     }
 
     rightCol->addStretch(1);
-    mainRow->addLayout(rightCol, 0);
+    auto* guide = new QLabel(tr("Drag a point to change frequency and gain. Drag square handles to change width."), paraAdvanced);
+    guide->setWordWrap(true); rightCol->addWidget(guide);
+
 
     col->addLayout(mainRow, 1);
-    return panel;
+    auto* controlsScroll = new QScrollArea(panel); controlsScroll->setWidgetResizable(true);
+    controlsScroll->setObjectName(QStringLiteral("TxEqSelectedControlsScroll"));
+    controlsScroll->setFrameShape(QFrame::NoFrame); controlsScroll->setMinimumHeight(100); controlsScroll->setMaximumHeight(260);
+    auto* controls = new QWidget(controlsScroll); auto* details = new QVBoxLayout(controls);
+    details->setContentsMargins(0, 0, 0, 0); details->setSpacing(6);
+    controlsScroll->setWidget(controls); col->addWidget(controlsScroll);
+    auto* bandScroll = new QScrollArea(panel); bandScroll->setWidgetResizable(false);
+    bandScroll->setObjectName(QStringLiteral("TxEqBandStripScroll"));
+    bandScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    bandScroll->setFrameShape(QFrame::NoFrame); bandScroll->setFixedHeight(65);
+    auto* bandButtons = new QWidget(bandScroll); m_bandSelectorRow = new QHBoxLayout(bandButtons);
+    m_bandSelectorRow->setContentsMargins(0, 0, 0, 0); m_bandSelectorRow->setSpacing(4);
+    m_bandSelector = new QButtonGroup(this); m_bandSelector->setObjectName(QStringLiteral("TxEqBandSelector"));
+    bandScroll->setWidget(bandButtons); details->addWidget(bandScroll);
+    m_selectedLabel = new QLabel(panel); m_selectedLabel->setObjectName(QStringLiteral("TxEqSelectedBandLabel"));
+    details->addWidget(m_selectedLabel);
+    // Arrange selected-band values in a grid so laptop widths remain usable.
+    auto* editorGrid = new QGridLayout;
+    int field = 0;
+    while (editRow->count()) {
+        auto* item = editRow->takeAt(0);
+        if (auto* widget = item->widget()) {
+            if (auto* label = qobject_cast<QLabel*>(widget)) {
+                if (label->text() == tr("Band")) { label->hide(); }
+                else { editorGrid->addWidget(label, 0, field++); }
+            } else if (widget == m_paraResetBtn) { editorGrid->addWidget(widget, 2, 3); }
+            else { editorGrid->addWidget(widget, 1, field - 1); }
+        }
+        delete item;
+    }
+    delete editRow;
+    details->addLayout(editorGrid);
+    auto* widthRow = new QHBoxLayout;
+    widthRow->addWidget(m_paraUseQFactorsChk);
+    widthRow->addWidget(new QLabel(tr("Wider"), panel));
+    m_widthSlider = new QSlider(Qt::Horizontal, panel); m_widthSlider->setRange(0, 1000);
+    m_widthSlider->setObjectName(QStringLiteral("TxEqWidthSlider"));
+    m_widthSlider->setAccessibleName(tr("Selected band width Q"));
+    m_widthSlider->setStyleSheet(Style::sliderHStyle());
+    widthRow->addWidget(m_widthSlider, 1); widthRow->addWidget(new QLabel(tr("Narrower"), panel));
+    details->addLayout(widthRow);
+    auto* limitation = new QLabel(tr("TX Width (Q) shapes audio for all 5, 10 and 18 bands when Use Q Factors is enabled."), panel);
+    limitation->setObjectName(QStringLiteral("TxEqWidthLimitation")); limitation->setWordWrap(true);
+    details->addWidget(limitation); m_paraQSpin->setToolTip(limitation->text()); m_widthSlider->setToolTip(limitation->text());
+    m_countNotice = new QWidget(panel); auto* noticeRow = new QHBoxLayout(m_countNotice);
+    m_countMessage = new QLabel(m_countNotice); m_countMessage->setWordWrap(true); noticeRow->addWidget(m_countMessage, 1);
+    auto* apply = new QPushButton(tr("Apply"), m_countNotice); apply->setObjectName(QStringLiteral("TxEqCountApplyBtn"));
+    auto* cancel = new QPushButton(tr("Cancel"), m_countNotice); cancel->setObjectName(QStringLiteral("TxEqCountCancelBtn"));
+    apply->setAutoDefault(false); cancel->setAutoDefault(false); noticeRow->addWidget(apply); noticeRow->addWidget(cancel);
+    m_applyCountBtn = apply;
+    connect(apply, &QPushButton::clicked, this, &TxEqDialog::applyBandCount);
+    connect(cancel, &QPushButton::clicked, this, &TxEqDialog::cancelBandCount);
+    col->insertWidget(1, m_countNotice); m_countNotice->hide();
+    m_parametricWidget->setSelectedIndex(0);
+    rebuildBandSelectors();
+    return root;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -867,8 +999,31 @@ QWidget* TxEqDialog::buildParametricPanel()
 void TxEqDialog::wireSignals()
 {
     // ── chkLegacyEQ toggle — From eqform.cs:981 + 2862-2911 [v2.10.3.13].
-    connect(m_legacyToggle, &QCheckBox::toggled,
-            this, &TxEqDialog::onLegacyToggled);
+    connect(m_modeSelector, &QButtonGroup::idClicked, this, [this](int id) { onLegacyToggled(id == 0); });
+    connect(m_undoBtn, &QPushButton::clicked, this, &TxEqDialog::undoEdit);
+    connect(m_redoBtn, &QPushButton::clicked, this, &TxEqDialog::redoEdit);
+    for (auto* history : m_history) {
+        connect(history, &EqEditHistory::availabilityChanged, this, [this] { refreshHistoryButtons(); });
+    }
+    for (auto* spin : findChildren<QAbstractSpinBox*>()) {
+        spin->setKeyboardTracking(false); spin->installEventFilter(this);
+        spin->setAccessibleName(spin->toolTip().isEmpty() ? spin->objectName() : spin->toolTip());
+        for (auto* line : spin->findChildren<QLineEdit*>()) { line->installEventFilter(this); }
+        connect(spin, &QAbstractSpinBox::editingFinished, this, [this, spin] {
+            if (m_numericEditor == spin) { m_numericEditor = nullptr; finishEdit(); }
+        });
+    }
+    for (auto* slider : findChildren<QSlider*>()) {
+        slider->installEventFilter(this); slider->setAccessibleName(slider->toolTip().isEmpty() ? slider->objectName() : slider->toolTip());
+        connect(slider, &QSlider::sliderPressed, this, [this] { beginEdit(); m_sliderActive = true; });
+        connect(slider, &QSlider::sliderReleased, this, [this] { m_sliderActive = false; finishEdit(); });
+    }
+    connect(m_widthSlider, &QSlider::valueChanged, this, [this](int value) { onParametricQSpinChanged(.2 * std::pow(100.0, value / 1000.0)); });
+    connect(m_bandSelector, &QButtonGroup::idClicked, this, [this](int id) {
+        m_parametricWidget->setSelectedIndex(m_parametricWidget->getIndexFromBandId(id)); updateEditRowFromSelection();
+    });
+    connect(m_parametricWidget, &ParametricEqWidget::editStarted, this, [this] { beginEdit(); m_gestureActive = true; });
+    connect(m_parametricWidget, &ParametricEqWidget::editFinished, this, [this] { m_gestureActive = false; finishEdit(); });
 
     // ── Legacy panel: UI → model ────────────────────────────────────
     connect(m_enableChk, &QCheckBox::toggled,
@@ -913,9 +1068,12 @@ void TxEqDialog::wireSignals()
             this, [this](int /*id*/, bool checked) {
         if (checked) onParametricBandCountChanged();
     });
-    connect(m_paraLowSpin, qOverload<int>(&QSpinBox::valueChanged),
+    connect(m_bandCountGroup, &QButtonGroup::idClicked, this, [this](int count) {
+        if (count == m_parametricWidget->bandCount()) { cancelBandCount(); }
+    });
+    connect(m_paraLowSpin, qOverload<double>(&QDoubleSpinBox::valueChanged),
             this, &TxEqDialog::onParametricLowFreqChanged);
-    connect(m_paraHighSpin, qOverload<int>(&QSpinBox::valueChanged),
+    connect(m_paraHighSpin, qOverload<double>(&QDoubleSpinBox::valueChanged),
             this, &TxEqDialog::onParametricHighFreqChanged);
     connect(m_paraLogScaleChk, &QCheckBox::toggled,
             this, &TxEqDialog::onParametricLogScaleToggled);
@@ -923,8 +1081,6 @@ void TxEqDialog::wireSignals()
             this, &TxEqDialog::onParametricUseQFactorsToggled);
     connect(m_paraLiveUpdateChk, &QCheckBox::toggled,
             this, &TxEqDialog::onParametricLiveUpdateToggled);
-    connect(m_paraSelectedBandSpin, qOverload<int>(&QSpinBox::valueChanged),
-            this, &TxEqDialog::onParametricSelectedBandChanged);
     connect(m_paraFreqSpin, qOverload<int>(&QSpinBox::valueChanged),
             this, &TxEqDialog::onParametricFreqSpinChanged);
     connect(m_paraGainSpin, qOverload<double>(&QDoubleSpinBox::valueChanged),
@@ -963,6 +1119,11 @@ void TxEqDialog::wireSignals()
     // overwrites the just-loaded curve.
     connect(&tx, &TransmitModel::txEqParaEqDataChanged,
             this, &TxEqDialog::syncParametricFromModel);
+    if (auto* profiles = m_radio->micProfileManager()) {
+        // Activation is authoritative even if every scalar/blob setter is
+        // idempotent: cancel unsaved runtime edits and seed from saved data.
+        connect(profiles, &MicProfileManager::activeProfileChanged, this, [this] { syncFromModel(); });
+    }
     // R-R3-49 (parity Task 4): the Legacy EQ box follows the model (a
     // profile load, or the Core's value in a remote window).
     connect(&tx, &TransmitModel::txEqUseLegacyChanged,
@@ -976,13 +1137,15 @@ void TxEqDialog::wireSignals()
 void TxEqDialog::onEnableToggled(bool on)
 {
     if (m_updatingFromModel || !m_radio) { return; }
+    const QScopedValueRollback<bool> guard(m_updatingFromModel, true);
     m_radio->transmitModel().setTxEqEnabled(on);
 }
 
 void TxEqDialog::onPreampChanged(int dB)
 {
     if (m_updatingFromModel || !m_radio) { return; }
-    m_radio->transmitModel().setTxEqPreamp(dB);
+    { QSignalBlocker a(m_preampSlider), b(m_preampSpin); m_preampSlider->setValue(dB); m_preampSpin->setValue(dB); }
+    changed();
 }
 
 void TxEqDialog::onBandValueChanged()
@@ -1001,7 +1164,8 @@ void TxEqDialog::onBandValueChanged()
     } else {
         return;
     }
-    m_radio->transmitModel().setTxEqBand(idx, value);
+    { QSignalBlocker a(m_bandSliders[idx]), b(m_bandSpins[idx]); m_bandSliders[idx]->setValue(value); m_bandSpins[idx]->setValue(value); }
+    changed();
 }
 
 void TxEqDialog::onFreqValueChanged()
@@ -1014,31 +1178,31 @@ void TxEqDialog::onFreqValueChanged()
     if (!ok || idx < 0 || idx >= 10) { return; }
     auto* spin = qobject_cast<QSpinBox*>(s);
     if (!spin) { return; }
-    m_radio->transmitModel().setTxEqFreq(idx, spin->value());
+    changed();
 }
 
-void TxEqDialog::onNcChanged(int nc)
+void TxEqDialog::onNcChanged(int /*nc*/)
 {
     if (m_updatingFromModel || !m_radio) { return; }
-    m_radio->transmitModel().setTxEqNc(nc);
+    changed();
 }
 
-void TxEqDialog::onMpToggled(bool mp)
+void TxEqDialog::onMpToggled(bool /*mp*/)
 {
     if (m_updatingFromModel || !m_radio) { return; }
-    m_radio->transmitModel().setTxEqMp(mp);
+    changed();
 }
 
-void TxEqDialog::onCtfmodeChanged(int mode)
+void TxEqDialog::onCtfmodeChanged(int /*mode*/)
 {
     if (m_updatingFromModel || !m_radio) { return; }
-    m_radio->transmitModel().setTxEqCtfmode(mode);
+    changed();
 }
 
-void TxEqDialog::onWintypeChanged(int wintype)
+void TxEqDialog::onWintypeChanged(int /*wintype*/)
 {
     if (m_updatingFromModel || !m_radio) { return; }
-    m_radio->transmitModel().setTxEqWintype(wintype);
+    changed();
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1056,19 +1220,36 @@ void TxEqDialog::onWintypeChanged(int wintype)
 
 void TxEqDialog::onLegacyToggled(bool legacy)
 {
-    if (!m_panelStack) { return; }
+    if (!m_panelStack || legacy == usingLegacyEq()) { return; }
+    if (m_numericEditor || m_gestureActive || m_sliderActive) { m_numericEditor = nullptr; m_gestureActive = false; m_sliderActive = false; finishEdit(); }
+    m_parametricWidget->cancelEditGesture(); cancelBandCount();
+    { QSignalBlocker b(m_modeSelector); m_modeSelector->button(legacy ? 0 : 1)->setChecked(true); }
     m_panelStack->setCurrentIndex(legacy ? 0 : 1);
-    if (m_updatingFromModel || !m_radio) { return; }
-    m_radio->transmitModel().setTxEqUseLegacy(legacy);
+    m_committed[legacy ? 0 : 1] = captureEditState(legacy);
+    refreshHistoryButtons();
+    if (auto* advanced = findChild<QWidget*>(QStringLiteral("TxEqParaAdvancedControls"))) { advanced->setVisible(!legacy); }
+    refreshAdvancedHeight();
+    if (!m_updatingFromModel && m_radio) {
+        const QScopedValueRollback<bool> guard(m_updatingFromModel, true);
+        m_radio->transmitModel().setTxEqUseLegacy(legacy);
+    }
 }
 
 void TxEqDialog::syncLegacyFromModel()
 {
-    if (!m_radio || !m_legacyToggle || !m_panelStack) { return; }
+    if (!m_radio || !m_modeSelector || !m_panelStack || m_updatingFromModel) { return; }
     const bool legacy = m_radio->transmitModel().txEqUseLegacy();
-    QSignalBlocker b(m_legacyToggle);
-    m_legacyToggle->setChecked(legacy);
-    m_panelStack->setCurrentIndex(legacy ? 0 : 1);
+    if (legacy != usingLegacyEq()) {
+        const QScopedValueRollback<bool> guard(m_updatingFromModel, true);
+        m_parametricWidget->cancelEditGesture();
+        cancelBandCount();
+        QSignalBlocker blocker(m_modeSelector);
+        m_modeSelector->button(legacy ? 0 : 1)->setChecked(true);
+        m_panelStack->setCurrentIndex(legacy ? 0 : 1);
+        if (auto* advanced = findChild<QWidget*>(QStringLiteral("TxEqParaAdvancedControls"))) { advanced->setVisible(!legacy); }
+        refreshAdvancedHeight();
+        rebaseEditHistory();
+    }
 }
 
 void TxEqDialog::setSettingsPermitted(bool permitted, const QString& reason)
@@ -1111,27 +1292,16 @@ void TxEqDialog::applySettingsPermitted()
 
 void TxEqDialog::onParametricPointsChanged(bool isDragging)
 {
-    if (m_ignoreUpdates) { return; }
+    if (m_ignoreUpdates || m_updatingFromModel) { return; }
     updateEditRowFromSelection();
-    // Mirrors eqform.cs:206-216 + Thetis live-update gating — defer the
-    // round-trip to TransmitModel until the user releases the mouse,
-    // unless Live Update is on.
-    if (!isDragging || (m_paraLiveUpdateChk && m_paraLiveUpdateChk->isChecked())) {
-        pushParametricToModel();
-    }
+    if (!m_gestureActive || isDragging) { changed(isDragging); }
 }
 
 void TxEqDialog::onParametricGlobalGainChanged(bool isDragging)
 {
-    if (m_ignoreUpdates) { return; }
-    if (!m_parametricWidget || !m_paraPreampSpin) { return; }
-    {
-        QSignalBlocker b(m_paraPreampSpin);
-        m_paraPreampSpin->setValue(m_parametricWidget->globalGainDb());
-    }
-    if (!isDragging || (m_paraLiveUpdateChk && m_paraLiveUpdateChk->isChecked())) {
-        pushParametricToModel();
-    }
+    if (m_ignoreUpdates || m_updatingFromModel) { return; }
+    updateEditRowFromSelection();
+    if (!m_gestureActive || isDragging) { changed(isDragging); }
 }
 
 void TxEqDialog::onParametricSelectedChanged(bool /*isDragging*/)
@@ -1150,6 +1320,7 @@ void TxEqDialog::onParametricResetClicked()
     // TxCfcDialog::onResetCompClicked / onResetEqClicked.  setBandCount()
     // can't be reused as the reset hook because it early-returns when the
     // requested count equals the current count.
+    beginEdit();
     const int bands = m_parametricWidget->bandCount();
     QVector<double> f(bands), g(bands, 0.0), q(bands, 4.0);
     const double minHz = m_parametricWidget->frequencyMinHz();
@@ -1161,97 +1332,88 @@ void TxEqDialog::onParametricResetClicked()
     }
     {
         QSignalBlocker b(m_parametricWidget);
-        m_parametricWidget->setSelectedIndex(-1);
+        m_parametricWidget->setSelectedIndex(0);
         m_parametricWidget->setGlobalGainDb(0.0);
         m_parametricWidget->setPointsData(f, g, q);
     }
     updateEditRowFromSelection();
-    pushParametricToModel();
+    changed();
+}
+
+void TxEqDialog::refreshAdvancedHeight()
+{
+    if (!m_advancedScroll || !m_advancedControls) { return; }
+    m_advancedControls->layout()->invalidate();
+    // Compact in Graphic mode; scroll the larger Parametric section without
+    // moving the header disclosure or taking all of the graph's height.
+    m_advancedScroll->setFixedHeight(qMin(180, m_advancedControls->sizeHint().height()));
 }
 
 void TxEqDialog::onParametricBandCountChanged()
 {
-    if (!m_parametricWidget || !m_bandCountGroup) { return; }
     const int count = m_bandCountGroup->checkedId();
-    if (count <= 0) { return; }
+    if (count == m_parametricWidget->bandCount()) { cancelBandCount(); return; }
+    m_pendingCount = count;
     {
-        QSignalBlocker b(m_parametricWidget);
-        m_parametricWidget->setBandCount(count);
-        m_parametricWidget->setSelectedIndex(-1);
+        QSignalBlocker blocker(m_bandCountGroup);
+        m_bandCountGroup->button(m_parametricWidget->bandCount())->setChecked(true);
     }
-    // Keep the # spinbox upper-bound in lockstep with the band count.
-    if (m_paraSelectedBandSpin) {
-        QSignalBlocker b(m_paraSelectedBandSpin);
-        m_paraSelectedBandSpin->setRange(kParaSelectedBandMin, count);
-        m_paraSelectedBandSpin->setValue(count);
-    }
-    updateEditRowFromSelection();
-    pushParametricToModel();
+    m_countMessage->setText(tr("Currently %1 bands → %2 requested. Applying resets frequencies, gains and widths.")
+                           .arg(m_parametricWidget->bandCount()).arg(count));
+    m_applyCountBtn->setText(tr("Apply %1 bands").arg(count));
+    m_countNotice->show();
 }
 
-void TxEqDialog::onParametricLowFreqChanged(int hz)
+void TxEqDialog::onParametricLowFreqChanged(double hz)
 {
     if (!m_parametricWidget || !m_paraHighSpin) { return; }
-    // From Thetis eqform.cs:3539-3557 [v2.10.3.15] (nudParaEQ_low_ValueChanged).
-    // The clamp sets the spin box with this handler still connected, so
-    // valueChanged re-fires with the clamped value and that call moves the
-    // curve. The range setter rescales the points and emits pointsChanged,
-    // which onParametricPointsChanged stores in the model, as Thetis's
-    // ucParametricEq1_PointsChanged does (eqform.cs:3197-3213 [v2.10.3.15]).
-    const int hi = m_paraHighSpin->value();
-    if (hz > hi - kMinFreqSpreadHz) {
-        m_paraLowSpin->setValue(hi - kMinFreqSpreadHz);
-        return;  // valueChanged will re-fire with the clamped value
+    // Enforce the 1 kHz spread guard — clamp Low so it stays at least
+    // kMinFreqSpreadHz below High.
+    const double hi = m_parametricWidget->frequencyMaxHz();
+    if (hz + kMinFreqSpreadHz > hi) {
+        QSignalBlocker b(m_paraLowSpin);
+        hz = hi - kMinFreqSpreadHz;
+        m_paraLowSpin->setValue(hz);
     }
-    m_parametricWidget->setFrequencyMinHz(static_cast<double>(hz));
+    if (!m_numericEditor && !m_sliderActive && !m_gestureActive) { beginEdit(); }
+    { QSignalBlocker b(m_parametricWidget); m_parametricWidget->setFrequencyMinHz(static_cast<double>(hz)); }
+    changed();
 }
 
-void TxEqDialog::onParametricHighFreqChanged(int hz)
+void TxEqDialog::onParametricHighFreqChanged(double hz)
 {
     if (!m_parametricWidget || !m_paraLowSpin) { return; }
-    // From Thetis eqform.cs:3559-3577 [v2.10.3.15] (nudParaEQ_high_ValueChanged),
-    // the same shape as Low above.
-    const int lo = m_paraLowSpin->value();
+    const double lo = m_parametricWidget->frequencyMinHz();
     if (hz < lo + kMinFreqSpreadHz) {
-        m_paraHighSpin->setValue(lo + kMinFreqSpreadHz);
-        return;
+        QSignalBlocker b(m_paraHighSpin);
+        hz = lo + kMinFreqSpreadHz;
+        m_paraHighSpin->setValue(hz);
     }
-    m_parametricWidget->setFrequencyMaxHz(static_cast<double>(hz));
+    if (!m_numericEditor && !m_sliderActive && !m_gestureActive) { beginEdit(); }
+    { QSignalBlocker b(m_parametricWidget); m_parametricWidget->setFrequencyMaxHz(static_cast<double>(hz)); }
+    changed();
 }
 
 void TxEqDialog::onParametricLogScaleToggled(bool on)
 {
     if (!m_parametricWidget) { return; }
-    QSignalBlocker b(m_parametricWidget);
-    m_parametricWidget->setLogScale(on);
+    if (!m_numericEditor && !m_sliderActive && !m_gestureActive) { beginEdit(); }
+    { QSignalBlocker b(m_parametricWidget); m_parametricWidget->setLogScale(on); }
+    changed();
 }
 
 void TxEqDialog::onParametricUseQFactorsToggled(bool on)
 {
     if (!m_parametricWidget) { return; }
-    QSignalBlocker b(m_parametricWidget);
-    m_parametricWidget->setParametricEq(on);
-    pushParametricToModel();
+    if (!m_numericEditor && !m_sliderActive && !m_gestureActive) { beginEdit(); }
+    { QSignalBlocker b(m_parametricWidget); m_parametricWidget->setParametricEq(on); }
+    updateEditRowFromSelection();
+    changed();
 }
 
 void TxEqDialog::onParametricLiveUpdateToggled(bool /*on*/)
 {
-    // No immediate side effect — the gating is read each time
-    // onParametricPointsChanged fires.  We could surface a warning
-    // icon visibility flip here if desired (Thetis only shows it
-    // when live mode is on AND the buffer size is large).  Defer.
-}
-
-void TxEqDialog::onParametricSelectedBandChanged(int oneBased)
-{
-    if (m_ignoreUpdates || !m_parametricWidget) { return; }
-    m_ignoreUpdates = true;
-    {
-        QSignalBlocker b(m_parametricWidget);
-        m_parametricWidget->setSelectedIndex(oneBased - 1);
-    }
-    m_ignoreUpdates = false;
-    updateEditRowFromSelection();
+    // Existing display preference: read while editing, with no audio write.
 }
 
 void TxEqDialog::onParametricFreqSpinChanged(int hz)
@@ -1259,53 +1421,37 @@ void TxEqDialog::onParametricFreqSpinChanged(int hz)
     if (m_ignoreUpdates || !m_parametricWidget) { return; }
     const int idx = m_parametricWidget->selectedIndex();
     if (idx < 0) { return; }
+    if (!m_numericEditor && !m_sliderActive && !m_gestureActive) { beginEdit(); }
     double f = 0.0, g = 0.0, q = 0.0;
-    m_parametricWidget->getPointData(idx, f, g, q);
+    const auto point = m_parametricWidget->points()[idx];
+    f = point.frequencyHz; g = point.gainDb; q = point.q;
     f = static_cast<double>(hz);
     {
         QSignalBlocker b(m_parametricWidget);
         m_parametricWidget->setPointData(idx, f, g, q);
     }
-    pushParametricToModel();
+    updateEditRowFromSelection(); changed();
 }
 
 void TxEqDialog::onParametricGainSpinChanged(double db)
 {
-    if (m_ignoreUpdates || !m_parametricWidget) { return; }
-    const int idx = m_parametricWidget->selectedIndex();
-    if (idx < 0) { return; }
-    double f = 0.0, g = 0.0, q = 0.0;
-    m_parametricWidget->getPointData(idx, f, g, q);
-    g = db;
-    {
-        QSignalBlocker b(m_parametricWidget);
-        m_parametricWidget->setPointData(idx, f, g, q);
-    }
-    pushParametricToModel();
+    changeSelectedPoint(db, false);
 }
 
 void TxEqDialog::onParametricQSpinChanged(double q)
 {
-    if (m_ignoreUpdates || !m_parametricWidget) { return; }
-    const int idx = m_parametricWidget->selectedIndex();
-    if (idx < 0) { return; }
-    double f = 0.0, g = 0.0, qOld = 0.0;
-    m_parametricWidget->getPointData(idx, f, g, qOld);
-    {
-        QSignalBlocker b(m_parametricWidget);
-        m_parametricWidget->setPointData(idx, f, g, q);
-    }
-    pushParametricToModel();
+    changeSelectedPoint(q, true);
 }
 
 void TxEqDialog::onParametricPreampSpinChanged(double db)
 {
     if (m_ignoreUpdates || !m_parametricWidget) { return; }
+    if (!m_numericEditor && !m_sliderActive && !m_gestureActive) { beginEdit(); }
     {
         QSignalBlocker b(m_parametricWidget);
         m_parametricWidget->setGlobalGainDb(db);
     }
-    pushParametricToModel();
+    changed();
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1317,6 +1463,10 @@ void TxEqDialog::updateEditRowFromSelection()
     if (!m_parametricWidget) { return; }
     const int idx = m_parametricWidget->selectedIndex();
     const bool haveSelection = (idx >= 0);
+    rebuildBandSelectors();
+    { QSignalBlocker b(m_paraPreampSpin); m_paraPreampSpin->setValue(m_parametricWidget->globalGainDb()); }
+    const bool useQ = m_parametricWidget->parametricEq();
+    m_widthSlider->setEnabled(haveSelection && useQ);
 
     // Edit-row spinboxes are enabled only when a band is selected,
     // matching Thetis frmCFCConfig.cs's selected-row-enable pattern
@@ -1325,20 +1475,19 @@ void TxEqDialog::updateEditRowFromSelection()
     // so users don't type into spinboxes that have no effect.
     if (m_paraFreqSpin)   m_paraFreqSpin->setEnabled(haveSelection);
     if (m_paraGainSpin)   m_paraGainSpin->setEnabled(haveSelection);
-    if (m_paraQSpin)      m_paraQSpin->setEnabled(haveSelection);
+    if (m_paraQSpin)      m_paraQSpin->setEnabled(haveSelection && useQ);
 
     if (!haveSelection) {
         return;
     }
 
     double f = 0.0, g = 0.0, q = 0.0;
-    m_parametricWidget->getPointData(idx, f, g, q);
+    const auto point = m_parametricWidget->points()[idx];
+    f = point.frequencyHz; g = point.gainDb; q = point.q;
 
+    m_selectedLabel->setText(tr("Band %1 · %2 Hz").arg(point.bandId).arg(f, 0, 'f', 0));
+    { QSignalBlocker b(m_widthSlider); m_widthSlider->setValue(qRound(1000 * std::log(q / .2) / std::log(100.0))); }
     m_ignoreUpdates = true;
-    if (m_paraSelectedBandSpin) {
-        QSignalBlocker b(m_paraSelectedBandSpin);
-        m_paraSelectedBandSpin->setValue(idx + 1);
-    }
     if (m_paraFreqSpin) {
         QSignalBlocker b(m_paraFreqSpin);
         m_paraFreqSpin->setValue(static_cast<int>(std::round(f)));
@@ -1363,6 +1512,8 @@ void TxEqDialog::pushParametricToModel()
     if (!m_radio || !m_parametricWidget || m_updatingFromModel) { return; }
     m_updatingFromModel = true;
     TransmitModel& tx = m_radio->transmitModel();
+    tx.setTxEqNc(m_ncSpin->value()); tx.setTxEqMp(m_mpChk->isChecked());
+    tx.setTxEqCtfmode(m_ctfmodeCombo->currentIndex()); tx.setTxEqWintype(m_wintypeCombo->currentIndex());
 
     // 1. Persist the parametric blob (consumed by profile save / load
     //    and by syncParametricFromModel on the next active-profile flip).
@@ -1390,6 +1541,7 @@ void TxEqDialog::pushParametricToModel()
 void TxEqDialog::syncParametricFromModel()
 {
     if (!m_radio || !m_parametricWidget || m_updatingFromModel) { return; }
+    m_parametricWidget->cancelEditGesture();
     const QString blob = m_radio->transmitModel().txEqParaEqData();
 
     // R-IOS-13 / R-R3-49: the TX panel loads the model's value as Thetis's
@@ -1430,6 +1582,9 @@ void TxEqDialog::syncParametricFromModel()
     syncParametricControlsFromWidget();
     updateEditRowFromSelection();
     m_updatingFromModel = false;
+    m_loadedBlob = blob;
+    m_loadedGraph = m_parametricWidget->saveEditState();
+    rebaseEditHistory();
 }
 
 // From Thetis eqform.cs:3352-3368 [v2.10.3.15] (setParaEQData, after the
@@ -1453,20 +1608,17 @@ void TxEqDialog::syncParametricControlsFromWidget()
     }
     if (m_paraLowSpin) {
         QSignalBlocker b(m_paraLowSpin);
-        m_paraLowSpin->setValue(static_cast<int>(m_parametricWidget->frequencyMinHz()));
+        m_paraLowSpin->setValue(m_parametricWidget->frequencyMinHz());
     }
     if (m_paraHighSpin) {
         QSignalBlocker b(m_paraHighSpin);
-        m_paraHighSpin->setValue(static_cast<int>(m_parametricWidget->frequencyMaxHz()));
+        m_paraHighSpin->setValue(m_parametricWidget->frequencyMaxHz());
     }
     if (m_paraUseQFactorsChk) {
         QSignalBlocker b(m_paraUseQFactorsChk);
         m_paraUseQFactorsChk->setChecked(m_parametricWidget->parametricEq());
     }
-    if (m_paraSelectedBandSpin) {
-        QSignalBlocker b(m_paraSelectedBandSpin);
-        m_paraSelectedBandSpin->setMaximum(count);
-    }
+    rebuildBandSelectors();
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1475,7 +1627,8 @@ void TxEqDialog::syncParametricControlsFromWidget()
 
 void TxEqDialog::syncFromModel()
 {
-    if (!m_radio) { return; }
+    if (!m_radio || m_updatingFromModel) { return; }
+    m_parametricWidget->cancelEditGesture();
     TransmitModel& tx = m_radio->transmitModel();
 
     m_updatingFromModel = true;
@@ -1526,12 +1679,270 @@ void TxEqDialog::syncFromModel()
     // on PR #159).  Initial profile-load path -- subsequent updates fire
     // via the txEqParaEqDataChanged signal wired in wireSignals().
     syncParametricFromModel();
+    rebaseEditHistory();
 }
 
 // ─────────────────────────────────────────────────────────────────────
 // Hide-on-close — From Thetis frmCFCConfig.cs:477-482 [v2.10.3.13]
 // pattern.  TxApplet keeps the singleton alive for fast re-show.
 // ─────────────────────────────────────────────────────────────────────
+
+// NereusSDR-original editor transaction plumbing. Runtime snapshots preserve
+// doubles and stable IDs; the existing saved JSON and WDSP conversion stay intact.
+bool TxEqDialog::usingLegacyEq() const
+{
+    return m_panelStack && m_panelStack->currentIndex() == 0;
+}
+
+QByteArray TxEqDialog::captureEditState(bool legacy) const
+{
+    QByteArray result; QDataStream stream(&result, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << m_ncSpin->value() << m_mpChk->isChecked() << m_ctfmodeCombo->currentIndex() << m_wintypeCombo->currentIndex();
+    if (legacy) {
+        stream << m_preampSpin->value();
+        for (int i = 0; i < 10; ++i) { stream << m_bandSpins[i]->value() << m_freqSpins[i]->value(); }
+    } else {
+        stream << m_parametricWidget->saveEditState();
+    }
+    return result;
+}
+
+void TxEqDialog::restoreEditState(bool legacy, const QByteArray& state)
+{
+    QDataStream stream(state); stream.setVersion(QDataStream::Qt_6_0);
+    int nc = 0, cutoff = 0, window = 0; bool mp = false;
+    stream >> nc >> mp >> cutoff >> window;
+    {
+        const QScopedValueRollback<bool> guard(m_ignoreUpdates, true);
+        QSignalBlocker a(m_ncSpin), b(m_mpChk), c(m_ctfmodeCombo), d(m_wintypeCombo);
+        m_ncSpin->setValue(nc); m_mpChk->setChecked(mp); m_ctfmodeCombo->setCurrentIndex(cutoff); m_wintypeCombo->setCurrentIndex(window);
+        if (legacy) {
+            int preamp = 0; stream >> preamp;
+            QSignalBlocker a(m_preampSlider), b(m_preampSpin);
+            m_preampSlider->setValue(preamp); m_preampSpin->setValue(preamp);
+            for (int i = 0; i < 10; ++i) {
+                int gain = 0, hz = 0; stream >> gain >> hz;
+                QSignalBlocker a(m_bandSliders[i]), b(m_bandSpins[i]), c(m_freqSpins[i]);
+                m_bandSliders[i]->setValue(gain); m_bandSpins[i]->setValue(gain); m_freqSpins[i]->setValue(hz);
+            }
+        } else {
+            QByteArray graph; stream >> graph;
+            QSignalBlocker a(m_parametricWidget), b(m_paraLiveUpdateChk), c(m_paraLowSpin), d(m_paraHighSpin), e(m_paraLogScaleChk), f(m_paraUseQFactorsChk);
+            if (!m_parametricWidget->restoreEditState(graph)) { return; }
+            m_parametricWidget->setSelectedIndex(m_parametricWidget->getIndexFromBandId(m_selectionStates.value(state, -1)));
+            m_paraLowSpin->setValue(m_parametricWidget->frequencyMinHz()); m_paraHighSpin->setValue(m_parametricWidget->frequencyMaxHz());
+            m_paraLogScaleChk->setChecked(m_parametricWidget->logScale()); m_paraUseQFactorsChk->setChecked(m_parametricWidget->parametricEq());
+        }
+    }
+    if (stream.status() != QDataStream::Ok || !stream.atEnd()) { return; }
+    cancelBandCount(); updateEditRowFromSelection();
+    m_committed[legacy ? 0 : 1] = state;
+    if (legacy) { pushLegacyControls(); }
+    else if (m_radio && m_parametricWidget->saveEditState() == m_loadedGraph) {
+        const QScopedValueRollback<bool> guard(m_updatingFromModel, true);
+        auto& tx = m_radio->transmitModel();
+        tx.setTxEqNc(m_ncSpin->value()); tx.setTxEqMp(m_mpChk->isChecked());
+        tx.setTxEqCtfmode(m_ctfmodeCombo->currentIndex()); tx.setTxEqWintype(m_wintypeCombo->currentIndex());
+        tx.setTxEqParaEqData(m_loadedBlob);
+    } else { pushParametricToModel(); }
+    refreshHistoryButtons();
+}
+
+void TxEqDialog::beginEdit()
+{
+    if (m_ignoreUpdates || m_updatingFromModel) { return; }
+    const bool legacy = usingLegacyEq(); const int mode = legacy ? 0 : 1;
+    const QByteArray state = captureEditState(legacy);
+    const int index = m_parametricWidget->selectedIndex();
+    if (!legacy) { m_selectionStates.insert(state, index >= 0 ? m_parametricWidget->points()[index].bandId : -1); }
+    m_history[mode]->beginEdit(state);
+}
+
+void TxEqDialog::finishEdit()
+{
+    if (m_ignoreUpdates || m_updatingFromModel) { return; }
+    const bool legacy = usingLegacyEq(); const int mode = legacy ? 0 : 1;
+    const QByteArray state = captureEditState(legacy);
+    const bool edited = state != m_committed[mode];
+    const int index = m_parametricWidget->selectedIndex();
+    if (!legacy) { m_selectionStates.insert(state, index >= 0 ? m_parametricWidget->points()[index].bandId : -1); }
+    if (edited) { m_history[mode]->commitEdit(state); } else { m_history[mode]->cancelEdit(); }
+    m_committed[mode] = state;
+    const auto retained = m_history[1]->retainedStates();
+    for (auto it = m_selectionStates.begin(); it != m_selectionStates.end();) {
+        if (!retained.contains(it.key())) { it = m_selectionStates.erase(it); } else { ++it; }
+    }
+    if (edited && !m_liveGestureWrote) {
+        if (legacy) { pushLegacyControls(); } else { pushParametricToModel(); }
+    } else if (edited && m_liveGestureWrote && !legacy) { pushParametricToModel(); }
+    m_liveGestureWrote = false; refreshHistoryButtons();
+}
+
+void TxEqDialog::changed(bool dragging)
+{
+    if (m_ignoreUpdates || m_updatingFromModel) { return; }
+    updateEditRowFromSelection();
+    if (m_gestureActive || m_sliderActive || dragging) {
+        if (m_paraLiveUpdateChk->isChecked()) {
+            if (usingLegacyEq()) { pushLegacyControls(); } else { pushParametricToModel(); }
+            m_liveGestureWrote = true;
+        }
+    } else if (!m_numericEditor) { finishEdit(); }
+}
+
+void TxEqDialog::pushLegacyControls()
+{
+    if (!m_radio || m_updatingFromModel) { return; }
+    const QScopedValueRollback<bool> guard(m_updatingFromModel, true);
+    auto& tx = m_radio->transmitModel();
+    const auto profileUpdate = tx.scopedTxEqProfileUpdate();
+    tx.setTxEqPreamp(m_preampSpin->value());
+    for (int i = 0; i < 10; ++i) { tx.setTxEqBand(i, m_bandSpins[i]->value()); tx.setTxEqFreq(i, m_freqSpins[i]->value()); }
+    tx.setTxEqNc(m_ncSpin->value()); tx.setTxEqMp(m_mpChk->isChecked());
+    tx.setTxEqCtfmode(m_ctfmodeCombo->currentIndex()); tx.setTxEqWintype(m_wintypeCombo->currentIndex());
+}
+
+void TxEqDialog::rebaseEditHistory()
+{
+    m_gestureActive = false;
+    if (m_sliderActive) {
+        for (auto* slider : findChildren<QSlider*>()) { if (slider->isSliderDown()) { m_cancelledSlider = slider; QSignalBlocker b(slider); slider->setSliderDown(false); } }
+    }
+    m_sliderActive = false; m_numericEditor = nullptr; m_liveGestureWrote = false;
+    m_selectionStates.clear();
+    for (int mode = 0; mode < 2; ++mode) {
+        m_history[mode]->cancelEdit(); m_committed[mode] = captureEditState(mode == 0); m_history[mode]->reset(m_committed[mode]);
+    }
+    cancelBandCount(); refreshHistoryButtons();
+}
+
+void TxEqDialog::refreshHistoryButtons()
+{
+    const int mode = usingLegacyEq() ? 0 : 1;
+    m_undoBtn->setEnabled(m_history[mode]->canUndo()); m_redoBtn->setEnabled(m_history[mode]->canRedo());
+}
+
+void TxEqDialog::undoEdit()
+{
+    if (m_numericEditor) { m_numericEditor = nullptr; finishEdit(); }
+    const bool legacy = usingLegacyEq();
+    if (const auto state = m_history[legacy ? 0 : 1]->undo()) { restoreEditState(legacy, *state); }
+}
+
+void TxEqDialog::redoEdit()
+{
+    if (m_numericEditor) { m_numericEditor = nullptr; finishEdit(); }
+    const bool legacy = usingLegacyEq();
+    if (const auto state = m_history[legacy ? 0 : 1]->redo()) { restoreEditState(legacy, *state); }
+}
+
+void TxEqDialog::rebuildBandSelectors()
+{
+    if (!m_bandSelector) { return; }
+    const auto& points = m_parametricWidget->points();
+    bool rebuild = m_bandSelector->buttons().size() != points.size();
+    if (!rebuild) { for (const auto& point : points) { if (!m_bandSelector->button(point.bandId)) { rebuild = true; break; } } }
+    if (rebuild) {
+        while (auto* item = m_bandSelectorRow->takeAt(0)) { if (auto* widget = item->widget()) { delete widget; } delete item; }
+        for (const auto& point : points) {
+            auto* button = new QPushButton(this); button->setCheckable(true); button->setAutoDefault(false);
+            button->setMinimumWidth(86); m_bandSelector->addButton(button, point.bandId); m_bandSelectorRow->addWidget(button);
+        }
+    }
+    const int selected = m_parametricWidget->selectedIndex();
+    m_bandSelector->setExclusive(false);
+    for (int i = 0; i < points.size(); ++i) {
+        auto* button = m_bandSelector->button(points[i].bandId);
+        button->show();
+        button->setText(tr("%1\n%2 Hz").arg(points[i].bandId).arg(points[i].frequencyHz, 0, 'f', 0));
+        button->setAccessibleName(tr("Band %1, %2 Hz").arg(points[i].bandId).arg(points[i].frequencyHz, 0, 'f', 0));
+        QSignalBlocker b(button); button->setChecked(i == selected);
+        // Layout order follows frequency while labels follow stable identity.
+        m_bandSelectorRow->removeWidget(button); m_bandSelectorRow->addWidget(button);
+    }
+    m_bandSelector->setExclusive(true);
+    // Keep one full-width row as the horizontal scroll area's content. A
+    // widget-resizable host briefly compressed/overlapped the large band row
+    // during count/layout changes before its minimum hint propagated.
+    m_bandSelectorRow->parentWidget()->setFixedSize(m_bandSelectorRow->sizeHint());
+    m_bandSelectorRow->activate();
+}
+
+void TxEqDialog::cancelBandCount()
+{
+    m_pendingCount = 0; m_countNotice->hide();
+    QSignalBlocker b(m_bandCountGroup);
+    if (auto* button = m_bandCountGroup->button(m_parametricWidget->bandCount())) { button->setChecked(true); }
+}
+
+void TxEqDialog::applyBandCount()
+{
+    if (m_pendingCount <= 0) { return; }
+    beginEdit();
+    { QSignalBlocker b(m_parametricWidget); m_parametricWidget->setBandCount(m_pendingCount); m_parametricWidget->setSelectedIndex(0); }
+    cancelBandCount(); updateEditRowFromSelection(); finishEdit();
+}
+
+void TxEqDialog::changeSelectedPoint(double value, bool width)
+{
+    if (m_ignoreUpdates || m_updatingFromModel) { return; }
+    const int index = m_parametricWidget->selectedIndex(); if (index < 0) { return; }
+    if (!m_numericEditor && !m_sliderActive && !m_gestureActive) { beginEdit(); }
+    const int id = m_parametricWidget->points()[index].bandId;
+    ParametricEqWidget::EqJsonState state;
+    state.bandCount = m_parametricWidget->bandCount(); state.parametricEq = m_parametricWidget->parametricEq();
+    state.globalGainDb = m_parametricWidget->globalGainDb(); state.frequencyMinHz = m_parametricWidget->frequencyMinHz(); state.frequencyMaxHz = m_parametricWidget->frequencyMaxHz();
+    state.points = m_parametricWidget->points();
+    if (width) { state.points[index].q = value; } else { state.points[index].gainDb = value; }
+    { QSignalBlocker b(m_parametricWidget); if (!m_parametricWidget->setEditorCurveState(state)) { return; } m_parametricWidget->setSelectedIndex(m_parametricWidget->getIndexFromBandId(id)); }
+    changed();
+}
+
+bool TxEqDialog::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == m_cancelledSlider) {
+        if (event->type() == QEvent::MouseButtonRelease) { m_cancelledSlider = nullptr; event->accept(); return true; }
+        if (event->type() == QEvent::MouseMove) { event->accept(); return true; }
+    }
+    if (auto* line = qobject_cast<QLineEdit*>(watched); line && event->type() == QEvent::KeyPress) {
+        auto* key = static_cast<QKeyEvent*>(event);
+        const bool undo = key->matches(QKeySequence::Undo), redo = key->matches(QKeySequence::Redo);
+        if ((undo && !line->isUndoAvailable()) || (redo && !line->isRedoAvailable())) {
+            if (undo) { undoEdit(); } else { redoEdit(); } key->accept(); return true;
+        }
+    }
+    auto* spin = qobject_cast<QAbstractSpinBox*>(watched);
+    if (!spin && qobject_cast<QLineEdit*>(watched)) { spin = qobject_cast<QAbstractSpinBox*>(watched->parent()); }
+    if (spin && event->type() == QEvent::FocusIn && !m_ignoreUpdates && !m_updatingFromModel) {
+        if (m_numericEditor != spin) {
+            if (m_numericEditor) { m_numericEditor = nullptr; finishEdit(); }
+            beginEdit(); m_numericEditor = spin;
+        }
+    }
+    if (spin && event->type() == QEvent::Wheel) {
+        beginEdit();
+        QTimer::singleShot(0, this, [this] { m_numericEditor = nullptr; finishEdit(); });
+    }
+    if (qobject_cast<QSlider*>(watched) && event->type() == QEvent::MouseButtonPress) { beginEdit(); m_sliderActive = true; }
+    if (qobject_cast<QSlider*>(watched) && event->type() == QEvent::MouseButtonRelease) {
+        QTimer::singleShot(0, this, [this] { if (m_sliderActive) { m_sliderActive = false; finishEdit(); } });
+    }
+    if (qobject_cast<QSlider*>(watched) && event->type() == QEvent::Wheel) { event->accept(); return true; }
+    return QDialog::eventFilter(watched, event);
+}
+
+void TxEqDialog::keyPressEvent(QKeyEvent* event)
+{
+    if (event->matches(QKeySequence::Undo) || event->matches(QKeySequence::Redo)) {
+        auto* line = qobject_cast<QLineEdit*>(QApplication::focusWidget());
+        if (line && ((event->matches(QKeySequence::Undo) && line->isUndoAvailable()) || (event->matches(QKeySequence::Redo) && line->isRedoAvailable()))) {
+            if (event->matches(QKeySequence::Undo)) { line->undo(); } else { line->redo(); }
+        } else if (event->matches(QKeySequence::Undo)) { undoEdit(); } else { redoEdit(); }
+        event->accept(); return;
+    }
+    QDialog::keyPressEvent(event);
+}
 
 void TxEqDialog::closeEvent(QCloseEvent* event)
 {

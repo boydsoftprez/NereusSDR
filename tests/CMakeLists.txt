@@ -577,6 +577,12 @@ nereus_add_test(tst_container_preview NATIVE_WINDOW)
 # R-R3-49: container title bar and filter passband use native hand cursors
 # (Qt 6.11.0 crashes drawing SizeAllCursor on macOS).
 nereus_add_test(tst_native_cursors EXTRA_LABELS gui)
+
+if(APPLE)
+    set_source_files_properties(tst_qt_cocoa_accessibility_ownership.cpp
+        PROPERTIES LANGUAGE OBJCXX SKIP_PRECOMPILE_HEADERS ON)
+    nereus_add_test(tst_qt_cocoa_accessibility_ownership NATIVE_WINDOW)
+endif()
 nereus_add_test(tst_meter_composite_dispatch)
 nereus_add_test(tst_meter_bar_face NATIVE_WINDOW)
 nereus_add_test(tst_meter_composite_presets NATIVE_WINDOW)
@@ -4427,6 +4433,8 @@ nereus_add_test(tst_tx_channel_leveler_alc_setters)
 # setStageRunning.  Same does-not-crash strategy as B-1 / B-2.
 nereus_add_test(tst_tx_channel_cfc_cpdr_cessb_setters)
 nereus_add_test(tst_cfc_profile)
+nereus_add_test(tst_cfc_edit_profile)
+nereus_add_test(tst_radio_model_cfc_profile_wiring)
 
 # ── Phase 3M-3a-ii follow-up Batch 7: TxChannel CFC live-display readback ──
 # Plan: 3M-3a-ii follow-up Batch 7 — TxChannel::getCfcDisplayCompression
@@ -5228,6 +5236,9 @@ nereus_add_test(tst_chrome_bar_items)
 
 # -- Phase 3M-3a-ii follow-up Batch 1: ParametricEqWidget skeleton --
 nereus_add_test(tst_parametric_eq_widget_skeleton)
+
+# Exact session-local transactions shared by the EQ and CFC editors.
+nereus_add_test(tst_eq_edit_history)
 
 # -- Phase 3M-3a-ii follow-up Batch 2: ParametricEqWidget axis math + ordering --
 nereus_add_test(tst_parametric_eq_widget_axis)
@@ -6088,6 +6099,8 @@ nereus_add_test(tst_psk_reporter_protocol)
 #   rejectsEmptyOrInvalidCallsign. Source: AetherSDR
 # src/core/CtyDatParser.{h,cpp} [@0cd4559].
 nereus_add_test(tst_cty_dat_parser)
+target_compile_definitions(tst_cty_dat_parser PRIVATE
+    NEREUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
 # ── Phase 3J-2 Task C2: AdifParser (.adi / .adif log parser) ───────────────
 # Pins the contract that AdifParser parses ADIF (Amateur Data
@@ -6103,6 +6116,8 @@ nereus_add_test(tst_cty_dat_parser)
 #   rejectsMalformedAdif (garbage bytes -> empty vector).
 # Source: AetherSDR src/core/AdifParser.{h,cpp} [@0cd4559].
 nereus_add_test(tst_adif_parser)
+target_compile_definitions(tst_adif_parser PRIVATE
+    NEREUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
 # ── Phase 3J-2 Task C3: DxccWorkedStatus (worked-status tracker) ───────────
 # Pins the contract that DxccWorkedStatus tracks per-entity /
@@ -6134,6 +6149,8 @@ nereus_add_test(tst_dxcc_worked_status)
 #   (W1AW on 20m PHONE -> colorWorked dim grey). Source:
 #   AetherSDR src/core/DxccColorProvider.{h,cpp} [@0cd4559].
 nereus_add_test(tst_dxcc_color_provider)
+target_compile_definitions(tst_dxcc_color_provider PRIVATE
+    NEREUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
 # ── Phase 3J-2 Task D1: SpotModel (TCI-keyed spot sink) ────────────────────
 # Pins the contract that SpotModel is a QMap<int, SpotData> sink

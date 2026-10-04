@@ -4668,6 +4668,11 @@ void TxChannel::setTxEqProfile(const std::vector<double>& F, const std::vector<d
         SetTXAEQProfile(m_channelId, nfreqs, f.data(), g.data(), q.empty() ? nullptr : q.data());
     });
 #endif
+#ifdef NEREUS_BUILD_TESTS
+    // Accepted arguments after validation, channel guard and WDSP boundary.
+    m_lastEqProfile = {std::vector<double>(F.begin() + 1, F.end()), G};
+    ++m_eqProfileApplyCount;
+#endif
 }
 
 void TxChannel::setTxEqNc(int nc)
@@ -4968,6 +4973,11 @@ void TxChannel::setTxCfcProfile(const std::vector<double>& F,
     Q_UNUSED(Qg);
     Q_UNUSED(Qe);
 #endif
+#ifdef NEREUS_BUILD_TESTS
+    // Accepted arguments, after WDSP's channel guard and setter boundary.
+    m_lastCfcProfile = {F, G, E, Qg, Qe};
+    ++m_cfcProfileApplyCount;
+#endif
 }
 
 void TxChannel::setTxCfcPrecompDb(double dB)
@@ -4986,6 +4996,9 @@ void TxChannel::setTxCfcPrecompDb(double dB)
     });
 #else
     Q_UNUSED(dB);
+#endif
+#ifdef NEREUS_BUILD_TESTS
+    m_lastCfcPrecompDb = dB;
 #endif
 }
 
@@ -5022,6 +5035,9 @@ void TxChannel::setTxCfcPrePeqDb(double dB)
     });
 #else
     Q_UNUSED(dB);
+#endif
+#ifdef NEREUS_BUILD_TESTS
+    m_lastCfcPostEqGainDb = dB;
 #endif
 }
 
