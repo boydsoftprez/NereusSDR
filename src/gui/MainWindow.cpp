@@ -1100,6 +1100,22 @@ warren@wpratt.com
 namespace NereusSDR {
 
 namespace {
+constexpr char kInitialOwnedPanViewProperty[] = "initialOwnedPanView";
+
+void initializeOwnedPanView(SpectrumWidget* spectrum, double frequencyHz)
+{
+    if (!spectrum) { return; }
+    const QVariant initialView = spectrum->property(kInitialOwnedPanViewProperty);
+    if (!initialView.isValid()) { return; }
+    spectrum->setProperty(kInitialOwnedPanViewProperty, QVariant());
+    const QPointF bornAt = initialView.toPointF();
+    if (qFuzzyCompare(spectrum->centerFrequency(), bornAt.x())
+        && qFuzzyCompare(spectrum->bandwidth(), bornAt.y())) {
+        spectrum->setDisplayWindowPreservingHistory(frequencyHz, spectrum->bandwidth());
+        spectrum->updateVfoPositions();
+    }
+}
+
 // First-run/rescan wants the "relevant" virtual cables for the current
 // platform — 3rd-party cables on Windows (BYO), our own NereusSdrVax
 // entries on Mac/Linux (native HAL plugin / pipe-source). Centralising
@@ -3104,6 +3120,15 @@ void MainWindow::refreshSliceChooser()
             }
         }
         flag->setSliceAccess(access);
+        // A newly created slice's access entry follows its model and flag.
+        // Complete the same once-only placement when ownership becomes known.
+        if (sliceAccessClient() && windowControlsSlice(it.key())
+            && !markerOnlyPlacement(it.key())) {
+            if (SliceModel* slice = m_radioModel->sliceById(it.key())) {
+                initializeOwnedPanView(qobject_cast<SpectrumWidget*>(flag->parentWidget()),
+                                       slice->frequency());
+            }
+        }
         // TX badge take: what the badge offers follows the slice's access.
         applyFlagTransmitGate(flag);
     }
@@ -3754,6 +3779,10 @@ void MainWindow::ensureRemoteSession()
                 m_sliceChooser->linkLost();
             }
         });
+        // Snapshot hydration precedes admitted remote access. Revisit pending
+        // new-pane placement only once real ownership is available.
+        connect(m_stationClient, &StationClient::handshakeComplete,
+                this, &MainWindow::refreshSliceChooser);
         if (SliceAccessMirror* access = m_stationClient->sliceAccess()) {
             // Slice control plan Task 15 fix round 1: a container's slice
             // buttons follow the change of control, as the flag and tabs do.
@@ -4555,6 +4584,15 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     const int sliceIndex = slice->sliceIndex();
     if (m_vfoWidgetsBySlice.contains(sliceIndex)) {
         return m_vfoWidgetsBySlice.value(sliceIndex);
+    }
+
+    // A new remote pan has no local stream-window initialization. Place its
+    // first owned slice once, unless the operator already moved/zoomed it.
+    // The pending geometry belongs to this widget instance, not its pan ID;
+    // reused views and additional cohosted flags therefore stay where they are.
+    if (sliceAccessClient() && windowControlsSlice(sliceIndex)
+        && !markerOnlyPlacement(sliceIndex)) {
+        initializeOwnedPanView(sw, slice->frequency());
     }
 
     VfoWidget* newFlag = sw->addVfoWidget(sliceIndex);
@@ -5773,6 +5811,18 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
     refreshForeignMarkers();
 
     configureSpectrumForPanForTest(sw, panId);
+
+    if (!m_radioModel->ownsLocalDsp()) {
+        // Only wired for a newly created secondary pan. This transient Qt
+        // property is retired by its first owned flag or by a user gesture;
+        // it is never persisted and dies with the pane. Geometry comparison
+        // at flag creation also preserves a view moved without centerChanged.
+        sw->setProperty(kInitialOwnedPanViewProperty,
+                        QPointF(sw->centerFrequency(), sw->bandwidth()));
+        connect(sw, &SpectrumWidget::centerChanged, sw, [sw](double) {
+            sw->setProperty(kInitialOwnedPanViewProperty, QVariant());
+        });
+    }
 
     // Parity ruling C13: in a remote window the Performance Overlay shows
     // the Core's drops too, headed as the Core's.

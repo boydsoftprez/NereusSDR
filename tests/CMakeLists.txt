@@ -2217,7 +2217,7 @@ nereus_add_test(tst_panadapter_applet_slice_assoc)
 # Structurally ported from AetherSDR src/gui/PanadapterStack.{h,cpp}
 # [@0cd4559]; applyLayout / floatPanadapter / rebuildSplitters stubbed for
 # Tasks 4-8.  See docs/attribution/aethersdr-reconciliation.md Bucket A.
-nereus_add_test(tst_panadapter_stack_layouts)
+nereus_add_test(tst_panadapter_stack_layouts fakes/LoopbackTransport.cpp)
 
 # ── Phase 3F Sub-Epic E Task 1: SpectrumStatusOverlay widget ────────────────
 # Top-right per-pan overlay widget for the Phase 3F multi-slice UI atlas.
