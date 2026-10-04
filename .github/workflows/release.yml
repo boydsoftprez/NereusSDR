@@ -1257,6 +1257,20 @@ jobs:
         shell: bash
         run: cmake --build build -j${NUMBER_OF_PROCESSORS}
 
+      - name: Record Windows export counts
+        if: ${{ always() && (steps.windows_build.outcome == 'success' || steps.windows_build.outcome == 'failure') }}
+        shell: pwsh
+        run: |
+          foreach ($target in @('NereusCore', 'NereusSDRLib')) {
+            $definition = "build/CMakeFiles/$target.dir/exports.def"
+            if (Test-Path $definition) {
+              $exports = @(Get-Content $definition | Where-Object { $_.Trim() -and $_.Trim() -ne 'EXPORTS' })
+              $dataExports = @($exports | Where-Object { $_ -match '\sDATA\s*$' })
+              Write-Output "Windows exports ${target}: $($exports.Count) total; $($dataExports.Count) DATA"
+              Get-FileHash -Algorithm SHA256 $definition | Format-List
+            }
+          }
+
       # Keep failed-link evidence on the runner before it is discarded. This
       # does not change the build result or the signed release asset inventory.
       - name: Record failed Windows link diagnostics

@@ -2082,6 +2082,14 @@ endif()
 foreach(_nereus_shared_target NereusCore NereusSDRLib)
     set_target_properties(${_nereus_shared_target} PROPERTIES
         WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    # MSVC's command-line default emits unreferenced inline COMDATs, which
+    # autoexport turns into import-library members (77,416 Core exports
+    # exceeded LINK's 65,535-member limit in the Windows release build).
+    # Remove those definitions before CMake scans the objects. This option
+    # is ineffective with /Od or /GL; it does not resolve a Debug limit.
+    # https://learn.microsoft.com/en-us/cpp/build/reference/zc-inline-remove-unreferenced-comdat
+    target_compile_options(${_nereus_shared_target} PRIVATE
+        "$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/Zc:inline>")
     if(MINGW)
         target_link_options(${_nereus_shared_target} PRIVATE
             "-Wl,--export-all-symbols")
@@ -2924,6 +2932,10 @@ if(NEREUS_USE_PCH)
     # compilation. There is no PCH per test and no propagated private or
     # export definitions. CMake's executable POSITION_INDEPENDENT_CODE=ON
     # chooses -fPIE, so an OBJECT donor gets that mode explicitly on Unix.
+    # MSVC clarification: REUSE_FROM implicitly links the donor's
+    # cmake_pch.cxx.obj into each consuming DLL. The normal donor source
+    # object remains build-only; the PCH object is absent from Ninja's
+    # autoexport scan. Keep its COMDAT option aligned with the DLLs.
     set(_nereus_pch_source "${CMAKE_CURRENT_BINARY_DIR}/nereus_shared_pch.cpp")
     file(GENERATE OUTPUT "${_nereus_pch_source}"
         CONTENT "// Build-only translation unit for the shared Qt/STL PCH.\n")
@@ -2939,7 +2951,8 @@ if(NEREUS_USE_PCH)
         set_target_properties(${_pch_target} PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     endforeach()
     if(MSVC)
-        target_compile_options(nereus_library_pch PRIVATE /W3 /Zc:__cplusplus)
+        target_compile_options(nereus_library_pch PRIVATE /W3 /Zc:__cplusplus
+            "$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/Zc:inline>")
     else()
         target_compile_options(nereus_library_pch PRIVATE -Wall -Wextra -Wpedantic)
     endif()

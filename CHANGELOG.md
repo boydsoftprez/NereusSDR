@@ -120,6 +120,12 @@ The [short SBC install guide](https://github.com/boydsoftprez/NereusSDR/blob/v20
 a 64-bit Raspberry Pi OS Lite or compatible Armbian Trixie image, installing
 the package with `apt`, starting the service and pairing a desktop or phone.
 
+The [operator manual working draft](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/manual/README.md)
+adds twenty chapters covering desktop and native mobile operation, shared Core
+access, audio, Canvas, EQ/CFC and station accessories. It preserves the original
+development captures and records their source and verification limits;
+selected-release captures and live RF/mobile acceptance remain tracked separately.
+
 ## Independent receivers and richer displays
 
 - Multiple receivers now have independent tuning, mode, DSP and audio routing. Capacity follows the connected radio's hardware.
