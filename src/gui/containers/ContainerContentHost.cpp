@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-04 — Fit stacked button groups to compact shared rows by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Guard integer boundary projection while preserving legacy float
 //                 rounding and imports by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Usable independent native control sizing by
@@ -277,6 +279,12 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         item->setProperty("containerSourceContext", row.context);
         item->setProperty("containerEntryId", entry.id);
         int height = isSingleContainerControl(item) ? singleContainerControlSize().height() : 72;
+        const QSize stackSize=document.layout==ContentLayout::VerticalStack ? containerStackButtonSize(item) : QSize();
+        item->setProperty("containerStackGrid",!stackSize.isEmpty());
+        if (!stackSize.isEmpty()) {
+            height=stackSize.height();
+            run->setMinimumWidth(qMax(run->minimumWidth(),containerStackButtonMinimum(item).width()));
+        }
         if (auto* face = qobject_cast<BarPresetItem*>(item)) {
             height = face->preferredFaceHeight(); run->setMinimumWidth(qMax(run->minimumWidth(),face->minimumFaceSize().width()));
         }

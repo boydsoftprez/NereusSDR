@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Separate compact object actions within their editor panes by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Reset Qt 6.11 Cocoa popup accessibility cache before
 //                 draft dropdown refresh by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -303,6 +305,14 @@ QPushButton* makeBtn(const QString& text, QWidget* parent)
     return btn;
 }
 
+QPushButton* makeObjectAction(const QString& text, QWidget* parent)
+{
+    QPushButton* button = makeBtn(text, parent);
+    button->setStyleSheet(QString::fromLatin1(kBtnStyle)
+                         + QStringLiteral("QPushButton { padding: 3px 6px; }"));
+    return button;
+}
+
 void styleSelectorPopups(QWidget* parent)
 {
     for (QComboBox* combo : parent->findChildren<QComboBox*>()) {
@@ -463,8 +473,8 @@ void ContainerSettingsDialog::buildAvailablePanel(QWidget* parent)
     // adds RX / TX / Special category headers; for this commit the list
     // is flat alphabetical.
     QVBoxLayout* layout = new QVBoxLayout(parent);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
+    layout->setContentsMargins(0, 0, 6, 0);
+    layout->setSpacing(6);
 
     QLabel* header = new QLabel(QStringLiteral("Available"), parent);
     header->setStyleSheet(kSectionHeaderStyle);
@@ -477,7 +487,7 @@ void ContainerSettingsDialog::buildAvailablePanel(QWidget* parent)
 
     QHBoxLayout* btnRow = new QHBoxLayout;
     btnRow->setSpacing(3);
-    m_btnAddFromAvailable = makeBtn(QStringLiteral("Add \u2192"), parent);
+    m_btnAddFromAvailable = makeObjectAction(QStringLiteral("Add \u2192"), parent);
     m_btnAddFromAvailable->setToolTip(
         QStringLiteral("Add the selected available item to the in-use list"));
     btnRow->addStretch();
@@ -495,8 +505,8 @@ void ContainerSettingsDialog::buildAvailablePanel(QWidget* parent)
 void ContainerSettingsDialog::buildInUsePanel(QWidget* parent)
 {
     QVBoxLayout* layout = new QVBoxLayout(parent);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
+    layout->setContentsMargins(6, 0, 6, 0);
+    layout->setSpacing(6);
 
     QLabel* header = new QLabel(QStringLiteral("Contents"), parent);
     header->setStyleSheet(kSectionHeaderStyle);
@@ -514,12 +524,12 @@ void ContainerSettingsDialog::buildInUsePanel(QWidget* parent)
     // parity with the old flow; it sits alongside the new Remove /
     // Up / Down controls.
     QHBoxLayout* btnRow = new QHBoxLayout;
-    btnRow->setSpacing(3);
+    btnRow->setSpacing(6);
 
-    m_btnAdd      = makeBtn(QStringLiteral("+"),           parent);
-    m_btnRemove   = makeBtn(QStringLiteral("\u2212"),      parent);
-    m_btnMoveUp   = makeBtn(QStringLiteral("\u25b2"),      parent);
-    m_btnMoveDown = makeBtn(QStringLiteral("\u25bc"),      parent);
+    m_btnAdd      = makeObjectAction(QStringLiteral("+"),           parent);
+    m_btnRemove   = makeObjectAction(QStringLiteral("\u2212"),      parent);
+    m_btnMoveUp   = makeObjectAction(QStringLiteral("\u25b2"),      parent);
+    m_btnMoveDown = makeObjectAction(QStringLiteral("\u25bc"),      parent);
 
     m_btnAdd->setToolTip(QStringLiteral("Add item (popup)"));
     m_btnRemove->setToolTip(QStringLiteral("Remove selected item"));
@@ -535,7 +545,7 @@ void ContainerSettingsDialog::buildInUsePanel(QWidget* parent)
     layout->addLayout(btnRow);
     if(m_editSession) {
         m_btnAdd->hide();
-        auto* duplicate=makeBtn(tr("Duplicate object"),parent); duplicate->setObjectName("duplicateContent"); layout->addWidget(duplicate);
+        auto* duplicate=makeObjectAction(tr("Duplicate object"),parent); duplicate->setObjectName("duplicateContent"); layout->addWidget(duplicate);
         connect(duplicate,&QPushButton::clicked,this,[this]{
             saveCurrentDraft(); auto d=m_editSession->draft();const int row=m_itemList->currentRow();
             for(auto& c:d.containers) {if(c.id!=m_selectedId || row<0 || row>=c.contents.size()) {continue;}
@@ -546,7 +556,7 @@ void ContainerSettingsDialog::buildInUsePanel(QWidget* parent)
             }
             m_editSession->setDraft(d);loadCurrentDraft();m_itemList->setCurrentRow(row+1);
         });
-        auto* move=makeBtn(tr("Move to container…"),parent);move->setObjectName("moveContent");layout->addWidget(move);
+        auto* move=makeObjectAction(tr("Move to container…"),parent);move->setObjectName("moveContent");layout->addWidget(move);
         connect(move,&QPushButton::clicked,this,[this,move]{
             saveCurrentDraft(); auto* menu=new QMenu(this);
             for(const auto& c:m_editSession->draft().containers) {if(c.id==m_selectedId) {continue;} auto* action=menu->addAction(c.name); action->setEnabled(!c.locked);

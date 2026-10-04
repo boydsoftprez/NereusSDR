@@ -1,6 +1,8 @@
 #pragma once
 // no-port-check: NereusSDR-original creation metadata for existing native actions.
 // Modification history (NereusSDR):
+//   2026-10-04 — Shared stack button-grid sizing by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-03 — Individually arranged controls by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 #include "gui/meters/OtherButtonItem.h"
@@ -37,4 +39,28 @@ inline bool isSingleContainerControl(const MeterItem* item)
 }
 inline QSize singleContainerControlSize() { return {112, 44}; }
 inline QSize singleContainerControlMinimum() { return {64, 32}; }
+// Stack presentation only; saved masks, columns and legacy aspect ratios survive.
+inline int containerStackButtonRows(const ButtonBoxItem* box)
+{
+    if (!box || box->columns()<=0 || box->columns()>box->buttonCount()) { return 0; }
+    int shown=0;
+    for (int i=0;i<box->buttonCount();++i) { if (box->isButtonShown(i)) { ++shown; } }
+    return qMax(1,shown/box->columns()+int(shown%box->columns()!=0));
+}
+inline QSize containerStackButtonSize(const MeterItem* item)
+{
+    const auto* box=qobject_cast<const ButtonBoxItem*>(item);
+    const int rows=containerStackButtonRows(box);
+    if (!rows) { return {}; }
+    const QSize cell=singleContainerControlSize();
+    return {box->columns()*cell.width(),rows*cell.height()};
+}
+inline QSize containerStackButtonMinimum(const MeterItem* item)
+{
+    const auto* box=qobject_cast<const ButtonBoxItem*>(item);
+    const int rows=containerStackButtonRows(box);
+    if (!rows) { return {}; }
+    const QSize cell=singleContainerControlMinimum();
+    return {box->columns()*cell.width(),rows*cell.height()};
+}
 } // namespace NereusSDR

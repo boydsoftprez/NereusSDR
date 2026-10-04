@@ -12,6 +12,9 @@
 #include <QScrollBar>
 #include <QPushButton>
 #include <QScopeGuard>
+#include <QPaintEngine>
+#include <QPainter>
+#include <QPainterPath>
 #include "core/RadioDiscovery.h"
 #include "core/RadioStatus.h"
 #include "gui/MainWindow.h"
@@ -21,6 +24,7 @@
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "core/AppSettings.h"
+#include "core/UnbuiltFeatureList.h"
 #include "core/mmio/MmioEndpoint.h"
 #include "gui/containers/ContainerEditSession.h"
 #include "gui/containers/ContainerPreviewWidget.h"
@@ -36,6 +40,47 @@
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/WebImageItem.h"
 using namespace NereusSDR;
+namespace {
+// Observe actual glyph ink rather than duplicating private button-grid geometry.
+class ButtonTextPaintDevice : public QPaintDevice {
+public:
+    struct Ink { QString label; QRectF bounds; };
+    class Engine : public QPaintEngine {
+    public:
+        QVector<Ink> inks;
+        Engine() : QPaintEngine(AllFeatures) {}
+        bool begin(QPaintDevice* device) override { setPaintDevice(device); setActive(true); return true; }
+        bool end() override { setActive(false); return true; }
+        void updateState(const QPaintEngineState&) override {}
+        Type type() const override { return User; }
+        void drawPixmap(const QRectF&, const QPixmap&, const QRectF&) override {}
+        void drawPath(const QPainterPath&) override {}
+        void drawPolygon(const QPointF*, int, PolygonDrawMode) override {}
+        void drawTextItem(const QPointF& point, const QTextItem& text) override {
+            QPainterPath path; path.addText(point, text.font(), text.text());
+            inks.append({text.text(), state->transform().mapRect(path.boundingRect())});
+        }
+    };
+    explicit ButtonTextPaintDevice(QSize size) : m_size(size) {}
+    QPaintEngine* paintEngine() const override { return &m_engine; }
+    const QVector<Ink>& inks() const { return m_engine.inks; }
+protected:
+    int metric(PaintDeviceMetric key) const override {
+        switch (key) {
+        case PdmWidth: return m_size.width();
+        case PdmHeight: return m_size.height();
+        case PdmDpiX: case PdmDpiY: case PdmPhysicalDpiX: case PdmPhysicalDpiY: return 96;
+        case PdmDepth: return 32;
+        case PdmDevicePixelRatio: return 1;
+        case PdmDevicePixelRatioScaled: return devicePixelRatioFScale();
+        default: return QPaintDevice::metric(key);
+        }
+    }
+private:
+    QSize m_size;
+    mutable Engine m_engine;
+};
+}
 class TstContainerPreview : public QObject {
     Q_OBJECT
     static ContentEntry rxFace(ContainerContentRegistry& registry) {
@@ -43,6 +88,198 @@ class TstContainerPreview : public QObject {
         config["attack"]=1; config["decay"]=1; config["ignoreHistoryMs"]=0; entry.config["properties"]=config; return entry;
     }
 private slots:
+    void stackButtonInkStaysInsideMiddleSharedRow_data() {
+        QTest::addColumn<QString>("type"); QTest::addColumn<uint>("bits");
+        QTest::addColumn<int>("columns"); QTest::addColumn<int>("width");
+        for (int width : {1280,1920}) {
+            QTest::newRow(qPrintable("other-one-"+QString::number(width))) << QString("OTHERBTNS") << uint(16) << 2 << width;
+            QTest::newRow(qPrintable("other-two-"+QString::number(width))) << QString("OTHERBTNS") << uint(24) << 2 << width;
+            QTest::newRow(qPrintable("mode-one-"+QString::number(width))) << QString("MODEBTNS") << uint(1) << 2 << width;
+            QTest::newRow(qPrintable("mode-two-"+QString::number(width))) << QString("MODEBTNS") << uint(3) << 2 << width;
+            QTest::newRow(qPrintable("recognized-single-"+QString::number(width))) << QString("OTHERBTNS") << uint(16) << 1 << width;
+        }
+    }
+    void stackButtonInkStaysInsideMiddleSharedRow() {
+        QFETCH(QString,type); QFETCH(uint,bits); QFETCH(int,columns); QFETCH(int,width);
+        ContainerContentRegistry registry; auto entry=registry.makeEntry(type);
+        QStringList fields=entry.config["legacyRecord"].toString().split('|');
+        const int visibilityField=type=="OTHERBTNS" ? 8 : 9; QVERIFY(fields.size()>visibilityField);
+        fields[7]=QString::number(columns); fields[visibilityField]=QString::number(bits);
+        entry.config["legacyRecord"]=fields.join('|');
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr,ContentRenderMode::Live));
+        auto* box=qobject_cast<ButtonBoxItem*>(item.get()); QVERIFY(box);
+        box->setProperty("containerStackGrid",true);
+        // A real shared surface normalizes its middle 44-pixel row within 132 pixels.
+        box->setRect(0,44.f/132.f,1,44.f/132.f);
+        const QRectF entryRect(0,44,width,44);
+        ButtonTextPaintDevice device(QSize(width,132)); QPainter textPainter(&device);
+        box->paint(textPainter,width,132); textPainter.end();
+        QList<int> shown;
+        for (int i=0;i<box->buttonCount();++i) { if (box->isButtonShown(i)) { shown.append(i); } }
+        QCOMPARE(device.inks().size(),shown.size()); QSignalSpy commands(box,&ButtonBoxItem::buttonClicked);
+        for (int i=0;i<shown.size();++i) {
+            const auto& ink=device.inks()[i]; QVERIFY(entryRect.contains(ink.bounds));
+            const QPointF point=ink.bounds.center();
+            QMouseEvent press(QEvent::MouseButtonPress,point,point,Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+            QMouseEvent release(QEvent::MouseButtonRelease,point,point,Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+            QVERIFY(box->handleMousePress(&press,width,132)); QVERIFY(box->handleMouseRelease(&release,width,132));
+            QCOMPARE(commands.count(),i+1); QCOMPARE(commands.last().first().toInt(),shown[i]);
+        }
+        QImage image(width,132,QImage::Format_ARGB32_Premultiplied); image.fill(Qt::transparent);
+        QPainter painter(&image);
+        // Intersect the row with the caller's clip and restore that clip for later items.
+        const QRect callerClip(0,0,width/2,132); painter.setClipRect(callerClip);
+        const QRegion originalClip=painter.clipRegion(); const QRectF originalClipBounds=painter.clipBoundingRect();
+        const bool originallyClipped=painter.hasClipping(); box->paint(painter,width,132);
+        QCOMPARE(painter.hasClipping(),originallyClipped); QCOMPARE(painter.clipBoundingRect(),originalClipBounds);
+        QCOMPARE(painter.clipRegion(),originalClip);
+        painter.fillRect(QRect(4,100,8,8),Qt::cyan); painter.end();
+        QCOMPARE(image.pixelColor(7,103),QColor(Qt::cyan));
+        int leakedPixels=0;
+        for (int y=0;y<image.height();++y) {
+            for (int x=0;x<image.width();++x) {
+                const bool sentinel=x>=4 && x<12 && y>=100 && y<108;
+                if (!sentinel && (y<44 || y>=88 || !callerClip.contains(x,y))) {
+                    leakedPixels+=int(image.pixelColor(x,y).alpha()!=0);
+                }
+            }
+        }
+        QCOMPARE(leakedPixels,0);
+    }
+    void primitiveStackPreviewUsesLiveRowHeight_data() {
+        QTest::addColumn<QString>("type");
+        for (const QString& type : QStringList{"CLOCK", "VFO", "TEXT", "HISTORY", "IMAGE"}) {
+            QTest::newRow(qPrintable(type)) << type;
+        }
+    }
+    void primitiveStackPreviewUsesLiveRowHeight() {
+        QFETCH(QString,type);
+        ContainerContentRegistry registry; MeterPoller poller;
+        auto entry=registry.makeEntry(type); entry.canvasRect=QRectF(.1234567890123,.25,.5678901234567,.125);
+        QTemporaryDir imageDirectory;
+        if (type=="IMAGE") {
+            QVERIFY(imageDirectory.isValid());
+            QImage image(4,4,QImage::Format_ARGB32_Premultiplied); image.fill(Qt::blue);
+            const QString path=imageDirectory.filePath("fixture.png"); QVERIFY(image.save(path));
+            QStringList fields=entry.config["legacyRecord"].toString().split('|'); QVERIFY(fields.size()>7);
+            fields[7]=path; entry.config["legacyRecord"]=fields.join('|');
+        }
+        entry.config["future"]=QJsonObject{{"keep",true}}; entry.extensions["opaque"]=QJsonObject{{"keep",true}};
+        ContainerDocument document; document.id="primitive-parity"; document.layout=ContentLayout::VerticalStack; document.contents={entry};
+        ContainerPreviewWidget preview(registry,poller); preview.setDocument(document); preview.resize(640,300); preview.show();
+        ContainerContentHost live(registry); live.reconcile(document); live.resize(640,300); live.show(); QCoreApplication::processEvents();
+        QCOMPARE(preview.entryBoundary(entry.id).height(),live.entryBoundary(entry.id).height());
+        const auto captured=live.captureDocument().contents.first();
+        QCOMPARE(captured.canvasRect,entry.canvasRect); QCOMPARE(captured.config["legacyRecord"],entry.config["legacyRecord"]);
+        QCOMPARE(captured.config["future"],entry.config["future"]); QCOMPARE(captured.extensions,entry.extensions);
+        QCOMPARE(preview.document(),document); QCOMPARE(poller.targetCountForTest(),0);
+    }
+    void emptyOrInvalidGroupedStackKeepsRecoverableData_data() {
+        QTest::addColumn<QString>("raw");
+        QTest::newRow("empty-mask") << QString("OTHERBTNS|.1|.2|.3|.4|0|0|2|0|future-tail");
+        QTest::newRow("invalid-columns") << QString("OTHERBTNS|.1|.2|.3|.4|0|0|0|1052|future-tail");
+        QTest::newRow("extreme-columns") << QString("OTHERBTNS|.1|.2|.3|.4|0|0|2147483647|1052|future-tail");
+    }
+    void emptyOrInvalidGroupedStackKeepsRecoverableData() {
+        QFETCH(QString,raw); ContainerContentRegistry registry; MeterPoller poller;
+        auto entry=registry.makeEntry("OTHERBTNS"); entry.config["legacyRecord"]=raw;
+        ContainerDocument document; document.id="safe-group"; document.layout=ContentLayout::VerticalStack; document.contents={entry};
+        ContainerPreviewWidget preview(registry,poller); preview.setDocument(document); preview.resize(640,300); preview.show();
+        ContainerContentHost live(registry); live.reconcile(document); live.resize(640,300); live.show(); QCoreApplication::processEvents();
+        QVERIFY(preview.entryBoundary(entry.id).height()>0); QVERIFY(live.entryBoundary(entry.id).height()>0);
+        QVERIFY(preview.width()<4096); QVERIFY(live.meterSurfaces().first()->minimumWidth()<4096);
+        QCOMPARE(preview.document(),document); QCOMPARE(live.captureDocument().contents.first().config["legacyRecord"].toString(),raw);
+    }
+    void groupedStackControlsKeepLabelsAndHitsInsideTheirRows_data() {
+        QTest::addColumn<QString>("type"); QTest::addColumn<int>("width");
+        for (const QString& type : QStringList{"OTHERBTNS", "BANDBTNS", "MODEBTNS", "FILTERBTNS", "ANTENNABTNS", "TUNESTEPBTNS", "VOICERECPLAY"}) {
+            for (int width : {160, 1280}) {
+                QTest::newRow(qPrintable(type + QString::number(width))) << type << width;
+            }
+        }
+    }
+    void groupedStackControlsKeepLabelsAndHitsInsideTheirRows() {
+        QFETCH(QString,type); QFETCH(int,width);
+        if (type=="VOICERECPLAY") { UnbuiltFeatures::setBuiltForTest(UnbuiltFeature::Voice,true); }
+        const auto restoreFeatures=qScopeGuard([] { UnbuiltFeatures::resetForTest(); });
+        ContainerContentRegistry registry; MeterPoller poller;
+        auto entry=registry.makeEntry(type);
+        QStringList fields=entry.config["legacyRecord"].toString().split('|');
+        const int visibilityField=type=="VOICERECPLAY" ? -1 : (type=="OTHERBTNS" || type=="ANTENNABTNS" ? 8 : 9);
+        QVERIFY(fields.size()>qMax(7,visibilityField));
+        fields[7]="2";
+        if (type=="OTHERBTNS") { fields[8]="1052"; }
+        else if (type=="ANTENNABTNS") { fields[8]="7"; }
+        else if (type!="VOICERECPLAY") { fields[9]="7"; }
+        fields.append("future-tail"); entry.config["legacyRecord"]=fields.join('|');
+        entry.canvasRect=QRectF(.1234567890123,.2345678901234,.5678901234567,.3456789012345);
+        entry.extensions["opaque"]=QJsonObject{{"keep",true}}; entry.config["future"]=QJsonObject{{"keep",true}};
+        ContainerDocument document; document.id="grouped-stack"; document.layout=ContentLayout::VerticalStack;
+        document.contents={entry,registry.makeEntry("TEXT")};
+        QScrollArea viewport; viewport.setWidgetResizable(true);
+        auto* preview=new ContainerPreviewWidget(registry,poller); viewport.setWidget(preview);
+        preview->setDocument(document); viewport.resize(width,300); viewport.show();
+        ContainerContentHost live(registry); live.reconcile(document); live.resize(width,300); live.show();
+        QCoreApplication::processEvents();
+        auto* previewMeter=preview->findChildren<MeterWidget*>().first();
+        auto* previewBox=qobject_cast<ButtonBoxItem*>(previewMeter->items().first()); QVERIFY(previewBox);
+        auto* liveBox=qobject_cast<ButtonBoxItem*>(live.entryRows().first().item.data()); QVERIFY(liveBox);
+        const int rows=type=="VOICERECPLAY" ? 3 : 2;
+        auto* liveMeter=qobject_cast<MeterWidget*>(live.entryRows().first().widget.data()); QVERIFY(liveMeter);
+        QCOMPARE(previewBox->visibleBits(),liveBox->visibleBits());
+        const QString capture=qEnvironmentVariable("PREVIEW_STACK_CAPTURE_DIR");
+        if (!capture.isEmpty()) {
+            const QString path=capture+"/"+QString::fromLatin1(QTest::currentDataTag()); QVERIFY(QDir().mkpath(path));
+            QImage painted(previewMeter->size(),QImage::Format_ARGB32_Premultiplied); painted.fill(QColor("#0f0f1a"));
+            QPainter painter(&painted); previewBox->paint(painter,previewMeter->width(),previewMeter->height()); painter.end();
+            QVERIFY(painted.save(path+"/group-paint-before-assertions.png"));
+        }
+        const QRect liveBoundary=live.entryBoundary(entry.id);
+        QVERIFY(live.entryBoundary(document.contents[1].id).top()>=liveBoundary.bottom());
+        for (const auto& pair : {QPair<ButtonBoxItem*,MeterWidget*>{previewBox,previewMeter},{liveBox,liveMeter}}) {
+            auto* box=pair.first; auto* meter=pair.second;
+            ButtonTextPaintDevice device(meter->size()); QPainter painter(&device);
+            box->paint(painter,meter->width(),meter->height()); painter.end();
+            QList<int> shown;
+            for (int i=0;i<box->buttonCount();++i) { if (box->isButtonShown(i)) { shown.append(i); } }
+            QCOMPARE(device.inks().size(),shown.size());
+            const int rowHeight=box==previewBox ? previewMeter->height() : live.entryBoundary(entry.id).height();
+            const QRectF row(0,0,meter->width(),rowHeight);
+            QSignalSpy commands(box,&ButtonBoxItem::buttonClicked);
+            for (int i=0;i<shown.size();++i) {
+                const auto& ink=device.inks()[i]; QCOMPARE(ink.label,box->button(shown[i]).text);
+                QVERIFY2(row.contains(ink.bounds),qPrintable(QString("%1 ink outside entry: %2,%3 %4x%5").arg(ink.label).arg(ink.bounds.x()).arg(ink.bounds.y()).arg(ink.bounds.width()).arg(ink.bounds.height())));
+                const QPointF point(ink.bounds.center());
+                QMouseEvent press(QEvent::MouseButtonPress,point,point,Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+                QMouseEvent release(QEvent::MouseButtonRelease,point,point,Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+                QVERIFY(box->handleMousePress(&press,meter->width(),meter->height()));
+                QVERIFY(box->handleMouseRelease(&release,meter->width(),meter->height()));
+                if (box==liveBox) { QCOMPARE(commands.count(),i+1); QCOMPARE(commands.last().first().toInt(),shown[i]); }
+                else { QCOMPARE(commands.count(),0); }
+            }
+        }
+        QCOMPARE(preview->entryBoundary(entry.id).top(),0);
+        QCOMPARE(preview->entryBoundary(entry.id).height(),44*rows);
+        QCOMPARE(live.entryBoundary(entry.id).height(),44*rows);
+        QVERIFY(previewMeter->minimumWidth()>=128); QVERIFY(liveMeter->minimumWidth()>=128);
+        QCOMPARE(preview->document(),document); QCOMPARE(poller.targetCountForTest(),0);
+        const auto captured=live.captureDocument().contents.first();
+        QCOMPARE(captured.canvasRect,entry.canvasRect); QCOMPARE(captured.config["legacyRecord"],entry.config["legacyRecord"]);
+        QCOMPARE(captured.config["future"],entry.config["future"]); QCOMPARE(captured.extensions,entry.extensions);
+        if (!capture.isEmpty()) {
+            const QString path=capture+"/"+QString::fromLatin1(QTest::currentDataTag()); QVERIFY(QDir().mkpath(path));
+#ifdef NEREUS_GPU_SPECTRUM
+            QSignalSpy previewFrames(previewMeter,&QRhiWidget::frameSubmitted),liveFrames(liveMeter,&QRhiWidget::frameSubmitted);
+            previewMeter->update(); liveMeter->update();
+            QTRY_VERIFY_WITH_TIMEOUT(previewFrames.count()>0 && liveFrames.count()>0,3000);
+            QVERIFY(previewMeter->grabFramebuffer().save(path+"/group-preview.png"));
+            QVERIFY(liveMeter->grabFramebuffer().save(path+"/group-live.png"));
+#else
+            QVERIFY(previewMeter->grab().save(path+"/group-preview.png")); QVERIFY(liveMeter->grab().save(path+"/group-live.png"));
+#endif
+            QVERIFY(viewport.grab().save(path+"/viewport.png"));
+        }
+    }
     void nativeFreeLeafCompositionPreflight() {
         ContainerContentRegistry registry;
         QWidget root;
