@@ -9879,3 +9879,5 @@ endif()
 
 # Thetis CAT catalogue, also available to the headless Core.
 nereus_add_test(tst_cat_catalog CORE_ONLY)
+
+nereus_add_test(tst_cat_parser CORE_ONLY)

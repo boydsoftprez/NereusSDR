@@ -954,6 +954,8 @@ endif()
 # Source files
 # --------------------------------------------------------------------------
 set(CORE_SOURCES
+    src/core/cat/CatParser.cpp
+    src/core/cat/CatCommandRouter.cpp
     src/core/cat/CatCommandCatalog.cpp
     src/core/AntennaLabels.cpp
     src/core/AppSettings.cpp
