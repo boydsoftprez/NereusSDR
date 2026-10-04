@@ -22,6 +22,8 @@ jobs:
           xcode-select -p
           swift --version
       - name: Observe the complete original Kit aggregate once
+        env:
+          KIT_HOSTED_SAMPLE_MODE: '0'
         run: python3 ios/scripts/kit-hosted-observe.py
       - name: Preserve observation even on failure
         if: always()

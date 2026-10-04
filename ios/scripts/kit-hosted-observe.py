@@ -321,6 +321,18 @@ def receipt_format_valid(exported):
             and captured['append_uptime'] >= after['append_uptime'])
 
 
+def sampling_policy(environment):
+    value = environment.get('KIT_HOSTED_SAMPLE_MODE', '1')
+    if value not in ('0', '1'):
+        raise ValueError('KIT_HOSTED_SAMPLE_MODE must be exactly 0 or 1')
+    return {'mode': value, 'enabled': value == '1',
+            'configured_by': 'environment' if 'KIT_HOSTED_SAMPLE_MODE' in environment else 'default',
+            'scope': 'receipts-only' if value == '0' else 'receipts-and-owned-process-samples',
+            'sample_thresholds_seconds': [10, 20], 'maximum_samples': 0 if value == '0' else 2,
+            'sample_duration_seconds': 1, 'sample_interval_milliseconds': 10,
+            'sampler_processing_bound_seconds': 10}
+
+
 def main():
     out = Path(tempfile.mkdtemp(prefix='kit-hosted-observe-', dir=os.environ.get('RUNNER_TEMP')))
     receipts_dir = out / 'receipts'
@@ -336,6 +348,14 @@ def main():
                'base': BASE, 'production_mismatches': unchanged, 'samples': [], 'owned_processes': [],
                'processor_count': os.cpu_count(), 'load_before': os.getloadavg(),
                'python_monotonic_clock_info': vars(time.get_clock_info('monotonic'))}
+    try:
+        sampling = sampling_policy(os.environ)
+        receipt['sampling_policy'] = sampling
+    except ValueError as error:
+        receipt['sampling_mode_requested'] = os.environ.get('KIT_HOSTED_SAMPLE_MODE')
+        receipt['failed_guard'] = str(error)
+        write_json(out, 'receipt.json', receipt)
+        raise
     for label, argv in [('swift', ['swift', '--version']), ('xcode', ['xcodebuild', '-version']),
                         ('developer', ['xcode-select', '-p']), ('os', ['sw_vers']),
                         ('head', ['git', 'rev-parse', 'HEAD'])]:
@@ -466,6 +486,8 @@ def main():
                     failure = 'verified test exceeded 120-second failed backstop'
                     break
                 for number, threshold in [(1, 10), (2, 20)]:
+                    if not sampling['enabled']:
+                        continue
                     if age < threshold or number in sample_numbers:
                         continue
                     observed = observe_owned(receipt['wrapper'], test['identity']['pid'], helper, {test['product']})
