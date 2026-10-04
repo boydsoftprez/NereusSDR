@@ -26,7 +26,7 @@ import Testing
     /// ring held after a feed check from then on.
     @discardableResult
     static func play(_ core: AudioPlaybackCore, callbackFrames: Int, seconds: Int,
-                     stallAfterFrames: Int? = nil) throws -> (heard: Bool, mostHeldFrames: Int) {
+                     stallAfterFrames: Int? = nil) async throws -> (heard: Bool, mostHeldFrames: Int) {
         let payload = try AudioJitterBufferTests.opusPayload()
         core.reanchor(AudioStreamAnchor(generation: 1, ssrc: ssrc, firstSequence: 0, firstTimestamp: 0))
         let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
@@ -66,6 +66,8 @@ import Testing
                 heard = heard || (0..<callbackFrames).contains { left[$0] != 0 }
             }
             now += callbackFrames
+            // The simulated callback is complete; let other test tasks run.
+            await Task.yield()
         }
         return (heard, mostHeld)
     }
@@ -73,9 +75,9 @@ import Testing
     /// 5 ms and 10 ms pieces (the microphone's I/O buffer), and 1024
     /// frames, about iOS's default.
     @Test(arguments: [240, 480, 1_024])
-    func smallOutputPiecesNeverFindTheRingDry(callbackFrames: Int) throws {
+    func smallOutputPiecesNeverFindTheRingDry(callbackFrames: Int) async throws {
         let core = try AudioPlaybackCore()
-        let played = try Self.play(core, callbackFrames: callbackFrames, seconds: 20)
+        let played = try await Self.play(core, callbackFrames: callbackFrames, seconds: 20)
         #expect(played.heard, "the band came through")
         #expect(core.renderUnderruns == 0)
         #expect(core.callbackFrames == callbackFrames)
@@ -90,12 +92,12 @@ import Testing
         #expect(ratio >= 0.999 && ratio <= 1.001)
     }
 
-    @Test func aFeedThatStallsPastTheRingCountsDryRenders() throws {
+    @Test func aFeedThatStallsPastTheRingCountsDryRenders() async throws {
         let core = try AudioPlaybackCore()
         // Playing starts after 180 ms of packets; the feed queue hears
         // nothing from 2 s on, so the ring's 30 to 70 ms run out and every
         // later render is dry.
-        try Self.play(core, callbackFrames: 480, seconds: 3, stallAfterFrames: 96_000)
+        try await Self.play(core, callbackFrames: 480, seconds: 3, stallAfterFrames: 96_000)
         #expect(core.renderUnderruns > 0)
         // The next feed check answers them: the mark rises by 5 ms.
         #expect(core.currentLowWaterFrames == 480 + AudioPlaybackCore.feedCoverFrames)

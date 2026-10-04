@@ -143,7 +143,10 @@ import Testing
     /// only the session's clock, moved by hand, can end it.
     @Test(arguments: ["::1", "127.0.0.1"])
     func aSilentCoreOverTLSEndsAtTheSessionsBound(address: String) async throws {
-        let listener = try SilentTLSListener(address: address)
+        let diagnostic = HostedDiagnosticReceipts("TLS session \(address)")
+        defer { diagnostic.export() }
+        diagnostic.mark("session test body entry")
+        let listener = try SilentTLSListener(address: address, observe: diagnostic.mark)
         let port = try await listener.start()
         defer { listener.stop() }
         let clock = ManualLinkClock()
@@ -152,7 +155,9 @@ import Testing
             trust: .identity(publicKey: Data(repeating: 4, count: 65)),
             authenticator: TokenAuthenticator(token: "conformance-token"), clock: clock,
             transportFactory: { endpoint, trust in
-                WebSocketLinkTransport(endpoint: endpoint, trust: trust, openDeadline: .seconds(600))
+                WebSocketLinkTransport(endpoint: endpoint, trust: trust, openDeadline: .seconds(600),
+                                       proxyResolver: SystemProxyResolver(),
+                                       observeOpening: diagnostic.mark)
             })
         let recorder = EventRecorder(session)
         let connecting = Task { await session.connect() }
@@ -163,13 +168,21 @@ import Testing
         try #require(!listener.receivedRequests.isEmpty, "the listener saw no opening, so nothing was waited on")
         #expect(await session.state == .connecting)
         let advanced = ContinuousClock.now
+        diagnostic.mark("session before clock advance")
         await clock.advance(by: 30_000)
+        diagnostic.mark("session clock advance returned")
+        diagnostic.mark("session before recorder wait")
         let ended = await recorder.wait(timeout: .seconds(10)) { events in
             events.contains(.stateChanged(.waitingToRetry(seconds: 1)))
         }
+        diagnostic.mark("session recorder wait returned")
         #expect(ended)
+        diagnostic.mark("session before disconnect")
         await session.disconnect()
+        diagnostic.mark("session disconnect returned")
+        diagnostic.mark("session before connecting task await")
         await connecting.value
+        diagnostic.mark("session connecting task await returned")
         #expect(ContinuousClock.now - advanced < .seconds(5))
     }
 

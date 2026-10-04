@@ -12,7 +12,7 @@ import tempfile
 import threading
 import time
 
-BASE = 'd2ca3475e30556494a70bd78a0c72eee32aa9a9c'
+BASE = '167dd1b1dd912dc457c19c5111228e4510cb1993'
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'ios/NereusKit'
 SAMPLE_OUTPUT_LIMIT = 16 * 1024 * 1024

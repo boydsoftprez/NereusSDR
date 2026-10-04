@@ -158,7 +158,8 @@ final class FakePairingConnection: LinkTransport, @unchecked Sendable {
                 phase = .hashing
             }
             // The Core hashes the code off its event loop, then sends step 0.
-            Task.detached { [self] in
+            // The fake Core's native hash must not occupy a cooperative worker.
+            let hashing = Thread { [self] in
                 guard let stored = SpakeExchange.storedData(code: code),
                       let publicData = spake.stationStep0(stored: stored) else {
                     refuse(LinkMessage.PairFail(reason: FakeStation.cannotPairReason, retryAfterMs: 0))
@@ -176,6 +177,8 @@ final class FakePairingConnection: LinkTransport, @unchecked Sendable {
                 }
                 enqueue(.pairSpake(LinkMessage.PairSpake(step: 0, data: Base64URL.encode(publicData))))
             }
+            hashing.name = "NereusSDR.test.fake-pairing-hash"
+            hashing.start()
         }
     }
 
