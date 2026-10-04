@@ -154,7 +154,10 @@ Applets and complete meter objects share one container system. Move them with do
 Portable container/object exchange preserves customized legacy records, unknown objects and external MMIO bindings. Migration retains recovery data. Complete composite meter faces use source-aware readings, and unavailable measurements are presented as unavailable. The ANAN multimeter gains approved Nereus artwork, calibrated live/peak/history
 needles and responsive named, unit-bearing readouts. Supported, unsupported
 and unknown readings stay distinct, and receive/transmit transitions clear
-stale readings. Compact labels and peaks fit within the meter glass.
+stale readings. All approved scale labels remain present at ordinary meter
+sizes, and readouts make room for the configured font when space permits.
+Visible idle pointers park dim at their calibrated starting positions while
+their readouts remain unavailable; they do not create measurements or history.
 
 ## Modes, audio and accessories
 
