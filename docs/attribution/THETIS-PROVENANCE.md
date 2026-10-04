@@ -543,3 +543,13 @@ object/container copies fresh return homes and disables unsupported container
 preferences while retaining their raw values. NereusSDR-original GUI adaptation
 by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; existing upstream notices,
 calibration and inline cites remain unchanged.
+
+### 2026-10-04 CAT transmit ownership (Task 4)
+
+`CatTxCoordinator.h/.cpp`, accepted-intent tags/generations in `MoxController`,
+and the tune/two-tone cycle lifetime guards are NereusSDR-original code.
+They use the existing Thetis-derived PollPTT/TUN/two-tone paths and their
+unchanged headers, inline comments and citations; no additional upstream logic
+is ported. The station program identity and existing permission/interlock gates
+remain authoritative. Session claims and supersession by an accepted idempotent
+request adapt Thetis's single-console controls for several native CAT sessions.

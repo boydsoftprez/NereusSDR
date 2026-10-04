@@ -164,6 +164,90 @@ class TestTwoToneController : public QObject
     Q_OBJECT
 
 private slots:
+    void supersededPendingStartNeverProgramsOrRekeys()
+    {
+        TransmitModel tx; RecordingTxChannel tc(kTxChannelId); MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0); mox.setMox(true);
+        TwoToneController ctrl; ctrl.setTransmitModel(&tx); ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox); ctrl.setSettleDelaysMs(1000, 0);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual); cat.program = true; cat.requestTag = 73;
+        ctrl.setActive(true, cat); QVERIFY(ctrl.isActivationInFlight());
+        mox.setMox(true); const int calls = tc.calls.size();
+        QVERIFY(QMetaObject::invokeMethod(&ctrl, "onMoxReleaseSettleElapsed", Qt::DirectConnection));
+        QCOMPARE(tc.calls.size(), calls); QVERIFY(mox.isMox());
+        QVERIFY(!ctrl.isActivationInFlight());
+    }
+
+    void rejectedRepeatRetainsTaggedCycle()
+    {
+        TransmitModel tx; RecordingTxChannel tc(kTxChannelId); MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        TwoToneController ctrl; ctrl.setTransmitModel(&tx); ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox); ctrl.setSettleDelaysMs(0, 0);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual); cat.program = true; cat.requestTag = 65;
+        ctrl.setActive(true, cat); QVERIFY(ctrl.isActive());
+        const quint64 stamp = mox.acceptedRequestGeneration(); const int calls = tc.calls.size();
+        mox.setMoxCheck([] { return BandPlanGuard::MoxCheckResult{false, QStringLiteral("repeat refused")}; });
+        ctrl.setActive(true);
+        QCOMPARE(mox.acceptedRequestGeneration(), stamp);
+        QCOMPARE(ctrl.keyer().requestTag, quint64(65)); QCOMPARE(tc.calls.size(), calls);
+        QVERIFY(ctrl.endIfRequest(65, stamp));
+    }
+
+    void supersededDelayedMag2DoesNotTouchGenerator()
+    {
+        TransmitModel tx; RecordingTxChannel tc(kTxChannelId); MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        TwoToneController ctrl; ctrl.setTransmitModel(&tx); ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox); ctrl.setSettleDelaysMs(0, 0);
+        tx.setTwoToneFreq2Delay(1000);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual); cat.program = true; cat.requestTag = 63;
+        ctrl.setActive(true, cat); QVERIFY(ctrl.isActive());
+        mox.setMox(true);
+        const int calls = tc.calls.size();
+        QVERIFY(QMetaObject::invokeMethod(&ctrl, "onFreq2DelayElapsed", Qt::DirectConnection));
+        QCOMPARE(tc.calls.size(), calls);
+    }
+
+    void staleDeactivationCannotRestoreNewCycle()
+    {
+        TransmitModel tx; RecordingTxChannel tc(kTxChannelId); MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        TwoToneController ctrl; ctrl.setTransmitModel(&tx); ctrl.setTxChannel(&tc);
+        ctrl.setMoxController(&mox); ctrl.setSettleDelaysMs(0, 0);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual); cat.program = true; cat.requestTag = 64;
+        ctrl.setActive(true, cat); QVERIFY(ctrl.isActive());
+        QVERIFY(ctrl.endIfRequest(64, mox.acceptedRequestGeneration()));
+        ctrl.setActive(true);
+        const int calls = tc.calls.size();
+        QVERIFY(QMetaObject::invokeMethod(&ctrl, "onDeactivationSettleElapsed", Qt::DirectConnection));
+        QCOMPARE(tc.calls.size(), calls);
+    }
+
+
+    void taggedRepeatAdoptsCycleAndStaleEndDoesNothing()
+    {
+        TransmitModel tx;
+        RecordingTxChannel tc(kTxChannelId);
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        TwoToneController ctrl;
+        ctrl.setTransmitModel(&tx); ctrl.setTxChannel(&tc); ctrl.setMoxController(&mox);
+        ctrl.setSettleDelaysMs(0, 0);
+        KeyerIdentity cat = KeyerIdentity::station(PttMode::Manual);
+        cat.program = true; cat.requestTag = 51;
+        ctrl.setActive(true, cat);
+        QVERIFY(ctrl.isActive());
+        const quint64 stamp = mox.acceptedRequestGeneration();
+        const int calls = tc.calls.size();
+        ctrl.setActive(true);
+        QCOMPARE(tc.calls.size(), calls);
+        QCOMPARE(ctrl.keyer().requestTag, quint64(0));
+        QVERIFY(!ctrl.endIfRequest(51, stamp));
+        QCOMPARE(tc.calls.size(), calls);
+        QVERIFY(mox.isMox());
+    }
+
 
     // ── I.1.A: power-off precondition ─────────────────────────────────────
     void setActive_powerOff_doesNotEngage()

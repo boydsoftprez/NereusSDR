@@ -2,6 +2,7 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #pragma once
 #include "CatModelAdapter.h"
+#include "CatTxCoordinator.h"
 #include "CatSettings.h"
 #include "CatSession.h"
 #include "CatParser.h"
@@ -32,6 +33,7 @@ public:
     void closeSession(quint64);
     CatSession* session(quint64);
     QByteArray processFrame(quint64, const QByteArray&);
+    CatTxCoordinator& txCoordinator() { return m_txCoordinator; }
     CatModelAdapter& adapter() { return m_adapter; }
     CatSettings& settings() { return m_settings; }
     CatCommandRouter& router() { return m_router; }
@@ -47,6 +49,7 @@ private:
     void setState(int channel, const QString&);
     QPointer<RadioModel> m_model;
     CatModelAdapter m_adapter;
+    CatTxCoordinator m_txCoordinator;
     CatSettings m_settings;
     CatCommandCatalog m_catalog;
     CatParser m_parser;

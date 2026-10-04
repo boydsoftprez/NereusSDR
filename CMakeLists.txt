@@ -957,6 +957,7 @@ set(CORE_SOURCES
     src/core/cat/CatModelAdapter.cpp
     src/core/cat/CatSettings.cpp
     src/core/cat/CatSession.cpp
+    src/core/cat/CatTxCoordinator.cpp
     src/core/cat/CatService.cpp
     src/core/cat/CatParser.cpp
     src/core/cat/CatCommandRouter.cpp

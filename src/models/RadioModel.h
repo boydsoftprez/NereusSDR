@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04: CAT accepted-intent tags and guarded cycle lifetimes,
+//                NereusSDR-original, by J.J. Boyd (KG4VCF), AI-assisted
+//                via OpenAI Codex.
 //   2026-10-03 - Diversity atomic reentry and slice-close/hydration lifetime
 //                 fences, J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30 - Fix round 1 (minor 4): transmitLinkDownReason picks the
@@ -604,6 +607,7 @@
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
+#include "core/MoxController.h"
 #include "core/ConnectionState.h"
 #include "core/audio/CaptureSupervisor.h"
 #include "core/ReceiveLayoutStore.h"
@@ -5135,6 +5139,7 @@ public slots:
     // on unheld transmit takes it) and the tune's MOX key is that device's.
     // setTune(false) ends it as any TUNE ends.
     void setTune(bool on, const KeyerIdentity& keyer);
+    bool endTuneIfRequest(quint64 tag, quint64 expectedAcceptedGeneration);
 
     // TGXL autotune orchestration (NereusSDR-native, no Thetis source).
     //
@@ -7832,6 +7837,12 @@ private:
     //   (round-robin priority bank0 > bank10), this produced an RF spike past
     //   the radio's spec at high tune-slider settings.  Issue #177.
     bool m_pendingTuneOff{false};
+    // NereusSDR-original tune cycle lifetime; not a permission identity.
+    KeyerIdentity m_tuneCycleKeyer{KeyerIdentity::station(PttMode::Manual)};
+    quint64 m_tuneCycleSerial{0};
+    quint64 m_tuneAcceptedGeneration{0};
+    bool m_tuneCycleGuarded{false};
+    bool tuneCycleCurrent(quint64 serial) const;
 
     // m_tuneOffSettleMs: explicit 100 ms wait between MoxController::rxReady
     //   and completeTuneOff().  Mirrors `await Task.Delay(100)` at Thetis

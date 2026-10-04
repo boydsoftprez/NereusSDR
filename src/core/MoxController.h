@@ -38,6 +38,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-04: CAT accepted-intent tags and guarded cycle lifetimes,
+//                NereusSDR-original, by J.J. Boyd (KG4VCF), AI-assisted
+//                via OpenAI Codex.
 //   2026-04-25 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
@@ -336,6 +339,8 @@ struct KeyerIdentity {
     /// tuner started; never by a device or a remote command. Not part of
     /// who the keyer is (operator== leaves it out).
     bool tunerPress{false};
+    // NereusSDR-original accepted-intent correlation; never permission identity.
+    quint64 requestTag{0};
 
     /// The same id as SliceOwnership::stationDevice().
     static constexpr char kStationDeviceId[] = "station";
@@ -558,6 +563,11 @@ public:
     /// (a program's key never takes transmit, so asking changes nothing);
     /// empty when the gate would admit it or there is no gate.
     TxRefusal programKeyRefusal(const KeyerIdentity& keyer) const;
+    // Fix wave M1: what setMox(true) would refuse before the keying gate
+    // (TX inhibit, the PA trip, receive only, the band plan, the
+    // interlock), asked without reporting anything. Empty when none would.
+    // Pure existing TX safety probe for accepted tune/two-tone repeats.
+    TxRefusal refusalBeforeTheGate() const;
 
     // A station key that starts more than MOX (TUNE, two-tone) asks the gate
     // before it changes anything, so a refused start never releases or rides
@@ -1081,6 +1091,12 @@ public slots:
     // Full CAT integration is Phase 3K.  Wiring deferred to 3K; this slot
     // establishes the API.
     void onCatPtt(bool pressed);
+    void onCatPtt(bool pressed, const KeyerIdentity& requester);
+    bool discardCatPttIfRequest(quint64 tag);
+    // Invalidate only an in-flight tagged admission; never admit, key or observe.
+    bool cancelPendingAdmissionIfRequest(quint64 tag);
+    quint64 acceptedRequestGeneration() const { return m_acceptedRequestGeneration; }
+    quint64 observeAcceptedRequest(const KeyerIdentity& requester, bool requestedOn);
 
     // onVoxActive: WDSP VOX activity crossing the DEXP gate.
     //
@@ -1249,6 +1265,7 @@ public slots:
     void onTxDrained();
 
 signals:
+    void requestAccepted(const KeyerIdentity& requester, quint64 generation, bool requestedOn);
     // Task 16 fix wave (M2): transmitBlockReason() changed; `reason` is the
     // new value, empty when nothing blocks transmit any more.
     void transmitBlockChanged(const QString& reason);
@@ -1523,10 +1540,6 @@ private:
     // `quiet` (a held source's repeat, M3) records it and says nothing.
     void reportRefusal(const QString& reason, const TxRefusal& refusal, bool quiet);
     static TxRefusal refusalForCheck(const safety::BandPlanGuard::MoxCheckResult& result);
-    // Fix wave M1: what setMox(true) would refuse before the keying gate
-    // (TX inhibit, the PA trip, receive only, the band plan, the
-    // interlock), asked without reporting anything. Empty when none would.
-    TxRefusal refusalBeforeTheGate() const;
     // Fix wave 2, Important 2: the interlock's refusal, asked quietly.
     // admitKey asks TX inhibit, the PA trip, receive only and this before
     // the gate, whatever the key sets up first; the band plan and the
@@ -1729,6 +1742,13 @@ private:
     // refused key drop the CAT and TCI levels, as chkMOX_CheckedChanged2
     // clears CATPTT and TCIPTT (console.cs:29406-29411 [v2.10.3.15]).
     bool     m_micPtt{false};   // mic_ptt: PTT from radio
+    quint64 m_pendingAdmissionTag{0};
+    quint64 m_pendingAdmissionSerial{0};
+    quint64 m_acceptedRequestGeneration{0};
+    quint64 m_transitionSerial{0};
+    KeyerIdentity m_lastAcceptedRequester;
+    bool m_lastAcceptedOn{false};
+    KeyerIdentity m_catRequester{KeyerIdentity::station(PttMode::Cat)};
     bool     m_catPtt{false};   // cat_ptt
     bool     m_voxPtt{false};   // Audio.VOXActive
     bool     m_tciPtt{false};   // _tci_ptt

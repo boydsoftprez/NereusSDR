@@ -6,12 +6,14 @@
 #include "models/RadioModel.h"
 namespace NereusSDR {
 CatService::CatService(RadioModel& model, QObject* parent)
-    : QObject(parent), m_model(&model), m_adapter(model), m_settings(AppSettings::instance()), m_parser(m_catalog)
+    : QObject(parent), m_model(&model), m_adapter(model), m_txCoordinator(model), m_settings(AppSettings::instance()), m_parser(m_catalog)
 {
     for (int channel = 1; channel <= 4; ++channel) { m_channels[channel - 1].config.channel = channel; }
     connect(&model, &RadioModel::connectionStateChanged, this, [this](ConnectionState state) {
         if (state == ConnectionState::Disconnected || state == ConnectionState::LinkLost) {
-            // Task 4 subscribes here to clear claims. Keep captured bindings unchanged.
+            const QPointer<CatService> self(this);
+            m_txCoordinator.cancelAll();
+            if (!self) { return; }
             emit radioDisconnected();
         }
     });
@@ -84,6 +86,8 @@ void CatService::stopAll()
     const QList<quint64> ids = m_sessions.keys();
     // Detach every old session before callbacks can start a replacement run.
     m_sessions.clear();
+    m_txCoordinator.cancelAll();
+    if (!self) { return; }
     for (quint64 id : ids) {
         emit sessionClosed(id);
         if (!self) { return; }
@@ -126,6 +130,9 @@ quint64 CatService::openSession(int channel, CatTransportKind transport)
 void CatService::closeSession(quint64 id)
 {
     if (!m_sessions.remove(id)) { return; }
+    const QPointer<CatService> self(this);
+    m_txCoordinator.cancelSession(id);
+    if (!self) { return; }
     emit sessionClosed(id);
 }
 CatSession* CatService::session(quint64 id) { return m_sessions.contains(id) ? m_sessions.value(id).get() : nullptr; }
