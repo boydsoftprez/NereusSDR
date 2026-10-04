@@ -4,9 +4,16 @@
 #include "gui/QtCocoaAccessibilityOwnershipGuard.h"
 #include "gui/ConnectionSelector.h"
 #include "gui/QtCocoaAccessibilityOwnershipGuard_p.h"
+#include "gui/applets/RxApplet.h"
+#include "core/BoardCapabilities.h"
+#include "core/StepAttenuatorFacade.h"
+#include "models/RadioModel.h"
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QAccessible>
+#include <QComboBox>
 #include <QPushButton>
+#include <QStackedWidget>
 #include <QTreeWidget>
 #include <QPersistentModelIndex>
 #include <QSignalSpy>
@@ -22,6 +29,8 @@
 - (id)initWithId:(unsigned int)identifier;
 - (id)initWithId:(unsigned int)identifier role:(NSAccessibilityRole)role;
 - (NSArray*)accessibilitySelectedChildren;
+- (NSArray*)accessibilityRows;
+- (NSArray*)accessibilityChildren;
 - (QAccessibleInterface*)qtInterface;
 - (void)updateTableModel;
 @end
@@ -165,6 +174,88 @@ private slots:
         selector.setTargets({});
         QVERIFY(selector.selectedKey().isEmpty());
         QVERIFY(table->selectionInterface()->selectedItems().isEmpty());
+    }
+
+    void preampRefreshAfterNativePopupRebuild()
+    {
+        QString reason;
+        QVERIFY2(installQtCocoaAccessibilityOwnershipGuard(&reason), qPrintable(reason));
+        QAccessible::setActive(true);
+        NereusSDR::RadioModel remote(NereusSDR::RadioModel::Role::Remote);
+        NereusSDR::RxApplet applet(nullptr, &remote);
+        applet.setBoardCapabilities(NereusSDR::BoardCapsTable::forBoard(NereusSDR::HPSDRHW::Saturn));
+        auto* stack = applet.findChild<QStackedWidget*>(QStringLiteral("RxAttenuatorStack"));
+        QVERIFY(stack);
+        auto* combo = stack->findChild<QComboBox*>();
+        QVERIFY(combo);
+        QCOMPARE(combo->count(), 4);
+        NereusSDR::StepAttenuatorFacade* stepAtt = remote.stepAttFacade();
+        stepAtt->setWindowAvailability(true, QString());
+        const int selectedMode = combo->itemData(2).toInt();
+        stepAtt->setPreampMode(selectedMode);
+        QCOMPARE(combo->currentData().toInt(), selectedMode);
+        QSignalSpy modeChanges(stepAtt, &NereusSDR::StepAttenuatorFacade::preampModeChanged);
+        QSignalSpy comboChanges(combo, &QComboBox::currentIndexChanged);
+        QAbstractItemView* view = combo->view();
+        view->resize(300, 200);
+        view->doItemsLayout();
+        QAccessibleInterface* table = QAccessible::queryAccessibleInterface(view);
+        QVERIFY(table && table->tableInterface() && table->selectionInterface());
+        const QAccessible::Id tableId = QAccessible::uniqueId(table);
+        Class cls = NSClassFromString(@"QMacAccessibilityElement");
+        id element = [cls elementWithId:tableId];
+        QVERIFY(element);
+        QVERIFY(!applet.isVisible());
+        QVERIFY(!view->isVisible());
+
+        for (NereusSDR::HPSDRHW board : {NereusSDR::HPSDRHW::Saturn,
+                                       NereusSDR::HPSDRHW::Hermes,
+                                       NereusSDR::HPSDRHW::Saturn}) {
+            view->setCurrentIndex(combo->model()->index(combo->currentIndex(), 0));
+            const QList<QAccessibleInterface*> selected = table->selectionInterface()->selectedItems();
+            QCOMPARE(selected.size(), 1);
+            const QAccessible::Id oldId = QAccessible::uniqueId(selected.first());
+            NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+            [element updateTableModel];
+            NSArray* rows = [element accessibilityRows];
+            QCOMPARE(rows.count, NSUInteger(combo->count()));
+            NSArray* native = [[rows objectAtIndex:combo->currentIndex()] accessibilityChildren];
+            QCOMPARE(native.count, NSUInteger(1));
+            QAccessibleInterface* promoted = [[native firstObject] qtInterface];
+            QVERIFY(promoted);
+            QCOMPARE(QAccessible::uniqueId(promoted), oldId);
+            [element updateTableModel];
+            [pool drain];
+            // Actual Cocoa row cleanup expires a promoted popup cell while
+            // QAccessibleTable still holds its ID. The next clear must not
+            // dereference that absent cell in RowsRemoved.
+            QVERIFY(!QAccessible::accessibleInterface(oldId));
+            QCOMPARE(QAccessible::accessibleInterface(tableId), table);
+            qInfo() << "Expired preamp popup cell ID before capability refresh:" << oldId;
+
+            const auto& caps = NereusSDR::BoardCapsTable::forBoard(board);
+            applet.setBoardCapabilities(caps);
+
+            const auto expected = NereusSDR::BoardCapsTable::preampItemsForBoard(board, caps.hasAlexFilters);
+            QCOMPARE(combo->count(), int(expected.size()));
+            for (int row = 0; row < combo->count(); ++row) {
+                QCOMPARE(combo->itemText(row), QString::fromLatin1(expected[row].label));
+                QCOMPARE(combo->itemData(row).toInt(), expected[row].modeInt);
+            }
+            QCOMPARE(combo->currentData().toInt(), selectedMode);
+            QCOMPARE(stepAtt->preampMode(), selectedMode);
+            QCOMPARE(comboChanges.count(), 0);
+            QCOMPARE(modeChanges.count(), 0);
+            QCOMPARE(QAccessible::accessibleInterface(tableId), table);
+            view->doItemsLayout();
+            view->setCurrentIndex(combo->model()->index(combo->currentIndex(), 0));
+            NSAutoreleasePool* freshPool = [[NSAutoreleasePool alloc] init];
+            NSArray* fresh = [element accessibilitySelectedChildren];
+            QCOMPARE(fresh.count, NSUInteger(1));
+            QAccessibleInterface* cell = [[fresh firstObject] qtInterface];
+            QVERIFY(cell && cell->isValid());
+            [freshPool drain];
+        }
     }
 
     void selectedChildrenLifecycle()
