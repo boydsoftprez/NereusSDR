@@ -1,6 +1,9 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-04: Resume retained automatic PureSignal intent after the
+//               first successful media admission, preserving retirement.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30: Fix round 1 for LINK-I4: the pairing window is built
 //               with the Core's settings, so a restart keeps service
 //               pairing shut. J.J. Boyd (KG4VCF), AI-assisted via
@@ -7342,7 +7345,8 @@ void StationServer::promoteToSession(SessionTransport* transport)
     // iPhone app Task 76: every admitted session has media, with its own
     // epoch. The first session on a Core with none starts the session
     // state afresh, as the one media session did before.
-    if (primaryMediaSession() == nullptr) {
+    const bool firstMediaSession = primaryMediaSession() == nullptr;
+    if (firstMediaSession) {
         m_ps3SubscriberEpoch = 0;
         m_radioModel->pureSignalFacade()->resetSession();
         m_dispatcher->resetSessionState();
@@ -7402,11 +7406,28 @@ void StationServer::promoteToSession(SessionTransport* transport)
     if (!m_peers.contains(transport)) {
         return;
     }
+    const QPointer<StationServer> admissionGuard(this);
     if (mediaAvailable(epoch)) {
         emit mediaSessionStarted(epoch);
     }
+    if (!admissionGuard) {
+        return;
+    }
     if (m_peers.contains(transport) && telemetryAvailable(epoch)) {
         emit telemetrySessionStarted(epoch);
+    }
+    if (!admissionGuard) {
+        return;
+    }
+    // Retirement keeps desired Auto but clears operational arming. Resume
+    // only once this first admission survives its snapshot/media callbacks;
+    // the coordinator retains its applied parameters and readiness gates.
+    if (firstMediaSession && m_peers.contains(transport)
+        && peerFor(transport).mediaEpoch == epoch && m_radioModel
+        && m_radioModel->role() == RadioModel::Role::Local) {
+        if (PureSignal* coordinator = m_radioModel->pureSignal()) {
+            coordinator->resumeAutomaticCalibrationPreference();
+        }
     }
 }
 

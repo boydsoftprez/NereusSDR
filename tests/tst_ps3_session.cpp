@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original PS3 action/session regression tests.
+// Modification history (NereusSDR):
+//   2026-10-04 J.J. Boyd (KG4VCF): first media admission/rejoin Auto
+//              convergence regressions. AI-assisted via OpenAI Codex.
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QJsonDocument>
@@ -32,6 +35,68 @@
 #include "fakes/UpgradedCoreToken.h"
 
 using namespace NereusSDR;
+
+namespace {
+
+struct AdmissionClient {
+    RadioModel radio{RadioModel::Role::Remote};
+    SettingsProxy proxy;
+    StationClient client{&radio, &proxy};
+
+    void join(StationServer& server, const QString& token, bool abortSnapshot = false)
+    {
+        auto coreEnd = std::make_unique<Test::LoopbackTransport>("station");
+        auto guiEnd = std::make_unique<Test::LoopbackTransport>("gui");
+        coreEnd->linkTo(guiEnd.get());
+        if (abortSnapshot) {
+            QObject::connect(coreEnd.get(), &Test::LoopbackTransport::outboundText,
+                             coreEnd.get(), [end = coreEnd.get()](const QByteArray& wire) {
+                if (QJsonDocument::fromJson(wire).object().value("type") == "capabilities") {
+                    end->closeLink(QStringLiteral("snapshot delivery lost"));
+                }
+            });
+        }
+        client.startSession(guiEnd.release(), token);
+        server.acceptTransport(coreEnd.release());
+    }
+};
+
+#ifdef HAVE_WDSP
+struct AdmissionCore {
+    // The station owns the coordinator, and must retire it before WDSP closes.
+    WdspEngine engine;
+    RadioModel radio;
+    PureSignal* coordinator{nullptr};
+    bool ready{true};
+    bool permitted{true};
+
+    bool initialize(const QString& directory)
+    {
+        engine.setSynchronousInitForTest(true);
+        if (!engine.initialize(directory + QLatin1Char('/'))) { return false; }
+        TxChannel* tx = engine.createTxChannel(WdspEngine::kTxChannelId);
+        if (!tx) { return false; }
+        coordinator = radio.installPureSignalForTest(tx);
+        coordinator->setTimersEnabled(false);
+        coordinator->setOperationalReadinessPredicate([this] { return ready; });
+        coordinator->setOperationalPermissionPredicate([this] { return permitted; });
+        coordinator->initializeAutoCalPreference(true);
+        radio.pureSignalSettings()->setRunCalibrationProcessing(true);
+        return coordinator->applyAcceptedSettingsToEngine();
+    }
+
+    void tick()
+    {
+        int resetInfo[16] = {};
+        // No IQ is supplied: the native engine stays at LRESET off the air.
+        for (int count = 0; count < 8; ++count) {
+            coordinator->processNewInfo(resetInfo);
+        }
+    }
+};
+#endif
+
+} // namespace
 
 class TestPs3Session : public QObject {
     Q_OBJECT
@@ -195,6 +260,199 @@ private slots:
             QVERIFY2(coordinator.isPsEnabled(), qPrintable(
                 QStringLiteral("Auto reverted to Single after %1 tick(s)").arg(singleTicks)));
         }
+#endif
+    }
+
+    void firstMediaAdmissionResumesSavedAutomaticIntent_data()
+    {
+        QTest::addColumn<bool>("rejoin");
+        QTest::newRow("first-join") << false;
+        QTest::newRow("after-last-client-departure") << true;
+    }
+
+    void firstMediaAdmissionResumesSavedAutomaticIntent()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("requires WDSP");
+#else
+        QFETCH(bool, rejoin);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AdmissionCore core;
+        QVERIFY(core.initialize(directory.path()));
+        QVERIFY(core.coordinator->resumeAutomaticCalibrationPreference());
+        core.tick();
+        QVERIFY(core.coordinator->isPsEnabled());
+        StationServer server(&core.radio, AppSettings::instance(),
+                             Test::seedUpgradedCoreToken(directory.path()));
+        server.setMediaEnabled(true);
+        AdmissionClient first;
+        if (rejoin) {
+            first.join(server, server.token());
+            QTRY_VERIFY(first.client.isHandshakeComplete());
+            // Establish a running prior session independently of the bug.
+            QVERIFY(core.coordinator->resumeAutomaticCalibrationPreference());
+            core.tick();
+            QVERIFY(core.coordinator->isPsEnabled());
+            first.client.disconnectFromStation(QStringLiteral("test departure"));
+            QTRY_VERIFY(server.mediaSessionEpochs().isEmpty());
+            core.tick();
+            QVERIFY(!core.coordinator->isPsEnabled());
+            QVERIFY(core.radio.pureSignalSettings()->autoCalEnabled());
+        }
+        PureSignalSessionFacade* facade = core.radio.pureSignalFacade();
+        const quint64 retiredGeneration = facade->displayGeneration();
+        facade->setRemoteAmpViewSubscribed(true);
+        AdmissionClient admitted;
+        admitted.join(server, server.token());
+        QTRY_VERIFY(admitted.client.isHandshakeComplete());
+        QCOMPARE(server.mediaSessionEpochs().size(), 1);
+        QVERIFY(facade->displayGeneration() > retiredGeneration);
+        core.tick();
+        QVERIFY(core.radio.pureSignalSettings()->autoCalEnabled());
+        QVERIFY2(core.coordinator->isPsEnabled(),
+                 "successful first media admission retained Auto but did not rearm it");
+        QVERIFY(!core.radio.transmitModel().isMox());
+        QVERIFY(!core.radio.twoToneController()->isActive());
+        QVERIFY(!admitted.radio.pureSignal());
+        QVERIFY(!facade->remoteAmpViewSubscribed());
+        QVERIFY(!facade->displaySnapshot());
+
+        AdmissionClient second;
+        const quint64 runningGeneration = facade->displayGeneration();
+        second.join(server, server.token());
+        QTRY_VERIFY(second.client.isHandshakeComplete());
+        QCOMPARE(server.mediaSessionEpochs().size(), 2);
+        QCOMPARE(facade->displayGeneration(), runningGeneration);
+        core.tick();
+        QVERIFY(core.coordinator->isPsEnabled());
+#endif
+    }
+
+    void firstMediaAdmissionHonorsAutomaticEligibility_data()
+    {
+        QTest::addColumn<QString>("gate");
+        QTest::newRow("Auto-off") << QStringLiteral("auto");
+        QTest::newRow("RunCal-off") << QStringLiteral("run");
+        QTest::newRow("radio-unready") << QStringLiteral("ready");
+        QTest::newRow("operation-not-permitted") << QStringLiteral("permission");
+        QTest::newRow("parameters-not-applied") << QStringLiteral("parameters");
+    }
+
+    void firstMediaAdmissionHonorsAutomaticEligibility()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("requires WDSP");
+#else
+        QFETCH(QString, gate);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AdmissionCore core;
+        QVERIFY(core.initialize(directory.path()));
+        if (gate == "auto") { core.coordinator->initializeAutoCalPreference(false); }
+        if (gate == "run") { core.radio.pureSignalSettings()->setRunCalibrationProcessing(false); }
+        if (gate == "ready") { core.ready = false; }
+        if (gate == "permission") { core.permitted = false; }
+        PureSignalSettings unappliedSettings;
+        if (gate == "parameters") {
+            unappliedSettings.initializeAutoCalPreference(true);
+            unappliedSettings.setRunCalibrationProcessing(true);
+            core.coordinator->setSettings(&unappliedSettings);
+        }
+        StationServer server(&core.radio, AppSettings::instance(),
+                             Test::seedUpgradedCoreToken(directory.path()));
+        server.setMediaEnabled(true);
+        AdmissionClient admitted;
+        admitted.join(server, server.token());
+        QTRY_VERIFY(admitted.client.isHandshakeComplete());
+        QCOMPARE(server.mediaSessionEpochs().size(), 1);
+        core.tick();
+        QVERIFY(!core.coordinator->isPsEnabled());
+        QVERIFY(!core.radio.transmitModel().isMox());
+        QVERIFY(!core.radio.twoToneController()->isActive());
+        // Return the station-owned settings before the temporary object leaves.
+        core.coordinator->setSettings(core.radio.pureSignalSettings());
+#endif
+    }
+
+    void failedMediaAuthenticationDoesNotResumeAutomatic_data()
+    {
+        QTest::addColumn<bool>("abortSnapshot");
+        QTest::newRow("invalid-token") << false;
+        QTest::newRow("lost-during-capabilities-snapshot") << true;
+    }
+
+    void failedMediaAuthenticationDoesNotResumeAutomatic()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("requires WDSP");
+#else
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AdmissionCore core;
+        QVERIFY(core.initialize(directory.path()));
+        core.coordinator->retireSessionOperations();
+        core.tick();
+        QVERIFY(!core.coordinator->isPsEnabled());
+        QVERIFY(core.radio.pureSignalSettings()->autoCalEnabled());
+        StationServer server(&core.radio, AppSettings::instance(),
+                             Test::seedUpgradedCoreToken(directory.path()));
+        server.setMediaEnabled(true);
+        const quint64 generation = core.radio.pureSignalFacade()->displayGeneration();
+        QFETCH(bool, abortSnapshot);
+        AdmissionClient rejected;
+        QSignalSpy ended(&rejected.client, &StationClient::sessionEnded);
+        rejected.join(server, abortSnapshot ? server.token() : QStringLiteral("invalid-test-token"),
+                      abortSnapshot);
+        QTRY_VERIFY(!ended.isEmpty());
+        QVERIFY(!rejected.client.isHandshakeComplete());
+        QVERIFY(server.mediaSessionEpochs().isEmpty());
+        if (abortSnapshot) {
+            QVERIFY(core.radio.pureSignalFacade()->displayGeneration() > generation);
+        } else {
+            QCOMPARE(core.radio.pureSignalFacade()->displayGeneration(), generation);
+        }
+        core.tick();
+        QVERIFY(!core.coordinator->isPsEnabled());
+        QVERIFY(!core.radio.transmitModel().isMox());
+        QVERIFY(!core.radio.twoToneController()->isActive());
+#endif
+    }
+
+    void telemetryAdmissionCallbackCanDestroyStationBeforeAutomaticResume()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("requires WDSP");
+#else
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AdmissionCore core;
+        QVERIFY(core.initialize(directory.path()));
+        QVERIFY(core.coordinator->resumeAutomaticCalibrationPreference());
+        core.tick();
+        QVERIFY(core.coordinator->isPsEnabled());
+        auto server = std::make_unique<StationServer>(&core.radio, AppSettings::instance(),
+            Test::seedUpgradedCoreToken(directory.path()));
+        server->setMediaEnabled(true);
+        server->setTelemetryEnabled(true);
+        const QPointer<StationServer> lifetime(server.get());
+        bool callbackReturned = false;
+        QObject::connect(server.get(), &StationServer::telemetrySessionStarted,
+                         &core.radio, [&server, &callbackReturned](quint64) {
+            // A direct subscriber may end the Core during admission.
+            server.reset();
+            callbackReturned = true;
+        });
+        AdmissionClient admitted;
+        admitted.join(*server, server->token());
+        QTRY_VERIFY(callbackReturned);
+        QVERIFY(lifetime.isNull());
+        QVERIFY(!server);
+        core.tick();
+        QVERIFY(!core.coordinator->isPsEnabled());
+        QVERIFY(core.radio.pureSignalSettings()->autoCalEnabled());
+        QVERIFY(!core.radio.transmitModel().isMox());
+        QVERIFY(!core.radio.twoToneController()->isActive());
 #endif
     }
 
