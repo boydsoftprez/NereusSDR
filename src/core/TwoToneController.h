@@ -86,6 +86,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
@@ -191,7 +192,7 @@ class TxChannel;
 //
 // Thread safety: all slots and signals are main-thread only.
 // ---------------------------------------------------------------------------
-class TwoToneController : public QObject
+class NEREUS_CORE_EXPORT TwoToneController : public QObject
 {
     Q_OBJECT
 

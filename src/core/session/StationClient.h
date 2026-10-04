@@ -463,6 +463,7 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include <QAbstractSocket>
 #include <QByteArray>
 #include <QDateTime>
@@ -617,7 +618,7 @@ struct StationEndReport {
 /// first, and IStationLink is a plain abstract interface with no metatype
 /// involvement, so the pair compose without any virtual-inheritance
 /// gymnastics.
-class StationClient : public QObject, public IStationLink {
+class NEREUS_CORE_EXPORT StationClient : public QObject, public IStationLink {
     Q_OBJECT
 
 public:

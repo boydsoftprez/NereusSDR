@@ -55,6 +55,7 @@
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include <QHash>
 #include <QJsonObject>
 #include <QObject>
@@ -78,7 +79,7 @@ class SpotModel;
 class WsjtxClient;
 struct SpotData;
 
-class SpotSourceHost : public QObject {
+class NEREUS_CORE_EXPORT SpotSourceHost : public QObject {
     Q_OBJECT
     // The station's sources, as the Core runs them: `off`, `connecting`,
     // `connected` or `error`, and the text a window shows beside it (the

@@ -66,6 +66,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QHash>
 #include <QObject>
 #include <QString>
@@ -94,7 +95,7 @@ class TransmitModel;
 // manifest.  Comma-stripping on saveProfile (F.2 spec) keeps the manifest
 // unambiguous.
 // ---------------------------------------------------------------------------
-class MicProfileManager : public QObject {
+class NEREUS_CORE_EXPORT MicProfileManager : public QObject {
     Q_OBJECT
 
 public:

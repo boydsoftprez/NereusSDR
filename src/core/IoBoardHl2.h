@@ -109,6 +109,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QString>
 #include <QElapsedTimer>
@@ -125,7 +126,7 @@ namespace NereusSDR {
 //   mi0bot IoBoardHl2.cs (full) [@c26a8a4]
 //   mi0bot network.h:112-148 [@c26a8a4]
 //   mi0bot console.cs:25781-25945 [@c26a8a4]
-class IoBoardHl2 : public QObject {
+class NEREUS_CORE_EXPORT IoBoardHl2 : public QObject {
     Q_OBJECT
 
 public:

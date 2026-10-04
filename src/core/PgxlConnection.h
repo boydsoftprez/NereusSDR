@@ -44,6 +44,7 @@
 // =================================================================
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QTcpSocket>
 #include <QTimer>
@@ -66,7 +67,7 @@ struct PgxlIdentityInfo {
     QString version;
 };
 
-class PgxlConnection : public QObject {
+class NEREUS_CORE_EXPORT PgxlConnection : public QObject {
     Q_OBJECT
 public:
     explicit PgxlConnection(QObject* parent = nullptr);

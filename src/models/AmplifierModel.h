@@ -36,6 +36,7 @@
 //                                    assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "core/PgxlStatusGauges.h"
 #include "models/TunerModel.h"
 
@@ -49,7 +50,7 @@ namespace NereusSDR {
 
 class PgxlConnection;
 
-class AmplifierModel : public QObject {
+class NEREUS_CORE_EXPORT AmplifierModel : public QObject {
     Q_OBJECT
     // The Tuner Genius's connection-state shape (TunerModel), same enum.
     Q_PROPERTY(NereusSDR::TunerModel::ConnectionPhase connectionPhase READ connectionPhase NOTIFY stationConnectionChanged)

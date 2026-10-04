@@ -76,13 +76,14 @@
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QString>
 
 namespace NereusSDR {
 
 // HL2-specific radio behavior knobs (mi0bot tpHL2Options.groupBoxHL2RXOptions).
-class Hl2OptionsModel : public QObject {
+class NEREUS_CORE_EXPORT Hl2OptionsModel : public QObject {
     Q_OBJECT
 public:
     explicit Hl2OptionsModel(QObject* parent = nullptr);

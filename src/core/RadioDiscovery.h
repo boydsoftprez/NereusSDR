@@ -56,6 +56,7 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+#include "core/NereusCoreExport.h"
 #include "HpsdrModel.h"
 
 #include <QObject>
@@ -177,7 +178,7 @@ constexpr DiscoveryTiming timingFor(DiscoveryProfile p) noexcept {
 // Both P1 and P2 radios respond to UDP broadcasts on port 1024.
 // Uses the mi0bot/Thetis NIC-walk + tunable timing-profile pattern:
 // bind per NIC, send P1+P2 probes, poll up to attemptsPerNic×quietPollsBeforeResend×pollTimeoutMs.
-class RadioDiscovery : public QObject {
+class NEREUS_CORE_EXPORT RadioDiscovery : public QObject {
     Q_OBJECT
 
 public:

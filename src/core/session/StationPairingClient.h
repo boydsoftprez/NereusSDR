@@ -47,6 +47,7 @@
 //               AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include <QByteArray>
 #include <QList>
 #include <QMetaType>
@@ -85,7 +86,7 @@ struct PairedStationRecord {
     quint16 port = 0;
 };
 
-class StationPairingClient : public QObject {
+class NEREUS_CORE_EXPORT StationPairingClient : public QObject {
     Q_OBJECT
 
 public:

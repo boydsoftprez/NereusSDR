@@ -42,6 +42,7 @@
 // =================================================================
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QByteArray>
 #include <QObject>
 #include <QString>
@@ -58,7 +59,7 @@ class UnkeyGate;
 /// Enforces the single-TX invariant: exactly one slice is TX-bound at a time.
 /// Performs RF-safe handoff (drops MOX before flipping). RadioModel owns one
 /// instance; MoxController + AlexController + VfoWidget + persistence subscribe.
-class TxSliceArbiter : public QObject {
+class NEREUS_CORE_EXPORT TxSliceArbiter : public QObject {
     Q_OBJECT
     Q_PROPERTY(int txBoundSliceId READ txBoundSliceId NOTIFY txBoundSliceChanged)
 

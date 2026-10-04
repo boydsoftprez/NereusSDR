@@ -33,6 +33,7 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "core/session/media/IMediaTransport.h"
 
 #include <QByteArray>
@@ -66,7 +67,7 @@ struct MediaPeerTelemetry {
     MediaTransportTelemetry traffic;
 };
 
-class MediaPeer final : public QObject {
+class NEREUS_CORE_EXPORT MediaPeer final : public QObject {
     Q_OBJECT
 
 public:

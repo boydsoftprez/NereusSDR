@@ -1,6 +1,7 @@
 // NereusSDR-original LAN Core discovery UDP receiver. Discovery is untrusted.
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "StationLanCache.h"
 
 #include <QElapsedTimer>
@@ -14,7 +15,7 @@ class TstStationLanTransport;
 
 namespace NereusSDR {
 
-class StationLanDiscovery : public QObject {
+class NEREUS_CORE_EXPORT StationLanDiscovery : public QObject {
     Q_OBJECT
 
 public:

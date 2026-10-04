@@ -1,5 +1,6 @@
 #pragma once
 // no-port-check: NereusSDR-original session-neutral PS3 presentation boundary.
+#include "core/NereusCoreExport.h"
 #include "core/dsp/Ps3Snapshot.h"
 #include <QHash>
 #include <QObject>
@@ -27,7 +28,7 @@ struct Ps3ActionResult {
     QVariantMap values;
 };
 
-class PureSignalSessionFacade final : public QObject {
+class NEREUS_CORE_EXPORT PureSignalSessionFacade final : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool available READ available NOTIFY statusChanged)
     Q_PROPERTY(bool canActuate READ canActuate NOTIFY statusChanged)

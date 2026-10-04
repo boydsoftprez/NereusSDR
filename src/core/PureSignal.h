@@ -59,6 +59,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QColor>
 #include <QObject>
 #include <QPointer>
@@ -96,7 +97,7 @@ class PureSignalSettings;
 // Thread safety: all public methods must be called from the main thread.
 // The internal timers fire on the main thread.  Status getters are atomic
 // for cheap cross-thread reads (e.g. SpectrumWidget LED indicator).
-class PureSignal : public QObject {
+class NEREUS_CORE_EXPORT PureSignal : public QObject {
     Q_OBJECT
 
     Q_PROPERTY(bool enabled READ isEnabled WRITE setEnabled NOTIFY enabledChanged)

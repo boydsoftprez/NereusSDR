@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "core/StationNetwork.h"
 
 #include <QHostAddress>
@@ -34,7 +35,7 @@
 
 namespace NereusSDR {
 
-class LanDiscovery : public QObject {
+class NEREUS_CORE_EXPORT LanDiscovery : public QObject {
     Q_OBJECT
 public:
     explicit LanDiscovery(QObject* parent = nullptr);

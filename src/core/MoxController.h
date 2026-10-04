@@ -269,6 +269,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QTimer>
 #include <functional>
@@ -379,7 +380,7 @@ struct KeyingAnswer {
 // released), not at setMox() entry, so subscribers see a definitive
 // "MOX is on/off" rather than "MOX command initiated".
 // ---------------------------------------------------------------------------
-class MoxController : public QObject {
+class NEREUS_CORE_EXPORT MoxController : public QObject {
     Q_OBJECT
 
 public:

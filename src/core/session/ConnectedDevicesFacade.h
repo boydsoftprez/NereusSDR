@@ -59,6 +59,7 @@
 //               implementation via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include <QByteArray>
 #include <QHash>
 #include <QJsonArray>
@@ -75,7 +76,7 @@ namespace NereusSDR {
 
 class DeviceStore;
 
-class ConnectedDevicesFacade final : public QObject {
+class NEREUS_CORE_EXPORT ConnectedDevicesFacade final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString listJson READ listJson NOTIFY connectedDevicesChanged)
     Q_PROPERTY(quint32 revision READ revision NOTIFY connectedDevicesChanged)

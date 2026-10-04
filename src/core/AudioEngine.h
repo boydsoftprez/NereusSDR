@@ -189,6 +189,7 @@
 //                 longer undo the AF gain. NereusSDR-original.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "AudioDeviceConfig.h"
 #include "IAudioBus.h"
 #include "audio/CaptureSupervisor.h"
@@ -284,7 +285,7 @@ public:
 // summing point so the cancellation reference matches the audio actually
 // leaving the speakers.  This is a tap-point relocation only; the WDSP
 // DEXP block and TxChannel::sendAntiVoxData wrapper stay unchanged.
-class AudioEngine : public QObject {
+class NEREUS_CORE_EXPORT AudioEngine : public QObject {
     Q_OBJECT
 
 public:

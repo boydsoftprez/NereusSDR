@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "BoardCapabilities.h"
 #include <QObject>
 #include <QString>
@@ -31,7 +32,7 @@ namespace NereusSDR {
 //
 // Call validate() after each successful connect. The resulting issue list
 // is available via issues() and is signalled via issuesChanged().
-class SettingsHygiene : public QObject {
+class NEREUS_CORE_EXPORT SettingsHygiene : public QObject {
     Q_OBJECT
 public:
     enum class Severity {

@@ -34,6 +34,7 @@
 //                                    via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "core/ConnectionDiagnostics.h"
 
 #include <QByteArray>
@@ -44,7 +45,7 @@
 
 namespace NereusSDR {
 
-class AccessoryDataModel : public QObject {
+class NEREUS_CORE_EXPORT AccessoryDataModel : public QObject {
     Q_OBJECT
 
 public:

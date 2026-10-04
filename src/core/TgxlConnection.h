@@ -37,6 +37,7 @@
 // =================================================================
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QTcpSocket>
 #include <QTimer>
@@ -67,7 +68,7 @@ struct TgxlIdentityInfo {
 //   V<version>\n                -- version line on connect
 //
 // Reverse-engineered from 4O3A TGXL management app pcap (#469).
-class TgxlConnection : public QObject {
+class NEREUS_CORE_EXPORT TgxlConnection : public QObject {
     Q_OBJECT
 public:
     explicit TgxlConnection(QObject* parent = nullptr);

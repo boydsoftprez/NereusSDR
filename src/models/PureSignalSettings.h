@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QByteArray>
 #include <QString>
@@ -30,7 +31,7 @@ struct PureSignalSettingsValues {
     bool operator==(const PureSignalSettingsValues&) const = default;
 };
 
-class PureSignalSettings final : public QObject {
+class NEREUS_CORE_EXPORT PureSignalSettings final : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool autoCalEnabled READ autoCalEnabled WRITE setAutoCalEnabled
                NOTIFY autoCalEnabledChanged)

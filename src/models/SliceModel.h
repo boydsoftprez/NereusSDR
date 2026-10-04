@@ -229,6 +229,7 @@
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+#include "core/NereusCoreExport.h"
 #include "Band.h"
 #include "core/ControlRanges.h"
 #include "core/NbFamily.h"
@@ -325,7 +326,7 @@ constexpr int tuneStepIndexForHz(int hz)
 // the radio via signals wired in RadioModel.
 //
 // From AetherSDR SliceModel pattern: Q_PROPERTY + signals for each state.
-class SliceModel : public QObject {
+class NEREUS_CORE_EXPORT SliceModel : public QObject {
     Q_OBJECT
 
 public:

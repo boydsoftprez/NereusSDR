@@ -147,6 +147,7 @@ mw0lge@grange-lane.co.uk
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QReadWriteLock>
 #include <QString>
@@ -161,7 +162,7 @@ namespace NereusSDR {
 // Tune+TwoTone, or MOX+Tune+TwoTone).
 //
 // Source: HPSDR/Penny.cs:33-150 + Console/enums.cs:443-457 [@501e3f5]
-class OcMatrix : public QObject {
+class NEREUS_CORE_EXPORT OcMatrix : public QObject {
     Q_OBJECT
 
 public:

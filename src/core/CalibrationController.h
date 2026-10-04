@@ -141,6 +141,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "core/HpsdrModel.h"
 #include "core/PaCalProfile.h"
 
@@ -164,7 +165,7 @@ namespace NereusSDR {
 //
 // Per-MAC persistence: hardware/<mac>/cal/{freqFactor, freqFactor10M, using10M,
 //   rx1_6mLna, rx2_6mLna, txDisplayOffset, paSens, paOffset}
-class CalibrationController : public QObject {
+class NEREUS_CORE_EXPORT CalibrationController : public QObject {
     Q_OBJECT
 
 public:

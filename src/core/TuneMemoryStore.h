@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "models/Band.h"
 
 #include <QObject>
@@ -44,7 +45,7 @@ struct TuneMemory {
 /// `listAll()` returns all stored memories sorted by band (ascending enum
 /// value), then by antenna (ascending). This ordering is stable across
 /// platform runtimes because both keys are integral.
-class TuneMemoryStore : public QObject {
+class NEREUS_CORE_EXPORT TuneMemoryStore : public QObject {
     Q_OBJECT
 public:
     explicit TuneMemoryStore(QObject* parent = nullptr);

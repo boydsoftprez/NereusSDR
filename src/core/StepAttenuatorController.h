@@ -164,6 +164,7 @@ mw0lge@grange-lane.co.uk
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "models/Band.h"
 #include "core/WdspTypes.h"
 #include "core/HpsdrModel.h"
@@ -237,7 +238,7 @@ enum class PreampMode {
 
 // --- Controller ---
 
-class StepAttenuatorController : public QObject {
+class NEREUS_CORE_EXPORT StepAttenuatorController : public QObject {
     Q_OBJECT
 public:
     explicit StepAttenuatorController(QObject* parent = nullptr);

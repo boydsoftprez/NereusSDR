@@ -92,6 +92,7 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "core/SliceOwnership.h"
 
 #include <QByteArray>
@@ -107,7 +108,7 @@ namespace NereusSDR {
 
 class RadioModel;
 
-class SliceAccessController : public QObject {
+class NEREUS_CORE_EXPORT SliceAccessController : public QObject {
     Q_OBJECT
 
 public:

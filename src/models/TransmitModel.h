@@ -322,6 +322,7 @@
 // =================================================================
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "Band.h"
 #include "core/HpsdrModel.h"
 #include "core/WdspTypes.h"
@@ -386,7 +387,7 @@ DrivePowerSource drivePowerSourceFromString(const QString& s);
 
 // Transmit state management.
 // Includes MOX, tune, TX frequency, power, mic gain, and PureSignal state.
-class TransmitModel : public QObject {
+class NEREUS_CORE_EXPORT TransmitModel : public QObject {
     Q_OBJECT
 
     Q_PROPERTY(bool   mox       READ isMox       WRITE setMox       NOTIFY moxChanged)

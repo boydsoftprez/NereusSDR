@@ -60,6 +60,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "core/NoiseFloorEstimator.h"
 
 #include <QObject>
@@ -67,7 +68,7 @@
 
 namespace NereusSDR {
 
-class ClarityController : public QObject {
+class NEREUS_CORE_EXPORT ClarityController : public QObject {
     Q_OBJECT
 public:
     explicit ClarityController(QObject* parent = nullptr);

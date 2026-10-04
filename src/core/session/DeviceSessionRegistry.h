@@ -80,6 +80,7 @@
 //               implementation via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include <QByteArray>
 #include <QElapsedTimer>
 #include <QHash>
@@ -92,7 +93,7 @@
 
 namespace NereusSDR {
 
-class DeviceSessionRegistry : public QObject {
+class NEREUS_CORE_EXPORT DeviceSessionRegistry : public QObject {
     Q_OBJECT
 
 public:

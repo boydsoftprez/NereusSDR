@@ -138,6 +138,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QString>
 #include <array>
@@ -156,7 +157,7 @@ namespace NereusSDR {
 // Block-TX toggles (blockTxAnt2 / blockTxAnt3) are a NereusSDR addition —
 // safety guards for the Antenna Control UI: antenna ports wired RX-only
 // should not accept TX assignments.
-class AlexController : public QObject {
+class NEREUS_CORE_EXPORT AlexController : public QObject {
     Q_OBJECT
 
 public:

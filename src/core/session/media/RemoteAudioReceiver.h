@@ -1,5 +1,6 @@
 #pragma once
 // no-port-check: NereusSDR-original remote audio lifecycle and worker wiring.
+#include "core/NereusCoreExport.h"
 #include "core/session/media/PcmAudioCodec.h"
 #include "core/session/media/IRemotePcmWorkerStage.h"
 #include <QObject>
@@ -197,7 +198,7 @@ struct RemoteAudioReceiverTelemetry {
 // at (AudioEngine::remotePlaybackFormat()): the rate matcher matches the
 // 48 kHz stream to the device's rate and clock, and a mono device hears
 // the two channels mixed as (left + right) / 2.
-class RemoteAudioReceiver final : public QObject {
+class NEREUS_CORE_EXPORT RemoteAudioReceiver final : public QObject {
     Q_OBJECT
 public:
     // The fault a worker notify() site observed. Q_ENUM registers it as a

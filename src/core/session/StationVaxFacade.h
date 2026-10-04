@@ -52,6 +52,7 @@
 //               Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QPointer>
 #include <QString>
@@ -62,7 +63,7 @@ class AppSettings;
 class AudioEngine;
 class RadioModel;
 
-class StationVax final : public QObject {
+class NEREUS_CORE_EXPORT StationVax final : public QObject {
     Q_OBJECT
 
     Q_PROPERTY(QString ch1Slices READ ch1Slices NOTIFY slicesChanged)

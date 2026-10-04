@@ -263,6 +263,7 @@ warren@wpratt.com
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
+#include "core/NereusCoreExport.h"
 #include "RadioConnection.h"
 #include "BoardCapabilities.h"
 #include "WidebandFrameAccumulator.h"
@@ -293,7 +294,7 @@ namespace NereusSDR {
 // Faithfully ported from Thetis ChannelMaster/network.c and network.h.
 // Uses a single UDP socket matching Thetis listenSock.
 // State structs mirror Thetis _radionet (network.h:53).
-class P2RadioConnection : public RadioConnection {
+class NEREUS_CORE_EXPORT P2RadioConnection : public RadioConnection {
     Q_OBJECT
 
 public:

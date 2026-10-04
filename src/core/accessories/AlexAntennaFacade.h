@@ -60,6 +60,7 @@
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "models/Band.h"
 
 #include <QByteArray>
@@ -77,7 +78,7 @@ namespace NereusSDR {
 
 class AlexController;
 
-class AlexAntennaFacade final : public QObject {
+class NEREUS_CORE_EXPORT AlexAntennaFacade final : public QObject {
     Q_OBJECT
     // Settable (receive).
     Q_PROPERTY(QString rxAntennas READ rxAntennas WRITE setRxAntennas NOTIFY rxAntennasChanged)

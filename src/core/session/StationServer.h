@@ -543,6 +543,7 @@
 //               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "core/session/IceConfiguration.h"
 
 #include <QHash>
@@ -629,7 +630,7 @@ class TxWatchServer;
 /// request as the station device answers, asks or tells.
 using StationAnswer = std::function<void(const SessionMessage&)>;
 
-class StationServer : public QObject {
+class NEREUS_CORE_EXPORT StationServer : public QObject {
     Q_OBJECT
 
 public:

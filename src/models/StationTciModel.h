@@ -37,6 +37,7 @@
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "core/TciProtocol.h"
 
 #include <QByteArray>
@@ -68,7 +69,7 @@ struct StationTciClient {
     bool operator==(const StationTciClient& other) const = default;
 };
 
-class StationTciModel : public QObject {
+class NEREUS_CORE_EXPORT StationTciModel : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool enabled READ enabled NOTIFY stateChanged)
     Q_PROPERTY(int port READ port NOTIFY stateChanged)

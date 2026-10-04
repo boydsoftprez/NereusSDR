@@ -2,6 +2,7 @@
 // NereusSDR-original local/remote station DSP asset contract.
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "DspAssetStore.h"
 
 #include <QByteArray>
@@ -25,7 +26,7 @@ struct DspAssetServiceResult {
     QVariantMap values;
 };
 
-class DspAssetService final : public QObject {
+class NEREUS_CORE_EXPORT DspAssetService final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString nnrStandardAsset READ nnrStandardAsset NOTIFY selectionChanged)
     Q_PROPERTY(QString nnrPremiumAsset READ nnrPremiumAsset NOTIFY selectionChanged)

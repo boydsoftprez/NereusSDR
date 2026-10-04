@@ -47,6 +47,7 @@
 //               with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "core/session/MirrorSchema.h"
 #include "core/session/SessionMessages.h"
 
@@ -186,7 +187,7 @@ struct RemotePrompt {
     QDateTime happenedAt() const { return receivedAt.addSecs(-prompt.secondsAgo); }
 };
 
-class RemoteDevicesState : public QObject {
+class NEREUS_CORE_EXPORT RemoteDevicesState : public QObject {
     Q_OBJECT
 
 public:
