@@ -2052,11 +2052,6 @@ private:
     // MasterOutputWidget. Owned by QMainWindow via setMenuWidget().
     TitleBar* m_titleBar{nullptr};
 
-    // Phase 3P-II Task 21: TGXL status bar chip.
-    // Shown when TunerModel::presenceChanged fires true; hidden otherwise.
-    // Text is "TGXL" / "TGXL OPER" / "TGXL BYPS" / "TGXL SBY".
-    QLabel* m_tgxlChip{nullptr};
-
     // Phase 3P-II Phase 4 Task 97 / R-R3-47: the power-cap alert count this
     // window has already shown (the Core de-bounces; see onPowerCapAlertChanged).
     qint64 m_powerCapAlertSeen{0};
