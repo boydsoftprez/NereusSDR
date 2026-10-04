@@ -2458,6 +2458,12 @@ public:
     static void setPSTxIdx(int txid, int idx);
 
 #ifdef NEREUS_BUILD_TESTS
+    std::array<std::vector<double>, 2> lastEqProfileForTest() const { return m_lastEqProfile; }
+    quint64 eqProfileApplyCountForTest() const { return m_eqProfileApplyCount; }
+    std::array<std::vector<double>, 5> lastCfcProfileForTest() const { return m_lastCfcProfile; }
+    quint64 cfcProfileApplyCountForTest() const { return m_cfcProfileApplyCount; }
+    double lastCfcPrecompDbForTest() const { return m_lastCfcPrecompDb; }
+    double lastCfcPostEqGainDbForTest() const { return m_lastCfcPostEqGainDb; }
     // R-IOS-13 (2026-09-27): WDSP's minimum-phase flag on the TX bandpass
     // (txa[].bp0.p->mp, what TXASetMP sets first), or -1 when the channel
     // is not open.
@@ -3441,6 +3447,14 @@ private:
     int     m_alcDecayMs       {10};
 
     // CFC carry (mirrors WDSP-wired setTxCfcRunning/PostEqRunning/PrecompDb/PrePeqDb)
+#ifdef NEREUS_BUILD_TESTS
+    std::array<std::vector<double>, 2> m_lastEqProfile;
+    quint64 m_eqProfileApplyCount = 0;
+    std::array<std::vector<double>, 5> m_lastCfcProfile;
+    quint64 m_cfcProfileApplyCount = 0;
+    double m_lastCfcPrecompDb = 0;
+    double m_lastCfcPostEqGainDb = 0;
+#endif
     bool    m_cfcOn            {false};
     bool    m_cfcPostEqOn      {false};
     double  m_cfcPrecompDb     {0.0};

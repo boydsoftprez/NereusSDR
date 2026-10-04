@@ -12,6 +12,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Native editor presentation, width gestures and exact runtime
+//                 snapshots by J.J. Boyd (KG4VCF), assisted by OpenAI Codex.
 //   2026-04-30 — Reimplemented in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.  Phase 3M-3a-ii follow-up
@@ -104,6 +106,14 @@ class ParametricEqWidget : public QWidget {
     friend class ::ParametricEqInteractionTester; // Task 4
     friend class ::ParametricEqJsonTester;        // Task 5
 public:
+    // NereusSDR-native editor presentation and exact session history.
+    void setEditorPresentationEnabled(bool enabled);
+    void setMinimumPlotGutters(int leftPx, int rightPx);
+    QRectF plotRect() const;
+    QByteArray saveEditState() const;
+    bool restoreEditState(const QByteArray& state);
+    void cancelEditGesture();
+
     // -- Public math helper (was private; promoted in PR #159 follow-up so
     //    consumers like TxEqDialog can sample the curve at WDSP band centers
     //    to drive the legacy scalar TX EQ path).  Pure const helper, no side
@@ -138,6 +148,9 @@ public:
         double             frequencyMaxHz = 4000.0;
         QVector<EqPoint>   points;        // FrequencyHz / GainDb / Q only -- ignore bandId/color
     };
+
+    // Exact authoritative editor loading; saved JSON precision is unchanged.
+    bool setEditorCurveState(const EqJsonState& state);
 
     explicit ParametricEqWidget(QWidget* parent = nullptr);
     ~ParametricEqWidget() override;
@@ -298,6 +311,8 @@ public:
     QVector<double> barChartData() const { return m_barChartData; }
 
 signals:
+    void editStarted();
+    void editFinished();
     // From Thetis ucParametricEq.cs:353-358 [v2.10.3.13] -- public events.
     // PointsChanged / GlobalGainChanged / SelectedIndexChanged carry an
     // is_dragging bool so downstream consumers can throttle expensive
@@ -326,6 +341,23 @@ protected:
     void wheelEvent       (QWheelEvent* event) override;
 
 private:
+    void beginEditGesture();
+    QPointF editorPointPosition(const QRect& plot, int index) const;
+    QPoint widthHandlePosition(const QRect& plot, int side) const;
+    int hitTestWidthHandle(const QRect& plot, QPoint pt) const;
+    void drawWidthHandles(QPainter& g, const QRect& plot);
+
+    bool m_editorPresentationEnabled = false;
+    int m_minimumPlotLeft = 0;
+    int m_minimumPlotRight = 0;
+    int m_widthDragSide = 0;
+    int m_widthDragBandId = -1;
+    QPoint m_widthPressPosition;
+    double m_widthPressQ = 4.0;
+    double m_widthPressHz = 0.0;
+    double m_widthPressHalfWidth = 0.0;
+    bool m_editGestureStarted = false;
+
     // Draw helpers -- From Thetis ucParametricEq.cs:1575-2748 [v2.10.3.13].
     void drawGrid           (QPainter& g, const QRect& plot);
     void drawBarChart       (QPainter& g, const QRect& plot);

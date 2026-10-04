@@ -20,6 +20,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03  J.J. Boyd / KG4VCF. STEP propagation, pan wheel and stale
+//                slice lifetime regressions. AI-assisted via OpenAI Codex.
 //   2026-10-02  J.J. Boyd / KG4VCF. Real window/fake Core TX-letter Take
 //                regressions: cancellation, current refusal, unchanged RX
 //                history, and target lifetime. AI-assisted via OpenAI Codex.
@@ -43,6 +45,7 @@
 #include <QPushButton>
 #include <QPointer>
 #include <QSignalSpy>
+#include <QWheelEvent>
 
 #include <memory>
 
@@ -60,8 +63,12 @@
 #include "gui/SpectrumWidget.h"
 #include "gui/SMeterWidget.h"
 #include "gui/applets/TxApplet.h"
+#include "gui/applets/RxApplet.h"
+#include "gui/TuneStepLabel.h"
 #include "core/TxSliceArbiter.h"
+#include "core/safety/TransmitHolder.h"
 #include "gui/meters/MeterPoller.h"
+#include "core/session/media/SpectrumEndpoint.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/containers/ContainerPreviewWidget.h"
@@ -142,6 +149,102 @@ private slots:
     void cleanupTestCase()
     {
         QVERIFY(RemoteWindowHarness::removeIsolatedProfile());
+    }
+
+    void selectedStepControlsPanWheelAndDisplayedStep()
+    {
+        RemoteWindowHarness h;
+        QVERIFY(h.start());
+        h.startStartupConnection();
+        QTRY_VERIFY(h.client()->isHandshakeComplete());
+        SliceModel* slice = h.remoteModel()->sliceById(0);
+        PanadapterApplet* pan = appletFor(h.window(), QStringLiteral("pan-0"));
+        RxApplet* rx = h.window()->findChild<RxApplet*>();
+        QVERIFY(slice && pan && rx);
+        SpectrumWidget* sw = pan->spectrumWidget();
+        slice->setStepHz(100);
+        slice->setStepHz(1000);
+        bool displayed = false;
+        for (QLabel* label : rx->findChildren<QLabel*>()) {
+            displayed |= label->text() == formatTuneStepLabel(1000);
+        }
+        QVERIFY(displayed);
+        const double before = slice->frequency();
+        sw->setVfoFrequency(before);
+        QSignalSpy requests(sw, &SpectrumWidget::frequencyClicked);
+        QWheelEvent wheel(QPointF(20, 20), QPointF(20, 20), QPoint(), QPoint(0, 120),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(sw, &wheel);
+        QCOMPARE(requests.size(), 1);
+        QCOMPARE(requests.first().first().toDouble(), before + 1000.0);
+        QCOMPARE(sw->stepSize(), 1000);
+    }
+
+    void panStepsFollowSelectionAndReplacementWithoutStaleUpdates()
+    {
+        RemoteWindowHarness::Options options;
+        options.stationSlices = 2;
+        options.panLayout = QStringLiteral("2v");
+        RemoteWindowHarness h(options);
+        QVERIFY(h.start());
+        h.station().sliceById(0)->setStepHz(1000);
+        h.station().sliceById(1)->setStepHz(500);
+        h.startStartupConnection();
+        QTRY_VERIFY(h.client()->isHandshakeComplete());
+        RadioModel* model = h.remoteModel();
+        SliceModel* a = model->sliceById(0);
+        SliceModel* b = model->sliceById(1);
+        PanadapterApplet* panA = appletFor(h.window(), QStringLiteral("pan-0"));
+        PanadapterApplet* panB = appletFor(h.window(), QStringLiteral("pan-1"));
+        QVERIFY(a && b && panA && panB);
+        SpectrumWidget* swA = panA->spectrumWidget();
+        SpectrumWidget* swB = panB->spectrumWidget();
+        QCOMPARE(swA->stepSize(), 1000);
+        QCOMPARE(swB->stepSize(), 500);
+
+        // Apply the same inbound create/destroy entry points as a new Core
+        // snapshot. A recycled id must not retain its previous STEP source.
+        QCOMPARE(model->addSliceWithStationId(99, QStringLiteral("pan-0")), 99);
+        SliceModel* replacement = model->sliceById(99);
+        QVERIFY(replacement);
+        replacement->setStepHz(2500);
+        panA->setActiveSliceIndex(99);
+        QCOMPARE(swA->stepSize(), 2500);
+        QCOMPARE(swB->stepSize(), 500);
+        a->setStepHz(10);
+        QCOMPARE(swA->stepSize(), 2500);
+        panA->setActiveSliceIndex(0);
+        QCOMPARE(swA->stepSize(), 10);
+        replacement->setStepHz(5000);
+        QCOMPARE(swA->stepSize(), 10);
+        panA->setActiveSliceIndex(99);
+        QCOMPARE(swA->stepSize(), 5000);
+        QPointer<SliceModel> old(replacement);
+        QVERIFY(QMetaObject::invokeMethod(replacement, "stepHzChanged", Qt::QueuedConnection,
+                                          Q_ARG(int, 10000)));
+        model->removeSliceWithStationId(99);
+        QCOMPARE(model->addSliceWithStationId(99, QStringLiteral("pan-0")), 99);
+        replacement = model->sliceById(99);
+        QVERIFY(replacement);
+        replacement->setStepHz(1000);
+        panA->setActiveSliceIndex(99);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCOMPARE(swA->stepSize(), 1000);
+        QCOMPARE(swB->stepSize(), 500);
+        if (old) { emit old->stepHzChanged(10000); }
+        QCOMPARE(swA->stepSize(), 1000);
+        QCOMPARE(swB->stepSize(), 500);
+
+        replacement->setPanKey(QStringLiteral("pan-1"));
+        panB->setActiveSliceIndex(99);
+        replacement->setStepHz(2500);
+        QCOMPARE(swA->stepSize(), a->stepHz());
+        QCOMPARE(swB->stepSize(), 2500);
+        b->setStepHz(100);
+        QCOMPARE(swB->stepSize(), 2500);
+        panB->setActiveSliceIndex(1);
+        QCOMPARE(swB->stepSize(), 100);
+        QCOMPARE(swA->stepSize(), a->stepHz());
     }
 
     // Core's primary slice can have no panKey. Its associated live pan is

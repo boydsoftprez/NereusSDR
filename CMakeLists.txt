@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 project(NereusSDR VERSION 0.5.2 LANGUAGES C CXX)
 
+if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 20)
+    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+endif()
+
 # ── ccache compiler launcher (2026-07-25) ──────────────────────────────
 # CI has always configured ccache explicitly; local dev machines never
 # had it wired at all. Auto-detect and use it when present so branch
@@ -1046,6 +1052,7 @@ set(CORE_SOURCES
     src/core/MicProfileManager.cpp
     src/core/ParaEqEnvelope.cpp
     src/core/CfcProfile.cpp
+    src/core/CfcEditProfile.cpp
     src/core/ParaEqCurve.cpp
     src/core/ParaEqCurve.h
     # Phone wire batch: the Diversity dialog's sensitivity pattern, drawn by
@@ -1663,6 +1670,8 @@ set(GUI_SOURCES
     src/gui/widgets/DexpPeakMeter.h
     src/gui/widgets/DexpPeakMeter.cpp
     src/gui/widgets/DspParamPopup.cpp
+    src/gui/widgets/EqEditHistory.h
+    src/gui/widgets/EqEditHistory.cpp
     src/gui/widgets/NnrControls.cpp
     src/gui/widgets/NnrControls.h
     src/gui/widgets/FilterPassbandWidget.cpp
@@ -1960,6 +1969,11 @@ set(GUI_SOURCES
 # --------------------------------------------------------------------------
 # Resources
 # --------------------------------------------------------------------------
+if(APPLE)
+    list(APPEND GUI_SOURCES src/gui/QtCocoaAccessibilityOwnershipGuard.mm)
+    set_source_files_properties(src/gui/QtCocoaAccessibilityOwnershipGuard.mm
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+endif()
 qt_add_resources(RESOURCES resources.qrc)
 
 # R-R3-10 / R-R3-21: the band plans belong to the Core, not the GUI.
@@ -2448,6 +2462,9 @@ function(nereus_apply_core_deps target)
 endfunction()
 
 function(nereus_apply_gui_deps target)
+    if(APPLE)
+        target_link_libraries(${target} PUBLIC "-framework Cocoa")
+    endif()
     # Qt6::Widgets and Qt6::GuiPrivate are NOT listed here: both are
     # NereusCore dependencies for now (see the comments in
     # nereus_apply_core_deps()), and NereusGui/NereusGui_LTO see them

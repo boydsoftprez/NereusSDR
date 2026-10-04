@@ -1,3 +1,5 @@
+// 2026-10-02 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+// merge native EQ/CFC transactions with latest Core/remote profile ownership.
 // =================================================================
 // src/models/TransmitModel.h  (NereusSDR)
 // =================================================================
@@ -328,6 +330,8 @@
 #include <QByteArray>
 #include <QMetaType>
 #include <QObject>
+#include <QScopeGuard>
+#include "core/CfcEditProfile.h"
 #include <QString>
 #include <QStringList>
 #include <QVariant>
@@ -769,12 +773,17 @@ public:
     /// has no range here). `propertyName` is the property's name on the
     /// link; the range is the setter's own.
     QString settingRangeRefusal(const QByteArray& propertyName, const QVariant& value) const;
-    bool cfcProfileRestoreInProgress() const noexcept { return m_cfcProfileRestoreDepth != 0; }
+    bool cfcProfileRestoreInProgress() const noexcept { return m_cfcProfileRestoreDepth != 0 || m_cfcProfileUpdateDepth != 0; }
     bool cfcProfileMutationInProgress() const noexcept {
         return cfcProfileRestoreInProgress() || m_projectingPairedCfc;
     }
-    void beginCfcProfileRestore() noexcept { ++m_cfcProfileRestoreDepth; }
+    void beginCfcProfileRestore() noexcept;
     void endCfcProfileRestore() noexcept;
+    CfcEditProfile effectiveCfcProfile() const;
+    bool setCfcProfile(const CfcEditProfile& profile);
+    void beginCfcProfileUpdate();
+    void endCfcProfileUpdate();
+    [[nodiscard]] auto scopedTxEqProfileUpdate() { beginTxEqProfileUpdate(); return qScopeGuard([this] { endTxEqProfileUpdate(); }); }
 
     // ── R-R3-49 (parity Task 3): the Core's TX profiles on the link ───────
     //
@@ -2264,6 +2273,8 @@ public slots:
     QString filterDisplayText(DSPMode mode) const;
 
 signals:
+    void cfcEditProfileChanged(const CfcEditProfile& profile);
+    void txEqProfileChanged(const QList<int>& frequenciesHz, const QList<int>& gainsDb);
     void cfcProfileRestored();
     void cfcSettingsReloaded();
     // ── TX filter bandwidth (Plan 4 D1) ────────────────────────────────────
@@ -3009,6 +3020,17 @@ private:
     // Opaque parametric-EQ blob.  database.cs:4768 [v2.10.3.13]:
     //   dr["CFCParaEQData"] = "";
     QString m_cfcParaEqData;
+    std::optional<CfcEditProfile> m_activeCfcProfile;
+    int m_cfcProfileUpdateDepth = 0;
+    bool m_cfcProfileDirty = false;
+    void notifyCfcProfileChange();
+    void beginTxEqProfileUpdate();
+    void endTxEqProfileUpdate();
+    void publishTxEqProfile();
+    int m_txEqProfileUpdateDepth = 0;
+    int m_txEqProfileStartPreamp = 0;
+    std::array<int, 10> m_txEqProfileStartBands{};
+    std::array<int, 10> m_txEqProfileStartFreqs{};
     int m_cfcProfileRestoreDepth = 0;
     bool m_projectingPairedCfc = false;
     quint64 m_cfcProfileGeneration = 0;

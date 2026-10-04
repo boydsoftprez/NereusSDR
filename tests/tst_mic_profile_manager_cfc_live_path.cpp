@@ -33,6 +33,7 @@
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QSignalSpy>
 
 #include "core/AppSettings.h"
 #include "core/MicProfileManager.h"
@@ -51,6 +52,40 @@ class TstMicProfileManagerCfcLivePath : public QObject {
     Q_OBJECT
 
 private slots:
+
+    void typedProfileNotificationExists()
+    {
+        TransmitModel tx;
+        QVERIFY(tx.metaObject()->indexOfSignal("cfcEditProfileChanged(NereusSDR::CfcEditProfile)") >= 0
+                || tx.metaObject()->indexOfSignal("cfcEditProfileChanged(CfcEditProfile)") >= 0);
+    }
+
+    void nestedProfileBatchesPublishOnlyTheFinalState()
+    {
+        TransmitModel tx;
+        QSignalSpy aggregate(&tx, &TransmitModel::cfcEditProfileChanged);
+        QSignalSpy band(&tx, &TransmitModel::cfcCompressionChanged);
+        tx.beginCfcProfileUpdate();
+        tx.setCfcCompression(1, 6);
+        tx.beginCfcProfileUpdate();
+        tx.setCfcPostEqBandGain(1, -7);
+        tx.setCfcParaEqData("unsupported-saved-blob");
+        tx.endCfcProfileUpdate();
+        QCOMPARE(aggregate.count(), 0);
+        tx.setCfcPrecompDb(4);
+        tx.endCfcProfileUpdate();
+        QCOMPARE(aggregate.count(), 1);
+        const CfcEditProfile p = qvariant_cast<CfcEditProfile>(aggregate[0][0]);
+        QCOMPARE(p.compression.gainsDb[1], 6.0);
+        QCOMPARE(p.postEq.gainsDb[1], -7.0);
+        QCOMPARE(p.compression.globalGainDb, 4.0);
+        QVERIFY(!p.compression.useQ);
+        QCOMPARE(tx.cfcParaEqData(), QString("unsupported-saved-blob"));
+        QCOMPARE(band.count(), 1);
+        tx.setCfcCompression(1, 6);
+        QCOMPARE(aggregate.count(), 1);
+        QCOMPARE(band.count(), 1);
+    }
 
     void initTestCase()
     {

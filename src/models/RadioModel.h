@@ -667,6 +667,7 @@
 #include <QString>
 #include <QList>
 #include <QThread>
+#include <QPointer>
 #include <QVariant> // Remote Daemon R2 Task 8: applyMirroredValue(name, value)
 
 #include <limits>   // 2026-05-22 NaN sentinel for m_lastEmittedRxMeterOffsetDb
@@ -4798,6 +4799,9 @@ public:
     // WDSP-init lambda inside connectToRadio() (see "createTxChannel(kTxChannelId)"
     // around RadioModel.cpp:1514).
     void injectTxChannelForTest(class TxChannel* ch) { m_txChannel = ch; }
+    void bindTxEqProfileChannelForTest(TxChannel* ch) { bindTxEqProfileChannel(ch); }
+    void bindCfcProfileChannelForTest(TxChannel* ch) { bindCfcProfileChannel(ch); }
+    void replayCfcProfileForTest() { replayCfcProfile(); }
 
     // R-R3-49 (parity Task 2): inject `channel` and run the Core's transmit
     // chain wiring (TransmitModel to TxChannel, MON to the audio engine)
@@ -7936,6 +7940,14 @@ private:
     // safe to call from the main thread per the WDSP API contract.
     // From Thetis dsp.cs:926-944 [v2.10.3.13] — WDSP.id(1, 0) = channel 1.
     TxChannel* m_txChannel{nullptr};
+    QPointer<TxChannel> m_txEqProfileChannel;
+    QList<QMetaObject::Connection> m_txEqProfileConnections;
+    void bindTxEqProfileChannel(TxChannel* channel);
+    void replayTxEqProfile();
+    QPointer<TxChannel> m_cfcProfileChannel;
+    QList<QMetaObject::Connection> m_cfcProfileConnections;
+    void bindCfcProfileChannel(TxChannel* channel);
+    void replayCfcProfile();
 
     // AM Mod Monitor analyzers: [0] TX I/Q tap, [1] PS feedback receiver.
     std::unique_ptr<AmModulationAnalyzer> m_amModTx;

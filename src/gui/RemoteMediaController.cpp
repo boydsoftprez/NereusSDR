@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-10-02: Carry accepted capture metadata to delayed display presentation.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-01  J.J. Boyd / KG4VCF. Opt-in numeric RX binding retirement
+//                 diagnostics. AI-assisted via OpenAI Codex.
 //   2026-09-29: a refused replace keeps the session move it carried: a
 //               move folded into a waiting fallback, or one that came
 //               while the fallback's replace was under way, stays pending
@@ -3038,6 +3040,10 @@ void RemoteMediaController::stop()
     QList<QPair<QPointer<SpectrumWidget>, QString>> retiredWidgets;
     retiredWidgets.reserve(static_cast<qsizetype>(d->bindings.size()));
     for (const auto& [id, binding] : d->bindings) {
+        if (binding.widget) {
+            binding.widget->traceRxHistoryEvent(SpectrumWidget::RxHistoryEvent::MediaRetired,
+                                                binding.observedStream, binding.observedStreamEpoch);
+        }
         retiredWidgets.append({binding.widget, binding.panId});
         if (binding.isMini()) { emit miniDisplayUnavailable(binding.miniSliceId); }
     }
@@ -4072,6 +4078,12 @@ bool RemoteMediaController::retireSubscriptions(const QList<quint32>& endpointId
         }
         if (budgetMode) {
             QPointer<SpectrumWidget> widget = found->second.widget;
+            if (widget) {
+                widget->traceRxHistoryEvent(keepHistory.contains(widget.data())
+                    ? SpectrumWidget::RxHistoryEvent::BindingPreserved
+                    : SpectrumWidget::RxHistoryEvent::BudgetBindingRetired,
+                    found->second.observedStream, found->second.observedStreamEpoch);
+            }
             QObject::disconnect(found->second.ctunGesture);
             QObject::disconnect(found->second.centreGesture);
             found->second.ctunGesture = {};
@@ -4124,6 +4136,12 @@ bool RemoteMediaController::retireSubscriptions(const QList<quint32>& endpointId
         }
         QPointer<SpectrumWidget> widget = found->second.widget;
         const QString panId = found->second.panId;
+        if (widget) {
+            widget->traceRxHistoryEvent(keepHistory.contains(widget.data())
+                ? SpectrumWidget::RxHistoryEvent::BindingPreserved
+                : SpectrumWidget::RxHistoryEvent::LegacyBindingRetired,
+                found->second.observedStream, found->second.observedStreamEpoch);
+        }
         // Retire local ownership before sending: a synchronous transport
         // failure can end the session and clear every binding inside send().
         d->bindings.erase(found);
@@ -4292,6 +4310,10 @@ void RemoteMediaController::refreshSubscriptions()
                         || !d->client || !d->client->remoteCtunAvailable()) { return; }
                     requestCentreFromGesture(id, centreHz);
             });
+            widget->traceRxHistoryEvent(keepHistory.contains(widget)
+                ? SpectrumWidget::RxHistoryEvent::BindingPreserved
+                : SpectrumWidget::RxHistoryEvent::LegacyBindingCreated,
+                slice->streamIndex(), slice->streamEpoch());
             // Parity Task 18 (B3.5): a pan taking another slice on the same
             // receiver keeps what it has drawn.
             if (keepHistory.contains(widget)) {
@@ -4902,6 +4924,8 @@ void RemoteMediaController::refreshBudgetSubscriptions()
                         || !d->client->remoteCtunAvailable()) { return; }
                     requestCentreFromGesture(endpointId, centreHz);
                 });
+            sw->traceRxHistoryEvent(SpectrumWidget::RxHistoryEvent::BudgetBindingCreated,
+                                    item.slice->streamIndex(), item.slice->streamEpoch());
             sw->invalidateRemoteSpectrumFrame();
             if (!self || !sw) { return; }
             sw->applyRemoteCtunState(false, false);
@@ -6122,6 +6146,8 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
             }
             const QPointer<RemoteMediaController> self(this);
             const QString panId = binding.panId;
+            binding.widget->traceRxHistoryEvent(SpectrumWidget::RxHistoryEvent::EndpointRejected,
+                                                binding.observedStream, binding.observedStreamEpoch);
             binding.widget->clearRemoteSpectrum();
             if (!self) { return; }
             setPanStatus(panId, perPanRefusalStatus(panId));

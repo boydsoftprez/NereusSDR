@@ -397,7 +397,7 @@ public slots:
     void setTxProcessingPermitted(bool permitted,
                                   const QString& unavailableReason = QString());
     // The CFC dialog, once a right-click or Setup has built it.
-    TxCfcDialog* cfcDialog() const { return m_cfcDialog; }
+    TxCfcDialog* cfcDialog() const;
     // R-R3-49 (parity Task 33): a remote window's CFC bar chart comes from
     // the Core. `setWanted` asks for (true) or lets go of (false) the Core's
     // CFC display while the dialog is shown; applyStationCfcCompression
@@ -674,8 +674,9 @@ private:
     QPushButton* m_cfcBtn     = nullptr;
     // ── 3M-3a-ii Batch 6 (Task A): modeless CFC dialog instance ─────────────
     // Lazy-created on first right-click of [CFC] or first call to
-    // requestOpenCfcDialog().  Lives until applet (parent window) is destroyed.
-    TxCfcDialog* m_cfcDialog  = nullptr;
+    // requestOpenCfcDialog(). Owned by the retained applet across container
+    // moves; explicit dialog destruction clears the cache for the next open.
+    QPointer<TxCfcDialog> m_cfcDialog;
     // Parity Task 33: a remote window's CFC chart source and its note.
     std::function<void(bool)> m_stationCfcBarChart;
     QString m_stationCfcBarChartReason;

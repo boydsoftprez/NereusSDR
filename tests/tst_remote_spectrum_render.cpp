@@ -1,4 +1,7 @@
 // no-port-check: NereusSDR-original. Remote display rendering contract.
+// Modification history (NereusSDR):
+//   2026-10-01  J.J. Boyd / KG4VCF. Opt-in history trace regression.
+//                 AI-assisted via OpenAI Codex.
 #include <QTest>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -258,6 +261,23 @@ private slots:
         QCOMPARE(widget.m_dss.rowDataRing(renewed)[widget.m_dss.cols() / 2], -130.0f);
         widget.clearRemoteSpectrum();
         QCOMPARE(widget.m_dssFoldCount, 0);
+    }
+
+    void remoteHistoryTraceIsOptInAndKeepsClearSemantics()
+    {
+        const QByteArray previous = qgetenv("NEREUS_TRACE_RX_HISTORY");
+        const bool wasSet = qEnvironmentVariableIsSet("NEREUS_TRACE_RX_HISTORY");
+        const auto restore = qScopeGuard([previous, wasSet]() {
+            if (wasSet) { qputenv("NEREUS_TRACE_RX_HISTORY", previous); }
+            else { qunsetenv("NEREUS_TRACE_RX_HISTORY"); }
+        });
+        SpectrumWidget widget;
+        qputenv("NEREUS_TRACE_RX_HISTORY", "1");
+        QTest::ignoreMessage(QtInfoMsg, QRegularExpression(QStringLiteral("^RX_HISTORY reason=1 pan=")));
+        widget.clearRemoteSpectrum();
+        QCOMPARE(widget.dssRowsPushedForTest(), 0);
+        QCOMPARE(widget.waterfallHistoryRowsForTest(), 0);
+        QCOMPARE(widget.peakDbmInPassband(9996000, 9998000), -400.0);
     }
 
     void remoteFrequencyScaleDragStopsAtAvailableSourceBandwidth()

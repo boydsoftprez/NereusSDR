@@ -28,6 +28,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Native dual-mode editor and exact session history by
+//                 J.J. Boyd (KG4VCF), assisted by OpenAI Codex.
 //   2026-04-29 — Phase 3M-3a-i Batch 3 (Task A.1): created by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.  Modeless singleton
@@ -121,8 +123,13 @@
 
 #include <QDialog>
 #include <QPointer>
+#include <QHash>
 #include <array>
 
+class QAbstractSpinBox;
+class QKeyEvent;
+class QHBoxLayout;
+class QLabel;
 class QButtonGroup;
 class QCheckBox;
 class QLabel;
@@ -130,6 +137,7 @@ class QCloseEvent;
 class QComboBox;
 class QDoubleSpinBox;
 class QPushButton;
+class QScrollArea;
 class QRadioButton;
 class QSlider;
 class QSpinBox;
@@ -138,59 +146,15 @@ class QWidget;
 
 namespace NereusSDR {
 
+class EqEditHistory;
 class ParametricEqWidget;
 class RadioModel;
 class TransmitModel;
 
-// TxEqDialog — modeless TX EQ dialog with two layouts.
-//
-//   ┌── Top row ──────────────────────────────────────────────────────┐
-//   │  [Legacy EQ]   [Enable]   Nc [____]   [Mp]   Cutoff [v]   ...   │
-//   ├── QStackedWidget swap ──────────────────────────────────────────┤
-//   │                                                                  │
-//   │  Legacy panel (chkLegacyEQ checked)                             │
-//   │   ┌── Band columns ───────────────────────────────────────────┐ │
-//   │   │  Pre  B1   B2   B3   B4   B5   B6   B7   B8   B9   B10   │ │
-//   │   │   ▲    ▲    ▲    ▲    ▲    ▲    ▲    ▲    ▲    ▲    ▲    │ │
-//   │   │   │    │    │    │    │    │    │    │    │    │    │    │ │
-//   │   │   ▼    ▼    ▼    ▼    ▼    ▼    ▼    ▼    ▼    ▼    ▼    │ │
-//   │   │  [dB] [dB] [dB] [dB] [dB] [dB] [dB] [dB] [dB] [dB] [dB]  │ │
-//   │   │       [Hz][Hz] [Hz] [Hz] [Hz] [Hz] [Hz] [Hz] [Hz] [Hz]   │ │
-//   │   └───────────────────────────────────────────────────────────┘ │
-//   │                                                                  │
-//   │  Parametric panel (chkLegacyEQ unchecked)                       │
-//   │   ┌── Edit row ──────────────────────────────────────────────┐ │
-//   │   │  # [_] f [____] Hz  Gain [__] dB  Q [__]  Preamp [__]    │ │
-//   │   │                                            [Reset]       │ │
-//   │   ├── ParametricEqWidget + right column ────────────────────┤ │
-//   │   │                                          [□ Log scale]   │ │
-//   │   │                                          [□ Use Q Fact.] │ │
-//   │   │  +24 ┐                                   [□ Live Update] │ │
-//   │   │      │                  ╱─╮              ⚠              │ │
-//   │   │      │     ●───────────╯  ●─────●        Low  [____] Hz │ │
-//   │   │      │                                   High [____] Hz │ │
-//   │   │  -24 ┘                                                   │ │
-//   │   │      0                                  16k              │ │
-//   │   │                                                          │ │
-//   │   │                                          ( ) 5-band      │ │
-//   │   │                                          (•) 10-band     │ │
-//   │   │                                          ( ) 18-band     │ │
-//   │   └───────────────────────────────────────────────────────────┘ │
-//   └─────────────────────────────────────────────────────────────────┘
-//
-// The legacy panel is bidirectionally bound to RadioModel::transmit-
-// Model() via a m_updatingFromModel echo guard (mirrors VfoWidget
-// pattern).  WDSP plumbing is already in place from
-// Phase 3M-3a-i Batches 1 & 2 — this dialog is pure UI on top.
-//
-// The parametric panel embeds a ParametricEqWidget (Tasks 1-5).
-// Its points round-trip through TransmitModel.txEqParaEqData (Task 6
-// JSON blob) when the user releases the mouse or types a value.
-//
-// Lifecycle: dialog is a modeless singleton owned by the static
-// instance() helper.  WA_DeleteOnClose=false; closeEvent() ignores
-// and hides instead of destroying so the singleton survives close /
-// hide cycles.
+// Modeless native Graphic / Parametric editor. Both modes preserve independent
+// values and bounded session histories across hide/reopen. Selected-band values
+// and width are below the parametric graph; filter/range/live controls collapse
+// into Advanced. Profile-bank ownership remains in TxApplet / Setup.
 class TxEqDialog : public QDialog {
     Q_OBJECT
 
@@ -216,7 +180,8 @@ public:
     QLabel* settingsReasonLabel() const { return m_settingsReasonLabel; }
 
     // ── Test / introspection accessors ────────────────────────────
-    QCheckBox*          legacyToggle()    const { return m_legacyToggle; }
+    bool usingLegacyEq() const;
+    QButtonGroup* modeSelector() const { return m_modeSelector; }
     QStackedWidget*     panelStack()      const { return m_panelStack; }
     QWidget*            legacyPanel()     const { return m_legacyPanel; }
     QWidget*            parametricPanel() const { return m_parametricPanel; }
@@ -243,12 +208,11 @@ private slots:
     void onParametricSelectedChanged(bool isDragging);
     void onParametricResetClicked();
     void onParametricBandCountChanged();
-    void onParametricLowFreqChanged(int hz);
-    void onParametricHighFreqChanged(int hz);
+    void onParametricLowFreqChanged(double hz);
+    void onParametricHighFreqChanged(double hz);
     void onParametricLogScaleToggled(bool on);
     void onParametricUseQFactorsToggled(bool on);
     void onParametricLiveUpdateToggled(bool on);
-    void onParametricSelectedBandChanged(int oneBased);
     void onParametricFreqSpinChanged(int hz);
     void onParametricGainSpinChanged(double db);
     void onParametricQSpinChanged(double q);
@@ -271,8 +235,25 @@ protected:
     // Hide-on-close per Thetis frmCFCConfig.cs:477-482 [v2.10.3.13]
     // pattern — TxApplet keeps the singleton alive for fast re-show.
     void closeEvent(QCloseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 
 private:
+    QByteArray captureEditState(bool legacy) const;
+    void restoreEditState(bool legacy, const QByteArray& state);
+    void rebaseEditHistory();
+    void beginEdit();
+    void finishEdit();
+    void changed(bool dragging = false);
+    void undoEdit();
+    void redoEdit();
+    void refreshHistoryButtons();
+    void refreshAdvancedHeight();
+    void rebuildBandSelectors();
+    void cancelBandCount();
+    void applyBandCount();
+    void pushLegacyControls();
+    void changeSelectedPoint(double value, bool width);
     void buildUi();
     QWidget* buildLegacyPanel();
     QWidget* buildParametricPanel();
@@ -300,7 +281,31 @@ private:
     QStackedWidget* m_panelStack       = nullptr;
     QWidget*        m_legacyPanel      = nullptr;
     QWidget*        m_parametricPanel  = nullptr;
-    QCheckBox*      m_legacyToggle     = nullptr;
+    QButtonGroup* m_modeSelector = nullptr;
+    QButtonGroup* m_bandSelector = nullptr;
+    QHBoxLayout* m_bandSelectorRow = nullptr;
+    QSlider* m_widthSlider = nullptr;
+    QPushButton* m_undoBtn = nullptr;
+    QPushButton* m_redoBtn = nullptr;
+    QScrollArea* m_advancedScroll = nullptr;
+    QWidget* m_advancedControls = nullptr;
+    QPushButton* m_applyCountBtn = nullptr;
+    QWidget* m_countNotice = nullptr;
+    QLabel* m_countMessage = nullptr;
+    QLabel* m_selectedLabel = nullptr;
+    int m_pendingCount = 0;
+    std::array<EqEditHistory*, 2> m_history{};
+    std::array<QByteArray, 2> m_committed{};
+    QHash<QByteArray, int> m_selectionStates;
+    QAbstractSpinBox* m_numericEditor = nullptr;
+    QSlider* m_cancelledSlider = nullptr;
+    bool m_gestureActive = false;
+    bool m_sliderActive = false;
+    bool m_liveGestureWrote = false;
+    QString m_loadedBlob;
+    QByteArray m_loadedGraph;
+    QByteArray m_seedGraph;
+
 
     QCheckBox*    m_enableChk     = nullptr;
     QSlider*      m_preampSlider  = nullptr;
@@ -316,7 +321,6 @@ private:
     // ── Parametric panel widgets ───────────────────────────────────
     ParametricEqWidget* m_parametricWidget = nullptr;
     // Edit row.
-    QSpinBox*       m_paraSelectedBandSpin = nullptr;
     QSpinBox*       m_paraFreqSpin         = nullptr;
     QDoubleSpinBox* m_paraGainSpin         = nullptr;
     QDoubleSpinBox* m_paraQSpin            = nullptr;
@@ -326,8 +330,8 @@ private:
     QCheckBox*      m_paraLogScaleChk     = nullptr;
     QCheckBox*      m_paraUseQFactorsChk  = nullptr;
     QCheckBox*      m_paraLiveUpdateChk   = nullptr;
-    QSpinBox*       m_paraLowSpin         = nullptr;
-    QSpinBox*       m_paraHighSpin        = nullptr;
+    QDoubleSpinBox* m_paraLowSpin         = nullptr;
+    QDoubleSpinBox* m_paraHighSpin        = nullptr;
     QRadioButton*   m_paraBands5Radio     = nullptr;
     QRadioButton*   m_paraBands10Radio    = nullptr;
     QRadioButton*   m_paraBands18Radio    = nullptr;
