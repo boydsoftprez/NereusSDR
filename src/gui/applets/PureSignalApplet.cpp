@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 - Include the coordinator type for Qt 6.4 typed connections;
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-18 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -74,6 +76,7 @@ mw0lge@grange-lane.co.uk
 
 #include "PureSignalApplet.h"
 
+#include "core/PureSignal.h"
 #include "core/session/PureSignalSessionFacade.h"
 #include "gui/DspAssetDialog.h"
 #include "gui/HGauge.h"
