@@ -30,7 +30,7 @@ The first two commands should report `arm64` and `VERSION_CODENAME=trixie`.
 dpkg --print-architecture
 grep '^VERSION_CODENAME=' /etc/os-release
 sudo apt update
-sudo apt install -y ca-certificates curl gnupg avahi-daemon
+sudo apt install -y ca-certificates curl gnupg avahi-daemon nano
 ```
 
 ## 3. Download and install the Core
