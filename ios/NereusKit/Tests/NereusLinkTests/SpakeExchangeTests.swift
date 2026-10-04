@@ -3,6 +3,7 @@
 
 import CSodium
 import Foundation
+import LinkSessionTestSupport
 import Testing
 @testable import NereusLink
 
@@ -23,9 +24,10 @@ import Testing
         #expect(crypto_pwhash_memlimit_interactive() == 67_108_864)
     }
 
-    @Test func sameCodeAgreesTheKeysAndEachSideOpensTheOthersBox() throws {
+    @Test func sameCodeAgreesTheKeysAndEachSideOpensTheOthersBox() async throws {
         let code = Self.code()
-        let stored = try #require(SpakeExchange.storedData(code: code))
+        let storedResult = await TestFixtureCrypto.run { SpakeExchange.storedData(code: code) }
+        let stored = try #require(storedResult)
         #expect(stored.count == 164)
         let core = SpakeExchange(role: .station)
         let device = SpakeExchange(role: .device)
@@ -34,7 +36,8 @@ import Testing
         // Version 1, Argon2id, the interactive limits, then a 16-byte salt.
         #expect(Array(step0.prefix(20)) == [1, 0, 2, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0])
         #expect(SpakeExchange.validatesPublicData(step0))
-        let step1 = try #require(device.deviceStep1(publicData: step0, code: code))
+        let step1Result = await TestFixtureCrypto.run { device.deviceStep1(publicData: step0, code: code) }
+        let step1 = try #require(step1Result)
         #expect(step1.count == 32)
         let step2 = try #require(core.stationStep2(stored: stored, response1: step1))
         #expect(step2.count == 64)
@@ -51,25 +54,30 @@ import Testing
         #expect(core.open(fromCore) == nil)
     }
 
-    @Test func anotherCodeFailsAtTheDevicesStep3() throws {
+    @Test func anotherCodeFailsAtTheDevicesStep3() async throws {
         let code = Self.code()
         var other = Self.code()
         while other == code {
             other = Self.code()
         }
-        let stored = try #require(SpakeExchange.storedData(code: code))
+        let storedResult = await TestFixtureCrypto.run { SpakeExchange.storedData(code: code) }
+        let stored = try #require(storedResult)
         let core = SpakeExchange(role: .station)
         let device = SpakeExchange(role: .device)
         let step0 = try #require(core.stationStep0(stored: stored))
-        let step1 = try #require(device.deviceStep1(publicData: step0, code: other))
+        let otherCode = other
+        let step1Result = await TestFixtureCrypto.run { device.deviceStep1(publicData: step0, code: otherCode) }
+        let step1 = try #require(step1Result)
         let step2 = try #require(core.stationStep2(stored: stored, response1: step1))
         #expect(device.deviceStep3(response2: step2) == nil)
         #expect(!device.isComplete)
         #expect(device.seal(Data("x".utf8)) == nil)
     }
 
-    @Test func otherHashSettingsAreRefusedBeforeHashing() throws {
-        let stored = try #require(SpakeExchange.storedData(code: Self.code()))
+    @Test func otherHashSettingsAreRefusedBeforeHashing() async throws {
+        let code = Self.code()
+        let storedResult = await TestFixtureCrypto.run { SpakeExchange.storedData(code: code) }
+        let stored = try #require(storedResult)
         let step0 = try #require(SpakeExchange(role: .station).stationStep0(stored: stored))
         for (range, bytes) in [(0..<2, [2, 0]), (2..<4, [1, 0]), (4..<12, [1, 0, 0, 0, 0, 0, 0, 0]),
                                (12..<20, [0, 0, 0, 1, 0, 0, 0, 0])] as [(Range<Int>, [UInt8])] {
@@ -82,19 +90,25 @@ import Testing
         #expect(!SpakeExchange.validatesPublicData(step0.prefix(35)))
     }
 
-    @Test func theCoreRefusesAStep1ThatIsNotAPointAndTakesNoSecondShare() throws {
+    @Test func theCoreRefusesAStep1ThatIsNotAPointAndTakesNoSecondShare() async throws {
         let code = Self.code()
-        let stored = try #require(SpakeExchange.storedData(code: code))
+        let storedResult = await TestFixtureCrypto.run { SpakeExchange.storedData(code: code) }
+        let stored = try #require(storedResult)
         let core = SpakeExchange(role: .station)
         let step0 = try #require(core.stationStep0(stored: stored))
         // All ones is not a canonical point.
         #expect(core.stationStep2(stored: stored, response1: Data(repeating: 0xFF, count: 32)) == nil)
-        let step1 = try #require(SpakeExchange(role: .device).deviceStep1(publicData: step0, code: code))
+        let step1Result = await TestFixtureCrypto.run {
+            SpakeExchange(role: .device).deviceStep1(publicData: step0, code: code)
+        }
+        let step1 = try #require(step1Result)
         #expect(core.stationStep2(stored: stored, response1: step1) == nil)
     }
 
-    @Test func eachSideTakesOnlyItsOwnSteps() throws {
-        let stored = try #require(SpakeExchange.storedData(code: Self.code()))
+    @Test func eachSideTakesOnlyItsOwnSteps() async throws {
+        let code = Self.code()
+        let storedResult = await TestFixtureCrypto.run { SpakeExchange.storedData(code: code) }
+        let stored = try #require(storedResult)
         #expect(SpakeExchange(role: .device).stationStep0(stored: stored) == nil)
         let step0 = try #require(SpakeExchange(role: .station).stationStep0(stored: stored))
         let stationRefusesStep1 = SpakeExchange(role: .station).deviceStep1(publicData: step0, code: Self.code()) == nil

@@ -86,7 +86,8 @@ import Testing
     /// returns the Core's exchange and what the app sent after step 2.
     private static func playToStep2(_ core: Core, stationCode: String) async throws
         -> (SpakeExchange, LinkMessage?) {
-        let stored = try #require(SpakeExchange.storedData(code: stationCode))
+        let storedResult = await TestFixtureCrypto.run { SpakeExchange.storedData(code: stationCode) }
+        let stored = try #require(storedResult)
         let spake = SpakeExchange(role: .station)
         let step0 = try #require(spake.stationStep0(stored: stored))
         core.transport.deliver(.pairSpake(LinkMessage.PairSpake(step: 0, data: Base64URL.encode(step0))))
@@ -235,7 +236,9 @@ import Testing
         let pairing = Task { try await client.pair(code: core.code, via: .direct(core.endpoint)) }
         core.transport.deliver(try core.hello())
         _ = try await Self.takeOpening(core, mode: .code, device: device)
-        let stored = try #require(SpakeExchange.storedData(code: core.code))
+        let code = core.code
+        let storedResult = await TestFixtureCrypto.run { SpakeExchange.storedData(code: code) }
+        let stored = try #require(storedResult)
         var step0 = try #require(SpakeExchange(role: .station).stationStep0(stored: stored))
         // Step 0's opslimit (u64 LE at bytes 4 to 11) lowered to 1.
         step0.replaceSubrange(4..<12, with: [1, 0, 0, 0, 0, 0, 0, 0])

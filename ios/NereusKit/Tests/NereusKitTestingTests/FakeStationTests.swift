@@ -415,10 +415,13 @@ struct FakeStationTests {
                 return first
             }
             guard case .pairSpake(let step0)? = first,
-                  let publicData = Base64URL.decode(step0.data),
-                  let response1 = SpakeExchange(role: .device).deviceStep1(publicData: publicData, code: code) else {
+                  let publicData = Base64URL.decode(step0.data) else {
                 return nil
             }
+            let response = await TestFixtureCrypto.run {
+                SpakeExchange(role: .device).deviceStep1(publicData: publicData, code: code)
+            }
+            guard let response1 = response else { return nil }
             let before = messages.count
             transport.send(LinkCodec.encode(.pairSpake(LinkMessage.PairSpake(step: 1,
                                                                              data: Base64URL.encode(response1)))))
