@@ -5,6 +5,8 @@
 #include <QJsonObject>
 #include <QFile>
 #include <QPushButton>
+#include <QLabel>
+#include "gui/applets/PureSignalApplet.h"
 #include <QTableWidget>
 #include <limits>
 #include <algorithm>
@@ -362,6 +364,54 @@ private slots:
         QCOMPARE(restoreRequested.size(), 1);
         QCOMPARE(remote.pureSignalFacade()->requestAction(
             Ps3Action::RestoreCorrection, {{"assetId", id}}), 0u);
+    }
+
+    void remoteCorrectionReadoutsFollowCoreStatusAndClearOnDisconnect()
+    {
+        RadioModel source;
+        QJsonObject status = QJsonDocument::fromJson(
+            source.pureSignalFacade()->statusJson().toUtf8()).object();
+        status["psEnabled"] = true;
+        status["mox"] = true;
+        status["correctionsApplied"] = true;
+        status["feedbackLevel"] = 149;
+        status["attemptedCalibrations"] = 7;
+        status["successfulCalibrations"] = 5;
+        status["engineState"] = 4;
+        status["correctionSummaryValid"] = true;
+        status["correctionGainAtPeak"] = 0.8125;
+        status["correctionPhaseSpanDegrees"] = 3.25;
+        RadioModel remote(RadioModel::Role::Remote);
+        PureSignalSessionFacade* facade = remote.pureSignalFacade();
+        facade->setRemoteCapabilities(true, false);
+        facade->applyRemoteProperty("available", true);
+        PsaIndicatorWidget indicator(&remote);
+        PureSignalApplet applet(&remote);
+        QVERIFY(facade->applyRemoteProperty("statusJson",
+            QString::fromUtf8(QJsonDocument(status).toJson(QJsonDocument::Compact))));
+        QLabel* footer = indicator.findChild<QLabel*>("lblCorrPeak");
+        QVERIFY(footer);
+        QVERIFY(footer->text().contains("0.8125"));
+        QLabel* correction = applet.findChild<QLabel*>("PsAppletCorrectionDbLabel");
+        QVERIFY(correction);
+        QVERIFY(correction->text().contains("0.8125"));
+        QLabel* diagnostic = applet.findChild<QLabel*>("PsAppletStatusLabel");
+        QVERIFY(diagnostic);
+        QVERIFY(diagnostic->text().contains("Collect"));
+        QLabel* calibrations = applet.findChild<QLabel*>("PsAppletIterationsLabel");
+        QVERIFY(calibrations);
+        QVERIFY(calibrations->text().contains("5 / 7"));
+        // A new feedback level can arrive without another calibration attempt.
+        status["feedbackLevel"] = 171;
+        status["correctionsApplied"] = false;
+        status["correctionSummaryValid"] = false;
+        QVERIFY(facade->applyRemoteProperty("statusJson",
+            QString::fromUtf8(QJsonDocument(status).toJson(QJsonDocument::Compact))));
+        QCOMPARE(indicator.fbText(), QStringLiteral("171"));
+        QVERIFY(!correction->text().contains("0.8125"));
+        facade->resetSession();
+        QVERIFY(!footer->text().contains("0.8125"));
+        QVERIFY(!remote.pureSignal());
     }
 
     void remoteIndicatorConsumesStatusWithoutALocalCoordinator()

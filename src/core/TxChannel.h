@@ -2387,6 +2387,15 @@ public:
         std::uint64_t sequence,
         std::int64_t capturedAtUnixMilliseconds);
 
+    /// Read correction measurements without changing the AmpView snapshot
+    /// stamps. With a control lane, returns its most recent summary.
+    std::optional<Ps3CorrectionSummary> psCorrectionSummary();
+
+    /// Restored IQC curves do not refresh GetPSDisp. Only a fresh successful
+    /// calibration can make the measured correction summary valid again.
+    void invalidatePsCorrectionSummary();
+    void markPsCorrectionSummaryCalibrationValid();
+
     /// Read the IQC run and transition-busy latches under WDSP's DSP lock.
     /// A missing value means the TX/IQC instance is not available.
     std::optional<Ps3CorrectionState> psCorrectionState() const;
@@ -2987,6 +2996,9 @@ private:
     mutable std::vector<double> m_cfcDisplayCache;
     mutable bool m_cfcDisplayFresh{false};
     mutable std::optional<Ps3Snapshot> m_ps3DisplayCache;
+    mutable std::optional<Ps3CorrectionSummary> m_psCorrectionSummaryCache;
+    std::uint64_t m_psCorrectionSummaryEpoch{0};
+    bool m_psCorrectionSummaryCalibrationValid{false};
 
 #ifdef NEREUS_BUILD_TESTS
     mutable std::mutex m_rfGateObserverMutex;

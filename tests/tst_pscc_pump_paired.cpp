@@ -22,6 +22,8 @@
 
 #include <QtTest/QtTest>
 
+#include <limits>
+
 #include "core/PsccPump.h"
 #include "core/WdspEngine.h"
 
@@ -31,6 +33,77 @@ class TestPsccPumpPaired : public QObject {
     Q_OBJECT
 
 private slots:
+    void pairedInputPeaksMeasureBothComplexStreamsAndReplaceTheLastPacket()
+    {
+        PsccPump pump;
+        pump.setSkipPsccForTests(true);
+        pump.setActive(true, 1, 0);
+        QVERIFY(!pump.pairedInputValid());
+
+        // Hand-derived complex envelopes: hypot(.375, .5) = .625,
+        // hypot(.75, 1) = 1.25. Distinct streams catch swapped readouts.
+        const QVector<float> feedback{0.375f, 0.5f, 0.125f, 0.0f};
+        const QVector<float> monitor{0.125f, 0.0f, -0.75f, -1.0f};
+        pump.onPsPairedIqData(0, feedback, 1, monitor);
+        QVERIFY(pump.pairedInputValid());
+        QCOMPARE(pump.feedbackPeak(), 0.625);
+        QCOMPARE(pump.txMonitorPeak(), 1.25);
+        QCOMPARE(pump.lastPsccArgsForTests().rx[0], 0.375);
+        QCOMPARE(pump.lastPsccArgsForTests().tx[2], -0.75);
+
+        pump.onPsPairedIqData(0, {0.0f, 0.0f}, 1, {0.25f, 0.0f});
+        QVERIFY(pump.pairedInputValid());
+        QCOMPARE(pump.feedbackPeak(), 0.0);
+        QCOMPARE(pump.txMonitorPeak(), 0.25);
+    }
+
+    void pairedInputPeaksStayFiniteAndRequireSamplesInBothStreams()
+    {
+        PsccPump pump;
+        pump.setSkipPsccForTests(true);
+        pump.setActive(true, 1, 0);
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const float inf = std::numeric_limits<float>::infinity();
+        pump.onPsPairedIqData(0, {nan, 0.0f, 0.0f, 0.5f},
+                              1, {0.25f, 0.0f, inf, 0.0f});
+        QVERIFY(pump.pairedInputValid());
+        QCOMPARE(pump.feedbackPeak(), 0.5);
+        QCOMPARE(pump.txMonitorPeak(), 0.25);
+
+        pump.onPsPairedIqData(0, {nan, inf}, 1, {0.25f, 0.0f});
+        QVERIFY(!pump.pairedInputValid());
+        QCOMPARE(pump.feedbackPeak(), 0.0);
+        QCOMPARE(pump.txMonitorPeak(), 0.25);
+    }
+
+    void pairedInputPeaksIgnoreRejectedPacketsAndClearWhenRoutingStops()
+    {
+        PsccPump pump;
+        pump.setSkipPsccForTests(true);
+        pump.setActive(true, 1, 0);
+        pump.onPsPairedIqData(0, {0.5f, 0.0f}, 1, {0.25f, 0.0f});
+        pump.onPsPairedIqData(1, {1.0f, 0.0f}, 0, {1.0f, 0.0f});
+        pump.onPsPairedIqData(0, {}, 1, {});
+        pump.onPsPairedIqData(0, {1.0f, 0.0f}, 1, {1.0f});
+        QVERIFY(pump.pairedInputValid());
+        QCOMPARE(pump.feedbackPeak(), 0.5);
+        QCOMPARE(pump.txMonitorPeak(), 0.25);
+        QCOMPARE(pump.totalBlocksPumped(), qint64{1});
+
+        pump.setActive(false, 1, 0);
+        QVERIFY(!pump.pairedInputValid());
+        QCOMPARE(pump.feedbackPeak(), 0.0);
+        QCOMPARE(pump.txMonitorPeak(), 0.0);
+        pump.onPsPairedIqData(0, {1.0f, 0.0f}, 1, {1.0f, 0.0f});
+        QVERIFY(!pump.pairedInputValid());
+        pump.setActive(true, 1, 0);
+        pump.onPsPairedIqData(0, {0.5f, 0.0f}, 1, {0.25f, 0.0f});
+        pump.retireSession();
+        QVERIFY(!pump.pairedInputValid());
+        QCOMPARE(pump.feedbackPeak(), 0.0);
+        QCOMPARE(pump.txMonitorPeak(), 0.0);
+    }
+
     // The pump must default to the real TXA channel, never a literal.
     //
     // pscc() does `a = txa[channel].calcc.p; if (a->runcal)` with no null

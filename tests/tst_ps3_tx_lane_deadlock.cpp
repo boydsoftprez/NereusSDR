@@ -177,6 +177,106 @@ bool finishNativeRamp()
 class TestPs3TxLaneDeadlock final : public QObject {
     Q_OBJECT
 private slots:
+    void correctionSummaryInvalidationRejectsRetainedAndQueuedCurves()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("requires real WDSP");
+#else
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        WdspEngine engine;
+        engine.setSynchronousInitForTest(true);
+        QVERIFY(engine.initialize(directory.path() + QLatin1Char('/')));
+        TxAnalyzer analyzer;
+        analyzer.setFftSize(4096);
+        analyzer.setBlockSize(WdspEngine::kTxDspBufferSize);
+        analyzer.start();
+        analyzer.stop();
+        TxChannel* tx = engine.createTxChannel(kChannel, kInputFrames,
+            WdspEngine::kTxDspBufferSize, kRate,
+            WdspEngine::kTxDspSampleRate, kRate);
+        QVERIFY(tx);
+        DspControlThread lane(DspLane::Transmit);
+        lane.start();
+        std::atomic<bool> releaseLane{false};
+        const auto cleanup = qScopeGuard([&] {
+            releaseLane.store(true, std::memory_order_release);
+            nereus_ps_release_parked_ramp(kChannel);
+            (void)lane.waitIdleForTest(kProgressBoundMs);
+            engine.setTransmitLane(nullptr);
+            engine.destroyTxChannel(kChannel);
+            lane.stop();
+        });
+        tx->setPSHWPeak(1.0);
+        tx->setPSMoxDelay(0.0);
+        tx->setPSLoopDelay(0.0);
+        tx->setPSTXDelay(0.0);
+        tx->setPSRunCal(1);
+        tx->setPSMox(true);
+        tx->setPSControl(1, 0, 1, 0);
+        CalibrationSamples samples;
+        samples.collect(7);
+        QVERIFY(QTest::qWaitFor(correctionBusy, kProgressBoundMs));
+        QVERIFY(finishNativeRamp());
+        int info[16] = {};
+        QVERIFY(QTest::qWaitFor([&] {
+            samples.collect(1);
+            ::GetPSInfo(kChannel, info);
+            return info[5] == 1;
+        }, kProgressBoundMs));
+
+        // The real vendor display retains completed calibration curves.
+        // Availability alone must not make them valid in a new session.
+        QVERIFY(tx->getPs3DisplaySnapshot(77, 19, 100));
+        QVERIFY(!tx->psCorrectionSummary());
+        tx->markPsCorrectionSummaryCalibrationValid();
+        QVERIFY(tx->psCorrectionSummary());
+        tx->invalidatePsCorrectionSummary();
+        QVERIFY(tx->getPs3DisplaySnapshot(77, 19, 100));
+        QVERIFY(!tx->psCorrectionSummary());
+        tx->markPsCorrectionSummaryCalibrationValid();
+        tx->setPSReset(true);
+        QVERIFY(!tx->psCorrectionSummary());
+        tx->setPSReset(false);
+        tx->markPsCorrectionSummaryCalibrationValid();
+        tx->setPSControl(1, 0, 1, 0);
+        QVERIFY(!tx->psCorrectionSummary());
+
+        engine.setTransmitLane(&lane);
+        tx->markPsCorrectionSummaryCalibrationValid();
+        (void)tx->getPs3DisplaySnapshot(77, 19, 100);
+        QVERIFY(lane.waitIdleForTest(kProgressBoundMs));
+        std::atomic<bool> laneEntered{false};
+        lane.postBarrier([&] {
+            laneEntered.store(true, std::memory_order_release);
+            while (!releaseLane.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+        });
+        QVERIFY(QTest::qWaitFor([&] { return laneEntered.load(std::memory_order_acquire); },
+                               kProgressBoundMs));
+        (void)tx->psCorrectionSummary(); // queued capture from the old epoch
+        tx->invalidatePsCorrectionSummary();
+        tx->markPsCorrectionSummaryCalibrationValid();
+        releaseLane.store(true, std::memory_order_release);
+        QVERIFY(lane.waitIdleForTest(kProgressBoundMs));
+        QVERIFY(!tx->psCorrectionSummary()); // stale queued capture was discarded
+        QVERIFY(lane.waitIdleForTest(kProgressBoundMs));
+        QVERIFY(tx->psCorrectionSummary());
+        const auto display = tx->getPs3DisplaySnapshot(77, 20, 101);
+        QVERIFY(display);
+        QCOMPARE(display->sequence, std::uint64_t{19});
+        QCOMPARE(display->capturedAtUnixMilliseconds, std::int64_t{100});
+        QVERIFY(lane.waitIdleForTest(kProgressBoundMs));
+        const QString saved = directory.filePath("summary.ps3");
+        QVERIFY(nativeWorkerBarrier(saved));
+        (void)tx->psFileOperationStatus(Ps3FileOperationKind::Save);
+        QVERIFY(lane.waitIdleForTest(kProgressBoundMs));
+        QVERIFY(tx->psRestoreCorr(saved));
+        QVERIFY(!tx->psCorrectionSummary()); // accepted restore invalidates at once
+#endif
+    }
+
     void cleanup()
     {
         RealtimeTestLoad::printLoadAverageIfFailed();

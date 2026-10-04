@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Live Core status and passive numeric correction readouts,
+//                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
+
 //   2026-05-06 — Created by J.J. Boyd (KG4VCF) for Phase 3M-4 Task 7
 //                 PureSignal coordinator, with AI-assisted source-first
 //                 protocol via Anthropic Claude Code.
@@ -117,6 +120,9 @@ PureSignal::PureSignal(WdspEngine* engine,
     m_pollTimer.start();
     m_autoAttTimer.start();
 
+    if (m_tx) {
+        m_tx->invalidatePsCorrectionSummary();
+    }
     connectTxChannelSignals();
 }
 
@@ -130,6 +136,7 @@ PureSignal::~PureSignal()
     // _ps_closing then joins; we rely on QTimer::stop being synchronous
     // on the main thread).
     if (m_tx) {
+        m_tx->invalidatePsCorrectionSummary();
         m_tx->setPSMox(false);
         requestNativeCorrectionStop();
     }
@@ -137,7 +144,8 @@ PureSignal::~PureSignal()
 
 void PureSignal::setTxChannel(TxChannel* tx)
 {
-    if (tx != m_tx) {
+    const bool changed = tx != m_tx;
+    if (changed) {
         retireSessionOperations();
         m_operationalSettingsApplied = false;
         if (m_tx) {
@@ -145,6 +153,9 @@ void PureSignal::setTxChannel(TxChannel* tx)
         }
     }
     m_tx = tx;
+    if (changed) {
+        invalidateCorrectionSummary();
+    }
     connectTxChannelSignals();
 }
 
@@ -191,6 +202,7 @@ void PureSignal::setSettings(PureSignalSettings* settings)
 {
     PureSignalSettings* replacement = settings ? settings : m_fallbackSettings;
     if (replacement == m_settings) return;
+    invalidateCorrectionSummary();
     if (m_settings) disconnect(m_settings, nullptr, this, nullptr);
     m_settings = replacement;
     m_operationalSettingsApplied = false;
@@ -361,6 +373,7 @@ void PureSignal::startAutomaticCalibration()
 
 void PureSignal::requestOperationalStop()
 {
+    invalidateCorrectionSummary();
     m_autoON = false;
     m_OFF = true;
     if (m_tx) {
@@ -454,6 +467,7 @@ bool PureSignal::applyCurrentCorrection()
 
 void PureSignal::retireSessionOperations()
 {
+    invalidateCorrectionSummary();
     retirePendingFileOperation();
     clearTransientOperationsForOff();
     if (m_tx) {
@@ -539,6 +553,7 @@ void PureSignal::setEnabled(bool enabled)
         return;
     }
     if (!enabled) {
+        invalidateCorrectionSummary();
         retirePendingFileOperation();
         beginSettingsHydration();
         forceAutoCalDisable();
@@ -612,6 +627,7 @@ void PureSignal::forcePS()
 
 void PureSignal::reset()
 {
+    invalidateCorrectionSummary();
     // From Thetis PSForm.cs:486-491 btnPSReset_Click [v2.10.3.13]:
     //   console.ForcePureSignalAutoCalDisable();
     //   if (!_OFF) _OFF = true;
@@ -717,6 +733,7 @@ std::optional<Ps3FileOperationToken> PureSignal::beginRestoreCorrections(
     if (!completion) {
         return std::nullopt;
     }
+    invalidateCorrectionSummary();
     Ps3FileOperationToken token{Ps3FileOperationKind::Restore,
                                 m_sessionGeneration, *completion};
     m_pendingFileOperation = token;
@@ -767,6 +784,11 @@ void PureSignal::pollFileOperation()
         // A later native generation cannot satisfy an older host request.
         retirePendingFileOperation();
         return;
+    }
+    if (token.kind == Ps3FileOperationKind::Restore) {
+        // The restored worker can replace IQC after a concurrent calibration.
+        // Its completion retires any measurement from before that replacement.
+        invalidateCorrectionSummary();
     }
     m_pendingFileOperation.reset();
     emit fileOperationCompleted(static_cast<int>(token.kind),
@@ -1137,6 +1159,20 @@ Ps3StatusSnapshot PureSignal::ps3StatusSnapshot() const
     return m_statusSnapshot;
 }
 
+void PureSignal::invalidateCorrectionSummary()
+{
+    m_summaryNeedsCalibrationBaseline = true;
+    if (m_tx) {
+        m_tx->invalidatePsCorrectionSummary();
+    }
+    // Retire the visible scalar immediately, while stop/restore commands
+    // may still be queued. Only a new successful calibration can re-enable it.
+    m_statusSnapshot.correctionSummaryValid = false;
+    m_statusSnapshot.correctionGainAtPeak = 0.0;
+    m_statusSnapshot.correctionPhaseSpanDegrees = 0.0;
+    emit ps3StatusChanged();
+}
+
 void PureSignal::updateStatusSnapshot(std::uint64_t sequence,
                                       std::int64_t capturedAtUnixMilliseconds)
 {
@@ -1187,6 +1223,13 @@ void PureSignal::updateStatusSnapshot(std::uint64_t sequence,
             next.restoreResult = static_cast<int>(restore->result);
         }
     }
+    if (m_tx && next.correctionsApplied) {
+        if (const auto summary = m_tx->psCorrectionSummary()) {
+            next.correctionSummaryValid = true;
+            next.correctionGainAtPeak = summary->gainAtPeak;
+            next.correctionPhaseSpanDegrees = summary->phaseSpanDegrees;
+        }
+    }
     m_statusSnapshot = next;
     emit ps3StatusChanged();
 }
@@ -1209,6 +1252,21 @@ void PureSignal::processNewInfo(const int newInfo[16])
     // check compares _info vs _oldInfo BEFORE the GetInfo memcpy/GetPSInfo
     // overwrite.  Here we already have the new values in newInfo and the
     // previous in m_oldInfo, so the comparison is the same.
+    // WDSP 2.10 info[5]/info[7] publish success/attempt counts together
+    // after calcdone. The first report after invalidation is a baseline;
+    // retained counters from a restored or previous session are not new data.
+    const bool restorePending = m_pendingFileOperation
+        && m_pendingFileOperation->kind == Ps3FileOperationKind::Restore;
+    const bool freshSuccessfulCalibration = !restorePending
+        && !m_summaryNeedsCalibrationBaseline
+        && newInfo[5] > m_calCount.load() && newInfo[7] > m_calAttempts.load();
+    // While restoration owns the native curves, continue withholding scalar
+    // measurements and seed the baseline only after its completion.
+    m_summaryNeedsCalibrationBaseline = restorePending;
+    if (freshSuccessfulCalibration && m_tx) {
+        m_tx->markPsCorrectionSummaryCalibrationValid();
+    }
+
     const bool changed = hasInfoChanged(newInfo);
 
     // BENCH DIAGNOSTIC (Phase 3M-4 Task 17): sample info[] every ~10 ticks

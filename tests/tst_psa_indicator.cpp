@@ -105,7 +105,7 @@ private slots:
 
     // ── State 3: TX, hide-feedback → FB "Feedback" (text), color tracks level ─
 
-    void psOnTxHideFeedback_showsFeedbackText()
+    void psOnTxLegacyHideFeedback_stillShowsRawNumericReading()
     {
         // Source: ucInfoBar.cs:870-876 [v2.10.3.13] — _hideFeedback branch.
         // FB color still reflects feedback level (not text) so user sees
@@ -115,7 +115,7 @@ private slots:
         w.setMox(true);
         w.setFeedbackLevel(150);   // in-range → Lime FB color
         w.setHideFeedback(true);
-        QCOMPARE(w.fbText(), QStringLiteral("Feedback"));
+        QCOMPARE(w.fbText(), QStringLiteral("150"));
         QCOMPARE(w.fbBackgroundColor(), kLime);
         QCOMPARE(w.psText(), QStringLiteral("PureSignal 3"));
     }
@@ -246,28 +246,26 @@ private slots:
 
     // ── Click handlers ───────────────────────────────────────────────────────
 
-    void leftClickOnFb_emitsInvertRedBlueRequested()
+    void leftClickOnFb_isPassive()
     {
-        // Source: ucInfoBar.cs:1044-1048 [v2.10.3.13] — Left mouse button
-        // toggles SwapRedBlue.
+        // NereusSDR footer indicators are passive, including the feedback badge.
         PsaIndicatorWidget w(nullptr);
         w.show();
         w.resize(200, 20);
         QSignalSpy spy(&w, &PsaIndicatorWidget::invertRedBlueRequested);
         w.simulateLeftClickOnFb();
-        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.count(), 0);
     }
 
-    void rightClickOnFb_emitsHideFeedbackToggleRequested()
+    void rightClickOnFb_isPassive()
     {
-        // Source: ucInfoBar.cs:1049-1053 [v2.10.3.13] — Right mouse button
-        // toggles HideFeedback.
+        // Numeric readouts do not toggle a visibility preference on right-click.
         PsaIndicatorWidget w(nullptr);
         w.show();
         w.resize(200, 20);
         QSignalSpy spy(&w, &PsaIndicatorWidget::hideFeedbackToggleRequested);
         w.simulateRightClickOnFb();
-        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.count(), 0);
     }
 
     void clickOnPs_emitsNothing()
@@ -374,14 +372,10 @@ private slots:
         QCOMPARE(w.psBackgroundColor(), kLime);
     }
 
-    void psInfo_withMoxAndCalChangedFalse_doesNotUpdateFields()
+    void psInfo_withMoxAndUnchangedCalibrationCount_updatesLiveFields()
     {
-        // Source: ucInfoBar.cs:814 [v2.10.3.13]:
-        //   if (_bCalibrationAttemptsChanged && _mox) { ... updatePSDisplay(); }
-        // When calChanged is false, the inner block is skipped entirely —
-        // _nFeedbackLevel + _bCorrectionsBeingApplied stay at their prior
-        // values.  We verify by seeding state via a calChanged=true call,
-        // then checking that calChanged=false leaves the fields untouched.
+        // A collection stall can publish changing feedback and applied flags
+        // without a completed attempt. Neither field may freeze on that count.
         PsaIndicatorWidget w(nullptr);
         w.setPsEnabled(true);
         w.setMox(true);
@@ -389,13 +383,10 @@ private slots:
         QCOMPARE(w.fbText(), QStringLiteral("150"));
         QCOMPARE(w.psText(), QStringLiteral("Correcting"));
 
-        // Second call with calChanged=false: the `if (calChanged && mox)`
-        // gate fails, so _nFeedbackLevel + _bCorrectionsBeingApplied keep
-        // their prior values and updatePSDisplay() is NOT called.  The
-        // sticky state survives.
+        // The next report is fresh even when the attempt count is unchanged.
         w.psInfo(50, true, false, false, kRed);
-        QCOMPARE(w.fbText(), QStringLiteral("150"));   // sticky
-        QCOMPARE(w.psText(), QStringLiteral("Correcting")); // sticky
+        QCOMPARE(w.fbText(), QStringLiteral("50"));
+        QCOMPARE(w.psText(), QStringLiteral("PureSignal 3"));
     }
 
     void psInfo_withoutMox_doesNotUpdateFields()
@@ -431,7 +422,7 @@ private slots:
         QCOMPARE(w.fbText(), QStringLiteral("150"));
     }
 
-    void psInfo_setMoxFalse_clearsCalibrationAttemptsChanged()
+    void psInfo_moxResumeShowsLatestRawReadingWithoutWaitingForAttempt()
     {
         // Source: ucInfoBar.cs:554-567 [v2.10.3.13] OnMoxChangeHandler.
         // When MOX flips off, setPSboolsToFalse() clears
@@ -453,9 +444,9 @@ private slots:
         QCOMPARE(w.fbText(), QStringLiteral("Feedback"));
 
         w.setMox(true);
-        // Cal-attempts-changed was reset by setPSboolsToFalse on the MOX
-        // edge.  No fresh psInfo() yet → numeric path is gated off.
-        QCOMPARE(w.fbText(), QStringLiteral("Feedback"));
+        // The raw status reading is retained across RX; it is not a live
+        // input magnitude (those are separately reported by the Core pump).
+        QCOMPARE(w.fbText(), QStringLiteral("150"));
     }
 };
 

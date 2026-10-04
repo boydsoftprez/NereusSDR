@@ -9,6 +9,9 @@
 // Modification history (NereusSDR):
 //   2026-10-04 - Include the coordinator type for Qt 6.4 typed connections;
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-04 — Live Core status and passive numeric correction readouts,
+//                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
+
 //   2026-04-18 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -217,15 +220,17 @@ void PureSignalApplet::buildUI()
         "PureSignal feedback level. Right-click to open PureSignal..."));
     vbox->addWidget(m_feedbackGauge);
 
-    // --- Control 4: Correction magnitude gauge (0-100, yellow@80, red@95) ---
+    // --- Control 4: measured AmpView endpoint gain (0..2 x) ---
     m_correctionGauge = new HGauge(this);
     m_correctionGauge->setObjectName(QStringLiteral("PsAppletCorrectionGauge"));
-    m_correctionGauge->setRange(0.0, 100.0);
-    m_correctionGauge->setYellowStart(80.0);
-    m_correctionGauge->setRedStart(95.0);
-    m_correctionGauge->setTitle(QStringLiteral("Correction"));
+    // Same 0..2 gain scale as the existing AmpView gain plot.
+    m_correctionGauge->setRange(0.0, 2.0);
+    m_correctionGauge->setYellowStart(2.0);
+    m_correctionGauge->setRedStart(2.0);
+    m_correctionGauge->setTitle(QStringLiteral("Corr @peak"));
+    m_correctionGauge->setUnit(QStringLiteral("x"));
     m_correctionGauge->setToolTip(tr(
-        "PureSignal correction magnitude. Right-click to open PureSignal..."));
+        "AmpView correction gain at the full-scale envelope endpoint. Right-click to open PureSignal..."));
     vbox->addWidget(m_correctionGauge);
 
     // --- Control 5+6+7: Save / Restore / Two-tone row ---
@@ -305,6 +310,12 @@ void PureSignalApplet::buildUI()
         lbl->setStyleSheet(infoStyle);
         vbox->addWidget(lbl);
     }
+
+    m_status = new QLabel(this);
+    m_status->setObjectName(QStringLiteral("PsAppletStatusLabel"));
+    m_status->setWordWrap(true);
+    m_status->setStyleSheet(infoStyle);
+    vbox->addWidget(m_status);
 
     vbox->addStretch();
     root->addWidget(body);
@@ -454,21 +465,57 @@ void PureSignalApplet::refreshFromFacade()
     const double feedback = std::clamp(status.feedbackLevel * 100.0 / 255.0,
                                        0.0, 100.0);
     m_feedbackGauge->setValue(feedback);
-    m_correctionGauge->setValue(status.correctionsApplied ? 100.0 : 0.0);
+    const bool measuredCorrection = available && status.correctionsApplied
+        && status.correctionSummaryValid;
+    m_correctionGauge->setUnavailable(!measuredCorrection);
+    m_correctionGauge->setValue(measuredCorrection ? status.correctionGainAtPeak : 0.0);
     m_iterations->setText(
-        tr("Iterations: %1").arg(status.successfulCalibrations));
+        tr("Calibrations: %1 / %2 attempts").arg(status.successfulCalibrations)
+            .arg(status.attemptedCalibrations));
     m_feedbackDb->setText(
-        available ? tr("Feedback: %1").arg(status.feedbackLevel)
+        available ? tr("Feedback: %1 (raw)").arg(status.feedbackLevel)
                   : tr("Feedback: —"));
-    m_correctionDb->setText(
-        status.correctionsApplied ? tr("Correction: Applied")
-                                  : tr("Correction: Off"));
+    m_correctionDb->setText(measuredCorrection
+        ? tr("Corr @peak: %1x (%2 dB)\nPhase span: %3°")
+            .arg(status.correctionGainAtPeak, 0, 'f', 4)
+            .arg(20.0 * std::log10(status.correctionGainAtPeak), 0, 'f', 2)
+            .arg(status.correctionPhaseSpanDegrees, 0, 'f', 2)
+        : status.correctionsApplied ? tr("Corr @peak: — (Applied)")
+                                    : tr("Corr @peak: — (Off)"));
 
-    const bool calibrating = status.engineState == 3
-        || status.engineState == 4 || status.engineState == 6;
+    // Control-state facts: vendored WDSP 2.10 calcc.c:2115-2127
+    // [@b02d5bac]. Keep unknown states visible rather than guessing.
+    const QStringList states{tr("Reset"), tr("Wait"), tr("MOX delay"),
+        tr("Setup"), tr("Collect"), tr("MOX check"), tr("Calculate"),
+        tr("Delay"), tr("Stay on"), tr("Turn on")};
+    const QString stateName = status.engineState >= 0 && status.engineState < states.size()
+        ? states.at(status.engineState) : tr("Unknown");
+    const QString pairedInput = available && status.pairedInputValid
+        ? tr("TX monitor: %1 | PA feedback: %2")
+            .arg(status.txMonitorPeak, 0, 'f', 4).arg(status.feedbackPeak, 0, 'f', 4)
+        : tr("TX monitor: — | PA feedback: —");
+    m_status->setText(available
+        ? tr("Engine: %1 (%2)\n%3\nLast cal TX peak: %4 | HW peak: %5\n"
+             "Pump: %6 | paired blocks: %7\nDDC TX: %8 | FB: %9\n"
+             "Solution: 0x%10 | watchdog: %11\nCorrection run: %12 | busy: %13")
+            .arg(stateName).arg(status.engineState).arg(pairedInput)
+            .arg(status.maxTx, 0, 'f', 4).arg(status.hardwarePeak, 0, 'f', 4)
+            .arg(status.pumpActive ? tr("Active") : tr("Inactive"))
+            .arg(static_cast<qulonglong>(status.pairedBlocks))
+            .arg(status.txMonitorDdc).arg(status.feedbackDdc)
+            .arg(status.solutionStatusBits, 0, 16).arg(status.dogCount)
+            .arg(status.correctionRun ? tr("On") : tr("Off"))
+            .arg(status.correctionBusy ? tr("Yes") : tr("No"))
+        : tr("PureSignal status: —"));
+    m_status->setToolTip(tr("TX monitor and PA feedback are the latest accepted paired I/Q "
+        "block peaks. The last calibration TX peak is published only after a completed "
+        "collection; zero there does not mean incoming TX samples are absent."));
+    const bool calibrating = available && (status.engineState == 3
+        || status.engineState == 4 || status.engineState == 6);
     setLedActive(m_led[0], calibrating);
-    setLedActive(m_led[1], status.correctionsApplied);
-    setLedActive(m_led[2], status.mox && status.feedbackLevel > 0);
+    setLedActive(m_led[1], available && status.correctionsApplied);
+    setLedActive(m_led[2], available && status.mox && status.pumpActive && status.pairedInputValid
+        && status.feedbackPeak > 0.0);
 }
 
 void PureSignalApplet::syncFromModel()

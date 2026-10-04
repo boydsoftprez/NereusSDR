@@ -5911,6 +5911,9 @@ void TxChannel::getPSInfo(int* info16)
 
 void TxChannel::setPSReset(bool reset)
 {
+    if (reset) {
+        invalidatePsCorrectionSummary();
+    }
 #ifdef HAVE_WDSP
     runOrdered([this, reset]() {
         if (!psAvailable()) return;
@@ -5963,6 +5966,9 @@ void TxChannel::setPSTurnon(bool turnon)
 
 void TxChannel::setPSControl(int reset, int mancal, int automode, int turnon)
 {
+    if (reset != 0) {
+        invalidatePsCorrectionSummary();
+    }
 #ifdef HAVE_WDSP
     runOrdered([this, reset, mancal, automode, turnon]() {
         if (!psAvailable()) return;
@@ -6116,6 +6122,70 @@ std::optional<Ps3Snapshot> TxChannel::getPs3DisplaySnapshot(
     Q_UNUSED(sessionGeneration);
     Q_UNUSED(sequence);
     Q_UNUSED(capturedAtUnixMilliseconds);
+    return std::nullopt;
+#endif
+}
+
+void TxChannel::invalidatePsCorrectionSummary()
+{
+    std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+    ++m_psCorrectionSummaryEpoch;
+    m_psCorrectionSummaryCalibrationValid = false;
+    m_psCorrectionSummaryCache.reset();
+}
+
+void TxChannel::markPsCorrectionSummaryCalibrationValid()
+{
+    std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+    ++m_psCorrectionSummaryEpoch;
+    m_psCorrectionSummaryCalibrationValid = true;
+    m_psCorrectionSummaryCache.reset();
+}
+
+std::optional<Ps3CorrectionSummary> TxChannel::psCorrectionSummary()
+{
+#ifdef HAVE_WDSP
+    std::uint64_t epoch = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+        if (!m_psCorrectionSummaryCalibrationValid) {
+            return std::nullopt;
+        }
+        epoch = m_psCorrectionSummaryEpoch;
+    }
+    const auto captureSummary = [this]() -> std::optional<Ps3CorrectionSummary> {
+        if (!psAvailable()) {
+            return std::nullopt;
+        }
+        const auto snapshot = m_ps3DisplayAdapter.capture(m_channelId, 0, 0, 0);
+        return snapshot ? Ps3DisplayAdapter::correctionSummary(*snapshot) : std::nullopt;
+    };
+    if (!readsWdspDirectly()) {
+        postRefresh(laneParameter("psCorrectionSummary"), [this, epoch, captureSummary]() {
+            {
+                std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+                if (!m_psCorrectionSummaryCalibrationValid
+                    || epoch != m_psCorrectionSummaryEpoch) {
+                    return;
+                }
+            }
+            auto summary = captureSummary();
+            std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+            if (m_psCorrectionSummaryCalibrationValid
+                && epoch == m_psCorrectionSummaryEpoch) {
+                m_psCorrectionSummaryCache = std::move(summary);
+            }
+        });
+        std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+        return m_psCorrectionSummaryCalibrationValid
+            && epoch == m_psCorrectionSummaryEpoch
+            ? m_psCorrectionSummaryCache : std::nullopt;
+    }
+    const auto summary = captureSummary();
+    std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+    return m_psCorrectionSummaryCalibrationValid
+        && epoch == m_psCorrectionSummaryEpoch ? summary : std::nullopt;
+#else
     return std::nullopt;
 #endif
 }
@@ -6471,6 +6541,7 @@ std::optional<std::uint64_t> TxChannel::psRestoreCorr(const QString& filename)
         m_psCache.restore->pending = true;
         m_psCache.restoreAwaiting = true;
     }
+    invalidatePsCorrectionSummary();
     runOrdered([this, utf8]() {
         if (psAvailable()) {
             (void)psRestoreCorrNow(utf8);
@@ -6495,6 +6566,9 @@ std::optional<std::uint64_t> TxChannel::psRestoreCorrNow(const QByteArray& utf8I
     const auto before = psFileOperationStatusNow(Ps3FileOperationKind::Restore);
     const auto other = psFileOperationStatusNow(Ps3FileOperationKind::Save);
     if (!before || !other || before->pending || other->pending) return std::nullopt;
+    // WDSP 2.10 calcc.c:PSRestoreCorrection installs IQC curves without
+    // refreshing GetPSDisp. Never present an earlier fit as restored gain.
+    invalidatePsCorrectionSummary();
     ::PSRestoreCorr(m_channelId, utf8.data());
     const auto after = psFileOperationStatusNow(Ps3FileOperationKind::Restore);
     if (!after) return std::nullopt;

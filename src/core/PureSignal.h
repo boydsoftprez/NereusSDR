@@ -469,13 +469,10 @@ signals:
     // tick.  Subscribers (PureSignalApplet) translate the value into Cal LED
     // (LSETUP=3 / LCOLLECT=4 / LCALC=6) and Run LED (LSTAYON=8) state.
     //
-    // correctionPeakChanged carries the calcc HW peak (TxChannel::getPSHWPeak)
-    // when it differs from the prior poll by more than 0.001.  Subscribers
-    // map the raw [0..1] envelope into the 0..100 PureSignalApplet correction
-    // gauge.  Source: NereusSDR-native — Thetis exposes the value via the
-    // PSpeak text box (PSForm.cs:792-803 PSpeak_TextChanged [v2.10.3.13]) but
-    // not as a coordinated signal; we add the signal seam here so the Phase
-    // 3M-4 applet can bind without polling its own timer.
+    // Legacy correctionPeakChanged is the configured HW peak, not a measured
+    // correction gain. Retained for API compatibility; presentation uses the
+    // optional correction summary in ps3StatusSnapshot()/ps3StatusChanged.
+    // Actual gain comes from the Core's lane-owned AmpView display adapter.
     //
     // feedbackActiveChanged fires when the predicate (m_correcting && MOX is
     // up) flips.  Subscribers (PureSignalApplet Fbk LED) light up while
@@ -568,6 +565,7 @@ private:
     void pollFileOperation();
     void retirePendingFileOperation();
     void retirePendingRestoreOperation();
+    void invalidateCorrectionSummary();
     void updateStatusSnapshot(std::uint64_t sequence,
                               std::int64_t capturedAtUnixMilliseconds);
 
@@ -727,6 +725,7 @@ private:
     std::uint64_t m_sessionGeneration{0};
     std::uint64_t m_statusSequence{0};
     Ps3StatusSnapshot m_statusSnapshot;
+    bool m_summaryNeedsCalibrationBaseline{true};
     std::optional<Ps3FileOperationToken> m_pendingFileOperation;
 #ifdef NEREUS_BUILD_TESTS
     std::optional<Ps3CorrectionState> m_correctionStateForTest;

@@ -118,6 +118,45 @@ std::optional<Ps3Snapshot> Ps3DisplayAdapter::capture(
     return snapshot;
 }
 
+// NereusSDR summary of existing owning display data, without re-evaluating
+// WDSP splines. Field meanings come from calcc.c:1799-1806,1823-1843
+// (vendored TAPR WDSP 2.10 @b02d5bac) and transform() below.
+std::optional<Ps3CorrectionSummary> Ps3DisplayAdapter::correctionSummary(
+    const Ps3Snapshot& snapshot)
+{
+    if (snapshot.correctionCount <= 0
+        || snapshot.correctionCount > Ps3Snapshot::kMaxCorrectionCount) {
+        return std::nullopt;
+    }
+    const std::size_t count = static_cast<std::size_t>(snapshot.correctionCount);
+    if (snapshot.xmCorrection.size() < count || snapshot.ymCorrection.size() < count
+        || snapshot.xaCorrection.size() < count || snapshot.yaCorrection.size() < count) {
+        return std::nullopt;
+    }
+    std::size_t peak = 0;
+    double minPhase = snapshot.yaCorrection.front();
+    double maxPhase = minPhase;
+    for (std::size_t i = 0; i < count; ++i) {
+        if (!std::isfinite(snapshot.xmCorrection[i])
+            || !std::isfinite(snapshot.ymCorrection[i])
+            || !std::isfinite(snapshot.xaCorrection[i])
+            || !std::isfinite(snapshot.yaCorrection[i])) {
+            return std::nullopt;
+        }
+        if (snapshot.xmCorrection[i] > snapshot.xmCorrection[peak]) {
+            peak = i;
+        }
+        minPhase = std::min(minPhase, snapshot.yaCorrection[i]);
+        maxPhase = std::max(maxPhase, snapshot.yaCorrection[i]);
+    }
+    const double gain = snapshot.ymCorrection[peak];
+    const double span = maxPhase - minPhase;
+    if (snapshot.xmCorrection[peak] <= 0.0 || gain <= 0.0 || !std::isfinite(span)) {
+        return std::nullopt;
+    }
+    return Ps3CorrectionSummary{gain, span};
+}
+
 Ps3PlotData Ps3DisplayAdapter::transform(const Ps3Snapshot& snapshot)
 {
     Ps3PlotData plot;

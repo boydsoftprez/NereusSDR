@@ -55,6 +55,14 @@ struct Ps3PlotData {
     std::vector<Ps3PlotPoint> correctionPhase;
 };
 
+// Compact readback of the correction curves already plotted by AmpView.
+// The gain is at the greatest magnitude coordinate; the phase is the span
+// of the published phase curve (its endpoint is centered by WDSP).
+struct Ps3CorrectionSummary {
+    double gainAtPeak{0.0};
+    double phaseSpanDegrees{0.0};
+};
+
 // Current Core-owned packet route; no GUI access to the pump or sample buffers.
 struct Ps3RoutingSnapshot {
     int txMonitorDdc{-1};
@@ -62,6 +70,9 @@ struct Ps3RoutingSnapshot {
     int feedbackChannelId{-1};
     bool pumpActive{false};
     std::uint64_t pairedBlocks{0};
+    bool pairedInputValid{false};
+    double txMonitorPeak{0.0};
+    double feedbackPeak{0.0};
 };
 
 struct Ps3StatusSnapshot {
@@ -88,13 +99,19 @@ struct Ps3StatusSnapshot {
     double requestedTxDelayNs{0.0};
     double appliedTxDelayNs{0.0};
     double hardwarePeak{0.0};
-    double maxTx{0.0};
+    double maxTx{0.0};             // last completed calibration's TX peak
+    bool correctionSummaryValid{false};
+    double correctionGainAtPeak{0.0};
+    double correctionPhaseSpanDegrees{0.0};
     int feedbackRateHz{0};
     int txMonitorDdc{-1};
     int feedbackDdc{-1};
     int feedbackChannelId{-1};
     bool pumpActive{false};
     std::uint64_t pairedBlocks{0};
+    bool pairedInputValid{false};
+    double txMonitorPeak{0.0};
+    double feedbackPeak{0.0};
     bool psEnabled{false};
     bool mox{false};
     bool runCalibrationProcessing{false};
