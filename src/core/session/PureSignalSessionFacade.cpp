@@ -71,6 +71,12 @@ QString encodeStatus(const Ps3StatusSnapshot& status)
 {
     QJsonObject object;
     object.insert("schema", 1);
+    object.insert("correctionSummaryValid", status.correctionSummaryValid);
+    object.insert("correctionGainAtPeak", status.correctionGainAtPeak);
+    object.insert("correctionPhaseSpanDegrees", status.correctionPhaseSpanDegrees);
+    object.insert("pairedInputValid", status.pairedInputValid);
+    object.insert("txMonitorPeak", status.txMonitorPeak);
+    object.insert("feedbackPeak", status.feedbackPeak);
     for (const auto& [name, member] : kIntegers) {
         object.insert(name, status.*member);
     }
@@ -143,6 +149,29 @@ std::optional<Ps3StatusSnapshot> decodeStatus(const QString& json)
             return std::nullopt;
         }
         status.raw[i] = raw[i].toInt();
+    }
+    // Additive schema-1 telemetry: older Cores omit these fields. Never
+    // substitute a configured hardware peak for an absent measurement.
+    const auto finiteNumber = [&object](const char* name) {
+        const QJsonValue value = object.value(name);
+        return value.isDouble() && std::isfinite(value.toDouble());
+    };
+    if (object.value("correctionSummaryValid").toBool(false)
+        && finiteNumber("correctionGainAtPeak")
+        && object.value("correctionGainAtPeak").toDouble() > 0.0
+        && finiteNumber("correctionPhaseSpanDegrees")
+        && object.value("correctionPhaseSpanDegrees").toDouble() >= 0.0) {
+        status.correctionSummaryValid = status.correctionsApplied;
+        status.correctionGainAtPeak = object.value("correctionGainAtPeak").toDouble();
+        status.correctionPhaseSpanDegrees = object.value("correctionPhaseSpanDegrees").toDouble();
+    }
+    if (object.value("pairedInputValid").toBool(false)
+        && finiteNumber("txMonitorPeak") && finiteNumber("feedbackPeak")
+        && object.value("txMonitorPeak").toDouble() >= 0.0
+        && object.value("feedbackPeak").toDouble() >= 0.0) {
+        status.pairedInputValid = true;
+        status.txMonitorPeak = object.value("txMonitorPeak").toDouble();
+        status.feedbackPeak = object.value("feedbackPeak").toDouble();
     }
     return status;
 }
@@ -427,7 +456,9 @@ Ps3ActionResult PureSignalSessionFacade::executeAction(Ps3Action action,
     if (!stop && action != Ps3Action::SetTwoTone && action != Ps3Action::SaveCorrection) {
         for (const PendingOperation& previous : std::as_const(m_pending)) {
             if (previous.action != Ps3Action::SetTwoTone
-                && previous.action != Ps3Action::SaveCorrection) {
+                && previous.action != Ps3Action::SaveCorrection
+                && !(action == Ps3Action::StartAutomatic
+                    && previous.action == Ps3Action::Single)) {
                 return fail(QStringLiteral("A PureSignal operation is still pending. "
                                            "Wait for completion or use Off to cancel it."));
             }
@@ -498,19 +529,50 @@ Ps3ActionResult PureSignalSessionFacade::executeAction(Ps3Action action,
             || !m_coordinator->resumeAutomaticCalibrationPreference()) {
             return fail(QStringLiteral("Automatic calibration could not start in the current radio state."));
         }
+        // A Single request may wait indefinitely for a full amplitude sweep.
+        // The explicit Auto mode change replaces that request; it must not
+        // depend on Single producing a correction first.
+        for (quint32 id : m_pending.keys()) {
+            if (m_pending.value(id).action == Ps3Action::Single) {
+                finishOperation(id, Ps3ActionPhase::Failed,
+                    QStringLiteral("Automatic calibration replaced the single calibration request."));
+            }
+        }
         break;
     case Ps3Action::ApplyCurrentCorrection:
         if (!m_coordinator->applyCurrentCorrection()) {
             return fail(QStringLiteral("There is no current correction available to apply."));
         }
         break;
-    case Ps3Action::SetTwoTone:
-        m_coordinator->setTwoToneOn(arguments.value("enabled").toBool());
+    case Ps3Action::SetTwoTone: {
+        pending.twoToneTarget = arguments.value("enabled").toBool();
+        TwoToneController* controller = m_radio ? m_radio->twoToneController() : nullptr;
+        if (pending.twoToneTarget && controller && controller->isDeactivationInFlight()) {
+            return fail(QStringLiteral("The two-tone test is still stopping. Try again after it stops."));
+        }
+        for (quint32 id : m_pending.keys()) {
+            const PendingOperation previous = m_pending.value(id);
+            if (previous.action == Ps3Action::SetTwoTone
+                && previous.twoToneTarget != pending.twoToneTarget) {
+                finishOperation(id, Ps3ActionPhase::Failed,
+                    QStringLiteral("A newer two-tone request replaced this request."));
+            }
+        }
+        m_coordinator->setTwoToneOn(pending.twoToneTarget);
         refreshStatus();
-        if (m_twoToneOn != arguments.value("enabled").toBool()) {
+        if (m_twoToneOn == pending.twoToneTarget
+            && (!controller || (!controller->isActivationInFlight()
+                && !controller->isDeactivationInFlight()))) {
+            return {operationId, Ps3ActionPhase::Completed, {}, {}};
+        }
+        if (pending.twoToneTarget && (!controller || !controller->isActivationInFlight())) {
             return fail(QStringLiteral("The two-tone test did not change."));
         }
-        return {operationId, Ps3ActionPhase::Completed, {}, {}};
+        // Start and stop can include the controller's MOX/TUNE settle wait.
+        // Its authoritative state change completes the request after that wait.
+        m_pending.insert(operationId, pending);
+        return {operationId, Ps3ActionPhase::Pending, {}, {}};
+    }
     case Ps3Action::SaveCorrection:
     case Ps3Action::RestoreCorrection:
         break;
@@ -608,6 +670,9 @@ void PureSignalSessionFacade::refreshStatus()
         m_status.feedbackChannelId = route.feedbackChannelId;
         m_status.pumpActive = route.pumpActive;
         m_status.pairedBlocks = route.pairedBlocks;
+        m_status.pairedInputValid = route.pairedInputValid;
+        m_status.txMonitorPeak = route.txMonitorPeak;
+        m_status.feedbackPeak = route.feedbackPeak;
     }
     for (auto it = m_retiredSaves.begin(); it != m_retiredSaves.end();) {
         const bool completed = it->owner && it->owner == m_coordinator
@@ -653,12 +718,28 @@ void PureSignalSessionFacade::refreshStatus()
         case Ps3Action::ApplyCurrentCorrection:
             complete = m_status.correctionRun;
             break;
+        case Ps3Action::SetTwoTone: {
+            TwoToneController* controller = m_radio ? m_radio->twoToneController() : nullptr;
+            complete = m_twoToneOn == it->twoToneTarget
+                && (!controller || (!controller->isActivationInFlight()
+                    && !controller->isDeactivationInFlight()));
+            if (!complete && it->twoToneTarget
+                && (!controller || !controller->isActivationInFlight())) {
+                complete = true;
+                success = false;
+            }
+            break;
+        }
         default:
             break;
         }
         if (complete) {
+            const QString reason = success ? QString()
+                : it->action == Ps3Action::SetTwoTone
+                    ? QStringLiteral("The two-tone test did not change.")
+                    : QStringLiteral("The calibration attempt did not produce a successful correction.");
             finishOperation(id, success ? Ps3ActionPhase::Completed : Ps3ActionPhase::Failed,
-                success ? QString() : QStringLiteral("The calibration attempt did not produce a successful correction."));
+                reason);
         }
     }
 }

@@ -275,10 +275,11 @@ void TstRemotePureSignalArming::coreOffersArmingAtVersionSeven()
 
 void TstRemotePureSignalArming::receiveOnlyCorePermitsPureSignal()
 {
+    // The coordinator borrows the channel, which must outlive its Core.
+    TxChannel tx(/*channelId=*/1);
     RadioModel core;
     core.setReceiveOnlyStationPolicy(true);
     QVERIFY(core.pureSignalOperationPermitted());
-    TxChannel tx(/*channelId=*/1);
     PureSignal* coordinator = core.installPureSignalForTest(&tx);
     QVERIFY(coordinator->canActuate());
     // A remote window never runs PureSignal itself.
@@ -375,8 +376,9 @@ void TstRemotePureSignalArming::olderAppKeepsTodaysReason()
     // An app below minor 11 is never offered transmitSettingsVersion: the
     // Core refuses its arming as before, and keeps its settings writes
     // without replaying them.
-    auto core = makeStationRadioModel();
+    // The coordinator borrows the channel, which must outlive its Core.
     TxChannel tx(/*channelId=*/1);
+    auto core = makeStationRadioModel();
     PureSignal* coordinator = core->installPureSignalForTest(&tx);
     coordinator->setTimersEnabled(false);
     QTemporaryDir dir;

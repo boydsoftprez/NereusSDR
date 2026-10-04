@@ -144,6 +144,12 @@ public:
     int  psFbDdc()            const { return m_psFbDdc; }
     qint64 totalBlocksPumped() const { return m_totalBlocksPumped; }
 
+    // Latest accepted feedback packet, before CALCC collection/fitting.
+    // Read on this object's thread, alongside the routing snapshot.
+    bool pairedInputValid() const { return m_pairedInputValid; }
+    double txMonitorPeak() const { return m_txMonitorPeak; }
+    double feedbackPeak() const { return m_feedbackPeak; }
+
 #ifdef NEREUS_BUILD_TESTS
     // ── Paired-call test seam (NEREUS_BUILD_TESTS only) ──────────────
     //
@@ -249,6 +255,9 @@ private:
     int m_txMonDdc{1};   // Thetis cmaster.cs:534 [v2.10.3.13]: Stream1 = TX
     int m_psFbDdc{0};    // Thetis cmaster.cs:533 [v2.10.3.13]: Stream0 = RX
     int m_blockSize{256};
+    bool m_pairedInputValid{false};
+    double m_txMonitorPeak{0.0};
+    double m_feedbackPeak{0.0};
 
     // Legacy independent-ring buffers (deprecated 2026-05-23 — see header
     // comment).  Kept declared but no longer written; the old onIqData

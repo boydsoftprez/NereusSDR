@@ -46,6 +46,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Acknowledge PS3 calibration reset before AutoAtt changes,
+//                 with causal TX status and cancellation drain. J.J. Boyd
+//                 (KG4VCF), with OpenAI Codex assistance.
 //   2026-05-06 — Created by J.J. Boyd (KG4VCF) for Phase 3M-4 Task 7
 //                 PureSignal coordinator, with AI-assisted source-first
 //                 protocol via Anthropic Claude Code.
@@ -424,7 +427,7 @@ public:
     // could in principle be tested with a stubbed GetInfo (PSForm.cs:1076-
     // 1085 [v2.10.3.13] — GetInfo is the only call that touches WDSP, the
     // rest of timer1code operates on the cached _info / _oldInfo arrays).
-    void processNewInfo(const int newInfo[16]);
+    void processNewInfo(const int newInfo[16], std::uint64_t controlSerial = 0);
 
 public slots:
     void onMoxChanged(bool mox);
@@ -469,13 +472,10 @@ signals:
     // tick.  Subscribers (PureSignalApplet) translate the value into Cal LED
     // (LSETUP=3 / LCOLLECT=4 / LCALC=6) and Run LED (LSTAYON=8) state.
     //
-    // correctionPeakChanged carries the calcc HW peak (TxChannel::getPSHWPeak)
-    // when it differs from the prior poll by more than 0.001.  Subscribers
-    // map the raw [0..1] envelope into the 0..100 PureSignalApplet correction
-    // gauge.  Source: NereusSDR-native — Thetis exposes the value via the
-    // PSpeak text box (PSForm.cs:792-803 PSpeak_TextChanged [v2.10.3.13]) but
-    // not as a coordinated signal; we add the signal seam here so the Phase
-    // 3M-4 applet can bind without polling its own timer.
+    // Legacy correctionPeakChanged is the configured HW peak, not a measured
+    // correction gain. Retained for API compatibility; presentation uses the
+    // optional correction summary in ps3StatusSnapshot()/ps3StatusChanged.
+    // Actual gain comes from the Core's lane-owned AmpView display adapter.
     //
     // feedbackActiveChanged fires when the predicate (m_correcting && MOX is
     // up) flips.  Subscribers (PureSignalApplet Fbk LED) light up while
@@ -559,6 +559,7 @@ private:
     void startAutomaticCalibration();
     void requestOperationalStop();
     void requestNativeCorrectionStop();
+    void cancelAutoAttenuation();
     // R-R3-39: the TX channel's lane reports; the TX delay on the lane (or
     // at once without one); the applied delay as either path reports it.
     void connectTxChannelSignals();
@@ -568,6 +569,7 @@ private:
     void pollFileOperation();
     void retirePendingFileOperation();
     void retirePendingRestoreOperation();
+    void invalidateCorrectionSummary();
     void updateStatusSnapshot(std::uint64_t sequence,
                               std::int64_t capturedAtUnixMilliseconds);
 
@@ -608,6 +610,9 @@ private:
     int m_saveAutoOn{0};
     int m_saveSingleCalOn{0};
     int m_deltaDb{0};
+    std::uint64_t m_infoControlSerial{0};
+    std::uint64_t m_aaResetControlSerial{0};
+    bool m_aaCancelPending{false};
 
     // Phase 3M-4 Task 17 fix: track calCount across autoAttentionTick
     // invocations so we only act ONCE per calcc cycle (mirrors Thetis
@@ -727,6 +732,7 @@ private:
     std::uint64_t m_sessionGeneration{0};
     std::uint64_t m_statusSequence{0};
     Ps3StatusSnapshot m_statusSnapshot;
+    bool m_summaryNeedsCalibrationBaseline{true};
     std::optional<Ps3FileOperationToken> m_pendingFileOperation;
 #ifdef NEREUS_BUILD_TESTS
     std::optional<Ps3CorrectionState> m_correctionStateForTest;

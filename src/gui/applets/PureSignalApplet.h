@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Live Core status and passive numeric correction readouts,
+//                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
+
 //   2026-04-18 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -174,6 +177,7 @@ private:
     QLabel* m_iterations         = nullptr;
     QLabel* m_feedbackDb         = nullptr;
     QLabel* m_correctionDb       = nullptr;
+    QLabel* m_status             = nullptr;
 };
 
 } // namespace NereusSDR

@@ -1991,6 +1991,13 @@ void TxApplet::wireControls()
             if (m_psFacade) {
                 connect(m_psFacade, &PureSignalSessionFacade::statusChanged,
                         this, &TxApplet::syncPsaFromFacade);
+                connect(m_psFacade, &PureSignalSessionFacade::actionResult,
+                        this, [this](quint32, Ps3ActionPhase phase, const QString&,
+                                     const QVariantMap&) {
+                    if (phase == Ps3ActionPhase::Failed) {
+                        syncPsaFromFacade();
+                    }
+                });
                 if (PureSignalSettings* settings = m_psFacade->settings()) {
                     connect(settings, &PureSignalSettings::autoCalEnabledChanged,
                             this, &TxApplet::syncPsaFromFacade);

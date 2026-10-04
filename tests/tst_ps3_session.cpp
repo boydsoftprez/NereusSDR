@@ -5,6 +5,8 @@
 #include <QJsonObject>
 #include <QFile>
 #include <QPushButton>
+#include <QLabel>
+#include "gui/applets/PureSignalApplet.h"
 #include <QTableWidget>
 #include <limits>
 #include <algorithm>
@@ -127,16 +129,72 @@ private slots:
         QTRY_VERIFY([&] { coordinator.pollTimerTick(); return coordinator.isPsEnabled(); }());
         QTRY_COMPARE(results.size(), 2);
         QCOMPARE(facade.executeAction(Ps3Action::Single, {}, 3).phase, Ps3ActionPhase::Pending);
-        const Ps3ActionResult conflict = facade.executeAction(Ps3Action::StartAutomatic, {}, 4);
-        QCOMPARE(conflict.phase, Ps3ActionPhase::Failed);
-        QVERIFY(conflict.reason.contains(QStringLiteral("pending")));
-        QCOMPARE(facade.executeAction(Ps3Action::OffReset, {}, 5).phase, Ps3ActionPhase::Pending);
-        QTRY_VERIFY([&] { coordinator.pollTimerTick(); return !coordinator.isPsEnabled(); }());
-        // No TXA or feedback sample was sent, and the explicit Off retired Single.
+        const Ps3ActionResult automatic = facade.executeAction(Ps3Action::StartAutomatic, {}, 4);
+        QCOMPARE(automatic.phase, Ps3ActionPhase::Pending);
+        QVERIFY(settings.autoCalEnabled());
         QVERIFY(std::any_of(results.begin(), results.end(), [](const QList<QVariant>& result) {
             return result[0].toUInt() == 3
                 && qvariant_cast<Ps3ActionPhase>(result[1]) == Ps3ActionPhase::Failed;
         }));
+        // Switching immediately after Single must not leave its transient
+        // request to switch the command state back into Single later.
+        int correctedInfo[16] = {};
+        correctedInfo[14] = 1;
+        for (int tick = 0; tick < 8; ++tick) {
+            coordinator.processNewInfo(correctedInfo);
+        }
+        QVERIFY(coordinator.isPsEnabled());
+        QTRY_VERIFY([&] {
+            coordinator.pollTimerTick();
+            return std::any_of(results.begin(), results.end(), [](const QList<QVariant>& result) {
+                return result[0].toUInt() == 4
+                    && qvariant_cast<Ps3ActionPhase>(result[1]) == Ps3ActionPhase::Completed;
+            });
+        }());
+        QCOMPARE(facade.executeAction(Ps3Action::Single, {}, 5).phase, Ps3ActionPhase::Pending);
+        QCOMPARE(facade.executeAction(Ps3Action::OffReset, {}, 6).phase, Ps3ActionPhase::Pending);
+        QTRY_VERIFY([&] { coordinator.pollTimerTick(); return !coordinator.isPsEnabled(); }());
+        // No TXA or feedback sample was sent, and the explicit Off retired Single.
+        QVERIFY(std::any_of(results.begin(), results.end(), [](const QList<QVariant>& result) {
+            return result[0].toUInt() == 5
+                && qvariant_cast<Ps3ActionPhase>(result[1]) == Ps3ActionPhase::Failed;
+        }));
+#endif
+    }
+
+    void automaticReplacesSingleAtEveryCommandTransition()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("requires WDSP");
+#else
+        for (int singleTicks = 0; singleTicks < 4; ++singleTicks) {
+            QTemporaryDir directory;
+            WdspEngine engine;
+            engine.setSynchronousInitForTest(true);
+            QVERIFY(engine.initialize(directory.path() + QLatin1Char('/')));
+            TxChannel* tx = engine.createTxChannel(WdspEngine::kTxChannelId);
+            QVERIFY(tx);
+            PureSignalSettings settings;
+            PureSignal coordinator(&engine, tx, nullptr, nullptr, nullptr, nullptr);
+            coordinator.setTimersEnabled(false);
+            coordinator.setSettings(&settings);
+            QVERIFY(coordinator.applyAcceptedSettingsToEngine());
+            PureSignalSessionFacade facade(nullptr, &coordinator);
+            QCOMPARE(facade.executeAction(Ps3Action::Single, {}, 1).phase,
+                     Ps3ActionPhase::Pending);
+            int info[16] = {};
+            for (int tick = 0; tick < singleTicks; ++tick) {
+                coordinator.processNewInfo(info);
+            }
+            QCOMPARE(facade.executeAction(Ps3Action::StartAutomatic, {}, 2).phase,
+                     Ps3ActionPhase::Pending);
+            info[14] = 1;
+            for (int tick = 0; tick < 8; ++tick) {
+                coordinator.processNewInfo(info);
+            }
+            QVERIFY2(coordinator.isPsEnabled(), qPrintable(
+                QStringLiteral("Auto reverted to Single after %1 tick(s)").arg(singleTicks)));
+        }
 #endif
     }
 
@@ -364,6 +422,57 @@ private slots:
             Ps3Action::RestoreCorrection, {{"assetId", id}}), 0u);
     }
 
+    void compactRemoteReadoutsFollowCoreStatusAndClearOnDisconnect()
+    {
+        RadioModel source;
+        QJsonObject status = QJsonDocument::fromJson(
+            source.pureSignalFacade()->statusJson().toUtf8()).object();
+        status["psEnabled"] = true;
+        status["mox"] = true;
+        status["correctionsApplied"] = true;
+        status["feedbackLevel"] = 149;
+        status["attemptedCalibrations"] = 7;
+        status["successfulCalibrations"] = 5;
+        status["engineState"] = 4;
+        status["correctionSummaryValid"] = true;
+        status["correctionGainAtPeak"] = 0.8125;
+        status["correctionPhaseSpanDegrees"] = 3.25;
+        RadioModel remote(RadioModel::Role::Remote);
+        PureSignalSessionFacade* facade = remote.pureSignalFacade();
+        facade->setRemoteCapabilities(true, false);
+        facade->applyRemoteProperty("available", true);
+        PsaIndicatorWidget indicator(&remote);
+        PureSignalApplet applet(&remote);
+        QVERIFY(facade->applyRemoteProperty("statusJson",
+            QString::fromUtf8(QJsonDocument(status).toJson(QJsonDocument::Compact))));
+        QVERIFY(!indicator.findChild<QLabel*>("lblCorrPeak"));
+        QCOMPARE(indicator.findChildren<QLabel*>().size(), 1);
+        QVERIFY(indicator.findChild<QLabel*>("lblPSFeedback"));
+        QCOMPARE(indicator.fbText(), QStringLiteral("Feedback 149"));
+        QCOMPARE(facade->statusSnapshot().correctionGainAtPeak, 0.8125);
+        QLabel* correction = applet.findChild<QLabel*>("PsAppletCorrectionDbLabel");
+        QVERIFY(correction);
+        QCOMPARE(correction->text(), QStringLiteral("Correction: Applied"));
+        QLabel* diagnostic = applet.findChild<QLabel*>("PsAppletStatusLabel");
+        QVERIFY(diagnostic);
+        QVERIFY(diagnostic->text().contains("Collect"));
+        QLabel* calibrations = applet.findChild<QLabel*>("PsAppletIterationsLabel");
+        QVERIFY(calibrations);
+        QVERIFY(calibrations->text().contains("5 / 7"));
+        // A new feedback level can arrive without another calibration attempt.
+        status["feedbackLevel"] = 171;
+        status["correctionsApplied"] = false;
+        status["correctionSummaryValid"] = false;
+        QVERIFY(facade->applyRemoteProperty("statusJson",
+            QString::fromUtf8(QJsonDocument(status).toJson(QJsonDocument::Compact))));
+        QCOMPARE(indicator.fbText(), QStringLiteral("Feedback 171"));
+        QCOMPARE(correction->text(), QStringLiteral("Correction: Off"));
+        facade->resetSession();
+        QCOMPARE(indicator.fbText(), QStringLiteral("Feedback —"));
+        QCOMPARE(correction->text(), QStringLiteral("Correction: Off"));
+        QVERIFY(!remote.pureSignal());
+    }
+
     void remoteIndicatorConsumesStatusWithoutALocalCoordinator()
     {
         RadioModel source;
@@ -391,8 +500,8 @@ private slots:
         PsaIndicatorWidget indicator(&remote);
         QVERIFY(facade->applyRemoteProperty("statusJson",
             QString::fromUtf8(QJsonDocument(status).toJson(QJsonDocument::Compact))));
-        QCOMPARE(indicator.fbText(), QStringLiteral("150"));
-        QCOMPARE(indicator.psText(), QStringLiteral("Correcting"));
+        QCOMPARE(indicator.fbText(), QStringLiteral("Feedback 150"));
+        QCOMPARE(indicator.psText(), QStringLiteral("PureSignal3"));
         const Ps3StatusSnapshot readback = facade->statusSnapshot();
         QCOMPARE(readback.txMonitorDdc, 3);
         QCOMPARE(readback.feedbackDdc, 2);
@@ -402,7 +511,7 @@ private slots:
         QVERIFY(!remote.pureSignal());
         QVERIFY(!facade->canActuate());
         facade->resetSession();
-        QCOMPARE(indicator.psText(), QStringLiteral("PureSignal 3"));
+        QCOMPARE(indicator.psText(), QStringLiteral("PureSignal3"));
     }
 };
 

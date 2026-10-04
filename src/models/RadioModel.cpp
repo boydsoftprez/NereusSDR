@@ -17363,6 +17363,9 @@ Ps3RoutingSnapshot RadioModel::pureSignalRoutingSnapshot() const
         route.feedbackDdc = m_psccPump->psFbDdc();
         route.pumpActive = m_psccPump->isActive();
         route.pairedBlocks = static_cast<std::uint64_t>(m_psccPump->totalBlocksPumped());
+        route.pairedInputValid = m_psccPump->pairedInputValid();
+        route.txMonitorPeak = m_psccPump->txMonitorPeak();
+        route.feedbackPeak = m_psccPump->feedbackPeak();
     }
     if (m_wdspEngine && m_wdspEngine->psFeedbackChannel()) {
         route.feedbackChannelId = m_wdspEngine->psFeedbackChannel()->channelId();

@@ -11900,9 +11900,8 @@ void MainWindow::buildStatusBar()
 
     // ── Phase 3M-4 Task 10: PSA bottom-banner pair (FB + PS) ──────────────────
     // Source-first port of Thetis ucInfoBar.cs:820-1098 [v2.10.3.13].
-    // The widget auto-wires to RadioModel's PureSignal coordinator and
-    // MoxController on construction; click signals route back to
-    // PureSignal::setInvertRedBlue / setHideFeedback below.
+    // Passive readings follow the same Core facade in local and remote
+    // windows; numeric values never change preferences when clicked.
     //
     // Phase 3M-4 bench-fix: visibility is gated on
     //   caps.hasPureSignal && pureSignal->isAutoCalEnabled()
@@ -11913,30 +11912,7 @@ void MainWindow::buildStatusBar()
     // pureSignalCoordinatorReady (late-bind seam, Task 13).
     m_psaIndicator = new PsaIndicatorWidget(m_radioModel, barWidget);
     m_psaIndicator->setVisible(false);
-    connect(m_psaIndicator, &PsaIndicatorWidget::invertRedBlueRequested, this, [this]() {
-        auto& settings = AppSettings::instance();
-        const bool inverted = settings.value("InvertRedBluePsa", "False").toString() != "True";
-        settings.setValue("InvertRedBluePsa", inverted ? "True" : "False");
-        m_psaIndicator->setInvertRedBlue(inverted);
-        if (PureSignal* ps = m_radioModel->pureSignal()) {
-            ps->setInvertRedBlue(inverted);
-        }
-        for (SetupDialog* dialog : findChildren<SetupDialog*>()) {
-            dialog->reloadFeedbackPreferences();
-        }
-    });
-    connect(m_psaIndicator, &PsaIndicatorWidget::hideFeedbackToggleRequested, this, [this]() {
-        auto& settings = AppSettings::instance();
-        const bool hidden = settings.value("HideFeedbackLevel", "False").toString() != "True";
-        settings.setValue("HideFeedbackLevel", hidden ? "True" : "False");
-        m_psaIndicator->setHideFeedback(hidden);
-        if (PureSignal* ps = m_radioModel->pureSignal()) {
-            ps->setHideFeedback(hidden);
-        }
-        for (SetupDialog* dialog : findChildren<SetupDialog*>()) {
-            dialog->reloadFeedbackPreferences();
-        }
-    });
+    // Passive telemetry: footer clicks do not change feedback preferences.
     connect(m_radioModel->pureSignalSettings(), &PureSignalSettings::autoCalEnabledChanged,
             this, &MainWindow::updatePsaIndicatorVisibility);
     connect(m_radioModel->pureSignalFacade(), &PureSignalSessionFacade::statusChanged,
@@ -16895,7 +16871,7 @@ int MainWindow::panLayoutLimitFor(const RadioModel* model)
 // pureSignalCoordinatorReady can all share one truth-source.
 //
 // m_psaIndicator is registered with m_chromeBar at rung 0 so its width
-// (two QLabel minimumWidth pins, ~154 px) is counted in the fold budget
+// (one compact stacked banner) is counted in the fold budget
 // on every PS-capable, PS-armed board (Task A8 fix round 1 finding 2).
 // The armed fact itself is reported via setItemAvailable, not a direct
 // setVisible call, per ChromeBarController::setItemAvailable's own doc
@@ -16905,7 +16881,10 @@ void MainWindow::updatePsaIndicatorVisibility()
     if (!m_psaIndicator) { return; }
     const bool caps = m_radioModel && m_radioModel->isConnected()
         && m_radioModel->pureSignalFacade()->available();
-    const bool armed = m_radioModel && m_radioModel->pureSignalSettings()->autoCalEnabled();
+    const Ps3StatusSnapshot psStatus = m_radioModel
+        ? m_radioModel->pureSignalFacade()->statusSnapshot() : Ps3StatusSnapshot{};
+    const bool armed = m_radioModel && (m_radioModel->pureSignalSettings()->autoCalEnabled()
+        || psStatus.psEnabled || psStatus.correctionsApplied);
     if (m_chromeBar && m_chromeBarWidget) {
         m_chromeBar->setItemAvailable(m_psaIndicator, caps && armed);
         m_chromeBar->relayout(m_chromeBarWidget->width());

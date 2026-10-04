@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import Foundation
+import Combine
 import NereusKitTesting
 import NereusLink
 import NereusMedia
@@ -946,6 +947,43 @@ struct AppModelTests {
         #expect(output.stops == 1)
     }
 
+    /// Wait for the actual published predicate, retaining a match that arrives
+    /// before iteration starts. The bound ends a missing event, not readiness.
+    private func heartbeatEvent(_ predicate: AnyPublisher<Bool, Never>,
+                                within limit: Duration = .seconds(30)) async -> Bool {
+        guard !Task.isCancelled else { return false }
+        let (events, sink) = AsyncStream.makeStream(of: Bool.self, bufferingPolicy: .bufferingNewest(1))
+        let watch = predicate.filter { @Sendable value in value }.sink { @Sendable _ in
+            sink.yield(true)
+            sink.finish()
+        }
+        let timeout = Task {
+            do {
+                try await Task.sleep(for: limit)
+            } catch {
+                return
+            }
+            sink.finish()
+        }
+        defer {
+            timeout.cancel()
+            watch.cancel()
+            sink.finish()
+        }
+        var iterator = events.makeAsyncIterator()
+        let observed = await iterator.next()
+        return !Task.isCancelled && observed == true
+    }
+
+    private func relayedHeartbeatReady(_ model: AppModel) async -> Bool {
+        await heartbeatEvent(model.$connection.combineLatest(model.$linkRelayed)
+            .map { @Sendable pair in pair.0 == .connected && pair.1 }.eraseToAnyPublisher())
+    }
+
+    private func heartbeatMeasured(_ model: AppModel) async -> Bool {
+        await heartbeatEvent(model.$roundTripMs.map { @Sendable value in value != nil }.eraseToAnyPublisher())
+    }
+
     @Test("the link chip shows no number until the first heartbeat is answered")
     func noRoundTripUntilMeasured() async throws {
         let station = try FakeStation()
@@ -976,12 +1014,86 @@ struct AppModelTests {
         let model = AppModel()
         await model.connect(through: route, name: station.label, trust: station.identityTrust,
                             authenticator: station.authenticator, clock: clock)
-        #expect(await settle { model.connection == .connected && model.linkRelayed })
+        #expect(await relayedHeartbeatReady(model))
         #expect(model.roundTripMs == nil)
         await clock.advance(by: 1_999)
         #expect(model.roundTripMs == nil)
         await clock.advance(by: 1)
-        #expect(await settle { model.roundTripMs != nil })
+        #expect(await heartbeatMeasured(model))
+        await model.disconnect()
+    }
+
+    @Test("relayed heartbeat waits for held snapshot completion before advancing its clock", arguments: [3, 4])
+    func snapshotCompletionWaitsBeforeRelayedHeartbeat(rank: Int) async throws {
+        let station = try FakeStation(fixture: "session-device-sign-in")
+        let snapshot = HeartbeatEventGate()
+        let route = RankedServiceRoute(station: station, rank: rank, snapshot: snapshot)
+        let clock = TestLinkClock()
+        let model = AppModel()
+        do {
+            await model.connect(through: route, name: station.label, trust: station.identityTrust,
+                                authenticator: station.authenticator, clock: clock)
+            try #require(await heartbeatEvent(snapshot.entered))
+            let readiness = Task { await relayedHeartbeatReady(model) }
+            // A control probe proves the old finite budget is insufficient
+            // while the actual snapshot completion remains held.
+            #expect(!(await settle { model.connection == .connected && model.linkRelayed }))
+            #expect(clock.now == 0)
+            #expect(clock.pendingDueTimes.contains(20_000))
+            #expect(model.roundTripMs == nil)
+            snapshot.release()
+            #expect(await readiness.value)
+            #expect(model.connection == .connected && model.linkRelayed)
+            #expect(clock.now == 0)
+            #expect(clock.pendingDueTimes.contains(2_000))
+            #expect(model.roundTripMs == nil)
+            await clock.advance(by: 1_999)
+            #expect(model.roundTripMs == nil)
+            await clock.advance(by: 1)
+            #expect(await heartbeatMeasured(model))
+            #expect(model.roundTripMs != nil)
+        } catch {
+            snapshot.cancel()
+            await model.disconnect()
+            throw error
+        }
+        snapshot.cancel()
+        await model.disconnect()
+    }
+
+    @Test("relayed heartbeat measurement waits for the actual held pong completion", arguments: [3, 4])
+    func pongCompletionWaitsForRoundTrip(rank: Int) async throws {
+        let station = try FakeStation(fixture: "session-device-sign-in")
+        let pong = HeartbeatEventGate()
+        let route = RankedServiceRoute(station: station, rank: rank, pong: pong)
+        let clock = TestLinkClock()
+        let model = AppModel()
+        do {
+            await model.connect(through: route, name: station.label, trust: station.identityTrust,
+                                authenticator: station.authenticator, clock: clock)
+            try #require(await relayedHeartbeatReady(model))
+            #expect(model.connection == .connected && model.linkRelayed)
+            #expect(model.roundTripMs == nil)
+            await clock.advance(by: 1_999)
+            #expect(model.roundTripMs == nil)
+            await clock.advance(by: 1)
+            try #require(await heartbeatEvent(pong.entered))
+            #expect(clock.now == 2_000)
+            // The heartbeat was submitted, but the session has not yet
+            // received its answer. Yield counts cannot complete that event.
+            #expect(!(await settle { model.roundTripMs != nil }))
+            #expect(model.roundTripMs == nil)
+            let measured = Task { await heartbeatMeasured(model) }
+            pong.release()
+            #expect(await measured.value)
+            #expect(model.roundTripMs != nil)
+            #expect(clock.now == 2_000)
+        } catch {
+            pong.cancel()
+            await model.disconnect()
+            throw error
+        }
+        pong.cancel()
         await model.disconnect()
     }
 
@@ -1058,17 +1170,140 @@ struct AppModelTests {
     }
 }
 
+/// Holds an inbound event without changing it. Entry is a retained current
+/// value; release before hold is valid. Close/cancellation resumes every hold.
+private final class HeartbeatEventGate: @unchecked Sendable {
+    private enum State { case held, released, cancelled }
+    private let lock = NSLock()
+    private var state: State = .held
+    private var waiting: [UUID: CheckedContinuation<Bool, Never>] = [:]
+    private let entry = CurrentValueSubject<Bool, Never>(false)
+
+    var entered: AnyPublisher<Bool, Never> { entry.eraseToAnyPublisher() }
+
+    func hold() async -> Bool {
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let immediate: Bool? = lock.withLock {
+                    if Task.isCancelled { return false }
+                    switch state {
+                    case .released:
+                        return true
+                    case .cancelled:
+                        return false
+                    case .held:
+                        waiting[id] = continuation
+                        return nil
+                    }
+                }
+                entry.send(true)
+                if let immediate { continuation.resume(returning: immediate) }
+            }
+        } onCancel: {
+            self.cancel()
+        }
+    }
+
+    func release() {
+        let continuations: [CheckedContinuation<Bool, Never>] = lock.withLock {
+            guard case .held = state else { return [] }
+            state = .released
+            let continuations = Array(waiting.values)
+            waiting.removeAll()
+            return continuations
+        }
+        for continuation in continuations { continuation.resume(returning: true) }
+    }
+
+    func cancel() {
+        let continuations: [CheckedContinuation<Bool, Never>] = lock.withLock {
+            state = .cancelled
+            let continuations = Array(waiting.values)
+            waiting.removeAll()
+            return continuations
+        }
+        for continuation in continuations { continuation.resume(returning: false) }
+    }
+}
+
+/// Forwards the same fake-station protocol/authentication/metadata. Only the
+/// selected inbound completion is held; native media configuration is intact.
+private final class HeartbeatGatedTransport: LinkTransport, @unchecked Sendable {
+    private let inner: any LinkTransport
+    private let snapshot: HeartbeatEventGate?
+    private let pong: HeartbeatEventGate?
+    private let lock = NSLock()
+    private var closed = false
+
+    init(inner: any LinkTransport, snapshot: HeartbeatEventGate?, pong: HeartbeatEventGate?) {
+        self.inner = inner
+        self.snapshot = snapshot
+        self.pong = pong
+    }
+
+    private var isClosed: Bool { lock.withLock { closed } }
+
+    func open(onEvent: @escaping @Sendable (LinkTransportEvent) async -> Void) async throws -> Data {
+        do {
+            return try await inner.open { [self] event in
+                guard !isClosed, !Task.isCancelled else { return }
+                if case .text(let text) = event,
+                   let message = try? LinkCodec.decode(text), case .snapshotComplete = message,
+                   let snapshot, !(await snapshot.hold()) {
+                    return
+                }
+                if case .pong = event, let pong, !(await pong.hold()) {
+                    return
+                }
+                guard !isClosed, !Task.isCancelled else { return }
+                await onEvent(event)
+            }
+        } catch {
+            snapshot?.cancel()
+            pong?.cancel()
+            throw error
+        }
+    }
+
+    @discardableResult func send(_ text: String) -> Bool { inner.send(text) }
+    func ping() { inner.ping() }
+    func close() {
+        lock.withLock { closed = true }
+        snapshot?.cancel()
+        pong?.cancel()
+        inner.close()
+    }
+    func setBinaryReceiver(_ receiver: (@Sendable (Data) -> Void)?) { inner.setBinaryReceiver(receiver) }
+    @discardableResult func sendBinary(_ frame: Data) -> Bool { inner.sendBinary(frame) }
+    @discardableResult func sendBinary(_ frame: Data, ownership: BinaryMediaOwnership) -> Bool {
+        inner.sendBinary(frame, ownership: ownership)
+    }
+    func discardBinary(ownership: BinaryMediaOwnership) { inner.discardBinary(ownership: ownership) }
+    var boundsItsOwnOpening: Bool { inner.boundsItsOwnOpening }
+    var selectedRouteObservation: SelectedRouteObservation { inner.selectedRouteObservation }
+    var diagnosticServiceRank: Int? { inner.diagnosticServiceRank }
+    var trafficObservation: LinkTrafficObservation? { inner.trafficObservation }
+}
+
 private final class RankedServiceRoute: CoreServiceRoute, @unchecked Sendable {
     let station: FakeStation
     let rank: Int
+    private let snapshot: HeartbeatEventGate?
+    private let pong: HeartbeatEventGate?
 
-    init(station: FakeStation, rank: Int) {
+    init(station: FakeStation, rank: Int, snapshot: HeartbeatEventGate? = nil,
+         pong: HeartbeatEventGate? = nil) {
         self.station = station
         self.rank = rank
+        self.snapshot = snapshot
+        self.pong = pong
     }
 
     func makeTransport() -> any SessionTransport {
-        station.transportFactory(station.endpoint, station.identityTrust)
+        let inner = station.transportFactory(station.endpoint, station.identityTrust)
+        guard snapshot != nil || pong != nil else { return inner }
+        return HeartbeatGatedTransport(inner: inner, snapshot: snapshot, pong: pong)
     }
     func mediaIceSettings() -> IceSettings? { nil }
     var selectedPathRank: Int? { rank }

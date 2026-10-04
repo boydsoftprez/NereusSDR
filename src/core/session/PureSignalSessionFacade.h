@@ -119,6 +119,7 @@ private:
         quint64 generation{0};
         int startAttempts{0};
         int startSuccesses{0};
+        bool twoToneTarget{false};
         QString path;
         QString label;
         std::optional<Ps3FileOperationToken> file;
