@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Suppress shutdown presentation reconciliation while retaining
+//                 persistence by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
@@ -84,6 +86,7 @@ mw0lge@grange-lane.co.uk
 #include "ContainerContentHost.h"
 #include "ContainerContentRegistry.h"
 #include "ContainerWorkspaceStore.h"
+#include "gui/GuiApplication.h"
 #include "ContainerDocumentCodec.h"
 #include <algorithm>
 
@@ -258,6 +261,9 @@ bool ContainerManager::eventFilter(QObject* watched, QEvent* event)
 }
 void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
 {
+    // Final geometry/config commits remain durable without showing closed
+    // forms again. This also covers aboutToQuit saves after Qt 6.4's Quit scope.
+    if (GuiApplication::applicationQuitInProgress()) { return; }
     if (!m_store || !m_registry || m_reconciling) { return; }
     // Refuse draft/preview state. Dependent controllers commit through the store.
     if (document != m_store->snapshot()) { return; }

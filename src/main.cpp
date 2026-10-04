@@ -1,4 +1,5 @@
 #include "gui/GuiConnectionController.h"
+#include "gui/GuiApplication.h"
 #include "gui/styles/AppTheme.h"
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
@@ -106,7 +107,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    QApplication app(argc, argv);
+    NereusSDR::GuiApplication app(argc, argv);
 #if defined(Q_OS_MAC)
     QString accessibilityRejection;
     if (!installQtCocoaAccessibilityOwnershipGuard(&accessibilityRejection)) {
