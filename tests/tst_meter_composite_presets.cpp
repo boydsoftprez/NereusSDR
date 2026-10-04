@@ -39,6 +39,8 @@ public:
     QVector<Text> texts;
     struct Glyph { QSize sourceSize; QRectF bounds; };
     QVector<Glyph> glyphs;
+    struct PaintedPath { QPainterPath path; QBrush brush; qreal opacity; };
+    QVector<PaintedPath> paths;
     explicit TextPaintEngine(int dpr):QPaintEngine(AllFeatures),m_dpr(dpr) {}
     bool begin(QPaintDevice* device) override { setPaintDevice(device); setActive(true); return true; }
     bool end() override { setActive(false); return true; }
@@ -52,7 +54,10 @@ public:
             glyphs.append({image.size(),QRectF(mapped.topLeft()/m_dpr,mapped.size()/m_dpr)});
         }
     }
-    void drawPath(const QPainterPath&) override {}
+    void drawPath(const QPainterPath& path) override {
+        QTransform logical=state->transform(); logical.scale(1.0/m_dpr,1.0/m_dpr);
+        paths.append({logical.map(path),state->brush(),state->opacity()});
+    }
     void drawPolygon(const QPointF*,int,PolygonDrawMode) override {}
     void drawTextItem(const QPointF& point,const QTextItem& item) override {
         const QRectF bounds(point.x(),point.y()-item.ascent(),item.width(),item.ascent()+item.descent());
@@ -68,6 +73,7 @@ public:
     QPaintEngine* paintEngine() const override { return &m_engine; }
     const QVector<TextPaintEngine::Text>& texts() const { return m_engine.texts; }
     const QVector<TextPaintEngine::Glyph>& glyphs() const { return m_engine.glyphs; }
+    const QVector<TextPaintEngine::PaintedPath>& paths() const { return m_engine.paths; }
 protected:
     int metric(PaintDeviceMetric key) const override {
         switch(key) {
@@ -94,6 +100,181 @@ private:
         for(int i=0;i<channels.size();++i) { auto c=channels[i].toObject(); c["ignoreHistoryMs"]=0; channels[i]=c; } return channels;
     }
 private slots:
+    void ananIdleNeedlesRemainParkedWithoutMeasurements() {
+        using Support=MeterItem::BindingSupport;
+        // Independently recorded approved starting anchors, in source1855×848
+        // coordinates. These are the scale starts, including10V and1SWR.
+        const QPointF starts[]{QPointF(.117059794,.380134788),QPointF(.588119078,.765593954),
+            QPointF(.245534088,.565355119),QPointF(.232210013,.378065912),
+            QPointF(.239802545,.476981032),QPointF(.269329015,.646806982),QPointF(.225121668,.741962507)};
+        const int order[]{1,6,5,2,4,3,0};
+        for(Support support:{Support::Supported,Support::Unknown}) {
+            AnanMultiMeterItem face;
+            for(int binding:face.readingBindings()) { face.setBindingSupport(binding,support); }
+            face.setAboveS9Frequency(true); face.setPowerScale(500);
+            const QString saved=face.serialize();
+            for(bool tx:{false,true}) {
+                face.resetForTxTransition(tx);
+                for(int group:{1,2,3,4,0}) {
+                    QVERIFY(face.applyConfiguration({{"displayGroup",group}}));
+                    for(const QSize size:{QSize(360,300),QSize(520,300),QSize(720,420)}) {
+                        const QRectF skin=face.ananNeedleRect(size.width(),size.height());
+                        for(int dpr:{1,2}) {
+                            TextPaintDevice device(size,dpr);
+                            { QPainter painter(&device); face.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::OverlayDynamic); }
+                            QVector<TextPaintEngine::PaintedPath> needles;
+                            for(const auto& path:device.paths()) {
+                                if(path.path.elementCount()==5 && path.brush.color()!=QColor(0,0,0,150)) { needles.append(path); }
+                            }
+                            QCOMPARE(needles.size(),7);
+                            for(int n=0;n<7;++n) {
+                                const int channel=order[n]; const auto& path=needles[n];
+                                const auto tip=path.path.elementAt(1),left=path.path.elementAt(0),right=path.path.elementAt(2);
+                                const QPointF expected=skin.topLeft()+QPointF(starts[channel].x()*skin.width(),starts[channel].y()*skin.height());
+                                const QPointF orb=channel==1?QPointF(1248,736):channel==6?QPointF(550,737):QPointF(919,740);
+                                QVERIFY(QLineF(QPointF(tip.x,tip.y),expected).length()<.01);
+                                QVERIFY(QLineF(QPointF((left.x+right.x)/2,(left.y+right.y)/2),skin.topLeft()+orb*skin.width()/1855).length()<.001);
+                                QVERIFY(path.opacity>0 && path.opacity<1);
+                                QVERIFY(!face.channelHasReading(channel));
+                            }
+                            for(const auto& text:device.texts()) {
+                                if(text.value.startsWith("Peak ")) { QCOMPARE(text.value,QString("Peak --")); }
+                                else if(!QStringList{"Signal","Volts","Amps","Power","SWR","Compression","ALC group"}.contains(text.value)) { QVERIFY(text.value.startsWith("--")); }
+                            }
+                        }
+                    }
+                }
+            }
+            QVERIFY(face.applyConfiguration({{"displayGroup",1}})); QCOMPARE(face.serialize(),saved);
+        }
+    }
+    void ananIdleNeedleRasterProof() {
+        using Support=MeterItem::BindingSupport;
+        const QPointF starts[]{QPointF(.117059794,.380134788),QPointF(.588119078,.765593954),
+            QPointF(.245534088,.565355119),QPointF(.232210013,.378065912),
+            QPointF(.239802545,.476981032),QPointF(.269329015,.646806982),QPointF(.225121668,.741962507)};
+        // Verify actual raster stem ink away from the hub for each role. Mode
+        // gates retain default policies even in these isolated pointer fixtures.
+        for(int channel=0;channel<7;++channel) {
+            AnanMultiMeterItem shown,hidden;
+            auto channels=shown.configuration()["channels"].toArray();
+            for(int i=0;i<7;++i) { auto c=channels[i].toObject(); c["visible"]=i==channel; channels[i]=c; }
+            QVERIFY(shown.applyConfiguration({{"channels",channels},{"showReadout",false}}));
+            for(int binding:shown.readingBindings()) { shown.setBindingSupport(binding,Support::Supported); }
+            auto c=channels[channel].toObject(); c["visible"]=false; channels[channel]=c;
+            QVERIFY(hidden.applyConfiguration({{"channels",channels},{"showReadout",false}}));
+            for(const QSize size:{QSize(360,300),QSize(520,300)}) {
+                const QRectF skin=shown.ananNeedleRect(size.width(),size.height());
+                const QPointF orb=channel==1?QPointF(1248,736):channel==6?QPointF(550,737):QPointF(919,740);
+                const QPointF pivot=skin.topLeft()+orb*skin.width()/1855,tip=skin.topLeft()+QPointF(starts[channel].x()*skin.width(),starts[channel].y()*skin.height());
+                for(int dpr:{1,2}) {
+                    QImage present(size*dpr,QImage::Format_ARGB32_Premultiplied),absent=present;
+                    present.setDevicePixelRatio(dpr); absent.setDevicePixelRatio(dpr); present.fill(Qt::transparent); absent.fill(Qt::transparent);
+                    { QPainter painter(&present); shown.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::OverlayDynamic); }
+                    { QPainter painter(&absent); hidden.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::OverlayDynamic); }
+                    const QPoint at=((pivot+(tip-pivot)*.55)*dpr).toPoint(); int stemPixels=0;
+                    for(int y=-2*dpr;y<=2*dpr;++y) { for(int x=-2*dpr;x<=2*dpr;++x) {
+                        const QPoint point=at+QPoint(x,y);
+                        if(present.pixelColor(point).alpha()>absent.pixelColor(point).alpha()+10) { ++stemPixels; }
+                    } }
+                    QVERIFY2(stemPixels>=2,qPrintable(QString("Absent parked stem channel%1 at%2px DPR%3").arg(channel).arg(size.width()).arg(dpr)));
+                }
+            }
+        }
+    }
+    void ananParkedTransitionsNeverUseStaleHistory() {
+        using Support=MeterItem::BindingSupport;
+        AnanMultiMeterItem face; auto channels=configuredChannels(face);
+        for(int i=0;i<7;++i) { auto c=channels[i].toObject(); c["attack"]=1; c["decay"]=1; c["peakHold"]=true; c["showHistory"]=true; channels[i]=c; }
+        QVERIFY(face.applyConfiguration({{"channels",channels}}));
+        for(int binding:face.readingBindings()) { face.setBindingSupport(binding,Support::Supported); }
+        const QString saved=face.serialize();
+        const auto check=[&](int expectedLive,int expectedIncluded) {
+            TextPaintDevice device(QSize(520,300),1);
+            { QPainter painter(&device); face.paintForLayer(painter,520,300,MeterItem::Layer::OverlayDynamic); }
+            int live=0,idle=0,history=0;
+            for(const auto& path:device.paths()) {
+                if(path.path.elementCount()==5 && path.brush.color()!=QColor(0,0,0,150)) { if(path.opacity==1) { ++live; } else { ++idle; } }
+                if(path.brush.color().alpha()==64 && path.opacity==1) { ++history; }
+            }
+            // Every active channel emits its real pointer and requested peak;
+            // an idle channel emits exactly one pointer and no history fan.
+            QCOMPARE(live,expectedLive*2); QCOMPARE(idle,expectedIncluded-expectedLive);
+            QCOMPARE(history,expectedLive);
+        };
+        face.pushBindingValue(MeterBinding::SignalAvg,-85); face.pushBindingValue(MeterBinding::HwVolts,13.8); face.advanceMeter(0);
+        check(2,7); QCOMPARE(face.channelValue(0),-85.0); QCOMPARE(face.channelPeak(0),-85.0);
+        face.resetForTxTransition(true); check(0,7);
+        for(int i=0;i<7;++i) { QVERIFY(!face.channelHasReading(i)); }
+        TextPaintDevice absent(QSize(520,300),1);
+        { QPainter painter(&absent); face.paintForLayer(painter,520,300,MeterItem::Layer::OverlayDynamic); }
+        for(const auto& text:absent.texts()) { QVERIFY(!text.value.contains("-85.0") && !text.value.contains("13.8")); }
+        face.pushBindingValue(MeterBinding::TxPower,70); face.pushBindingValue(MeterBinding::TxSwr,1.6); face.advanceMeter(100); check(2,7);
+        // A real sample outside the selected group does not become a live
+        // pointer, fan or peak. This preserves the existing group policy.
+        face.pushBindingValue(MeterBinding::TxAlcGain,20); face.advanceMeter(200); QVERIFY(face.channelHasReading(5)); check(2,7);
+        QVERIFY(face.applyConfiguration({{"displayGroup",2}})); check(0,7);
+        face.pushBindingValue(MeterBinding::TxAlcGain,20); face.advanceMeter(300); check(1,7);
+        face.setBindingSupport(MeterBinding::TxAlcGain,Support::Unsupported); check(0,6);
+        face.setBindingSupport(MeterBinding::TxAlcGain,Support::Supported); check(0,7);
+        auto hidden=face.configuration()["channels"].toArray(); auto c=hidden[2].toObject(); c["visible"]=false; hidden[2]=c;
+        QVERIFY(face.applyConfiguration({{"channels",hidden}})); check(0,6);
+        face.resetForTxTransition(false); check(0,6);
+        c["visible"]=true; hidden[2]=c; QVERIFY(face.applyConfiguration({{"channels",hidden},{"displayGroup",1}}));
+        face.setBindingSupport(MeterBinding::SignalAvg,Support::Unknown); face.pushBindingValue(MeterBinding::SignalAvg,-91); face.advanceMeter(400); check(1,7);
+        QCOMPARE(face.channelValue(0),-91.0); QCOMPARE(face.channelPeak(0),-91.0);
+        face.setBindingUnavailable(MeterBinding::SignalAvg,"offline fixture unavailable"); check(0,7);
+        face.setBindingUnavailable(MeterBinding::SignalAvg,QString()); face.advanceMeter(500); check(0,7);
+        QCOMPARE(face.serialize(),saved);
+    }
+    void ananDefaultStateNativeFrames() {
+#ifdef NEREUS_GPU_SPECTRUM
+        if(QGuiApplication::platformName()=="offscreen") { QSKIP("Native QRhi frames require the configured native platform"); }
+#endif
+        const QString destination=qEnvironmentVariable("NEREUS_METER_CAPTURE_DIR");
+        for(int width:{360,520,720}) {
+            MeterWidget widget; auto face=std::make_unique<AnanMultiMeterItem>();
+            auto channels=configuredChannels(*face);
+            for(int i=0;i<7;++i) { auto c=channels[i].toObject(); c["attack"]=1; c["decay"]=1; channels[i]=c; }
+            QVERIFY(face->applyConfiguration({{"channels",channels}}));
+            AnanMultiMeterItem* item=face.get(); widget.addItem(face.release()); widget.resize(width,300);
+#ifdef NEREUS_GPU_SPECTRUM
+            QSignalSpy submitted(&widget,&QRhiWidget::frameSubmitted);
+#endif
+            widget.show();
+            const auto capture=[&](const QString& state) {
+                QImage native;
+#ifdef NEREUS_GPU_SPECTRUM
+                const int before=submitted.count(); widget.update(); QTRY_VERIFY_WITH_TIMEOUT(submitted.count()>before,2000); native=widget.grabFramebuffer();
+#else
+                widget.update(); QCoreApplication::processEvents(); native=widget.grab().toImage();
+#endif
+                QVERIFY(!native.isNull());
+                qInfo()<<"ANAN offline fixture"<<state<<QGuiApplication::platformName()<<width<<"DPR"<<widget.devicePixelRatioF();
+                if(!destination.isEmpty()) {
+                    QDir().mkpath(destination); QVERIFY(native.save(destination+QString("/anan-default-%1-native-%2-dpr%3.png").arg(state).arg(width).arg(widget.devicePixelRatioF())));
+                    for(int dpr:{1,2}) {
+                        QImage cpu(QSize(width,300)*dpr,QImage::Format_ARGB32_Premultiplied); cpu.setDevicePixelRatio(dpr); cpu.fill(Qt::transparent);
+                        { QPainter painter(&cpu); item->paint(painter,width,300); }
+                        QVERIFY(cpu.save(destination+QString("/anan-default-%1-cpu-%2-dpr%3.png").arg(state).arg(width).arg(dpr)));
+                    }
+                }
+            };
+            const QString saved=item->serialize(); capture("disconnected-unknown");
+            for(int binding:item->readingBindings()) { widget.setBindingSupport(binding,MeterItem::BindingSupport::Supported); }
+            widget.updateMeterValue(MeterBinding::SignalAvg,-85); widget.updateMeterValue(MeterBinding::HwVolts,13.8); widget.advanceMeters(0); capture("rx-supported");
+            widget.resetForTxTransition(true); widget.advanceMeters(100); capture("tx-idle-supported");
+            widget.updateMeterValue(MeterBinding::HwVolts,13.8); widget.updateMeterValue(MeterBinding::TxPower,70); widget.updateMeterValue(MeterBinding::TxSwr,1.6); widget.advanceMeters(200); capture("tx-group1-supported");
+            for(int group:{2,3,4}) {
+                QVERIFY(item->applyConfiguration({{"displayGroup",group}})); widget.invalidatePresentation(item);
+                const int binding=group==2?MeterBinding::TxAlcGain:group==3?MeterBinding::TxAlcGroup:MeterBinding::HwAmps;
+                widget.updateMeterValue(binding,group==2?20:group==3?0:8); widget.advanceMeters(200+group*100); capture(QString("tx-group%1-supported").arg(group));
+            }
+            widget.clearReadingCache(); widget.resetForTxTransition(false); QVERIFY(item->applyConfiguration({{"displayGroup",1}})); widget.invalidatePresentation(item); widget.advanceMeters(700); capture("rx-return-no-stale-samples");
+            for(int i=0;i<7;++i) { QVERIFY(!item->channelHasReading(i)); }
+            QCOMPARE(item->serialize(),saved);
+        }
+    }
     void ananAllTransmitGroupPreservesRoles() {
         AnanMultiMeterItem face;
         QVERIFY(face.applyConfiguration({{"displayGroup",0}}));

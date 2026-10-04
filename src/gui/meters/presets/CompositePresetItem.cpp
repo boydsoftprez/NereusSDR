@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-03 — Retain dim calibrated parked ANAN pointers without fabricating
+//                 readings by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Fit compact source lettering inside rounded glass by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Readable minimum ANAN readout fonts and measured row reflow by
@@ -787,10 +789,18 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
     } else {
         // Shared needleTip is used by marks, live motion, history and peak hold.
         for(int i:QVector<int>{1,6,5,2,4,3,0}) {
-            if(!included(i) || !active(i) || !m_channels[i].dynamics.hasReading()) { continue; }
+            if(!included(i)) { continue; }
             const Channel& channel=m_channels[i]; const QJsonObject& config=channel.config;
+            const bool live=active(i) && channel.dynamics.hasReading();
             const QPointF pivot=needlePivot(i,skin);
-            if(config["showHistory"].toBool()) {
+            // Parked pointers describe the face, not a measurement. Unknown
+            // support is dimmer; no parked value enters dynamics or history.
+            p.save();
+            if(!live) {
+                const int binding=i==0?bindingId():channel.binding;
+                p.setOpacity(p.opacity()*(bindingSupport(binding)==BindingSupport::Supported?.5:.35));
+            }
+            if(live && config["showHistory"].toBool()) {
                 QPainterPath fan; fan.moveTo(pivot);
                 for(int step=0;step<=30;++step) { fan.lineTo(needleTip(i,channel.dynamics.minHistory()+(channel.dynamics.maxHistory()-channel.dynamics.minHistory())*step/30,skin)); }
                 fan.closeSubpath(); p.fillPath(fan,color(config,"historyColor"));
@@ -809,8 +819,9 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
                 p.setPen(QPen(i==0 || i==3?QColor("#ffc0bd"):QColor(Qt::white),qMax(.55,2.4*scale)));
                 p.drawLine(pivot,tip-direction*12*scale);
             };
-            if(config["peakHold"].toBool()) { draw(channel.dynamics.maxHistory(),true); }
-            draw(channel.dynamics.value(),false);
+            if(live && config["peakHold"].toBool()) { draw(channel.dynamics.maxHistory(),true); }
+            draw(live?channel.dynamics.value():raw(i,channel.calibration.firstKey()),false);
+            p.restore();
         }
         // Foreground circles follow every channel's edited origin. Coincident
         // source pivots share a crop; edited pivots receive their own crop.
