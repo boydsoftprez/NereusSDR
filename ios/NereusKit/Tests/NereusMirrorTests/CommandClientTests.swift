@@ -1014,6 +1014,8 @@ extension CommandClientTests {
         let commands = CommandClient(session: session, clock: commandClock)
         // The recorder's barrier observes an event only after the actual client
         // has handled it; nothing injects answers directly into CommandClient.
+        // Each handled wait bounds event observation at 10 seconds; the session
+        // and command policies still use their separate manual clocks.
         let recorder = EventRecorder(session, forward: { await commands.handle($0) })
         do {
             await session.connect()
@@ -1029,7 +1031,7 @@ extension CommandClientTests {
             await transport.deliver(.authResult(.init(accepted: true, reason: "", retryable: false)))
             await transport.deliver(.capabilities(.init(properties: [])))
             await transport.deliver(.snapshotComplete)
-            try #require(await recorder.settle { $0.contains(.stateChanged(.ready)) })
+            try #require(await recorder.handled(within: .seconds(10)) { $0.contains(.stateChanged(.ready)) })
             #expect(await session.state == .ready)
             let original = await session.diagnosticsSnapshot()
             let generation = try #require(original.attemptGeneration)
@@ -1057,7 +1059,7 @@ extension CommandClientTests {
                                         reason: "This answer belongs to another verb.")
             for unrelated in [wrongID, wrongVerb] {
                 await transport.deliver(unrelated)
-                try #require(await recorder.settle { $0.contains(.message(unrelated)) })
+                try #require(await recorder.handled(within: .seconds(10)) { $0.contains(.message(unrelated)) })
                 #expect(await commands.waitingCount == 1)
                 #expect(commandClock.pendingDueTimes == [5_000])
             }
@@ -1066,7 +1068,7 @@ extension CommandClientTests {
             let reason = "The Core does not know this request. Updating the Core may help."
             let refused = Self.result("conformanceUnknownVerb", invoke.id, accepted: false, reason: reason)
             await transport.deliver(refused)
-            try #require(await recorder.settle { $0.contains(.message(refused)) })
+            try #require(await recorder.handled(within: .seconds(10)) { $0.contains(.message(refused)) })
             #expect(await commands.waitingCount == 0)
             #expect(commandClock.pendingDueTimes.isEmpty)
             // A broken result handler times out deterministically instead of
@@ -1090,7 +1092,7 @@ extension CommandClientTests {
             #expect(next.args.isEmpty)
             // A duplicate refused result cannot settle the later command.
             await transport.deliver(refused)
-            try #require(await recorder.settle { events in
+            try #require(await recorder.handled(within: .seconds(10)) { events in
                 events.filter { $0 == .message(refused) }.count == 2
             })
             #expect(await commands.waitingCount == 1)
@@ -1101,7 +1103,7 @@ extension CommandClientTests {
                 .init(name: "status", value: .utf8("NNR model selections are available.")),
             ])
             await transport.deliver(accepted)
-            try #require(await recorder.settle { $0.contains(.message(accepted)) })
+            try #require(await recorder.handled(within: .seconds(10)) { $0.contains(.message(accepted)) })
             #expect(await commands.waitingCount == 0)
             #expect(commandClock.pendingDueTimes.isEmpty)
             await commandClock.advance(by: 5_000)
@@ -1116,7 +1118,7 @@ extension CommandClientTests {
                 .init(name: "StationName", value: .utf8("Still connected")),
             ]))
             await transport.deliver(continued)
-            try #require(await recorder.settle { $0.contains(.message(continued)) })
+            try #require(await recorder.handled(within: .seconds(10)) { $0.contains(.message(continued)) })
             let after = await session.diagnosticsSnapshot()
             #expect(after.state == .ready)
             #expect(after.attemptGeneration == generation)
@@ -1131,12 +1133,12 @@ extension CommandClientTests {
             #expect(commandClock.pendingDueTimes.isEmpty)
             #expect(sessionClock.pendingDueTimes == [20_000])
             await session.disconnect()
-            try #require(await recorder.settle { $0.contains(.stateChanged(.stopped)) })
+            try #require(await recorder.handled(within: .seconds(10)) { $0.contains(.stateChanged(.stopped)) })
             #expect(sessionClock.pendingDueTimes.isEmpty)
             #expect(station.openConnections == 0)
         } catch {
             await session.disconnect()
-            await recorder.settle { $0.contains(.stateChanged(.stopped)) }
+            await recorder.handled(within: .seconds(10)) { $0.contains(.stateChanged(.stopped)) }
             throw error
         }
         // EventRecorder cancels its single stream reader when this scope ends.
