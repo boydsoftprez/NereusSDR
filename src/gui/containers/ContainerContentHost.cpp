@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-04 — Guard integer boundary projection while preserving legacy float
+//                 rounding and imports by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Usable independent native control sizing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -32,6 +34,8 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <QJsonArray>
 #include <QScrollArea>
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <memory>
 namespace NereusSDR {
 ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, QWidget* parent)
@@ -381,11 +385,36 @@ QRect ContainerContentHost::entryBoundary(const QString& id) const
         if (row.entryId != id || !row.widget) { continue; }
         const QPoint origin = row.widget->mapTo(const_cast<ContainerContentHost*>(this), QPoint(0, 0));
         if (row.item && m_document.layout == ContentLayout::LegacyCanvas) {
-            return QRectF(origin.x() + row.item->x() * row.widget->width(),
-                          origin.y() + row.item->y() * row.widget->height(),
-                          row.item->itemWidth() * row.widget->width(),
-                          row.item->itemHeight() * row.widget->height())
-                .toAlignedRect();
+            // Retain legacy float rounding: promoting the operands can move a
+            // fractional edge by one pixel when toAlignedRect rounds outward.
+            const float left = origin.x() + row.item->x() * row.widget->width();
+            const float top = origin.y() + row.item->y() * row.widget->height();
+            const float width = row.item->itemWidth() * row.widget->width();
+            const float height = row.item->itemHeight() * row.widget->height();
+            if (!std::isfinite(left) || !std::isfinite(top) ||
+                !std::isfinite(width) || !std::isfinite(height)) { return {}; }
+            const QRectF boundary(static_cast<qreal>(left), static_cast<qreal>(top),
+                                  static_cast<qreal>(width), static_cast<qreal>(height));
+            // Qt qrect.cpp toAlignedRect floors/ceils to int, subtracts the
+            // endpoints, then QRect stores each exclusive far edge minus one.
+            // Check that arithmetic in double before any integer conversion;
+            // unrepresentable presentation must not rewrite the imported data.
+            const double alignedLeft = std::floor(boundary.left());
+            const double alignedTop = std::floor(boundary.top());
+            const double alignedRight = std::ceil(boundary.right());
+            const double alignedBottom = std::ceil(boundary.bottom());
+            const auto fitsInt = [](double value) {
+                return std::isfinite(value) && value >= std::numeric_limits<int>::min()
+                    && value <= std::numeric_limits<int>::max();
+            };
+            const double alignedWidth = alignedRight - alignedLeft;
+            const double alignedHeight = alignedBottom - alignedTop;
+            if (!fitsInt(alignedLeft) || !fitsInt(alignedTop) ||
+                !fitsInt(alignedRight) || !fitsInt(alignedBottom) ||
+                !fitsInt(alignedWidth) || !fitsInt(alignedHeight) ||
+                !fitsInt(alignedRight - 1) || !fitsInt(alignedBottom - 1) ||
+                !fitsInt(alignedWidth - 1) || !fitsInt(alignedHeight - 1)) { return {}; }
+            return boundary.toAlignedRect();
         }
         return row.item ? QRect(origin + QPoint(0, row.offset), QSize(row.widget->width(), row.height)) : QRect(origin, row.widget->size());
     }

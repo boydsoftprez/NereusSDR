@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original mixed host integration invariants.
 // Modification history (NereusSDR):
+//   2026-10-04 — Cover safe legacy rounding and unsafe integer boundaries by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest>
@@ -8,11 +10,14 @@
 #include <QScopeGuard>
 #include <QAction>
 #include <QLabel>
+#include <limits>
 #include "gui/meters/MeterItem.h"
 #include "core/AppSettings.h"
 #include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/ContainerDocumentCodec.h"
+#include "gui/containers/ContainerEditSession.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerSourceAdapter.h"
@@ -28,6 +33,96 @@ using namespace NereusSDR;
 class TstContainerContentHost : public QObject {
     Q_OBJECT
 private slots:
+    void legacyBoundaryKeepsFloatRoundingAndChecksIntegerProjection_data()
+    {
+        QTest::addColumn<QRectF>("geometry");
+        QTest::addColumn<QRect>("expected");
+        QTest::newRow("fractional-float-rounding") << QRectF(.15,-.15,.15,.15) << QRect(3,-3,3,3);
+        QTest::newRow("negative-position") << QRectF(-3.25,-2.5,.5,.25) << QRect(-65,-50,10,5);
+        QTest::newRow("negative-dimension") << QRectF(-.1,.2,-.15,.15) << QRect(-2,4,-3,3);
+        QTest::newRow("zero-width") << QRectF(.15,.15,0,.15) << QRect(3,3,0,3);
+        QTest::newRow("zero-height") << QRectF(.15,.15,.15,0) << QRect(3,3,3,0);
+        QTest::newRow("safe-int-min-left") << QRectF(-107374182.4,0,.15,.15)
+            << QRect(std::numeric_limits<int>::min(),0,3,3);
+        QTest::newRow("safe-large-width") << QRectF(0,0,107374176,.15) << QRect(0,0,2147483520,3);
+        QTest::newRow("finite-float-overflow") << QRectF(0,0,3e38,.15) << QRect();
+        QTest::newRow("float-rounding-past-int-max") << QRectF(107374182.35,0,.15,.15) << QRect();
+        QTest::newRow("far-edge-past-int-max") << QRectF(107374176,0,12.8,.15) << QRect();
+        QTest::newRow("positive-span-overflow") << QRectF(-50000000,0,107374182.4,.15) << QRect();
+        QTest::newRow("negative-span-overflow") << QRectF(50000000,0,-150000000,.15) << QRect();
+        QTest::newRow("int-min-exclusive-right") << QRectF(-107374182.4,0,0,.15) << QRect();
+        QTest::newRow("int-min-negative-span") << QRectF(50000000,0,-107374182.4,.15) << QRect();
+        QTest::newRow("vertical-span-overflow") << QRectF(0,-50000000,.15,107374182.4) << QRect();
+        QTest::newRow("int-min-exclusive-bottom") << QRectF(0,-107374182.4,.15,0) << QRect();
+    }
+    void legacyBoundaryKeepsFloatRoundingAndChecksIntegerProjection()
+    {
+        QFETCH(QRectF,geometry);
+        QFETCH(QRect,expected);
+        ContainerContentRegistry registry; ContainerContentHost host(registry);
+        ContainerDocument document; document.id="legacy"; document.layout=ContentLayout::LegacyCanvas;
+        auto entry=registry.makeEntry("TEXT"); entry.canvasRect=geometry;
+        entry.extensions["originalImport"]=QStringLiteral("retain complete record");
+        document.contents={entry}; host.reconcile(document);
+        QCOMPARE(host.entryRows().size(),1); QVERIFY(host.entryRows().first().item);
+        QWidget* surface=host.entryRows().first().widget;
+        // Keep the host hidden: the public boundary query must be safe before
+        // painting, without exercising MeterItem's separate pixelRect path.
+        surface->setFixedSize(20,20);
+        const QPoint origin=surface->mapTo(&host,QPoint());
+        surface->move(surface->pos()-origin);
+        QCOMPARE(surface->mapTo(&host,QPoint()),QPoint());
+        const auto before=host.captureDocument();
+        const QByteArray capturedBytes=ContainerDocumentCodec::exportContainer(before);
+        QCOMPARE(host.entryBoundary(entry.id),expected);
+        QCOMPARE(host.captureDocument(),before);
+        QCOMPARE(ContainerDocumentCodec::exportContainer(host.captureDocument()),capturedBytes);
+        QCOMPARE(host.captureDocument().contents.first().config["legacyRecord"],entry.config["legacyRecord"]);
+        QCOMPARE(host.captureDocument().contents.first().canvasRect.x(),geometry.x());
+        QCOMPARE(host.captureDocument().contents.first().canvasRect.y(),geometry.y());
+        QCOMPARE(host.captureDocument().contents.first().canvasRect.width(),geometry.width());
+        QCOMPARE(host.captureDocument().contents.first().canvasRect.height(),geometry.height());
+    }
+    void legacyBoundaryLeavesImportedRecordsAndUnchangedApplyIntact()
+    {
+        QTemporaryDir directory; AppSettings settings(directory.filePath("settings.xml"));
+        ContainerWorkspaceStore store(settings); ContainerContentRegistry registry;
+        ContainerDocument container; container.id="legacy"; container.layout=ContentLayout::LegacyCanvas;
+        auto precise=registry.makeEntry("TEXT");
+        precise.canvasRect=QRectF(-3.250000000000001,.15000000000000002,.15000000000000002,0);
+        QStringList legacyFields=precise.config["legacyRecord"].toString().split('|');
+        legacyFields[1]="-3.250000"; legacyFields[2]="0.150000";
+        legacyFields[3]="0.150000"; legacyFields[4]="0.000000";
+        precise.config["legacyRecord"]=legacyFields.join('|');
+        auto oversized=registry.makeEntry("TEXT"); oversized.canvasRect=QRectF(0,0,3e38,.15);
+        for(ContentEntry* entry:{&precise,&oversized}) {
+            entry->extensions["opaqueOriginal"]=QJsonObject{{"keep",true},{"precision","original bytes"}};
+        }
+        container.contents={precise,oversized};
+        WorkspaceDocument document; document.mainContainerId=container.id; document.containers={container};
+        QCOMPARE(store.commit(document,0).status,CommitStatus::Saved);
+        const auto saved=store.snapshot();
+        const QByteArray savedEntryBytes=ContainerDocumentCodec::exportContainer(saved.containers.first());
+        ContainerContentHost host(registry); host.reconcile(saved.containers.first());
+        const auto captured=host.captureDocument();
+        for(const ContentEntry& entry:saved.containers.first().contents) {
+            host.entryBoundary(entry.id);
+        }
+        QCOMPARE(host.captureDocument(),captured);
+        for(int i=0;i<container.contents.size();++i) {
+            const auto& original=container.contents[i]; const auto& retained=captured.contents[i];
+            QCOMPARE(retained.config["legacyRecord"],original.config["legacyRecord"]);
+            QCOMPARE(retained.extensions,original.extensions);
+            QCOMPARE(retained.canvasRect.x(),original.canvasRect.x());
+            QCOMPARE(retained.canvasRect.y(),original.canvasRect.y());
+            QCOMPARE(retained.canvasRect.width(),original.canvasRect.width());
+            QCOMPARE(retained.canvasRect.height(),original.canvasRect.height());
+        }
+        ContainerEditSession session(store); QVERIFY(!session.hasPendingChanges());
+        QCOMPARE(session.apply().status,CommitStatus::Saved);
+        QCOMPARE(store.snapshot().containers,saved.containers);
+        QCOMPARE(ContainerDocumentCodec::exportContainer(store.snapshot().containers.first()),savedEntryBytes);
+    }
     void orderedRunsKeepContextGeometryAndHiddenBoundaries()
     {
         ContainerContentRegistry registry;

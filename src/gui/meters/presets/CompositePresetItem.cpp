@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-04 — Make bounded clock float rounding explicit by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Restore full approved source typography at ordinary sizes and
 //                 reserve painted readout rows by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -1091,7 +1093,12 @@ void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer l
         for(MeterItem* child:internalItems()) { if(child!=m_clock) { child->paint(p,width,height); } }
         if(m_clock) {
             p.setFont(font);
-            const QRectF clock(m_clock->x()*width,m_clock->y()*height,m_clock->itemWidth()*width,m_clock->itemHeight()*height); const QString mode=m_config["clockMode"].toString(); const QDateTime utc=QDateTime::currentDateTimeUtc(); p.setPen(m_clock->timeColour());
+            // layoutChildren derives these from the owner's integer pixelRect;
+            // keep its bounded float products and established text-fit rounding.
+            const float clockLeft=m_clock->x()*width,clockTop=m_clock->y()*height;
+            const float clockWidth=m_clock->itemWidth()*width,clockHeight=m_clock->itemHeight()*height;
+            const QRectF clock(static_cast<qreal>(clockLeft),static_cast<qreal>(clockTop),
+                               static_cast<qreal>(clockWidth),static_cast<qreal>(clockHeight)); const QString mode=m_config["clockMode"].toString(); const QDateTime utc=QDateTime::currentDateTimeUtc(); p.setPen(m_clock->timeColour());
             const auto display=[&](QDateTime time,QString title,QRectF rect) {
                 const QString fmt=m_config["show24Hour"].toBool()?"HH:mm:ss":"hh:mm:ss AP";
                 const bool titleOn=m_config["showTitle"].toBool(),dateOn=m_config["showDate"].toBool();
