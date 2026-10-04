@@ -1,10 +1,13 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-03 — Canonical independent control creation shortcuts by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Plain preview and unavailable explanations by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include "ContainerContentRegistry.h"
+#include "ContainerControlCatalog.h"
 #include "gui/meters/MeterItem.h"
 #include "core/UnbuiltFeatureList.h"
 #include <QUuid>
@@ -255,6 +258,9 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     result.append({QStringLiteral("ANTENNABTNS"), QStringLiteral("AntennaButton"), false, true, {}});
     result.append({QStringLiteral("TUNESTEPBTNS"), QStringLiteral("TuneStepButton"), false, true, {}});
     result.append({QStringLiteral("OTHERBTNS"), QStringLiteral("OtherButton"), false, true, {}});
+    for (const auto& control : supportedContainerControls()) {
+        result.append({control.creationId, control.title, false, true, {}});
+    }
     result.append({QStringLiteral("VOICERECPLAY"), QStringLiteral("VoiceRecordPlay"), false, true, {}});
     result.append({QStringLiteral("VFO"), QStringLiteral("VfoDisplay"), false, true, {}});
     result.append({QStringLiteral("CLOCK"), QStringLiteral("Clock"), false, true, {}});
@@ -296,6 +302,17 @@ ContentEntry ContainerContentRegistry::makeEntry(const QString& typeId) const {
     entry.name = typeId + QStringLiteral(" (unavailable)");
     for (const auto& descriptor : descriptors()) {
         if (descriptor.typeId == catalogType(typeId)) { entry.name = descriptor.title; break; }
+    }
+    for (const auto& control : supportedContainerControls()) {
+        if (typeId != control.creationId) { continue; }
+        OtherButtonItem item;
+        item.setColumns(1);
+        item.setVisibleBits(1u << int(control.buttonId));
+        entry.typeId = QStringLiteral("OTHERBTNS");
+        entry.config.insert(QStringLiteral("legacyRecord"), item.serialize());
+        entry.canvasRect = QRectF(item.x(), item.y(), item.itemWidth(), item.itemHeight());
+        entry.paintOrder = item.zOrder();
+        return entry;
     }
     const auto item = allocate(typeId);
     if (const auto* face=qobject_cast<const BarPresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->configuration()); }
@@ -358,6 +375,8 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     // Raw legacy geometry is authoritative until capture supplies an explicit rect.
     if (!entry.canvasRect.isNull()) { item->setRect(entry.canvasRect.x(), entry.canvasRect.y(), entry.canvasRect.width(), entry.canvasRect.height()); }
     item->setZOrder(entry.paintOrder);
+    // Presentation only: a one-cell native control follows its actual viewport.
+    item->setProperty("containerSingleControl", isSingleContainerControl(item.get()));
     ContentEntry remembered = entry;
     if (remembered.id.isEmpty()) { remembered.id = QUuid::createUuid().toString(QUuid::WithoutBraces); }
     if (remembered.name.isEmpty()) { remembered.name = makeEntry(entry.typeId).name; }

@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original native mixed-host and Main wiring evidence.
 // Modification history (NereusSDR):
+//   2026-10-03 — Individual control creation, scope and lifecycle regression by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest>
@@ -14,6 +16,7 @@
 #include "gui/applets/AppletPanelWidget.h"
 #include "gui/applets/AppletVisibilityController.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContainerButtonDispatcher.h"
 #include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWidget.h"
@@ -22,6 +25,9 @@
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/VfoDisplayItem.h"
 #include "gui/meters/ModeButtonItem.h"
+#include "gui/meters/OtherButtonItem.h"
+#include "gui/containers/ContainerArrangeController.h"
+#include "models/TransmitModel.h"
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "models/RadioModel.h"
@@ -52,6 +58,62 @@ private slots:
         RadioDiscovery discovery; discovery.holdOffScans(std::chrono::minutes(5));
     }
     void cleanupTestCase() { QFile::remove(AppSettings::instance().filePath()); RadioDiscovery::clearHoldOffForTest(); }
+    void independentControlsNativeStateScopePlacementAndLifecycle()
+    {
+        auto window=std::make_unique<MainWindow>(RemoteStationOptions{},nullptr,MainWindow::ConnectionStartup::Deferred);
+        window->resize(1100,760);window->show();
+        auto* manager=window->findChild<ContainerManager*>();QVERIFY(manager);
+        auto* store=manager->workspaceStore();auto* registry=manager->contentRegistry();
+        auto document=store->snapshot();const QString id=document.mainContainerId;
+        document.containers.clear();ContainerDocument main;main.id=id;main.layout=ContentLayout::FreeCanvas;main.dockMode=DockMode::Floating;main.geometry=QRect(160,160,620,460);
+        auto mox=registry->makeEntry("control.mox"),monitor=registry->makeEntry("control.monitor"),mute=registry->makeEntry("control.mute"),legacy=registry->makeEntry("OTHERBTNS");
+        mox.setFreeCanvasRect(QRectF(20,20,112,44));monitor.setFreeCanvasRect(QRectF(152,20,112,44));mute.setFreeCanvasRect(QRectF(284,20,112,44));legacy.setFreeCanvasRect(QRectF(20,110,420,260));
+        mute.context["sliceId"]=0;main.contents={mox,monitor,mute,legacy};document.containers={main};
+        QCOMPARE(manager->commitWorkspace(document,document.revision).status,CommitStatus::Saved);
+        auto* host=manager->contentHost(id);auto* model=window->radioModel();
+        auto* mon=qobject_cast<OtherButtonItem*>(host->entryRows()[1].item.data());QVERIFY(mon);
+        auto* monMeter=qobject_cast<MeterWidget*>(host->entryRows()[1].widget.data());QVERIFY(monMeter);QCOMPARE(monMeter->size(),QSize(112,44));
+        const bool before=model->transmitModel().monEnabled();QSignalSpy changed(&model->transmitModel(),&TransmitModel::monEnabledChanged);
+        QTest::mouseClick(monMeter,Qt::LeftButton,Qt::NoModifier,QPoint(55,20));
+        QCOMPARE(changed.count(),1);QCOMPARE(model->transmitModel().monEnabled(),!before);QVERIFY(mon->buttonState(OtherButtonItem::ButtonId::Mon));
+        QTRY_COMPARE_WITH_TIMEOUT(monMeter->grab().toImage().pixelColor(10,20),mon->button(mon->indexOf(OtherButtonItem::ButtonId::Mon)).onColour,500);
+        capture(monMeter,"single-monitor-on");capture(qobject_cast<MeterWidget*>(host->entryRows()[0].widget.data()),"single-mox-unavailable");capture(qobject_cast<MeterWidget*>(host->entryRows()[3].widget.data()),"legacy-other-buttons");
+        auto* moxItem=qobject_cast<OtherButtonItem*>(host->entryRows()[0].item.data());QVERIFY(moxItem);QVERIFY(!moxItem->isButtonAvailable(OtherButtonItem::ButtonId::Mox));QSignalSpy command(moxItem,&OtherButtonItem::otherButtonClicked);
+        QTest::mouseClick(qobject_cast<MeterWidget*>(host->entryRows()[0].widget.data()),Qt::LeftButton,Qt::NoModifier,QPoint(55,20));QCOMPARE(command.count(),0);QVERIFY(!model->isTune());
+        // Model-only offline slices give the real GUI dispatcher two distinguishable targets.
+        model->setBoardForTest(HPSDRHW::Saturn);model->configureStreamPool(5,5,192000);model->setConnectionStateForTest(ConnectionState::Connected);while(model->slices().size()<2) {QVERIFY(model->addSlice()>=0);}
+        auto* a=model->sliceById(0);auto* b=model->sliceById(1);QVERIFY(a && b);QSignalSpy aMute(a,&SliceModel::mutedChanged),bMute(b,&SliceModel::mutedChanged);
+        auto* muteMeter=qobject_cast<MeterWidget*>(host->entryRows()[2].widget.data());QTest::mouseClick(muteMeter,Qt::LeftButton,Qt::NoModifier,QPoint(55,20));QCOMPARE(aMute.count(),1);QCOMPARE(bMute.count(),0);
+        document=store->snapshot();document.containers[0].contents[2].context["sessionId"]="foreign-session";document.containers[0].contents[1].context["sessionId"]="foreign-session";document.containers[0].contents[3].context["sessionId"]="foreign-session";document.containers[0].contents[0].context["sessionId"]="foreign-session";QPointer<MeterItem> old=host->entryRows()[2].item;
+        QCOMPARE(manager->commitWorkspace(document,document.revision).status,CommitStatus::Saved);QVERIFY(old.isNull());host=manager->contentHost(id);auto* foreign=qobject_cast<OtherButtonItem*>(host->entryRows()[2].item.data());QVERIFY(foreign);QVERIFY(!foreign->isButtonAvailable(OtherButtonItem::ButtonId::Mute));
+        QTest::mouseClick(qobject_cast<MeterWidget*>(host->entryRows()[2].widget.data()),Qt::LeftButton,Qt::NoModifier,QPoint(55,20));QCOMPARE(aMute.count(),1);QCOMPARE(bMute.count(),0);
+        auto* foreignMon=qobject_cast<OtherButtonItem*>(host->entryRows()[1].item.data());QVERIFY(foreignMon);QVERIFY(!foreignMon->isButtonAvailable(OtherButtonItem::ButtonId::Mon));
+        QTest::mouseClick(qobject_cast<MeterWidget*>(host->entryRows()[1].widget.data()),Qt::LeftButton,Qt::NoModifier,QPoint(55,20));QCOMPARE(changed.count(),1);
+        auto* foreignGroup=qobject_cast<OtherButtonItem*>(host->entryRows()[3].item.data());QVERIFY(foreignGroup);QVERIFY(!foreignGroup->isButtonAvailable(OtherButtonItem::ButtonId::Mon));QVERIFY(!foreignGroup->buttonUnavailableReason(foreignGroup->indexOf(OtherButtonItem::ButtonId::Mon)).isEmpty());
+        foreignGroup->otherButtonClicked(int(OtherButtonItem::ButtonId::Mon));foreignMon->otherButtonClicked(int(OtherButtonItem::ButtonId::Mon));QCOMPARE(changed.count(),1);
+        int txRequests=0;ContainerButtonDispatcher::Hooks fakeHooks;fakeHooks.desktopHosting=[]{return true;};fakeHooks.desktopMoxOn=[]{return false;};fakeHooks.desktopTuneOn=[]{return false;};
+        const auto fakeRequest=[&](bool){++txRequests;};fakeHooks.requestDesktopMox=fakeRequest;fakeHooks.requestDesktopTune=fakeRequest;fakeHooks.requestDesktopTwoTone=fakeRequest;ContainerButtonDispatcher fakeDispatcher(model,std::move(fakeHooks));
+        auto* foreignTx=qobject_cast<OtherButtonItem*>(host->entryRows()[0].item.data());QVERIFY(foreignTx);
+        connect(foreignTx,&OtherButtonItem::otherButtonClicked,this,[&](int action){fakeDispatcher.click(static_cast<OtherButtonItem::ButtonId>(action),1);});
+        QTest::mouseClick(qobject_cast<MeterWidget*>(host->entryRows()[0].widget.data()),Qt::LeftButton,Qt::NoModifier,QPoint(55,20));QCOMPARE(txRequests,0);
+        connect(foreignGroup,&OtherButtonItem::otherButtonClicked,this,[&](int action){fakeDispatcher.click(static_cast<OtherButtonItem::ButtonId>(action),1);});
+        auto* foreignGroupMeter=qobject_cast<MeterWidget*>(host->entryRows()[3].widget.data());QSignalSpy txRefused(foreignGroup,&ButtonBoxItem::unavailableButtonClicked);
+        for(const int x:{105,175,245}) {QTest::mouseClick(foreignGroupMeter,Qt::LeftButton,Qt::NoModifier,QPoint(x,30));}QCOMPARE(txRequests,0);QCOMPARE(txRefused.count(),3);
+        RadioInfo currentRadio;currentRadio.macAddress="02:00:00:00:00:01";model->setLastRadioInfoForTest(currentRadio);QVERIFY(!model->currentRadioMac().isEmpty());
+        document=store->snapshot();document.containers[0].contents[3].context["sessionId"]=model->currentRadioMac();document.containers[0].contents[3].context["sliceId"]=99;document.containers[0].contents[1].context.remove("sessionId");QCOMPARE(manager->commitWorkspace(document,document.revision).status,CommitStatus::Saved);
+        host=manager->contentHost(id);auto* validGroup=qobject_cast<OtherButtonItem*>(host->entryRows()[3].item.data());QVERIFY(validGroup);QVERIFY(validGroup->isButtonAvailable(OtherButtonItem::ButtonId::Mon));validGroup->otherButtonClicked(int(OtherButtonItem::ButtonId::Mon));QCOMPARE(changed.count(),2);
+        // Unsupported and malformed scope refuse even direct forwarded signals.
+        auto* validMon=qobject_cast<OtherButtonItem*>(host->entryRows()[1].item.data());validMon->setProperty("containerUnsupportedSource",true);validMon->setProperty("unsupportedSourceReason","Unsupported synthetic source");QSignalSpy unsupported(manager->container(id),&ContainerWidget::unavailableButtonClicked);validMon->otherButtonClicked(int(OtherButtonItem::ButtonId::Mon));QCOMPARE(changed.count(),2);QCOMPARE(unsupported.count(),1);manager->container(id)->rxSourceChanged(manager->container(id)->rxSource());QVERIFY(!validMon->isButtonAvailable(OtherButtonItem::ButtonId::Mon));
+        validMon->setProperty("containerUnsupportedSource",false);validMon->setProperty("containerSourceContext",QJsonObject{{"sessionId",17}});validMon->otherButtonClicked(int(OtherButtonItem::ButtonId::Mon));QCOMPARE(changed.count(),2);manager->container(id)->rxSourceChanged(manager->container(id)->rxSource());QVERIFY(!validMon->isButtonAvailable(OtherButtonItem::ButtonId::Mon));
+        model->setConnectionStateForTest(ConnectionState::Disconnected);
+        ContainerArrangeController arrange(*store,manager);const auto original=store->snapshot().containers[0].contents[1];
+        QVERIFY(arrange.popOut(monitor.id).ok);QCOMPARE(store->snapshot().containers.size(),2);QVERIFY(arrange.returnEntry(monitor.id).ok);
+        document=store->snapshot();const auto returned=document.containers[0].contents[1];QCOMPARE(returned.id,original.id);QCOMPARE(returned.config,original.config);QCOMPARE(returned.context,original.context);QCOMPARE(returned.freeCanvasRect(),original.freeCanvasRect());
+        QVERIFY(arrange.placeFreeCanvas(monitor.id,QRectF(410,20,144,48),*returned.freeCanvasRect()).ok);document=store->snapshot();document.containers[0].locked=true;QCOMPARE(manager->commitWorkspace(document,document.revision).status,CommitStatus::Saved);
+        QVERIFY(!arrange.placeFreeCanvas(monitor.id,QRectF(450,20,144,48),QRectF(410,20,144,48)).ok);QCOMPARE(store->snapshot().containers[0].contents[1].freeCanvasRect(),std::optional<QRectF>(QRectF(410,20,144,48)));
+        const QString captures=qEnvironmentVariable("TASK6_CAPTURE_DIR");if(!captures.isEmpty()) {QVERIFY(manager->container(id)->window()->grab().save(captures+"/independent-controls-workspace.png"));}
+        ContainerWorkspaceStore reloaded(AppSettings::instance());auto loaded=reloaded.load();QVERIFY(loaded.ok);QCOMPARE(loaded.document,store->snapshot());
+    }
     void productionSourcesOfflineCadenceNativeMovesAndShutdown()
     {
         auto* window=new MainWindow({},nullptr,MainWindow::ConnectionStartup::Deferred);

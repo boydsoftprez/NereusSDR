@@ -70,6 +70,7 @@
 #include "gui/SpectrumWidget.h"
 #include "gui/UnbuiltFeatures.h"
 #include "gui/containers/ContainerButtonDispatcher.h"
+#include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/meters/AntennaButtonItem.h"
 #include "gui/meters/BandButtonItem.h"
@@ -182,6 +183,26 @@ private:
     };
 
 private slots:
+    void independentTransmitControlsUseExactlyOneGuardedExistingHook()
+    {
+        Fixture f;f.model.setConnectionStateForTest(ConnectionState::Connected);
+        ContainerContentRegistry registry;
+        for(const auto& action:QList<QPair<QString,Id>>{{"mox",Id::Mox},{"tune",Id::Tun},{"twoTone",Id::TwoTon}}) {
+            int requests=0;bool on=false;
+            ContainerButtonDispatcher::Hooks hooks;hooks.desktopHosting=[]{return true;};hooks.desktopMoxOn=[&]{return on;};hooks.desktopTuneOn=[&]{return on;};
+            const auto request=[&](bool value){++requests;on=value;};hooks.requestDesktopMox=request;hooks.requestDesktopTune=request;hooks.requestDesktopTwoTone=request;
+            ContainerButtonDispatcher dispatcher(&f.model,std::move(hooks));const auto entry=registry.makeEntry("control."+action.first);
+            for(const auto mode:{ContentRenderMode::Preview,ContentRenderMode::Live}) {
+                std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr,mode));auto* other=qobject_cast<OtherButtonItem*>(item.get());QVERIFY(other);other->setRect(0,0,1,1);
+                connect(other,&OtherButtonItem::otherButtonClicked,this,[&](int id){QVERIFY(dispatcher.click(Id(id),kSliceA).isEmpty());});dispatcher.apply(other,kSliceA);
+                QMouseEvent press(QEvent::MouseButtonPress,QPointF(55,20),QPointF(55,20),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);QMouseEvent release(QEvent::MouseButtonRelease,QPointF(55,20),QPointF(55,20),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+                other->handleMousePress(&press,112,44);other->handleMouseRelease(&release,112,44);QCOMPARE(requests,mode==ContentRenderMode::Live?1:0);
+                QVERIFY(!f.model.moxController()->isMox());QVERIFY(!f.model.isTune());QVERIFY(!f.model.twoToneController()->isActive());
+                if(mode==ContentRenderMode::Live) {f.model.setRxOnly(true);dispatcher.apply(other,kSliceA);QVERIFY(!other->isButtonAvailable(action.second));QSignalSpy refused(other,&ButtonBoxItem::unavailableButtonClicked);other->handleMousePress(&press,112,44);other->handleMouseRelease(&release,112,44);QCOMPARE(requests,1);QCOMPARE(refused.count(),1);f.model.setRxOnly(false);}
+            }
+        }
+        f.model.setConnectionStateForTest(ConnectionState::Disconnected);
+    }
     void initTestCase()
     {
         // The engine opens no real sound device in test mode.

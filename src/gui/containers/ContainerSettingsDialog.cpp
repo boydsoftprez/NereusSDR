@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Compact independent control creation geometry by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Explicit readable dropdown selection by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — New-copy return homes and retained unsupported preferences by
@@ -125,6 +127,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ContainerSettingsDialog.h"
+#include "ContainerControlCatalog.h"
 #include "ContainerContentRegistry.h"
 #include "ContainerManager.h"
 #include "ContainerContentHost.h"
@@ -1555,7 +1558,9 @@ void ContainerSettingsDialog::addNewItem(const QString& typeTag)
         entry=m_manager->contentRegistry()->makeEntry(typeTag);
         for(auto& c:draft.containers) { if(c.id==m_selectedId) {if(c.locked) {m_transactionStatus->setText(tr("Arrangement is locked."));return;} c.contents.append(entry); if(c.layout==ContentLayout::FreeCanvas) {
             double bottom=0;for(const auto& sibling:c.contents) {if(auto rect=sibling.freeCanvasRect()) {bottom=qMax(bottom,rect->bottom());}}
-            c.contents.last().setFreeCanvasRect(QRectF(0,bottom+20,qMax(320,m_preview?m_preview->width():320),160));
+            QSize initial(qMax(320,m_preview?m_preview->width():320),160);
+            if(typeTag.startsWith("control.")) {initial=singleContainerControlSize();}
+            c.contents.last().setFreeCanvasRect(QRectF(QPointF(0,bottom+20),QSizeF(initial)));
         } else if(typeTag.startsWith("applet:")) {c.layout=ContentLayout::VerticalStack;} break; } }
         m_editSession->setDraft(draft); loadCurrentDraft(); m_itemList->setCurrentRow(m_itemList->count()-1); return;
     }

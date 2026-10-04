@@ -1,8 +1,11 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-03 — Usable independent native control sizing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include "ContainerContentHost.h"
+#include "ContainerControlCatalog.h"
 #include "ContainerArrangeController.h"
 #include "ContainerWorkspaceStore.h"
 #include "FreeCanvasSurface.h"
@@ -269,7 +272,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         }
         item->setProperty("containerSourceContext", row.context);
         item->setProperty("containerEntryId", entry.id);
-        int height = 72;
+        int height = isSingleContainerControl(item) ? singleContainerControlSize().height() : 72;
         if (auto* face = qobject_cast<BarPresetItem*>(item)) {
             height = face->preferredFaceHeight(); run->setMinimumWidth(qMax(run->minimumWidth(),face->minimumFaceSize().width()));
         }
@@ -331,7 +334,7 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                 if(auto* item=m_registry.createMeterItem(entry,meter.get())) {
                     item->clearStackMetadata();item->setRect(0,0,1,1);
                     item->setProperty("containerEntryId",entry.id);item->setProperty("containerSourceContext",row.context);
-                    QSize minimum(24,24);
+                    QSize minimum = isSingleContainerControl(item) ? singleContainerControlMinimum() : QSize(24,24);
                     if(auto* face=qobject_cast<BarPresetItem*>(item)) {minimum=face->minimumFaceSize();}
                     if(auto* face=qobject_cast<CompositePresetItem*>(item)) {
                         minimum=face->minimumFaceSize();for(auto* child:face->internalItems()) {child->setProperty("containerSourceContext",row.context);child->setProperty("containerEntryId",entry.id);}

@@ -9,6 +9,8 @@
 // Modification history (NereusSDR):
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-03 — Bounded container single-control viewport sizing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -64,6 +66,7 @@ mw0lge@grange-lane.co.uk
 #include <QPainter>
 #include <QMouseEvent>
 #include <QtMath>
+#include <QVariant>
 
 namespace NereusSDR {
 
@@ -173,16 +176,24 @@ QRectF ButtonBoxItem::buttonRect(int index, const QRectF& area) const
     // From Thetis: button_width = ((1 - 0.04) / columns) - margin - border
     const float pad = 0.04f;
     const float cellW = (area.width() * (1.0f - pad)) / m_columns;
-    const float cellH = cellW * m_heightRatio;
+    // Reference: Thetis MeterManager.cs:39027-39042 [v2.10.3.15] lays out
+    // native cells against available width and height. NereusSDR-original:
+    // only a supported single OTHERBTNS cell marked by
+    // the container factory/editor fits its viewport. Legacy groups retain
+    // the upstream aspect ratio. Paint and hit testing share this rectangle.
+    const bool singleControl = m_columns == 1 && m_visibleBits != 0
+        && (m_visibleBits & (m_visibleBits - 1)) == 0
+        && property("containerSingleControl").toBool();
+    const float cellH = singleControl ? area.height() * (1.0f - pad) : cellW * m_heightRatio;
     const float bw = cellW - (m_margin + m_borderWidth) * area.width();
-    const float bh = cellH - (m_margin + m_borderWidth) * area.width();
+    const float bh = cellH - (m_margin + m_borderWidth) * (singleControl ? area.height() : area.width());
 
     const float xOff = area.x() + (pad / 2.0f) * area.width();
     const float yOff = area.y() + (pad / 2.0f) * area.height();
 
     return QRectF(
         xOff + col * cellW + (m_margin * area.width() / 2.0f),
-        yOff + row * cellH + (m_margin * area.width() / 2.0f),
+        yOff + row * cellH + (m_margin * (singleControl ? area.height() : area.width()) / 2.0f),
         bw, bh
     );
 }
