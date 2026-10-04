@@ -10,14 +10,21 @@ import Testing
     private actor SuspendedAuthenticator: StationAuthenticator {
         private var continuation: CheckedContinuation<Void, Never>?
         private var didEnter = false
+        private var released = false
+        let entry = TestPhase<Void>()
         var entered: Bool { didEnter }
         func authRequest(stationHello: LinkMessage.Hello, certificateSHA256: Data) async throws
             -> LinkMessage.AuthRequest {
-            didEnter = true
-            await withCheckedContinuation { continuation = $0 }
+            await withCheckedContinuation {
+                continuation = $0
+                didEnter = true
+                entry.finish(.success(()))
+                if released { continuation?.resume(); continuation = nil }
+            }
             return LinkMessage.AuthRequest(token: "never-send")
         }
         func resume() {
+            released = true
             continuation?.resume()
             continuation = nil
         }
@@ -248,10 +255,19 @@ import Testing
         _ = try await lease.inspect(clock: ManualLinkClock(), deadline: .seconds(30))
         let signer = SuspendedAuthenticator()
         let session = StationSession(trust: .certificate(pinSHA256: inner.digest),
-                                     authenticator: signer, transport: { lease })
+                                     authenticator: signer, clock: ManualLinkClock(), transport: { lease })
         let connecting = Task { await session.connect() }
-        let deadline = Date().addingTimeInterval(2)
-        while !(await signer.entered) && Date() < deadline { await Task.yield() }
+        do {
+            try await signer.entry.wait(until: ContinuousClock.now + .seconds(2))
+        } catch {
+            // A missing signer entry fails this phase; release even if it
+            // arrives later so cleanup cannot leave authentication held.
+            lease.close()
+            connecting.cancel()
+            await signer.resume()
+            await session.disconnect()
+            throw error
+        }
         #expect(await signer.entered)
         lease.close()
         await signer.resume()

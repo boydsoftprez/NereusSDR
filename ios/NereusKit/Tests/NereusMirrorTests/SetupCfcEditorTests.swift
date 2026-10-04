@@ -427,7 +427,7 @@ final class CfcTestClock: Clock, @unchecked Sendable {
     }
 
     @Test func anEditMadeWhileASendIsOutIsSentNextWithTheNewRevision() async throws {
-        let rig = Rig()
+        let rig = Rig(commandClock: ManualLinkClock())
         try await rig.connect()
         try rig.edit { $0.postEqGainDb = 1 }
         await rig.endPause()
@@ -467,7 +467,7 @@ final class CfcTestClock: Clock, @unchecked Sendable {
     @Test func anEditHeldBehindATakenSendIsRebasedOnTheProfileTheCoreReturned() async throws {
         // The Core's answer arrives before its transmit delta: the held
         // edit follows on from the profile the answer carries.
-        let rig = Rig()
+        let rig = Rig(commandClock: ManualLinkClock())
         try await rig.connect()
         try rig.edit { $0.precompDb = 1 }
         await rig.endPause()

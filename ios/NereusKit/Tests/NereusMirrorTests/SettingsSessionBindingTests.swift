@@ -178,7 +178,7 @@ private final class MutableSettingsRoute: @unchecked Sendable {
         let hold = SendHold()
         let route = MutableSettingsRoute()
         let proxy = SettingsProxyClient(send: route.send,
-                                        captureSender: { route.capture(hold: hold) })
+                                        captureSender: { route.capture(hold: hold) }, clock: ManualLinkClock())
         authenticate(proxy, value: "600")
         let identity = try #require(proxy.currentSnapshotIdentity)
         let authority = CommandSendPermit()

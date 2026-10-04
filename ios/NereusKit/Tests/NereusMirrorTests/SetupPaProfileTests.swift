@@ -310,7 +310,7 @@ import Testing
 
     @Test(arguments: ["revision", "profile", "permissions", "description", "session", "transmit", "object"])
     func aChangedScopeCancelsAQueuedCellAtFinalHandoff(change: String) async throws {
-        let rig = Rig()
+        let rig = Rig(clock: ManualLinkClock())
         try await rig.connect()
         let admission = try rig.admit("table", band: 5, column: "adjust1")
         let hold = HandoffHold()

@@ -11,13 +11,15 @@ final class SilentTLSListener: @unchecked Sendable {
     private let queue = DispatchQueue(label: "NereusSDR.tests.silent-tls")
     private let listener: NWListener
     private let host: NWEndpoint.Host
+    private let observe: @Sendable (String) -> Void
     private let lock = NSLock()
     private var connections: [NWConnection] = []
     private var buffers: [ObjectIdentifier: Data] = [:]
     private var requests: [String] = []
 
     /// `address` is "::1" or "127.0.0.1".
-    init(address: String) throws {
+    init(address: String, observe: @escaping @Sendable (String) -> Void = { _ in }) throws {
+        self.observe = observe
         let certificate = try TestCertificate.make()
         let tls = NWProtocolTLS.Options()
         guard let identity = sec_identity_create(certificate.identity) else {
@@ -66,6 +68,11 @@ final class SilentTLSListener: @unchecked Sendable {
     var receivedRequests: [String] { lock.withLock { requests } }
 
     private func accept(_ connection: NWConnection) {
+        let identity = ObjectIdentifier(connection)
+        observe("TLS listener accepted \(identity)")
+        connection.stateUpdateHandler = { [observe] state in
+            observe("TLS listener state \(identity): \(state)")
+        }
         lock.withLock { connections.append(connection) }
         connection.start(queue: queue)
         receive(on: connection)
@@ -76,12 +83,16 @@ final class SilentTLSListener: @unchecked Sendable {
             guard let self else {
                 return
             }
+            if error != nil || isComplete {
+                self.observe("TLS receive socket completed \(ObjectIdentifier(connection)): \(String(describing: error))")
+            }
             if let content {
                 let key = ObjectIdentifier(connection)
                 self.lock.withLock {
                     var buffer = self.buffers[key, default: Data()]
                     buffer.append(content)
                     if let end = buffer.range(of: Data("\r\n\r\n".utf8)) {
+                        self.observe("TLS listener opening entry \(ObjectIdentifier(connection))")
                         self.requests.append(String(decoding: buffer[..<end.lowerBound], as: UTF8.self))
                         buffer = Data(buffer[end.upperBound...])
                     }

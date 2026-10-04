@@ -16,9 +16,9 @@ import Testing
 @Suite struct RecordStreamClientTests {
     private let sent = SentMessages()
 
-    private func rig(recordStreamVersion: Int64 = 1) -> (RecordStreamClient, MirrorStore, CommandClient) {
+    private func rig(recordStreamVersion: Int64 = 1, clock: any LinkClock = SystemLinkClock()) -> (RecordStreamClient, MirrorStore, CommandClient) {
         let mirror = MirrorStore(send: sent.sender)
-        let commands = CommandClient(send: sent.sender)
+        let commands = CommandClient(clock: clock, send: sent.sender)
         mirror.apply(FixtureReplay.stationHello())
         mirror.apply(FixtureReplay.capabilities([RecordStreamClient.capabilityName: .i64(recordStreamVersion)]))
         return (RecordStreamClient(mirror: mirror, commands: commands), mirror, commands)
@@ -147,16 +147,24 @@ import Testing
     }
 
     @Test func theCoresRefusalIsKeptForItsStream() async throws {
-        let (client, _, commands) = rig()
+        let (client, _, commands) = rig(clock: ManualLinkClock())
         client.want("notAStream", backlog: 10)
         await ready(client, commands)
         #expect(await sent.settle(untilCount: 1))
         let invoke = try #require(invokes().first)
+        let answered = try #require(client.recordCommandTask)
         await commands.receive(.commandResult(LinkMessage.CommandResult(
             verb: invoke.verb, id: invoke.id, accepted: false, reason: "The Core does not keep that list.",
             affected: [], values: nil)))
-        for _ in 0..<50 where client.refusals["notAStream"] == nil {
-            await Task.yield()
+        let consumed = TestPhase<Void>()
+        let observer = Task { await answered.value; consumed.finish(.success(())) }
+        defer { observer.cancel() }
+        do { try await consumed.wait(until: ContinuousClock.now + .seconds(10)) }
+        catch {
+            answered.cancel()
+            await commands.handle(.stateChanged(.stopped))
+            client.handle(.stateChanged(.stopped))
+            throw error
         }
         #expect(client.refusals["notAStream"] == "The Core does not keep that list.")
     }
