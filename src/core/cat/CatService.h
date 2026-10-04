@@ -56,6 +56,8 @@ Added extended CAT commands for APF funtions - May 2017.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - Independently implemented native PTY lifecycle and transport diagnostics,
 //              same author and AI tooling; no new upstream port.
+// 2026-10-04 - Native separate Hamlib dialect and guarded lifecycle integration,
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; no new Thetis port.
 #pragma once
 #include "CatModelAdapter.h"
 #include "CatTxCoordinator.h"
@@ -108,6 +110,9 @@ public:
     void sendToGuid(const QUuid&, const QByteArray&);
     QList<quint64> sessionIds(int channel) const;
     int clientCount(int channel) const;
+    int rigctldClientCount(int channel) const;
+    QHostAddress rigctldBoundAddress(int channel) const;
+    quint16 rigctldBoundPort(int channel) const;
     QHostAddress boundAddress(int channel) const;
     quint16 boundPort(int channel) const;
     void applyPttSample(int channel, bool cts, bool dsr);
@@ -128,6 +133,7 @@ signals:
     void sessionClosed(quint64 sessionId);
     void radioDisconnected();
     void clientCountChanged(int channel, int count);
+    void rigctldClientCountChanged(int channel, int count);
     void pttStateChanged(QString state);
     void messageLogged(int channel, bool inbound, QByteArray bytes);
 private:
@@ -137,6 +143,7 @@ private:
         quint64 revision{0};
         QString state{"Stopped"};
         std::shared_ptr<CatTcpTransport> tcp;
+        std::shared_ptr<CatTcpTransport> rigctld;
         std::shared_ptr<CatSerialTransport> serial;
         std::shared_ptr<CatPtyTransport> pty;
         quint64 ptySession{0};
@@ -157,6 +164,7 @@ private:
     void closeSerialChannel(int channel, const std::shared_ptr<CatSerialTransport>& transport);
     void startChannel(int channel);
     void startPty(int channel);
+    void startRigctld(int channel);
     void setTransportState(int channel, CatTransportKind kind, const QString& state);
     void updateChannelState(int channel);
     void stopChannel(int channel);

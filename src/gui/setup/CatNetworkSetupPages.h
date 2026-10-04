@@ -46,6 +46,8 @@ private:
         QComboBox* primary{}; QComboBox* secondary{};
         QLineEdit* address{}; QSpinBox* port{}; QCheckBox* pty{};
         QLabel* status{}; QLabel* path{};
+        QCheckBox* rigctld{}; QLineEdit* rigAddress{}; QSpinBox* rigPort{};
+        QComboBox* dialect{}; QLabel* rigStatus{};
     };
     Row m_rows[4];
     QPointer<CatService> m_service;

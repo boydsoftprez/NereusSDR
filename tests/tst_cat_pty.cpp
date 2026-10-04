@@ -57,14 +57,22 @@ private slots:
         QVERIFY(!service.isListening(1));
 #endif
     }
-    void unavailableDialectDoesNotMaskSibling() {
+    void deliveredDialectKeepsSibling() {
         RadioModel model; CatService& service = *model.catService();
         CatEndpointConfig config = endpoint(); config.ptyDialect = "Rigctld";
         QTcpServer probe; QVERIFY(probe.listen(QHostAddress::LocalHost, 0)); config.tcpEnabled = true; config.tcpPort = probe.serverPort(); probe.close();
         QVERIFY(service.applyChannelConfig(1, config)); service.startConfigured();
-        QVERIFY(service.ptySlavePath(1).isEmpty()); QVERIFY(service.channelState(1).contains("unavailable"));
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+        QVERIFY(!service.ptySlavePath(1).isEmpty()); QCOMPARE(service.channelState(1),QString("Listening"));
+#else
+        QVERIFY(service.ptySlavePath(1).isEmpty());
+#endif
         QVERIFY(service.isListening(1)); QCOMPARE(service.transportState(1, CatTransportKind::Tcp), QString("Listening"));
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+        QCOMPARE(service.transportState(1, CatTransportKind::Pty),QString("Listening"));
+#else
         QVERIFY(service.transportState(1, CatTransportKind::Pty).contains("unavailable"));
+#endif
     }
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
     void realBytesBindingsAndRawTerminal() {

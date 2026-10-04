@@ -60,7 +60,7 @@ bool CatPtyTransport::isOpen() const { return m_master && m_master->value >= 0; 
 bool CatPtyTransport::start(int channel, const CatEndpointConfig& config) {
     stop(); m_error.clear();
     if (channel < 1 || channel > 4) { fail("Invalid PTY channel"); return false; }
-    if (config.ptyDialect != "Thetis") { fail("Rigctld PTY backend unavailable"); return false; }
+    if (config.ptyDialect != "Thetis" && config.ptyDialect != "Rigctld") { fail("Invalid PTY dialect"); return false; }
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
     auto master = std::make_unique<Descriptor>(::posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC));
     if (master->value < 0) { fail(systemError("posix_openpt")); return false; }

@@ -58,7 +58,10 @@ Added extended CAT commands for APF funtions - May 2017.
 //              same author and AI tooling; no new upstream port.
 // 2026-10-04 - Native live configuration, scoped write/lifecycle supersession and isolated Tester,
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; no new upstream port.
+// 2026-10-04 - Native separate Hamlib dialect and guarded lifecycle integration,
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; no new Thetis port.
 #include "CatService.h"
+#include "RigctlProtocol.h"
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"
 #include "models/RadioModel.h"
@@ -292,9 +295,51 @@ void CatService::startChannel(int channel)
     if (!lifetime || (run != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || !m_started) { return; }
     if (config.ptyEnabled) { startPty(channel); }
     if (!lifetime || (run != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || !m_started) { return; }
-    if (config.rigctldEnabled) { setTransportState(channel, CatTransportKind::Rigctld, "Rigctld backend unavailable"); }
+    if (config.rigctldEnabled) { startRigctld(channel); }
     if (!lifetime || (run != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || !m_started) { return; }
     updateChannelState(channel);
+}
+void CatService::startRigctld(int channel)
+{
+    Channel& endpoint = m_channels[channel - 1];
+    const quint64 revision = endpoint.revision;
+    if (endpoint.config.rigctldEnabled) {
+        const auto tcp = std::make_shared<CatTcpTransport>();
+        endpoint.rigctld = tcp;
+        const std::weak_ptr<CatTcpTransport> weak(tcp);
+        const QPointer<CatService> self(this);
+        const quint64 generation = m_lifecycleGeneration;
+        connect(tcp.get(), &CatTcpTransport::clientAccepted, this, [this, self, weak, channel, generation, revision](QTcpSocket* socket) {
+            const auto transport = weak.lock();
+            if (!self || !transport || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || !m_started
+                || m_channels[channel - 1].rigctld != transport) { return; }
+            const quint64 opened = createTransportSession(channel, CatTransportKind::Rigctld,
+                [weak](quint64 id, const QByteArray& bytes) { const auto owner = weak.lock(); return owner && owner->writeBytes(id, bytes); },
+                [weak](quint64 id) { const auto owner = weak.lock(); if (owner) { owner->closeSession(id); } });
+            if (!opened || !transport->attachSession(opened, socket)) {
+                if (self) { closeSession(opened); }
+                return;
+            }
+            if (!self || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || !session(opened)) { return; }
+        });
+        connect(tcp.get(), &CatTcpTransport::bytesReceived, this, [this, weak](quint64 id, const QByteArray& bytes) {
+            const auto transport = weak.lock();
+            if (transport) { processBytes(id, bytes); }
+        });
+        connect(tcp.get(), &CatTcpTransport::closeRequested, this, [this, weak](quint64 id) {
+            const auto transport = weak.lock();
+            if (transport) { closeSession(id); }
+        });
+        connect(tcp.get(), &CatTcpTransport::clientCountChanged, this, [this, weak, channel, generation, revision](int count) {
+            const auto transport = weak.lock();
+            if (transport && generation == m_lifecycleGeneration && revision == m_channels[channel - 1].revision && m_channels[channel - 1].rigctld == transport) {
+                emit rigctldClientCountChanged(channel, count);
+            }
+        });
+        if (!tcp->start(QHostAddress(endpoint.config.rigctldBindAddress), static_cast<quint16>(endpoint.config.rigctldPort))) {
+            setTransportState(channel, CatTransportKind::Rigctld, QStringLiteral("Rigctld error: ") + tcp->errorString());
+        } else { setTransportState(channel, CatTransportKind::Rigctld, QStringLiteral("Listening")); }
+    }
 }
 QString CatService::ptySlavePath(int channel) const {
     return validChannel(channel) && m_channels[channel - 1].pty ? m_channels[channel - 1].pty->slavePath() : QString();
@@ -378,6 +423,7 @@ void CatService::stopChannel(int channel)
 {
     const quint64 revision = m_channels[channel - 1].revision;
     const auto tcp = std::exchange(m_channels[channel - 1].tcp, {});
+    const auto rigctld = std::exchange(m_channels[channel - 1].rigctld, {});
     const auto serial = std::exchange(m_channels[channel - 1].serial, {});
     const auto pty = std::exchange(m_channels[channel - 1].pty, {});
     m_channels[channel - 1].ptySession = 0;
@@ -400,6 +446,7 @@ void CatService::stopChannel(int channel)
     if (serial) { serial->stop(); }
     if (pty) { pty->stop(); }
     if (tcp) { tcp->stop(); }
+    if (rigctld) { rigctld->stop(); }
     if (input && input->separate) { input->transport->stop(); }
     if (!self) { return; }
     for (quint64 id : sessions.keys()) { emit sessionClosed(id); if (!self) { return; } }
@@ -409,6 +456,8 @@ void CatService::stopChannel(int channel)
     if (!self || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision)) { return; }
     if (input && !m_ptt) { setPttState("Stopped"); }
     if (!self || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision)) { return; }
+    emit rigctldClientCountChanged(channel, 0);
+    if (!self || generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) { return; }
     emit clientCountChanged(channel, 0);
     if (!self || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision)) { return; }
     setState(channel, QStringLiteral("Stopped"));
@@ -432,6 +481,8 @@ void CatService::stopAll()
     for (int index = 0; index < 4; ++index) { serials[index] = std::exchange(m_channels[index].serial, {}); }
     std::array<std::shared_ptr<CatTcpTransport>, 4> transports;
     for (int index = 0; index < 4; ++index) { transports[index] = std::exchange(m_channels[index].tcp, {}); }
+    std::array<std::shared_ptr<CatTcpTransport>, 4> rigctldTransports;
+    for (int index = 0; index < 4; ++index) { rigctldTransports[index] = std::exchange(m_channels[index].rigctld, {}); }
     // Detach old sessions, registrations, buffers and pending reports before cancellation callbacks.
     m_reporter->reset();
     for (const auto& current : sessions) { current->clearRuntime(); }
@@ -442,6 +493,7 @@ void CatService::stopAll()
     for (const auto& pty : ptys) { if (pty) { pty->stop(); } }
     if (ptt && ptt->separate) { ptt->transport->stop(); }
     for (const auto& transport : transports) { if (transport) { transport->stop(); } }
+    for (const auto& transport : rigctldTransports) { if (transport) { transport->stop(); } }
     if (!self) { return; }
     for (quint64 id : sessions.keys()) {
         emit sessionClosed(id);
@@ -452,6 +504,8 @@ void CatService::stopAll()
     if (!self || generation != m_lifecycleGeneration) { return; }
     for (int channel = 1; channel <= 4; ++channel) {
         emit ptyPathChanged(channel, {});
+        if (!self || generation != m_lifecycleGeneration) { return; }
+        emit rigctldClientCountChanged(channel, 0);
         if (!self || generation != m_lifecycleGeneration) { return; }
         emit clientCountChanged(channel, 0);
         if (!self || generation != m_lifecycleGeneration) { return; }
@@ -464,7 +518,19 @@ bool CatService::isListening(int channel) const
     if (!validChannel(channel)) { return false; }
     const Channel& endpoint = m_channels[channel - 1];
     return (endpoint.tcp && endpoint.tcp->isListening()) || (endpoint.serial && endpoint.serial->isOpen())
-        || (endpoint.pty && endpoint.pty->isOpen());
+        || (endpoint.pty && endpoint.pty->isOpen()) || (endpoint.rigctld && endpoint.rigctld->isListening());
+}
+int CatService::rigctldClientCount(int channel) const
+{
+    return validChannel(channel) && m_channels[channel - 1].rigctld ? m_channels[channel - 1].rigctld->clientCount() : 0;
+}
+QHostAddress CatService::rigctldBoundAddress(int channel) const
+{
+    return validChannel(channel) && m_channels[channel - 1].rigctld ? m_channels[channel - 1].rigctld->boundAddress() : QHostAddress();
+}
+quint16 CatService::rigctldBoundPort(int channel) const
+{
+    return validChannel(channel) && m_channels[channel - 1].rigctld ? m_channels[channel - 1].rigctld->boundPort() : 0;
 }
 int CatService::clientCount(int channel) const
 {
@@ -569,7 +635,11 @@ quint64 CatService::createTransportSession(int channel, CatTransportKind kind,
 {
     if (m_destroying || !m_started || !validChannel(channel)) { return 0; }
     const quint64 id = ++m_nextSessionId;
-    const auto current = std::make_shared<CatSession>(id, channel, kind, channelConfig(channel).binding);
+    const CatEndpointConfig config = channelConfig(channel);
+    const CatWireDialect dialect = kind == CatTransportKind::Rigctld || (kind == CatTransportKind::Pty && config.ptyDialect == "Rigctld")
+        ? CatWireDialect::Rigctld : CatWireDialect::Thetis;
+    const auto current = std::make_shared<CatSession>(id, channel, kind, config.binding, dialect);
+    if (dialect == CatWireDialect::Rigctld) { current->setRigctlProtocol(std::make_shared<RigctlProtocol>(m_adapter, m_txCoordinator, channel, id)); }
     current->setOutputHooks([write = std::move(write), id](const QByteArray& bytes) { return write && write(id, bytes); },
         [close = std::move(close), id] { if (close) { close(id); } });
     m_sessions.insert(id, current);
@@ -613,7 +683,7 @@ CatSession* CatService::session(quint64 id) { return m_sessions.contains(id) ? m
 QByteArray CatService::processFrame(quint64 id, const QByteArray& frame)
 {
     const std::shared_ptr<CatSession> current = m_sessions.value(id);
-    if (m_destroying || !m_started || !current) { return "?;"; }
+    if (m_destroying || !m_started || !current || current->dialect() != CatWireDialect::Thetis) { return "?;"; }
     const CatValidation validation = m_parser.validate(frame);
     if (!validation.request) { return m_parser.formatValidationError(validation, current->context()); }
     const CatRequest& request = *validation.request;
@@ -637,7 +707,9 @@ void CatService::processBytes(quint64 id, const QByteArray& bytes)
     if (m_destroying || !m_started || !current) { return; }
     const QPointer<CatService> self(this);
     const quint64 generation = m_lifecycleGeneration;
-    const QList<QByteArray> frames = current->framer().feed(bytes);
+    const bool rigctld = current->dialect() == CatWireDialect::Rigctld;
+    const auto protocol = current->rigctlProtocol();
+    const QList<QByteArray> frames = rigctld ? current->feedLines(bytes) : current->framer().feed(bytes);
     for (const QByteArray& frame : frames) {
         if (!self || generation != m_lifecycleGeneration || !m_started || m_sessions.value(id) != current) { return; }
         // Empty framer entry is one oversize event; no unbounded noise is logged.
@@ -645,7 +717,9 @@ void CatService::processBytes(quint64 id, const QByteArray& bytes)
             emit messageLogged(current->context().channel, true, frame);
             if (!self || generation != m_lifecycleGeneration || m_sessions.value(id) != current) { return; }
         }
-        const QByteArray result = frame.isEmpty() ? QByteArray("?;") : processFrame(id, frame);
+        const QByteArray result = rigctld
+            ? (frame.isEmpty() ? QByteArray("RPRT -1\n") : protocol->handleLine(QString::fromLatin1(frame)).toLatin1())
+            : (frame.isEmpty() ? QByteArray("?;") : processFrame(id, frame));
         if (!self || generation != m_lifecycleGeneration || !m_started || m_sessions.value(id) != current) { return; }
         if (!result.isEmpty()) { sendToSession(id, result); }
         if (!self) { return; }

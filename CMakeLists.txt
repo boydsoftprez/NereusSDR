@@ -957,6 +957,7 @@ set(CORE_SOURCES
     src/core/cat/CatModelAdapter.cpp
     src/core/cat/CatSettings.cpp
     src/core/cat/CatSession.cpp
+    src/core/cat/RigctlProtocol.cpp
     src/core/cat/CatTxCoordinator.cpp
     src/core/cat/CatRxCommands.cpp
     src/core/cat/CatDspCommands.cpp

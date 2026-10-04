@@ -164,5 +164,6 @@ struct CatGlobalConfig {
     // From Thetis setup.cs:351-354 [v2.10.3.15].
     int pttSerialBaud{CatDefaults::kSerialBaud}; QString pttSerialParity{"None"}; int pttSerialDataBits{CatDefaults::kSerialDataBits}; QString pttSerialStopBits{"1"};
 };
+enum class CatWireDialect { Thetis, Rigctld };
 enum class CatTransportKind { Tcp, Serial, Pty, Rigctld, Tester };
 } // namespace NereusSDR

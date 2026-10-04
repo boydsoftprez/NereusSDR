@@ -210,6 +210,7 @@ void CatApplet::syncFromModel()
     }
     if (!service) { return; }
     const QSignalBlocker tcp(m_tcpBtn),pty(m_ptyBtn);
+    if (available) { m_ptyBtn->setToolTip(tr("Enable %1 PTY for CAT1. Configure all four channels individually in Setup → CAT & Network.").arg(service->channelConfig(1).ptyDialect)); }
     m_tcpBtn->setChecked(service->channelConfig(1).tcpEnabled); m_ptyBtn->setChecked(service->channelConfig(1).ptyEnabled);
     for (int i=0;i<4;++i) {
         const QString state=service->transportState(i+1,CatTransportKind::Tcp);
@@ -220,7 +221,7 @@ void CatApplet::syncFromModel()
         const QString path=service->ptySlavePath(i+1);
         m_ptyPath[i]->setObjectName(QStringLiteral("catPtyPath%1").arg(i+1));
         m_ptyPath[i]->setText(path.isEmpty() ? QStringLiteral("—") : path);
-        m_ptyPath[i]->setToolTip(tr("CAT%1 PTY: %2").arg(i+1).arg(service->transportState(i+1,CatTransportKind::Pty)));
+        m_ptyPath[i]->setToolTip(tr("CAT%1 %2 PTY: %3").arg(i+1).arg(service->channelConfig(i+1).ptyDialect,service->transportState(i+1,CatTransportKind::Pty)));
         m_ptyPath[i]->setTextInteractionFlags(Qt::TextSelectableByMouse);
     }
 }

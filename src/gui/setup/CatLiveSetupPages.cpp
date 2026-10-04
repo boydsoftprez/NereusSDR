@@ -129,32 +129,44 @@ CatChannelSetupPage::CatChannelSetupPage(RadioModel* model, bool serial, QWidget
             row.port=new QSpinBox(group); row.port->setRange(0,65535); row.port->setSpecialValueText(tr("Choose port")); row.port->setObjectName(prefix+"Port"); row.port->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
             grid->addWidget(new QLabel(tr("Listen on:"),group),1,0); grid->addWidget(row.address,1,1,1,2);
             grid->addWidget(new QLabel(tr("Port:"),group),1,3); grid->addWidget(row.port,1,4);
-            row.pty=new QCheckBox(tr("Enable Thetis PTY"),group); row.pty->setObjectName(prefix+"Pty"); row.pty->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle)); grid->addWidget(row.pty,2,0,1,2);
+            row.pty=new QCheckBox(tr("Enable PTY"),group); row.pty->setObjectName(prefix+"Pty"); row.pty->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle)); grid->addWidget(row.pty,2,0,1,2);
 #if !defined(Q_OS_MAC) && !defined(Q_OS_LINUX)
             row.pty->setEnabled(false); row.pty->setToolTip(tr("Native PTYs are available only on macOS and Linux; use a supplied virtual COM device here."));
 #endif
-            row.path=note(group,{}); row.path->setObjectName(prefix+"Path"); row.path->setTextInteractionFlags(Qt::TextSelectableByMouse); grid->addWidget(row.path,2,2,1,3);
+            row.dialect=combo(group,{"Thetis","Rigctld"},prefix+"PtyDialect");
+            grid->addWidget(row.dialect,3,0,1,2);
+            row.rigctld=new QCheckBox(tr("Enable Hamlib rigctld"),group); row.rigctld->setObjectName(prefix+"RigctldEnabled");
+            row.rigctld->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle)); grid->addWidget(row.rigctld,5,0,1,5);
+            row.rigAddress=new QLineEdit(group); row.rigAddress->setObjectName(prefix+"RigctldAddress"); row.rigAddress->setStyleSheet(QString::fromLatin1(Style::kLineEditStyle));
+            row.rigPort=new QSpinBox(group); row.rigPort->setRange(0,65535); row.rigPort->setSpecialValueText(tr("Choose port")); row.rigPort->setObjectName(prefix+"RigctldPort"); row.rigPort->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
+            grid->addWidget(new QLabel(tr("Listen on:"),group),6,0); grid->addWidget(row.rigAddress,6,1,1,2);
+            grid->addWidget(new QLabel(tr("Port:"),group),6,3); grid->addWidget(row.rigPort,6,4);
+            row.rigStatus=note(group,{}); row.rigStatus->setObjectName(prefix+"RigctldStatus"); grid->addWidget(row.rigStatus,7,0,1,5);
+            row.path=note(group,{}); row.path->setObjectName(prefix+"Path"); row.path->setTextInteractionFlags(Qt::TextSelectableByMouse); grid->addWidget(row.path,3,2,1,3);
         }
-        row.status=note(group,{}); row.status->setObjectName(prefix+"Status"); grid->addWidget(row.status,3,0,1,5);
+        row.status=note(group,{}); row.status->setObjectName(prefix+"Status"); grid->addWidget(row.status,serial ? 3 : 4,0,1,5);
         contentLayout()->insertWidget(contentLayout()->count()-1,group);
         connect(row.enabled,&QCheckBox::toggled,this,[this,i] { apply(i+1); });
         if (row.pty) { connect(row.pty,&QCheckBox::toggled,this,[this,i] { apply(i+1); }); }
-        for (QComboBox* widget:{row.primary,row.secondary,row.baud,row.parity,row.bits,row.stops}) {
+        for (QComboBox* widget:{row.primary,row.secondary,row.baud,row.parity,row.bits,row.stops,row.dialect}) {
             if (!widget) { continue; } widget->installEventFilter(this);
             connect(widget,&QComboBox::currentIndexChanged,this,[this,i] { apply(i+1); });
         }
         if (row.device) { row.device->installEventFilter(this); connect(row.device->lineEdit(),&QLineEdit::editingFinished,this,[this,i] { apply(i+1); }); connect(row.device,&QComboBox::activated,this,[this,i] { apply(i+1); }); }
+        if (row.rigctld) { connect(row.rigctld,&QCheckBox::toggled,this,[this,i] { apply(i+1); }); }
+        if (row.rigAddress) { connect(row.rigAddress,&QLineEdit::editingFinished,this,[this,i] { apply(i+1); }); }
+        if (row.rigPort) { row.rigPort->installEventFilter(this); connect(row.rigPort,&QSpinBox::valueChanged,this,[this,i] { apply(i+1); }); }
         if (row.address) { connect(row.address,&QLineEdit::editingFinished,this,[this,i] { apply(i+1); }); }
         if (row.port) { row.port->installEventFilter(this); connect(row.port,&QSpinBox::valueChanged,this,[this,i] { apply(i+1); }); }
     }
     if (!serial) {
-        auto* rigctld=new QCheckBox(tr("Hamlib rigctld"),this); rigctld->setEnabled(false); rigctld->setToolTip(tr("The separate rigctld backend has not been delivered yet.")); contentLayout()->insertWidget(contentLayout()->count()-1,rigctld);
         contentLayout()->insertWidget(contentLayout()->count()-1,note(this,tr("Each channel controls its assigned slice IDs independently of GUI focus. PTY paths are created only while the transport is open.")));
     }
     if (m_service) {
         connect(m_service,&CatService::configurationChanged,this,[this] { syncFromModel(); });
         connect(m_service,&CatService::channelStateChanged,this,[this] { syncFromModel(); });
         connect(m_service,&CatService::clientCountChanged,this,[this] { syncFromModel(); });
+        connect(m_service,&CatService::rigctldClientCountChanged,this,[this] { syncFromModel(); });
         connect(m_service,&CatService::ptyPathChanged,this,[this] { syncFromModel(); });
         connect(m_service,&CatService::transportStateChanged,this,[this] { syncFromModel(); });
     }
@@ -172,7 +184,8 @@ void CatChannelSetupPage::apply(int channel) {
     config.binding.primaryIncarnation=row.primary->currentData(Qt::UserRole+1).toULongLong();
     config.binding.secondaryIncarnation=secondary<0 ? std::nullopt : std::optional<quint64>(row.secondary->currentData(Qt::UserRole+1).toULongLong());
     if (m_serial) { config.serialEnabled=row.enabled->isChecked(); config.serialDevice=row.device->currentText().trimmed(); config.serialBaud=row.baud->currentText().toInt(); config.serialParity=row.parity->currentText(); config.serialDataBits=row.bits->currentText().toInt(); config.serialStopBits=row.stops->currentText(); }
-    else { config.tcpEnabled=row.enabled->isChecked(); config.tcpBindAddress=row.address->text().trimmed(); config.tcpPort=row.port->value(); config.ptyEnabled=row.pty->isChecked(); }
+    else { config.tcpEnabled=row.enabled->isChecked(); config.tcpBindAddress=row.address->text().trimmed(); config.tcpPort=row.port->value(); config.ptyEnabled=row.pty->isChecked(); config.ptyDialect=row.dialect->currentText();
+        config.rigctldEnabled=row.rigctld->isChecked(); config.rigctldBindAddress=row.rigAddress->text().trimmed(); config.rigctldPort=row.rigPort->value(); }
     const QPointer<CatChannelSetupPage> lifetime(this);
     const bool accepted=m_service->reconfigureChannel(channel,config);
     if (!lifetime) { return; }
@@ -188,6 +201,10 @@ void CatChannelSetupPage::syncFromModel() {
         if (m_serial) { setChoice(row.device,config.serialDevice); setChoice(row.baud,QString::number(config.serialBaud)); setChoice(row.parity,config.serialParity); setChoice(row.bits,QString::number(config.serialDataBits)); setChoice(row.stops,config.serialStopBits); row.status->setText(tr("Serial: %1").arg(m_service->transportState(i+1,CatTransportKind::Serial))); }
         else {
             const QSignalBlocker address(row.address), port(row.port), pty(row.pty);
+            const QSignalBlocker rigEnabled(row.rigctld), rigAddress(row.rigAddress), rigPort(row.rigPort);
+            row.rigctld->setChecked(config.rigctldEnabled); row.rigAddress->setText(config.rigctldBindAddress); row.rigPort->setValue(config.rigctldPort); setChoice(row.dialect,config.ptyDialect);
+            row.pty->setToolTip(tr("CAT %1 PTY uses %2 commands on this computer.").arg(i+1).arg(config.ptyDialect));
+            row.rigStatus->setText(tr("Rigctld: %1 · Bound: %2:%3 · Clients: %4").arg(m_service->transportState(i+1,CatTransportKind::Rigctld),m_service->rigctldBoundAddress(i+1).toString()).arg(m_service->rigctldBoundPort(i+1)).arg(m_service->rigctldClientCount(i+1)));
             row.address->setText(config.tcpBindAddress); row.port->setValue(config.tcpPort); row.pty->setChecked(config.ptyEnabled);
             row.path->setText(m_service->ptySlavePath(i+1).isEmpty() ? tr("PTY: %1").arg(m_service->transportState(i+1,CatTransportKind::Pty)) : m_service->ptySlavePath(i+1));
             row.status->setText(tr("TCP: %1 · Bound: %2:%3 · Clients: %4").arg(m_service->transportState(i+1,CatTransportKind::Tcp),m_service->boundAddress(i+1).toString()).arg(m_service->boundPort(i+1)).arg(m_service->clientCount(i+1)));

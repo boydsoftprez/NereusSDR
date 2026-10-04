@@ -37,6 +37,38 @@ private slots:
     void initTestCase() { AppSettings::setProfileOverride(QStringLiteral("cat-setup-%1").arg(QCoreApplication::applicationPid())); qInfo()<<"CAT test settings sandbox:"<<AppSettings::instance().filePath(); }
     void init() { AppSettings::instance().setChangeHook({}); AppSettings::instance().clear(); }
     void cleanup() { AppSettings::instance().setChangeHook({}); }
+    void rigctldControlsAndPtyDialectAreLive() {
+        RadioModel model; model.addSlice(); CatService& service=*model.catService(); service.startConfigured(); CatTcpIpPage page(&model);
+        auto* enabled=control<QCheckBox>(page,"cat1RigctldEnabled"); auto* port=control<QSpinBox>(page,"cat1RigctldPort");
+        auto* address=control<QLineEdit>(page,"cat1RigctldAddress"); auto* dialect=control<QComboBox>(page,"cat1PtyDialect");
+        QVERIFY(enabled && port && address && dialect); QVERIFY(enabled->isEnabled()); QVERIFY(!enabled->isChecked()); QCOMPARE(port->value(),0);
+        enabled->setChecked(true); QVERIFY(!enabled->isChecked()); QVERIFY(!service.channelConfig(1).rigctldEnabled);
+        const int chosen=unusedPort(); QVERIFY(chosen>0); port->setValue(chosen); enabled->setChecked(true);
+        QVERIFY(service.isListening(1)); QCOMPARE(service.rigctldBoundPort(1),chosen); QCOMPARE(service.boundPort(1),0);
+        QVERIFY(control<QLabel>(page,"cat1RigctldStatus")->text().contains(QString::number(chosen)));
+        QTcpSocket socket; socket.connectToHost(QHostAddress::LocalHost,chosen); QTRY_COMPARE(service.rigctldClientCount(1),1);
+        QVERIFY(control<QLabel>(page,"cat1RigctldStatus")->text().contains("Clients: 1"));
+        dialect->setCurrentText("Rigctld"); QCOMPARE(service.channelConfig(1).ptyDialect,QString("Rigctld"));
+        QVERIFY(control<QCheckBox>(page,"cat1Pty")->toolTip().contains("Rigctld"));
+        QSignalSpy changed(&service,&CatService::configurationChanged);
+        CatEndpointConfig external=service.channelConfig(1); external.rigctldEnabled=false; QVERIFY(service.reconfigureChannel(1,external));
+        QCOMPARE(changed.size(),1); QVERIFY(!enabled->isChecked()); QCOMPARE(service.rigctldClientCount(1),0);
+        QTcpServer occupied; QVERIFY(occupied.listen(QHostAddress::LocalHost,0)); port->setValue(occupied.serverPort()); enabled->setChecked(true);
+        QVERIFY(control<QLabel>(page,"cat1RigctldStatus")->text().contains("error"));
+        QVERIFY(!service.isListening(1)); QVERIFY(service.channelConfig(1).rigctldEnabled);
+        address->setText("invalid"); QVERIFY(QMetaObject::invokeMethod(address,"editingFinished",Qt::DirectConnection));
+        QCOMPARE(service.channelConfig(1).rigctldBindAddress,QString("127.0.0.1"));
+        for (int channel=2;channel<=4;++channel) {
+            const QString name=QStringLiteral("cat%1RigctldEnabled").arg(channel); auto* control=page.findChild<QCheckBox*>(name); QVERIFY(control && control->isEnabled()); QVERIFY(!control->isChecked());
+        }
+    }
+    void synchronousRigctldCallbackMayDeletePage() {
+        RadioModel model; CatService& service=*model.catService(); auto page=std::make_unique<CatTcpIpPage>(&model);
+        auto* port=control<QSpinBox>(*page,"cat1RigctldPort"); const int chosen=unusedPort(); { const QSignalBlocker block(port); port->setValue(chosen); }
+        QObject observer; QPointer<CatTcpIpPage> alive(page.get());
+        connect(&service,&CatService::configurationChanged,&observer,[&] { page.reset(); });
+        QVERIFY(QMetaObject::invokeMethod(port,"valueChanged",Qt::DirectConnection,Q_ARG(int,chosen))); QVERIFY(!alive); QCOMPARE(service.channelConfig(1).rigctldPort,chosen);
+    }
     void tcpControlsAreLiveAndExternalSyncDoesNotEcho() {
         RadioModel model; CatService& service=*model.catService(); service.startConfigured();
         CatTcpIpPage page(&model); auto* enabled=control<QCheckBox>(page,"cat1Enabled"); auto* port=control<QSpinBox>(page,"cat1Port");
@@ -182,9 +214,9 @@ private slots:
     void captureSandboxWidgets() {
         const QString directory=qEnvironmentVariable("NEREUS_CAT_CAPTURE_DIR"); if (directory.isEmpty()) { QSKIP("Visual capture is requested explicitly in the sandbox native/scaled runs."); }
         QVERIFY(QDir().mkpath(directory)); RadioModel model; model.addSlice(); model.addSlice(); CatService& service=*model.catService(); service.startConfigured();
-        QTemporaryDir devices; QVERIFY(devices.isValid()); CatEndpointConfig first=service.channelConfig(1); first.tcpEnabled=true; first.tcpPort=unusedPort(); QVERIFY(service.reconfigureChannel(1,first));
-        QTcpServer occupied; QVERIFY(occupied.listen(QHostAddress::LocalHost,0)); CatEndpointConfig second=service.channelConfig(2); second.tcpEnabled=true; second.tcpPort=occupied.serverPort(); QVERIFY(service.reconfigureChannel(2,second));
-        CatEndpointConfig third=service.channelConfig(3); third.ptyEnabled=true; third.serialEnabled=true; third.serialDevice=devices.filePath("absent.serial"); QVERIFY(service.reconfigureChannel(3,third));
+        QTemporaryDir devices; QVERIFY(devices.isValid()); CatEndpointConfig first=service.channelConfig(1); first.tcpEnabled=true; first.tcpPort=unusedPort(); first.rigctldEnabled=true; first.rigctldPort=unusedPort(); QVERIFY(service.reconfigureChannel(1,first));
+        QTcpServer occupied; QVERIFY(occupied.listen(QHostAddress::LocalHost,0)); CatEndpointConfig second=service.channelConfig(2); second.tcpEnabled=true; second.tcpPort=occupied.serverPort(); second.rigctldEnabled=true; second.rigctldPort=occupied.serverPort(); QVERIFY(service.reconfigureChannel(2,second));
+        CatEndpointConfig third=service.channelConfig(3); third.ptyEnabled=true; third.ptyDialect="Rigctld"; third.serialEnabled=true; third.serialDevice=devices.filePath("absent.serial"); QVERIFY(service.reconfigureChannel(3,third));
         QWidget window; auto* root=new QVBoxLayout(&window); auto* applet=new CatApplet(&model,&window); root->addWidget(applet); auto* tabs=new QTabWidget(&window); root->addWidget(tabs,1);
         tabs->addTab(new CatTcpIpPage(&model,tabs),"TCP / PTY"); tabs->addTab(new CatSerialPortsPage(&model,tabs),"Serial"); tabs->addTab(new CatOptionsSetupPage(&model,tabs),"Options / Tester"); tabs->addTab(new CatPttSetupPage(&model,tabs),"Input PTT");
         RadioModel remote(RadioModel::Role::Remote); tabs->addTab(new CatTcpIpPage(&remote,tabs),"Remote scope");
@@ -201,6 +233,8 @@ private slots:
             const QString path=directory+QStringLiteral("/task-11-setup-%1.png").arg(i);
             QVERIFY(setup.grab().save(path)); qInfo()<<"SETUP CAPTURE"<<path<<"logical"<<setup.size()<<"platform"<<QGuiApplication::platformName()<<"DPR"<<setup.devicePixelRatioF();
         }
+        setup.selectPage("TCP/IP CAT"); for (QScrollArea* scroll:setup.findChildren<QScrollArea*>()) { scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum()); }
+        QCoreApplication::processEvents(); QVERIFY(setup.grab().save(directory+"/task-13-setup-rigctld-bottom.png"));
         setup.selectPage("CAT Options"); for (QScrollArea* scroll:setup.findChildren<QScrollArea*>()) { scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum()); }
         QCoreApplication::processEvents(); QVERIFY(setup.grab().save(directory+"/task-11-setup-tester.png"));
         SetupDialog remoteSetup(&remote); remoteSetup.resize(1280,800); remoteSetup.selectPage("TCP/IP CAT"); remoteSetup.show(); QVERIFY(QTest::qWaitForWindowExposed(&remoteSetup));

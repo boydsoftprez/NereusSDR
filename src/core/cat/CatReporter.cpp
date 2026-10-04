@@ -60,6 +60,8 @@
 // 2026-10-04 - Native event-loop CAT adaptation by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
 
+// 2026-10-04 - Native separate Hamlib dialect and guarded lifecycle integration,
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; no new Thetis port.
 #include "CatReporter.h"
 #include "CatService.h"
 #include "models/RadioModel.h"
@@ -130,7 +132,7 @@ bool CatReporter::eligible(quint64 id) const
     // [original inline comment from console.cs:51331]
     if (!m_service || !m_service->isStarted()) { return false; }
     const CatSession* session = m_service->session(id);
-    if (!session) { return false; }
+    if (!session || session->dialect() != CatWireDialect::Thetis) { return false; }
     const CatGlobalConfig config = m_service->globalConfig();
     if (!config.allowKenwoodAi || !config.aiEnabled || !m_aiEnabled) { return false; }
     if (session->transport() == CatTransportKind::Tcp) { return config.aiTcp; }
