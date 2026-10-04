@@ -99,6 +99,27 @@ private slots:
         if(mode==ContentRenderMode::Live) {QCOMPARE(command.at(0).at(0).toInt(),int(OtherButtonItem::ButtonId::Mox));other->setButtonAvailable(OtherButtonItem::ButtonId::Mox,false,"Transmit is unavailable");other->handleMousePress(&press,112,44);other->handleMouseRelease(&release,112,44);QCOMPARE(command.count(),1);QCOMPARE(refused.count(),1);}
     }
  }
+ void replacementWarningFitsNativePicker_data() {
+    QTest::addColumn<bool>("narrowProperties");QTest::newRow("current-picker")<<false;QTest::newRow("narrow-properties")<<true;
+ }
+ void replacementWarningFitsNativePicker() {
+    QFETCH(bool,narrowProperties);
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);
+    WorkspaceDocument document;document.mainContainerId="A";ContainerDocument container;container.id="A";container.contents={registry.makeEntry("OTHERBTNS")};document.containers={container};QCOMPARE(manager.commitWorkspace(document,0).status,CommitStatus::Saved);
+    ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);dialog.findChild<QListWidget*>("containerDraftContents")->setCurrentRow(0);dialog.resize(1400,1000);dialog.show();dialog.activateWindow();QCoreApplication::processEvents();
+    auto* choice=dialog.findChild<QComboBox*>("otherSingleControl");QVERIFY(choice);QLabel* warning=nullptr;
+    for(auto* label:dialog.findChildren<QLabel*>()) {if(label->text().startsWith("Choosing a single control replaces")) {warning=label;break;}}QVERIFY(warning);
+    QScrollArea* properties=nullptr;for(QWidget* parent=choice->parentWidget();parent;parent=parent->parentWidget()) {if((properties=qobject_cast<QScrollArea*>(parent))) {break;}}QVERIFY(properties);
+    if(narrowProperties) {properties->setFixedWidth(380);}QCoreApplication::processEvents();properties->ensureWidgetVisible(warning,20,20);QCoreApplication::processEvents();
+    const QString captures=qEnvironmentVariable("TASK_CONTROL_CAPTURE_DIR");if(!captures.isEmpty()) {QVERIFY(QDir().mkpath(captures));QVERIFY(dialog.grab().save(captures+(narrowProperties?"/replacement-warning-narrow.png":"/replacement-warning-current.png")));}
+    const int requiredHeight=warning->heightForWidth(warning->width());qInfo()<<"warning geometry"<<warning->geometry()<<"required wrapped height"<<requiredHeight<<"Properties viewport"<<properties->viewport()->size();
+    QVERIFY2(requiredHeight>0,"The complete replacement warning must report its wrapped text height");QVERIFY2(warning->height()>=requiredHeight,"Allocated paragraph height clips the replacement warning");
+    const QRect warningInViewport(warning->mapTo(properties->viewport(),QPoint()),warning->size());QVERIFY(properties->viewport()->rect().contains(warningInViewport));
+    const QRect choiceInViewport(choice->mapTo(properties->viewport(),QPoint()),choice->size());QVERIFY(properties->viewport()->rect().contains(choiceInViewport));
+    if(narrowProperties) {QVERIFY(properties->viewport()->width()<400);}
+    const auto original=store.snapshot();dialog.reject();QCOMPARE(store.snapshot(),original);
+ }
  void individualCatalogDraftAddApplyCancelAndFreeGeometry() {
     QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;
     QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);

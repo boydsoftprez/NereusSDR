@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original editor for existing native action visibility.
 // Modification history (NereusSDR):
+//   2026-10-03 — Keep the full replacement warning visible in the local form by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Explicit individual control selection by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 #include "OtherButtonItemEditor.h"
@@ -7,6 +9,7 @@
 #include <QComboBox>
 #include <QCheckBox>
 #include <QLabel>
+#include <QFormLayout>
 
 namespace NereusSDR {
 OtherButtonItemEditor::OtherButtonItemEditor(QWidget* parent)
@@ -47,7 +50,12 @@ void OtherButtonItemEditor::buildOtherSpecific()
     addRow(tr("Single control"), m_singleControl);
     auto* explanation = new QLabel(tr("Choosing a single control replaces this group's selection. Add separate controls to arrange them independently."), this);
     explanation->setWordWrap(true);
-    addRow(QString(), explanation);
+    QSizePolicy paragraphPolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+    paragraphPolicy.setHeightForWidth(true);
+    explanation->setSizePolicy(paragraphPolicy);
+    // A spanning row lets the form use the paragraph's height for its actual
+    // width instead of constraining it to a single field-height row.
+    m_form->addRow(explanation);
     connect(m_singleControl, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
         if (isProgrammaticUpdate()) { return; }
         auto* other = qobject_cast<OtherButtonItem*>(m_item);
