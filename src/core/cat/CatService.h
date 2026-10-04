@@ -54,6 +54,8 @@ Added extended CAT commands for APF funtions - May 2017.
 // Modification history (NereusSDR):
 // 2026-10-04 - Composite release-armed input PTT and requesting serial close by
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-04 - Independently implemented native PTY lifecycle and transport diagnostics,
+//              same author and AI tooling; no new upstream port.
 #pragma once
 #include "CatModelAdapter.h"
 #include "CatTxCoordinator.h"
@@ -67,6 +69,7 @@ Added extended CAT commands for APF funtions - May 2017.
 #include "CatCommandRouter.h"
 #include "CatTcpTransport.h"
 #include "CatSerialTransport.h"
+#include "CatPtyTransport.h"
 #include "CatReporter.h"
 #include <QObject>
 #include <QPointer>
@@ -88,6 +91,9 @@ public:
     bool isStarted() const { return m_started; }
     bool isListening(int channel) const;
     QString channelState(int channel) const;
+    QString ptySlavePath(int channel) const;
+    CatPtyTransport* ptyTransport(int channel) const;
+    QString transportState(int channel, CatTransportKind kind) const;
     CatGlobalConfig globalConfig() const;
     bool applyGlobalConfig(const CatGlobalConfig&);
     quint64 openSession(int channel, CatTransportKind);
@@ -113,6 +119,8 @@ public:
 signals:
     void channelStateChanged(int channel, QString state);
     void configurationChanged(int channel);
+    void ptyPathChanged(int channel, QString path);
+    void transportStateChanged(int channel, CatTransportKind kind, QString state);
     void globalConfigurationChanged();
     void sessionClosed(quint64 sessionId);
     void radioDisconnected();
@@ -126,6 +134,9 @@ private:
         QString state{"Stopped"};
         std::shared_ptr<CatTcpTransport> tcp;
         std::shared_ptr<CatSerialTransport> serial;
+        std::shared_ptr<CatPtyTransport> pty;
+        quint64 ptySession{0};
+        QHash<CatTransportKind, QString> transportStates;
     };
     struct PttInput {
         quint64 sessionId{0};
@@ -141,6 +152,9 @@ private:
     void setPttState(const QString& state);
     void closeSerialChannel(int channel, const std::shared_ptr<CatSerialTransport>& transport);
     void startChannel(int channel);
+    void startPty(int channel);
+    void setTransportState(int channel, CatTransportKind kind, const QString& state);
+    void updateChannelState(int channel);
     void stopChannel(int channel);
     quint64 createTransportSession(int channel, CatTransportKind, std::function<bool(quint64, const QByteArray&)>, std::function<void(quint64)>);
     bool validChannel(int channel) const;
