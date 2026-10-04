@@ -32,11 +32,12 @@
     "request": "AG0;",
     "source": "CATCommands.cs:84-105 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::audioEngine(); AudioEngine::volume()/setVolume(float); Read real master normalized mixer volume; convert source percentage/output widths, source AG divisor0.392 retained.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "AG0128;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "AG-set",
@@ -45,11 +46,14 @@
     "request": "AG0000;",
     "source": "CATCommands.cs:84-105 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::audioEngine(); AudioEngine::volume()/setVolume(float); Set actual master mixer volume via source conversion/clamp; silence; no primary slice AF change. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "masterVolume": 0
+    }
   },
   {
     "id": "AI-get",
@@ -1064,11 +1068,12 @@
     "request": "GT;",
     "source": "CATCommands.cs:281-291 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::agcMode()/setAgcMode(AGCMode); Read actual enum as source digit; GT pads3.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "GT002;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "GT-set",
@@ -1077,11 +1082,14 @@
     "request": "GT000;",
     "source": "CATCommands.cs:281-291 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::agcMode()/setAgcMode(AGCMode); Only0..5 accepted; map named mode; real setter silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.agcMode": 0
+    }
   },
   {
     "id": "ID-get",
@@ -1577,11 +1585,12 @@
     "request": "NB;",
     "source": "CATCommands.cs:647-666 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::nbMode()/setNbMode(NbMode); Read1 iff actual NbMode equals targeted mode else0.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "NB1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "NB-set",
@@ -1590,11 +1599,14 @@
     "request": "NB0;",
     "source": "CATCommands.cs:647-666 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::nbMode()/setNbMode(NbMode); 1 selects targeted mode;0 selects NbMode::Off only if targeted mode currently active, leaving other mode intact; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.nbMode": 0
+    }
   },
   {
     "id": "NL-get",
@@ -1655,11 +1667,12 @@
     "request": "NT;",
     "source": "CATCommands.cs:666-685 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(primaryId); SliceModel::anfEnabled() / setAnfEnabled(bool); Read actual bound-slice property as 0 or 1 with source prefix/width. Missing target -> ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "NT1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "NT-set",
@@ -1668,11 +1681,14 @@
     "request": "NT0;",
     "source": "CATCommands.cs:666-685 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(primaryId); SliceModel::anfEnabled() / setAnfEnabled(bool); Validate complete request; set real property; setter silence. Missing target -> ?; before mutation. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.anfEnabled": false
+    }
   },
   {
     "id": "OF-get",
@@ -2753,11 +2769,12 @@
     "request": "SQ0;",
     "source": "CATCommands.cs:935-970 [v2.10.3.15]; console.cs:19530-19562,47279-47330",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::amsqThresh/setAmsqThresh(double), fmsqThresh/setFmsqThresh(double), ssqlThresh/setSsqlThresh(double); RadioModel::rxMeterOffsetDbForSlice(primaryId); Reconstruct canonical slider from actual active threshold: normal round(amsqThresh+offset); voice round(-160+1.6*ssqlThresh); FM round(-160+1.6*(-fmsqThresh/0.4)). Clamp[-160,0]. SQ returns echoed RXselector+roundToEven((1-abs(slider/160))*255) source width; ZZSQ abs(slider) padded3. Quantization reflects actual model, not stored last request.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "SQ0128;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "SQ-set",
@@ -2766,11 +2783,14 @@
     "request": "SQ0000;",
     "source": "CATCommands.cs:935-970 [v2.10.3.15]; console.cs:19530-19562,47279-47330",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::amsqThresh/setAmsqThresh(double), fmsqThresh/setFmsqThresh(double), ssqlThresh/setSsqlThresh(double); RadioModel::rxMeterOffsetDbForSlice(primaryId); Validate entire form, target, required bound per-slice ADC calibration/channel capability before mutation; choose actual voice/FM/normal path, convert and set only corresponding real threshold; preserve enable flags; silence. SQ ignores RXselector per source. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.slider": -160
+    }
   },
   {
     "id": "SR-get",
@@ -3346,11 +3366,12 @@
     "request": "ZZAP;",
     "source": "CATCommands.cs:1250-1273 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(primaryId); SliceModel::apfEnabled() / setApfEnabled(bool); Read actual bound-slice property as 0 or 1 with source prefix/width. Missing target -> ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZAP1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZAP-set",
@@ -3359,11 +3380,14 @@
     "request": "ZZAP0;",
     "source": "CATCommands.cs:1250-1273 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(primaryId); SliceModel::apfEnabled() / setApfEnabled(bool); Validate complete request; set real property; setter silence. Missing target -> ?; before mutation. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.apfEnabled": false
+    }
   },
   {
     "id": "ZZAT-get",
@@ -3372,11 +3396,12 @@
     "request": "ZZAT;",
     "source": "CATCommands.cs:1346-1382 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::apfTuneHz()/setApfTuneHz(int); Read actual tune offset as signed padded field.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZAT+025;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZAT-set",
@@ -3385,11 +3410,14 @@
     "request": "ZZAT0000;",
     "source": "CATCommands.cs:1346-1382 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::apfTuneHz()/setApfTuneHz(int); Set actual tune offset, silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.apfTuneHz": 0
+    }
   },
   {
     "id": "ZZAB-get",
@@ -3398,11 +3426,12 @@
     "request": "ZZAB;",
     "source": "CATCommands.cs:1073-1109 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZAB-set",
@@ -3411,11 +3440,12 @@
     "request": "ZZAB0000;",
     "source": "CATCommands.cs:1073-1109 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZAA-get",
@@ -3424,11 +3454,12 @@
     "request": "ZZAA;",
     "source": "CATCommands.cs:1038-1073 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZAA-set",
@@ -3437,11 +3468,12 @@
     "request": "ZZAA0000;",
     "source": "CATCommands.cs:1038-1073 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZMD-get",
@@ -3783,11 +3815,12 @@
     "request": "ZZNE;",
     "source": "CATCommands.cs:4983-5007 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::activeNr()/setActiveNr(NrSlot); Read selected actual representable slot; Nereus-only other slots -> ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNE0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNE-set",
@@ -3796,11 +3829,12 @@
     "request": "ZZNE0;",
     "source": "CATCommands.cs:4983-5007 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::activeNr()/setActiveNr(NrSlot); Only0..4 select real slot; reject all others before mutation; silence. Retain production NR selection admission; unavailable NR3 model or backend refusal returns ?; with unchanged selected slot; no fake enabled NR. Never alias native NNR/DFNR/BNR/MNR into source0..4. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNF-get",
@@ -3809,11 +3843,12 @@
     "request": "ZZNF;",
     "source": "CATCommands.cs:5007-5031 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::activeNr()/setActiveNr(NrSlot); Read selected actual representable slot; Nereus-only other slots -> ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNF0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNF-set",
@@ -3822,11 +3857,12 @@
     "request": "ZZNF0;",
     "source": "CATCommands.cs:5007-5031 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::activeNr()/setActiveNr(NrSlot); Only0..4 select real slot; reject all others before mutation; silence. Retain production NR selection admission; unavailable NR3 model or backend refusal returns ?; with unchanged selected slot; no fake enabled NR. Never alias native NNR/DFNR/BNR/MNR into source0..4. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNG-get",
@@ -3835,11 +3871,12 @@
     "request": "ZZNG;",
     "source": "CATCommands.cs:5031-5093 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::nr4Reduction()/setNr4Reduction(double); Read actual reduction converted source truncated percent and answer zero-padding.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNG050;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNG-set",
@@ -3848,11 +3885,14 @@
     "request": "ZZNG000;",
     "source": "CATCommands.cs:5031-5093 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::nr4Reduction()/setNr4Reduction(double); Set actual dB with source float calculation; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.nr4Reduction": 0
+    }
   },
   {
     "id": "ZZNH-get",
@@ -3861,11 +3901,12 @@
     "request": "ZZNH;",
     "source": "CATCommands.cs:5093-5156 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::nr4Reduction()/setNr4Reduction(double); Read actual reduction converted source truncated percent and answer zero-padding.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNH050;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNH-set",
@@ -3874,11 +3915,14 @@
     "request": "ZZNH000;",
     "source": "CATCommands.cs:5093-5156 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::nr4Reduction()/setNr4Reduction(double); Set actual dB with source float calculation; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "secondary.nr4Reduction": 0
+    }
   },
   {
     "id": "ZZNR-get",
@@ -3887,11 +3931,12 @@
     "request": "ZZNR;",
     "source": "CATCommands.cs:4936-4959 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::activeNr()/setActiveNr(NrSlot); Return1 iff selected real slot equals targeted slot else0.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNR0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNR-set",
@@ -3900,11 +3945,12 @@
     "request": "ZZNR0;",
     "source": "CATCommands.cs:4936-4959 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::activeNr()/setActiveNr(NrSlot); 1 selects slot;0 clears only if targeted slot active; leave other selected slots intact; silence. Retain production NR selection admission; unavailable NR3 model or backend refusal returns ?; with unchanged selected slot; no fake enabled NR. Never alias native NNR/DFNR/BNR/MNR into source0..4. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNS-get",
@@ -3913,11 +3959,12 @@
     "request": "ZZNS;",
     "source": "CATCommands.cs:4959-4983 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::activeNr()/setActiveNr(NrSlot); Return1 iff selected real slot equals targeted slot else0.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNS0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNS-set",
@@ -3926,11 +3973,12 @@
     "request": "ZZNS0;",
     "source": "CATCommands.cs:4959-4983 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::activeNr()/setActiveNr(NrSlot); 1 selects slot;0 clears only if targeted slot active; leave other selected slots intact; silence. Retain production NR selection admission; unavailable NR3 model or backend refusal returns ?; with unchanged selected slot; no fake enabled NR. Never alias native NNR/DFNR/BNR/MNR into source0..4. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNL-get",
@@ -3939,11 +3987,12 @@
     "request": "ZZNL;",
     "source": "CATCommands.cs:4862-4881 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::nb1Threshold()/setNb1Threshold(int); Read actual threshold source padded width.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNL030;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNL-set",
@@ -3952,11 +4001,14 @@
     "request": "ZZNL000;",
     "source": "CATCommands.cs:4862-4881 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::nb1Threshold()/setNb1Threshold(int); Set real threshold with existing clamp, silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.nb1Threshold": 1
+    }
   },
   {
     "id": "ZZNB-get",
@@ -3965,11 +4017,12 @@
     "request": "ZZNB;",
     "source": "CATCommands.cs:4804-4823 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::nbMode()/setNbMode(NbMode); Read1 iff actual NbMode equals targeted mode else0.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNB0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNB-set",
@@ -3978,11 +4031,12 @@
     "request": "ZZNB0;",
     "source": "CATCommands.cs:4804-4823 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::nbMode()/setNbMode(NbMode); 1 selects targeted mode;0 selects NbMode::Off only if targeted mode currently active, leaving other mode intact; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNM-get",
@@ -3991,11 +4045,12 @@
     "request": "ZZNM;",
     "source": "CATCommands.cs:4881-4900 [v2.10.3.15]; setup.cs:5720-5728",
     "outcome": "SourceInert",
-    "precondition": "Calling session verboseErrors=false; source inert/static state; no production state to seed",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "ZZNM0000;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-source-contract",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNM-set",
@@ -4004,11 +4059,12 @@
     "request": "ZZNM0000;",
     "source": "CATCommands.cs:4881-4900 [v2.10.3.15]; setup.cs:5720-5728",
     "outcome": "SourceInert",
-    "precondition": "Calling session verboseErrors=false; source inert/static state; no production state to seed",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-source-contract",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNN-get",
@@ -4017,11 +4073,12 @@
     "request": "ZZNN;",
     "source": "CATCommands.cs:4900-4918 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(primaryId); SliceModel::snbEnabled() / setSnbEnabled(bool); Read actual bound-slice property as 0 or 1 with source prefix/width. Missing target -> ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNN1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNN-set",
@@ -4030,11 +4087,14 @@
     "request": "ZZNN0;",
     "source": "CATCommands.cs:4900-4918 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(primaryId); SliceModel::snbEnabled() / setSnbEnabled(bool); Validate complete request; set real property; setter silence. Missing target -> ?; before mutation. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.snbEnabled": false
+    }
   },
   {
     "id": "ZZNO-get",
@@ -4043,11 +4103,12 @@
     "request": "ZZNO;",
     "source": "CATCommands.cs:4918-4936 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(secondaryId); SliceModel::snbEnabled() / setSnbEnabled(bool); Read actual bound-slice property as 0 or 1 with source prefix/width. Missing target -> ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNO1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNO-set",
@@ -4056,11 +4117,14 @@
     "request": "ZZNO0;",
     "source": "CATCommands.cs:4918-4936 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(secondaryId); SliceModel::snbEnabled() / setSnbEnabled(bool); Validate complete request; set real property; setter silence. Missing target -> ?; before mutation. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "secondary.snbEnabled": false
+    }
   },
   {
     "id": "ZZNV-get",
@@ -4069,11 +4133,12 @@
     "request": "ZZNV;",
     "source": "CATCommands.cs:5191-5214 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::activeNr()/setActiveNr(NrSlot); Return1 iff selected real slot equals targeted slot else0.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNV0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNV-set",
@@ -4082,11 +4147,12 @@
     "request": "ZZNV0;",
     "source": "CATCommands.cs:5191-5214 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::activeNr()/setActiveNr(NrSlot); 1 selects slot;0 clears only if targeted slot active; leave other selected slots intact; silence. Retain production NR selection admission; unavailable NR3 model or backend refusal returns ?; with unchanged selected slot; no fake enabled NR. Never alias native NNR/DFNR/BNR/MNR into source0..4. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNW-get",
@@ -4095,11 +4161,12 @@
     "request": "ZZNW;",
     "source": "CATCommands.cs:5214-5237 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::activeNr()/setActiveNr(NrSlot); Return1 iff selected real slot equals targeted slot else0.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNW0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNW-set",
@@ -4108,11 +4175,12 @@
     "request": "ZZNW0;",
     "source": "CATCommands.cs:5214-5237 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::activeNr()/setActiveNr(NrSlot); 1 selects slot;0 clears only if targeted slot active; leave other selected slots intact; silence. Retain production NR selection admission; unavailable NR3 model or backend refusal returns ?; with unchanged selected slot; no fake enabled NR. Never alias native NNR/DFNR/BNR/MNR into source0..4. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZPL-get",
@@ -4147,11 +4215,12 @@
     "request": "ZZGT;",
     "source": "CATCommands.cs:3200-3222 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::agcMode()/setAgcMode(AGCMode); Read actual enum as source digit; GT pads3.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZGT2;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZGT-set",
@@ -4160,11 +4229,14 @@
     "request": "ZZGT0;",
     "source": "CATCommands.cs:3200-3222 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::agcMode()/setAgcMode(AGCMode); Only0..5 accepted; map named mode; real setter silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.agcMode": 0
+    }
   },
   {
     "id": "ZZGU-get",
@@ -4173,11 +4245,12 @@
     "request": "ZZGU;",
     "source": "CATCommands.cs:3222-3243 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::agcMode()/setAgcMode(AGCMode); Read actual enum as source digit; GT pads3.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZGU2;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZGU-set",
@@ -4186,11 +4259,14 @@
     "request": "ZZGU0;",
     "source": "CATCommands.cs:3222-3243 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::agcMode()/setAgcMode(AGCMode); Only0..5 accepted; map named mode; real setter silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "secondary.agcMode": 0
+    }
   },
   {
     "id": "ZZFI-get",
@@ -4343,11 +4419,12 @@
     "request": "ZZMA;",
     "source": "CATCommands.cs:3892-3919 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(primaryId); SliceModel::muted() / setMuted(bool); Read actual bound-slice property as 0 or 1 with source prefix/width. Missing target -> ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZMA1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZMA-set",
@@ -4356,11 +4433,14 @@
     "request": "ZZMA0;",
     "source": "CATCommands.cs:3892-3919 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(primaryId); SliceModel::muted() / setMuted(bool); Validate complete request; set real property; setter silence. Missing target -> ?; before mutation. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.muted": false
+    }
   },
   {
     "id": "ZZTU-get",
@@ -4395,11 +4475,12 @@
     "request": "ZZBI;",
     "source": "CATCommands.cs:1517-1535 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(primaryId); SliceModel::binauralEnabled() / setBinauralEnabled(bool); Read actual bound-slice property as 0 or 1 with source prefix/width. Missing target -> ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZBI1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZBI-set",
@@ -4408,11 +4489,14 @@
     "request": "ZZBI0;",
     "source": "CATCommands.cs:1517-1535 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(primaryId); SliceModel::binauralEnabled() / setBinauralEnabled(bool); Validate complete request; set real property; setter silence. Missing target -> ?; before mutation. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.binauralEnabled": false
+    }
   },
   {
     "id": "ZZCP-get",
@@ -4447,11 +4531,12 @@
     "request": "ZZPA;",
     "source": "CATCommands.cs:5443-5498 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::stepAttFacade(); StepAttenuatorFacade::preampModeForSlice(int) const / setPreampModeForSlice(int,int); Resolve bound primary forZZPA/secondary forZZPB and require connected controller-bound facade. Read actual ADC-routed preamp mode; convert named PreampMode to source integer0..9. Never infer RX2 from slice list position.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZPA1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZPA-set",
@@ -4460,11 +4545,12 @@
     "request": "ZZPA0;",
     "source": "CATCommands.cs:5443-5498 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::stepAttFacade(); StepAttenuatorFacade::preampModeForSlice(int) const / setPreampModeForSlice(int,int); Validate complete source form and endpoint plus bound facade before mutation. Source legal inert codes return silence unchanged; active requested mode must exist in BoardCapsTable preampItemsForBoard/rx2PreampItemsForBoard for the routed ADC or return ?; before setter. Call per-slice facade setter and read settled hardware state; retain native controller rules, success silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio. Actual OrionMKII offered preamp items exclude Off; reject before mutation.",
+    "expectedReply": "?;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZDM-get",
@@ -4545,11 +4631,12 @@
     "request": "ZZVL;",
     "source": "CATCommands.cs:7473-7514 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary/secondary SliceModel::locked()/setLocked(bool); Return1 iff any configured target locked; absent secondary contributes false.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZVL0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZVL-set",
@@ -4558,11 +4645,14 @@
     "request": "ZZVL0;",
     "source": "CATCommands.cs:7473-7514 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary/secondary SliceModel::locked()/setLocked(bool); Suffix0 or1 both cycle. If transition requires locking missing secondary -> ?; before any lock changes. Otherwise atomically set two real lock flags; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.locked": true
+    }
   },
   {
     "id": "ZZUP-get",
@@ -4798,11 +4888,12 @@
     "request": "ZZSO;",
     "source": "CATCommands.cs:6388-6404 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "bound SliceModel::amsqEnabled()/setAmsqEnabled(bool), fmsqEnabled()/setFmsqEnabled(bool), ssqlEnabled()/setSsqlEnabled(bool); If actual voice enabled return2; otherwise active-mode normal SQL enabled ->1; else0. Read actual DSP flags only.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZSO1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZSO-set",
@@ -4811,11 +4902,14 @@
     "request": "ZZSO0;",
     "source": "CATCommands.cs:6388-6404 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "bound SliceModel::amsqEnabled()/setAmsqEnabled(bool), fmsqEnabled()/setFmsqEnabled(bool), ssqlEnabled()/setSsqlEnabled(bool); Validate0..2 and target first;0 clears all three;2 sets voice and clears normal flags;1 enables FM normal if FM else amplitude normal and clears other flags; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.amsqEnabled": false
+    }
   },
   {
     "id": "ZZDA-get",
@@ -5184,11 +5278,12 @@
     "request": "ZZAG;",
     "source": "CATCommands.cs:1199-1223 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::audioEngine(); AudioEngine::volume()/setVolume(float); Read real master normalized mixer volume; convert source percentage/output widths, source AG divisor0.392 retained.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZAG050;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZAG-set",
@@ -5197,11 +5292,14 @@
     "request": "ZZAG000;",
     "source": "CATCommands.cs:1199-1223 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::audioEngine(); AudioEngine::volume()/setVolume(float); Set actual master mixer volume via source conversion/clamp; silence; no primary slice AF change. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "masterVolume": 0
+    }
   },
   {
     "id": "ZZSQ-get",
@@ -5210,11 +5308,12 @@
     "request": "ZZSQ;",
     "source": "CATCommands.cs:6404-6447 [v2.10.3.15]; console.cs:19530-19562,47279-47330",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::amsqThresh/setAmsqThresh(double), fmsqThresh/setFmsqThresh(double), ssqlThresh/setSsqlThresh(double); RadioModel::rxMeterOffsetDbForSlice(primaryId); Reconstruct canonical slider from actual active threshold: normal round(amsqThresh+offset); voice round(-160+1.6*ssqlThresh); FM round(-160+1.6*(-fmsqThresh/0.4)). Clamp[-160,0]. SQ returns echoed RXselector+roundToEven((1-abs(slider/160))*255) source width; ZZSQ abs(slider) padded3. Quantization reflects actual model, not stored last request.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZSQ080;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZSQ-set",
@@ -5223,11 +5322,14 @@
     "request": "ZZSQ000;",
     "source": "CATCommands.cs:6404-6447 [v2.10.3.15]; console.cs:19530-19562,47279-47330",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::amsqThresh/setAmsqThresh(double), fmsqThresh/setFmsqThresh(double), ssqlThresh/setSsqlThresh(double); RadioModel::rxMeterOffsetDbForSlice(primaryId); Validate entire form, target, required bound per-slice ADC calibration/channel capability before mutation; choose actual voice/FM/normal path, convert and set only corresponding real threshold; preserve enable flags; silence. SQ ignores RXselector per source. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.slider": 0
+    }
   },
   {
     "id": "ZZCU-get",
@@ -5559,11 +5661,12 @@
     "request": "ZZXT;",
     "source": "CATCommands.cs:8368-8393 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZXT-set",
@@ -5572,11 +5675,12 @@
     "request": "ZZXT0;",
     "source": "CATCommands.cs:8368-8393 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZAR-get",
@@ -5585,11 +5689,12 @@
     "request": "ZZAR;",
     "source": "CATCommands.cs:1273-1311 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::agcThreshold()/setAgcThreshold(int); autoAgcEnabled()/setAutoAgcEnabled(bool); Read actual signed threshold source padded4.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZAR+020;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZAR-set",
@@ -5598,11 +5703,15 @@
     "request": "ZZAR0000;",
     "source": "CATCommands.cs:1273-1311 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::agcThreshold()/setAgcThreshold(int); autoAgcEnabled()/setAutoAgcEnabled(bool); If actual threshold differs and auto AGC enabled, disable same-slice auto AGC then set new threshold; same value leaves auto AGC on; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.agcThreshold": 0,
+      "primary.autoAgcEnabled": false
+    }
   },
   {
     "id": "ZZBR-get",
@@ -5637,11 +5746,12 @@
     "request": "ZZSR;",
     "source": "CATCommands.cs:6447-6470 [v2.10.3.15]",
     "outcome": "SourceInert",
-    "precondition": "Calling session verboseErrors=false; source inert/static state; no production state to seed",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "ZZSR0;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-source-contract",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZSR-set",
@@ -5650,11 +5760,12 @@
     "request": "ZZSR0;",
     "source": "CATCommands.cs:6447-6470 [v2.10.3.15]",
     "outcome": "SourceInert",
-    "precondition": "Calling session verboseErrors=false; source inert/static state; no production state to seed",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-source-contract",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZCT-get",
@@ -6872,11 +6983,12 @@
     "request": "ZZNT;",
     "source": "CATCommands.cs:5156-5174 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(primaryId); SliceModel::anfEnabled() / setAnfEnabled(bool); Read actual bound-slice property as 0 or 1 with source prefix/width. Missing target -> ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNT1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNT-set",
@@ -6885,11 +6997,14 @@
     "request": "ZZNT0;",
     "source": "CATCommands.cs:5156-5174 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(primaryId); SliceModel::anfEnabled() / setAnfEnabled(bool); Validate complete request; set real property; setter silence. Missing target -> ?; before mutation. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.anfEnabled": false
+    }
   },
   {
     "id": "ZZNU-get",
@@ -6898,11 +7013,12 @@
     "request": "ZZNU;",
     "source": "CATCommands.cs:5174-5191 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(secondaryId); SliceModel::anfEnabled() / setAnfEnabled(bool); Read actual bound-slice property as 0 or 1 with source prefix/width. Missing target -> ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNU1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNU-set",
@@ -6911,11 +7027,14 @@
     "request": "ZZNU0;",
     "source": "CATCommands.cs:5174-5191 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(secondaryId); SliceModel::anfEnabled() / setAnfEnabled(bool); Validate complete request; set real property; setter silence. Missing target -> ?; before mutation. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "secondary.anfEnabled": false
+    }
   },
   {
     "id": "ZZPD-set",
@@ -7104,11 +7223,12 @@
     "request": "ZZER;",
     "source": "CATCommands.cs:2613-2632 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZER-set",
@@ -7117,11 +7237,12 @@
     "request": "ZZER0;",
     "source": "CATCommands.cs:2613-2632 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZET-get",
@@ -7234,11 +7355,12 @@
     "request": "ZZNA;",
     "source": "CATCommands.cs:4786-4804 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::nbMode()/setNbMode(NbMode); Read1 iff actual NbMode equals targeted mode else0.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNA1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNA-set",
@@ -7247,11 +7369,14 @@
     "request": "ZZNA0;",
     "source": "CATCommands.cs:4786-4804 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::nbMode()/setNbMode(NbMode); 1 selects targeted mode;0 selects NbMode::Off only if targeted mode currently active, leaving other mode intact; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.nbMode": 0
+    }
   },
   {
     "id": "ZZBD-set",
@@ -7786,11 +7911,12 @@
     "request": "ZZHA;",
     "source": "CATCommands.cs:3243-3260 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZHA-set",
@@ -7799,11 +7925,12 @@
     "request": "ZZHA0;",
     "source": "CATCommands.cs:3243-3260 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZHR-get",
@@ -7812,11 +7939,12 @@
     "request": "ZZHR;",
     "source": "CATCommands.cs:3260-3278 [v2.10.3.15]; CATCommands.cs:10520-10591; CATStructs.xml active text stripped with .NET Convert.ToBoolean semantics (ZZHW true-whitespace is active); DspOptionsPage.cpp:195-263,375-388",
     "outcome": "Adapted",
-    "precondition": "AppSettings::value()/setValue(\"DspOptionsBufferSizePhoneRx/CwRx/DigRx\"); RadioModel::scheduleRemoteDspOptionsApply(const QString&); RxChannel::onModeChanged(DSPMode), dspBlockSize(); If primary currently in group and live WDSP channel exists, query actual dspBlockSize through source Width2Index; otherwise query actual persisted per-group configuration. Source unlisted width returnsindex0 (including existing64), explicitly lossy code.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZHR0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZHR-set",
@@ -7825,11 +7953,14 @@
     "request": "ZZHR0;",
     "source": "CATCommands.cs:3260-3278 [v2.10.3.15]; CATCommands.cs:10520-10591; CATStructs.xml active text stripped with .NET Convert.ToBoolean semantics (ZZHW true-whitespace is active); DspOptionsPage.cpp:195-263,375-388",
     "outcome": "Adapted",
-    "precondition": "AppSettings::value()/setValue(\"DspOptionsBufferSizePhoneRx/CwRx/DigRx\"); RadioModel::scheduleRemoteDspOptionsApply(const QString&); RxChannel::onModeChanged(DSPMode), dspBlockSize(); Require connected local Core and off-air station gate before changing setting. Validate source form and convert source index0..6=>256..16384, other legal single digit=>256. Store genuine global mode-group preference then call existing scheduleRemoteDspOptionsApply(key) so production coalescer applies every live slice in that mode group, with its existing on-air deferral and lane quiescence. Success silence; getter reads actual persisted group preference and source Buffer2Index (64/unlisted=>0), never last request. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizePhoneRx": 256
+    }
   },
   {
     "id": "ZZHT-get",
@@ -7838,11 +7969,12 @@
     "request": "ZZHT;",
     "source": "Thetis CAT/CATCommands.cs:3278-3293 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "AppSettings::value()/setValue(\"DspOptionsBufferSizePhoneTx\"); RadioModel::scheduleRemoteDspOptionsApply(const QString&); TxChannel::txDspBlockSize()/onModeChanged(DSPMode); ZZHT<source Width2Index>; if bound TX slice in Phone group and connected initialized TX channel, query actual txDspBlockSize(); otherwise query actual persisted PhoneTx preference (native default64 -> source fallbackindex0). No remembered request echo.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZHT0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZHT-set",
@@ -7851,11 +7983,14 @@
     "request": "ZZHT0;",
     "source": "Thetis CAT/CATCommands.cs:3278-3293 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "AppSettings::value()/setValue(\"DspOptionsBufferSizePhoneTx\"); RadioModel::scheduleRemoteDspOptionsApply(const QString&); TxChannel::txDspBlockSize()/onModeChanged(DSPMode); Connected local Core, resolved stable endpoint/owner/freeze permissions and stationOnAirRefusal()==false required before mutation. Exactly1 unsigned decimal digit; map source0..6 and defaultother to256. Store real DspOptionsBufferSizePhoneTx then scheduleRemoteDspOptionsApply(key), silent. Production coalescer defers if keyed before apply; invalid/blocked -> ?; no mutation.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizePhoneTx": 256
+    }
   },
   {
     "id": "ZZFM-get",
@@ -7877,11 +8012,12 @@
     "request": "ZZEA;",
     "source": "CATCommands.cs:2508-2549 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZEA-set",
@@ -7890,11 +8026,12 @@
     "request": "ZZEA010000000000000000000000000000000000;",
     "source": "CATCommands.cs:2508-2549 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZEB-get",
@@ -9093,11 +9230,12 @@
     "request": "ZZHU;",
     "source": "CATCommands.cs:3296-3314 [v2.10.3.15]; CATCommands.cs:10520-10591; CATStructs.xml active text stripped with .NET Convert.ToBoolean semantics (ZZHW true-whitespace is active); DspOptionsPage.cpp:195-263,375-388",
     "outcome": "Adapted",
-    "precondition": "AppSettings::value()/setValue(\"DspOptionsBufferSizePhoneRx/CwRx/DigRx\"); RadioModel::scheduleRemoteDspOptionsApply(const QString&); RxChannel::onModeChanged(DSPMode), dspBlockSize(); If primary currently in group and live WDSP channel exists, query actual dspBlockSize through source Width2Index; otherwise query actual persisted per-group configuration. Source unlisted width returnsindex0 (including existing64), explicitly lossy code.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZHU0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZHU-set",
@@ -9106,11 +9244,14 @@
     "request": "ZZHU0;",
     "source": "CATCommands.cs:3296-3314 [v2.10.3.15]; CATCommands.cs:10520-10591; CATStructs.xml active text stripped with .NET Convert.ToBoolean semantics (ZZHW true-whitespace is active); DspOptionsPage.cpp:195-263,375-388",
     "outcome": "Adapted",
-    "precondition": "AppSettings::value()/setValue(\"DspOptionsBufferSizePhoneRx/CwRx/DigRx\"); RadioModel::scheduleRemoteDspOptionsApply(const QString&); RxChannel::onModeChanged(DSPMode), dspBlockSize(); Require connected local Core and off-air station gate before changing setting. Validate source form and convert source index0..6=>256..16384, other legal single digit=>256. Store genuine global mode-group preference then call existing scheduleRemoteDspOptionsApply(key) so production coalescer applies every live slice in that mode group, with its existing on-air deferral and lane quiescence. Success silence; getter reads actual persisted group preference and source Buffer2Index (64/unlisted=>0), never last request. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeCwRx": 256
+    }
   },
   {
     "id": "ZZHV-get",
@@ -9119,11 +9260,12 @@
     "request": "ZZHV;",
     "source": "Thetis CAT/CATCommands.cs:3314-3329 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "AppSettings::value()/setValue(\"DspOptionsBufferSizePhoneRx/CwRx/DigRx\"); RadioModel::scheduleRemoteDspOptionsApply(const QString&); RxChannel::onModeChanged(DSPMode), dspBlockSize() (read-only CW RX alias; no write to TX or RX setting); ZZHV<source Width2Index of actual CwRx configuration>; identical actual read selection/guard to ZZHU, including native64/unlisted widths ->0; query does not read CwTx.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZHV0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZHV-set",
@@ -9132,11 +9274,12 @@
     "request": "ZZHV0;",
     "source": "Thetis CAT/CATCommands.cs:3314-3329 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "AppSettings::value()/setValue(\"DspOptionsBufferSizePhoneRx/CwRx/DigRx\"); RadioModel::scheduleRemoteDspOptionsApply(const QString&); RxChannel::onModeChanged(DSPMode), dspBlockSize() (read-only CW RX alias; no write to TX or RX setting); Exactly1 unsigned decimal digit invokes source Index2Width mapping then returns silence without any mutation; hardware/model/settings/DSP untouched. Other malformed widths/suffix -> ?; no mutation.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZHW-get",
@@ -9145,11 +9288,12 @@
     "request": "ZZHW;",
     "source": "CATCommands.cs:3332-3350 [v2.10.3.15]; CATCommands.cs:10520-10591; CATStructs.xml active text stripped with .NET Convert.ToBoolean semantics (ZZHW true-whitespace is active); DspOptionsPage.cpp:195-263,375-388",
     "outcome": "Adapted",
-    "precondition": "AppSettings::value()/setValue(\"DspOptionsBufferSizePhoneRx/CwRx/DigRx\"); RadioModel::scheduleRemoteDspOptionsApply(const QString&); RxChannel::onModeChanged(DSPMode), dspBlockSize(); If primary currently in group and live WDSP channel exists, query actual dspBlockSize through source Width2Index; otherwise query actual persisted per-group configuration. Source unlisted width returnsindex0 (including existing64), explicitly lossy code.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZHW0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZHW-set",
@@ -9158,11 +9302,14 @@
     "request": "ZZHW0;",
     "source": "CATCommands.cs:3332-3350 [v2.10.3.15]; CATCommands.cs:10520-10591; CATStructs.xml active text stripped with .NET Convert.ToBoolean semantics (ZZHW true-whitespace is active); DspOptionsPage.cpp:195-263,375-388",
     "outcome": "Adapted",
-    "precondition": "AppSettings::value()/setValue(\"DspOptionsBufferSizePhoneRx/CwRx/DigRx\"); RadioModel::scheduleRemoteDspOptionsApply(const QString&); RxChannel::onModeChanged(DSPMode), dspBlockSize(); Require connected local Core and off-air station gate before changing setting. Validate source form and convert source index0..6=>256..16384, other legal single digit=>256. Store genuine global mode-group preference then call existing scheduleRemoteDspOptionsApply(key) so production coalescer applies every live slice in that mode group, with its existing on-air deferral and lane quiescence. Success silence; getter reads actual persisted group preference and source Buffer2Index (64/unlisted=>0), never last request. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeDigRx": 256
+    }
   },
   {
     "id": "ZZHX-get",
@@ -9171,11 +9318,12 @@
     "request": "ZZHX;",
     "source": "Thetis CAT/CATCommands.cs:3350-3365 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "AppSettings::value()/setValue(\"DspOptionsBufferSizeDigTx\"); RadioModel::scheduleRemoteDspOptionsApply(const QString&); TxChannel::txDspBlockSize()/onModeChanged(DSPMode); ZZHX<source Width2Index>; if bound TX slice in Dig group and connected initialized TX channel, query actual txDspBlockSize(); otherwise query actual persisted DigTx preference (native default64 -> source fallbackindex0). No remembered request echo.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZHX0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZHX-set",
@@ -9184,11 +9332,14 @@
     "request": "ZZHX0;",
     "source": "Thetis CAT/CATCommands.cs:3350-3365 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "AppSettings::value()/setValue(\"DspOptionsBufferSizeDigTx\"); RadioModel::scheduleRemoteDspOptionsApply(const QString&); TxChannel::txDspBlockSize()/onModeChanged(DSPMode); Connected local Core, resolved stable endpoint/owner/freeze permissions and stationOnAirRefusal()==false required before mutation. Exactly1 unsigned decimal digit; map source0..6 and defaultother to256. Store real DspOptionsBufferSizeDigTx then scheduleRemoteDspOptionsApply(key), silent. Production coalescer defers if keyed before apply; invalid/blocked -> ?; no mutation.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeDigTx": 256
+    }
   },
   {
     "id": "ZZRD-get",
@@ -9501,11 +9652,12 @@
     "request": "ZZRX;",
     "source": "CATCommands.cs:6159-6183 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::stepAttFacade(); StepAttenuatorFacade::attenuationDbForSlice(int) const / setAttenuationDbForSlice(int,int); Require connected bound endpoint slice and controller-bound facade; report actual ADC-routed integer attenuation with source width. Read actual signed native attenuation if present, using source formatter; no fabricated0.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZRX10;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZRX-set",
@@ -9514,11 +9666,14 @@
     "request": "ZZRX00;",
     "source": "CATCommands.cs:6159-6183 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::stepAttFacade(); StepAttenuatorFacade::attenuationDbForSlice(int) const / setAttenuationDbForSlice(int,int); Validate endpoint/source form/controller first. Clamp payload0..31 then call setAttenuationDbForSlice(id,db); underlying controller retains board/link range restrictions. Successful setter silence; query settled value, never last requested value. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.attenuation": 0
+    }
   },
   {
     "id": "ZZRY-get",
@@ -9527,11 +9682,12 @@
     "request": "ZZRY;",
     "source": "CATCommands.cs:6183-6207 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::stepAttFacade(); StepAttenuatorFacade::attenuationDbForSlice(int) const / setAttenuationDbForSlice(int,int); Require connected bound endpoint slice and controller-bound facade; report actual ADC-routed integer attenuation with source width. Read actual signed native attenuation if present, using source formatter; no fabricated0.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZRY10;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZRY-set",
@@ -9540,11 +9696,14 @@
     "request": "ZZRY00;",
     "source": "CATCommands.cs:6183-6207 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::stepAttFacade(); StepAttenuatorFacade::attenuationDbForSlice(int) const / setAttenuationDbForSlice(int,int); Validate endpoint/source form/controller first. Clamp payload0..31 then call setAttenuationDbForSlice(id,db); underlying controller retains board/link range restrictions. Successful setter silence; query settled value, never last requested value. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "secondary.attenuation": 0
+    }
   },
   {
     "id": "ZZTO-get",
@@ -10165,11 +10324,12 @@
     "request": "ZZAY;",
     "source": "CATCommands.cs:1400-1430 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZAY-set",
@@ -10178,11 +10338,12 @@
     "request": "ZZAY0;",
     "source": "CATCommands.cs:1400-1430 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZAE-set",
@@ -10995,11 +11156,12 @@
     "request": "ZZOL;",
     "source": "CATCommands.cs:5344-5369 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::diglOffsetHz()/setDiglOffsetHz(int); Read actual property zero-padding per source.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZOL1500;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZOL-set",
@@ -11008,11 +11170,14 @@
     "request": "ZZOL0000;",
     "source": "CATCommands.cs:5344-5369 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::diglOffsetHz()/setDiglOffsetHz(int); Clamp then real model setter; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.diglOffsetHz": 0
+    }
   },
   {
     "id": "ZZOU-get",
@@ -11021,11 +11186,12 @@
     "request": "ZZOU;",
     "source": "CATCommands.cs:5403-5429 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::diguOffsetHz()/setDiguOffsetHz(int); Read actual property zero-padding per source.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZOU1500;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZOU-set",
@@ -11034,11 +11200,14 @@
     "request": "ZZOU0000;",
     "source": "CATCommands.cs:5403-5429 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::diguOffsetHz()/setDiguOffsetHz(int); Clamp then real model setter; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.diguOffsetHz": 0
+    }
   },
   {
     "id": "ZZSY-get",
@@ -11119,11 +11288,12 @@
     "request": "ZZPB;",
     "source": "CATCommands.cs:5498-5570 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::stepAttFacade(); StepAttenuatorFacade::preampModeForSlice(int) const / setPreampModeForSlice(int,int); Resolve bound primary forZZPA/secondary forZZPB and require connected controller-bound facade. Read actual ADC-routed preamp mode; convert named PreampMode to source integer0..9. Never infer RX2 from slice list position.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZPB1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZPB-set",
@@ -11132,11 +11302,12 @@
     "request": "ZZPB0;",
     "source": "CATCommands.cs:5498-5570 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::stepAttFacade(); StepAttenuatorFacade::preampModeForSlice(int) const / setPreampModeForSlice(int,int); Validate complete source form and endpoint plus bound facade before mutation. Source legal inert codes return silence unchanged; active requested mode must exist in BoardCapsTable preampItemsForBoard/rx2PreampItemsForBoard for the routed ADC or return ?; before setter. Call per-slice facade setter and read settled hardware state; retain native controller rules, success silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio. Actual OrionMKII offered preamp items exclude Off; reject before mutation.",
+    "expectedReply": "?;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNC-get",
@@ -11145,11 +11316,12 @@
     "request": "ZZNC;",
     "source": "CATCommands.cs:4823-4841 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::nbMode()/setNbMode(NbMode); Read1 iff actual NbMode equals targeted mode else0.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZNC1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZNC-set",
@@ -11158,11 +11330,14 @@
     "request": "ZZNC0;",
     "source": "CATCommands.cs:4823-4841 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::nbMode()/setNbMode(NbMode); 1 selects targeted mode;0 selects NbMode::Off only if targeted mode currently active, leaving other mode intact; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "secondary.nbMode": 0
+    }
   },
   {
     "id": "ZZND-get",
@@ -11171,11 +11346,12 @@
     "request": "ZZND;",
     "source": "CATCommands.cs:4841-4862 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::nbMode()/setNbMode(NbMode); Read1 iff actual NbMode equals targeted mode else0.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZND0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZND-set",
@@ -11184,11 +11360,12 @@
     "request": "ZZND0;",
     "source": "CATCommands.cs:4841-4862 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::nbMode()/setNbMode(NbMode); 1 selects targeted mode;0 selects NbMode::Off only if targeted mode currently active, leaving other mode intact; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZDB-get",
@@ -11197,11 +11374,12 @@
     "request": "ZZDB;",
     "source": "CATCommands.cs:1957-1987 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZDB-set",
@@ -11210,11 +11388,12 @@
     "request": "ZZDB0;",
     "source": "CATCommands.cs:1957-1987 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZDC-get",
@@ -11223,11 +11402,12 @@
     "request": "ZZDC;",
     "source": "CATCommands.cs:1987-2014 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZDC-set",
@@ -11236,11 +11416,12 @@
     "request": "ZZDC0000;",
     "source": "CATCommands.cs:1987-2014 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZDD-get",
@@ -11249,11 +11430,12 @@
     "request": "ZZDD;",
     "source": "CATCommands.cs:2014-2048 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::diversityPhaseDeg()/setDiversityPhaseDeg(double); Read actual phase normalize signed; return hundredths signed padded6. Non-SliceA or unsupported dual ADC capability ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZDD+00900;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZDD-set",
@@ -11262,11 +11444,14 @@
     "request": "ZZDD000000;",
     "source": "CATCommands.cs:2014-2048 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::diversityPhaseDeg()/setDiversityPhaseDeg(double); Validate primary identity/capability first; clamp source hundredths and normalize actual phase0..360 then set; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.diversityPhaseDeg": 0
+    }
   },
   {
     "id": "ZZDE-get",
@@ -11275,11 +11460,12 @@
     "request": "ZZDE;",
     "source": "CATCommands.cs:2048-2078 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::diversityTargetSlice(), diversityState(), diversityStateRevision(), invokeDiversityAsStationDevice(const SessionMessage&); Read whether configured primary is the coordinated diversity owner; if a different slice owns diversity, return ?; rather than reporting that owner as endpoint primary.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZDE0;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZDE-set",
@@ -11288,11 +11474,12 @@
     "request": "ZZDE0;",
     "source": "CATCommands.cs:2048-2078 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::diversityTargetSlice(), diversityState(), diversityStateRevision(), invokeDiversityAsStationDevice(const SessionMessage&); Use existing admitted station-device diversity.control transaction, never raw SliceModel::setDiversityEnabled or private setDiversityTarget. Build existing eight typed arguments from current diversityState plus SliceOwnership incarnation/control revisions: enabled,stateRevision,sourceSliceId/sourceIncarnation/sourceControlRevision,targetSliceId/targetIncarnation/targetControlRevision. Enable targets primary, off targets-1 with0/0 incarnation/revision. Require source absent or endpoint primary; reject foreign owner before invocation. Existing transaction validates station control, freeze/on-air, board eligibility/resources and revisions before commit. Accepted silence, any refusal ?;. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZDF-get",
@@ -11301,11 +11488,12 @@
     "request": "ZZDF;",
     "source": "CATCommands.cs:2078-2107 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZDF-set",
@@ -11314,11 +11502,12 @@
     "request": "ZZDF0;",
     "source": "CATCommands.cs:2078-2107 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZDG-get",
@@ -11327,11 +11516,12 @@
     "request": "ZZDG;",
     "source": "CATCommands.cs:2107-2133 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZDG-set",
@@ -11340,11 +11530,12 @@
     "request": "ZZDG0000;",
     "source": "CATCommands.cs:2107-2133 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZDH-get",
@@ -11353,11 +11544,12 @@
     "request": "ZZDH;",
     "source": "CATCommands.cs:2133-2170 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZDH-set",
@@ -11366,11 +11558,12 @@
     "request": "ZZDH0;",
     "source": "CATCommands.cs:2133-2170 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZAS-get",
@@ -11379,11 +11572,12 @@
     "request": "ZZAS;",
     "source": "CATCommands.cs:1311-1346 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::agcThreshold()/setAgcThreshold(int); autoAgcEnabled()/setAutoAgcEnabled(bool); Read actual signed threshold source padded4.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZAS+020;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZAS-set",
@@ -11392,11 +11586,15 @@
     "request": "ZZAS0000;",
     "source": "CATCommands.cs:1311-1346 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::agcThreshold()/setAgcThreshold(int); autoAgcEnabled()/setAutoAgcEnabled(bool); If actual threshold differs and auto AGC enabled, disable same-slice auto AGC then set new threshold; same value leaves auto AGC on; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "secondary.agcThreshold": 0,
+      "secondary.autoAgcEnabled": false
+    }
   },
   {
     "id": "ZZPY-get",
@@ -11477,11 +11675,12 @@
     "request": "ZZLA;",
     "source": "CATCommands.cs:3648-3674 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::afGain()/setAfGain(int); Actual per-slice gain zero-padded3.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZLA050;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZLA-set",
@@ -11490,11 +11689,14 @@
     "request": "ZZLA000;",
     "source": "CATCommands.cs:3648-3674 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::afGain()/setAfGain(int); Set real slice gain, silence; missing target ?;. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.afGain": 0
+    }
   },
   {
     "id": "ZZLB-get",
@@ -11503,11 +11705,12 @@
     "request": "ZZLB;",
     "source": "CATCommands.cs:3674-3705 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::audioPan()/setAudioPan(double); Read actual per-slice pan and convert to source3-digit percentage.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZLB050;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZLB-set",
@@ -11516,11 +11719,14 @@
     "request": "ZZLB000;",
     "source": "CATCommands.cs:3674-3705 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "primary SliceModel::audioPan()/setAudioPan(double); Set real pan, silence; missing target ?;. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.audioPan": -1
+    }
   },
   {
     "id": "ZZLC-get",
@@ -11529,11 +11735,12 @@
     "request": "ZZLC;",
     "source": "CATCommands.cs:3705-3731 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZLC-set",
@@ -11542,11 +11749,12 @@
     "request": "ZZLC000;",
     "source": "CATCommands.cs:3705-3731 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZLD-get",
@@ -11555,11 +11763,12 @@
     "request": "ZZLD;",
     "source": "CATCommands.cs:3731-3762 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZLD-set",
@@ -11568,11 +11777,12 @@
     "request": "ZZLD000;",
     "source": "CATCommands.cs:3731-3762 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZPE-get",
@@ -11679,11 +11889,12 @@
     "request": "ZZLE;",
     "source": "CATCommands.cs:3762-3788 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::afGain()/setAfGain(int); Actual per-slice gain zero-padded3.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZLE050;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZLE-set",
@@ -11692,11 +11903,14 @@
     "request": "ZZLE000;",
     "source": "CATCommands.cs:3762-3788 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::afGain()/setAfGain(int); Set real slice gain, silence; missing target ?;. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "secondary.afGain": 0
+    }
   },
   {
     "id": "ZZLF-get",
@@ -11705,11 +11919,12 @@
     "request": "ZZLF;",
     "source": "CATCommands.cs:3788-3819 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::audioPan()/setAudioPan(double); Read actual per-slice pan and convert to source3-digit percentage.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZLF050;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZLF-set",
@@ -11718,11 +11933,14 @@
     "request": "ZZLF000;",
     "source": "CATCommands.cs:3788-3819 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::audioPan()/setAudioPan(double); Set real pan, silence; missing target ?;. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "secondary.audioPan": -1
+    }
   },
   {
     "id": "ZZIO-get",
@@ -11965,11 +12183,12 @@
     "request": "ZZSV;",
     "source": "CATCommands.cs:6491-6507 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "bound SliceModel::amsqEnabled()/setAmsqEnabled(bool), fmsqEnabled()/setFmsqEnabled(bool), ssqlEnabled()/setSsqlEnabled(bool); If actual voice enabled return2; otherwise active-mode normal SQL enabled ->1; else0. Read actual DSP flags only.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZSV1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZSV-set",
@@ -11978,11 +12197,14 @@
     "request": "ZZSV0;",
     "source": "CATCommands.cs:6491-6507 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "bound SliceModel::amsqEnabled()/setAmsqEnabled(bool), fmsqEnabled()/setFmsqEnabled(bool), ssqlEnabled()/setSsqlEnabled(bool); Validate0..2 and target first;0 clears all three;2 sets voice and clears normal flags;1 enables FM normal if FM else amplitude normal and clears other flags; silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "secondary.amsqEnabled": false
+    }
   },
   {
     "id": "ZZSX-get",
@@ -11991,11 +12213,12 @@
     "request": "ZZSX;",
     "source": "CATCommands.cs:6534-6579 [v2.10.3.15]; console.cs:47637-47677",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::amsqThresh()/setAmsqThresh(double), fmsqThresh()/setFmsqThresh(double), ssqlThresh()/setSsqlThresh(double); RadioModel::rxMeterOffsetDbForSlice(secondaryId); Same canonical slider reconstruction asZZSQ from actual secondary model threshold and secondary ADC offset. Normal/voice/FM supported; output absolute canonical negative slider padded3. Require valid secondary and actual calibration/channel capability; unavailable returns ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZSX080;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZSX-set",
@@ -12004,11 +12227,14 @@
     "request": "ZZSX000;",
     "source": "CATCommands.cs:6534-6579 [v2.10.3.15]; console.cs:47637-47677",
     "outcome": "Adapted",
-    "precondition": "secondary SliceModel::amsqThresh()/setAmsqThresh(double), fmsqThresh()/setFmsqThresh(double), ssqlThresh()/setSsqlThresh(double); RadioModel::rxMeterOffsetDbForSlice(secondaryId); Same active SQL conversion asZZSQ using actual secondary rxMeterOffsetDbForSlice; validate full request and capability before mutation, preserve enable flags. Source FM double-negation corrected to negative slider. Success silence. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "secondary.slider": 0
+    }
   },
   {
     "id": "ZZML-get",
@@ -12426,11 +12652,12 @@
     "request": "ZZMB;",
     "source": "CATCommands.cs:3919-3949 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(secondaryId); SliceModel::muted() / setMuted(bool); Read actual bound-slice property as 0 or 1 with source prefix/width. Missing target -> ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZMB1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZMB-set",
@@ -12439,11 +12666,14 @@
     "request": "ZZMB0;",
     "source": "CATCommands.cs:3919-3949 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(secondaryId); SliceModel::muted() / setMuted(bool); Validate complete request; set real property; setter silence. Missing target -> ?; before mutation. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "secondary.muted": false
+    }
   },
   {
     "id": "ZZLG-get",
@@ -12452,11 +12682,12 @@
     "request": "ZZLG;",
     "source": "CATCommands.cs:3819-3842 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZLG-set",
@@ -12465,11 +12696,12 @@
     "request": "ZZLG0;",
     "source": "CATCommands.cs:3819-3842 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZLH-get",
@@ -12478,11 +12710,12 @@
     "request": "ZZLH;",
     "source": "CATCommands.cs:3842-3865 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZLH-set",
@@ -12491,11 +12724,12 @@
     "request": "ZZLH0;",
     "source": "CATCommands.cs:3842-3865 [v2.10.3.15]",
     "outcome": "Unavailable",
-    "precondition": "Calling session verboseErrors=false; command classified unavailable; router must reject before any production API call",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
     "expectedReply": "?;",
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
-    "executionStatus": "not-executed"
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZLI-get",
@@ -13232,11 +13466,12 @@
     "request": "ZZZQ;",
     "source": "CATCommands.cs:8589-8615 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(primaryId); SliceModel::autoAgcEnabled() / setAutoAgcEnabled(bool); Read actual bound-slice property as 0 or 1 with source prefix/width. Missing target -> ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZZQ1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZZQ-set",
@@ -13245,11 +13480,14 @@
     "request": "ZZZQ0;",
     "source": "CATCommands.cs:8589-8615 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(primaryId); SliceModel::autoAgcEnabled() / setAutoAgcEnabled(bool); Validate complete request; set real property; setter silence. Missing target -> ?; before mutation. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "primary.autoAgcEnabled": false
+    }
   },
   {
     "id": "ZZZR-get",
@@ -13258,11 +13496,12 @@
     "request": "ZZZR;",
     "source": "CATCommands.cs:8615-8642 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(secondaryId); SliceModel::autoAgcEnabled() / setAutoAgcEnabled(bool); Read actual bound-slice property as 0 or 1 with source prefix/width. Missing target -> ?;.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "ZZZR1;",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
   },
   {
     "id": "ZZZR-set",
@@ -13271,11 +13510,14 @@
     "request": "ZZZR0;",
     "source": "CATCommands.cs:8615-8642 [v2.10.3.15]",
     "outcome": "Adapted",
-    "precondition": "RadioModel::sliceById(secondaryId); SliceModel::autoAgcEnabled() / setAutoAgcEnabled(bool); Validate complete request; set real property; setter silence. Missing target -> ?; before mutation. Resolve stable endpoint incarnation and existing Core ownership/freeze permission first; no implicit creation, control claim, or GUI-focus change.",
-    "expectedReply": null,
-    "expectedMutation": null,
-    "fixtureStatus": "pending-family-model",
-    "executionStatus": "not-executed"
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-model-or-source-inert",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "secondary.autoAgcEnabled": false
+    }
   },
   {
     "id": "ZZZN-get",
@@ -13549,5 +13791,381 @@
     "expectedMutation": "none",
     "fixtureStatus": "materialized-rejection",
     "executionStatus": "not-executed"
+  },
+  {
+    "id": "ZZHR-set-source-fallback-upper-v",
+    "command": "ZZHR",
+    "form": "Set",
+    "request": "ZZHRV;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizePhoneRx": 256
+    }
+  },
+  {
+    "id": "ZZHR-set-source-fallback-lower-v",
+    "command": "ZZHR",
+    "form": "Set",
+    "request": "ZZHRv;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizePhoneRx": 256
+    }
+  },
+  {
+    "id": "ZZHR-set-source-fallback-plus",
+    "command": "ZZHR",
+    "form": "Set",
+    "request": "ZZHR+;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizePhoneRx": 256
+    }
+  },
+  {
+    "id": "ZZHR-set-source-fallback-minus",
+    "command": "ZZHR",
+    "form": "Set",
+    "request": "ZZHR-;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizePhoneRx": 256
+    }
+  },
+  {
+    "id": "ZZHT-set-source-fallback-upper-v",
+    "command": "ZZHT",
+    "form": "Set",
+    "request": "ZZHTV;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizePhoneTx": 256
+    }
+  },
+  {
+    "id": "ZZHT-set-source-fallback-lower-v",
+    "command": "ZZHT",
+    "form": "Set",
+    "request": "ZZHTv;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizePhoneTx": 256
+    }
+  },
+  {
+    "id": "ZZHT-set-source-fallback-plus",
+    "command": "ZZHT",
+    "form": "Set",
+    "request": "ZZHT+;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizePhoneTx": 256
+    }
+  },
+  {
+    "id": "ZZHT-set-source-fallback-minus",
+    "command": "ZZHT",
+    "form": "Set",
+    "request": "ZZHT-;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizePhoneTx": 256
+    }
+  },
+  {
+    "id": "ZZHU-set-source-fallback-upper-v",
+    "command": "ZZHU",
+    "form": "Set",
+    "request": "ZZHUV;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeCwRx": 256
+    }
+  },
+  {
+    "id": "ZZHU-set-source-fallback-lower-v",
+    "command": "ZZHU",
+    "form": "Set",
+    "request": "ZZHUv;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeCwRx": 256
+    }
+  },
+  {
+    "id": "ZZHU-set-source-fallback-plus",
+    "command": "ZZHU",
+    "form": "Set",
+    "request": "ZZHU+;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeCwRx": 256
+    }
+  },
+  {
+    "id": "ZZHU-set-source-fallback-minus",
+    "command": "ZZHU",
+    "form": "Set",
+    "request": "ZZHU-;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeCwRx": 256
+    }
+  },
+  {
+    "id": "ZZHV-set-source-fallback-upper-v",
+    "command": "ZZHV",
+    "form": "Set",
+    "request": "ZZHVV;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
+  },
+  {
+    "id": "ZZHV-set-source-fallback-lower-v",
+    "command": "ZZHV",
+    "form": "Set",
+    "request": "ZZHVv;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
+  },
+  {
+    "id": "ZZHV-set-source-fallback-plus",
+    "command": "ZZHV",
+    "form": "Set",
+    "request": "ZZHV+;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
+  },
+  {
+    "id": "ZZHV-set-source-fallback-minus",
+    "command": "ZZHV",
+    "form": "Set",
+    "request": "ZZHV-;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "none",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {}
+  },
+  {
+    "id": "ZZHW-set-source-fallback-upper-v",
+    "command": "ZZHW",
+    "form": "Set",
+    "request": "ZZHWV;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeDigRx": 256
+    }
+  },
+  {
+    "id": "ZZHW-set-source-fallback-lower-v",
+    "command": "ZZHW",
+    "form": "Set",
+    "request": "ZZHWv;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeDigRx": 256
+    }
+  },
+  {
+    "id": "ZZHW-set-source-fallback-plus",
+    "command": "ZZHW",
+    "form": "Set",
+    "request": "ZZHW+;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeDigRx": 256
+    }
+  },
+  {
+    "id": "ZZHW-set-source-fallback-minus",
+    "command": "ZZHW",
+    "form": "Set",
+    "request": "ZZHW-;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeDigRx": 256
+    }
+  },
+  {
+    "id": "ZZHX-set-source-fallback-upper-v",
+    "command": "ZZHX",
+    "form": "Set",
+    "request": "ZZHXV;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeDigTx": 256
+    }
+  },
+  {
+    "id": "ZZHX-set-source-fallback-lower-v",
+    "command": "ZZHX",
+    "form": "Set",
+    "request": "ZZHXv;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeDigTx": 256
+    }
+  },
+  {
+    "id": "ZZHX-set-source-fallback-plus",
+    "command": "ZZHX",
+    "form": "Set",
+    "request": "ZZHX+;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeDigTx": 256
+    }
+  },
+  {
+    "id": "ZZHX-set-source-fallback-minus",
+    "command": "ZZHX",
+    "form": "Set",
+    "request": "ZZHX-;",
+    "source": "CAT/CATCommands.cs:10554-10591 [v2.10.3.15] literal Index2Width default; CAT/CATParser.cs:550-565 admitted one-byte suffix",
+    "outcome": "Adapted",
+    "precondition": "Task6 production RadioModel fixture: connected local OrionMKII model, real codec planner and controller-bound frontend; primary0/secondary2 station-owned fixed incarnations. Explicit baseline properties in tst_cat_dsp_commands.cpp; no physical radio.",
+    "expectedReply": "",
+    "expectedMutation": "native-global-buffer-preference",
+    "fixtureStatus": "materialized-production-model",
+    "executionStatus": "executed-task-6",
+    "expectedState": {
+      "settings.DspOptionsBufferSizeDigTx": 256
+    }
   }
 ]

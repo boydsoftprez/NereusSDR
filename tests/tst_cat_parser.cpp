@@ -138,10 +138,10 @@ private slots:
             QCOMPARE(parser.format(*descriptor,*validation.request,supplied,{1,1}),wire);
             ++framed;
         }
-        QCOMPARE(fixtures.size(),752);
-        QCOMPARE(accepted+rejected,752);
-        QCOMPARE(pending,186);
-        QCOMPARE(framed+rejected,566);
+        QCOMPARE(fixtures.size(),776);
+        QCOMPARE(accepted+rejected,776);
+        QCOMPARE(pending,72);
+        QCOMPARE(framed+rejected,704);
         qInfo()<<"Validated requests:"<<accepted<<"active,"<<rejected<<"inactive; supplied result frames:"<<framed<<"; pending family fixtures:"<<pending;
     }
 };
