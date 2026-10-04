@@ -17,6 +17,9 @@
 //                AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 - Qualify the opaque DEXP struct declaration against the
+//                 Microsoft CRT function name. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-01 - #299: deferred real initialization test seam for startup
 //                 wiring coverage. J.J. Boyd (KG4VCF), assisted by OpenAI Codex.
 //   2026-09-30  J.J. Boyd / KG4VCF  RADE reason: test seam (createRadeChannel honours setRadeCreateFailsForTest and setRadeStartFailsForTest).
@@ -124,7 +127,7 @@ warren@wpratt.com
 // C DSP types; the owner only needs to clear this pointer after destruction.
 extern "C" {
 struct _dexp;
-extern _dexp* pdexp[];
+extern struct _dexp* pdexp[];
 }
 #endif
 
