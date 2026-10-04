@@ -992,14 +992,11 @@ jobs:
         # there's no test list to run against.  Linux is the source-of-
         # truth gate for the test suite.
         #
-        # QT_QPA_PLATFORM=offscreen: GitHub runners are headless so
-        # Qt widgets can't create native windows.  The offscreen
-        # platform plugin lets GUI-backed tests (QApplication +
-        # QWidget constructors) run without an X server.
-        # xvfb-run wraps the entire ctest invocation in a virtual
-        # X display for the handful of tests that probe QScreen /
-        # QGuiApplication directly (where the offscreen plugin
-        # alone is insufficient).
+        # Ordinary tests select offscreen individually through
+        # NEREUS_TESTS_OFFSCREEN in tests/CMakeLists.txt. Native-window
+        # tests deliberately keep the caller's platform: their QRhi
+        # surfaces need xcb on the virtual X display supplied by xvfb-run.
+        # Forcing offscreen here prevents those surfaces from rendering.
         # ALSA_CONFIG_PATH=/dev/null + libasound2 has no audio
         # device on the runner; tests that touch PortAudio must
         # gracefully handle "no devices available" rather than
@@ -1018,7 +1015,7 @@ jobs:
         # the process that 240 s would leave gdb no time before 300 s.
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
-            export QT_QPA_PLATFORM=offscreen
+            export QT_QPA_PLATFORM=xcb
             export QTEST_FUNCTION_TIMEOUT=240000
             xvfb-run -a ctest --output-on-failure
           else
