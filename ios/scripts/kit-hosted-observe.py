@@ -15,6 +15,8 @@ import time
 BASE = 'd2ca3475e30556494a70bd78a0c72eee32aa9a9c'
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'ios/NereusKit'
+SAMPLE_OUTPUT_LIMIT = 16 * 1024 * 1024
+AGGREGATE_PRODUCT_LIMIT = 128 * 1024 * 1024
 
 # Reviewed diagnostic production scope. All other production remains the frozen base.
 DIAGNOSTIC_PRODUCTION_PATHS = frozenset(('ios/NereusKit/Sources/NereusLink/WebSocketLinkTransport.swift', 'ios/NereusKit/Sources/NereusLink/SystemProxyWebSocketOpening.swift'))
@@ -174,6 +176,91 @@ def token_overlap(tail, chunk, token=b'Test run started.'):
     return data.count(token), data[-(len(token) - 1):]
 
 
+def sampler_argv(pid, output):
+    # Documented options only. This does not disable all symbolication.
+    return ['/usr/bin/sample', str(pid), '1', '10', '-file', str(output)]
+
+
+def sample_output_failure(metadata, completed=False):
+    try:
+        for key in ('sample_file', 'command_log'):
+            path = Path(metadata[key])
+            if path.is_symlink() or (path.exists() and not path.is_file()):
+                return 'sampler output is not an owned regular file'
+            size = path.stat().st_size if path.exists() else 0
+            metadata[key + '_bytes'] = size
+            if size > SAMPLE_OUTPUT_LIMIT:
+                return 'sampler output exceeded 16-MiB artifact cap'
+        if completed and metadata['sample_file_bytes'] == 0:
+            return 'sampler completed without a nonempty sample report'
+    except (OSError, KeyError, TypeError) as error:
+        return 'sampler output validation failed: ' + repr(error)
+    return None
+
+
+def retain_sample_outputs(metadata, out):
+    # Raw writers stay outside the upload directory. Even an unknown surviving
+    # writer cannot grow this bounded snapshot. Prefixes are explicit failures.
+    for key in ('sample_file', 'command_log'):
+        path = Path(metadata[key])
+        if path.is_symlink() or not path.is_file():
+            raise OSError('expected sampler ' + key + ' is missing, symlinked or nonregular')
+        destination = out / metadata[key + '_artifact']
+        if destination.parent != out:
+            raise OSError('sampler artifact path escaped output directory')
+        with path.open('rb') as original, destination.open('xb') as retained:
+            remaining = SAMPLE_OUTPUT_LIMIT
+            while remaining:
+                chunk = original.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                retained.write(chunk)
+                remaining -= len(chunk)
+        metadata[key + '_retained_bytes'] = destination.stat().st_size
+        if (key == 'sample_file' and metadata.get('exit') == 0 and not metadata.get('failed_guard')
+                and metadata[key + '_retained_bytes'] == 0):
+            raise OSError('successful sampler has no nonempty retained report')
+        size = path.stat().st_size
+        if size > SAMPLE_OUTPUT_LIMIT:
+            metadata.setdefault('failed_guard', 'sampler output exceeded 16-MiB artifact cap')
+            metadata.setdefault('failed_artifact_prefixes', {})[key] = {'original_bytes': size,
+                                                                      'retained_bytes': SAMPLE_OUTPUT_LIMIT}
+
+
+def retain_aggregate_product(test, before, after, out):
+    if test is None or not before or before != after or test['product'] not in before:
+        raise RuntimeError('aggregate product lacks matching admitted before/after pins')
+    source = Path(test['product'])
+    if source.is_symlink() or not source.is_file():
+        raise RuntimeError('aggregate product is not a regular file')
+    size = source.stat().st_size
+    if size == 0:
+        raise RuntimeError('aggregate product is empty')
+    if size > AGGREGATE_PRODUCT_LIMIT:
+        raise RuntimeError('aggregate product exceeded 128-MiB artifact cap')
+    destination = out / 'aggregate-product-Mach-O'
+    copied = 0
+    computed = hashlib.sha256()
+    created = False
+    try:
+        with source.open('rb') as original, destination.open('xb') as retained:
+            created = True
+            while chunk := original.read(1024 * 1024):
+                copied += len(chunk)
+                if copied > AGGREGATE_PRODUCT_LIMIT:
+                    raise RuntimeError('aggregate product grew beyond 128-MiB artifact cap')
+                computed.update(chunk)
+                retained.write(chunk)
+        expected = before[test['product']]
+        if computed.hexdigest() != expected or digest(destination) != expected:
+            raise RuntimeError('retained aggregate product does not match sealed product')
+    except Exception:
+        if created:
+            destination.unlink(missing_ok=True)
+        raise
+    return {'source': str(source), 'artifact': destination.name, 'bytes': copied, 'sha256': expected}
+
+
 def service_sampler(child, metadata, receipt, deadline, final=False,
                     clock=time.monotonic, get_identity=None, get_args=None):
     get_identity = identity if get_identity is None else get_identity
@@ -187,16 +274,20 @@ def service_sampler(child, metadata, receipt, deadline, final=False,
         except subprocess.TimeoutExpired:
             pass
     code = child.poll()
+    output_failure = sample_output_failure(metadata, completed=code == 0)
     if code is not None and clock() <= deadline:
         metadata['exit'] = code
         metadata['observed_finished'] = stamp()
         if code != 0:
             metadata['failed_guard'] = 'sampler returned nonzero'
             receipt['failed_guard'] = metadata['failed_guard']
+        elif output_failure:
+            metadata['failed_guard'] = output_failure
+            receipt['failed_guard'] = output_failure
         return
-    if clock() < deadline:
+    if clock() < deadline and not output_failure:
         return
-    metadata['failed_guard'] = 'sampler processing exceeded original 10-second deadline'
+    metadata['failed_guard'] = output_failure or 'sampler processing exceeded original 10-second deadline'
     receipt['failed_guard'] = metadata['failed_guard']
     for action in ('terminate', 'kill'):
         current = get_identity(child.pid)
@@ -519,14 +610,21 @@ def main():
                         failure = 'test arguments/identity changed before sample'
                         break
                     sample_numbers.add(number)
-                    argv = ['/usr/bin/sample', str(current['pid']), '1', '10', '-mayDie', '-fullPaths',
-                            '-file', str(out / ('sample-' + str(number) + '.txt'))]
-                    handle = (out / ('sample-' + str(number) + '-command.log')).open('wb')
+                    private_sample = Path(tempfile.mkdtemp(prefix='kit-sample-private-', dir=out.parent))
+                    sample_name = 'sample-' + str(number) + '.txt'
+                    command_name = 'sample-' + str(number) + '-command.log'
+                    sample_file = private_sample / sample_name
+                    command_log = private_sample / command_name
+                    argv = sampler_argv(current['pid'], sample_file)
+                    handle = command_log.open('wb')
                     sample_deadline = time.monotonic() + 10
                     child = subprocess.Popen(argv, stdout=handle, stderr=subprocess.STDOUT, start_new_session=True)
                     metadata = {'number': number, 'argv': argv, 'start': stamp(), 'verified_test': current,
                                 'verified_args': args, 'sampler_identity': identity(child.pid),
-                                'deadline_monotonic': sample_deadline}
+                                'deadline_monotonic': sample_deadline,
+                                'sample_file': str(sample_file), 'command_log': str(command_log),
+                                'sample_file_artifact': sample_name, 'command_log_artifact': command_name,
+                                'output_limit_bytes': SAMPLE_OUTPUT_LIMIT}
                     metadata['sampler_args'] = read_args(child.pid)
                     admitted_sampler = identity(child.pid)
                     if (not same_observation(metadata['sampler_identity'], admitted_sampler)
@@ -569,6 +667,12 @@ def main():
                 metadata['unknown_or_surviving_sampler'] = identity(child.pid)
                 receipt['failed_guard'] = 'sampler survived or could not be verified for cleanup'
             handle.close()
+            try:
+                retain_sample_outputs(metadata, out)
+            except OSError as error:
+                metadata['failed_guard'] = metadata.get('failed_guard') or 'sampler artifact bounding failed: ' + repr(error)
+            if metadata.get('failed_guard'):
+                receipt['failed_guard'] = receipt.get('failed_guard') or metadata['failed_guard']
             receipt['samples'].append(metadata)
         surviving = [v for p, v in known.items() if same_identity(v['identity'], identity(p))]
         if surviving:
@@ -579,6 +683,14 @@ def main():
         receipt['diagnostic_production_hashes_after'] = {name: after.get(name) for name in DIAGNOSTIC_PRODUCTION_PATHS}
         receipt['sources_equal'] = before == after
         receipt['products_after'] = products()
+        receipt['sample_output_limit_bytes'] = SAMPLE_OUTPUT_LIMIT
+        receipt['aggregate_product_limit_bytes'] = AGGREGATE_PRODUCT_LIMIT
+        try:
+            # Copy only after tests and sampler cleanup, outside test deadlines.
+            receipt['retained_aggregate_product'] = retain_aggregate_product(
+                test, receipt.get('products_before_test_measurement'), receipt['products_after'], out)
+        except Exception as error:
+            receipt['failed_guard'] = receipt.get('failed_guard') or 'aggregate retention failed: ' + repr(error)
         receipt['end'] = stamp()
         receipt['load_after'] = os.getloadavg()
         raw = (out / 'raw.log').read_text(errors='replace')

@@ -23,7 +23,7 @@ jobs:
           swift --version
       - name: Observe the complete original Kit aggregate once
         env:
-          KIT_HOSTED_SAMPLE_MODE: '0'
+          KIT_HOSTED_SAMPLE_MODE: '1'
         run: python3 ios/scripts/kit-hosted-observe.py
       - name: Preserve observation even on failure
         if: always()
