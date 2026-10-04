@@ -1,11 +1,14 @@
 // no-port-check: NereusSDR-original inert preview projection, no polling targets.
 // Modification history (NereusSDR):
+//   2026-10-04 — Match individual control preview sizes to live controls by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Scroll the full configured preview stack by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Safe previews by J.J. Boyd (KG4VCF), OpenAI Codex assisted.
 #include "ContainerPreviewWidget.h"
 #include "ContainerContentRegistry.h"
 #include "ContainerContentHost.h"
+#include "ContainerControlCatalog.h"
 #include "FreeCanvasSurface.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/MeterPoller.h"
@@ -98,6 +101,7 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
         if (auto* meter=qobject_cast<MeterWidget*>(view)) {
             int height=80;QSize minimum(24,24);
             for (auto* item : meter->items()) {
+                if (isSingleContainerControl(item)) { height=singleContainerControlSize().height(); minimum=singleContainerControlMinimum(); }
                 if (auto* face=qobject_cast<CompositePresetItem*>(item)) { height=face->preferredFaceHeight(); minimum=face->minimumFaceSize(); meter->setMinimumWidth(minimum.width()); }
                 else if (auto* face=qobject_cast<BarPresetItem*>(item)) { height=face->preferredFaceHeight(); minimum=face->minimumFaceSize(); meter->setMinimumWidth(minimum.width()); }
                 item->setZOrder(entry.paintOrder);item->clearStackMetadata(); item->setRect(0,0,1,1); item->setProperty("containerSourceContext",context);

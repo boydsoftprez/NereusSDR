@@ -4,6 +4,7 @@
 #include "gui/meters/OtherButtonItem.h"
 #include "gui/containers/meter_property_editors/OtherButtonItemEditor.h"
 #include "gui/containers/ContainerContentHost.h"
+#include "gui/containers/ContainerControlCatalog.h"
 #include <QTemporaryDir>
 #include <QSplitter>
 #include <QScrollArea>
@@ -161,6 +162,58 @@ private slots:
  void individualControlStackUsesUsableCompactViewport() {
     ContainerContentRegistry registry;ContainerContentHost host(registry);ContainerDocument document;document.id="A";document.layout=ContentLayout::VerticalStack;document.contents={registry.makeEntry("control.mox"),registry.makeEntry("control.tune")};host.reconcile(document);host.resize(420,200);host.show();QCoreApplication::processEvents();
     QCOMPARE(host.entryRows().size(),2);QCOMPARE(host.entryRows()[0].height,44);QCOMPARE(host.entryRows()[1].height,44);QCOMPARE(host.meterSurfaces().first()->height(),88);
+ }
+ void canvasNumericResizeUsesLiveControlMinimum_data() {
+    QTest::addColumn<QString>("creationId");
+    QTest::addColumn<QString>("legacyRecord");
+    QTest::addColumn<QSize>("expectedMinimum");
+    for(const auto& control:supportedContainerControls()) {
+        QTest::newRow(qPrintable(control.creationId))<<control.creationId<<QString()<<QSize(64,32);
+    }
+    const uint32_t mox=1u<<int(OtherButtonItem::ButtonId::Mox);
+    const uint32_t tune=1u<<int(OtherButtonItem::ButtonId::Tun);
+    const uint32_t rx2=1u<<int(OtherButtonItem::ButtonId::Rx2);
+    QTest::newRow("legacy-single")<<QString("OTHERBTNS")<<QString("OTHERBTNS|0|0|1|1|0|0|1|%1").arg(mox)<<QSize(64,32);
+    QTest::newRow("legacy-group-one-column")<<QString("OTHERBTNS")<<QString("OTHERBTNS|0|0|1|1|0|0|1|%1").arg(mox|tune)<<QSize(24,24);
+    QTest::newRow("legacy-single-two-columns")<<QString("OTHERBTNS")<<QString("OTHERBTNS|0|0|1|1|0|0|2|%1").arg(mox)<<QSize(24,24);
+    QTest::newRow("unsupported-single-action")<<QString("OTHERBTNS")<<QString("OTHERBTNS|0|0|1|1|0|0|1|%1").arg(rx2)<<QSize(24,24);
+    QTest::newRow("ordinary-text")<<QString("TEXT")<<QString()<<QSize(24,24);
+ }
+ void canvasNumericResizeUsesLiveControlMinimum() {
+    QFETCH(QString,creationId);QFETCH(QString,legacyRecord);QFETCH(QSize,expectedMinimum);
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
+    WorkspaceDocument document;document.mainContainerId="A";ContainerDocument container;container.id="A";container.layout=ContentLayout::FreeCanvas;
+    auto entry=registry.makeEntry(creationId);if(!legacyRecord.isEmpty()) {entry.config["legacyRecord"]=legacyRecord;}
+    const QRectF importedRect(10.5,20.25,24,24);entry.setFreeCanvasRect(importedRect);container.contents={entry};document.containers={container};
+    QCOMPARE(manager.commitWorkspace(document,0).status,CommitStatus::Saved);const auto saved=store.snapshot();
+    ContainerContentHost live(registry);live.reconcile(container);QCOMPARE(live.entryRows().size(),1);
+    QCOMPARE(live.entryRows().first().widget->property("freeCanvasMinimum").toSizeF(),QSizeF(expectedMinimum));
+    QCOMPARE(live.captureDocument().contents.first().freeCanvasRect(),std::optional<QRectF>(importedRect));
+    ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);
+    auto* list=dialog.findChild<QListWidget*>("containerDraftContents");QVERIFY(list);list->setCurrentRow(0);
+    auto* preview=dialog.findChild<ContainerPreviewWidget*>();QVERIFY(preview);
+    QCOMPARE(preview->resolvedFreeCanvasRect(entry.id),importedRect);
+    auto* width=dialog.findChild<QDoubleSpinBox*>("canvasWidth");auto* height=dialog.findChild<QDoubleSpinBox*>("canvasHeight");QVERIFY(width);QVERIFY(height);
+    QCOMPARE(width->value(),24.);QCOMPARE(height->value(),24.);
+    // Exact imported sizes survive projection; only explicit resize edits use the live minimum.
+    width->setValue(12);height->setValue(12);
+    const QRectF resized(10.5,20.25,expectedMinimum.width(),expectedMinimum.height());
+    QCOMPARE(dialog.editSession()->draft().containers.first().contents.first().freeCanvasRect(),std::optional<QRectF>(resized));
+    QCOMPARE(width->value(),double(expectedMinimum.width()));QCOMPARE(height->value(),double(expectedMinimum.height()));
+    QCOMPARE(preview->freeCanvasMinimum(entry.id),QSizeF(expectedMinimum));QCOMPARE(preview->resolvedFreeCanvasRect(entry.id),resized);
+    QCOMPARE(store.snapshot(),saved);
+    QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+    QCOMPARE(store.snapshot().containers.first().contents.first().freeCanvasRect(),std::optional<QRectF>(resized));
+ }
+ void singleControlPreviewStackUsesCompactHeightWithoutChangingGroups() {
+    ContainerContentRegistry registry;MeterPoller poller;ContainerPreviewWidget preview(registry,poller);
+    ContainerDocument document;document.id="A";document.layout=ContentLayout::VerticalStack;
+    document.contents={registry.makeEntry("control.mox"),registry.makeEntry("control.tune"),registry.makeEntry("OTHERBTNS")};
+    preview.setDocument(document);preview.resize(420,240);preview.show();QCoreApplication::processEvents();
+    QCOMPARE(preview.entryBoundary(document.contents[0].id).height(),44);
+    QCOMPARE(preview.entryBoundary(document.contents[1].id).height(),44);
+    QCOMPARE(preview.entryBoundary(document.contents[2].id).height(),80);
  }
  void initTestCase() {AppSettings::setProfileOverride(QStringLiteral("task10-settings-%1").arg(QCoreApplication::applicationPid()));AppSettings::instance().clear();}
  void cleanupTestCase() {QFile::remove(AppSettings::instance().filePath());}
