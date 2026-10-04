@@ -104,7 +104,7 @@ jobs:
         run: |
           if [[ -f .github/release-notes-template.md ]]; then
             echo "" >> release_notes.md
-            cat .github/release-notes-template.md >> release_notes.md
+            sed "s/@VERSION@/${{ steps.meta.outputs.version }}/g" .github/release-notes-template.md >> release_notes.md
           fi
 
       - name: Upload release notes artifact
@@ -573,7 +573,7 @@ jobs:
           - runner: macos-15
             arch: x86_64
             dmg_suffix: macOS-intel
-            deployment_target: "11.0"
+            deployment_target: "12.0"
     runs-on: ${{ matrix.runner }}
     # Capture the Apple Developer ID secret into a job-level env var so
     # step-level `if:` guards can evaluate it. GitHub Actions forbids
@@ -598,7 +598,7 @@ jobs:
         # or a dependency of something else in this list) rather than
         # declaring the dependency this build actually has, the same way
         # fftw already is declared.
-        run: brew install qt@6 ninja create-dmg fftw openssl@3 ccache autoconf automake libtool wget
+        run: brew install ninja create-dmg fftw openssl@3 ccache autoconf automake libtool wget
 
       - name: Install non-Qt brew packages (x86_64 cross-compile)
         if: matrix.arch == 'x86_64'
@@ -607,16 +607,25 @@ jobs:
         # default macOS runner image.
         run: brew install ninja create-dmg ccache autoconf automake libtool wget
 
-      - name: Install Qt 6.8 for x86_64 macOS via aqtinstall
-        if: matrix.arch == 'x86_64'
+      - name: Install pinned Qt 6.8.3 for macOS via aqtinstall
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.*'
+          version: '6.8.3'
           host: 'mac'
           target: 'desktop'
           arch: 'clang_64'
           modules: 'qtmultimedia qtshadertools qtwebsockets'
           cache: true
+
+      - name: Verify Qt SDK architecture
+        run: |
+          set -euo pipefail
+          # clang_64 is the official macOS SDK package; verify its actual
+          # framework and Cocoa plugin support this row before compiling.
+          test -f "$QT_ROOT_DIR/lib/cmake/Qt6/Qt6Config.cmake"
+          test -x "$QT_ROOT_DIR/bin/macdeployqt"
+          lipo -verify_arch "${{ matrix.arch }}" "$QT_ROOT_DIR/lib/QtCore.framework/Versions/A/QtCore"
+          lipo -verify_arch "${{ matrix.arch }}" "$QT_ROOT_DIR/plugins/platforms/libqcocoa.dylib"
 
       - name: Build FFTW from source for x86_64 (both precisions)
         if: matrix.arch == 'x86_64'
@@ -775,11 +784,11 @@ jobs:
             # target_link_libraries, not target_link_directories — brew's
             # /opt/homebrew/lib is in the default linker path on the arm64
             # row, our cross-compile prefix is not). Qt is installed by
-            # jurplel/install-qt-action and exposed via Qt6_DIR env.
+            # jurplel/install-qt-action and selected explicitly below.
             FFTW_PREFIX="${{ github.workspace }}/fftw-x86_64"
             export PKG_CONFIG_PATH="$FFTW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
             export LDFLAGS="-L$FFTW_PREFIX/lib $LDFLAGS"
-            CMAKE_PREFIX_PATH_VAL="$FFTW_PREFIX"
+            CMAKE_PREFIX_PATH_VAL="$QT_ROOT_DIR;$FFTW_PREFIX"
             # OpenSSL (fix round 3, Important B): same cross-compile-
             # from-source story as FFTW above, for the same reason --
             # this row's Homebrew (arm64) has no x86_64 openssl@3 slice.
@@ -790,19 +799,20 @@ jobs:
             # native-arm64 configure of the same working directory).
             EXTRA_CMAKE_ARGS="-DOPENSSL_ROOT_DIR=${{ github.workspace }}/openssl-x86_64"
           else
-            # Native path: brew supplies both Qt and FFTW under the brew
-            # prefix (/opt/homebrew on Apple Silicon). No env-var dance
+            # Native path: brew supplies FFTW under the brew prefix
+            # (/opt/homebrew on Apple Silicon). No env-var dance
             # needed because brew's lib dir is in the default search path,
             # and openssl@3 is not keg-only (fix round 3 correction; see
             # CMakeLists.txt's find_package(OpenSSL) comment) so it needs
             # no OPENSSL_ROOT_DIR hint either.
-            CMAKE_PREFIX_PATH_VAL="$(brew --prefix)"
+            CMAKE_PREFIX_PATH_VAL="$QT_ROOT_DIR;$(brew --prefix)"
             EXTRA_CMAKE_ARGS=""
           fi
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="${{ matrix.deployment_target }}" \
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
+            -DQt6_DIR="$QT_ROOT_DIR/lib/cmake/Qt6" \
             -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH_VAL" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
@@ -817,14 +827,9 @@ jobs:
 
       - name: Bundle Qt frameworks
         run: |
-          # macdeployqt comes from brew on the arm64 row, from aqtinstall on
-          # the x86_64 row. jurplel/install-qt-action exposes the install via
-          # QT_ROOT_DIR.
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            MACDEPLOYQT="$QT_ROOT_DIR/bin/macdeployqt"
-          else
-            MACDEPLOYQT="$(brew --prefix qt@6)/bin/macdeployqt"
-          fi
+          # Bundle with the same pinned SDK selected at configure time.
+          # jurplel/install-qt-action exposes it via QT_ROOT_DIR on both rows.
+          MACDEPLOYQT="$QT_ROOT_DIR/bin/macdeployqt"
           # R-R3-36: the microphone capture helper in Contents/Helpers links
           # Qt directly, so macdeployqt must rewrite its references too.
           HELPER="build/NereusSDR.app/Contents/Helpers/nereus-audio-capture"
