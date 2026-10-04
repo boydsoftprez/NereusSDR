@@ -1,7 +1,8 @@
 # Thetis CAT compatibility and setup design
 
 - Date: 2026-10-04
-- Status: proposed written design for maintainer review; implementation has not started.
+- Status: approved by JJ on 2026-10-04; implementation plan reconciled to the requested Core Controller tip; implementation has not started.
+- Nereus implementation baseline: Core Controller candidate `27716f5d6700e1e7d1808acfe478756249828e8c`, requested by JJ on 2026-10-04.
 - Source baseline: Thetis v2.10.3.15, commit `3759d096`.
 - Author: J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
 
@@ -30,7 +31,7 @@ Thetis sources under `Project Files/Source/Console/` establish:
 
 | Source | Finding |
 | --- | --- |
-| `CAT/CATStructs.xml` | 419 distinct descriptors; 348 active (39 standard, 309 extended `ZZ`), 71 inactive. |
+| `CAT/CATStructs.xml` | 419 distinct descriptors; 349 active (39 standard, 310 extended `ZZ`), 70 inactive. |
 | `CAT/CATParser.cs:410-593` | Semicolon framing, case-insensitive prefixes, activity and field-width validation, payload exceptions and extended dispatch. |
 | `CAT/CATCommands.cs` | 10,591 lines of handlers; many directly access Console controls or Setup forms. Standard commands often delegate to extended counterparts. |
 | `CAT/SIOListenerII.cs:31,324,556,784` | Four ordinary serial listeners, all controlling the same global Console. |
@@ -94,7 +95,7 @@ Proposed responsibilities:
 | `CatCommandCatalog` | Immutable descriptor widths, activity, validation kind and handler identity. |
 | `CatParser` | Validate a complete command and format the appropriate result; no GUI or socket operations. |
 | `CatModelAdapter` | Resolve endpoint targets and perform model operations, conversions and real state readback. |
-| `CatSession` | Own per-client stream buffer and protocol-local state, including registrations and reporting subscriptions. |
+| `CatSession` | Own per-client stream buffer and protocol-local state, including registrations and delivery bookkeeping. Global AI enablement remains service-owned. |
 | `CatService` | Own endpoint configuration, transport lifecycle, reporting routes and CAT PTT claims. |
 | Serial/TCP/PTY transports | Deliver bytes and expose actual connection/error state; delegate parsing and model work. |
 
@@ -123,8 +124,7 @@ generic mapping to all extended commands.
 
 Do not create a slice as a side effect of opening a connection or querying VFO
 B. Missing targets produce the command's documented unavailable/error outcome.
-Removing a bound slice invalidates its binding rather than retargeting the
-next slice that occupies the same list position. Changing endpoint assignments
+Removing a bound slice invalidates its binding rather than retargeting a recreated slice with the same reusable ID. Capture the existing SliceOwnership incarnation at endpoint binding/start and require it to match until explicit rebind. Incarnations are not persisted across Core boots. Changing endpoint assignments
 requires stopping that endpoint first and clearing its session state.
 
 The first endpoint proposes primary slice A and optional secondary slice B
@@ -151,9 +151,7 @@ All endpoints share one physical transmit chain. TX/RX commands use CAT's
 existing `MoxController::onCatPtt` path after resolving the selected TX slice
 and existing interlocks. They never set a radio keying bit directly.
 
-The existing PTT slots are last-setter-wins, not shared source arbitration
-(`MoxController.h:567`, `MoxController.cpp:1223`). Adopt a defined CAT ownership
-contract rather than introducing global PTT refcounting in this port:
+The requested newer Core supplies `KeyerIdentity`, an installed keying gate and guarded CAT PollPTT release (`MoxController.cpp:549-630,2820-2846`). CAT must preserve that authority: program keys never take transmit. Those existing identities distinguish devices/sources but not individual CAT activations or accepted idempotent station requests. Add the observational activation identity defined in the implementation plan, while preserving gate decisions and existing source APIs:
 
 - Accept the first CAT TX claim only when the transmitter is idle and any
   required handoff is confirmed. Reserve that target during pending handoff.
@@ -163,9 +161,7 @@ contract rather than introducing global PTT refcounting in this port:
   split/simplex/handoff changes while a CAT claim or another source's TX is live.
 - A release, disconnect, endpoint stop, radio disconnect or transport error
   removes that source's claim. The final claim releases MOX only while CAT still
-  owns the same activation. Add an ownership guard to `onCatPtt(false)` analogous
-  to the existing guarded microphone release, instead of its current
-  unconditional `setMox(false)`.
+  owns the same activation. Reuse the existing guarded CAT release, with activation/generation validation before dispatch.
 - Another source taking over, a UI/TCI TX handoff, or an external unkey invalidates
   all prior CAT claims and pending activations. Never automatically rekey from
   those stale claims. Require a fresh explicit TX command; pin PTT requires a
@@ -209,8 +205,7 @@ oversized and subsequent valid commands. Record any resulting upstream
 divergence in source, provenance and the compatibility report.
 
 Implement `ZZGA`/`ZZGR` registration and directed outbound messages at the
-session/service boundary. Preserve Thetis automatic-information enablement and
-destination choices; emit from model changes and avoid request echoes or
+session/service boundary. Preserve Thetis service-global automatic-information enablement and configured serial1–4/TCP destination choices; emit from model changes and avoid request echoes or
 duplicate notifications. Record source behavior and any multi-endpoint
 adaptation explicitly. Logs show actual requests/replies and transport state.
 

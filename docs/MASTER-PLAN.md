@@ -1017,11 +1017,13 @@ Bench verification: matrix at `docs/architecture/phase3r-verification/README.md`
 ### Phase 3K: CAT/rigctld + TCP Server
 **Goal:** External radio control for logging and contest software.
 
+The [Thetis CAT design](architecture/2026-10-04-thetis-cat-design.md) was approved on 2026-10-04. The [implementation plan](architecture/2026-10-04-thetis-cat-plan.md) and [419-command planning matrix](architecture/cat/2026-10-04-command-mapping.csv) are reconciled to Core Controller candidate `27716f5d`; implementation has not started.
+
 Scope:
-- 4-channel slice-bound rigctld server (AetherSDR `RigctlServer` + `RigctlPty` pattern)
-- TCP/IP CAT server (AetherSDR pattern, verified against Thetis `TCPIPcatServer.cs`)
-- Verify CAT command set against Thetis `SIOListenerII` for completeness
-- CatApplet UI for configuration
+- Complete pinned Thetis descriptor inventory with explicit supported, adapted, inert, inactive or unavailable contracts
+- Four stable slice-bound CAT channels, native TCP/optional serial/PTY transports and source-grounded PTT/reporting settings
+- CatApplet, live setup/status/logging and production model/headless verification
+- Separate four-channel rigctld delivery, studying current AetherSDR `CatPort`/`RigctlProtocol`/`SmartCatSession` transport patterns
 
 ### Phase 3L: Protocol 1 Support
 **Goal:** Add P1 support for Hermes Lite 2 and older ANAN radios.
