@@ -610,7 +610,7 @@ bool isLibraryNoise(const QString& line)
         QStringView message = QStringView(line).mid(juice + 7);
         // "agent.c:1234: " before the message itself.
         static const QRegularExpression source(QStringLiteral("^[A-Za-z0-9_]+\\.c:\\d+: "));
-        const QRegularExpressionMatch at = source.matchView(message);
+        const QRegularExpressionMatch at = source.match(message);
         if (at.hasMatch()) {
             message = message.mid(at.capturedLength());
         }
