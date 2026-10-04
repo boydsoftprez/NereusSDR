@@ -1480,8 +1480,9 @@ void TstRemoteTxEqCfc::reentrantCfcProjectionKeepsNewestCurve()
 // Task 33 (Thetis's unkey order) both happen at the TX drain's request.
 void TstRemoteTxEqCfc::txaFlushedTellsPureSignalOnTheMainThread()
 {
-    auto core = makeStationRadioModel();
+    // The borrowed channel must outlive the Core-owned PureSignal coordinator.
     TxChannel channel(1);
+    auto core = makeStationRadioModel();
     core->wireTransmitChainForTest(&channel);
     QVERIFY(core->installPureSignalForTest(&channel));
     core->wireTxaFlushedForTest();
