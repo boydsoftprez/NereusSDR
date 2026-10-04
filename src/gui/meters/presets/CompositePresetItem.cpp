@@ -1,5 +1,8 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-03 — Restore full approved source typography at ordinary sizes and
+//                 reserve painted readout rows by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-03 — Retain dim calibrated parked ANAN pointers without fabricating
 //                 readings by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Fit compact source lettering inside rounded glass by J.J. Boyd
@@ -111,12 +114,15 @@ mw0lge@grange-lane.co.uk
 #include "CompositePresetItem.h"
 #include "AnanFaceRenderer.h"
 #include "gui/meters/MeterPoller.h"
+#include "core/LogCategories.h"
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/ModeButtonItem.h"
 #include "gui/meters/VfoDisplayItem.h"
 #include "gui/meters/ClockItem.h"
 #include <QPainter>
+#include <QGuiApplication>
 #include <QPainterPath>
+#include <QPainterPathStroker>
 #include <QImage>
 #include <QLinearGradient>
 #include <QFontMetrics>
@@ -160,24 +166,33 @@ QRectF fitAspect(const QRectF& box,double aspect) {
     const double width=qMax(0.0,qMin(box.width(),box.height()/aspect));
     return {box.center().x()-width/2,box.center().y()-width*aspect/2,width,width*aspect};
 }
-AnanFaceGeometry ananGeometry(const QRectF& outer,int fontSize,bool showReadout,bool showPeak) {
-    int columns=outer.width()<420?2:outer.width()<600?3:4;
+AnanFaceGeometry ananGeometry(const QRectF& outer,int fontSize,bool showReadout,bool showPeak,int readoutCount,double requestedCellWidth) {
+    int columns=qMin(qMax(1,readoutCount),outer.width()<420?2:outer.width()<600?3:4);
     const double header=qMin(qMax(14.0,22*outer.width()/720),outer.height()*.2);
     double readoutFont=qMax(12.0,fontSize*outer.width()/720),readoutHeight=0;
     double nameHeight=0,valueHeight=0,peakHeight=0;
     for(int pass=0;pass<5;++pass) {
-        QFont font; font.setBold(true); font.setPixelSize(qMax(12,qRound(readoutFont)));
+        QFont font=QGuiApplication::font(); font.setBold(true); font.setItalic(false); font.setPixelSize(qMax(12,qRound(readoutFont)));
         QFont heading=font; heading.setPixelSize(qMax(11,qRound(readoutFont*.75)));
         QFont peak=font; peak.setPixelSize(qMax(11,qRound(readoutFont*.7)));
         nameHeight=QFontMetricsF(heading).height(); valueHeight=QFontMetricsF(font).height();
         peakHeight=showPeak?QFontMetricsF(peak).height():0;
         const double cell=nameHeight+valueHeight+peakHeight+4;
-        readoutHeight=showReadout?((7+columns-1)/columns)*cell:0;
         const double maximum=qMax(0.0,outer.height()-header-12);
+        if(showReadout && pass==0) {
+            // Reserve the configured role text at its requested font size.
+            // Reflow only if the added rows fit; live samples cannot change
+            // this stable width budget or make the face jump between layouts.
+            while(columns>1 && outer.width()/columns<requestedCellWidth &&
+                ((readoutCount+columns-2)/(columns-1))*cell<=maximum) {
+                --columns;
+            }
+        }
+        readoutHeight=showReadout?((readoutCount+columns-1)/columns)*cell:0;
         if(readoutHeight<=maximum) { break; }
         // A short allocation gets additional columns before any proportional
         // reduction. The ordinary360px minimum keeps its two-column layout.
-        const int maximumColumns=qMin(7,qMax(columns,int(outer.width()/90)));
+        const int maximumColumns=qMin(readoutCount,qMax(columns,int(outer.width()/90)));
         if(columns<maximumColumns) { ++columns; continue; }
         const double reduced=qMax(12.0,readoutFont*maximum/qMax(1.0,readoutHeight));
         if(reduced==readoutFont) { break; }
@@ -387,11 +402,44 @@ QPointF CompositePresetItem::needleTip(int i,double value,const QRectF& r) const
     const double angle=std::atan2(dy,dx)+M_PI; const double radius=r.width()/2*c["lengthFactor"].toDouble();
     return pivot+QPointF(std::cos(angle)*radius*c["radiusX"].toDouble(),std::sin(angle)*radius*c["radiusY"].toDouble());
 }
+bool CompositePresetItem::ananChannelIncluded(int i) const {
+    const int binding=i==0?bindingId():m_channels[i].binding;
+    return m_channels[i].config["visible"].toBool() && bindingSupport(binding)!=BindingSupport::Unsupported;
+}
+int CompositePresetItem::ananReadoutCount() const {
+    int count=0;
+    for(int i=0;i<m_channels.size();++i) { if(ananChannelIncluded(i) && channelVisible(i)) { ++count; } }
+    return count;
+}
+double CompositePresetItem::ananReadoutCellWidth(double outerWidth) const {
+    const double pixels=qMax(12.0,m_config["fontSize"].toDouble()*outerWidth/720);
+    QFont value=QGuiApplication::font(); value.setBold(true); value.setItalic(false); value.setPixelSize(qMax(12,qRound(pixels)));
+    QFont heading=value; heading.setPixelSize(qMax(11,qRound(pixels*.75)));
+    QFont peak=value; peak.setPixelSize(qMax(11,qRound(pixels*.7)));
+    const QFontMetricsF values(value),headings(heading),peaks(peak);
+    double width=0;
+    for(int i=0;i<m_channels.size();++i) {
+        if(!ananChannelIncluded(i) || !channelVisible(i)) { continue; }
+        const Channel& channel=m_channels[i];
+        width=qMax(width,headings.horizontalAdvance(channel.name));
+        width=qMax(width,values.horizontalAdvance(QStringLiteral("-- ")+channel.units));
+        if(m_config["showPeakValue"].toBool()) { width=qMax(width,peaks.horizontalAdvance(QStringLiteral("Peak --"))); }
+        for(double endpoint:{channel.calibration.firstKey(),channel.calibration.lastKey()}) {
+            const QString reading=i==0 && channel.units==QStringLiteral("dBm")?signalReadout(endpoint):
+                QString::number(endpoint,'f',1)+" "+channel.units;
+            width=qMax(width,values.horizontalAdvance(reading));
+            if(m_config["showPeakValue"].toBool()) {
+                width=qMax(width,peaks.horizontalAdvance(QStringLiteral("Peak %1").arg(endpoint,0,'f',1)));
+            }
+        }
+    }
+    return std::ceil(width)+6;
+}
 QRectF CompositePresetItem::ananNeedleRect(int width,int height) const {
-    return ananGeometry(pixelRect(width,height),m_config["fontSize"].toInt(),m_config["showReadout"].toBool(),m_config["showPeakValue"].toBool()).needles;
+    return ananGeometry(pixelRect(width,height),m_config["fontSize"].toInt(),m_config["showReadout"].toBool(),m_config["showPeakValue"].toBool(),ananReadoutCount(),ananReadoutCellWidth(pixelRect(width,height).width())).needles;
 }
 QRectF CompositePresetItem::ananGroupControlRect(int width,int height) const {
-    return ananGeometry(pixelRect(width,height),m_config["fontSize"].toInt(),m_config["showReadout"].toBool(),m_config["showPeakValue"].toBool()).selector;
+    return ananGeometry(pixelRect(width,height),m_config["fontSize"].toInt(),m_config["showReadout"].toBool(),m_config["showPeakValue"].toBool(),ananReadoutCount(),ananReadoutCellWidth(pixelRect(width,height).width())).selector;
 }
 QString CompositePresetItem::signalReadout(double value) const { return formatSignalReading(value,m_unitMode,m_aboveS9,m_showDecimal); }
 QString CompositePresetItem::formatSignalReading(double value,MeterUnit unit,bool aboveS9,bool decimal) {
@@ -562,7 +610,7 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
 }
 void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool background) {
     using namespace AnanFace;
-    const AnanFaceGeometry geometry=ananGeometry(outer,m_config["fontSize"].toInt(),m_config["showReadout"].toBool(),m_config["showPeakValue"].toBool());
+    const AnanFaceGeometry geometry=ananGeometry(outer,m_config["fontSize"].toInt(),m_config["showReadout"].toBool(),m_config["showPeakValue"].toBool(),ananReadoutCount(),ananReadoutCellWidth(outer.width()));
     const QRectF& skin=geometry.skin;
     if(skin.isEmpty()) { return; }
     const double scale=geometry.scale,fontRatio=m_config["fontSize"].toDouble()/18;
@@ -575,10 +623,7 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
         const double factor=qMin(1.0,qMin(box.width()/qMax(1.0,metrics.horizontalAdvance(value)),box.height()/qMax(1.0,metrics.height())));
         font.setPixelSize(qMax(minimumPixels,qFloor(size*factor))); p.setFont(font); p.setPen(ink); p.drawText(box,alignment,value);
     };
-    const auto included=[&](int i) {
-        const int binding=i==0?bindingId():m_channels[i].binding;
-        return m_channels[i].config["visible"].toBool() && bindingSupport(binding)!=BindingSupport::Unsupported;
-    };
+    const auto included=[&](int i) { return ananChannelIncluded(i); };
     const auto active=[&](int i) {
         const int binding=i==0?bindingId():m_channels[i].binding;
         return channelVisible(i) && (bindingSupport(binding)==BindingSupport::Supported || m_channels[i].dynamics.hasReading());
@@ -618,21 +663,28 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
     }
     p.save(); p.setClipPath(glass,Qt::IntersectClip);
     if(background) {
-        QVector<Segment> segments;
+        QVector<QPainterPath> paintedClearance;
         QVector<QRectF> occupied;
+        const double clearance=3*qMin(1.0,skin.width()/600);
+        const auto recordClearance=[&](const QPainterPath& path,double stroke) {
+            // Measure the square caps/bevel joins actually painted by QPen;
+            // segment distance alone underestimates their corner clearance.
+            QPainterPathStroker stroker; stroker.setWidth(stroke+2*clearance);
+            stroker.setCapStyle(Qt::SquareCap); stroker.setJoinStyle(Qt::BevelJoin);
+            paintedClearance.append(stroker.createStroke(path));
+        };
         const auto line=[&](const QPointF& a,const QPointF& b,double stroke,const QBrush& ink) {
-            p.setPen(QPen(ink,stroke)); p.drawLine(a,b); segments.append({QLineF(a,b),stroke});
+            p.setPen(QPen(ink,stroke)); p.drawLine(a,b);
+            QPainterPath path; path.moveTo(a); path.lineTo(b); recordClearance(path,stroke);
         };
         const auto arc=[&](int i,double begin,double end,const QBrush& ink,double width) {
             QPainterPath path;
-            QPointF previous;
             const double stroke=qMax(1.0,width*scale);
             for(int step=0;step<=90;++step) {
                 const QPointF point=toWidget(atAngle(i,m_channels[i].config,(begin+(end-begin)*step/90)*M_PI/180),skin);
-                if(step==0) { path.moveTo(point); } else { path.lineTo(point); segments.append({QLineF(previous,point),stroke}); }
-                previous=point;
+                if(step==0) { path.moveTo(point); } else { path.lineTo(point); }
             }
-            p.setPen(QPen(ink,stroke)); p.drawPath(path);
+            p.setPen(QPen(ink,stroke)); p.drawPath(path); recordClearance(path,stroke);
         };
         // Paint scales in the preview's outer-to-inner order. Every drawn arc
         // and tick participates in the numeric ink clearance measurement.
@@ -670,41 +722,15 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
         const QStringList defaultUnits{"dBm","V","A","W","","dB","dB"};
         const QColor defaultNeedles[]{QColor(233,51,50),Qt::black,Qt::black,QColor(233,51,50),Qt::black,Qt::black,Qt::black};
         const QVector<QImage>& crops=glyphs();
-        double compactFit=1;
-        QRectF compactHeading;
         for(int j=0;j<identities().size();++j) {
             const Identity& identity=identities()[j]; const int i=identity.channel;
-            if(!included(i) || (skin.width()<600 && j!=0 && j!=1 && j!=8)) { continue; }
+            if(!included(i)) { continue; }
             const Channel& channel=m_channels[i];
             QRectF box(toWidget(identity.box.topLeft(),skin),QSizeF(identity.box.width()*scale,identity.box.height()*scale));
-            double grow=fontRatio;
-            if(skin.width()<600) { grow=qMax(grow,11/qMax(.01,box.height())); }
-            const QPointF center=box.center(); box.setSize(box.size()*grow);
-            if(skin.width()>=600) { box.moveCenter(center); }
-            else if(j==0) { box.moveLeft(toWidget({919,0},skin).x()-box.width()/2); }
-            double pad=3*scale*grow;
-            QRectF destination=box.adjusted(-pad,-pad,pad,pad);
-            if(skin.width()<600) {
-                // Compact crops retain their source aspect and pixels. Reserve
-                // the rounded corners horizontally and a small screen inset;
-                // fitting the entire padded destination prevents edge clipping.
-                const double horizontal=qMin(qMax(2.0,44*scale+2),geometry.window.width()/4);
-                const double vertical=qMin(2.0,geometry.window.height()/4);
-                const QRectF available=geometry.window.adjusted(horizontal,vertical,-horizontal,-vertical);
-                const double fit=qMin(j==0?1.0:compactFit,qMin(available.width()/destination.width(),available.height()/destination.height()));
-                const QPointF midpoint=destination.center();
-                destination.setSize(destination.size()*fit); destination.moveCenter(midpoint);
-                destination.moveLeft(qBound(available.left(),destination.left(),available.right()-destination.width()));
-                destination.moveTop(qBound(available.top(),destination.top(),available.bottom()-destination.height()));
-                if(j==0) {
-                    compactFit=fit; compactHeading=destination;
-                } else if(destination.intersects(compactHeading)) {
-                    // At microscopic fits, keep all three glyph crops at the
-                    // same reduction and separate the heading from S/dB.
-                    destination.moveTop(qBound(available.top(),compactHeading.bottom()+1,available.bottom()-destination.height()));
-                }
-                grow*=fit; pad*=fit; box=destination.adjusted(pad,pad,-pad,-pad);
-            }
+            const double grow=fontRatio;
+            const QPointF center=box.center(); box.setSize(box.size()*grow); box.moveCenter(center);
+            const double pad=3*scale*grow;
+            const QRectF destination=box.adjusted(-pad,-pad,pad,pad);
             p.save(); if(!active(i)) { p.setOpacity(p.opacity()*.62); }
             const bool renamed=!identity.unit && channel.name!=defaultNames[i];
             const bool reunit=identity.unit && channel.units!=defaultUnits[i];
@@ -721,69 +747,102 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
             }
             p.restore(); occupied.append(box);
         }
-        if(skin.width()>=600) {
-            for(int i:order) {
-                if(!included(i)) { continue; }
-                int numberIndex=0;
-                for(double key:values()[i]) {
-                    const double value=raw(i,key),a=theta(i,value);
-                    const QPointF tip=needleTip(i,value,skin),normal=ellipseNormal(i,m_channels[i].config,a),tangent(-normal.y(),normal.x());
-                    const int sign=i==0?1:-1;
-                    const QString label=i==0?(key<=-73?QString::number(qRound((key+127)/6)):QStringLiteral("+%1").arg(key+73)):
-                        QString::number(raw(i,key),'g',4);
-                    QFont font(QStringLiteral("Arial")); font.setBold(true); font.setPixelSize(qMax(11,qRound(42*scale*fontRatio)));
-                    QPainterPath inkPath; inkPath.addText(QPointF(0,0),font,label);
-                    const QRectF inkBounds=inkPath.boundingRect();
-                    const QRect source=i==0?signalBoxes()[numberIndex]:QRect();
-                    const double halfWidth=i==0?source.width()*scale*fontRatio/2:inkBounds.width()/2;
-                    const double halfHeight=i==0?source.height()*scale*fontRatio/2:inkBounds.height()/2;
+        for(int i:order) {
+            if(!included(i)) { continue; }
+            int numberIndex=0;
+            double previousNumberX=-std::numeric_limits<double>::infinity();
+            for(double key:values()[i]) {
+                const double value=raw(i,key),a=theta(i,value);
+                const QPointF tip=needleTip(i,value,skin),normal=ellipseNormal(i,m_channels[i].config,a),tangent(-normal.y(),normal.x());
+                const int sign=i==0?1:-1;
+                const QString label=i==0?(key<=-73?QString::number(qRound((key+127)/6)):QStringLiteral("+%1").arg(key+73)):
+                    QString::number(raw(i,key),'g',4);
+                const QVector<double>& majors=values()[i];
+                const QPointF before=numberIndex>0?needleTip(i,raw(i,majors[numberIndex-1]),skin):
+                    tip*2-needleTip(i,raw(i,majors[numberIndex+1]),skin);
+                const QPointF after=numberIndex+1<majors.size()?needleTip(i,raw(i,majors[numberIndex+1]),skin):tip*2-before;
+                const double lowTangent=QPointF::dotProduct(before-tip,tangent)/2;
+                const double highTangent=QPointF::dotProduct(after-tip,tangent)/2;
+                const QPointF pivot=needlePivot(i,skin),radius=radii(i,m_channels[i].config)*scale;
+                const auto phase=[&](const QPointF& point) { return std::atan2((point.y()-pivot.y())/radius.y(),(point.x()-pivot.x())/radius.x()); };
+                const double beforePhase=numberIndex>0?phase(before):2*a-phase(after);
+                const double afterPhase=numberIndex+1<majors.size()?phase(after):2*a-beforePhase;
+                const double lowPhase=(beforePhase+a)/2,highPhase=(afterPhase+a)/2;
+                // Keep the nested main-scale numbers between their own arc
+                // and the next inner arc. Angular association alone can put
+                // a Current value into the COMP row at a compact size.
+                const int innerChannel=i==3?4:i==4?2:i==2?5:-1;
+                const QPointF innerRadius=innerChannel>=0?radii(innerChannel,m_channels[innerChannel].config)*scale:QPointF();
+                const bool nested=innerChannel>=0 && included(innerChannel) &&
+                    QLineF(pivot,needlePivot(innerChannel,skin)).length()<.001 &&
+                    innerRadius.x()<radius.x() && innerRadius.y()<radius.y();
+                const auto inRow=[&](const QPointF& point) {
+                    if(!nested) { return true; }
+                    const QPointF relative=point-pivot;
+                    return std::hypot(relative.x()/radius.x(),relative.y()/radius.y())<1 &&
+                        std::hypot(relative.x()/innerRadius.x(),relative.y()/innerRadius.y())>1;
+                };
+                const QRect source=i==0?signalBoxes()[numberIndex]:QRect();
+                QPainterPath inkPath; QRectF inkBounds,box; bool found=false;
+                const int nominalPixels=qMax(1,qRound(42*scale*fontRatio));
+                int previousPixels=-1;
+                // A number stays beside its own calibrated major tick. Search
+                // normal offsets first; only fit its original numeric style
+                // proportionally if this local region cannot hold nominal ink.
+                for(double fit:{1.,.95,.9,.85,.8,.75,.7}) {
+                    const int pixels=qMax(1,qRound(nominalPixels*fit));
+                    if(i!=0 && pixels==previousPixels) { continue; }
+                    previousPixels=pixels;
+                    QFont font(QStringLiteral("Arial")); font.setBold(true); font.setPixelSize(pixels);
+                    inkPath=QPainterPath(); inkPath.addText(QPointF(0,0),font,label); inkBounds=inkPath.boundingRect();
+                    const double halfWidth=i==0?source.width()*scale*fontRatio*fit/2:inkBounds.width()/2;
+                    const double halfHeight=i==0?source.height()*scale*fontRatio*fit/2:inkBounds.height()/2;
                     const double tickLength=i==0?32:i==5?12:20;
                     const double normalSupport=std::abs(normal.x())*halfWidth+std::abs(normal.y())*halfHeight;
-                    const QPointF base=tip+normal*sign*(tickLength*scale+normalSupport+3+3.5*scale);
+                    const QPointF base=tip+normal*sign*(tickLength*scale+normalSupport+clearance+3.5*scale);
                     const auto place=[&](double along,double away) {
                         const QPointF center=base+tangent*along*scale+normal*sign*away*scale;
                         return QRectF(center.x()-halfWidth,center.y()-halfHeight,halfWidth*2,halfHeight*2);
                     };
-                    const auto collides=[&](const QRectF& box) {
-                        return !geometry.window.contains(box) || std::any_of(occupied.cbegin(),occupied.cend(),[&](const QRectF& prior) { return prior.adjusted(-3,-3,3,3).intersects(box); }) ||
-                            std::any_of(segments.cbegin(),segments.cend(),[&](const Segment& segment) { return segmentClearance(box,segment)<3; });
+                    const auto fits=[&](const QRectF& candidate) {
+                        const double x=candidate.center().x(),along=QPointF::dotProduct(candidate.center()-tip,tangent);
+                        const double angle=phase(candidate.center());
+                        return x>previousNumberX && along>=lowTangent && along<=highTangent && angle>=lowPhase && angle<=highPhase && inRow(candidate.center()) && geometry.window.contains(candidate) &&
+                            std::none_of(occupied.cbegin(),occupied.cend(),[&](const QRectF& prior) { return prior.adjusted(-clearance,-clearance,clearance,clearance).intersects(candidate); }) &&
+                            std::none_of(paintedClearance.cbegin(),paintedClearance.cend(),[&](const QPainterPath& stroke) { return stroke.intersects(candidate); });
                     };
-                    QRectF box=place(0,0); bool found=!collides(box);
+                    const QVector<double> normalOffsets{0,4,8,12,16,20,24,28,32,40,48,64,80,-4,-8};
+                    for(double away:normalOffsets) {
+                        const QRectF candidate=place(0,away);
+                        if(fits(candidate)) { box=candidate; found=true; break; }
+                    }
                     if(!found) {
                         QVector<QPointF> candidates;
-                        for(double away:{0.,8.,16.,24.,32.,-8.}) { for(double along:{22.,-22.,35.,-35.,50.,-50.,70.,-70.,0.}) { candidates.append({along,away}); } }
+                        for(int away=-8;away<=80;away+=2) { for(int along=-70;along<=70;along+=2) { if(along!=0) { candidates.append({double(along),double(away)}); } } }
                         std::stable_sort(candidates.begin(),candidates.end(),[](const QPointF& x,const QPointF& y) { return std::hypot(x.x(),x.y())<std::hypot(y.x(),y.y()); });
                         for(const QPointF& candidate:candidates) {
                             const QRectF alternative=place(candidate.x(),candidate.y());
-                            if(!collides(alternative)) { box=alternative; found=true; break; }
+                            if(fits(alternative)) { box=alternative; found=true; break; }
                         }
                     }
-                    // Customized geometry can exceed the approved search region.
-                    // Measure further positions instead of dropping required values.
-                    if(!found) {
-                        for(int radius=80;radius<=240 && !found;radius+=10) {
-                            for(double away:{0.,8.,16.,24.,32.,-8.}) {
-                                for(int direction:{1,-1}) {
-                                    const QRectF alternative=place(direction*radius,away);
-                                    if(!collides(alternative)) { box=alternative; found=true; break; }
-                                }
-                                if(found) { break; }
-                            }
-                        }
-                    }
-                    p.save(); if(!active(i)) { p.setOpacity(p.opacity()*.62); }
-                    if(i==0 && color(m_config,"lowColor")==QColor("#ff203040") && color(m_config,"highColor")==QColor("#ffff4444")) {
-                        p.drawImage(box,crops[identities().size()+numberIndex]);
-                    } else {
-                        inkPath.translate(box.center()-inkBounds.center());
-                        QLinearGradient metal(box.topLeft(),box.bottomLeft());
-                        metal.setColorAt(0,Qt::white); metal.setColorAt(.42,QColor("#eff3f5")); metal.setColorAt(1,QColor("#bcc5cc"));
-                        const QBrush ink=i==0 && key>-73?QBrush(markInk(i,key)):i==6 && key<0?QBrush(QColor("#2bc2ff")):
-                            color(m_config,"lowColor")==QColor("#ff203040")?QBrush(metal):QBrush(onDarkGlass(color(m_config,"lowColor")));
-                        p.fillPath(inkPath,ink);
-                    }
-                    p.restore(); occupied.append(box); ++numberIndex;
+                    if(found) { break; }
+                    box=place(0,0);
                 }
+                // Impossible imported geometry is diagnosed, never disguised by
+                // moving a value to a different tick or silently omitting it.
+                if(!found) { qCWarning(lcMeter)<<"ANAN numeric ink cannot fit calibrated tick neighborhood"<<i<<key<<skin.size(); }
+                p.save(); if(!active(i)) { p.setOpacity(p.opacity()*.62); }
+                if(i==0 && color(m_config,"lowColor")==QColor("#ff203040") && color(m_config,"highColor")==QColor("#ffff4444")) {
+                    p.drawImage(box,crops[identities().size()+numberIndex]);
+                } else {
+                    inkPath.translate(box.center()-inkBounds.center());
+                    QLinearGradient metal(box.topLeft(),box.bottomLeft());
+                    metal.setColorAt(0,Qt::white); metal.setColorAt(.42,QColor("#eff3f5")); metal.setColorAt(1,QColor("#bcc5cc"));
+                    const QBrush ink=i==0 && key>-73?QBrush(markInk(i,key)):i==6 && key<0?QBrush(QColor("#2bc2ff")):
+                        color(m_config,"lowColor")==QColor("#ff203040")?QBrush(metal):QBrush(onDarkGlass(color(m_config,"lowColor")));
+                    p.fillPath(inkPath,ink);
+                }
+                p.restore(); occupied.append(box); previousNumberX=box.center().x(); ++numberIndex;
             }
         }
     } else {
@@ -844,8 +903,7 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
         p.drawImage(QRectF(skin.left(),skin.top()+754*scale,skin.width(),(kHeight-754)*scale),art,QRectF(0,754,kWidth,kHeight-754));
     }
     if(!background && m_config["showReadout"].toBool()) {
-        int count=0;
-        for(int i=0;i<m_channels.size();++i) { if(included(i) && channelVisible(i)) { ++count; } }
+        const int count=ananReadoutCount();
         const int columns=qMin(geometry.columns,qMax(1,count)),rows=qMax(1,(count+columns-1)/columns);
         const double width=geometry.readout.width()/columns,height=geometry.readout.height()/rows;
         int cell=0;

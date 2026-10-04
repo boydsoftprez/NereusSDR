@@ -122,6 +122,9 @@ private:
     void paintBar(QPainter&,const QRectF&,int);
     void paintNeedles(QPainter&,const QRectF&,bool);
     void paintAnan(QPainter&,const QRectF&,bool);
+    bool ananChannelIncluded(int) const;
+    int ananReadoutCount() const;
+    double ananReadoutCellWidth(double outerWidth) const;
     void paintEye(QPainter&,const QRectF&);
     void paintHistory(QPainter&,const QRectF&);
     Face m_face;

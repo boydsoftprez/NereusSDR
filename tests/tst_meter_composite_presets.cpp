@@ -2,10 +2,13 @@
 #include <QtTest>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPainterPathStroker>
 #include <QPaintEngine>
 #include <QPaintDevice>
 #include <QDir>
 #include <QScreen>
+#include <QApplication>
+#include <QScopeGuard>
 #include <QJsonArray>
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
@@ -37,9 +40,9 @@ class TextPaintEngine : public QPaintEngine {
 public:
     struct Text { QString value; int pixels; QRectF bounds; };
     QVector<Text> texts;
-    struct Glyph { QSize sourceSize; QRectF bounds; };
+    struct Glyph { QSize sourceSize; QRectF bounds; QRectF ink; };
     QVector<Glyph> glyphs;
-    struct PaintedPath { QPainterPath path; QBrush brush; qreal opacity; };
+    struct PaintedPath { QPainterPath path; QBrush brush; qreal opacity; QPen pen; };
     QVector<PaintedPath> paths;
     explicit TextPaintEngine(int dpr):QPaintEngine(AllFeatures),m_dpr(dpr) {}
     bool begin(QPaintDevice* device) override { setPaintDevice(device); setActive(true); return true; }
@@ -51,14 +54,28 @@ public:
         // Small cached source crops are face glyphs; the1855×848 art is not.
         if(image.width()<=468 && image.height()<=65) {
             const QRectF mapped=state->transform().mapRect(target);
-            glyphs.append({image.size(),QRectF(mapped.topLeft()/m_dpr,mapped.size()/m_dpr)});
+            QRect pixels;
+            for(int y=0;y<image.height();++y) { for(int x=0;x<image.width();++x) {
+                if(image.pixelColor(x,y).alpha()>32) { pixels=pixels.united(QRect(x,y,1,1)); }
+            } }
+            const QRectF bounds(mapped.topLeft()/m_dpr,mapped.size()/m_dpr);
+            const QRectF ink(bounds.left()+pixels.x()*bounds.width()/image.width(),bounds.top()+pixels.y()*bounds.height()/image.height(),
+                pixels.width()*bounds.width()/image.width(),pixels.height()*bounds.height()/image.height());
+            glyphs.append({image.size(),bounds,ink});
         }
     }
     void drawPath(const QPainterPath& path) override {
         QTransform logical=state->transform(); logical.scale(1.0/m_dpr,1.0/m_dpr);
-        paths.append({logical.map(path),state->brush(),state->opacity()});
+        paths.append({logical.map(path),state->brush(),state->opacity(),state->pen()});
     }
-    void drawPolygon(const QPointF*,int,PolygonDrawMode) override {}
+    void drawLines(const QLineF* lines,int count) override {
+        for(int i=0;i<count;++i) { QPainterPath path; path.moveTo(lines[i].p1()); path.lineTo(lines[i].p2()); drawPath(path); }
+    }
+    void drawPolygon(const QPointF* points,int count,PolygonDrawMode mode) override {
+        if(mode==PolylineMode && count>=2) {
+            QPainterPath path; path.moveTo(points[0]); for(int i=1;i<count;++i) { path.lineTo(points[i]); } drawPath(path);
+        }
+    }
     void drawTextItem(const QPointF& point,const QTextItem& item) override {
         const QRectF bounds(point.x(),point.y()-item.ascent(),item.width(),item.ascent()+item.descent());
         const QRectF mapped=state->transform().mapRect(bounds);
@@ -232,12 +249,14 @@ private slots:
         if(QGuiApplication::platformName()=="offscreen") { QSKIP("Native QRhi frames require the configured native platform"); }
 #endif
         const QString destination=qEnvironmentVariable("NEREUS_METER_CAPTURE_DIR");
-        for(int width:{360,520,720}) {
+        for(const QSize size:{QSize(360,300),QSize(520,300),QSize(720,300),QSize(720,420)}) {
+            const int width=size.width(),height=size.height();
+            const QString sizeTag=height==300?QString::number(width):QString("%1x%2").arg(width).arg(height);
             MeterWidget widget; auto face=std::make_unique<AnanMultiMeterItem>();
             auto channels=configuredChannels(*face);
             for(int i=0;i<7;++i) { auto c=channels[i].toObject(); c["attack"]=1; c["decay"]=1; channels[i]=c; }
             QVERIFY(face->applyConfiguration({{"channels",channels}}));
-            AnanMultiMeterItem* item=face.get(); widget.addItem(face.release()); widget.resize(width,300);
+            AnanMultiMeterItem* item=face.get(); widget.addItem(face.release()); widget.resize(size);
 #ifdef NEREUS_GPU_SPECTRUM
             QSignalSpy submitted(&widget,&QRhiWidget::frameSubmitted);
 #endif
@@ -250,13 +269,13 @@ private slots:
                 widget.update(); QCoreApplication::processEvents(); native=widget.grab().toImage();
 #endif
                 QVERIFY(!native.isNull());
-                qInfo()<<"ANAN offline fixture"<<state<<QGuiApplication::platformName()<<width<<"DPR"<<widget.devicePixelRatioF();
+                qInfo()<<"ANAN offline fixture"<<state<<QGuiApplication::platformName()<<size<<"DPR"<<widget.devicePixelRatioF();
                 if(!destination.isEmpty()) {
-                    QDir().mkpath(destination); QVERIFY(native.save(destination+QString("/anan-default-%1-native-%2-dpr%3.png").arg(state).arg(width).arg(widget.devicePixelRatioF())));
+                    QDir().mkpath(destination); QVERIFY(native.save(destination+QString("/anan-default-%1-native-%2-dpr%3.png").arg(state).arg(sizeTag).arg(widget.devicePixelRatioF())));
                     for(int dpr:{1,2}) {
-                        QImage cpu(QSize(width,300)*dpr,QImage::Format_ARGB32_Premultiplied); cpu.setDevicePixelRatio(dpr); cpu.fill(Qt::transparent);
-                        { QPainter painter(&cpu); item->paint(painter,width,300); }
-                        QVERIFY(cpu.save(destination+QString("/anan-default-%1-cpu-%2-dpr%3.png").arg(state).arg(width).arg(dpr)));
+                        QImage cpu(size*dpr,QImage::Format_ARGB32_Premultiplied); cpu.setDevicePixelRatio(dpr); cpu.fill(Qt::transparent);
+                        { QPainter painter(&cpu); item->paint(painter,width,height); }
+                        QVERIFY(cpu.save(destination+QString("/anan-default-%1-cpu-%2-dpr%3.png").arg(state).arg(sizeTag).arg(dpr)));
                     }
                 }
             };
@@ -395,33 +414,185 @@ private slots:
         }
         QVERIFY(ordinaryValueFont>=12); QVERIFY(largerValueFont>=ordinaryValueFont*1.8);
     }
-    void compactAnanSourceGlyphsFitInsideRoundedGlass() {
-        // Regression: enlarging compact lettering must not send the dB crop
-        // outside ordinary360px glass, or crop the heading in a short face.
-        AnanMultiMeterItem face;
-        const QString saved=face.serialize();
-        for(const QSize size:{QSize(360,300),QSize(360,600),QSize(320,300),QSize(520,300),QSize(720,180)}) {
+    void ananReadoutsHonorWiderFonts() {
+        // Real text metrics reproduce the fixed-column cap without relying on
+        // a particular installed platform font or changing the growth contract.
+        const QFont original=QApplication::font();
+        const auto restoreFont=qScopeGuard([&] { QApplication::setFont(original); });
+        QFont wider=original; wider.setStretch(125); QApplication::setFont(wider);
+        AnanMultiMeterItem face; auto channels=configuredChannels(face);
+        for(int i=0;i<channels.size();++i) {
+            auto c=channels[i].toObject(); c["onlyWhenRx"]=false; c["onlyWhenTx"]=false;
+            c["attack"]=1; c["decay"]=1; c["showHistory"]=false; channels[i]=c;
+        }
+        QVERIFY(face.applyConfiguration({{"channels",channels},{"displayGroup",0},{"showPeakValue",true}}));
+        for(int binding:face.readingBindings()) { face.setBindingSupport(binding,MeterItem::BindingSupport::Supported); }
+        int ordinary=0,larger=0;
+        for(int pixels:{18,36}) {
+            QVERIFY(face.applyConfiguration({{"fontSize",pixels}}));
+            face.pushBindingValue(1,-85); face.pushBindingValue(200,13.8); face.pushBindingValue(201,8);
+            face.pushBindingValue(100,70); face.pushBindingValue(102,1.6); face.pushBindingValue(109,20); face.pushBindingValue(110,0); face.advanceMeter(0);
+            for(int dpr:{1,2}) {
+                TextPaintDevice device(QSize(720,600),dpr);
+                { QPainter painter(&device); face.paintForLayer(painter,720,600,MeterItem::Layer::OverlayDynamic); }
+                QCOMPARE(device.texts().size(),21); // Every name, value and peak.
+                for(int i=0;i<device.texts().size();++i) {
+                    const auto& text=device.texts()[i];
+                    QVERIFY2(QRectF(0,0,720,600).adjusted(-.5,-.5,.5,.5).contains(text.bounds),qPrintable(QString("Wider font clipped: %1 %2,%3 %4x%5").arg(text.value).arg(text.bounds.x()).arg(text.bounds.y()).arg(text.bounds.width()).arg(text.bounds.height())));
+                    for(int prior=0;prior<i;++prior) { QVERIFY(!text.bounds.intersects(device.texts()[prior].bounds)); }
+                    if(text.value=="-85.0 dBm") { (pixels==18?ordinary:larger)=text.pixels; }
+                }
+                QCOMPARE(face.configuration()["fontSize"].toInt(),pixels);
+            }
+        }
+        qInfo() << "ANAN wider requested 18/36 emitted" << ordinary << larger;
+        QVERIFY(ordinary>=12);
+        QVERIFY2(larger>=ordinary*1.8,qPrintable(QString("Wider emitted fonts %1 -> %2px").arg(ordinary).arg(larger)));
+    }
+    void ananFullSourceTypographyRemainsPresentAndContained() {
+        // JJ explicitly superseded the old compact-three-crop expectation.
+        // Preserve its containment coverage while requiring all approved roles.
+        AnanMultiMeterItem face; const QString saved=face.serialize();
+        for(bool tx:{false,true}) {
+            face.resetForTxTransition(tx);
+            for(const QSize size:{QSize(360,300),QSize(360,420),QSize(520,300),QSize(520,420),QSize(720,300),QSize(720,420)}) {
+                const QRectF skin=face.ananNeedleRect(size.width(),size.height());
+                const double scale=skin.width()/1855.0,clearance=3*qMin(1.0,skin.width()/600);
+                const QRectF bounds(skin.left()+84*scale,skin.top()+76*scale,1687*scale,678*scale);
+                QPainterPath glass; glass.addRoundedRect(bounds.adjusted(-.01,-.01,.01,.01),44*scale,44*scale);
+                for(int dpr:{1,2}) {
+                    TextPaintDevice device(size,dpr);
+                    { QPainter painter(&device); face.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::Background); }
+                    QCOMPARE(device.glyphs().size(),21); //13 source identities/units +8 Signal numbers.
+                    QVector<QRectF> identities,numbers; QVector<QPainterPath> numberInk; int index=0;
+                    for(const auto& glyph:device.glyphs()) {
+                        QVERIFY2(glass.contains(glyph.ink),qPrintable(QString("%1x%2 DPR%3 source%4x%5 glyph ink%6,%7 %8x%9 escapes glass%10,%11 %12x%13").arg(size.width()).arg(size.height()).arg(dpr).arg(glyph.sourceSize.width()).arg(glyph.sourceSize.height()).arg(glyph.ink.x()).arg(glyph.ink.y()).arg(glyph.ink.width()).arg(glyph.ink.height()).arg(bounds.x()).arg(bounds.y()).arg(bounds.width()).arg(bounds.height())));
+                        QVERIFY(qAbs(glyph.bounds.width()/glyph.bounds.height()-double(glyph.sourceSize.width())/glyph.sourceSize.height())<.0001);
+                        if(index++<13) { identities.append(glyph.ink); }
+                        else { numbers.append(glyph.ink); QPainterPath ink; ink.addRect(glyph.ink); numberInk.append(ink); }
+                    }
+                    for(const auto& path:device.paths()) {
+                        if(path.pen.style()==Qt::NoPen && (path.brush.gradient()!=nullptr || path.brush.color()==QColor("#2bc2ff"))) { numbers.append(path.path.boundingRect()); numberInk.append(path.path); }
+                    }
+                    QCOMPARE(numbers.size(),37);
+                    QVector<QRectF> occupied=identities;
+                    int numberIndex=0;
+                    for(const QRectF& number:numbers) {
+                        QVERIFY2(glass.contains(number),qPrintable(QString("%1x%2 DPR%3 numeric ink escapes glass").arg(size.width()).arg(size.height()).arg(dpr)));
+                        for(const QRectF& prior:occupied) {
+                            QVERIFY2(!number.intersects(prior),qPrintable(QString("%1x%2 DPR%3 numeric/identity ink overlap %4,%5 %6x%7 and %8,%9 %10x%11").arg(size.width()).arg(size.height()).arg(dpr).arg(number.x()).arg(number.y()).arg(number.width()).arg(number.height()).arg(prior.x()).arg(prior.y()).arg(prior.width()).arg(prior.height())));
+                        }
+                        for(const auto& path:device.paths()) {
+                            if(path.pen.style()==Qt::NoPen) { continue; }
+                            QPainterPathStroker stroker; stroker.setWidth(path.pen.widthF()+2*clearance-.02); stroker.setCapStyle(path.pen.capStyle()); stroker.setJoinStyle(path.pen.joinStyle());
+                            QVERIFY2(!stroker.createStroke(path.path).intersects(numberInk[numberIndex]),qPrintable(QString("%1x%2 DPR%3 numeric ink intersects arc/tick clearance%4 at%5,%6 %7x%8").arg(size.width()).arg(size.height()).arg(dpr).arg(clearance).arg(number.x()).arg(number.y()).arg(number.width()).arg(number.height())));
+                        }
+                        occupied.append(number); ++numberIndex;
+                    }
+                    for(int i=0;i<identities.size();++i) { for(int j=0;j<i;++j) { QVERIFY(!identities[i].intersects(identities[j])); } }
+                    const QStringList numericLabels{"0","10","25","50","100","150","1","1.5","2","3","10","0","5","10","15","20","0","5","10","15","20","25","30","-30","0","25","10","12.5","15"};
+                    int minimumPixels=std::numeric_limits<int>::max(),maximumPixels=0,fittedCount=0,pathIndex=0;
+                    for(const auto& path:device.paths()) {
+                        if(path.pen.style()!=Qt::NoPen || (path.brush.gradient()==nullptr && path.brush.color()!=QColor("#2bc2ff"))) { continue; }
+                        int observedPixels=0;
+                        for(int pixels=1;pixels<=qMax(1,qRound(42*scale));++pixels) {
+                            QFont font(QStringLiteral("Arial")); font.setBold(true); font.setPixelSize(pixels);
+                            QPainterPath expected; expected.addText(QPointF(),font,numericLabels[pathIndex]);
+                            const QSizeF difference=expected.boundingRect().size()-path.path.boundingRect().size();
+                            if(qAbs(difference.width())<.01 && qAbs(difference.height())<.01) { observedPixels=pixels; break; }
+                        }
+                        QVERIFY2(observedPixels>0,"Actual numeric ink does not match its approved Arial bold value at any proportional size");
+                        minimumPixels=qMin(minimumPixels,observedPixels); maximumPixels=qMax(maximumPixels,observedPixels);
+                        if(observedPixels<qRound(42*scale)) { ++fittedCount; } ++pathIndex;
+                    }
+                    QCOMPARE(pathIndex,29);
+                    qInfo()<<"ANAN source typography"<<size<<"DPR"<<dpr<<"scale"<<scale<<"nominal numeric font"<<qMax(1,qRound(42*scale))<<"actual numeric pixels"<<minimumPixels<<"to"<<maximumPixels<<"fitted values"<<fittedCount<<"clearance"<<clearance;
+                }
+            }
+        }
+        QCOMPARE(face.serialize(),saved);
+    }
+    void ananScaleLabelsFollowTheirCalibratedTickOrder() {
+        // Independent source major-value sequence. Inspect actual emitted
+        // crop/numeric ink centers against their unchanged calibrated ticks.
+        const QVector<QVector<double>> majors{{-121,-109,-97,-85,-73,-53,-33,-13},
+            {10,12.5,15},{0,5,10,15,20},{0,10,25,50,100,150},
+            {1,1.5,2,3,10},{0,5,10,15,20,25,30},{-30,0,25}};
+        const int order[]{0,3,4,2,5,6,1};
+        const QPointF radii[]{QPointF(1140,530),QPointF(205,135),QPointF(900,304),QPointF(1040,475),QPointF(1010,380),QPointF(750,231),QPointF(220,135)};
+        AnanMultiMeterItem face; const QString saved=face.serialize();
+        for(const QSize size:{QSize(360,300),QSize(520,300),QSize(720,300),QSize(720,420)}) {
             const QRectF skin=face.ananNeedleRect(size.width(),size.height());
-            QVERIFY(skin.width()<600);
-            const double scale=skin.width()/1855.0;
-            // Independent approved glass oracle; includes a1logicalpx inset.
-            const QRectF bounds(skin.left()+84*scale,skin.top()+76*scale,1687*scale,678*scale);
-            QPainterPath glass; glass.addRoundedRect(bounds.adjusted(1,1,-1,-1),qMax(0.0,44*scale-1),qMax(0.0,44*scale-1));
             for(int dpr:{1,2}) {
                 TextPaintDevice device(size,dpr);
                 { QPainter painter(&device); face.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::Background); }
-                QCOMPARE(device.glyphs().size(),3);
-                for(const auto& glyph:device.glyphs()) {
-                    QVERIFY2(glass.contains(glyph.bounds),qPrintable(QString("%1x%2 DPR%3 source%4x%5 glyph bounds%6,%7 %8x%9 escape rounded glass").arg(size.width()).arg(size.height()).arg(dpr).arg(glyph.sourceSize.width()).arg(glyph.sourceSize.height()).arg(glyph.bounds.x()).arg(glyph.bounds.y()).arg(glyph.bounds.width()).arg(glyph.bounds.height())));
-                    const double sourceAspect=double(glyph.sourceSize.width())/glyph.sourceSize.height();
-                    QVERIFY(qAbs(glyph.bounds.width()/glyph.bounds.height()-sourceAspect)<.0001);
-                    for(const auto& prior:device.glyphs()) {
-                        if(&prior==&glyph) { break; }
-                        QVERIFY2(!glyph.bounds.intersects(prior.bounds),qPrintable(QString("%1x%2 DPR%3 compact glyphs overlap").arg(size.width()).arg(size.height()).arg(dpr)));
+                QVector<QRectF> labels;
+                for(int n=13;n<device.glyphs().size();++n) { labels.append(device.glyphs()[n].ink); }
+                for(const auto& path:device.paths()) {
+                    if(path.pen.style()==Qt::NoPen && (path.brush.gradient()!=nullptr || path.brush.color()==QColor("#2bc2ff"))) { labels.append(path.path.boundingRect()); }
+                }
+                QCOMPARE(labels.size(),37); int index=0;
+                for(int channel:order) {
+                    double previous=-std::numeric_limits<double>::infinity();
+                    const QPointF pivot=face.needlePivot(channel,skin),radius=radii[channel]*skin.width()/1855;
+                    const auto phase=[&](const QPointF& point) { return std::atan2((point.y()-pivot.y())/radius.y(),(point.x()-pivot.x())/radius.x()); };
+                    for(int n=0;n<majors[channel].size();++n) {
+                        const double key=majors[channel][n]; const QPointF tick=face.needleTip(channel,key,skin);
+                        const QPointF center=labels[index++].center();
+                        const double x=center.x();
+                        // Numbers on the nested main scales must stay in their
+                        // own row, not merely beside a tick at the same angle.
+                        const int innerChannel=channel==3?4:channel==4?2:channel==2?5:-1;
+                        if(innerChannel>=0) {
+                            const QPointF innerRadius=radii[innerChannel]*skin.width()/1855;
+                            const QPointF relative=center-pivot;
+                            const double ownLevel=std::hypot(relative.x()/radius.x(),relative.y()/radius.y());
+                            const double innerLevel=std::hypot(relative.x()/innerRadius.x(),relative.y()/innerRadius.y());
+                            QVERIFY2(ownLevel<1 && innerLevel>1,qPrintable(QString("%1x%2 DPR%3 channel%4 value%5 leaves its scale row: own%6 inner%7").arg(size.width()).arg(size.height()).arg(dpr).arg(channel).arg(key).arg(ownLevel).arg(innerLevel)));
+                        }
+                        const double tickPhase=phase(tick);
+                        QPointF normal(std::cos(tickPhase)/radius.x(),std::sin(tickPhase)/radius.y());
+                        normal/=std::hypot(normal.x(),normal.y()); const QPointF tangent(-normal.y(),normal.x());
+                        const QPointF before=n>0?face.needleTip(channel,majors[channel][n-1],skin):tick*2-face.needleTip(channel,majors[channel][n+1],skin);
+                        const QPointF after=n+1<majors[channel].size()?face.needleTip(channel,majors[channel][n+1],skin):tick*2-before;
+                        const double along=QPointF::dotProduct(center-tick,tangent);
+                        QVERIFY2(along>=QPointF::dotProduct(before-tick,tangent)/2-.5*skin.width()/1855 && along<=QPointF::dotProduct(after-tick,tangent)/2+.5*skin.width()/1855,qPrintable(QString("%1x%2 DPR%3 channel%4 value%5 ink leaves its local major tick tangent neighborhood").arg(size.width()).arg(size.height()).arg(dpr).arg(channel).arg(key)));
+                        const double beforePhase=n>0?phase(face.needleTip(channel,majors[channel][n-1],skin)):2*tickPhase-phase(face.needleTip(channel,majors[channel][n+1],skin));
+                        const double afterPhase=n+1<majors[channel].size()?phase(face.needleTip(channel,majors[channel][n+1],skin)):2*tickPhase-beforePhase;
+                        QVERIFY2(phase(center)>=(beforePhase+tickPhase)/2-.0001 && phase(center)<=(afterPhase+tickPhase)/2+.0001,qPrintable(QString("%1x%2 DPR%3 channel%4 value%5 angular ink center%6 leaves tick%7 neighborhood[%8,%9]").arg(size.width()).arg(size.height()).arg(dpr).arg(channel).arg(key).arg(phase(center)*180/M_PI).arg(tickPhase*180/M_PI).arg((beforePhase+tickPhase)*90/M_PI).arg((afterPhase+tickPhase)*90/M_PI)));
+                        QVERIFY2(x>previous,qPrintable(QString("%1x%2 DPR%3 channel%4 value%5 reverses the scale order: x%6 <=%7").arg(size.width()).arg(size.height()).arg(dpr).arg(channel).arg(key).arg(x).arg(previous)));
+                        previous=x;
                     }
                 }
             }
         }
+        QCOMPARE(face.serialize(),saved);
+    }
+    void ananReadoutGeometryReservesOnlyPaintedRows() {
+        AnanMultiMeterItem face;
+        const QString saved=face.serialize();
+        for(const QSize size:{QSize(360,300),QSize(520,300),QSize(720,300)}) {
+            TextPaintDevice device(size,1);
+            { QPainter painter(&device); face.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::OverlayDynamic); }
+            QCOMPARE(device.texts().size(),6); //default RX: Signal/Volts, value and peak each.
+            double readoutTop=size.height(); for(const auto& text:device.texts()) { readoutTop=qMin(readoutTop,text.bounds.top()); QVERIFY(text.pixels>=11); }
+            QVERIFY2(readoutTop>size.height()-70,qPrintable(QString("%1px RX reserves more than its one painted readout row: top%2").arg(size.width()).arg(readoutTop)));
+            const QRectF skin=face.ananNeedleRect(size.width(),size.height());
+            QVERIFY(skin.bottom()<readoutTop); QVERIFY(QRectF(QPointF(),size).contains(skin));
+            const QRectF selector=face.ananGroupControlRect(size.width(),size.height()); QVERIFY(selector.bottom()<=skin.top()+.01);
+            for(int dpr:{1,2}) {
+                TextPaintDevice background(size,dpr); { QPainter painter(&background); face.paintForLayer(painter,size.width(),size.height(),MeterItem::Layer::Background); }
+                QVERIFY(!background.glyphs().isEmpty());
+                // Full heading's source destination agrees with queried skin.
+                const QRectF heading=background.glyphs().first().bounds;
+                QVERIFY(QLineF(heading.center(),skin.topLeft()+QPointF(919,95)*skin.width()/1855).length()<.01);
+            }
+        }
+        face.setBindingSupport(MeterBinding::HwVolts,MeterItem::BindingSupport::Unsupported);
+        face.takeStaticPresentationChange(); face.setBindingSupport(MeterBinding::SignalAvg,MeterItem::BindingSupport::Unsupported);
+        QVERIFY(face.takeStaticPresentationChange()); TextPaintDevice empty(QSize(520,300),1);
+        { QPainter painter(&empty); face.paintForLayer(painter,520,300,MeterItem::Layer::OverlayDynamic); }
+        QVERIFY(empty.texts().isEmpty()); QVERIFY(face.ananNeedleRect(520,300).height()>200);
         QCOMPARE(face.serialize(),saved);
     }
     void ananSupportMasksScaleAndNeverRevivesOldSamples() {
