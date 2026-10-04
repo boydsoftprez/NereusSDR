@@ -170,6 +170,7 @@ stale readings. Compact labels and peaks fit within the meter glass.
 - Replay saved anti-VOX state to replacement transmit workers (#334).
 - Fence transmit keying callbacks to the current radio session (#335).
 - Align spectrum painting and mouse geometry in CPU and GPU builds (#336).
+- Correct two Qt 6.11 Cocoa accessibility failures found during native evaluation: shared element ownership and stale connection-list child caches. The fixes preserve selection and connection behavior; release Mac packages use a pinned Qt 6.8 SDK and must pass a real Cocoa startup check.
 
 Further work addresses receiver/channel lifetimes, media recovery, stale session replies, audio-ring overruns, microphone stalls, shared-device authority and reconnect teardown. The reconnect fixes above are narrower than the original acoustic/startup and intermittent-crash reports; the requested retests for #235, #299 and #300 remain open.
 

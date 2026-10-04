@@ -48,7 +48,8 @@ Works with any radio implementing OpenHPSDR Protocol 1 or Protocol 2:
 
 Pre-built binaries for Linux (AppImage, x86_64 + aarch64), macOS (DMG +
 PKG, Apple Silicon + Intel), and Windows (NSIS installer + portable ZIP,
-x64) are published as GitHub Releases:
+x64) are published as GitHub Releases. The calendar release targets macOS 14
+or later on Apple Silicon and macOS 12 or later on Intel:
 
 **<https://github.com/boydsoftprez/NereusSDR/releases>**
 
