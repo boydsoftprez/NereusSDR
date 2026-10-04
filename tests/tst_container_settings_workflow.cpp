@@ -46,6 +46,46 @@ using namespace NereusSDR;
 class TstContainerSettingsWorkflow:public QObject {
  Q_OBJECT
 private slots:
+ void objectActionsHaveRoomInNativeEditor_data() {
+    QTest::addColumn<QSize>("dialogSize");
+    QTest::newRow("regular")<<QSize(1200,900);
+    QTest::newRow("small")<<QSize(960,700);
+ }
+ void objectActionsHaveRoomInNativeEditor() {
+    QFETCH(QSize,dialogSize);
+    qApp->setStyle(QStyleFactory::create("Fusion"));applyDarkPalette(*qApp);applyAppBaselineQss(*qApp);
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);
+    ContainerContentRegistry registry;MeterPoller poller;QWidget root;QSplitter splitter(&root);
+    ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
+    WorkspaceDocument document;document.mainContainerId="A";ContainerDocument container;container.id="A";
+    container.layout=ContentLayout::VerticalStack;auto group=registry.makeEntry("OTHERBTNS");
+    std::unique_ptr<MeterItem> groupItem(registry.createMeterItem(group,nullptr,ContentRenderMode::Validation));
+    auto* otherButtons=qobject_cast<OtherButtonItem*>(groupItem.get());QVERIFY(otherButtons);otherButtons->setColumns(2);
+    group=registry.captureMeterItem(*otherButtons,group);container.contents={group};document.containers={container};
+    QCOMPARE(manager.commitWorkspace(document,0).status,CommitStatus::Saved);const auto original=store.snapshot();
+    ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);
+    dialog.findChild<QListWidget*>("containerDraftContents")->setCurrentRow(0);dialog.resize(dialogSize);dialog.show();QCoreApplication::processEvents();
+    auto* duplicate=dialog.findChild<QPushButton*>("duplicateContent");auto* move=dialog.findChild<QPushButton*>("moveContent");QVERIFY(duplicate && move);
+    QList<QPushButton*> actions{duplicate,move};QPushButton* add=nullptr;
+    for(auto* button:dialog.findChildren<QPushButton*>()) {
+        if(button->text()==QStringLiteral("Add →")) {add=button;actions.append(button);}
+        if(button->parentWidget()==duplicate->parentWidget() && button->isVisible() && !actions.contains(button)) {actions.append(button);}
+    }
+    QVERIFY(add);
+    const QString capture=qEnvironmentVariable("TASK_EDITOR_CAPTURE_DIR");
+    if(!capture.isEmpty()) {QVERIFY(QDir().mkpath(capture));QVERIFY(dialog.grab().save(capture+"/actions-"+QString::fromLatin1(QTest::currentDataTag())+".png"));}
+    for(auto* button:actions) {
+        const QRect bounds(button->mapTo(&dialog,QPoint()),button->size());
+        QVERIFY2(dialog.rect().contains(bounds),qPrintable(button->text()+" escapes the editor"));
+        QVERIFY2(button->width()>=button->minimumSizeHint().width(),qPrintable(button->text()+" is narrower than its readable label"));
+        for(auto* other:actions) {
+            if(button==other) {continue;}
+            const QRect otherBounds(other->mapTo(&dialog,QPoint()),other->size());
+            QVERIFY2(!bounds.adjusted(-2,-2,3,3).intersects(otherBounds),qPrintable(button->text()+" crowds "+other->text()));
+        }
+    }
+    dialog.reject();QCOMPARE(store.snapshot(),original);QCOMPARE(poller.targetCountForTest(),0);
+ }
  void individualControlCatalogCreatesOrdinaryIndependentEntries() {
     ContainerContentRegistry registry;
     const QList<QPair<QString, OtherButtonItem::ButtonId>> actions = {
@@ -206,14 +246,14 @@ private slots:
     QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
     QCOMPARE(store.snapshot().containers.first().contents.first().freeCanvasRect(),std::optional<QRectF>(resized));
  }
- void singleControlPreviewStackUsesCompactHeightWithoutChangingGroups() {
+ void singleControlPreviewStackSharesCompactGroupRows() {
     ContainerContentRegistry registry;MeterPoller poller;ContainerPreviewWidget preview(registry,poller);
     ContainerDocument document;document.id="A";document.layout=ContentLayout::VerticalStack;
     document.contents={registry.makeEntry("control.mox"),registry.makeEntry("control.tune"),registry.makeEntry("OTHERBTNS")};
     preview.setDocument(document);preview.resize(420,240);preview.show();QCoreApplication::processEvents();
     QCOMPARE(preview.entryBoundary(document.contents[0].id).height(),44);
     QCOMPARE(preview.entryBoundary(document.contents[1].id).height(),44);
-    QCOMPARE(preview.entryBoundary(document.contents[2].id).height(),80);
+    QCOMPARE(preview.entryBoundary(document.contents[2].id).height(),132);
  }
  void initTestCase() {AppSettings::setProfileOverride(QStringLiteral("task10-settings-%1").arg(QCoreApplication::applicationPid()));AppSettings::instance().clear();}
  void cleanupTestCase() {QFile::remove(AppSettings::instance().filePath());}
