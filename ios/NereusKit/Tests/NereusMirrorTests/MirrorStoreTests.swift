@@ -382,7 +382,11 @@ import Testing
     }
 
     @Test func aRefusedWriteKeepsTheCoresValueAndReason() async throws {
-        let store = try replayed()
+        let clock = ManualLinkClock()
+        let store = store(clock: clock)
+        for message in try FixtureReplay.stationMessages("session-connect-connectable") {
+            store.apply(message)
+        }
         let slice = try #require(store.object("slice:0"))
         let (task, write) = try await startWrite(store, "slice:0", "signalStrengthDbm", .double(-50))
         // The store sends it; the Core decides.

@@ -1,4 +1,4 @@
-// NereusSDR: run expensive synchronous fixture crypto outside cooperative workers
+// NereusSDR for iOS: run expensive synchronous fixture crypto outside cooperative workers
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import Foundation

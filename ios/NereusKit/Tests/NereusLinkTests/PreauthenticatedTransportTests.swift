@@ -11,14 +11,26 @@ import Testing
         private var continuation: CheckedContinuation<Void, Never>?
         private var didEnter = false
         private var released = false
+        private let closeWhileSuspended: (@Sendable () -> Void)?
+        private(set) var closedWhilePending = false
         let entry = TestPhase<Void>()
         var entered: Bool { didEnter }
+        init(closeWhileSuspended: (@Sendable () -> Void)? = nil) {
+            self.closeWhileSuspended = closeWhileSuspended
+        }
         func authRequest(stationHello: LinkMessage.Hello, certificateSHA256: Data) async throws
             -> LinkMessage.AuthRequest {
             await withCheckedContinuation {
                 continuation = $0
                 didEnter = true
                 entry.finish(.success(()))
+                if let closeWhileSuspended {
+                    // Close with authentication still pending, independently of test-task admission.
+                    let wasPending = continuation != nil
+                    closeWhileSuspended()
+                    closedWhilePending = wasPending && continuation != nil
+                    resume()
+                }
                 if released { continuation?.resume(); continuation = nil }
             }
             return LinkMessage.AuthRequest(token: "never-send")
@@ -253,14 +265,19 @@ import Testing
         let inner = Immediate()
         let lease = PreauthenticatedTransport(inner)
         _ = try await lease.inspect(clock: ManualLinkClock(), deadline: .seconds(30))
-        let signer = SuspendedAuthenticator()
+        let signer = SuspendedAuthenticator(closeWhileSuspended: { lease.close() })
         let session = StationSession(trust: .certificate(pinSHA256: inner.digest),
                                      authenticator: signer, clock: ManualLinkClock(), transport: { lease })
-        let connecting = Task { await session.connect() }
+        let completed = TestPhase<Void>()
+        let connecting = Task {
+            await session.connect()
+            completed.finish(.success(()))
+        }
         do {
-            try await signer.entry.wait(until: ContinuousClock.now + .seconds(2))
+            // Bound the whole fixture operation; the close itself is ordered by the signer.
+            try await completed.wait(until: ContinuousClock.now + StationSession.connectDeadline)
         } catch {
-            // A missing signer entry fails this phase; release even if it
+            // A missing completion fails this phase; release even if signing
             // arrives later so cleanup cannot leave authentication held.
             lease.close()
             connecting.cancel()
@@ -269,8 +286,8 @@ import Testing
             throw error
         }
         #expect(await signer.entered)
-        lease.close()
-        await signer.resume()
+        let closedWhilePending = await signer.closedWhilePending
+        #expect(closedWhilePending && inner.isClosed)
         await connecting.value
         #expect(inner.messages.isEmpty)
         await session.disconnect()
