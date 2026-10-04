@@ -170,6 +170,7 @@ signals:
     // Phase 3J-1 review P2.4: forwarded from CatTciServerPage — enable checkbox
     // toggled.  MainWindow connects this to call TciServer::start() / stop()
     // so the server goes live immediately without a disconnect/reconnect cycle.
+    void catLogRequested();
     void tciServerEnableToggled(bool on, quint16 port);
 
     // Phase 3J-1 closeout Item 1 (2026-05-12): forwarded from CatTciServerPage —

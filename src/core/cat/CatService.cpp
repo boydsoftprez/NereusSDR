@@ -56,6 +56,8 @@ Added extended CAT commands for APF funtions - May 2017.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - Independently implemented native PTY lifecycle and transport diagnostics,
 //              same author and AI tooling; no new upstream port.
+// 2026-10-04 - Native live configuration, scoped write/lifecycle supersession and isolated Tester,
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; no new upstream port.
 #include "CatService.h"
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"
@@ -63,6 +65,7 @@ Added extended CAT commands for APF funtions - May 2017.
 #include "models/SliceModel.h"
 #include "core/TxSliceArbiter.h"
 #include <utility>
+#include <QScopeGuard>
 namespace NereusSDR {
 CatService::CatService(RadioModel& model, QObject* parent)
     : QObject(parent), m_model(&model), m_adapter(model), m_txCoordinator(model), m_settings(AppSettings::instance()), m_rxCommands(m_adapter, m_txCoordinator, m_settings), m_dspCommands(m_adapter), m_txCommands(m_adapter,m_txCoordinator,m_settings), m_globalCommands(m_adapter,m_settings), m_parser(m_catalog)
@@ -101,9 +104,16 @@ CatEndpointConfig CatService::channelConfig(int channel) const
 {
     return validChannel(channel) ? m_channels[channel - 1].config : CatEndpointConfig{};
 }
-bool CatService::applyChannelConfig(int channel, const CatEndpointConfig& supplied)
+bool CatService::applyChannelConfig(int channel, const CatEndpointConfig& config)
 {
-    if (m_destroying || !m_model || !m_model->ownsLocalDsp() || !validChannel(channel) || m_started) { return false; }
+    if (m_started) { return false; }
+    // The low-level stopped operation remains an explicit binding capture.
+    CatEndpointConfig captured=config; captured.binding=m_adapter.snapshotBinding(config.binding);
+    return reconfigureChannel(channel, captured);
+}
+bool CatService::reconfigureChannel(int channel, const CatEndpointConfig& supplied)
+{
+    if (m_destroying || !m_model || !m_model->ownsLocalDsp() || !validChannel(channel)) { return false; }
     CatEndpointConfig config = supplied; config.channel = channel;
     QString reason;
     if (!CatSettings::validate(config, &reason)) { qCWarning(lcCat) << reason; return false; }
@@ -115,13 +125,47 @@ bool CatService::applyChannelConfig(int channel, const CatEndpointConfig& suppli
     const CatGlobalConfig global = globalConfig();
     if (config.serialEnabled && global.pttEnabled && global.pttDeviceSource == "Physical"
         && config.serialDevice == global.pttSerialDevice) { return false; }
-    config.binding = m_adapter.snapshotBinding(config.binding);
-    m_channels[channel - 1].config = config; m_channels[channel - 1].configured = true;
+    const CatEndpointConfig previous = channelConfig(channel);
+    if (!m_channels[channel - 1].configured) { config.binding = m_adapter.snapshotBinding(config.binding); }
+    else {
+        // Transport-only edits keep the old incarnation even if the reusable ID now names a new slice.
+        // A caller explicitly rebinds by supplying the current live incarnation (the selectors do this).
+        const bool primaryChanged = config.binding.primarySliceId != previous.binding.primarySliceId;
+        const bool secondaryChanged = config.binding.secondarySliceId != previous.binding.secondarySliceId;
+        const bool primaryRebound = !primaryChanged && config.binding.primaryIncarnation != 0
+            && config.binding.primaryIncarnation != previous.binding.primaryIncarnation;
+        const bool secondaryRebound = !secondaryChanged && config.binding.secondaryIncarnation.value_or(0) != 0
+            && config.binding.secondaryIncarnation != previous.binding.secondaryIncarnation;
+        if (primaryChanged || secondaryChanged || primaryRebound || secondaryRebound) {
+            const CatBinding live = m_adapter.snapshotBinding(config.binding);
+            if ((primaryRebound && config.binding.primaryIncarnation != live.primaryIncarnation)
+                || (secondaryRebound && config.binding.secondaryIncarnation != live.secondaryIncarnation)) { return false; }
+            config.binding.primaryIncarnation = primaryChanged || primaryRebound ? live.primaryIncarnation : previous.binding.primaryIncarnation;
+            config.binding.secondaryIncarnation = secondaryChanged || secondaryRebound ? live.secondaryIncarnation : previous.binding.secondaryIncarnation;
+        } else {
+            config.binding = previous.binding;
+        }
+    }
+    if (m_channels[channel - 1].configured && config == previous) { return true; }
+    Channel& endpoint = m_channels[channel - 1];
+    const quint64 revision = ++endpoint.revision;
+    const quint64 run = m_lifecycleGeneration;
+    const bool started = m_started;
+    const int pttChannel = global.pttDeviceSource == "Physical" ? global.pttChannel : global.pttDeviceSource.right(1).toInt();
+    const bool rearmPtt = global.pttEnabled && pttChannel == channel;
+    endpoint.config = config; endpoint.configured = true;
     const QPointer<CatService> self(this);
-    CatSettings::save(AppSettings::instance(), config);
-    if (!self) { return false; }
+    const auto current = [self, channel, revision] { return self && !self->m_destroying && self->m_channels[channel - 1].revision == revision; };
+    stopChannel(channel);
+    if (!current()) { return false; }
+    if (!CatSettings::save(AppSettings::instance(), config, current) || !current()) { return false; }
     emit configurationChanged(channel);
-    return true;
+    if (!current()) { return false; }
+    if (started && m_started && run == m_lifecycleGeneration) {
+        startChannel(channel);
+        if (current() && m_started && run == m_lifecycleGeneration && rearmPtt && !m_ptt) { startPtt(); }
+    }
+    return current();
 }
 void CatService::setState(int channel, const QString& state)
 {
@@ -157,6 +201,7 @@ void CatService::startConfigured()
 }
 void CatService::startChannel(int channel)
 {
+    const quint64 revision = m_channels[channel - 1].revision;
     Channel& endpoint = m_channels[channel - 1];
     const CatEndpointConfig config = endpoint.config;
     const QPointer<CatService> lifetime(this);
@@ -168,9 +213,9 @@ void CatService::startChannel(int channel)
         const std::weak_ptr<CatTcpTransport> weak(tcp);
         const QPointer<CatService> self(this);
         const quint64 generation = m_lifecycleGeneration;
-        connect(tcp.get(), &CatTcpTransport::clientAccepted, this, [this, self, weak, channel, generation](QTcpSocket* socket) {
+        connect(tcp.get(), &CatTcpTransport::clientAccepted, this, [this, self, weak, channel, generation, revision](QTcpSocket* socket) {
             const auto transport = weak.lock();
-            if (!self || !transport || generation != m_lifecycleGeneration || !m_started
+            if (!self || !transport || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || !m_started
                 || m_channels[channel - 1].tcp != transport) { return; }
             const quint64 opened = createTransportSession(channel, CatTransportKind::Tcp,
                 [weak](quint64 id, const QByteArray& bytes) { const auto owner = weak.lock(); return owner && owner->writeBytes(id, bytes); },
@@ -179,7 +224,7 @@ void CatService::startChannel(int channel)
                 if (self) { closeSession(opened); }
                 return;
             }
-            if (!self || generation != m_lifecycleGeneration || !session(opened)) { return; }
+            if (!self || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || !session(opened)) { return; }
             if (globalConfig().sendWelcome) { sendToSession(opened, "#NereusSDR TCP/IP Cat#;"); }
         });
         connect(tcp.get(), &CatTcpTransport::bytesReceived, this, [this, weak](quint64 id, const QByteArray& bytes) {
@@ -190,9 +235,9 @@ void CatService::startChannel(int channel)
             const auto transport = weak.lock();
             if (transport) { closeSession(id); }
         });
-        connect(tcp.get(), &CatTcpTransport::clientCountChanged, this, [this, weak, channel, generation](int count) {
+        connect(tcp.get(), &CatTcpTransport::clientCountChanged, this, [this, weak, channel, generation, revision](int count) {
             const auto transport = weak.lock();
-            if (transport && generation == m_lifecycleGeneration && m_channels[channel - 1].tcp == transport) {
+            if (transport && generation == m_lifecycleGeneration && revision == m_channels[channel - 1].revision && m_channels[channel - 1].tcp == transport) {
                 emit clientCountChanged(channel, count);
             }
         });
@@ -200,7 +245,7 @@ void CatService::startChannel(int channel)
             setTransportState(channel, CatTransportKind::Tcp, QStringLiteral("TCP error: ") + tcp->errorString());
         } else { setTransportState(channel, CatTransportKind::Tcp, QStringLiteral("Listening")); }
     }
-    if (!lifetime || run != m_lifecycleGeneration || !m_started) { return; }
+    if (!lifetime || (run != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || !m_started) { return; }
     if (config.serialEnabled) {
         const auto startSerial = [&] {
             for (int other = 1; other <= 4; ++other) {
@@ -214,7 +259,7 @@ void CatService::startChannel(int channel)
                 setTransportState(channel, CatTransportKind::Serial, "Serial error: device assigned to exclusive physical PTT"); return;
             }
             const auto serial = m_serialFactory ? m_serialFactory() : std::make_shared<CatSerialTransport>();
-            if (!lifetime || run != m_lifecycleGeneration || !m_started || !serial) { return; }
+            if (!lifetime || (run != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || !m_started || !serial) { return; }
             endpoint.serial = serial;
             const std::weak_ptr<CatSerialTransport> weak(serial);
             const quint64 opened = createTransportSession(channel, CatTransportKind::Serial,
@@ -222,33 +267,33 @@ void CatService::startChannel(int channel)
                     const auto owner = weak.lock(); if (!owner || !owner->isOpen()) { return false; }
                     owner->writeBytes(bytes); return owner->isOpen();
                 }, [weak](quint64) { const auto owner = weak.lock(); if (owner) { owner->stop(); } });
-            connect(serial.get(), &CatSerialTransport::bytesReceived, this, [this, weak, opened, channel, run](const QByteArray& bytes) {
+            connect(serial.get(), &CatSerialTransport::bytesReceived, this, [this, weak, opened, channel, run, revision](const QByteArray& bytes) {
                 const auto owner = weak.lock();
-                if (owner && run == m_lifecycleGeneration && m_channels[channel - 1].serial == owner) { processBytes(opened, bytes); }
+                if (owner && run == m_lifecycleGeneration && revision == m_channels[channel - 1].revision && m_channels[channel - 1].serial == owner) { processBytes(opened, bytes); }
             });
-            connect(serial.get(), &CatSerialTransport::failed, this, [this, weak, channel, run](const QString& error) {
+            connect(serial.get(), &CatSerialTransport::failed, this, [this, weak, channel, run, revision](const QString& error) {
                 const auto owner = weak.lock();
-                if (!owner || run != m_lifecycleGeneration || m_channels[channel - 1].serial != owner) { return; }
+                if (!owner || (run != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || m_channels[channel - 1].serial != owner) { return; }
                 const QPointer<CatService> self(this);
                 const bool pinSource = m_ptt && m_ptt->transport == owner;
                 closeSerialChannel(channel, owner);
-                if (self && run == m_lifecycleGeneration && !m_channels[channel - 1].serial) {
+                if (self && run == m_lifecycleGeneration && revision == m_channels[channel - 1].revision && !m_channels[channel - 1].serial) {
                     setTransportState(channel, CatTransportKind::Serial, "Serial error: " + error);
-                    if (self && run == m_lifecycleGeneration && pinSource && !m_ptt) { setPttState("PTT error: " + error); }
+                    if (self && run == m_lifecycleGeneration && revision == m_channels[channel - 1].revision && pinSource && !m_ptt) { setPttState("PTT error: " + error); }
                 }
             });
             const bool started = serial->start(config);
-            if (!lifetime || run != m_lifecycleGeneration || m_channels[channel - 1].serial != serial) { return; }
+            if (!lifetime || (run != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || m_channels[channel - 1].serial != serial) { return; }
             if (started) { setTransportState(channel, CatTransportKind::Serial, "Listening"); }
             else { closeSerialChannel(channel, serial); }
         };
         startSerial();
     }
-    if (!lifetime || run != m_lifecycleGeneration || !m_started) { return; }
+    if (!lifetime || (run != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || !m_started) { return; }
     if (config.ptyEnabled) { startPty(channel); }
-    if (!lifetime || run != m_lifecycleGeneration || !m_started) { return; }
+    if (!lifetime || (run != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || !m_started) { return; }
     if (config.rigctldEnabled) { setTransportState(channel, CatTransportKind::Rigctld, "Rigctld backend unavailable"); }
-    if (!lifetime || run != m_lifecycleGeneration || !m_started) { return; }
+    if (!lifetime || (run != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || !m_started) { return; }
     updateChannelState(channel);
 }
 QString CatService::ptySlavePath(int channel) const {
@@ -264,8 +309,9 @@ void CatService::setTransportState(int channel, CatTransportKind kind, const QSt
     m_channels[channel - 1].transportStates.insert(kind, state);
     const QPointer<CatService> self(this);
     const quint64 generation = m_lifecycleGeneration;
+    const quint64 revision = m_channels[channel - 1].revision;
     updateChannelState(channel);
-    if (self && generation == m_lifecycleGeneration) { emit transportStateChanged(channel, kind, state); }
+    if (self && generation == m_lifecycleGeneration && revision == m_channels[channel - 1].revision) { emit transportStateChanged(channel, kind, state); }
 }
 void CatService::updateChannelState(int channel) {
     const Channel& endpoint = m_channels[channel - 1];
@@ -283,15 +329,16 @@ void CatService::updateChannelState(int channel) {
 // slave handles are indistinguishable; a close/reopen gap the event loop never sees
 // cannot establish a new identity. Only observed HUP retires claims/framer for reopen.
 void CatService::startPty(int channel) {
+    const quint64 revision = m_channels[channel - 1].revision;
     Channel& endpoint = m_channels[channel - 1];
     const auto pty = std::make_shared<CatPtyTransport>();
     endpoint.pty = pty;
     const std::weak_ptr<CatPtyTransport> weak(pty);
     const QPointer<CatService> self(this);
     const quint64 generation = m_lifecycleGeneration;
-    connect(pty.get(), &CatPtyTransport::peerOpened, this, [this, self, weak, channel, generation] {
+    connect(pty.get(), &CatPtyTransport::peerOpened, this, [this, self, weak, channel, generation, revision] {
         const auto owner = weak.lock();
-        if (!self || !owner || generation != m_lifecycleGeneration || !m_started || m_channels[channel - 1].pty != owner) { return; }
+        if (!self || !owner || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || !m_started || m_channels[channel - 1].pty != owner) { return; }
         const quint64 id = createTransportSession(channel, CatTransportKind::Pty,
             [weak](quint64 sessionId, const QByteArray& bytes) { const auto transport = weak.lock(); return transport && transport->writeBytes(sessionId, bytes); },
             [weak](quint64 sessionId) { const auto transport = weak.lock(); if (transport) { transport->closeSession(sessionId); } });
@@ -299,36 +346,37 @@ void CatService::startPty(int channel) {
         m_channels[channel - 1].ptySession = id;
         m_reporter->sessionsChanged(channel);
     });
-    connect(pty.get(), &CatPtyTransport::peerClosed, this, [this, self, weak, channel, generation](quint64 id) {
+    connect(pty.get(), &CatPtyTransport::peerClosed, this, [this, self, weak, channel, generation, revision](quint64 id) {
         const auto owner = weak.lock();
-        if (!self || !owner || generation != m_lifecycleGeneration || m_channels[channel - 1].pty != owner) { return; }
+        if (!self || !owner || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || m_channels[channel - 1].pty != owner) { return; }
         // The transport already dropped peer identity and both queues, so the close hook preserves the endpoint.
         closeSession(id);
     });
-    connect(pty.get(), &CatPtyTransport::bytesReceived, this, [this, weak, channel, generation](const QByteArray& bytes) {
+    connect(pty.get(), &CatPtyTransport::bytesReceived, this, [this, weak, channel, generation, revision](const QByteArray& bytes) {
         const auto owner = weak.lock();
-        if (owner && generation == m_lifecycleGeneration && m_channels[channel - 1].pty == owner) { processBytes(m_channels[channel - 1].ptySession, bytes); }
+        if (owner && generation == m_lifecycleGeneration && revision == m_channels[channel - 1].revision && m_channels[channel - 1].pty == owner) { processBytes(m_channels[channel - 1].ptySession, bytes); }
     });
-    connect(pty.get(), &CatPtyTransport::failed, this, [this, self, weak, channel, generation](const QString& error) {
+    connect(pty.get(), &CatPtyTransport::failed, this, [this, self, weak, channel, generation, revision](const QString& error) {
         const auto owner = weak.lock();
-        if (!self || !owner || generation != m_lifecycleGeneration || m_channels[channel - 1].pty != owner) { return; }
+        if (!self || !owner || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || m_channels[channel - 1].pty != owner) { return; }
         const quint64 id = std::exchange(m_channels[channel - 1].ptySession, 0);
         closeSession(id);
-        if (!self || generation != m_lifecycleGeneration || m_channels[channel - 1].pty != owner) { return; }
+        if (!self || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || m_channels[channel - 1].pty != owner) { return; }
         emit ptyPathChanged(channel, {});
-        if (self && generation == m_lifecycleGeneration && m_channels[channel - 1].pty == owner) {
+        if (self && generation == m_lifecycleGeneration && revision == m_channels[channel - 1].revision && m_channels[channel - 1].pty == owner) {
             setTransportState(channel, CatTransportKind::Pty, "PTY error: " + error);
         }
     });
     const bool opened = pty->start(channel, endpoint.config);
-    if (!self || generation != m_lifecycleGeneration || m_channels[channel - 1].pty != pty) { return; }
+    if (!self || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || m_channels[channel - 1].pty != pty) { return; }
     if (opened) {
         setTransportState(channel, CatTransportKind::Pty, "Listening");
-        if (self && generation == m_lifecycleGeneration && m_channels[channel - 1].pty == pty) { emit ptyPathChanged(channel, pty->slavePath()); }
+        if (self && generation == m_lifecycleGeneration && revision == m_channels[channel - 1].revision && m_channels[channel - 1].pty == pty) { emit ptyPathChanged(channel, pty->slavePath()); }
     }
 }
 void CatService::stopChannel(int channel)
 {
+    const quint64 revision = m_channels[channel - 1].revision;
     const auto tcp = std::exchange(m_channels[channel - 1].tcp, {});
     const auto serial = std::exchange(m_channels[channel - 1].serial, {});
     const auto pty = std::exchange(m_channels[channel - 1].pty, {});
@@ -338,6 +386,10 @@ void CatService::stopChannel(int channel)
     QHash<quint64, std::shared_ptr<CatSession>> sessions;
     for (quint64 id : sessionIds(channel)) { sessions.insert(id, m_sessions.take(id)); }
     for (const auto& current : sessions) { current->clearRuntime(); }
+    for (quint64 id:m_testers.keys()) {
+        if (m_testers.value(id)->context().channel==channel) { m_testers.take(id)->clearRuntime(); }
+    }
+    m_reporter->sessionsChanged(channel);
     const QPointer<CatService> self(this);
     const QPointer<CatTxCoordinator> coordinator(&m_txCoordinator);
     const quint64 generation = m_lifecycleGeneration;
@@ -351,14 +403,14 @@ void CatService::stopChannel(int channel)
     if (input && input->separate) { input->transport->stop(); }
     if (!self) { return; }
     for (quint64 id : sessions.keys()) { emit sessionClosed(id); if (!self) { return; } }
-    if (generation != m_lifecycleGeneration) { return; }
+    if ((generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision)) { return; }
     m_reporter->sessionsChanged(channel);
     emit ptyPathChanged(channel, {});
-    if (!self || generation != m_lifecycleGeneration) { return; }
+    if (!self || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision)) { return; }
     if (input && !m_ptt) { setPttState("Stopped"); }
-    if (!self || generation != m_lifecycleGeneration) { return; }
+    if (!self || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision)) { return; }
     emit clientCountChanged(channel, 0);
-    if (!self || generation != m_lifecycleGeneration) { return; }
+    if (!self || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision)) { return; }
     setState(channel, QStringLiteral("Stopped"));
 }
 void CatService::stopAll()
@@ -366,6 +418,8 @@ void CatService::stopAll()
     const QPointer<CatService> self(this);
     const quint64 generation = ++m_lifecycleGeneration;
     m_started = false;
+    const auto testers = std::exchange(m_testers, {});
+    for (const auto& tester:testers) { tester->clearRuntime(); }
     const auto sessions = std::exchange(m_sessions, {});
     const auto ptt = std::exchange(m_ptt, {});
     std::array<std::shared_ptr<CatPtyTransport>, 4> ptys;
@@ -433,26 +487,82 @@ QList<quint64> CatService::sessionIds(int channel) const
     return ids;
 }
 QString CatService::channelState(int channel) const { return validChannel(channel) ? m_channels[channel - 1].state : QStringLiteral("Invalid channel"); }
-CatGlobalConfig CatService::globalConfig() const { return m_settings.global(); }
+CatGlobalConfig CatService::globalConfig() const { return m_desiredGlobal.value_or(m_settings.global()); }
+namespace {
+bool samePttIngress(const CatGlobalConfig& a, const CatGlobalConfig& b)
+{
+    return a.pttEnabled == b.pttEnabled && a.pttDeviceSource == b.pttDeviceSource
+        && a.pttSerialDevice == b.pttSerialDevice && a.pttUseCts == b.pttUseCts && a.pttUseDsr == b.pttUseDsr
+        && a.pttChannel == b.pttChannel && a.pttSerialBaud == b.pttSerialBaud && a.pttSerialParity == b.pttSerialParity
+        && a.pttSerialDataBits == b.pttSerialDataBits && a.pttSerialStopBits == b.pttSerialStopBits;
+}
+}
 bool CatService::applyGlobalConfig(const CatGlobalConfig& config)
 {
+    if (m_started && !samePttIngress(config, globalConfig())) { return false; }
+    return reconfigureGlobal(config);
+}
+bool CatService::reconfigureGlobal(const CatGlobalConfig& supplied)
+{
     if (m_destroying || !m_model || !m_model->ownsLocalDsp()) { return false; }
-    if (m_started) {
-        const CatGlobalConfig current = globalConfig();
-        if (config.pttEnabled != current.pttEnabled || config.pttDeviceSource != current.pttDeviceSource
-            || config.pttSerialDevice != current.pttSerialDevice || config.pttUseCts != current.pttUseCts
-            || config.pttUseDsr != current.pttUseDsr || config.pttChannel != current.pttChannel
-            || config.pttSerialBaud != current.pttSerialBaud || config.pttSerialParity != current.pttSerialParity
-            || config.pttSerialDataBits != current.pttSerialDataBits || config.pttSerialStopBits != current.pttSerialStopBits) { return false; }
-    }
+    const CatGlobalConfig config = supplied;
+    if (!CatSettings::validateGlobal(config)) { return false; }
     if (config.pttEnabled && config.pttDeviceSource == "Physical") {
         for (const Channel& endpoint : m_channels) {
             if (endpoint.config.serialEnabled && endpoint.config.serialDevice == config.pttSerialDevice) { return false; }
         }
     }
+    const CatGlobalConfig previous = globalConfig();
+    if (config == previous) { return true; }
+    const bool pttChanged = !samePttIngress(config, previous);
+    const quint64 revision = ++m_globalRevision;
+    const quint64 run = m_lifecycleGeneration;
+    const bool started = m_started;
+    m_desiredGlobal = config;
     const QPointer<CatService> self(this);
-    if (!m_settings.setGlobal(config) || !self) { return false; }
-    emit globalConfigurationChanged(); return true;
+    const auto current = [self, revision] { return self && !self->m_destroying && self->m_globalRevision == revision; };
+    const auto discardOwnDesired = [self, revision] {
+        if (self && self->m_globalRevision == revision) { self->m_desiredGlobal.reset(); }
+    };
+    if (pttChanged) { stopPtt(); }
+    if (!current()) { discardOwnDesired(); return false; }
+    if (!m_settings.setGlobal(config, current) || !current()) { discardOwnDesired(); return false; }
+    m_desiredGlobal.reset();
+    emit globalConfigurationChanged();
+    if (!current()) { return false; }
+    if (pttChanged && started && m_started && run == m_lifecycleGeneration && !m_ptt) { startPtt(); }
+    return current();
+}
+QByteArray CatService::testCommand(int channel, const QByteArray& frame)
+{
+    if (m_destroying || !m_model || !m_model->ownsLocalDsp() || !validChannel(channel)) { return "?;"; }
+    const quint64 id=++m_nextSessionId;
+    const auto tester=std::make_shared<CatSession>(id,channel,CatTransportKind::Tester,channelConfig(channel).binding);
+    const QPointer<CatService> self(this);
+    m_testers.insert(id,tester);
+    // Family handlers resolve this isolated session, but transport enumeration/reporting never sees it.
+    const auto cleanup=qScopeGuard([self,id,tester] {
+        tester->clearRuntime();
+        if (self && self->m_testers.value(id)==tester) { self->m_testers.remove(id); }
+    });
+    const auto current=[self,id,tester] { return self && !self->m_destroying && self->m_testers.value(id)==tester; };
+    emit messageLogged(channel,true,frame);
+    if (!current()) { return "?;"; }
+    const CatValidation validation=m_parser.validate(frame);
+    if (!validation.request) {
+        const QByteArray reply=m_parser.formatValidationError(validation,tester->context());
+        if (!reply.isEmpty()) { emit messageLogged(channel,false,reply); }
+        return reply;
+    }
+    const CatRequest request=*validation.request;
+    // Native Tester policy: ZZLI1 calls PureSignalCoordinator::setAutoCalEnabled(true),
+    // which starts calibration. Ordinary CAT transport behavior remains in CatTxCommands.
+    const bool calibration=request.code=="ZZLI" && request.form==CatForm::Set && request.suffix=="1";
+    const CatCommandResult result=calibration ? CatCommandResult{CatResultKind::Error,"?;"} : m_router.execute(request,tester->context());
+    if (!current()) { return "?;"; }
+    const QByteArray reply=m_parser.format(*m_catalog.find(request.code),request,result,tester->context());
+    if (!reply.isEmpty()) { emit messageLogged(channel,false,reply); }
+    return reply;
 }
 quint64 CatService::createTransportSession(int channel, CatTransportKind kind,
     std::function<bool(quint64, const QByteArray&)> write, std::function<void(quint64)> close)
@@ -499,7 +609,7 @@ void CatService::closeSession(quint64 id)
     }
     emit sessionClosed(id);
 }
-CatSession* CatService::session(quint64 id) { return m_sessions.contains(id) ? m_sessions.value(id).get() : nullptr; }
+CatSession* CatService::session(quint64 id) { return m_sessions.contains(id) ? m_sessions.value(id).get() : m_testers.value(id).get(); }
 QByteArray CatService::processFrame(quint64 id, const QByteArray& frame)
 {
     const std::shared_ptr<CatSession> current = m_sessions.value(id);
@@ -587,6 +697,12 @@ void CatService::startPtt() {
     input->useCts = config.pttUseCts; input->useDsr = config.pttUseDsr;
     input->separate = config.pttDeviceSource == "Physical";
     if (!validChannel(input->channel)) { setPttState("Invalid PTT channel"); return; }
+    const quint64 configuration = m_globalRevision;
+    const quint64 channelRevision = m_channels[input->channel - 1].revision;
+    const auto currentOperation = [self, generation, configuration, channelRevision, channel = input->channel] {
+        return self && !self->m_destroying && self->m_started && generation == self->m_lifecycleGeneration
+            && configuration == self->m_globalRevision && channelRevision == self->m_channels[channel - 1].revision;
+    };
     input->binding = channelConfig(input->channel).binding;
     input->sessionId = ++m_nextSessionId;
     if (input->separate) {
@@ -597,7 +713,7 @@ void CatService::startPtt() {
         }
         input->transport = m_serialFactory ? m_serialFactory() : std::make_shared<CatSerialTransport>();
     } else { input->transport = m_channels[input->channel - 1].serial; }
-    if (!self || generation != m_lifecycleGeneration || !m_started) { return; }
+    if (!currentOperation()) { return; }
     if (!input->transport || (!input->separate && !input->transport->isOpen())) {
         setPttState("PTT input pins require an open serial CAT endpoint"); return;
     }
@@ -621,10 +737,10 @@ void CatService::startPtt() {
         serial.serialBaud = config.pttSerialBaud; serial.serialParity = config.pttSerialParity;
         serial.serialDataBits = config.pttSerialDataBits; serial.serialStopBits = config.pttSerialStopBits;
         const bool opened = input->transport->start(serial);
-        if (!self || generation != m_lifecycleGeneration || m_ptt != input || !opened) { return; }
+        if (!currentOperation() || m_ptt != input || !opened) { return; }
     }
     const bool sampled = input->transport->setPinSampling(true);
-    if (!self || generation != m_lifecycleGeneration || m_ptt != input || !sampled) { return; }
+    if (!currentOperation() || m_ptt != input || !sampled) { return; }
     setPttState(input->armed ? "Armed" : "Waiting for release");
 }
 void CatService::stopPtt() {
@@ -681,6 +797,7 @@ void CatService::closeSerialChannel(int channel, const std::shared_ptr<CatSerial
     const QPointer<CatService> self(this);
     const QPointer<CatTxCoordinator> coordinator(&m_txCoordinator);
     const quint64 generation = m_lifecycleGeneration;
+    const quint64 revision = m_channels[channel - 1].revision;
     // Detach every affected claim before cancellation can invoke model or lifecycle callbacks.
     if (input) { input->armed = false; input->asserted = false; coordinator->cancelSession(input->sessionId); }
     for (quint64 id : sessions.keys()) { if (coordinator) { coordinator->cancelSession(id); } }
@@ -690,10 +807,10 @@ void CatService::closeSerialChannel(int channel, const std::shared_ptr<CatSerial
     transport->stop();
     if (!self) { return; }
     for (quint64 id : sessions.keys()) { emit sessionClosed(id); if (!self) { return; } }
-    if (generation != m_lifecycleGeneration) { return; }
+    if ((generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision)) { return; }
     m_reporter->sessionsChanged(channel);
     if (input && !m_ptt) { setPttState("Stopped"); }
-    if (!self || generation != m_lifecycleGeneration) { return; }
+    if (!self || (generation != m_lifecycleGeneration || revision != m_channels[channel - 1].revision)) { return; }
     if (!m_channels[channel - 1].serial) {
         setTransportState(channel, CatTransportKind::Serial, "Stopped");
     }

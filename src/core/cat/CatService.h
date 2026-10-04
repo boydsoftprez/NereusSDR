@@ -84,6 +84,9 @@ public:
     explicit CatService(RadioModel& model, QObject* parent = nullptr);
     ~CatService() override;
     bool applyChannelConfig(int, const CatEndpointConfig&);
+    bool reconfigureChannel(int, const CatEndpointConfig&);
+    bool reconfigureGlobal(const CatGlobalConfig&);
+    QByteArray testCommand(int, const QByteArray&);
     CatEndpointConfig channelConfig(int) const;
     void startConfigured();
     void stopAll();
@@ -131,6 +134,7 @@ private:
     struct Channel {
         CatEndpointConfig config;
         bool configured{false};
+        quint64 revision{0};
         QString state{"Stopped"};
         std::shared_ptr<CatTcpTransport> tcp;
         std::shared_ptr<CatSerialTransport> serial;
@@ -172,12 +176,15 @@ private:
     CatCommandRouter m_router;
     std::array<Channel, 4> m_channels;
     QHash<quint64, std::shared_ptr<CatSession>> m_sessions;
+    QHash<quint64, std::shared_ptr<CatSession>> m_testers;
     std::unique_ptr<CatReporter> m_reporter;
     std::shared_ptr<PttInput> m_ptt;
     QString m_pttState{"Stopped"};
     std::function<std::shared_ptr<CatSerialTransport>()> m_serialFactory;
     quint64 m_nextSessionId{0};
     quint64 m_lifecycleGeneration{0};
+    quint64 m_globalRevision{0};
+    std::optional<CatGlobalConfig> m_desiredGlobal;
     bool m_destroying{false};
     bool m_started{false};
 };

@@ -617,3 +617,27 @@ One dedicated session claim uses the existing native transmit coordinator and th
 actual selected target inside a frozen channel binding. Shared CAT pin sources reuse
 the open handle; separate physical PTT owns an exclusive device. Serial ZZZZ closes
 only its requesting endpoint instead of the upstream first serial port.
+
+### 2026-10-04 CAT live setup and diagnostics (Task 11)
+
+`CatLiveSetupPages.cpp`, `CatLogWindow.h/.cpp`, and the CAT applet/setup/status
+wiring are NereusSDR-original Qt mechanics, marked `no-port-check` where new.
+The existing setup and applet notices remain unchanged. Source choice facts
+come from Thetis `setup.Designer.cs:57973-57983,58053-58058,58069-58072,
+58083-58086,59524-59528` [v2.10.3.15 @3759d096], which has no per-file header.
+The native layout follows existing SetupPage and TciLogWindow patterns; the
+AetherSDR CatControlApplet was studied without copying new implementation.
+Native QtSerialPort format limits are documented at
+https://doc.qt.io/qt-6/qserialport.html (DataBits-enum, parity-prop,
+StopBits-enum and baudRate-prop). Restored custom baud and Data5 remain exact.
+
+The service-owned live writer preserves stopped-only endpoint apply and
+runtime-only global apply contracts. Scoped channel/global operation revisions
+cancel superseded synchronous AppSettings saves without changing AppSettings
+hooks. Desired global state exists only during a write and completed reads use
+the store. Endpoint edits preserve unchanged slice incarnations; a current
+selector carries explicit rebind intent. Isolated Tester sessions use a separate
+transient lookup, excluded from transport enumeration, AI and GUID registration;
+TX/Tune/TwoTone, VOX enable and PureSignal single/calibration are denied.
+These changes are original adaptation by J.J. Boyd (KG4VCF), AI-assisted via
+OpenAI Codex. Existing source headers, inline comments and constants are retained.

@@ -99,26 +99,43 @@ QList<CatEndpointConfig> CatSettings::load(AppSettings& settings, const RadioMod
     }
     return result;
 }
-void CatSettings::save(AppSettings& settings, const CatEndpointConfig& config)
+bool CatSettings::save(AppSettings& settings, CatEndpointConfig config, std::function<bool()> current)
 {
-    if (config.channel < 1 || config.channel > 4) { return; }
+    if (config.channel < 1 || config.channel > 4) { return false; }
     const QString prefix = QStringLiteral("Cat/Channels/%1/").arg(config.channel);
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "PrimarySliceId", config.binding.primarySliceId);
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "SecondarySliceId", config.binding.secondarySliceId.value_or(-1));
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "TcpEnabled", boolString(config.tcpEnabled));
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "SerialEnabled", boolString(config.serialEnabled));
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "PtyEnabled", boolString(config.ptyEnabled));
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "RigctldEnabled", boolString(config.rigctldEnabled));
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "TcpBindAddress", config.tcpBindAddress);
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "RigctldBindAddress", config.rigctldBindAddress);
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "TcpPort", config.tcpPort);
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "RigctldPort", config.rigctldPort);
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "SerialDevice", config.serialDevice);
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "SerialBaud", config.serialBaud);
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "SerialParity", config.serialParity);
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "SerialDataBits", config.serialDataBits);
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "SerialStopBits", config.serialStopBits);
+    if (current && !current()) { return false; }
     settings.setValue(prefix + "PtyDialect", config.ptyDialect);
+    return !current || current();
 }
 bool CatSettings::validate(const CatEndpointConfig& config, QString* reason)
 {
@@ -142,6 +159,7 @@ bool CatSettings::validate(const CatEndpointConfig& config, QString* reason)
 }
 CatGlobalConfig CatSettings::global() const
 {
+    if (m_writeState->desired) { return *m_writeState->desired; }
     CatGlobalConfig config;
     const QString prefix = QStringLiteral("Cat/");
     config.sendWelcome = m_settings.value(prefix + "SendWelcome", boolString(config.sendWelcome)).toString() == "True";
@@ -173,7 +191,7 @@ CatGlobalConfig CatSettings::global() const
     config.pttSerialStopBits = m_settings.value(prefix + "Ptt/SerialStopBits", config.pttSerialStopBits).toString();
     return config;
 }
-bool CatSettings::setGlobal(const CatGlobalConfig& config)
+bool CatSettings::validateGlobal(const CatGlobalConfig& config)
 {
     // From Thetis setup.Designer.cs:59524-59528 [v2.10.3.15].
     // Native validation preserves rig selections and RTTY offset limits.
@@ -185,35 +203,75 @@ bool CatSettings::setGlobal(const CatGlobalConfig& config)
         || (config.pttEnabled && (config.pttDeviceSource == "None" || (!config.pttUseCts && !config.pttUseDsr)))
         || (config.pttEnabled && config.pttDeviceSource == "Physical" && config.pttSerialDevice.trimmed().isEmpty())
         || !serialFormat(config.pttSerialBaud, config.pttSerialParity, config.pttSerialDataBits, config.pttSerialStopBits)) { return false; }
-    AppSettings& settings = m_settings;
-    const QString prefix = QStringLiteral("Cat/");
-    settings.setValue(prefix + "SendWelcome", boolString(config.sendWelcome));
-    settings.setValue(prefix + "RigIdentity", config.rigIdentity);
-    settings.setValue(prefix + "AllowKenwoodAi", boolString(config.allowKenwoodAi));
-    settings.setValue(prefix + "AiEnabled", boolString(config.aiEnabled));
-    settings.setValue(prefix + "AiSerial1", boolString(config.aiSerial1));
-    settings.setValue(prefix + "AiSerial2", boolString(config.aiSerial2));
-    settings.setValue(prefix + "AiSerial3", boolString(config.aiSerial3));
-    settings.setValue(prefix + "AiSerial4", boolString(config.aiSerial4));
-    settings.setValue(prefix + "AiTcp", boolString(config.aiTcp));
-    settings.setValue(prefix + "DigitalReportsSideband", boolString(config.digitalReportsSideband));
-    settings.setValue(prefix + "RecenterVfo", boolString(config.recenterVfo));
-    settings.setValue(prefix + "SerialNumber", config.serialNumber);
-    settings.setValue(prefix + "LimitReportedPower", boolString(config.limitReportedPower));
-    settings.setValue(prefix + "RttyOffsetAEnabled", boolString(config.rttyOffsetAEnabled));
-    settings.setValue(prefix + "RttyOffsetBEnabled", boolString(config.rttyOffsetBEnabled));
-    settings.setValue(prefix + "RttyDiguHz", config.rttyDiguHz);
-    settings.setValue(prefix + "RttyDiglHz", config.rttyDiglHz);
-    settings.setValue(prefix + "Ptt/Enabled", boolString(config.pttEnabled));
-    settings.setValue(prefix + "Ptt/DeviceSource", config.pttDeviceSource);
-    settings.setValue(prefix + "Ptt/SerialDevice", config.pttSerialDevice);
-    settings.setValue(prefix + "Ptt/UseCts", boolString(config.pttUseCts));
-    settings.setValue(prefix + "Ptt/UseDsr", boolString(config.pttUseDsr));
-    settings.setValue(prefix + "Ptt/Channel", config.pttChannel);
-    settings.setValue(prefix + "Ptt/SerialBaud", config.pttSerialBaud);
-    settings.setValue(prefix + "Ptt/SerialParity", config.pttSerialParity);
-    settings.setValue(prefix + "Ptt/SerialDataBits", config.pttSerialDataBits);
-    settings.setValue(prefix + "Ptt/SerialStopBits", config.pttSerialStopBits);
     return true;
+}
+bool CatSettings::setGlobal(CatGlobalConfig config, std::function<bool()> current)
+{
+    if (!validateGlobal(config)) { return false; }
+    // This retained write state survives deletion during a synchronous settings hook.
+    // Only an in-flight desired tuple is cached; completed reads remain store-authoritative.
+    const auto state = m_writeState;
+    const quint64 revision = ++state->revision;
+    state->desired = config;
+    AppSettings& settings = m_settings;
+    const auto valid = [state, revision, current] { return state->revision == revision && (!current || current()); };
+    const QString prefix = QStringLiteral("Cat/");
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "SendWelcome", boolString(config.sendWelcome));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "RigIdentity", config.rigIdentity);
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "AllowKenwoodAi", boolString(config.allowKenwoodAi));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "AiEnabled", boolString(config.aiEnabled));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "AiSerial1", boolString(config.aiSerial1));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "AiSerial2", boolString(config.aiSerial2));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "AiSerial3", boolString(config.aiSerial3));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "AiSerial4", boolString(config.aiSerial4));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "AiTcp", boolString(config.aiTcp));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "DigitalReportsSideband", boolString(config.digitalReportsSideband));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "RecenterVfo", boolString(config.recenterVfo));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "SerialNumber", config.serialNumber);
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "LimitReportedPower", boolString(config.limitReportedPower));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "RttyOffsetAEnabled", boolString(config.rttyOffsetAEnabled));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "RttyOffsetBEnabled", boolString(config.rttyOffsetBEnabled));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "RttyDiguHz", config.rttyDiguHz);
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "RttyDiglHz", config.rttyDiglHz);
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "Ptt/Enabled", boolString(config.pttEnabled));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "Ptt/DeviceSource", config.pttDeviceSource);
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "Ptt/SerialDevice", config.pttSerialDevice);
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "Ptt/UseCts", boolString(config.pttUseCts));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "Ptt/UseDsr", boolString(config.pttUseDsr));
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "Ptt/Channel", config.pttChannel);
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "Ptt/SerialBaud", config.pttSerialBaud);
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "Ptt/SerialParity", config.pttSerialParity);
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "Ptt/SerialDataBits", config.pttSerialDataBits);
+    if (!valid()) { if (state->revision == revision) { state->desired.reset(); } return false; }
+    settings.setValue(prefix + "Ptt/SerialStopBits", config.pttSerialStopBits);
+    const bool accepted = valid();
+    if (state->revision == revision) { state->desired.reset(); }
+    return accepted;
 }
 } // namespace NereusSDR

@@ -942,6 +942,8 @@ private slots:
     // Phase 23: open Setup dialog at "TCI Server" page.  Wired to
     // tciAction triggered + m_tciIndicator click + TciApplet::setupRequested.
     void openTciSetupPage();
+    void openCatSetupPage();
+    void showCatLog();
 
     // Phase 3P-II Phase 4 Task 90: generic navigation entry point for applet
     // right-click menus. Maps a pageKey string to a SetupDialog tree label:
@@ -1953,6 +1955,7 @@ private:
     class CwxApplet*        m_cwxApplet{nullptr};
     class DvkApplet*        m_dvkApplet{nullptr};
     class CatApplet*        m_catApplet{nullptr};
+    class CatLogWindow* m_catLogWindow{nullptr};
     class TunerApplet*      m_tunerApplet{nullptr};
 
     // Phase 3P-III Task 14: RF-Kit RF2K-S applet.

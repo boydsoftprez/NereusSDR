@@ -26,6 +26,9 @@
 
 #include "CatApplet.h"
 #include "NyiOverlay.h"
+#include "models/RadioModel.h"
+#include "core/cat/CatService.h"
+#include <QSignalBlocker>
 #include "gui/ComboStyle.h"
 #include "gui/StyleConstants.h"
 
@@ -59,7 +62,30 @@ static QLabel* makePathLabel(const QString& text, QWidget* parent)
 CatApplet::CatApplet(RadioModel* model, QWidget* parent)
     : AppletWidget(model, parent)
 {
+    m_service=model ? model->catService() : nullptr;
+    m_localHost=model && model->ownsLocalDsp();
     buildUI();
+    if (model && model->catService()) {
+        const QPointer<CatService> service=m_service;
+        connect(service,&CatService::configurationChanged,this,[this] { syncFromModel(); });
+        connect(service,&CatService::channelStateChanged,this,[this] { syncFromModel(); });
+        connect(service,&CatService::clientCountChanged,this,[this] { syncFromModel(); });
+        connect(service,&CatService::ptyPathChanged,this,[this] { syncFromModel(); });
+        connect(service,&CatService::transportStateChanged,this,[this] { syncFromModel(); });
+        connect(m_tcpBtn,&QPushButton::toggled,this,[this,service](bool enabled) {
+            if (!service) { return; }
+            CatEndpointConfig config=service->channelConfig(1); config.tcpEnabled=enabled;
+            const QPointer<CatApplet> lifetime(this);
+            service->reconfigureChannel(1,config); if (lifetime) { syncFromModel(); }
+        });
+        connect(m_ptyBtn,&QPushButton::toggled,this,[this,service](bool enabled) {
+            if (!service) { return; }
+            CatEndpointConfig config=service->channelConfig(1); config.ptyEnabled=enabled;
+            const QPointer<CatApplet> lifetime(this);
+            service->reconfigureChannel(1,config); if (lifetime) { syncFromModel(); }
+        });
+    }
+    syncFromModel();
 }
 
 void CatApplet::buildUI()
@@ -96,7 +122,8 @@ void CatApplet::buildUI()
         row->addStretch();
 
         vbox->addLayout(row);
-        NyiOverlay::markNyi(m_tcpBtn, QStringLiteral("3K"));
+        m_tcpBtn->setObjectName("catTcpButton");
+        m_tcpBtn->setToolTip(tr("Enable TCP for CAT1. Configure all four channels individually in Setup → CAT & Network."));
     }
 
     // --- Control 2: CAT PTY enable + 4 path labels ---
@@ -110,13 +137,14 @@ void CatApplet::buildUI()
 
         for (int i = 0; i < 4; ++i) {
             m_ptyPath[i] = makePathLabel(
-                QStringLiteral("/dev/ptyp%1").arg(i), this);
+                QStringLiteral("—"), this);
             row->addWidget(m_ptyPath[i]);
         }
         row->addStretch();
 
         vbox->addLayout(row);
-        NyiOverlay::markNyi(m_ptyBtn, QStringLiteral("3K"));
+        m_ptyBtn->setObjectName("catPtyButton");
+        m_ptyBtn->setToolTip(tr("Enable Thetis PTY for CAT1. Configure all four channels individually in Setup → CAT & Network."));
     }
 
     vbox->addWidget(divider());
@@ -170,7 +198,31 @@ void CatApplet::buildUI()
 
 void CatApplet::syncFromModel()
 {
-    // NYI — Phase 3K / 3-VAX
+    CatService* service=m_service;
+    const bool available=m_localHost && service;
+    m_tcpBtn->setEnabled(available); m_ptyBtn->setEnabled(available);
+#if !defined(Q_OS_MAC) && !defined(Q_OS_LINUX)
+    m_ptyBtn->setEnabled(false); m_ptyBtn->setToolTip(tr("Native PTYs are available only on macOS and Linux."));
+#endif
+    if (!available) {
+        const QString reason=tr("CAT setup belongs to the local host. Configure it on the computer running the Core.");
+        m_tcpBtn->setToolTip(reason); m_ptyBtn->setToolTip(reason);
+    }
+    if (!service) { return; }
+    const QSignalBlocker tcp(m_tcpBtn),pty(m_ptyBtn);
+    m_tcpBtn->setChecked(service->channelConfig(1).tcpEnabled); m_ptyBtn->setChecked(service->channelConfig(1).ptyEnabled);
+    for (int i=0;i<4;++i) {
+        const QString state=service->transportState(i+1,CatTransportKind::Tcp);
+        const bool listening=state=="Listening";
+        m_tcpLed[i]->setObjectName(QStringLiteral("catTcpLed%1").arg(i+1));
+        m_tcpLed[i]->setStyleSheet(QStringLiteral("QLabel { background: %1; color: #c8d8e8; border-radius: 2px; font-size: 8px; font-weight: bold; }").arg(listening ? "#208040" : state.contains("error",Qt::CaseInsensitive) ? "#a04040" : "#405060"));
+        m_tcpLed[i]->setToolTip(tr("CAT%1 TCP: %2 · %3:%4 · %5 clients").arg(i+1).arg(state,service->boundAddress(i+1).toString()).arg(service->boundPort(i+1)).arg(service->clientCount(i+1)));
+        const QString path=service->ptySlavePath(i+1);
+        m_ptyPath[i]->setObjectName(QStringLiteral("catPtyPath%1").arg(i+1));
+        m_ptyPath[i]->setText(path.isEmpty() ? QStringLiteral("—") : path);
+        m_ptyPath[i]->setToolTip(tr("CAT%1 PTY: %2").arg(i+1).arg(service->transportState(i+1,CatTransportKind::Pty)));
+        m_ptyPath[i]->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    }
 }
 
 } // namespace NereusSDR

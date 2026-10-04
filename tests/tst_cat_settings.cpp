@@ -2,10 +2,12 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest>
 #include <QTemporaryDir>
+#include <QTcpServer>
 #include "core/AppSettings.h"
 #include "core/cat/CatSettings.h"
 #include "core/cat/CatService.h"
 #include "models/RadioModel.h"
+#include "core/SliceOwnership.h"
 using namespace NereusSDR;
 class TstCatSettings : public QObject {
     Q_OBJECT
@@ -111,6 +113,93 @@ private slots:
         service.beginRetirement(); baseline.rttyOffsetAEnabled=false; QVERIFY(!service.applyGlobalConfig(baseline)); QCOMPARE(changed.count(),1);
         RadioModel remote(RadioModel::Role::Remote); QVERIFY(!remote.catService()->applyGlobalConfig(baseline));
         AppSettings::instance().clear();
+    }
+    void nestedGlobalSaveNewestWins() {
+        AppSettings& store = AppSettings::instance(); store.clear();
+        RadioModel model; CatService& service = *model.catService();
+        CatGlobalConfig old = service.globalConfig(); old.rigIdentity = "TS-50S"; old.rttyDiguHz = 100;
+        CatGlobalConfig newer = old; newer.rigIdentity = "TS-480"; newer.rttyDiguHz = 999;
+        bool nested = false;
+        store.setChangeHook([&](const QString& key) {
+            if (!nested && key == "Cat/SendWelcome") { nested = true; QVERIFY(service.applyGlobalConfig(newer)); }
+        });
+        const bool accepted = service.applyGlobalConfig(old);
+        store.setChangeHook({});
+        QVERIFY(nested); QVERIFY(!accepted);
+        QCOMPARE(service.globalConfig().rigIdentity, newer.rigIdentity);
+        QCOMPARE(store.value("Cat/RttyDiguHz").toInt(), 999);
+    }
+    void globalTupleIsCoherentDuringSave() {
+        AppSettings& store = AppSettings::instance(); store.clear();
+        RadioModel model; CatService& service = *model.catService();
+        CatGlobalConfig desired = service.globalConfig(); desired.rigIdentity = "TS-480"; desired.rttyDiguHz = 999;
+        bool observed = false; CatGlobalConfig seen;
+        store.setChangeHook([&](const QString& key) {
+            if (!observed && key == "Cat/SendWelcome") { observed = true; seen = service.globalConfig(); service.startConfigured(); }
+        });
+        const bool accepted = service.applyGlobalConfig(desired); store.setChangeHook({});
+        QVERIFY(accepted); QVERIFY(observed); QCOMPARE(seen.rigIdentity, desired.rigIdentity); QCOMPARE(seen.rttyDiguHz, 999);
+    }
+    void nestedChannelSaveNewestWins() {
+        AppSettings& store = AppSettings::instance(); store.clear();
+        RadioModel model; CatService& service = *model.catService();
+        CatEndpointConfig old; old.tcpPort = 12345; old.serialBaud = 9600;
+        CatEndpointConfig newer = old; newer.tcpPort = 23456; newer.serialBaud = 38400;
+        bool nested = false;
+        store.setChangeHook([&](const QString& key) {
+            if (!nested && key == "Cat/Channels/1/PrimarySliceId") { nested = true; QVERIFY(service.applyChannelConfig(1, newer)); }
+        });
+        const bool accepted = service.applyChannelConfig(1, old); store.setChangeHook({});
+        QVERIFY(nested); QVERIFY(!accepted); QCOMPARE(service.channelConfig(1).tcpPort, 23456);
+        QCOMPARE(store.value("Cat/Channels/1/TcpPort").toInt(), 23456);
+        QCOMPARE(store.value("Cat/Channels/1/SerialBaud").toInt(), 38400);
+    }
+    void saveCallbackStopWinsRestart() {
+        AppSettings& store=AppSettings::instance(); store.clear(); RadioModel model; CatService& service=*model.catService(); service.startConfigured();
+        CatEndpointConfig desired=service.channelConfig(1); desired.tcpEnabled=true; desired.tcpPort=0;
+        // An invalid proposal is rejected before hooks or teardown.
+        int hooks=0; store.setChangeHook([&](const QString&) { ++hooks; service.stopAll(); });
+        QVERIFY(!service.reconfigureChannel(1,desired)); QCOMPARE(hooks,0); QVERIFY(service.isStarted());
+        desired.tcpEnabled=false; desired.serialBaud=19200;
+        QVERIFY(service.reconfigureChannel(1,desired)); QVERIFY(hooks>0); QVERIFY(!service.isStarted()); QVERIFY(!service.isListening(1));
+        QCOMPARE(store.value("Cat/Channels/1/SerialBaud").toInt(),19200); store.setChangeHook({});
+    }
+    void deletedServiceStopsSavingAndDoesNotNotify() {
+        AppSettings& store=AppSettings::instance(); store.clear(); auto model=std::make_unique<RadioModel>();
+        CatService* service=model->catService(); CatGlobalConfig desired=service->globalConfig(); desired.sendWelcome=true; desired.rigIdentity="TS-480";
+        QPointer<CatService> alive(service); int writes=0;
+        store.setChangeHook([&](const QString& key) { if (key.startsWith("Cat/")) { ++writes; model.reset(); } });
+        QVERIFY(!service->reconfigureGlobal(desired)); store.setChangeHook({}); QVERIFY(!alive); QCOMPARE(writes,1);
+        QVERIFY(store.value("Cat/RigIdentity").toString()!="TS-480");
+    }
+    void sameChannelStatusSupersessionDropsOldTransportSignal() {
+        AppSettings::instance().clear(); RadioModel model; CatService& service=*model.catService();
+        QTcpServer reservation; QVERIFY(reservation.listen(QHostAddress::LocalHost,0)); const int port=reservation.serverPort(); reservation.close();
+        CatEndpointConfig config; config.tcpEnabled=true; config.tcpPort=port; QVERIFY(service.applyChannelConfig(1,config));
+        bool replaced=false; int stale=0;
+        connect(&service,&CatService::channelStateChanged,&model,[&](int channel,const QString& state) {
+            if (channel==1 && state=="Listening" && !replaced) { replaced=true; CatEndpointConfig disabled=service.channelConfig(1); disabled.tcpEnabled=false; QVERIFY(service.reconfigureChannel(1,disabled)); }
+        });
+        connect(&service,&CatService::transportStateChanged,&model,[&](int channel,CatTransportKind,const QString& state) { if (channel==1 && replaced && state=="Listening") { ++stale; } });
+        service.startConfigured(); QVERIFY(replaced); QCOMPARE(stale,0); QVERIFY(!service.isListening(1));
+    }
+    void retirementClearsInflightGlobalTuple() {
+        AppSettings& store=AppSettings::instance(); store.clear(); RadioModel model; CatService& service=*model.catService();
+        CatGlobalConfig desired=service.globalConfig(); desired.rigIdentity="TS-480";
+        bool retired=false; store.setChangeHook([&](const QString& key) { if (!retired && key=="Cat/SendWelcome") { retired=true; service.beginRetirement(); } });
+        const bool accepted=service.reconfigureGlobal(desired); store.setChangeHook({}); QVERIFY(!accepted); QVERIFY(retired);
+        CatSettings persisted(store); QCOMPARE(service.globalConfig().rigIdentity,persisted.global().rigIdentity);
+    }
+    void transportEditDoesNotRebindReusedSlice() {
+        AppSettings::instance().clear(); RadioModel model; model.addSlice(); model.addSlice(); CatService& service=*model.catService();
+        CatEndpointConfig config; config.binding.primarySliceId=0; config.tcpPort=12345; QVERIFY(service.applyChannelConfig(1,config)); service.startConfigured();
+        const quint64 incarnation=service.channelConfig(1).binding.primaryIncarnation;
+        model.removeSlice(0); QCOMPARE(model.addSlice(),0); QVERIFY(model.sliceOwnership()->incarnation(0)!=incarnation);
+        config=service.channelConfig(1); config.tcpPort=23456; QVERIFY(service.reconfigureChannel(1,config));
+        QCOMPARE(service.channelConfig(1).binding.primaryIncarnation,incarnation);
+        QVERIFY(!service.adapter().resolveSlice(service.channelConfig(1).binding,CatVfo::Primary));
+        config=service.channelConfig(1); config.binding=service.adapter().snapshotBinding(config.binding);
+        QVERIFY(service.reconfigureChannel(1,config)); QVERIFY(service.adapter().resolveSlice(service.channelConfig(1).binding,CatVfo::Primary));
     }
     void validation()
     {

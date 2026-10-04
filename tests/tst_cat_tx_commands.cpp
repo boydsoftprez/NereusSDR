@@ -228,6 +228,8 @@ private slots:
   QCOMPARE(channel->lastMicPreampForTest(),model.transmitModel().micPreampLinear()); QVERIFY(channel->lastDexpRunForTest()); QVERIFY(channel->lastTxCpdrOnForTest()); QCOMPARE(channel->lastTxCpdrGainDbForTest(),11.0);
   QCOMPARE(channel->m_filterLowHz,300); QCOMPARE(channel->m_filterHighHz,3100); QVERIFY(model.audioEngine()->txMonitorEnabled()); QCOMPARE(model.audioEngine()->txMonitorVolume(),0.8f);
   model.setBoardForTest(HPSDRHW::OrionMKII); PureSignal* ps=model.installPureSignalForTest(channel); QVERIFY(ps); QSignalSpy calibrations(ps,&PureSignal::calibrationStarted);
+  ps->setAutoCalEnabled(false);
+  QCOMPARE(service.testCommand(1,"ZZLI1;"),QByteArray("?;")); QVERIFY(!ps->isAutoCalEnabled());
   QCOMPARE(service.processFrame(id,"ZZLI1;"),QByteArray()); QVERIFY(ps->isAutoCalEnabled()); QCOMPARE(service.processFrame(id,"ZZLI;"),QByteArray("ZZLI1;"));
   service.session(id)->context().transmitAllowed=true;
   ps->setRunCalibrationProcessing(false); QCOMPARE(service.processFrame(id,"ZZUS;"),QByteArray("?;")); QCOMPARE(calibrations.size(),0); QVERIFY(!model.moxController()->isMox());

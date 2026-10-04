@@ -129,6 +129,7 @@ constexpr int kRttyMaximumHz = 3000;
 
 // Nereus logical channels and transport enablement are approved design defaults.
 struct CatEndpointConfig {
+    bool operator==(const CatEndpointConfig&) const = default;
     int channel{1};
     CatBinding binding;
     bool tcpEnabled{false}; bool serialEnabled{false}; bool ptyEnabled{false}; bool rigctldEnabled{false};
@@ -140,6 +141,7 @@ struct CatEndpointConfig {
     QString ptyDialect{"Thetis"};
 };
 struct CatGlobalConfig {
+    bool operator==(const CatGlobalConfig&) const = default;
     // Welcome is deliberately off in the approved Nereus design.
     bool sendWelcome{false};
     // From Thetis setup.cs:355 [v2.10.3.15].

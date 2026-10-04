@@ -9901,3 +9901,7 @@ nereus_add_test(tst_cat_serial CORE_ONLY)
 nereus_add_test(tst_cat_serial_ptt CORE_ONLY EXTRA_LABELS core models)
 
 nereus_add_test(tst_cat_pty CORE_ONLY)
+
+# Native CAT setup and applet controls.
+nereus_add_test(tst_cat_setup)
+nereus_add_test(tst_cat_applet)

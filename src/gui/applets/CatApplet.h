@@ -26,6 +26,7 @@
 
 #pragma once
 #include "AppletWidget.h"
+#include <QPointer>
 
 class QPushButton;
 class QLabel;
@@ -33,8 +34,10 @@ class QComboBox;
 
 namespace NereusSDR {
 
+class CatService;
+
 // CAT / rigctld control interfaces.
-// NYI — Phase 3K (CAT/rigctld) + 3-VAX (VAX/IQ).
+// Live Thetis CAT; rigctld and VAX/IQ retain their separate delivery boundaries.
 // TCI controls live in TciApplet (Phase 21).
 //
 // Controls:
@@ -53,6 +56,8 @@ public:
 
 private:
     void buildUI();
+    QPointer<CatService> m_service;
+    bool m_localHost{false};
 
     // Control 1 — CAT TCP: enable button + 4 status LEDs (A/B/C/D)
     QPushButton* m_tcpBtn        = nullptr;

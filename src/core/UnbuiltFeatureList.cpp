@@ -182,7 +182,7 @@ QString key(UnbuiltFeature feature)
 
 bool isBuilt(UnbuiltFeature feature)
 {
-    if (feature == UnbuiltFeature::ContainerFilterDisplay) { return true; }
+    if (feature == UnbuiltFeature::Cat || feature == UnbuiltFeature::ContainerFilterDisplay) { return true; }
     return builtForTest().contains(static_cast<int>(feature));
 }
 

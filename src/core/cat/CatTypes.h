@@ -42,6 +42,7 @@ enum class CatOutcome { Faithful, Adapted, Inactive, SourceInert, Unavailable };
 enum class CatSuffixKind { Numeric, Text, Equalizer, Guid };
 enum class CatFormPrecedence { SetFirst, GetFirst };
 struct CatBinding {
+    bool operator==(const CatBinding&) const = default;
     int primarySliceId{-1};
     std::optional<int> secondarySliceId;
     quint64 primaryIncarnation{0};

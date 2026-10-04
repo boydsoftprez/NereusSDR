@@ -975,6 +975,8 @@ warren@wpratt.com
 #include "applets/CwxApplet.h"
 #include "applets/DvkApplet.h"
 #include "applets/CatApplet.h"
+#include "core/cat/CatService.h"
+#include "setup/CatLogWindow.h"
 #include "applets/TunerApplet.h"
 // Phase 23: TCI server + applets (guarded so non-WebSocket builds still compile)
 #ifdef HAVE_WEBSOCKETS
@@ -9752,6 +9754,9 @@ void MainWindow::populateDefaultMeter()
     m_modMonApplet = new ModMonitorApplet(m_radioModel, nullptr);
     panel->insertApplet(0, m_modMonApplet);   // directly below the S-Meter
 
+    m_catApplet = new CatApplet(m_radioModel, nullptr);
+    panel->addApplet(m_catApplet);
+
     // Phase 23: TCI applets — live in Container #0 below the existing applets.
     // Visibility is now managed by AppletVisibilityController below
     // (registered as ids "Tci" + "ClientChain", keys AppletTciVisible +
@@ -10029,6 +10034,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("Amp")]        = m_ampApplet;
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
     m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
+    m_appletsById[QStringLiteral("Cat")]        = m_catApplet;
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
         m_appletsById[QStringLiteral("Tci")]        = m_tciApplet;
@@ -10073,6 +10079,7 @@ void MainWindow::populateDefaultMeter()
                                 QStringLiteral("Power Genius"), true);
     m_appletVis->registerApplet(QStringLiteral("Tuner"),
                                 QStringLiteral("Tuner Genius"), true);
+    m_appletVis->registerApplet(QStringLiteral("Cat"),QStringLiteral("CAT"),true);
     m_appletVis->registerApplet(QStringLiteral("RfKit"),
                                 QStringLiteral("RF-Kit RF2K-S"), true);
 #ifdef HAVE_WEBSOCKETS
@@ -10199,7 +10206,7 @@ void MainWindow::populateDefaultMeter()
     // m_diversityApplet  = new DiversityApplet(m_radioModel, nullptr);  // TODO 3F (multi-RX)
     // m_cwxApplet        = new CwxApplet(m_radioModel, nullptr);        // TODO 3M-2 (CW TX)
     // m_dvkApplet        = new DvkApplet(m_radioModel, nullptr);        // TODO 3M-1 (DVK)
-    // m_catApplet        = new CatApplet(m_radioModel, nullptr);        // TODO 3J/3K/3-VAX
+    // CAT is registered with the live applet host above.
 
     // Detach the analog singleton before the old header wrapper is disposed.
     panel->clearHeaderWidget();
@@ -11328,7 +11335,9 @@ void MainWindow::buildMenuBar()
     }
     {
         QAction* catAction = toolsMenu->addAction(QStringLiteral("&CAT Control..."));
-        catAction->setEnabled(false);
+        catAction->setEnabled(true);
+        catAction->setObjectName("catControlAction");
+        connect(catAction,&QAction::triggered,this,&MainWindow::openCatSetupPage);
         // R-R3-49: hidden until CAT is built.
         UnbuiltFeatures::hideUnlessBuilt(catAction, UnbuiltFeature::Cat);
     }
@@ -12036,10 +12045,26 @@ void MainWindow::buildStatusBar()
         return w;
     };
 
-    // CAT Serial — NYI until Phase 3K; kept as static indicator, no live signal
+    // CAT status reflects actual local listener activity and errors.
     m_catIndicator = makeIndicator(QStringLiteral("CAT"), QStringLiteral("Off"));
     m_catIndicator->setObjectName(QStringLiteral("statusCatIndicator"));
     hbox->addWidget(m_catIndicator);
+    m_catIndicator->installEventFilter(this);
+    const auto refreshCat = [this] {
+        const bool local=m_radioModel->ownsLocalDsp(); CatService* service=m_radioModel->catService();
+        bool listening=false; bool error=false; int clients=0; QStringList details;
+        for (int channel=1;channel<=4;++channel) {
+            listening=listening || service->isListening(channel); clients+=service->clientCount(channel);
+            const QString state=service->channelState(channel); error=error || state.contains("error",Qt::CaseInsensitive) || state.contains("unavailable",Qt::CaseInsensitive);
+            details.append(tr("CAT%1: %2").arg(channel).arg(state));
+        }
+        const auto labels=m_catIndicator->findChildren<QLabel*>();
+        if (labels.size()>1) { labels.last()->setText(!local ? tr("Local host") : error ? tr("Error") : listening ? tr("On (%1)").arg(clients) : tr("Off")); }
+        m_catIndicator->setToolTip(local ? details.join('\n') : tr("CAT listeners are configured on the computer running the Core."));
+    };
+    connect(m_radioModel->catService(),&CatService::channelStateChanged,this,refreshCat);
+    connect(m_radioModel->catService(),&CatService::clientCountChanged,this,refreshCat);
+    refreshCat();
     m_catSep = makeSep();
     hbox->addWidget(m_catSep);
 
@@ -12856,6 +12881,18 @@ void MainWindow::updateTciIndicator()
 // openTciSetupPage() — open Setup dialog at "TCI Server" page.
 // Pattern-matched from the many other "open setup" sites in MainWindow.cpp
 // (e.g. vfoWidget::openSetupRequested, m_overlayPanel::openSetupRequested).
+void MainWindow::openCatSetupPage()
+{
+    auto* dialog=createSetupDialog();
+    if (!dialog) { return; }
+    dialog->selectPage(QStringLiteral("TCP/IP CAT")); dialog->show();
+}
+void MainWindow::showCatLog()
+{
+    if (!m_radioModel->ownsLocalDsp()) { return; }
+    if (!m_catLogWindow) { m_catLogWindow=new CatLogWindow(m_radioModel->catService(),this); }
+    m_catLogWindow->show(); m_catLogWindow->raise(); m_catLogWindow->activateWindow();
+}
 void MainWindow::openTciSetupPage()
 {
     auto* dialog = createSetupDialog();
@@ -13839,6 +13876,7 @@ void MainWindow::setVoltsAmpsVisible(bool visible)
 void MainWindow::wireSetupDialog(SetupDialog* dialog)
 {
     if (!dialog) { return; }
+    connect(dialog,&SetupDialog::catLogRequested,this,&MainWindow::showCatLog);
     // R-R3-21: Appearance > Meter Styles changes the S-meter on screen.
     const auto sMeter = [this]() {
         return m_appletPanel ? m_appletPanel->smeterWidget() : nullptr;
@@ -14827,6 +14865,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     // Phase 23: m_tciIndicator click → open Setup → TCI Server.
     // The indicator is a QWidget (not a QLabel) so we match by pointer identity.
     if (event->type() == QEvent::MouseButtonPress) {
+        if (watched == m_catIndicator) { openCatSetupPage(); return true; }
         if (watched == m_tciIndicator) {
             openTciSetupPage();
             return true;  // event consumed

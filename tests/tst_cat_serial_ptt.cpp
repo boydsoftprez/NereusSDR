@@ -42,6 +42,34 @@ private slots:
             if (key.startsWith("Cat/")) { AppSettings::instance().remove(key); }
         }
     }
+    void liveChannelChangeReleasesBeforeCallbacksAndRearms() {
+        RxCatMockConnection connection; RadioModel model; setup(model,connection);
+        const auto device=std::make_shared<CatSerialTestDevice>(); CatService& service=*model.catService();
+        QVERIFY(configure(service,device)); service.startConfigured(); const quint64 old=service.sessionIds(1).first();
+        sample(service,device,1,false,false); sample(service,device,1,true,false); QVERIFY(model.moxController()->isMox());
+        QCOMPARE(service.processFrame(old,"TX;"),QByteArray());
+        bool closed=false; device->onClose=[&] { closed=true; QVERIFY(!model.moxController()->isMox()); QVERIFY(!service.session(old)); };
+        CatEndpointConfig changed=service.channelConfig(1); changed.serialBaud=19200; QVERIFY(service.reconfigureChannel(1,changed));
+        QVERIFY(closed); QCOMPARE(device->accepted.serialBaud,19200); QVERIFY(!model.moxController()->isMox());
+        QVERIFY(!service.session(old)); QCOMPARE(service.sessionIds(1).size(),1); QCOMPARE(service.pttState(),QString("Waiting for release"));
+        sample(service,device,1,true,false); QVERIFY(!model.moxController()->isMox());
+        pumpCat(); sample(service,device,1,false,false); sample(service,device,1,true,false); QVERIFY(model.moxController()->isMox());
+        device->onClose={}; service.stopAll(); pumpCat(); model.injectConnectionForTest(nullptr);
+    }
+    void liveGlobalRuntimeKeepsHandleAndIngressChangeRearms() {
+        RxCatMockConnection connection; RadioModel model; setup(model,connection);
+        const auto device=std::make_shared<CatSerialTestDevice>(); CatService& service=*model.catService();
+        QVERIFY(configure(service,device)); service.startConfigured(); const quint64 session=service.sessionIds(1).first(); const int opens=device->opens;
+        sample(service,device,1,false,false); sample(service,device,1,true,false); QVERIFY(model.moxController()->isMox());
+        CatGlobalConfig global=service.globalConfig(); global.sendWelcome=true; QVERIFY(service.reconfigureGlobal(global));
+        QCOMPARE(device->opens,opens); QVERIFY(service.session(session)); QVERIFY(model.moxController()->isMox());
+        bool stopped=false; connect(&service,&CatService::pttStateChanged,&model,[&](const QString& state) { if (state=="Stopped") { stopped=true; QVERIFY(!model.moxController()->isMox()); } });
+        global.pttUseDsr=false; QVERIFY(service.reconfigureGlobal(global)); QVERIFY(stopped); QCOMPARE(device->opens,opens);
+        QVERIFY(service.session(session)); QVERIFY(!model.moxController()->isMox()); QCOMPARE(service.pttState(),QString("Waiting for release"));
+        pumpCat(); sample(service,device,1,false,false); sample(service,device,1,true,false); QVERIFY(model.moxController()->isMox());
+        global.pttEnabled=false; QVERIFY(service.reconfigureGlobal(global)); QVERIFY(!model.moxController()->isMox());
+        QVERIFY(service.session(session)); service.stopAll(); pumpCat(); model.injectConnectionForTest(nullptr);
+    }
     void singleInputAndRefusal_data() {
         QTest::addColumn<bool>("useCts"); QTest::newRow("CTS-legacy-RTS") << true; QTest::newRow("DSR-legacy-DTR") << false;
     }
