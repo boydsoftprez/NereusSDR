@@ -6,6 +6,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 - Include address-lifetime timer directly for Qt 6.4.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-29 - Created for the phone's direct addresses. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-29 - The kernel's own temporary and deprecated flags on Linux
@@ -19,6 +21,7 @@
 #include "core/session/IceConfiguration.h"
 #include "core/session/StationLanAnnouncer.h"
 
+#include <QDeadlineTimer>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>

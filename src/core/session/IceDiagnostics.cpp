@@ -6,6 +6,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 - Include address-lifetime timer directly for Qt 6.4.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-29 - Created for the 5G media-path diagnosis. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-30 - Review fix: the ICE username fragment, a failed ufrag
@@ -18,6 +20,7 @@
 
 #include "core/session/CoreAddresses.h"
 
+#include <QDeadlineTimer>
 #include <QElapsedTimer>
 #include <QHostAddress>
 #include <QLoggingCategory>
