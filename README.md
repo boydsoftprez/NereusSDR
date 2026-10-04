@@ -231,11 +231,14 @@ records a specific hardware check; feature acceptance remains recorded separatel
   Parametric/CFC curves, exact entry, width/Q editing and undo/redo. Leveler,
   ALC, CFC, CPDR, CESSB, phase rotator, DEXP/VOX and anti-VOX remain integrated.
   See the [EQ/CFC guide](docs/guides/tx-eq-cfc.md).
-- **Containers and complete meter objects.** Move, reorder and float applets
-  and meters, return them to remembered homes, preview draft settings and
-  exchange portable layouts. Composite faces retain calibrated source bindings;
-  missing readings are shown as unavailable. External MMIO data bindings and
-  recovery data survive migration.
+- **Containers, meters and individual controls.** Move, resize and layer
+  applets, meters and fifteen supported individual controls on an editable
+  Canvas, or keep automatic stacks and saved legacy compositions. Preview
+  draft settings, Apply or Cancel, float containers, return them to remembered
+  homes and exchange portable layouts. Meter text scales with each object;
+  composite faces retain calibrated source bindings and show missing readings
+  as unavailable. External MMIO bindings and recovery data survive migration.
+  See the [Canvas guide](docs/architecture/native-free-canvas.md).
 - **Station audio and connections.** Receive mixes, radio speaker/headphone
   output, capability-gated hardware microphone controls, VAX audio buses,
   remote media recovery, discovery and manual/unicast connection targets.
@@ -253,8 +256,7 @@ records a specific hardware check; feature acceptance remains recorded separatel
 ## Roadmap and acceptance
 
 CW transmit/keyer/QSK, FM pre-emphasis, CAT/rigctld, legacy skin import and
-WAV/IQ recording remain future work. Free Canvas placement/dragging/resizing
-and individual Thetis button objects also remain pending. Disabled actions retain an explanation;
+WAV/IQ recording remain future work. Disabled actions retain an explanation;
 being represented by an applet or Setup page does not establish implementation.
 The iPhone/iPad app has an independent release process and calendar counter.
 

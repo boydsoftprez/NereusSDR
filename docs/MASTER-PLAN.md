@@ -15,9 +15,9 @@ in October is `2026.10.0`. Settings schema and wire versions remain separate.
 Current implementation includes independent receiver DSP/audio, multi-pan and
 TX displays, native 3D history, tunable notch filters, a radio-owning Core and
 remote desktop sessions, shared-device receiver/TX authority, Core Settings,
-WDSP 2.10 with NNR/PureSignal 3 assets, movable applets and complete meter
-objects, native TX EQ/CFC editors, Diversity, AM modulation monitoring and
-Core-owned accessories. The [README](../README.md), [changelog](../CHANGELOG.md)
+WDSP 2.10 with NNR/PureSignal 3 assets, editable Canvas and stacked containers,
+proportional meter text, complete faces and fifteen individual controls, native
+TX EQ/CFC editors, Diversity, AM modulation monitoring and Core-owned accessories. The [README](../README.md), [changelog](../CHANGELOG.md)
 and [tester guide](debugging/v2026.10.0-alpha-tester-smoketest.md) describe the
 release scope and upgrade behavior.
 

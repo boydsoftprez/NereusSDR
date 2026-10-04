@@ -151,6 +151,10 @@ The graphs show configured curves; they are not measurements of the complete aud
 
 Applets and complete meter objects share one container system. Move them with dotted grips or menu commands, reorder stacks, float them and return them to remembered homes. Container settings offer draft previews, Apply/Cancel, reload and conflict handling.
 
+Editable Canvas placement adds per-object movement and resizing, numeric geometry, layers, locking and a scrollable scene. Apply/Cancel keeps edits in a draft; saved legacy compositions, high-precision positions and unknown records remain intact. Supported existing controls can be created as fifteen independently arranged button objects, retaining their capability and authority rules. Preview controls remain inert. Settings and live Canvas share the same supported-control resize minimum.
+
+Bar and other native meter faces scale text to each object's logical dimensions and fit it within measured title, scale and readout regions. The approved ANAN artwork, scale lettering, blue ALC section and orb-origin pointers remain intact. Clicking a control now refreshes its cached interaction frame, including the end of Monitor's momentary indication.
+
 Portable container/object exchange preserves customized legacy records, unknown objects and external MMIO bindings. Migration retains recovery data. Complete composite meter faces use source-aware readings, and unavailable measurements are presented as unavailable. The ANAN multimeter gains approved Nereus artwork, calibrated live/peak/history
 needles and responsive named, unit-bearing readouts. Supported, unsupported
 and unknown readings stay distinct, and receive/transmit transitions clear
@@ -176,7 +180,9 @@ their readouts remain unavailable; they do not create measurements or history.
 - Fence transmit keying callbacks to the current radio session (#335).
 - Align spectrum painting and mouse geometry in CPU and GPU builds (#336).
 - Keep each pan's displayed and wheel-tuning STEP bound to its selected receiver, including selection changes and replacement receivers.
-- Correct Qt 6.11 Cocoa accessibility failures found during native evaluation: shared element ownership, stale connection-list child caches and an expired preamp-combo child cache when board capabilities refresh after reconnect. The fixes preserve selection, preamp choices and connection behavior; release Mac packages use a pinned Qt 6.8 SDK and must pass a real Cocoa startup check.
+- Release a retired display whose pending subscribe result was lost across a media handover, retaining its reservation until the Core confirms release. New and surviving spectra/waterfalls can then resume; synchronous display-stack destruction is also guarded. Live late-reply and missing-release-acknowledgement behavior retains its existing rules.
+- Preserve fresh remote VAX audio that arrives after the pump checks for input. Startup and resumed streams no longer lose that block during inactive-source cleanup; quiet stale data is still discarded.
+- Correct Qt 6.11 Cocoa accessibility failures found during native evaluation: shared element ownership, stale connection-list child caches, an expired preamp-combo child cache when board capabilities refresh after reconnect, and an expired container-dropdown child cache when switching the Settings selection. The fixes preserve selection, preamp choices and connection behavior; release Mac packages use a pinned Qt 6.8 SDK and must pass a real Cocoa startup check.
 
 Further work addresses receiver/channel lifetimes, media recovery, stale session replies, audio-ring overruns, microphone stalls, shared-device authority and reconnect teardown. The reconnect fixes above are narrower than the original acoustic/startup and intermittent-crash reports; the requested retests for #235, #299 and #300 remain open.
 
@@ -197,10 +203,7 @@ Keep existing settings and profiles; let the application perform its migrations.
 
 This remains an alpha release. Software and package checks will be reported from the exact final commit; they do not substitute for every radio, operating system or on-air acceptance matrix.
 
-Cross-radio TNF listening, NNR quality, PureSignal RF improvement, RADE on-air interoperability, sustained SBC operation, accessory bench matrices and remaining native UI interactions retain their recorded pending status until exact evidence closes them. CW transmit, FM pre-emphasis, CAT/rigctld, skin import and WAV/IQ recording are not advertised as delivered here. The legacy PS-RX/PS-TX spectrum view remains explicitly unavailable. Free
-Canvas placement/dragging/resizing and individual Thetis button objects
-remain planned container work; the accepted movement/reordering features
-operate through the implemented grips, menus and stacks. High-resolution trackpad gesture handling remains under review.
+Cross-radio TNF listening, NNR quality, PureSignal RF improvement, RADE on-air interoperability, sustained SBC operation, accessory bench matrices and remaining native UI interactions retain their recorded pending status until exact evidence closes them. CW transmit, FM pre-emphasis, CAT/rigctld, skin import and WAV/IQ recording are not advertised as delivered here. The legacy PS-RX/PS-TX spectrum view remains explicitly unavailable. High-resolution trackpad gesture handling remains under review.
 
 Final artifact list, signatures, checksums and installation links will come from the completed release workflow. Source archives and dependency notices accompany the binary distribution.
 
