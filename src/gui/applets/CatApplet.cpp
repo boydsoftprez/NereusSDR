@@ -14,6 +14,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-04 - Preserve native platform and remote-host PTY reasons during sync.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Retain disabled virtual-audio/IQ controls with precise
 //                 capability reasons and a dialect-neutral initial PTY tooltip.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -217,7 +219,9 @@ void CatApplet::syncFromModel()
     }
     if (!service) { return; }
     const QSignalBlocker tcp(m_tcpBtn),pty(m_ptyBtn);
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
     if (available) { m_ptyBtn->setToolTip(tr("Enable %1 PTY for CAT1. Configure all four channels individually in Setup → CAT & Network.").arg(service->channelConfig(1).ptyDialect)); }
+#endif
     m_tcpBtn->setChecked(service->channelConfig(1).tcpEnabled); m_ptyBtn->setChecked(service->channelConfig(1).ptyEnabled);
     for (int i=0;i<4;++i) {
         const QString state=service->transportState(i+1,CatTransportKind::Tcp);

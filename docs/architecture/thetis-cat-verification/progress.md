@@ -28,7 +28,16 @@ v2.10.3.15 / `3759d096` and AetherSDR `1e0718ad`.
 | 11 Live UI/config / high | `0d4b45f3a3e1b432bb71294408a9517e79be3e16` | 26 unchanged-source gates, corrected catalogue 3/3, final GUI 5/5; no-SerialPort 6/6 + final GUI 2/2. Native and scaled actual captures inspected. Fixed nested persistence, retained incarnations, tester keying and page deletion. CAT1 applet button wiring is explicit. |
 | 12 Integration/platform / high | `13cf119c68543b72e8e3662a42cf2814e1077bec` | Mac 30/30, Linux 16/16, no-SerialPort 8/8, final affected 2/2 each. Linux native HUP and retained slave-tail failures reproduced and fixed. CI requests optional Qt SerialPort; Windows execution remains pending. |
 | 13 Separate Hamlib / high | `d8c4fc1f258966f8d78e24a807fe48b72457e63a` | Mac 26/26; Linux 17/17 and actual Hamlib 4.7.0/554e02b39 client, 14/14 final native MOX proof; no-SerialPort 13/13. Real six client invocations and fresh readback, split/AF/RIT/T/t/disconnect. Mandatory handshake/LOCK terminator corrected from primary Hamlib contracts. Native/scaled UI and exact 23+3 Aether comments pass. |
-| 14 Final acceptance / high | This local acceptance/correction commit; exact signed hash is in the retained Task 14 report | Fresh application and 43 named checks; native untyped Tune OFF correction, precise retained applet reasons, reason scan/three catalogue expectation updates; final 1120/1120 ordinary + 11/11 native-window + 22/22 realtime CTests, all EXIT0, covering 1,153 registrations; Qt 19,694/0/374. Refreshed Linux17/official Hamlib and noSerial13; exact compliance/raw bytes/accounting, failed epochs, final report and local PR packet. Lead integrated review and known Windows PTY tooltip correction remain pending. |
+| 14 Final acceptance / high | `025e7f365552594e441bc1f3c82a2420cb41892a` | Fresh application and 43 named checks; native untyped Tune OFF correction, precise retained applet reasons, reason scan/three catalogue expectation updates; final 1120/1120 ordinary + 11/11 native-window + 22/22 realtime CTests, all EXIT0, covering 1,153 registrations; Qt 19,694/0/374. Refreshed Linux17/official Hamlib and noSerial13; exact compliance/raw bytes/accounting, failed epochs, final report and local PR packet. Initial integrated review subsequently required the five corrections documented below. |
+
+The [one consolidated correction wave](CORRECTIONS.md) starts at the accepted
+Task 14 head. Fresh focused tests are 10/10 CTests, 458 Qt passes, zero failures
+and two separately qualified skips. It corrects both dialects' owned OFF,
+native mode/filter continuation, combined numeric validation, all three desired
+global snapshots and functional PTT restart, and both PTY platform/host reasons.
+Its signed freeze identity is retained in the wave report. Scoped rereview and
+refreshed full/platform gates remain pending; no integrated acceptance is
+claimed by the focused result.
 
 Each row's raw evidence/report is retained locally under
 `.crew/2026-10-04-thetis-cat-plan/task-N-*`. Normal hooks and GPG signatures

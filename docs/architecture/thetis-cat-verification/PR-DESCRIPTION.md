@@ -99,7 +99,7 @@ locally under `.crew/2026-10-04-thetis-cat-plan/task-N-*`.
 
 Current macOS 27 arm64 / Qt 6.11 application and tests, Linux aarch64 / Qt 6.8.2
 Core CAT targets, native PTY/QSerialPort behavior on owned test slaves, and the
-independent no-SerialPort lane are distinct evidence. Final Task14 coverage is
+independent no-SerialPort lane are distinct evidence. Retained pre-wave Task14 coverage on signed `025e7f365552594e441bc1f3c82a2420cb41892a` is
 1120/1120 ordinary nonrealtime,11/11 serial native-window and22/22 serial realtime,
 all CTestEXIT0;19,694Qt passes/0failures/374skips across1,151Qt blocks. Fresh
 current-source Linux17/17 includes actual official Hamlib/native MOX execution
@@ -111,12 +111,17 @@ owned loopback endpoints, observing F/f/M/m fresh readback, split S/I/i/X/x,
 AF/RIT and T/t plus native MOX-on/disconnect release. Those tests use the
 existing deterministic admission harness; they do not transmit RF.
 
-A required consolidated-review correction remains: on Windows the correctly
-disabled PTY button has its unavailable-platform tooltip overwritten by a later
-local-host assignment. The narrow platform guard and Windows disabled/reason
-assertion proposal is retained locally and remains unapplied pending the lead's
-fresh integrated review/fix wave. The branch is not ready to ship with that
-known issue unresolved.
+The initial integrated review required five corrections: owned OFF after
+unrelated primary loss in both dialects, native mode-callback lifetime and
+supersession, complete combined Hamlib numeric prevalidation, desired global
+command snapshots with functional PTT retirement continuation, and both
+Windows PTY tooltip branches. The [consolidated wave](CORRECTIONS.md) records
+actual causal reds and fresh focused greens, including replacement sampling
+and one-attempt open/sampling failure handling. Native RX mode/filter
+notification continuations changed; algorithms, values, routing and defaults
+are preserved. Windows branch evidence is source-only with platform-correct
+runtime assertions; actual Windows execution remains unavailable. Scoped
+rereview and refreshed combined/platform acceptance remain pending.
 
 Windows SDK compilation/runtime, Linux GUI/x86, physical cables/pins, other
 Hamlib versions/apps, WSJT-X/JTDX/loggers, radio discovery/connect/RX/audio and

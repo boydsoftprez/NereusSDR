@@ -2,6 +2,8 @@
 // Thetis setup.Designer.cs defines the referenced choice inventories, not this Qt UI logic.
 // Native SetupPage/TCI styling and AetherSDR CatControlApplet were studied; no new UI port.
 // Modification history (NereusSDR):
+// 2026-10-04 - Keep disabled PTY platform reasons and remote-host guidance.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include "CatNetworkSetupPages.h"
 #include "core/cat/CatService.h"
@@ -203,7 +205,10 @@ void CatChannelSetupPage::syncFromModel() {
             const QSignalBlocker address(row.address), port(row.port), pty(row.pty);
             const QSignalBlocker rigEnabled(row.rigctld), rigAddress(row.rigAddress), rigPort(row.rigPort);
             row.rigctld->setChecked(config.rigctldEnabled); row.rigAddress->setText(config.rigctldBindAddress); row.rigPort->setValue(config.rigctldPort); setChoice(row.dialect,config.ptyDialect);
-            row.pty->setToolTip(tr("CAT %1 PTY uses %2 commands on this computer.").arg(i+1).arg(config.ptyDialect));
+            if (!local(model())) { row.pty->setToolTip(localReason()); }
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+            else { row.pty->setToolTip(tr("CAT %1 PTY uses %2 commands on this computer.").arg(i+1).arg(config.ptyDialect)); }
+#endif
             row.rigStatus->setText(tr("Rigctld: %1 · Bound: %2:%3 · Clients: %4").arg(m_service->transportState(i+1,CatTransportKind::Rigctld),m_service->rigctldBoundAddress(i+1).toString()).arg(m_service->rigctldBoundPort(i+1)).arg(m_service->rigctldClientCount(i+1)));
             row.address->setText(config.tcpBindAddress); row.port->setValue(config.tcpPort); row.pty->setChecked(config.ptyEnabled);
             row.path->setText(m_service->ptySlavePath(i+1).isEmpty() ? tr("PTY: %1").arg(m_service->transportState(i+1,CatTransportKind::Pty)) : m_service->ptySlavePath(i+1));

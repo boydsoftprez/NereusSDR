@@ -1,12 +1,14 @@
 // no-port-check: NereusSDR-original Hamlib wire/authority integration tests.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest>
+#include <limits>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QProcess>
 #include "CatFixtureHarness.h"
 #include "core/cat/CatService.h"
 #include "core/cat/RigctlProtocol.h"
+#include "core/TwoToneController.h"
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
 #include <fcntl.h>
 #include <unistd.h>
@@ -76,6 +78,95 @@ private slots:
         QCOMPARE(exchange(socket,"L AF 0.73\nl AF\nU LOCK 1\nu LOCK\n","RPRT 0\n0.73\nRPRT 0\n1\n"),QByteArray("RPRT 0\n0.73\nRPRT 0\n1\n"));
         QCOMPARE(f.model.sliceById(0)->afGain(),73); QVERIFY(f.model.sliceById(0)->locked());
         QCOMPARE(exchange(socket,"F nan\nL AF 2\nU MUTE nope\n\\get_powerstat\nP foo 1\n","RPRT -1\nRPRT -1\nRPRT -1\nRPRT -11\nRPRT -11\n"),QByteArray("RPRT -1\nRPRT -1\nRPRT -1\nRPRT -11\nRPRT -11\n"));
+    }
+    void thetisOwnedOffSurvivesUnrelatedPrimaryLoss_data() {
+        QTest::addColumn<QByteArray>("on"); QTest::addColumn<QByteArray>("off");
+        QTest::addColumn<int>("loss"); QTest::addColumn<bool>("newer");
+        const QList<QPair<QByteArray,QByteArray>> operations{{"TX;","RX;"},{"ZZTX1;","ZZTX0;"},
+            {"ZZTU1;","ZZTU0;"},{"ZZUT1;","ZZUT0;"}};
+        for (const auto& operation:operations) {
+            for (int loss=0;loss<3;++loss) {
+                for (bool newer:{false,true}) {
+                    const QByteArray row=operation.second+QByteArray::number(loss)+(newer ? "new-owner":"owned");
+                    QTest::newRow(row.constData())<<operation.first<<operation.second<<loss<<newer;
+                }
+            }
+        }
+    }
+    void thetisOwnedOffSurvivesUnrelatedPrimaryLoss() {
+        QFETCH(QByteArray,on); QFETCH(QByteArray,off); QFETCH(int,loss); QFETCH(bool,newer);
+        TxChannel channel(1); RigFixture f; QVERIFY(f.configure());
+        f.model.injectTxChannelForTest(&channel); f.model.setTuneOffSettleMsForTest(0);
+        f.model.twoToneController()->setTxChannel(&channel); f.model.twoToneController()->setPowerOn(true);
+        QVERIFY(f.model.txSliceArbiter()->requestHandoff(2,SliceOwnership::stationDevice()));
+        f.service.startConfigured(); QTcpSocket socket;
+        socket.connectToHost(QHostAddress::LocalHost,f.service.boundPort(1));
+        QTRY_COMPARE(f.service.clientCount(1),1);
+        QCOMPARE(exchange(socket,on+"ID;","ID019;"),QByteArray("ID019;"));
+        QTRY_VERIFY(f.model.moxController()->isMox()); QCOMPARE(f.model.txBoundSlice(),f.model.sliceById(2));
+        // A command for a different kind must not release this accepted activation.
+        const QByteArray wrong=off=="ZZTU0;" ? QByteArray("RX;"):QByteArray("ZZTU0;");
+        QCOMPARE(exchange(socket,wrong+"ID;","ID019;"),QByteArray("ID019;"));
+        QVERIFY(f.model.moxController()->isMox());
+        if (loss==1) {
+            f.model.sliceOwnership()->setOwner(0,"other-device");
+            QVERIFY(f.model.sliceOwnership()->leave(SliceOwnership::stationDevice(),0));
+        } else {
+            f.model.removeSlice(0); QVERIFY(!f.model.sliceById(0));
+            if (loss==2) { QCOMPARE(f.model.addSlice(),0); f.model.sliceOwnership()->setOwner(0,SliceOwnership::stationDevice()); }
+        }
+        QVERIFY(f.model.moxController()->isMox());
+        QCOMPARE(exchange(socket,"FA;","?;"),QByteArray("?;"));
+        if (newer) { f.model.moxController()->setMox(true); }
+        QCOMPARE(exchange(socket,off+"ID;","ID019;"),QByteArray("ID019;"));
+        QTRY_COMPARE(f.model.moxController()->isMox(),newer);
+        if (!newer) { QTRY_VERIFY(!f.model.isTune()); QTRY_VERIFY(!f.model.twoToneController()->isActive()); }
+        // OFF did not revive a missing/reused primary binding or admit a new ON.
+        QCOMPARE(exchange(socket,on+"ID;","?;ID019;"),QByteArray("?;ID019;"));
+        QTRY_COMPARE(f.model.moxController()->isMox(),newer);
+    }
+    void prefixedRigOffReleasesOnlyLastCoalescedClaim_data() {
+        QTest::addColumn<int>("loss"); QTest::addColumn<bool>("newer");
+        for (int loss=0;loss<3;++loss) {
+            for (bool newer:{false,true}) {
+                const QByteArray row=QByteArray::number(loss)+(newer ? "new-owner":"owned");
+                QTest::newRow(row.constData())<<loss<<newer;
+            }
+        }
+    }
+    void prefixedRigOffReleasesOnlyLastCoalescedClaim() {
+        QFETCH(int,loss); QFETCH(bool,newer); RigFixture f; QVERIFY(f.configure());
+        QVERIFY(f.model.txSliceArbiter()->requestHandoff(2,SliceOwnership::stationDevice()));
+        f.service.startConfigured(); QTcpSocket thetis,rig;
+        thetis.connectToHost(QHostAddress::LocalHost,f.service.boundPort(1)); connectRig(f,rig);
+        QTRY_COMPARE(f.service.clientCount(1),1); QTRY_COMPARE(f.service.rigctldClientCount(1),1);
+        QCOMPARE(exchange(thetis,"TX;ID;","ID019;"),QByteArray("ID019;"));
+        QCOMPARE(exchange(rig,"T VFOA 1\n","RPRT 0\n"),QByteArray("RPRT 0\n"));
+        QTRY_VERIFY(f.model.moxController()->isMox());
+        QCOMPARE(exchange(rig,"T VFOA 2\n","RPRT -1\n"),QByteArray("RPRT -1\n"));
+        if (loss==1) {
+            f.model.sliceOwnership()->setOwner(0,"other-device");
+            QVERIFY(f.model.sliceOwnership()->leave(SliceOwnership::stationDevice(),0));
+        } else {
+            f.model.removeSlice(0);
+            if (loss==2) { QCOMPARE(f.model.addSlice(),0); f.model.sliceOwnership()->setOwner(0,SliceOwnership::stationDevice()); }
+        }
+        for (quint64 id:f.service.sessionIds(1)) {
+            if (f.service.session(id)->transport()==CatTransportKind::Tcp) {
+                f.service.session(id)->context().transmitAllowed=false;
+                QCOMPARE(f.service.processFrame(id,"RX;"),QByteArray("?;"));
+                f.service.session(id)->context().transmitAllowed=true;
+            }
+        }
+        QVERIFY(f.model.moxController()->isMox());
+        thetis.abort(); QTRY_COMPARE(f.service.clientCount(1),0);
+        QVERIFY(f.model.moxController()->isMox());
+        if (newer) { f.model.moxController()->setMox(true); }
+        QCOMPARE(exchange(rig,"+\\set_ptt VFOA 0\n","set_ptt: VFOA 0\nRPRT 0\n"),
+                 QByteArray("set_ptt: VFOA 0\nRPRT 0\n"));
+        QTRY_COMPARE(f.model.moxController()->isMox(),newer);
+        QCOMPARE(exchange(rig,"T VFOA 1\n","RPRT -12\n"),QByteArray("RPRT -12\n"));
+        QTRY_COMPARE(f.model.moxController()->isMox(),newer);
     }
     void officialRigctlExecutableInterop() {
         const QString binary=qEnvironmentVariable("NEREUS_HAMLIB_RIGCTL");
@@ -184,6 +275,69 @@ private slots:
         socket.write("K 7101000 LSB 2300\nT 1\n"); QTRY_COMPARE(socket.state(),QAbstractSocket::UnconnectedState);
         QCOMPARE(incoming,1); QVERIFY(!f.service.session(old)); QCOMPARE(f.model.sliceById(2)->dspMode(),DSPMode::USB);
         QVERIFY(!f.model.moxController()->isMox()); QCOMPARE(socket.bytesAvailable(),0);
+    }
+    void combinedNumericValidationHasNoEffects_data() {
+        QTest::addColumn<QByteArray>("command"); QTest::addColumn<QByteArray>("expected");
+        for (const QByteArray& mode:{QByteArray("USB"),QByteArray("LSB"),QByteArray("AM"),QByteArray("CW")}) {
+            const DSPMode native=mode=="USB" ? DSPMode::USB : mode=="LSB" ? DSPMode::LSB : mode=="AM" ? DSPMode::AM : DSPMode::CWU;
+            const auto edges=SliceModel::defaultFilterForMode(native);
+            const qint64 magnitude=qMax(qAbs(edges.first),qAbs(edges.second));
+            const QList<qint64> widths{qint64(std::numeric_limits<int>::max()),qint64(std::numeric_limits<int>::max())-magnitude+1,
+                qint64(std::numeric_limits<int>::max())+1,qint64(-2)};
+            for (qsizetype index=0;index<widths.size();++index) {
+                const QByteArray args="7101000 "+mode+' '+QByteArray::number(widths[index]);
+                for (int form=0;form<3;++form) {
+                    const QByteArray command=(form==0 ? QByteArray("K "):form==1 ? QByteArray("\\set_split_freq_mode "):QByteArray("+\\set_split_freq_mode "))+args+'\n';
+                    const QByteArray expected=form==2 ? QByteArray("set_split_freq_mode: ")+args+"\nRPRT -1\n" : QByteArray("RPRT -1\n");
+                    QTest::newRow((mode+QByteArray::number(index)+'-'+QByteArray::number(form)).constData()) << command << expected;
+                }
+            }
+        }
+    }
+    void combinedNumericValidationHasNoEffects() {
+        QFETCH(QByteArray,command); QFETCH(QByteArray,expected);
+        RigFixture f; QVERIFY(f.configure()); f.service.startConfigured(); QTcpSocket socket; connectRig(f,socket);
+        QTRY_COMPARE(f.service.rigctldClientCount(1),1);
+        SliceModel* slice=f.model.sliceById(2);
+        const double hz=slice->frequency(); const DSPMode mode=slice->dspMode();
+        const QPair<int,int> edges{slice->filterLow(),slice->filterHigh()};
+        QSignalSpy frequencies(slice,&SliceModel::frequencyChanged), modes(slice,&SliceModel::dspModeChanged), filters(slice,&SliceModel::filterChanged);
+        QCOMPARE(exchange(socket,command,expected),expected);
+        QCOMPARE(slice->frequency(),hz); QCOMPARE(slice->dspMode(),mode);
+        QCOMPARE(qMakePair(slice->filterLow(),slice->filterHigh()),edges);
+        QCOMPARE(frequencies.size(),0); QCOMPARE(modes.size(),0); QCOMPARE(filters.size(),0);
+    }
+    void modeSetterCallbackDeletion_data() {
+        QTest::addColumn<QByteArray>("command"); QTest::addColumn<int>("targetId");
+        QTest::addColumn<bool>("wholeModel");
+        for (const QByteArray& command:{QByteArray("M LSB 2300\n"),QByteArray("X LSB 2300\n"),QByteArray("K 7101000 LSB 2300\n")}) {
+            for (bool whole:{false,true}) {
+                QTest::newRow((command.trimmed()+(whole ? "model":"slice")).constData())
+                    << command << (command.startsWith("M") ? 0:2) << whole;
+            }
+        }
+    }
+    void modeSetterCallbackDeletion() {
+        QFETCH(QByteArray,command); QFETCH(int,targetId); QFETCH(bool,wholeModel);
+        auto model=std::make_unique<RadioModel>(); CatRxFixtureHarness harness; harness.slices(*model);
+        QTcpServer reserve; QVERIFY(reserve.listen(QHostAddress::LocalHost,0)); CatEndpointConfig config;
+        config.rigctldEnabled=true; config.rigctldPort=reserve.serverPort(); reserve.close();
+        config.binding.primarySliceId=0; config.binding.secondarySliceId=2;
+        QVERIFY(model->catService()->applyChannelConfig(1,config)); model->catService()->startConfigured();
+        QTcpSocket socket; socket.connectToHost(QHostAddress::LocalHost,model->catService()->rigctldBoundPort(1));
+        QTRY_COMPARE(model->catService()->rigctldClientCount(1),1);
+        QPointer<SliceModel> target=model->sliceById(targetId); QObject observer;
+        int modes=0; int filters=0;
+        connect(target,&SliceModel::filterChanged,&observer,[&](int,int) { ++filters; });
+        connect(target,&SliceModel::dspModeChanged,&observer,[&](DSPMode) {
+            ++modes;
+            if (wholeModel) { model.reset(); } else { model->removeSlice(targetId); QCoreApplication::sendPostedEvents(target,QEvent::DeferredDelete); }
+        });
+        if (wholeModel) {
+            socket.write(command); QTRY_VERIFY(!model);
+            QTRY_COMPARE(socket.state(),QAbstractSocket::UnconnectedState); QCOMPARE(socket.bytesAvailable(),0);
+        } else { QCOMPARE(exchange(socket,command,"RPRT -12\n"),QByteArray("RPRT -12\n")); }
+        QVERIFY(!target); QCOMPARE(modes,1); QCOMPARE(filters,0); QCOMPARE(bool(model),!wholeModel);
     }
     void setterCallbackServiceAndModelDeletion() {
         auto model=std::make_unique<RadioModel>(); CatRxFixtureHarness harness; harness.slices(*model);

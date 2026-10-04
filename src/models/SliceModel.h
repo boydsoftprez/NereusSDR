@@ -12,6 +12,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-04 - Track mode/filter commits for surviving notification continuations.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30: radeReason, why a RADE slice has no working decoder, in
 //               plain words, declared last. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
@@ -1717,6 +1719,8 @@ private:
     quint64 m_stationAutoAgcNoiseFloorGeneration{0};
     bool    m_streamCtunPinned{false};
     quint64 m_streamEpoch{0};
+    quint64 m_modeRevision{0};
+    quint64 m_modeFilterRevision{0};
     DSPMode m_dspMode{DSPMode::USB};
     int     m_filterLow{100};            // USB default from Thetis F5
     int     m_filterHigh{3000};

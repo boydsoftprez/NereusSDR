@@ -175,6 +175,10 @@ mw0lge@grange-lane.co.uk
 
 // Ported from Thetis CAT/CATCommands.cs and console.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+// 2026-10-04 - Read the service desired global tuple during reconfiguration.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-04 - Admit session-owned OFF before unrelated primary readability,
+//              by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - TX/global CAT compatibility by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
 #include "CatTxCommands.h"
@@ -215,12 +219,23 @@ CatCommandResult CatTxCommands::execute(const CatRequest& request,CatSessionCont
     const QPointer<RadioModel> model(&m_adapter.radioModel());
     const QPointer<CatService> service(model->catService());
     if (!service || !service->session(context.sessionId)) { return error(); }
+    const QByteArray code=request.code;
+    const bool get=request.form == CatForm::Get;
+    // Owned OFF is session cleanup, independent of unrelated RX readability.
+    // The coordinator retains kind, session, tag and accepted-generation checks.
+    const bool ownedOff=code == "RX" || (!get && request.suffix == "0"
+        && (code == "ZZTX" || code == "ZZTU" || code == "ZZUT"));
+    if (ownedOff) {
+        if (!context.transmitAllowed) { return error(); }
+        const CatTransmitKind kind=code == "ZZTU" ? CatTransmitKind::Tune
+            : code == "ZZUT" ? CatTransmitKind::TwoTone : CatTransmitKind::Ptt;
+        m_coordinator.releaseTransmit(context.sessionId,kind);
+        return model && service ? silence() : error();
+    }
     const CatBinding binding=service->session(context.sessionId)->binding();
     const QPointer<SliceModel> primary(m_adapter.resolveSlice(binding,CatVfo::Primary));
     if (!primary || !m_adapter.mayRead(binding,CatVfo::Primary)) { return error(); }
     const QPointer<TransmitModel> tx(&model->transmitModel());
-    const QByteArray code=request.code;
-    const bool get=request.form == CatForm::Get;
     static const CatCommandCatalog catalog;
     const CatDescriptor* descriptor=catalog.find(code);
     if (!descriptor) { return error(); }
@@ -286,10 +301,8 @@ CatCommandResult CatTxCommands::execute(const CatRequest& request,CatSessionCont
             if (code == "ZZUT") { const TwoToneController* tones=model->twoToneController(); return tones ? payload(tones->isActive() ? "1":"0") : error(); }
             return payload(model->moxController()->isMox() ? "1":"0");
         }
-        const bool on=code == "TX" || (code != "RX" && request.suffix == "1");
         if (code != "RX" && code != "TX" && request.suffix != "0" && request.suffix != "1") { return error(); }
         if (!context.transmitAllowed) { return error(); }
-        if (!on) { m_coordinator.releaseTransmit(context.sessionId,code == "ZZTU" ? CatTransmitKind::Tune : code == "ZZUT" ? CatTransmitKind::TwoTone : CatTransmitKind::Ptt); return model && service ? silence() : error(); }
         if (!valid()) { return error(); }
         const QPointer<SliceModel> selected(model->txBoundSlice());
         if (!selected) { return error(); }
@@ -481,7 +494,7 @@ CatCommandResult CatTxCommands::execute(const CatRequest& request,CatSessionCont
         if (source == DrivePowerSource::TuneSlider) { if (!tx->tuneTxBandKnown() || !model->txBoundSlice()) { return error(); } value=tx->tunePowerForTxBand(); }
         if (source == DrivePowerSource::Fixed) { value=tx->tunePower(); }
         if (get) {
-            if (m_settings.global().limitReportedPower) {
+            if (service->globalConfig().limitReportedPower) {
                 if (source == DrivePowerSource::DriveSlider && tx->powerSliderLimitEnabled()) { value=std::min(value,tx->powerLimit()); }
                 if (source == DrivePowerSource::TuneSlider) { value=std::min(value,tx->tunePowerLimit()); }
             }

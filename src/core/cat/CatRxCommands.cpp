@@ -87,6 +87,8 @@ Added extended CAT commands for APF funtions - May 2017.
 
 // Ported from Thetis CAT/CATCommands.cs and console.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+// 2026-10-04 - Read the service desired global tuple during reconfiguration.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - Stable slice CAT RX commands adapted by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
 #include "CatRxCommands.h"
@@ -684,7 +686,7 @@ CatCommandResult CatRxCommands::execute(const CatRequest& request, CatSessionCon
     const QByteArray code=request.code;
     const bool get=request.form == CatForm::Get;
     bool parsed=false; const qint64 input=request.suffix.toLongLong(&parsed);
-    const CatGlobalConfig global=m_settings.global();
+    const CatGlobalConfig global=service->globalConfig();
     // From Thetis CAT/CATCommands.cs:223-237 [v2.10.3.15]. Source-inert receiver selector.
     if (code == "FR") { return get ? payload("0") : silence(); }
     // From Thetis CAT/CATCommands.cs:4209-4242 [v2.10.3.15]. Common modes only; AM sidebands unsupported.

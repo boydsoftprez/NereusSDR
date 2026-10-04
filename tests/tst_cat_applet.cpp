@@ -49,7 +49,16 @@ private slots:
         QVERIFY(rates->toolTip().contains("I/Q audio output"));
         CatEndpointConfig config=model.catService()->channelConfig(1);
         config.ptyDialect="Rigctld"; QVERIFY(model.catService()->reconfigureChannel(1,config));
-        QVERIFY(applet.findChild<QPushButton*>("catPtyButton")->toolTip().contains("Rigctld PTY"));
+        auto* pty=applet.findChild<QPushButton*>("catPtyButton"); QVERIFY(pty);
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+        QVERIFY(pty->isEnabled()); QVERIFY(pty->toolTip().contains("Rigctld PTY"));
+#else
+        QVERIFY(!pty->isEnabled()); QVERIFY(pty->toolTip().contains("only on macOS and Linux"));
+        QVERIFY(!pty->toolTip().contains("Enable Rigctld"));
+#endif
+        RadioModel remote(RadioModel::Role::Remote); CatApplet remoteApplet(&remote);
+        auto* remotePty=remoteApplet.findChild<QPushButton*>("catPtyButton"); QVERIFY(remotePty);
+        QVERIFY(!remotePty->isEnabled()); QVERIFY(remotePty->toolTip().contains("local host"));
     }
     void configurationCallbackMayDeleteApplet() {
         AppSettings::instance().clear(); RadioModel model; CatService& service=*model.catService();

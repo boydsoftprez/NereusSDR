@@ -3,6 +3,10 @@
 // https://github.com/ten9876/AetherSDR — GNU GPL v3, project LICENSE applies.
 // Upstream source has no top-of-file GPL header; no notice is fabricated.
 // Modification history (NereusSDR):
+// 2026-10-04 - Prepare all combined mode/passband numbers before frequency effects.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-04 - Keep prefixed session-owned PTT OFF independent of RX admission,
+//              by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - Supported dispatch/response contracts adapted by J.J. Boyd
 //              (KG4VCF), AI-assisted via OpenAI Codex. Native model operations,
 //              frozen bindings and shared claims replace Flex command strings.
@@ -18,6 +22,7 @@
 #include <cmath>
 #include <cctype>
 #include <limits>
+#include <optional>
 namespace NereusSDR {
 namespace {
 // From Hamlib 4.7.0 include/hamlib/rig.h rig_errcode_e (negative wire returns).
@@ -246,7 +251,10 @@ QString RigctlProtocol::handleLine(const QString& line)
         && !parts.isEmpty() && vfoName(parts.first())) {
         CatVfo rx;
         if (!resolveVfo(parts.takeFirst(),rx)) { return reply(kVfoInvalid); }
-        if (!m_adapter.mayRead(m_binding,rx)) { return reply(kTargetUnavailable); }
+        // A valid OFF releases only this session's coordinator claim; an RX
+        // prefix does not impose new-action readability on surviving TX ownership.
+        const bool ownedOff=name == "set_ptt" && parts.size() == 1 && parts[0] == "0";
+        if (!ownedOff && !m_adapter.mayRead(m_binding,rx)) { return reply(kTargetUnavailable); }
     }
     if (name == "get_split_vfo" || name == "set_split_vfo") {
         if (name == "get_split_vfo") {
@@ -304,6 +312,24 @@ QString RigctlProtocol::handleLine(const QString& line)
         if (!m_adapter.revalidateWrite(token)) { return kAccessDenied; }
         return changed() ? 0 : kRejected;
     };
+    struct ModePassband { DSPMode mode; int low; int high; bool preserve; };
+    const auto prepareModePassband = [&](const QStringList& arguments) -> std::optional<ModePassband> {
+        if (arguments.size() != 2 || !kModes.contains(arguments[0])) { return {}; }
+        bool ok; const int passband = arguments[1].toInt(&ok);
+        if (!ok || passband < -1) { return {}; }
+        const DSPMode mode = kModes.value(arguments[0]);
+        const auto edges = SliceModel::defaultFilterForMode(mode);
+        const int width = passband == 0 ? edges.second-edges.first : passband;
+        int low = edges.first, high = edges.second;
+        if (qint64(width)+qMax(qAbs(edges.first),qAbs(edges.second)) > std::numeric_limits<int>::max()) { return {}; }
+        if (width > 0) {
+            if (edges.first < 0 && edges.second > 0) { low = -width/2; high = low+width; }
+            else if (edges.second <= 0) { high = edges.second; low = high-width; }
+            else { low = edges.first; high = low+width; }
+        }
+        return ModePassband{mode,low,high,passband == -1};
+    };
+    std::optional<ModePassband> preparedMode;
     if (operation == "get_freq" || operation == "set_freq" || operation == "get_freq_mode" || operation == "set_freq_mode") {
         const bool combined = operation.endsWith("freq_mode");
         if (!setter) {
@@ -317,8 +343,8 @@ QString RigctlProtocol::handleLine(const QString& line)
         bool ok; const double hz = parts[0].toDouble(&ok);
         if (!ok || !std::isfinite(hz) || hz < 0 || hz > kMaximumIntegralFrequency) { return reply(kInvalid); }
         if (combined) {
-            bool bandOk; const int width = parts[2].toInt(&bandOk);
-            if (!kModes.contains(parts[1]) || !bandOk || width < -1) { return reply(kInvalid); }
+            preparedMode = prepareModePassband(parts.mid(1));
+            if (!preparedMode) { return reply(kInvalid); }
             for (const QByteArray& property : {QByteArray("frequency"),QByteArray("dspMode"),QByteArray("filterLow"),QByteArray("filterHigh")}) {
                 const int refusal = writeError(vfo,property); if (refusal) { return reply(refusal); }
             }
@@ -334,19 +360,12 @@ QString RigctlProtocol::handleLine(const QString& line)
             const QString mode = modeName(slice->dspMode()); if (mode.isEmpty()) { return reply(kUnavailable); }
             value(split ? "TX Mode" : "Mode",mode); value(split ? "TX Passband" : "Passband",QString::number(slice->filterHigh()-slice->filterLow())); return reply(0);
         }
-        if (parts.size() != 2 || !kModes.contains(parts[0])) { return reply(kInvalid); }
-        bool ok; const int passband = parts[1].toInt(&ok); if (!ok || passband < -1) { return reply(kInvalid); }
-        const DSPMode mode = kModes.value(parts[0]);
-        const auto edges = SliceModel::defaultFilterForMode(mode);
-        const int width = passband == 0 ? edges.second-edges.first : passband;
-        int low = edges.first, high = edges.second;
-        if (qint64(width)+qMax(qAbs(edges.first),qAbs(edges.second)) > std::numeric_limits<int>::max()) { return reply(kInvalid); }
-        if (width > 0) {
-            if (edges.first < 0 && edges.second > 0) { low = -width/2; high = low+width; }
-            else if (edges.second <= 0) { high = edges.second; low = high-width; }
-            else { low = edges.first; high = low+width; }
-        }
-        if (passband == -1) { low = slice->filterLow(); high = slice->filterHigh(); }
+        if (!preparedMode) { preparedMode = prepareModePassband(parts); }
+        if (!preparedMode) { return reply(kInvalid); }
+        const DSPMode mode = preparedMode->mode;
+        // Preserve Hamlib -1 semantics after any native frequency/band callback.
+        const int low = preparedMode->preserve ? slice->filterLow() : preparedMode->low;
+        const int high = preparedMode->preserve ? slice->filterHigh() : preparedMode->high;
         for (const QByteArray& property : {QByteArray("dspMode"),QByteArray("filterLow"),QByteArray("filterHigh")}) {
             const int refusal = writeError(vfo,property); if (refusal) { return reply(refusal); }
         }

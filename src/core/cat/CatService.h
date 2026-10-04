@@ -52,6 +52,8 @@ Added extended CAT commands for APF funtions - May 2017.
 
 // Ported from Thetis Project Files/Source/Console/CAT/SerialPortPTT.cs and CATCommands.cs
 // Modification history (NereusSDR):
+// 2026-10-04 - Track scoped PTT restart continuation for nested preferences.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - Composite release-armed input PTT and requesting serial close by
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - Independently implemented native PTY lifecycle and transport diagnostics,
@@ -193,6 +195,10 @@ private:
     quint64 m_lifecycleGeneration{0};
     quint64 m_globalRevision{0};
     std::optional<CatGlobalConfig> m_desiredGlobal;
+    // Only nested callbacks of an explicit ingress change inherit its restart.
+    struct PttRestart { quint64 generation; quint64 revision; };
+    std::optional<PttRestart> m_pendingPttRestart;
+    quint64 m_consumedPttRestartRevision{0};
     bool m_destroying{false};
     bool m_started{false};
 };

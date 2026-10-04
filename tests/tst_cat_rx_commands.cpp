@@ -192,6 +192,43 @@ private slots:
     QCOMPARE(service.processFrame(id,"ZZRAV;"),QByteArray()); QVERIFY(service.globalConfig().rttyOffsetAEnabled); QCOMPARE(notification.count(),0);
     QCOMPARE(service.processFrame(id,"SHV0;"),QByteArray()); QCOMPARE(model.sliceById(0)->filterHigh(),0);
  }
+ void modeCallbackDeletion_data() {
+    QTest::addColumn<QByteArray>("command"); QTest::addColumn<bool>("wholeModel"); QTest::addColumn<int>("origin");
+    for (const QByteArray& command:{QByteArray("MD1;"),QByteArray("ZZMD00;")}) {
+        for (bool whole:{false,true}) {
+            for (int origin=0;origin<5;++origin) {
+                QTest::newRow((command+(whole ? "model":"slice")+QByteArray::number(origin)).constData()) << command << whole << origin;
+            }
+        }
+    }
+ }
+ void modeCallbackDeletion() {
+    QFETCH(QByteArray,command); QFETCH(bool,wholeModel); QFETCH(int,origin);
+    auto model=std::make_unique<RadioModel>(); slices(*model);
+    const quint64 id=start(*model); QVERIFY(id); CatService* service=model->catService();
+    QPointer<SliceModel> target=model->sliceById(0);
+    if (origin==1 || origin==2) {
+        target->setDspMode(DSPMode::RADE_U); target->setLastRadeRxCallsign("KG4VCF"); target->setRadeSynced(true);
+    }
+    QObject observer; int modes=0; int filters=0; bool entered=false;
+    const auto remove=[&] {
+        if (entered) { return; } entered=true;
+        if (wholeModel) { model.reset(); }
+        else { model->removeSlice(0); QCoreApplication::sendPostedEvents(target,QEvent::DeferredDelete); }
+    };
+    connect(target,&SliceModel::filterChanged,&observer,[&](int,int) { ++filters; });
+    connect(target,&SliceModel::dspModeChanged,&observer,[&](DSPMode) { ++modes; if (origin==0) { remove(); } });
+    if (origin==1) { connect(target,&SliceModel::lastRadeRxCallsignChanged,&observer,[&](const QString&) { remove(); }); }
+    else if (origin==2) { connect(target,&SliceModel::radeSyncedChanged,&observer,[&](bool) { remove(); }); }
+    else if (origin>=3) {
+        AppSettings::instance().setChangeHook([&](const QString& key) {
+            if (key.endsWith(origin==3 ? "/FilterLow":"/FilterHigh")) { remove(); }
+        });
+    }
+    const QByteArray reply=service->processFrame(id,command); AppSettings::instance().setChangeHook({});
+    QCOMPARE(reply,QByteArray("?;")); QVERIFY(entered); QVERIFY(!target);
+    QCOMPARE(modes,origin==0 ? 1:0); QCOMPARE(filters,0); QCOMPARE(bool(model),!wholeModel);
+ }
  void modelDeletionDuringCallbackAndMissingSecondary() {
     auto model=std::make_unique<RadioModel>(); slices(*model); const quint64 id=start(*model,false); CatService* service=model->catService();
     QCOMPARE(service->processFrame(id,"FB;"),QByteArray("?;")); QCOMPARE(model->slices().size(),2);

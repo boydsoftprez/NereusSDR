@@ -70,6 +70,92 @@ private slots:
         global.pttEnabled=false; QVERIFY(service.reconfigureGlobal(global)); QVERIFY(!model.moxController()->isMox());
         QVERIFY(service.session(session)); service.stopAll(); pumpCat(); model.injectConnectionForTest(nullptr);
     }
+    void globalDesiredTupleSurvivesOwnedOffCallback_data() {
+        QTest::addColumn<QByteArray>("setter");
+        for (const QByteArray& setter:{QByteArray("AI1;"),QByteArray("ZZID;"),QByteArray("ZZRH+0999;"),QByteArray("ZZRB0;")}) {
+            QTest::newRow(setter.constData()) << setter;
+        }
+    }
+    void globalDesiredTupleSurvivesOwnedOffCallback() {
+        QFETCH(QByteArray,setter);
+        RxCatMockConnection connection; RadioModel model; setup(model,connection);
+        const auto device=std::make_shared<CatSerialTestDevice>(); CatService& service=*model.catService();
+        QVERIFY(configure(service,device)); service.startConfigured();
+        const quint64 session=service.sessionIds(1).first(); const int opens=device->opens;
+        sample(service,device,1,false,false); sample(service,device,1,true,false);
+        QVERIFY(model.moxController()->isMox());
+        TransmitModel& tx=model.transmitModel(); tx.setPower(90); tx.setPowerLimit(20); tx.setPowerSliderLimitEnabled(true);
+        tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider); tx.setTuneTxBand(Band::Band20m);
+        QVERIFY(tx.setTunePowerForTxBand(80)); tx.setTunePowerLimit(15);
+        CatGlobalConfig desired=service.globalConfig(); desired.pttUseDsr=false;
+        desired.rigIdentity="TS-480"; desired.serialNumber="1111-2222"; desired.allowKenwoodAi=true; desired.aiEnabled=false;
+        desired.rttyOffsetAEnabled=true; desired.rttyOffsetBEnabled=true; desired.rttyDiguHz=123; desired.rttyDiglHz=-321;
+        desired.limitReportedPower=false;
+        CatGlobalConfig newest=desired;
+        if (setter=="AI1;") { newest.aiEnabled=true; }
+        else if (setter=="ZZID;") { newest.rigIdentity="PowerSDR"; }
+        else if (setter=="ZZRH+0999;") { newest.rttyDiguHz=999; }
+        else { newest.rttyOffsetBEnabled=false; }
+        QObject observer; bool observed=false; QByteArray snapshot,reply;
+        connect(model.moxController(),&MoxController::requestAccepted,&observer,[&](const KeyerIdentity&,quint64,bool on) {
+            if (on || observed) { return; }
+            observed=true; device->output.clear();
+            device->receive("ID;ZZSN;AI;ZZRA;ZZRB;ZZRH;ZZRL;PC;ZZPC;ZZTO;");
+            snapshot=std::exchange(device->output,{});
+            device->receive(setter+"ZZGA12345678-1234-1234-1234-123456789abc;");
+            reply=std::exchange(device->output,{});
+        });
+        const bool accepted=service.reconfigureGlobal(desired);
+        qInfo()<<"OFF callback"<<observed<<"snapshot"<<snapshot<<"nested reply"<<reply
+            <<"outer accepted"<<accepted<<"PTT state"<<service.pttState()<<"pin reads"<<device->pinReads;
+        QVERIFY(observed);
+        QCOMPARE(snapshot,QByteArray("ID020;ZZSN1111-2222;AI0;ZZRA1;ZZRB1;ZZRH+0123;ZZRL-0321;PC090;ZZPC090;ZZTO080;"));
+        QCOMPARE(reply,QByteArray("ZZGA12345678-1234-1234-1234-123456789abc;"));
+        QVERIFY(!accepted); QCOMPARE(service.globalConfig(),newest); QCOMPARE(CatSettings(AppSettings::instance()).global(),newest);
+        QVERIFY(service.session(session)); QCOMPARE(device->opens,opens); QVERIFY(!model.moxController()->isMox());
+        QCOMPARE(service.pttState(),QString("Waiting for release"));
+        const int before=device->pinReads; device->cts=false; device->dsr=false;
+        QTRY_VERIFY(device->pinReads>before); QTRY_COMPARE(service.pttState(),QString("Armed"));
+        device->cts=true; QTRY_VERIFY(model.moxController()->isMox());
+        service.stopAll(); pumpCat(); model.injectConnectionForTest(nullptr);
+    }
+    void failedExplicitIngressIsAttemptedOnce_data() {
+        QTest::addColumn<bool>("openFailure");
+        QTest::newRow("open-failure") << true; QTest::newRow("sampling-failure") << false;
+    }
+    void failedExplicitIngressIsAttemptedOnce() {
+        QFETCH(bool,openFailure);
+        RxCatMockConnection connection; RadioModel model; setup(model,connection);
+        const auto oldDevice=std::make_shared<CatSerialTestDevice>();
+        const auto failedDevice=std::make_shared<CatSerialTestDevice>();
+        failedDevice->refuseOpen=openFailure; failedDevice->pinsAvailable=openFailure;
+        CatService& service=*model.catService(); QVERIFY(configure(service,oldDevice));
+        int created=0;
+        QVERIFY(service.setSerialTransportFactoryForTest([&] {
+            return std::make_shared<CatSerialTransport>(created++==0 ? oldDevice:failedDevice);
+        }));
+        service.startConfigured(); const quint64 session=service.sessionIds(1).first();
+        sample(service,oldDevice,1,false,false); sample(service,oldDevice,1,true,false); QVERIFY(model.moxController()->isMox());
+        CatGlobalConfig desired=service.globalConfig(); desired.pttDeviceSource="Physical"; desired.pttUseDsr=false;
+        CatGlobalConfig newest=desired; newest.rigIdentity="TS-480";
+        QObject observer; int notices=0; bool nestedAccepted=false;
+        connect(&service,&CatService::pttStateChanged,&observer,[&](const QString& state) {
+            if (!state.startsWith("PTT error:")) { return; }
+            ++notices;
+            if (notices>2) { return; }
+            nestedAccepted=service.applyGlobalConfig(newest);
+        });
+        QVERIFY(!service.reconfigureGlobal(desired)); QVERIFY(nestedAccepted);
+        QCOMPARE(notices,1); QCOMPARE(failedDevice->opens,1); QCOMPARE(created,2);
+        QCOMPARE(service.globalConfig(),newest); QCOMPARE(CatSettings(AppSettings::instance()).global(),newest);
+        QVERIFY(service.session(session)); QVERIFY(oldDevice->opened); QVERIFY(!failedDevice->opened);
+        const int reads=oldDevice->pinReads; QTest::qWait(50); QCOMPARE(oldDevice->pinReads,reads);
+        QVERIFY(service.applyGlobalConfig(newest)); QCOMPARE(failedDevice->opens,1);
+        newest.rttyDiguHz=123; QVERIFY(service.applyGlobalConfig(newest)); QCOMPARE(failedDevice->opens,1);
+        newest.pttEnabled=false; QVERIFY(service.reconfigureGlobal(newest)); QCOMPARE(service.pttState(),QString("Disabled"));
+        newest.rttyDiguHz=124; QVERIFY(service.applyGlobalConfig(newest)); QCOMPARE(service.pttState(),QString("Disabled")); QCOMPARE(failedDevice->opens,1);
+        service.stopAll(); pumpCat(); model.injectConnectionForTest(nullptr);
+    }
     void singleInputAndRefusal_data() {
         QTest::addColumn<bool>("useCts"); QTest::newRow("CTS-legacy-RTS") << true; QTest::newRow("DSR-legacy-DTR") << false;
     }

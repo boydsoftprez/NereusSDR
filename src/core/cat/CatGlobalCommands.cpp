@@ -175,6 +175,8 @@ mw0lge@grange-lane.co.uk
 
 // Ported from Thetis CAT/CATCommands.cs and console.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+// 2026-10-04 - Read the service desired global tuple during reconfiguration.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - TX/global CAT compatibility by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
 #include "CatGlobalCommands.h"
@@ -1172,7 +1174,7 @@ CatCommandResult CatGlobalCommands::execute(const CatRequest& request,CatSession
     // [original inline comment from CATCommands.cs:129]
     // From Thetis CAT/CATCommands.cs:1223 [v2.10.3.15].
     if (code == "ID" || code == "ZZID" || code == "ZZSN" || code == "AI" || code == "ZZAI") {
-        CatGlobalConfig config=m_settings.global();
+        CatGlobalConfig config=service->globalConfig();
         if (code == "ID") {
             if (!get) { return error(); }
             return payload(config.rigIdentity == "PowerSDR" ? "900" : config.rigIdentity == "TS-50S" ? "013" : config.rigIdentity == "TS-480" ? "020" : "019");

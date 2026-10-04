@@ -11,6 +11,7 @@
 
 #include <QtTest/QtTest>
 #include <QTemporaryDir>
+#include <memory>
 
 #include "core/AppSettings.h"
 #include "models/SliceModel.h"
@@ -22,6 +23,97 @@ class TestSliceFilterPerBandPerModePersistence : public QObject {
     Q_OBJECT
 
 private slots:
+    void mode_notification_continuation_data() {
+        QTest::addColumn<int>("nested");
+        QTest::newRow("newer-mode") << 0;
+        QTest::newRow("newer-filter-low") << 1;
+        QTest::newRow("newer-filter-high") << 2;
+        QTest::newRow("newer-filter-pair") << 3;
+        QTest::newRow("mode-away-and-back") << 4;
+        QTest::newRow("mode-no-op-echo") << 5;
+        QTest::newRow("filter-low-no-op-echo") << 6;
+        QTest::newRow("filter-high-no-op-echo") << 7;
+        QTest::newRow("filter-pair-no-op-echo") << 8;
+    }
+    void mode_notification_continuation() {
+        QFETCH(int, nested);
+        AppSettings::instance().clear();
+        SliceModel slice(4, nullptr);
+        slice.setFrequency(14200000);
+        slice.setFilter(100, 2800);
+        QObject observer;
+        QList<QPair<int,int>> filters;
+        bool entered=false;
+        connect(&slice, &SliceModel::filterChanged, &observer,
+                [&](int low, int high) { filters.append({low,high}); });
+        connect(&slice, &SliceModel::dspModeChanged, &observer, [&](DSPMode) {
+            if (entered) { return; }
+            entered=true;
+            if (nested==0) { slice.setDspMode(DSPMode::AM); }
+            else if (nested==1) { slice.setFilterLow(-2400); }
+            else if (nested==2) { slice.setFilterHigh(-200); }
+            else if (nested==3) { slice.setFilter(-2400,-200); }
+            else if (nested==4) { slice.setDspMode(DSPMode::AM); slice.setDspMode(DSPMode::LSB); }
+            else if (nested==5) { slice.setDspMode(DSPMode::LSB); }
+            else if (nested==6) { slice.setFilterLow(slice.filterLow()); }
+            else if (nested==7) { slice.setFilterHigh(slice.filterHigh()); }
+            else { slice.setFilter(slice.filterLow(),slice.filterHigh()); }
+        });
+        slice.setDspMode(DSPMode::LSB);
+        QVERIFY(entered);
+        QCOMPARE(slice.dspMode(), nested==0 ? DSPMode::AM : DSPMode::LSB);
+        QCOMPARE(filters.size(), nested==4 ? 2 : 1);
+        QCOMPARE(filters.last(), qMakePair(slice.filterLow(),slice.filterHigh()));
+        if (nested==4) {
+            const auto expected=SliceModel::defaultFilterForMode(DSPMode::LSB);
+            QCOMPARE(filters.last(),expected);
+        }
+    }
+
+    void early_mode_callback_data() {
+        QTest::addColumn<int>("origin"); QTest::addColumn<int>("action");
+        const QList<QByteArray> origins{"callsign","sync","save-low","save-high"};
+        const QList<QByteArray> actions{"delete","newer-mode","newer-filter","mode-away-back"};
+        for (int origin=0;origin<origins.size();++origin) {
+            for (int action=0;action<actions.size();++action) {
+                QTest::newRow((origins[origin]+'-'+actions[action]).constData()) << origin << action;
+            }
+        }
+    }
+    void early_mode_callback() {
+        QFETCH(int,origin); QFETCH(int,action);
+        AppSettings& settings=AppSettings::instance(); settings.setChangeHook({}); settings.clear();
+        auto slice=std::make_unique<SliceModel>(5,nullptr);
+        slice->setFrequency(14200000); slice->setFilter(100,2800);
+        if (origin<2) {
+            slice->setDspMode(DSPMode::RADE_U); slice->setLastRadeRxCallsign("KG4VCF"); slice->setRadeSynced(true);
+        }
+        QObject observer; bool entered=false; int modes=0,filters=0;
+        DSPMode expectedMode=DSPMode::LSB; QPair<int,int> expectedEdges;
+        connect(slice.get(),&SliceModel::dspModeChanged,&observer,[&](DSPMode) { ++modes; });
+        connect(slice.get(),&SliceModel::filterChanged,&observer,[&](int,int) { ++filters; });
+        const auto callback=[&] {
+            if (entered) { return; } entered=true;
+            if (action==0) { slice.reset(); return; }
+            if (action==1) { slice->setDspMode(DSPMode::AM); }
+            else if (action==2) { slice->setFilter(-2400,-200); }
+            else { slice->setDspMode(DSPMode::AM); slice->setDspMode(DSPMode::LSB); }
+            expectedMode=slice->dspMode(); expectedEdges={slice->filterLow(),slice->filterHigh()};
+        };
+        if (origin==0) { connect(slice.get(),&SliceModel::lastRadeRxCallsignChanged,&observer,[&](const QString&) { callback(); }); }
+        else if (origin==1) { connect(slice.get(),&SliceModel::radeSyncedChanged,&observer,[&](bool) { callback(); }); }
+        else {
+            settings.setChangeHook([&](const QString& key) {
+                if (key.endsWith(origin==2 ? "/FilterLow":"/FilterHigh")) { callback(); }
+            });
+        }
+        slice->setDspMode(DSPMode::LSB); settings.setChangeHook({});
+        QVERIFY(entered);
+        if (action==0) { QVERIFY(!slice); QCOMPARE(modes,0); QCOMPARE(filters,0); return; }
+        QCOMPARE(slice->dspMode(),expectedMode); QCOMPARE(qMakePair(slice->filterLow(),slice->filterHigh()),expectedEdges);
+        QCOMPARE(modes,action==3 ? 2 : 1); QCOMPARE(filters,action==3 ? 2 : 1);
+    }
+
     void mode_change_remembers_per_mode_filter() {
         // Use the singleton with an explicit test-mode reset so each test
         // starts from a clean slate.  AppSettings is process-wide, so we

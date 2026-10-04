@@ -49,7 +49,12 @@ private slots:
         QTcpSocket socket; socket.connectToHost(QHostAddress::LocalHost,chosen); QTRY_COMPARE(service.rigctldClientCount(1),1);
         QVERIFY(control<QLabel>(page,"cat1RigctldStatus")->text().contains("Clients: 1"));
         dialect->setCurrentText("Rigctld"); QCOMPARE(service.channelConfig(1).ptyDialect,QString("Rigctld"));
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
         QVERIFY(control<QCheckBox>(page,"cat1Pty")->toolTip().contains("Rigctld"));
+#else
+        QVERIFY(!control<QCheckBox>(page,"cat1Pty")->isEnabled());
+        QVERIFY(control<QCheckBox>(page,"cat1Pty")->toolTip().contains("only on macOS and Linux"));
+#endif
         QSignalSpy changed(&service,&CatService::configurationChanged);
         CatEndpointConfig external=service.channelConfig(1); external.rigctldEnabled=false; QVERIFY(service.reconfigureChannel(1,external));
         QCOMPARE(changed.size(),1); QVERIFY(!enabled->isChecked()); QCOMPARE(service.rigctldClientCount(1),0);
@@ -60,6 +65,25 @@ private slots:
         QCOMPARE(service.channelConfig(1).rigctldBindAddress,QString("127.0.0.1"));
         for (int channel=2;channel<=4;++channel) {
             const QString name=QStringLiteral("cat%1RigctldEnabled").arg(channel); auto* control=page.findChild<QCheckBox*>(name); QVERIFY(control && control->isEnabled()); QVERIFY(!control->isChecked());
+        }
+    }
+    void ptyReasonsFollowNativePlatformAndHost() {
+        RadioModel model; CatService& service=*model.catService(); CatTcpIpPage page(&model);
+        for (int channel=1;channel<=4;++channel) {
+            CatEndpointConfig config=service.channelConfig(channel); config.ptyDialect="Rigctld";
+            QVERIFY(service.reconfigureChannel(channel,config)); page.syncFromModel();
+            auto* pty=page.findChild<QCheckBox*>(QStringLiteral("cat%1Pty").arg(channel)); QVERIFY(pty);
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+            QVERIFY(pty->isEnabled()); QVERIFY(pty->toolTip().contains("Rigctld"));
+#else
+            QVERIFY(!pty->isEnabled()); QVERIFY(pty->toolTip().contains("only on macOS and Linux"));
+            QVERIFY(pty->toolTip().contains("virtual COM")); QVERIFY(!pty->toolTip().contains("uses Rigctld"));
+#endif
+        }
+        RadioModel remote(RadioModel::Role::Remote); CatTcpIpPage remotePage(&remote); remotePage.syncFromModel();
+        for (int channel=1;channel<=4;++channel) {
+            auto* pty=remotePage.findChild<QCheckBox*>(QStringLiteral("cat%1Pty").arg(channel)); QVERIFY(pty);
+            QVERIFY(!pty->isEnabled()); QVERIFY(pty->toolTip().contains("local host"));
         }
     }
     void synchronousRigctldCallbackMayDeletePage() {

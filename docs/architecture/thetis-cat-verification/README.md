@@ -5,8 +5,15 @@ Local verification dated 2026-10-04, against original implementation base
 `27716f5d6700e1e7d1808acfe478756249828e8c`. Final Task 14 base is accepted
 signed `d8c4fc1f258966f8d78e24a807fe48b72457e63a`. Thetis remains
 v2.10.3.15 / `3759d096`; AetherSDR is `1e0718ad`. No later Core integration,
-completed integrated review or publication is implied. The lead performs one
-fresh integrated review after this local handback.
+publication is implied. The initial full-feature review found five required
+corrections. The [consolidated correction wave](CORRECTIONS.md), based on signed
+Task 14 head `025e7f365552594e441bc1f3c82a2420cb41892a`, records fresh focused
+regressions. Scoped rereview and refreshed full/platform acceptance are pending;
+the lead owns their acceptance and final document closure.
+
+The full-suite and platform results below are retained pre-wave Task 14
+evidence on that accepted signed head. They remain historical evidence while
+the correction wave refreshes its combined production and platform gates.
 
 The catalogue has 419 descriptors, 349 active registrations and 70 inactive
 entries. Fresh `tst_cat_coverage` executes all 783 current request fixtures

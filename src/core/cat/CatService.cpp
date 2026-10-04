@@ -52,6 +52,9 @@ Added extended CAT commands for APF funtions - May 2017.
 
 // Ported from Thetis Project Files/Source/Console/CAT/SerialPortPTT.cs and CATCommands.cs
 // Modification history (NereusSDR):
+// 2026-10-04 - Complete accepted nested PTT ingress retirement and preserve
+//              replacement sampling on a retained shared serial transport.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - Composite release-armed input PTT and requesting serial close by
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - Independently implemented native PTY lifecycle and transport diagnostics,
@@ -584,8 +587,18 @@ bool CatService::reconfigureGlobal(const CatGlobalConfig& supplied)
     const quint64 revision = ++m_globalRevision;
     const quint64 run = m_lifecycleGeneration;
     const bool started = m_started;
+    const std::optional<PttRestart> previousRestart = m_pendingPttRestart;
+    const bool restartPtt = pttChanged || (previousRestart && previousRestart->generation == run
+        && previousRestart->revision > m_consumedPttRestartRevision);
+    if (pttChanged && started) {
+        if (previousRestart) { m_consumedPttRestartRevision = qMax(m_consumedPttRestartRevision,previousRestart->revision); }
+        m_pendingPttRestart = PttRestart{run,revision};
+    }
     m_desiredGlobal = config;
     const QPointer<CatService> self(this);
+    const auto restartScope = qScopeGuard([self,previousRestart] {
+        if (self) { self->m_pendingPttRestart = previousRestart; }
+    });
     const auto current = [self, revision] { return self && !self->m_destroying && self->m_globalRevision == revision; };
     const auto discardOwnDesired = [self, revision] {
         if (self && self->m_globalRevision == revision) { self->m_desiredGlobal.reset(); }
@@ -596,7 +609,11 @@ bool CatService::reconfigureGlobal(const CatGlobalConfig& supplied)
     m_desiredGlobal.reset();
     emit globalConfigurationChanged();
     if (!current()) { return false; }
-    if (pttChanged && started && m_started && run == m_lifecycleGeneration && !m_ptt) { startPtt(); }
+    if (restartPtt && started && m_started && run == m_lifecycleGeneration && !m_ptt) {
+        // Consume before open/sampling can report failure and reenter preferences.
+        if (m_pendingPttRestart) { m_consumedPttRestartRevision = qMax(m_consumedPttRestartRevision,m_pendingPttRestart->revision); }
+        startPtt();
+    }
     return current();
 }
 QByteArray CatService::testCommand(int channel, const QByteArray& frame)
@@ -825,8 +842,12 @@ void CatService::stopPtt() {
     const quint64 generation = m_lifecycleGeneration;
     m_txCoordinator.cancelSession(input->sessionId);
     // Detached old input cannot stop a callback-started replacement lifecycle.
-    input->transport->setPinSampling(false);
-    if (input->separate) { input->transport->stop(); }
+    const bool replacementOwnsTransport = self && self->m_ptt
+        && self->m_ptt->transport == input->transport;
+    if (!replacementOwnsTransport) {
+        input->transport->setPinSampling(false);
+        if (input->separate) { input->transport->stop(); }
+    }
     if (self && generation == m_lifecycleGeneration && !m_ptt) { setPttState("Stopped"); }
 }
 void CatService::applyPttSample(int channel, bool cts, bool dsr) {
