@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-04 - Guard frequency notification continuations against deletion/reentry.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30 - RADE reason: applyRadeModeChange brackets each RADE
 //                 decoder start (RadioModel::beginRadeStart, endRadeStart)
 //                 so a create or start that fails gives the slice its
@@ -194,6 +196,7 @@
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+#include <QPointer>
 #include "SliceModel.h"
 
 #include "Band.h"
@@ -332,9 +335,13 @@ bool SliceModel::holdForListener()
 void SliceModel::applyFrequency(double freq)
 {
     if (!qFuzzyCompare(m_frequency, freq)) {
+        const QPointer<SliceModel> self(this);
         m_frequency = freq;
         emit frequencyChanged(freq);
+        // CAT/model callbacks may retire this slice or supersede the frequency.
+        if (!self || !qFuzzyCompare(m_frequency, freq)) { return; }
         noteDiversityPatternInputs();
+        if (!self || !qFuzzyCompare(m_frequency, freq)) { return; }
 
         // Phase 3P-II Task 64: emit bandChanged on band boundary cross.
         // Uses Band::bandFromFrequency (IARU Region 2, GEN fallback).

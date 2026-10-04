@@ -6,17 +6,20 @@ request bytes, source, explicit precondition, expected response/mutation when
 materialized, and separate fixture/execution status. Empty expectedReply means
 successful silence; JSON null means no response has been invented.
 
-There are 752 request records, 467 materialized response
-contracts and 285 pending model response contracts for 166 codes.
+There are 752 request records, 566 materialized response
+contracts and 186 pending model response contracts.
 The pending cases retain exact descriptor widths, source ranges, target APIs,
 read/set semantic requirements and stable case IDs. Zero numeric payloads in
 pending cases are parser structure examples, not claims of valid semantic ranges
 or successful mutation. Tasks 5-7 must replace them with family-owned concrete
 production model setup and expected bytes before advertising handler support.
 
-Every case currently has executionStatus=not-executed: the catalogue test checks
-coverage/structure only. Task 2 validates requests and result formatting; Task 7
-must execute production families. Never count catalogue/fixture counts as
+Task 5 executes 158 records across 99 owning descriptors through the actual service/router
+and native models in `tst_cat_rx_commands::fixtureExecution`, with source-valid
+requests and `familyModelSetup`/`expectedState` assertions. Their execution status
+is `executed-task-5`; the remaining 594 records are `not-executed`. The catalogue
+and parser tests check structure/formatting only; their counts are not execution
+evidence. Task 7 must execute all production families. Never count catalogue/fixture counts as
 functional coverage. Source-inert replies preserve source constants only where
 verified; inactive/unavailable fixtures always reject without mutation. Equal
 get/set widths follow GetFirst for ZZZM/ZZZV, SetFirst for unavailable ZZJS.

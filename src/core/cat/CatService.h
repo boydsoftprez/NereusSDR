@@ -4,6 +4,7 @@
 #include "CatModelAdapter.h"
 #include "CatTxCoordinator.h"
 #include "CatSettings.h"
+#include "CatRxCommands.h"
 #include "CatSession.h"
 #include "CatParser.h"
 #include "CatCommandRouter.h"
@@ -51,6 +52,7 @@ private:
     CatModelAdapter m_adapter;
     CatTxCoordinator m_txCoordinator;
     CatSettings m_settings;
+    CatRxCommands m_rxCommands;
     CatCommandCatalog m_catalog;
     CatParser m_parser;
     CatCommandRouter m_router;

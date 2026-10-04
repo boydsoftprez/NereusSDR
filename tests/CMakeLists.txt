@@ -9887,3 +9887,5 @@ nereus_add_test(tst_cat_settings CORE_ONLY)
 nereus_add_test(tst_cat_headless CORE_ONLY)
 
 nereus_add_test(tst_cat_tx_ownership CORE_ONLY)
+
+nereus_add_test(tst_cat_rx_commands CORE_ONLY)

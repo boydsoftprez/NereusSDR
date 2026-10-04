@@ -4,6 +4,7 @@
 #include <QTemporaryDir>
 #include "core/AppSettings.h"
 #include "core/cat/CatSettings.h"
+#include "core/cat/CatService.h"
 #include "models/RadioModel.h"
 using namespace NereusSDR;
 class TstCatSettings : public QObject {
@@ -65,6 +66,32 @@ private slots:
         for (const QString& key : restored.allKeys()) {
             QVERIFY(!key.contains("Incarnation") && !key.contains("Session") && !key.contains("Guid") && !key.contains("Meter"));
         }
+    }
+    void runtimeGlobalPreferencesKeepPttIngressStopped()
+    {
+        AppSettings::instance().clear();
+        RadioModel model; CatService& service=*model.catService(); service.startConfigured();
+        QSignalSpy changed(&service,&CatService::globalConfigurationChanged);
+        CatGlobalConfig baseline=service.globalConfig(); baseline.rttyOffsetAEnabled=true;
+        QVERIFY(service.applyGlobalConfig(baseline)); QCOMPARE(changed.count(),1);
+        QCOMPARE(AppSettings::instance().value("Cat/RttyOffsetAEnabled").toString(),QString("True"));
+        for (int field=0; field<10; ++field) {
+            CatGlobalConfig config=baseline;
+            switch (field) {
+            case 0: config.pttEnabled=true; break; case 1: config.pttDeviceSource="CAT1"; break;
+            case 2: config.pttSerialDevice="absent-device"; break; case 3: config.pttUseCts=true; break;
+            case 4: config.pttUseDsr=true; break; case 5: config.pttChannel=2; break;
+            case 6: config.pttSerialBaud=9600; break; case 7: config.pttSerialParity="Odd"; break;
+            case 8: config.pttSerialDataBits=7; break; case 9: config.pttSerialStopBits="2"; break;
+            }
+            QVERIFY(!service.applyGlobalConfig(config)); QCOMPARE(changed.count(),1);
+            const CatGlobalConfig actual=service.globalConfig();
+            QVERIFY(!actual.pttEnabled && actual.pttDeviceSource=="None" && actual.pttSerialDevice.isEmpty() && !actual.pttUseCts && !actual.pttUseDsr);
+            QCOMPARE(actual.pttChannel,1); QCOMPARE(actual.pttSerialBaud,115200); QCOMPARE(actual.pttSerialParity,QString("None")); QCOMPARE(actual.pttSerialDataBits,8); QCOMPARE(actual.pttSerialStopBits,QString("1"));
+        }
+        service.beginRetirement(); baseline.rttyOffsetAEnabled=false; QVERIFY(!service.applyGlobalConfig(baseline)); QCOMPARE(changed.count(),1);
+        RadioModel remote(RadioModel::Role::Remote); QVERIFY(!remote.catService()->applyGlobalConfig(baseline));
+        AppSettings::instance().clear();
     }
     void validation()
     {

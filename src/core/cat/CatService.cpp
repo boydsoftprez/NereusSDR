@@ -6,8 +6,11 @@
 #include "models/RadioModel.h"
 namespace NereusSDR {
 CatService::CatService(RadioModel& model, QObject* parent)
-    : QObject(parent), m_model(&model), m_adapter(model), m_txCoordinator(model), m_settings(AppSettings::instance()), m_parser(m_catalog)
+    : QObject(parent), m_model(&model), m_adapter(model), m_txCoordinator(model), m_settings(AppSettings::instance()), m_rxCommands(m_adapter, m_txCoordinator, m_settings), m_parser(m_catalog)
 {
+    for (const QByteArray& code : CatRxCommands::codes()) {
+        m_router.registerHandler(code, [this](const CatRequest& request, CatSessionContext& context) { return m_rxCommands.execute(request, context); });
+    }
     for (int channel = 1; channel <= 4; ++channel) { m_channels[channel - 1].config.channel = channel; }
     connect(&model, &RadioModel::connectionStateChanged, this, [this](ConnectionState state) {
         if (state == ConnectionState::Disconnected || state == ConnectionState::LinkLost) {
@@ -108,7 +111,15 @@ QString CatService::channelState(int channel) const { return validChannel(channe
 CatGlobalConfig CatService::globalConfig() const { return m_settings.global(); }
 bool CatService::applyGlobalConfig(const CatGlobalConfig& config)
 {
-    if (m_destroying || !m_model || !m_model->ownsLocalDsp() || m_started) { return false; }
+    if (m_destroying || !m_model || !m_model->ownsLocalDsp()) { return false; }
+    if (m_started) {
+        const CatGlobalConfig current = globalConfig();
+        if (config.pttEnabled != current.pttEnabled || config.pttDeviceSource != current.pttDeviceSource
+            || config.pttSerialDevice != current.pttSerialDevice || config.pttUseCts != current.pttUseCts
+            || config.pttUseDsr != current.pttUseDsr || config.pttChannel != current.pttChannel
+            || config.pttSerialBaud != current.pttSerialBaud || config.pttSerialParity != current.pttSerialParity
+            || config.pttSerialDataBits != current.pttSerialDataBits || config.pttSerialStopBits != current.pttSerialStopBits) { return false; }
+    }
     if (config.pttEnabled && config.pttDeviceSource == "Physical") {
         for (const Channel& endpoint : m_channels) {
             if (endpoint.config.serialEnabled && endpoint.config.serialDevice == config.pttSerialDevice) { return false; }
