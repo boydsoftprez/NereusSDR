@@ -554,17 +554,23 @@ import Testing
                                              connectDeadline: .seconds(5), safeToReplace: { true })
         let failedCandidate = try #require(rig.recorder.peers.last)
         old.become(.failed)
-        await rig.recorder.settle { old.isClosed && failedCandidate.isClosed && rig.recorder.peers.count == 3 }
+        #expect(await rig.recorder.settle { old.isClosed && failedCandidate.isClosed && rig.recorder.peers.count == 3 })
         #expect(await rig.client.connectionId != oldId)
 
         let fresh = try #require(rig.recorder.peers.last)
-        fresh.become(.connected)
-        await rig.recorder.settle { rig.recorder.mediaConnectedCalls >= 2 }
+        // A connected callback precedes the client's startup completion.
+        // Fence the restarted peer before requesting its replacement.
+        try await rig.connect()
         let freshId = try await rig.connectionId
+        let replacementCount = rig.recorder.sent("replace").count
         await rig.client.controlRouteDidMove(peerFactory: rig.recorder.peerFactory,
                                              connectDeadline: .seconds(5), safeToReplace: { true })
-        let nextId = try #require(MediaControlDecoder.string(rig.recorder.sent("replace").last?["connectionId"]))
+        try #require(rig.recorder.sent("replace").count == replacementCount + 1)
+        let replacement = try #require(rig.recorder.sent("replace").last)
+        try #require(MediaControlDecoder.string(replacement["replaces"]) == freshId)
+        let nextId = try #require(MediaControlDecoder.string(replacement["connectionId"]))
         await rig.deliver(["op": "replace", "connectionId": .string(nextId), "replaces": .string(freshId)])
+        try #require(await rig.client.connectionId == nextId)
         fresh.become(.failed) // the draining ID is no longer the owner
         await rig.timers.advance(by: 2_000)
         #expect(await rig.client.connectionId == nextId)
