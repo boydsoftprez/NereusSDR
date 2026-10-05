@@ -43,8 +43,8 @@ It is our first **calendar-versioned release**. `2026.10.0` is the first
 release in October 2026; another release that month becomes `2026.10.1`.
 The first release in a new month starts at `.0`. Releases ship when ready.
 
-**2026.10.0 is being prepared.** The downloads page continues to show the
-latest published release until the new packages are available. Read the
+**Current version: 2026.10.0.** Packages are listed on the
+[releases page](https://github.com/boydsoftprez/NereusSDR/releases). Read the
 [upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html) before updating
 an existing station, and update the Core and desktop together.
 

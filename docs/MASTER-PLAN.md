@@ -6,9 +6,9 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 ---
 
-## Current release work: 2026.10.0
+## Current release: 2026.10.0
 
-The first CalVer release is being prepared from the work since 0.5.2.
+The first CalVer release brings together the work since 0.5.2.
 `YYYY.M.counter` replaces semantic release numbers; the first final release
 in October is `2026.10.0`. Settings schema and wire versions remain separate.
 
