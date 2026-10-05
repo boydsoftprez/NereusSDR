@@ -38,12 +38,15 @@
 #include <QtTest>
 
 #include <QAction>
+#include <QAbstractItemView>
+#include <QAccessible>
 #include <QApplication>
 #include <QClipboard>
 #include <QComboBox>
 #include <QLabel>
 #include <QMenu>
 #include <QPointer>
+#include <QPersistentModelIndex>
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -54,10 +57,12 @@
 #include "core/HpsdrModel.h"
 #include "core/MoxController.h"
 #include "core/session/IStationLink.h"
+#include "core/session/RecordStream.h"
 #include "core/session/StationClient.h"
 #include "core/station/StationRadios.h"
 #include "fakes/RemoteWindowHarness.h"
 #include "gui/TitleBar.h"
+#include "gui/SetupDialog.h"
 #include "gui/setup/ThisCorePage.h"
 #include "gui/widgets/StationBlock.h"
 #include "models/RadioModel.h"
@@ -170,6 +175,72 @@ private slots:
     void init() { QVERIFY(RemoteWindowHarness::clearIsolatedProfile()); }
 
     void cleanupTestCase() { QVERIFY(RemoteWindowHarness::removeIsolatedProfile()); }
+
+    void availabilityRefreshWithAccessibleModelKeepsCoresChoice()
+    {
+        QAccessible::setActive(true);
+        RadioModel model(RadioModel::Role::Remote);
+        StationRadioEntry radio;
+        radio.id = kHermesMac;
+        radio.mac = kHermesMac;
+        radio.name = QStringLiteral("Bench Hermes");
+        radio.model = static_cast<int>(HPSDRModel::HERMES);
+        radio.models = {static_cast<int>(HPSDRModel::HERMES),
+                        static_cast<int>(HPSDRModel::REDPITAYA)};
+        radio.inUse = true;
+        RecordBatch batch;
+        batch.stream = QStringLiteral("stationRadios");
+        batch.reset = true;
+        batch.upserts.append({radio.id, radio.toFields()});
+        model.applyStationRecordBatch(batch);
+        SetupDialog dialog(&model);
+        QVERIFY(dialog.findChild<ThisCorePage*>() == nullptr);
+        dialog.selectPage(QStringLiteral("This Core"));
+        ThisCorePage* page = dialog.findChild<ThisCorePage*>();
+        QVERIFY(page);
+        QComboBox* combo = page->modelCombo();
+        QCOMPARE(combo->count(), 2);
+        QSignalSpy removed(combo->model(), &QAbstractItemModel::rowsRemoved);
+        QSignalSpy resets(combo->model(), &QAbstractItemModel::modelReset);
+        for (int iteration = 0; iteration < 3; ++iteration) {
+            QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(combo->view());
+            QVERIFY(accessible && accessible->tableInterface());
+            QAccessibleInterface* selected = accessible->tableInterface()->cellAt(combo->currentIndex(), 0);
+            QVERIFY(selected && selected->isValid());
+            QCOMPARE(selected->text(QAccessible::Name), combo->currentText());
+            const QAccessible::Id selectedId = QAccessible::uniqueId(selected);
+            // Opening Core settings selects its lazy hub and refreshes
+            // already realized pages through refreshTransmitPresentation.
+            dialog.inspectCoreTarget(QString());
+            dialog.setStationSettingsAvailable(false, QStringLiteral("Test unavailable"));
+            QCOMPARE(removed.count(), 0);
+            QCOMPARE(resets.count(), 0);
+            QCOMPARE(QAccessible::accessibleInterface(selectedId), selected);
+            QCOMPARE(combo->count(), 2);
+            QCOMPARE(combo->currentData().toInt(), radio.model);
+            QVERIFY(!combo->isEnabled());
+            QCOMPARE(combo->toolTip(), QStringLiteral("Test unavailable"));
+        }
+        // A genuine Core model-list change still replaces the choice list.
+        // A model reset invalidates persistent popup indexes before its
+        // accessibility cache is cleared; QComboBox::clear removes rows.
+        const QPersistentModelIndex previousIndex(combo->model()->index(0, 0));
+        QVERIFY(previousIndex.isValid());
+        radio.models = {static_cast<int>(HPSDRModel::REDPITAYA)};
+        radio.model = static_cast<int>(HPSDRModel::REDPITAYA);
+        batch.upserts = {{radio.id, radio.toFields()}};
+        model.applyStationRecordBatch(batch);
+        QVERIFY(!previousIndex.isValid());
+        QCOMPARE(combo->count(), 1);
+        QCOMPARE(combo->currentData().toInt(), radio.model);
+        QCOMPARE(removed.count(), 0);
+        QVERIFY(resets.count() > 0);
+        QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(combo->view());
+        QVERIFY(accessible && accessible->tableInterface());
+        QAccessibleInterface* selected = accessible->tableInterface()->cellAt(0, 0);
+        QVERIFY(selected && selected->isValid());
+        QCOMPARE(selected->text(QAccessible::Name), combo->currentText());
+    }
 
     void theCoresRadioFromTheWindow()
     {
