@@ -5820,6 +5820,11 @@ nereus_add_test(tst_tx_display_window)
 # governing viewer's window and pixels, the carrier following XIT), and
 # TxAnalyzer::clampViewToBaseband.
 nereus_add_test(tst_tx_display_feed)
+if(FFTW3_FOUND AND WDSP_FOUND)
+    # The first-key regression reads applied DSP/siphon/analyzer geometry.
+    target_include_directories(tst_tx_display_feed PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_tx_display_feed PRIVATE WDSP_STATIC_BUILD)
+endif()
 # ── Phase 3J-1 Task 2.1: TciServer + ClientSession lifecycle ─────────────────
 # 3 tests: start/listen/signal, double-start rejection, stop/clear.
 # Gated on Qt6WebSockets_FOUND — TciServer.h/.cpp are #ifdef HAVE_WEBSOCKETS.

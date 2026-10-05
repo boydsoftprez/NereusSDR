@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-04: Hold accepted Core waterfall levels in the remote codec window.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04: Keep local PC microphone preview capture while unkeyed,
 //               independently of uplink admission; discard preview PCM.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -493,14 +495,13 @@ constexpr double kRuntimeLowLevelReachDb = 60.0;
 
 // Whether the pan's waterfall levels are set at run time rather than the
 // stored low and high levels (SpectrumWidget::composeWaterfallActiveThresholds).
-// A pan whose AGC levels come from the Core (coreWaterfallLevelsInUse) is
-// coloured against levels the Core computed before it clamped the rows, so
-// its window is the stored levels', as with manual levels: AGC settling
-// asks the Core nothing.
+// Core levels are computed before codec clamping, but still need to be
+// represented by the transported rows that the widget colours with them.
+// Until the first accepted pair arrives the renderer uses stored levels.
 bool runtimeWaterfallLevels(const SpectrumWidget* widget)
 {
     if (widget->coreWaterfallLevelsInUse()) {
-        return false;
+        return widget->coreWaterfallLevels().has_value();
     }
     return widget->clarityActive() || widget->wfAgcEnabled()
         || widget->waterfallNFAGCEnabled();
@@ -518,15 +519,21 @@ DbmWindow waterfallLevelsWindow(const SpectrumWidget* widget,
     if (!runtimeWaterfallLevels(widget)) {
         return stored;
     }
-    // Clarity's levels come from the Core's noise floor of the whole
-    // source, not from these values, so only the AGCs are held to the reach.
-    double activeLow = double(widget->wfActiveLowThreshold());
-    if (!widget->clarityActive()) {
+    // Core automatic levels and Clarity's floor come from the source
+    // before codec clamping. Only a local AGC following transported rows
+    // needs the reach cap to prevent clamped-floor feedback.
+    const auto coreLevels = widget->coreWaterfallLevelsInUse()
+        ? widget->coreWaterfallLevels() : std::nullopt;
+    double activeLow = coreLevels ? double(coreLevels->first)
+                                  : double(widget->wfActiveLowThreshold());
+    if (!coreLevels && !widget->clarityActive()) {
         const double reach = std::floor(std::min(panLowDbm, stored.minDbm)
                                         - kRuntimeLowLevelReachDb);
         activeLow = std::max(activeLow, reach + kRuntimeLevelHeadroomDb);
     }
-    const double activeHigh = std::max(double(widget->wfActiveHighThreshold()), activeLow);
+    const double high = coreLevels ? double(coreLevels->second)
+                                  : double(widget->wfActiveHighThreshold());
+    const double activeHigh = std::max(high, activeLow);
     if (!std::isfinite(activeLow) || !std::isfinite(activeHigh)) {
         return held.value_or(stored);
     }

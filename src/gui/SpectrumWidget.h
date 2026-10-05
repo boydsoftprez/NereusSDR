@@ -879,6 +879,12 @@ public:
     }
     /// The Core's levels for the latest waterfall line (NSDX section 0x08).
     void setCoreWaterfallLevels(float lowDbm, float highDbm);
+    /// Last accepted Core pair, also retained by the renderer while a new
+    /// display context is pending. Distinct from Clarity's active pair.
+    std::optional<std::pair<float, float>> coreWaterfallLevels() const
+    {
+        return m_coreWfLevels;
+    }
     // NF-AGC: auto-track waterfall thresholds to noise floor + offset.
     void setWaterfallNFAGCEnabled(bool on);
     bool waterfallNFAGCEnabled() const { return m_wfNfAgcEnabled; }

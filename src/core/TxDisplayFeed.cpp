@@ -10,6 +10,8 @@
 //   2026-09-26 : Tasks 27-29 fix wave (R-R3-49): remote viewer changes
 //                 coalesced while keyed; one SetAnalyzer per view. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-04 : Match both analyzers to the queued TX DSP block size on
+//                 first key. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "core/TxDisplayFeed.h"
@@ -189,11 +191,12 @@ void TxDisplayFeed::onMoxStateChanged(bool keyed)
     }
     if (keyed) {
         m_keyed = true;
-        // SetAnalyzer's bf_sz is the TX channel's DSP block (TxAnalyzer::
-        // setBlockSize), as DaemonApp and MainWindow set it on every key.
+        // SetAnalyzer follows the queued DSP resize on the transmit lane.
+        // Use its requested block size: the native readback can still hold
+        // the previous mode's size until that earlier lane job completes.
         if (m_model) {
             if (TxChannel* txc = m_model->txChannel()) {
-                m_analyzer->setBlockSize(txc->dspBlockFrames());
+                m_analyzer->setBlockSize(txc->txDspBlockSize());
             }
         }
         watchTransmitSlice();
@@ -379,7 +382,9 @@ void TxDisplayFeed::ensureMini()
     m_miniAnalyzer->setNumPixels(1024);
     m_miniAnalyzer->setOutputFps(30);
     m_miniAnalyzer->setSampleRate(96000.0);
-    m_miniAnalyzer->setBlockSize(channel->dspBlockFrames());
+    // The pending channel resize precedes this analyzer's configuration on
+    // the same lane; its requested size is the size the siphon will push.
+    m_miniAnalyzer->setBlockSize(channel->txDspBlockSize());
     m_miniAnalyzer->setView(-20'000, 20'000, 1024);
     applyMiniRxSettings();
     connect(m_miniAnalyzer.get(), &TxAnalyzer::txFftReady, this,

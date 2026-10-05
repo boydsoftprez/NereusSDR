@@ -203,6 +203,9 @@ their readouts remain unavailable; they do not create measurements or history.
 
 ## Reliability fixes
 
+- Keep Protocol 1 and 2 receive setup and timers initialized after a failed initial UDP bind, preventing a crash during the next connection attempt.
+- Match the main and mini transmit analyzers to the requested DSP block size when a mode change is queued, preventing stale analyzer geometry on the first transmission.
+- Include accepted Core automatic waterfall levels in the remote display transport range, preserving low-level detail that the previous range could clip. Saved waterfall controls are preserved; the separate brightness change when switching between Core and Clarity level ownership remains under investigation.
 - Close structured floating containers during application Quit while preserving final saved geometry and canceled-quit behavior.
 - Place the first owned receiver's flag within its newly created remote pan after the Core confirms receiver authority. Preserve pan views the operator has already moved or zoomed, and preserve listener views.
 - Send paced waterfall-level metadata even when peak hold is disabled. Metadata consumes the existing display byte budget and charges samples only when a peak-hold plane is present.
@@ -241,6 +244,13 @@ Keep existing settings and profiles; let the application perform its migrations.
 ## Alpha status and remaining checks
 
 This remains an alpha release. Software and package checks will be reported from the exact final commit; they do not substitute for every radio, operating system or on-air acceptance matrix.
+
+PureSignal two-tone calibration retains an open transmit-stream continuity
+investigation: development captures show gaps in the host-generated TX-I/Q
+stream during both first and repeated two-tone runs. Receive restoration
+after unkeying has not completed physical-radio validation. The saved Auto
+startup/rejoin repair does not close either item. Reported waterfall
+brightness changes after clicking a slice flag remain under investigation.
 
 Cross-radio TNF listening, NNR quality, PureSignal RF improvement, RADE on-air interoperability, sustained SBC operation, accessory bench matrices and remaining native UI interactions retain their recorded pending status until exact evidence closes them. CW transmit, FM pre-emphasis, CAT/rigctld, skin import and WAV/IQ recording are not advertised as delivered here. The legacy PS-RX/PS-TX spectrum view remains explicitly unavailable. High-resolution trackpad gesture handling remains under review.
 

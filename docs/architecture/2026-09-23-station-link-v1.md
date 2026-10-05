@@ -4036,6 +4036,15 @@ Each point:
   An app draws the points as sent and never reorders them. The Core hands
   WDSP the saved order without the spacing. For every curve the dialog or
   Thetis saved, the two are the same.
+- **Changing Low or High in the editor.** Move every point with the ends,
+  as the desktop editor does. For a point at `f`, keep its share of the old
+  span: `t = clamp((f - oldMinHz) / (oldMaxHz - oldMinHz), 0, 1)`, then set
+  `f = newMinHz + t * (newMaxHz - newMinHz)`. Preserve the point's gain and Q,
+  the preamp and Use Q Factors. Apply the ordering and spacing rules above
+  to the edited curve before sending the whole curve. This is an edit, not
+  a change to how a received Core curve is drawn. If the new ends are not
+  finite or Low is not below High, do not rescale the existing points; the
+  Core validates the submitted range and supplies its refusal reason.
 - **Drawing it.** The dialog's line at frequency `f`, from `minHz` to
   `maxHz` on a -24 to 24 dB scale, is the response at `f` plus
   `preampDb`:
