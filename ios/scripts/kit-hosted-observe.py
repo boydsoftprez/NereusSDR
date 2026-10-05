@@ -1,0 +1,789 @@
+#!/usr/bin/env python3
+# NereusSDR: isolated hosted Kit observation; no retries or workload changes
+# SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+import datetime
+import hashlib
+import json
+import os
+import re
+from pathlib import Path
+import signal
+import subprocess
+import tempfile
+import threading
+import time
+
+BASE = '021ddf6cd01be33ecb927093ac4057a7460f91e8'
+ROOT = Path(__file__).resolve().parents[2]
+SOURCE = ROOT / 'ios/NereusKit'
+SAMPLE_OUTPUT_LIMIT = 16 * 1024 * 1024
+AGGREGATE_PRODUCT_LIMIT = 128 * 1024 * 1024
+
+# No production exception: Sources, vendor, package and wrapper match shipping.
+DIAGNOSTIC_PRODUCTION_PATHS = frozenset()
+DIAGNOSTIC_PRODUCTION_HASHES = {}
+
+
+def stamp():
+    return {'utc': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'monotonic': time.monotonic()}
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def names_helper_product(args, helper, products):
+    fields = args.split()
+    flag = '--test-bundle-path'
+    if not fields or fields[0] != helper or fields.count(flag) != 1 or any(f.startswith('--list-tests') for f in fields):
+        return None
+    index = fields.index(flag)
+    if index + 1 >= len(fields) or fields[index + 1] not in products:
+        return None
+    if fields.count('--testing-library') != 1:
+        return None
+    library = fields.index('--testing-library')
+    if library + 1 >= len(fields) or fields[library + 1] != 'swift-testing':
+        return None
+    product = fields[index + 1]
+    if not product.endswith('/NereusKitPackageTests.xctest/Contents/MacOS/NereusKitPackageTests'):
+        return None
+    return product
+
+
+def helper_phase(args, helper, products):
+    fields = args.split()
+    discovery = fields.count('--list-tests')
+    if discovery > 1 or any(f.startswith('--list-tests') and f != '--list-tests' for f in fields):
+        return None
+    stripped = ' '.join(f for f in fields if f != '--list-tests')
+    product = names_helper_product(stripped, helper, products)
+    if product is None:
+        return None
+    return ('discovery' if discovery else 'execution', product)
+
+
+def same_identity(expected, current):
+    return (expected is not None and current is not None
+            and all(expected[k] == current[k] for k in ('pid', 'lstart', 'image', 'pgid')))
+
+
+def owned_descendants(snapshot, wrapper_pid):
+    owned = {wrapper_pid}
+    while True:
+        extra = {pid for pid, row in snapshot.items() if row['ppid'] in owned}
+        if extra <= owned:
+            return owned
+        owned |= extra
+
+
+def snapshot_processes():
+    text = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,pgid=,lstart=,comm='], text=True)
+    result = {}
+    for line in text.splitlines():
+        fields = line.strip().split(None, 8)
+        if len(fields) == 9:
+            pid, ppid, pgid = map(int, fields[:3])
+            result[pid] = {'pid': pid, 'ppid': ppid, 'pgid': pgid,
+                           'lstart': ' '.join(fields[3:8]), 'image': fields[8]}
+    return result
+
+
+def same_observation(a, b):
+    return same_identity(a, b) and a['ppid'] == b['ppid']
+
+
+def current_chain(snapshot, wrapper, pid):
+    if wrapper is None or not same_observation(wrapper, snapshot.get(wrapper['pid'])):
+        return None
+    chain, visited = [], set()
+    while pid not in visited:
+        row = snapshot.get(pid)
+        if row is None:
+            return None
+        chain.append(row)
+        if pid == wrapper['pid']:
+            return chain
+        visited.add(pid)
+        pid = row['ppid']
+    return None
+
+
+def consistent_chain(before, after, wrapper, pid):
+    first, last = current_chain(before, wrapper, pid), current_chain(after, wrapper, pid)
+    if (first is None or last is None or len(first) != len(last)
+            or not all(same_observation(a, b) for a, b in zip(first, last))):
+        return None
+    return last
+
+
+def admit_owned(before, after, wrapper, pid, args, helper, available):
+    chain = consistent_chain(before, after, wrapper, pid)
+    if chain is None or not args or args.split()[0] != chain[0]['image']:
+        return None
+    runner = chain[0]['image'] == helper
+    if runner and helper_phase(args, helper, available) is None:
+        return None
+    if (not runner and ('swiftpm-testing-helper' in chain[0]['image']
+                        or '.xctest/Contents/MacOS/' in chain[0]['image'])):
+        return None
+    return {'identity': chain[0], 'args': args, 'chain': chain, 'runner': runner}
+
+
+def cleanup_disposition(record, before, after, wrapper, args, helper, available):
+    expected = record['identity']
+    first, last = before.get(expected['pid']), after.get(expected['pid'])
+    if not same_identity(expected, first) or not same_observation(first, last) or args != record['args']:
+        return None
+    if record['runner'] and helper_phase(args, helper, available) is None:
+        return None
+    chain = consistent_chain(before, after, wrapper, expected['pid'])
+    if chain is not None:
+        # A different live chain never inherits the original admission.
+        if [r['pid'] for r in chain] != [r['pid'] for r in record['chain']]:
+            return None
+        if not all(same_identity(a, b) for a, b in zip(chain, record['chain'])):
+            return None
+        return 'current verified chain'
+    # Only a previously admitted lifetime can become an explicit orphan.
+    # An unknown PID or a live replacement parent is never admitted here.
+    if expected['pid'] != wrapper['pid'] and last['ppid'] == 1 and len(record['chain']) > 1:
+        parent = record['chain'][1]
+        if parent['pid'] not in before and parent['pid'] not in after:
+            return 'previously verified orphan; original parent absent'
+    return None
+
+
+def read_args(pid):
+    try:
+        return subprocess.check_output(['ps', '-p', str(pid), '-o', 'args='], text=True).strip()
+    except subprocess.CalledProcessError:
+        return ''
+
+
+def observe_owned(wrapper, pid, helper, available, observation=None):
+    before = snapshot_processes()
+    if current_chain(before, wrapper, pid) is None:
+        return None
+    args = read_args(pid)
+    after = snapshot_processes()
+    if observation is not None:
+        observation.update(before=before.get(pid), after=after.get(pid), args=args)
+    return admit_owned(before, after, wrapper, pid, args, helper, available)
+
+
+def token_overlap(tail, chunk, token=b'Test run started.'):
+    data = tail + chunk
+    return data.count(token), data[-(len(token) - 1):]
+
+
+def sampler_argv(pid, output):
+    # Documented options only. This does not disable all symbolication.
+    return ['/usr/bin/sample', str(pid), '1', '10', '-file', str(output)]
+
+
+def sample_output_failure(metadata, completed=False):
+    try:
+        for key in ('sample_file', 'command_log'):
+            path = Path(metadata[key])
+            if path.is_symlink() or (path.exists() and not path.is_file()):
+                return 'sampler output is not an owned regular file'
+            size = path.stat().st_size if path.exists() else 0
+            metadata[key + '_bytes'] = size
+            if size > SAMPLE_OUTPUT_LIMIT:
+                return 'sampler output exceeded 16-MiB artifact cap'
+        if completed and metadata['sample_file_bytes'] == 0:
+            return 'sampler completed without a nonempty sample report'
+    except (OSError, KeyError, TypeError) as error:
+        return 'sampler output validation failed: ' + repr(error)
+    return None
+
+
+def retain_sample_outputs(metadata, out):
+    # Raw writers stay outside the upload directory. Even an unknown surviving
+    # writer cannot grow this bounded snapshot. Prefixes are explicit failures.
+    for key in ('sample_file', 'command_log'):
+        path = Path(metadata[key])
+        if path.is_symlink() or not path.is_file():
+            raise OSError('expected sampler ' + key + ' is missing, symlinked or nonregular')
+        destination = out / metadata[key + '_artifact']
+        if destination.parent != out:
+            raise OSError('sampler artifact path escaped output directory')
+        with path.open('rb') as original, destination.open('xb') as retained:
+            remaining = SAMPLE_OUTPUT_LIMIT
+            while remaining:
+                chunk = original.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                retained.write(chunk)
+                remaining -= len(chunk)
+        metadata[key + '_retained_bytes'] = destination.stat().st_size
+        if (key == 'sample_file' and metadata.get('exit') == 0 and not metadata.get('failed_guard')
+                and metadata[key + '_retained_bytes'] == 0):
+            raise OSError('successful sampler has no nonempty retained report')
+        size = path.stat().st_size
+        if size > SAMPLE_OUTPUT_LIMIT:
+            metadata.setdefault('failed_guard', 'sampler output exceeded 16-MiB artifact cap')
+            metadata.setdefault('failed_artifact_prefixes', {})[key] = {'original_bytes': size,
+                                                                      'retained_bytes': SAMPLE_OUTPUT_LIMIT}
+
+
+def retain_aggregate_product(test, before, after, out):
+    if test is None or not before or before != after or test['product'] not in before:
+        raise RuntimeError('aggregate product lacks matching admitted before/after pins')
+    source = Path(test['product'])
+    if source.is_symlink() or not source.is_file():
+        raise RuntimeError('aggregate product is not a regular file')
+    size = source.stat().st_size
+    if size == 0:
+        raise RuntimeError('aggregate product is empty')
+    if size > AGGREGATE_PRODUCT_LIMIT:
+        raise RuntimeError('aggregate product exceeded 128-MiB artifact cap')
+    destination = out / 'aggregate-product-Mach-O'
+    copied = 0
+    computed = hashlib.sha256()
+    created = False
+    try:
+        with source.open('rb') as original, destination.open('xb') as retained:
+            created = True
+            while chunk := original.read(1024 * 1024):
+                copied += len(chunk)
+                if copied > AGGREGATE_PRODUCT_LIMIT:
+                    raise RuntimeError('aggregate product grew beyond 128-MiB artifact cap')
+                computed.update(chunk)
+                retained.write(chunk)
+        expected = before[test['product']]
+        if computed.hexdigest() != expected or digest(destination) != expected:
+            raise RuntimeError('retained aggregate product does not match sealed product')
+    except Exception:
+        if created:
+            destination.unlink(missing_ok=True)
+        raise
+    return {'source': str(source), 'artifact': destination.name, 'bytes': copied, 'sha256': expected}
+
+
+def service_sampler(child, metadata, receipt, deadline, final=False,
+                    clock=time.monotonic, get_identity=None, get_args=None):
+    get_identity = identity if get_identity is None else get_identity
+    get_args = read_args if get_args is None else get_args
+    if 'exit' in metadata or 'failed_guard' in metadata:
+        return
+    remaining = deadline - clock()
+    if final and child.poll() is None and remaining > 0:
+        try:
+            child.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            pass
+    code = child.poll()
+    output_failure = sample_output_failure(metadata, completed=code == 0)
+    if code is not None and clock() <= deadline:
+        metadata['exit'] = code
+        metadata['observed_finished'] = stamp()
+        if code != 0:
+            metadata['failed_guard'] = 'sampler returned nonzero'
+            receipt['failed_guard'] = metadata['failed_guard']
+        elif output_failure:
+            metadata['failed_guard'] = output_failure
+            receipt['failed_guard'] = output_failure
+        return
+    if clock() < deadline and not output_failure:
+        return
+    metadata['failed_guard'] = output_failure or 'sampler processing exceeded original 10-second deadline'
+    receipt['failed_guard'] = metadata['failed_guard']
+    for action in ('terminate', 'kill'):
+        current = get_identity(child.pid)
+        args = get_args(child.pid) if same_identity(metadata['sampler_identity'], current) else ''
+        last = get_identity(child.pid)
+        if (not same_observation(current, last) or not same_identity(metadata['sampler_identity'], current)
+                or current['ppid'] != os.getpid() or args != metadata['sampler_args']):
+            metadata['cleanup_rejected'] = current
+            return
+        if child.poll() is not None:
+            metadata['exit'] = child.poll()
+            return
+        getattr(child, action)()
+        try:
+            metadata['exit'] = child.wait(timeout=2)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+    metadata['survived_cleanup'] = True
+
+def identity(pid):
+    try:
+        text = subprocess.check_output(['ps', '-p', str(pid), '-o', 'lstart=', '-o', 'ppid=',
+                                        '-o', 'pgid=', '-o', 'comm='], text=True)
+    except subprocess.CalledProcessError:
+        return None
+    fields = text.strip().split(None, 7)
+    if len(fields) != 8:
+        return None
+    return {'pid': pid, 'lstart': ' '.join(fields[:5]), 'ppid': int(fields[5]),
+            'pgid': int(fields[6]), 'image': fields[7]}
+
+
+def source_manifest():
+    return {str(p.relative_to(ROOT)): digest(p) for p in SOURCE.rglob('*')
+            if p.is_file() and '.build' not in p.parts and '.swiftpm' not in p.parts}
+
+
+def production_hash_mismatches(expected, actual, approved):
+    # No broad Sources exception, missing file, or newly introduced file is admitted.
+    if set(approved) != DIAGNOSTIC_PRODUCTION_PATHS or not set(approved).issubset(expected):
+        return ['invalid diagnostic production allowlist paths']
+    if any(len(value) != 64 or any(c not in '0123456789abcdef' for c in value) for value in approved.values()):
+        return ['invalid diagnostic production allowlist hashes']
+    return sorted(name for name in set(expected) | set(actual)
+                  if name not in expected or name not in actual
+                  or actual[name] != approved.get(name, expected.get(name)))
+
+
+def production_matches_base(manifest):
+    names = subprocess.check_output(['git', 'ls-tree', '-r', '--name-only', BASE,
+                                    'ios/NereusKit/Sources', 'ios/NereusKit/Package.swift',
+                                    'ios/scripts/swift-test.sh'], cwd=ROOT, text=True).splitlines()
+    expected = {name: hashlib.sha256(subprocess.check_output(['git', 'show', BASE + ':' + name], cwd=ROOT)).hexdigest()
+                for name in names}
+    actual_sources = {name for name in manifest if '/Sources/' in name}
+    actual = {}
+    for name in set(names) | actual_sources:
+        path = ROOT / name
+        if name in manifest: actual[name] = manifest[name]
+        elif path.is_file(): actual[name] = digest(path)
+    return production_hash_mismatches(expected, actual, DIAGNOSTIC_PRODUCTION_HASHES)
+
+
+def products():
+    build = SOURCE / '.build'
+    return {str(p.resolve()): digest(p) for p in build.rglob('*') if p.is_file()
+            and p.parent.name == 'MacOS' and p.parent.parent.name == 'Contents'
+            and p.parent.parent.parent.suffix == '.xctest'}
+
+
+def selected_helper():
+    swift = Path(subprocess.check_output(['xcrun', '--find', 'swift'], text=True).strip())
+    helper = swift.parent.parent / 'libexec/swift/pm/swiftpm-testing-helper'
+    if not helper.is_file():
+        raise RuntimeError('selected toolchain has no recognized testing helper')
+    return str(helper)
+
+
+def write_json(out, name, value):
+    (out / name).write_text(json.dumps(value, indent=2, sort_keys=True) + '\n')
+
+
+def cleanup_owned(proc, known, receipt, helper, available):
+    wrapper = receipt['wrapper']
+    snapshot = snapshot_processes()
+    owned = owned_descendants(snapshot, proc.pid)
+    receipt['cleanup_unknown'] = [snapshot[p] for p in owned if p in snapshot and p not in known]
+    receipt.setdefault('cleanup_actions', [])
+    receipt.setdefault('cleanup_rejected', [])
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid, record in sorted(known.items(), reverse=True):
+            before = snapshot_processes()
+            if not same_identity(record['identity'], before.get(pid)):
+                continue
+            args = read_args(pid)
+            after = snapshot_processes()
+            disposition = cleanup_disposition(record, before, after, wrapper, args, helper, available)
+            if disposition is None:
+                receipt['cleanup_rejected'].append({'record': record, 'current': after.get(pid), 'args': args})
+                continue
+            try:
+                os.kill(pid, sig)
+                receipt['cleanup_actions'].append({'identity': record['identity'], 'signal': int(sig),
+                                                    'disposition': disposition})
+            except ProcessLookupError:
+                pass
+        if sig == signal.SIGTERM:
+            end = time.monotonic() + 5
+            while time.monotonic() < end and any(same_identity(v['identity'], identity(p)) for p, v in known.items()):
+                time.sleep(0.1)
+    receipt['cleanup_survivors'] = [v for p, v in known.items() if same_identity(v['identity'], identity(p))]
+    current = snapshot_processes()
+    receipt['unknown_survivors'] = [row for row in receipt['cleanup_unknown'] if same_identity(row, current.get(row['pid']))]
+
+def numeric_receipts(raw):
+    # Current test-local schemas: ConnectDeadlineFromDialTests.swift:518-544
+    # and DtlsFingerprintTests.swift:109-193 at cfaca3f. Timestamps below are
+    # producer durations, never console emission times; integers stay exact.
+    parsed = {'opening': [], 'dtls': [], 'errors': [], 'omitted_records': 0}
+    opening_marker = 'OPENING_PHASE_RECEIPT'
+    dtls_marker = 'DTLS_PHASE_RECEIPT'
+
+    def integer(value, low, high):
+        return type(value) is int and low <= value <= high
+
+    def matrix(text, width, count):
+        rows = [[int(value) for value in row.split(',')] for row in text.split(';')]
+        if (len(rows) != count or any(len(row) != width for row in rows)
+                or any(not integer(value, 0, 2**63 - 1) for row in rows for value in row)):
+            raise ValueError('invalid numeric counter matrix')
+        return rows
+
+    for line_number, line in enumerate(raw.splitlines(), 1):
+        opening_count = line.count(opening_marker)
+        dtls_count = line.count(dtls_marker)
+        if not opening_count and not dtls_count:
+            continue
+        try:
+            if opening_count + dtls_count != 1:
+                raise ValueError('multiple markers on one stdout line')
+            if opening_count:
+                value = json.loads(line.split(opening_marker, 1)[1].strip())
+                if not isinstance(value, list) or len(value) != 3:
+                    raise ValueError('invalid opening receipt envelope')
+                case_id, omitted, records = value
+                if (not integer(case_id, 1, 6) or not integer(omitted, 0, 2**63 - 1)
+                        or not isinstance(records, list) or not 1 <= len(records) <= 64):
+                    raise ValueError('invalid opening case, omission or 64-record cap')
+                previous = (0, 0)
+                for record in records:
+                    if (not isinstance(record, list) or len(record) != 3
+                            or not integer(record[0], 0, 255)
+                            or not integer(record[1], 0, 2**63 - 1)
+                            or not integer(record[2], 0, 10**18 - 1)):
+                        raise ValueError('invalid opening numeric phase or duration')
+                    elapsed = (record[1], record[2])
+                    if elapsed < previous:
+                        raise ValueError('opening timestamps are out of append order')
+                    previous = elapsed
+                parsed['opening'].append({'case': case_id, 'cap': 64,
+                                          'omitted': omitted, 'records': records})
+            else:
+                value = line.split(dtls_marker, 1)[1].strip()
+                match = re.fullmatch(r'version=1 cap=128 omitted=([0-9]+) records=([-0-9,;]*) '
+                                     r'event_counts=([0-9,;]+) candidate_counts=([0-9,;]+) native_getters=0', value)
+                if match is None:
+                    raise ValueError('invalid DTLS version, cap, fields or native_getters guard')
+                omitted = int(match[1])
+                records = [[int(field) for field in row.split(',')] for row in match[2].split(';')]
+                if not integer(omitted, 0, 2**63 - 1) or not 1 <= len(records) <= 128:
+                    raise ValueError('invalid DTLS omission or 128-record cap')
+                previous = 0
+                for record in records:
+                    if (len(record) != 8 or not integer(record[0], 0, 2**64 - 1)
+                            or not integer(record[1], 0, 1) or not integer(record[2], 1, 11)
+                            or not integer(record[3], 0, 2) or not integer(record[4], 0, 11)
+                            or any(not integer(field, -(2**63), 2**63 - 1) for field in record[5:])):
+                        raise ValueError('invalid DTLS numeric timestamp or observation fields')
+                    if record[0] < previous:
+                        raise ValueError('DTLS timestamps are out of sorted order')
+                    previous = record[0]
+                events = matrix(match[3], 11, 2)
+                candidates = matrix(match[4], 5, 2)
+                parsed['dtls'].append({'version': 1, 'cap': 128, 'omitted': omitted,
+                                       'records': records, 'event_counts': events,
+                                       'candidate_counts': candidates, 'native_getters': 0})
+            parsed['omitted_records'] += omitted
+        except (ValueError, TypeError, RecursionError) as error:
+            parsed['errors'].append({'line': line_number, 'error': str(error)})
+    cases = [item['case'] for item in parsed['opening']]
+    if sorted(cases) != list(range(1, 7)):
+        parsed['errors'].append({'error': 'opening receipts must cover each case 1..6 exactly once',
+                                 'observed_cases': cases})
+    if len(parsed['dtls']) != 1:
+        parsed['errors'].append({'error': 'exactly one DTLS receipt is required',
+                                 'observed_count': len(parsed['dtls'])})
+    if parsed['omitted_records']:
+        parsed['errors'].append({'error': 'producer explicitly omitted records',
+                                 'omitted_records': parsed['omitted_records']})
+    parsed['format_valid'] = not parsed['errors']
+    return parsed
+
+
+def sampling_policy(environment):
+    value = environment.get('KIT_HOSTED_SAMPLE_MODE', '1')
+    if value not in ('0', '1'):
+        raise ValueError('KIT_HOSTED_SAMPLE_MODE must be exactly 0 or 1')
+    return {'mode': value, 'enabled': value == '1',
+            'configured_by': 'environment' if 'KIT_HOSTED_SAMPLE_MODE' in environment else 'default',
+            'scope': 'receipts-only' if value == '0' else 'receipts-and-owned-process-samples',
+            'sample_thresholds_seconds': [10, 20], 'maximum_samples': 0 if value == '0' else 2,
+            'sample_duration_seconds': 1, 'sample_interval_milliseconds': 10,
+            'sampler_processing_bound_seconds': 10}
+
+
+def main():
+    out = Path(tempfile.mkdtemp(prefix='kit-hosted-observe-', dir=os.environ.get('RUNNER_TEMP')))
+    if os.environ.get('GITHUB_ENV'):
+        with open(os.environ['GITHUB_ENV'], 'a') as env:
+            env.write('KIT_HOSTED_ARTIFACT_DIR=' + str(out) + '\n')
+    print('Kit diagnostic artifact directory: ' + str(out), flush=True)
+    before = source_manifest()
+    write_json(out, 'source-before.json', before)
+    unchanged = production_matches_base(before)
+    receipt = {'start': stamp(), 'argv': ['ios/scripts/swift-test.sh'], 'source_count': len(before),
+               'base': BASE, 'production_mismatches': unchanged,
+               'approved_diagnostic_production_hashes': dict(DIAGNOSTIC_PRODUCTION_HASHES),
+               'diagnostic_production_hashes_before': {name: before.get(name) for name in DIAGNOSTIC_PRODUCTION_PATHS},
+               'original_production_hashes': {name: hashlib.sha256(subprocess.check_output(['git', 'show', BASE + ':' + name], cwd=ROOT)).hexdigest() for name in DIAGNOSTIC_PRODUCTION_PATHS},
+               'samples': [], 'owned_processes': [],
+               'processor_count': os.cpu_count(), 'load_before': os.getloadavg(),
+               'python_monotonic_clock_info': vars(time.get_clock_info('monotonic'))}
+    try:
+        sampling = sampling_policy(os.environ)
+        receipt['sampling_policy'] = sampling
+    except ValueError as error:
+        receipt['sampling_mode_requested'] = os.environ.get('KIT_HOSTED_SAMPLE_MODE')
+        receipt['failed_guard'] = str(error)
+        write_json(out, 'receipt.json', receipt)
+        raise
+    for label, argv in [('swift', ['swift', '--version']), ('xcode', ['xcodebuild', '-version']),
+                        ('developer', ['xcode-select', '-p']), ('os', ['sw_vers']),
+                        ('head', ['git', 'rev-parse', 'HEAD'])]:
+        receipt[label] = subprocess.check_output(argv, cwd=ROOT, text=True).strip()
+    write_json(out, 'receipt.json', receipt)
+    if unchanged:
+        raise RuntimeError('production/vendor/package/wrapper differs from frozen base')
+    helper = selected_helper()
+    if not receipt['swift'].startswith('Apple Swift version 6.3.3 '):
+        raise RuntimeError('hosted compiler differs from the requested Swift 6.3.3 observation')
+    receipt['selected_helper'] = helper
+    environment = dict(os.environ)
+    proc = subprocess.Popen(receipt['argv'], cwd=ROOT, env=environment, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, start_new_session=True)
+    receipt['wrapper'] = identity(proc.pid)
+    initial = observe_owned(receipt['wrapper'], proc.pid, helper, {})
+    if initial is None:
+        receipt['unknown_wrapper_survivor'] = identity(proc.pid)
+        receipt['failed_guard'] = 'wrapper lifetime/ancestry could not be admitted'
+        write_json(out, 'receipt.json', receipt)
+        raise RuntimeError('unknown wrapper; no signal authorized')
+    known = {proc.pid: initial}
+    output = {'run_starts': 0}
+    output_lock = threading.Lock()
+
+    def reader():
+        pending = b''
+        with (out / 'raw.log').open('wb') as log:
+            while True:
+                chunk = proc.stdout.read1(65536)
+                if not chunk:
+                    break
+                log.write(chunk)
+                log.flush()
+                count, pending = token_overlap(pending, chunk)
+                with output_lock:
+                    output['run_starts'] += count
+                # Console emission is explicitly not an occurrence timestamp.
+                print(chunk.decode('utf-8', errors='replace'), end='', flush=True)
+
+    reading = threading.Thread(target=reader, daemon=True)
+    reading.start()
+    began = time.monotonic()
+    test = None
+    test_start = None
+    samples = []
+    sample_numbers = set()
+    failure = None
+    try:
+        while proc.poll() is None:
+            now = time.monotonic()
+            if now - began > 1200:
+                failure = 'wrapper/compile exceeded 20-minute failed backstop'
+                break
+            snapshot = snapshot_processes()
+            owned = owned_descendants(snapshot, proc.pid)
+            for pid in sorted(owned):
+                if pid in snapshot and pid not in known:
+                    candidate = observe_owned(receipt['wrapper'], pid, helper, products() if snapshot[pid]['image'] == helper else {})
+                    if candidate is not None:
+                        known[pid] = candidate
+                        receipt['owned_processes'].append({'record': candidate, 'observed': stamp()})
+            helpers = [snapshot[p] for p in owned if p in snapshot and snapshot[p]['image'] == helper]
+            unknown = [snapshot[p] for p in owned if p in snapshot
+                       and ('swiftpm-testing-helper' in snapshot[p]['image'] or '.xctest/Contents/MacOS/' in snapshot[p]['image'])
+                       and snapshot[p]['image'] != helper]
+            if unknown or len(helpers) > 1:
+                receipt['unknown_graph'] = unknown + helpers
+                receipt['unknown_owned_arguments'] = []
+                for row in unknown + helpers:
+                    first = snapshot_processes()
+                    if current_chain(first, receipt['wrapper'], row['pid']) is not None:
+                        args = read_args(row['pid'])
+                        last = snapshot_processes()
+                        if consistent_chain(first, last, receipt['wrapper'], row['pid']) is not None:
+                            receipt['unknown_owned_arguments'].append({'identity': last[row['pid']], 'args': args})
+                failure = 'unknown or multiple test runners'
+                break
+            if helpers and test is None:
+                candidate = helpers[0]
+                available = products()
+                attempt = {}
+                observed = observe_owned(receipt['wrapper'], candidate['pid'], helper, available, attempt)
+                if observed is None:
+                    # A disappearing discovery helper is not a replacement lifetime.
+                    if identity(candidate['pid']) is None:
+                        continue
+                    receipt['unrecognized_runner'] = {'candidate': candidate, 'products': available, 'observation': attempt}
+                    failure = 'runner lifetime/current ancestry/argv not recognized'
+                    break
+                first = last = observed['identity']
+                args = observed['args']
+                phase = helper_phase(args, helper, available)
+                if len(available) != 1 or phase is None:
+                    receipt['unrecognized_runner'] = {'before': first, 'after': last, 'args': args, 'products': available}
+                    failure = 'runner identity/argv does not name one exact aggregate product'
+                    break
+                if candidate['pid'] in known and not same_identity(known[candidate['pid']]['identity'], last):
+                    failure = 'runner PID replaced an admitted lifetime'
+                    break
+                known[candidate['pid']] = observed
+                if phase[0] == 'discovery':
+                    # Discovery is not test execution, even when it uses the
+                    # same executable and --testing-library token.
+                    receipt.setdefault('discovery_helpers', {})[str(first['pid'])] = {'identity': first, 'args': args}
+                    time.sleep(0.1)
+                    continue
+                product = phase[1]
+                if not same_identity(first, last) or len(available) != 1 or product is None:
+                    receipt['unrecognized_runner'] = {'before': first, 'after': last, 'args': args, 'products': available}
+                    failure = 'runner identity/argv does not name one exact aggregate product'
+                    break
+                test = {'identity': last, 'args': args, 'product': product}
+                test_start = time.monotonic()
+                receipt['test'] = test
+                receipt['test_verified'] = stamp()
+                receipt['products_before_test_measurement'] = available
+                write_json(out, 'products-before-test.json', available)
+                print('Kit aggregate test identity verified', flush=True)
+            with output_lock:
+                starts = output['run_starts']
+            if starts > 1:
+                failure = 'more than one aggregate test run'
+                break
+            if test is not None:
+                age = now - test_start
+                if age > 120:
+                    failure = 'verified test exceeded 120-second failed backstop'
+                    break
+                for number, threshold in [(1, 10), (2, 20)]:
+                    if not sampling['enabled']:
+                        continue
+                    if age < threshold or number in sample_numbers:
+                        continue
+                    observed = observe_owned(receipt['wrapper'], test['identity']['pid'], helper, {test['product']})
+                    if observed is None:
+                        if identity(test['identity']['pid']) is None:
+                            continue
+                        failure = 'test current ownership/argv changed before sample'
+                        break
+                    current, args = observed['identity'], observed['args']
+                    if (not same_identity(test['identity'], current)
+                            or names_helper_product(args, helper, {test['product']}) != test['product']):
+                        failure = 'test arguments/identity changed before sample'
+                        break
+                    sample_numbers.add(number)
+                    private_sample = Path(tempfile.mkdtemp(prefix='kit-sample-private-', dir=out.parent))
+                    sample_name = 'sample-' + str(number) + '.txt'
+                    command_name = 'sample-' + str(number) + '-command.log'
+                    sample_file = private_sample / sample_name
+                    command_log = private_sample / command_name
+                    argv = sampler_argv(current['pid'], sample_file)
+                    handle = command_log.open('wb')
+                    sample_deadline = time.monotonic() + 10
+                    child = subprocess.Popen(argv, stdout=handle, stderr=subprocess.STDOUT, start_new_session=True)
+                    metadata = {'number': number, 'argv': argv, 'start': stamp(), 'verified_test': current,
+                                'verified_args': args, 'sampler_identity': identity(child.pid),
+                                'deadline_monotonic': sample_deadline,
+                                'sample_file': str(sample_file), 'command_log': str(command_log),
+                                'sample_file_artifact': sample_name, 'command_log_artifact': command_name,
+                                'output_limit_bytes': SAMPLE_OUTPUT_LIMIT}
+                    metadata['sampler_args'] = read_args(child.pid)
+                    admitted_sampler = identity(child.pid)
+                    if (not same_observation(metadata['sampler_identity'], admitted_sampler)
+                            or admitted_sampler['ppid'] != os.getpid()
+                            or metadata['sampler_args'].split() != argv):
+                        metadata['failed_guard'] = 'sampler lifetime/argv could not be admitted; no signal authorized'
+                        receipt['failed_guard'] = metadata['failed_guard']
+                        failure = metadata['failed_guard']
+                    samples.append((child, handle, metadata, sample_deadline))
+            for child, _, metadata, deadline in samples:
+                service_sampler(child, metadata, receipt, deadline)
+                if metadata.get('failed_guard'):
+                    failure = metadata['failed_guard']
+            if failure:
+                break
+            if now - began > 1200:
+                failure = 'wrapper/compile exceeded 20-minute failed backstop'
+                break
+            # A logged run without a recognized helper may never inherit compile budget.
+            if starts and test is None:
+                failure = 'test started without a verified aggregate helper'
+                break
+            time.sleep(0.1)
+    except Exception as error:
+        failure = 'observation exception: ' + repr(error)
+    finally:
+        if failure:
+            receipt['failed_guard'] = failure
+            cleanup_owned(proc, known, receipt, helper, products())
+        try:
+            receipt['exit'] = proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            receipt['failed_guard'] = 'wrapper survived verified cleanup'
+        reading.join(timeout=5)
+        if reading.is_alive():
+            receipt['failed_guard'] = 'output reader did not close'
+        for child, handle, metadata, deadline in samples:
+            service_sampler(child, metadata, receipt, deadline, final=True)
+            if child.poll() is None:
+                metadata['unknown_or_surviving_sampler'] = identity(child.pid)
+                receipt['failed_guard'] = 'sampler survived or could not be verified for cleanup'
+            handle.close()
+            try:
+                retain_sample_outputs(metadata, out)
+            except OSError as error:
+                metadata['failed_guard'] = metadata.get('failed_guard') or 'sampler artifact bounding failed: ' + repr(error)
+            if metadata.get('failed_guard'):
+                receipt['failed_guard'] = receipt.get('failed_guard') or metadata['failed_guard']
+            receipt['samples'].append(metadata)
+        surviving = [v for p, v in known.items() if same_identity(v['identity'], identity(p))]
+        if surviving:
+            receipt['failed_guard'] = 'owned descendants survived wrapper termination'
+            cleanup_owned(proc, known, receipt, helper, products())
+        after = source_manifest()
+        write_json(out, 'source-after.json', after)
+        receipt['diagnostic_production_hashes_after'] = {name: after.get(name) for name in DIAGNOSTIC_PRODUCTION_PATHS}
+        receipt['sources_equal'] = before == after
+        receipt['products_after'] = products()
+        receipt['sample_output_limit_bytes'] = SAMPLE_OUTPUT_LIMIT
+        receipt['aggregate_product_limit_bytes'] = AGGREGATE_PRODUCT_LIMIT
+        try:
+            # Copy only after tests and sampler cleanup, outside test deadlines.
+            receipt['retained_aggregate_product'] = retain_aggregate_product(
+                test, receipt.get('products_before_test_measurement'), receipt['products_after'], out)
+        except Exception as error:
+            receipt['failed_guard'] = receipt.get('failed_guard') or 'aggregate retention failed: ' + repr(error)
+        receipt['end'] = stamp()
+        receipt['load_after'] = os.getloadavg()
+        raw = (out / 'raw.log').read_text(errors='replace')
+        receipt['raw_sha256'] = digest(out / 'raw.log')
+        receipt['run_starts'] = raw.count('Test run started.')
+        receipt['terminal'] = [line for line in raw.splitlines() if 'Test run with ' in line]
+        receipt['issues'] = [line for line in raw.splitlines() if 'recorded an issue' in line]
+        receipt['skips'] = [line for line in raw.splitlines() if ' skipped:' in line or ' skipped.' in line]
+        exported = numeric_receipts(raw)
+        write_json(out, 'numeric-phase-receipts.json', exported)
+        receipt['receipt_count'] = len(exported['opening']) + len(exported['dtls'])
+        receipt['receipt_format_valid'] = exported['format_valid']
+        receipt['receipt_errors'] = exported['errors']
+        receipt['omitted_records'] = exported['omitted_records']
+        receipt['diagnostic_sources_after_match_base'] = production_matches_base(after)
+        receipt['artifact_hashes'] = {str(p.relative_to(out)): digest(p) for p in out.rglob('*') if p.is_file() and p.name != 'receipt.json'}
+        write_json(out, 'receipt.json', receipt)
+    diagnostic_ok = (not receipt.get('failed_guard') and test is not None and receipt['sources_equal']
+                     and receipt['products_before_test_measurement'] == receipt['products_after']
+                     and not receipt['diagnostic_sources_after_match_base']
+                     and all(s.get('exit') == 0 and not s.get('failed_guard') for s in receipt['samples'])
+                     and receipt['run_starts'] == 1 and len(receipt['terminal']) == 1
+                     and receipt['receipt_format_valid'] and receipt['receipt_count'] == 7 and receipt['omitted_records'] == 0)
+    if not diagnostic_ok:
+        raise RuntimeError('diagnostic observation incomplete; see retained receipt')
+    return receipt['exit']
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
