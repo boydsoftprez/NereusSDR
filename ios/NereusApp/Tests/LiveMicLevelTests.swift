@@ -425,7 +425,18 @@ struct LiveMicLevelTests {
             properties: TransmitScreenTests.holder("", short: "", keyed: false)
                 + [.init(ordinal: 17, name: "stopSerial", value: .i64(0))])))
         await TransmitScreenTests.fillTransmit(station)
-        #expect(await settle(seconds: 30) { model.main.transmit.permitted && model.connection == .connected })
+        // Finish the initial media requests before a caller measures what the meter sends.
+        #expect(await settle(seconds: 30) {
+            let startupOps = Set(station.messages.compactMap { message -> String? in
+                guard case .mediaControl(let control) = message,
+                      case .string(let op)? = control.payload["op"] else {
+                    return nil
+                }
+                return op
+            })
+            return model.main.transmit.permitted && model.connection == .connected
+                && startupOps.isSuperset(of: ["start", "audio", "subscribe", "keyframe"])
+        })
         return (model, station, microphone)
     }
 
