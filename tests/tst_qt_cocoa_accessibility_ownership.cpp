@@ -15,6 +15,8 @@
 #include <QSplitter>
 #include <QTemporaryDir>
 #include "gui/applets/RxApplet.h"
+#include "gui/applets/RadeApplet.h"
+#include "core/MicProfileManager.h"
 #include "core/BoardCapabilities.h"
 #include "core/StepAttenuatorFacade.h"
 #include "models/RadioModel.h"
@@ -30,6 +32,9 @@
 #include <QStackedWidget>
 #include <QTreeWidget>
 #include <QPersistentModelIndex>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QStandardItemModel>
 #include <QSignalSpy>
 #include <QSignalBlocker>
 #include <QStandardPaths>
@@ -387,12 +392,129 @@ private slots:
             QCOMPARE(card.currentConfig().bufferSamples, config.bufferSamples);
             QCOMPARE(device->currentText(), config.deviceName + QStringLiteral(" (not available)"));
             QCOMPARE(device->count(), 2);
-            QCOMPARE(modelResets.count(), 0);
+            // The accepted DeviceCard model reset runs twice for driver
+            // rebuild + retained device selection, once for a retained-entry reload.
+            const int resetsPerRefresh = refresh == QStringLiteral("driver") ? 2 : 1;
+            QCOMPARE(modelResets.count(), (iteration + 1) * resetsPerRefresh);
             QAccessibleInterface* table = QAccessible::queryAccessibleInterface(refreshed->view());
             QVERIFY(table && table->tableInterface());
             QAccessibleInterface* selected = table->tableInterface()->cellAt(refreshed->currentIndex(), 0);
             QVERIFY(selected && selected->isValid());
             QCOMPARE(selected->text(QAccessible::Name), refreshed->currentText());
+        }
+    }
+
+    void radeProfileRefreshAfterNativePopupRebuild_data()
+    {
+        QTest::addColumn<bool>("permitted");
+        QTest::newRow("profile-permitted") << true;
+        QTest::newRow("profile-denied") << false;
+    }
+
+    void radeProfileRefreshAfterNativePopupRebuild()
+    {
+        QFETCH(bool, permitted);
+        QString reason;
+        QVERIFY2(installQtCocoaAccessibilityOwnershipGuard(&reason), qPrintable(reason));
+        QVERIFY(QStandardPaths::isTestModeEnabled());
+        QVERIFY(NereusSDR::PortAudioBus::portAudioBarredForTestRun());
+        QAccessible::setActive(true);
+        NereusSDR::RadioModel remote{NereusSDR::RadioModel::Role::Remote};
+        QVERIFY(!remote.ownsLocalDsp());
+        QVERIFY(remote.stationLink() == nullptr);
+        auto& tx = remote.transmitModel();
+        QVERIFY(tx.applyStationValue("txProfilesJson", QStringLiteral("[\"Default\",\"RADE\",\"Secondary\"]")));
+        QVERIFY(tx.applyStationValue("activeTxProfile", QStringLiteral("Default")));
+        NereusSDR::RadeApplet applet(&remote);
+        const QString deniedReason = QStringLiteral("Profile changes are unavailable during this test");
+        applet.setTxProfilePermitted(permitted, deniedReason);
+        QComboBox* const combo = applet.profileComboForTest();
+        QPushButton* const reset = applet.resetVocoderButtonForTest();
+        auto* const model = qobject_cast<QStandardItemModel*>(combo->model());
+        QVERIFY(model && reset);
+        QObject* const modelParent = model->parent();
+        QWidget* const comboParent = combo->parentWidget();
+        QCOMPARE(combo->currentText(), QStringLiteral("RADE"));
+        QCOMPARE(combo->isEnabled(), permitted);
+        QCOMPARE(reset->isEnabled(), permitted);
+        const QString tooltip = combo->toolTip();
+        const QString description = combo->accessibleDescription();
+        const QString resetTooltip = reset->toolTip();
+        const QString resetDescription = reset->accessibleDescription();
+        if (!permitted) {
+            QCOMPARE(tooltip, deniedReason);
+            QCOMPARE(description, deniedReason);
+            QCOMPARE(resetTooltip, deniedReason);
+            QCOMPARE(resetDescription, deniedReason);
+        }
+        QSignalSpy resets(model, &QAbstractItemModel::modelReset);
+        QSignalSpy activated(combo, &QComboBox::textActivated);
+        QSignalSpy indexChanges(combo, &QComboBox::currentIndexChanged);
+        QSignalSpy activeChanges(remote.micProfileManager(), &NereusSDR::MicProfileManager::activeProfileChanged);
+        QSignalSpy lists(remote.micProfileManager(), &NereusSDR::MicProfileManager::profileListChanged);
+        QSignalSpy catalogs(&tx, &NereusSDR::TransmitModel::txProfilesJsonChanged);
+        QSignalSpy rejected(&remote, &NereusSDR::RadioModel::sliceAddRejected);
+        QSignalSpy commands(&remote, &NereusSDR::RadioModel::stationCommandFinished);
+        // A refresh must tolerate expired native cells without activating a
+        // profile. Exercise the real remote catalog -> manager -> applet path.
+        const QList<QStringList> catalogsToApply = {
+            {QStringLiteral("Secondary A"), QStringLiteral("Default")},
+            {QStringLiteral("Secondary B"), QStringLiteral("RADE"), QStringLiteral("Default")},
+            {QStringLiteral("Default"), QStringLiteral("Secondary C")}
+        };
+        const QStringList selections = {QStringLiteral("Default"), QStringLiteral("RADE"), QStringLiteral("Default")};
+        QVERIFY(!applet.isVisible());
+        QVERIFY(!combo->view()->isVisible());
+        for (int iteration = 0; iteration < 3; ++iteration) {
+            const QPersistentModelIndex oldIndex(model->index(combo->currentIndex(), 0));
+            QVERIFY(oldIndex.isValid());
+            QAccessibleInterface* const table = QAccessible::queryAccessibleInterface(combo->view());
+            QVERIFY(table && table->tableInterface());
+            const QAccessible::Id tableId = QAccessible::uniqueId(table);
+            const QAccessible::Id expired = expireNativePopupCell(combo);
+            QVERIFY2(expired != 0, "Actual Cocoa row rebuild must expire the queried RADE popup cell");
+            QVERIFY(!QAccessible::accessibleInterface(expired));
+            QCOMPARE(QAccessible::accessibleInterface(tableId), table);
+            qInfo() << "Expired RADE popup cell before mirrored catalog refresh:" << expired << permitted << iteration;
+
+            const QStringList& names = catalogsToApply.at(iteration);
+            const QString json = QString::fromUtf8(QJsonDocument(QJsonArray::fromStringList(names)).toJson(QJsonDocument::Compact));
+            QVERIFY(tx.applyStationValue("txProfilesJson", json));
+
+            QCOMPARE(catalogs.count(), iteration + 1);
+            QCOMPARE(lists.count(), iteration + 1);
+            QCOMPARE(combo->model(), model);
+            QCOMPARE(model->parent(), modelParent);
+            QCOMPARE(combo->parentWidget(), comboParent);
+            QCOMPARE(model->columnCount(), 1);
+            QCOMPARE(combo->count(), names.size());
+            for (int row = 0; row < names.size(); ++row) {
+                QCOMPARE(combo->itemText(row), names.at(row));
+            }
+            QCOMPARE(combo->currentText(), selections.at(iteration));
+            QCOMPARE(remote.micProfileManager()->profileNames(), names);
+            QCOMPARE(remote.micProfileManager()->activeProfileName(), QStringLiteral("Default"));
+            QCOMPARE(tx.activeTxProfile(), QStringLiteral("Default"));
+            QCOMPARE(resets.count(), iteration + 1);
+            QVERIFY(!oldIndex.isValid());
+            QCOMPARE(activated.count(), 0);
+            QCOMPARE(indexChanges.count(), 0);
+            QCOMPARE(activeChanges.count(), 0);
+            QCOMPARE(rejected.count(), 0);
+            QCOMPARE(commands.count(), 0);
+            QVERIFY(!tx.isMox());
+            QVERIFY(!tx.isTune());
+            QCOMPARE(combo->isEnabled(), permitted);
+            QCOMPARE(reset->isEnabled(), permitted);
+            QCOMPARE(combo->toolTip(), tooltip);
+            QCOMPARE(combo->accessibleDescription(), description);
+            QCOMPARE(reset->toolTip(), resetTooltip);
+            QCOMPARE(reset->accessibleDescription(), resetDescription);
+            QCOMPARE(QAccessible::accessibleInterface(tableId), table);
+            QAccessibleInterface* const selected = table->tableInterface()->cellAt(combo->currentIndex(), 0);
+            QVERIFY(selected && selected->isValid());
+            QCOMPARE(selected->text(QAccessible::Name), selections.at(iteration));
+            qInfo() << "Verified RADE mirrored catalog refresh:" << permitted << iteration;
         }
     }
 

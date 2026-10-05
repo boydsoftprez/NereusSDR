@@ -237,6 +237,7 @@ dim at their calibrated starting points, with no invented readings or history.
 - Let new and surviving spectra/waterfalls resume after a media handover when a retired display's reply was lost. The Core still confirms the display release before its reservation is reused.
 - Preserve fresh remote VAX audio during startup and resumed streams instead of losing it during inactive-source cleanup; quiet stale audio is still discarded.
 - Improve macOS connection, preamp, audio-device, buffer, TX Input and container selectors when their contents refresh. Reconnecting and changing Settings selections preserve the chosen values without stale dropdown entries or the reproduced accessibility-cache crashes.
+- Avoid a macOS crash when the Core refreshes the RADE profile list, while preserving profile order, selection rules and transmit permissions.
 
 Other reliability work improves receiver lifetimes, audio and media recovery,
 microphone restart, shared-station authority and reconnect cleanup. The original

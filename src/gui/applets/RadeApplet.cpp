@@ -18,6 +18,9 @@
 //                the Core's RADE transmit vocoder (rade.resetVocoder),
 //                both following setTxProfilePermitted. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-05 - Reset the Qt 6.11.0 Cocoa popup model before replacing
+//                mirrored profiles, invalidating expired accessible cells.
+//                J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 #include "RadeApplet.h"
 
@@ -31,10 +34,12 @@
 #include "models/SliceModel.h"
 
 #include <QComboBox>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QStandardItemModel>
 #include <QVariant>
 #include <QVBoxLayout>
 
@@ -265,6 +270,18 @@ void RadeApplet::syncFromModel()
 
     // Repopulate combo from the live profile list.
     QSignalBlocker block(m_profileCombo);
+#if defined(Q_OS_MAC)
+    if (QGuiApplication::platformName() == QStringLiteral("cocoa")
+        && qVersion() == QStringLiteral("6.11.0")) {
+        // As in DeviceCard, reset the actual model so persistent cell indexes
+        // invalidate before accessibility clears its expired Cocoa child IDs
+        // (Qt 6.11 qstandarditemmodel.cpp:2264-2275; itemviews.cpp:645-708).
+        // These rows are deliberately replaced; no retained entries need cloning.
+        if (auto* model = qobject_cast<QStandardItemModel*>(m_profileCombo->model())) {
+            model->clear();
+        }
+    }
+#endif
     m_profileCombo->clear();
     const QStringList names = mgr->profileNames();
     for (const QString& name : names) {
