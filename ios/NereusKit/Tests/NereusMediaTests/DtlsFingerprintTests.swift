@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import Foundation
+import Darwin
 import NereusLink
 import Testing
 @testable import NereusMedia
@@ -14,13 +15,19 @@ import Testing
 /// since libdatachannel's log is process-wide.
 @Suite(.serialized) struct DtlsFingerprintTests {
     @Test func aDataChannelPeerWithAWrongFingerprintInTheOfferNeverOpensItsChannel() async throws {
+        let receipts = DtlsDiagnosticReceipts()
+        defer { receipts.printOnce() }
         let log = LogLines()
         RtcBridge.setLogSink { log.append($0) }
         defer { RtcBridge.setLogSink(nil) }
 
-        let pair = try DataChannelTestPair(wrongFingerprint: true)
+        let pair = try DataChannelTestPair(wrongFingerprint: true, observer: receipts.mark)
         defer { pair.close() }
-        try await Self.waitUntil("the answerer to fail") {
+        defer {
+            pair.diagnosticSnapshot(.finalSnapshot)
+            receipts.printOnce()
+        }
+        try await Self.waitUntil("the answerer to fail", onWait: { phase in pair.diagnosticSnapshot(phase) }) {
             pair.answererStates.contains(.failed) || pair.answererStates.contains(.closed)
         }
 
@@ -68,15 +75,19 @@ import Testing
     }
 
     private static func waitUntil(_ what: String, timeout: Duration = .seconds(10),
+                                  onWait: (@Sendable (DtlsDiagnosticReceipt.Phase) -> Void)? = nil,
                                   _ condition: () -> Bool) async throws {
         let clock = ContinuousClock()
         let deadline = clock.now + timeout
+        onWait?(.waitEntry)
         while !condition() {
             guard clock.now < deadline else {
+                onWait?(.waitTimeout)
                 throw TimedOut(description: "timed out waiting for \(what)")
             }
             try await Task.sleep(for: .milliseconds(10))
         }
+        onWait?(.waitDone)
     }
 }
 
@@ -91,5 +102,69 @@ private final class LogLines: @unchecked Sendable {
 
     var lines: [String] {
         lock.withLock { stored }
+    }
+}
+
+// Diagnostic-only collection adds clock/thread reads and lock/copy overhead.
+// It is capped and prints once before the existing pair teardown; no waits are added.
+private final class DtlsDiagnosticReceipts: @unchecked Sendable {
+    private struct Entry {
+        let elapsed: Duration
+        let threadID: UInt64
+        let mainThread: Bool
+        let receipt: DtlsDiagnosticReceipt
+    }
+    private let lock = NSLock()
+    private let clock = ContinuousClock()
+    private let started = ContinuousClock.now
+    private var entries: [Entry] = []
+    private var omitted = 0
+    private var printed = false
+
+    func mark(_ receipt: DtlsDiagnosticReceipt) {
+        lock.withLock {
+            guard !printed else { return }
+            let terminal = receipt.phase == .waitTimeout || receipt.phase == .waitDone || receipt.phase == .finalSnapshot
+            guard entries.count < (terminal ? 128 : 120) else {
+                omitted += 1
+                return
+            }
+            var threadID: UInt64 = 0
+            _ = pthread_threadid_np(nil, &threadID)
+            entries.append(Entry(elapsed: clock.now - started, threadID: threadID,
+                                 mainThread: Thread.isMainThread, receipt: receipt))
+        }
+    }
+
+    func printOnce() {
+        let snapshot: ([Entry], Int)? = lock.withLock {
+            guard !printed else { return nil }
+            printed = true
+            return (entries, omitted)
+        }
+        guard let (entries, omitted) = snapshot else { return }
+        var lines = ["KIT DTLS WRONG-FINGERPRINT RECEIPTS count=\(entries.count) omitted=\(omitted)"]
+        for (index, entry) in entries.enumerated() {
+            let r = entry.receipt
+            var fields = ["n=\(index)", "elapsed=\(entry.elapsed)", "thread=\(entry.threadID)",
+                          "main=\(entry.mainThread)", "phase=\(r.phase.rawValue)"]
+            if let value = r.side { fields.append("side=\(value.rawValue)") }
+            if let value = r.call { fields.append("call=\(value.rawValue)") }
+            if let value = r.event { fields.append("event=\(value.rawValue)") }
+            if let value = r.code { fields.append("code=\(value)") }
+            if let value = r.success { fields.append("success=\(value)") }
+            if let value = r.prefixPresent { fields.append("prefixPresent=\(value)") }
+            if let value = r.changed { fields.append("changed=\(value)") }
+            if let value = r.state { fields.append("state=\(value)") }
+            if let value = r.count { fields.append("count=\(value)") }
+            if let value = r.descriptions { fields.append("descriptions=\(value)") }
+            if let value = r.candidates { fields.append("candidates=\(value)") }
+            if let value = r.opened { fields.append("opened=\(value)") }
+            if let value = r.failed { fields.append("failed=\(value)") }
+            if let value = r.closed { fields.append("closed=\(value)") }
+            if let value = r.connected { fields.append("connected=\(value)") }
+            lines.append(fields.joined(separator: " "))
+        }
+        print(lines.joined(separator: "\n"))
     }
 }
