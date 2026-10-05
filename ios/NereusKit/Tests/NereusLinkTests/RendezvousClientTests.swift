@@ -586,7 +586,8 @@ import Testing
         #expect(start.device.name == "iPhone")
         #expect(start.device.kind == "phone")
 
-        let stored = try #require(SpakeExchange.storedData(code: code))
+        let storedResult = await TestFixtureCrypto.run { SpakeExchange.storedData(code: code) }
+        let stored = try #require(storedResult)
         let spake = SpakeExchange(role: .station)
         let step0 = try #require(spake.stationStep0(stored: stored))
         Self.toCore(.pairSpake(LinkMessage.PairSpake(step: 0, data: Base64URL.encode(step0))), connection)
