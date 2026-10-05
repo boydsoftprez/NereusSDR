@@ -4,10 +4,10 @@
 
 **Your station. Wherever you operate.**
 
-[Website](https://nereussdr.com/) · [User guide](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/manual/README.md) · [Discord](https://discord.gg/m35ERjwRe)
+[Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)
 
-Upgrading from 0.5.2? Start with the [upgrade checklist](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/guides/upgrading-to-2026.10.0.md).
-For a new station computer, follow the [Raspberry Pi OS Lite / Armbian Core install guide](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/guides/install-core-sbc.md).
+Upgrading from 0.5.2? Start with the [upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html).
+For a new station computer, follow the [Raspberry Pi OS Lite / Armbian Core install guide](https://nereussdr.com/guides/install-core-sbc.html).
 
 2026.10.0 brings together the work since 0.5.2: independent receivers, a shared
 station Core, remote desktop and native iPhone/iPad operation, IPv6-aware
@@ -125,11 +125,11 @@ session contracts serve desktop and native mobile consoles.
 
 A dedicated Debian 13/Trixie ARM64 Core package accompanies the Ubuntu
 packages. Choose the package matching your board's operating system.
-The [short SBC install guide](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/guides/install-core-sbc.md) covers flashing
+The [short SBC install guide](https://nereussdr.com/guides/install-core-sbc.html) covers flashing
 a 64-bit Raspberry Pi OS Lite or compatible Armbian Trixie image, installing
 the package with `apt`, starting the service and pairing a desktop or phone.
 
-The [user guide](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/manual/README.md)
+The [user guide](https://nereussdr.com/manual/)
 brings desktop and mobile operation together: connecting, tuning, sharing a
 Core, choosing audio, arranging your workspace, editing transmit audio and
 using station accessories. Its illustrated procedures identify the builds
@@ -276,12 +276,12 @@ import and WAV/IQ recording remain future work.
 
 | What you need | Guide |
 | --- | --- |
-| Install and connect on a computer | [Desktop setup](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/manual/01-desktop-connect.md) |
-| Operate from an iPhone or iPad | [Mobile setup](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/manual/06-iphone-connect.md) and [mobile operation](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/manual/07-iphone-operate.md) |
-| Share a Core between devices | [Shared station operation](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/manual/08-shared-core.md) |
-| Arrange applets and meters | [Customize your workspace](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/manual/10-customize.md) |
-| Set up EQ and CFC | [Transmit audio editing](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/guides/tx-eq-cfc.md) |
-| Solve a connection or audio problem | [Troubleshooting](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/manual/11-troubleshooting.md) |
+| Install and connect on a computer | [Desktop setup](https://nereussdr.com/manual/01-desktop-connect.html) |
+| Operate from an iPhone or iPad | [Mobile setup](https://nereussdr.com/manual/06-iphone-connect.html) and [mobile operation](https://nereussdr.com/manual/07-iphone-operate.html) |
+| Share a Core between devices | [Shared station operation](https://nereussdr.com/manual/08-shared-core.html) |
+| Arrange applets and meters | [Customize your workspace](https://nereussdr.com/manual/10-customize.html) |
+| Set up EQ and CFC | [Transmit audio editing](https://nereussdr.com/guides/tx-eq-cfc.html) |
+| Solve a connection or audio problem | [Troubleshooting](https://nereussdr.com/manual/11-troubleshooting.html) |
 
 Visit [nereussdr.com](https://nereussdr.com/) for the project overview and
 join [Discord](https://discord.gg/m35ERjwRe) for questions, station discussion

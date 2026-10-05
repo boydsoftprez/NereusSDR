@@ -3,8 +3,8 @@
 ## Install NereusSDR
 
 Choose the package for your computer from this release's **Assets**. Start
-with the [user guide](https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/docs/manual/README.md)
-for desktop and mobile operation, or the [upgrade checklist](https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/docs/guides/upgrading-to-2026.10.0.md)
+with the [user guide](https://nereussdr.com/manual/)
+for desktop and mobile operation, or the [upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html)
 when updating an existing station. Update the Core and desktop together.
 
 ### Linux desktop
@@ -24,7 +24,7 @@ the headless Core; the dedicated Core packages below install it as a service.
 
 For a fresh **64-bit Debian 13/Trixie** board, download
 `nereusd_@VERSION@_arm64_trixie.deb`. The
-[SBC install guide](https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/docs/guides/install-core-sbc.md)
+[SBC install guide](https://nereussdr.com/guides/install-core-sbc.html)
 walks through preparing Raspberry Pi OS Lite or compatible Armbian,
 verifying the download, installing with `apt`, starting the Core at boot
 and pairing your desktop or native iPhone/iPad console.
@@ -56,7 +56,7 @@ on first launch; verify the download before choosing More info > Run anyway.
 
 The mobile console has its own TestFlight/App Store delivery process.
 Desktop/Core assets do not install it. Follow
-[mobile setup](https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/docs/manual/06-iphone-connect.md)
+[mobile setup](https://nereussdr.com/manual/06-iphone-connect.html)
 for connecting the app to a running Core; mobile availability is announced separately.
 
 ## Verify your download
@@ -138,7 +138,7 @@ A written 3-year source offer applies independently per
 ## Help and community
 
 Explore the project at [nereussdr.com](https://nereussdr.com/), read the
-[user guide](https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/docs/manual/README.md),
+[user guide](https://nereussdr.com/manual/),
 or join [NereusSDR on Discord](https://discord.gg/m35ERjwRe) for setup questions,
 operating discussion and feedback.
 
@@ -146,5 +146,5 @@ For a problem you want tracked, open a
 [GitHub issue](https://github.com/boydsoftprez/NereusSDR/issues). Include the
 NereusSDR version, OS, radio model and firmware, protocol, whether the Core is
 local or remote, and the relevant application or Core log. The
-[troubleshooting guide](https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/docs/manual/11-troubleshooting.md)
+[troubleshooting guide](https://nereussdr.com/manual/11-troubleshooting.html)
 has the first checks to try.

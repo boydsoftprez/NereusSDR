@@ -7,7 +7,7 @@ Windows and Linux, with a native iPhone and iPad app. Keep the radio and its
 signal processing at your station, and operate from the console that suits
 you: a local desktop, another computer, or your phone or tablet.
 
-[Website](https://nereussdr.com/) · [Downloads](https://github.com/boydsoftprez/NereusSDR/releases) · [User guide](docs/manual/README.md) · [Discord](https://discord.gg/m35ERjwRe) · [Release notes](CHANGELOG.md)
+[Website](https://nereussdr.com/) · [Downloads](https://github.com/boydsoftprez/NereusSDR/releases) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe) · [Release notes](CHANGELOG.md)
 
 [![CI](https://github.com/boydsoftprez/NereusSDR/actions/workflows/ci.yml/badge.svg)](https://github.com/boydsoftprez/NereusSDR/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
@@ -18,15 +18,15 @@ you: a local desktop, another computer, or your phone or tablet.
 
 | What you want to do | Where to go |
 | --- | --- |
-| Install the desktop console and connect your radio | [Downloads](https://github.com/boydsoftprez/NereusSDR/releases) and [desktop setup](docs/manual/01-desktop-connect.md) |
-| Upgrade from 0.5.2 | [2026.10.0 upgrade checklist](docs/guides/upgrading-to-2026.10.0.md) and [release notes](CHANGELOG.md) |
-| Run the Core on a Raspberry Pi or another SBC | [Fresh Raspberry Pi OS Lite / Armbian install](docs/guides/install-core-sbc.md) |
-| Connect an iPhone or iPad | [Mobile setup](docs/manual/06-iphone-connect.md) and [mobile operation](docs/manual/07-iphone-operate.md) |
-| Arrange receivers, displays, applets and meters | [Receivers and panadapters](docs/manual/04-slices.md) and [workspace and meters](docs/manual/10-customize.md) |
-| Set up transmit audio | [Transmit setup](docs/manual/05-transmit.md) and [EQ/CFC editing](docs/guides/tx-eq-cfc.md) |
-| Get help or share your station | [Discord](https://discord.gg/m35ERjwRe), [troubleshooting](docs/manual/11-troubleshooting.md) and [GitHub Issues](https://github.com/boydsoftprez/NereusSDR/issues) |
+| Install the desktop console and connect your radio | [Downloads](https://github.com/boydsoftprez/NereusSDR/releases) and [desktop setup](https://nereussdr.com/manual/01-desktop-connect.html) |
+| Upgrade from 0.5.2 | [2026.10.0 upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html) and [release notes](CHANGELOG.md) |
+| Run the Core on a Raspberry Pi or another SBC | [Fresh Raspberry Pi OS Lite / Armbian install](https://nereussdr.com/guides/install-core-sbc.html) |
+| Connect an iPhone or iPad | [Mobile setup](https://nereussdr.com/manual/06-iphone-connect.html) and [mobile operation](https://nereussdr.com/manual/07-iphone-operate.html) |
+| Arrange receivers, displays, applets and meters | [Receivers and panadapters](https://nereussdr.com/manual/04-slices.html) and [workspace and meters](https://nereussdr.com/manual/10-customize.html) |
+| Set up transmit audio | [Transmit setup](https://nereussdr.com/manual/05-transmit.html) and [EQ/CFC editing](https://nereussdr.com/guides/tx-eq-cfc.html) |
+| Get help or share your station | [Discord](https://discord.gg/m35ERjwRe), [troubleshooting](https://nereussdr.com/manual/11-troubleshooting.html) and [GitHub Issues](https://github.com/boydsoftprez/NereusSDR/issues) |
 
-The [user guide](docs/manual/README.md) brings the operating instructions
+The [user guide](https://nereussdr.com/manual/) brings the operating instructions
 together, from the first connection to shared stations, digital modes and
 accessories. Join Discord for questions and discussion; use GitHub Issues
 for bug reports and feature requests that need tracking.
@@ -45,7 +45,7 @@ The first release in a new month starts at `.0`. Releases ship when ready.
 
 **2026.10.0 is being prepared.** The downloads page continues to show the
 latest published release until the new packages are available. Read the
-[upgrade checklist](docs/guides/upgrading-to-2026.10.0.md) before updating
+[upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html) before updating
 an existing station, and update the Core and desktop together.
 
 ## One station, several ways to operate
@@ -87,7 +87,7 @@ installation:
 5. Select the Core in your desktop or mobile console and pair with it.
    `sudo nereusd pairing show` displays a pairing code on the SBC.
 
-The [SBC install guide](docs/guides/install-core-sbc.md) has the complete
+The [SBC install guide](https://nereussdr.com/guides/install-core-sbc.html) has the complete
 commands, signature checks and startup troubleshooting. An ANAN-G2's built-in
 Pi also needs its Saturn-specific setup. The Ubuntu Core packages and the
 Trixie package are separate builds; choose the one matching your OS.
@@ -103,8 +103,8 @@ and transmit-holder rules as the desktop.
 The Core continues processing the radio while you operate from the phone.
 
 The mobile app is delivered separately through its own TestFlight/App Store
-process. Desktop/Core packages do not install it. See [mobile setup](docs/manual/06-iphone-connect.md)
-and [mobile operation](docs/manual/07-iphone-operate.md) for the console workflow.
+process. Desktop/Core packages do not install it. See [mobile setup](https://nereussdr.com/manual/06-iphone-connect.html)
+and [mobile operation](https://nereussdr.com/manual/07-iphone-operate.html) for the console workflow.
 
 ### Reach your station from another network
 
@@ -144,8 +144,8 @@ flowchart LR
     Relay <-->|"Optional session path"| Mobile
 ```
 
-See [shared Core operation](docs/manual/08-shared-core.md) for operating a
-station from several devices, and [RV installation](rendezvous/README.md)
+See [shared Core operation](https://nereussdr.com/manual/08-shared-core.html) for operating a
+station from several devices, and [RV installation](https://nereussdr.com/guides/remote-access.html)
 if you want to host the remote-access service yourself.
 
 ## Make the console your own
@@ -293,7 +293,7 @@ the Trixie job also checks installation and CLI startup in a fresh runtime
 container. Package verification can run from a branch with the release
 workflow's `verify_only` dispatch. Always pass `--profile <name>` when running
 `nereusd` by hand, or it writes the same settings the GUI reads.
-For a board installation, use the [short SBC guide](docs/guides/install-core-sbc.md).
+For a board installation, use the [short SBC guide](https://nereussdr.com/guides/install-core-sbc.html).
 
 On first run, NereusSDR generates FFTW wisdom (optimized FFT plans). This takes ~15 minutes and shows a progress dialog. The wisdom file is cached for subsequent launches.
 
