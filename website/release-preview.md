@@ -1,90 +1,95 @@
 # Major release website preview
 
-Prepared on 2026-10-02 in `codex/website-major-release`. This is a local review
-copy. No deployment, remote server write, push or PR has been performed.
+Prepared in `codex/website-major-release`; refreshed on 2026-10-04 against
+release candidate `65154776440bc51751e9b89e4b172980bd1cb91c`.
+Source integration and live publication are separate. This task has performed
+no deployment, remote server write, push or new PR.
 
-The page keeps the existing static HTML/CSS/JS setup and interactive desktop
-radio demo. It adds native iPhone simulator captures, a Core/SBC explanation,
-a radio-to-Core-to-console diagram, shared station operation, and the major
-release's desktop feature changes. Screenshot originals and hashes are in
-`screenshot-sources.md`; pixels are unchanged.
-
-## Local review
-
-Run from this checkout:
+## Review locally
 
 ```sh
 python3 -m http.server 8766 --bind 127.0.0.1 --directory website/public
 ```
 
-Open http://127.0.0.1:8766/. Review the mobile section and Core section as well
-as the top of the page. The live website is independent of this preview.
+Open http://127.0.0.1:8766/. The page keeps the existing static HTML/CSS/JS
+setup and interactive desktop radio demo. It uses unmodified native simulator
+captures; original paths and hashes are in `screenshot-sources.md`.
 
-The follow-up removes alpha release language, adds an operator-focused Nereus
-identity section, and rewrites the heritage around both upstream foundations
-and original Core/mobile work. Feature coverage now includes 3D spectrum,
-NNR load-aware noise reduction, per-slice audio routing, persistent TNF,
-AM modulation instrumentation and live diagnostics.
+The draft keeps “Your station. Wherever you operate.” and brings the release
+forward in operator terms: station Core and native consoles, independent
+receivers, 3D/TNF/diversity, NNR/PureSignal 3, containers/Canvas/meters, and
+native TX EQ/CFC. Recent phone work includes filter presets, TX profiles,
+PA readings, voice editors, station tools and Core-described controls.
+
+Guides are grouped by task: operate the station, install/connect a Core, and
+shape transmitted audio. Upgrade navigation uses the new operator-facing
+`docs/guides/upgrading-to-2026.10.0.md`, prepared in Release's working copy;
+its source integration is still a publication dependency. The current Discord invite supplied by JJ is
+https://discord.gg/m35ERjwRe. GitHub Issues remains the destination for tracked
+bugs and feature requests.
 
 ## Before publication
 
-- Set the final release version, date and actual download asset details when
-  the major release exists. Retain coherent signed-download links and commands.
-  Existing JavaScript only swaps releases when all desktop asset suffixes match.
-- Replace the hero's "The next major release", Status's "Coming in the major
-  release", and Download's upcoming-release note when the release is published.
-  Add the new release to the release-history list; keep old releases historical.
+- Review and approve this preview before using the existing deploy script.
+- Integrate the release documentation into public main before publishing these
+  guide links. As checked on 2026-10-04, GitHub main returned 404 for the manual
+  index, SBC install guide and EQ/CFC guide. All exist in candidate 651547764.
+  Recheck all linked documentation after Release ships its source integration.
+- GitHub's latest published release remains v0.5.2 (24 May 2026), verified on
+  2026-10-04. Its real links and asset sizes remain in the download section.
+  Finalize the version, release date, history, platform requirements, commands
+  and actual asset names when 2026.10.0 is published. Existing JavaScript
+  changes download versions only when every expected desktop asset exists.
+- Change forthcoming 2026.10.0 wording when the release is published.
 - Confirm mobile distribution separately. Add an App Store or public TestFlight
-  link only when JJ supplies the approved destination. The current page does
-  not advertise either as publicly available.
-- Confirm the final release scope. The native app is being worked on; these
-  captures document a development build, not a frozen release candidate.
-- Keep station-card image availability precise. Main contains build recipes
-  and a manual workflow, which do not establish public prebuilt card downloads.
-- Review and approve the local result before using the existing deploy script.
+  link only when the approved destination is available. Native source in the
+  candidate does not establish public mobile availability.
+- The SBC guide targets 64-bit Pi OS Lite or compatible Armbian Debian Trixie
+  and a matching Core package. Do not imply existing public card images or
+  published Trixie packages while release artifacts are still pending.
+- CAT is explicitly deferred to the next release. Incomplete XDMA PR339 is not
+  advertised. No shipping or primary worktree was edited by this task.
 
-## Content grounding
+## Content and link basis
 
-Core: origin/main `15508fb42` including PR327. Main's older receive-only docs
-are stale; RemoteTransmitClient and session ownership code establish remote
-transmit and four-device coordination. Hardware records establish Pi4/HL2 and
-ROCK5C/G2 development. They do not guarantee arbitrary ARM64 board support or
-unlimited simultaneous DSP loads.
+The candidate's operator manual and code establish the Core/GUI roles,
+per-device receiver and transmit authority, native phone controls, display
+transport, NNR fallback, PureSignal 3, diversity, containers and voice editors.
+Its `docs/guides/install-core-sbc.md` and `docs/guides/tx-eq-cfc.md` establish
+fresh-board setup and the desktop Graphic/Parametric EQ/CFC workflows.
 
-Desktop feature copy is grounded in the main source and Unreleased changes:
-multiple pans/slices, TNF, AM/SAM/DSB, AM monitor, vintage meter faces and
-RF2K-S integration. No promise of complete hardware validation is added.
-The open PR323 enhancement package is not advertised as released.
+The RV service introduces devices; direct, TURN and separate WebSocket relay
+paths carry station sessions. IPv4/IPv6 and relay selection provide alternatives
+for CGNAT/mobile networks; they do not guarantee every carrier/firewall path.
+T-Mobile's official Home Internet connection page, checked on 2026-10-04,
+confirms that its gateway does not offer configurable port forwarding:
+https://www.t-mobile.com/support/home-internet/connect
 
-Identity evidence: StationHost, StationServer, ReceiverPlanner, DisplayCodec
-and SpectrumEndpoint establish the station architecture, per-device views,
-receiver-change confirmation and calibrated display transport. PanadapterStack,
-ClarityController, DssRenderer, NnrSettings and MasterMixer establish the
-workspace, adaptive display, 3D, NNR fallback and audio-routing claims.
-Diagnostics history remains unbuilt; public copy says live counters instead.
-Clarity and earlier noise reducers predate v0.5.2 and are described as product
-capabilities, not new inventions. Heritage retains Thetis/WDSP/Aether attribution.
+Hardware copy says development used Pi4 and a 2 GB Rock5C, not a guaranteed
+minimum or workload. Diversity requires supported synchronized two-ADC paths;
+phone memories are not called shared. Canvas is desktop-only. Phone PureSignal
+copy promises status and automatic calibration controls, not desktop AmpView or
+advanced correction-file workflows. Clarity and earlier reducers are product
+capabilities rather than new inventions. Attribution remains intact.
 
-Scale check (snapshot additions versus v0.5.2, not original production-code
-size): origin/main 15508fb42 adds 1,456,270 lines across 2,889 files;
-claude/iphone-app as inspected adds 2,147,303 across 4,985 files. These include
-tests, dependencies, docs and tooling. The mobile branch is separate from main.
-The public page focuses on operator outcomes rather than a raw line count.
+## Verification
 
-## Verification for this preview
+The current refresh passed 390/768/1024/1440 px overflow and guide-grid checks,
+mobile menu opening/closing and guide navigation, local image loading, HTML
+ID/fragment/asset validation, JavaScript syntax and whitespace checks. All four
+native screenshots still match their recorded source hashes. Independent
+source/copy review checked the feature claims and candidate documentation; the
+new upgrade guide was then checked in Release's working copy. Prior checks
+also covered demo keyboard tuning. Browser proof captures are kept locally. No application builds or CI reruns are needed for
+this static website change. Production Caddy headers are not exercised by the
+Python preview; deployment remains a separate reviewed action.
 
-- Desktop, 390 px phone, 768 px tablet, 1024 px and 1440 px layouts inspected.
-  Document width matched viewport width; no horizontal overflow or failed images.
-- Mobile menu opens, follows the iPhone anchor and closes; final mobile link font
-  is 15.2 px. Screenshots stack at a readable 290 px width on phones.
-- Existing desktop-demo keyboard tuning still changes its frequency.
-- HTML checks: 31 unique ids, seven image elements, no missing local assets,
-  broken local fragments or missing alt attributes. All new image dimensions
-  match their PNG headers and the originals' SHA-256 hashes.
-- JavaScript syntax check and `git diff --check` pass. JavaScript is unchanged.
-- Independent content and code reviews found no blocking issues.
-- Follow-up source review caught an unbuilt connection-history placeholder;
-  copy corrected to live connection counters. Responsive checks repeated for
-  the identity and expanded feature sections; visible page text has no alpha.
-- No deployment script or remote mutation was run. Production CSP has not been
-  exercised by the Python preview, which serves the same local static assets.
+## Source handoff
+
+Release candidate 651547764 is a separate repository. Its website preimage
+differs from this branch's parent: it lacks the previous Discord addition and
+contains document-page CSS for the phone privacy/source pages. The final
+651-based website patch restores the current invite and preserves that CSS.
+Apply only the reviewed website delta; retain Release's version, docs and
+privacy/source pages. No source integration or deployment is authorized by
+this handoff.

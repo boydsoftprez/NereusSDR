@@ -1,280 +1,235 @@
 # NereusSDR
 
-**A cross-platform SDR console for OpenHPSDR radios**
+**Your station. Wherever you operate.**
 
-[User manual working draft](docs/manual/README.md): desktop and iPhone/iPad
-operation with explicit source-build and live-verification limits.
+NereusSDR is a free, open-source console for OpenHPSDR radios on macOS,
+Windows and Linux, with a native iPhone and iPad app. Keep the radio and its
+signal processing at your station, and operate from the console that suits
+you: a local desktop, another computer, or your phone or tablet.
 
-> [!IMPORTANT]
-> **Release candidate: 2026.10.0, the first calendar-versioned release.**
-> This brings together the work since 0.5.2: independent receivers, remote
-> Core operation with desktop and native iPhone/iPad consoles, IPv6-aware
-> remote access, WDSP 2.10 with NNR and PureSignal 3, 3D display history,
-> TX EQ/CFC graph editors, and movable applets with configurable meters.
->
-> **Alpha testers, start here:**
-> [2026.10.0 tester guide](docs/debugging/v2026.10.0-alpha-tester-smoketest.md).
-> Read its upgrade notes before connecting an existing station. Core and
-> desktop should be updated together. Settings migrate automatically, but
-> watchdog and TCI interval defaults change once, and PS3 requires compatible
-> version-2 correction files.
->
-> The latest published release remains **v0.5.2** until the new release
-> artifacts are available. Hardware and on-air acceptance retain their
-> recorded status in the feature verification documents.
->
-> J.J. Boyd ~ KG4VCF
+[Website](https://nereussdr.com/) · [Downloads](https://github.com/boydsoftprez/NereusSDR/releases) · [User guide](docs/manual/README.md) · [Discord](https://discord.gg/m35ERjwRe) · [Release notes](CHANGELOG.md)
 
 [![CI](https://github.com/boydsoftprez/NereusSDR/actions/workflows/ci.yml/badge.svg)](https://github.com/boydsoftprez/NereusSDR/actions/workflows/ci.yml)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
 [![Qt6](https://img.shields.io/badge/Qt-6-green.svg)](https://www.qt.io/)
 
-NereusSDR is a C++20/Qt6 port of [Thetis](https://github.com/ramdor/Thetis) — the canonical OpenHPSDR / Apache Labs SDR console, itself descended from FlexRadio PowerSDR — carrying its radio logic, DSP integration, and feature set forward to a native cross-platform codebase (macOS, Linux, Windows) with a Qt-based GUI. The Thetis contributor lineage (FlexRadio Systems, Doug Wigley W5WC, Richard Samphire MW0LGE, and the wider OpenHPSDR community) is preserved per-file in source headers and summarized in [docs/attribution/THETIS-PROVENANCE.md](docs/attribution/THETIS-PROVENANCE.md). Distributed under GPLv3 (root [LICENSE](LICENSE)), elected under the "or later" grant in upstream Thetis source-file headers (Thetis is GPLv2-or-later). A verbatim copy of GPLv2 ships at [docs/attribution/LICENSE-GPLv2](docs/attribution/LICENSE-GPLv2) for reference, since several WDSP and ChannelMaster source files explicitly reference v2.
+## Start here
 
-![NereusSDR v0.1.6 — ANAN-G2 on 40m LSB](docs/images/nereussdr-v016-screenshot.jpg)
+| What you want to do | Where to go |
+| --- | --- |
+| Install the desktop console and connect your radio | [Downloads](https://github.com/boydsoftprez/NereusSDR/releases) and [desktop setup](docs/manual/01-desktop-connect.md) |
+| Upgrade from 0.5.2 | [2026.10.0 upgrade checklist](docs/guides/upgrading-to-2026.10.0.md) and [release notes](CHANGELOG.md) |
+| Run the Core on a Raspberry Pi or another SBC | [Fresh Raspberry Pi OS Lite / Armbian install](docs/guides/install-core-sbc.md) |
+| Connect an iPhone or iPad | [Mobile setup](docs/manual/06-iphone-connect.md) and [mobile operation](docs/manual/07-iphone-operate.md) |
+| Arrange receivers, displays, applets and meters | [Receivers and panadapters](docs/manual/04-slices.md) and [workspace and meters](docs/manual/10-customize.md) |
+| Set up transmit audio | [Transmit setup](docs/manual/05-transmit.md) and [EQ/CFC editing](docs/guides/tx-eq-cfc.md) |
+| Get help or share your station | [Discord](https://discord.gg/m35ERjwRe), [troubleshooting](docs/manual/11-troubleshooting.md) and [GitHub Issues](https://github.com/boydsoftprez/NereusSDR/issues) |
 
----
+The [user guide](docs/manual/README.md) brings the operating instructions
+together, from the first connection to shared stations, digital modes and
+accessories. Join Discord for questions and discussion; use GitHub Issues
+for bug reports and feature requests that need tracking.
 
-## Supported Radios
+## What's new in 2026.10.0
 
-Works with any radio implementing OpenHPSDR Protocol 1 or Protocol 2:
+This release brings together the work since 0.5.2: independent receivers,
+a shared station Core, remote desktop and native mobile operation,
+IPv6-aware connections, WDSP 2.10 with NNR and PureSignal 3, 3D display
+history, TX EQ/CFC graph editors, and a workspace of movable applets and
+configurable meters.
 
-- **Apache Labs ANAN line** — ANAN-G2 (Saturn), ANAN-7000DLE, ANAN-8000DLE, ANAN-200D, ANAN-100D, ANAN-100, ANAN-10E
-- **Hermes Lite 2**
-- **All OpenHPSDR Protocol 1 radios** — Metis, Hermes, Angelia, Orion, Orion MkII
-- **All OpenHPSDR Protocol 2 radios**
+It is our first **calendar-versioned release**. `2026.10.0` is the first
+release in October 2026; another release that month becomes `2026.10.1`.
+The first release in a new month starts at `.0`. Releases ship when ready.
 
----
+**2026.10.0 is being prepared.** The downloads page continues to show the
+latest published release until the new packages are available. Read the
+[upgrade checklist](docs/guides/upgrading-to-2026.10.0.md) before updating
+an existing station, and update the Core and desktop together.
 
-## Releases & Installation
+## One station, several ways to operate
 
-Pre-built binaries for Linux (AppImage, x86_64 + aarch64), macOS (DMG +
-PKG, Apple Silicon + Intel), and Windows (NSIS installer + portable ZIP,
-x64) are published as GitHub Releases. The calendar release targets macOS 14
-or later on Apple Silicon and macOS 12 or later on Intel:
+The **Core** connects to your radio and does the signal processing. It runs
+receive and transmit DSP, noise reduction and PureSignal, prepares spectra
+and meters, manages station audio and accessories, and coordinates receiver
+control and transmit access.
 
-**<https://github.com/boydsoftprez/NereusSDR/releases>**
+The **console** is what you operate. It displays receivers, waterfalls,
+meters and editors, plays received audio, and sends your tuning changes,
+microphone audio and transmit requests to the Core.
 
-All artifacts are GPG-signed (`KG4VCF`) via `SHA256SUMS.txt.asc`. To verify:
+On a local desktop, the Core and console run together. For a remote station,
+the headless **`nereusd`** Core runs beside the radio while you use a Mac,
+Windows or Linux console, or the native iPhone/iPad app elsewhere. Several
+paired devices can share a station within its capacity. The Core keeps
+receiver ownership and a single transmit holder clear across those devices.
 
-```bash
-gpg --keyserver keyserver.ubuntu.com --recv-keys 4A95F4D22AEE9271D8A3C01B20C284473F97D2B3
-gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
-sha256sum -c SHA256SUMS.txt
-```
+### Keep the Core beside the radio
 
-> **Platform signing:** macOS release packaging includes Apple Developer ID
-> signing and notarization. Windows installers currently have no Authenticode
-> signature and may prompt through SmartScreen. Check the selected release's
-> artifact list and signing results; a source or CI build does not establish
-> that a release package was signed successfully.
+A suitable Linux single-board computer can run the Core without a monitor
+or a local GUI. Use a Raspberry Pi inside an **ANAN-G2**, or a separate SBC
+on the radio's network. Development testing included a **Raspberry Pi 4**
+and a **Radxa Rock 5C with 2 GB RAM**. Receiver count, DSP choices and display
+load determine how much a particular board can sustain.
 
----
+For a fresh **64-bit Raspberry Pi OS Lite or Armbian Debian 13/Trixie**
+installation:
 
-## Current Status
-
-**Preparing 2026.10.0.** The latest published release is v0.5.2 (2026-05-24).
-This is a substantial alpha release spanning the station Core, receiver/DSP
-architecture and operator console. See [CHANGELOG.md](CHANGELOG.md) for
-release history and the [tester guide](docs/debugging/v2026.10.0-alpha-tester-smoketest.md)
-for upgrade checks and current limits.
-
-## Core, GUI and remote access
-
-The **Core** owns the radio connection and station state. It runs receiver
-and transmit DSP, noise reduction and PureSignal, computes spectra, manages
-station audio and accessories, and decides receiver and transmit authority.
-The **GUI** is the operator's console: it renders VFOs, pans, waterfalls,
-meters and editors, sends control requests, plays received audio and sends
-microphone audio to the Core. Radio processing stays with the Core as the
-operator moves between consoles.
-
-There are two ways to run it. A local desktop runs the Core and GUI together.
-For a remote station, headless **`nereusd`** runs beside the radio while the
-GUI runs on a Mac, Windows or Linux computer, iPhone or iPad elsewhere.
-Several authenticated
-devices can use one Core, within station capacity, with receiver ownership
-and a single transmit holder enforced by that Core.
-
-The headless Core can run on a suitable Linux **single-board computer (SBC)**,
-including a Raspberry Pi inside an **ANAN-G2**, or a separate SBC beside the
-radio. Development testing included a **Raspberry Pi 4** and a **Radxa Rock 5C
-with 2 GB RAM**. Other compatible SBCs can host the same Core; sustainable
-receiver count, DSP features and display load depend on the board and its
-configuration. A display and a locally running GUI are not required at the
-radio. The radio and Core can remain at the station while the operator uses
-a separate console.
-
-For a fresh board, follow the [short Raspberry Pi OS Lite/Armbian install
-guide](docs/guides/install-core-sbc.md). It uses the release's Debian Trixie
-ARM64 package, enables `nereusd` at boot and walks through pairing a desktop
-or phone. A matching package and normal `apt` dependencies keep this separate
-from the Ubuntu package and the optional station-card image build.
-
-**Fresh SBC setup in five steps:**
-
-1. Flash 64-bit Raspberry Pi OS Lite or compatible Armbian Debian Trixie;
-   set your own login/hostname, enable SSH and connect Ethernet to the radio's LAN.
-2. Download `nereusd_<version>_arm64_trixie.deb` and verify the release's
-   signed checksums.
-3. Install with `sudo apt install ./nereusd_<version>_arm64_trixie.deb`, copy
-   `/usr/share/nereusd/nereusd.conf.sample` to `/etc/nereusd.conf` and review it.
+1. Flash the image, set your login and hostname, enable SSH, and connect
+   wired Ethernet to the radio's LAN.
+2. Download the matching `nereusd_<version>_arm64_trixie.deb` and verify
+   its signed checksum.
+3. Install it with `sudo apt install ./nereusd_<version>_arm64_trixie.deb`.
+   Copy `/usr/share/nereusd/nereusd.conf.sample` to `/etc/nereusd.conf`
+   and review the configuration.
 4. Run `sudo systemctl enable --now nereusd`, then `sudo nereusd status`.
-5. Choose that Core in the desktop or native phone/tablet console and pair;
-   `sudo nereusd pairing show` displays a code on the SBC.
+5. Select the Core in your desktop or mobile console and pair with it.
+   `sudo nereusd pairing show` displays a pairing code on the SBC.
 
-The [full command sequence](docs/guides/install-core-sbc.md) includes OS checks,
-download/signature verification and startup diagnostics.
+The [SBC install guide](docs/guides/install-core-sbc.md) has the complete
+commands, signature checks and startup troubleshooting. An ANAN-G2's built-in
+Pi also needs its Saturn-specific setup. The Ubuntu Core packages and the
+Trixie package are separate builds; choose the one matching your OS.
 
-### A native iPhone and iPad console
+### Take the console with you
 
-The **native iPhone and iPad app** is another full operator console for the
-same Core. Its Swift/SwiftUI interface has live spectrum/waterfall and VFO
-flags, touch tuning and receiver controls, received audio, microphone uplink
-and PTT, transmit readings, station Setup, spots and accessory pages. It uses
-the same station identity, pairing, receiver ownership and transmit-holder
-rules as a desktop GUI. The phone or tablet renders station data while the
-Core runs the radio and DSP, including the transmit processing chain.
+The native **iPhone and iPad app** provides live spectrum and waterfall,
+touch tuning, receiver controls, receive audio, microphone uplink and PTT,
+transmit readings, station Setup, spots and accessory pages. Native EQ/CFC
+controls, Filter Presets and named TX profiles bring voice shaping and everyday
+receiver setup to the phone. It follows the same pairing, receiver ownership
+and transmit-holder rules as the desktop.
+The Core continues processing the radio while you operate from the phone.
 
-This is a major part of the Core/GUI split: the operator can use a desktop,
-iPhone or iPad with the radio and its processing remaining at the station.
-The mobile app is native to those devices, with its own release counter,
-validation and TestFlight/App Store delivery process. Its delivery status is
-tracked separately from the desktop/Core release artifacts.
+The mobile app is delivered separately through its own TestFlight/App Store
+process. Desktop/Core packages do not install it. See [mobile setup](docs/manual/06-iphone-connect.md)
+and [mobile operation](docs/manual/07-iphone-operate.md) for the console workflow.
 
-### How the RV server connects a remote console
+### Reach your station from another network
 
-The **rendezvous (RV) server** is a separate network service that helps a
-GUI reach a Core across different networks. Both ends contact the configured
-RV service. The Core registers its station identity with the RV signalling
-service; the GUI asks for an introduction to that station. The service passes
-connection offers and network candidates between them and provides a pairing
-mailbox when the devices are not on the same network. The Core authenticates
-the device and retains all control and transmit-authority decisions.
+The **rendezvous (RV) service** introduces your console to your Core. The Core
+registers its station identity; the console asks to connect to that station.
+The service exchanges connection offers and network candidates, and provides
+a pairing mailbox when the devices are on different networks. Your Core
+still authenticates each device and decides what it may control.
 
-After introduction, the station session uses its own connection. It can run
-directly between the GUI and Core, through a **TURN relay** when a direct path
-is unavailable, or through the separate **WebSocket relay** for a network that
-only passes web traffic. The RV service issues short-lived relay credentials;
-its signalling process handles introductions rather than ongoing session
-traffic. The signalling service, TURN relay and WebSocket relay are separate
-parts of the RV server installation.
+Once connected, the session can travel directly between console and Core,
+through a **TURN relay**, or through a **WebSocket relay** on networks that
+only pass web traffic. The RV signalling service handles introductions;
+relay services carry session traffic when needed. A reachable Core on your
+LAN or VPN can also be selected directly by address.
 
-A directly reachable Core on the same LAN or a VPN can also be selected by
-address. Core Settings shows the chosen station, connection and audio path,
-so the operator can see which Core is in use and how the session is connected.
-The RV server provides reachability; the Core continues to own the radio and
-perform the DSP on every path.
+**IPv4 and IPv6** are supported for Core/client discovery and connections.
+IPv6 can provide a direct route when both ends and their firewalls allow it.
+When a direct route is unavailable, the outbound relay paths provide alternatives.
+This is useful on CGNAT and mobile broadband networks, including services such
+as [T-Mobile Home Internet](https://www.t-mobile.com/support/home-internet/connect)
+whose gateways do not offer configurable port forwarding. Core Settings shows
+the station, selected connection path and audio status.
 
-### IPv6 and CGNAT/mobile networks
-
-The station link, LAN discovery and connection selection support **IPv4
-and IPv6**. Clients try usable IPv6 addresses alongside IPv4 alternatives,
-and the RV installation offers relay hosts for both address families. This
-lets a phone on an IPv6 mobile network reach a compatible station using
-IPv6. This applies to Core/client and RV networking; the Core continues to
-use the radio's existing OpenHPSDR connection.
-
-This matters on **carrier-grade NAT (CGNAT)** and mobile broadband networks.
-CGNAT shares an IPv4 address at the provider, so a forwarding rule on the
-home router alone does not provide an incoming route through that provider.
-A usable global IPv6 path can provide direct connectivity when both ends and
-their firewalls permit it. When that path is unavailable, RV-assisted
-connection setup and the TURN/WebSocket relays provide alternatives.
-
-For example, [T-Mobile's Home Internet documentation](https://www.t-mobile.com/support/home-internet/connect)
-states that its gateways do not offer configurable NAT/port forwarding.
-IPv6-aware connection selection and outbound relay paths are therefore
-important for stations and mobile consoles on networks with those limits.
-The actual selected route and its audio status remain visible in Core Settings;
-carrier, router and firewall conditions still determine which route succeeds.
+The Core uses your radio's existing OpenHPSDR connection on every route.
+High-rate radio I/Q stays at the station.
 
 ```mermaid
 flowchart LR
-    Radio["OpenHPSDR radio"] <-->|"Radio I/Q and control"| Core["Core: local desktop or headless SBC"]
-    Core <-->|"Session: controls, audio, spectra and meters"| GUI["GUI: operator's computer"]
-    Core <-->|"Registration and introduction"| RV["RV signalling service"]
-    GUI <-->|"Introduction and pairing mailbox"| RV
-    Core <-->|"Controls, audio, spectra and meters"| Phone["Native iPhone/iPad app"]
-    Phone <-->|"Introduction and pairing mailbox"| RV
+    Radio["OpenHPSDR radio"] <-->|"Radio I/Q and control"| Core["Station Core"]
+    Core <-->|"Controls, audio, displays and meters"| Desktop["Desktop console"]
+    Core <-->|"Controls, audio, displays and meters"| Mobile["Native iPhone/iPad"]
+    Core <-->|"Registration and introduction"| RV["RV service"]
+    Desktop <-->|"Introduction and pairing"| RV
+    Mobile <-->|"Introduction and pairing"| RV
     Core <-->|"Optional session path"| Relay["TURN or WebSocket relay"]
-    Relay <-->|"Optional session path"| GUI
-    Relay <-->|"Optional session path"| Phone
+    Relay <-->|"Optional session path"| Desktop
+    Relay <-->|"Optional session path"| Mobile
 ```
 
-See the [Core architecture](docs/architecture/2026-07-28-remote-daemon-architecture-design.md),
-[station link](docs/architecture/2026-09-23-station-link-v1.md) and
-[RV server installation guide](rendezvous/README.md) for implementation and
-server setup. The development [Rock 5C receive-control bench](docs/architecture/2026-08-03-remote-daemon-r2-verification/rock-5c-2026-09-20/README.md)
-records a specific hardware check; feature acceptance remains recorded separately.
+See [shared Core operation](docs/manual/08-shared-core.md) for operating a
+station from several devices, and [RV installation](rendezvous/README.md)
+if you want to host the remote-access service yourself.
 
-## Key Features
+## Make the console your own
 
-- **Independent receivers and displays.** Per-receiver tuning, mode, DSP and
-  audio; radio-capacity-aware allocation; saved multi-pan layouts, floating
-  pans and coloured receiver markers. The transmit receiver owns its TX
-  spectrum/waterfall. Native 3D stacked spectrum/waterfall adds display history.
-- **A shared station Core.** Run with the desktop or as headless `nereusd`
-  beside the radio. Authenticated remote desktop sessions share receiver
-  control, displays and audio. Pairing, saved/manual station targets, device
-  authority, transfer confirmations, link recovery and explicit direct/relayed
-  connection status are part of the station system. Core Settings presents
-  connection choices and current Core/audio status.
-- **WDSP 2.10.** AGC, noise filters, squelch and advanced DSP controls;
-  NNR Standard/Premium station-owned model assets; PureSignal 3 correction
-  assets, status and AmpView. Capability and authority determine which actions
-  a local or remote device can perform. See the
-  [operator notes](docs/architecture/wdsp210-operator-notes.md) and
-  [verification status](docs/architecture/wdsp210-verification/README.md).
-- **Receiver tools.** CTUN, tunable notch filters, calibrated signal readings,
-  per-band DSP/display persistence and Core-owned Diversity on eligible receivers.
-- **TX processing and graph editors.** SSB, AM/SAM/DSB and RADE transmit;
-  microphone profiles, independent Graphic/Parametric EQ, 5/10/18-band
-  Parametric/CFC curves, exact entry, width/Q editing and undo/redo. Leveler,
-  ALC, CFC, CPDR, CESSB, phase rotator, DEXP/VOX and anti-VOX remain integrated.
-  See the [EQ/CFC guide](docs/guides/tx-eq-cfc.md).
-- **Containers, meters and individual controls.** Move, resize and layer
-  applets, meters and fifteen supported individual controls on an editable
-  Canvas, or keep automatic stacks and saved legacy compositions. Preview
-  draft settings, Apply or Cancel, float containers, return them to remembered
-  homes and exchange portable layouts. Meter text scales with each object;
-  composite faces retain calibrated source bindings and show missing readings
-  as unavailable. External MMIO bindings and recovery data survive migration.
-  See the [Canvas guide](docs/architecture/native-free-canvas.md).
-- **Station audio and connections.** Receive mixes, radio speaker/headphone
-  output, capability-gated hardware microphone controls, VAX audio buses,
-  remote media recovery, discovery and manual/unicast connection targets.
-- **Digital-app integration and spots.** TCI v2.0 WebSocket control/audio;
-  DX Cluster, RBN, WSJT-X, DXLab, POTA, FreeDV Reporter and PSK Reporter sources;
-  spots with click-to-tune and a live FreeDV station view. RADE supports
-  end-of-over callsigns when FreeDV Reporter is enabled.
-- **Accessories and hardware controls.** PGXL, TGXL and RF-Kit RF2K-S;
-  Core-authoritative accessory operation, tuner sequencing, step attenuator,
-  preamp/Level Cal corrections, ADC overload indication and per-radio controls.
-- **Cross-platform distribution.** Linux AppImage, macOS DMG/PKG and Windows
-  installer/portable ZIP, with GPG-signed checksums. Headless Core install is
-  separate from the console package; see the build/install instructions below.
+- **Independent receivers and displays.** Tune, filter and listen to each
+  receiver independently. Arrange several pans, float them across displays,
+  and save your layouts. Coloured receiver markers, tunable notch filters,
+  CTUN and per-band settings keep each receiver easy to follow. The native
+  3D spectrum/waterfall adds depth and history; the transmit receiver has
+  its own spectrum and waterfall settings.
+- **Receive DSP.** WDSP 2.10 brings the processing engine forward. NNR offers
+  Standard and Premium station-owned models, with per-radio and per-receiver
+  tuning and a Models manager. AGC, noise reduction, squelch and other DSP
+  controls remain available alongside Core-owned Diversity on eligible receivers.
+- **Transmit audio.** Microphone profiles carry Graphic and Parametric EQ,
+  5/10/18-band curves, CFC and the rest of the transmit processing chain.
+  Native graph editors provide exact entry, frequency/width handles, shared
+  CFC frequency selection and undo/redo. PureSignal 3 adds correction assets,
+  status and AmpView. AM/SAM/DSB transmit and the AM modulation monitor add
+  carrier, envelope and positive/negative modulation readings.
+- **Applets, Canvas and meters.** Stack or float containers, or arrange
+  applets, meters and fifteen individual controls on an editable Canvas.
+  Move, resize, layer and lock objects, preview changes, and Apply or Cancel.
+  Responsive meter text, complete meter faces and the Nereus ANAN artwork
+  bring readings together. Supported objects can follow the selected receiver
+  or stay with a fixed receiver. Existing layouts and external MMIO bindings
+  survive migration and portable layout exchange.
+- **Audio and digital applications.** Choose receiver mixes, station and
+  radio speaker/headphone output, microphone sources and VAX audio buses.
+  TCI provides WebSocket control/audio for external applications. Spots from
+  DX Cluster, RBN, WSJT-X, DXLab, POTA, FreeDV Reporter and PSK Reporter can
+  be filtered and selected to tune. RADE supports end-of-over callsigns when
+  FreeDV Reporter is enabled.
+- **Station accessories.** Operate PGXL, TGXL and RF-Kit RF2K-S through the
+  Core, with device authority and tuner sequencing. Hardware controls follow
+  the connected radio's capabilities, including attenuation, preamp,
+  microphone inputs and ADC overload indication.
 
-## Roadmap and acceptance
+## Radios and downloads
 
-CW transmit/keyer/QSK, FM pre-emphasis, CAT/rigctld, legacy skin import and
-WAV/IQ recording remain future work. Disabled actions retain an explanation;
-being represented by an applet or Setup page does not establish implementation.
-The iPhone/iPad app has an independent release process and calendar counter.
+NereusSDR supports radios using **OpenHPSDR Protocol 1 or Protocol 2**:
 
-Cross-radio TNF listening, NNR quality, PureSignal RF improvement, RADE on-air
-interoperability, sustained Pi/Radxa operation and accessory bench matrices
-retain their documented pending checks. Software tests do not close these
-hardware matrices. The reconnect fixes in this release also need the original
-reporters' retests for issues #235, #299 and #300.
+- Apache Labs ANAN-G2/Saturn, ANAN-7000DLE, ANAN-8000DLE, ANAN-200D,
+  ANAN-100D, ANAN-100, ANAN-10E and other compatible ANAN models.
+- Hermes Lite 2.
+- OpenHPSDR Metis, Hermes, Angelia, Orion and Orion MkII hardware.
 
-[docs/MASTER-PLAN.md](docs/MASTER-PLAN.md) preserves the original phase plan and
-release history. Its current release summary takes precedence over older
-phase scheduling notes. Feature designs and verification documents are under
-[docs/architecture/](docs/architecture/).
+Choose your package from [GitHub Releases](https://github.com/boydsoftprez/NereusSDR/releases):
 
----
+| System | Package |
+| --- | --- |
+| macOS Apple Silicon, macOS 14 or later | DMG or PKG |
+| macOS Intel, macOS 12 or later | DMG or PKG |
+| Windows x64 | Installer or portable ZIP |
+| Linux x86_64 or ARM64 | AppImage |
+| Headless Linux Core | Ubuntu `.deb`, or Debian 13/Trixie ARM64 `.deb` for compatible SBCs |
+
+Release downloads include detached GPG signatures and a signed checksum list.
+Verify the list and the file you downloaded before installing:
+
+```sh
+gpg --keyserver keyserver.ubuntu.com --recv-keys 4A95F4D22AEE9271D8A3C01B20C284473F97D2B3
+gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
+# Use the row for your downloaded file; a full check expects every listed asset.
+awk -v file="YOUR_DOWNLOADED_FILENAME" '$2 == file { print }' SHA256SUMS.txt | sha256sum --check --strict
+```
+
+On macOS, use `shasum -a 256 -c` in place of `sha256sum --check --strict`.
+macOS release packaging uses Developer ID signing and notarization. Windows
+installers do not have an Authenticode signature and may prompt through SmartScreen.
+
+## Known issues and what's next
+
+PureSignal two-tone runs have an open transmit-stream continuity issue.
+Receive restoration after unkeying still needs physical-radio validation.
+Waterfall brightness can change when selecting a receiver and switching
+between Core and Clarity level ownership. These items remain under investigation.
+The original reconnect reports in [#235](https://github.com/boydsoftprez/NereusSDR/issues/235),
+[#299](https://github.com/boydsoftprez/NereusSDR/issues/299) and
+[#300](https://github.com/boydsoftprez/NereusSDR/issues/300) still need reporter retests.
+
+CAT/rigctld follows in the next release. CW transmit/keyer/QSK, FM pre-emphasis,
+legacy skin import and WAV/IQ recording remain future work. Radio-specific and
+on-air checks are recorded in the [feature verification documents](docs/architecture/).
 
 ## Building from Source
 
@@ -295,7 +250,7 @@ sudo pacman -S qt6-base qt6-multimedia qt6-svg qt6-websockets \
   alsa-lib jack2 pipewire openssl
 
 # macOS (Homebrew)
-brew install qt@6 ninja cmake pkgconf fftw
+brew install qt@6 ninja cmake pkgconf fftw openssl@3
 ```
 
 The bundled PortAudio is built with `PA_USE_ALSA=ON` and `PA_USE_JACK=ON` on Linux,
@@ -305,7 +260,9 @@ strongly recommended on PipeWire-default distributions (Ubuntu 24.04+, Fedora 39
 Arch) — without it the Linux audio path falls back from the native libpipewire-0.3
 bridge to the older pactl route.
 
-`openssl` / `libssl-dev` (≥ 3.0) is hard-required (`find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)`) since Remote Daemon R2 Task 17: `src/core/security/CertificateStore` links libcrypto directly to mint nereusd's self-signed TLS certificate, because Qt6 has no certificate-*generation* API. macOS resolves this through Homebrew's `openssl@3` formula with no extra hints; it is not keg-only (verified via `brew info --json=v2 openssl@3` fix round 3), its files are ordinary live symlinks into `${HOMEBREW_PREFIX}/lib` and `.../include`, the same path already searched for every other Homebrew library. The macOS Intel release row (no arm64 keg to link against) and both Windows rows source OpenSSL differently; see the `find_package(OpenSSL)` block in `CMakeLists.txt` and `vcpkg.json` for the full per-platform acquisition story.
+OpenSSL 3.0 or later is required for Core certificates. Install `libssl-dev`
+on Debian/Ubuntu or `openssl@3` through Homebrew on macOS. Windows dependency
+setup is described in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Windows (FFTW3 Setup)
 
@@ -317,14 +274,14 @@ No manual setup required. CMake auto-downloads [`fftw-3.3.5-dll64.zip`](https://
 git clone https://github.com/boydsoftprez/NereusSDR.git
 cd NereusSDR
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
-cmake --build build -j$(nproc)
-./build/NereusSDR
+cmake --build build --parallel
 ```
 
+Launch `./build/NereusSDR` on Linux, open `build/NereusSDR.app` on macOS,
+or run `build/NereusSDR.exe` on Windows with this Ninja build.
+
 The build produces **two** binaries. `NereusSDR` is the GUI. `nereusd` is the
-headless daemon added in remote-daemon R1: it links `NereusCore` only, no GUI
-object code, and is guarded by `tst_core_has_no_gui_includes`. It is installed
-separately so the GUI's release artifacts are unaffected:
+headless Core. To install the Core and its service separately:
 
 ```
 cmake --install build --component nereusd
@@ -346,15 +303,18 @@ See [docs/MASTER-PLAN.md](docs/MASTER-PLAN.md) for the full implementation plan 
 
 ## Contributing
 
-PRs, bug reports, and feature requests welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-**Development environment:** NereusSDR is developed using [Claude Code](https://claude.com/claude-code) as the primary development tool. We encourage contributors to use Claude Code for consistency. PRs must follow project conventions, pass CI, and include GPG-signed commits.
+Contributions, bug reports and feature requests are welcome. Follow
+[CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, code conventions,
+attribution and review requirements. Pull requests must pass CI and include
+GPG-signed commits.
 
 ---
 
 ## Heritage
 
-NereusSDR stands on the shoulders of these projects:
+NereusSDR builds on these projects, with original station Core, remote-console
+and native mobile work alongside its upstream foundations. Contributor notices
+are preserved in source files and the [provenance record](docs/attribution/THETIS-PROVENANCE.md).
 
 - **[Thetis](https://github.com/ramdor/Thetis)** — The canonical Apache Labs / OpenHPSDR SDR console (C# / WinForms). NereusSDR's feature source.
 - **[AetherSDR](https://github.com/ten9876/AetherSDR)** — Native FlexRadio client (C++20 / Qt6). NereusSDR's architectural template.

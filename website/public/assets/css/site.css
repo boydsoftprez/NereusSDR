@@ -2576,6 +2576,12 @@ html:not(.js) .tabs {
 }
 .mobile__features h3, .core__cards h4 { font-size: 1.35rem; margin-bottom: 0.75rem; }
 .mobile__features p { color: var(--text-2); font-size: 0.98rem; }
+.network-note { margin-top: 2rem; padding: 1.5rem; border-left: 2px solid var(--accent); background: var(--app-bg); }
+.network-note h3 { font-size: 1.35rem; margin-bottom: 0.75rem; }
+.network-note p { color: var(--text-2); }
+.network-note p:last-child { margin-bottom: 0; }
+.guide-links { list-style: none; padding: 0; margin: 1rem 0 0; }
+.guide-links li + li { margin-top: 0.65rem; }
 .screens { max-width: 920px; margin-inline: auto; gap: 2rem; }
 .screen { min-width: 0; margin: 0; }
 .screen > a { display: block; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--inset); }

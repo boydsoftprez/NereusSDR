@@ -10,7 +10,7 @@ verbatim from `CLAUDE.md` as of commit 86a1b20d6.
 The station and console changes since 0.5.2 are being assembled for the first
 CalVer release, 2026.10.0. See the [README](../../README.md),
 [release notes](../../CHANGELOG.md) and
-[tester guide](../debugging/v2026.10.0-alpha-tester-smoketest.md).
+[upgrade guide](../guides/upgrading-to-2026.10.0.md).
 The release summary in [MASTER-PLAN.md](../MASTER-PLAN.md) records current scope.
 
 The remaining text is an archived reference copied from the earlier agent

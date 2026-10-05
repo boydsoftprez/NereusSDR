@@ -1,66 +1,72 @@
 ---
 
-## Installation
+## Install NereusSDR
+
+Choose the package for your computer from this release's **Assets**. Start
+with the [user guide](https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/docs/manual/README.md)
+for desktop and mobile operation, or the [upgrade checklist](https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/docs/guides/upgrading-to-2026.10.0.md)
+when updating an existing station. Update the Core and desktop together.
 
 ### Linux desktop
 
 Download `NereusSDR-@VERSION@-x86_64.AppImage` or
 `NereusSDR-@VERSION@-aarch64.AppImage` for your architecture:
 
-```bash
+```sh
 chmod +x NereusSDR-@VERSION@-*.AppImage
 ./NereusSDR-@VERSION@-*.AppImage
 ```
 
-The ARM AppImage uses the CPU spectrum fallback. The desktop packages include
-the headless Core; the dedicated packages below install it as a service.
+The ARM AppImage uses the CPU spectrum renderer. Desktop packages include
+the headless Core; the dedicated Core packages below install it as a service.
 
 ### Raspberry Pi OS Lite / Armbian Core
 
-For a fresh ARM64 Debian 13/Trixie system, use
-`nereusd_@VERSION@_arm64_trixie.deb`. Follow the
-[short SBC install guide](https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/docs/guides/install-core-sbc.md)
-to prepare the image, verify the package, configure the Core, start its service
-and pair a desktop or native iPhone/iPad console. The matching
-`nereusd_@VERSION@_arm64_trixie.provenance.json` records source and build inputs.
-The Ubuntu `.deb` packages target Ubuntu 24.04 and are separate builds.
+For a fresh **64-bit Debian 13/Trixie** board, download
+`nereusd_@VERSION@_arm64_trixie.deb`. The
+[SBC install guide](https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/docs/guides/install-core-sbc.md)
+walks through preparing Raspberry Pi OS Lite or compatible Armbian,
+verifying the download, installing with `apt`, starting the Core at boot
+and pairing your desktop or native iPhone/iPad console.
+
+The Ubuntu `.deb` packages target Ubuntu 24.04. Use the package matching
+your operating system. The accompanying Trixie `.provenance.json` records
+its source and package identity.
 
 ### macOS
 
-- **Apple Silicon, macOS 14 or later:**
-  `NereusSDR-@VERSION@-macOS-apple-silicon.dmg`
-- **Intel, macOS 12 or later:**
-  `NereusSDR-@VERSION@-macOS-intel.dmg`
+- **Apple Silicon, macOS 14 or later:** `NereusSDR-@VERSION@-macOS-apple-silicon.dmg`.
+- **Intel, macOS 12 or later:** `NereusSDR-@VERSION@-macOS-intel.dmg`.
 
-Open the matching DMG and drag NereusSDR to Applications. Matching `.pkg`
-installers are also attached. Developer ID signing and notarization follow the
-release workflow's configured Apple credentials; the completed run records
-the result. For an ad-hoc build, use right-click > Open on first launch.
+Open the matching DMG and drag NereusSDR to Applications, or use the matching
+`.pkg` installer. Release packaging uses Apple Developer ID signing and
+notarization; the completed packaging run records the result.
 
 ### Windows
 
-- **Installer:** `NereusSDR-@VERSION@-Windows-x64-setup.exe` installs to
-  Program Files and adds a Start Menu shortcut and uninstaller.
-- **Portable:** `NereusSDR-@VERSION@-Windows-x64-portable.zip`; extract it and
-  run `NereusSDR.exe`.
+- **Installer:** `NereusSDR-@VERSION@-Windows-x64-setup.exe` installs the console
+  with Start Menu and uninstall entries.
+- **Portable:** extract `NereusSDR-@VERSION@-Windows-x64-portable.zip` and run
+  `NereusSDR.exe`.
 
-Windows binaries do not have an Authenticode signature. SmartScreen may warn
-on first launch; use More info > Run anyway after verifying the download.
+Windows binaries do not have an Authenticode signature. SmartScreen may prompt
+on first launch; verify the download before choosing More info > Run anyway.
 
-### Native iPhone / iPad app
+### Native iPhone and iPad app
 
-The native mobile console has its own version counter and delivery process.
-Desktop/Core release assets do not install the iOS app; its testing and
-TestFlight/App Store delivery status are tracked separately.
+The mobile console has its own TestFlight/App Store delivery process.
+Desktop/Core assets do not install it. Follow
+[mobile setup](https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/docs/manual/06-iphone-connect.md)
+for connecting the app to a running Core; mobile availability is announced separately.
 
-## Verification
+## Verify your download
 
-Artifacts and `SHA256SUMS.txt` have detached GPG signatures. Import the full
-KG4VCF signing-key fingerprint and verify the checksum list, then check the
-file you downloaded. The following example verifies the Trixie Core package;
-replace `core_package` with another asset filename as needed.
+Each asset and `SHA256SUMS.txt` has a detached GPG signature. Import the full
+KG4VCF signing-key fingerprint, verify the checksum list, and check your file.
+This example verifies the Trixie Core package; replace `core_package` with
+the filename you downloaded when checking another asset.
 
-```bash
+```sh
 (
 set -eu
 core_package=nereusd_@VERSION@_arm64_trixie.deb
@@ -129,8 +135,16 @@ the written source offer below applies independently:
 A written 3-year source offer applies independently per
 `licenses/SOURCE-OFFER.txt`; contact <jj@skyrunner.net> to invoke it.
 
-## Reporting Issues
+## Help and community
 
-This is an alpha build for debuggers/testers. Please report issues at
-<https://github.com/boydsoftprez/NereusSDR/issues> with: OS, radio model,
-protocol version, and log file (`~/.config/NereusSDR/nereussdr.log`).
+Explore the project at [nereussdr.com](https://nereussdr.com/), read the
+[user guide](https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/docs/manual/README.md),
+or join [NereusSDR on Discord](https://discord.gg/m35ERjwRe) for setup questions,
+operating discussion and feedback.
+
+For a problem you want tracked, open a
+[GitHub issue](https://github.com/boydsoftprez/NereusSDR/issues). Include the
+NereusSDR version, OS, radio model and firmware, protocol, whether the Core is
+local or remote, and the relevant application or Core log. The
+[troubleshooting guide](https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/docs/manual/11-troubleshooting.md)
+has the first checks to try.

@@ -49,7 +49,7 @@
           <li><a href="#core">NereusCore</a></li>
           <li><a href="#radios">Radios</a></li>
           <li><a href="#features">Features</a></li>
-          <li><a href="#status">Status</a></li>
+          <li><a href="#guides">Guides</a></li>
           <li><a href="#download">Download</a></li>
 
           <li>
@@ -69,7 +69,7 @@
     <section class="hero" aria-labelledby="hero-title">
       <div class="wrap hero__grid">
         <div class="hero__copy">
-          <p class="eyebrow">The next major release · Free and open source</p>
+          <p class="eyebrow">Coming in 2026.10.0 · Free and open source</p>
           <h1 id="hero-title">
             <span class="line">Your station.</span>
             <span class="line line--lit">Wherever you operate.</span>
@@ -143,6 +143,7 @@
           <article><span class="feature-index">03 / TRANSMIT</span><h3>Take the microphone.</h3>
             <p>Voice transmit with on-screen PTT. The Core manages transmit ownership, time-outs and interlocks, with one device holding transmit at a time.</p></article>
         </div>
+        <p class="capture-note">Choose native filter presets, save named TX profiles and watch PA peak and minimum readings. Spots, station accessories and Core-described Setup controls bring the rest of your station within reach. <a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/manual/07-iphone-operate.md">Operate from your iPhone or iPad →</a></p>
         <div class="screens" data-reveal>
           <figure class="screen"><a href="/assets/img/iphone-panadapter.png" aria-label="Open the full panadapter screenshot"><img src="/assets/img/iphone-panadapter.png" width="1320" height="2868" alt="iPhone panadapter with a VFO flag and markers for other receiver slices" loading="lazy"></a><figcaption><b>The band</b><span>Your receivers, frequencies and waterfall.</span></figcaption></figure>
           <figure class="screen"><a href="/assets/img/iphone-receive.png" aria-label="Open the full receive controls screenshot"><img src="/assets/img/iphone-receive.png" width="1206" height="2622" alt="iPhone receive panel with filter presets, AGC and noise reduction controls" loading="lazy"></a><figcaption><b>Receive controls</b><span>Filters and DSP, within reach.</span></figcaption></figure>
@@ -161,9 +162,9 @@
         <header class="section__head" data-reveal>
           <p class="eyebrow">NereusCore · At the station</p>
           <h2 id="core-title">A small computer. <strong>A complete station engine.</strong></h2>
-          <p>Run the headless Core beside the radio, or use it with the desktop console on the same computer.
-             The Core owns the radio connection, receive and transmit DSP, spectrum and station state.
-             Your clients receive audio and display frames and send controls back.</p>
+          <p>The Core runs the radio connection, receive and transmit DSP, spectrum, station audio and accessories.
+             The GUI is your console: tuning, displays, meters, receive sound and microphone input.
+             Run both together on a desktop, or put headless <code>nereusd</code> beside the radio and connect from another device.</p>
         </header>
         <ol class="station-path" data-reveal aria-label="How NereusSDR connects your station">
           <li><span class="feature-index">01 / RADIO</span><h3>Your OpenHPSDR radio</h3><p>RF and I/Q over Ethernet.<br>Protocol 1 or Protocol 2.</p></li>
@@ -171,9 +172,14 @@
           <li><span class="feature-index">03 / CONSOLE</span><h3>Your choice of screen</h3><p>macOS, Windows or Linux.<br>Native iPhone and iPad.</p></li>
         </ol>
         <div class="core__cards" data-reveal>
-          <article class="panel"><div class="titlebar"><h3>Single-board computers</h3></div><div class="panel__body"><h4>Keep the processing beside the radio.</h4><p>Development and hardware testing have used a <strong>Raspberry Pi 4</strong> with a Hermes Lite 2 and a <strong>Radxa ROCK 5C</strong> with an ANAN-G2/Saturn. Receiver count and DSP choices depend on the radio and the computer's capacity.</p><p>Linux ARM64 Core packages and station-image build recipes provide the starting point for a dedicated station computer.</p><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/packaging/station-image/README.md">Station computer setup →</a></div></article>
-          <article class="panel"><div class="titlebar"><h3>Local and remote operation</h3></div><div class="panel__body"><h4>Connect from home or away.</h4><p>Find and pair with your Core on the LAN, or connect from another network. The remote access service introduces the two ends, using direct connections where possible and relay paths when needed.</p><p>Audio, display frames and controls travel over an encrypted link. The high-rate radio I/Q stays at the station.</p><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/rendezvous/README.md">Remote access and self-hosting →</a></div></article>
-          <article class="panel"><div class="titlebar"><h3>One station, several devices</h3></div><div class="panel__body"><h4>Up to four devices share a Core.</h4><p>Desktop and mobile clients use the same station, each with its own pans and slices. Receiver access is coordinated, other devices' slices are visible as markers, and one device holds transmit at a time.</p><p>The radio's available receivers and the Core's processing capacity set what the station can run together.</p></div></article>
+          <article class="panel"><div class="titlebar"><h3>Single-board computers</h3></div><div class="panel__body"><h4>Keep the processing beside the radio.</h4><p>Development used a <strong>Raspberry Pi 4</strong> and a <strong>Radxa Rock 5C with 2 GB RAM</strong>. A station Core needs no local screen or GUI. Receiver count, DSP choices and display load depend on the radio and the computer's capacity.</p><p>The fresh-board guide covers 64-bit <strong>Raspberry Pi OS Lite</strong> and compatible <strong>Armbian Debian Trixie</strong>, using the matching ARM64 Core package once its release assets are published.</p><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/guides/install-core-sbc.md">Install a station Core →</a></div></article>
+          <article class="panel"><div class="titlebar"><h3>Local and remote operation</h3></div><div class="panel__body"><h4>Connect from home or away.</h4><p>Find and pair with your Core on the LAN, choose an address on a VPN, or use the <strong>rendezvous (RV) service</strong> for an introduction across networks.</p><p>The station session connects directly where possible, through <strong>TURN</strong>, or through a separate <strong>WebSocket relay</strong> when needed. RV signalling handles the introduction; the Core runs the radio and DSP on every path.</p><p>Core Settings shows the selected Core and its control, audio and display paths.</p><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/manual/01-desktop-connect.md#connect-to-another-computers-core">Connect to a remote Core →</a></div></article>
+          <article class="panel"><div class="titlebar"><h3>One station, several devices</h3></div><div class="panel__body"><h4>Up to four devices share a Core.</h4><p>Desktop and mobile clients use the same station, each with its own pans and slices. Receiver access is coordinated, other devices' slices are visible as markers, and one device holds transmit at a time.</p><p>The radio's available receivers and the Core's processing capacity set what the station can run together.</p><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/manual/08-shared-core.md">Operate with several devices →</a></div></article>
+        </div>
+        <div class="network-note" data-reveal>
+          <h3>A path through the networks you use.</h3>
+          <p>Nereus tries usable <strong>IPv6 and IPv4</strong> paths, with TURN and WebSocket relay alternatives when a direct route is unavailable. That matters on <strong>CGNAT and mobile broadband</strong>, where incoming IPv4 port forwarding may not be an option. <a href="https://www.t-mobile.com/support/home-internet/connect">T-Mobile Home Internet</a>, for example, does not offer configurable port forwarding. Carrier, router and firewall conditions determine which route succeeds.</p>
+          <p><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/rendezvous/README.md#self-hosting">Run your own remote access server →</a></p>
         </div>
       </div>
     </section>
@@ -291,7 +297,7 @@
     </section>
 
     <section class="section desktop" aria-labelledby="desktop-title">
-      <div class="wrap"><header class="section__head" data-reveal><p class="eyebrow">The desktop console</p><h2 id="desktop-title">A familiar console. <strong>A new station behind it.</strong></h2><p>Run locally or connect to your Core. Flexible panadapters, receiver slices, meters and station tools on macOS, Windows and Linux.</p></header></div>
+      <div class="wrap"><header class="section__head" data-reveal><p class="eyebrow">The desktop console</p><h2 id="desktop-title">A familiar console. <strong>A new station behind it.</strong></h2><p>Run locally or connect to your Core. Independently tune each receiver, arrange pans across your screens, and build a workspace from applets, containers, Canvas and meters on macOS, Windows and Linux.</p></header></div>
       <!-- The simulated radio, framed in the program's own chrome: TitleBar, the
            SpectrumWidget (overlay panel, spectrum, dBm strip, frequency strip,
            waterfall, VFO flag) and the bottom banner, rebuilt from the source values. -->
@@ -424,7 +430,7 @@
             <div class="titlebar"><h3>RX DSP</h3></div>
             <div class="applet__body">
               <h4>WDSP does the heavy lifting.</h4>
-              <p>WDSP handles SSB, CW, AM, FM and digital modes. Choose conventional, spectral or neural noise reduction, including the new WDSP NNR. Available algorithms and models follow your Core's capabilities; NNR can step back its model under processing load.</p>
+              <p>WDSP 2.10 handles SSB, CW, AM, FM and digital modes. Choose conventional, spectral or neural noise reduction for each receiver. NNR offers Standard and Premium models, tuning controls and clear status when your Core needs to reduce its processing load.</p>
               <ul class="chips">
                 <li class="is-blue">AGC</li><li>NB</li><li>NB2</li><li>SNB</li><li class="is-green">NR2</li><li>NR3</li><li>NR4</li><li>DFNR</li><li class="is-green">NNR</li><li>MNR</li><li>ANF</li><li>APF</li><li>SQL</li><li class="is-amber">RIT</li>
               </ul>
@@ -435,7 +441,7 @@
             <div class="titlebar"><h3>TX</h3></div>
             <div class="applet__body">
               <h4>Voice transmit with a full speech chain.</h4>
-              <p>SSB, AM, SAM and DSB transmit, with a 10-band EQ, leveler, ALC, CFC compressor, CESSB and phase rotator. PureSignal predistortion runs on every supported radio, the Hermes Lite 2 included.</p>
+              <p>SSB, AM, SAM and DSB transmit, with equalization, leveler, ALC, CFC compression, CESSB and phase rotation. Select a microphone source, choose a transmit profile and keep your audio controls beside the receiver you are working.</p>
               <ul class="chips">
                 <li class="is-green">EQ</li><li>LEV</li><li>ALC</li><li>CFC</li><li>CPDR</li><li>CESSB</li><li>VOX</li><li>DEXP</li><li class="is-blue">PS-A</li><li>2-Tone</li>
               </ul>
@@ -446,7 +452,7 @@
             <div class="titlebar"><h3>Panadapter</h3></div>
             <div class="applet__body">
               <h4>A panadapter drawn on your GPU.</h4>
-              <p>Arrange multiple pans and receiver slices, float a pan onto another monitor, and tune with CTUN and zoom. Explore signals over time in the GPU-rendered 3D spectrum, with Clarity following the noise floor to keep the waterfall readable.</p>
+              <p>Give each receiver its own frequency, mode, filter and DSP settings. Arrange its panadapter around the way you operate. The 3D stacked spectrum shows signals over time, with depth, angle, gain and speed controls; Clarity keeps the waterfall anchored to the noise floor.</p>
               <ul class="chips">
                 <li>Metal</li><li>Vulkan</li><li>D3D12</li><li class="is-blue">CTUN</li><li>Zoom</li><li class="is-green">Clarity</li><li>Multiple pans</li><li>3D spectrum</li>
               </ul>
@@ -454,12 +460,12 @@
           </article>
 
           <article class="applet" data-reveal>
-            <div class="titlebar"><h3>Meters</h3></div>
+            <div class="titlebar"><h3>Your desktop workspace</h3></div>
             <div class="applet__body">
-              <h4>Meters you can build yourself.</h4>
-              <p>Vintage analog S-meter faces, the ANAN multimeter, and cross-needle power and SWR meters. The AM modulation monitor adds positive and negative peaks, asymmetry and an envelope scope. Arrange instruments in docked or floating containers.</p>
+              <h4>Build the panel you want.</h4>
+              <p>Mix meters, applets and individual controls in a vertical stack or position them on a Canvas. Dock a container, overlay it or float it onto another monitor. Vintage S-meter faces, cross-needle meters and the AM modulation monitor give your instruments their own character.</p>
               <ul class="chips">
-                <li class="is-green">S-meter</li><li>Multimeter</li><li>Cross-needle</li><li>Vintage faces</li><li>AM monitor</li><li>Containers</li>
+                <li class="is-green">Canvas</li><li>Containers</li><li>Applets</li><li>S-meter</li><li>Cross-needle</li><li>Vintage faces</li><li>AM monitor</li>
               </ul>
             </div>
           </article>
@@ -503,6 +509,33 @@
           </article>
 
           <article class="applet" data-reveal>
+            <div class="titlebar"><h3>Diversity</h3></div>
+            <div class="applet__body">
+              <h4>Two antenna paths. One signal.</h4>
+              <p>Combine two synchronized antenna paths on supported two-ADC hardware. Adjust phase and gain from desktop or phone and watch the Core's live diversity pattern. Hardware limits and pauses for PureSignal are visible in the controls.</p>
+              <ul class="chips"><li class="is-blue">Phase</li><li>Gain</li><li>Live pattern</li><li>Core-owned</li><li>Two ADCs</li></ul>
+            </div>
+          </article>
+
+          <article class="applet" data-reveal>
+            <div class="titlebar"><h3>PureSignal 3</h3></div>
+            <div class="applet__body">
+              <h4>Keep correction at the station.</h4>
+              <p>Manage predistortion on supported radio and feedback configurations, with calibration controls, feedback status and AmpView on desktop. From the native phone app, check status and control automatic calibration while the Core runs the correction.</p>
+              <ul class="chips"><li class="is-green">WDSP 2.10</li><li>PS3</li><li>Feedback</li><li>Calibration</li><li>AmpView</li></ul>
+            </div>
+          </article>
+
+          <article class="applet" data-reveal>
+            <div class="titlebar"><h3>TX EQ and CFC</h3></div>
+            <div class="applet__body">
+              <h4>Shape the sound you send.</h4>
+              <p>Use graphic or parametric EQ, adjust band frequency, gain and width, and tune CFC's compression and post-EQ curves. Desktop editors offer 5, 10 and 18 bands, exact entries and undo. Native mobile EQ and CFC controls put voice shaping within reach of your phone.</p>
+              <ul class="chips"><li class="is-blue">Graphic / parametric</li><li>Q factors</li><li>CFC</li><li>Post-EQ</li><li>TX profiles</li></ul>
+            </div>
+          </article>
+
+          <article class="applet" data-reveal>
             <div class="titlebar"><h3>RADE</h3></div>
             <div class="applet__body">
               <h4>FreeDV RADE digital voice, built in.</h4>
@@ -516,6 +549,23 @@
       </div>
     </section>
 
+    <!-- ============ Operator guides ============ -->
+    <section class="section" id="guides" aria-labelledby="guides-title">
+      <div class="wrap">
+        <div class="ruler" aria-hidden="true"></div>
+        <header class="section__head" data-reveal>
+          <p class="eyebrow">Operator guides</p>
+          <h2 id="guides-title">Start here. <strong>Make it your station.</strong></h2>
+          <p>Connect your radio, get comfortable with the console, or set up a Core beside the station. Follow the guide for the job in front of you.</p>
+        </header>
+        <div class="core__cards" data-reveal>
+          <article class="panel"><div class="titlebar"><h3>Operate your station</h3></div><div class="panel__body"><h4>Find the control you need.</h4><p>The user guide takes you through tuning, receivers, displays, audio, profiles and station tools on desktop and native mobile.</p><ul class="guide-links"><li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/manual/README.md">Read the user guide →</a></li><li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/manual/01-desktop-connect.md">Start on the desktop →</a></li><li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/manual/06-iphone-connect.md">Pair an iPhone or iPad →</a></li><li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/guides/upgrading-to-2026.10.0.md">Upgrade from 0.5.2 →</a></li><li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/manual/11-troubleshooting.md">Troubleshoot operation →</a></li></ul></div></article>
+          <article class="panel"><div class="titlebar"><h3>Run a station Core</h3></div><div class="panel__body"><h4>Put the processing where it belongs.</h4><p>Prepare a fresh Pi OS Lite or Armbian Trixie system, install the matching Core package, start the service and connect your console.</p><ul class="guide-links"><li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/guides/install-core-sbc.md">Install Core on an SBC →</a></li><li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/manual/01-desktop-connect.md#connect-to-another-computers-core">Connect to a remote Core →</a></li><li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/manual/08-shared-core.md">Share the station →</a></li><li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/rendezvous/README.md#self-hosting">Host your own RV service →</a></li></ul></div></article>
+          <article class="panel"><div class="titlebar"><h3>Shape your transmitted audio</h3></div><div class="panel__body"><h4>Make your voice sound like you.</h4><p>Work through EQ and CFC, keep the settings with your transmit profile, and understand the feedback and diversity tools available to your radio.</p><ul class="guide-links"><li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/guides/tx-eq-cfc.md">Use the EQ and CFC editors →</a></li><li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/manual/14-voice-profiles.md">Set up voice profiles →</a></li><li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/manual/18-puresignal-diversity.md">Use PureSignal and diversity →</a></li><li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/manual/10-customize.md">Arrange controls and meters →</a></li></ul></div></article>
+        </div>
+      </div>
+    </section>
+
     <!-- ============ Status ============ -->
     <section class="section" id="status" aria-labelledby="status-title">
       <div class="wrap">
@@ -524,7 +574,7 @@
           <p class="eyebrow">Status</p>
           <h2 id="status-title">A new chapter <strong>for your station.</strong></h2>
           <p>
-            The next major release brings the Core, remote operation and mobile console together,
+            2026.10.0 brings the Core, remote operation and mobile console together,
             alongside a substantial desktop update. From a cross-platform console to a station you can operate across devices,
             this is the biggest step forward since v0.5.2.
           </p>
@@ -564,13 +614,14 @@
 
           <div data-reveal>
             <div class="next">
-              <div class="titlebar"><h3>Coming in the major release</h3></div>
+              <div class="titlebar"><h3>Coming in 2026.10.0</h3></div>
               <div class="next__body"><ol>
-                <li><b>NereusCore and remote operation</b><span>A headless station engine, desktop remote receive and transmit, encrypted connections and shared station access.</span></li>
-                <li><b>Native iPhone and iPad app</b><span>Touch tuning, spectrum and waterfall, receive audio, voice PTT, station controls and an iPad layout. Mobile distribution is being prepared separately.</span></li>
-                <li><b>A broader desktop console</b><span>Multiple pans and slices, 3D spectrum, WDSP neural noise reduction, tunable notch filters, AM/SAM/DSB transmit, the AM modulation monitor, vintage meters and RF2K-S integration.</span></li>
+                <li><b>Your station, across devices</b><span>A headless Core, desktop remote operation, shared receiver access and IPv4/IPv6 paths with RV, TURN and WebSocket alternatives.</span></li>
+                <li><b>A native mobile console</b><span>Touch tuning, filters, receive audio, voice PTT, TX profiles, EQ/CFC, station tools and an iPad layout. Mobile delivery remains separate from desktop/Core downloads.</span></li>
+                <li><b>A workspace of your own</b><span>Independent receivers, 3D, TNF, diversity, WDSP NNR and PureSignal 3, Canvas and containers, configurable meters and native voice editors.</span></li>
               </ol></div>
             </div>
+            <p class="capture-note">CAT support follows in the next release.</p>
           </div>
         </div>
       </div>
@@ -794,17 +845,17 @@ cmake --build build
         <div class="involve">
           <a href="https://github.com/boydsoftprez/NereusSDR/issues/new/choose" data-reveal>
             <b>Report a bug</b>
-            <span>Click the lightbulb in NereusSDR's menu bar to draft a report, or open an issue on GitHub.</span>
+            <span>Click the lightbulb in NereusSDR's menu bar to draft a bug report. Use GitHub Issues for tracked bug reports and feature requests.</span>
             <i>Open an issue</i>
           </a>
-          <a href="https://github.com/boydsoftprez/NereusSDR/blob/main/CHANGELOG.md" data-reveal>
-            <b>Follow the release</b>
-            <span>Explore what's changed since the last release and see the work coming to your station.</span>
-            <i>Release notes</i>
+          <a href="https://discord.gg/m35ERjwRe" data-reveal>
+            <b>Join Discord</b>
+            <span>Talk radios, share your station and get help from the NereusSDR community. Follow development and announcements in one place.</span>
+            <i>Join the community</i>
           </a>
           <a href="https://github.com/boydsoftprez/NereusSDR/blob/main/CONTRIBUTING.md" data-reveal>
             <b>Contribute code</b>
-            <span>C++20 and Qt 6. Ported code keeps its upstream attribution, and every commit is GPG-signed.</span>
+            <span>Improve the station engine, desktop console or native mobile app. Upstream attribution stays with the code.</span>
             <i>Contributing guide</i>
           </a>
         </div>
@@ -825,17 +876,23 @@ cmake --build build
         <div>
           <h2>Project</h2>
           <ul>
+            <li><a href="https://nereussdr.com/">Website</a></li>
             <li><a href="https://github.com/boydsoftprez/NereusSDR">Source code</a></li>
             <li><a href="https://github.com/boydsoftprez/NereusSDR/releases">Releases</a></li>
             <li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/CHANGELOG.md">Changelog</a></li>
             <li><a href="https://github.com/boydsoftprez/NereusSDR/issues">Issues</a></li>
+            <li><a href="https://discord.gg/m35ERjwRe">Join Discord</a></li>
           </ul>
         </div>
         <div>
           <h2>Docs</h2>
           <ul>
-            <li><a href="https://github.com/boydsoftprez/NereusSDR#readme">README</a></li>
-            <li><a href="https://github.com/boydsoftprez/NereusSDR#building-from-source">Build instructions</a></li>
+            <li><a href="#guides">Operator guides</a></li>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/manual/README.md">User guide</a></li>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/guides/upgrading-to-2026.10.0.md">Upgrade to 2026.10.0</a></li>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/guides/install-core-sbc.md">Install a station Core</a></li>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/guides/tx-eq-cfc.md">TX EQ and CFC</a></li>
+            <li><a href="https://github.com/boydsoftprez/NereusSDR#building-from-source">Build from source</a></li>
             <li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/CONTRIBUTING.md">Contributing</a></li>
             <li><a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/attribution/THETIS-PROVENANCE.md">Attribution</a></li>
           </ul>

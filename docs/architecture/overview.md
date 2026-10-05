@@ -63,7 +63,7 @@ credentials. The Core authenticates the device and authorizes its actions.
 IPv4/IPv6 station addresses, dual-family LAN discovery and connection
 selection support direct and RV-assisted paths, including mobile/CGNAT
 networks. The session uses its own direct, TURN or WebSocket-relayed path. See the
-[operator explanation](../../README.md#core-gui-and-remote-access) and
+[operator explanation](../../README.md#one-station-several-ways-to-operate) and
 [RV installation guide](../../rendezvous/README.md). The R1 implementation
 notes and historical flow examples below describe the extraction foundation.
 
