@@ -32,12 +32,22 @@ import Testing
         private let lock = NSLock()
         private var made: [SlowOpeningTransport] = []
         private let creation = TestPhase<SlowOpeningTransport>()
+        private let observe: (@Sendable (UInt8) -> Void)?
+
+        init(observe: (@Sendable (UInt8) -> Void)? = nil) {
+            self.observe = observe
+        }
 
         var factory: LinkTransportFactory {
             { [self] endpoint, trust in
-                let slow = SlowOpeningTransport(station.factory(endpoint, trust))
+                observe?(10)
+                let slow = SlowOpeningTransport(station.factory(endpoint, trust), observe: observe)
+                observe?(11)
                 lock.withLock { made.append(slow) }
+                observe?(12)
                 creation.finish(.success(slow))
+                observe?(13)
+                observe?(14)
                 return slow
             }
         }
@@ -46,8 +56,23 @@ import Testing
 
         func opening() async throws -> SlowOpeningTransport {
             let deadline = ContinuousClock.now + .seconds(10)
-            let transport = try await creation.wait(until: deadline)
-            try await transport.openingEntry.wait(until: deadline)
+            observe?(20)
+            let transport: SlowOpeningTransport
+            do {
+                transport = try await creation.wait(until: deadline)
+                observe?(21)
+            } catch {
+                observe?(22)
+                throw error
+            }
+            observe?(23)
+            do {
+                try await transport.openingEntry.wait(until: deadline)
+                observe?(24)
+            } catch {
+                observe?(25)
+                throw error
+            }
             return transport
         }
     }
@@ -68,16 +93,25 @@ import Testing
     }
 
     @Test func aCoreSlowToOpenThenSilentEndsAtTheSameBound() async throws {
-        let slow = SlowStation()
+        let receipts = OpeningPhaseReceipts(caseID: 1)
+        defer { receipts.emit() }
+        let slow = SlowStation(observe: receipts.mark)
         let clock = ManualLinkClock()
         let session = Self.session(clock: clock, trust: slow.station.trust, factory: slow.factory)
-        let connecting = Task { await session.connect() }
+        receipts.mark(1)
+        let connecting = Task {
+            receipts.mark(2)
+            await session.connect()
+            receipts.mark(3)
+        }
         let transport: SlowOpeningTransport
         do { transport = try await slow.opening() }
         catch {
+            receipts.mark(5)
             connecting.cancel()
             slow.latest?.close()
             await session.disconnect()
+            receipts.mark(6)
             throw error
         }
         await clock.advance(by: 10_000)
@@ -93,16 +127,25 @@ import Testing
     }
 
     @Test func aCoreThatNeverOpensEndsAtTheSameBound() async throws {
-        let slow = SlowStation()
+        let receipts = OpeningPhaseReceipts(caseID: 2)
+        defer { receipts.emit() }
+        let slow = SlowStation(observe: receipts.mark)
         let clock = ManualLinkClock()
         let session = Self.session(clock: clock, trust: slow.station.trust, factory: slow.factory)
-        let connecting = Task { await session.connect() }
+        receipts.mark(1)
+        let connecting = Task {
+            receipts.mark(2)
+            await session.connect()
+            receipts.mark(3)
+        }
         let transport: SlowOpeningTransport
         do { transport = try await slow.opening() }
         catch {
+            receipts.mark(5)
             connecting.cancel()
             slow.latest?.close()
             await session.disconnect()
+            receipts.mark(6)
             throw error
         }
         await clock.advance(by: 29_999)
@@ -152,16 +195,25 @@ import Testing
     }
 
     @Test func aNormalConnectAfterASlowOpeningIsUnaffected() async throws {
-        let slow = SlowStation()
+        let receipts = OpeningPhaseReceipts(caseID: 3)
+        defer { receipts.emit() }
+        let slow = SlowStation(observe: receipts.mark)
         let clock = ManualLinkClock()
         let session = Self.session(clock: clock, trust: slow.station.trust, factory: slow.factory)
-        let connecting = Task { await session.connect() }
+        receipts.mark(1)
+        let connecting = Task {
+            receipts.mark(2)
+            await session.connect()
+            receipts.mark(3)
+        }
         let transport: SlowOpeningTransport
         do { transport = try await slow.opening() }
         catch {
+            receipts.mark(5)
             connecting.cancel()
             slow.latest?.close()
             await session.disconnect()
+            receipts.mark(6)
             throw error
         }
         await clock.advance(by: 10_000)
@@ -185,9 +237,14 @@ import Testing
         try DeviceIdentity.load(store: InMemoryKeyStore())
     }
 
-    private static func client(clock: ManualLinkClock, transport: any LinkTransport) throws -> PairingClient {
+    private static func client(clock: ManualLinkClock, transport: any LinkTransport,
+                               observe: (@Sendable (UInt8) -> Void)? = nil) throws -> PairingClient {
         try PairingClient(identity: try device(), name: "Shack iPhone", kind: .phone, clock: clock,
-                          transportFactory: { _, _ in transport })
+                          transportFactory: { _, _ in
+                              observe?(10)
+                              observe?(11)
+                              return transport
+                          })
     }
 
     /// The error `task` ended with, or nil when it succeeded. Without the
@@ -216,17 +273,30 @@ import Testing
     }
 
     @Test func aPairingSlowToOpenThenSilentEndsThirtySecondsAfterTheDial() async throws {
+        let receipts = OpeningPhaseReceipts(caseID: 4)
+        defer { receipts.emit() }
         let core = PairingTestTransport()
         let identity = TestStationIdentity()
         let clock = ManualLinkClock()
-        let slow = SlowOpeningTransport(core)
-        let client = try Self.client(clock: clock, transport: slow)
+        let slow = SlowOpeningTransport(core, observe: receipts.mark)
+        let client = try Self.client(clock: clock, transport: slow, observe: receipts.mark)
         let endpoint = Self.uniqueEndpoint()
-        let pairing = Task { try await client.pairOnThisNetwork(endpoint: endpoint) }
+        receipts.mark(1)
+        let pairing = Task {
+            receipts.mark(2)
+            do {
+                let result = try await client.pairOnThisNetwork(endpoint: endpoint)
+                receipts.mark(3)
+                return result
+            } catch {
+                receipts.mark(4)
+                throw error
+            }
+        }
         // An entry assertion can throw before the normal deadline/cancel path.
         // Scope cleanup ends that task without supplying any assertion result.
-        defer { pairing.cancel(); slow.close() }
-        _ = try #require(await SlowOpeningTransport.opening(in: { slow }))
+        defer { receipts.mark(5); pairing.cancel(); slow.close(); receipts.mark(6) }
+        _ = try #require(await SlowOpeningTransport.opening(in: { slow }, observe: receipts.mark))
         #expect(clock.pendingDueTimes == [30_000])
         await clock.advance(by: 10_000)
         slow.finishOpening()
@@ -247,14 +317,27 @@ import Testing
     }
 
     @Test func aPairingNobodyOpensEndsAtTheSameBoundAndFreesTheCore() async throws {
+        let receipts = OpeningPhaseReceipts(caseID: 5)
+        defer { receipts.emit() }
         let clock = ManualLinkClock()
-        let slow = SlowOpeningTransport(PairingTestTransport())
+        let slow = SlowOpeningTransport(PairingTestTransport(), observe: receipts.mark)
         let endpoint = Self.uniqueEndpoint()
-        let first = try Self.client(clock: clock, transport: slow)
-        let pairing = Task { try await first.pairOnThisNetwork(endpoint: endpoint) }
+        let first = try Self.client(clock: clock, transport: slow, observe: receipts.mark)
+        receipts.mark(1)
+        let pairing = Task {
+            receipts.mark(2)
+            do {
+                let result = try await first.pairOnThisNetwork(endpoint: endpoint)
+                receipts.mark(3)
+                return result
+            } catch {
+                receipts.mark(4)
+                throw error
+            }
+        }
         // Close even when the fixture entry assertion throws.
-        defer { pairing.cancel(); slow.close() }
-        _ = try #require(await SlowOpeningTransport.opening(in: { slow }))
+        defer { receipts.mark(5); pairing.cancel(); slow.close(); receipts.mark(6) }
+        _ = try #require(await SlowOpeningTransport.opening(in: { slow }, observe: receipts.mark))
         await clock.advance(by: 29_999)
         #expect(!slow.isClosedByApp)
         await clock.advance(by: 1)
@@ -264,26 +347,50 @@ import Testing
         #expect(clock.pendingDueTimes.isEmpty)
         // The Core's gate is free: a new pairing dials rather than being
         // refused as one still running, and has its own 30 s.
-        let next = SlowOpeningTransport(PairingTestTransport())
-        let second = try Self.client(clock: clock, transport: next)
-        let retry = Task { try await second.pairOnThisNetwork(endpoint: endpoint) }
-        defer { retry.cancel(); next.close() }
-        _ = try #require(await SlowOpeningTransport.opening(in: { next }))
+        let next = SlowOpeningTransport(PairingTestTransport(), observe: receipts.mark)
+        let second = try Self.client(clock: clock, transport: next, observe: receipts.mark)
+        receipts.mark(1)
+        let retry = Task {
+            receipts.mark(2)
+            do {
+                let result = try await second.pairOnThisNetwork(endpoint: endpoint)
+                receipts.mark(3)
+                return result
+            } catch {
+                receipts.mark(4)
+                throw error
+            }
+        }
+        defer { receipts.mark(5); retry.cancel(); next.close(); receipts.mark(6) }
+        _ = try #require(await SlowOpeningTransport.opening(in: { next }, observe: receipts.mark))
         #expect(clock.pendingDueTimes == [60_000])
         await clock.advance(by: 30_000)
         #expect(await Self.failure(retry, closing: next) == .didNotOpen(localNetworkDenied: false))
     }
 
     @Test func aPairingCancelledWhileDiallingThrowsCancellationAndClosesAtOnce() async throws {
+        let receipts = OpeningPhaseReceipts(caseID: 6)
+        defer { receipts.emit() }
         let clock = ManualLinkClock()
-        let slow = SlowOpeningTransport(PairingTestTransport())
+        let slow = SlowOpeningTransport(PairingTestTransport(), observe: receipts.mark)
         let endpoint = Self.uniqueEndpoint()
-        let client = try Self.client(clock: clock, transport: slow)
-        let pairing = Task { try await client.pairOnThisNetwork(endpoint: endpoint) }
+        let client = try Self.client(clock: clock, transport: slow, observe: receipts.mark)
+        receipts.mark(1)
+        let pairing = Task {
+            receipts.mark(2)
+            do {
+                let result = try await client.pairOnThisNetwork(endpoint: endpoint)
+                receipts.mark(3)
+                return result
+            } catch {
+                receipts.mark(4)
+                throw error
+            }
+        }
         // An entry assertion can throw before the normal deadline/cancel path.
         // Scope cleanup ends that task without supplying any assertion result.
-        defer { pairing.cancel(); slow.close() }
-        _ = try #require(await SlowOpeningTransport.opening(in: { slow }))
+        defer { receipts.mark(5); pairing.cancel(); slow.close(); receipts.mark(6) }
+        _ = try #require(await SlowOpeningTransport.opening(in: { slow }, observe: receipts.mark))
         pairing.cancel()
         // Without the cancel closing it, only this would end the opening,
         // and the pairing would then fail as one that never opened.
@@ -408,6 +515,35 @@ import Testing
 
 }
 
+/// Passive diagnostic observations only; phase finish receipts do not assert
+/// that TestPhase accepted the attempted outcome. Each case emits once, after
+/// its existing cleanup, with at most 64 numeric records and no payloads.
+private final class OpeningPhaseReceipts: @unchecked Sendable {
+    private let caseID: UInt8
+    private let started = ContinuousClock.now
+    private let lock = NSLock()
+    private var records: [(UInt8, Duration)] = []
+    private var dropped = 0
+
+    init(caseID: UInt8) { self.caseID = caseID }
+
+    func mark(_ phase: UInt8) {
+        lock.withLock {
+            guard records.count < 64 else { dropped += 1; return }
+            records.append((phase, ContinuousClock.now - started))
+        }
+    }
+
+    func emit() {
+        let snapshot = lock.withLock { (records, dropped) }
+        let numeric = snapshot.0.map { phase, elapsed in
+            let parts = elapsed.components
+            return "[\(phase),\(parts.seconds),\(parts.attoseconds)]"
+        }.joined(separator: ",")
+        print("OPENING_PHASE_RECEIPT [\(caseID),\(snapshot.1),[\(numeric)]]")
+    }
+}
+
 /// The connections a factory made, for a test to close.
 private final class Made: @unchecked Sendable {
     private let lock = NSLock()
@@ -430,21 +566,27 @@ final class SlowOpeningTransport: LinkTransport, @unchecked Sendable {
     let openingEntry = TestPhase<Void>()
     private var released = false
     private var closed = false
+    private let observe: (@Sendable (UInt8) -> Void)?
 
-    init(_ inner: any LinkTransport) {
+    init(_ inner: any LinkTransport, observe: (@Sendable (UInt8) -> Void)? = nil) {
         self.inner = inner
+        self.observe = observe
     }
 
     /// Waits, up to 10 s of real time, for the transport `latest` names to
     /// be inside its opening.
-    static func opening(in latest: @escaping @Sendable () -> SlowOpeningTransport?) async -> SlowOpeningTransport? {
+    static func opening(in latest: @escaping @Sendable () -> SlowOpeningTransport?,
+                        observe: (@Sendable (UInt8) -> Void)? = nil) async -> SlowOpeningTransport? {
         let giveUp = ContinuousClock.now + .seconds(10)
+        observe?(26)
         while ContinuousClock.now < giveUp {
             if let transport = latest(), transport.isOpening {
+                observe?(27)
                 return transport
             }
             try? await Task.sleep(for: .milliseconds(2))
         }
+        observe?(28)
         return nil
     }
 
@@ -453,26 +595,34 @@ final class SlowOpeningTransport: LinkTransport, @unchecked Sendable {
 
     /// The Core answers the opening.
     func finishOpening() {
+        observe?(34)
         let resume = lock.withLock { () -> CheckedContinuation<Void, Error>? in
             released = true
             defer { waiter = nil }
             return waiter
         }
+        observe?(35)
         resume?.resume()
     }
 
     func open(onEvent: @escaping @Sendable (LinkTransportEvent) async -> Void) async throws -> Data {
+        observe?(30)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let outcome = lock.withLock { () -> Bool? in
                 if closed {
+                    observe?(36)
                     return false
                 }
                 if released {
+                    observe?(37)
                     return true
                 }
                 waiter = continuation
+                observe?(31)
                 // Acknowledge only after the opening hold exists.
+                observe?(32)
                 openingEntry.finish(.success(()))
+                observe?(33)
                 return nil
             }
             switch outcome {
@@ -496,14 +646,18 @@ final class SlowOpeningTransport: LinkTransport, @unchecked Sendable {
     }
 
     func close() {
+        observe?(40)
         let resume = lock.withLock { () -> CheckedContinuation<Void, Error>? in
             closed = true
             defer { waiter = nil }
             return waiter
         }
+        observe?(41)
         openingEntry.finish(.failure(.closed))
+        observe?(42)
         resume?.resume(throwing: LinkTransportError.failed("closed"))
         inner.close()
+        observe?(43)
     }
 }
 

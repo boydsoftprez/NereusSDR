@@ -70,7 +70,38 @@ jobs:
       - name: swift test (NereusKit)
         run: ios/scripts/swift-test.sh
 
+      - name: Compare startup and DTLS cases after the package workload
+        # Diagnostic branch only; the original full package run remains above.
+        if: always() && github.ref == 'refs/heads/codex/kit-startup-receipts'
+        run: |
+          startup_test_binary=ios/NereusKit/.build/arm64-apple-macosx/debug/NereusKitPackageTests.xctest/Contents/MacOS/NereusKitPackageTests
+          test -f "$startup_test_binary"
+          shasum -a 256 "$startup_test_binary" > startup-binary-before.sha256
+          cat startup-binary-before.sha256
+          set +e
+          ios/scripts/swift-test.sh --skip-build --filter 'ConnectDeadlineFromDialTests|DtlsFingerprintTests' > startup-focused.log 2>&1
+          startup_exit=$?
+          set -e
+          cat startup-focused.log
+          shasum -a 256 "$startup_test_binary" > startup-binary-after.sha256
+          cat startup-binary-after.sha256
+          cmp startup-binary-before.sha256 startup-binary-after.sha256
+          echo "Startup/DTLS focused command exit: $startup_exit"
+          exit "$startup_exit"
+
+      - name: Retain the focused startup and DTLS receipts
+        if: always() && github.ref == 'refs/heads/codex/kit-startup-receipts'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kit-startup-focused-${{ github.run_id }}
+          path: |
+            startup-focused.log
+            startup-binary-before.sha256
+            startup-binary-after.sha256
+          if-no-files-found: error
+
   interop:
+    if: github.ref != 'refs/heads/codex/kit-startup-receipts'
     runs-on: macos-26
     name: Media and pairing interop with the Core
     steps:
@@ -94,6 +125,7 @@ jobs:
         run: ios/scripts/interop-test.sh
 
   app:
+    if: github.ref != 'refs/heads/codex/kit-startup-receipts'
     # Xcode 27 is on its own hosted image; macos-26 carries Xcode 26.
     # https://github.com/actions/runner-images/issues/14404
     runs-on: xcode-27
