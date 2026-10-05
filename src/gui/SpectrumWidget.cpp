@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-05  J.J. Boyd / KG4VCF. Refresh slice flags and floating
+//                 controls when the RF view changes, including accepted
+//                 remote crops on GPU. AI-assisted via OpenAI Codex.
 //   2026-10-04  J.J. Boyd / KG4VCF. Opt-in numeric actual-row diagnostics
 //                 with applied extras provenance, bounded to one log per
 //                 widget per 500 ms. AI-assisted via OpenAI Codex.
@@ -11042,6 +11045,10 @@ void SpectrumWidget::applyViewWindow(double centreHz, double bandwidthHz)
     // The scale and grid are cached chrome; the trace is not. Without this
     // the numbers stay frozen while the trace moves.
     markOverlayDirty();
+
+    // Child flags and their floating controls follow the same RF window as
+    // the ruler. GPU painting does not run the CPU paintEvent position pass.
+    updateVfoPositions();
 
     // Structural, not remembered: any zoom or pan path added later inherits
     // this because it cannot change the window without coming through here.
