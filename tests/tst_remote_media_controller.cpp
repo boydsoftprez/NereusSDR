@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-04: Hold accepted Core waterfall levels in the remote codec window.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04: Genuine delayed allocation results across peer promotion,
@@ -101,6 +103,7 @@
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
 #include "core/ClarityController.h"
+#include "gui/PanClarityRegistry.h"
 #include "core/session/SliceAccessMirror.h"
 #include "core/session/DeviceSessionRegistry.h"
 #include "core/session/StationClient.h"
@@ -2307,6 +2310,11 @@ private slots:
         pan->addSlice(secondId);
         pan->setActiveSliceIndex(firstId);
         auto* widget = pan->spectrumWidget();
+        remote.setClarityEnabled(true);
+        PanClarityRegistry registry(&remote);
+        registry.registerPan(QStringLiteral("pan"),widget,nullptr);
+        ClarityController* clarity=registry.controllerForPan(QStringLiteral("pan"));
+        QSignalSpy floors(clarity,&ClarityController::noiseFloorChanged);
         widget->setDisplayWindowPreservingHistory(centre, 96000);
         widget->setVfoFrequency(centre);
         widget->setConnectionState(ConnectionState::Connected);
@@ -2322,6 +2330,7 @@ private slots:
                 sinkMedia = new DisplayTransport(owner);
                 return sinkMedia;
             });
+        gui.setClarityRegistry(&registry);
         auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
         auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
         stationLink->linkTo(clientLink);
@@ -2345,6 +2354,9 @@ private slots:
         };
         QTRY_VERIFY_WITH_TIMEOUT((feed(), drawn() >= 5), 10000);
         const int before = drawn();
+        QTRY_VERIFY(!floors.isEmpty());
+        clarity->notifyManualOverride();
+        const float retainedLow=clarity->lastLow(), retainedFloor=clarity->smoothedFloor();
 
         // The operator selects the other slice's flag on this pan.
         pan->setActiveSliceIndex(secondId);
@@ -2362,6 +2374,8 @@ private slots:
         // is drawn at its time on the audio's clock, a little after rows
         // captured before the switch.
         QTRY_VERIFY_WITH_TIMEOUT((feed(), !widget->renderedPixels().isEmpty()), 10000);
+        QVERIFY(clarity->isPaused());
+        QCOMPARE(clarity->lastLow(),retainedLow); QCOMPARE(clarity->smoothedFloor(),retainedFloor);
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
@@ -2648,17 +2662,17 @@ private slots:
             });
         RadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
-        ClarityController clarity;
-        remote.setClarityController(&clarity);
-        const auto detachClarity = qScopeGuard([&] { remote.setClarityController(nullptr); });
-        clarity.setEnabled(true);
-        QSignalSpy liveFloors(&clarity, &ClarityController::noiseFloorChanged);
+        PanClarityRegistry registry(&remote);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
         PanadapterStack stack;
         auto* first = stack.addPanadapter(QStringLiteral("first"));
         auto* second = stack.addPanadapter(QStringLiteral("second"));
         stack.setActivePan(QStringLiteral("first"));
+        registry.registerPan(QStringLiteral("first"), first->spectrumWidget(), nullptr);
+        registry.registerPan(QStringLiteral("second"), second->spectrumWidget(), nullptr);
+        QSignalSpy liveFloors(registry.controllerForPan(QStringLiteral("first")), &ClarityController::noiseFloorChanged);
+        QSignalSpy otherFloors(registry.controllerForPan(QStringLiteral("second")), &ClarityController::noiseFloorChanged);
         for (auto* applet : {first, second}) {
             applet->setActiveSliceIndex(sliceId);
             applet->spectrumWidget()->setDisplayWindowPreservingHistory(centre, 48000);
@@ -2678,6 +2692,7 @@ private slots:
                 sinkMedia = new DisplayTransport(owner);
                 return sinkMedia;
             });
+        gui.setClarityRegistry(&registry);
         QSignalSpy outbound(&server, &StationServer::mediaControlReceived);
         QSignalSpy inbound(&client, &StationClient::mediaControlReceived);
         auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
@@ -2706,7 +2721,7 @@ private slots:
                 && !second->spectrumWidget()->renderedPixels().isEmpty();
         };
         QTRY_VERIFY_WITH_TIMEOUT(bothHaveFrames(), 5000);
-        QTRY_VERIFY_WITH_TIMEOUT(!liveFloors.isEmpty(), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!liveFloors.isEmpty() && !otherFloors.isEmpty(), 5000);
         QCOMPARE(countControl(inbound, QStringLiteral("rejected")), 0);
 
         // DaemonMediaController applies the station offset before reducing
@@ -4983,6 +4998,102 @@ private slots:
         QCOMPARE(finished.size(), 1);
     }
 
+    void fourAcceptedPanFloorsOwnIndependentPlannerWindows()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5,5,192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        QList<int> sliceIds;
+        for(int n=0;n<4;++n) {
+            const int sliceId=station.addSlice(QStringLiteral("pan-%1").arg(n));
+            SliceModel* source=station.sliceById(sliceId);
+            QVERIFY(source); source->setStreamIndex(0); source->setFrequency(14225000);
+            sliceIds.append(sliceId);
+        }
+        StationServer server(&station, settings, Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        remote.setClarityEnabled(true);
+        PanClarityRegistry registry(&remote);
+        SettingsProxy proxy; StationClient client(&remote, &proxy); PanadapterStack stack;
+        for (int n=0; n<4; ++n) {
+            const QString id = QStringLiteral("pan-%1").arg(n);
+            auto* pan=stack.addPanadapter(id); pan->setActiveSliceIndex(sliceIds[n]);
+            auto* widget=pan->spectrumWidget();
+            widget->setDisplayWindowPreservingHistory(14225000,24000);
+            widget->setDbmRange(-100,-60); widget->setWfAgcEnabled(false);
+            widget->setWaterfallNFAGCEnabled(false); widget->setDispNormalize(false);
+            widget->setWfUseSpectrumMinMax(false); widget->setWfLowThreshold(-110); widget->setWfHighThreshold(-70);
+            registry.registerPan(id,widget,nullptr);
+            registry.controllerForPan(id)->setPollIntervalMs(0);
+        }
+        stack.setActivePan(QStringLiteral("pan-0")); stack.resize(600,800); stack.show();
+        QPointer<DisplayTransport> media;
+        RemoteMediaController controller(&client,&remote,&stack,nullptr,
+            [&media](QObject* owner)->IMediaTransport* { media=new DisplayTransport(owner); return media; });
+        controller.setClarityRegistry(&registry);
+        QSignalSpy controls(&server,&StationServer::mediaControlReceived);
+        QSignalSpy inbound(&client,&StationClient::mediaControlReceived);
+        auto* stationLink=new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink=new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink); client.startSession(clientLink,server.token()); server.acceptTransport(stationLink);
+        QTRY_VERIFY(media); media->activate();
+        QTRY_COMPARE(countControl(controls,QStringLiteral("subscribe")),4);
+        QList<QJsonObject> requests;
+        for (const auto& event : controls) {
+            const QJsonObject payload=event.first().toJsonObject();
+            if (payload.value(QStringLiteral("op"))==QStringLiteral("subscribe")) { requests.append(payload); }
+        }
+        QCOMPARE(requests.size(),4);
+        for (int n=0;n<4;++n) {
+            const auto request=requests[n];
+            const int hosted=sliceIds.indexOf(request.value(QStringLiteral("sliceId")).toInt());
+            QVERIFY(hosted>=0);
+            const QString id=QStringLiteral("pan-%1").arg(hosted);
+            // The request identifies its real widget, including inactive panes.
+            QVERIFY(stack.spectrum(id));
+            SpectrumContextMessage message;
+            message.connectionId=request.value(QStringLiteral("connectionId")).toString();
+            message.endpointId=quint32(request.value(QStringLiteral("endpointId")).toDouble());
+            message.revision=quint32(request.value(QStringLiteral("revision")).toDouble());
+            message.contextGeneration=1; message.sourceStream=0; message.sourceCentreHz=14225000; message.sampleRateHz=192000;
+            message.centreHz=14225023.4375; message.spanHz=24046.875;
+            message.traceSamples=128; message.waterfallSamples=128; message.minDbm=-180; message.maxDbm=0;
+            message.fps=30; message.framesPerLine=1; message.wideband=WidebandDisplayContext{};
+            SpectrumContextGrant grant; grant.grantedFftSize=4096; grant.requestedPixels=128; grant.grantedPixels=128;
+            message.grant=grant;
+            QVERIFY(server.sendMediaControl(encodeRemoteSpectrumContext(message,true),server.mediaSessionEpoch()));
+            const float floor=-150.0f+hosted*15.0f;
+            QJsonObject event{{QStringLiteral("op"),QStringLiteral("noise-floor")},
+                {QStringLiteral("connectionId"),message.connectionId},{QStringLiteral("endpointId"),double(message.endpointId)},
+                {QStringLiteral("revision"),double(message.revision)},{QStringLiteral("contextGeneration"),1},{QStringLiteral("floorDbm"),floor}};
+            QVERIFY(server.sendMediaControl(event,server.mediaSessionEpoch()));
+            QTRY_VERIFY(stack.spectrum(id)->clarityActive()
+                && stack.spectrum(id)->wfActiveLowThreshold()==floor-5
+                && stack.spectrum(id)->wfActiveHighThreshold()==floor+55);
+            QCOMPARE(stack.spectrum(id)->wfActiveHighThreshold(),floor+55);
+        }
+        QTRY_VERIFY(countControl(controls,QStringLiteral("subscribe"))>=8);
+        for(int n=0;n<4;++n) {
+            const QString id=QStringLiteral("pan-%1").arg(n);
+            QJsonObject latest;
+            for(const auto& event:controls) { const auto payload=event.first().toJsonObject();
+                if(payload.value(QStringLiteral("op"))==QStringLiteral("subscribe") && payload.value(QStringLiteral("sliceId")).toInt()==sliceIds[n]) { latest=payload; } }
+            QVERIFY(!latest.isEmpty());
+            QVERIFY(latest.value(QStringLiteral("minDbm")).toDouble() <= stack.spectrum(id)->wfActiveLowThreshold()-10);
+            QVERIFY(latest.value(QStringLiteral("maxDbm")).toDouble() >= stack.spectrum(id)->wfActiveHighThreshold()+10);
+        }
+        const int settled=countControl(controls,QStringLiteral("subscribe"));
+        stack.setActivePan(QStringLiteral("pan-2"));
+        for(int n=0;n<4;++n) { const QString id=QStringLiteral("pan-%1").arg(n); QCOMPARE(stack.spectrum(id)->wfActiveLowThreshold(),-155.0f+n*15); }
+        QVERIFY(countControl(controls,QStringLiteral("subscribe"))>=settled);
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     void contextMediaAndRetirementStayInAuthenticatedSession()
     {
         QTemporaryDir dir;
@@ -4999,25 +5110,17 @@ private slots:
         server.setMediaEnabled(true);
         RadioModel remote(RadioModel::Role::Remote);
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
-        ClarityController clarity;
-        remote.setClarityController(&clarity);
-        const auto detachClarity = qScopeGuard([&] { remote.setClarityController(nullptr); });
-        clarity.setEnabled(true);
-        clarity.setPollIntervalMs(0);
-        clarity.setSmoothingTauSec(0);
-        clarity.setDeadbandDb(0);
-        QSignalSpy floors(&clarity, &ClarityController::noiseFloorChanged);
+        PanClarityRegistry registry(&remote);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
         PanadapterStack stack;
         auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
         applet->setActiveSliceIndex(stationSlice->sliceIndex());
         auto* widget = applet->spectrumWidget();
-        connect(&clarity, &ClarityController::waterfallThresholdsChanged,
-                widget, [widget](float low, float high) {
-            widget->setClarityActive(true);
-            widget->setClarityWaterfallThresholds(low, high);
-        });
+        registry.registerPan(QStringLiteral("pan-0"), widget, nullptr);
+        ClarityController& clarity = *registry.controllerForPan(QStringLiteral("pan-0"));
+        clarity.setPollIntervalMs(0); clarity.setSmoothingTauSec(0); clarity.setDeadbandDb(0);
+        QSignalSpy floors(&clarity, &ClarityController::noiseFloorChanged);
         // Parity Task 17 follow-up: the dBm window holds the run-time
         // waterfall levels with headroom. Levels that already take in the
         // ones Clarity sets below (-137.375 to -77.375) keep this test's
@@ -5046,6 +5149,7 @@ private slots:
                 media = new DisplayTransport(owner);
                 return media;
             });
+        controller.setClarityRegistry(&registry);
         QSignalSpy controls(&server, &StationServer::mediaControlReceived);
         QSignalSpy receivedControls(&client, &StationClient::mediaControlReceived);
         QSignalSpy frames(&controller, &RemoteMediaController::displayFrameReceived);
@@ -5210,6 +5314,15 @@ private slots:
         deliverFloor(noiseFloor);
         QCOMPARE(floors.size(), 1);
         widget->show();
+        // A valid accepted recipient keeps adapting when another full pan is selected.
+        auto* other = stack.addPanadapter(QStringLiteral("pan-1"));
+        QVERIFY(other);
+        stack.setActivePan(QStringLiteral("pan-1"));
+        deliverFloor(noiseFloor);
+        QCOMPARE(floors.size(), 2);
+        floors.removeLast();
+        stack.setActivePan(QStringLiteral("pan-0"));
+        stack.removePanadapter(QStringLiteral("pan-1"));
         QCOMPARE(clarity.smoothedFloor(), -132.375f);
         QCOMPARE(widget->wfActiveLowThreshold(), -137.375f);
         QCOMPARE(widget->wfActiveHighThreshold(), -77.375f);
@@ -6204,9 +6317,13 @@ private slots:
         widget->setDbmRange(-100.0f, -60.0f);
         widget->setWfLowThreshold(-110.0f);
         widget->setWfHighThreshold(-70.0f);
+        remote.setClarityEnabled(true);
+        PanClarityRegistry registry(&remote);
+        registry.registerPan(QStringLiteral("pan-0"),widget,nullptr);
+        registry.bindRemote(QStringLiteral("pan-0"),widget,stationSlice,{0,stationSlice->streamEpoch(),14225000,192000},1,1,1);
+        ClarityController* clarity=registry.controllerForPan(QStringLiteral("pan-0"));
         // Clarity drives the levels, below and above what the pan shows.
-        widget->setClarityActive(true);
-        widget->setClarityWaterfallThresholds(-150.0f, -40.0f);
+        emit clarity->waterfallThresholdsChanged(-150.0f, -40.0f);
         stack.resize(600, 400);
         stack.show();
         QVERIFY(QTest::qWaitForWindowExposed(&stack));
@@ -6241,14 +6358,14 @@ private slots:
         };
 
         // A few dB of movement inside the window asks nothing.
-        widget->setClarityWaterfallThresholds(-147.0f, -44.0f);
+        emit clarity->waterfallThresholdsChanged(-147.0f, -44.0f);
         settle();
-        widget->setClarityWaterfallThresholds(-153.0f, -37.0f);
+        emit clarity->waterfallThresholdsChanged(-153.0f, -37.0f);
         settle();
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
 
         // The low level leaves the window: asked again, with headroom.
-        widget->setClarityWaterfallThresholds(-175.0f, -37.0f);
+        emit clarity->waterfallThresholdsChanged(-175.0f, -37.0f);
         settle();
         QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
         asked = lastControl(controls, QStringLiteral("subscribe"));
@@ -6257,7 +6374,7 @@ private slots:
 
         // The levels close in far inside the window: it narrows to them,
         // never inside what the pan shows.
-        widget->setClarityWaterfallThresholds(-120.0f, -90.0f);
+        emit clarity->waterfallThresholdsChanged(-120.0f, -90.0f);
         settle();
         QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 3);
         asked = lastControl(controls, QStringLiteral("subscribe"));
@@ -6267,7 +6384,7 @@ private slots:
         // Back to the stored levels: the window is the pan and those levels.
         // (Waterfall AGC's levels come from a Core that offers display
         // extras, as this one does: coreWaterfallAgcAsksNothingAsItSettles.)
-        widget->setClarityActive(false);
+        registry.setEnabled(false);
         settle();
         QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 4);
         asked = lastControl(controls, QStringLiteral("subscribe"));
