@@ -40,6 +40,9 @@ warren@wpratt.com
 //                 Phase 3M-1c TX pump architecture redesign v3, with
 //                 AI-assisted implementation via Anthropic Claude
 //                 Code.
+//   2026-10-04: Measure acquire entry and successful return to split the
+//                 longest wake interval. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex.
 //   2026-10-01: TX diagnostics lane: waitForBlock times each wake that
 //                 brings a block (TxMicWakeWatch). Measurement only.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
@@ -242,22 +245,26 @@ bool TxMicSource::waitForBlock(int timeoutMs)
     // when the source has been stopped (poison release in stop()).
     // TX diagnostics lane: each wake that brings a block is timed
     // (measurement only; see TxMicWakeWatch).
-    const auto noteWake = [this] {
-        m_wakeWatch.noteWake(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                 std::chrono::steady_clock::now().time_since_epoch())
-                                 .count());
+    // Acquire entry splits processing/scheduling between waits from input
+    // wait/scheduling inside acquire. Neither isolates native DSP locks.
+    const auto steadyNs = [] {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch()).count();
     };
     if (timeoutMs < 0) {
+        const qint64 acquireStartNs = steadyNs();
         m_blockReadySem.acquire(1);
+        const qint64 wakeNs = steadyNs();
         const bool running = m_running.load(std::memory_order_acquire);
         if (running) {
-            noteWake();
+            m_wakeWatch.noteWake(wakeNs, acquireStartNs);
         }
         return running;
     }
+    const qint64 acquireStartNs = steadyNs();
     const bool acquired = m_blockReadySem.tryAcquire(1, timeoutMs);
     if (acquired) {
-        noteWake();
+        m_wakeWatch.noteWake(steadyNs(), acquireStartNs);
     }
     return acquired;
 }

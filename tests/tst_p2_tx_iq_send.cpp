@@ -22,6 +22,8 @@
 //   - after the stall the frame rate returns to 800 a second (192 kHz / 240).
 //
 // Modification history (NereusSDR):
+//   2026-10-04: Verify watcher stage timing reaches TX diagnostic stats.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01: TX diagnostics lane: a key with a late first block, a send
 //               thread stall and a half-second producer pause places its
 //               silence (start, mid-key, tail), its ran dry and its
@@ -34,6 +36,7 @@
 #include <QtTest/QtTest>
 
 #include "core/P2RadioConnection.h"
+#include "core/audio/TxMicSource.h"
 
 #include <vector>
 
@@ -160,6 +163,37 @@ class TestP2TxIqSend : public QObject {
     Q_OBJECT
 
 private slots:
+    void wakeIntervalSplit_reachesTransportStats()
+    {
+        TxMicSource source;
+        P2RadioConnection conn;
+        conn.setTxMicSource(&source);
+        QCOMPARE(conn.txSendStats().wakeGapWorkerMs, -1.0);
+        QCOMPARE(conn.txSendStats().wakeGapAcquireMs, -1.0);
+        source.wakeWatch().begin();
+        source.wakeWatch().noteSequence(41);
+        source.wakeWatch().noteWake(1'000'000'000);
+        source.wakeWatch().noteSequence(42);
+        source.wakeWatch().noteWake(1'512'000'000, 1'012'000'000);
+        source.wakeWatch().noteWake(1'513'000'000, 1'512'250'000);
+        source.wakeWatch().end();
+        const RadioConnection::TxSendStats stats = conn.txSendStats();
+        QCOMPARE(stats.longestWakeGapMs, 512.0);
+        QCOMPARE(stats.wakeGapWorkerMs, 12.0);
+        QCOMPARE(stats.wakeGapAcquireMs, 500.0);
+        QCOMPARE(stats.wakeGapWorkerMs + stats.wakeGapAcquireMs, stats.longestWakeGapMs);
+        QCOMPARE(stats.wakeGapSequenceStep, qint64(1));
+        source.wakeWatch().begin();
+        source.wakeWatch().noteWake(2'000'000'000);
+        source.wakeWatch().noteWake(2'020'000'000);
+        QCOMPARE(conn.txSendStats().longestWakeGapMs, 20.0);
+        QCOMPARE(conn.txSendStats().wakeGapWorkerMs, -1.0);
+        QCOMPARE(conn.txSendStats().wakeGapAcquireMs, -1.0);
+        conn.setTxMicSource(nullptr);
+        QCOMPARE(conn.txSendStats().wakeGapWorkerMs, -1.0);
+        QCOMPARE(conn.txSendStats().wakeGapAcquireMs, -1.0);
+    }
+
     // Red on 68410c40: the ring held 16384 floats (42.7 ms), so a 200 ms
     // stall's worth of blocks on top of the 20 ms cushion overflowed.
     void ring_holdsTwoHundredMsStallWithCushion()
