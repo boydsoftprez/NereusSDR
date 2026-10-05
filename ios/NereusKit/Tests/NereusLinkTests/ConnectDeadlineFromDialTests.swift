@@ -223,6 +223,9 @@ import Testing
         let client = try Self.client(clock: clock, transport: slow)
         let endpoint = Self.uniqueEndpoint()
         let pairing = Task { try await client.pairOnThisNetwork(endpoint: endpoint) }
+        // An entry assertion can throw before the normal deadline/cancel path.
+        // Scope cleanup ends that task without supplying any assertion result.
+        defer { pairing.cancel(); slow.close() }
         _ = try #require(await SlowOpeningTransport.opening(in: { slow }))
         #expect(clock.pendingDueTimes == [30_000])
         await clock.advance(by: 10_000)
@@ -249,6 +252,8 @@ import Testing
         let endpoint = Self.uniqueEndpoint()
         let first = try Self.client(clock: clock, transport: slow)
         let pairing = Task { try await first.pairOnThisNetwork(endpoint: endpoint) }
+        // Close even when the fixture entry assertion throws.
+        defer { pairing.cancel(); slow.close() }
         _ = try #require(await SlowOpeningTransport.opening(in: { slow }))
         await clock.advance(by: 29_999)
         #expect(!slow.isClosedByApp)
@@ -262,6 +267,7 @@ import Testing
         let next = SlowOpeningTransport(PairingTestTransport())
         let second = try Self.client(clock: clock, transport: next)
         let retry = Task { try await second.pairOnThisNetwork(endpoint: endpoint) }
+        defer { retry.cancel(); next.close() }
         _ = try #require(await SlowOpeningTransport.opening(in: { next }))
         #expect(clock.pendingDueTimes == [60_000])
         await clock.advance(by: 30_000)
@@ -274,6 +280,9 @@ import Testing
         let endpoint = Self.uniqueEndpoint()
         let client = try Self.client(clock: clock, transport: slow)
         let pairing = Task { try await client.pairOnThisNetwork(endpoint: endpoint) }
+        // An entry assertion can throw before the normal deadline/cancel path.
+        // Scope cleanup ends that task without supplying any assertion result.
+        defer { pairing.cancel(); slow.close() }
         _ = try #require(await SlowOpeningTransport.opening(in: { slow }))
         pairing.cancel()
         // Without the cancel closing it, only this would end the opening,
