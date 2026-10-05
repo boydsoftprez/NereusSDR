@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] - First calendar release
+## [2026.10.0] - 2026-10-05
 
 **Your station. Wherever you operate.**
 
@@ -269,6 +269,7 @@ in the [feature verification documents](https://github.com/boydsoftprez/NereusSD
 The legacy PS-RX/PS-TX spectrum view remains unavailable, and high-resolution
 trackpad gestures remain under review.
 
+Native G2/XDMA support remains incomplete and is outside this release.
 CAT/rigctld follows in the next release. CW transmit, FM pre-emphasis, skin
 import and WAV/IQ recording remain future work.
 

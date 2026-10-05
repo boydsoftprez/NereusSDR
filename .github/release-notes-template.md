@@ -80,8 +80,8 @@ On macOS, use `shasum -a 256 -c` in place of `sha256sum --check --strict`.
 
 ## Source & Licence (GPLv3 §6 / GPLv2 §3 corresponding source)
 
-NereusSDR is distributed under **GPLv3** (see `LICENSE` inside any
-release artifact, or <https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/LICENSE>).
+NereusSDR is distributed under **GPLv3** (see `LICENSE` in the NereusSDR
+packages and source archive, or <https://github.com/boydsoftprez/NereusSDR/blob/v@VERSION@/LICENSE>).
 The combined work links/bundles:
 
 - **Thetis**-derived C++ ports (GPL-2.0-or-later; combined under GPLv3
@@ -96,11 +96,11 @@ The combined work links/bundles:
   — see `licenses/fftw3.txt`
 - **WDSP** (GPL-2.0-or-later, static) — see `licenses/wdsp.txt`
 
-Every release artifact ships a `licenses/` directory containing the
+NereusSDR desktop and Core packages include a `licenses/` directory containing the
 three full FSF licence texts (`GPLv2.txt`, `GPLv3.txt`, `LGPLv3.txt`),
 all per-dependency notices listed above, and a written source offer at
-`licenses/SOURCE-OFFER.txt` covering GPLv3 §6(a) (primary: this release
-page) and §6(b) (fallback: 3-year offer via email).
+`licenses/SOURCE-OFFER.txt`. Source downloads are provided on this release
+page, with a three-year email fallback described in the offer.
 
 The following source archives accompany the binaries on this release page;
 the written source offer below applies independently:
