@@ -12,8 +12,10 @@ Scope is the approved 2026-10-04 design/plan against qualified Core
 `27716f5d6700e1e7d1808acfe478756249828e8c`; whole-feature review starts at
 `620883fde90b629ec15005fdac8d6ac7fcd43998`. Task 14 starts at accepted signed
 `d8c4fc1f258966f8d78e24a807fe48b72457e63a`. This local packet does not claim
-integration with a later Core candidate, completed lead review, hosted CI or
-publication.
+integration with a later Core candidate, hosted CI or publication. Integrated
+source review and refreshed local software verification are accepted on signed
+`be3e0ab35e0d48a5364f6ef5c95e5e6a595e8bf3`; the closing commit changes only
+the four verification documents.
 
 ## Delivered behavior and source decisions
 
@@ -82,7 +84,8 @@ Frequency, CTUN, mode/filter, AGC/NR/NB/ANF/APF/squelch, frontend attenuation,
 admitted diversity and off-air buffer controls reuse existing model parameter
 and receiver wiring. Meter reads use existing ready channel/lane caches and
 calibration. RadioModel/SliceModel and MOX/TwoTone helpers changed for inert CAT
-ownership, accepted TX intent/cancellation and callback-safe notifications.
+ownership, accepted TX intent/cancellation, callback-safe frequency/mode/filter
+notifications and actual retained RADE decoder retirement.
 AudioEngine, RxChannel, WdspEngine and RadioConnection processing sources remain
 unchanged across the feature. No I/Q/WDSP algorithm, signal routing, audio
 callback mutex, DSP thread or authority-gate redesign was introduced. Software
@@ -97,19 +100,30 @@ accepted signed task commit, worker effort, corrections and measured evidence.
 Raw attempts, including failed command/fixture/setup attempts, are retained
 locally under `.crew/2026-10-04-thetis-cat-plan/task-N-*`.
 
-Current macOS 27 arm64 / Qt 6.11 application and tests, Linux aarch64 / Qt 6.8.2
-Core CAT targets, native PTY/QSerialPort behavior on owned test slaves, and the
-independent no-SerialPort lane are distinct evidence. Retained pre-wave Task14 coverage on signed `025e7f365552594e441bc1f3c82a2420cb41892a` is
-1120/1120 ordinary nonrealtime,11/11 serial native-window and22/22 serial realtime,
-all CTestEXIT0;19,694Qt passes/0failures/374skips across1,151Qt blocks. Fresh
-current-source Linux17/17 includes actual official Hamlib/native MOX execution
-with1,333Qt passes and zero skips; independent noSerial13/13 has177Qt passes and
-two explicit capture/client skips. The README preserves earlier failed epochs,
-actual host samples, complete fresh LastTest logs and each skip category. Task 13 ran the actual
-Hamlib 4.7.0 / `554e02b39` rigctl executable six times against current-source
-owned loopback endpoints, observing F/f/M/m fresh readback, split S/I/i/X/x,
-AF/RIT and T/t plus native MOX-on/disconnect release. Those tests use the
-existing deterministic admission harness; they do not transmit RF.
+Current macOS 27 arm64 / Qt 6.11 application and daemon/all_tests build passes.
+The final selected provenance covers all 1,153 registrations: 1,120 ordinary,
+11 native-window and 22 realtime. The initial ordinary command was 1,118/1,120,
+EXIT 8; two existing prerequisite/count failures pass in unchanged complete
+executable reruns, replacing only their original failed records. Realtime uses
+qualified per-executable intervals with conservative or recorded command bounds
+and adjacent host observations, not an uninterrupted quiet whole-epoch claim.
+The final Wi-Fi record explicitly retains two ordinary Docker-dashboard VM
+observations and the lead's supported disposition; no proven VM causality or
+zero-activity claim is made. All other ambiguous/heavy attempts stay preserved.
+
+Final Qt totals are **19,838 passed, zero failed, 374 skipped**, across 1,151
+Qt-bearing registrations and 1,153 legitimate Totals blocks. One registration
+runs three Qt subtests and two registrations are non-Qt. Current Linux Core
+17/17 has 1,443 Qt passes, zero failures/skips and actual official Hamlib 4.7.0 /
+`554e02b39` execution. Six owned-loopback client invocations prove fresh F/f/M/m,
+split S/I/i/X/x, AF/RIT and T/t plus native MOX-on/disconnect release. These use
+existing deterministic admission; no RF is transmitted. Independent noSerial
+13/13 has 268 Qt passes and two expected capture/Linux-client skips, with actual
+compiler/header/link absence. Final compliance passes all 16 commands; exact
+52 notice regions and 1,264 relocated comments, XML/catalogue/fixture accounting
+and source boundaries are preserved. Source hashes and preserved final binaries
+match the reviewed freeze. The README retains historical `025e7f3` results,
+exact current durations, failed/interrupted/stale attempts and all skip reasons.
 
 The initial integrated review required five corrections: owned OFF after
 unrelated primary loss in both dialects, native mode-callback lifetime and
@@ -121,7 +135,13 @@ and one-attempt open/sampling failure handling. Native RX mode/filter
 notification continuations changed; algorithms, values, routing and defaults
 are preserved. Windows branch evidence is source-only with platform-correct
 runtime assertions; actual Windows execution remains unavailable. Scoped
-rereview and refreshed combined/platform acceptance remain pending.
+rereview closed four findings and found an introduced F2 live-decoder defect.
+The narrow correction uses actual retained engine-channel state for existing
+retirement/replacement paths; eight live parent/engine rows reproduce the defect
+and pass after correction. The same reviewer then closed F2 and accepted all
+five source findings on `be3e0ab`. Current focused regressions are 10/10, 466 Qt
+passes, zero failures and two expected skips; refreshed combined/platform gates
+are accepted.
 
 Windows SDK compilation/runtime, Linux GUI/x86, physical cables/pins, other
 Hamlib versions/apps, WSJT-X/JTDX/loggers, radio discovery/connect/RX/audio and
@@ -135,8 +155,10 @@ session cleanup, while a close/reopen entirely between observations can be
 invisible. Hamlib 4.7 get_lock_mode unconditionally reads an extra record after
 an error; missing frozen targets truthfully return ENTARGET (-12), which may
 cause that client's timeout. No unlocked filler is returned. get_powerstat and
-q remain outside the subset (-11). Final fresh integrated lead review and any
-shipping/public action remain pending separately.
+q remain outside the subset (-11). Integrated source review and local software
+acceptance are complete.
+Shipping/public action and the unperformed platform/bench evidence remain
+separate.
 
 Final acceptance also restores the established native untyped Tune OFF release
 contract while preserving explicit CAT/requester guards. The first full suite

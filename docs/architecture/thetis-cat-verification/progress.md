@@ -2,9 +2,11 @@
 
 Approved 2026-10-04 by J.J. Boyd (KG4VCF). Sequential crew workers used
 OpenAI Codex Sol 6.1, with medium or high effort as listed. The lead accepted
-Tasks 1–13 from actual diffs, retained raw command/exit logs and signed commits.
-Task 14 records completed local software verification; the lead's one fresh integrated
-requirements/code review is still pending. Token usage and total task wall time
+Tasks 1–14 from actual diffs, retained raw command/exit logs and signed commits.
+The one fresh integrated review and its same-reviewer scoped corrections are
+accepted on final product source `be3e0ab35e0d48a5364f6ef5c95e5e6a595e8bf3`.
+Refreshed full/platform software verification is accepted. Token usage and total
+task wall time
 are unknown; measured command durations are preserved in the raw logs.
 
 Implementation starts at `620883fde90b629ec15005fdac8d6ac7fcd43998`, based on
@@ -30,14 +32,34 @@ v2.10.3.15 / `3759d096` and AetherSDR `1e0718ad`.
 | 13 Separate Hamlib / high | `d8c4fc1f258966f8d78e24a807fe48b72457e63a` | Mac 26/26; Linux 17/17 and actual Hamlib 4.7.0/554e02b39 client, 14/14 final native MOX proof; no-SerialPort 13/13. Real six client invocations and fresh readback, split/AF/RIT/T/t/disconnect. Mandatory handshake/LOCK terminator corrected from primary Hamlib contracts. Native/scaled UI and exact 23+3 Aether comments pass. |
 | 14 Final acceptance / high | `025e7f365552594e441bc1f3c82a2420cb41892a` | Fresh application and 43 named checks; native untyped Tune OFF correction, precise retained applet reasons, reason scan/three catalogue expectation updates; final 1120/1120 ordinary + 11/11 native-window + 22/22 realtime CTests, all EXIT0, covering 1,153 registrations; Qt 19,694/0/374. Refreshed Linux17/official Hamlib and noSerial13; exact compliance/raw bytes/accounting, failed epochs, final report and local PR packet. Initial integrated review subsequently required the five corrections documented below. |
 
-The [one consolidated correction wave](CORRECTIONS.md) starts at the accepted
-Task 14 head. Fresh focused tests are 10/10 CTests, 458 Qt passes, zero failures
-and two separately qualified skips. It corrects both dialects' owned OFF,
-native mode/filter continuation, combined numeric validation, all three desired
-global snapshots and functional PTT restart, and both PTY platform/host reasons.
-Its signed freeze identity is retained in the wave report. Scoped rereview and
-refreshed full/platform gates remain pending; no integrated acceptance is
-claimed by the focused result.
+The [one consolidated correction wave](CORRECTIONS.md) starts at accepted
+Task 14 head `025e7f3`. Signed `27dd27b08eea4ca04b07be4ee0ba867f3864b202`
+addresses owned OFF, mode/filter continuation, combined numeric validation,
+desired global snapshots/functional PTT restart and PTY platform/host reasons.
+The same reviewer's scoped rereview closed four findings and identified an
+introduced live RADE lifecycle defect in F2. Narrow signed
+`be3e0ab35e0d48a5364f6ef5c95e5e6a595e8bf3` corrects actual retained codec/route
+retirement; all five source findings are now closed. Its current focused result
+is 10/10, 466 Qt passes, zero failures and two expected skips.
+
+Final current-source acceptance reconciles 1,153 unique registered executables:
+1,120 ordinary successful records (the first attempt was 1,118/1,120, EXIT 8,
+with two unchanged full-executable passing replacements), 11/11 native-window,
+and 22 realtime records qualified individually with explicit host provenance.
+There is no one-command green ordinary attempt or uninterrupted quiet realtime
+epoch claim. Totals are 19,838 Qt passes, zero failures and 374 skips across
+1,151 Qt-bearing registrations and 1,153 legitimate Qt Totals blocks. The
+linger-teardown registration runs three Qt subtests; two registrations are
+non-Qt. Current Linux17 passes with 1,443 Qt passes/zero skips and actual official
+Hamlib/native MOX proof; noSerial13 passes with 268 Qt passes/two expected skips.
+All 16 final compliance commands pass. The [README](README.md) records exact
+build/test durations, retained failed attempts, interval qualification and limits.
+
+The final worker handback confirms clean signed source, all 4,315 tracked hashes
+and 1,133 preserved binaries unchanged, and no task-owned processes or containers.
+The lead independently matched the selected manifest to a fresh CTest inventory,
+closed the four existing verification documents and retained all source/test/build
+bytes from the reviewed freeze. The closing commit is documentation-only.
 
 Each row's raw evidence/report is retained locally under
 `.crew/2026-10-04-thetis-cat-plan/task-N-*`. Normal hooks and GPG signatures

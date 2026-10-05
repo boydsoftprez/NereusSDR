@@ -1,19 +1,16 @@
 # Native CAT implementation verification
 
-Local verification dated 2026-10-04, against original implementation base
-`620883fde90b629ec15005fdac8d6ac7fcd43998` and qualified Core
-`27716f5d6700e1e7d1808acfe478756249828e8c`. Final Task 14 base is accepted
-signed `d8c4fc1f258966f8d78e24a807fe48b72457e63a`. Thetis remains
-v2.10.3.15 / `3759d096`; AetherSDR is `1e0718ad`. No later Core integration,
-publication is implied. The initial full-feature review found five required
-corrections. The [consolidated correction wave](CORRECTIONS.md), based on signed
-Task 14 head `025e7f365552594e441bc1f3c82a2420cb41892a`, records fresh focused
-regressions. Scoped rereview and refreshed full/platform acceptance are pending;
-the lead owns their acceptance and final document closure.
-
-The full-suite and platform results below are retained pre-wave Task 14
-evidence on that accepted signed head. They remain historical evidence while
-the correction wave refreshes its combined production and platform gates.
+Local software verification accepted 2026-10-04, against original feature base
+`620883fde90b629ec15005fdac8d6ac7fcd43998` and agreed qualified Core
+`27716f5d6700e1e7d1808acfe478756249828e8c`. Task 14 started at signed
+`d8c4fc1f258966f8d78e24a807fe48b72457e63a`; its original accepted head was
+`025e7f365552594e441bc1f3c82a2420cb41892a`. The reviewed final product source
+is signed `be3e0ab35e0d48a5364f6ef5c95e5e6a595e8bf3` after the
+[consolidated corrections and narrow RADE closure](CORRECTIONS.md).
+All five integrated source findings and the refreshed local verification gates
+are accepted. Thetis stays v2.10.3.15 / `3759d096`; AetherSDR stays `1e0718ad`.
+This packet records local software acceptance; later Core integration,
+publication, hosted CI and hardware/RF evidence are separate.
 
 The catalogue has 419 descriptors, 349 active registrations and 70 inactive
 entries. Fresh `tst_cat_coverage` executes all 783 current request fixtures
@@ -32,6 +29,71 @@ The fixture `executionStatus` is preserved owning-family history (158 Task 5,
 target, including 140 inactive and six router records. Fresh execution output,
 not metadata alone, establishes the final production coverage claim.
 
+## Accepted post-review verification
+
+All results in this section use frozen signed source
+`be3e0ab35e0d48a5364f6ef5c95e5e6a595e8bf3`, parent
+`27dd27b08eea4ca04b07be4ee0ba867f3864b202`. The same integrated reviewer
+closed all five findings, including the narrow correction to actual RADE
+codec/route retirement. The lead independently reconciled the selected result
+manifest with a fresh CTest inventory. No product, test, threshold or label was
+changed to obtain timing qualification.
+
+| Gate | Accepted current evidence |
+| --- | --- |
+| Application, daemon and all_tests build | EXIT 0, 477.56 s; all 4,315 tracked-file hashes unchanged. |
+| Focused correction regressions | 10/10 CTests; 466 Qt passes, zero failures, two expected capture/Linux-client skips. |
+| Ordinary first attempt | 1,118/1,120, EXIT 8, 643.52 s CTest / 643.62 s wrapper; 19,315 Qt passes, two failures and 354 skips. The failed attempt remains intact. |
+| Unchanged complete ordinary replacements | TGXL 1/1, EXIT 0, 83.33 s, 67 Qt passes; link loss 1/1, EXIT 0, 10.29 s, 19 Qt passes. Replace only their original failed records: 1,120 unique successful ordinary registrations, 19,317 Qt passes, zero failures, 354 skips. |
+| Native windows, serial | 11/11, EXIT 0, 51.00 s CTest / 51.01 s wrapper; 220 Qt passes, zero failures, one optional capture skip. |
+| Realtime, qualified per complete executable | 22 accepted records; 301 Qt passes, zero failures, 19 skips. Six records use conservative intervals in the fourth complete attempt; sixteen use monitored complete-executable isolated runs. There is no uninterrupted quiet 22-test epoch claim. |
+| Linux Core and official Hamlib | 17/17, EXIT 0, 38.46 s CTest / 273.71 s build/run wrapper; 1,443 Qt passes, zero failures/skips. Actual official-client and native MOX/disconnect assertions execute. |
+| Independent no-SerialPort | Configure/build EXIT 0, 14.59/242.36 s; 13/13, EXIT 0, 42.06 s CTest / 42.09 s wrapper; 268 Qt passes, zero failures, two expected skips. Compiler/header/Core/GUI-link absence is verified. |
+| Final compliance | All 16 commands EXIT 0, 59.95 s; exact notices, comments, provenance, source boundaries and catalogue/fixture accounting pass. |
+
+The ordinary failures were in unchanged existing tests. TGXL's settle-window
+prerequisite failed before its product autotune assertion. Link loss detected
+the timeout and continuing Core stream, then failed the ping-count snapshot.
+An already queued pre-drop ping is a possible scheduling mechanism, not a
+measured cause. Both entire executables pass on unchanged source with existing
+bounds. Their original failing records are preserved; the initial 1,120-test
+command is not represented as wholly passing.
+
+Realtime qualification follows each complete executable's actual provenance.
+Older CTest absolute times have minute precision, so conservative serial-duration
+bounds and adjacent full-host observations establish their intervals. New
+isolates record precise command launch/return and PS observation bounds.
+Unknown boundaries and competing build/test/container work stay unqualified.
+The last Wi-Fi record retains two isolated VM observations (39.3% and 30.6%)
+and the lead's explicit ordinary Docker Desktop dashboard disposition: recurring
+read-only stats children have the same dashboard parent, no competing build or
+test rows occur, and actual pre/post container CPU is low. This supports ordinary
+app activity under the existing rule; no proven VM causality or zero-activity
+claim is made. Earlier ambiguous or heavy records were not retroactively
+qualified. Docker API EOF observations remain unavailable data, never fabricated
+idle readings. Failed, interrupted, declined, stale and passing-but-unqualified
+attempts remain retained separately.
+
+The final manifest has **1,153 unique successful registered executables**:
+1,120 ordinary, 11 native-window and 22 realtime. **1,151 registrations are
+Qt-bearing, with 1,153 legitimate Qt Totals blocks**: the linger-teardown
+registration runs three Qt subtests, while two registrations are non-Qt.
+Selected totals are **19,838 passed, zero failed and 374 skipped**. Realtime's
+19 skips are 17 complementary fixture-selection slots and two existing
+TURN/relay keyable-session requirements. Ordinary/native skips total 355;
+per-slot reasons remain in the retained raw logs. Executable success does not
+mean every inner slot ran.
+
+Raw result/provenance and interval tables are retained locally in
+`.crew/2026-10-04-thetis-cat-plan/fix-wave-final-unique-test-provenance.json`,
+`fix-wave-per-test-realtime-qualification.{json,md}` and
+`fix-wave-reviewed-normal-app-disposition.json`. The final worker check confirms
+signed clean source, all 4,315 tracked hashes, all 1,133 preserved final
+binaries/libraries and zero task-owned processes/containers. Disk recovery
+removed only 1,409 owned generated object files (2,191,450,688 bytes); final
+binaries and raw evidence were preserved. The lead's documentation-only closing
+commit changes none of the reviewed product/test/build-source bytes.
+
 ## Production contracts and acceptance mapping
 
 | Approved requirement | Delivered implementation and actual evidence |
@@ -44,7 +106,7 @@ not metadata alone, establishes the final production coverage claim.
 | Settings and live UI | Service-owned reconfigureChannel/reconfigureGlobal validate/save desired tuple once, retain visible bind/open failures and protect newer callback edits. Setup/applet/tester tests and actual normal/scaled Cocoa captures prove reachable local controls/status, remote guidance and no-key tester. |
 | Lifecycle/headless/R1 | Inert RadioModel construction; start after policy-ready desktop/daemon setup; stop before retirement; permanent denial after retirement. Headless/desktop/daemon/R1 tests execute without a radio. Remote-role service/pages cannot host local listeners. |
 | Separate Hamlib | Newline framer, independent four TCP handles/diagnostics and optional PTY dialect share stable targets/claims. Real client and wire tests exercise supported short/long/ERP, NET handshake and precise unsupported/missing-target errors. |
-| Platform/full acceptance | Fresh macOS application/tests and split full-suite results below; current-source Linux Core and independent no-SerialPort evidence refreshed after the final correction. Windows and bench limitations remain explicit. Lead integrated review pending. |
+| Platform/full acceptance | Fresh macOS application/tests and split full-suite results below; current-source Linux Core and independent no-SerialPort evidence refreshed after the final correction. Windows and bench limitations remain explicit. Integrated source review and local software gates accepted. |
 
 `RadioModel::catService()` exposes the owned service. Low-level
 `applyChannelConfig` requires a stopped channel; `applyGlobalConfig` allows live
@@ -77,7 +139,8 @@ TX frequency intent through an identified no-hardware connection. Receiver
 numbers derive from native ReceiverManager mapping, rather than slice-ID guesses.
 
 Across the feature, RadioModel/SliceModel changed for inert service ownership,
-native Tune lifecycle and frequency notification survival; MoxController and
+native Tune lifecycle, frequency/mode/filter notification survival and actual
+RADE decoder retirement; MoxController and
 TwoTone helpers changed for accepted-intent observation and owned cancellation.
 AudioEngine, RxChannel, WdspEngine and RadioConnection processing sources remain
 byte-identical to the original implementation base. No I/Q/WDSP algorithm,
@@ -89,9 +152,9 @@ and connection intent do not prove a radio MOX bit, RF or received speaker audio
 
 | Environment | Actual evidence | Remaining evidence |
 | --- | --- | --- |
-| macOS 27.0 arm64, Qt 6.11.0, SDK 27.0 | Task 14 fresh configure and application/named build; 43/43 focused CTests. Task 13 had 26/26 current named gates and actual normal/scaled Cocoa Setup captures. Native owned PTY/QSerialPort byte and lifecycle tests execute. | Real cables/CTS/DSR and radio/audio/RF bench; other external applications. |
-| Linux 6.12.76-linuxkit aarch64, Debian 13, GCC 14.2, Qt 6.8.2 | Task 14 current read-only source compiled into the retained distinct writable build in an owned network-disabled disposable container: 17/17 Core CAT gates, 34.85 s tests / 96.45 s wrapper, 1,333 Qt passes and zero failures/skips. Actual QtSerialPort compiler/link proof and official Hamlib/native MOX assertions execute; rigctld has 14/14 Qt cases and zero skips. Optional DFNR disabled in this lane. | Linux GUI/application, x86/hosted CI, physical serial and bench. |
-| Independent macOS no-SerialPort | Task 14 fresh configure 14.46 s, named 13-target build 28.74 s and 13/13 anchored CTests 49.12 s; 177 Qt passes, zero failures, two explicit capture/client skips. Actual compiler definitions/headers and Core/GUI links omit QtSerialPort. Absence/refusal and native PTY/TCP assertions execute. | QSerialPort-only slots are compiled out; this is optional-absence evidence, not physical serial. Official executable slot skips here and runs on Linux. |
+| macOS 27.0 arm64, Qt 6.11.0, SDK 27.0 | Reviewed-source application/daemon/all_tests build, 10/10 focused correction gates and all 1,153 registrations with qualified replacement provenance. Task 13 retained 26/26 named gates and actual normal/scaled Cocoa Setup captures. Native owned PTY/QSerialPort byte and lifecycle tests execute. | Real cables/CTS/DSR and radio/audio/RF bench; other external applications. |
+| Linux 6.12.76-linuxkit aarch64, Debian 13, GCC 14.2, Qt 6.8.2 | Task 14 current read-only source compiled into the retained distinct writable build in an owned network-disabled disposable container: 17/17 Core CAT gates, 38.46 s tests / 273.71 s build/run wrapper, 1,443 Qt passes and zero failures/skips. Actual QtSerialPort compiler/link proof and official Hamlib/native MOX assertions execute; rigctld has 98 Qt passes, zero failures/skips. Optional DFNR disabled in this lane. | Linux GUI/application, x86/hosted CI, physical serial and bench. |
+| Independent macOS no-SerialPort | Task 14 fresh configure 14.59 s, named 13-target build 242.36 s and 13/13 anchored CTests 42.06 s; 268 Qt passes, zero failures, two explicit capture/client skips. Actual compiler definitions/headers and Core/GUI links omit QtSerialPort. Absence/refusal and native PTY/TCP assertions execute. | QSerialPort-only slots are compiled out; this is optional-absence evidence, not physical serial. Official executable slot skips here and runs on Linux. |
 | Windows | Production guards/explicit PTY unavailable branch and CI's optional qtserialport module configuration inspected. | Actual Windows Qt SDK/compiler and runtime unavailable locally. No hosted CI dispatched; configuration is not execution. |
 
 Task 13 built the official Hamlib 4.7.0 release tarball (SHA256
@@ -101,7 +164,7 @@ SHA `554e02b39`, 64-bit. Six `rigctl -m2` invocations against owned ephemeral
 loopback endpoints prove NET open, F/f/M/m with fresh-client readback,
 S/I/i/X/x split effects, AF/RIT and T/t. Captured stdout/stderr/wire requests and
 native assertions include an observed MOX-on and disconnect retirement/MOX
-release. Refreshed Task 14 Linux rigctld evidence is 14 passed, zero failed/skipped; the macOS
+release. Refreshed reviewed-source Linux rigctld evidence is 98 passed, zero failed/skipped; the macOS
 optional-client slot is skipped without the task-owned Linux executable.
 
 Hamlib 4.7's get_lock_mode waits for an extra record even after an error. A
@@ -166,9 +229,12 @@ cleanup guarantees apply to observed HUP, explicit close, error, stop or
 retirement. No claim of process identity or unseen-gap detection is made.
 
 
-## Task 14 final verification
+## Historical Task 14 verification on 025e7f3
 
-Final measured gates:
+The following gates and attempts precede the integrated correction wave. They
+are retained historical evidence, not the current source acceptance above.
+
+Historical measured gates:
 
 | Gate | Exact result |
 | --- | --- |
@@ -180,7 +246,7 @@ Final measured gates:
 | Second realtime attempt, watched | EXIT8/395.19s;firstPureSignal executable failed0.71s, but CTest detail/output incomplete and LastTest byte-identical to prior isolated run. No pass count or Qt totals claimed. Preserved separately. |
 | Unchanged isolated PureSignal |1/1 EXIT0/3.80s;6Qtpassed/0failed/0skipped, verbose actual BEGIN/SWAP/epoch assertions, zero competing samples. |
 | Final realtime, serial/verbose | 22/22 EXIT0,395.92s wrapper/395.88s CTest;22fresh Qt blocks301pass/0fail/19skip;actual70samples have no compiler/foreign-test activity or heavy container work. |
-| Current Linux17/official client | 17/17 EXIT0,34.85s tests/96.45s configure/build wrapper;1333Qtpass/0fail/0skip, rigctld14/14 including actual official-client execution. |
+| Historical Linux17/official client | 17/17 EXIT0,34.85s tests/96.45s configure/build wrapper;1333Qtpass/0fail/0skip, rigctld14/14 including actual official-client execution. |
 | Independent noSerial13 | Configure/build/tests/artifact0;13/13,49.12s;177Qtpass/0fail/2explicit capture/client skips, actual compiler/link absence. |
 | Exact compliance and raw preservation | All16 final commands EXIT0,77.99s, including exact qualifiedCore/originalfeature/Task14BASE and FULL scans.52raw notice regions/1264relocated source comments, exactXML/419/349/70/783; changed notices/all old comments plus Aether23+3 retained.19Python compliance cases pass. |
 
@@ -247,7 +313,7 @@ Monitor13/0/0 and PureSignal6/0/0 both execute inside this final lane.
 No source/test/timeout change was made for these observations.
 
 The final three lanes cover all1,153registered executables:1120+11+22, all
-CTestEXIT0. Inner Qt totals across1,151Qt blocks are19,694passed/0failed/374skipped;
+CTestEXIT0. Inner Qt totals across1,151Qt-bearing registrations are19,694passed/0failed/374skipped;
 two ordinary registrations are non-Qt. Realtime's19skips consist of17nonrealtime
 fixture-selection slots and two existing TURN/relay keyable-session harness
 requirements that remain unperformed. These are distinct from the ordinary
@@ -278,23 +344,21 @@ build/container. Current registration has 1,153 tests, 1,131 without
 realtime, 22 realtime and 11 native-window. Qt inner skipped slots are reported
 separately from CTest executable pass counts.
 
-## Remaining acceptance
+## Remaining platform and integration evidence
 
-A required consolidated-review follow-up remains: on Windows the applet's PTY
-button is disabled correctly, but the later local-host tooltip assignment
-overwrites its unavailable-platform explanation. The lead retains a narrow
-native-platform guard and Windows disabled/reason assertion proposal; it is not
-applied or waived in this Task14 validated source. Windows runtime/SDK evidence
-remains absent, and the branch is not described as ready to ship.
+All five source findings are closed on the reviewed final product source,
+including both Windows PTY reason branches. Windows branch inspection and
+conditional assertions are source evidence; actual Windows SDK/runtime remains
+unperformed. Linux GUI/x86, physical serial cables/modem pins, other logger and
+digital-mode clients, radio MOX/RF and discovery → connect → received I/Q/WDSP →
+speaker bench remain unverified. Native RADE lifecycle fixture execution is
+macOS evidence; Linux compiles the changed Core but did not run that engine
+fixture. Exact unavailable contracts stay visible for missing APIs.
 
-
-The lead's fresh integrated requirements/code review remains pending. The lead
-checked later Core candidates; no fully qualified advance was available for
-this handoff, so the selected qualified baseline remains `27716f5d`. A local PR
-description is prepared; no PR/push/hosted
-CI/merge/release/publication was performed. Windows SDK/runtime, Linux GUI/x86,
-physical serial cable/modem pins, other logging/digital-mode clients, radio
-MOX/RF and discovery → connect → received I/Q/WDSP → speaker bench remain
-unverified. Exact unavailable catalogue contracts stay visible for missing
-recording/CWX/VAC/memories, controller/MIDI/scripting, GUI-only display/recenter
-and preset identity operations. Existing unrelated bench limitations remain.
+The agreed qualified Core remains `27716f5d`. The controller read at
+2026-10-04 21:27:58 UTC did not establish a newly qualified replacement baseline;
+this packet makes no claim about the qualification of later controller work.
+No fetch/rebase/import of later candidates occurred during the source freeze.
+The [local PR description](PR-DESCRIPTION.md) is ready for review. No push,
+public PR, hosted CI, merge, release, installation or hardware operation was
+performed by this CAT execution.
