@@ -1,0 +1,135 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Share a Core with other devices | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/08-shared-core.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html" aria-current=page>Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="share-a-core-with-other-devices">Share a Core with other devices</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#inspect-shared-administration-from-a-desktop">Inspect shared administration from a desktop</a></li><li><a href="#read-the-ownership-indications">Read the ownership indications</a></li><li><a href="#take-a-slice-or-receiver">Take a slice or receiver</a></li><li><a href="#understand-shared-change-confirmations">Understand shared-change confirmations</a></li><li><a href="#add-a-paired-device">Add a paired device</a></li><li><a href="#rename-or-revoke-a-device">Rename or revoke a device</a></li><li><a href="#back-up-the-core-identity-key">Back up the Core identity key</a></li><li><a href="#connect-when-four-device-places-are-occupied">Connect when four device places are occupied</a></li><li><a href="#coordinate-a-second-device-handoff">Coordinate a second-device handoff</a></li><li><a href="#release-stop-listening-or-disconnect">Release, stop listening, or disconnect</a></li></ol></details>
+<p>The phone procedures in this chapter describe the reviewed native development
+app, whose availability and delivery are separate from the desktop/Core release.
+Use the connected Core's capability/refusal messages; see <a href="/manual/verification.md">build and verification
+scope</a> before treating these instructions as release acceptance.</p>
+<p>A Core serves multiple paired phones and computers, but receiver capacity is finite. Each device can have its own slices and can listen where its receiver assignment permits. The Core decides ownership and access. On the iPhone, a foreign slice is a read-only label until this phone takes control. Transmit ownership is separate from the active receive slice. Check the TX slice and holder independently, using the supported starting states in <a href="/manual/07-iphone-operate.html#prepare-and-transmit-voice-from-the-phone">phone transmit preparation</a>.</p>
+<h2 id="inspect-shared-administration-from-a-desktop">Inspect shared administration from a desktop</h2>
+<p>For a saved Core, open <strong>File &gt; Settings… &gt; Cores &gt; Your Cores</strong>, select it,
+and use <strong>Overview</strong>, <strong>Radio</strong> and <strong>Devices</strong>. Inspection does not connect
+this window. Radio/device administration applies only to the Core currently
+connected in this window; disconnected entries show the unavailable reason.
+<strong>Overview &gt; Rename Core…</strong> changes its name for all devices, with acceptance
+required. <strong>Addresses</strong> manages future routes without changing the live link.
+See <a href="/manual/01-desktop-connect.html#inspect-a-saved-core-and-the-actual-connection-path">Core Settings and direct addresses</a>.</p>
+<p>Keep receiver control and TX ownership separate. A desktop <strong>Take transmit</strong>
+can ask to unkey the named current holder, then recheck its state and this
+session's permission before granting the change. See <a href="/manual/05-transmit.html#recheck-a-handoff-and-radio-side-ptt">handoff and radio-side
+PTT</a>. The phone paths below
+remain scoped to the reviewed native development app.</p>
+<h2 id="read-the-ownership-indications">Read the ownership indications</h2>
+<p>Open <strong>Setup &gt; Devices</strong> to see this Core's identity, connected devices, paired devices, and pairing controls. <strong>Connected now</strong> lists devices presently connected; their row can show assigned slice letters/bands and a <strong>TX</strong> mark for the device holding transmit. <strong>Paired</strong> lists identities that may connect even when currently away. The current phone is identified in its row. Up to four devices can be connected at once. The <strong>Devices</strong> page note explains that revoking a device drops it immediately, including during a session.</p>
+<p>On <strong>Panadapter</strong>, slices owned by this phone have interactive flags. Another operator's receiver is shown as a foreign, read-only label. Do not use its visible frequency as evidence that this phone can tune or transmit through it. If the Core offers <strong>Take control</strong>, the request and its result determine whether the flag becomes editable.</p>
+<p><a href="/manual/images/iphone-shared-slices-original.png"><img src="/manual/images/iphone-shared-slices-original.png" alt="iPhone band with two slices and a foreign slice offering Take control" /></a></p>
+<p><em>Slice B belongs to another device and offers Take control; selecting its label does not grant that control. The folded A flag and TX badge are separate indications. This native simulator screen uses simulated Core state and a synthetic waterfall, not received RF.</em></p>
+<h2 id="take-a-slice-or-receiver">Take a slice or receiver</h2>
+<p>Start from the band with the other device's slice visible. Tap the foreign label and choose <strong>Take control</strong> when it is offered. The Core may grant the existing slice with its settings intact. The band shows the result or the Core's refusal. If another operator takes one of this phone's slices, a notice names the change and can offer <strong>Take back</strong>; use it only after coordinating, because control will change again.</p>
+<p>When all receivers are in use and opening another slice requires one, the Core presents <strong>Every receiver is in use</strong> (or <strong>Every slice is in use</strong> when the radio's slices run out first):</p>
+<ol>
+<li>Read each choice. It names a receiver and the device using it, shows that device's slice frequency/mode and activity, and gives the Core's reason if the receiver cannot be taken.</li>
+<li>The first takeable choice is selected initially. Select another takeable receiver only if it is the one you intend to reclaim. The action button names the affected device, for example <strong>Take the iPad's receiver</strong>. For a free receiver it says <strong>Use this receiver</strong>.</li>
+<li>Read the impact note: taking a receiver closes the slice on that device and tells its operator who took it. Taking a slice has the same ownership consequence for that slice. Tap the named action to proceed or cancel the sheet to preserve the other session.</li>
+<li>Wait for the Core's response. Confirm the new slice is yours and that the other device has received the notice. If refused, use the Core's explanation and coordinate a release rather than repeating the request.</li>
+</ol>
+<p>A receiver takeover is not a transmit takeover. When this phone already holds transmit, its <strong>TX</strong> badge can select the newly controlled slice without keying. Without that ownership, the badge can be refused even though the slice is now yours. The Core can highlight the badge after refusing a first key on a taken slice. In this phone version that prompt does not provide a complete route to acquire another device's transmit ownership. Keep that handoff receive-only; see the starting states in <a href="/manual/07-iphone-operate.html#prepare-and-transmit-voice-from-the-phone">phone voice operation</a>.</p>
+<h2 id="understand-shared-change-confirmations">Understand shared-change confirmations</h2>
+<p>A Core setting can affect other connected listeners. Before applying a shared change, the phone shows the change name and <strong>from/to</strong> values, then the affected devices and slices. The details can say that a slice moves to another receiver, closes, or pauses while the radio transmits. A one-device confirmation names that device; a multi-device confirmation says other devices will hear the change.</p>
+<ol>
+<li>Read the old and new value and every affected device/slice. Check whether the impact is acceptable to those operators.</li>
+<li>Tap the button named for the new value (for example, <strong>Set 20 dB</strong>) or <strong>Make the change</strong>. The Core performs the change and the control updates to its readback. The sheet also says which devices are told the change.</li>
+<li>Tap <strong>Cancel</strong> to leave the shared setting unchanged. If the Core refuses the change or the link drops, use the reported reason/readback and ask before trying a different setting.</li>
+</ol>
+<p>Do not treat a setting's physical location in the phone app as its ownership. The <strong>Setup</strong> tree marks each category and page:</p>
+<table>
+<thead>
+<tr>
+<th>Mark</th>
+<th>Meaning</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Core</strong></td>
+<td>The setting lives at the Core and is shared with devices paired to that Core</td>
+<td><strong>Setup &gt; Devices</strong>, Core-described hardware/DSP pages</td>
+</tr>
+<tr>
+<td><strong>This phone</strong></td>
+<td>The setting stays on this phone</td>
+<td><strong>General &gt; Navigation</strong>, <strong>General &gt; Battery and sessions</strong>, <strong>Audio &gt; On this phone</strong></td>
+</tr>
+<tr>
+<td><strong>Both</strong></td>
+<td>The category contains settings with both owners; inspect the page mark and individual controls</td>
+<td><strong>Audio</strong>, <strong>Display</strong>, <strong>Transmit</strong>, <strong>General</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The phone builds much of this tree from pages and controls described by the connected Core. A Core can provide a different page list from another Core or version. The app filters pages it does not support and shows unsupported offered pages disabled with a reason. A page missing from this Core's described list is not proof that a similarly named desktop or radio control is available on the phone. On a described page, read the help text, range, unit, choices and confirmation prompt attached to each control; these are the Core's current definitions. Values that the Core refuses stay visible with its reason. For details on phone-only choices, see <a href="/manual/07-iphone-operate.html">Operate from an iPhone</a>.</p>
+<h2 id="add-a-paired-device">Add a paired device</h2>
+<p>Pairing is initiated by a device that already has access, unless the Core is still open for its initial pairing.</p>
+<ol>
+<li>On the connected iPhone open <strong>Setup &gt; Devices</strong>. Confirm the Core name at the top is the one whose access you want to extend.</li>
+<li>Tap <strong>Add a device</strong>. The page opens the pairing window and displays the current one-use code and the instruction to choose <strong>Pair with a code</strong> on the new device. Send that code privately to the intended operator.</li>
+<li>Have the operator enter the code on the new phone or computer and complete pairing. The code works once; when the new device pairs, the window closes. If the code is rejected or expires, reopen <strong>Add a device</strong> and share the newly displayed code.</li>
+<li>Return to <strong>Devices</strong> and check that the new identity appears under <strong>Connected now</strong> or <strong>Paired</strong>, according to its session state. The list can update as it connects. Pairing gives access to the Core; it does not reserve a receiver or choose its TX slice.</li>
+</ol>
+<p>The page reports the four-device connection limit. If it is reached, coordinate which device should disconnect before adding another active session. A paired but disconnected device may still be listed under <strong>Paired</strong>.</p>
+<h2 id="rename-or-revoke-a-device">Rename or revoke a device</h2>
+<p>The top card shows the Core name and connected radio and offers <strong>Rename</strong>. Use that action when the Core's shared station name needs correction; wait for the Core's response and confirm the displayed name. Device rows have <strong>Revoke</strong> where the Core permits it. Revoke immediately removes that device's access and can terminate it mid-session. Before revoking, verify the row's name, its slices and whether it holds <strong>TX</strong>, then coordinate with its operator. The current phone cannot revoke itself from this page. A disabled <strong>Revoke</strong> has a reason; resolve that condition instead of assuming the device was removed.</p>
+<p>To remove only this phone's local saved Core entry, use <strong>Radio &gt; Remove Core</strong> from this phone's session. That is different from revoking another device in the Core's shared device list. Removing the phone's own local entry does not remove other operators or the Core itself.</p>
+<p><a href="/manual/images/iphone-devices-original.png"><img src="/manual/images/iphone-devices-original.png" alt="Native iPhone Devices page distinguishing Connected now and Paired devices" /></a></p>
+<p><em>Devices separates active connections from identities permitted to connect. Device names and station identity here are synthetic test values. This native SwiftUI simulator screen does not demonstrate pairing or revocation on a real Core.</em></p>
+<h2 id="back-up-the-core-identity-key">Back up the Core identity key</h2>
+<p>The Core's key is its identity. The Devices page can show a reminder if the Core says it has not been backed up. If the station operator administers the Core, use <strong>Show me how</strong>:</p>
+<ol>
+<li>Read the file path shown by the Core. On the Core's computer, copy that file to safe storage away from that computer, such as a USB drive or another computer. Keep the copy private; someone who obtains it can stand in for the Core.</li>
+<li>Only after the copy is complete, return to the sheet and tap <strong>I've backed it up</strong>. This tells the Core the backup was made and clears the reminder across its devices after the Core accepts the request.</li>
+<li>If you have not made the copy, choose <strong>Not now</strong>. The reminder remains. If the page cannot provide a path, ask the Core administrator rather than guessing a filename.</li>
+</ol>
+<p>The backup is not a phone pairing export; it is the Core's identity recovery file. Restoring it to the same place after the Core's storage fails allows existing devices to connect as before. Without it, the Core may have a new identity and devices may need to pair again.</p>
+<h2 id="connect-when-four-device-places-are-occupied">Connect when four device places are occupied</h2>
+<p>A full Core presents <strong>Four devices are on</strong> followed by its name. This is a
+session-capacity choice, separate from pairing or receiver ownership. Read each
+device's current activity, listening slices, connection duration and last
+activity before choosing whom to replace. The computer running the Core cannot
+be replaced.</p>
+<ol>
+<li>Select a replaceable device. Selection alone does not evict it.</li>
+<li>Read the consequence beside the confirmation button. For a transmitting
+device the button says <strong>Unkey and take [device]'s place</strong>; otherwise it
+says <strong>Take [device]'s place</strong>.</li>
+<li>Confirm the intended replacement, or choose <strong>Cancel</strong> to leave the other
+device in place. Wait for the connection result and read any refusal.</li>
+<li>After connecting, inspect your slices and TX ownership before operating.
+Taking a device place is not the same as choosing a transmit slice.</li>
+</ol>
+<p>The displaced device's slices and settings remain saved. Its screen reports
+<strong>TAKEN OVER</strong>, identifies who took its place and when, and offers <strong>Take it
+back</strong> or <strong>Back to Cores</strong>. Take it back returns to the device-place choice;
+it does not silently reclaim the session. If a returning device was away long
+enough for its place to be freed, the app can explain that fact and present
+the same choice. Do not regenerate pairing codes merely because a saved device
+has lost its active place.</p>
+<p>Coordinate replacement with the other operator when possible. Replacing a
+transmitting device explicitly unkeys it; replacing an idle listener still
+ends that device's current connection. Receiver takeover and transmit handoff
+remain separate actions after the session is admitted.</p>
+<h2 id="coordinate-a-second-device-handoff">Coordinate a second-device handoff</h2>
+<p>A handoff separates receiver control, listening, and transmit ownership. Agree which operator is taking each role before either changes it. In the covered phone build, a receiver handoff is supported but a general desktop-to-phone transmit takeover is not exposed. The steps below therefore transfer reception. They do not promise that the phone can key afterward.</p>
+<p><strong>Example: the iPhone takes control of the desktop's existing slice A.</strong></p>
+<ol>
+<li>The desktop operator unkeys and confirms receive. The iPhone operator checks <strong>Setup &gt; Devices</strong> to identify the desktop and its slice, then selects that slice's <strong>Take control</strong> action on the band.</li>
+<li>The phone operator waits for the control request to succeed. The desktop operator checks its flag or <strong>Slices on this Core</strong> chooser for the changed controller. Taking control of an existing slice can leave the desktop listening to it. Do not confuse this with reclaiming an occupied receiver to create a new slice: that separate resource request can close the other operator's slice, and its confirmation names that consequence.</li>
+<li>The iPhone operator confirms the slice appears as owned, checks frequency, mode and filter, and tests receive audio. The desktop operator can continue using any unaffected receiver/slice.</li>
+<li>Both operators leave transmit in receive and identify its holder separately. The phone operator can inspect the <strong>TX</strong> mark in <strong>Setup &gt; Devices</strong>. The desktop operator reads its TX status/holder and slice chooser. <strong>Setup &gt; Devices</strong> is a phone path. Unkeying the desktop does not release its transmit ownership; tapping the phone's slice badge does not take that ownership.</li>
+<li>To return receiver control, the phone operator stops tuning and tells the desktop operator it is ready. The desktop operator opens <strong>Slices on this Core</strong>, selects A, and chooses <strong>Take control</strong>, or uses the offered <strong>Take back</strong> notice. Both wait for the result. The desktop verifies its control mark and frequency/mode; the phone verifies that its flag is read-only/listening again. No invented phone <strong>Release</strong> action is required.</li>
+</ol>
+<p>If this phone already holds transmit independently, it can choose the returned/taken slice's TX badge and follow the ordinary voice procedure. If another device holds transmit, this source version cannot complete that takeover from the phone. Do not key another slice merely to manufacture ownership. For a fresh unheld transmitter, a human PTT on an original owned slice is the supported first-key path, with all normal RF and microphone prerequisites; it is not an ownership-only button.</p>
+<p>If a device goes away unexpectedly, its connection row can show it as away/stale. Do not revoke it merely to clear a stale mark; first establish whether that operator is reconnecting. Link loss unkeys transmit, but the Core may continue to list a paired identity for later reconnection.</p>
+<h2 id="release-stop-listening-or-disconnect">Release, stop listening, or disconnect</h2>
+<p>These actions have different effects. In the desktop <strong>Slices on this Core</strong> chooser, <strong>Release</strong> gives up receiver control while other listeners can continue; with nobody left, the slice closes. <strong>Stop listening</strong> removes this window's subscription to a receiver it does not control. These are receiver actions, not transmit release.</p>
+<p>On the phone, coordinate return by having the intended operator take control and waiting for both devices' readbacks. <strong>Take back</strong> requests the offered reversal; it does not silently restore ownership. A flag's close action asks the Core to remove that slice, so do not use it as a generic release while another operator is relying on the receiver. If leaving the entire phone session, unkey first and confirm receive, then use <strong>Radio &gt; Disconnect</strong>. The Core can retain an away device's ownership during its reconnect period; an ended link is not proof of immediate transmit release. Disconnecting leaves the phone paired. <strong>Radio &gt; Remove Core</strong> makes this phone forget the saved Core.</p>
+<p>A handoff is complete when both operators can identify who owns the receiver, which slice is being monitored, and which device carries the TX indication. The selected slice button alone does not prove transmit ownership.</p>
+<div class="page-next"><a href="/manual/07-iphone-operate.html">Previous chapter</a><a href="/manual/09-tools.html">Next chapter</a></div></main></div></body></html>

@@ -1,0 +1,377 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phone preferences and session care | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/20-phone-preferences.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html" aria-current=page>Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="phone-preferences-and-session-care">Phone preferences and session care</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#configure-the-phones-band-display">Configure the phone&#x27;s band display</a></li><li><a href="#choose-a-tuning-dial-and-touch-behavior">Choose a tuning dial and touch behavior</a></li><li><a href="#select-playback-and-microphone-routes">Select playback and microphone routes</a></li><li><a href="#recover-from-headphone-removal-or-an-audio-interruption">Recover from headphone removal or an audio interruption</a></li><li><a href="#set-screen-background-and-sleep-behavior">Set screen, background and sleep behavior</a></li><li><a href="#manage-wi-fi-and-cellular-data-use">Manage Wi-Fi and cellular data use</a></li><li><a href="#understand-the-sharing-indicator">Understand the Sharing indicator</a></li><li><a href="#set-a-transmit-time-out-and-recognize-disabled-ptt-choices">Set a transmit time-out and recognize disabled PTT choices</a></li><li><a href="#inspect-app-information-and-collect-evidence">Inspect app information and collect evidence</a></li><li><a href="#worked-example-a-long-headphone-listening-session">Worked example: a long headphone listening session</a></li></ol></details>
+<p>The phone procedures in this chapter describe the reviewed native development
+app, whose availability and delivery are separate from the desktop/Core release.
+Use the connected Core's capability/refusal messages; see <a href="/manual/verification.md">build and verification
+scope</a> before treating these instructions as release acceptance.</p>
+<p>Use this chapter to adapt the app to the way you listen: a phone in your hand,
+headphones away from the desk, an iPad on a stand, or a longer cellular session.
+The <strong>This phone</strong> or <strong>This iPad</strong> badge identifies a preference kept on that
+device. A <strong>Core</strong> badge identifies a station setting. These can appear on the
+same page, so check the badge of the particular group before changing it.</p>
+<p>The <a href="/manual/07-iphone-operate.html">phone operating chapter</a> covers an ordinary receive
+and transmit session. <a href="/manual/08-shared-core.html">Sharing a Core</a> covers device and
+receiver ownership. The settings below refine those workflows.</p>
+<h2 id="configure-the-phones-band-display">Configure the phone's band display</h2>
+<p>The toolbar <strong>Display</strong> sheet is a quick control surface for its named pan.
+It says <strong>Pan N · this phone</strong> and changes that pan's local waterfall and
+spectrum presentation. <strong>Palette</strong>, waterfall level mode, <strong>Colour gain</strong> and
+<strong>Black level</strong> affect waterfall contrast. <strong>Fill</strong>, <strong>Line</strong>, and <strong>Spectrum
+height</strong> affect the trace. <strong>Top</strong> and <strong>Range</strong> move the visible dBm scale.
+Read the scale labels and trace after each change. <strong>CTUN</strong> changes the
+relationship between tuned frequency and pan center; read the sheet's note and
+verify the flag after toggling it. <strong>LIVE</strong> returns from a historical view. A
+disabled extra names the missing Core capability.</p>
+<p>Tap <strong>More display options in Setup</strong> for <strong>Setup &gt; Display &gt; On this phone</strong>.
+The page contains station and local controls together, so follow its scope
+badge on each group:</p>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th>What it changes and how to check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Band plan</strong></td>
+<td>Choose from plans advertised by the Core. This changes the Core's plan for desktop and all devices. <strong>Size</strong> changes the plan's visual size on this phone. Check the selected plan and strip at the bottom of the band.</td>
+</tr>
+<tr>
+<td><strong>Core display groups</strong></td>
+<td>The Core describes its analyzer groups and owns offered FFT, window, Hz/bin target, and frame-rate settings. These are shared. Check the badge and bin-width readout; an older Core shows them greyed with an explanation.</td>
+</tr>
+<tr>
+<td><strong>Waterfall</strong></td>
+<td>Choose palette and, when available, <strong>Clarity</strong>, <strong>Auto</strong>, <strong>Noise floor</strong>, or <strong>Manual</strong> levels. <strong>High level</strong> and <strong>Low level</strong> are manual endpoints; Core levels can arrive later. <strong>Colour gain</strong> and <strong>Black level</strong> refine contrast.</td>
+</tr>
+<tr>
+<td><strong>Waterfall: more</strong></td>
+<td>Set detector/averaging when those are not in Core groups, update period, opacity, stop-on-transmit, timestamps/time zone, look-back depth, filter and zero-line overlays, or a custom gradient. Copy buttons transfer the visible scale endpoints to levels or back. The footer reports retained history for the current period.</td>
+</tr>
+<tr>
+<td><strong>Spectrum / Spectrum: more</strong></td>
+<td>Set fill, gradient, line width, spectrum height, trace/passband color and strength, classic peak hold, and zero line. Older-Core pages can expose detector, averaging, and decimation locally when supported. Calibration is disabled because the Core has already applied radio calibration.</td>
+</tr>
+<tr>
+<td><strong>Grid &amp; Scales / Grid &amp; Scales: more</strong></td>
+<td>Set grid visibility/step and dBm top/bottom; show the dBm scale and choose frequency-label alignment. If the Core supplies a noise-floor estimate, the bottom can follow it and optionally preserve the range.</td>
+</tr>
+<tr>
+<td><strong>Noise floor / Peaks</strong></td>
+<td>The noise-floor line and shift, active peak hold, and peak blobs require Core display extras. Classic peak hold is separate. Follow the disabled reason if extras are unavailable.</td>
+</tr>
+<tr>
+<td><strong>On the band / Colours / View</strong></td>
+<td>Toggle cursor frequency, bin width, frame rate, and strongest-signal readout; choose its corner and update rate. Set local grid, marker, line, and label colors. Extended view is available only when described by the Core; CTUN is a pan view setting.</td>
+</tr>
+<tr>
+<td><strong>Transmit display</strong></td>
+<td>Local transmit scale top/range, waterfall levels/palette, and DUP. <strong>The Core's transmit display</strong> contains station analyzer settings and affects devices viewing it. Check its badge and returned values.</td>
+</tr>
+</tbody>
+</table>
+<p>For a weak-signal view, select the correct pan, set waterfall <strong>Levels</strong> to
+<strong>Manual</strong>, and adjust High/Low around the current noise and signal. Use a copy
+button if you want those endpoints to match the dBm scale; otherwise tune them
+separately. Set the scale/grid so peaks remain visible, then adjust trace and
+palette. Return to the band and inspect the noise floor and a strong nearby
+signal. A disabled control's footer tells whether the Core lacks the catalog
+or does not support that choice. Most groups belong to this phone; <strong>Core</strong> or
+<strong>Both</strong> badges identify settings with broader effect. Desktop controls with
+similar names may have another owner; see <a href="/manual/10-customize.html">desktop display procedures</a>.</p>
+<h2 id="choose-a-tuning-dial-and-touch-behavior">Choose a tuning dial and touch behavior</h2>
+<p>Open <strong>Setup &gt; General &gt; Navigation</strong>. The choices apply immediately on this
+phone; they do not rearrange another device's controls.</p>
+<table>
+<thead>
+<tr>
+<th>Tuning dial</th>
+<th>Where it appears and how to choose it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Off</strong></td>
+<td>Tune with the enabled band gestures. Dial haptics and direction settings are disabled until a dial is selected.</td>
+</tr>
+<tr>
+<td><strong>Knob on the waterfall</strong></td>
+<td>Keep a knob opposite PTT on the main display. Useful when small corrections need to stay within reach.</td>
+</tr>
+<tr>
+<td><strong>Pop-up knob</strong></td>
+<td>Tap the frequency to use a larger knob in its panel.</td>
+</tr>
+<tr>
+<td><strong>Thumbwheel</strong></td>
+<td>Use the flat wheel along the bottom of the waterfall.</td>
+</tr>
+</tbody>
+</table>
+<p>Select one, return to Main and tune a slice you control. Check the step on the
+dial itself before turning it. The slice keeps its own step on each band.
+<strong>Haptic tick on each detent</strong> marks individual increments; <strong>Firmer bump on
+each whole kHz</strong> marks kHz boundaries. <strong>Reverse dial direction</strong> changes the
+direction that raises frequency. Compare the displayed frequency before and
+after a small movement to confirm the direction you expect.</p>
+<p>The <strong>Touch</strong> group controls separate gestures:</p>
+<table>
+<thead>
+<tr>
+<th>Preference</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Drag a flag to tune</strong></td>
+<td>Dragging a flag or passband tunes that slice in its step. Dragging the band still moves the view.</td>
+</tr>
+<tr>
+<td><strong>Tap to tune on the band</strong></td>
+<td>A tap tunes the active slice at the tapped position.</td>
+</tr>
+<tr>
+<td><strong>Pinch to zoom the band</strong></td>
+<td>Enables pinch zoom. The waterfall's minus/plus buttons remain available.</td>
+</tr>
+<tr>
+<td><strong>Double-tap action</strong></td>
+<td>Choose <strong>Tune</strong>, <strong>Center</strong> or <strong>None</strong>. Center is a view action; Tune requests a frequency change.</td>
+</tr>
+<tr>
+<td><strong>Snap tap-to-tune to step</strong></td>
+<td>Round tap tuning to the slice's nearest step. Available when single-tap tuning or double-tap Tune is enabled.</td>
+</tr>
+</tbody>
+</table>
+<p>For a crowded display, one useful arrangement is to turn off single-tap tuning,
+keep flag dragging, and assign double-tap to Tune. Try the gestures in receive,
+then check the final VFO frequency and passband. These choices control how a
+request starts; ownership, lock and Core refusals still apply.</p>
+<p><a href="/manual/images/iphone-navigation-original.png"><img src="/manual/images/iphone-navigation-original.png" alt="Native iPhone Navigation settings with tuning and touch behavior choices" /></a></p>
+<p><em>Navigation sets touch behavior on this device. Choose the gesture you will use, then test it while receiving. This native SwiftUI simulator screen shows controlled preference values, not prescribed settings.</em></p>
+<h2 id="select-playback-and-microphone-routes">Select playback and microphone routes</h2>
+<p>Open <strong>Setup &gt; Audio &gt; On this phone</strong>, or use Main's <strong>Sound</strong> panel for the
+playback route. The checkmark follows the current route in both places.</p>
+<ol>
+<li>In <strong>Play the band through</strong>, choose the device you want to hear. The list
+includes the iPhone/iPad speaker, the iPhone earpiece where available, and
+connected headphones or AirPods by their current name.</li>
+<li>Confirm received audio comes from that device. Adjust its volume and the
+slice's audio level separately.</li>
+<li>Under <strong>Microphone</strong>, choose <strong>iPhone microphone</strong> or <strong>AirPods microphone</strong>
+as appropriate. Check the TX microphone meter before keying.</li>
+<li>Check <strong>Mute the band while you talk</strong>. The monitor rule shown underneath
+is separate: <strong>MON</strong> plays in headphones only.</li>
+</ol>
+<p>Using the iPhone microphone lets AirPods retain full-quality receive playback.
+Choosing the AirPods microphone makes iOS use its phone-call audio profile in
+both directions. If playback quality changes when you select that microphone,
+compare with the iPhone microphone before changing the Core's DSP or network
+settings. Changing the phone microphone does not select a radio's front-panel
+mic input; the transmitter's input choice is covered in
+<a href="/manual/05-transmit.html">transmit setup</a>.</p>
+<p><strong>iPhone voice processing</strong> is shown as Off. The Core's PROC, equalizer and
+leveler shape the transmitted voice. Use <a href="/manual/14-voice-profiles.html">voice processing and
+profiles</a> for those controls rather than searching for an
+iOS voice-effect switch.</p>
+<p>The implemented <strong>Standard</strong> audio quality is Opus at 24 kbit/s with audio up
+to 8 kHz. <strong>High</strong> remains greyed with the reason that the Core does not offer
+it. The presence of that row is not an additional usable quality setting.</p>
+<h2 id="recover-from-headphone-removal-or-an-audio-interruption">Recover from headphone removal or an audio interruption</h2>
+<p>When a connected headset disappears, playback pauses and the app presents a
+notice. Choose the offered speaker-resume action when you are ready to play
+through the phone. This prevents a private headphone session from suddenly
+playing aloud. Once playback is running, reconnect/select headphones in
+<strong>Sound</strong> and confirm their route and audible output. Reconnecting headphones
+or selecting a route alone does not clear this paused state.</p>
+<p>A call, Siri or another audio interruption pauses playback and ends a phone
+transmission. When the interruption ends, the receive audio can resume;
+transmit does not resume automatically. Before starting another transmission,
+check the route, microphone, TX badge and PTT state. Treat an interrupted
+transmission as ended, even if you were speaking when the interruption began.</p>
+<p>If receive audio does not return, distinguish the paused-headphone notice from
+a Core reconnect message. Use the matching recovery action first. Re-pairing a
+Core is not a playback-route repair. See <a href="/manual/11-troubleshooting.html">troubleshooting</a>
+when the route is selected but the audio remains absent.</p>
+<h2 id="set-screen-background-and-sleep-behavior">Set screen, background and sleep behavior</h2>
+<p>Open <strong>Setup &gt; General &gt; Battery and sessions</strong>. These are phone preferences.</p>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th>Choices and outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Locked or in another app: Sound only</strong></td>
+<td>While away from the app, stop requesting band images and retain sound. On return the band subscribes again.</td>
+</tr>
+<tr>
+<td><strong>Keep the screen on</strong></td>
+<td><strong>Never</strong>, <strong>While charging</strong>, or <strong>Always</strong>. Never still keeps it on while keyed; Always keeps it on while the band is showing.</td>
+</tr>
+<tr>
+<td><strong>Sleep timer</strong></td>
+<td><strong>Off</strong>, <strong>30 minutes</strong>, <strong>1 hour</strong> or <strong>2 hours</strong>. A running timer shows <strong>Disconnects at</strong> followed by the end time.</td>
+</tr>
+<tr>
+<td><strong>In Low Power Mode, drop to Saver</strong></td>
+<td>Limit the requested band to Saver quality when iOS Low Power Mode is on.</td>
+</tr>
+<tr>
+<td><strong>Slow the band when the phone is hot</strong></td>
+<td>Reduce display work while iOS reports heat, returning as it cools.</td>
+</tr>
+</tbody>
+</table>
+<p>For a listening session away from the screen, enable Sound only and select a
+sleep duration. Check the displayed disconnect time after connecting. When
+returning to Main, expect a new live band view; the waterfall can mark the
+period when the phone was locked or in another app. Historical rows are not
+evidence of continuous visual updates while the app was away.</p>
+<p>The sleep timer ends the session by disconnecting. It is different from a
+transmit time-out, which ends keying, and different from a Core service's
+lifetime. The station Core may continue running after this phone disconnects.
+Set the sleep timer to Off when you intend to listen until you explicitly
+leave. Recheck its end time if you change the timer during a session.</p>
+<p>Locking the phone ends a transmission. Keeping the screen awake and permitting
+background audio do not provide locked-phone transmit control. Return to the
+foreground, read the ownership state and key deliberately for the next over.</p>
+<h2 id="manage-wi-fi-and-cellular-data-use">Manage Wi-Fi and cellular data use</h2>
+<p>Open <strong>Setup &gt; CAT &amp; Network &gt; Data use</strong>. <strong>This session</strong> counts the session
+across its network use; <strong>This month on cellular</strong> tracks cellular use. The
+choices for Wi-Fi and cellular are stored separately.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Requested band</th>
+<th>Estimate displayed by the app</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Full</strong></td>
+<td>30 frames/s, full detail.</td>
+<td>About 60 MB/hour.</td>
+</tr>
+<tr>
+<td><strong>Balanced</strong></td>
+<td>15 frames/s.</td>
+<td>About 35 MB/hour.</td>
+</tr>
+<tr>
+<td><strong>Saver</strong></td>
+<td>5 frames/s, half the detail.</td>
+<td>About 20 MB/hour.</td>
+</tr>
+<tr>
+<td><strong>Audio only</strong></td>
+<td>Sound without a band view.</td>
+<td>About 13 MB/hour.</td>
+</tr>
+</tbody>
+</table>
+<p>Wi-Fi offers Full and Balanced. Cellular also offers Saver and Audio only.
+These rates are requests, and the displayed data amounts are estimates, not
+measurements or a billing guarantee. The page also estimates an additional
+13 MB for each hour of talking. Use its counters and your cellular account's
+usage information when planning an actual allowance.</p>
+<ol>
+<li>Choose the Wi-Fi mode for normal station or home use.</li>
+<li>Choose the cellular mode for the amount of visual activity you need away
+from Wi-Fi. Audio only suits listening when you do not need to inspect the
+spectrum; it does not represent a failed band display.</li>
+<li>Enable <strong>Warn me past 5 GB a month on cellular</strong> if you want the app's
+threshold notice. The warning is a notice, not an automatic usage cap.</li>
+<li>Return to Main and read the data-mode chip. After a network change, check
+which mode is in use before interpreting a change in waterfall speed.</li>
+</ol>
+<p>Power and heat policies can reduce the requested rate further. Serious heat
+halves the current request; critical heat or Low Power Mode can cap it at
+Saver when their switches are enabled. The Core's own display settings also
+limit what arrives. Choosing Full does not force a busy Core to deliver Full.</p>
+<p><a href="/manual/images/iphone-data-use-original.png"><img src="/manual/images/iphone-data-use-original.png" alt="Native iPhone Data use page with separate Wi-Fi and cellular modes and session totals" /></a></p>
+<p><em>Data use distinguishes Wi-Fi from cellular choices. Read the selected mode and session totals before changing quality to diagnose a route. This native SwiftUI simulator screen uses test-start zero totals; it is not a measured data-rate example. Its acceptance-build estimate text differs from the source-baseline table above. Use your installed build's counters and estimates.</em></p>
+<h2 id="understand-the-sharing-indicator">Understand the Sharing indicator</h2>
+<p>Main can show <strong>Sharing · n fps</strong> when the Core grants fewer display frames
+than this phone requests. Tap it to see whether the Core is busy or its
+connection is full. The note can identify the device holding transmit, which
+keeps its full band and sound while other devices share the remaining budget.</p>
+<p>Check the reason before increasing quality or repeatedly reconnecting. If
+only the band is slower and audio remains clear, the allocation may be doing
+its intended job. If audio breaks up too, use <strong>Tools &gt; Connection and
+performance</strong> and compare audio delivery with display activity. A Sharing
+chip alone does not diagnose Wi-Fi signal strength or microphone failure.</p>
+<h2 id="set-a-transmit-time-out-and-recognize-disabled-ptt-choices">Set a transmit time-out and recognize disabled PTT choices</h2>
+<p>Open <strong>Setup &gt; Transmit &gt; PTT buttons</strong>. In <strong>Stop transmitting after</strong>, select
+an offered duration or Off, then read the returned selection and any error.
+This group is marked <strong>Core</strong>. The Core time-out applies to phone/iPad
+transmissions; the station desktop also has its own time-out setting. A Core
+watchdog remains part of transmit supervision. A time-out reason means the
+over ended, so return to receive and check the state before keying again.</p>
+<p>The Headset button, Bluetooth PTT Pair, Action button and <strong>Buttons key a
+locked phone</strong> controls are disabled in the covered app. Only on-screen PTT
+keys from this phone. Do not configure an accessory around those labels or
+assume that pairing a Bluetooth audio device gives it a working PTT button.
+In a debug build, a <strong>PTT button test</strong> may appear; it logs button behavior
+and never keys the radio.</p>
+<h2 id="inspect-app-information-and-collect-evidence">Inspect app information and collect evidence</h2>
+<p>Use <strong>Setup &gt; About this app</strong> for the phone build, device and license/link
+information. When reporting a session problem, record the app and Core builds,
+the network type, playback/microphone route, selected data mode, whether the
+phone was hot or in Low Power Mode, and the time the symptom began. Include
+whether the phone was in front, locked or returning from another app.</p>
+<p><strong>Setup &gt; Diagnostics &gt; Logs</strong> and <strong>Tools &gt; Support Bundle</strong> provide the log
+and collection workflows described in <a href="/manual/11-troubleshooting.html">troubleshooting</a>.
+Sharing a bundle is an explicit action through the phone's share sheet.</p>
+<h2 id="worked-example-a-long-headphone-listening-session">Worked example: a long headphone listening session</h2>
+<p>Start with a saved Core and connected headphones. This is a receive session;
+leave PTT unkeyed throughout the setup.</p>
+<ol>
+<li>Connect to the saved Core and select the intended slice on <strong>Panadapter</strong>.
+Verify its frequency/mode and live link. Open <strong>Sound</strong> and choose the
+connected headphones. Check local mute and level, then listen to a known
+signal. If silent, correct this phone's route before changing the Core's
+SPEAKERS/PHONES buttons.</li>
+<li>Open <strong>Setup &gt; Audio &gt; On this phone</strong>. Choose <strong>iPhone microphone</strong> if you
+want AirPods playback to remain at full quality. Choosing <strong>AirPods
+microphone</strong> uses phone-call quality in both directions. This choice does
+not key, but it changes the audio-session behavior a later over will use.</li>
+<li>Open <strong>Setup &gt; General &gt; Battery and sessions</strong>. Enable <strong>Sound only</strong> for
+locked/background listening. Choose <strong>Off</strong>, <strong>30 minutes</strong>, <strong>1 hour</strong> or
+<strong>2 hours</strong> under <strong>Sleep timer</strong>. For a timed session, read <strong>Disconnects
+at</strong> and check that it is the intended end time.</li>
+<li>Open <strong>Setup &gt; CAT &amp; Network &gt; Data use</strong>. Review <strong>On Wi-Fi</strong> and <strong>On
+cellular</strong> separately, select the intended policy, and read <strong>This
+session</strong> plus <strong>This month on cellular</strong>. A connected session can slow
+the display for data, heat or battery management; check the chosen policy
+before treating a slower waterfall as link loss.</li>
+<li>Return to <strong>Panadapter</strong>, confirm audio, then lock the phone or switch
+apps. Sound only requests audio without the band while in that state.
+Before returning, do not infer tuning or TX ownership from continued
+headphone audio alone.</li>
+<li>After an interruption or headphone removal, bring the app to the front.
+For a headphone-removal pause, tap the band’s audio notice when ready to
+resume on the phone speaker. Once playback is running, reconnect/select
+headphones in <strong>Sound</strong>, then verify their route and audible output.
+Reconnecting headphones alone leaves playback paused. After a call or
+other interruption ends, receive audio can resume without that action;
+transmit remains ended. Check the slice and receive audio again. If the
+Core is reconnecting, inspect the link chip/<strong>Connection and performance</strong>
+before changing DSP.</li>
+<li>If the sleep timer ended the session and the app is disconnected, select
+the saved Core and reconnect. Pair again only when the app/Core actually
+requires it. If merely the band paused for background listening, return
+to the live display and inspect the current data mode instead.</li>
+<li>Before a later voice over, follow <a href="/manual/07-iphone-operate.html#prepare-and-transmit-voice-from-the-phone">phone transmit preparation</a>
+from its stated holder condition. Recheck microphone, frequency, TX slice
+and permission. Successful listening has not granted transmit.</li>
+<li>To finish, confirm receive and choose <strong>Radio &gt; Disconnect</strong>. The saved
+Core remains for the next session; use Remove Core only when you intend
+to forget it.</li>
+</ol>
+<div class="page-next"><a href="/manual/19-amplifiers-tuners.html">Previous chapter</a></div></main></div></body></html>

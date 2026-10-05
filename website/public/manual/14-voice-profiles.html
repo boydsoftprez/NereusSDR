@@ -1,0 +1,268 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Voice processing and profiles | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/14-voice-profiles.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html" aria-current=page>Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="voice-processing-and-profiles">Voice processing and profiles</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#select-and-verify-the-microphone-route">Select and verify the microphone route</a></li><li><a href="#use-proc-leveler-and-alc">Use PROC, leveler, and ALC</a></li><li><a href="#set-tx-equalization">Set TX equalization</a></li><li><a href="#configure-phase-rotation-cfc-and-cessb">Configure phase rotation, CFC, and CESSB</a></li><li><a href="#match-rx-bandwidth-to-tx-once">Match RX bandwidth to TX once</a></li><li><a href="#create-and-manage-tx-profiles">Create and manage TX profiles</a></li><li><a href="#worked-setup-a-clean-ssb-voice-profile">Worked setup: a clean SSB voice profile</a></li><li><a href="#monitor-am-modulation">Monitor AM modulation</a></li></ol></details>
+<p>Use this chapter to set a microphone route, shape voice audio, and keep separate station-side transmit profiles. Start with the radio connected, the intended TX slice selected, and the transmitter unkeyed. A control that is grey or marked unavailable is being held by the radio model, Core permissions, firmware/catalogue version, active transmit state, or the relevant hardware capability; read its displayed reason before continuing. Basic MOX, TUNE, drive, PTT ownership, TX readiness, and station timeouts are covered in <a href="/manual/05-transmit.html">Set up and transmit</a>. This chapter covers the detailed processing and profile editor.</p>
+<h2 id="select-and-verify-the-microphone-route">Select and verify the microphone route</h2>
+<p>Open <strong>File &gt; Settings… &gt; Audio &gt; TX Input</strong>. The route selector offers <strong>PC Mic</strong>, <strong>Radio Mic</strong>, and <strong>VAX TX</strong> where the connected station supports them. Select the source that is physically connected to the microphone or digital-audio application. The local desktop chooses the radio's source. A supported remote desktop selects its authenticated session's PC/VAX input or <strong>Radio Mic</strong> at the Core, and must wait for the accepted source status; this is separate from choosing its local computer capture device. <strong>VAX TX</strong> selects the virtual audio input described in <a href="/manual/09-tools.html">Digital audio and external applications</a>; it does not select a local microphone.</p>
+<p>When <strong>PC Mic</strong> is selected, use the <strong>PC Mic</strong> group. Choose the <strong>Backend</strong> and <strong>Device</strong> that correspond to the operating-system capture device, then set the <strong>Buffer</strong> to a value the audio backend accepts. The displayed latency is the configured buffer estimate. If the device list is empty, choose another available backend or connect/enable the capture device in the operating system, then reopen or refresh the device list. An unavailable backend or denied microphone permission prevents capture even if the device name remains selected.</p>
+<p>Enable <strong>Test Mic</strong> to check the local capture path while the radio is unkeyed. Speak at normal operating distance and observe <strong>Mic Gain</strong> and the Phone/CW page's <strong>Level</strong> gauge if that applet is open. <strong>Test Mic</strong> is a local capture check; it does not key the radio or prove that the selected TX slice, radio input, or RF path is correct. Turn it off after the check. The app does not provide a microphone monitor route from Setup's Audio Devices page; use the distinct TX monitor controls only when the station is actually transmitting.</p>
+<p>With <strong>Radio Mic</strong> selected, the page exposes the group for the detected radio family. Use only that board's labeled controls. Hermes-family hardware offers the radio input choices and <strong>+20 dB Mic Boost</strong>; its <strong>Line In Gain</strong> control changes the radio line input gain. Orion MkII exposes <strong>Mic Tip-Ring (Tip is Mic)</strong>, <strong>Mic Bias</strong>, <strong>Mic PTT Disabled</strong>, and <strong>+20 dB Mic Boost</strong>. The Saturn G2 group exposes its supported radio microphone input controls. These values alter the radio's physical input wiring/gain, not the local computer's audio device. The candidate can offer HL2 Radio Mic with a note requiring its audio add-on; a stock HL2 supplies no mic audio. Confirm the actual add-on and the radio family in <a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a>, and verify the input against the actual connector wiring before changing bias or tip/ring selection. A group that does not match the connected board is hidden or disabled.</p>
+<p>After selecting the route, use <strong>Mic Gain</strong> to bring speech into a useful range. The common supported-board range is −40 to +10 dB in 1 dB steps; the application uses the connected board's capability range, so follow the slider's actual endpoints. Speak at the distance and level used on air. A level consistently near the top of the <strong>Level</strong> gauge or in its red region indicates that input gain is too high; reduce gain or correct the upstream audio level. A very low reading calls for checking the selected device, connector, source level, and permission before adding gain. The gauge spans −40 to +10 dB, with yellow beginning at −10 dB and red at 0 dB. This readback is input level, not RF output or the TX ALC meter.</p>
+<p>The compact <strong>Phone/CW</strong> applet's Phone page exposes <strong>Level</strong>, <strong>Compression</strong>, the active profile selector, microphone source, mic gain, <strong>PROC</strong>, <strong>VAX</strong>, and <strong>AM Car</strong>. The <strong>Level</strong> gauge spans −40 to +10 dB, with yellow from −10 and red from 0. The microphone source menu selects <strong>MIC</strong>, <strong>BAL</strong>, <strong>LINE</strong>, or <strong>PC</strong>; the <strong>ACC</strong> row is unavailable. Select <strong>PC</strong> for this computer's input, or the radio input matching the connected jack. The separate <strong>VAX</strong> toggle selects the station's VAX TX route. The profile selector is the same TX profile list as the TX applet. Use <strong>File &gt; Settings… &gt; Audio &gt; TX Input</strong> for the complete device/backend/buffer setup and local <strong>Test Mic</strong> procedure. The <strong>+ACC</strong> and Phone/CW <strong>MON</strong> controls are unavailable. The CW page is a placeholder because CW transmit is not implemented. The supported TX monitor is the <strong>MON</strong> control in the TX applet, distinct from the unavailable Phone/CW <strong>MON</strong> control.</p>
+<h2 id="use-proc-leveler-and-alc">Use PROC, leveler, and ALC</h2>
+<p>Use this task to decide whether compression helps the same phrase. Keep the
+mic, distance, TX filter, and monitor volume fixed while comparing. The
+<strong>Speech Processor</strong> dashboard at <strong>Setup &gt; Transmit &gt; Speech Processor</strong> is
+the stage-state readback; parameter pages are linked from that dashboard.</p>
+<ol>
+<li>With the radio unkeyed, record the <strong>TX Leveler</strong> <strong>Enable</strong>, <strong>Max Gain</strong>,
+and <strong>Decay</strong> values and the <strong>TX ALC</strong> <strong>Max Gain</strong> and <strong>Decay</strong> values in
+<strong>File &gt; Settings… &gt; DSP &gt; AGC/ALC</strong>. ALC is always running; there is no
+ALC enable switch. Also record <strong>PROC</strong> state and level in <strong>Phone/CW</strong>.</li>
+<li>Speak one quiet phrase and one loud phrase. Note which words disappear or
+flatten, and record the available mic/ALC and monitor evidence. Make a
+short, authorized keyed check only when the station path is ready; local
+<strong>Test Mic</strong> does not exercise the transmit chain.</li>
+<li>Change only one stage or parameter. Compare the same quiet and loud
+phrases at the same mic position and monitor level. Read back its state and
+value before changing anything else. If either phrase becomes harsh,
+clipped, or loses syllables, bypass that change and verify the prior state.</li>
+<li>Use <strong>PROC</strong> only to compare CPDR on versus off; its adjacent 0–20 dB
+control changes compressor level. Do not compensate for a weak input by
+increasing compression or RF drive. Reduce or bypass a stage when its
+addition worsens the phrase.</li>
+</ol>
+<p>The compact Phone/CW page's <strong>PROC</strong> button and level slider operate the CPDR speech compressor. Select <strong>PROC</strong> to enable or bypass that stage; set the adjacent level from 0 to 20 dB and use the numeric dB readout as confirmation. This is a radio/Core transmit setting. Increase it only while listening to a monitor or making a controlled test into a suitable station load. Compare the same phrase at the same mic distance, and watch the TX audio/ALC indication. More compressor level increases compression; it does not authorize more RF power. Stop and reduce the microphone or upstream input level if the signal becomes harsh, flat-topped, or the radio reports overdrive.</p>
+<p>For detailed controls, open <strong>File &gt; Settings… &gt; DSP &gt; AGC/ALC</strong>. The <strong>TX Leveler</strong> group has <strong>Enable</strong>, <strong>Max Gain</strong>, and <strong>Decay</strong>. <strong>Enable</strong> allows the leveler to adjust gain as transmit audio rises or falls. <strong>Max Gain</strong> caps how much gain it can add; <strong>Decay</strong> is an exponential time constant in milliseconds. The value ranges are shown by each spinbox. Adjust one control at a time while monitoring the transmitted audio, then read back its displayed value. A long time constant responds more slowly to changing input; a shorter one responds more quickly. Avoid using large <strong>Max Gain</strong> to compensate for a disconnected or poorly routed microphone.</p>
+<p>In <strong>TX ALC</strong>, <strong>Max Gain</strong> limits gain applied before ALC limiting and <strong>Decay</strong> sets its time constant in milliseconds. ALC itself is always running in this implementation, so there is no separate ALC <strong>Enable</strong> checkbox. Do not treat a visible ALC meter as a request to drive it continuously into limiting. Set the mic and processor for clean speech, then use ALC and forward-power readback to confirm that peaks remain controlled. If the audio is distorted, disable or reduce added processing and correct the level at the earliest stage that is too high.</p>
+<p>The Phone/CW <strong>DEXP</strong> button is wired to enable or bypass the downward expander; its adjacent slider is only a decorative threshold marker and does not change the Setup threshold. To adjust DEXP, open <strong>File &gt; Settings… &gt; Transmit &gt; DEXP/VOX</strong>. In <strong>VOX / DEXP</strong>, <strong>Enable DEXP</strong> switches the downward expander on. The shared <strong>Threshold (dBV)</strong> and <strong>Hold (ms)</strong> controls also set the VOX threshold and hang time. <strong>Attack (ms)</strong> is 2–100, <strong>Hold (ms)</strong> 1–2000, <strong>Release (ms)</strong> 2–1000, <strong>Threshold (dBV)</strong> −80 to 0, <strong>Exp. Ratio (dB)</strong> 0–30, <strong>Hyst.Ratio (dB)</strong> 0–10, and <strong>Det.Tau (ms)</strong> 1–100. Use the numeric readbacks rather than the decorative Phone/CW marker to record the active settings.</p>
+<p>DEXP reduces low-level audio below its threshold; excessive expansion can clip quiet syllables or word endings. Adjust the threshold in small steps while speaking, compare with <strong>Enable DEXP</strong> on and off, and back it down if quiet speech disappears. Attack, hold, release, ratio, hysteresis, and detector time constant govern how the gain reduction enters and recovers; change one at a time. The <strong>Audio LookAhead</strong> group's <strong>Enable</strong> and <strong>Look Ahead (ms)</strong> (10–999 ms) apply audio lookahead to the VOX trigger timing. The <strong>Side-Channel Trigger Filter</strong> group's <strong>Enable</strong>, <strong>Low Cut</strong>, and <strong>High Cut</strong> (each 100–10000 Hz) restrict the frequency content used to trigger VOX. Keep <strong>Low Cut</strong> below <strong>High Cut</strong>. These controls affect VOX triggering rather than the audio spectrum sent over RF.</p>
+<p>The same <strong>VOX / DEXP</strong> group has <strong>Enable VOX</strong>, which allows voice-activated keying. Set the threshold using the actual microphone level readback and confirm VOX keys only when intended speech crosses it. <strong>Hold (ms)</strong> controls the shared hang time before unkeying after speech drops below threshold. The TX applet's <strong>VOX</strong> indicator provides the keying state. First verify a safe station path and timeout behavior from <a href="/manual/05-transmit.html">Set up and transmit</a>; if VOX keys from room noise or the selected audio path, disable VOX and correct the source or trigger filter before trying again.</p>
+<p><strong>Anti-VOX</strong> is on the same Setup page. <strong>Anti-VOX Enable</strong> switches on its detector; <strong>Gain (dB)</strong> sets sensitivity, and <strong>Tau (ms)</strong> sets the smoothing time constant (1–500 ms). Anti-VOX references audio about to play through the configured output devices. Check the output route and listen at the usual station level before enabling it. Then confirm receiver audio alone does not key VOX and intended mic speech still does. If a remote window cannot change these settings, read the transmit-settings reason; the Core must offer the matching control version. Anti-VOX is not an RF feedback or transmit-inhibit control.</p>
+<h2 id="set-tx-equalization">Set TX equalization</h2>
+<h3 id="compare-one-eq-change">Compare one EQ change</h3>
+<p>Keep the established working curve intact until the active profile has been
+saved under a new name. In <strong>Tools &gt; TX Equalizer</strong>, record <strong>Enable TX EQ</strong>,
+the active profile, and the current curve mode. Enable or bypass TX EQ for an
+equal-level comparison first. If editing the curve, change one band's gain
+and compare the same quiet/loud phrases; read back the selected band's
+frequency, gain, and Q before the next change. <strong>5-band</strong>, <strong>10-band</strong>, and
+<strong>18-band</strong> request a layout change. Explicit <strong>Apply</strong> resets the points, so
+save-as before applying; the pending <strong>Cancel</strong> keeps the current layout.
+<strong>Reset</strong> in the parametric editor flattens that curve; it is not a general
+profile rollback. Restore by switching back to the saved working profile and
+checking its active name and curve mode.</p>
+<p>Open <strong>Tools &gt; TX Equalizer</strong> or right-click the TX applet's <strong>EQ</strong> control and open the TX EQ editor. The <strong>TX EQ</strong> control enables or bypasses the equalizer stage; the editor's <strong>Enable TX EQ</strong> checkbox is the same master state. This is the transmit equalizer. <strong>DSP &gt; Equalizer</strong> is explicitly unbuilt and is not an alternative receive or transmit EQ page.</p>
+<p>The candidate header offers <strong>Graphic · Legacy</strong> and <strong>Parametric</strong>. These
+modes retain separate curves; changing mode applies that mode's stored settings.
+The older figure below uses a <strong>Legacy EQ</strong> checkbox for the same distinction.
+The mode choice is stored with the TX profile and follows the model in remote
+windows. Check the active mode and profile after recall.</p>
+<p>In <strong>Graphic · Legacy</strong>, <strong>Pre</strong> sets overall pre-gain from −12 to +15 dB.
+The ten band sliders have gain fields and editable center frequencies. Change
+one gain/frequency, compare the same phrase at the same input level, and read
+back the value. Positive boosts can require reducing Pre or another stage.
+<strong>Reset curve</strong> resets the graphic gains/pre-gain; use Undo or the saved profile
+when the prior curve is needed. Expand <strong>Advanced</strong> for <strong>Nc</strong>, <strong>Mp</strong>,
+<strong>Cutoff</strong> and <strong>Wintype</strong>. Nc is the filter coefficient count (32–8192), Mp
+chooses minimum versus linear phase, and the other fields select the existing
+implementation options. These global fields are outside the profile snapshot.</p>
+<p>In <strong>Parametric</strong>, select a numbered band and drag its graph point left/right
+for frequency and up/down for gain. The exact <strong>Frequency</strong>, <strong>Gain</strong>
+(−24 to +24 dB) and <strong>Width (Q)</strong> (0.2–20) fields follow the selected band.
+<strong>Preamp</strong> is overall gain. With <strong>Use Q Factors</strong> enabled, use the point's
+square width handles, the Wider/Narrower slider or exact Q. Lower Q is wider;
+higher Q is narrower. The wheel changes Q, Shift-wheel gain, and Ctrl-wheel
+frequency; endpoint frequency locks still apply.</p>
+<ol>
+<li>Save and activate a working profile copy before a layout change.</li>
+<li>Expand <strong>Advanced</strong> and request <strong>5-band</strong>, <strong>10-band</strong> or <strong>18-band</strong>.
+The checked count stays on the applied curve; a pending message names the
+requested count. This selection alone does not reset the curve.</li>
+<li>Click <strong>Apply 5/10/18 bands</strong> only when the reset is intended. It replaces
+frequencies, gains and widths. <strong>Cancel</strong> beside that pending change
+keeps the current curve. <strong>Undo</strong> can restore an applied count change.</li>
+<li>Read the applied count, points and exact fields afterward. <strong>Reset</strong>
+redistributes the parametric frequencies within its curve range, flattens
+gains, returns Q to 4 and resets Preamp; it is not a whole-profile rollback.</li>
+</ol>
+<p><strong>Curve low/high</strong> in Advanced change the actual curve frequencies, including
+endpoints, with at least 1000 Hz separation. They are not merely view bounds.
+<strong>Log scale</strong> changes axis presentation. <strong>Live Update</strong> sends drag changes
+while moving when on, or on release when off; exact entries still apply.
+<strong>Undo / Redo</strong> restore whole edits. Each EQ mode keeps its own history across
+hiding/reopening; a profile or external-state replacement starts fresh history.
+While typing in an entry, text Undo operates first. The graph shows configured
+settings, not a measured filter response. Confirm processing separately with
+EQ state and the controlled audio evidence described above.</p>
+<p><a href="/manual/images/desktop-tx-eq-original.png"><img src="/manual/images/desktop-tx-eq-original.png" alt="Desktop TX Equalizer showing Legacy EQ, pre-gain, band gains and center frequencies" /></a></p>
+<p><em>TX EQ editor: Legacy EQ is selected and Enable TX EQ is off. The existing curve is displayed, not recommended. Check the enable state separately from the visible curve; record a working profile before editing. This is the earlier desktop development editor, captured without curve changes. The release candidate uses Graphic · Legacy / Parametric mode buttons and added edit history; a selected-release screenshot is pending.</em></p>
+<h3 id="set-tx-eq-from-iphone-or-ipad">Set TX EQ from iPhone or iPad</h3>
+<p>Open <strong>Tools &gt; TX Equalizer</strong>. The <strong>TX EQ</strong> switch enables or bypasses the entire equalizer stage. <strong>Legacy EQ</strong> selects whether the ten-band controls are the active curve; when off, the parametric curve at the Core is used instead. The profile menu selects a Core TX profile; changing it applies that profile to the shared transmit chain. Before editing, verify the displayed profile and whether <strong>Legacy EQ</strong> is on. Coordinate with anyone else using the transmitter.</p>
+<p>Under <strong>Bands</strong>, <strong>Preamp</strong> and <strong>B1</strong> through <strong>B10</strong> are gain sliders from −12 to +15 dB. Each band row also has its center-frequency field. Tap the center field, enter a whole-number Hz value from 10 to 22,000 on the number pad, and tap <strong>Set to ...</strong>; an out-of-range value cannot be sent. Change a single band gain, then read the displayed signed dB value and compare the same signal or permitted monitor/test phrase at the same level. Continue one band at a time and avoid compensating for distortion with more positive gain. The page writes each change to the active Core transmit settings; there is no separate Apply or Save button. Wait for the displayed value to follow the Core. A Core refusal appears in the page's message; the switch/editor can be greyed while disconnected, on air, or lacking the required transmit-settings capability.</p>
+<p>Under <strong>Filter</strong>, <strong>Filter size</strong> accepts 32 to 8192 taps, <strong>Minimum phase</strong> changes phase behavior, <strong>Cutoff</strong> selects <strong>Peaking</strong> or <strong>Notch</strong>, and <strong>Window</strong> selects <strong>Blackman-Harris</strong> or <strong>Hann</strong>. Make these changes only for a specific filter reason, then verify the resulting values and make a careful audio comparison. The <strong>Parametric curve</strong> section on the phone is a Core readout, not an editor; edit the detailed curve on a supported Core desktop.</p>
+<p>The phone page has no <strong>Reset</strong> command for its ten-band EQ. To bypass the current stage without losing its values, turn <strong>TX EQ</strong> off and verify the switch follows. To flatten only the legacy ten-band gains, set each <strong>B1–B10</strong> slider to <strong>0 dB</strong> and verify each readback. This does not reset the parametric curve, center frequencies, filter settings, preamp or the rest of the TX profile. Do not treat profile switching as an EQ-only reset.</p>
+<h2 id="configure-phase-rotation-cfc-and-cessb">Configure phase rotation, CFC, and CESSB</h2>
+<p>Treat these as separate experiments. Record each stage state on <strong>Setup &gt;
+Transmit &gt; Speech Processor</strong>, then change one stage and compare the same
+quiet and loud phrases at the same input and monitor levels. If the change
+degrades either phrase, restore its prior state before proceeding. Save the
+profile under a new name before changing a CFC layout: <strong>5-band</strong>,
+<strong>10-band</strong>, and <strong>18-band</strong> require the explicit pending <strong>Apply</strong> to reset
+points. <strong>Reset Compression</strong> and <strong>Reset EQ</strong> clear their respective curve
+amounts/widths; restore the saved profile if
+the previous curve is needed.</p>
+<p>Open <strong>File &gt; Settings… &gt; DSP &gt; CFC</strong>. In <strong>Phase Rotator</strong>, <strong>Enable</strong> turns the stage on; <strong>FREQ</strong> sets rotation frequency from 10 to 2000 Hz; <strong>STAGES</strong> sets the number of stages from 2 to 16; <strong>Reverse Phase</strong> reverses it. The controls write to the active shared transmit chain. Read back the values and verify the <strong>Phase Rotator</strong> state in <strong>Setup &gt; Transmit &gt; Speech Processor</strong>. Make a controlled audio comparison at equal input level; phase rotation changes the voice waveform, not the TX passband or transmit permission.</p>
+<p>In the Setup <strong>CFC</strong> group, <strong>Enable</strong> activates Continuous Frequency
+Compression, <strong>Pre-Comp</strong> sets the global pre-compression level, and
+<strong>Post-EQ Enable / Post-EQ Gain</strong> select the post-compression EQ and overall
+gain. Open <strong>Configure CFC bands…</strong>, or right-click the TX applet's <strong>CFC</strong>.
+Left-clicking that applet control enables or bypasses its stage.</p>
+<ol>
+<li>Select a band in either graph or its numbered selector. The upper
+<strong>Compression</strong> graph and lower <strong>EQ after compression</strong> graph share band
+frequency/selection. Moving a frequency changes both graphs; their amounts
+and widths remain separate.</li>
+<li>Enter exact <strong>Frequency</strong>, compression <strong>Amount / Width (Q)</strong> or post-EQ
+<strong>Gain / Width (Q)</strong>, or drag the appropriate graph point. Amount spans
+0–16 dB; EQ gain spans −24 to +24 dB; Q spans 0.2–20. Enable <strong>Use Q
+Factors</strong> before adjusting widths. Compare one change at the same speech
+level. The separate <strong>Pre-compression</strong> and <strong>Post-EQ gain</strong> fields change
+overall levels, not one band's amount.</li>
+<li>To change count, request <strong>5</strong>, <strong>10</strong> or <strong>18</strong> in <strong>Bands</strong>, inspect the
+pending reset message and choose <strong>Apply 5/10/18 bands</strong> or its <strong>Cancel</strong>.
+Apply resets both curves. Read back the applied count; save a working profile
+first and use <strong>Undo</strong> to recover an applied edit when its history is available.</li>
+<li><strong>Reset Compression</strong> sets its band amounts and overall Pre-compression
+level to zero and widths to Q=4. <strong>Reset EQ</strong> sets its band gains and overall
+Post-EQ gain to zero and widths to Q=4. Each preserves shared frequencies,
+selection and the other graph's settings. Read back both the selected band
+and corresponding overall field; use Undo when the old curve is needed.</li>
+<li>Expand <strong>Advanced</strong> for <strong>Curve range</strong>, <strong>Live Update</strong> and <strong>Log scale</strong>.
+Curve range rescales frequencies in both curves, including endpoints, with
+at least 1000 Hz spread. Live Update applies drags during motion when on,
+otherwise on release. Undo/Redo treat a completed drag, exact edit, reset or
+applied count change as one step; CFC restores its two curves together.</li>
+</ol>
+<p>The configured curve and live measured compression bars are separate evidence.
+Bars do not belong to edit history. If stored legacy frequencies cannot span
+1000 Hz, read the displayed guidance and save the profile before an intentional
+count reset. A visible configured curve alone proves neither clean audio nor
+successful compression.</p>
+<p>In <strong>CESSB</strong>, <strong>Enable</strong> requests Controlled-Envelope SSB. It needs <strong>CPDR
+Enable</strong> as well as the profile's CESSB state; check both on the stage dashboard.
+Use the same controlled phrase and monitor evidence before relying on that chain.</p>
+<p>The Phone/CW <strong>PROC</strong> button controls CPDR, not all processing stages. TX EQ, leveler, phase rotator, CFC, CESSB and ALC have separate stage states. Open <strong>Setup &gt; Transmit &gt; Speech Processor</strong> for the live stage grid and its <strong>Open TX EQ…</strong>, <strong>Open Phase Rotator…</strong>, <strong>Open CFC…</strong>, <strong>Open CESSB…</strong>, and <strong>Open DEXP/VOX…</strong> links. A green state means the displayed stage is enabled; use its linked Setup page to change parameters. The DEXP row in this dashboard is a stage-state readout; the full controls are on <strong>Transmit &gt; DEXP/VOX</strong>.</p>
+<p><a href="/manual/images/desktop-cfc-original.png"><img src="/manual/images/desktop-cfc-original.png" alt="Desktop CFC editor with compression and post-EQ curves, layout choices and selected band fields" /></a></p>
+<p><em>CFC editor: selected-band controls, compression and post-EQ curves, and 5/10/18-band layout choices. The captured 10-band curve is an existing setting, not a voice recipe. Save a copy before changing a layout; the figure was captured without edits or keyed audio. This is the earlier editor; the candidate adds pending Apply/Cancel, separate width fields and Undo/Redo. A selected-release screenshot remains pending.</em></p>
+<h2 id="match-rx-bandwidth-to-tx-once">Match RX bandwidth to TX once</h2>
+<p>To copy the current receive filter edges to the transmit audio passband, select the desired RX filter and use <strong>Match RX</strong> in the Phone transmit controls, or Shift-click the RX filter preset in the desktop RX/VFO controls. The mapping is mode-aware: AM, SAM, DSB, FM, and DRM copy from zero to the absolute high edge; other supported modes copy the receive edge magnitudes in ascending order. The TX low/high readback changes once. This is a one-time copy, not a continuous RX-follow link. The RX change occurs even if TX settings permission refuses the copy; inspect the TX filter values and enter the intended TX edges in the TX applet or <strong>Setup &gt; Audio &gt; TX Profile</strong> if necessary. For TX operation and filter safety, follow <a href="/manual/05-transmit.html">Set up and transmit</a>.</p>
+<h2 id="create-and-manage-tx-profiles">Create and manage TX profiles</h2>
+<p>TX profiles store a snapshot of supported transmit-chain settings for the connected radio. The local profile bank is keyed to that radio's MAC address. In a remote window, profile names and active selection come from the connected Core's profile manager; selection changes only after the Core reports the result. A request that is refused or not accepted leaves the reported active name in place and the control may show a reason. Profiles are not device-local mic presets and do not include radio-authoritative settings such as TX drive, antenna selection, or transmit ownership. Changing a profile immediately applies its saved values to the shared TX chain, so coordinate with other operators and make changes off air.</p>
+<p>The active name appears in the TX applet's <strong>TX Profile</strong> selector. Left-click a name to activate it. To open the editor, right-click the selector and choose its editor route, open <strong>File &gt; Settings… &gt; Audio &gt; TX Profile</strong>, or use <strong>File &gt; Profiles &gt; TX Profiles…</strong> or <strong>Mic Profiles…</strong>. Both File profile entries open the same editor because TX and mic profiles are the same profile bank. The editor shows <strong>Active profile</strong>, <strong>Save…</strong>, <strong>Delete</strong>, and the <strong>TX Filter</strong> group. <strong>File &gt; Profiles &gt; Import…</strong> and <strong>Export…</strong> open <strong>Setup &gt; Diagnostics &gt; Export / Import</strong>; they do not import or export an individual TX profile. This profile editor has no profile import/export control. The phone selector also operates the active TX profile list.</p>
+<p>To make a profile, first select the connected radio and configure the current TX chain as required. Open <strong>Audio &gt; TX Profile</strong>, press <strong>Save…</strong>, enter the new profile name, and confirm. Leading/trailing spaces are trimmed; a blank name is ignored, and commas in names are changed to underscores. If the name already exists, confirm <strong>Overwrite TX Profile</strong> to replace its stored snapshot. Verify the new name is listed, then select it in <strong>Active profile</strong> or the TX applet selector and wait for the accepted active name. Saving under a new name captures the current live transmit values and adds the name to this radio's bank, which is the available way to make a copy of the current settings under another name.</p>
+<p>For a safe working copy, save-as before editing a curve or processor chain:
+select <strong>Save…</strong>, enter a distinct name, and confirm. Saving adds the copy to
+the profile list; it does not activate it. Select the new name in the TX
+applet's <strong>TX Profile</strong> selector or the editor's <strong>Active profile</strong>, then wait
+for the accepted name before editing. To compare profiles, switch the active
+name and inspect the key values. The editor warns about unsaved edits: <strong>Yes</strong>
+saves them to the old profile before switching, <strong>No</strong> discards them, and
+<strong>Cancel</strong> keeps the current profile active.</p>
+<p>The saved snapshot includes microphone source/gain and board mic options, line-in settings, VOX/DEXP values, Anti-VOX gain, TX monitor volume, two-tone test parameters, TX filter low/high cutoffs, AM carrier level, TX EQ and parametric EQ data, TX Leveler, TX ALC limits, CFC and its band data, CPDR level, CESSB, and phase-rotator settings. The Anti-VOX enable and time constant are not included. It does not include all console DSP settings: global TX EQ implementation settings such as <strong>Nc</strong>, <strong>Mp</strong>, <strong>Cutoff</strong>, and <strong>Wintype</strong> are not per-profile, and neither is the global CPDR enable switch. PureSignal correction enable/calibration is managed separately. RF power, antenna, PA calibration, and TX holder are outside this profile snapshot. Do not treat changing the profile as a complete station backup.</p>
+<p>After changing a value, the editor marks the current profile as modified. If you change <strong>Active profile</strong> in the editor, answer the <strong>Unsaved Profile Changes</strong> prompt: <strong>Yes</strong> saves the current live values back under the current name before loading the next profile; <strong>No</strong> discards those unsaved changes and loads the next profile; <strong>Cancel</strong> returns the selector to the previous name. Use <strong>Save…</strong> to save the current values, overwrite the same name after confirmation, or save the values under a new name. Changes from the TX applet selector apply immediately; use the editor's save prompt or <strong>Save…</strong> workflow when you need to preserve edits. Verify the new active profile name and its key TX Filter/processor values after switching.</p>
+<p>After any recall, separately check <strong>PROC</strong> on <strong>Phone/CW</strong> and <strong>Enable</strong> in
+the <strong>CPDR</strong> group on <strong>File &gt; Settings… &gt; DSP &gt; CFC</strong>. CPDR enable is global
+console state and is not restored by profile recall, although its level is
+stored in the profile. If CESSB is enabled, CPDR must also be enabled for
+CESSB to act. Also recheck global TX EQ implementation fields (<strong>Nc</strong>, <strong>Mp</strong>,
+<strong>Cutoff</strong>, <strong>Wintype</strong>) and Anti-VOX enable/time constant if your task depends
+on them; those are outside the saved profile. To roll back, select the prior
+working profile, verify its accepted active name and stored values, then
+restore these excluded global states deliberately and verify them on their
+own pages.</p>
+<p>To delete a profile, select it in the editor and press <strong>Delete</strong>, then confirm the profile name in the prompt. The last remaining profile cannot be deleted. Deleting the active profile selects the first remaining name in sorted order and loads that profile. There is no rename command: save the current values under a new name, switch to it, then delete the old name if no longer needed. If deletion is refused, verify that another profile remains; if activation appears to change the wrong radio, check <strong>Radio Info</strong> and the connected radio's MAC before making further edits.</p>
+<p><a href="/manual/images/desktop-tx-profile-original.png"><img src="/manual/images/desktop-tx-profile-original.png" alt="Desktop TX Profile settings with Default active and Save and Delete controls" /></a></p>
+<p><em>TX Profile: Default is active in this desktop development capture. Save stores a named snapshot; inspect the active name after selection and separately check excluded global settings. No profile was saved, overwritten or deleted for the image.</em></p>
+<h2 id="worked-setup-a-clean-ssb-voice-profile">Worked setup: a clean SSB voice profile</h2>
+<p>This procedure establishes a deliberately bypassed starting chain, then adds
+one stage at a time. It uses no universal gain, compression, RF power, ALC, or
+EQ target. Start with a connected radio, supported SSB mode, the intended TX
+slice and owner, a verified antenna/load path, and the transmitter unkeyed.
+Use the desktop <strong>TX</strong> applet's <strong>MON</strong> only during a controlled keyed check;
+the monitor is not an on-air report. See <a href="/manual/05-transmit.html#route-and-test-microphone-audio">Test the microphone and interpret
+the evidence</a> and <a href="/manual/05-transmit.html#listen-to-the-transmit-audio-monitor">Monitor
+transmitted audio</a>.</p>
+<p>Before changing the chain, record the active profile name and the excluded
+global states listed in <a href="#create-and-manage-tx-profiles">profile scope</a>. Save
+the current live chain under a new rollback name if you need to preserve
+unsaved edits. The downstream comparisons below require a controlled keyed
+monitor check or independent transmitted-audio evidence. Receive-side
+<strong>Test Mic</strong> proves capture; it does not audition those stages. If the station
+is not ready to key, record settings and defer the audible comparison.</p>
+<ol>
+<li>Open <strong>File &gt; Settings… &gt; Audio &gt; TX Input</strong>. Select <strong>PC Mic</strong> and its
+intended <strong>Backend</strong> and <strong>Device</strong>, or select the physically wired
+<strong>Radio Mic</strong> input. Set <strong>Mic Gain</strong> only after checking the selected
+source. If using PC Mic, enable <strong>Test Mic</strong>, speak a quiet sentence and a
+normal/loud sentence, and note the local level. Stop <strong>Test Mic</strong>. This
+confirms local capture only; it does not confirm radio input or RF audio.</li>
+<li>Open <strong>Setup &gt; Transmit &gt; Speech Processor</strong> and record its state grid.
+Establish a reproducible bypass baseline: <strong>TX EQ</strong>, <strong>Phase Rotator</strong>,
+<strong>CFC</strong>, <strong>CESSB</strong>, <strong>TX Leveler Enable</strong>, <strong>PROC</strong> (CPDR), and <strong>DEXP</strong>
+disabled. Leave <strong>VOX</strong> off unless intended. In <strong>File &gt; Settings… &gt; DSP &gt;
+AGC/ALC</strong>, record the <strong>TX ALC</strong> limits; ALC itself always runs and has no
+enable switch. Do not alter its limits just to make a meter look a certain
+way.</li>
+<li>Speak the same quiet and loud phrases while receiving. If permitted and
+the station path is ready, make a brief keyed comparison using <a href="/manual/05-transmit.html#listen-to-the-transmit-audio-monitor">the TX
+monitor procedure</a>.
+Record the stage grid, available mic/ALC readbacks, and what is heard. If
+quiet speech is already missing, troubleshoot the source and mic level
+before enabling DEXP or adding processing.</li>
+<li>Test DEXP by enabling only <strong>Enable DEXP</strong> at <strong>File &gt; Settings… &gt;
+Transmit &gt; DEXP/VOX</strong>. Repeat both phrases. If quiet syllables or word
+endings disappear, disable DEXP or reduce its threshold effect, confirm
+<strong>Enable DEXP</strong> is off, and proceed from that baseline. Change only one
+DEXP control at a time.</li>
+<li>Test <strong>TX Leveler Enable</strong> by itself. Compare quiet and loud phrases and
+read back <strong>Max Gain</strong> and <strong>Decay</strong>. If quiet speech pumps or loud speech
+flattens, disable it or restore its prior values. Then test <strong>PROC</strong> alone
+at a small change to its displayed level; read back both the button state
+and level. Bypass it again if either phrase sounds worse.</li>
+<li>Save the chosen baseline or working chain as a new profile in <strong>File &gt;
+Settings… &gt; Audio &gt; TX Profile</strong> using <strong>Save…</strong>. Saving adds the named
+copy without activating it. Select that name in <strong>Active profile</strong>, wait
+for it to be accepted, and verify the reported active name. This provides
+a rollback point before any curve-layout edit.</li>
+<li>Enable TX EQ only if wanted, and compare bypass versus enabled first. If
+editing, change one band; compare the same phrases and read back the band
+values. Save a named copy before changing the parametric EQ editor’s
+5/10/18-band layout: applying a requested count resets its band points.
+<strong>Graphic · Legacy / Parametric</strong> chooses the candidate EQ mode; the
+older development figure uses a <strong>Legacy EQ</strong> switch. Save the accepted
+chain under a descriptive name.</li>
+<li>If investigating Phase Rotator, CFC, or CESSB, test one stage at a time
+against the saved chain. Save a named copy before changing the CFC
+editor's 5/10/18-band layout, because explicit Apply resets both curves.
+Check the dashboard state and compare both phrases. CESSB needs <strong>CPDR Enable</strong> in <strong>DSP &gt; CFC</strong> as well as CESSB's
+profile state; check both after recall because CPDR enable is global and
+omitted from the profile. Do not infer successful CESSB from its saved
+checkbox alone.</li>
+<li>Recall the saved working profile from the TX applet selector and wait for
+its reported active name. Inspect microphone source, TX filter, EQ mode and
+curve, DEXP/leveler/CFC/phase/CESSB states, and CPDR level. Then explicitly
+restore and verify global <strong>CPDR Enable</strong>, global EQ implementation values,
+and any Anti-VOX enable/time constant the station requires. This checks
+both the profile snapshot and its excluded state without claiming a
+calibrated on-air result.</li>
+</ol>
+<p>If a stage degrades speech, switch back to the saved working profile, confirm
+its name and relevant values, then restore excluded global states separately.
+Keep the TX path unkeyed until its readiness, holder, and station protections
+are confirmed in <a href="/manual/05-transmit.html">Set up and transmit</a>. Use <a href="/manual/18-puresignal-diversity.html">PureSignal and
+diversity</a> only after its compatible feedback path
+is configured.</p>
+<p>The visible <strong>Two-tone</strong> test control generates and transmits a two-tone signal when used; it is not a speech test. Configure two-tone output only for a controlled measurement setup and follow the calibration procedure in <a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a>. The Phone/CW <strong>AM Car</strong> control is wired: its 0–100 percent value sets the AM carrier level, also used for SAM and DSB. It is not a speech-level control; read the numeric label after adjustment. The Phone/CW profile selector uses the TX profile list, and its source selector supports MIC/BAL/LINE/PC where the radio permits. The separate Phone/CW <strong>MON</strong> and <strong>ACC</strong> controls are unavailable. CWX/keyer and FM transmit/repeater operation are not available in this build.</p>
+<h2 id="monitor-am-modulation">Monitor AM modulation</h2>
+<p>Open <strong>Containers &gt; Applets &gt; AM Mod Monitor</strong> or the applet panel's <strong>☰</strong> menu and select <strong>AM Mod Monitor</strong>. The monitor reports readings only while transmitting in AM, SAM, or DSB; it does not key the radio. If the applet says the Core cannot provide readings, check the Core connection and its monitor capability rather than changing microphone settings. Begin with the radio unkeyed and select <strong>TX I/Q</strong> to inspect the generated modulation. Select <strong>PA FB</strong> only when PureSignal feedback is running and the feedback receiver is known; choose the matching <strong>rx</strong> stream (0–4). The desktop source is an applet-local choice. On the phone, the AM Mod Monitor sits below the normal controls on the TX panel; use its settings sheet for the corresponding monitor choices.</p>
+<p>The positive peak gauge spans 0–160 percent, turns yellow at 100 percent, and red at 125 percent. The negative peak gauge spans 0–100 percent, turns yellow at 90 percent, and red at 98 percent. Read the held peak values and asymmetry alongside the live trace. <strong>RESET</strong> clears peak-hold and flashers; it does not change transmit processing. <strong>VU</strong> changes the local display style. The desktop positive and negative peak flasher controls span 50–160 percent and 50–100 percent respectively; these are local warning thresholds, not modulation targets. On the phone, the settings sheet separates <strong>On this phone</strong> display choices (source, thresholds, meter style) from <strong>On the Core, for every device</strong>, which selects the shared <strong>PA feedback receiver</strong>. A carrier status of <strong>NO CARRIER</strong>, <strong>CARRIER LOW</strong>, or <strong>CARRIER HIGH</strong> describes the monitor's live assessment. Stop transmitting and correct AM carrier/audio setup if a warning persists; do not use a monitor reading alone to infer legal power or RF spectral purity. Use the same known, low-risk station setup and compare readbacks after changing one parameter at a time.</p>
+<div class="page-next"><a href="/manual/13-receiver-dsp.html">Previous chapter</a><a href="/manual/15-rade-freedv.html">Next chapter</a></div></main></div></body></html>

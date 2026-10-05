@@ -1,0 +1,294 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Troubleshoot operation | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/11-troubleshooting.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html" aria-current=page>Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="troubleshoot-operation">Troubleshoot operation</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#the-desktop-cannot-connect-to-the-radio">The desktop cannot connect to the radio</a></li><li><a href="#the-iphone-cannot-reach-its-core">The iPhone cannot reach its Core</a></li><li><a href="#there-is-no-receive-audio">There is no receive audio</a></li><li><a href="#ptt-is-refused-or-a-tci-client-will-not-transmit">PTT is refused or a TCI client will not transmit</a></li><li><a href="#a-control-is-greyed-or-a-change-does-not-stick">A control is greyed or a change does not stick</a></li><li><a href="#tuning-appears-to-act-on-the-wrong-place">Tuning appears to act on the wrong place</a></li><li><a href="#audio-is-distorted-noisy-or-breaks-up">Audio is distorted, noisy or breaks up</a></li><li><a href="#interpret-desktop-network-diagnostics">Interpret desktop network diagnostics</a></li><li><a href="#interpret-phone-connection-and-performance-charts">Interpret phone connection and performance charts</a></li><li><a href="#validate-settings-before-repair-or-reset">Validate settings before repair or reset</a></li><li><a href="#back-up-configuration-and-understand-restore-scope">Back up configuration and understand restore scope</a></li><li><a href="#inspect-logs-and-reproduce-an-incident">Inspect logs and reproduce an incident</a></li><li><a href="#collect-support-information">Collect support information</a></li></ol></details>
+<p>Start with the indicator or message that changed. Check whether the problem is on this device, the shared Core, or the radio link before changing settings. For shared receiver and transmit access, use the ownership steps in <a href="/manual/08-shared-core.html">chapter 8</a>; another device's slice can be visible while remaining read-only.</p>
+<h2 id="the-desktop-cannot-connect-to-the-radio">The desktop cannot connect to the radio</h2>
+<ol>
+<li>Open <strong>Radio &gt; Connections…</strong> (or <strong>Manage Radios…</strong> in a radio-panel window) and follow the <a href="/manual/01-desktop-connect.html">connection flow for this window</a>. In <strong>Connections</strong>, scan for and select the radio, then click its <strong>Connect</strong> button. A dedicated remote window using <strong>Manage Radios…</strong> can open <strong>This Core</strong> instead; inspect that Core's radio and link state.</li>
+<li>If the radio is absent from discovery, confirm its power and this computer's network, then scan again. Use <strong>Add Radio…</strong> in the Connections picker, or <strong>Add Manually…</strong> in the local radio panel, for a known radio address.</li>
+<li>For a Core session, inspect <strong>Settings &gt; Cores &gt; Your Cores &gt; Overview</strong> for this window's current control and audio/display paths, then <strong>Audio with the Core</strong> for format/health and <strong>Retry audio</strong> when enabled. Open <strong>Tools &gt; Network Diagnostics...</strong> to inspect the network state. Check cabling, interface selection, and the route between the computer/Core and radio. Retry from the connection dialog and confirm the connection indicator changes.</li>
+</ol>
+<p><strong>Radio &gt; Connect</strong> reconnects the last selected target when available. Use <strong>Connections…</strong> when choosing or changing a picker target. For a saved Core address, inspect <strong>Settings &gt; Cores &gt; Your Cores &gt; Addresses</strong>; retaining a verified address does not switch the current connection.</p>
+<p>Do not infer that a radio is connected merely because the application opened. The spectrum and radio status indicators should update after connection.</p>
+<h2 id="the-iphone-cannot-reach-its-core">The iPhone cannot reach its Core</h2>
+<p>Read the <strong>Core isn't answering</strong> sheet and its tried-path results. If it says local-network access is denied, open iOS <strong>Settings &gt; Privacy &amp; Security &gt; Local Network</strong>, allow NereusSDR, then tap <strong>Try again</strong>. Otherwise check that the Core computer is awake, its NereusSDR Core switch is on, and the home internet or intended remote route is available. Reconnect on the same Wi-Fi first when at the station. If the app says the Core or app needs updating, follow the named side of the version message; the sheet says which one must be updated.</p>
+<p>An older Core may connect while leaving individual Tools entries marked as needing a newer Core. That is a feature/version limitation, not a failed radio link.</p>
+<h2 id="there-is-no-receive-audio">There is no receive audio</h2>
+<p>On desktop, confirm the selected slice is receiving, unmuted, and has <strong>AF</strong> above zero. Check the computer's output device in <strong>Setup &gt; Audio &gt; Devices</strong> and the operating system's output volume. If the spectrum moves but audio is silent, inspect the selected audio route before changing DSP controls. For digital software, check the VAX channel meter and mute state in the VAX applet; a silent VAX path can coexist with normal speaker audio.</p>
+<p>On iPhone/iPad, check the phone's output route and volume, then open <strong>Tools &gt; Connection and performance</strong>. The audio charts distinguish Core source frames, received packets, phone decoding, and playback underflows. Incoming traffic alone does not prove audio reached the speaker. A rising underflow count points to phone playback or link timing; capture the time and selected route before retrying.</p>
+<h2 id="ptt-is-refused-or-a-tci-client-will-not-transmit">PTT is refused or a TCI client will not transmit</h2>
+<p>Check the selected TX slice and the transmit permission/ownership indication. When another device holds transmit, this device cannot key until a supported takeover succeeds. Desktop offers its transmit takeover workflow; the phone build covered here has no general transmit takeover action. An unheld transmitter has a separate first-human-key path, described with its RF prerequisites in <a href="/manual/07-iphone-operate.html#prepare-and-transmit-voice-from-the-phone">phone transmit preparation</a>. Do not repeatedly tap PTT to clear an ownership refusal. A TCI client also needs the owning window's <strong>TXcontrol</strong>. Confirm the server is running at <strong>Setup &gt; CAT &amp; Network &gt; TCI Server</strong> and that the client appears in its client list. Do not troubleshoot this as an audio problem until ownership and server state are confirmed.</p>
+<p><a href="/manual/images/iphone-mic-muted-original.png"><img src="/manual/images/iphone-mic-muted-original.png" alt="iPhone TX panel explicitly reporting the Core microphone muted and unavailable transmit readings" /></a></p>
+<p><em>Read the reason beside the control: this example says the Core microphone is muted and that transmit readings are absent. Empty stage bars are unavailable data, not measured zero levels. The native simulator screen uses scripted Core state; the indicated values are not a voice setup recipe.</em></p>
+<h2 id="a-control-is-greyed-or-a-change-does-not-stick">A control is greyed or a change does not stick</h2>
+<p>Read its reason before reconnecting or repeating the request. Common cases
+need different remedies:</p>
+<table>
+<thead>
+<tr>
+<th>Reason or symptom</th>
+<th>Check and next action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>You only listen to this slice.</td>
+<td>Take control if appropriate, or use the personal volume/mute controls.</td>
+</tr>
+<tr>
+<td>Another device holds transmit.</td>
+<td>Arrange a handoff and explicitly select the TX slice after obtaining control.</td>
+</tr>
+<tr>
+<td>Station is transmitting or tuning.</td>
+<td>End the over and wait for receive before a shared hardware/configuration change.</td>
+</tr>
+<tr>
+<td>Requires a newer Core.</td>
+<td>Check the Core build. Updating only the phone cannot supply a missing Core command.</td>
+</tr>
+<tr>
+<td>Radio lacks the hardware.</td>
+<td>Check radio identity and capability; a different layout cannot supply another ADC or antenna port.</td>
+</tr>
+<tr>
+<td>Neural processor/model unavailable or limited.</td>
+<td>Inspect <a href="/manual/13-receiver-dsp.html">DSP setup</a>, the installed assets and the Core's resource reason. Compare a supported method or Off.</td>
+</tr>
+<tr>
+<td>Requested display quality reduced.</td>
+<td>Read the Sharing/data-mode chip and power/heat settings. See <a href="/manual/20-phone-preferences.html">phone session care</a>.</td>
+</tr>
+<tr>
+<td>A setting returns to its former value.</td>
+<td>Read pending/refused state and final Core readback; check ownership and any shared-change confirmation.</td>
+</tr>
+</tbody>
+</table>
+<p>A visible disabled placeholder can represent an unimplemented feature. The
+<a href="/manual/12-reference.html">availability reference</a> distinguishes those from temporarily
+held operating controls. Avoid using another application's instructions to
+activate an unimplemented NereusSDR page.</p>
+<h2 id="tuning-appears-to-act-on-the-wrong-place">Tuning appears to act on the wrong place</h2>
+<p>Check the active slice letter, not only the applet you most recently opened.
+Select the intended flag or RX letter tab and compare its frequency, mode and
+filter. A foreign slice can remain visible while its controls are read-only.
+After a TX handoff, selecting a receive slice does not necessarily select TX.</p>
+<p>For an unexpected offset, inspect both enable states and stored RIT/XIT values.
+Use <strong>0</strong> to clear an offset you no longer need. For a VFO outside the visible
+band, inspect CTUN and the pan's centre/span; a panned view can move without
+retuning. Check whether the waterfall is in history and use LIVE before
+interpreting a stopped trace. Use explicit units for numeric frequency entry.</p>
+<p>If adding a slice or moving a shared receiver window is refused, read the
+resource/impact notice. Reduce an unnecessary slice or choose an available
+window rather than retrying the same allocation indefinitely. The automatic
+receiver allocation is described in <a href="/manual/04-slices.html">slices and panadapters</a>.</p>
+<h2 id="audio-is-distorted-noisy-or-breaks-up">Audio is distorted, noisy or breaks up</h2>
+<p>Separate radio overload, receive processing, microphone overload and packet
+timing. They can sound similar but require different controls.</p>
+<table>
+<thead>
+<tr>
+<th>Observation</th>
+<th>First comparison</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ADC overload with distorted reception.</td>
+<td>Inspect antenna, preamp and ADC attenuation. AF changes loudness after the affected input.</td>
+</tr>
+<tr>
+<td>NR introduces watery or delayed audio.</td>
+<td>Compare the selected method with Off while holding mode/filter/AF steady; then adjust its parameters.</td>
+</tr>
+<tr>
+<td>Wanted signal disappears between syllables.</td>
+<td>Compare SQL Off, then AGC behavior and filter width.</td>
+</tr>
+<tr>
+<td>Microphone level clips or processing stays heavily active.</td>
+<td>Recheck the actual TX input and gain, then processing one stage at a time. See <a href="/manual/14-voice-profiles.html">voice profiles</a>.</td>
+</tr>
+<tr>
+<td>Clean spectrum but intermittent playback.</td>
+<td>Inspect underruns, packet gaps and audio-route interruptions at the time of the break.</td>
+</tr>
+<tr>
+<td>Headphones removed or a call interrupted the phone.</td>
+<td>Follow its audio notice; check Sound before a Core reconnect.</td>
+</tr>
+<tr>
+<td>Speakers work but a decoder hears nothing.</td>
+<td>Inspect the selected VAX/TCI channel, stream enable/mute and client route. See <a href="/manual/09-tools.html">digital audio</a>.</td>
+</tr>
+</tbody>
+</table>
+<p>Record the observation before changing several controls. A useful comparison
+changes one cause, repeats the same listening conditions and restores the
+setting if it did not help.</p>
+<h2 id="interpret-desktop-network-diagnostics">Interpret desktop network diagnostics</h2>
+<p>Open <strong>Tools &gt; Network Diagnostics...</strong> while the symptom is occurring. In a
+local radio window it reports the radio connection; a remote window has the
+Core-link diagnostics for that window. Check the heading/identity so a healthy
+computer-to-Core connection is not mistaken for proof of a healthy Core-to-radio
+connection. The desktop also provides <strong>Setup &gt; Diagnostics &gt; Radio Status</strong>
+and <strong>Connection Quality</strong> for the available station readings.</p>
+<p>The local radio dialog groups its readings as follows:</p>
+<table>
+<thead>
+<tr>
+<th>Group/readings</th>
+<th>What they establish</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Connection</strong>: Status, Uptime, Radio, Protocol, IP, MAC.</td>
+<td>Which radio/session is being observed, whether it is connected, and its identity.</td>
+</tr>
+<tr>
+<td><strong>Latency (RTT)</strong> and <strong>Max RTT</strong>.</td>
+<td>Current and observed maximum round-trip delay. A maximum alone does not describe when a break happened.</td>
+</tr>
+<tr>
+<td><strong>Jitter</strong>, <strong>Packet loss</strong>, <strong>Packet gap</strong>, <strong>UDP seen</strong>.</td>
+<td>Packet timing/loss observations when measured. Packet gap is the longest datagram interval in the recent sampling window.</td>
+</tr>
+<tr>
+<td>TX/RX rates and Sample rate.</td>
+<td>Traffic and the connected receive configuration. Traffic can be present even with silent or misrouted audio.</td>
+</tr>
+<tr>
+<td><strong>Audio</strong>: Backend and Underruns.</td>
+<td>Playback backend and observed shortages. The Buffer row has no production reading in the covered local dialog.</td>
+</tr>
+<tr>
+<td><strong>Radio Telemetry</strong>: PA voltage and ADC overload.</td>
+<td>Reported radio conditions where the hardware supplies them. Not reported is different from zero.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Not measured</strong>, a dash, or a graph gap is missing evidence, not a healthy
+zero. Read changes across the problem interval instead of choosing a universal
+RTT or loss threshold. Use <strong>Reset session stats</strong> to start a comparison only
+after saving the current evidence. Resetting counters does not repair a link.
+The unbuilt 60-second Connection Quality history should not be assumed to exist.</p>
+<h2 id="interpret-phone-connection-and-performance-charts">Interpret phone connection and performance charts</h2>
+<p>Open <strong>Tools &gt; Connection and performance</strong>. Select the section and history
+range, then compare the time of the symptom with the selected paths, latest
+connection attempt/failure and available charts. <strong>Focus</strong>, <strong>Compare</strong> and
+<strong>Show all</strong> change which chart series are shown. Gaps indicate unavailable
+readings, stale samples or connection changes; older sessions are historical.</p>
+<p>Follow an audio break through the sequence: Core source frames, packets
+received by the phone, decode, and playback. If source frames stop, investigate
+the station side. If delivery stops while the source continues, investigate
+the connection path. If decode/playback falls behind despite received data,
+record the phone state and route. This is a way to localize the symptom, not a
+claim that every missing reading uniquely identifies its cause.</p>
+<p>Where enabled, <strong>Reset session stats</strong> resets the phone diagnostics-session
+underruns and observed maximum radio RTT only. It does not erase every chart,
+every Core counter or the cellular-use counter. Save the incident readings
+before starting a fresh comparison.</p>
+<h2 id="validate-settings-before-repair-or-reset">Validate settings before repair or reset</h2>
+<p>On desktop open <strong>Setup &gt; Diagnostics &gt; Settings Validation</strong> and choose
+<strong>Re-validate</strong>. Read each issue's severity, summary and detail. With no issues,
+the list states that every setting is within this radio's range. A remote
+Core can refuse validation/repair/forget for unavailable support, lack of
+pairing or the station's current state; use the displayed reason.</p>
+<p><strong>Repair Invalid Settings</strong> asks for confirmation. It brings the supported
+invalid values back into range and removes settings for hardware the radio
+does not have. It is distinct from <strong>Forget This Radio</strong>, which removes that
+radio's saved settings. Before either operation, export the relevant settings,
+record the reported issues and arrange an off-air interval. After repair,
+re-validate and check the affected hardware values. Do not use Forget as a
+routine response to one silent slice.</p>
+<p>On phone, use the offered settings-hygiene controls on the Core's Radio/setup
+page and read their confirmation, affected scope and result. Their presence
+and allowed actions depend on the Core. A refused repair does not mean the
+phone should erase its saved Core pairing.</p>
+<h2 id="back-up-configuration-and-understand-restore-scope">Back up configuration and understand restore scope</h2>
+<p>Open desktop <strong>Setup &gt; Diagnostics &gt; Export / Import</strong>. The page explains
+what the available operation includes.</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Scope and result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Export All Settings...</strong>, local window.</td>
+<td>Export this window's settings as XML to the selected file.</td>
+</tr>
+<tr>
+<td><strong>Export All Settings...</strong>, remote window.</td>
+<td>With a supporting, connected Core, collect this window and paired Core into a combined backup. Wait for completion and the saved path.</td>
+</tr>
+<tr>
+<td><strong>Export Connected Radio...</strong></td>
+<td>Save only the connected radio's hardware, antenna, filter and amplifier settings, from the local store or the Core as appropriate.</td>
+</tr>
+<tr>
+<td><strong>Import All Settings...</strong>, local window.</td>
+<td>Select a local XML file, confirm replacing current settings, then restart after a successful import.</td>
+</tr>
+<tr>
+<td>Import of combined window/Core backup.</td>
+<td>Not available in the covered remote window. Export support does not imply a working combined restore.</td>
+</tr>
+</tbody>
+</table>
+<ol>
+<li>Export to a named location and inspect <strong>Export Complete</strong> or <strong>Export
+Failed</strong>. A selected filename alone is not a saved backup.</li>
+<li>Before local import, retain the current export and check that the chosen
+file is the intended local XML configuration.</li>
+<li>Read <strong>Replace Settings</strong> and confirm only when ready to replace that
+configuration and restart. Cancel preserves the current setup.</li>
+<li>After <strong>Import Complete</strong>, restart NereusSDR, reconnect as needed and inspect
+the relevant values. On Import Failed, retain the file and error for support.</li>
+</ol>
+<p>A remote export can stop if the Core connection or availability changes; retry
+after restoring it. Container-layout files use their own editor and layout import/export commands.
+They are not interchangeable with full configuration or per-radio exports.
+TX and mic profiles are managed in the profile editor; this build has no
+individual profile-file import/export. The File menu profile Import/Export
+entries open the Diagnostics configuration workflow. The Core identity-key backup in
+<a href="/manual/08-shared-core.html">device management</a> is another separate operation.</p>
+<h2 id="inspect-logs-and-reproduce-an-incident">Inspect logs and reproduce an incident</h2>
+<p>Desktop <strong>Setup &gt; Diagnostics &gt; Logs</strong> provides <strong>Refresh</strong> and <strong>Clear</strong>.
+A remote window distinguishes <strong>The Core's Recent Log</strong> from <strong>This Computer's
+Recent Log</strong>. Clear here empties the view and keeps the log files. This is
+different from <strong>Clear Log</strong> in the Support dialog, which clears the local log.
+Preserve incident evidence before using that command.</p>
+<p>Phone <strong>Setup &gt; Diagnostics &gt; Logs</strong> displays the Core's log, newest lines at
+the bottom. <strong>Reload</strong> reads it again; <strong>Clear</strong> empties this phone's view
+without deleting the Core log. Its category switches, <strong>Turn all on</strong> and
+<strong>Turn all off</strong> change the Core's logging for every device. The phone's own
+log is included in Support Bundle rather than shown on this page.</p>
+<p>For a repeatable issue, note the time, enable the relevant offered diagnostic
+category, repeat the shortest procedure that causes the symptom, then collect
+the bundle. Category changes are station changes, so coordinate them if another
+operator is diagnosing the same Core. Restore the desired logging selection
+after gathering evidence.</p>
+<h2 id="collect-support-information">Collect support information</h2>
+<p>On desktop choose <strong>Tools &gt; Support Bundle...</strong> and use the displayed diagnostics. On iPhone/iPad open <strong>Tools &gt; Support Bundle</strong>, tap <strong>Collect</strong>, inspect which phone/Core files are included, then tap <strong>Share</strong> to choose where to send them. The app does not send the bundle automatically. Include the time, device, Core connection state, and the steps that reproduce the issue. Avoid sharing logs or addresses outside the support channel you intend.</p>
+<p>The desktop <strong>Support &amp; Diagnostics</strong> dialog offers category switches,
+<strong>Refresh</strong>, <strong>Clear Log</strong>, <strong>Open Log Folder</strong>, and <strong>Create Support Bundle</strong>.
+In a remote window, the Core's category/log readings are distinct from the
+computer's log. Create the bundle and wait for the result and saved path;
+use <strong>Open Folder</strong> to locate it. If the Core's collection fails or times out,
+include that result and inspect what the local bundle actually contains.</p>
+<p>On phone, <strong>What goes in</strong> identifies the phone log and whether the Core bundle
+is available, with a reason when it is excluded. After collection, <strong>Ready to
+share</strong> lists the files and any Core note. Inspect that list before Share;
+<strong>Collect again</strong> makes a fresh collection. The Core logging and recent-log
+controls below use the same Core log as Setup. Collection and sharing are
+separate actions.</p>
+<p>Include the app/Core build and radio identity, expected versus actual result,
+frequency/mode and affected slice, ownership, audio route, network path, and
+the smallest reproducible steps. State whether it began after a mode, route,
+device, profile, rate or shared-ownership change. On Linux, <strong>Help &gt; Diagnose
+audio backend</strong> provides the platform's additional audio-backend diagnostic
+path where offered. <strong>Help &gt; About</strong> supplies desktop build information.</p>
+<div class="page-next"><a href="/manual/10-customize.html">Previous chapter</a><a href="/manual/12-reference.html">Next chapter</a></div></main></div></body></html>

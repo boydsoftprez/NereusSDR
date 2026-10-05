@@ -1,0 +1,751 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Control reference | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/12-reference.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html" aria-current=page>Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="control-reference">Control reference</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#common-paths">Common paths</a></li><li><a href="#iphone-and-ipad-operator-procedures">iPhone and iPad operator procedures</a></li><li><a href="#desktop-setup-page-map">Desktop Setup page map</a></li><li><a href="#menus-and-applets-at-a-glance">Menus and applets at a glance</a></li><li><a href="#what-is-personal-and-what-is-shared">What is personal and what is shared</a></li><li><a href="#verified-desktop-shortcuts">Verified desktop shortcuts</a></li><li><a href="#gesture-reference">Gesture reference</a></li><li><a href="#availability-in-this-edition">Availability in this edition</a></li><li><a href="#abbreviations-used-on-operating-controls">Abbreviations used on operating controls</a></li><li><a href="#find-a-worked-procedure">Find a worked procedure</a></li><li><a href="#terms">Terms</a></li></ol></details>
+<p>Use this chapter to locate common commands and distinguish which part of the station they affect. Menu paths name the desktop command first; iPhone/iPad routes use tab names. For operating procedures, see <a href="/manual/03-receive.html">receive</a>, <a href="/manual/04-slices.html">slices</a>, <a href="/manual/05-transmit.html">transmit</a>, and <a href="/manual/08-shared-core.html">shared Core operation</a>.</p>
+<h2 id="common-paths">Common paths</h2>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Desktop path</th>
+<th>iPhone or iPad path</th>
+<th>Scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Select playback and microphone devices</td>
+<td><strong>Setup &gt; Audio &gt; Devices</strong></td>
+<td><strong>Setup &gt; Audio</strong> device controls</td>
+<td>This computer / this phone</td>
+</tr>
+<tr>
+<td>Configure VAX audio</td>
+<td><strong>Tools &gt; VAX Audio...</strong> or <strong>Setup &gt; Audio &gt; VAX</strong></td>
+<td><strong>Tools &gt; VAX Audio</strong></td>
+<td>Desktop: this computer, including remote windows. Phone: Core computer.</td>
+</tr>
+<tr>
+<td>Configure TCI audio streams</td>
+<td><strong>Setup &gt; Audio &gt; TCI</strong></td>
+<td><strong>Tools &gt; TCI Server</strong> for Core server options</td>
+<td>Desktop audio setup is this computer; iOS server is Core</td>
+</tr>
+<tr>
+<td>Enable TCI server</td>
+<td><strong>Tools &gt; TCI Server...</strong> or <strong>Setup &gt; CAT &amp; Network &gt; TCI Server</strong></td>
+<td><strong>Tools &gt; TCI Server</strong></td>
+<td>This computer on desktop; Core on phone</td>
+</tr>
+<tr>
+<td>Spot sources and filters</td>
+<td><strong>Tools &gt; Spot Hub...</strong></td>
+<td><strong>Tools &gt; Spot Hub</strong></td>
+<td>Core station data</td>
+</tr>
+<tr>
+<td>FreeDV station list</td>
+<td><strong>Tools &gt; FreeDV Reporter...</strong></td>
+<td><strong>Tools &gt; FreeDV Reporter</strong></td>
+<td>Core station service</td>
+</tr>
+<tr>
+<td>Link and audio diagnostics</td>
+<td><strong>Tools &gt; Network Diagnostics...</strong></td>
+<td><strong>Tools &gt; Connection and performance</strong></td>
+<td>Desktop network view / phone and Core measurements</td>
+</tr>
+<tr>
+<td>PureSignal status and controls</td>
+<td><strong>Tools &gt; PureSignal...</strong></td>
+<td><strong>Tools &gt; PureSignal</strong></td>
+<td>Radio/Core; requires compatible capability</td>
+</tr>
+<tr>
+<td>Support diagnostics</td>
+<td><strong>Tools &gt; Support Bundle...</strong></td>
+<td><strong>Tools &gt; Support Bundle</strong></td>
+<td>Bundle identifies phone and Core contents</td>
+</tr>
+<tr>
+<td>Display and appearance</td>
+<td><strong>Setup &gt; Display</strong>; <strong>Setup &gt; Appearance</strong></td>
+<td><strong>Setup &gt; Display</strong></td>
+<td>Page labels identify phone/Core scope</td>
+</tr>
+<tr>
+<td>Inspect saved Core, retain addresses and rename</td>
+<td><strong>Setup &gt; Cores &gt; Your Cores</strong></td>
+<td>Saved Core row actions; <strong>Setup &gt; Devices</strong> when connected</td>
+<td>Desktop inspection is local; accepted rename changes the shared Core.</td>
+</tr>
+<tr>
+<td>Core audio quality and media recovery</td>
+<td><strong>Setup &gt; Cores &gt; Audio with the Core</strong></td>
+<td><strong>Sound</strong>, <strong>Setup &gt; Data use</strong></td>
+<td>Current window/device preference; read actual format/health.</td>
+</tr>
+<tr>
+<td>Canvas, meter sources and individual controls</td>
+<td><strong>Containers &gt; New / Edit Container</strong></td>
+<td>No desktop Canvas editor on phone</td>
+<td>Desktop arrangement; live controls retain their ordinary receiver/TX authority.</td>
+</tr>
+<tr>
+<td>Core service and pairing</td>
+<td><strong>Setup &gt; CAT &amp; Network &gt; Remote Access</strong></td>
+<td>Welcome/connect flow; <strong>Setup &gt; Devices</strong> for paired-device administration</td>
+<td>Service on this computer; device registry on Core</td>
+</tr>
+<tr>
+<td>Radio selection and saved targets</td>
+<td><strong>Radio &gt; Connections…</strong> (or <strong>Manage Radios…</strong> in a radio-panel window)</td>
+<td><strong>Radio &gt; More &gt; Manage Radios</strong> for the radio the connected Core runs; <strong>Your Cores</strong> list for saved connection targets</td>
+<td>Choosing a different radio changes the Core's shared radio and reconnects devices; this is not the same as choosing a saved Core target.</td>
+</tr>
+<tr>
+<td>TX input and microphone route</td>
+<td><strong>Setup &gt; Audio &gt; TX Input</strong></td>
+<td>Main <strong>TX</strong>, <strong>Modes</strong> transmit section; <strong>Setup &gt; Audio &gt; On this phone</strong> for the phone microphone</td>
+<td>Mixed input/device and Core transmit settings</td>
+</tr>
+<tr>
+<td>TX/mic profiles</td>
+<td><strong>File &gt; Profiles &gt; TX Profiles... / Mic Profiles...</strong>, <strong>Setup &gt; Audio &gt; TX Profile</strong></td>
+<td>Offered Core-described profile settings</td>
+<td>Core transmit configuration</td>
+</tr>
+<tr>
+<td>Filter bank</td>
+<td><strong>Setup &gt; DSP &gt; Filter Presets</strong></td>
+<td>Offered Core-described Setup page; quick presets in Modes</td>
+<td>Shared Core bank; choosing a preset applies to one slice</td>
+</tr>
+<tr>
+<td>Advanced receive DSP</td>
+<td><strong>Setup &gt; DSP &gt; AGC/ALC, NR/ANF, NB/SNB, CW, TNF, Options</strong></td>
+<td><strong>Modes</strong>, then offered Core Setup pages</td>
+<td>Core receive processing; some pages include separate TX groups</td>
+</tr>
+<tr>
+<td>Antennas and radio hardware</td>
+<td><strong>Setup &gt; Hardware &gt; Hardware Config</strong></td>
+<td><strong>Radio</strong>, <strong>Setup &gt; Hardware</strong> as offered</td>
+<td>Physical radio/front end, often shared by several slices</td>
+</tr>
+<tr>
+<td>PA calibration and readings</td>
+<td><strong>Setup &gt; PA &gt; PA Gain / Watt Meter / PA Values</strong></td>
+<td>Offered Core Setup pages</td>
+<td>Radio/Core; compatible PA profile required</td>
+</tr>
+<tr>
+<td>Voice processor, expander, VOX</td>
+<td><strong>Setup &gt; Transmit &gt; Speech Processor / DEXP/VOX</strong>; <strong>Setup &gt; DSP &gt; CFC</strong></td>
+<td>Offered Core controls, Modes transmit section</td>
+<td>Core TX, subject to transmit-settings permission</td>
+</tr>
+<tr>
+<td>External amplifiers and tuners</td>
+<td><strong>Setup &gt; CAT &amp; Network &gt; 4O3A / RF-Kit</strong>, accessory applets</td>
+<td><strong>Radio</strong> accessory pages, offered Core Setup</td>
+<td>Core station accessories</td>
+</tr>
+<tr>
+<td>Waterfall history and 3D</td>
+<td>Band display; <strong>Setup &gt; Display &gt; Waterfall Defaults / 3D View</strong></td>
+<td>Main Display; <strong>Setup &gt; Display &gt; On this phone</strong></td>
+<td>Local picture/history; Core capability governs feeds</td>
+</tr>
+<tr>
+<td>Meter containers</td>
+<td><strong>Containers &gt; New Container... / Edit Container</strong></td>
+<td>No desktop container designer on phone</td>
+<td>Desktop layout and item sources</td>
+</tr>
+<tr>
+<td>Settings validation and backup</td>
+<td><strong>Setup &gt; Diagnostics &gt; Settings Validation / Export / Import</strong></td>
+<td>Offered Core hygiene controls; device-key backup in Devices</td>
+<td>Operation-dependent scope, explained before confirmation</td>
+</tr>
+<tr>
+<td>Logs</td>
+<td><strong>Setup &gt; Diagnostics &gt; Logs</strong>, Support dialog</td>
+<td><strong>Setup &gt; Diagnostics &gt; Logs</strong>; Support Bundle</td>
+<td>Desktop/phone view; Core categories are shared</td>
+</tr>
+</tbody>
+</table>
+<h2 id="iphone-and-ipad-operator-procedures">iPhone and iPad operator procedures</h2>
+<h3 id="change-the-radio-a-connected-core-runs">Change the radio a connected Core runs</h3>
+<p>With the phone connected to the Core you intend to change, open <strong>Radio &gt; More &gt; Manage Radios</strong>. The page asks the Core for its radio list while the page is open. Read each card's name (or MAC if unnamed), model, protocol, IP address and MAC; <strong>In use</strong> identifies the radio it currently runs. <strong>Scan again</strong> requests a fresh LAN scan. Wait for <strong>The Core is looking for radios</strong> and the refreshed list. An empty-list message or a greyed action states when the Core is offline, too old, on air, or this session did not use a paired device key.</p>
+<p>To switch radios, choose an inactive radio, review the confirmation, then tap <strong>Choose</strong>. The confirmation says the Core switches and every connected device, including this phone, reconnects. After the phone reconnects, read the Core/link and radio identity before continuing; do not assume a successful tap changed the selected radio. If the Core refuses the request, its words appear in <strong>Refusal</strong>. A disconnect or missing capability disables the action with its reason. Choosing the current <strong>In use</strong> radio is not a switch.</p>
+<p>Use <strong>Change model</strong> only to change the model saved for a listed radio. Pick one of the Core-provided models; the checkmark marks the model the Core currently reports. The Core saves that choice for its next connection to that radio, so it does not switch the Core immediately. When the older Core does not list model choices, or lists only one, the page gives the reason instead of guessing. To remove an inactive saved radio from the Core, tap <strong>Forget</strong>, read the confirmation that also removes that radio's saved model, then tap <strong>Forget</strong> to confirm. A later scan may list the radio again while it is on the network. Check the resulting list or the Core's refusal before proceeding. These actions affect the Core's station, not just the phone's saved <strong>Your Cores</strong> list.</p>
+<h3 id="adjust-the-cores-vax-levels-from-the-phone">Adjust the Core's VAX levels from the phone</h3>
+<p>Open <strong>Tools &gt; VAX Audio</strong>. This page controls VAX channels on the Core's computer, not audio devices on the phone. Each of <strong>VAX 1–4</strong> identifies its virtual device and feeding slice or slices, then provides <strong>Level</strong>, a 0–100% slider, a level meter, and <strong>Mute</strong>. Set a channel level to change what digital-mode apps receive from that VAX channel. <strong>Mute</strong> silences that channel for its applications; it does not mute the speakers. Watch the meter and device/slice labels to make sure the intended receive path is selected. The <strong>VAX microphone</strong> section identifies the transmit slice and has its own <strong>Level</strong> slider and meter. That level changes the Core's VAX microphone input, not this phone's microphone route. Wait for values/meters to refresh; if a request is refused, the page displays the Core's reason. The TX-level slider is disabled unless this phone may transmit. Missing channel or meter data shows an older-Core/unavailable reason rather than a zero value. VAX application routing and platform availability are in <a href="/manual/09-tools.html">Digital audio and external applications</a>.</p>
+<h3 id="use-ipad-screen-arrangements-and-the-meter">Use iPad screen arrangements and the meter</h3>
+<p>Follow the <a href="/manual/07-iphone-operate.html#worked-session-two-slices-on-an-ipad">two-slice iPad listening session</a> for the operating order. The details below explain the layout and meter choices used by that session.</p>
+<p>On an iPad, the band screen uses three arrangements. With a regular-width window whose shorter side is at least 600 points, landscape uses the <strong>applet column</strong>: the band on the left and a 320-point column on the right, with the S-meter at the top and RX then TX controls below in one scroll view. Use the toolbar corner button to hide or show that column. In portrait at that size, the band stays full width and the S-meter, RX and TX are three columns below it; RX and TX scroll separately. Turning the iPad to landscape switches back to the applet column. A narrow split-view window or compact-width environment falls back to the phone arrangement, even on an iPad.</p>
+<p>The analog S-meter shows the active slice's RX reading while receiving and the selected TX reading while on air. Tap the meter title bar's menu button, or press and hold the meter face, to open its menu. <strong>RX Mode</strong> offers Signal, Sig Avg, Signal Peak and Max Bin; <strong>TX Mode</strong> offers Power, SWR, Level and Compression. A mode whose required Core reading is unavailable is disabled with a reason. <strong>Peak Hold</strong> contains <strong>Enabled</strong>, <strong>Decay</strong>, and <strong>Reset</strong>. <strong>Meter Face</strong> selects one of the offered vintage faces or <strong>Classic</strong>. Check the needle/readout after a mode change; a disabled option is not a zero meter reading.</p>
+<h3 id="edit-a-core-described-phone-setup-control">Edit a Core-described phone Setup control</h3>
+<p>Open <strong>Setup</strong>, choose a category, then a page the connected Core describes. The page uses the Core's labels, help text, choices, units and ranges. Native controls operate the shared Core/radio setting described by that page, not a private phone copy. A toggle or choice sends its selected value; a number control uses its step buttons; a slider sends when you release it; a text field sends when you submit it. A button or a particular value can ask for a confirmation. Read the control name and question, then select <strong>Yes</strong> to send or <strong>No</strong> to leave the value unchanged. Wait for the Core's updated value before treating an edit as accepted. If the Core refuses or the link is lost, the page shows its refusal or unavailable reason and retains the last accepted readback. Controls can be disabled for missing Core capability, stale/not-ready settings, transmit ownership, or on-air state. Do not retry until that displayed condition is addressed.</p>
+<p>Some tables have native panels rather than generic rows: <strong>Notch Table</strong> edits an existing notch's center/width, active state and delete action; use <a href="/manual/13-receiver-dsp.html">receiver DSP notch procedures</a>. <strong>Settings Validation</strong> lists severity, problem and detail and provides <strong>Re-validate</strong>, <strong>Repair</strong>, and <strong>Forget</strong> with Core confirmations where offered; use <a href="/manual/11-troubleshooting.html">settings recovery</a>. <strong>Antenna Rows</strong> selects per-band physical paths; see <a href="/manual/17-hardware-antennas-calibration.html">hardware and antennas</a>. <strong>PA Telemetry</strong> is read-only and marks stale/unreported readings unavailable with their age; see <a href="/manual/17-hardware-antennas-calibration.html">PA readings</a>. <strong>CFC Bands</strong> edits the transmit compressor/EQ curves on the Core; see <a href="/manual/14-voice-profiles.html">voice processing</a>. If a specialized control says it is unavailable on this phone, do not infer that its generic table placeholder is editable.</p>
+<h2 id="desktop-setup-page-map">Desktop Setup page map</h2>
+<p>Open <strong>File &gt; Settings...</strong> and select a leaf in the left-hand tree. Category
+names group pages; selecting a category is not the same as selecting an
+editable page. Read page/group scope and disabled reasons. In a remote window,
+some values arrive asynchronously from the Core and can remain unavailable
+until that readback is ready.</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Implemented pages in the covered source</th>
+<th>Detailed instructions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>General</strong></td>
+<td>Startup &amp; Preferences; Options; This Core in a remote window.</td>
+<td><a href="/manual/01-desktop-connect.html">Connect</a>, <a href="/manual/08-shared-core.html">sharing</a>, <a href="/manual/16-spots-reporters.html">spots and identity</a>.</td>
+</tr>
+<tr>
+<td><strong>Cores</strong></td>
+<td>Your Cores (Overview, Addresses, Radio, Devices); Audio with the Core. Inspection and current connection are distinct.</td>
+<td><a href="/manual/01-desktop-connect.html">Core Settings and audio</a>, <a href="/manual/08-shared-core.html">sharing</a>.</td>
+</tr>
+<tr>
+<td><strong>Hardware</strong></td>
+<td>Hardware Config, whose tabs depend on the radio.</td>
+<td><a href="/manual/17-hardware-antennas-calibration.html">Hardware and antennas</a>.</td>
+</tr>
+<tr>
+<td><strong>PA</strong></td>
+<td>PA Gain; Watt Meter; PA Values, with radio capability reasons.</td>
+<td><a href="/manual/17-hardware-antennas-calibration.html">Calibration</a>.</td>
+</tr>
+<tr>
+<td><strong>Audio</strong></td>
+<td>Devices; TX Input where available; VAX; TCI; Advanced; TX Profile.</td>
+<td><a href="/manual/05-transmit.html">Transmit</a>, <a href="/manual/09-tools.html">digital routing</a>, <a href="/manual/14-voice-profiles.html">profiles</a>.</td>
+</tr>
+<tr>
+<td><strong>DSP</strong></td>
+<td>AGC/ALC; NR/ANF; NB/SNB; CW; AM/SAM; FM; CFC; TNF; Filter Presets; Options.</td>
+<td><a href="/manual/13-receiver-dsp.html">Receiver DSP</a>, <a href="/manual/14-voice-profiles.html">voice processing</a>. A parent page can contain disabled or hidden unbuilt groups.</td>
+</tr>
+<tr>
+<td><strong>Display</strong></td>
+<td>Spectrum Defaults; Spectrum Peaks; Waterfall Defaults; Grid &amp; Scales; Multimeter; TX Display; 3D View.</td>
+<td><a href="/manual/10-customize.html">Display and layout</a>.</td>
+</tr>
+<tr>
+<td><strong>Transmit</strong></td>
+<td>Power; Speech Processor; DEXP/VOX.</td>
+<td><a href="/manual/05-transmit.html">Transmit</a>, <a href="/manual/14-voice-profiles.html">voice processing</a>. TX Profile is under Audio.</td>
+</tr>
+<tr>
+<td><strong>Appearance</strong></td>
+<td>Colors &amp; Theme; Meter Styles.</td>
+<td><a href="/manual/10-customize.html">Display and layout</a>.</td>
+</tr>
+<tr>
+<td><strong>CAT &amp; Network</strong></td>
+<td>TCI Server when built; 4O3A; Remote Access; RF-Kit.</td>
+<td><a href="/manual/09-tools.html">Digital routing</a>, <a href="/manual/06-iphone-connect.html">phone connection</a>, <a href="/manual/19-amplifiers-tuners.html">accessories</a>. The category name does not imply implemented serial CAT.</td>
+</tr>
+<tr>
+<td><strong>Test</strong></td>
+<td>Two-Tone IMD, with transmit/radio gates.</td>
+<td><a href="/manual/18-puresignal-diversity.html">PureSignal</a>.</td>
+</tr>
+<tr>
+<td><strong>Diagnostics</strong></td>
+<td>Radio Status; Connection Quality; Settings Validation; Export / Import; Logs.</td>
+<td><a href="/manual/11-troubleshooting.html">Troubleshooting and support</a>.</td>
+</tr>
+</tbody>
+</table>
+<p>The phone Setup tree combines native phone pages with pages described by the
+connected Core. Therefore this desktop tree is not a promise of an identical
+phone tree. A Core can omit an unsupported page, or show it with a version or
+capability reason. Native phone Navigation, Audio, Display, Battery and
+sessions, Data use, PTT buttons, Devices, Logs and About pages are covered in
+<a href="/manual/20-phone-preferences.html">phone session care</a> and the phone chapters.</p>
+<h2 id="menus-and-applets-at-a-glance">Menus and applets at a glance</h2>
+<table>
+<thead>
+<tr>
+<th>Desktop surface</th>
+<th>Main implemented operating uses</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>File</strong></td>
+<td>Settings, profile editor routes, configuration Import/Export routes, Quit.</td>
+</tr>
+<tr>
+<td><strong>Radio</strong></td>
+<td>Connect last target, Disconnect, Manage Radios, state-dependent radio management and Protocol Info.</td>
+</tr>
+<tr>
+<td><strong>View</strong></td>
+<td>Pan Layout, add slice, float pan, display duplex, Band Plan and performance presentation.</td>
+</tr>
+<tr>
+<td><strong>Band</strong></td>
+<td>Choose available HF/GEN/WWV band targets.</td>
+</tr>
+<tr>
+<td><strong>Mode</strong></td>
+<td>Set active slice's demodulation. FM availability here is receive support, not FM transmit.</td>
+</tr>
+<tr>
+<td><strong>DSP</strong></td>
+<td>Quick NR/NB/ANF/SNB/APF/AGC/TNF actions for the selected receiver or stated master function.</td>
+</tr>
+<tr>
+<td><strong>Containers</strong></td>
+<td>Applet visibility, container creation/editing and default-layout reset.</td>
+</tr>
+<tr>
+<td><strong>Tools</strong></td>
+<td>VAX/TCI when built, Spot Hub, FreeDV Reporter, RADE-related operating surfaces, PureSignal, Diversity, Network Diagnostics and Support Bundle as offered.</td>
+</tr>
+<tr>
+<td><strong>Help</strong></td>
+<td>What's New, About and platform-specific diagnostics. Integrated Getting Started/Help/Data Modes pages remain unbuilt.</td>
+</tr>
+</tbody>
+</table>
+<p>The <strong>Containers</strong> menu's <strong>Applets</strong> section and the panel <strong>☰</strong> menu show
+registered applets. Availability can depend on connected hardware, an enabled
+service or the desktop build. An amplifier panel will not become functional
+merely because it is checked. Use <a href="/manual/02-desktop-window.html">window controls</a> to
+show/float/dock an applet, and the relevant subject chapter to configure it.</p>
+<h2 id="what-is-personal-and-what-is-shared">What is personal and what is shared</h2>
+<table>
+<thead>
+<tr>
+<th>Setting or operation</th>
+<th>Normal scope and qualification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Selecting the active slice, arranging panes or floating controls.</td>
+<td>This device's operating focus/layout. Other slices continue receiving.</td>
+</tr>
+<tr>
+<td>Frequency, mode, passband, AGC and RX DSP of an owned slice.</td>
+<td>That shared receiver. A listening device does not gain edit rights by selecting it.</td>
+</tr>
+<tr>
+<td><strong>Your volume</strong> and mute while listening to another device's slice.</td>
+<td>Personal to the listening device.</td>
+</tr>
+<tr>
+<td>Preset-bank edits, notches and station identity.</td>
+<td>Core bank/station state, distinct from ordinary per-slice preset selection.</td>
+</tr>
+<tr>
+<td>ADC attenuation, preamp, physical antenna/filter routing and sample-rate resources.</td>
+<td>Radio/receiver-window hardware; other slices can be affected. Read any impact confirmation.</td>
+</tr>
+<tr>
+<td>Microphone device/backend and playback route.</td>
+<td>Computer or phone hosting that route. Core TX input/processing settings are a different group.</td>
+</tr>
+<tr>
+<td>TX slice, keying, drive, TX bandwidth, processors and profiles.</td>
+<td>Core transmitter, with TX ownership/settings gates. Receiving successfully is not transmit permission.</td>
+</tr>
+<tr>
+<td>Desktop VAX and TCI.</td>
+<td>This computer, including a remote desktop window.</td>
+</tr>
+<tr>
+<td>Phone Tools VAX and TCI Server.</td>
+<td>Core's computer. These pages do not create desktop virtual devices on the phone.</td>
+</tr>
+<tr>
+<td>Palette, grid, layout and local history.</td>
+<td>Local presentation, with separately scoped Core analyzer/subscription fields where offered.</td>
+</tr>
+<tr>
+<td>Paired-device removal, pairing and Core key backup.</td>
+<td>Core device registry/identity. Removing a saved Core from a phone is a different action.</td>
+</tr>
+<tr>
+<td>Diagnostic category switches for a Core.</td>
+<td>Shared logging. Clearing a view need not clear the underlying file.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Mixed</strong> or <strong>Both</strong> means inspect the individual group. It does not mean
+every field affects both places equally. A requested change, a pending
+confirmation and an accepted readback are different states.</p>
+<h2 id="verified-desktop-shortcuts">Verified desktop shortcuts</h2>
+<table>
+<thead>
+<tr>
+<th>Shortcut</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Ctrl+,</strong></td>
+<td>Open <strong>Settings...</strong></td>
+</tr>
+<tr>
+<td><strong>Ctrl+K</strong></td>
+<td>Connect to the remembered target when actionable.</td>
+</tr>
+<tr>
+<td><strong>Ctrl+Shift+K</strong></td>
+<td>Disconnect.</td>
+</tr>
+<tr>
+<td><strong>Ctrl+L</strong></td>
+<td>Open <strong>Pan Layout...</strong></td>
+</tr>
+<tr>
+<td><strong>Ctrl+R</strong></td>
+<td>Add a slice</td>
+</tr>
+<tr>
+<td><strong>Ctrl+Shift+S</strong></td>
+<td>Open <strong>Spot Hub...</strong></td>
+</tr>
+<tr>
+<td><strong>Ctrl+Shift+R</strong></td>
+<td>Open <strong>FreeDV Reporter...</strong></td>
+</tr>
+<tr>
+<td><strong>Ctrl+Shift+D</strong></td>
+<td>Open <strong>Diversity...</strong></td>
+</tr>
+<tr>
+<td><strong>Ctrl+Shift+X</strong></td>
+<td>Clear all spots.</td>
+</tr>
+<tr>
+<td><strong>Ctrl+Shift+N</strong></td>
+<td>Toggle TNF master processing.</td>
+</tr>
+<tr>
+<td><strong>Ctrl+Q</strong></td>
+<td>Quit NereusSDR</td>
+</tr>
+</tbody>
+</table>
+<p>These actions are present in the desktop menus of the source build covered by this draft. The current build has no shortcut-remapping page. macOS may display the platform's Command modifier in place of Ctrl; use the shortcut shown in the menu.</p>
+<h2 id="gesture-reference">Gesture reference</h2>
+<table>
+<thead>
+<tr>
+<th>Surface/action</th>
+<th>Gesture</th>
+<th>Readback to check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Desktop numeric frequency.</td>
+<td>Double-click the frequency, enter explicit units, Enter.</td>
+<td>Final VFO frequency.</td>
+</tr>
+<tr>
+<td>Desktop quick tune.</td>
+<td>Click empty spectrum/waterfall; wheel over frequency/band.</td>
+<td>Active slice and selected step.</td>
+</tr>
+<tr>
+<td>Desktop pan.</td>
+<td>Drag empty band horizontally.</td>
+<td>View centre/span, not an assumed VFO change.</td>
+</tr>
+<tr>
+<td>Desktop filter/tune.</td>
+<td>Drag an edge to resize; drag inside the passband to tune.</td>
+<td>Both filter edges or VFO frequency as appropriate.</td>
+</tr>
+<tr>
+<td>Desktop band zoom.</td>
+<td>Ctrl/Command+wheel.</td>
+<td>Frequency span.</td>
+</tr>
+<tr>
+<td>Desktop reference level.</td>
+<td>Shift+wheel over band.</td>
+<td>Level window.</td>
+</tr>
+<tr>
+<td>Desktop dBm ruler.</td>
+<td>Wheel changes range; left-drag moves it; right-drag stretches it.</td>
+<td>Minimum/maximum level and visibility of signals.</td>
+</tr>
+<tr>
+<td>Desktop RX-to-TX filter match.</td>
+<td>Shift-click a preset.</td>
+<td>RX passband and TX BW separately; the TX request can be refused.</td>
+</tr>
+<tr>
+<td>Desktop manual notch.</td>
+<td>Add from spectrum context menu; drag centre/edge; wheel adjusts width, Shift for fine width.</td>
+<td>Marker, TNF master and audible result.</td>
+</tr>
+<tr>
+<td>Phone selection/tuning.</td>
+<td>Tap flag to select; use enabled tap/drag/number-pad/dial gestures.</td>
+<td>Ownership and final frequency.</td>
+</tr>
+<tr>
+<td>Phone zoom/pan.</td>
+<td>Pinch where enabled; drag empty band; use minus/plus.</td>
+<td>Span/centre and live/history state.</td>
+</tr>
+<tr>
+<td>Phone gestures.</td>
+<td>Choose them in Setup &gt; General &gt; Navigation.</td>
+<td>Verify the chosen action in receive.</td>
+</tr>
+<tr>
+<td>Phone PTT.</td>
+<td>Tap on-screen PTT to key, tap again to unkey.</td>
+<td>TX badge, owner, keying indication and final receive state.</td>
+</tr>
+</tbody>
+</table>
+<p>Notch hit areas take precedence over ordinary band gestures. Locked,
+listened-to or on-air controls can refuse a request. See <a href="/manual/02-desktop-window.html">desktop gestures</a>
+and <a href="/manual/07-iphone-operate.html">phone operation</a> for the full context.</p>
+<h2 id="availability-in-this-edition">Availability in this edition</h2>
+<p>This manual covers a development checkout, with real desktop figures from a
+separately identified development GUI. Check your installed build and connected
+Core rather than treating the manual as a public release compatibility list.
+The operator-facing exclusions below explain common missing controls.</p>
+<table>
+<thead>
+<tr>
+<th>Missing/unimplemented surface</th>
+<th>Supported alternative or boundary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Serial/TCP CAT, MIDI and their status/tool pages.</td>
+<td>Use supported TCI where suitable; it is its own interface and build dependency.</td>
+</tr>
+<tr>
+<td>CWX, Phone/CW keyer page, CW keyer settings.</td>
+<td>CW receive mode/filter/APF controls remain separately usable. Do not infer a working software keyer from CW modes.</td>
+</tr>
+<tr>
+<td>Voice recorder/playback, DVK, macro buttons, Memory Manager and memory spots.</td>
+<td>Use ordinary live receive/transmit and the implemented spot sources.</td>
+</tr>
+<tr>
+<td>FM TX/repeater/offset/reverse, CTCSS encode/tone squelch and FM Phone/CW page.</td>
+<td>FM receive/squelch remain; do not plan repeater transmission with these shells.</td>
+</tr>
+<tr>
+<td>Transverters, VHF band/OC pages and band stacking.</td>
+<td>Current implemented band selection and HF hardware controls.</td>
+</tr>
+<tr>
+<td>Minimal Mode, UI Scale/Theme page, desktop Navigation editor, skins and keyboard remapping.</td>
+<td>Actual fixed menu shortcuts, supported layout/colors and phone Navigation.</td>
+</tr>
+<tr>
+<td>Receive DSP Equalizer.</td>
+<td>TX Equalizer is a separate implemented feature.</td>
+</tr>
+<tr>
+<td>SAM advanced options and APF bandwidth/gain fields.</td>
+<td>SAM demodulation and APF enable/frequency have their own implemented paths.</td>
+</tr>
+<tr>
+<td>Container Var1/Var2, RX2/Sub RX/Pan Swap, macros, Voice, Click Box.</td>
+<td>Slices and ordinary filter presets; only wired designer items should be used.</td>
+</tr>
+<tr>
+<td>FDX and container RX/TX antenna-split switch.</td>
+<td>Display duplex <strong>DUP</strong> is implemented separately and is not full-duplex transmit support.</td>
+</tr>
+<tr>
+<td>Container AVG, Multimeter averaging/holds/global history-enable checkbox and PBSNR.</td>
+<td>Spectrum averaging, S-meter peak hold and a bound container History Graph first series are implemented; History duration updates existing graphs. The graph's second-axis editor has no live update path.</td>
+</tr>
+<tr>
+<td>DDC Routing editor, bandwidth monitor, second HL2 I2C bus, hardware Signal Generator/Tests, frequency calibration Start.</td>
+<td>Automatic DDC allocation, supported HL2 options and implemented diagnostic/calibration fields.</td>
+</tr>
+<tr>
+<td>ACC microphone input/Phone-CW +ACC; Phone-CW MON.</td>
+<td>Offered MIC/BAL/LINE/PC routes; TX applet MON is separate and implemented.</td>
+</tr>
+<tr>
+<td>RF-Kit TUNE/BYPASS.</td>
+<td>Use the accessory's implemented status and controls; do not assume these key/tune it.</td>
+</tr>
+<tr>
+<td>Audio bit-depth/default-rate lookup, mic monitor/first-PTT tone check, IQ/TX-monitor-to-VAX and mute-VAX-during-other-slice-TX.</td>
+<td>Implemented device/capture, VAX audio and TX monitor paths.</td>
+</tr>
+<tr>
+<td>Desktop TX grid controls and waterfall low-level color.</td>
+<td>Supported TX analyzer/palette and phone-local grid controls are separate.</td>
+</tr>
+<tr>
+<td>Generic Logging &amp; Performance and 60-second Connection Quality history.</td>
+<td>Implemented Logs, Support diagnostic categories and current network measurements.</td>
+</tr>
+<tr>
+<td>Phone headset/Bluetooth/Action-button/locked-phone PTT; High audio quality.</td>
+<td>On-screen PTT; Standard audio. Disabled labels do not establish accessory support.</td>
+</tr>
+<tr>
+<td>Spot Hub's unbuilt WSJT-X filter group, RBN rate limit and FreeDV-decode-to-PSK option.</td>
+<td>The implemented feed/listener/filter controls described in the spots chapter.</td>
+</tr>
+</tbody>
+</table>
+<p>Capability-held features such as PureSignal, diversity, PA profiles, specific
+antenna controls and neural noise processors require their compatible hardware,
+Core or installed assets. TCI/Client Chain availability also depends on the
+desktop build. Those are different from the explicit unbuilt surfaces above.</p>
+<h2 id="abbreviations-used-on-operating-controls">Abbreviations used on operating controls</h2>
+<table>
+<thead>
+<tr>
+<th>Label</th>
+<th>Meaning in use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>AF</strong></td>
+<td>Receive audio level.</td>
+</tr>
+<tr>
+<td><strong>AGC / AGC-T / AUTO</strong></td>
+<td>Gain response, maximum receive gain, noise-floor-based gain adjustment.</td>
+</tr>
+<tr>
+<td><strong>ATT / S-ATT / A-ATT</strong></td>
+<td>Input attenuation, with stepped/automatic state where supported.</td>
+</tr>
+<tr>
+<td><strong>SQL</strong></td>
+<td>Squelch gate and threshold.</td>
+</tr>
+<tr>
+<td><strong>NB / NB2 / SNB</strong></td>
+<td>Impulse/spectral blanking methods.</td>
+</tr>
+<tr>
+<td><strong>NR / ANF / TNF / APF</strong></td>
+<td>Noise reduction, automatic notch, manual-notch master, CW peak filter.</td>
+</tr>
+<tr>
+<td><strong>RIT / XIT / CTUN</strong></td>
+<td>Receive offset, transmit offset, independent-pan tuning.</td>
+</tr>
+<tr>
+<td><strong>RF PWR / TUNE PWR</strong></td>
+<td>Normal/tune drive, or supported PA-profile watts interpretation.</td>
+</tr>
+<tr>
+<td><strong>MOX / TUNE / MON</strong></td>
+<td>Manual keying, tune transmission and audio monitor.</td>
+</tr>
+<tr>
+<td><strong>PROC / LEV / ALC / EQ / CFC / DEXP / VOX</strong></td>
+<td>Transmit processing/leveler/level control/equalizer/compressor/expander/voice keying; see the voice chapter for interactions.</td>
+</tr>
+<tr>
+<td><strong>DUP</strong></td>
+<td>Display duplex; distinct from full-duplex RF operation.</td>
+</tr>
+<tr>
+<td><strong>BIN</strong></td>
+<td>Binaural I/Q headphone playback.</td>
+</tr>
+<tr>
+<td><strong>TX BW</strong></td>
+<td>Transmit audio passband width/edges, not a receive slice allocation.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="find-a-worked-procedure">Find a worked procedure</h2>
+<table>
+<thead>
+<tr>
+<th>Goal</th>
+<th>Read</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hear a weak voice station and compare interference treatment.</td>
+<td><a href="/manual/03-receive.html">Receive</a>, then <a href="/manual/13-receiver-dsp.html">DSP parameters</a>.</td>
+</tr>
+<tr>
+<td>Listen to two parts of a band or arrange multiple panes.</td>
+<td><a href="/manual/04-slices.html">Slices and panadapters</a>.</td>
+</tr>
+<tr>
+<td>Prepare a microphone and make an over.</td>
+<td><a href="/manual/05-transmit.html">Transmit</a>, then <a href="/manual/14-voice-profiles.html">voice profiles</a>.</td>
+</tr>
+<tr>
+<td>Connect a digital application.</td>
+<td><a href="/manual/09-tools.html#worked-route-receive-through-vax-key-from-nereussdr">Complete VAX receive/TX/restore route</a>.</td>
+</tr>
+<tr>
+<td>Use RADE digital voice and find another station.</td>
+<td><a href="/manual/15-rade-freedv.html#receive-with-rade">RADE receive</a>, <a href="/manual/15-rade-freedv.html#prepare-and-transmit-rade">short call</a>, then <a href="/manual/15-rade-freedv.html#open-freedv-reporter">reporter connection</a>.</td>
+</tr>
+<tr>
+<td>Configure the radio front end, antenna or PA readings.</td>
+<td><a href="/manual/17-hardware-antennas-calibration.html">Hardware/calibration</a>.</td>
+</tr>
+<tr>
+<td>Operate feedback calibration or two-ADC diversity.</td>
+<td><a href="/manual/18-puresignal-diversity.html">PureSignal/diversity</a>.</td>
+</tr>
+<tr>
+<td>Configure an external amplifier/tuner.</td>
+<td><a href="/manual/19-amplifiers-tuners.html">Accessories</a>.</td>
+</tr>
+<tr>
+<td>Hand receiver control to another device and identify the separate TX holder.</td>
+<td><a href="/manual/08-shared-core.html#coordinate-a-second-device-handoff">Coordinated receiver handoff and phone TX limits</a>.</td>
+</tr>
+<tr>
+<td>Listen from a phone with headphones or cellular data and recover an interruption.</td>
+<td><a href="/manual/20-phone-preferences.html#worked-example-a-long-headphone-listening-session">Long headphone session</a>.</td>
+</tr>
+<tr>
+<td>Listen to two slices on an iPad.</td>
+<td><a href="/manual/07-iphone-operate.html#worked-session-two-slices-on-an-ipad">Two-slice session</a>, then <a href="#use-ipad-screen-arrangements-and-the-meter">layout and meter choices</a>.</td>
+</tr>
+<tr>
+<td>Collect evidence for a connection or audio fault.</td>
+<td><a href="/manual/11-troubleshooting.html">Troubleshooting</a>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="terms">Terms</h2>
+<p><strong>Core</strong>: The NereusSDR service connected to a radio. In phone operation it runs on the station computer and performs signal processing.</p>
+<p><strong>Device</strong>: A desktop window or paired phone connecting to a Core. Device-local audio and display choices do not automatically change another device.</p>
+<p><strong>Slice</strong>: A receiver channel with its own frequency, mode, filter, and receive controls. It may be owned by one device and shown read-only on another.</p>
+<p><strong>Panadapter</strong>: A frequency display containing one or more slices. A panadapter is a display arrangement; it is not itself a receiver.</p>
+<p><strong>TCI</strong>: The interface through which compatible programs can exchange radio control and audio with NereusSDR. A connected client needs transmit ownership before it can key.</p>
+<p><strong>VAX</strong>: Virtual audio channels for routing receive and transmit sound to digital-mode software on the computer running those channels.</p>
+<p><strong>RADE</strong>: A digital voice mode with receive decoding and a Core transmit vocoder. Select <strong>RADE-U</strong> or <strong>RADE-L</strong> for the appropriate sideband, then use the RADE applet for profile and decode status.</p>
+<p><strong>TXcontrol</strong>: Ownership held by the desktop window that is allowed to control transmit. TCI transmit requires this ownership.</p>
+<div class="page-next"><a href="/manual/11-troubleshooting.html">Previous chapter</a><a href="/manual/13-receiver-dsp.html">Next chapter</a></div></main></div></body></html>

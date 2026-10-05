@@ -93,3 +93,38 @@ contains document-page CSS for the phone privacy/source pages. The final
 Apply only the reviewed website delta; retain Release's version, docs and
 privacy/source pages. No source integration or deployment is authorized by
 this handoff.
+
+## Own-site guide follow-up
+
+JJ requested the existing one-source manual posture: keep the operator guide
+and how-to pages on nereussdr.com, maintained from the repository manuscripts.
+This follow-up starts from Root's signed docs/website checkpoint
+`9f3ff34e60ccc8b5208ba9f85c865952228c9473` and leaves its application code and
+manuscripts unchanged. The live homepage currently has no self-hosted manual
+entry; this completes the agreed publication path rather than assuming an
+already deployed guide route.
+
+The existing `docs/manual/build_preview.py` renderer gains an opt-in website
+build. Its default manual-review output remains available. Website output is
+`/manual/` plus the 20 existing chapter filenames, and these how-to pages:
+`/guides/install-core-sbc.html`, `/guides/tx-eq-cfc.html`,
+`/guides/upgrading-to-2026.10.0.html`, and `/guides/remote-access.html`.
+The last page renders `rendezvous/README.md`; the other three render their
+same-named files under `docs/guides/`. Images, operator prose, mobile delivery
+qualifications and capture/build limitations come from the source manuscripts.
+Generated files are build output, not a second independently maintained manual.
+
+Homepage operator links use those local routes. Cross-chapter and how-to links
+are rewritten through the source-to-page map with their section fragments.
+The upgrade guide's operator overview links point to homepage `#core` and
+`#download`; technical source references and repository/release/issue links
+retain GitHub destinations. The generated manual's source map records exact
+manuscript and copied-image hashes without local machine paths.
+
+Before publication, run the renderer and source/link checks, commit generated
+output with any manuscript updates, and review the integrated website. This
+follow-up generates a local preview only; it does not change public releases,
+mobile distribution, production routing/configuration or the live server.
+The earlier GitHub-main guide-link 404 gate is superseded by bundling these
+rendered files with the site. Release still owns final source/docs integration
+and the existing pending manual captures and live operating checks.

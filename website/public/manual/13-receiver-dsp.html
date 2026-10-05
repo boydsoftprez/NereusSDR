@@ -1,0 +1,240 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Receiver DSP and filter setup | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/13-receiver-dsp.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html" aria-current=page>Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="receiver-dsp-and-filter-setup">Receiver DSP and filter setup</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#choose-and-tune-receiver-agc">Choose and tune receiver AGC</a></li><li><a href="#select-a-noise-reduction-method">Select a noise reduction method</a></li><li><a href="#neural-receiver-methods-and-model-assets">Neural receiver methods and model assets</a></li><li><a href="#noise-blankers-and-adaptive-notch">Noise blankers and adaptive notch</a></li><li><a href="#apf-for-cw-reception">APF for CW reception</a></li><li><a href="#add-and-adjust-tunable-notches">Add and adjust tunable notches</a></li><li><a href="#set-filter-edges-and-edit-the-shared-preset-bank">Set filter edges and edit the shared preset bank</a></li><li><a href="#dsp-options-buffer-and-filter-tradeoffs">DSP Options: buffer and filter tradeoffs</a></li><li><a href="#related-controls-and-availability-limits">Related controls and availability limits</a></li></ol></details>
+<p>The desktop DSP menu and VFO DSP tab provide quick controls for the selected slice. Detailed controls are in <strong>File &gt; Settings &gt; DSP</strong>. These settings act on receiver or transmitter DSP at the Core. A phone presents quick receiver controls in <strong>Modes</strong> and its <strong>RX</strong> sheet, while Core-described Setup controls are available only when that Core advertises them. A control may be omitted or disabled because the radio, Core build, neural asset, or current operating state does not support it.</p>
+<p>For routine listening, start with the active slice's mode, filter and AGC controls. Change one DSP method at a time, compare the same signal, and check both intelligibility and the noise between transmissions. Noise processing can suppress wanted speech or create artifacts. Turn a method off if its result is worse. The detailed controls below are tuning tools, not a requirement to enable every processor.</p>
+<h2 id="choose-and-tune-receiver-agc">Choose and tune receiver AGC</h2>
+<p>Open the selected VFO's <strong>DSP</strong> tab or <strong>Setup &gt; DSP &gt; AGC/ALC</strong>. Confirm that you are editing <strong>RX1 AGC</strong> for the intended receiver. <strong>Mode</strong> offers Off, Long, Slow, Med, Fast and Custom. Begin with a preset mode; Custom exposes the individual response controls.</p>
+<ul>
+<li><strong>Attack</strong> sets how quickly gain responds when signal level rises.</li>
+<li><strong>Decay</strong> sets the gain recovery time after a strong signal. Longer values hold down gain longer after a peak.</li>
+<li><strong>Hang</strong> holds the gain state after a strong signal. <strong>Hang Threshold</strong> sets the level at which the hang behavior engages.</li>
+<li><strong>Slope</strong> controls gain difference for weak and strong signals.</li>
+<li><strong>Max Gain</strong> caps AGC gain even on weak signals. <strong>Fixed Gain</strong> is the receiver gain used when AGC is Off.</li>
+<li><strong>Auto AGC RX1</strong> adjusts AGC from the measured noise floor. <strong>± Offset</strong> shifts its target from that floor in dB.</li>
+</ul>
+<p>To reduce pumping from a nearby strong signal, compare a slower mode or longer decay and lower the maximum gain. To make weak signals rise sooner after a peak, reduce decay or hang in Custom. Read the controls back and compare on the same audio. Do not use receiver AGC settings to correct an antenna, preamp or overload problem. The page also contains <strong>TX Leveler</strong> and <strong>TX ALC</strong> controls, which are transmit processing; the RX selector does not make them receiver settings. See <a href="/manual/14-voice-profiles.html">chapter 14</a> for TX processing.</p>
+<h2 id="select-a-noise-reduction-method">Select a noise reduction method</h2>
+<p>Use the selected slice's VFO <strong>NR</strong> control or <strong>DSP &gt; NR</strong> to choose one receiver noise-reduction method. Start with the same wanted signal, filter, AGC and audio level for every comparison. Change only the NR choice, listen with it off and on, and keep the method only if the wanted speech or tone is clearer. A neural or platform-specific option can be unavailable while ordinary methods remain available; use its displayed readiness reason.</p>
+<p>Choose a control that matches the symptom before changing an NR method:</p>
+<table>
+<thead>
+<tr>
+<th>What you hear</th>
+<th>First comparison</th>
+<th>Readback and next step</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Clicks, pulses or other separate impulses</td>
+<td>Compare <strong>NB</strong> and <strong>NB2</strong>; if needed, compare <strong>SNB</strong> separately. These blankers are separate from the NR selector.</td>
+<td>Keep the wanted peaks intact. Use <a href="/manual/03-receive.html#select-noise-treatment-by-the-problem">chapter 3</a> for the quick controls and blanker entry points.</td>
+</tr>
+<tr>
+<td>One steady background wash</td>
+<td>Compare one available NR method at a time, with the same speech and the same passband.</td>
+<td>Check intelligibility and noise between words. If consonants disappear or processing artifacts become distracting, turn off the last method or restore its prior value.</td>
+</tr>
+<tr>
+<td>One persistent carrier or tone</td>
+<td>Compare <strong>ANF</strong> or a narrow manual <strong>TNF</strong> notch.</td>
+<td>Confirm that nearby wanted audio remains. These tone controls are not NR methods; see <a href="#add-and-adjust-tunable-notches">Add and adjust tunable notches</a>.</td>
+</tr>
+<tr>
+<td>A nearby station overlaps the passband</td>
+<td>Narrow the affected filter edge before adding more noise processing.</td>
+<td>Verify the wanted signal remains inside the passband, then repeat the listening comparison. See <a href="/manual/03-receive.html#choose-and-adjust-the-receive-passband">chapter 3</a>.</td>
+</tr>
+<tr>
+<td>Speech becomes watery, clipped or unstable after processing</td>
+<td>Bypass the most recently changed method or restore the recorded value.</td>
+<td>Compare again against the unchanged baseline. Do not add another processor until the first change has been accepted or reversed.</td>
+</tr>
+</tbody>
+</table>
+<p>For a method comparison, use this sequence:</p>
+<ol>
+<li>Select the receiver you control. Read back its mode, passband and AGC before changing DSP; keep those conditions fixed during the comparison.</li>
+<li>Listen with NR off and note the wanted speech/tone and the noise between words. Select one candidate method from the NR control and check that its button/readback shows it active.</li>
+<li>Compare the same signal with the method enabled. If a different method is offered, turn off the first before selecting the next; do not stack alternatives.</li>
+<li>Keep the method only when intelligibility improves without unacceptable artifacts. If it is worse, turn it off or restore its previous tuning value, then confirm the NR readback.</li>
+<li>If the option is disabled or steps back, follow the Core/build reason under <a href="#neural-receiver-methods-and-model-assets">Neural receiver methods and model assets</a>. A changed number or enabled indicator alone does not establish better reception.</li>
+</ol>
+<p>The detailed entry point is <strong>Setup &gt; DSP &gt; NR/ANF</strong>. These controls apply to the selected receiver as you change them; they are not a staged profile editor. Use the row for the active method only:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Available tuning and scope</th>
+<th>Use the readback to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>NR1</strong></td>
+<td>The VFO popup has <strong>Taps</strong>, <strong>Delay</strong>, <strong>Gain</strong>, <strong>Leak</strong> and <strong>Position</strong> (<strong>Pre-AGC</strong> / <strong>Post-AGC</strong>). The numeric units for the first four are not defined by this interface.</td>
+<td>Make one small change and compare the same signal. Do not infer a control meaning from its name.</td>
+</tr>
+<tr>
+<td><strong>NR2</strong></td>
+<td>The popup has <strong>Gain Method</strong> (Linear, Log, Gamma, Trained), <strong>NPE Method</strong> (OSMS, MMSE, NSTAT), <strong>AE Filter</strong>, and <strong>Noise post proc</strong>. Setup provides <strong>T1</strong> (-5.0 to +5.0, default -0.5), <strong>T2</strong> (0.0 to 2.0, default 0.20), <strong>Position</strong>, and post-processing <strong>Enable</strong>, <strong>Level</strong>, <strong>Factor</strong>, <strong>Rate</strong> and <strong>Taper</strong>. The interface describes T1 as noise-estimator asymmetry; it calls T2 a training parameter without a further operator definition.</td>
+<td>Compare AE Filter on/off on the same audio. Change one cascade value at a time and reverse it if speech artifacts worsen.</td>
+</tr>
+<tr>
+<td><strong>NR3</strong></td>
+<td>RNNoise with <strong>Position</strong> and <strong>Use fixed gain for input samples</strong>. The Core-wide model selector and <strong>Models...</strong> asset dialog are described below.</td>
+<td>Read <strong>Status</strong> after a model request. Keep the last available method if the Core refuses the change.</td>
+</tr>
+<tr>
+<td><strong>NR4</strong></td>
+<td><strong>Reduction</strong> (0-20 dB), <strong>Smoothing</strong> (0-100), <strong>Whitening</strong> (0-100), <strong>Rescale</strong> (0-12), <strong>SNRthresh</strong> (-10 to +10 dB), and <strong>Algorithm</strong> (Algo 1/2/3).</td>
+<td>Compare one field at a time. The interface does not describe the audible distinction between the three algorithms.</td>
+</tr>
+<tr>
+<td><strong>DFNR</strong></td>
+<td><strong>Attenuation Limit</strong> (0-100 dB) and <strong>Post-Filter Beta</strong>. The quick popup reaches 1.00; Setup limits Beta to 0.30. The Core/build status explains whether it can run.</td>
+<td>Read the actual value at the entry point you use. Do not assume an unavailable control is enabled by its parent NR selection.</td>
+</tr>
+<tr>
+<td><strong>MNR</strong></td>
+<td>macOS MMSE-Wiener noise reduction. <strong>Strength</strong>, <strong>Aggressiveness</strong>, <strong>Floor</strong>, <strong>Alpha</strong>, <strong>Bias</strong>, <strong>Gsmooth</strong> and <strong>Reset</strong> are available in the popup and Setup.</td>
+<td>Read the platform/readiness state, begin with <strong>Reset</strong> if you need a known comparison, and reverse any change that degrades speech.</td>
+</tr>
+</tbody>
+</table>
+<p>The VFO popup and Setup page can present different entry points or ranges. Read the value at the control you changed. Do not reuse a numeric interpretation or range from another method.</p>
+<p>For the neural methods, compare against the same short speech passage and note the starting values. <strong>DFNR</strong> offers <strong>Attenuation Limit</strong> from 0 to 100 dB; its Setup <strong>Post-Filter Beta</strong> range is 0.00 to 0.30 while the quick popup reaches 1.00. Reduce attenuation if wanted peaks disappear. If the Core/build disables DFNR, follow its displayed reason. <strong>MNR</strong> has a <strong>Reset</strong> action and reports when the Core platform cannot run it. Neither status nor a saved value proves that the audio improved.</p>
+<h2 id="neural-receiver-methods-and-model-assets">Neural receiver methods and model assets</h2>
+<p>DFNR, NR3 and NNR use neural processing; MNR is a separate macOS MMSE-Wiener method. Their readiness paths differ. DFNR depends on build/runtime support and Core resources, MNR on the Core platform, and NNR on Core-managed Standard and Premium model slots. A phone requests Core-side processing; it does not run these receiver methods locally.</p>
+<h3 id="select-or-repair-an-nnr-model">Select or repair an NNR model</h3>
+<ol>
+<li>Open <strong>Setup &gt; DSP &gt; NR/ANF &gt; NNR</strong>. Read the <strong>Standard model</strong> and
+<strong>Premium model</strong> selections, <strong>Active</strong> labels and <strong>Status</strong> before
+replacing a choice. NNR tuning is per slice; these model assignments and
+their files belong to the Core.</li>
+<li>If a selected model is missing or incompatible, choose a bundled model or
+a valid compatible Core asset from the appropriate selector. A saved name
+is not proof that the Core can run the file.</li>
+<li>To inspect or transfer an asset, choose <strong>Models...</strong> to open <strong>NNR Model
+Files</strong>. The table shows Label, Format, Encoding, Size, Identity and
+Compatibility. Select the row and expand <strong>Details</strong> for validation errors.
+<strong>Refresh files</strong> reloads the Core list; <strong>Import...</strong> transfers a local
+asset to the Core; <strong>Export...</strong> saves the selected Core asset locally.
+These actions do not download models from a network catalogue.</li>
+<li>Select the intended compatible model, then inspect the pending/active
+readbacks. The pending choice takes effect through <strong>Apply models and
+reconnect</strong>. Do this off air: it reconnects the radio and the Core refuses
+it while transmitting.</li>
+<li>After reconnecting, recheck the <strong>Active</strong> labels and <strong>Status</strong>, select the
+intended slice and repeat the audible comparison. If readiness still
+fails, retain an available receiver method while resolving the reported
+compatibility or runtime reason.</li>
+<li>If you connect to a different Core during a transfer, reopen the asset
+dialog and load that Core’s files before another request. NR3, DFNR and
+MNR have separate model/readiness paths; this NNR procedure does not
+repair their assets.</li>
+</ol>
+<p>The VFO <strong>NNR</strong> popup offers <strong>Standard</strong> or <strong>Premium</strong> and <strong>Suppression</strong> (-50 to -10 dB, default -25 dB). More-negative values permit stronger suppression. <strong>Advanced</strong> exposes <strong>Position</strong>, <strong>Alpha</strong>, <strong>Alpha knee</strong>, <strong>Noise time</strong>, <strong>Maximum gain</strong>, <strong>Attack</strong> and <strong>Release</strong>. <strong>Reset tuning</strong> restores these tuning values without changing the model assignment. The <strong>Diagnostics</strong> group is temporary until reconnect: <strong>Runtime</strong>, <strong>Models</strong>, <strong>Rate / latency</strong>, <strong>Source</strong> and <strong>Status</strong> report Core processing state. <strong>Test Mode</strong> offers <strong>Network</strong>, <strong>Identity</strong> or <strong>Low-pass</strong>; <strong>Output Mode</strong> offers <strong>Duplicate I/Q</strong> or <strong>Q zero</strong>. <strong>Apply until reconnect</strong> applies these diagnostic modes to the current session. Restore <strong>Network</strong> and <strong>Q zero</strong> before resuming normal reception; reconnect also resets the diagnostic choices. These diagnostics are status checks, not routine audio adjustments.</p>
+<table>
+<thead>
+<tr>
+<th>NNR control</th>
+<th>Range and default</th>
+<th>Meaning shown by the controls</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Suppression</strong></td>
+<td>-50 to -10 dB; -25 dB</td>
+<td>More-negative values permit stronger suppression.</td>
+</tr>
+<tr>
+<td><strong>Position</strong></td>
+<td><strong>Pre-AGC</strong> or <strong>Post-AGC</strong></td>
+<td>Places NNR before or after automatic gain control.</td>
+</tr>
+<tr>
+<td><strong>Alpha</strong> / <strong>Alpha knee</strong></td>
+<td>0-4 (1); 0-40 dB (10 dB)</td>
+<td>Alpha reshapes gains below the knee. 1 leaves them unchanged; higher values deepen them and lower values lift them.</td>
+</tr>
+<tr>
+<td><strong>Noise time</strong></td>
+<td>0.05-30 s; 2 s</td>
+<td>Time constant for normalizing input power before the neural network.</td>
+</tr>
+<tr>
+<td><strong>Maximum gain</strong></td>
+<td>0-24 dB; 12 dB</td>
+<td>Limits gain the neural stage may add.</td>
+</tr>
+<tr>
+<td><strong>Attack</strong> / <strong>Release</strong></td>
+<td>0-500 ms each; 0 ms</td>
+<td>Set how quickly suppression engages and relaxes. Zero uses the model response.</td>
+</tr>
+</tbody>
+</table>
+<p>For ordinary NNR tuning, <strong>Position</strong> chooses processing before or after AGC. <strong>Alpha</strong> reshapes gains below <strong>Alpha knee</strong>: 1 leaves them unchanged, above 1 deepens them, and below 1 lifts them. <strong>Noise time</strong> sets the input-power normalization time constant; <strong>Maximum gain</strong> limits added gain. <strong>Attack</strong> and <strong>Release</strong> set suppression transitions, with zero using the model response. For a repeatable comparison:</p>
+<ol>
+<li>Select the intended slice and listen to steady speech with NNR off. Note consonant clarity and background noise, then select a ready Standard or Premium model and enable NNR.</li>
+<li>Confirm the active model/runtime readback. Start with <strong>Reset tuning</strong> if you need a known baseline, then adjust <strong>Suppression</strong> and compare the same speech with NNR enabled and bypassed.</li>
+<li>Change one advanced value at a time and note its prior value. Compare <strong>Alpha</strong> with <strong>Alpha knee</strong> as a pair; compare <strong>Attack</strong> and <strong>Release</strong> during speech transitions. Keep diagnostic Test/Output modes at <strong>Network</strong> and <strong>Q zero</strong>.</li>
+<li>If consonants, level stability or transitions worsen, restore the recorded value or choose <strong>Reset tuning</strong>, then repeat the comparison. The status indicator confirms processor state, not audio quality.</li>
+</ol>
+<p>If Core resource protection steps NNR back, read the reason beside the warning. On the phone, <strong>Modes &gt; Noise</strong> or the <strong>RX</strong> panel offers <strong>Try again</strong> when the Core reports that action. Retry after the stated resource/load condition clears; the Core can step the method back again if it remains constrained. An older Core may show a compatibility reason and omit retry. Phone <strong>NNR model</strong> buttons choose the Core-reported Standard or Premium slot; <strong>Reset</strong> resets the available tuning controls for this receiver. After retry, read back the selected method and compare the sound again. Readiness does not prove improved audio.</p>
+<h2 id="noise-blankers-and-adaptive-notch">Noise blankers and adaptive notch</h2>
+<p>Choose <strong>DSP &gt; NB</strong> to cycle Off, NB and NB2. The detailed controls are at <strong>Setup &gt; DSP &gt; NB/SNB</strong>. <strong>NB1 Threshold</strong> ranges 1-1000 (default 30); a lower value detects weaker impulses and is more aggressive. <strong>Transition</strong>, <strong>Lead</strong>, and <strong>Lag</strong> each range 0.01-2.00 ms (default 0.01 ms): transition controls the fade toward/from zero around an impulse, lead blanks before the detected impulse, and lag remains at zero after it. <strong>NB2 Mode</strong> selects how NB2 fills blanked samples: <strong>Zero</strong>, <strong>Sample &amp; Hold</strong>, <strong>Mean-Hold</strong>, <strong>Hold &amp; Sample</strong>, or <strong>Linear Interpolate</strong>. There is no NB2 threshold control in this page. NB1/NB2 settings are shared by receivers on the same DDC; SNB settings apply to the selected receiver only. <strong>SNB Threshold 1</strong> ranges 2.0-20.0 (default 8.0) and marks candidate outliers relative to running noise power. <strong>Threshold 2</strong> ranges 4.0-60.0 (default 20.0) and confirms candidates; lower values increase aggressive blanking. <strong>Output Bandwidth</strong> ranges 100-96000 Hz (default 6000) and sets the width of audio SNB processes, centered on zero. Change one field at a time and check that wanted peaks remain intact.</p>
+<p>Choose <strong>DSP &gt; ANF</strong> to toggle the Automatic Notch Filter on the selected slice. The <strong>Setup &gt; DSP &gt; NR/ANF &gt; ANF</strong> tab has a live <strong>Enable ANF</strong> checkbox wired to the same slice setting as the quick toggle. Advanced ANF taps, delay, gain and leakage tuning is not exposed. Do not apply NR1 parameter meanings to ANF. ANF is separate from manual TNF notches. Compare the quick toggle on and off for a stable unwanted tone and check nearby wanted audio.</p>
+<h2 id="apf-for-cw-reception">APF for CW reception</h2>
+<p>For CW reception, choose <strong>CWL</strong> or <strong>CWU</strong>, set the receive filter and pitch, then enable <strong>DSP &gt; APF</strong>. <strong>Setup &gt; DSP &gt; CW</strong> provides the APF enable and center-frequency controls. The phone Modes page also offers <strong>APF tune</strong>; its slider works only in CW with APF on. APF bandwidth and gain controls are not implemented. Align the center/tune readback with the desired tone and compare the audio. The CW Setup page can contain unrelated hidden or unavailable keyer/timing items; the presence of a CW receive mode does not establish CW transmit or a built-in keyer. Use the controls the application actually offers.</p>
+<h2 id="add-and-adjust-tunable-notches">Add and adjust tunable notches</h2>
+<p>Use <strong>DSP &gt; TNF</strong> to enable or bypass the tunable notch filter. To create a notch, use the spectrum's notch context action at the interfering signal, or open <strong>Setup &gt; DSP &gt; TNF</strong> and press <strong>Add</strong>. The spectrum context route targets the frequency under the pointer; the Setup <strong>Add</strong> route creates a row that can be precisely edited. Do not drag a spectrum marker to create a notch unless the displayed build explicitly offers that gesture.</p>
+<p>In the TNF table, each row has <strong>Center Frequency (Hz)</strong>, <strong>Width (Hz)</strong>, <strong>Active</strong>, and <strong>Delete</strong>. Change center to place the notch over the unwanted carrier, adjust width only as far as required, and leave <strong>Active</strong> checked to apply it. <strong>Minimum Notch Width</strong> reports the minimum supported width for the current receiver. <strong>Auto-Increase width (if needed) to achieve &gt;100dB attenuation</strong> lets the filter widen a narrower request to meet the stated attenuation. <strong>Visual approximation of notch</strong> affects the spectrum display approximation, not the received audio response. Use the row's Delete action to remove one notch. The notch table is a persistent station-level set fanned out to active receiver channels, not an independent per-slice list. The master TNF switch bypasses all stored notches together; leave individual rows intact for a temporary global bypass.</p>
+<h2 id="set-filter-edges-and-edit-the-shared-preset-bank">Set filter edges and edit the shared preset bank</h2>
+<p>The active slice's filter edges are independent from the stored preset bank. Use the VFO passband controls or the filter preset buttons to set the current receiver. A normal preset click applies that preset's low/high edges to the active editable receiver. It does not change every slice.</p>
+<p>To edit a preset bank, open <strong>Setup &gt; DSP &gt; Filter Presets</strong>. The bank is a Core/station setting, including when accessed from a remote desktop. Choose the <strong>DSP Mode</strong> whose rows you intend to edit. The table has ten slots per mode and shows <strong>Name</strong>, <strong>Low (Hz)</strong>, <strong>High (Hz)</strong>, <strong>Width (Hz)</strong> and <strong>Reorder</strong>. Edit a row's name or edge values and finish editing the field to save the row. Width is read from the edge values. Reorder controls change the order in which the presets are presented. Confirm the rows again after changing the mode selector.</p>
+<p>Use <strong>Reset Selected Row</strong> to restore the selected slot, <strong>Reset All Rows for This Mode</strong> to restore that mode's bank, or <strong>Reset Every Mode to Thetis Defaults</strong> to reset the full bank. These actions discard custom bank values; inspect the selected mode/row before reset and verify the table after the confirmation. A stored bank edit is not itself a request to retune every receiver.</p>
+<p>Use <strong>Shift-click</strong> on a receive filter preset when you want a one-time <strong>Match RX</strong> operation. It applies the receive preset and copies the resulting passband once to the TX audio filter. For AM, SAM, DSB, FM and DRM the TX range becomes zero to the absolute high edge; other modes use the absolute RX edges in ascending order. The RX change happens first. If the TX settings write is refused, the RX preset remains applied and the TX filter does not change. There is no continuous RX-follow-TX checkbox. On phone, tap <strong>Match RX</strong> in the TX panel or the Modes transmit section to perform the same one-time conversion. See <a href="/manual/14-voice-profiles.html">chapter 14</a> for other TX filter controls.</p>
+<h2 id="dsp-options-buffer-and-filter-tradeoffs">DSP Options: buffer and filter tradeoffs</h2>
+<p>Open <strong>Setup &gt; DSP &gt; Options</strong> and select the RX row for the mode you are using. Each mode group has its own saved RX values and, except CW, TX values. The controls serve different tradeoffs:</p>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Available values</th>
+<th>Effect to compare</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Buffer Size (IQcomp)</strong></td>
+<td>64, 128, 256, 512 or 1024 samples</td>
+<td>Larger buffers can produce sharper filters, with more interaction latency.</td>
+</tr>
+<tr>
+<td><strong>Filter Size (taps)</strong></td>
+<td>1024, 2048, 4096, 8192 or 16384 taps</td>
+<td>More taps sharpen filter skirts, with added CPU work and latency.</td>
+</tr>
+<tr>
+<td><strong>Filter Type</strong></td>
+<td><strong>Linear Phase</strong> or <strong>Low Latency</strong></td>
+<td>Linear Phase has symmetric delay. Low Latency is minimum phase and has less group delay.</td>
+</tr>
+</tbody>
+</table>
+<p>To choose a setting for the current mode:</p>
+<ol>
+<li>Start off air. Read the current mode group, RX row and values. The Buffer Size group is locked while transmitting; a remote Core can also refuse a change while keyed.</li>
+<li>If an adjacent signal is entering the receiver passband, first set appropriate filter edges as described in <a href="#set-filter-edges-and-edit-the-shared-preset-bank">Set filter edges and edit the shared preset bank</a>. If you still need sharper skirts, raise <strong>Filter Size (taps)</strong> by one available step and compare the same adjacent-signal condition. Change <strong>Buffer Size (IQcomp)</strong> only when its sharper response is worth the extra interaction delay.</li>
+<li>If tuning or mode changes feel delayed, compare <strong>Low Latency</strong> with the current filter type. Keep the buffer and tap count fixed during that comparison so the result has one cause.</li>
+<li>Read back the changed row. When the active slice mode matches the edited group, wait for the DSP rebuild and check <strong>Time to last change</strong>. A setting for another mode takes effect when a slice uses that mode.</li>
+<li>If sharpness, latency, CPU behavior or audio worsens, restore the recorded value and read it back again. Warning icons indicate differences among mode groups, not a failure.</li>
+</ol>
+<p>The defaults are 64 samples / 4096 taps / <strong>Low Latency</strong> for SSB/AM, 256 RX and 128 TX samples / 4096 taps / <strong>Low Latency</strong> for FM, 64 / 4096 / <strong>Low Latency</strong> for CW RX, and 64 / 4096 / <strong>Low Latency</strong> for Digital RX/TX. CW has no TX row.</p>
+<p><strong>Enable impulse caching</strong> keeps filter responses in memory to speed later channel rebuilds at the cost of memory. <strong>Keep impulse cache on disk between launches</strong> saves and reloads the cache, which can avoid the first rebuild cost after restart but can create a large cache file. Both take effect on the next radio connect or channel rebuild. <strong>High-resolution filter characteristics in filter graph</strong> shows the computed FIR response instead of a simplified box-shaped passband; it changes the graph, not the selected filter.</p>
+<h2 id="related-controls-and-availability-limits">Related controls and availability limits</h2>
+<p>Setup also contains <strong>AM/SAM</strong> and <strong>FM</strong> receiver sections. Use the enabled AM/FM receive squelch controls only when the corresponding mode is selected. SAM fade and other disabled groups are not enabled by selecting SAM. FM transmit, tone and repeater controls may be absent because FM TX is not implemented in this build. The <strong>DSP &gt; Equalizer</strong> item is not the TX equalizer; use <strong>Tools &gt; TX Equalizer</strong> for transmit audio processing. For TX leveler, ALC, CFC, EQ, VOX and DEXP, see <a href="/manual/14-voice-profiles.html">chapter 14</a>.</p>
+<p>Quick controls also exist on iPhone/iPad in <strong>Modes</strong> and the <strong>RX</strong> panel. They alter the Core's selected receiver; device-local audio controls affect only phone playback. If a subcontrol is not offered by the Core description, a working parent method does not imply that missing subcontrol is supported.</p>
+<div class="page-next"><a href="/manual/12-reference.html">Previous chapter</a><a href="/manual/14-voice-profiles.html">Next chapter</a></div></main></div></body></html>
