@@ -707,6 +707,13 @@ struct MicrophoneTransmitTests {
         #expect(await station.waitUntilLive())
         let newOwner = try #require(rig.model.mediaOwnerForTesting)
         #expect(newOwner > oldOwner)
+        // The fake Core is live before AppModel has consumed its state events.
+        // Wait for NEW's natural ready state before keying; OLD still holds the
+        // media event pump, so NEW's microphone line is supplied below.
+        #expect(await settle(seconds: 30) {
+            rig.model.mediaOwnerForTesting == newOwner && rig.model.connection == .connected
+                && rig.transmit.permitted
+        })
         await rig.transmit.sessionChanged(.ready, owner: newOwner)
         rig.transmit.microphoneLineChanged(true)
         await rig.transmit.controller.tap()
