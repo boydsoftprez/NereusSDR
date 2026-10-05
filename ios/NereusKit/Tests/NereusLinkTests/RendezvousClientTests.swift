@@ -593,9 +593,13 @@ import Testing
         #expect(start.device.name == "iPhone")
         #expect(start.device.kind == "phone")
 
-        receipts.mark("residual direct hash begin")
-        let stored = try #require(SpakeExchange.storedData(code: code))
-        receipts.mark("residual direct hash returned and required")
+        let storedResult = await TestFixtureCrypto.run {
+            receipts.mark("residual owned-thread hash begin")
+            let result = SpakeExchange.storedData(code: code)
+            receipts.mark("residual owned-thread hash returned")
+            return result
+        }
+        let stored = try #require(storedResult)
         let spake = SpakeExchange(role: .station)
         let step0 = try #require(spake.stationStep0(stored: stored))
         Self.toCore(.pairSpake(LinkMessage.PairSpake(step: 0, data: Base64URL.encode(step0))), connection)
