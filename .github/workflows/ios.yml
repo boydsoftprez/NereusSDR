@@ -57,7 +57,7 @@ concurrency:
 
 jobs:
   package:
-    if: github.ref != 'refs/heads/codex/extended-view-receipts'
+    if: github.ref != 'refs/heads/codex/live-mic-receipts'
     runs-on: macos-26
     name: NereusKit package tests
     steps:
@@ -72,7 +72,7 @@ jobs:
         run: ios/scripts/swift-test.sh
 
   interop:
-    if: github.ref != 'refs/heads/codex/extended-view-receipts'
+    if: github.ref != 'refs/heads/codex/live-mic-receipts'
     runs-on: macos-26
     name: Media and pairing interop with the Core
     steps:
@@ -130,40 +130,50 @@ jobs:
             build
 
       - name: Build for devices
+        # This test-only diagnostic uses the already device-built production
+        # source at 39e2481. Normal shipping refs retain their device build.
+        if: github.ref != 'refs/heads/codex/live-mic-receipts'
         # Unsigned: CI holds no signing identity.
         run: |
           xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO build
 
-      - name: Trace the extended-view case before the full app workload
+      - name: Trace the microphone-meter send boundary before the full app workload
         id: focused_trace
         # This branch is diagnostic only; the full ordinary test step below
         # still runs and retains its own verdict even if this control fails.
-        if: github.ref == 'refs/heads/codex/extended-view-receipts'
+        if: github.ref == 'refs/heads/codex/live-mic-receipts'
         run: |
           set +e
           xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
-            '-only-testing:NereusSDRTests/DropSheetShotTests/extendedViewZoomedOut()' \
-            test > extended-view-focused.log 2>&1
+            '-only-testing:NereusSDRTests/LiveMicLevelTests/againstAFakeCore()' \
+            test > live-mic-focused.log 2>&1
           focused_exit=$?
           set -e
-          cat extended-view-focused.log
-          grep -F 'EXTENDED_VIEW_RECEIPT' extended-view-focused.log
-          echo "Focused extended-view command exit: $focused_exit"
+          cat live-mic-focused.log
+          echo "Focused microphone-meter command exit: $focused_exit"
+          if [ "$focused_exit" -ne 0 ]; then
+            exit "$focused_exit"
+          fi
+          marker_count=$(grep -cF 'LIVE_MIC_SENT_RECEIPT' live-mic-focused.log || true)
+          if [ "$marker_count" -ne 1 ]; then
+            echo "Expected one original microphone-meter fixture receipt, observed $marker_count" >&2
+            exit 1
+          fi
           exit "$focused_exit"
 
-      - name: Retain the focused extended-view receipt
-        if: always() && github.ref == 'refs/heads/codex/extended-view-receipts'
+      - name: Retain the focused microphone-meter receipt
+        if: always() && github.ref == 'refs/heads/codex/live-mic-receipts'
         uses: actions/upload-artifact@v4
         with:
-          name: extended-view-focused-${{ github.run_id }}
-          path: extended-view-focused.log
+          name: live-mic-focused-${{ github.run_id }}
+          path: live-mic-focused.log
           if-no-files-found: error
 
       - name: Test on an iPhone 17 simulator
-        if: success() || (github.ref == 'refs/heads/codex/extended-view-receipts' && (steps.focused_trace.outcome == 'success' || steps.focused_trace.outcome == 'failure'))
+        if: success() || (github.ref == 'refs/heads/codex/live-mic-receipts' && (steps.focused_trace.outcome == 'success' || steps.focused_trace.outcome == 'failure'))
         run: |
           xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
             -destination 'platform=iOS Simulator,name=iPhone 17' \

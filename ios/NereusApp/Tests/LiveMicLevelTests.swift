@@ -283,6 +283,9 @@ struct LiveMicLevelTests {
     @Test("connected: the level follows the Core's Mic Gain, sends nothing, and keyed shows the Core's reading")
     func againstAFakeCore() async throws {
         let (model, station, microphone) = try await connected()
+        let sentReceipts = LiveMicSentReceipts()
+        defer { sentReceipts.printOnce() }
+        sentReceipts.capture(stage: 0, station: station)
         let transmit = model.main.transmit
         let level = model.main.micLevel
         await station.deliver(.delta(LinkMessage.Delta(key: "transmit", properties: [
@@ -290,7 +293,9 @@ struct LiveMicLevelTests {
         ])))
         #expect(await settle { model.main.modes.micGainDb == -6 })
         let sentBefore = Self.sent(station)
+        sentReceipts.capture(stage: 1, station: station, savedBaseline: sentBefore)
         let viewer = UUID()
+        sentReceipts.capture(stage: 2, station: station, savedBaseline: sentBefore)
         level.show(viewer)
         await level.settle()
         #expect(microphone.isMetering)
@@ -307,7 +312,9 @@ struct LiveMicLevelTests {
         await MainQueue.drained()
         // Nothing reached the Core: no write, no command, no media request,
         // no microphone packet; sending never started.
+        sentReceipts.capture(stage: 3, station: station, savedBaseline: sentBefore)
         #expect(Self.sent(station) == sentBefore)
+        sentReceipts.capture(stage: 4, station: station, savedBaseline: sentBefore)
         #expect(station.mediaPeers.last?.microphonePackets.isEmpty ?? true)
         #expect(microphone.starts == 0)
         #expect(!MicLevelGauge.showsCoreReading(transmit))
@@ -451,5 +458,102 @@ private struct LiveMicShotRoot: View {
             TabBar(selection: .constant(.panadapter), sideways: false)
         }
         .background(ChromeColours.bar.ignoresSafeArea())
+    }
+}
+
+/// Passive receipts for this case's original sent-count assertion only.
+@MainActor
+private final class LiveMicSentReceipts {
+    private struct Packet {
+        let index: Int
+        let kind: Int
+        let mediaOp: Int
+        let propertyCount: Int
+        let ordinals: [UInt16]
+        let omittedOrdinals: Int
+    }
+
+    private struct Snapshot {
+        let stage: Int
+        let elapsedNs: UInt64
+        let savedBaseline: Int
+        let total: Int
+        let writes: Int
+        let media: Int
+        let commands: Int
+        let packets: [Packet]
+        let omittedPackets: Int
+    }
+
+    // Five snapshot records plus at most 27 packet records, shared by all stages.
+    private let began = DispatchTime.now().uptimeNanoseconds
+    private var packetBudget = 27
+    private var snapshots: [Snapshot] = []
+
+    func capture(stage: Int, station: FakeStation, savedBaseline: Int = -1) {
+        guard snapshots.count < 5 else { return }
+        let elapsed = DispatchTime.now().uptimeNanoseconds - began
+        let messages = station.messages
+        var writes = 0
+        var media = 0
+        var commands = 0
+        var packets: [Packet] = []
+        var omitted = 0
+        for (index, message) in messages.enumerated() {
+            let kind: Int
+            switch message {
+            case .propertyWrite: writes += 1; kind = 1
+            case .mediaControl: media += 1; kind = 2
+            case .commandInvoke: commands += 1; kind = 3
+            default: continue
+            }
+            guard packetBudget > 0 else { omitted += 1; continue }
+            packetBudget -= 1
+            var op = 0
+            var propertyCount = 0
+            var ordinals: [UInt16] = []
+            if case .mediaControl(let control) = message {
+                op = Self.mediaOp(control.payload["op"])
+            }
+            if case .propertyWrite(let write) = message {
+                propertyCount = write.properties.count
+                ordinals = write.properties.prefix(8).map(\.ordinal)
+            }
+            packets.append(Packet(index: index, kind: kind, mediaOp: op,
+                                  propertyCount: propertyCount, ordinals: ordinals,
+                                  omittedOrdinals: propertyCount - ordinals.count))
+        }
+        snapshots.append(Snapshot(stage: stage, elapsedNs: elapsed, savedBaseline: savedBaseline,
+                                  total: messages.count, writes: writes, media: media, commands: commands,
+                                  packets: packets, omittedPackets: omitted))
+    }
+
+    // Only these source-defined operation labels are inspected; none are printed.
+    private static func mediaOp(_ value: LinkJSON?) -> Int {
+        guard case .string(let op) = value else { return 0 }
+        switch op {
+        case "start": return 1
+        case "description": return 2
+        case "candidate": return 3
+        case "subscribe": return 4
+        case "unsubscribe": return 5
+        case "keyframe": return 6
+        case "audio": return 7
+        case "monitor-audio": return 8
+        case "replace": return 9
+        case "clock-probe": return 10
+        case "clarity-retune": return 11
+        default: return 0
+        }
+    }
+
+    func printOnce() {
+        let lines = snapshots.map { snapshot in
+            let packets = snapshot.packets.map { packet in
+                "i=\(packet.index),k=\(packet.kind),op=\(packet.mediaOp),pc=\(packet.propertyCount),ord=\(packet.ordinals),ordOmitted=\(packet.omittedOrdinals)"
+            }.joined(separator: ";")
+            return "stage=\(snapshot.stage),ns=\(snapshot.elapsedNs),saved=\(snapshot.savedBaseline),total=\(snapshot.total),writes=\(snapshot.writes),media=\(snapshot.media),commands=\(snapshot.commands),packetOmitted=\(snapshot.omittedPackets),packets=[\(packets)]"
+        }.joined(separator: " | ")
+        print("LIVE_MIC_SENT_RECEIPT \(lines)")
     }
 }
