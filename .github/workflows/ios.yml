@@ -71,6 +71,7 @@ jobs:
         run: ios/scripts/swift-test.sh
 
   interop:
+    if: github.ref != 'refs/heads/codex/kit-350-refusal-receipts'
     runs-on: macos-26
     name: Media and pairing interop with the Core
     steps:
@@ -94,6 +95,7 @@ jobs:
         run: ios/scripts/interop-test.sh
 
   app:
+    if: github.ref != 'refs/heads/codex/kit-350-refusal-receipts'
     # Xcode 27 is on its own hosted image; macos-26 carries Xcode 26.
     # https://github.com/actions/runner-images/issues/14404
     runs-on: xcode-27

@@ -44,6 +44,7 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
     private let openDeadline: Duration
     private let proxyResolver: SystemProxyResolver
     private let traffic: TrafficCounter
+    private let openingObserver: WebSocketOpeningObserver?
     private let queue = DispatchQueue(label: "NereusSDR.link.websocket")
 
     // Everything below is read and written under `lock`.
@@ -82,17 +83,21 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
     }
 
     init(endpoint: StationEndpoint, trust: StationTrust, openDeadline: Duration,
-         proxyResolver: SystemProxyResolver, traffic: TrafficCounter = .shared) {
+         proxyResolver: SystemProxyResolver, traffic: TrafficCounter = .shared,
+         openingObserver: WebSocketOpeningObserver? = nil) {
         self.endpoint = endpoint
         self.trust = trust
         self.openDeadline = openDeadline
         self.proxyResolver = proxyResolver
         self.traffic = traffic
+        self.openingObserver = openingObserver
     }
 
     public func open(onEvent: @escaping @Sendable (LinkTransportEvent) async -> Void) async throws -> Data {
         let startedAt = ContinuousClock().now
+        openingObserver?(.init(phase: "open.stamp", budget: openDeadline, startedAt: startedAt))
         guard endpoint.port != 0 else {
+            openingObserver?(.init(phase: "open.error", reason: "noPort"))
             throw LinkTransportError.failed("no port")
         }
         let (stream, continuation) = AsyncStream.makeStream(of: LinkTransportEvent.self)
@@ -104,11 +109,14 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
 
         guard case .url(let url) = Self.url(for: endpoint) else {
             continuation.finish()
+            openingObserver?(.init(phase: "open.error", reason: "invalidAddress"))
             throw LinkTransportError.failed("not a Core address")
         }
         let task = Task { [self] in
-            try await SystemProxyWebSocketOpening.run(
-                target: url, timeout: openDeadline, startedAt: startedAt, resolver: proxyResolver
+            openingObserver?(.init(phase: "open.task.entry"))
+            return try await SystemProxyWebSocketOpening.run(
+                target: url, timeout: openDeadline, startedAt: startedAt, resolver: proxyResolver,
+                observer: openingObserver
             ) { route, remaining in
                 try await self.openAttempt(route: route, timeout: remaining, events: continuation)
             }
@@ -128,16 +136,20 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
             do {
                 let digest = try await task.value
                 if lock.withLock({ finished }) { throw LinkTransportError.failed("closed") }
+                openingObserver?(.init(phase: "open.success"))
                 return digest
             } catch {
                 let wasClosed = lock.withLock { finished }
                 close()
                 if wasClosed || Task.isCancelled || error is CancellationError {
+                    openingObserver?(.init(phase: "open.error", reason: "closed"))
                     throw LinkTransportError.failed("closed")
                 }
                 if let proxyError = error as? SystemProxyError {
+                    openingObserver?(.init(phase: "open.error", reason: WebSocketOpeningReceipt.reason(for: proxyError)))
                     throw LinkTransportError.failed(proxyError.openingFailureText)
                 }
+                openingObserver?(.init(phase: "open.error", reason: WebSocketOpeningReceipt.reason(for: error)))
                 throw error
             }
         } onCancel: {
@@ -148,6 +160,7 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
     private func openAttempt(route: SystemProxyRoute, timeout: Duration,
                              events continuation: AsyncStream<LinkTransportEvent>.Continuation) async throws -> Data {
         let deadline = ContinuousClock().now + timeout
+        openingObserver?(.init(phase: "attempt.entry", budget: timeout, reason: WebSocketOpeningReceipt.route(route)))
         guard let port = NWEndpoint.Port(rawValue: endpoint.port) else { throw LinkTransportError.failed("no port") }
         let id = lock.withLock { () -> Int in
             attemptID += 1
@@ -195,15 +208,19 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
                 }
                 if alreadyClosed {
                     continuation.finish()
+                    openingObserver?(.init(phase: "attempt.settle.error", reason: "closedBeforeOpening"))
                     opening.resume(throwing: LinkTransportError.failed("closed before opening"))
                     return
                 }
                 connection.stateUpdateHandler = { [weak self] state in
                     self?.stateChanged(state, on: connection)
                 }
+                openingObserver?(.init(phase: "attempt.networkStart.before"))
                 connection.start(queue: queue)
+                openingObserver?(.init(phase: "attempt.networkStart.after"))
                 let remaining = deadline - ContinuousClock().now
                 guard remaining > .zero else {
+                    openingObserver?(.init(phase: "attempt.timeout.afterSetup", budget: remaining))
                     failAttempt(.noReply, on: connection)
                     return
                 }
@@ -212,6 +229,7 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
                 queue.asyncAfter(deadline: .now() + .nanoseconds(nanoseconds)) { [weak self] in
                     self?.openDeadlinePassed(on: connection)
                 }
+                openingObserver?(.init(phase: "attempt.timerBudget", budget: remaining))
             }
         } onCancel: {
             failAttempt(.failed("cancelled"), on: connection)
@@ -355,6 +373,9 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
             return taken
         }
         task?.cancel()
+        if opening != nil {
+            openingObserver?(.init(phase: "attempt.settle.error", reason: "closed"))
+        }
         opening?.resume(throwing: LinkTransportError.failed("closed"))
         guard let connection else {
             return
@@ -397,6 +418,7 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
         guard pending else {
             return
         }
+        openingObserver?(.init(phase: "attempt.timeout.callback"))
         Self.logger.info("The Core did not answer the connection in time")
         failAttempt(LinkTransportError.noReply, on: connection)
     }
@@ -426,6 +448,7 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
     }
 
     private func stateChanged(_ state: NWConnection.State, on connection: NWConnection) {
+        openingObserver?(Self.receipt(for: state))
         guard lock.withLock({ self.connection === connection && !finished }) else { return }
         let route = lock.withLock { activeRoute }
         switch state {
@@ -443,11 +466,13 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
             guard let digest else {
                 // No certificate was presented; the Core cannot be checked.
                 Self.logger.warning("The Core presented no certificate; closing before reading anything")
+                openingObserver?(.init(phase: "attempt.settle.error", reason: "noCertificate"))
                 opening.resume(throwing: LinkTransportError.failed("no certificate presented"))
                 finish(on: connection)
                 connection.cancel()
                 return
             }
+            openingObserver?(.init(phase: "attempt.settle.success"))
             opening.resume(returning: digest)
             receiveNext(on: connection)
         case .waiting(let error):
@@ -467,6 +492,28 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
             else { failAttempt(LinkTransportError.failed("cancelled"), on: connection) }
         default:
             break
+        }
+    }
+
+    // Diagnostic state labels deliberately omit endpoints and error descriptions.
+    private static func receipt(for state: NWConnection.State) -> WebSocketOpeningReceipt {
+        switch state {
+        case .setup: return .init(phase: "network.state.setup")
+        case .preparing: return .init(phase: "network.state.preparing")
+        case .ready: return .init(phase: "network.state.ready")
+        case .cancelled: return .init(phase: "network.state.cancelled")
+        case .waiting(let error): return receipt(phase: "network.state.waiting", error: error)
+        case .failed(let error): return receipt(phase: "network.state.failed", error: error)
+        @unknown default: return .init(phase: "network.state.other")
+        }
+    }
+
+    private static func receipt(phase: String, error: NWError) -> WebSocketOpeningReceipt {
+        switch error {
+        case .posix(let code): return .init(phase: phase, reason: "posix", code: code.rawValue)
+        case .tls(let code): return .init(phase: phase, reason: "tls", code: code)
+        case .dns(let code): return .init(phase: phase, reason: "dns", code: code)
+        @unknown default: return .init(phase: phase, reason: "other")
         }
     }
 
@@ -499,8 +546,10 @@ public final class WebSocketLinkTransport: LinkTransport, @unchecked Sendable {
             return
         }
         if let digest, case .certificate(let pin) = trust, !CertificatePin.matches(digest, pin: pin) {
+            openingObserver?(.init(phase: "attempt.settle.error", reason: "link.certificateMismatch"))
             opening.resume(throwing: LinkTransportError.certificateMismatch)
         } else {
+            openingObserver?(.init(phase: "attempt.settle.error", reason: WebSocketOpeningReceipt.reason(for: reason)))
             opening.resume(throwing: reason)
         }
         connection.cancel()

@@ -37,14 +37,66 @@ import Testing
 
     /// A port nothing listens on, on this computer: its connection is refused.
     @Test func aPortNothingListensOnIsRefused() async throws {
+        let receipts = RefusedOpeningReceipts()
+        defer { print("KIT REFUSED OPENING RECEIPTS\n\(receipts.summary)") }
+        receipts.mark(.init(phase: "fixture.entry"))
         let reservation = try RefusedPortReservation()
         defer { reservation.close() }
+        receipts.mark(.init(phase: "fixture.reservation.ready.listenerClosed"))
         try #require(reservation.port != 0)
         let transport = WebSocketLinkTransport(endpoint: StationEndpoint(host: "127.0.0.1", port: reservation.port),
-                                               trust: .pairing, openDeadline: .seconds(10))
+                                               trust: .pairing, openDeadline: .seconds(10),
+                                               proxyResolver: SystemProxyResolver(), openingObserver: receipts.mark)
+        receipts.mark(.init(phase: "fixture.beforeOpenAssertion"))
         await #expect(throws: LinkTransportError.refused) {
             _ = try await transport.open { _ in }
         }
+        receipts.mark(.init(phase: "fixture.afterOpenAssertion"))
+    }
+}
+
+// Diagnostic-only, capped and synchronous on the existing flow. Recording adds
+// clock/thread reads and a short lock; timing comparisons include that overhead.
+private final class RefusedOpeningReceipts: @unchecked Sendable {
+    private struct Entry {
+        let elapsed: Duration
+        let threadID: UInt64
+        let mainThread: Bool
+        let receipt: WebSocketOpeningReceipt
+    }
+    private static let maximum = 128
+    private let started = ContinuousClock.now
+    private let lock = NSLock()
+    private var entries: [Entry] = []
+    private var dropped = 0
+
+    func mark(_ receipt: WebSocketOpeningReceipt) {
+        let elapsed = ContinuousClock.now - started
+        var threadID: UInt64 = 0
+        _ = pthread_threadid_np(nil, &threadID)
+        let entry = Entry(elapsed: elapsed, threadID: threadID, mainThread: Thread.isMainThread, receipt: receipt)
+        lock.withLock {
+            guard entries.count < Self.maximum else {
+                dropped += 1
+                return
+            }
+            entries.append(entry)
+        }
+    }
+
+    var summary: String {
+        let (recorded, lost) = lock.withLock { (entries, dropped) }
+        let lines = recorded.map { entry in
+            let receipt = entry.receipt
+            var fields = ["elapsed=\(entry.elapsed)", "thread=\(entry.threadID)",
+                          "main=\(entry.mainThread)", "phase=\(receipt.phase)"]
+            if let budget = receipt.budget { fields.append("budget=\(budget)") }
+            if let stamp = receipt.startedAt { fields.append("originalStamp=\(stamp - started)") }
+            if let reason = receipt.reason { fields.append("reason=\(reason)") }
+            if let code = receipt.code { fields.append("code=\(code)") }
+            return fields.joined(separator: " ")
+        }
+        return (lines + ["records=\(recorded.count) dropped=\(lost)"]).joined(separator: "\n")
     }
 }
 
