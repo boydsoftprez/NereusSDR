@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import Foundation
+import LinkSessionTestSupport
 import LinkTestSupport
 import NereusLink
 import Testing
@@ -246,7 +247,7 @@ import Testing
     }
 
     @Test func takeControlSendsTheValuesThePhoneSawAndReadsTheNewRevision() async throws {
-        let commands = CommandClient(send: sent.sender)
+        let commands = CommandClient(clock: ManualLinkClock(), send: sent.sender)
         await ready(commands)
         let state = SliceAccess.State(sliceId: 1, incarnation: 3, controllerDeviceId: "mac", controlRevision: 12)
         let task = Task { await SliceAccess.takeControl(state, commands: commands) }
@@ -262,7 +263,7 @@ import Testing
     }
 
     @Test func listenStopReleaseAndLevelSendTheValuesThePhoneSaw() async throws {
-        let commands = CommandClient(send: sent.sender)
+        let commands = CommandClient(clock: ManualLinkClock(), send: sent.sender)
         await ready(commands)
         let state = SliceAccess.State(sliceId: 0, incarnation: 5, controllerDeviceId: "station", controlRevision: 9)
         let slice = [LinkMessage.PropertyEntry(name: "sliceId", value: .i64(0)),
@@ -332,7 +333,7 @@ import Testing
 
     @Test(arguments: takeRefusals)
     func aRefusedTakeCarriesTheCoresWordsAsSent(_ words: String) async throws {
-        let commands = CommandClient(send: sent.sender)
+        let commands = CommandClient(clock: ManualLinkClock(), send: sent.sender)
         await ready(commands)
         let state = SliceAccess.State(sliceId: 1, incarnation: 3, controllerDeviceId: "mac", controlRevision: 12)
         let task = Task { await SliceAccess.takeControl(state, commands: commands) }
@@ -428,7 +429,7 @@ import Testing
     @Test func anAcceptedTakeBackTakesTheCardDownAndMarksTheSlice() async throws {
         let store = store(version: 2)
         store.apply(Self.access(controller: "shack-phone"))
-        let commands = CommandClient(send: sent.sender)
+        let commands = CommandClient(clock: ManualLinkClock(), send: sent.sender)
         let devices = await devices(store, commands)
         var tookBack: [(Int, Int64?)] = []
         devices.tookControlBack = { tookBack.append(($0, $1)) }
@@ -450,7 +451,7 @@ import Testing
     @Test func aTakeBackRefusedWhileTheSliceTransmitsKeepsTheCard() async throws {
         let store = store(version: 2)
         store.apply(Self.access(controller: "shack-phone"))
-        let commands = CommandClient(send: sent.sender)
+        let commands = CommandClient(clock: ManualLinkClock(), send: sent.sender)
         let devices = await devices(store, commands)
         devices.receive(Self.controlTaken(takeBack: true))
         let words = "Slice B is transmitting. Take control once it stops."
@@ -480,7 +481,7 @@ import Testing
             // Control moved on since the notice: the revision is past the entry's.
             store.apply(Self.access(controller: "garden-pad", revision: 14))
         }
-        let commands = CommandClient(send: sent.sender)
+        let commands = CommandClient(clock: ManualLinkClock(), send: sent.sender)
         let devices = await devices(store, commands)
         devices.receive(Self.controlTaken(takeBack: true))
         let task = Task { await devices.takeBack(41) }
