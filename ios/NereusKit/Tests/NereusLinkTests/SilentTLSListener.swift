@@ -20,7 +20,9 @@ final class SilentTLSListener: @unchecked Sendable {
     /// `address` is "::1" or "127.0.0.1".
     init(address: String, observe: @escaping @Sendable (String) -> Void = { _ in }) throws {
         self.observe = observe
+        observe("TLS certificate creation entered")
         let certificate = try TestCertificate.make()
+        observe("TLS certificate creation returned")
         let tls = NWProtocolTLS.Options()
         guard let identity = sec_identity_create(certificate.identity) else {
             throw TestCertificate.Failure(description: "could not wrap the identity")
@@ -35,20 +37,24 @@ final class SilentTLSListener: @unchecked Sendable {
 
     /// Starts listening; returns the port.
     func start() async throws -> UInt16 {
+        observe("TLS listener start entered")
+        defer { observe("TLS listener start returned") }
         listener.newConnectionHandler = { [weak self] connection in
             self?.accept(connection)
         }
         return try await withCheckedThrowingContinuation { continuation in
             let once = FirstOnly()
-            listener.stateUpdateHandler = { [listener] state in
+            listener.stateUpdateHandler = { [listener, observe] state in
                 let first = { once.take() }
                 switch state {
                 case .ready:
                     if first(), let port = listener.port?.rawValue {
+                        observe("TLS listener ready; publishing port")
                         continuation.resume(returning: port)
                     }
                 case .failed(let error):
                     if first() {
+                        observe("TLS listener failed before port publication")
                         continuation.resume(throwing: error)
                     }
                 default:
@@ -56,10 +62,12 @@ final class SilentTLSListener: @unchecked Sendable {
                 }
             }
             listener.start(queue: queue)
+            observe("TLS listener start submitted to queue")
         }
     }
 
     func stop() {
+        observe("TLS listener stop entered")
         listener.cancel()
         lock.withLock { connections }.forEach { $0.cancel() }
     }
@@ -88,15 +96,21 @@ final class SilentTLSListener: @unchecked Sendable {
             }
             if let content {
                 let key = ObjectIdentifier(connection)
-                self.lock.withLock {
+                let published = self.lock.withLock { () -> Bool in
+                    var published = false
                     var buffer = self.buffers[key, default: Data()]
                     buffer.append(content)
                     if let end = buffer.range(of: Data("\r\n\r\n".utf8)) {
-                        self.observe("TLS listener opening entry \(ObjectIdentifier(connection))")
                         self.requests.append(String(decoding: buffer[..<end.lowerBound], as: UTF8.self))
+                        published = true
                         buffer = Data(buffer[end.upperBound...])
                     }
                     self.buffers[key] = buffer
+                    return published
+                }
+                if published {
+                    // The request list is visible before this callback records publication.
+                    self.observe("TLS listener opening entry published \(ObjectIdentifier(connection))")
                 }
             }
             if error == nil && !isComplete {

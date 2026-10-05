@@ -19,10 +19,10 @@ import Testing
         LinkMessage.AuthResult(accepted: true, reason: "", retryable: false))
 
     private static func session(clock: ManualLinkClock, trust: StationTrust,
-                                factory: @escaping LinkTransportFactory) -> StationSession {
+                                factory: @escaping LinkTransportFactory, receipts: TestReceipts) -> StationSession {
         StationSession(endpoint: StationEndpoint(host: "shack.example.net"), trust: trust,
                        authenticator: TokenAuthenticator(token: "conformance-token"),
-                       clock: clock, transportFactory: factory)
+                       clock: ReceiptClock(base: clock, receipts: receipts), transportFactory: factory)
     }
 
     /// A factory that wraps each of a scripted station's connections so its
@@ -31,13 +31,21 @@ import Testing
         let station = ScriptedStation()
         private let lock = NSLock()
         private var made: [SlowOpeningTransport] = []
-        private let creation = TestPhase<SlowOpeningTransport>()
+        private let creation: TestPhase<SlowOpeningTransport>
+        private let receipts: TestReceipts
+
+        init(receipts: TestReceipts) {
+            self.receipts = receipts
+            creation = TestPhase(receipts: receipts, phase: "transport creation")
+        }
 
         var factory: LinkTransportFactory {
             { [self] endpoint, trust in
-                let slow = SlowOpeningTransport(station.factory(endpoint, trust))
+                receipts.mark("session factory entered")
+                let slow = SlowOpeningTransport(station.factory(endpoint, trust), receipts: receipts)
                 lock.withLock { made.append(slow) }
                 creation.finish(.success(slow))
+                receipts.mark("session factory returning")
                 return slow
             }
         }
@@ -46,6 +54,8 @@ import Testing
 
         func opening() async throws -> SlowOpeningTransport {
             let deadline = ContinuousClock.now + .seconds(10)
+            receipts.mark("session observer deadline captured: \(receipts.offset(of: deadline))")
+            defer { receipts.mark("session opening observer exited") }
             let transport = try await creation.wait(until: deadline)
             try await transport.openingEntry.wait(until: deadline)
             return transport
@@ -55,9 +65,11 @@ import Testing
     // MARK: A sign-in
 
     @Test func aCoreThatOpensAndNeverSaysHelloEndsThirtySecondsAfterTheDial() async throws {
+        let receipts = TestReceipts(caseID: #function)
+        defer { receipts.flush() }
         let station = ScriptedStation()
         let clock = ManualLinkClock()
-        let session = Self.session(clock: clock, trust: station.trust, factory: station.factory)
+        let session = Self.session(clock: clock, trust: station.trust, factory: station.factory, receipts: receipts)
         await session.connect()
         let transport = try #require(station.latest)
         await clock.advance(by: 29_999)
@@ -68,10 +80,17 @@ import Testing
     }
 
     @Test func aCoreSlowToOpenThenSilentEndsAtTheSameBound() async throws {
-        let slow = SlowStation()
+        let receipts = TestReceipts(caseID: #function)
+        defer { receipts.flush() }
+        let slow = SlowStation(receipts: receipts)
         let clock = ManualLinkClock()
-        let session = Self.session(clock: clock, trust: slow.station.trust, factory: slow.factory)
-        let connecting = Task { await session.connect() }
+        let session = Self.session(clock: clock, trust: slow.station.trust, factory: slow.factory, receipts: receipts)
+        receipts.mark("connecting Task submitting")
+        let connecting = Task {
+            receipts.mark("connecting Task entered")
+            defer { receipts.mark("connecting Task settled") }
+            await session.connect()
+        }
         let transport: SlowOpeningTransport
         do { transport = try await slow.opening() }
         catch {
@@ -93,10 +112,17 @@ import Testing
     }
 
     @Test func aCoreThatNeverOpensEndsAtTheSameBound() async throws {
-        let slow = SlowStation()
+        let receipts = TestReceipts(caseID: #function)
+        defer { receipts.flush() }
+        let slow = SlowStation(receipts: receipts)
         let clock = ManualLinkClock()
-        let session = Self.session(clock: clock, trust: slow.station.trust, factory: slow.factory)
-        let connecting = Task { await session.connect() }
+        let session = Self.session(clock: clock, trust: slow.station.trust, factory: slow.factory, receipts: receipts)
+        receipts.mark("connecting Task submitting")
+        let connecting = Task {
+            receipts.mark("connecting Task entered")
+            defer { receipts.mark("connecting Task settled") }
+            await session.connect()
+        }
         let transport: SlowOpeningTransport
         do { transport = try await slow.opening() }
         catch {
@@ -121,23 +147,36 @@ import Testing
     /// only the session's clock, moved by hand, can end it.
     @Test(arguments: ["::1", "127.0.0.1"])
     func aSilentCoreOverTLSEndsAtTheSessionsBound(address: String) async throws {
-        let listener = try SilentTLSListener(address: address)
+        let receipts = TestReceipts(caseID: "\(#function) \(address)")
+        defer { receipts.flush() }
+        let listener = try SilentTLSListener(address: address, observe: receipts.mark)
         let port = try await listener.start()
         defer { listener.stop() }
         let clock = ManualLinkClock()
         let session = StationSession(
             endpoint: StationEndpoint(host: address, port: port),
             trust: .identity(publicKey: Data(repeating: 4, count: 65)),
-            authenticator: TokenAuthenticator(token: "conformance-token"), clock: clock,
+            authenticator: TokenAuthenticator(token: "conformance-token"), clock: ReceiptClock(base: clock, receipts: receipts),
             transportFactory: { endpoint, trust in
-                WebSocketLinkTransport(endpoint: endpoint, trust: trust, openDeadline: .seconds(600))
+                receipts.mark("session TLS factory entered")
+                let transport = ReceiptTransport(WebSocketLinkTransport(endpoint: endpoint, trust: trust,
+                                                                         openDeadline: .seconds(600)), receipts: receipts)
+                receipts.mark("session TLS factory returning")
+                return transport
             })
         let recorder = EventRecorder(session)
-        let connecting = Task { await session.connect() }
+        receipts.mark("connecting Task submitting")
+        let connecting = Task {
+            receipts.mark("connecting Task entered")
+            defer { receipts.mark("connecting Task settled") }
+            await session.connect()
+        }
         let started = ContinuousClock.now
+        receipts.mark("TLS request observer window began; deadline=\(receipts.offset(of: started + .seconds(10)))", at: started)
         while listener.receivedRequests.isEmpty && ContinuousClock.now - started < .seconds(10) {
             try await Task.sleep(for: .milliseconds(20))
         }
+        receipts.mark("TLS request observer exited; request published=\(!listener.receivedRequests.isEmpty)")
         try #require(!listener.receivedRequests.isEmpty, "the listener saw no opening, so nothing was waited on")
         #expect(await session.state == .connecting)
         let advanced = ContinuousClock.now
@@ -152,10 +191,17 @@ import Testing
     }
 
     @Test func aNormalConnectAfterASlowOpeningIsUnaffected() async throws {
-        let slow = SlowStation()
+        let receipts = TestReceipts(caseID: #function)
+        defer { receipts.flush() }
+        let slow = SlowStation(receipts: receipts)
         let clock = ManualLinkClock()
-        let session = Self.session(clock: clock, trust: slow.station.trust, factory: slow.factory)
-        let connecting = Task { await session.connect() }
+        let session = Self.session(clock: clock, trust: slow.station.trust, factory: slow.factory, receipts: receipts)
+        receipts.mark("connecting Task submitting")
+        let connecting = Task {
+            receipts.mark("connecting Task entered")
+            defer { receipts.mark("connecting Task settled") }
+            await session.connect()
+        }
         let transport: SlowOpeningTransport
         do { transport = try await slow.opening() }
         catch {
@@ -185,9 +231,14 @@ import Testing
         try DeviceIdentity.load(store: InMemoryKeyStore())
     }
 
-    private static func client(clock: ManualLinkClock, transport: any LinkTransport) throws -> PairingClient {
-        try PairingClient(identity: try device(), name: "Shack iPhone", kind: .phone, clock: clock,
-                          transportFactory: { _, _ in transport })
+    private static func client(clock: ManualLinkClock, transport: any LinkTransport,
+                               receipts: TestReceipts) throws -> PairingClient {
+        try PairingClient(identity: try device(), name: "Shack iPhone", kind: .phone, clock: ReceiptClock(base: clock, receipts: receipts),
+                          transportFactory: { _, _ in
+                              receipts.mark("pairing factory entered")
+                              receipts.mark("pairing factory returning")
+                              return transport
+                          })
     }
 
     /// The error `task` ended with, or nil when it succeeded. Without the
@@ -216,13 +267,20 @@ import Testing
     }
 
     @Test func aPairingSlowToOpenThenSilentEndsThirtySecondsAfterTheDial() async throws {
+        let receipts = TestReceipts(caseID: #function)
+        defer { receipts.flush() }
         let core = PairingTestTransport()
         let identity = TestStationIdentity()
         let clock = ManualLinkClock()
-        let slow = SlowOpeningTransport(core)
-        let client = try Self.client(clock: clock, transport: slow)
+        let slow = SlowOpeningTransport(core, receipts: receipts)
+        let client = try Self.client(clock: clock, transport: slow, receipts: receipts)
         let endpoint = Self.uniqueEndpoint()
-        let pairing = Task { try await client.pairOnThisNetwork(endpoint: endpoint) }
+        receipts.mark("pairing Task submitting")
+        let pairing = Task {
+            receipts.mark("pairing Task entered")
+            defer { receipts.mark("pairing Task settled") }
+            return try await client.pairOnThisNetwork(endpoint: endpoint)
+        }
         // An entry assertion can throw before the normal deadline/cancel path.
         // Scope cleanup ends that task without supplying any assertion result.
         defer { pairing.cancel(); slow.close() }
@@ -247,11 +305,18 @@ import Testing
     }
 
     @Test func aPairingNobodyOpensEndsAtTheSameBoundAndFreesTheCore() async throws {
+        let receipts = TestReceipts(caseID: #function)
+        defer { receipts.flush() }
         let clock = ManualLinkClock()
-        let slow = SlowOpeningTransport(PairingTestTransport())
+        let slow = SlowOpeningTransport(PairingTestTransport(), receipts: receipts)
         let endpoint = Self.uniqueEndpoint()
-        let first = try Self.client(clock: clock, transport: slow)
-        let pairing = Task { try await first.pairOnThisNetwork(endpoint: endpoint) }
+        let first = try Self.client(clock: clock, transport: slow, receipts: receipts)
+        receipts.mark("pairing Task submitting")
+        let pairing = Task {
+            receipts.mark("pairing Task entered")
+            defer { receipts.mark("pairing Task settled") }
+            return try await first.pairOnThisNetwork(endpoint: endpoint)
+        }
         // Close even when the fixture entry assertion throws.
         defer { pairing.cancel(); slow.close() }
         _ = try #require(await SlowOpeningTransport.opening(in: { slow }))
@@ -264,9 +329,14 @@ import Testing
         #expect(clock.pendingDueTimes.isEmpty)
         // The Core's gate is free: a new pairing dials rather than being
         // refused as one still running, and has its own 30 s.
-        let next = SlowOpeningTransport(PairingTestTransport())
-        let second = try Self.client(clock: clock, transport: next)
-        let retry = Task { try await second.pairOnThisNetwork(endpoint: endpoint) }
+        let next = SlowOpeningTransport(PairingTestTransport(), receipts: receipts, phase: "retry slow opening")
+        let second = try Self.client(clock: clock, transport: next, receipts: receipts)
+        receipts.mark("retry Task submitting")
+        let retry = Task {
+            receipts.mark("retry Task entered")
+            defer { receipts.mark("retry Task settled") }
+            return try await second.pairOnThisNetwork(endpoint: endpoint)
+        }
         defer { retry.cancel(); next.close() }
         _ = try #require(await SlowOpeningTransport.opening(in: { next }))
         #expect(clock.pendingDueTimes == [60_000])
@@ -275,11 +345,18 @@ import Testing
     }
 
     @Test func aPairingCancelledWhileDiallingThrowsCancellationAndClosesAtOnce() async throws {
+        let receipts = TestReceipts(caseID: #function)
+        defer { receipts.flush() }
         let clock = ManualLinkClock()
-        let slow = SlowOpeningTransport(PairingTestTransport())
+        let slow = SlowOpeningTransport(PairingTestTransport(), receipts: receipts)
         let endpoint = Self.uniqueEndpoint()
-        let client = try Self.client(clock: clock, transport: slow)
-        let pairing = Task { try await client.pairOnThisNetwork(endpoint: endpoint) }
+        let client = try Self.client(clock: clock, transport: slow, receipts: receipts)
+        receipts.mark("pairing Task submitting")
+        let pairing = Task {
+            receipts.mark("pairing Task entered")
+            defer { receipts.mark("pairing Task settled") }
+            return try await client.pairOnThisNetwork(endpoint: endpoint)
+        }
         // An entry assertion can throw before the normal deadline/cancel path.
         // Scope cleanup ends that task without supplying any assertion result.
         defer { pairing.cancel(); slow.close() }
@@ -299,13 +376,25 @@ import Testing
     }
 
     @Test func aPairingIOSKeepsOffTheNetworkSaysSo() async throws {
+        let receipts = TestReceipts(caseID: #function)
+        defer { receipts.flush() }
         let clock = ManualLinkClock()
-        let client = try Self.client(clock: clock, transport: FailingOpenTransport(.localNetworkDenied))
-        let pairing = Task { try await client.pairOnThisNetwork(endpoint: Self.uniqueEndpoint()) }
+        let client = try Self.client(clock: clock, transport: FailingOpenTransport(.localNetworkDenied), receipts: receipts)
+        receipts.mark("pairing Task submitting")
+        let pairing = Task {
+            receipts.mark("pairing Task entered")
+            defer { receipts.mark("pairing Task settled") }
+            return try await client.pairOnThisNetwork(endpoint: Self.uniqueEndpoint())
+        }
         #expect(await Self.failure(pairing, closing: FailingOpenTransport(.localNetworkDenied))
             == .didNotOpen(localNetworkDenied: true))
-        let refused = try Self.client(clock: clock, transport: FailingOpenTransport(.failed("refused")))
-        let again = Task { try await refused.pairOnThisNetwork(endpoint: Self.uniqueEndpoint()) }
+        let refused = try Self.client(clock: clock, transport: FailingOpenTransport(.failed("refused")), receipts: receipts)
+        receipts.mark("again Task submitting")
+        let again = Task {
+            receipts.mark("again Task entered")
+            defer { receipts.mark("again Task settled") }
+            return try await refused.pairOnThisNetwork(endpoint: Self.uniqueEndpoint())
+        }
         #expect(await Self.failure(again, closing: FailingOpenTransport(.failed("refused")))
             == .didNotOpen(localNetworkDenied: false))
         #expect(clock.pendingDueTimes.isEmpty)
@@ -313,8 +402,8 @@ import Testing
 
     @Test(arguments: ["::1", "127.0.0.1"])
     func aPairingWithASilentCoreOverTLSEndsAtThePairingsBound(address: String) async throws {
-        let receipts = TestReceipts()
-        defer { print("KIT RECEIPTS pairing \(address)\n\(receipts.summary)") }
+        let receipts = TestReceipts(caseID: "\(#function) \(address)")
+        defer { receipts.flush() }
         let listener = try SilentTLSListener(address: address, observe: receipts.mark)
         let port = try await listener.start()
         defer { listener.stop() }
@@ -322,10 +411,15 @@ import Testing
         let made = Made()
         let client = try PairingClient(identity: try Self.device(), name: "Shack iPhone", kind: .phone, clock: clock,
                                        transportFactory: { endpoint, trust in
-                                           made.keep(ReceiptTransport(WebSocketLinkTransport(endpoint: endpoint, trust: trust,
+                                           receipts.mark("pairing TLS factory entered")
+                                           let transport = made.keep(ReceiptTransport(WebSocketLinkTransport(endpoint: endpoint, trust: trust,
                                                                             openDeadline: .seconds(600)), receipts: receipts))
+                                           receipts.mark("pairing TLS factory returning")
+                                           return transport
                                        })
+        receipts.mark("pairing Task submitting")
         let pairing = Task {
+            receipts.mark("pairing Task entered")
             do {
                 let result = try await client.pairOnThisNetwork(endpoint: StationEndpoint(host: address, port: port))
                 receipts.mark("pairing task settled successfully")
@@ -336,9 +430,11 @@ import Testing
             }
         }
         let started = ContinuousClock.now
+        receipts.mark("TLS request observer window began; deadline=\(receipts.offset(of: started + .seconds(10)))", at: started)
         while listener.receivedRequests.isEmpty && ContinuousClock.now - started < .seconds(10) {
             try await Task.sleep(for: .milliseconds(20))
         }
+        receipts.mark("TLS request observer exited; request published=\(!listener.receivedRequests.isEmpty)")
         try #require(!listener.receivedRequests.isEmpty, "the listener saw no opening, so nothing was waited on")
         let advanced = ContinuousClock.now
         receipts.mark("observer advancing pairing clock")
@@ -352,7 +448,9 @@ import Testing
     }
 
     @Test func fixturePhaseAlreadyExpiredRegistrationStaysFailedAfterLateEntry() async throws {
-        let expired = TestPhase<Void>()
+        let receipts = TestReceipts(caseID: #function)
+        defer { receipts.flush() }
+        let expired = TestPhase<Void>(receipts: receipts, phase: "expired control")
         await #expect(throws: TestPhase<Void>.Failure.noEntry) {
             try await expired.wait(until: ContinuousClock.now - .seconds(1))
         }
@@ -363,7 +461,9 @@ import Testing
     }
 
     @Test func fixturePhaseExpiryAlsoSettlesAnAlreadyRegisteredObserver() async throws {
-        let phase = TestPhase<Void>()
+        let receipts = TestReceipts(caseID: #function)
+        defer { receipts.flush() }
+        let phase = TestPhase<Void>(receipts: receipts, phase: "phase control")
         let earlier = Task { try await phase.wait(until: ContinuousClock.now + .seconds(10)) }
         defer { earlier.cancel() }
         let entryDeadline = ContinuousClock.now + .seconds(2)
@@ -373,7 +473,7 @@ import Testing
             try await phase.wait(until: ContinuousClock.now - .seconds(1))
         }
         phase.finish(.success(()))
-        let settled = TestPhase<Bool>()
+        let settled = TestPhase<Bool>(receipts: receipts, phase: "settled control")
         let observer = Task {
             do { try await earlier.value; settled.finish(.success(false)) }
             catch { settled.finish(.success(error as? TestPhase<Void>.Failure == .noEntry)) }
@@ -383,7 +483,9 @@ import Testing
     }
 
     @Test func fixturePhaseMissingEntryAndCancellationFailRatherThanHang() async throws {
-        let missing = TestPhase<Void>()
+        let receipts = TestReceipts(caseID: #function)
+        defer { receipts.flush() }
+        let missing = TestPhase<Void>(receipts: receipts, phase: "missing control")
         await #expect(throws: TestPhase<Void>.Failure.noEntry) {
             try await missing.wait(until: ContinuousClock.now + .milliseconds(20))
         }
@@ -392,14 +494,16 @@ import Testing
         await #expect(throws: TestPhase<Void>.Failure.noEntry) {
             try await missing.wait(until: ContinuousClock.now + .seconds(10))
         }
-        let cancelled = TestPhase<Void>()
+        let cancelled = TestPhase<Void>(receipts: receipts, phase: "cancelled control")
         let waiting = Task { try await cancelled.wait(until: ContinuousClock.now + .seconds(10)) }
         waiting.cancel()
         await #expect(throws: TestPhase<Void>.Failure.cancelled) { try await waiting.value }
     }
 
     @Test func aClosedSlowOpeningCannotSatisfyTheFixtureEntryBarrier() async throws {
-        let slow = SlowOpeningTransport(PairingTestTransport())
+        let receipts = TestReceipts(caseID: #function)
+        defer { receipts.flush() }
+        let slow = SlowOpeningTransport(PairingTestTransport(), receipts: receipts)
         slow.close()
         await #expect(throws: TestPhase<Void>.Failure.closed) {
             try await slow.openingEntry.wait(until: ContinuousClock.now + .seconds(10))
@@ -427,24 +531,36 @@ final class SlowOpeningTransport: LinkTransport, @unchecked Sendable {
     private let inner: any LinkTransport
     private let lock = NSLock()
     private var waiter: CheckedContinuation<Void, Error>?
-    let openingEntry = TestPhase<Void>()
+    let openingEntry: TestPhase<Void>
+    let receipts: TestReceipts
+    private let phase: String
     private var released = false
     private var closed = false
 
-    init(_ inner: any LinkTransport) {
+    init(_ inner: any LinkTransport, receipts: TestReceipts, phase: String = "slow opening") {
         self.inner = inner
+        self.receipts = receipts
+        self.phase = phase
+        openingEntry = TestPhase(receipts: receipts, phase: phase)
     }
 
     /// Waits, up to 10 s of real time, for the transport `latest` names to
     /// be inside its opening.
     static func opening(in latest: @escaping @Sendable () -> SlowOpeningTransport?) async -> SlowOpeningTransport? {
         let giveUp = ContinuousClock.now + .seconds(10)
+        let receipts = latest()?.receipts
+        if let receipts {
+            receipts.mark("pairing observer deadline captured: \(receipts.offset(of: giveUp))")
+        }
+        defer { receipts?.mark("pairing opening observer exited") }
         while ContinuousClock.now < giveUp {
             if let transport = latest(), transport.isOpening {
+                transport.receipts.mark("pairing observer saw opening")
                 return transport
             }
             try? await Task.sleep(for: .milliseconds(2))
         }
+        receipts?.mark("pairing observer reached bound; returning nil")
         return nil
     }
 
@@ -453,6 +569,7 @@ final class SlowOpeningTransport: LinkTransport, @unchecked Sendable {
 
     /// The Core answers the opening.
     func finishOpening() {
+        receipts.mark("\(phase) release entered")
         let resume = lock.withLock { () -> CheckedContinuation<Void, Error>? in
             released = true
             defer { waiter = nil }
@@ -462,7 +579,9 @@ final class SlowOpeningTransport: LinkTransport, @unchecked Sendable {
     }
 
     func open(onEvent: @escaping @Sendable (LinkTransportEvent) async -> Void) async throws -> Data {
+        receipts.mark("\(phase) open entered")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            var installedAt: ContinuousClock.Instant?
             let outcome = lock.withLock { () -> Bool? in
                 if closed {
                     return false
@@ -471,10 +590,12 @@ final class SlowOpeningTransport: LinkTransport, @unchecked Sendable {
                     return true
                 }
                 waiter = continuation
+                installedAt = ContinuousClock.now
                 // Acknowledge only after the opening hold exists.
                 openingEntry.finish(.success(()))
                 return nil
             }
+            if let installedAt { receipts.mark("\(phase) waiter installed", at: installedAt) }
             switch outcome {
             case true?:
                 continuation.resume()
@@ -496,6 +617,7 @@ final class SlowOpeningTransport: LinkTransport, @unchecked Sendable {
     }
 
     func close() {
+        receipts.mark("\(phase) close entered")
         let resume = lock.withLock { () -> CheckedContinuation<Void, Error>? in
             closed = true
             defer { waiter = nil }
@@ -530,17 +652,23 @@ final class FailingOpenTransport: LinkTransport, @unchecked Sendable {
 
 /// Observe the existing manual timer callback without changing its clock.
 private final class ReceiptClock: LinkClock, @unchecked Sendable {
-    let base = ManualLinkClock()
+    let base: ManualLinkClock
     let receipts: TestReceipts
-    init(receipts: TestReceipts) { self.receipts = receipts }
+    init(base: ManualLinkClock = ManualLinkClock(), receipts: TestReceipts) {
+        self.base = base
+        self.receipts = receipts
+    }
     var nowMilliseconds: Int64 { base.nowMilliseconds }
     func schedule(after delay: Duration, _ action: @escaping @Sendable () async -> Void) -> any LinkTimer {
         let receipts = receipts
-        return base.schedule(after: delay) {
+        receipts.mark("timer schedule entered (delay \(delay)); manual now=\(base.nowMilliseconds)")
+        let timer = base.schedule(after: delay) {
             receipts.mark("timer callback entered (delay \(delay))")
             await action()
             receipts.mark("timer callback returned")
         }
+        receipts.mark("timer registered; manual due times=\(base.pendingDueTimes)")
+        return timer
     }
 }
 

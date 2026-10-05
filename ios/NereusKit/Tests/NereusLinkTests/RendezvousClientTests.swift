@@ -560,6 +560,8 @@ import Testing
     }
 
     @Test func aCodePairsThroughAMailboxCarryingThePairingMessagesUnchanged() async throws {
+        let receipts = TestReceipts(caseID: #function)
+        defer { receipts.flush() }
         let service = RendezvousTestService()
         let device = try Self.device()
         let core = TestStationIdentity()
@@ -567,7 +569,12 @@ import Testing
         let name = "Shack Handheld"
         let client = try PairingClient(identity: device, name: name, kind: .phone, clock: ManualLinkClock(),
                                        rendezvousTransportFactory: service.factory)
-        let pairing = Task { try await client.pair(code: code, via: .rendezvous(server: [.nereus], nameplate: nameplate)) }
+        receipts.mark("mailbox pairing Task submitting")
+        let pairing = Task {
+            receipts.mark("mailbox pairing Task entered")
+            defer { receipts.mark("mailbox pairing Task settled") }
+            return try await client.pair(code: code, via: .rendezvous(server: [.nereus], nameplate: nameplate))
+        }
         let connection = try #require(await service.connection(0))
         connection.greet()
         // The number, and only the number, goes to the service.
@@ -586,7 +593,9 @@ import Testing
         #expect(start.device.name == "iPhone")
         #expect(start.device.kind == "phone")
 
+        receipts.mark("residual direct hash begin")
         let stored = try #require(SpakeExchange.storedData(code: code))
+        receipts.mark("residual direct hash returned and required")
         let spake = SpakeExchange(role: .station)
         let step0 = try #require(spake.stationStep0(stored: stored))
         Self.toCore(.pairSpake(LinkMessage.PairSpake(step: 0, data: Base64URL.encode(step0))), connection)
