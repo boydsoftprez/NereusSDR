@@ -13204,8 +13204,9 @@ void SpectrumWidget::recenterOnVfo()
 
 void SpectrumWidget::endPanDrag()
 {
-    if (!m_draggingPan) { return; }
+    if (!m_draggingPan && !m_draggingBandwidth) { return; }
     m_draggingPan = false;
+    m_draggingBandwidth = false;
     setCursor(Qt::CrossCursor);
 }
 

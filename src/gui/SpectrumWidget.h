@@ -1589,8 +1589,8 @@ public:
     // operator moving the pan. A remote window uses it to keep a zoom a view
     // change on a stream other receivers share.
     bool isZoomRecentring() const { return m_draggingBandwidth || m_wheelZoomRecentring; }
-    // Ends the current pan drag without a click-to-tune on release; the
-    // rest of the drag leaves the view where it is. Used when the Core
+    // Ends the current pan or frequency-scale drag without click-to-tune
+    // on release; the rest leaves the view where it is. Used when the Core
     // refuses to move its window for this drag.
     void endPanDrag();
 
