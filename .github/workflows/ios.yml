@@ -70,6 +70,27 @@ jobs:
       - name: swift test (NereusKit)
         run: ios/scripts/swift-test.sh
 
+      - name: Compare the renderer benchmark after the package workload
+        # Diagnostic branch only: retain the complete package run above,
+        # then observe the original benchmark on the same compiled binary.
+        if: always() && github.ref == 'refs/heads/codex/kit-350-refusal-receipts'
+        run: |
+          renderer_test_binary=ios/NereusKit/.build/arm64-apple-macosx/debug/NereusKitPackageTests.xctest/Contents/MacOS/NereusKitPackageTests
+          test -f "$renderer_test_binary"
+          shasum -a 256 "$renderer_test_binary" > renderer-binary-before.sha256
+          cat renderer-binary-before.sha256
+          set +e
+          ios/scripts/swift-test.sh --skip-build --filter aPhoneWideBandDrawsInUnderEightMilliseconds > renderer-alone.log 2>&1
+          renderer_exit=$?
+          set -e
+          cat renderer-alone.log
+          shasum -a 256 "$renderer_test_binary" > renderer-binary-after.sha256
+          cat renderer-binary-after.sha256
+          cmp renderer-binary-before.sha256 renderer-binary-after.sha256
+          grep -Eq 'Test run with 1 tests? in 1 suites? (passed|failed)' renderer-alone.log
+          echo "Renderer-only command exit: $renderer_exit"
+          exit "$renderer_exit"
+
   interop:
     if: github.ref != 'refs/heads/codex/kit-350-refusal-receipts'
     runs-on: macos-26
