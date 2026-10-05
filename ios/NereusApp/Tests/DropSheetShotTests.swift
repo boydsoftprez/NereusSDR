@@ -195,6 +195,22 @@ struct DropSheetShotTests {
         let station = try FakeStation(additions: .all)
         let model = AppModel(mediaPeerFactory: station.mediaPeerFactory,
                              displaySettings: BandDisplaySettingsStore(defaults: defaults))
+        #if DEBUG
+        let receipts = ExtendedViewReceipts()
+        let receiptBand = model.main.band
+        let priorBefore = model.beforeMediaEventForTesting
+        let priorAfter = model.afterMediaEventForTesting
+        model.beforeMediaEventForTesting = { event in receipts.observe(event, stage: .before, band: receiptBand) }
+        model.afterMediaEventForTesting = { event in receipts.observe(event, stage: .after, band: receiptBand) }
+        defer {
+            model.beforeMediaEventForTesting = priorBefore
+            model.afterMediaEventForTesting = priorAfter
+            receipts.mark(.final, band: receiptBand)
+            receipts.noteMessages(station.messages)
+            receipts.printSummary()
+        }
+        receipts.mark(.installed, band: receiptBand)
+        #endif
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
                             transportFactory: station.transportFactory)
         #expect(await station.waitUntilLive())
@@ -207,16 +223,35 @@ struct DropSheetShotTests {
         let span = 8_000_000.0
         try await shoot("pan-extended-view-zoomed-out", sheet: nil, sideways: false, model: model) { bandDraw in
             band.requestView(TuneGestures.View(centerHz: 7_236_400, spanHz: span))
+            #if DEBUG
+            receipts.mark(.spanWaitEntry, band: band, requestedPixels: bandDraw.requestedPixels)
+            #endif
             #expect(await settle(seconds: 30) { band.spanHz == span })
+            #if DEBUG
+            receipts.mark(.spanWaitReturn, band: band, requestedPixels: bandDraw.requestedPixels)
+            receipts.mark(.burstEntry, band: band, requestedPixels: bandDraw.requestedPixels)
+            #endif
             station.sendDisplayRows(2_400)
+            #if DEBUG
+            receipts.mark(.burstReturn, band: band, requestedPixels: bandDraw.requestedPixels)
+            #endif
             // The rows arrive through the media client one at a time.
             for _ in 0..<400 where (band.state.frame?.encoderSequence ?? 0) < 2_400 {
                 try await Task.sleep(for: .milliseconds(50))
             }
+            #if DEBUG
+            receipts.mark(.waitEnd, band: band, requestedPixels: bandDraw.requestedPixels)
+            #endif
             #expect((band.state.frame?.encoderSequence ?? 0) >= 2_400)
             #expect(band.state.frame?.traceDbm.count == bandDraw.requestedPixels)
         }
+        #if DEBUG
+        receipts.mark(.beforeDisconnect, band: band)
+        #endif
         await model.disconnect()
+        #if DEBUG
+        receipts.mark(.afterDisconnect, band: band)
+        #endif
     }
 
     // MARK: Inside
@@ -303,3 +338,140 @@ private final class IdlePeer: MediaPeerConnection, @unchecked Sendable {
     func setExpectedAudioSsrc(_ ssrc: UInt32?) {}
     func close() {}
 }
+
+#if DEBUG
+// Diagnostic-only: synchronous counters on the existing MainActor hooks. Clock
+// reads occur at capped contexts/milestones, not on every one of the 2400 rows.
+@MainActor
+private final class ExtendedViewReceipts {
+    enum Stage: String { case before, after }
+    enum Phase: String {
+        case installed, spanWaitEntry, spanWaitReturn, burstEntry, burstReturn, waitEnd
+        case frame2400Before, frame2400After, beforeDisconnect, afterDisconnect, final
+    }
+    private struct Progress {
+        let endpoint: UInt32
+        let generation: UInt32
+        var beforeCount = 0
+        var afterCount = 0
+        var beforeMax: UInt32 = 0
+        var afterMax: UInt32 = 0
+        var before2400 = false
+        var after2400 = false
+    }
+    private let started = ContinuousClock.now
+    private var progress: [Progress] = []
+    private var contexts: [String] = []
+    private var milestones: [String] = []
+    private var operations: [String] = []
+    private var beforeFrames = 0
+    private var afterFrames = 0
+    private var beforeContexts = 0
+    private var afterContexts = 0
+    private var omittedGenerations = 0
+    private var omittedContexts = 0
+    private var omittedMilestones = 0
+    private var omittedOperations = 0
+    private var subscribeCount = 0
+    private var keyframeCount = 0
+
+    func observe(_ event: MediaControlEvent, stage: Stage, band: BandModel) {
+        switch event {
+        case .context(let context):
+            if stage == .before { beforeContexts += 1 } else { afterContexts += 1 }
+            guard contexts.count < 16 else { omittedContexts += 1; return }
+            contexts.append("context stage=\(stage.rawValue) elapsed=\(ContinuousClock.now - started) "
+                + "endpoint=\(context.endpointId) generation=\(context.contextGeneration) revision=\(context.revision) "
+                + "centreHz=\(context.centreHz) spanHz=\(context.spanHz) traceSamples=\(context.traceSamples) "
+                + "waterfallSamples=\(context.waterfallSamples) fps=\(context.fps) framesPerLine=\(context.framesPerLine) "
+                + "bandEndpoint=\(band.endpointId ?? 0) bandSpanHz=\(band.spanHz)")
+        case .displayFrame(let frame):
+            if stage == .before { beforeFrames += 1 } else { afterFrames += 1 }
+            let found = progress.firstIndex { $0.endpoint == frame.endpointId && $0.generation == frame.contextGeneration }
+            if found == nil {
+                guard progress.count < 16 else { omittedGenerations += 1; return }
+                progress.append(Progress(endpoint: frame.endpointId, generation: frame.contextGeneration))
+            }
+            let index = found ?? (progress.count - 1)
+            var reached2400 = false
+            if stage == .before {
+                progress[index].beforeCount += 1
+                progress[index].beforeMax = max(progress[index].beforeMax, frame.encoderSequence)
+                if frame.encoderSequence >= 2_400, !progress[index].before2400 {
+                    progress[index].before2400 = true
+                    reached2400 = true
+                }
+            } else {
+                progress[index].afterCount += 1
+                progress[index].afterMax = max(progress[index].afterMax, frame.encoderSequence)
+                if frame.encoderSequence >= 2_400, !progress[index].after2400 {
+                    progress[index].after2400 = true
+                    reached2400 = true
+                }
+            }
+            if reached2400 {
+                mark(stage == .before ? .frame2400Before : .frame2400After, band: band,
+                     eventGeneration: frame.contextGeneration, eventSequence: frame.encoderSequence)
+            }
+        default: break
+        }
+    }
+
+    func mark(_ phase: Phase, band: BandModel, requestedPixels: Int? = nil,
+              eventGeneration: UInt32? = nil, eventSequence: UInt32? = nil) {
+        let terminal = phase == .waitEnd || phase == .beforeDisconnect || phase == .afterDisconnect || phase == .final
+        guard milestones.count < (terminal ? 32 : 24) else { omittedMilestones += 1; return }
+        let frame = band.state.frame
+        let revision = band.frameRevision
+        var line = "milestone phase=\(phase.rawValue) elapsed=\(ContinuousClock.now - started) "
+            + "bandEndpoint=\(band.endpointId ?? 0) centreHz=\(band.centerHz) spanHz=\(band.spanHz) "
+            + "spanMatches=\(band.spanHz == 8_000_000) framePresent=\(frame != nil) committedSequence=\(frame?.encoderSequence ?? 0) "
+            + "committedGeneration=\(frame?.contextGeneration ?? 0) committedEndpoint=\(frame?.endpointId ?? 0) "
+            + "committedSerial=\(band.state.committedSerial) revisionPresent=\(revision != nil) frameRevision=\(revision ?? 0) "
+            + "traceSamples=\(frame?.traceDbm.count ?? 0) beforeFrames=\(beforeFrames) afterFrames=\(afterFrames) "
+            + "beforeContexts=\(beforeContexts) afterContexts=\(afterContexts)"
+        if let requestedPixels { line += " requestedPixels=\(requestedPixels)" }
+        if let eventGeneration { line += " eventGeneration=\(eventGeneration)" }
+        if let eventSequence { line += " eventSequence=\(eventSequence)" }
+        for item in progress {
+            line += " progress(endpoint=\(item.endpoint),generation=\(item.generation),beforeCount=\(item.beforeCount),"
+                + "beforeMax=\(item.beforeMax),afterCount=\(item.afterCount),afterMax=\(item.afterMax))"
+        }
+        milestones.append(line)
+    }
+
+    func noteMessages(_ messages: [LinkMessage]) {
+        for message in messages {
+            guard case .mediaControl(let control) = message else { continue }
+            let payload = control.payload
+            let operation: String
+            if payload["op"] == .string("subscribe") {
+                subscribeCount += 1
+                operation = "subscribe"
+            } else if payload["op"] == .string("keyframe") {
+                keyframeCount += 1
+                operation = "keyframe"
+            } else { continue }
+            guard operations.count < 32 else { omittedOperations += 1; continue }
+            func number(_ key: String) -> Double {
+                if case .number(let value)? = payload[key] { return value }
+                return -1
+            }
+            operations.append("operation op=\(operation) endpoint=\(number("endpointId")) revision=\(number("revision")) "
+                + "centreHz=\(number("centreHz")) spanHz=\(number("spanHz")) pixels=\(number("pixels")) "
+                + "fps=\(number("fps")) framesPerLine=\(number("framesPerLine"))")
+        }
+    }
+
+    func printSummary() {
+        var lines = ["EXTENDED_VIEW_RECEIPT beforeFrames=\(beforeFrames) afterFrames=\(afterFrames) "
+            + "beforeContexts=\(beforeContexts) afterContexts=\(afterContexts) subscribeCount=\(subscribeCount) "
+            + "keyframeCount=\(keyframeCount) omittedGenerationEvents=\(omittedGenerations) "
+            + "omittedContexts=\(omittedContexts) omittedMilestones=\(omittedMilestones) omittedOperations=\(omittedOperations)"]
+        lines.append(contentsOf: contexts)
+        lines.append(contentsOf: milestones)
+        lines.append(contentsOf: operations)
+        print(lines.joined(separator: "\n"))
+    }
+}
+#endif

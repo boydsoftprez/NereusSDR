@@ -57,6 +57,7 @@ concurrency:
 
 jobs:
   package:
+    if: github.ref != 'refs/heads/codex/extended-view-receipts'
     runs-on: macos-26
     name: NereusKit package tests
     steps:
@@ -71,6 +72,7 @@ jobs:
         run: ios/scripts/swift-test.sh
 
   interop:
+    if: github.ref != 'refs/heads/codex/extended-view-receipts'
     runs-on: macos-26
     name: Media and pairing interop with the Core
     steps:
@@ -134,7 +136,34 @@ jobs:
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO build
 
+      - name: Trace the extended-view case before the full app workload
+        id: focused_trace
+        # This branch is diagnostic only; the full ordinary test step below
+        # still runs and retains its own verdict even if this control fails.
+        if: github.ref == 'refs/heads/codex/extended-view-receipts'
+        run: |
+          set +e
+          xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            '-only-testing:NereusSDRTests/DropSheetShotTests/extendedViewZoomedOut()' \
+            test > extended-view-focused.log 2>&1
+          focused_exit=$?
+          set -e
+          cat extended-view-focused.log
+          grep -F 'EXTENDED_VIEW_RECEIPT' extended-view-focused.log
+          echo "Focused extended-view command exit: $focused_exit"
+          exit "$focused_exit"
+
+      - name: Retain the focused extended-view receipt
+        if: always() && github.ref == 'refs/heads/codex/extended-view-receipts'
+        uses: actions/upload-artifact@v4
+        with:
+          name: extended-view-focused-${{ github.run_id }}
+          path: extended-view-focused.log
+          if-no-files-found: error
+
       - name: Test on an iPhone 17 simulator
+        if: success() || (github.ref == 'refs/heads/codex/extended-view-receipts' && (steps.focused_trace.outcome == 'success' || steps.focused_trace.outcome == 'failure'))
         run: |
           xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
