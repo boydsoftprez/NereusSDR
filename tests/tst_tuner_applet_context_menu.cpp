@@ -31,6 +31,7 @@
 #include <QtTest>
 #include <QMenu>
 #include <QAction>
+#include <QPushButton>
 
 #include "gui/applets/TunerApplet.h"
 #include "core/TgxlConnection.h"
@@ -51,7 +52,45 @@ private slots:
     void receiveOnlyPermissionKeepsAccessoryCommandsDisabled();
     void remoteDisconnectMarksCachedTelemetryStale();
     void remoteConnectionActionNavigatesToPeripheralsAndLocalActionRemains();
+    void nativeModeReportsDriveButtonCycle();
 };
+
+void TunerAppletContextMenuTest::nativeModeReportsDriveButtonCycle()
+{
+    TgxlConnection connection;
+    TunerModel tuner;
+    tuner.bindConnection(&connection);
+    connection.injectLineForTesting(QStringLiteral("V1.2.17"));
+    TunerApplet applet(nullptr, &tuner);
+    QPushButton* const button = applet.operateButtonForTesting();
+    QVERIFY(button);
+    QSignalSpy frames(&connection, &TgxlConnection::testFrameWrittenForTesting);
+
+    connection.injectLineForTesting(QStringLiteral("S0|state state=1 bypass=0"));
+    QCOMPARE(button->text(), QStringLiteral("OPERATE"));
+    button->click();
+    QCOMPARE(frames.count(), 1);
+    QVERIFY(frames.at(0).first().toString().endsWith(QStringLiteral("|bypass set=1")));
+    QCOMPARE(button->text(), QStringLiteral("OPERATE"));
+
+    connection.injectLineForTesting(QStringLiteral("S0|state state=1 bypass=1"));
+    QCOMPARE(button->text(), QStringLiteral("BYPASS"));
+    button->click();
+    QCOMPARE(frames.count(), 2);
+    QVERIFY(frames.at(1).first().toString().endsWith(QStringLiteral("|operate set=0")));
+    QCOMPARE(button->text(), QStringLiteral("BYPASS"));
+
+    connection.injectLineForTesting(QStringLiteral("S0|state state=0 bypass=0"));
+    QCOMPARE(button->text(), QStringLiteral("STANDBY"));
+    button->click();
+    QCOMPARE(frames.count(), 4);
+    QVERIFY(frames.at(2).first().toString().endsWith(QStringLiteral("|bypass set=0")));
+    QVERIFY(frames.at(3).first().toString().endsWith(QStringLiteral("|operate set=1")));
+    QCOMPARE(button->text(), QStringLiteral("STANDBY"));
+
+    connection.injectLineForTesting(QStringLiteral("S0|state state=1 bypass=0"));
+    QCOMPARE(button->text(), QStringLiteral("OPERATE"));
+}
 
 // Triggering "Save current tune memory" must store C1=42, L=199, C2=88
 // for Band::Band20m / antenna 1 in the TuneMemoryStore.
