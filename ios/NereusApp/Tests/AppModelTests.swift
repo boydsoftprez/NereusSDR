@@ -489,6 +489,86 @@ struct AppModelTests {
         await model.disconnect()
     }
 
+    @Test("buffered OLD key answers released after NEW is keyed cannot control NEW")
+    func bufferedOldKeyAnswersAfterNewReadyCannotControlNew() async throws {
+        let old = try FakeStation(additions: [.remoteTx])
+        let newer = try FakeStation(additions: [.remoteTx])
+        let replies = HeldCommandReplies()
+        replies.hold("tx.key")
+        let model = AppModel()
+        await model.connect(to: old.endpoint, trust: old.trust, authenticator: old.authenticator,
+                            transportFactory: { endpoint, trust in
+            ReplyHoldingTransport(inner: old.transportFactory(endpoint, trust), replies: replies)
+        })
+        try #require(await settle { model.connection == .connected })
+        // Keep OLD alive so release exercises its retired transport callback.
+        let oldSession = try #require(model.session)
+        #expect(model.commandRouteForTesting.session === oldSession)
+        let clock = TestLinkClock()
+        let ptt = PttController(commands: TransmitCommandClient(commands: model.commands), clock: clock)
+        await ptt.logicalSessionChanged(1)
+        await ptt.linkChanged(up: true)
+        await ptt.tap()
+        try #require(await settle { replies.count("tx.key") == 3 })
+        let oldKeys = old.messages.compactMap(TransmitScreenTests.invoke).filter { $0.verb == "tx.key" }
+        #expect(oldKeys.count == 3)
+        let oldKeyId = try #require(oldKeys.first?.id)
+        #expect(oldKeys.allSatisfy { $0.id == oldKeyId })
+        #expect(old.keyed)
+        #expect(await ptt.state == .keying)
+
+        await ptt.linkChanged(up: false)
+        await model.disconnect()
+        #expect(await oldSession.state == .stopped)
+        await ptt.logicalSessionChanged(2)
+        await connect(model, to: newer)
+        try #require(await settle { model.connection == .connected })
+        let newSession = try #require(model.session)
+        #expect(newSession !== oldSession)
+        #expect(model.commandRouteForTesting.session === newSession)
+        await ptt.linkChanged(up: true)
+        await ptt.tap()
+        await ptt.settle()
+        #expect(await ptt.state.isKeyed)
+        #expect(newer.keyed)
+        let newKeys = newer.messages.compactMap(TransmitScreenTests.invoke).filter { $0.verb == "tx.key" }
+        #expect(newKeys.count == 3)
+        let newKeyId = try #require(newKeys.first?.id)
+        #expect(newKeyId != oldKeyId)
+        #expect(newKeys.allSatisfy { $0.id == newKeyId })
+        let newPtt = await ptt.snapshot
+        #expect(newPtt.logicalSessionOwner == 2)
+        #expect(newPtt.keyKind == .ptt)
+        // OLD's three actual accepted replies remain buffered through NEW readiness and keying.
+        #expect(replies.count("tx.key") == 3)
+        #expect(!newer.messages.contains { TransmitScreenTests.invoke($0)?.verb == "tx.unkey" })
+
+        await replies.release("tx.key")
+        #expect(replies.count("tx.key") == 0)
+        #expect(await oldSession.state == .stopped)
+        await ptt.settle()
+        let fresh = await model.commands.start("new.command", arguments: [], copies: 3, timeout: .seconds(1))
+        await fresh.sent()
+        let afterReply = newer.messages.compactMap(TransmitScreenTests.invoke)
+        #expect(afterReply.filter { $0.verb == "tx.key" }.count == 3)
+        #expect(afterReply.filter { $0.verb == "tx.key" }.allSatisfy { $0.id == newKeyId })
+        #expect(afterReply.filter { $0.verb == "tx.unkey" }.isEmpty)
+        #expect(afterReply.filter { $0.verb == "new.command" }.count == 3)
+        #expect(await ptt.snapshot == newPtt)
+        #expect(await ptt.state.isKeyed)
+        #expect(newer.keyed)
+
+        // A fresh NEW off still traverses the same app command route.
+        await ptt.tap()
+        await ptt.settle()
+        #expect(await ptt.state == .idle)
+        #expect(!newer.keyed)
+        #expect(newer.messages.filter { TransmitScreenTests.invoke($0)?.verb == "tx.unkey" }.count == 3)
+        await ptt.linkChanged(up: false)
+        #expect(clock.pendingDueTimes.isEmpty)
+        await model.disconnect()
+    }
+
     @Test("disconnect cancels a start suspended before media activation")
     func disconnectCancelsPendingMediaStart() async throws {
         let station = try FakeStation(fixture: "session-device-sign-in")

@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-04 — Project native bar rows into responsive viewport allocations by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Fit stacked button groups to compact shared rows by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Guard integer boundary projection while preserving legacy float
@@ -40,6 +42,14 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <limits>
 #include <memory>
 namespace NereusSDR {
+namespace {
+int preferredWidgetHeight(const QWidget* widget, int width)
+{
+    const int wrapped = widget->hasHeightForWidth() ? widget->heightForWidth(width) : -1;
+    const int preferred = wrapped >= 0 ? wrapped : widget->sizeHint().height();
+    return qBound(widget->minimumHeight(), preferred, widget->maximumHeight());
+}
+} // namespace
 ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, QWidget* parent)
     : QWidget(parent), m_registry(registry)
 {
@@ -68,9 +78,19 @@ QJsonObject ContainerContentHost::effectiveContext(const ContainerDocument& docu
 {
     QJsonObject context;
     // Preserve identity axes; binding/stack/display fields are per-item, not source.
-    for (const QString& key : {QStringLiteral("sessionId"), QStringLiteral("sliceId"), QStringLiteral("rxSource")}) {
+    for (const QString& key : {QStringLiteral("sessionId"), QStringLiteral("sliceId"), QStringLiteral("rxSource"), QStringLiteral("rxSourceMode")}) {
         if (document.config.contains(key)) { context[key] = document.config[key]; }
         if (entry.context.contains(key)) { context[key] = entry.context[key]; }
+    }
+    // Source choices override as one axis; session inheritance is independent.
+    if (entry.context.value("rxSourceMode").toString() != QStringLiteral("followSelectedRx")
+        && (entry.context.contains("sliceId") || entry.context.contains("rxSource"))) {
+        context.remove("rxSourceMode");
+    }
+    if (context.value("rxSourceMode").toString() == QStringLiteral("followSelectedRx")) {
+        context.remove("sliceId");
+        context.remove("rxSource");
+        return context;
     }
     if (entry.context.contains("rxSource") && !entry.context.contains("sliceId")) {
         context["sliceId"] = entry.context["rxSource"].toInt() - 1;
@@ -82,6 +102,11 @@ QJsonObject ContainerContentHost::effectiveContext(const ContainerDocument& docu
 }
 void ContainerContentHost::releaseViews()
 {
+    ++m_projectionEpoch;
+    m_projectionPending = false;
+    m_lastPreferredHeight = -1;
+    m_materialized = false;
+    m_body->setMinimumHeight(0);
     for (const auto& row : std::as_const(m_rows)) {
         if (row.widget && !row.item && !row.widget->property("singletonTypeId").toString().isEmpty()) {
             if (m_registry.singletonView(row.widget->property("singletonTypeId").toString()) == row.widget) { m_registry.parkSingleton(row.widget); }
@@ -113,6 +138,7 @@ void ContainerContentHost::setBannerMenu(QMenu* menu)
         auto* button=new QPushButton(QStringLiteral("☰"),m_body); button->setObjectName(QStringLiteral("containerAppletsMenu"));
         button->setMenu(menu); button->setFixedHeight(22); m_layout->insertWidget(0,button);
     }
+    scheduleStackProjection();
 }
 bool ContainerContentHost::needsReconcile(const ContainerDocument& document) const
 {
@@ -171,8 +197,10 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 label->setText(entry.name + QStringLiteral(" — ") + (!claim?QStringLiteral("duplicate singleton placement; original data retained"):
                     (m_registry.isAvailable(entry.typeId)?QStringLiteral("waiting for its live view"):m_registry.unavailableReason(entry.typeId))));
             }
-            if (row.widget) { row.widget->setVisible(view && claim ? row.effectiveVisible : entry.visible); }
+            row.presentationVisible = view && claim ? row.effectiveVisible : entry.visible;
+            if (row.widget) { row.widget->setVisible(row.presentationVisible); }
         }
+        scheduleStackProjection();
         updateGrips();
         emit reconciled();
         return;
@@ -228,6 +256,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
     for (const auto& entry : document.contents) {
         EntryRow row; row.entryId = entry.id; row.context = effectiveContext(document, entry);
         row.effectiveVisible = entry.visible && m_registry.isAvailable(entry.typeId);
+        row.presentationVisible = row.effectiveVisible;
         if (entry.typeId.startsWith("applet:")) {
             finishRun();
             QWidget* view = m_registry.singletonView(entry.typeId);
@@ -244,6 +273,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 auto* label = new QLabel(entry.name + QStringLiteral(" — ") +
                     (unique ? QStringLiteral("waiting for its live view") : QStringLiteral("duplicate singleton placement; original data retained")), m_body);
                 label->setWordWrap(true); row.widget = label; m_layout->addWidget(label);
+                row.presentationVisible = entry.visible;
                 label->setVisible(entry.visible);
             }
             m_rows.append(row); continue;
@@ -253,6 +283,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
             finishRun();
             auto* label = new QLabel(entry.name + QStringLiteral(" — ") + m_registry.unavailableReason(entry.typeId), m_body);
             label->setWordWrap(true); row.widget = label; m_layout->addWidget(label);
+            row.presentationVisible = entry.visible;
             label->setVisible(entry.visible); m_rows.append(row); continue;
         }
         if (run && document.layout == ContentLayout::VerticalStack && row.context != runContext) { finishRun(); }
@@ -267,7 +298,8 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         if (!item) {
             finishRun();
             auto* label = new QLabel(entry.name + QStringLiteral(" — unsupported configuration; original data retained"), this);
-            row.widget = label; m_layout->addWidget(label); m_rows.append(row); continue;
+            row.widget = label; m_layout->addWidget(label); row.presentationVisible = entry.visible;
+            label->setVisible(row.presentationVisible); m_rows.append(row); continue;
         }
         if (document.layout == ContentLayout::LegacyCanvas && row.context != runContext) {
             // One canvas cannot be sampled as two contexts by a context-targeted
@@ -286,7 +318,12 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
             run->setMinimumWidth(qMax(run->minimumWidth(),containerStackButtonMinimum(item).width()));
         }
         if (auto* face = qobject_cast<BarPresetItem*>(item)) {
-            height = face->preferredFaceHeight(); run->setMinimumWidth(qMax(run->minimumWidth(),face->minimumFaceSize().width()));
+            height = face->preferredFaceHeight();
+            // Stack bars follow the usable viewport width. Other layouts retain
+            // the face minimum, and controls/composites keep their own minima.
+            if (document.layout != ContentLayout::VerticalStack) {
+                run->setMinimumWidth(qMax(run->minimumWidth(),face->minimumFaceSize().width()));
+            }
         }
         if (auto* face = qobject_cast<CompositePresetItem*>(item)) {
             height = face->preferredFaceHeight(); run->setMinimumWidth(qMax(run->minimumWidth(),face->minimumFaceSize().width()));
@@ -298,6 +335,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
             }
         }
         row.widget = run; row.item = item; row.offset = runHeight; row.height = height;
+        row.baseHeight = height;
         runHeight += height; runRows.append(m_rows.size()); m_rows.append(row);
         run->addItem(item);
     }
@@ -305,6 +343,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
     m_generation = m_registry.generation(); m_materialized = true;
     int minimumWidth=0; for (auto* meter : meterSurfaces()) { minimumWidth=qMax(minimumWidth,meter->minimumWidth()); }
     setMinimumWidth(minimumWidth ? minimumWidth + (m_arrange ? 28 : 8) : 0);
+    scheduleStackProjection();
     updateGrips();
     emit reconciled();
 }
@@ -497,6 +536,101 @@ void ContainerContentHost::setArrangeController(ContainerArrangeController *cont
 {
     m_arrange = controller;
     m_layout->setContentsMargins(controller ? 20 : 0, 0, 8, 0);
+    if (!controller) {
+        for (const auto& grip : m_grips) {
+            if (grip) { grip->hide(); }
+        }
+    }
+    scheduleStackProjection();
+}
+void ContainerContentHost::scheduleStackProjection()
+{
+    if (!m_materialized || m_document.layout != ContentLayout::VerticalStack || m_projectionPending) {
+        return;
+    }
+    m_projectionPending = true;
+    const quint64 epoch = m_projectionEpoch;
+    QTimer::singleShot(0, this, [this, epoch] {
+        if (epoch != m_projectionEpoch) { return; }
+        m_projectionPending = false;
+        projectStackRows();
+    });
+}
+void ContainerContentHost::projectStackRows()
+{
+    if (!m_materialized || m_document.layout != ContentLayout::VerticalStack) { return; }
+    // Same logical reference width as PresetGeometry's native bar face. Saved
+    // rowHeight remains the calibration; only the allocated row is projected.
+    constexpr int kBarReferenceWidth = 260;
+    const QMargins margins = m_layout->contentsMargins();
+    const int usableWidth = qMax(0, m_scroll->viewport()->width() - margins.left() - margins.right());
+    if (usableWidth <= 0) { return; }
+    double responsiveBaseHeight = 0;
+    double fixedHeight = margins.top() + margins.bottom() + (m_bannerMenu ? 22 : 0);
+    QSet<QWidget*> fixedWidgets;
+    for (const auto& row : std::as_const(m_rows)) {
+        if (!row.widget || !row.presentationVisible) { continue; }
+        if (row.item) {
+            if (qobject_cast<BarPresetItem*>(row.item.data())) {
+                responsiveBaseHeight += row.baseHeight;
+            } else {
+                fixedHeight += row.baseHeight;
+            }
+        } else if (!fixedWidgets.contains(row.widget)) {
+            fixedWidgets.insert(row.widget);
+            fixedHeight += preferredWidgetHeight(row.widget, usableWidth);
+        }
+    }
+    if (responsiveBaseHeight <= 0) { return; }
+    const double widthRatio = double(usableWidth) / kBarReferenceWidth;
+    const double availableRatio = qMax(0.0, m_scroll->viewport()->height() - fixedHeight) / responsiveBaseHeight;
+    const double desiredScale = m_document.autoHeight ? widthRatio : qMin(widthRatio, qMax(1.0, availableRatio));
+    // Bound presentation arithmetic to Qt's representable widget extent even
+    // when an imported calibration is huge; the stored value remains intact.
+    const double scale = qMin(desiredScale, double(QWIDGETSIZE_MAX) / responsiveBaseHeight);
+    // Carry fractional rounding across all runs, so their combined allocation
+    // fits the available height without one rounding pixel per row/run causing
+    // a scrollbar to appear, shrink the width, then disappear again.
+    double responsiveOffset = 0;
+    int responsiveBottom = 0;
+    for (MeterWidget* meter : meterSurfaces()) {
+        int runHeight = 0;
+        QVector<EntryRow*> runRows;
+        bool changed = false;
+        for (auto& row : m_rows) {
+            if (row.widget != meter || !row.item) { continue; }
+            int height = row.baseHeight;
+            if (qobject_cast<BarPresetItem*>(row.item.data())) {
+                responsiveOffset += row.baseHeight * scale;
+                const int bottom = qRound(responsiveOffset);
+                height = qMax(1, bottom - responsiveBottom);
+                responsiveBottom += height;
+            }
+            changed = changed || row.offset != runHeight || row.height != height;
+            row.offset = runHeight;
+            row.height = height;
+            runHeight += height;
+            runRows.append(&row);
+        }
+        if (runHeight <= 0) { continue; }
+        if (changed || meter->minimumHeight() != runHeight || meter->maximumHeight() != runHeight) {
+            for (EntryRow* row : runRows) {
+                row->item->setRect(0, float(row->offset) / runHeight, 1, float(row->height) / runHeight);
+            }
+            meter->setFixedHeight(runHeight);
+            meter->invalidateGeometry();
+        }
+    }
+    // QScrollArea otherwise chooses the layout's minimum, which can reduce a
+    // borrowed Preferred widget or word-wrapped placeholder to zero height in
+    // a scrolling body. Reserve their measured hints without changing the views.
+    m_body->setMinimumHeight(qRound(qMin(double(QWIDGETSIZE_MAX), fixedHeight + responsiveBottom)));
+    updateGrips();
+    const int preferred = preferredContentHeight();
+    if (preferred != m_lastPreferredHeight) {
+        m_lastPreferredHeight = preferred;
+        emit preferredContentHeightChanged();
+    }
 }
 void ContainerContentHost::updateGrips()
 {
@@ -537,14 +671,17 @@ int ContainerContentHost::preferredContentHeight() const
 {
     if(m_document.layout==ContentLayout::FreeCanvas) {return m_canvas->contentHeight()+(m_bannerMenu?22:0);}
     int height = 0;
+    const QMargins margins = m_layout->contentsMargins();
+    const int usableWidth = qMax(0, m_scroll->viewport()->width() - margins.left() - margins.right());
     QSet<QWidget *> seen;
     for (const auto &row : m_rows) {
-        if (!row.widget || !row.effectiveVisible || seen.contains(row.widget)) {
+        const bool visible = m_document.layout == ContentLayout::VerticalStack ? row.presentationVisible : row.effectiveVisible;
+        if (!row.widget || !visible || seen.contains(row.widget)) {
             continue;
         }
         seen.insert(row.widget);
-        height += qBound(row.widget->minimumHeight(), row.widget->sizeHint().height(),
-                         row.widget->maximumHeight());
+        height += m_document.layout == ContentLayout::VerticalStack ? preferredWidgetHeight(row.widget, usableWidth)
+            : qBound(row.widget->minimumHeight(), row.widget->sizeHint().height(), row.widget->maximumHeight());
     }
     return qMax(24, height + (m_bannerMenu ? 22 : 0));
 }
@@ -635,6 +772,10 @@ void ContainerContentHost::addContentsMenu(QMenu &menu)
 }
 bool ContainerContentHost::eventFilter(QObject *watched, QEvent *event)
 {
+    if (event->type() == QEvent::Resize || event->type() == QEvent::LayoutRequest ||
+        event->type() == QEvent::Show) {
+        scheduleStackProjection();
+    }
     if (!m_arrange) {
         return QWidget::eventFilter(watched, event);
     }

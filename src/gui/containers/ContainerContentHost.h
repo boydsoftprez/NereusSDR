@@ -1,6 +1,8 @@
 #pragma once
 // no-port-check: NereusSDR-original committed mixed-content projection.
 // Modification history (NereusSDR):
+//   2026-10-04 — Runtime responsive stack projection by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include "ContainerDocument.h"
@@ -25,7 +27,9 @@ public:
         QPointer<MeterItem> item;
         QJsonObject context;
         int offset = 0, height = 0;
+        int baseHeight = 0; // configured calibration, never a projected size
         bool effectiveVisible = false;
+        bool presentationVisible = false; // includes a visible unavailable placeholder
     };
     explicit ContainerContentHost(ContainerContentRegistry& registry, QWidget* parent = nullptr);
     ~ContainerContentHost() override;
@@ -47,11 +51,14 @@ public:
 signals:
     void meterSurfaceReady(MeterWidget* meter, const QJsonObject& context);
     void reconciled();
+    void preferredContentHeightChanged();
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 private:
     void reconcileFreeCanvas(const ContainerDocument&);
     void updateGrips();
+    void scheduleStackProjection();
+    void projectStackRows();
     void addEntryActions(QMenu& menu, const QString& entryId);
     QPointer<ContainerArrangeController> m_arrange;
     QVector<QPointer<QWidget>> m_grips;
@@ -67,6 +74,9 @@ private:
     QScrollArea* m_scroll = nullptr;
     FreeCanvasSurface* m_canvas = nullptr;
     quint64 m_generation = 0;
+    quint64 m_projectionEpoch = 0;
+    bool m_projectionPending = false;
+    int m_lastPreferredHeight = -1;
     bool m_materialized = false;
     QPointer<QMenu> m_bannerMenu;
 };

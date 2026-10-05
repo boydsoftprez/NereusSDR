@@ -90,7 +90,7 @@ public struct SetupDescription: Equatable, Sendable {
         case edit(String)
         /// V15: the value another row of the page holds (a staged row).
         case control(String)
-        /// V15: a name the desktop asks for; never sent from the phone.
+        /// V15: a name supplied by the described prompt.
         case prompt
     }
     public struct Command: Equatable, Sendable {
@@ -200,6 +200,7 @@ public struct SetupDescription: Equatable, Sendable {
         case cfcProfile(CfcEditor)
         /// V14 lifecycle and band table, with V20 row availability.
         case paProfile(PaProfileBinding), paProfileGrid(PaProfileGrid)
+        case filterPresets(FilterPresetsBinding)
         /// A V13 to V16 source this phone does not run; the row is greyed.
         case unsupported(String)
     }
@@ -357,7 +358,7 @@ public struct SetupDescription: Equatable, Sendable {
 
     private static func parseControl(_ raw: [String: Any], id: String, label: String, version: Int, category: String) -> Control {
         if let required = raw["requiresDescriptionVersion"].flatMap(integer).map(Int.init), required >= 13 {
-            return parseModernControl(raw, id: id, label: label, version: version, required: required)
+            return parseModernControl(raw, id: id, label: label, category: category, version: version, required: required)
         }
         let rawKind = raw["kind"] as? String ?? ""
         let kind = Kind(rawValue: rawKind)

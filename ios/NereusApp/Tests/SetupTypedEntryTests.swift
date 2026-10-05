@@ -761,8 +761,9 @@ struct SetupTypedEntryTests {
         #expect(rig.invocations.count == 2)
     }
 
-    @Test("a native settings question hands presentation to the proxy until its next Core value", .timeLimit(.minutes(1)))
-    func nativeSettingsTextAwaitingConfirmationHandoff() async throws {
+    @Test("a native settings question restores submitted Core text and preserves newer unsent text",
+          .timeLimit(.minutes(1)), arguments: [false, true])
+    func nativeSettingsTextAwaitingConfirmationHandoff(newerUnsent: Bool) async throws {
         let rig = TextFieldRig()
         try await rig.connect()
         let row = SetupRowOutcomeOwner()
@@ -775,13 +776,22 @@ struct SetupTypedEntryTests {
         await ShotWait.laidOut(screen.window)
         try Self.returnOwnershipText(field)
         try #require(await Pages.settle { rig.sent.messages.count == 1 })
-        rig.settings.apply(.settingsReject(.init(key: TextFieldRig.key, properties: [], reason: SeveralDevices.waitingReason)))
+        if newerUnsent {
+            Self.typeNative("New unsent", on: field)
+            await ShotWait.laidOut(screen.window)
+        }
+        rig.settings.apply(.settingsReject(.init(key: TextFieldRig.key, properties: [
+            .init(name: TextFieldRig.key, value: .utf8("Core before")),
+        ], reason: SeveralDevices.waitingReason)))
         try #require(await Pages.settle { rig.dispatcher.openAdmissionCount == 0 })
         await ShotWait.laidOut(screen.window)
-        #expect(field.text == "Submitted" && row.problem == nil)
+        #expect(rig.settings.value(TextFieldRig.key) == "Core before")
+        #expect(field.text == (newerUnsent ? "New unsent" : "Core before") && row.problem == nil)
         rig.core("Question Core")
         await ShotWait.laidOut(screen.window)
-        #expect(field.text == "Question Core", "a local waiting phase must not hide the proxy's next Core value")
+        #expect(rig.settings.value(TextFieldRig.key) == "Question Core")
+        #expect(field.text == (newerUnsent ? "New unsent" : "Question Core"),
+                "submitted text follows the Core while a newer unsent edit keeps its own display")
         #expect(try screen.field() === field && row.problem == nil)
         await rig.clock.advance(by: 25_000)
         #expect(rig.sent.messages.count == 1)

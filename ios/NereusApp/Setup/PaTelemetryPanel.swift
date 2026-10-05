@@ -16,13 +16,15 @@ struct PaTelemetryPanel: View {
     @ObservedObject var dispatcher: SetupControlDispatcher
     /// The clock the Core's samples were stamped with on arrival.
     let now: () -> Int64
+    var paValues: PaValuesModel?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             let reading = dispatcher.telemetryReading(control, in: category, nowMilliseconds: now())
             VStack(alignment: .leading, spacing: 2) {
                 LabeledContent(control.label) {
-                    Text(Self.text(reading, control: control))
+                    let base = Self.text(reading, control: control)
+                    Text(paValues?.text(base: base, control: control, category: category) ?? base)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }

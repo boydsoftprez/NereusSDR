@@ -363,7 +363,7 @@ public final class SeveralDevicesClient: ObservableObject {
     // MARK: Inside
 
     /// The readback goes in as the Core's own word: a property write's
-    /// values into its object, a setting's value into the cache.
+    /// values into its object, a setting's value or absence into the cache.
     private func apply(_ readback: SeveralDevices.Readback) {
         switch readback {
         case .properties(let key, let values):
@@ -373,7 +373,9 @@ public final class SeveralDevicesClient: ObservableObject {
             store.apply(.delta(LinkMessage.Delta(key: key, properties: entries)))
         case .setting(let key, let value):
             settings.apply(.settingsValue(LinkMessage.SettingsValue(
-                key: key, origin: "", properties: [LinkMessage.PropertyEntry(name: key, value: .utf8(value))])))
+                key: key, origin: "", properties: value.map {
+                    [LinkMessage.PropertyEntry(name: key, value: .utf8($0))]
+                } ?? [])))
         }
     }
 }

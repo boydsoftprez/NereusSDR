@@ -10,6 +10,7 @@
 #include <QCheckBox>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QLayout>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QPaintEngine>
@@ -421,9 +422,24 @@ private slots:
                 if(d.contents[i].config["properties"].toObject().contains(key)) { QCOMPARE(captured.contents[i].config["properties"].toObject()[key],d.contents[i].config["properties"].toObject()[key]); }
             }
         }
+        auto* liveViewport = live.findChild<QScrollArea*>();
+        QVERIFY(liveViewport);
+        QVERIFY(liveViewport->widget()->layout());
+        const QMargins liveMargins = liveViewport->widget()->layout()->contentsMargins();
+        const int liveUsableWidth = liveViewport->viewport()->width() - liveMargins.left() - liveMargins.right();
         for(int i=0;i<live.entryRows().size();++i) {
             const auto& row=live.entryRows()[i]; const QRect boundary=live.entryBoundary(row.entryId);
-            qInfo()<<"STACK live"<<boundary; QVERIFY(qAbs(boundary.height()-meters[i]->height())<=1);
+            qInfo()<<"STACK live"<<boundary<<"usable viewport width"<<liveUsableWidth;
+            if (auto* bar = qobject_cast<BarPresetItem*>(row.item.data())) {
+                // The draft preview keeps configured row heights. Approved live
+                // auto-height bars instead use natural width-derived allocation;
+                // both retain the same document and renderer calibration.
+                QCOMPARE(meters[i]->height(), bar->preferredRowHeight());
+                const int naturalHeight = qRound(double(bar->preferredRowHeight()) * liveUsableWidth / 260);
+                QVERIFY(qAbs(boundary.height() - naturalHeight) <= 1); // cumulative rounding across rows
+            } else {
+                QVERIFY(qAbs(boundary.height()-meters[i]->height())<=1);
+            }
             if(i>0) { QVERIFY(boundary.top()>=live.entryBoundary(live.entryRows()[i-1].entryId).bottom()); }
             for(int binding:row.item->readingBindings()) { row.item->pushBindingValue(binding,-73); } row.item->advanceMeter(100);
             if(auto* face=qobject_cast<CompositePresetItem*>(row.item.data())) { face->setFrequency(14225000); face->setModeLabel("USB"); face->setBandLabel("20m"); face->setUnavailableText({}); }

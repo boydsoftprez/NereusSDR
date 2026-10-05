@@ -188,7 +188,7 @@ enum SetupTree {
     /// its place. A category the desktop does not have (a newer Core's)
     /// follows Diagnostics with the Core's name and mark.
     static func categories(described: [String: SetupDescription], order: [String],
-                           unreadable: [String: String], stackOffered: Bool = false) -> [Category] {
+                           unreadable: [String: String], stackOffered: Bool = false, showPaValues: Bool = true) -> [Category] {
         var result: [Category] = []
         for skeleton in skeleton {
             if skeleton.title == "About this app" {
@@ -197,6 +197,7 @@ enum SetupTree {
             let description = skeleton.coreId.flatMap { described[$0] }
             let pages = withStackPage(merged(skeleton, description: description), description: description,
                                       stackOffered: stackOffered)
+                .filter { showPaValues || $0.destination != .described(category: "pa", page: "pa.values") }
             let notice = skeleton.coreId.flatMap { unreadable[$0] }
             guard !pages.isEmpty || notice != nil else {
                 continue

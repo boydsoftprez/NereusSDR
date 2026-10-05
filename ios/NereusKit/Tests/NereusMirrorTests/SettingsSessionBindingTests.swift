@@ -175,10 +175,12 @@ private final class MutableSettingsRoute: @unchecked Sendable {
     }
 
     @Test func authorityRevokedWhileHeldRollsBackAndSendsNothing() async throws {
+        // Revocation is under test; only this test should advance the answer clock.
+        let clock = ManualLinkClock()
         let hold = SendHold()
         let route = MutableSettingsRoute()
         let proxy = SettingsProxyClient(send: route.send,
-                                        captureSender: { route.capture(hold: hold) }, clock: ManualLinkClock())
+                                        captureSender: { route.capture(hold: hold) }, clock: clock)
         authenticate(proxy, value: "600")
         let identity = try #require(proxy.currentSnapshotIdentity)
         let authority = CommandSendPermit()
@@ -192,6 +194,7 @@ private final class MutableSettingsRoute: @unchecked Sendable {
         #expect(await write.value == .notSent)
         #expect(proxy.value("CWPitch") == "600")
         #expect(route.destinations.isEmpty)
+        #expect(clock.now == 0 && clock.pendingDueTimes.isEmpty)
     }
 
     @Test func oldFailureCannotUndoNewSnapshotOrPendingValue() async throws {

@@ -83,6 +83,8 @@ final class AppModel: ObservableObject {
     /// The Setup pages the Core describes (R-IOS-18), for as long as it
     /// sends them in the current session.
     let setupFeed: SetupDescriptionFeed
+    /// The six PA Values readings and their extrema, on this viewer only.
+    let paValues: PaValuesModel
     /// Those pages as the Setup tree shows them, kept while the Core is away.
     lazy var setupPages = SetupDescribedPages(feed: setupFeed, store: mirror,
                                               hello: $stationHello.eraseToAnyPublisher())
@@ -113,12 +115,13 @@ final class AppModel: ObservableObject {
             }
             return range.map { SetupDescription.Range(minimum: $0.min, maximum: $0.max, step: $0.step) }
         }
+        paValues.configure(dispatcher)
         return dispatcher
     }()
     /// The clock the mirror stamps the Core's telemetry with, for its age.
     let mirrorClock: any LinkClock
     /// This phone's settings behind the described controls' phone keys.
-    private lazy var phoneSetupKeys = PhoneSetupKeys(main: main)
+    private lazy var phoneSetupKeys = PhoneSetupKeys(main: main, paValues: paValues)
     /// Where Setup's buttons that open another page lead; set by the root
     /// view, which owns the tabs.
     var phoneNavigation: PhoneNavigation? {
@@ -261,6 +264,7 @@ final class AppModel: ObservableObject {
                                      spots: spots, slices: main.slices, catalogFeed: main.catalogFeed,
                                      phone: phoneSettings)
         setupFeed = SetupDescriptionFeed(store: mirror)
+        paValues = PaValuesModel(store: mirror, feed: setupFeed, now: { mirrorClock.nowMilliseconds })
         // The audio quality this phone asks for, and the microphone's (R-IOS-09).
         audioQuality = AudioQualityModel(settings: phoneSettings, mirror: mirror, catalogFeed: main.catalogFeed,
                                          media: media, cellular: longSession.$cellular.eraseToAnyPublisher())
@@ -313,6 +317,7 @@ final class AppModel: ObservableObject {
                 self?.connectionPerformance.playbackStateWillChange(newState)
             }
             .store(in: &watches)
+        main.transmit.bindProfileFlow(setupControls.txProfiles)
         wireTransmitAudio()
         wireDialHaptics()
     }
@@ -1057,6 +1062,7 @@ final class AppModel: ObservableObject {
             main.take.sessionChanged(state)
         }
         mirror.handle(event)
+        paValues.handle(event)
         if case .message(let message) = event, Self.changesMoveSafety(message) {
             safetyMirrorChanged?(expected)
         }

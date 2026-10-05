@@ -234,6 +234,167 @@ import Testing
         #expect(settings.value("DspOptionsFilterSizeRx") == "4096")
     }
 
+    @Test(arguments: [false, true])
+    func aWaitingSettingsRollbackKeepsTheQuestionForProceedOrCancel(cancel: Bool) async throws {
+        let clock = ManualLinkClock()
+        let (handoffs, handedOff) = AsyncStream<LinkMessage>.makeStream(bufferingPolicy: .unbounded)
+        let sender: MirrorStore.Sender = { [sent] message in
+            try await sent.sender(message)
+            handedOff.yield(message)
+        }
+        let settings = SettingsProxyClient(origin: "phone", send: sender, clock: clock)
+        settings.handle(.stateChanged(.receivingSnapshot))
+        settings.apply(FixtureReplay.accepted)
+        settings.apply(.settingsSnapshot(.init(properties: [
+            .init(name: "DspOptionsFilterSizeRx", value: .utf8("2048")),
+        ])))
+        settings.handle(.stateChanged(.ready))
+        let commands = CommandClient(clock: clock, send: sender)
+        let devices = await client(MirrorStore(send: sender, clock: clock), settings, commands)
+        var messages = handoffs.makeAsyncIterator()
+        let write = Task { await settings.write("DspOptionsFilterSizeRx", "4096") }
+        let initial = await messages.next()
+        #expect(initial == .settingsWrite(.init(key: "DspOptionsFilterSizeRx", origin: "phone",
+                                               properties: [.init(name: "DspOptionsFilterSizeRx", value: .utf8("4096"))])))
+        #expect(settings.value("DspOptionsFilterSizeRx") == "4096")
+        settings.apply(.settingsReject(.init(key: "DspOptionsFilterSizeRx", properties: [
+            .init(name: "DspOptionsFilterSizeRx", value: .utf8("2048")),
+        ], reason: SeveralDevices.waitingReason)))
+        #expect(await write.value == .rejected(reason: SeveralDevices.waitingReason))
+        #expect(settings.value("DspOptionsFilterSizeRx") == "2048")
+        devices.receive(.confirmRequest(.init(
+            id: 41, kind: "sharedSetting", reason: SeveralDevices.waitingReason,
+            affected: [.object(["deviceId": .string("d1"), "deviceName": .string("Other device 1"),
+                                "deviceShortName": .string("Tablet B"), "state": .string("listening"),
+                                "holdsTransmit": .bool(false), "slices": .array([])])],
+            expiresInMs: 60000,
+            change: ["label": .string("Receive filter size"), "from": .string("2048"), "to": .string("4096")],
+            forSettingsKey: "DspOptionsFilterSizeRx")))
+        let question = try #require(devices.question)
+        #expect(question.id == 41 && question.kind == .sharedSetting)
+        #expect(question.forSettingsKey == "DspOptionsFilterSizeRx")
+        #expect(question.change == SeveralDevices.Change(label: "Receive filter size", from: "2048", to: "4096"))
+        #expect(settings.value("DspOptionsFilterSizeRx") == "2048")
+        #expect(sent.count == 1 && clock.now == 0 && clock.pendingDueTimes.isEmpty)
+        if cancel {
+            devices.cancel()
+            #expect(devices.question == nil && devices.answering == .idle)
+            let cancelled = await messages.next()
+            #expect(cancelled == .commandInvoke(.init(verb: "confirm.cancel", id: 1, args: [
+                .init(name: "id", value: .i64(41)),
+            ])))
+            #expect(settings.value("DspOptionsFilterSizeRx") == "2048")
+            await commands.receive(Self.answer("confirm.cancel", id: 1, accepted: true))
+        } else {
+            let proceed = Task { await devices.proceed() }
+            let invoked = await messages.next()
+            #expect(invoked == .commandInvoke(.init(verb: "confirm.proceed", id: 1, args: [
+                .init(name: "id", value: .i64(41)), .init(name: "choice", value: .i64(-1)),
+            ])))
+            #expect(devices.question == question && devices.answering == .proceeding)
+            #expect(settings.value("DspOptionsFilterSizeRx") == "2048")
+            await commands.receive(Self.answer("confirm.proceed", id: 1, accepted: true, values: [
+                .init(name: "settingsKey", value: .utf8("DspOptionsFilterSizeRx")),
+                .init(name: "value", value: .utf8("4096")),
+            ]))
+            #expect(await proceed.value)
+            #expect(devices.question == nil && devices.answering == .idle)
+            #expect(settings.value("DspOptionsFilterSizeRx") == "4096")
+        }
+        #expect(sent.count == 2, "one settings envelope and one answer, with no settings resend")
+        #expect(clock.now == 0 && clock.pendingDueTimes.isEmpty)
+    }
+
+    @Test(arguments: [0, 1, 2, 3, 4, 5])
+    func settingsProceedReadbackDistinguishesRemovalFromPresentAndMalformedValues(caseIndex: Int) {
+        let cases: [(accepted: Bool, entries: [LinkMessage.PropertyEntry], reads: Bool, value: String?)] = [
+            (true, [.init(name: "settingsKey", value: .utf8("DspOptionsFilterSizeRx"))], true, nil),
+            (true, [.init(name: "settingsKey", value: .utf8("DspOptionsFilterSizeRx")),
+                    .init(name: "value", value: .utf8(""))], true, ""),
+            (true, [.init(name: "settingsKey", value: .utf8("DspOptionsFilterSizeRx")),
+                    .init(name: "value", value: .utf8("4096"))], true, "4096"),
+            (true, [.init(name: "settingsKey", value: .utf8("DspOptionsFilterSizeRx")),
+                    .init(name: "value", value: .i64(4096))], false, nil),
+            (false, [.init(name: "settingsKey", value: .utf8("DspOptionsFilterSizeRx"))], false, nil),
+            (true, [.init(name: "value", value: .utf8("4096"))], false, nil),
+        ]
+        let example = cases[caseIndex]
+        let result = CommandResult(.init(verb: "confirm.proceed", id: 1, accepted: example.accepted,
+                                         reason: "", affected: [], values: example.entries))
+        let readback = SeveralDevices.Readback(result)
+        #expect((readback != nil) == example.reads)
+        if example.reads {
+            guard case .setting(let key, let value)? = readback else {
+                Issue.record("the accepted setting answer did not produce its readback")
+                return
+            }
+            let carried: String? = value
+            #expect(key == "DspOptionsFilterSizeRx" && carried == example.value)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func aRemovalProceedReadbackSettlesWithoutAnEchoOrResend(newerWrite: Bool) async throws {
+        let clock = ManualLinkClock()
+        let (handoffs, handedOff) = AsyncStream<LinkMessage>.makeStream(bufferingPolicy: .unbounded)
+        let sender: MirrorStore.Sender = { [sent] message in
+            try await sent.sender(message)
+            handedOff.yield(message)
+        }
+        let settings = SettingsProxyClient(origin: "phone", send: sender, clock: clock)
+        settings.handle(.stateChanged(.receivingSnapshot))
+        settings.apply(FixtureReplay.accepted)
+        settings.apply(.settingsSnapshot(.init(properties: [
+            .init(name: "DspOptionsFilterSizeRx", value: .utf8("2048")),
+        ])))
+        settings.handle(.stateChanged(.ready))
+        let commands = CommandClient(clock: clock, send: sender)
+        let devices = await client(MirrorStore(send: sender, clock: clock), settings, commands)
+        var messages = handoffs.makeAsyncIterator()
+        devices.receive(.confirmRequest(.init(
+            id: 42, kind: "sharedSetting", reason: SeveralDevices.waitingReason,
+            affected: [.object(["deviceId": .string("d1"), "deviceName": .string("Other device 1"),
+                                "deviceShortName": .string("Tablet B"), "state": .string("listening"),
+                                "holdsTransmit": .bool(false), "slices": .array([])])],
+            expiresInMs: 60000,
+            change: ["label": .string("Receive filter size"), "from": .string("2048"), "to": .string("Default")],
+            forSettingsKey: "DspOptionsFilterSizeRx")))
+        let question = try #require(devices.question)
+        let proceed = Task { await devices.proceed() }
+        let invoked = await messages.next()
+        #expect(invoked == .commandInvoke(.init(verb: "confirm.proceed", id: 1, args: [
+            .init(name: "id", value: .i64(42)), .init(name: "choice", value: .i64(-1)),
+        ])))
+        #expect(devices.question == question && devices.answering == .proceeding)
+        #expect(settings.value("DspOptionsFilterSizeRx") == "2048")
+        var write: Task<SettingsWriteOutcome, Never>?
+        if newerWrite {
+            write = Task { await settings.write("DspOptionsFilterSizeRx", "4096") }
+            let written = await messages.next()
+            #expect(written == .settingsWrite(.init(key: "DspOptionsFilterSizeRx", origin: "phone",
+                                                   properties: [.init(name: "DspOptionsFilterSizeRx", value: .utf8("4096"))])))
+            #expect(settings.value("DspOptionsFilterSizeRx") == "4096")
+        }
+        // Isolate the proceed readback: no ordinary absent settings.value is fed.
+        await commands.receive(Self.answer("confirm.proceed", id: 1, accepted: true, values: [
+            .init(name: "settingsKey", value: .utf8("DspOptionsFilterSizeRx")),
+        ]))
+        #expect(await proceed.value)
+        #expect(settings.value("DspOptionsFilterSizeRx") == (newerWrite ? "4096" : nil))
+        #expect(devices.question == nil && devices.answering == .idle)
+        #expect(await commands.waitingCount == 0)
+        if let write {
+            #expect(clock.pendingDueTimes.count == 1, "the newer settings write still awaits its own answer")
+            settings.apply(.settingsValue(.init(key: "DspOptionsFilterSizeRx", origin: "phone", properties: [
+                .init(name: "DspOptionsFilterSizeRx", value: .utf8("4096")),
+            ])))
+            #expect(await write.value == .accepted)
+            #expect(settings.value("DspOptionsFilterSizeRx") == "4096")
+        }
+        #expect(sent.count == (newerWrite ? 2 : 1), "proceed and the optional newer write, with no resend")
+        #expect(clock.now == 0 && clock.pendingDueTimes.isEmpty)
+    }
+
     @Test func aTakeSendsTheChosenReceiversChoice() async throws {
         let store = MirrorStore(send: sent.sender)
         let commands = CommandClient(send: sent.sender)

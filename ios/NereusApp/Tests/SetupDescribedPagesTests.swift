@@ -1013,7 +1013,7 @@ struct SetupDescribedPagesTests {
     /// The Filter Presets table's own reason, as the phone words it.
     static let filterPresetsReason = "Filter presets are edited on the desktop."
 
-    @Test("the Filter Presets table says why once: its own reason")
+    @Test("the supported Filter Presets table uses the Core catalogue or says why once")
     func filterPresetsSaysWhyOnce() async throws {
         let rig = try await Self.connected()
         defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
@@ -1023,7 +1023,10 @@ struct SetupDescribedPagesTests {
         #expect(await settle { pages.isCurrent && pages.categories["dsp"]?.version == 15 })
         let presets = try #require(pages.categories["dsp"]?.pages.first { $0.id == "dsp.filterPresets" }?
             .sections.flatMap(\.controls).first { $0.kind == .table })
-        #expect(rig.app.setupControls.state(of: presets, in: "dsp").reason == Self.filterPresetsReason)
+        #expect(presets.metadataIssue == nil && presets.modern?.pendingReason == nil)
+        #expect(DescribedControl.row(for: presets) == .panel)
+        let state = rig.app.setupControls.state(of: presets, in: "dsp")
+        #expect(state.reason == (rig.app.setupControls.filterPresets.rows.isEmpty ? "Waiting for the Core to send the limits for this setting." : nil))
         // One line: the row's own reason; the tables' standard words only for a table without one.
         #expect(DescribedControl.tableReason(Self.filterPresetsReason) == Self.filterPresetsReason)
         #expect(DescribedControl.tableReason(nil) == SetupControlDispatcher.notOnThisPhoneReason)

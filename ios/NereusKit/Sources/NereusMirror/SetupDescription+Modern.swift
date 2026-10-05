@@ -119,6 +119,8 @@ extension SetupDescription {
         public var radioSettingDependency: RadioSettingDependency?
         /// A question is asked only when the row is set to this value.
         public var confirmWhen: Literal?
+        public var profilePrompt: ProfilePrompt?
+        public var profileUnsavedChanges: ProfileUnsavedChanges?
         public var pendingReason: String?
 
         public init() {}
@@ -133,13 +135,14 @@ extension SetupDescription {
     static let noChoicesReason = "The Core sent no choices for this setting."
     static let noLimitsReason = "The Core sent no limits for this setting."
 
-    static func parseModernControl(_ raw: [String: Any], id: String, label: String, version: Int,
+    static func parseModernControl(_ raw: [String: Any], id: String, label: String, category: String, version: Int,
                                    required: Int?) -> Control {
         var modern = Modern()
         var issue: String?
         func reject(_ reason: String) { if issue == nil { issue = reason } }
         func pending(_ reason: String) { if modern.pendingReason == nil { modern.pendingReason = reason } }
 
+        if id == "dsp.filterPresets.mode", !filterPresetsModeValid(raw, category: category, version: version) { reject("Invalid Filter Presets mode metadata.") }
         if let required, required > min(version, highestVersion) { reject("Unsupported Setup control version.") }
         let rawKind = raw["kind"] as? String ?? ""
         let kind = Kind(rawValue: rawKind)
@@ -274,7 +277,13 @@ extension SetupDescription {
                     binding = .unsupported(key); pending(desktopOnlyReason)
                 }
             case "filterPresets":
-                binding = .unsupported(key); pending(filterPresetsReason)
+                if let editor = filterPresetsBinding(data, raw: raw, id: id, category: category, version: version) {
+                    binding = .filterPresets(editor)
+                } else if id.hasPrefix("dsp.filterPresets.") {
+                    reject("Invalid Filter Presets metadata.")
+                } else {
+                    binding = .unsupported(key); pending(filterPresetsReason)
+                }
             case "paProfile":
                 if paMetadataValid(raw, version: version, grid: false) {
                     binding = paProfileBinding(data, raw: raw, id: id, kind: kind).map(Binding.paProfile)
@@ -292,14 +301,25 @@ extension SetupDescription {
         } else {
             reject("Invalid Setup binding or argument source.")
         }
-        if case .command(let value)? = binding, value.arguments.values.contains(.prompt) { pending(promptReason) }
-        if raw["prompt"] != nil {
-            if case .paProfile? = binding {} else { pending(promptReason) }
+        if id == "audio.txProfile.save", category == "audio", version >= 15, kind == .button,
+           case .command(let command)? = binding, command.arguments == ["name": .prompt],
+           let prompt = profilePrompt(raw["prompt"]) {
+            modern.profilePrompt = prompt
         }
-        if raw["unsavedChanges"] != nil { pending(unsavedChangesReason) }
+        if id == "audio.txProfile.activeProfile", category == "audio", version >= 15, kind == .choice,
+           case .command(let command)? = binding, command.valueProperty != nil,
+           command.arguments == ["name": .controlValue], modern.choicesFrom != nil,
+           let unsaved = profileUnsavedChanges(raw["unsavedChanges"]) {
+            modern.profileUnsavedChanges = unsaved
+        }
+        if case .command(let value)? = binding, value.arguments.values.contains(.prompt), modern.profilePrompt == nil { pending(promptReason) }
+        if raw["prompt"] != nil {
+            if case .paProfile? = binding {} else if modern.profilePrompt == nil { pending(promptReason) }
+        }
+        if raw["unsavedChanges"] != nil, modern.profileUnsavedChanges == nil { pending(unsavedChangesReason) }
         if kind == .table {
             switch binding {
-            case .unsupported?, .cfcProfile?, .paProfileGrid?: break
+            case .unsupported?, .cfcProfile?, .paProfileGrid?, .filterPresets?: break
             default: pending(desktopOnlyReason)
             }
         }

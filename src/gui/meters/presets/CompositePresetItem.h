@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-04 — Selected RX source identity and RX-only presentation reset by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Independent history sampling cadence by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
@@ -73,6 +75,10 @@ public:
     void setBindingSupport(int,BindingSupport) override;
     bool advanceMeter(qint64) override;
     void resetForTxTransition(bool) override;
+    void resetRxSource() override;
+#ifdef NEREUS_BUILD_TESTS
+    int historySampleCountForTest() const { return m_samples.size(); }
+#endif
     void setPowerScale(int) override;
     void setAboveS9Frequency(bool above) { if(m_aboveS9!=above) { m_aboveS9=above; markPresentationDirty(true); } }
     void markPresentationDirty(bool staticLayers=false) { m_presentationDirty=true; m_staticPresentationDirty=m_staticPresentationDirty || staticLayers; }

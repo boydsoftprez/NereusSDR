@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Follow responsive content height in auto-height containers by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-04 — Preserve pending container placement and initialize overlay
+//                 anchor baselines by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Suppress shutdown presentation reconciliation while retaining
 //                 persistence by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
@@ -170,6 +174,9 @@ ContainerWorkspaceStore* ContainerManager::workspaceStore() const { return m_sto
 ContainerContentRegistry* ContainerManager::contentRegistry() const { return m_registry; }
 void ContainerManager::setWorkspaceAdapter(ContainerWorkspaceStore* store, ContainerContentRegistry* registry)
 {
+    m_geometryCommit.stop();
+    m_pendingGeometry.clear();
+    m_documentGeometry.clear();
     if (m_store) { disconnect(m_store, nullptr, this, nullptr); }
     if (m_registry) { disconnect(m_registry, nullptr, this, nullptr); }
     if (m_arrange) {
@@ -254,6 +261,17 @@ bool ContainerManager::eventFilter(QObject* watched, QEvent* event)
     if (m_store && !m_reconciling && m_storageError.isEmpty()
         && (event->type() == QEvent::Move || event->type() == QEvent::Resize)) {
         if (qobject_cast<ContainerWidget*>(watched) || qobject_cast<FloatingContainer*>(watched)) {
+            ContainerWidget* changed = qobject_cast<ContainerWidget*>(watched);
+            if (!changed) {
+                changed = container(qobject_cast<FloatingContainer*>(watched)->id());
+            }
+            if (changed) {
+                m_pendingGeometry.insert(changed->id());
+                if (changed->isOverlayDocked() && m_dockParent) {
+                    changed->storeLocation();
+                    changed->setDelta(QPoint(m_dockParent->width(), m_dockParent->height()));
+                }
+            }
             m_geometryCommit.start();
         }
     }
@@ -291,10 +309,25 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
     for (const QString& id : m_containers.keys()) {
         if (!ids.contains(id)) { destroyContainer(id); }
     }
+    m_pendingGeometry.intersect(ids);
+    for (const QString& id : m_documentGeometry.keys()) {
+        if (!ids.contains(id)) { m_documentGeometry.remove(id); }
+    }
     m_panelContainerId = document.mainContainerId;
     for (const auto& d : document.containers) {
         auto* c = container(d.id);
         const bool fresh = !c;
+        // Runtime content refresh and unrelated document edits must not replay
+        // stale placement over an uncommitted move. Explicit placement/mode
+        // edits remain authoritative, and no storage commit occurs here.
+        const bool preserveGeometry = c && m_storageError.isEmpty() && c->dockMode() == d.dockMode
+            && (m_pendingGeometry.contains(d.id) || c->geometryInteractionActive())
+            && m_documentGeometry.contains(d.id) && m_documentGeometry.value(d.id) == d.geometry;
+        if (preserveGeometry) {
+            m_pendingGeometry.insert(d.id);
+        } else {
+            m_pendingGeometry.remove(d.id);
+        }
         if (!c) {
             c = new ContainerWidget(); c->setId(d.id);
             c->setRxSource(d.config.value("rxSource").toInt(1));
@@ -353,7 +386,9 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             const QByteArray geometry=QByteArray::fromHex(d.config.value("legacyAppletFloatGeometry").toString().toLatin1());
             if (!geometry.isEmpty()) { form->QWidget::restoreGeometry(geometry); }
         }
-        if (d.geometry.isValid()) { (d.dockMode == DockMode::Floating ? static_cast<QWidget*>(form) : c)->setGeometry(d.geometry); }
+        if (!preserveGeometry) {
+            if (d.geometry.isValid()) { (d.dockMode == DockMode::Floating ? static_cast<QWidget*>(form) : c)->setGeometry(d.geometry); }
+        }
         if (!host) {
             host = new ContainerContentHost(*m_registry, c);
             connect(host, &ContainerContentHost::meterSurfaceReady, this, [this, c](MeterWidget* meter, const QJsonObject& context) {
@@ -364,6 +399,38 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                 emit meterReadyForPolling(meter);
             });
             connect(host, &ContainerContentHost::reconciled, this, &ContainerManager::workspaceReconciled);
+            connect(host, &ContainerContentHost::preferredContentHeightChanged, this,
+                    [this, id = d.id, content = QPointer<ContainerContentHost>(host),
+                     view = QPointer<ContainerWidget>(c), shell = QPointer<FloatingContainer>(form)] {
+                if (!m_store || m_reconciling || GuiApplication::applicationQuitInProgress()
+                    || !content || !view || container(id) != view.data()
+                    || contentHost(id) != content.data()) {
+                    return;
+                }
+                const WorkspaceDocument latest = m_store->snapshot();
+                const auto placement = std::find_if(latest.containers.cbegin(), latest.containers.cend(),
+                    [&id](const ContainerDocument& value) { return value.id == id; });
+                if (placement == latest.containers.cend() || !placement->autoHeight
+                    || placement->dockMode == DockMode::PanelDocked) {
+                    return;
+                }
+                QWidget* target = placement->dockMode == DockMode::Floating
+                    ? static_cast<QWidget*>(shell.data()) : view.data();
+                if (!target) {
+                    return;
+                }
+                int height = content->preferredContentHeight() + ContainerWidget::kTitleBarHeight;
+                if (placement->layout == ContentLayout::FreeCanvas && target->screen()) {
+                    height = qMin(height, target->screen()->availableGeometry().height());
+                }
+                const QSize wanted = QSize(qMax(target->width(), view->minimumSizeHint().width()), height)
+                    .expandedTo(target->minimumSize()).boundedTo(target->maximumSize());
+                if (target->size() != wanted) {
+                    // Width changes settle through the host's viewport layout;
+                    // use live placement rather than replaying saved geometry.
+                    target->resize(wanted);
+                }
+            }, Qt::QueuedConnection);
             c->setContent(host);
         }
         host->setArrangeController(m_arrange);
@@ -381,6 +448,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                 c->geometry(), m_dockParent->rect(),
                 c->minimumSizeHint().expandedTo(QSize(260, 24))));
             c->storeLocation();
+            c->setDelta(QPoint(m_dockParent->width(), m_dockParent->height()));
         }
         if (d.dockMode == DockMode::Floating) {
             c->show();
@@ -389,11 +457,17 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             c->setVisible(effectiveVisible(d));
         }
         if (fresh) { emit containerAdded(d.id); }
+        m_documentGeometry[d.id] = d.geometry;
     }
     if (m_splitter) {
         for (auto *handle : m_splitter->findChildren<QSplitterHandle *>()) {
             handle->installEventFilter(this);
         }
+    }
+    const bool interactionActive = std::any_of(m_containers.cbegin(), m_containers.cend(),
+        [](ContainerWidget* c) { return c->geometryInteractionActive(); });
+    if (!m_pendingGeometry.isEmpty() && !interactionActive && m_storageError.isEmpty()) {
+        m_geometryCommit.start();
     }
     emit workspaceReconciled();
 }
@@ -419,8 +493,13 @@ void ContainerManager::wireContainer(ContainerWidget* container)
 {
     connect(container, &ContainerWidget::geometryInteractionStarted, this,
             [this] { m_geometryCommit.stop(); });
-    connect(container, &ContainerWidget::geometryInteractionFinished, this, [this] {
+    connect(container, &ContainerWidget::geometryInteractionFinished, this, [this, container] {
         if (m_store && !m_reconciling) {
+            m_pendingGeometry.insert(container->id());
+            if (container->isOverlayDocked() && m_dockParent) {
+                container->storeLocation();
+                container->setDelta(QPoint(m_dockParent->width(), m_dockParent->height()));
+            }
             m_geometryCommit.start();
         }
     });
@@ -941,6 +1020,10 @@ void ContainerManager::saveState()
 {
     if (m_store) {
         if (m_reconciling || !m_store->loadError().isEmpty()) { return; }
+        // Publication projects the final captured geometry; rejection restores
+        // committed placement rather than preserving the rejected live draft.
+        m_geometryCommit.stop();
+        m_pendingGeometry.clear();
         WorkspaceDocument document = m_store->snapshot();
         for (auto& d : document.containers) {
             auto* c = container(d.id); if (!c) { continue; }

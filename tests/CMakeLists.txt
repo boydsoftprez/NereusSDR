@@ -567,6 +567,10 @@ nereus_add_test(tst_container_legacy_import)
 nereus_add_test(tst_container_persistence)
 nereus_add_test(tst_container_arrangement)
 nereus_add_test(tst_container_application_quit)
+nereus_add_test(tst_container_position_restore)
+nereus_add_test(tst_container_follow_selected_rx)
+nereus_add_test(tst_container_stack_responsive)
+nereus_add_test(tst_container_preview_scroll_native NATIVE_WINDOW)
 nereus_add_test(tst_container_workspace_integration)
 nereus_add_test(tst_container_meter_native NATIVE_WINDOW)
 nereus_add_test(tst_container_chrome NATIVE_WINDOW)
@@ -2218,7 +2222,7 @@ nereus_add_test(tst_panadapter_applet_slice_assoc)
 # Structurally ported from AetherSDR src/gui/PanadapterStack.{h,cpp}
 # [@0cd4559]; applyLayout / floatPanadapter / rebuildSplitters stubbed for
 # Tasks 4-8.  See docs/attribution/aethersdr-reconciliation.md Bucket A.
-nereus_add_test(tst_panadapter_stack_layouts)
+nereus_add_test(tst_panadapter_stack_layouts fakes/LoopbackTransport.cpp)
 
 # ── Phase 3F Sub-Epic E Task 1: SpectrumStatusOverlay widget ────────────────
 # Top-right per-pan overlay widget for the Phase 3F multi-slice UI atlas.

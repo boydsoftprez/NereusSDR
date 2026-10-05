@@ -284,7 +284,7 @@ let package = Package(
         .testTarget(
             name: "NereusMirrorTests",
             dependencies: ["NereusMirror", "NereusModels", "NereusLink", "LinkTestSupport", "LinkSessionTestSupport"],
-            resources: [.copy("Fixtures/DiversityProducerV1")],
+            resources: [.copy("Fixtures/DiversityProducerV1"), .copy("Fixtures/TxProfileWatch60")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         // The band: the spectrum trace, the waterfall, the band-plan strip

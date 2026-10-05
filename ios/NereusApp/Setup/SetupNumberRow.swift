@@ -28,6 +28,8 @@ struct SetupNumberRow: View {
     var enterWithLate: ((Double, @escaping @MainActor (PropertyWriteOutcome) -> Void) async -> PropertyWriteOutcome?)? = nil
     var onOutcome: ((PropertyWriteOutcome) -> Void)? = nil
     var readCurrent: (() -> Double?)? = nil
+    /// Closed editors capture their gesture before opening the shared pad.
+    var openValuePad: (() -> Void)? = nil
     let set: (Double) -> Void
 
     @Environment(\.valuePadHost) private var pads
@@ -134,6 +136,7 @@ struct SetupNumberRow: View {
         guard typable, let pads else {
             return
         }
+        if let openValuePad { openValuePad(); return }
         let set = set
         let send = enter ?? { typed in
             set(typed)

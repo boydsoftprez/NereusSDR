@@ -505,17 +505,34 @@ private slots:
         painted.fill(Qt::black);
         painted.setPixel(240, 0, qRgb(255, 0, 0));
         widget.m_waterfall = painted;
-        widget.m_waterfallHistory = painted;
-        widget.m_wfHistoryRowCount = 1;
-        widget.m_wfHistoryTimestamps = {1234, 0};
+        // Record through the production history append path so the ring has
+        // its real capacity, write position, timestamp and captured RF window.
+        widget.appendHistoryRow(
+            reinterpret_cast<const QRgb*>(painted.constScanLine(0)), 1234);
+        const QImage originalHistory = widget.m_waterfallHistory;
+        const QVector<qint64> originalTimestamps = widget.m_wfHistoryTimestamps;
+        const int capturedRow = widget.m_wfHistoryWriteRow;
+        QCOMPARE(widget.m_wfHistoryWindows[capturedRow].centerHz, context.exactCentreHz);
+        QCOMPARE(widget.m_wfHistoryWindows[capturedRow].bandwidthHz, context.exactSpanHz);
         ++context.codec.contextGeneration;
         context.exactCentreHz += 1000;
         widget.setRemoteSpectrumContext(context, context.exactCentreHz, 192000);
         QCOMPARE(widget.m_waterfall.pixel(220, 0), qRgb(255, 0, 0));
         QCOMPARE(widget.m_waterfall.pixel(240, 0), qRgb(0, 0, 0));
-        QCOMPARE(widget.m_waterfallHistory, widget.m_waterfall);
+        QCOMPARE(widget.m_waterfallHistory, originalHistory);
         QCOMPARE(widget.m_wfHistoryRowCount, 1);
-        QCOMPARE(widget.m_wfHistoryTimestamps, QVector<qint64>({1234, 0}));
+        QCOMPARE(widget.m_wfHistoryTimestamps, originalTimestamps);
+        QCOMPARE(widget.m_wfHistoryTimestamps[capturedRow], qint64(1234));
+        // Returning to the original view must recover the original RF marker
+        // without reprojecting or cropping its retained source pixels.
+        ++context.codec.contextGeneration;
+        context.exactCentreHz -= 1000;
+        widget.setRemoteSpectrumContext(context, context.exactCentreHz, 192000);
+        QCOMPARE(widget.m_waterfall.pixel(240, 0), qRgb(255, 0, 0));
+        QCOMPARE(widget.m_waterfall.pixel(220, 0), qRgb(0, 0, 0));
+        QCOMPARE(widget.m_waterfallHistory, originalHistory);
+        QCOMPARE(widget.m_wfHistoryTimestamps, originalTimestamps);
+        QCOMPARE(widget.m_wfHistoryRowCount, 1);
     }
 
     void contextRenewalPreservesHistoryWhileRejectingOldData_data()

@@ -23,6 +23,7 @@ import UIKit
 final class PhoneSetupKeys: SetupPhoneKeys {
     private let main: MainScreenModel
     private let defaults: UserDefaults
+    private let paValues: PaValuesModel?
     /// Where the buttons that open another page lead.
     var navigation: PhoneNavigation?
     /// The Filter Presets page's mode, which the phone keeps (V15).
@@ -33,9 +34,10 @@ final class PhoneSetupKeys: SetupPhoneKeys {
     /// test asks otherwise.
     var copyToClipboard: (String) -> Void = { UIPasteboard.general.string = $0 }
 
-    init(main: MainScreenModel, defaults: UserDefaults = .standard) {
+    init(main: MainScreenModel, defaults: UserDefaults = .standard, paValues: PaValuesModel? = nil) {
         self.main = main
         self.defaults = defaults
+        self.paValues = paValues
         let kept = defaults.object(forKey: Self.filterPresetsModeDefault) as? Int
         filterPresetsMode = kept.map(Int64.init) ?? Self.filterPresetsModeStart
         let unit = defaults.string(forKey: Self.paTempUnitDefault)
@@ -57,9 +59,11 @@ final class PhoneSetupKeys: SetupPhoneKeys {
     static let opaqueColourKeys: Set<String> = ["DisplayFillColor"]
 
     var changes: AnyPublisher<Void, Never> {
-        Publishers.Merge4(main.band.$settings.map { _ in () }, main.sMeter.$state.map { _ in () },
-                          $filterPresetsMode.map { _ in () }, $paTempUnit.map { _ in () })
+        let existing = Publishers.Merge4(main.band.$settings.map { _ in () }, main.sMeter.$state.map { _ in () },
+                                          $filterPresetsMode.map { _ in () }, $paTempUnit.map { _ in () })
             .eraseToAnyPublisher()
+        guard let paValues else { return existing }
+        return existing.merge(with: paValues.objectWillChange.map { _ in () }).eraseToAnyPublisher()
     }
 
     func value(forPhoneKey key: String) -> SetupValue? {
@@ -131,6 +135,8 @@ final class PhoneSetupKeys: SetupPhoneKeys {
             return SMeterUnit.allCases.firstIndex(of: meter.unit).map { .integer(Int64($0)) }
         case "filterPresetsMode":
             return .integer(filterPresetsMode)
+        case PaValuesModel.showPageKey:
+            return paValues.map { .bool($0.showPage) }
         case SetupControlDispatcher.paTempUnitKey:
             return .text(paTempUnit)
         default:
@@ -246,6 +252,9 @@ final class PhoneSetupKeys: SetupPhoneKeys {
             guard let mode = value.whole, mode >= 0, let number = Int(exactly: mode) else { return false }
             filterPresetsMode = mode
             defaults.set(number, forKey: Self.filterPresetsModeDefault)
+        case PaValuesModel.showPageKey:
+            guard let on = value.flag else { return false }
+            return paValues?.setShowPage(on) ?? false
         case SetupControlDispatcher.paTempUnitKey:
             guard let unit = value.text, unit == Self.celsiusUnit || unit == Self.fahrenheitUnit else { return false }
             paTempUnit = unit
@@ -266,7 +275,7 @@ final class PhoneSetupKeys: SetupPhoneKeys {
     static let navigationActions: Set<String> = ["openTxEq", "openSetupPage"]
 
     func canPerform(_ action: String) -> Bool {
-        Self.actions.contains(action) || (Self.navigationActions.contains(action) && navigation != nil)
+        (action == PaValuesModel.resetAction && paValues?.canReset == true) || Self.actions.contains(action) || (Self.navigationActions.contains(action) && navigation != nil)
     }
 
     func perform(_ action: String, argument: String?) -> Bool {
@@ -289,6 +298,8 @@ final class PhoneSetupKeys: SetupPhoneKeys {
 
     func perform(_ action: String) -> Bool {
         switch action {
+        case PaValuesModel.resetAction:
+            return paValues?.reset() ?? false
         case "smoothDefaults":
             main.changeDisplay(Self.smoothDefaults)
         case "copySpectrumMinMax":
@@ -383,7 +394,7 @@ final class PhoneSetupKeys: SetupPhoneKeys {
         case "MultimeterSignalHistoryDurationMs":
             return Self.noHistoryGraphReason
         case "display/showPaValuesPage", "resetPaValues":
-            return Self.paValuesPeakReason
+            return paValues == nil ? Self.paValuesPeakReason : nil
         default:
             return nil
         }

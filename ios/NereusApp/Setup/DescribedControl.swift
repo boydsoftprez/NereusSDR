@@ -15,6 +15,7 @@ struct DescribedControl: View {
     let category: String
     @ObservedObject var dispatcher: SetupControlDispatcher
     var specialized: SetupSpecializedPanels = .none
+    let profileOwner: UUID?
 
     @StateObject private var outcomeOwner = SetupRowOutcomeOwner()
     @State private var typedEdit: UInt64?
@@ -34,11 +35,12 @@ struct DescribedControl: View {
     @State private var textEntry = SetupTextEntryDraft()
 
     init(control: SetupDescription.Control, category: String, dispatcher: SetupControlDispatcher,
-         specialized: SetupSpecializedPanels = .none, outcomeOwner: SetupRowOutcomeOwner = SetupRowOutcomeOwner()) {
+         specialized: SetupSpecializedPanels = .none, outcomeOwner: SetupRowOutcomeOwner = SetupRowOutcomeOwner(), profileOwner: UUID? = nil) {
         self.control = control
         self.category = category
         self.dispatcher = dispatcher
         self.specialized = specialized
+        self.profileOwner = profileOwner
         _outcomeOwner = StateObject(wrappedValue: outcomeOwner)
         _textEntry = State(initialValue: control.kind == .text
             ? Self.textEntry(for: control, category: category, dispatcher: dispatcher)
@@ -67,12 +69,16 @@ struct DescribedControl: View {
     private var drawn: SetupDescription.Control { dispatcher.resolved(control) }
 
     var body: some View {
-        if SetupSpecializedPanels.isPaProfile(control) {
+        if control.modern?.profilePrompt != nil || control.modern?.profileUnsavedChanges != nil {
+            TxProfileControl(control: control, category: category, dispatcher: dispatcher, flow: dispatcher.txProfiles, owner: profileOwner ?? dispatcher.txProfiles.setupOwner)
+        } else if SetupSpecializedPanels.isPaProfile(control) {
             if let panel = specialized.makePa?(control, category) {
                 panel
             } else {
                 unavailableRow(SetupSpecializedPanels.unavailableReason)
             }
+        } else if case .filterPresets? = control.binding {
+            FilterPresetsPanel(control: control, dispatcher: dispatcher)
         } else if let kind = control.specialized {
             if let panel = specialized.make(kind, control, category) {
                 panel
@@ -142,6 +148,7 @@ struct DescribedControl: View {
     /// The row a control is drawn as; nil only for a kind the Core has not
     /// defined, which shows as an unavailable reading.
     static func row(for control: SetupDescription.Control) -> Row? {
+        if case .filterPresets? = control.binding { return .panel }
         if control.specialized != nil || SetupSpecializedPanels.isPaProfile(control) {
             return .panel
         }
@@ -209,7 +216,7 @@ struct DescribedControl: View {
             if dispatcher.temperatureUnitKey(of: control) != nil {
                 temperature(state)
             } else {
-                valueRow(Self.reading(state.value, control: control))
+                valueRow(paReading(state.value))
             }
         case .table?:
             table(reason: state.reason)
@@ -221,6 +228,11 @@ struct DescribedControl: View {
     /// The row's label: a per-band row names the band (V12's `perBand`).
     private var title: String {
         dispatcher.label(of: control)
+    }
+
+    private func paReading(_ value: SetupValue?) -> String {
+        let base = Self.reading(value, control: control)
+        return specialized.paValues?.text(base: base, control: control, category: category) ?? base
     }
 
     private func valueRow(_ value: String) -> some View {
@@ -237,7 +249,7 @@ struct DescribedControl: View {
     private func temperature(_ state: SetupControlState) -> some View {
         let fahrenheit = dispatcher.temperatureInFahrenheit(control)
         return VStack(alignment: .leading, spacing: 8) {
-            valueRow(Self.reading(state.value, control: control))
+            valueRow(paReading(state.value))
             LabeledContent(Self.temperatureUnitText) {
                 Picker(Self.temperatureUnitText, selection: Binding(
                     get: { fahrenheit ?? false },
@@ -611,14 +623,26 @@ struct DescribedControl: View {
         // Bind permission to this gesture before the task can yield to a
         // replacement session or settings snapshot. perform rechecks that
         // captured admission; an old gesture cannot obtain fresh authority.
-        let admission = dispatcher.admit(control, in: category)
+        let localModel = specialized.paValues
+        let localAdmission = PaValuesModel.owns(control, category: category)
+            ? localModel?.admit(control, category: category) : nil
+        let admission = localAdmission == nil ? dispatcher.admit(control, in: category) : nil
         Task { @MainActor in
             let outcome: SetupEditOutcome
-            switch admission {
-            case .success(let admission):
-                outcome = await dispatcher.perform(admission, value: value, asked: asked, onLateOutcome: receive)
-            case .failure(let refusal):
-                outcome = .notSent(refusal.reason)
+            if let localAdmission, let localModel {
+                switch localAdmission {
+                case .success(let action): outcome = await localModel.perform(action, value: value)
+                case .failure(let refusal): outcome = .notSent(refusal.reason)
+                }
+            } else if let admission {
+                switch admission {
+                case .success(let admission):
+                    outcome = await dispatcher.perform(admission, value: value, asked: asked, onLateOutcome: receive)
+                case .failure(let refusal):
+                    outcome = .notSent(refusal.reason)
+                }
+            } else {
+                outcome = .notSent(SetupControlDispatcher.changedFirstReason)
             }
             receive(outcome)
         }

@@ -15,6 +15,7 @@ struct SetupSpecializedPanels {
     typealias MakePa = @MainActor (_ control: SetupDescription.Control, _ category: String) -> AnyView?
     let make: Make
     var makePa: MakePa?
+    var paValues: PaValuesModel?
 
     init(_ make: @escaping Make, makePa: MakePa? = nil) {
         self.make = make
@@ -49,7 +50,7 @@ struct SetupSpecializedPanels {
                 return AnyView(AntennaRowsPanel(control: control, category: category, dispatcher: dispatcher))
             case .paTelemetry:
                 return AnyView(PaTelemetryPanel(control: control, category: category, dispatcher: dispatcher,
-                                                now: { clock.nowMilliseconds }))
+                                                now: { clock.nowMilliseconds }, paValues: app.paValues))
             case .cfcBands:
                 return AnyView(CfcBandsPanel(control: control, category: category, dispatcher: dispatcher))
             }
@@ -59,6 +60,7 @@ struct SetupSpecializedPanels {
             return AnyView(PaProfilesPanel(control: control, category: category,
                                            pages: app.setupPages, dispatcher: dispatcher))
         }
+        panels.paValues = app.paValues
         return panels
     }
 }

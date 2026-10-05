@@ -11,6 +11,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Selected RX source identity and RX-only presentation reset by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Describe saved control scope in user words by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Refuse foreign-session container function controls by
@@ -1100,6 +1102,22 @@ warren@wpratt.com
 namespace NereusSDR {
 
 namespace {
+constexpr char kInitialOwnedPanViewProperty[] = "initialOwnedPanView";
+
+void initializeOwnedPanView(SpectrumWidget* spectrum, double frequencyHz)
+{
+    if (!spectrum) { return; }
+    const QVariant initialView = spectrum->property(kInitialOwnedPanViewProperty);
+    if (!initialView.isValid()) { return; }
+    spectrum->setProperty(kInitialOwnedPanViewProperty, QVariant());
+    const QPointF bornAt = initialView.toPointF();
+    if (qFuzzyCompare(spectrum->centerFrequency(), bornAt.x())
+        && qFuzzyCompare(spectrum->bandwidth(), bornAt.y())) {
+        spectrum->setDisplayWindowPreservingHistory(frequencyHz, spectrum->bandwidth());
+        spectrum->updateVfoPositions();
+    }
+}
+
 // First-run/rescan wants the "relevant" virtual cables for the current
 // platform — 3rd-party cables on Windows (BYO), our own NereusSdrVax
 // entries on Mac/Linux (native HAL plugin / pipe-source). Centralising
@@ -1870,7 +1888,7 @@ SliceModel* MainWindow::activeSliceForWindow() const
     return nullptr;
 }
 
-SliceModel* MainWindow::windowRxSlice() const
+SliceModel* MainWindow::windowRxSlice(bool allowFallback) const
 {
     if (!m_radioModel) { return nullptr; }
     if (desktopHosting()) {
@@ -1882,7 +1900,7 @@ SliceModel* MainWindow::windowRxSlice() const
                 return m_radioModel->sliceById(rx);
             }
         }
-        return activeSliceForWindow();
+        return allowFallback ? activeSliceForWindow() : nullptr;
     }
     // A remote window that shares slices: the slice whose access entry
     // names this device in activeRx (the Core's selectRx answer).
@@ -1896,8 +1914,15 @@ SliceModel* MainWindow::windowRxSlice() const
                 if (entry && entry->activeRx.contains(self)) { return slice; }
             }
         }
+        if (!allowFallback) { return nullptr; }
     }
     return m_radioModel->activeSlice();
+}
+
+SliceModel* MainWindow::containerSourceSlice(const QJsonObject& context) const
+{
+    return ContainerSourceAdapter::slice(m_radioModel, context,
+        windowRxSlice(!ContainerSourceAdapter::followsSelectedRx(context)), containerSessionId());
 }
 
 bool MainWindow::sliceShownInWindow(int sliceId) const
@@ -3104,6 +3129,15 @@ void MainWindow::refreshSliceChooser()
             }
         }
         flag->setSliceAccess(access);
+        // A newly created slice's access entry follows its model and flag.
+        // Complete the same once-only placement when ownership becomes known.
+        if (sliceAccessClient() && windowControlsSlice(it.key())
+            && !markerOnlyPlacement(it.key())) {
+            if (SliceModel* slice = m_radioModel->sliceById(it.key())) {
+                initializeOwnedPanView(qobject_cast<SpectrumWidget*>(flag->parentWidget()),
+                                       slice->frequency());
+            }
+        }
         // TX badge take: what the badge offers follows the slice's access.
         applyFlagTransmitGate(flag);
     }
@@ -3754,6 +3788,10 @@ void MainWindow::ensureRemoteSession()
                 m_sliceChooser->linkLost();
             }
         });
+        // Snapshot hydration precedes admitted remote access. Revisit pending
+        // new-pane placement only once real ownership is available.
+        connect(m_stationClient, &StationClient::handshakeComplete,
+                this, &MainWindow::refreshSliceChooser);
         if (SliceAccessMirror* access = m_stationClient->sliceAccess()) {
             // Slice control plan Task 15 fix round 1: a container's slice
             // buttons follow the change of control, as the flag and tabs do.
@@ -4555,6 +4593,15 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     const int sliceIndex = slice->sliceIndex();
     if (m_vfoWidgetsBySlice.contains(sliceIndex)) {
         return m_vfoWidgetsBySlice.value(sliceIndex);
+    }
+
+    // A new remote pan has no local stream-window initialization. Place its
+    // first owned slice once, unless the operator already moved/zoomed it.
+    // The pending geometry belongs to this widget instance, not its pan ID;
+    // reused views and additional cohosted flags therefore stay where they are.
+    if (sliceAccessClient() && windowControlsSlice(sliceIndex)
+        && !markerOnlyPlacement(sliceIndex)) {
+        initializeOwnedPanView(sw, slice->frequency());
     }
 
     VfoWidget* newFlag = sw->addVfoWidget(sliceIndex);
@@ -5773,6 +5820,18 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
     refreshForeignMarkers();
 
     configureSpectrumForPanForTest(sw, panId);
+
+    if (!m_radioModel->ownsLocalDsp()) {
+        // Only wired for a newly created secondary pan. This transient Qt
+        // property is retired by its first owned flag or by a user gesture;
+        // it is never persisted and dies with the pane. Geometry comparison
+        // at flag creation also preserves a view moved without centerChanged.
+        sw->setProperty(kInitialOwnedPanViewProperty,
+                        QPointF(sw->centerFrequency(), sw->bandwidth()));
+        connect(sw, &SpectrumWidget::centerChanged, sw, [sw](double) {
+            sw->setProperty(kInitialOwnedPanViewProperty, QVariant());
+        });
+    }
 
     // Parity ruling C13: in a remote window the Performance Overlay shows
     // the Core's drops too, headed as the Core's.
@@ -7517,11 +7576,18 @@ void MainWindow::buildUI()
         return pan->spectrumWidget();
     });
     m_meterPoller->setSessionIdSource([this] { return containerSessionId(); });
+    m_meterPoller->setRxSourceIdentitySource([this](const QJsonObject& context) {
+        const bool remote = m_radioModel->role() == RadioModel::Role::Remote;
+        const bool ready = m_radioModel->isConnected() && (!remote || (m_stationClient && m_stationClient->isHandshakeComplete()));
+        return ContainerSourceAdapter::sourceIdentity(m_radioModel, context,
+            windowRxSlice(!ContainerSourceAdapter::followsSelectedRx(context)), containerSessionId(), ready);
+    });
     m_meterPoller->setRxReadingSource([this, cachedMaxBin](const QJsonObject& context, int binding) {
         const bool remote = m_radioModel->role() == RadioModel::Role::Remote;
         const bool ready = m_radioModel->isConnected() && (!remote || (m_stationClient && m_stationClient->isHandshakeComplete()));
         const bool extended = !remote || (m_stationClient && m_stationClient->capabilities().meterReadingsVersion >= 1);
-        return ContainerSourceAdapter::reading(m_radioModel, context, windowRxSlice(), binding, ready, extended, cachedMaxBin, containerSessionId());
+        return ContainerSourceAdapter::reading(m_radioModel, context,
+            windowRxSlice(!ContainerSourceAdapter::followsSelectedRx(context)), binding, ready, extended, cachedMaxBin, containerSessionId());
     });
     m_meterPoller->rescalePowerMeters(paMaxWattsFor(m_radioModel->hardwareProfile().model));
     m_containerManager->setPreviewPoller(m_meterPoller);
@@ -12896,9 +12962,8 @@ void MainWindow::reconcileMiniDisplays()
             for (MeterItem* root : meter->items()) { if (auto* face = qobject_cast<CompositePresetItem*>(root)) { descendants += face->internalItems(); } }
             for (MeterItem* base : descendants) {
                 const QVariant entryContext = base->property("containerSourceContext");
-                SliceModel* slice = ContainerSourceAdapter::slice(m_radioModel,
-                    entryContext.isValid()?entryContext.toJsonObject():(routed.isValid()?routed.toJsonObject():QJsonObject{{"sliceId",container->rxSource()-1}}),
-                    windowRxSlice(), containerSessionId());
+                SliceModel* slice = containerSourceSlice(
+                    entryContext.isValid()?entryContext.toJsonObject():(routed.isValid()?routed.toJsonObject():QJsonObject{{"sliceId",container->rxSource()-1}}));
                 if (!slice || slice->streamIndex() < 0) { continue; }
                 auto* item = qobject_cast<FilterDisplayItem*>(base);
                 if (item && !item->property("containerUnsupportedSource").toBool() && meter->shouldRender(item)
@@ -13175,7 +13240,7 @@ int MainWindow::containerControlRxSource(const ContainerWidget* c) const
     if (!c) { return 0; }
     const QVariant routed = c->property("containerDispatchContext");
     if (!routed.isValid()) { return c->rxSource(); }
-    SliceModel* source = ContainerSourceAdapter::slice(m_radioModel, routed.toJsonObject(), windowRxSlice(), containerSessionId());
+    SliceModel* source = containerSourceSlice(routed.toJsonObject());
     return source ? source->sliceIndex()+1 : 0;
 }
 SliceModel* MainWindow::containerSlice(const ContainerWidget* c) const
@@ -13253,7 +13318,7 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
 {
     if (m_shuttingDown || !meter || !m_radioModel || !m_containerButtons) { return; }
     const bool unsupported = only && only->property("containerUnsupportedSource").toBool();
-    SliceModel* source = unsupported || (!c && !m_radioModel->isConnected()) ? nullptr : ContainerSourceAdapter::slice(m_radioModel, context, windowRxSlice(), containerSessionId());
+    SliceModel* source = unsupported || (!c && !m_radioModel->isConnected()) ? nullptr : containerSourceSlice(context);
     const int rxSource = source ? source->sliceIndex()+1 : 0;
     SliceModel* slice = m_containerButtons->sliceFor(rxSource);
     QVector<MeterItem*> items;
@@ -13325,6 +13390,7 @@ void MainWindow::refreshContainerMeter(ContainerWidget* c, MeterWidget* meter, M
         // none of its last state. The buttons light nothing and say why
         // when clicked; the VFO display says the slice is not open.
         const QString notOpen = unsupported ? only->property("unsupportedSourceReason").toString() :
+            ContainerSourceAdapter::followsSelectedRx(context) ? tr("No selected RX is available in this window") :
             tr("%1 is not open").arg(ContainerWidget::sliceNameForRxSource(
                 context.contains("sliceId") ? context.value("sliceId").toInt(-1)+1 :
                 context.value("rxSource").toInt(c ? c->rxSource() : 0)));
@@ -13458,7 +13524,7 @@ void MainWindow::refreshContainerFrequency(SliceModel* slice)
                 const QVariant entryContext = root->property("containerSourceContext");
                 const QJsonObject context = entryContext.isValid() ? entryContext.toJsonObject() :
                     (surfaceContext.isValid() ? surfaceContext.toJsonObject() : QJsonObject{{"sliceId", c->rxSource()-1}});
-                if (ContainerSourceAdapter::slice(m_radioModel, context, windowRxSlice(), containerSessionId()) == slice) {
+                if (containerSourceSlice(context) == slice) {
                     refreshContainerMeter(c, meter, root, context, true);
                 }
             }

@@ -34,8 +34,13 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QSignalBlocker>
+#include <QStandardItemModel>
+
 #include <QTimer>
 #include <QVBoxLayout>
+
+#include <memory>
+#include <vector>
 
 namespace NereusSDR {
 
@@ -149,13 +154,26 @@ static void resetPopupAccessibilityCache(QComboBox* combo)
         // but QAccessibleTable retains their IDs and dereferences them on
         // RowsRemoved/RowsInserted (itemviews.cpp:645-741). Reset only the
         // accessibility cache before clearing or replacing retained entries.
-        QAbstractItemView* view = combo->view();
-        QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(view);
-        if (accessible != nullptr && accessible->tableInterface() != nullptr) {
-            QAccessibleTableModelChangeEvent reset(
-                view, QAccessibleTableModelChangeEvent::ModelReset);
-            accessible->tableInterface()->modelChange(&reset);
+        // The reset below now uses the model to invalidate indexes first.
+        // An accessibility-only reset deletes still-valid cells. Qt's Cocoa
+        // destruction notification can then promote a native cell and delete
+        // that interface reentrantly (Qt 6.11 qaccessiblecache.cpp:193-208).
+        // Reset the actual model first so its persistent cell indexes are
+        // invalid before the view sends its accessibility ModelReset.
+        auto* model = qobject_cast<QStandardItemModel*>(combo->model());
+        if (model == nullptr) { return; }
+        QSignalBlocker blocker(combo);
+        const int selected = combo->currentIndex();
+        std::vector<std::unique_ptr<QStandardItem>> items;
+        items.reserve(model->rowCount());
+        for (int row = 0; row < model->rowCount(); ++row) {
+            items.emplace_back(model->item(row)->clone());
         }
+        model->clear();
+        for (std::unique_ptr<QStandardItem>& item : items) {
+            model->appendRow(item.release());
+        }
+        combo->setCurrentIndex(selected);
     }
 #else
     Q_UNUSED(combo);

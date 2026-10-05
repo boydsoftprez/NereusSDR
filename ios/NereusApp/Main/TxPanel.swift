@@ -34,6 +34,7 @@ struct TxPanel: View {
     /// The visible route to the full Transmit section in Modes.
     var openSettings: () -> Void = {}
     @State private var timingOpen = false
+    @State var profileOwner = UUID()
     @Environment(\.dynamicTypeSize) private var textSize
 
     static let width: CGFloat = 300
@@ -67,6 +68,9 @@ struct TxPanel: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("TX panel")
         .accessibilityIdentifier("txPanelDrawer")
+        .background {
+            if let flow = transmit.profileFlow { TxProfileSurfaceQuestion(flow: flow, owner: profileOwner, identifier: "txProfile") }
+        }
     }
 
     private var pinnedControls: some View {
@@ -183,6 +187,9 @@ struct TxPanel: View {
                 TakeTransmitButton(take: take, identifier: "txTakeTransmit")
                     .padding(.top, 6)
             }
+            if let reason = transmit.profileFlow?.problem(for: profileOwner) {
+                note(reason).accessibilityIdentifier("txPanelProfileNote")
+            }
             if let reason = transmit.note {
                 note(reason)
                     .accessibilityIdentifier("txPanelNote")
@@ -264,7 +271,7 @@ struct TxPanel: View {
     /// The TX profile (I12): the Core's profiles in its order, the active
     /// one ticked; a pick asks the Core (`txProfile.select`).
     private var profileRow: some View {
-        let editable = transmit.settingsEditable(3) && !transmit.profiles.isEmpty
+        let editable = transmit.settingsEditable(3) && transmit.profileSelectionReason == nil && transmit.profileFlow?.busy != true && !transmit.profiles.isEmpty
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text("Profile")
@@ -274,7 +281,7 @@ struct TxPanel: View {
                 Menu {
                     ForEach(transmit.profiles, id: \.self) { name in
                         Button {
-                            transmit.selectProfile(name)
+                            transmit.selectProfile(name, owner: profileOwner)
                         } label: {
                             if name == transmit.activeProfile {
                                 Label(name, systemImage: "checkmark")

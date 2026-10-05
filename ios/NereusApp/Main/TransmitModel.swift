@@ -116,6 +116,24 @@ final class TransmitModel: ObservableObject {
     /// none; nil while the radio is not on the air, or is on the air for
     /// this phone. The lock-screen card says so (parity row I16).
     @Published private(set) var onAirElsewhere: String?
+    /// The persistent canonical guard shared by the existing profile surfaces.
+    @Published private(set) var profileFlow: SetupTxProfileFlow?
+    private var profileFlowWatch: AnyCancellable?
+    let profileModelOwner = UUID()
+    private var profileCanonicalSession: UInt64?
+    var usesLegacyProfileSelection: Bool {
+        if let profileFlow { return profileFlow.usesLegacySelection }
+        return SetupTxProfileFlow.legacySelectionIsAvailable(store: mirror, canonicalSession: profileCanonicalSession)
+            && commands != nil
+    }
+    var profileSelectionReason: String? {
+        if let profileFlow { return profileFlow.selectionReason }
+        return usesLegacyProfileSelection ? nil : SetupControlDispatcher.updatingReason
+    }
+    func bindProfileFlow(_ flow: SetupTxProfileFlow) {
+        profileFlow = flow
+        profileFlowWatch = flow.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+    }
     /// The Core's words for the last panel change it refused.
     @Published private(set) var note: String?
     /// A tap on PTT while another device holds transmit, or while it
@@ -459,7 +477,15 @@ final class TransmitModel: ObservableObject {
             Task { @MainActor in self?.confirmationRevision &+= 1 }
         }.store(in: &watches)
         mirror.$objectKeys.sink { [weak self] _ in self?.queueRefresh() }.store(in: &watches)
-        mirror.$capabilities.sink { [weak self] _ in self?.queueRefresh() }.store(in: &watches)
+        mirror.$capabilities.sink { [weak self] capabilities in
+            guard let self else { return }
+            switch capabilities["setupDescriptionVersion"] {
+            case .int(let version)?, .enumeration(let version)?:
+                if version >= 15 { self.profileCanonicalSession = self.mirror.snapshotIdentity }
+            default: break
+            }
+            self.queueRefresh()
+        }.store(in: &watches)
         mirror.$isSnapshotComplete.sink { [weak self] _ in self?.queueRefresh() }.store(in: &watches)
         mirror.$isStale.sink { [weak self] _ in self?.queueRefresh() }.store(in: &watches)
         slices.$entries.sink { [weak self] _ in self?.queueRefresh() }.store(in: &watches)
@@ -773,12 +799,15 @@ final class TransmitModel: ObservableObject {
     }
 
     /// A TX profile, by the Core's name for it (`txProfile.select`).
-    func selectProfile(_ name: String) {
+    func selectProfile(_ name: String, owner: UUID? = nil) {
         guard settingsEditable(3), name != activeProfile else {
             return
         }
-        invoke(Self.txProfileVerb, [CommandArgument(name: "name", value: .text(name))],
-               shows: [.init(Self.transmitKey, "activeTxProfile", .text(name))])
+        if usesLegacyProfileSelection {
+            invoke(Self.txProfileVerb, [CommandArgument(name: "name", value: .text(name))],
+                   shows: [.init(Self.transmitKey, "activeTxProfile", .text(name))])
+        } else if let flow = profileFlow { flow.choose(name, owner: owner ?? profileModelOwner) }
+        else { note = SetupControlDispatcher.updatingReason }
     }
 
     /// 2-Tone: the Core's two-tone test, keyed through the PTT's one queue as TUNE is.

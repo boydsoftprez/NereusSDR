@@ -16,9 +16,17 @@ struct DescribedPage: View {
     var specialized: SetupSpecializedPanels = .none
     /// Calibration's Level Cal group, on that page only (nil elsewhere).
     var levelCal: LevelCalModel?
+    @State var profileOwner = UUID()
+    @State private var paPresentation: UUID?
 
     /// The words for a page the Core no longer describes.
     static let goneText = "This page is no longer on the Core."
+
+    private func openProfiles(_ page: SetupDescription.Page) {
+        if let control = page.sections.flatMap(\.controls).first(where: { $0.modern?.profileUnsavedChanges != nil }) {
+            dispatcher.txProfiles.open(control, in: category)
+        }
+    }
 
     var body: some View {
         if let page = pages.page(pageId, in: category) {
@@ -41,7 +49,7 @@ struct DescribedPage: View {
                         }
                         ForEach(section.controls, id: \.id) { control in
                             DescribedControl(control: control, category: category, dispatcher: dispatcher,
-                                             specialized: specialized)
+                                             specialized: specialized, profileOwner: profileOwner)
                         }
                         if let group {
                             LevelCalSection.Run(model: group)
@@ -49,6 +57,13 @@ struct DescribedPage: View {
                     } header: {
                         Text(section.title)
                     }
+                }
+            }
+            .onAppear { openProfiles(page) }
+            .onChange(of: page) { _, updated in openProfiles(updated) }
+            .onDisappear {
+                if page.sections.flatMap(\.controls).contains(where: { $0.modern?.profileUnsavedChanges != nil }) {
+                    dispatcher.txProfiles.retire(owner: profileOwner)
                 }
             }
             .levelCalAlerts(levelCal)
@@ -59,6 +74,15 @@ struct DescribedPage: View {
                 }
             }
             .accessibilityIdentifier(page.id)
+            .onAppear {
+                if category == "pa", pageId == "pa.values", let model = specialized.paValues {
+                    paPresentation = model.beginPresentation()
+                }
+            }
+            .onDisappear {
+                if let token = paPresentation { specialized.paValues?.endPresentation(token) }
+                paPresentation = nil
+            }
         } else {
             List {
                 Text(Self.goneText)

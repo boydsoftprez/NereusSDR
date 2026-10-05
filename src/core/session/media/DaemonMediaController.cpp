@@ -4,6 +4,9 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-04: Send scalar/blob NSDX extras under the same display pacing
+//               budget without requiring a peak-hold sample plane.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01: Control logging lane: the media connection's selected pair
 //               (candidate types and transports, masked addresses) when
 //               first known and on every change, and its rtt in that line
@@ -5008,7 +5011,7 @@ bool DaemonMediaController::trySendDisplayExtras(MediaPeer* peer, quint64 epoch,
         const quint64 samples = std::exchange(it->second.pendingExtrasSamples, 0);
         if (displayPacingRequired()
             && (!m_displayPacerInitialized
-                || !m_displayPacer.spendSpectrum(static_cast<quint64>(bytes.size()),
+                || !m_displayPacer.spendDisplayExtras(static_cast<quint64>(bytes.size()),
                                                  samples, nowNs))) {
             // No credit now: the extras of a frame already on its way are
             // worth nothing later, and the next frame brings its own.

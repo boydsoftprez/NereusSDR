@@ -43,6 +43,22 @@ public final class SettingsProxyClient: ObservableObject {
     /// Keys whose latest write had no answer within the deadline.
     @Published public private(set) var unconfirmedKeys: Set<String> = []
 
+    /// Core events before cache publication. Closed multi-key editors distinguish
+    /// their echo from outside changes without reading an optimistic value.
+    struct CoreChange {
+        let key: String
+        let value: String?
+        let ownEcho: Bool
+    }
+    let coreChanges = PassthroughSubject<CoreChange, Never>()
+
+    var hasPendingFilterPresets: Bool { pending.keys.contains { $0.hasPrefix("filters/") } }
+
+    func confirmedValue(_ key: String) -> String? {
+        if let held = coreValues[key] { return held }
+        return values[key]
+    }
+
     private static let logger = Logger(subsystem: "NereusSDR", category: "mirror.settings")
 
     private struct Operation {
@@ -141,6 +157,7 @@ public final class SettingsProxyClient: ObservableObject {
             nextSnapshotReplaces = false
             for entry in snapshot.properties {
                 if case .utf8(let text) = entry.value {
+                    coreChanges.send(CoreChange(key: entry.name, value: text, ownEcho: false))
                     if !firstOfSession, pending[entry.name] != nil {
                         // A key this app wrote keeps its value until the answer.
                         coreValues[entry.name] = text
@@ -176,13 +193,13 @@ public final class SettingsProxyClient: ObservableObject {
     /// `authority` belongs to the caller and may be revoked when that gesture
     /// or description expires. The sender must honor the permit at handoff.
     public func writeBound(_ key: String, _ value: String, expectedSnapshotIdentity: UInt64,
-                           authority: CommandSendPermit,
+                           authority: CommandSendPermit, capturedSender: BoundSender? = nil,
                            onLateOutcome: (@MainActor (SettingsWriteOutcome) -> Void)? = nil) async -> SettingsWriteOutcome {
-        await writePrepared(key, value, expectedSnapshotIdentity: expectedSnapshotIdentity, authority: authority, onLateOutcome: onLateOutcome)
+        await writePrepared(key, value, expectedSnapshotIdentity: expectedSnapshotIdentity, authority: authority, capturedSender: capturedSender, onLateOutcome: onLateOutcome)
     }
 
     private func writePrepared(_ key: String, _ value: String, expectedSnapshotIdentity: UInt64?,
-                               authority: CommandSendPermit?,
+                               authority: CommandSendPermit?, capturedSender: BoundSender? = nil,
                                onLateOutcome: (@MainActor (SettingsWriteOutcome) -> Void)?) async -> SettingsWriteOutcome {
         guard SettingsScope.of(key) == .station else {
             return .keptOnThisDevice
@@ -193,7 +210,7 @@ public final class SettingsProxyClient: ObservableObject {
             key: key, origin: origin,
             properties: [LinkMessage.PropertyEntry(name: key, value: .utf8(value))]))
         let previous = values[key]
-        guard let sender = admittedSender() else { return .notSent }
+        guard let sender = capturedSender ?? admittedSender() else { return .notSent }
         let permit = CommandSendPermit(parents: [sessionPermit] + [authority].compactMap { $0 })
         return await withCheckedContinuation { continuation in
             _ = start(key: key, message: message, value: value, previous: previous,
@@ -217,27 +234,29 @@ public final class SettingsProxyClient: ObservableObject {
     /// A bound removal resolves on its echo or refusal, with the same outcome
     /// rules as a bound write. Stale admission has no cache effect.
     public func removeBound(_ key: String, expectedSnapshotIdentity: UInt64,
-                            authority: CommandSendPermit) async -> SettingsWriteOutcome {
+                            authority: CommandSendPermit, capturedSender: BoundSender? = nil,
+                            onLateOutcome: (@MainActor (SettingsWriteOutcome) -> Void)? = nil) async -> SettingsWriteOutcome {
         guard SettingsScope.of(key) == .station else { return .keptOnThisDevice }
         guard isCurrent(expectedSnapshotIdentity), linkUp, !authority.isRevoked else { return .notSent }
-        guard let sender = admittedSender() else { return .notSent }
+        guard let sender = capturedSender ?? admittedSender() else { return .notSent }
         let permit = CommandSendPermit(parents: [sessionPermit, authority])
         return await withCheckedContinuation { continuation in
-            _ = startRemoval(key, resolve: continuation, sender: sender, permit: permit)
+            _ = startRemoval(key, resolve: continuation, sender: sender, permit: permit, onLateOutcome: onLateOutcome)
         }
     }
 
     private func startRemoval(_ key: String, resolve: CheckedContinuation<SettingsWriteOutcome, Never>?,
-                              sender: @escaping BoundSender, permit: CommandSendPermit) -> Task<Void, Never> {
+                              sender: @escaping BoundSender, permit: CommandSendPermit,
+                              onLateOutcome: (@MainActor (SettingsWriteOutcome) -> Void)? = nil) -> Task<Void, Never> {
         let message = LinkMessage.settingsRemove(LinkMessage.SettingsRemove(key: key))
         let previous = values[key]
         return start(key: key, message: message, value: nil, previous: previous,
-                     isRemoval: true, resolve: resolve, sender: sender, permit: permit)
+                     isRemoval: true, resolve: resolve, sender: sender, permit: permit, onLateOutcome: onLateOutcome)
     }
 
     // MARK: Inside
 
-    private func admittedSender() -> BoundSender? {
+    func admittedSender() -> BoundSender? {
         if let captureSender { return captureSender() }
         let send = send
         return { message, permit in
@@ -301,6 +320,7 @@ public final class SettingsProxyClient: ObservableObject {
         } else {
             ownEcho = false
         }
+        coreChanges.send(CoreChange(key: change.key, value: carried, ownEcho: ownEcho))
         if ownEcho {
             let settled = queue.removeFirst()
             pending[change.key] = queue.isEmpty ? nil : queue
@@ -327,21 +347,15 @@ public final class SettingsProxyClient: ObservableObject {
     }
 
     private func applyReject(_ reject: LinkMessage.SettingsReject) {
+        coreChanges.send(CoreChange(key: reject.key, value: Self.text(reject.properties), ownEcho: true))
         var queue = pending[reject.key] ?? []
         guard !queue.isEmpty else {
-            if reject.reason != SeveralDevices.waitingReason {
-                setValue(Self.text(reject.properties), for: reject.key)
-            }
+            setValue(Self.text(reject.properties), for: reject.key)
             return
         }
         let settled = queue.removeFirst()
         pending[reject.key] = queue.isEmpty ? nil : queue
-        if queue.isEmpty, reject.reason == SeveralDevices.waitingReason {
-            // A held question keeps the established post-answer delta rule.
-            coreValues[reject.key] = nil
-        } else {
-            receiveCore(Self.text(reject.properties), key: reject.key, token: settled.token)
-        }
+        receiveCore(Self.text(reject.properties), key: reject.key, token: settled.token)
         settle(settled, .rejected(reason: reject.reason ?? ""), key: reject.key)
     }
 

@@ -18,8 +18,9 @@ import Testing
     }
 
     /// A store that has taken the whole connect sequence of `fixture`.
-    private func replayed(_ fixture: String = "session-connect-connectable") throws -> MirrorStore {
-        let store = store()
+    private func replayed(_ fixture: String = "session-connect-connectable",
+                          clock: any LinkClock = SystemLinkClock()) throws -> MirrorStore {
+        let store = store(clock: clock)
         for message in try FixtureReplay.stationMessages(fixture) {
             store.apply(message)
         }

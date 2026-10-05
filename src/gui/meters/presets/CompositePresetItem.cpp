@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-04 — Selected RX source identity and RX-only presentation reset by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Make bounded clock float rounding explicit by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Restore full approved source typography at ordinary sizes and
@@ -359,6 +361,24 @@ bool CompositePresetItem::advanceMeter(qint64 now) {
     const bool clock=m_clock && (m_lastFrame<0 || now/250!=m_lastFrame/250); m_lastFrame=now; const bool dirty=m_presentationDirty; m_presentationDirty=false; return changed || clock || dirty;
 }
 void CompositePresetItem::resetForTxTransition(bool tx) { m_tx=tx; configureDynamics(); if(m_face==Face::Anan) { markPresentationDirty(true); } if(m_vfo) { m_vfo->setTransmitting(tx); } if(m_bands) { m_bands->setTransmitting(tx); m_modes->setTransmitting(tx); } }
+void CompositePresetItem::resetRxSource()
+{
+    if (hasMmioBinding()) { return; }
+    bool changed = false;
+    for (int i = 0; i < m_channels.size(); ++i) {
+        const int binding = i == 0 ? bindingId() : m_channels[i].binding;
+        if (binding < MeterBinding::SignalPeak || binding > MeterBinding::PbSnr) { continue; }
+        Channel& channel = m_channels[i];
+        channel.dynamics.reset(channel.calibration.firstKey() - (m_aboveS9 && isReceiveSignalBinding(binding) ? 20 : 0));
+        if (i == 0) {
+            m_value = kNoMeterReadingDbm;
+            m_samples.clear();
+            m_lastHistorySample = -1;
+        }
+        changed = true;
+    }
+    if (changed) { markPresentationDirty(m_face == Face::Anan); }
+}
 void CompositePresetItem::setPowerScale(int watts) { if(watts>0 && watts!=m_powerScale) { m_powerScale=watts; markPresentationDirty(true); } }
 void CompositePresetItem::setFrequency(qint64 hz) { if(m_vfo && m_vfo->frequency()!=hz) { markPresentationDirty(); } if(m_vfo) { m_vfo->setFrequency(hz); m_vfo->setUnavailableText(hz>0?QString():QStringLiteral("No live slice reading")); } }
 void CompositePresetItem::setModeLabel(const QString& text) { if(m_stateMode!=text) { m_stateMode=text; markPresentationDirty(); } if(m_vfo) { m_vfo->setModeLabel(text); } }

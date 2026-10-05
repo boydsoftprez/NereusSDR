@@ -54,6 +54,14 @@ The mobile app is native to those devices, with its own release counter,
 validation and TestFlight/App Store delivery process. Its delivery status is
 tracked separately from the desktop/Core release artifacts.
 
+Native Filter Presets, local PA peak/minimum readings and resets, named TX
+profile saving, overwrite confirmation and unsaved-profile switching join
+the phone console. TX profile change detection covers all 60 existing saved
+settings. Settings held for confirmation restore the Core value while
+retaining newer unsent text; accepted setting removals carry their readback
+even without a later echo. Buffered replies from a retired session cannot
+change a replacement session's transmit authority.
+
 ### Reaching the station through the RV server
 
 The **rendezvous (RV) server** is a separate network service that helps a
@@ -145,6 +153,14 @@ The desktop and Core share the upgraded WDSP 2.10 engine.
 
 PS3 uses **version-2 correction files**. Legacy version-1 files are refused with an explanation; create a fresh calibration rather than assuming old correction curves transfer.
 
+PureSignal status follows the control request applied by the Core. Reset and
+drain operations preserve their ordering, correction status follows its
+calibration epoch, and two-tone completion follows the command that finished.
+Saved Auto preferences resume when the first authenticated media session
+joins an eligible local Core, including after rejoining. Restoring a saved
+preference does not replay a calibration or keying command. The existing
+factory two-tone level is retained.
+
 ## TX EQ and CFC editors
 
 Graphic and Parametric TX EQ retain their own values and have native graph editing, width handles, exact entry and session undo/redo. CFC presents aligned Compression and post-EQ graphs, shared frequency selection, independent gain/Q controls and measured compression bars.
@@ -156,6 +172,13 @@ The graphs show configured curves; they are not measurements of the complete aud
 ## Containers, applets and meters
 
 Applets and complete meter objects share one container system. Move them with dotted grips or menu commands, reorder stacks, float them and return them to remembered homes. Container settings offer draft previews, Apply/Cancel, reload and conflict handling.
+
+Container meter stacks size responsive bars to the available space while
+preserving saved row heights and fixed layouts. Pending moves and resizes
+survive content refreshes until their placement is saved. A per-object
+**Follow selected RX** option lets a supported reading follow the receiver
+selected in that window; fixed receiver choices remain available, and
+changing source clears readings retained from the previous receiver.
 
 Editable Canvas placement adds per-object movement and resizing, numeric geometry, layers, locking and a scrollable scene. Apply/Cancel keeps edits in a draft; saved legacy compositions, high-precision positions and unknown records remain intact. Supported existing controls can be created as fifteen independently arranged button objects, retaining their capability and authority rules. Preview controls remain inert. Settings and live Canvas share the same supported-control resize minimum.
 
@@ -180,6 +203,9 @@ their readouts remain unavailable; they do not create measurements or history.
 
 ## Reliability fixes
 
+- Close structured floating containers during application Quit while preserving final saved geometry and canceled-quit behavior.
+- Place the first owned receiver's flag within its newly created remote pan after the Core confirms receiver authority. Preserve pan views the operator has already moved or zoomed, and preserve listener views.
+- Send paced waterfall-level metadata even when peak hold is disabled. Metadata consumes the existing display byte budget and charges samples only when a peak-hold plane is present.
 - Restart TX microphone pumping after live receiver reconfiguration (#331).
 - Keep the selected PC microphone’s level meter active while receiving in a remote desktop window. Preview audio is drained locally and never queued for a later PTT.
 - Preserve each waterfall row’s original RF window, so retained transmit history aligns correctly when returning to the receive display without losing the saved receive rows.
@@ -195,6 +221,7 @@ their readouts remain unavailable; they do not create measurements or history.
 - Release a retired display whose pending subscribe result was lost across a media handover, retaining its reservation until the Core confirms release. New and surviving spectra/waterfalls can then resume; synchronous display-stack destruction is also guarded. Live late-reply and missing-release-acknowledgement behavior retains its existing rules.
 - Preserve fresh remote VAX audio that arrives after the pump checks for input. Startup and resumed streams no longer lose that block during inactive-source cleanup; quiet stale data is still discarded.
 - Correct Qt 6.11 Cocoa accessibility failures found during native evaluation: shared element ownership, stale connection-list child caches, an expired preamp-combo child cache when board capabilities refresh after reconnect, and an expired container-dropdown child cache when switching the Settings selection, and expired audio device, buffer and TX Input dropdown child caches during refresh. The fixes preserve selection, preamp choices and connection behavior; release Mac packages use a pinned Qt 6.8 SDK and must pass a real Cocoa startup check.
+- Use a real model reset when refreshing the Qt 6.11 Cocoa audio-device selector, preventing the native accessibility-cache crash while preserving device selection and configuration signals.
 
 Further work addresses receiver/channel lifetimes, media recovery, stale session replies, audio-ring overruns, microphone stalls, shared-device authority and reconnect teardown. The reconnect fixes above are narrower than the original acoustic/startup and intermittent-crash reports; the requested retests for #235, #299 and #300 remain open.
 

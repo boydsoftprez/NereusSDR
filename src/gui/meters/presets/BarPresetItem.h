@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-04 — Selected RX source identity and RX-only presentation reset by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-02 — Native complete faces by J.J. Boyd (KG4VCF), with AI-assisted
 // transformation via OpenAI Codex.
 /*  MeterManager.cs
@@ -70,6 +72,7 @@ public:
     bool advanceMeter(qint64) override;
     bool takeStaticPresentationChange() override { const bool dirty=m_staticDirty; m_staticDirty=false; return dirty; }
     void resetForTxTransition(bool) override;
+    void resetRxSource() override;
     QString serialize() const override;
     bool deserialize(const QString&) override;
     QJsonObject configuration() const;

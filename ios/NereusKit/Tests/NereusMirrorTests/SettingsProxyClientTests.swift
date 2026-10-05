@@ -233,20 +233,89 @@ import Testing
         #expect(clock.now == 0 && clock.pendingDueTimes.isEmpty)
     }
 
-    @Test func aWriteHeldForThisPhonesQuestionKeepsTheTouchedValue() async {
-        // Held for a question is not a refusal (StationClient.cpp:7308-7317).
+    @Test(arguments: [false, true])
+    func aWriteHeldForThisPhonesQuestionRestoresTheCarriedCoreValue(missing: Bool) async {
+        // The waiting reply carries the Core value; confirm.request retains the proposed change separately.
         let clock = ManualLinkClock()
         let proxy = connected(["SwrProtectionLimit": "2.0"], clock: clock)
         let task = await startWrite(proxy, "SwrProtectionLimit", "3.0")
+        #expect(proxy.value("SwrProtectionLimit") == "3.0")
         proxy.apply(.settingsReject(LinkMessage.SettingsReject(
             key: "SwrProtectionLimit",
-            properties: [LinkMessage.PropertyEntry(name: "SwrProtectionLimit", value: .utf8("2.0"))],
+            properties: missing ? [] : [LinkMessage.PropertyEntry(name: "SwrProtectionLimit", value: .utf8("2.0"))],
             reason: SeveralDevices.waitingReason)))
         #expect(await task.value == .rejected(reason: SeveralDevices.waitingReason))
-        #expect(proxy.value("SwrProtectionLimit") == "3.0")
-        // The Core's next value of the key settles it.
+        #expect(proxy.value("SwrProtectionLimit") == (missing ? nil : "2.0"))
+        // The next actual Core value is still followed after the initial refusal.
         proxy.apply(Self.value("SwrProtectionLimit", "2.0", origin: "another-device"))
         #expect(proxy.value("SwrProtectionLimit") == "2.0")
+        #expect(sent.count == 1)
+        #expect(clock.now == 0 && clock.pendingDueTimes.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func aWaitingRejectWithoutAPendingWriteRestoresTheCarriedValue(missing: Bool) {
+        let clock = ManualLinkClock()
+        let proxy = connected(["CWPitch": "700"], clock: clock)
+        proxy.apply(.settingsReject(.init(key: "CWPitch", properties: missing ? [] : [
+            .init(name: "CWPitch", value: .utf8("600")),
+        ], reason: SeveralDevices.waitingReason)))
+        #expect(proxy.value("CWPitch") == (missing ? nil : "600"))
+        #expect(sent.count == 0)
+        #expect(clock.now == 0 && clock.pendingDueTimes.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func aWaitingRejectPreservesOnlyTheNewerPendingWrite(acceptNewest: Bool) async {
+        let clock = ManualLinkClock()
+        let proxy = connected(["CWPitch": "600"], clock: clock)
+        let first = await startWrite(proxy, "CWPitch", "650")
+        let second = await startWrite(proxy, "CWPitch", "700")
+        #expect(sent.messages == [
+            .settingsWrite(.init(key: "CWPitch", origin: Self.origin,
+                                 properties: [.init(name: "CWPitch", value: .utf8("650"))])),
+            .settingsWrite(.init(key: "CWPitch", origin: Self.origin,
+                                 properties: [.init(name: "CWPitch", value: .utf8("700"))])),
+        ])
+        proxy.apply(.settingsReject(.init(key: "CWPitch", properties: [
+            .init(name: "CWPitch", value: .utf8("600")),
+        ], reason: SeveralDevices.waitingReason)))
+        #expect(await first.value == .rejected(reason: SeveralDevices.waitingReason))
+        #expect(proxy.value("CWPitch") == "700", "the older refusal cannot replace the newer active touch")
+        if acceptNewest {
+            proxy.apply(Self.value("CWPitch", "700", origin: Self.origin))
+            #expect(await second.value == .accepted)
+            #expect(proxy.value("CWPitch") == "700")
+        } else {
+            proxy.apply(.settingsReject(.init(key: "CWPitch", properties: [
+                .init(name: "CWPitch", value: .utf8("600")),
+            ], reason: SeveralDevices.waitingReason)))
+            #expect(await second.value == .rejected(reason: SeveralDevices.waitingReason))
+            #expect(proxy.value("CWPitch") == "600", "once the newest touch is refused its carried Core value shows")
+        }
+        #expect(sent.count == 2)
+        #expect(clock.now == 0 && clock.pendingDueTimes.isEmpty)
+    }
+
+    @Test func aWaitingRemovalRejectRestoresTheCoreBeforeAnActualRemovalEcho() async throws {
+        let clock = ManualLinkClock()
+        let proxy = connected(["CWPitch": "600"], clock: clock)
+        let identity = try #require(proxy.currentSnapshotIdentity)
+        let removal = Task { await proxy.removeBound("CWPitch", expectedSnapshotIdentity: identity,
+                                                      authority: CommandSendPermit()) }
+        #expect(await sent.settle(untilCount: 1))
+        #expect(sent.messages == [.settingsRemove(.init(key: "CWPitch"))])
+        #expect(proxy.value("CWPitch") == nil)
+        proxy.apply(.settingsReject(.init(key: "CWPitch", properties: [
+            .init(name: "CWPitch", value: .utf8("600")),
+        ], reason: SeveralDevices.waitingReason)))
+        #expect(await removal.value == .rejected(reason: SeveralDevices.waitingReason))
+        #expect(proxy.value("CWPitch") == "600")
+        #expect(clock.now == 0 && clock.pendingDueTimes.isEmpty)
+        // Only an actual empty-origin removal value, after confirmation, clears the restored cache.
+        proxy.apply(Self.value("CWPitch", nil, origin: ""))
+        #expect(proxy.value("CWPitch") == nil)
+        #expect(sent.count == 1)
         #expect(clock.now == 0 && clock.pendingDueTimes.isEmpty)
     }
 

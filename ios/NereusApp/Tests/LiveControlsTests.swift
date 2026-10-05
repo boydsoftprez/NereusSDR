@@ -257,7 +257,7 @@ struct LiveControlsTests {
         await clock.advance(by: 60_000)
         #expect(rx.afGain == before)
         await result(station, key: key, write, accepted: true, kept: write.properties[0].value)
-        #expect(await settle { rx.note == nil && !model.mirror.isUnconfirmed(key, property: "afGain") })
+        #expect(await settle { rx.note == nil && !model.mirror.isUnconfirmed(key, property: "afGain") && rx.afGain == wanted })
         #expect(rx.afGain == wanted)
         await model.disconnect()
     }

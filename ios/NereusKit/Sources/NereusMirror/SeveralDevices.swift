@@ -606,10 +606,11 @@ public enum SeveralDevices {
     // MARK: The answer to Confirm
 
     /// What a `confirm.proceed` answer says the change settled at (ruling
-    /// 7.4a): a property write's object and values, or a setting's value.
+    /// 7.4a): a property write's object and values, or a setting's value
+    /// (nil for a removal, link document section 8.1).
     public enum Readback: Equatable, Sendable {
         case properties(objectKey: String, values: [String: MirrorValue])
-        case setting(key: String, value: String)
+        case setting(key: String, value: String?)
 
         /// The readback an accepted proceed carries, or nil (a command's own
         /// result values, or none).
@@ -628,10 +629,15 @@ public enum SeveralDevices {
                 return
             }
             if case .text(let key)? = result.values["settingsKey"] {
-                guard case .text(let value)? = result.values["value"] else {
+                // An accepted removal carries settingsKey alone (link document section 8.1).
+                switch result.values["value"] {
+                case nil:
+                    self = .setting(key: key, value: nil)
+                case .text(let value)?:
+                    self = .setting(key: key, value: value)
+                default:
                     return nil
                 }
-                self = .setting(key: key, value: value)
                 return
             }
             return nil

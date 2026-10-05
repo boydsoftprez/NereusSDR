@@ -123,6 +123,8 @@ final class TxEqualizerModel: ObservableObject {
     @Published private(set) var switchReason: String?
     @Published private(set) var editorReason: String?
     @Published private(set) var profileReason: String?
+    var profileFlow: SetupTxProfileFlow? { transmit.profileFlow }
+    let profileModelOwner = UUID()
     /// The Core's words for the last change it refused.
     @Published private(set) var note: String?
     /// The number pad open over the page, if any.
@@ -205,6 +207,7 @@ final class TxEqualizerModel: ObservableObject {
         watch.watch(transmit.$profiles)
         watch.watch(transmit.$activeProfile)
         watch.watch(transmit.$report)
+        watch.watch(transmit.objectWillChange)
         self.watch = watch
         refresh()
     }
@@ -234,7 +237,7 @@ final class TxEqualizerModel: ObservableObject {
         set(\.activeProfile, transmit.activeProfile)
         set(\.switchReason, reason(Self.switchVersion))
         set(\.editorReason, reason(Self.editorVersion))
-        set(\.profileReason, reason(Self.profileVersion))
+        set(\.profileReason, reason(Self.profileVersion) ?? transmit.profileSelectionReason)
         set(\.saveReason, reason(Self.profileVersion))
         set(\.transmitting, transmit.coreOnAir)
         set(\.takesOnAir, transmit.settingsVersion >= Self.onAirVersion)
@@ -426,8 +429,13 @@ final class TxEqualizerModel: ObservableObject {
     }
 
     /// A TX profile, by the Core's name for it (`txProfile.select`).
-    func selectProfile(_ name: String) {
+    func selectProfile(_ name: String, owner: UUID? = nil) {
         guard profileReason == nil, name != activeProfile else {
+            return
+        }
+        if !transmit.usesLegacyProfileSelection {
+            guard let flow = profileFlow else { note = SetupControlDispatcher.updatingReason; return }
+            flow.choose(name, owner: owner ?? profileModelOwner)
             return
         }
         guard let commands else {

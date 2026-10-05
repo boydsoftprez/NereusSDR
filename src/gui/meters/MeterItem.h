@@ -10,6 +10,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Selected RX source identity and RX-only presentation reset by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -236,6 +238,8 @@ public:
     virtual bool takeStaticPresentationChange() { return false; }
     virtual bool advanceMeter(qint64 monotonicMs) { Q_UNUSED(monotonicMs); return false; }
     virtual void resetForTxTransition(bool inTx);
+    // GUI source handoff: RX presentation only, preserving TX/PA/MMIO state.
+    virtual void resetRxSource();
     virtual void setPowerScale(int watts);
     // Composites can render individual unavailable channels while keeping
     // useful siblings visible. Empty reason restores availability.

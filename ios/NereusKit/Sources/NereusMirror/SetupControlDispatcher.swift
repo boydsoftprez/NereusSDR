@@ -51,6 +51,8 @@ public final class SetupControlDispatcher: ObservableObject {
     let store: MirrorStore
     let feed: SetupDescriptionFeed
     let settings: SettingsProxyClient
+    public lazy var txProfiles = SetupTxProfileFlow(dispatcher: self)
+    public lazy var filterPresets = FilterPresetsEditor(dispatcher: self)
     let commands: CommandClient
     let captureSender: CaptureSender
     let selectedSlice: () -> Int?
@@ -179,6 +181,10 @@ public final class SetupControlDispatcher: ObservableObject {
     public func admit(_ control: SetupDescription.Control, in category: String) -> Result<SetupAdmission, SetupRefusal> {
         switch control.binding {
         case .paProfile?, .paProfileGrid?: return admitPa(control, in: category)
+        case .filterPresets?:
+            // The closed editor admits a FilterPresetsGesture that captures
+            // the entire row and bank; a generic admission cannot substitute.
+            return .failure(SetupRefusal(reason: Self.notOnThisPhoneReason))
         default: break
         }
         let sliceId = selectedSlice()
@@ -436,6 +442,8 @@ public final class SetupControlDispatcher: ObservableObject {
             return reason
         }
         switch control.binding {
+        case .filterPresets?:
+            return filterPresets.reason(for: control, in: category)
         case .setting(let key)?:
             guard SettingsScope.of(key) == .station else {
                 // The Core keeps only station settings; this one would never be sent.
@@ -472,7 +480,11 @@ public final class SetupControlDispatcher: ObservableObject {
                 switch argument {
                 case .property(let reference):
                     if read(reference, sliceId: sliceId) == nil { return Self.valueMissingReason }
-                case .row, .edit, .prompt:
+                case .prompt:
+                    guard let prompt = control.modern?.profilePrompt,
+                          read(prompt.initial, sliceId: sliceId) != nil,
+                          read(prompt.namesFrom, sliceId: sliceId) != nil else { return Self.unreadableReason }
+                case .row, .edit:
                     return Self.unreadableReason
                 case .control(let id):
                     guard let named = currentControl(id, in: category), controlValue(named, sliceId: sliceId) != nil else {
@@ -645,7 +657,11 @@ public final class SetupControlDispatcher: ObservableObject {
             case .selectedOwnedSliceId:
                 guard let sliceId else { return nil }
                 typed = .int(Int64(sliceId))
-            case .row, .edit, .prompt:
+            case .prompt:
+                guard control.modern?.profilePrompt != nil, let text = value?.text,
+                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+                typed = .text(text.trimmingCharacters(in: .whitespacesAndNewlines))
+            case .row, .edit:
                 return nil
             }
             result.append(CommandArgument(name: name, value: typed))

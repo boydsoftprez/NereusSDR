@@ -13,6 +13,7 @@ struct TxEqualizerPage: View {
     @ObservedObject var model: TxEqualizerModel
     /// False on a phone turned sideways, where the curve is drawn beside the page.
     var showsCurve = true
+    @State var profileOwner = UUID()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -101,18 +102,24 @@ struct TxEqualizerPage: View {
                     model.setWindow($0)
                 }
             }
+            if let note = model.profileFlow?.problem(for: profileOwner) {
+                ToolPageParts.Refusal(text: note, identifier: "txEq.profileNote").padding(.top, 4)
+            }
             if let note = model.note {
                 ToolPageParts.Refusal(text: note, identifier: "txEq.note").padding(.top, 4)
             }
         }
+        .background {
+            if let flow = model.profileFlow { TxProfileSurfaceQuestion(flow: flow, owner: profileOwner, identifier: "txEq.profile") }
+        }
     }
 
     private var profileMenu: some View {
-        let enabled = model.profileReason == nil && !model.profiles.isEmpty
+        let enabled = model.profileReason == nil && model.profileFlow?.busy != true && !model.profiles.isEmpty
         return Menu {
             ForEach(model.profiles, id: \.self) { name in
                 Button {
-                    model.selectProfile(name)
+                    model.selectProfile(name, owner: profileOwner)
                 } label: {
                     if name == model.activeProfile {
                         Label(name, systemImage: "checkmark")

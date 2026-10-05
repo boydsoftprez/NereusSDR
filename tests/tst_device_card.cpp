@@ -30,6 +30,7 @@
 #include <QComboBox>
 #include <QCheckBox>
 #include <QAccessible>
+#include <QGuiApplication>
 #include <QAbstractItemView>
 #include <QSignalBlocker>
 #include <QStandardPaths>
@@ -397,7 +398,18 @@ private slots:
         QFETCH(bool, input);
         QVERIFY(QStandardPaths::isTestModeEnabled());
         QVERIFY(PortAudioBus::portAudioBarredForTestRun());
-        QAccessible::setActive(true);
+        // DeviceCard's native cache workaround is specific to Qt 6.11 Cocoa.
+        // Other backends still exercise every configuration and persistence
+        // assertion below, without imposing Cocoa cell-cache semantics.
+#if defined(Q_OS_MAC)
+        const bool inspectNativeCache = QGuiApplication::platformName() == QStringLiteral("cocoa")
+            && qVersion() == QStringLiteral("6.11.0");
+#else
+        const bool inspectNativeCache = false;
+#endif
+        if (inspectNativeCache) {
+            QAccessible::setActive(true);
+        }
         const QString prefix = input ? QStringLiteral("audio/TxInput")
                                      : QStringLiteral("audio/Speakers");
         AudioDeviceConfig config;
@@ -421,11 +433,13 @@ private slots:
         }
         QSignalSpy changes(&card, &DeviceCard::configChanged);
         for (int iteration = 0; iteration < 3; ++iteration) {
-            QAccessibleInterface* table = QAccessible::queryAccessibleInterface(device->view());
-            QVERIFY(table && table->tableInterface());
-            QAccessibleInterface* selected = table->tableInterface()->cellAt(device->currentIndex(), 0);
-            QVERIFY(selected && selected->isValid());
-            QCOMPARE(selected->text(QAccessible::Name), QStringLiteral("Absent test audio device (not available)"));
+            if (inspectNativeCache) {
+                QAccessibleInterface* table = QAccessible::queryAccessibleInterface(device->view());
+                QVERIFY(table && table->tableInterface());
+                QAccessibleInterface* selected = table->tableInterface()->cellAt(device->currentIndex(), 0);
+                QVERIFY(selected && selected->isValid());
+                QCOMPARE(selected->text(QAccessible::Name), QStringLiteral("Absent test audio device (not available)"));
+            }
 
             driver->setCurrentIndex(driver->currentIndex() == 0 ? 1 : 0);
 
@@ -437,10 +451,12 @@ private slots:
             const AudioDeviceConfig saved = AudioDeviceConfig::loadFromSettings(prefix);
             QCOMPARE(saved.deviceName, config.deviceName);
             QCOMPARE(saved.bufferSamples, 3000);
-            table = QAccessible::queryAccessibleInterface(device->view());
-            selected = table->tableInterface()->cellAt(device->currentIndex(), 0);
-            QVERIFY(selected && selected->isValid());
-            QCOMPARE(selected->text(QAccessible::Name), device->currentText());
+            if (inspectNativeCache) {
+                QAccessibleInterface* table = QAccessible::queryAccessibleInterface(device->view());
+                QAccessibleInterface* selected = table->tableInterface()->cellAt(device->currentIndex(), 0);
+                QVERIFY(selected && selected->isValid());
+                QCOMPARE(selected->text(QAccessible::Name), device->currentText());
+            }
         }
     }
 

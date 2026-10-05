@@ -91,7 +91,7 @@ struct SetupTab: View {
     /// The tree now: the app's own pages and the ones the Core describes.
     private var tree: [SetupTree.Category] {
         SetupTree.categories(described: pages.categories, order: pages.order, unreadable: pages.unreadable,
-                             stackOffered: band.stackOffered)
+                             stackOffered: band.stackOffered, showPaValues: app.paValues.showPage)
     }
 
     @ViewBuilder

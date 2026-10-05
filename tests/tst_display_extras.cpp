@@ -19,6 +19,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04: Budget-enforced waterfall-only/no-peak-hold daemon
+//               regressions. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25  J.J. Boyd / KG4VCF  R-IOS-27, R-IOS-06: clarity-retune
 //                                    and displayExtrasVersion 2.
 //                                    AI-assisted via Anthropic Claude Code.
@@ -1153,6 +1155,78 @@ private slots:
         QVERIFY(!decodeDisplayExtras(other, context).accepted);
         // A missing state byte is truncated.
         QVERIFY(!decodeDisplayExtras(bytes.left(bytes.size() - 1), context).accepted);
+    }
+
+    void budgetPacingSendsExtrasWithoutPeakHold_data()
+    {
+        QTest::addColumn<QJsonObject>("extras");
+        QTest::addColumn<int>("expectedSections");
+        QTest::newRow("waterfall-only-agc") << levels(QStringLiteral("agc"))
+                                          << int(kDisplayExtrasWaterfallLevels);
+        QTest::newRow("waterfall-only-noise-floor-agc") << levels(QStringLiteral("noiseFloorAgc"))
+                                                      << int(kDisplayExtrasWaterfallLevels);
+        QJsonObject withoutHold = everyExtra();
+        withoutHold.remove(QStringLiteral("activePeakHold"));
+        QTest::newRow("all-extras-without-peak-hold") << withoutHold
+            << int(kDisplayExtrasKnownSections & ~kDisplayExtrasPeakHold);
+    }
+
+    void budgetPacingSendsExtrasWithoutPeakHold()
+    {
+#ifndef HAVE_FFTW3
+        QSKIP("FFTEngine has no FFTW3 backend in this build");
+#endif
+        QFETCH(QJsonObject, extras);
+        QFETCH(int, expectedSections);
+        Harness harness;
+        QVERIFY(harness.server.setDisplayBudgetLimits({1'000'000, 1'000'000, 1}));
+        harness.server.setDisplayBudgetEnforcementEnabled(true);
+        QVERIFY(harness.establishSession());
+        QVERIFY(harness.server.displayBudgetAvailable(harness.client.sessionEpoch()));
+        QSignalSpy controls(&harness.client, &StationClient::mediaControlReceived);
+        QVERIFY(harness.startReadyPeer());
+        const double centreHz = harness.radio.streamCentreHz(harness.streamIndex);
+        QVERIFY(harness.client.sendMediaControl(
+            withFields(subscription(7, harness.sliceId, centreHz), extras),
+            harness.client.sessionEpoch()));
+        QTRY_COMPARE_WITH_TIMEOUT(harness.controller.activeEndpointCount(), 1, 2'000);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            (harness.feedRadio(), !messageFor(controls, QStringLiteral("context"), 7).isEmpty()),
+            2'000);
+        const DisplayCodecContext context = contextFrom(messageFor(controls, QStringLiteral("context"), 7));
+        const auto plainCost = spectrumDisplayCost(128, 60, false);
+        QVERIFY(plainCost.has_value());
+        // Scalar/blob extras consume bytes, but add no peak-hold sample plane.
+        QCOMPARE(harness.controller.acceptedDisplayCharge().spectrumSampleUnitsPerSecond,
+                 plainCost->charge.spectrumSampleUnitsPerSecond);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            (harness.feedRadio(), !withMagic(harness.mediaTransport->displays, "NSDC").isEmpty()),
+            2'000);
+        const bool extrasArrived = QTest::qWaitFor([&harness] {
+            harness.feedRadio();
+            return withMagic(harness.mediaTransport->displays, "NSDX").size() >= 3;
+        }, 2'000);
+        QVERIFY2(extrasArrived, qPrintable(QStringLiteral("budget-enabled NSDC=%1 NSDX=%2")
+            .arg(withMagic(harness.mediaTransport->displays, "NSDC").size())
+            .arg(withMagic(harness.mediaTransport->displays, "NSDX").size())));
+
+        int checked = 0;
+        const QList<QByteArray>& displays = harness.mediaTransport->displays;
+        for (int i = 0; i < displays.size(); ++i) {
+            if (!displays[i].startsWith("NSDX")) { continue; }
+            const auto decoded = decodeDisplayExtras(displays[i], context);
+            QVERIFY(decoded.accepted);
+            QCOMPARE(int(decoded.frame.sections()), expectedSections);
+            QVERIFY(!decoded.frame.peakHoldDbm.has_value());
+            QVERIFY(decoded.frame.waterfallLevelsDbm.has_value());
+            QVERIFY(std::isfinite(decoded.frame.waterfallLevelsDbm->first));
+            QVERIFY(decoded.frame.waterfallLevelsDbm->second > decoded.frame.waterfallLevelsDbm->first);
+            QVERIFY(i > 0 && displays[i - 1].startsWith("NSDC"));
+            QCOMPARE(sequenceOfNsdc(displays[i - 1]), decoded.frame.encoderSequence);
+            ++checked;
+        }
+        QVERIFY(checked >= 3);
+        harness.finish();
     }
 
     void anEndpointThatAsksGetsExtrasBesideEachFrame()

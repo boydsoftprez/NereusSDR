@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Selected RX source identity and RX-only presentation reset by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
@@ -1311,7 +1313,8 @@ private:
     // Slice control plan Task 15: the slice this window's RX area follows
     // (bottom bar, flag focus, RX applet). A listened slice may be it; the
     // active slice (menus, transmit) never moves with it.
-    SliceModel* windowRxSlice() const;
+    SliceModel* windowRxSlice(bool allowFallback = true) const;
+    SliceModel* containerSourceSlice(const QJsonObject& context) const;
     // Slice control plan Task 15 (ruling U7): the RX applet's tabs, one per
     // slice this window controls or listens to and shows, each saying who
     // controls it; the applet binds windowRxSlice() with its access.

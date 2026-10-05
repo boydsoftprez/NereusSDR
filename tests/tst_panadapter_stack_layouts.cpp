@@ -8,6 +8,23 @@
 #include <QtTest/QtTest>
 #include <QPointer>
 #include <QSplitter>
+#include <QStandardPaths>
+#include <QTemporaryDir>
+#include <QScopeGuard>
+#include <QMouseEvent>
+#include <memory>
+#include <cmath>
+#include "core/session/StationClient.h"
+#include "core/session/StationServer.h"
+#include "core/settings/SettingsProxy.h"
+#include "core/HpsdrModel.h"
+#include "core/SliceOwnership.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
+#include "gui/widgets/VfoWidget.h"
+#include "fakes/LoopbackTransport.h"
+#include "fakes/UpgradedCoreToken.h"
+#include "fakes/MainWindowTestSettings.h"
 #include "gui/PanadapterStack.h"
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterApplet.h"
@@ -19,7 +36,287 @@ using namespace NereusSDR;
 
 class TestPanadapterStackLayouts : public QObject {
     Q_OBJECT
+    QString m_isolatedSettingsPath;
 private slots:
+    void initTestCase()
+    {
+        QVERIFY(QStandardPaths::isTestModeEnabled());
+        const QString profile = QStringLiteral("pan-flag-regression-%1").arg(QCoreApplication::applicationPid());
+        AppSettings::setProfileOverride(profile);
+        m_isolatedSettingsPath = AppSettings::resolveSettingsPath(profile);
+        QCOMPARE(AppSettings::instance().filePath(), m_isolatedSettingsPath);
+        AppSettings::instance().clear();
+    }
+
+    void cleanup()
+    {
+        if (AppSettings::instance().filePath() == m_isolatedSettingsPath) {
+            AppSettings::instance().setRemoteBackend(nullptr);
+            AppSettings::instance().clear();
+        }
+    }
+
+    void remoteLayoutShowsSeededSecondaryFlagBeforeFirstTune_data()
+    {
+        QTest::addColumn<bool>("rehome");
+        QTest::addColumn<int>("control");
+        QTest::newRow("new-slice-on-new-pan") << false << 0;
+        QTest::newRow("cohosted-slice-spread-to-new-pan") << true << 0;
+        QTest::newRow("shrink-expand-preserves-slice-state-and-zoom") << false << 1;
+        QTest::newRow("listened-slice-rehomes-as-marker-without-moving-view") << false << 2;
+        QTest::newRow("ordinary-core-frequency-delta-reveals-flag-preserving-span") << false << 3;
+        QTest::newRow("operator-pan-before-initial-slice-arrival-is-preserved") << false << 4;
+        QTest::newRow("additional-cohosted-flag-preserves-initial-owned-view") << true << 5;
+        QTest::newRow("existing-listener-view-is-preserved-on-owned-cohost-arrival") << false << 6;
+    }
+
+    void remoteLayoutShowsSeededSecondaryFlagBeforeFirstTune()
+    {
+        QFETCH(bool, rehome);
+        QFETCH(int, control);
+        QVERIFY(QStandardPaths::isTestModeEnabled());
+        AppSettings& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("PanLayoutId"), QStringLiteral("1"));
+        Test::markAudioFirstRunDone();
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings stationSettings(directory.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        QVERIFY(station.addSlice(QStringLiteral("pan-0")) >= 0);
+        SliceModel* a = station.sliceById(0);
+        QVERIFY(a);
+        a->setFrequency(7'284'600.0);
+        a->setDspMode(DSPMode::LSB);
+        a->setFilter(-2850, -150);
+        if (rehome) {
+            QVERIFY(station.addSlice(QStringLiteral("pan-0")) >= 0);
+            station.sliceById(1)->setFrequency(7'302'300.0);
+            station.sliceById(1)->setFilter(-2400, -200);
+        }
+        if (control == 5) {
+            QVERIFY(station.addSlice(QStringLiteral("pan-0")) >= 0);
+            station.sliceById(2)->setFrequency(14'195'100.0);
+        }
+        if (control == 6) {
+            QVERIFY(station.addSlice(QStringLiteral("pan-1")) >= 0);
+            station.sliceOwnership()->setOwner(1, QByteArrayLiteral("phone-test"));
+            station.sliceOwnership()->join(QByteArrayLiteral("token:1"), 1);
+        }
+        station.flushPendingSettingsSave();
+        StationServer server(&station, stationSettings,
+                             Test::seedUpgradedCoreToken(directory.path()));
+        server.setHeartbeatIntervalMs(0);
+        server.setMediaEnabled(false);
+        SettingsProxy proxy;
+        settings.setRemoteBackend(&proxy);
+        const auto detachBackend = qScopeGuard([&settings] { settings.setRemoteBackend(nullptr); });
+        const RemoteStationOptions options{QStringLiteral("ws://offline.invalid"),
+                                          server.token(), {}, true};
+        MainWindow window(options, nullptr, MainWindow::ConnectionStartup::Deferred);
+        window.resize(1280, 800);
+        window.show();
+        StationClient* client = window.findChild<StationClient*>();
+        QVERIFY(client);
+        client->setTokenSessionHolderForTest(QStringLiteral("token:1"));
+        client->setTokenSliceAccessForTest(true);
+        auto stationLink = std::make_unique<Test::LoopbackTransport>(QStringLiteral("station"));
+        auto clientLink = std::make_unique<Test::LoopbackTransport>(QStringLiteral("client"));
+        Test::LoopbackTransport* coreWire = stationLink.get();
+        stationLink->linkTo(clientLink.get());
+        client->startSession(clientLink.release(), server.token());
+        server.acceptTransport(stationLink.release());
+        QTRY_VERIFY(client->isHandshakeComplete());
+        RadioModel* remote = window.radioModel();
+        QVERIFY(!remote->ownsLocalDsp());
+        QTRY_VERIFY(remote->sliceById(0));
+        QTRY_COMPARE(remote->sliceById(0)->frequency(), 7'284'600.0);
+        PanadapterStack* stack = window.findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        SpectrumWidget* existing = stack->spectrum(QStringLiteral("pan-0"));
+        QVERIFY(existing);
+        existing->setDisplayWindowPreservingHistory(7'310'000.0, 48'000.0);
+        existing->setCtunEnabled(true);
+        const double retainedCenter = existing->centerFrequency();
+        const double retainedSpan = existing->bandwidth();
+        if (control == 4) { coreWire->setHoldsOutgoing(true); }
+        double operatorCenter = 0.0;
+        double operatorSpan = 0.0;
+        // Real slot, the same accepted layout path as PanLayoutDialog. The
+        // station receives and applies add/rehome through the normal link.
+        QVERIFY(QMetaObject::invokeMethod(&window, "applyPanLayout",
+                                          Q_ARG(QString, QStringLiteral("2v"))));
+        QTRY_VERIFY(stack->spectrum(QStringLiteral("pan-1")));
+        if (control == 4) {
+            SpectrumWidget* waiting = stack->spectrum(QStringLiteral("pan-1"));
+            QCoreApplication::processEvents();
+            QVERIFY(!waiting->vfoWidget(1));
+            const double beforeDrag = waiting->centerFrequency();
+            const QRect plot = waiting->notchSpecRectForTest();
+            QVERIFY(plot.width() > 200);
+            const QPoint start = plot.center();
+            const QPoint finish = start + QPoint(80, 0);
+            QSignalSpy userMoved(waiting, &SpectrumWidget::centerChanged);
+            QMouseEvent press(QEvent::MouseButtonPress, start, waiting->mapToGlobal(start),
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(waiting, &press);
+            QMouseEvent move(QEvent::MouseMove, finish, waiting->mapToGlobal(finish),
+                             Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(waiting, &move);
+            QMouseEvent release(QEvent::MouseButtonRelease, finish, waiting->mapToGlobal(finish),
+                                Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(waiting, &release);
+            QVERIFY(userMoved.count() > 0);
+            QVERIFY(waiting->centerFrequency() != beforeDrag);
+            operatorCenter = waiting->centerFrequency();
+            operatorSpan = waiting->bandwidth();
+            coreWire->setHoldsOutgoing(false);
+        }
+        QTRY_VERIFY(remote->sliceById(1));
+        const int secondarySlice = rehome ? 0 : 1;
+        QTRY_COMPARE(remote->sliceById(secondarySlice)->panKey(), QStringLiteral("pan-1"));
+        SpectrumWidget* secondary = stack->spectrum(QStringLiteral("pan-1"));
+        VfoWidget* flag = secondary->vfoWidget(secondarySlice);
+        QTRY_VERIFY(secondary->vfoWidget(secondarySlice));
+        flag = secondary->vfoWidget(secondarySlice);
+        QCOMPARE(flag->frequency(), 7'284'600.0);
+        QVERIFY(secondary->ctunEnabled());
+        QCOMPARE(existing, stack->spectrum(QStringLiteral("pan-0")));
+        QCOMPARE(existing->centerFrequency(), retainedCenter);
+        QCOMPARE(existing->bandwidth(), retainedSpan);
+        if (control != 6) { QVERIFY(!flag->isListening()); }
+        qInfo() << "pre-tune secondary" << secondarySlice << "VFO" << flag->frequency()
+                << "center" << secondary->centerFrequency() << "span" << secondary->bandwidth()
+                << "hidden" << flag->isHidden();
+        if (control == 0) {
+            QVERIFY2(!flag->isHidden(), "Owned secondary slice flag must be visible before any subsequent tune");
+            QVERIFY(flag->geometry().intersects(secondary->rect()));
+            return;
+        }
+        if (control == 5) {
+            const double firstCenter = secondary->centerFrequency();
+            const double firstSpan = secondary->bandwidth();
+            station.sliceById(2)->setPanKey(QStringLiteral("pan-1"));
+            QTRY_VERIFY(secondary->vfoWidget(2));
+            QCOMPARE(secondary->centerFrequency(), firstCenter);
+            QCOMPARE(secondary->bandwidth(), firstSpan);
+            QVERIFY(!secondary->vfoWidget(0)->isHidden());
+            QCOMPARE(secondary->vfoWidget(2)->frequency(), 14'195'100.0);
+            QVERIFY(secondary->vfoWidget(2)->isHidden());
+            return;
+        }
+        if (control == 6) {
+            QVERIFY(flag->isListening());
+            // Hydrating a foreign-owned listener must not consume this new
+            // pane's pending owned-slice initialization.
+            QCOMPARE(secondary->centerFrequency(), 14'225'000.0);
+            QVERIFY(flag->isHidden());
+            const double listenerCenter = secondary->centerFrequency();
+            const double firstSpan = secondary->bandwidth();
+            station.sliceById(0)->setFrequency(7'300'000.0);
+            QTRY_COMPARE(remote->sliceById(0)->frequency(), 7'300'000.0);
+            station.sliceById(0)->setPanKey(QStringLiteral("pan-1"));
+            QTRY_VERIFY(secondary->vfoWidget(0));
+            QVERIFY(!secondary->vfoWidget(0)->isHidden());
+            QCOMPARE(secondary->bandwidth(), firstSpan);
+            QCOMPARE(secondary->centerFrequency(), 7'300'000.0);
+            QVERIFY(secondary->centerFrequency() != listenerCenter);
+            QVERIFY(secondary->vfoWidget(1)->isListening());
+            QVERIFY(!secondary->vfoWidget(1)->isHidden());
+            return;
+        }
+        if (control == 4) {
+            QCOMPARE(secondary->centerFrequency(), operatorCenter);
+            QCOMPARE(secondary->bandwidth(), operatorSpan);
+            QVERIFY(flag->isHidden()); // Operator chose a window outside its VFO.
+            return;
+        }
+        const double secondarySpan = secondary->bandwidth();
+        if (control == 3) {
+            station.sliceById(1)->setFrequency(7'284'700.0);
+            QTRY_COMPARE(remote->sliceById(1)->frequency(), 7'284'700.0);
+            QTRY_VERIFY(!secondary->vfoWidget(1)->isHidden());
+            QVERIFY(secondary->vfoWidget(1)->geometry().intersects(secondary->rect()));
+            QCOMPARE(secondary->bandwidth(), secondarySpan);
+            QCOMPARE(existing->centerFrequency(), retainedCenter);
+            QCOMPARE(existing->bandwidth(), retainedSpan);
+            return;
+        }
+        if (control == 2) {
+            // Core delta, not a hand-invoked GUI hook: the controlled slice
+            // becomes listened-to on this window, then its pan is retired.
+            station.sliceById(1)->setFrequency(14'195'100.0);
+            station.sliceOwnership()->setOwner(1, QByteArrayLiteral("phone-test"));
+            station.sliceOwnership()->join(QByteArrayLiteral("token:1"), 1);
+            QTRY_VERIFY(secondary->vfoWidget(1)->isListening());
+            QVERIFY(QMetaObject::invokeMethod(&window, "applyPanLayout",
+                                              Q_ARG(QString, QStringLiteral("1"))));
+            QTRY_VERIFY(existing->vfoWidget(1));
+            QVERIFY(existing->isEdgeMarkedSlice(1));
+            QVERIFY(existing->vfoWidget(1)->isHidden());
+            QCOMPARE(existing->centerFrequency(), retainedCenter);
+            QCOMPARE(existing->bandwidth(), retainedSpan);
+            QCOMPARE(station.sliceById(1)->panKey(), QStringLiteral("pan-1"));
+            return;
+        }
+        const double aFrequency = remote->sliceById(0)->frequency();
+        const double bFrequency = remote->sliceById(1)->frequency();
+        const DSPMode aMode = remote->sliceById(0)->dspMode();
+        const DSPMode bMode = remote->sliceById(1)->dspMode();
+        const int aLow = remote->sliceById(0)->filterLow();
+        const int bLow = remote->sliceById(1)->filterLow();
+        const int aHigh = remote->sliceById(0)->filterHigh();
+        const int bHigh = remote->sliceById(1)->filterHigh();
+        QVERIFY(QMetaObject::invokeMethod(&window, "applyPanLayout",
+                                          Q_ARG(QString, QStringLiteral("1"))));
+        QTRY_COMPARE(stack->count(), 1);
+        QTRY_VERIFY(existing->vfoWidget(0) && existing->vfoWidget(1));
+        QVERIFY(QMetaObject::invokeMethod(&window, "applyPanLayout",
+                                          Q_ARG(QString, QStringLiteral("2v"))));
+        QTRY_COMPARE(stack->count(), 2);
+        QCOMPARE(remote->slices().size(), 2);
+        QCOMPARE(remote->sliceById(0)->frequency(), aFrequency);
+        QCOMPARE(remote->sliceById(1)->frequency(), bFrequency);
+        QCOMPARE(remote->sliceById(0)->dspMode(), aMode);
+        QCOMPARE(remote->sliceById(1)->dspMode(), bMode);
+        QCOMPARE(remote->sliceById(0)->filterLow(), aLow);
+        QCOMPARE(remote->sliceById(1)->filterLow(), bLow);
+        QCOMPARE(remote->sliceById(0)->filterHigh(), aHigh);
+        QCOMPARE(remote->sliceById(1)->filterHigh(), bHigh);
+        QCOMPARE(existing->centerFrequency(), retainedCenter);
+        QCOMPARE(existing->bandwidth(), retainedSpan);
+        QCOMPARE(stack->spectrum(QStringLiteral("pan-1"))->bandwidth(), secondarySpan);
+    }
+
+    void localNewSubscriptionPlacesSecondaryViewOnItsStream()
+    {
+        Test::markAudioFirstRunDone();
+        AppSettings::instance().setValue(QStringLiteral("PanLayoutId"), QStringLiteral("1"));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        window.resize(1280, 800);
+        window.show();
+        RadioModel* model = window.radioModel();
+        model->setBoardForTest(HPSDRHW::Saturn);
+        model->configureStreamPool(5, 5, 192000);
+        model->setConnectionStateForTest(ConnectionState::Connected);
+        QVERIFY(model->addSlice(QStringLiteral("pan-0")) >= 0);
+        SliceModel* first = model->sliceById(0);
+        QVERIFY(first);
+        first->setFrequency(7'284'600.0);
+        QVERIFY(QMetaObject::invokeMethod(&window, "applyPanLayout",
+                                          Q_ARG(QString, QStringLiteral("2v"))));
+        PanadapterStack* stack = window.findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        SpectrumWidget* secondary = stack->spectrum(QStringLiteral("pan-1"));
+        QVERIFY(secondary);
+        QTRY_VERIFY(secondary->vfoWidget(1));
+        QCOMPARE(secondary->vfoWidget(1)->frequency(), 7'284'600.0);
+        QVERIFY(!secondary->vfoWidget(1)->isHidden());
+        QVERIFY(std::abs(secondary->centerFrequency() - 7'284'600.0) < secondary->bandwidth() / 2.0);
+    }
+
     void stack_starts_with_layout_single()
     {
         PanadapterStack stack;
