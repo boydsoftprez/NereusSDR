@@ -1101,6 +1101,36 @@ namespace NereusSDR {
 
 namespace {
 constexpr char kInitialOwnedPanViewProperty[] = "initialOwnedPanView";
+constexpr char kInitialOwnedPanCtunProperty[] = "initialOwnedPanPreservesCtun";
+
+void followRemoteSliceFrequency(SpectrumWidget* spectrum, double frequencyHz)
+{
+    if (!spectrum) { return; }
+    const double halfSpan = spectrum->bandwidth() / 2.0;
+    const bool offScreen = frequencyHz < spectrum->centerFrequency() - halfSpan
+        || frequencyHz > spectrum->centerFrequency() + halfSpan;
+    // Core alone moves the DDC and applies the demodulator shift.
+    // Following a mirrored VFO must not echo an explicit pan gesture.
+    if (!spectrum->ctunEnabled() || offScreen) {
+        spectrum->setDisplayWindowPreservingHistory(frequencyHz, spectrum->bandwidth());
+    }
+    spectrum->setVfoFrequency(frequencyHz);
+}
+
+void armInitialOwnedPanView(SpectrumWidget* sw, bool preservesVisibleCtun = false)
+{
+    if (!sw) { return; }
+    // The first authoritative owned slice may arrive on the primary pane too.
+    // Retire this once-only placement on a user gesture; compare the geometry
+    // again when ownership arrives so accepted Core crops are preserved.
+    sw->setProperty(kInitialOwnedPanViewProperty,
+                          QPointF(sw->centerFrequency(), sw->bandwidth()));
+    sw->setProperty(kInitialOwnedPanCtunProperty, preservesVisibleCtun);
+    QObject::connect(sw, &SpectrumWidget::centerChanged, sw,
+                     [sw](double) {
+        sw->setProperty(kInitialOwnedPanViewProperty, QVariant());
+    });
+}
 
 void initializeOwnedPanView(SpectrumWidget* spectrum, double frequencyHz)
 {
@@ -1111,7 +1141,14 @@ void initializeOwnedPanView(SpectrumWidget* spectrum, double frequencyHz)
     const QPointF bornAt = initialView.toPointF();
     if (qFuzzyCompare(spectrum->centerFrequency(), bornAt.x())
         && qFuzzyCompare(spectrum->bandwidth(), bornAt.y())) {
-        spectrum->setDisplayWindowPreservingHistory(frequencyHz, spectrum->bandwidth());
+        // The primary pane already follows the remote CTUN rule: retain an
+        // on-window centre. Secondary panes keep their existing first-owned
+        // placement, so this does not change that separate policy.
+        if (spectrum->property(kInitialOwnedPanCtunProperty).toBool()) {
+            followRemoteSliceFrequency(spectrum, frequencyHz);
+        } else {
+            spectrum->setDisplayWindowPreservingHistory(frequencyHz, spectrum->bandwidth());
+        }
         spectrum->updateVfoPositions();
     }
 }
@@ -3124,7 +3161,8 @@ void MainWindow::refreshSliceChooser()
         // Complete the same once-only placement when ownership becomes known.
         if (sliceAccessClient() && windowControlsSlice(it.key())
             && !markerOnlyPlacement(it.key())) {
-            if (SliceModel* slice = m_radioModel->sliceById(it.key())) {
+            if (SliceModel* slice = m_radioModel->sliceById(it.key());
+                slice && !slice->panKey().isEmpty()) {
                 initializeOwnedPanView(qobject_cast<SpectrumWidget*>(flag->parentWidget()),
                                        slice->frequency());
             }
@@ -4591,7 +4629,7 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // The pending geometry belongs to this widget instance, not its pan ID;
     // reused views and additional cohosted flags therefore stay where they are.
     if (sliceAccessClient() && windowControlsSlice(sliceIndex)
-        && !markerOnlyPlacement(sliceIndex)) {
+        && !slice->panKey().isEmpty() && !markerOnlyPlacement(sliceIndex)) {
         initializeOwnedPanView(sw, slice->frequency());
     }
 
@@ -4614,7 +4652,7 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
         // A listened slice a layout change placed here: its flag and its own
         // edge marker, never this pan's VFO.
         sw->setEdgeMarkedSlice(sliceIndex, true);
-    } else {
+    } else if (m_radioModel->ownsLocalDsp() || !slice->panKey().isEmpty()) {
         sw->setVfoFrequency(slice->frequency());
     }
     newFlag->setMode(slice->dspMode());
@@ -4829,9 +4867,43 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // panKeyChanged added one more frequency, mode and filter handler, and a
     // deleted flag's handlers stayed live. The hooks below are the host-side
     // half; the binding repaints the flag before calling them.
+    const auto queueKeylessPresentation = [this, slice, newFlag](double hz) {
+        const QPointer<SliceModel> pendingSlice(slice);
+        // applyUpdates completes synchronously; the flag's context drops
+        // this work if migration/removal retires it before the next turn.
+        // A complete record may legitimately have no key, so keep the
+        // existing hosting fallback once hydration has finished.
+        QMetaObject::invokeMethod(newFlag, [this, pendingSlice, hz]() {
+            if (!pendingSlice || !m_radioModel
+                || m_radioModel->sliceById(pendingSlice->sliceIndex()) != pendingSlice
+                || !pendingSlice->panKey().isEmpty()
+                || !qFuzzyCompare(pendingSlice->frequency(), hz)) { return; }
+            SpectrumWidget* host = spectrumForSlice(pendingSlice);
+            if (!host) { return; }
+            if (markerOnlyPlacement(pendingSlice->sliceIndex())) {
+                host->setEdgeMarkedSlice(pendingSlice->sliceIndex(), true);
+                host->refreshSliceFlags();
+            } else {
+                followRemoteSliceFrequency(host, hz);
+            }
+        }, Qt::QueuedConnection);
+    };
+    // A completed record can retain both the default frequency and empty
+    // key, emitting neither changed signal. Its initial flag still needs
+    // the same guarded fallback after synchronous record hydration.
+    if (!m_radioModel->ownsLocalDsp() && slice->panKey().isEmpty()) {
+        queueKeylessPresentation(slice->frequency());
+    }
     SliceFlagHostHooks hostHooks;
-    hostHooks.frequencyChanged = [this, slice](double hz) {
+    hostHooks.frequencyChanged = [this, slice, queueKeylessPresentation](double hz) {
         if (m_handlingBandJump) { return; }
+        // A remote object record publishes the slice before its pan key.
+        // Its frequency is already on the flag, but must not move the pane
+        // it temporarily borrows while that authoritative key is still absent.
+        if (!m_radioModel->ownsLocalDsp() && slice->panKey().isEmpty()) {
+            queueKeylessPresentation(hz);
+            return;
+        }
         // Keep the hosting pan's VFO marker on this slice as it tunes.
         // Resolved per-call rather than captured, because a slice can migrate
         // to another pan and the flag follows it there.
@@ -4865,12 +4937,7 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
         const double halfBw = host->bandwidth() / 2.0;
         const bool offScreen = (hz < center - halfBw) || (hz > center + halfBw);
         if (!m_radioModel->ownsLocalDsp()) {
-            // Core alone moves the DDC and applies the demodulator shift.
-            // Following a mirrored VFO must not echo an explicit pan gesture.
-            if (!host->ctunEnabled() || offScreen) {
-                host->setDisplayWindowPreservingHistory(hz, host->bandwidth());
-            }
-            host->setVfoFrequency(hz);
+            followRemoteSliceFrequency(host, hz);
             return;
         }
         if (!host->ctunEnabled() || offScreen) {
@@ -5813,15 +5880,10 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
     configureSpectrumForPanForTest(sw, panId);
 
     if (!m_radioModel->ownsLocalDsp()) {
-        // Only wired for a newly created secondary pan. This transient Qt
-        // property is retired by its first owned flag or by a user gesture;
-        // it is never persisted and dies with the pane. Geometry comparison
-        // at flag creation also preserves a view moved without centerChanged.
-        sw->setProperty(kInitialOwnedPanViewProperty,
-                        QPointF(sw->centerFrequency(), sw->bandwidth()));
-        connect(sw, &SpectrumWidget::centerChanged, sw, [sw](double) {
-            sw->setProperty(kInitialOwnedPanViewProperty, QVariant());
-        });
+        // This transient Qt property is retired by its first owned flag or
+        // by a user gesture; it is never persisted and dies with the pane.
+        // Geometry comparison also preserves a view moved without centerChanged.
+        armInitialOwnedPanView(sw);
     }
 
     // Parity ruling C13: in a remote window the Performance Overlay shows
@@ -6899,6 +6961,9 @@ void MainWindow::buildUI()
     if (initialSpectrum) {
         configureSpectrumForPanForTest(initialSpectrum,
                                        QStringLiteral("pan-0"));
+        if (!m_radioModel->ownsLocalDsp()) {
+            armInitialOwnedPanView(initialSpectrum, true);
+        }
     }
 
     // Task 13 wires per-pan rebinding when the active pan changes; for
@@ -7893,6 +7958,24 @@ void MainWindow::buildUI()
                 }
                 m_vfoWidgetsBySlice.remove(idx);
                 if (dest) { createSliceFlag(slice, dest); }
+            }
+            // Complete presentation on the authoritative host, even when
+            // Slice A's flag was already parented there and needed no rebuild.
+            // The pane's once-only placement preserves operator/listener views
+            // and accepted Core crops, exactly as a newly owned flag does.
+            if (dest && !m_radioModel->ownsLocalDsp()
+                && !markerOnlyPlacement(idx)) {
+                if (sliceAccessClient() && windowControlsSlice(idx)) {
+                    initializeOwnedPanView(dest, slice->frequency());
+                }
+                // Use the mirrored-frequency path: non-CTUN must update
+                // the view before the VFO, avoiding auto-scroll centreChanged
+                // writing a display margin back into the authoritative slice.
+                if (dest->ctunEnabled()) {
+                    dest->setVfoFrequency(slice->frequency());
+                } else {
+                    followRemoteSliceFrequency(dest, slice->frequency());
+                }
             }
             // Phase 3F Sub-Epic I Task 9: the slice now feeds a different
             // pan, so the FFT topology has to follow. Unconditional: the
@@ -14062,8 +14145,16 @@ void MainWindow::wireSliceToSpectrum()
         const double ceiling  = host->maxZoomOutBandwidthHz();
         const double initialBw = (loadedBw >= 10000.0 && loadedBw <= ceiling)
                                  ? loadedBw : 768000.0;
-        host->setFrequencyRange(freq, initialBw);
-        host->setVfoFrequency(freq);
+        // The provisional remote Slice A has no authoritative hosting key.
+        // Preserve this pane's view until its record completes, just as the
+        // per-flag frequency binding does; local startup keeps its seed.
+        const bool provisionalRemote = !m_radioModel->ownsLocalDsp()
+            && slice->panKey().isEmpty();
+        host->setFrequencyRange(provisionalRemote ? host->centerFrequency() : freq,
+                                initialBw);
+        if (!provisionalRemote) {
+            host->setVfoFrequency(freq);
+        }
         host->setFilterOffset(slice->filterLow(), slice->filterHigh());
         host->setStepSize(slice->stepHz());
     }
