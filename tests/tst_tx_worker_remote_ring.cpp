@@ -74,6 +74,9 @@
 //               lines that now follow it (they never carry "transmit I/Q"),
 //               and the first over's underrun is placed in one. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-03: run the scripted capture child in this test executable so
+//               sharded builds do not need a sibling test. J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -93,13 +96,16 @@
 #include "core/session/media/RemoteMicReceiver.h"
 
 #include "fakes/FakeAudioBus.h"
+#include "fakes/FakeCaptureChild.h"
 
+#include <QApplication>
 #include <QElapsedTimer>
 #include <QScopeGuard>
 #include <QStandardPaths>
 
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <numbers>
 #include <vector>
 
@@ -221,6 +227,106 @@ struct Pump {
         worker.dispatchBlockForTest(radio.data());
     }
 };
+
+// Real source admission and worker wiring, with only injected audio buses and
+// a counting connection. No native device or radio service participates.
+struct RadioSourcePump {
+    Pump pump;
+    Core core;
+    Device device{QStringLiteral("Radio source window"), QStringLiteral("computer")};
+    LoopbackTransport* app{nullptr};
+    TxWorkerThread* worker{nullptr};
+    FakeAudioBus* vaxMic{nullptr};
+    qint64 samples{0};
+
+    RadioSourcePump()
+    {
+        allowTransmit(core);
+        core.pair(device);
+        auto features = kTransmitter;
+        features.insert("radioMic", 2);
+        app = core.signIn(device, features);
+        auto owned = std::make_unique<TxWorkerThread>();
+        worker = owned.get();
+        core.model->installTxWorkerForTest(std::move(owned));
+        worker->setTxChannel(&pump.channel);
+        worker->setAudioEngine(&pump.engine);
+        worker->setRemoteMicFeed(core.model->remoteMicFeed());
+        auto bus = std::make_unique<FakeAudioBus>(QStringLiteral("DistinctVax"));
+        bus->open(pump.pcMic->negotiatedFormat());
+        vaxMic = bus.get();
+        pump.engine.setVaxTxBusForTest(std::move(bus));
+        core.model->moxController()->setMoxCheck([]() {
+            safety::BandPlanGuard::MoxCheckResult result;
+            result.ok = true; // source-route fixture; capture admission is tested separately
+            return result;
+        });
+    }
+
+    void path(bool rade)
+    {
+        worker->setCurrentTxPath(rade ? TxWorkerThread::TxPath::Rade : TxWorkerThread::TxPath::Wdsp);
+        if (rade) {
+            worker->setRadeLeveler(false, 15, 100);
+            worker->setRadeMicGainDb(0);
+            worker->setRadeMicKeyed(true);
+        }
+    }
+
+    // The last second of a stable tone: Radio=1 kHz/.2, Client=1.9 kHz/.4,
+    // PC=1.3 kHz/.6, VAX=1.7 kHz/.8. Level AND frequency distinguish sources.
+    std::vector<double> hear(bool rade, bool client)
+    {
+        path(rade);
+        QSignalSpy speech(worker, &TxWorkerThread::radeMicBlockReady);
+        std::vector<double> heard;
+        for (int block = 0; block < 1500; ++block) {
+            if (client && block % 15 == 0) {
+                const auto remote = tone(samples, 960, .4f, 1900.0);
+                core.model->remoteMicFeed()->write(remote.data(), 960);
+            }
+            const auto provide = [this](FakeAudioBus* bus, float level, double frequency) {
+                const auto mono = tone(samples, kBlock, level, frequency);
+                QByteArray pcm(kBlock * 2 * int(sizeof(float)), Qt::Uninitialized);
+                auto* out = reinterpret_cast<float*>(pcm.data());
+                for (int i = 0; i < kBlock; ++i) { out[2*i] = out[2*i+1] = mono[size_t(i)]; }
+                bus->setPullData(pcm);
+            };
+            provide(pump.pcMic, .6f, 1300.0);
+            provide(vaxMic, .8f, 1700.0);
+            const auto radio = tone(samples, kBlock, .2f, 1000.0);
+            worker->dispatchBlockForTest(radio.data());
+            samples += kBlock;
+            if (!rade) {
+                const auto input = lastI(pump.channel);
+                heard.insert(heard.end(), input.begin(), input.end());
+            }
+        }
+        if (rade) {
+            for (const auto& call : std::as_const(speech)) {
+                const QByteArray bytes = call.first().toByteArray();
+                const auto* pcm = reinterpret_cast<const qint16*>(bytes.constData());
+                for (qsizetype i = 0; i < bytes.size()/2; ++i) { heard.push_back(pcm[i]/32767.0); }
+            }
+        }
+        return heard;
+    }
+};
+
+void verifySourceTone(const std::vector<double>& heard, bool rade, double amplitude, double frequency)
+{
+    QVERIFY(heard.size() > 16000);
+    const size_t from = heard.size()-16000;
+    const double errorDb = 20.0*std::log10(rms(heard, from)/(amplitude/std::sqrt(2.0)));
+    QVERIFY2(std::abs(errorDb) < 1.0, qPrintable(QStringLiteral("source level error %1 dB").arg(errorDb)));
+    int crossings = 0;
+    for (size_t i=from+1; i<heard.size(); ++i) {
+        if ((heard[i]>=0) != (heard[i-1]>=0)) { ++crossings; }
+    }
+    const int expected = int(std::round(2.0*frequency*16000/(rade ? 16000 : 48000)));
+    QVERIFY2(std::abs(crossings-expected)<8,
+             qPrintable(QStringLiteral("source crossings %1, expected %2").arg(crossings).arg(expected)));
+}
 
 // A test MasterMixAudioTap: what the Core would send a remote device.
 class ProgramTap final : public MasterMixAudioTap {
@@ -466,6 +572,10 @@ private slots:
 
     void ringInUseReplacesTheOperatorsSource();
     void ringFillingIsSilenceNeverALocalSource();
+    void remoteRadioUsesRadioWaveformDespitePcVaxAndRemoteFeed();
+    void retainedRadioTailIsReplacedByTheNextAdmittedSource_data();
+    void retainedRadioTailIsReplacedByTheNextAdmittedSource();
+    void radioAdmissionRefusesReentrantSourceSelectionWithReadyCorePc();
     void radePathTakesTheRing();
     void toneFromTheLineReachesTheTxChannelAtItsLevel();
     void aStandingSendRingIsShedOnlyInSilenceBySkippingPumpBlocks();
@@ -541,6 +651,193 @@ void TestTxWorkerRemoteRing::ringFillingIsSilenceNeverALocalSource()
 
 // RADE: the ring feeds the RADE encoder's input (after its HPF and the 48 to
 // 16 kHz resampler), at the tone's level, and nothing of the PC microphone.
+void TestTxWorkerRemoteRing::remoteRadioUsesRadioWaveformDespitePcVaxAndRemoteFeed()
+{
+    for (const bool rade : {false, true}) {
+        for (const bool vax : {false, true}) {
+            Pump pump;
+            if (vax) {
+                auto bus = std::make_unique<FakeAudioBus>(QStringLiteral("CompetingVax"));
+                bus->open(pump.pcMic->negotiatedFormat());
+                pump.engine.setVaxTxBusForTest(std::move(bus));
+                pump.engine.onMicSourceChanged(false);
+                pump.engine.onMicSourceChangedVax(true);
+            }
+            pump.worker.setRemoteRadioMicActive(true);
+            pump.feed.setInUse(true);
+            if (rade) {
+                pump.worker.setCurrentTxPath(TxWorkerThread::TxPath::Rade);
+                pump.worker.setRadeLeveler(false, 15, 100);
+                pump.worker.setRadeMicGainDb(0);
+                pump.worker.setRadeMicKeyed(true);
+            }
+            QSignalSpy speech(&pump.worker, &TxWorkerThread::radeMicBlockReady);
+            std::vector<double> heard;
+            const auto remote = tone(0, 960, 0.7f, 1900.0);
+            QVERIFY(pump.feed.write(remote.data(), 960));
+            for (int b = 0; b < 1500; ++b) {
+                const auto radio = tone(static_cast<qint64>(b) * kBlock, kBlock, 0.2f, 1000.0);
+                pump.worker.dispatchBlockForTest(radio.data());
+                if (!rade) {
+                    const auto input = lastI(pump.channel);
+                    heard.insert(heard.end(), input.begin(), input.end());
+                }
+            }
+            if (rade) {
+                for (const auto& call : std::as_const(speech)) {
+                    const QByteArray bytes = call.first().toByteArray();
+                    const auto* pcm = reinterpret_cast<const qint16*>(bytes.constData());
+                    for (qsizetype i = 0; i < bytes.size() / 2; ++i) {
+                        heard.push_back(pcm[i] / 32767.0);
+                    }
+                }
+            }
+            QVERIFY(heard.size() > 16000);
+            const double level = rms(heard, heard.size() - 16000);
+            const double errorDb = 20.0 * std::log10(level / (0.2 / std::sqrt(2.0)));
+            QVERIFY2(std::abs(errorDb) < 1.0, qPrintable(QString::number(errorDb)));
+            // A genuine radio 1 kHz tone crosses zero twice per period;
+            // the competing remote 1.9 kHz tone cannot satisfy this count.
+            int crossings = 0;
+            const size_t from = heard.size() - 16000;
+            for (size_t i = from + 1; i < heard.size(); ++i) {
+                if ((heard[i] >= 0.0) != (heard[i - 1] >= 0.0)) { ++crossings; }
+            }
+            const int expected = rade ? 2000 : 667;
+            QVERIFY(std::abs(crossings - expected) < 8);
+        }
+    }
+}
+
+void TestTxWorkerRemoteRing::retainedRadioTailIsReplacedByTheNextAdmittedSource_data()
+{
+    QTest::addColumn<bool>("rade");
+    QTest::addColumn<int>("nextSource"); // 0=ClientAudio, 1=local PC, 2=local VAX
+    for (bool rade : {false, true}) {
+        for (int source : {0, 1, 2}) {
+            QTest::newRow(qPrintable(QStringLiteral("%1-to-%2").arg(rade ? "rade-tail" : "normal-drain").arg(source)))
+                << rade << source;
+        }
+    }
+}
+
+void TestTxWorkerRemoteRing::retainedRadioTailIsReplacedByTheNextAdmittedSource()
+{
+    QFETCH(bool, rade);
+    QFETCH(int, nextSource);
+    RadioSourcePump rig;
+    auto* model = rig.core.model.get();
+    auto* mox = model->moxController();
+    const auto cleanup = qScopeGuard([mox]() {
+        mox->setEndOfOverTail({});
+        mox->setAwaitsTxDrain(false);
+        mox->setMox(false);
+        mox->onEndOfOverTailDone();
+        mox->onTxDrained();
+    });
+    QVERIFY(rig.core.invoke(rig.app, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))})
+        .value(QStringLiteral("accepted")).toBool());
+    const auto first = rig.core.invoke(rig.app, "tx.key", {utf8("trigger", QStringLiteral("screen"))});
+    QVERIFY(first.value(QStringLiteral("accepted")).toBool());
+    const quint32 firstEpoch = model->keyedBy().epoch;
+    QTRY_COMPARE(mox->state(), MoxState::Tx);
+    rig.path(rade);
+    verifySourceTone(rig.hear(rade, false), rade, .2, 1000.0);
+    mox->setAwaitsTxDrain(true);
+    mox->setTxDrainTimeoutMsForTest(60000);
+    mox->setEndOfOverTailMaxMsForTest(60000);
+    if (rade) { mox->setEndOfOverTail([] { return true; }); }
+    QSignalSpy hardware(mox, &MoxController::hardwareFlipped);
+    QVERIFY(rig.core.invoke(rig.app, "tx.unkey", {int64("epoch", firstEpoch)})
+        .value(QStringLiteral("accepted")).toBool());
+    QVERIFY(mox->isReleasing());
+    if (rade) { QVERIFY(mox->isEndOfOverTailActive()); }
+    // The ordinary drain/tail still carries Radio until hardware dekeys.
+    verifySourceTone(rig.hear(rade, false), rade, .2, 1000.0);
+    QCOMPARE(hardware.count(), 0);
+    if (nextSource == 0) {
+        QVERIFY(rig.core.invoke(rig.app, "tx.setMicSource", {utf8("source", QStringLiteral("ClientAudio"))})
+            .value(QStringLiteral("accepted")).toBool());
+        model->openRemoteMicLine(rig.device.key.fingerprint());
+        const auto next = rig.core.invoke(rig.app, "tx.key", {utf8("trigger", QStringLiteral("screen"))});
+        QVERIFY(next.value(QStringLiteral("accepted")).toBool());
+        QCOMPARE(mox->currentKeyer().deviceId, rig.device.key.fingerprint());
+    } else {
+        // Holder/take admission has its own loopback coverage. Exercise the
+        // local source supersession without a transfer's safety stop ending
+        // the deliberately held old drain before this new local press.
+        mox->setKeyingGate({});
+        model->transmitModel().setMicSource(nextSource == 1 ? MicSource::Pc : MicSource::Vax);
+        rig.pump.engine.onMicSourceChanged(nextSource == 1);
+        rig.pump.engine.onMicSourceChangedVax(nextSource == 2);
+        mox->setMox(true);
+        QVERIFY(mox->currentKeyer().isStation());
+    }
+    QVERIFY(mox->isMox());
+    QVERIFY(model->keyedBy().epoch > firstEpoch);
+    // No old hardware-off can retire the NEW key; its admission replaces
+    // the old source before samples resume.
+    QCOMPARE(hardware.count(), 1);
+    verifySourceTone(rig.hear(rade, nextSource == 0), rade,
+                     nextSource == 0 ? .4 : nextSource == 1 ? .6 : .8,
+                     nextSource == 0 ? 1900.0 : nextSource == 1 ? 1300.0 : 1700.0);
+    mox->setEndOfOverTail({});
+    mox->setAwaitsTxDrain(false);
+    mox->setMox(false);
+    // Complete only the deliberately held fake drain/tail during cleanup.
+    mox->onEndOfOverTailDone();
+    mox->onTxDrained();
+    QTRY_COMPARE(mox->state(), MoxState::Rx);
+}
+
+void TestTxWorkerRemoteRing::radioAdmissionRefusesReentrantSourceSelectionWithReadyCorePc()
+{
+    RadioSourcePump rig;
+    auto* model = rig.core.model.get();
+    auto* mox = model->moxController();
+    model->transmitModel().setMicSource(MicSource::Pc);
+    CaptureSupervisor::Options options;
+    options.program = QCoreApplication::applicationFilePath();
+    options.arguments = {QStringLiteral("--fake-capture-child"), QStringLiteral("ready")};
+    model->audioEngine()->setCaptureSupervisorOptionsForTest(options);
+    auto lease = model->audioEngine()->acquireCaptureDemand(CaptureSupervisor::Demand::LocalSession);
+    QTRY_COMPARE_WITH_TIMEOUT(model->audioEngine()->captureStatus().state,
+                             CaptureSupervisor::Status::State::Ready, 8000);
+    QVERIFY(model->audioEngine()->isCaptureReaderOpen());
+    RemoteKeying::MicUplink noMic;
+    noMic.carriesMic = [](const QByteArray&) { return false; };
+    rig.core.server->remoteKeying()->setMicUplink(noMic);
+    QVERIFY(rig.core.invoke(rig.app, "tx.setMicSource", {utf8("source", QStringLiteral("RadioMic"))})
+        .value(QStringLiteral("accepted")).toBool());
+    bool attempted = false;
+    QJsonObject nested;
+    mox->setMoxCheck([&]() {
+        if (!attempted) {
+            attempted = true;
+            nested = rig.core.invoke(rig.app, "tx.setMicSource", {utf8("source", QStringLiteral("ClientAudio"))});
+        }
+        safety::BandPlanGuard::MoxCheckResult result;
+        result.ok = model->audioEngine()->captureStatus().state == CaptureSupervisor::Status::State::Ready;
+        return result;
+    });
+    const auto cleanup = qScopeGuard([mox]() { mox->setMoxCheck({}); mox->setMox(false); });
+    const quint32 before = model->keyingEpoch();
+    const auto key = rig.core.invoke(rig.app, "tx.key", {utf8("trigger", QStringLiteral("screen"))});
+    QVERIFY(attempted);
+    QVERIFY2(!nested.value(QStringLiteral("accepted")).toBool(), qPrintable(nested.value("reason").toString()));
+    QVERIFY(key.value(QStringLiteral("accepted")).toBool());
+    QCOMPARE(model->keyedBy().epoch, before+1);
+    QCOMPARE(model->keyedBy().trigger, QByteArray("screen"));
+    QVERIFY(model->remoteRadioMicKeyActive(rig.device.key.fingerprint()));
+    QVERIFY(!rig.core.server->remoteKeying()->keyPending());
+    verifySourceTone(rig.hear(false, false), false, .2, 1000.0);
+    mox->setMoxCheck({}); // no reference to stack state during fixture teardown
+    mox->setMox(false);
+    QTRY_COMPARE(mox->state(), MoxState::Rx);
+    QVERIFY(rig.core.invoke(rig.app, "tx.setMicSource", {utf8("source", QStringLiteral("ClientAudio"))})
+        .value(QStringLiteral("accepted")).toBool());
+}
+
 void TestTxWorkerRemoteRing::radePathTakesTheRing()
 {
     Pump pump;
@@ -1412,5 +1709,17 @@ void TestTxWorkerRemoteRing::aKeyAtTheCoreLogsNoMicrophoneLine()
     QCOMPARE(g_unkeyLines.size(), 0);
 }
 
-QTEST_MAIN(TestTxWorkerRemoteRing)
+int main(int argc, char* argv[])
+{
+    if (argc > 2 && std::strcmp(argv[1], "--fake-capture-child") == 0) {
+        return NereusSDR::Test::runFakeCaptureChild(QString::fromLocal8Bit(argv[2]));
+    }
+    // Keep QTEST_MAIN's QApplication and test coordinate setup; the fake
+    // child must dispatch before creating a GUI application.
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TestTxWorkerRemoteRing test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    return QTest::qExec(&test, argc, argv);
+}
 #include "tst_tx_worker_remote_ring.moc"

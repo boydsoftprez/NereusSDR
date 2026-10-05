@@ -234,6 +234,9 @@
 #include <QVariantMap>
 #include <QtGlobal>
 
+#include "core/audio/CompositeTxMicRouter.h"
+#include "core/session/RemoteMicSource.h"
+
 namespace NereusSDR {
 
 class RemoteTransmitClient;
@@ -824,6 +827,9 @@ public:
     /// remote window keys through it and never through its own
     /// MoxController; RadioModel routes MOX, TUNE and two-tone here while
     /// it is available().
+    virtual bool remoteMicSourceAvailable() const { return false; }
+    virtual CommandOutcome requestMicSource(MicSource, std::function<void()> = {})
+    { return {false, remoteMicLegacyReason()}; }
     virtual RemoteTransmitClient* remoteTransmit() { return nullptr; }
 };
 

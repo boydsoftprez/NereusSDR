@@ -42,6 +42,7 @@
 //                                    Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include <QJsonObject>
 #include <QList>
 #include <QObject>
@@ -80,7 +81,7 @@ struct StationRadioEntry {
     bool operator==(const StationRadioEntry& other) const;
 };
 
-class StationRadios : public QObject {
+class NEREUS_CORE_EXPORT StationRadios : public QObject {
     Q_OBJECT
 
 public:

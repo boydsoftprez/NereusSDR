@@ -1,0 +1,31 @@
+{
+  "linkMajors": [
+    1
+  ],
+  "fixtures": [
+    {
+      "id": "control-client-diversity-set-target",
+      "file": "control/client-diversity-set-target.json",
+      "kind": "control",
+      "requires": {
+        "diversityControlVersion": 1
+      }
+    },
+    {
+      "id": "session-diversity-control-pattern",
+      "file": "sessions/diversity-control-pattern.json",
+      "kind": "session",
+      "requires": {
+        "diversityControlVersion": 1
+      }
+    },
+    {
+      "id": "session-diversity-control-no-pattern",
+      "file": "sessions/diversity-control-no-pattern.json",
+      "kind": "session",
+      "requires": {
+        "diversityControlVersion": 1
+      }
+    }
+  ]
+}

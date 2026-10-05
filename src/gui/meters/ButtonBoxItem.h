@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Consume transient interaction dirtiness by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -162,6 +164,7 @@ public:
     // Rendering
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
+    bool advanceMeter(qint64 monotonicMs) override;
 
     // Mouse interaction
     bool handleMousePress(QMouseEvent* event, int widgetW, int widgetH) override;
@@ -208,6 +211,7 @@ private:
     int m_clickedIndex{-1};
     int m_unavailablePressedIndex{-1};
     QTimer m_clickTimer;
+    bool m_interactionDirty{false};
 };
 
 } // namespace NereusSDR

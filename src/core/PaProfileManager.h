@@ -88,6 +88,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "HpsdrModel.h"
 #include "PaProfile.h"
 
@@ -123,7 +124,7 @@ namespace NereusSDR {
 // any other call. Without a MAC, every mutator is a no-op (same convention
 // as MicProfileManager).
 // ---------------------------------------------------------------------------
-class PaProfileManager : public QObject {
+class NEREUS_CORE_EXPORT PaProfileManager : public QObject {
     Q_OBJECT
 
 public:

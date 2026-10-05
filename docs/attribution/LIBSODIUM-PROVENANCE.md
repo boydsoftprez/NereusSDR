@@ -5,7 +5,8 @@ exchange (iPhone app plan Task 14, spec D37): Argon2id password hashing,
 the edwards25519 arithmetic SPAKE2+EE runs on, BLAKE2b, the key
 derivation and the XChaCha20-Poly1305 confirmation boxes. It is fetched
 at build time, not vendored, and compiled into NereusCore as a static
-library. The iPhone and iPad app (plan Task 15) vendors the same archive.
+library. The iPhone and iPad app (plan Task 15b) vendors the same archive
+(below).
 
 NereusSDR is distributed under GPLv3 (root `LICENSE`). libsodium is ISC,
 a permissive licence compatible with GPLv3 and with the App Store build
@@ -70,6 +71,20 @@ Checked on the machine that took the pin (macOS arm64, Apple Clang): all
 The macOS x86_64, Linux x86_64 and arm64, and Windows MSVC builds are
 proven by CI and the Rock and Pi Docker builder.
 
+## In the iPhone and iPad app
+
+`ios/scripts/vendor-sources.sh libsodium` extracts every `.c` and `.h`
+file under `src/libsodium` of the same archive, checked against the same
+SHA-256, into `ios/NereusKit/Sources/CSodium/`, unchanged (the `.S` files
+stay out, since SwiftPM would compile them). The script also writes
+`src/libsodium/include/sodium/version.h` (a copy of
+`builds/msvc/version.h`, as above) and
+`src/libsodium/include/module.modulemap`, which exposes `sodium.h` alone
+to Swift; `VENDORED.txt` records both. `ios/NereusKit/Package.swift` builds
+it with this file's Apple configuration and flags. `ios/scripts/swift-test.sh`
+checks the committed copy against the archive before every run. The app's
+licences screen shows `LICENSE` followed by `libsodium-notices.txt`.
+
 ## Updating
 
 1. Download the new release's fixed archive and its `.minisig`; check the
@@ -78,4 +93,6 @@ proven by CI and the Rock and Pi Docker builder.
    file; compare the new `LICENSE` with `libsodium.txt` and copy it if it
    changed.
 3. Rebuild and run `tst_spake_exchange` and `tst_station_pairing`.
-4. Tell the iPhone session, whose Task 15 vendors the same archive.
+4. Change the pin in `ios/scripts/vendor-sources.sh`, run it, and run
+   `ios/scripts/interop-test.sh` (the app's pairing against
+   `nereus_pairing_peer` and a scratch `nereusd`).

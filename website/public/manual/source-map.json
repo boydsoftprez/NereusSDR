@@ -1,0 +1,494 @@
+{
+  "downloads": [
+    {
+      "output": "manual/01-desktop-connect.md",
+      "output_sha256": "b13a93a39996ab4ad30b2479b21973d5ad0c318a6522ae53f2a566fd852fff8e",
+      "sha256": "b13a93a39996ab4ad30b2479b21973d5ad0c318a6522ae53f2a566fd852fff8e",
+      "source": "docs/manual/01-desktop-connect.md"
+    },
+    {
+      "output": "manual/02-desktop-window.md",
+      "output_sha256": "eed826020543cad54e4555a1adbcb008aba773a884cee9b5f4b7f832cee2f543",
+      "sha256": "eed826020543cad54e4555a1adbcb008aba773a884cee9b5f4b7f832cee2f543",
+      "source": "docs/manual/02-desktop-window.md"
+    },
+    {
+      "output": "manual/03-receive.md",
+      "output_sha256": "6bb0f620f707de79d2a1ecf2b5ac85a4d999d99cc986efa0f5e990133d274166",
+      "sha256": "6bb0f620f707de79d2a1ecf2b5ac85a4d999d99cc986efa0f5e990133d274166",
+      "source": "docs/manual/03-receive.md"
+    },
+    {
+      "output": "manual/04-slices.md",
+      "output_sha256": "b1f0d69f078b623d44051fa82063c3474aa17270b53db0e5e9fa6c3902cf8f60",
+      "sha256": "b1f0d69f078b623d44051fa82063c3474aa17270b53db0e5e9fa6c3902cf8f60",
+      "source": "docs/manual/04-slices.md"
+    },
+    {
+      "output": "manual/05-transmit.md",
+      "output_sha256": "e23a999efdb5359b48c6ed2978e909f4bc662cc74f4ceb0f476cd0eb1f734bec",
+      "sha256": "e23a999efdb5359b48c6ed2978e909f4bc662cc74f4ceb0f476cd0eb1f734bec",
+      "source": "docs/manual/05-transmit.md"
+    },
+    {
+      "output": "manual/06-iphone-connect.md",
+      "output_sha256": "d803648379bfb8b692269facf689ac8a2ae80330b00e9f215862dc304733b3c6",
+      "sha256": "d803648379bfb8b692269facf689ac8a2ae80330b00e9f215862dc304733b3c6",
+      "source": "docs/manual/06-iphone-connect.md"
+    },
+    {
+      "output": "manual/07-iphone-operate.md",
+      "output_sha256": "985df9987bc913fa3c3635073050124f23156320fbb16b5127b81f8945b02dc2",
+      "sha256": "985df9987bc913fa3c3635073050124f23156320fbb16b5127b81f8945b02dc2",
+      "source": "docs/manual/07-iphone-operate.md"
+    },
+    {
+      "output": "manual/08-shared-core.md",
+      "output_sha256": "248efa6b6509034bc16c042f1da2bf68a7e6b8afe796927414d32d79837673ab",
+      "sha256": "248efa6b6509034bc16c042f1da2bf68a7e6b8afe796927414d32d79837673ab",
+      "source": "docs/manual/08-shared-core.md"
+    },
+    {
+      "output": "manual/09-tools.md",
+      "output_sha256": "7c7aaf9fe47809636c07ecde45ac5bb38e9bbdee984270ace0dd3288c438c7be",
+      "sha256": "7c7aaf9fe47809636c07ecde45ac5bb38e9bbdee984270ace0dd3288c438c7be",
+      "source": "docs/manual/09-tools.md"
+    },
+    {
+      "output": "manual/10-customize.md",
+      "output_sha256": "eee2eda72a5bef1b8e3ad4649413516bb09cea0fec2291566ab8ee21d45574ea",
+      "sha256": "eee2eda72a5bef1b8e3ad4649413516bb09cea0fec2291566ab8ee21d45574ea",
+      "source": "docs/manual/10-customize.md"
+    },
+    {
+      "output": "manual/11-troubleshooting.md",
+      "output_sha256": "a579b5639468c91818121564247d9cd5f0ca121653fed390efd8d2ae6327f1c3",
+      "sha256": "a579b5639468c91818121564247d9cd5f0ca121653fed390efd8d2ae6327f1c3",
+      "source": "docs/manual/11-troubleshooting.md"
+    },
+    {
+      "output": "manual/12-reference.md",
+      "output_sha256": "e60e54727da1bd5a60cf3d6f8e0a2d70f101b8214e740416faae2e00d7276a95",
+      "sha256": "e60e54727da1bd5a60cf3d6f8e0a2d70f101b8214e740416faae2e00d7276a95",
+      "source": "docs/manual/12-reference.md"
+    },
+    {
+      "output": "manual/13-receiver-dsp.md",
+      "output_sha256": "869aed35b8dcee162562b57aded6db958c0ae6c214a0e839113d478293775bbc",
+      "sha256": "869aed35b8dcee162562b57aded6db958c0ae6c214a0e839113d478293775bbc",
+      "source": "docs/manual/13-receiver-dsp.md"
+    },
+    {
+      "output": "manual/14-voice-profiles.md",
+      "output_sha256": "4fc582d6984c614ae77e37c4850f80c5962603ca3abd2411d87a62c3bfb7d9c2",
+      "sha256": "4fc582d6984c614ae77e37c4850f80c5962603ca3abd2411d87a62c3bfb7d9c2",
+      "source": "docs/manual/14-voice-profiles.md"
+    },
+    {
+      "output": "manual/15-rade-freedv.md",
+      "output_sha256": "db4f36811193b61e49ec00732404b6554636359318d3ced9cffc266afcd9cbb5",
+      "sha256": "db4f36811193b61e49ec00732404b6554636359318d3ced9cffc266afcd9cbb5",
+      "source": "docs/manual/15-rade-freedv.md"
+    },
+    {
+      "output": "manual/16-spots-reporters.md",
+      "output_sha256": "d55dd3f1ef53205c11e7cfab3450db890352076809a71be8da73c5aa531467b7",
+      "sha256": "d55dd3f1ef53205c11e7cfab3450db890352076809a71be8da73c5aa531467b7",
+      "source": "docs/manual/16-spots-reporters.md"
+    },
+    {
+      "output": "manual/17-hardware-antennas-calibration.md",
+      "output_sha256": "98ee7476ec8be0cf81c5cad7b32b9ba971417a01f5cde8a9770ecaaeaf17e504",
+      "sha256": "98ee7476ec8be0cf81c5cad7b32b9ba971417a01f5cde8a9770ecaaeaf17e504",
+      "source": "docs/manual/17-hardware-antennas-calibration.md"
+    },
+    {
+      "output": "manual/18-puresignal-diversity.md",
+      "output_sha256": "db5f7ece75e03403eab0ec3243b47640c94ee0f10ebdda0ac648fb0cd49a19b9",
+      "sha256": "db5f7ece75e03403eab0ec3243b47640c94ee0f10ebdda0ac648fb0cd49a19b9",
+      "source": "docs/manual/18-puresignal-diversity.md"
+    },
+    {
+      "output": "manual/19-amplifiers-tuners.md",
+      "output_sha256": "a53c4f222e7506d9a0932fe11246eae69bc36de096128bc8b4ee21b3d2dd7939",
+      "sha256": "a53c4f222e7506d9a0932fe11246eae69bc36de096128bc8b4ee21b3d2dd7939",
+      "source": "docs/manual/19-amplifiers-tuners.md"
+    },
+    {
+      "output": "manual/20-phone-preferences.md",
+      "output_sha256": "b2d0f1833266d096fecc423229addee919e5d09507c3f7c8629a1286b2428522",
+      "sha256": "b2d0f1833266d096fecc423229addee919e5d09507c3f7c8629a1286b2428522",
+      "source": "docs/manual/20-phone-preferences.md"
+    },
+    {
+      "output": "manual/README.md",
+      "output_sha256": "7df87d08e5eb2b2706d159605ad1c3b138c830b3ccbb9214c903b23863c5a4c0",
+      "sha256": "7df87d08e5eb2b2706d159605ad1c3b138c830b3ccbb9214c903b23863c5a4c0",
+      "source": "docs/manual/README.md"
+    },
+    {
+      "output": "manual/authoring.md",
+      "output_sha256": "53ab1a3562f8e33ad14108f9687bf88819e6fbe9e0cee456e67a269a4b9071e2",
+      "sha256": "53ab1a3562f8e33ad14108f9687bf88819e6fbe9e0cee456e67a269a4b9071e2",
+      "source": "docs/manual/authoring.md"
+    },
+    {
+      "output": "manual/coverage.md",
+      "output_sha256": "188bb6ac5466ac2e4527a5d93afd61823315c7517312cf5365ea371c83c389b4",
+      "sha256": "188bb6ac5466ac2e4527a5d93afd61823315c7517312cf5365ea371c83c389b4",
+      "source": "docs/manual/coverage.md"
+    },
+    {
+      "output": "manual/images/README.md",
+      "output_sha256": "f70c46afc27457ee9ed9481fb4f3a4093819b573643334e0110f5398747a7bf4",
+      "sha256": "f70c46afc27457ee9ed9481fb4f3a4093819b573643334e0110f5398747a7bf4",
+      "source": "docs/manual/images/README.md"
+    },
+    {
+      "output": "manual/verification.md",
+      "output_sha256": "4647fbec88c5c77668f3820378995d68b36548b25a577abccecb6feb766505a9",
+      "sha256": "4647fbec88c5c77668f3820378995d68b36548b25a577abccecb6feb766505a9",
+      "source": "docs/manual/verification.md"
+    }
+  ],
+  "images": [
+    {
+      "output": "manual/images/README.md",
+      "output_sha256": "f70c46afc27457ee9ed9481fb4f3a4093819b573643334e0110f5398747a7bf4",
+      "sha256": "f70c46afc27457ee9ed9481fb4f3a4093819b573643334e0110f5398747a7bf4",
+      "source": "docs/manual/images/README.md"
+    },
+    {
+      "output": "manual/images/capture-provenance.json",
+      "output_sha256": "93876ad2c3cfb9275ccd419bae6309a49f85337dcb93041b575cada23f46f768",
+      "sha256": "64683911bd9538f63c9cff400d5781b3edfc537a21cdee00cbe76a08b13eec0f",
+      "source": "docs/manual/images/capture-provenance.json"
+    },
+    {
+      "output": "manual/images/desktop-audio-devices-original.png",
+      "output_sha256": "8eedc07e08abb18741ce8cccb7d983600d144e879376b4289d1a409cfee16b76",
+      "sha256": "8eedc07e08abb18741ce8cccb7d983600d144e879376b4289d1a409cfee16b76",
+      "source": "docs/manual/images/desktop-audio-devices-original.png"
+    },
+    {
+      "output": "manual/images/desktop-cfc-original.png",
+      "output_sha256": "3808fac63f9157b602ad88f547c533531050f3b696d44c3a63fde3815ff3fb40",
+      "sha256": "3808fac63f9157b602ad88f547c533531050f3b696d44c3a63fde3815ff3fb40",
+      "source": "docs/manual/images/desktop-cfc-original.png"
+    },
+    {
+      "output": "manual/images/desktop-freedv-source-original.png",
+      "output_sha256": "be9b74eb82f651accce0c2439a4016895df2ab34c2306937e7f7cf7cde0c60cc",
+      "sha256": "be9b74eb82f651accce0c2439a4016895df2ab34c2306937e7f7cf7cde0c60cc",
+      "source": "docs/manual/images/desktop-freedv-source-original.png"
+    },
+    {
+      "output": "manual/images/desktop-overview-original.png",
+      "output_sha256": "e50ec094b0bab11de7badcfee4cec29834827c8b32166b8e9de11443ba1a68cc",
+      "sha256": "e50ec094b0bab11de7badcfee4cec29834827c8b32166b8e9de11443ba1a68cc",
+      "source": "docs/manual/images/desktop-overview-original.png"
+    },
+    {
+      "output": "manual/images/desktop-overview.jpg",
+      "output_sha256": "72a5093e46b14dfa5863321b274b873b3d5f0aaecc509742bb65c7b3526796fe",
+      "sha256": "72a5093e46b14dfa5863321b274b873b3d5f0aaecc509742bb65c7b3526796fe",
+      "source": "docs/manual/images/desktop-overview.jpg"
+    },
+    {
+      "output": "manual/images/desktop-overview.svg",
+      "output_sha256": "8e9e0c31a460799fcbb33e34cd8052d6fa263cb058b67844424b6bc72db099a2",
+      "sha256": "8e9e0c31a460799fcbb33e34cd8052d6fa263cb058b67844424b6bc72db099a2",
+      "source": "docs/manual/images/desktop-overview.svg"
+    },
+    {
+      "output": "manual/images/desktop-puresignal-original.png",
+      "output_sha256": "e35acb2a0ab01f06e069de3c2a29b86aa0dd92528ec7cf9cd96e808ce5eee5a3",
+      "sha256": "e35acb2a0ab01f06e069de3c2a29b86aa0dd92528ec7cf9cd96e808ce5eee5a3",
+      "source": "docs/manual/images/desktop-puresignal-original.png"
+    },
+    {
+      "output": "manual/images/desktop-rx.jpg",
+      "output_sha256": "89fe5f2542be47926d6305a396eab4cd4bd04fbae82d2cd57d41ae6bf0f1ba65",
+      "sha256": "89fe5f2542be47926d6305a396eab4cd4bd04fbae82d2cd57d41ae6bf0f1ba65",
+      "source": "docs/manual/images/desktop-rx.jpg"
+    },
+    {
+      "output": "manual/images/desktop-rx.svg",
+      "output_sha256": "395816306e3717a4befaa44e47d7efe16014391c77789c42e1d3cef29a22791a",
+      "sha256": "395816306e3717a4befaa44e47d7efe16014391c77789c42e1d3cef29a22791a",
+      "source": "docs/manual/images/desktop-rx.svg"
+    },
+    {
+      "output": "manual/images/desktop-spot-hub-original.png",
+      "output_sha256": "d8509a241eb37643da243164ab0652cc5305c9b389b486f177b873c22636df85",
+      "sha256": "d8509a241eb37643da243164ab0652cc5305c9b389b486f177b873c22636df85",
+      "source": "docs/manual/images/desktop-spot-hub-original.png"
+    },
+    {
+      "output": "manual/images/desktop-tci-server-original.png",
+      "output_sha256": "56062a15f20eb7fdb122092b9914bc463d58198f09dbfb49f88e70197709d7e5",
+      "sha256": "56062a15f20eb7fdb122092b9914bc463d58198f09dbfb49f88e70197709d7e5",
+      "source": "docs/manual/images/desktop-tci-server-original.png"
+    },
+    {
+      "output": "manual/images/desktop-tx-eq-original.png",
+      "output_sha256": "18c306c0474377378fcaf8bd966c5fa9a8ccfcafc1e24822c015033862af9821",
+      "sha256": "18c306c0474377378fcaf8bd966c5fa9a8ccfcafc1e24822c015033862af9821",
+      "source": "docs/manual/images/desktop-tx-eq-original.png"
+    },
+    {
+      "output": "manual/images/desktop-tx-profile-original.png",
+      "output_sha256": "7712058a44f6099f5fa5336cfd08c1a742b4b16223872fffbc2eb71cec4ceef3",
+      "sha256": "7712058a44f6099f5fa5336cfd08c1a742b4b16223872fffbc2eb71cec4ceef3",
+      "source": "docs/manual/images/desktop-tx-profile-original.png"
+    },
+    {
+      "output": "manual/images/desktop-tx.jpg",
+      "output_sha256": "61e8f68d0d507bf6815960b1eec18032f736fc012f3c0037b9fec65156b65ec5",
+      "sha256": "61e8f68d0d507bf6815960b1eec18032f736fc012f3c0037b9fec65156b65ec5",
+      "source": "docs/manual/images/desktop-tx.jpg"
+    },
+    {
+      "output": "manual/images/desktop-tx.svg",
+      "output_sha256": "092d649882813a7365f94cf3407e4abdd60e8bf9772d33f8c79c95b221bb4697",
+      "sha256": "092d649882813a7365f94cf3407e4abdd60e8bf9772d33f8c79c95b221bb4697",
+      "source": "docs/manual/images/desktop-tx.svg"
+    },
+    {
+      "output": "manual/images/desktop-vax-original.png",
+      "output_sha256": "d2b5ccd03cff15a5424c79ced00af3c95130e42aad706b64561ba895bff413ba",
+      "sha256": "d2b5ccd03cff15a5424c79ced00af3c95130e42aad706b64561ba895bff413ba",
+      "source": "docs/manual/images/desktop-vax-original.png"
+    },
+    {
+      "output": "manual/images/desktop-vfo.jpg",
+      "output_sha256": "129f7e0d34f8fccc60bc29234aceb8bbccf879a261052a64f8ca74425b7a1635",
+      "sha256": "129f7e0d34f8fccc60bc29234aceb8bbccf879a261052a64f8ca74425b7a1635",
+      "source": "docs/manual/images/desktop-vfo.jpg"
+    },
+    {
+      "output": "manual/images/desktop-vfo.svg",
+      "output_sha256": "98eba1c292d3df5a4270a5587f1a39dccd97b74e87a6ee2196479eaed572a05a",
+      "sha256": "98eba1c292d3df5a4270a5587f1a39dccd97b74e87a6ee2196479eaed572a05a",
+      "source": "docs/manual/images/desktop-vfo.svg"
+    },
+    {
+      "output": "manual/images/ipad-applet-column-original.png",
+      "output_sha256": "d47959ece9f5f51c2382e9bb706fd70b0054ef2bccabe3b5213c136ff117f850",
+      "sha256": "d47959ece9f5f51c2382e9bb706fd70b0054ef2bccabe3b5213c136ff117f850",
+      "source": "docs/manual/images/ipad-applet-column-original.png"
+    },
+    {
+      "output": "manual/images/iphone-data-use-original.png",
+      "output_sha256": "df7160a6bf897c53809ec1f03bae946ecfc18317ed9e906f1e586753948d95a0",
+      "sha256": "df7160a6bf897c53809ec1f03bae946ecfc18317ed9e906f1e586753948d95a0",
+      "source": "docs/manual/images/iphone-data-use-original.png"
+    },
+    {
+      "output": "manual/images/iphone-devices-original.png",
+      "output_sha256": "9d67f35b7148720188232b65145369480cdbe27a510395670b0c73a1bedb18dc",
+      "sha256": "9d67f35b7148720188232b65145369480cdbe27a510395670b0c73a1bedb18dc",
+      "source": "docs/manual/images/iphone-devices-original.png"
+    },
+    {
+      "output": "manual/images/iphone-mic-muted-original.png",
+      "output_sha256": "311f8669ce04a916e238db53ca20b9f5d0a4fda4b351156ef742fc847f262346",
+      "sha256": "311f8669ce04a916e238db53ca20b9f5d0a4fda4b351156ef742fc847f262346",
+      "source": "docs/manual/images/iphone-mic-muted-original.png"
+    },
+    {
+      "output": "manual/images/iphone-navigation-original.png",
+      "output_sha256": "b457c8f7cd648cda4381e02ec00263050b8c451c9176dee092ec94801b6194f7",
+      "sha256": "b457c8f7cd648cda4381e02ec00263050b8c451c9176dee092ec94801b6194f7",
+      "source": "docs/manual/images/iphone-navigation-original.png"
+    },
+    {
+      "output": "manual/images/iphone-radio-landscape-original.png",
+      "output_sha256": "9fddcf446b0cc7850eba3c7d7a919712563caa08f9c0fa531eea877364b05e81",
+      "sha256": "9fddcf446b0cc7850eba3c7d7a919712563caa08f9c0fa531eea877364b05e81",
+      "source": "docs/manual/images/iphone-radio-landscape-original.png"
+    },
+    {
+      "output": "manual/images/iphone-shared-slices-original.png",
+      "output_sha256": "44aa47104255be91cb17e920c926d38d54c7e29355186f244bdcfad8f0523ab4",
+      "sha256": "44aa47104255be91cb17e920c926d38d54c7e29355186f244bdcfad8f0523ab4",
+      "source": "docs/manual/images/iphone-shared-slices-original.png"
+    },
+    {
+      "output": "manual/images/iphone-sound-original.png",
+      "output_sha256": "9cd9f8e256db7272ef39efc925b1649ce1771ea8ef6e9909f53c513c463157eb",
+      "sha256": "9cd9f8e256db7272ef39efc925b1649ce1771ea8ef6e9909f53c513c463157eb",
+      "source": "docs/manual/images/iphone-sound-original.png"
+    },
+    {
+      "output": "manual/images/iphone-spot-hub-landscape-original.png",
+      "output_sha256": "b74fd66115fbe44a38303c3dc7f4ded1f0ad0067e5bcc9d26c26c05b840743bf",
+      "sha256": "b74fd66115fbe44a38303c3dc7f4ded1f0ad0067e5bcc9d26c26c05b840743bf",
+      "source": "docs/manual/images/iphone-spot-hub-landscape-original.png"
+    },
+    {
+      "output": "manual/images/iphone-tools-original.png",
+      "output_sha256": "b8980e691e94b1056dc44aeba9c6cd66f14da47353b36257cc9fdae79d6ddf8b",
+      "sha256": "b8980e691e94b1056dc44aeba9c6cd66f14da47353b36257cc9fdae79d6ddf8b",
+      "source": "docs/manual/images/iphone-tools-original.png"
+    },
+    {
+      "output": "manual/images/iphone-welcome-original.png",
+      "output_sha256": "f30a7c39a95460985c62a435dddd024842deddd72538103f9a460908e210b0ed",
+      "sha256": "f30a7c39a95460985c62a435dddd024842deddd72538103f9a460908e210b0ed",
+      "source": "docs/manual/images/iphone-welcome-original.png"
+    }
+  ],
+  "pages": [
+    {
+      "output": "manual/index.html",
+      "output_sha256": "a15c7323559a0f4ff51b1b63c68ed4e68c50efe5989fa6a740bde75c49360d84",
+      "sha256": "7df87d08e5eb2b2706d159605ad1c3b138c830b3ccbb9214c903b23863c5a4c0",
+      "source": "docs/manual/README.md"
+    },
+    {
+      "output": "manual/01-desktop-connect.html",
+      "output_sha256": "829b3cdf0de339cfec305d60fea61917cf95aba776310ebbfb36e907f2581e18",
+      "sha256": "b13a93a39996ab4ad30b2479b21973d5ad0c318a6522ae53f2a566fd852fff8e",
+      "source": "docs/manual/01-desktop-connect.md"
+    },
+    {
+      "output": "manual/02-desktop-window.html",
+      "output_sha256": "1c4ab03e558a82b8c13989e911f8d60c15bd98a0617b00bebb7b73a58b1a47f5",
+      "sha256": "eed826020543cad54e4555a1adbcb008aba773a884cee9b5f4b7f832cee2f543",
+      "source": "docs/manual/02-desktop-window.md"
+    },
+    {
+      "output": "manual/03-receive.html",
+      "output_sha256": "df52eab650543b37388321b341b9c771fd115a1725ee0b54e790f8310a2b68b8",
+      "sha256": "6bb0f620f707de79d2a1ecf2b5ac85a4d999d99cc986efa0f5e990133d274166",
+      "source": "docs/manual/03-receive.md"
+    },
+    {
+      "output": "manual/04-slices.html",
+      "output_sha256": "c687a02e60bf413f50833ec30268dd5f257546a96457c8f7c6919d8b90156d4d",
+      "sha256": "b1f0d69f078b623d44051fa82063c3474aa17270b53db0e5e9fa6c3902cf8f60",
+      "source": "docs/manual/04-slices.md"
+    },
+    {
+      "output": "manual/05-transmit.html",
+      "output_sha256": "59ca5b1fc6db06be1e05692165c05c322a3ff16f7f3f5984e740199329a66b49",
+      "sha256": "e23a999efdb5359b48c6ed2978e909f4bc662cc74f4ceb0f476cd0eb1f734bec",
+      "source": "docs/manual/05-transmit.md"
+    },
+    {
+      "output": "manual/06-iphone-connect.html",
+      "output_sha256": "ac830dd349364d8e84a814f4c2738ef468129adcd4d59110fb633da9788d05de",
+      "sha256": "d803648379bfb8b692269facf689ac8a2ae80330b00e9f215862dc304733b3c6",
+      "source": "docs/manual/06-iphone-connect.md"
+    },
+    {
+      "output": "manual/07-iphone-operate.html",
+      "output_sha256": "c02f6a1797b124e177e6c65208cce96c27d04b22fc8572e3794bedeb8d69655e",
+      "sha256": "985df9987bc913fa3c3635073050124f23156320fbb16b5127b81f8945b02dc2",
+      "source": "docs/manual/07-iphone-operate.md"
+    },
+    {
+      "output": "manual/08-shared-core.html",
+      "output_sha256": "1933eb47ee9bb8bfcfdcb9e3b9c6e15d32b19771ec952677d4557922d0e7c04a",
+      "sha256": "248efa6b6509034bc16c042f1da2bf68a7e6b8afe796927414d32d79837673ab",
+      "source": "docs/manual/08-shared-core.md"
+    },
+    {
+      "output": "manual/09-tools.html",
+      "output_sha256": "4234aa248d0108353fd7acdb10af7ad87fa266a60470640ffc3f2fbc97d9e7a7",
+      "sha256": "7c7aaf9fe47809636c07ecde45ac5bb38e9bbdee984270ace0dd3288c438c7be",
+      "source": "docs/manual/09-tools.md"
+    },
+    {
+      "output": "manual/10-customize.html",
+      "output_sha256": "fb4830c779e0fa8da0d87ba9a5a7aa679f7b6f7fa9aefb8a353376c68af27948",
+      "sha256": "eee2eda72a5bef1b8e3ad4649413516bb09cea0fec2291566ab8ee21d45574ea",
+      "source": "docs/manual/10-customize.md"
+    },
+    {
+      "output": "manual/11-troubleshooting.html",
+      "output_sha256": "a0860626ab73c85f1f44e3e81de4e2eaafaadaa5e7cb5c2dc0fb7ec65b2c76af",
+      "sha256": "a579b5639468c91818121564247d9cd5f0ca121653fed390efd8d2ae6327f1c3",
+      "source": "docs/manual/11-troubleshooting.md"
+    },
+    {
+      "output": "manual/12-reference.html",
+      "output_sha256": "c52f73cc7a88cbc524fc3c202ede1a0cff9699110cfbe6f63551bfa2ef8a4549",
+      "sha256": "e60e54727da1bd5a60cf3d6f8e0a2d70f101b8214e740416faae2e00d7276a95",
+      "source": "docs/manual/12-reference.md"
+    },
+    {
+      "output": "manual/13-receiver-dsp.html",
+      "output_sha256": "2dea70a693212109a002fa1115d5ecab5e119bc52f2f859a51a98422c8469ba3",
+      "sha256": "869aed35b8dcee162562b57aded6db958c0ae6c214a0e839113d478293775bbc",
+      "source": "docs/manual/13-receiver-dsp.md"
+    },
+    {
+      "output": "manual/14-voice-profiles.html",
+      "output_sha256": "6bb2c5eed7a5b20ad87767fe0adbb89ca0e9ef2ef57969e0eb08a092f10e4ecd",
+      "sha256": "4fc582d6984c614ae77e37c4850f80c5962603ca3abd2411d87a62c3bfb7d9c2",
+      "source": "docs/manual/14-voice-profiles.md"
+    },
+    {
+      "output": "manual/15-rade-freedv.html",
+      "output_sha256": "925596adfcdd3e81661b2e777a1c73c56174b69920bbc29bc06e53a44c7af92d",
+      "sha256": "db4f36811193b61e49ec00732404b6554636359318d3ced9cffc266afcd9cbb5",
+      "source": "docs/manual/15-rade-freedv.md"
+    },
+    {
+      "output": "manual/16-spots-reporters.html",
+      "output_sha256": "711f5c2bd0342f6a302b5bb3cfabee098acf22d003dc3c040daba76261367d56",
+      "sha256": "d55dd3f1ef53205c11e7cfab3450db890352076809a71be8da73c5aa531467b7",
+      "source": "docs/manual/16-spots-reporters.md"
+    },
+    {
+      "output": "manual/17-hardware-antennas-calibration.html",
+      "output_sha256": "85c6b3d8d6767a41b93c4cb393505830171274c3919dd3496072a6bd51f8518d",
+      "sha256": "98ee7476ec8be0cf81c5cad7b32b9ba971417a01f5cde8a9770ecaaeaf17e504",
+      "source": "docs/manual/17-hardware-antennas-calibration.md"
+    },
+    {
+      "output": "manual/18-puresignal-diversity.html",
+      "output_sha256": "66af3e07ece3ae14d46615f67d634ca37637d6e6dc6f165b37672c16dfb156d7",
+      "sha256": "db5f7ece75e03403eab0ec3243b47640c94ee0f10ebdda0ac648fb0cd49a19b9",
+      "source": "docs/manual/18-puresignal-diversity.md"
+    },
+    {
+      "output": "manual/19-amplifiers-tuners.html",
+      "output_sha256": "5bef49947dbeceb421406d7f48466a6c1ea1e3b62bc52b655d9d94e253b99d8e",
+      "sha256": "a53c4f222e7506d9a0932fe11246eae69bc36de096128bc8b4ee21b3d2dd7939",
+      "source": "docs/manual/19-amplifiers-tuners.md"
+    },
+    {
+      "output": "manual/20-phone-preferences.html",
+      "output_sha256": "bf278128e20f1b3c69000b9c23f6c2b001765fa14f3de47dc4b5fc1e78eaeb57",
+      "sha256": "b2d0f1833266d096fecc423229addee919e5d09507c3f7c8629a1286b2428522",
+      "source": "docs/manual/20-phone-preferences.md"
+    },
+    {
+      "output": "guides/install-core-sbc.html",
+      "output_sha256": "5b7dcbb52de413646ca04e9900e9253f3d10b21f89fb84cc942450917bb74de9",
+      "sha256": "530bb03c2b4b616edfe67bec72c6d52b81fea51c3d74ea8c5dea6fe21bb3f531",
+      "source": "docs/guides/install-core-sbc.md"
+    },
+    {
+      "output": "guides/tx-eq-cfc.html",
+      "output_sha256": "4672c87f23db620252e17155a43ade4fa5a21a4a34825a7874a591ed956cfb5a",
+      "sha256": "a4780f58435b7e1e1eee8fb765179c04388fb240af93d2c96c23f40721ad0340",
+      "source": "docs/guides/tx-eq-cfc.md"
+    },
+    {
+      "output": "guides/upgrading-to-2026.10.0.html",
+      "output_sha256": "42ac848843f01dc0c9df0bb11f4e1eefdb3d3efec930117090381f6b5078d973",
+      "sha256": "6352200a60ab960350299e2d22718de7feb5eaf23eccc625557b92aaccae1c63",
+      "source": "docs/guides/upgrading-to-2026.10.0.md"
+    },
+    {
+      "output": "guides/remote-access.html",
+      "output_sha256": "088d55000c277cf3912ba8757e2f8717f3ebdfed2bca4aad4d5b93d85dbc3928",
+      "sha256": "f4956766f7bc56030faa8044ce2fed7b36cb396e0058f68b430cfd92d9f368fd",
+      "source": "rendezvous/README.md"
+    }
+  ]
+}

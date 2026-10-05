@@ -27,6 +27,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QTimer>
 #include <QDateTime>
@@ -36,7 +37,7 @@ namespace NereusSDR {
 class PgxlConnection;
 class TgxlConnection;
 
-class ConnectionDiagnostics : public QObject {
+class NEREUS_CORE_EXPORT ConnectionDiagnostics : public QObject {
     Q_OBJECT
 
     Q_PROPERTY(qint64  uptimeMs        READ uptimeMs        NOTIFY changed)

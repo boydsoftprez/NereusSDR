@@ -18,3 +18,8 @@ NereusSDR is under active development. This guide will be updated as features ar
 - Apache Labs ANAN line (ANAN-G2, ANAN-7000DLE, ANAN-8000DLE, ANAN-200D, etc.)
 - Hermes Lite 2
 - All OpenHPSDR Protocol 1 and Protocol 2 compatible radios
+
+## Arrange Your Console
+
+See [Containers and objects](containers.md) for moving views, editing drafts,
+recovering hidden headers, returning pop-outs and exchanging saved content.

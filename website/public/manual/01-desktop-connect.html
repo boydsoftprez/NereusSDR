@@ -1,0 +1,129 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Install, connect, and check desktop audio | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/01-desktop-connect.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html" aria-current=page>Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="install-connect-and-check-desktop-audio">Install, connect, and check desktop audio</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#install-and-make-the-first-start">Install and make the first start</a></li><li><a href="#connect-to-a-radio-through-this-computers-core">Connect to a radio through this computer&#x27;s Core</a></li><li><a href="#connect-to-another-computers-core">Connect to another computer&#x27;s Core</a></li><li><a href="#inspect-a-saved-core-and-the-actual-connection-path">Inspect a saved Core and the actual connection path</a></li><li><a href="#start-a-core-service-on-this-computer">Start a Core service on this computer</a></li><li><a href="#choose-this-computers-receive-and-transmit-audio-routes">Choose this computer&#x27;s receive and transmit audio routes</a></li><li><a href="#choose-audio-quality-for-this-windows-core-connection">Choose audio quality for this window&#x27;s Core connection</a></li><li><a href="#choose-whether-a-saved-target-connects-at-startup">Choose whether a saved target connects at startup</a></li><li><a href="#recover-a-lost-connection">Recover a lost connection</a></li></ol></details>
+<p>This chapter gets the desktop client to the intended radio and confirms that receive audio and a microphone route exist. It covers the radio target for this window and audio devices attached to this computer. To host a Core for phones or another desktop, see <a href="/manual/08-shared-core.html">Share a Core with other devices</a>. For transmit setup and a controlled on-air check, continue to <a href="/manual/05-transmit.html">Set up and transmit</a>.</p>
+<h2 id="install-and-make-the-first-start">Install and make the first start</h2>
+<p>Download the package matching your operating system and processor from the <a href="https://github.com/boydsoftprez/NereusSDR/releases">NereusSDR releases page</a>, and use that release's notes for package-specific requirements. On macOS, install from the DMG or PKG and launch NereusSDR from Applications. On Windows, run the x64 installer or extract the portable ZIP and keep its files together. On Linux, make the AppImage executable and launch it. If a platform's package manager or security prompt blocks launch, resolve that operating-system prompt before diagnosing radio discovery.</p>
+<p>The first local launch may show <strong>NereusSDR: FFTW Wisdom</strong> while it creates optimized DSP tables. Allow this one-time work to finish; closing the application interrupts startup and the next launch may repeat it. The wisdom cache is local to this computer. It is not a radio setting and does not travel with a saved radio entry. If a later release changes the DSP build, a new wisdom pass may be needed. First-start time varies with the computer, so the progress display is the readback; there is no fixed completion time to promise.</p>
+<p>Before connecting, power the radio and attach it to the network. A local desktop needs network reachability to the radio. A remote desktop needs reachability to the Core computer, while that Core computer needs reachability to its radio. The desktop's <strong>Connections</strong> picker chooses this window's target; it does not start the Core service on another computer. Open it through <strong>Radio &gt; Connections…</strong> in a picker-managed window. Windows using the local radio panel call that command <strong>Manage Radios…</strong>; a dedicated remote window can instead open <strong>This Core</strong>. The connection procedures below use the picker name where applicable.</p>
+<h2 id="connect-to-a-radio-through-this-computers-core">Connect to a radio through this computer's Core</h2>
+<ol>
+<li>Open <strong>Radio &gt; Connections…</strong>. This opens the <strong>Connections</strong> picker. In a normal local window, its <strong>This computer's Core</strong> row means that the local Core is selected as the operating context; it is not itself a radio. Select a radio under <strong>Radios on this network</strong>. If the list is stale, press <strong>Scan</strong> and wait for discovery to refresh.</li>
+<li>Select the radio row and press <strong>Connect</strong>. If the model or address is not discovered, use <strong>Add Radio…</strong>, enter the radio address and model requested by the editor, save it, then select the saved row and connect. Check the address and model against the radio/Core information you have; a saved row is only a target record, not proof that the endpoint is reachable.</li>
+<li>Read <strong>Current connection</strong> in the picker. It should identify the connected radio and say the window is connected using this computer's Core. Close the picker and wait for the panadapter trace to update. Open <strong>RX</strong> or select the active VFO's audio controls and unmute a suitable output; a moving spectrum alone confirms data, not that the selected speaker is audible.</li>
+</ol>
+<p>Some desktop windows present <strong>Connect to Radio</strong> directly instead of the full picker. In that dialog select a row under <strong>Discovered Radios</strong>, use <strong>↻ Scan</strong> to refresh, or choose <strong>Add Manually...</strong> to enter a target, then press <strong>Connect</strong>. The dialog's own <strong>Connected</strong> state is the readback. Follow the labels actually displayed by the window.</p>
+<p>The selected target is saved so the application can reconnect to it. If you need a different radio, reopen <strong>Radio &gt; Connections…</strong>, select the other row, and connect. Use <strong>Edit…</strong> to correct a saved target and <strong>Forget…</strong> to remove a saved entry you no longer use. Forgetting removes the saved target from this computer's picker; it is not a factory reset of the radio. Do not use the standalone <strong>Radio &gt; Connect</strong> action to choose a different target: in an ordinary local window it reconnects to the last-used saved radio. <strong>Radio &gt; Disconnect</strong> ends the current radio link. In a picker-managed window, <strong>Connect</strong> opens the picker workflow.</p>
+<h2 id="connect-to-another-computers-core">Connect to another computer's Core</h2>
+<p>Use this route when another computer owns the radio connection and DSP. In <strong>Radio &gt; Connections…</strong>, select a paired Core under <strong>Your Cores</strong>, or choose a nearby entry under <strong>Cores on this network</strong>. The selected row's action may read <strong>Connect</strong> or <strong>Pair</strong>. For first-time pairing, use <strong>Add a Core by code…</strong> and enter the code shown by the Core, or <strong>Type an address…</strong> when you were given a network address. A pairing code is an enrollment credential; enter it only for the Core you intend to trust.</p>
+<p>After pairing, select that Core and press <strong>Connect</strong>. Confirm its name and connection state in <strong>Current connection</strong> before operating; the radio is remote through that Core. Later, <strong>Radio &gt; Connect</strong> in a dedicated remote window reconnects the window's Core target. Reopen <strong>Connections…</strong> when choosing among saved targets. <strong>Radio &gt; Disconnect</strong> leaves the Core session. A connection attempt can fail even when the target is saved: verify that the Core is online, the address/path is current, and that the Core has remote access enabled. Retry from the picker after correcting reachability rather than repeatedly changing the radio's saved identity.</p>
+<p>In a dedicated remote window that retains <strong>Radio &gt; Manage Radios…</strong>, that command can open the <strong>This Core</strong> radio-management page. <strong>Change radio…</strong>, <strong>Edit radio…</strong>, and <strong>Forget radio</strong> there affect the radio configured on that Core, rather than this computer's local radio list. A change to the radio attached to a shared Core changes the station endpoint for its connected operators. The action can be held while transmitting, while a Core change is busy, or when the Core does not offer that operation; read the reason displayed by the page and resolve that condition first. Reconnect the window when the page says a Core radio change requires it.</p>
+<h2 id="inspect-a-saved-core-and-the-actual-connection-path">Inspect a saved Core and the actual connection path</h2>
+<p>Open <strong>File &gt; Settings… &gt; Cores &gt; Your Cores</strong>, or select a saved Core in
+<strong>Connections</strong> and click <strong>Manage…</strong>. This is the Core Settings area. Selecting
+an entry for inspection does not connect this window or change its target.
+The selected Core has <strong>Overview</strong>, <strong>Addresses</strong>, <strong>Radio</strong> and <strong>Devices</strong> tabs.</p>
+<ol>
+<li>Select the intended saved Core and read <strong>Overview &gt; Connection in this
+window</strong>. <strong>Status</strong> tells you whether this window is connected to that Core.
+<strong>Reached through</strong>, <strong>Controls</strong>, <strong>Audio and display</strong>, <strong>Core listener IP</strong>
+and <strong>Radio</strong> report the available current-session facts. Controls and media
+may use different paths. A retained address is a candidate for a connection,
+not proof of the path currently in use.</li>
+<li>Open <strong>Connection details…</strong> or <strong>Diagnostics…</strong> for this window's live
+connection evidence. <strong>Audio with the Core…</strong> also concerns this window's
+current Core, even when the saved entry being inspected is a different Core.
+Check that context before changing audio quality.</li>
+<li>Use <strong>Radio</strong> and <strong>Devices</strong> to administer the inspected Core only when this
+window is connected to it. Otherwise these tabs explain why their actions
+are unavailable. Changing its radio restarts the station connection and
+affects connected windows/devices; coordinate first and wait for reconnect.</li>
+</ol>
+<h3 id="retain-a-direct-address-for-a-paired-core">Retain a direct address for a paired Core</h3>
+<p>Use this when the already paired Core has a reachable listener on a LAN or VPN,
+or its known listener address has changed. It is separate from adding or
+pairing a different Core.</p>
+<ol>
+<li>Select the saved Core, open <strong>Addresses</strong>, then choose <strong>Add address…</strong>.
+Enter <strong>Hostname or IP address</strong> and <strong>Core connection port</strong>, using the
+Core listener's details. IPv4, hostnames and IPv6 are accepted; IPv6 can
+be entered with or without brackets. The radio's IP and the RV service's
+address are different endpoints.</li>
+<li>Click <strong>Add</strong> and wait for the identity check. The address is saved only
+when the answering endpoint is verified as this paired Core. A refusal
+leaves it unsaved; correct the address/port and use the offered <strong>Retry</strong>.</li>
+<li>Confirm it appears under <strong>Added by you</strong>. Up to four manual addresses can
+be retained. <strong>Previously worked</strong> is a separate successful-connection
+history of up to four; <strong>Supplied by the Core</strong> is its reported inventory,
+which may contain addresses this computer cannot reach. One row can carry
+several of these labels.</li>
+<li>Changes apply to future connection attempts. They do not switch the current
+connection or mark a newly retained address as previously successful.
+When ready to reconnect, use <strong>Connections</strong>, select this Core and verify
+<strong>Overview</strong> again after it connects.</li>
+</ol>
+<p>Use a manual row's <strong>Edit…</strong> to correct it. <strong>Remove</strong> asks to remove its manual
+retention; the same address can still remain in the automatic sources. Read
+the confirmation, then verify the row's labels. Removing retention does not
+terminate this window's connection or revoke its pairing.</p>
+<h3 id="rename-the-core-for-all-devices">Rename the Core for all devices</h3>
+<p>In the selected Core's <strong>Overview</strong>, choose <strong>Rename Core…</strong>. Enter the callsign
+and optional <code>/name</code> using the characters and length described beside the
+field, then press <strong>Save</strong>. This changes the name on the shared Core. It is not
+a private alias on this computer.</p>
+<p>Wait for acceptance and check the displayed name. The desktop can use an
+eligible existing authenticated session or a temporary sign-in to a reachable
+paired Core. It needs this computer's existing device key; the page explains
+missing pairing/key, incompatible administration, a connection retry or a
+rename session still closing. Cancel or correct the reported condition before
+retrying. If the Core accepted the name but saving its local presentation failed,
+follow that message and verify the actual Core name rather than issuing a
+second rename merely because the saved label has not caught up.</p>
+<h2 id="start-a-core-service-on-this-computer">Start a Core service on this computer</h2>
+<p>To host a local radio for phone/tablet clients or remote desktop clients, connect this desktop to the local radio first, then open <strong>File &gt; Settings… &gt; CAT &amp; Network &gt; Remote Access</strong>. Under <strong>Core on this computer</strong>, enable <strong>Run a Core on this computer</strong>. The <strong>Core</strong> section reports the Core name and reachability. <strong>Keep it running when NereusSDR is closed</strong> and <strong>Start it with the computer</strong> control the service lifecycle beyond this application session; enable them only when that persistent behavior is intended. The <strong>Connections…</strong> button on this page only opens the target picker. It does not enable the Core.</p>
+<p>Use <strong>Rename</strong> to give the Core a recognizable station name. For phone enrollment, use <strong>Add a device</strong> or provide the current pairing code shown on the page. Codes rotate and should be read from the current Core page. <strong>Paired devices</strong> lists enrolled devices; <strong>Connected now</strong> reports active sessions. The key-backup section gives its own file location and <strong>I've backed it up</strong> acknowledgement. Follow the displayed backup instruction and store that Core key safely: ordinary desktop settings export is not a substitute for a Core key backup. If the Core controls are disabled, the page states why, for example that no local radio is connected, a Core change is in progress, or the station is transmitting. See <a href="/manual/08-shared-core.html">Core sharing and device management</a> for pairing, ownership, and revocation procedures.</p>
+<h2 id="choose-this-computers-receive-and-transmit-audio-routes">Choose this computer's receive and transmit audio routes</h2>
+<p>Open <strong>File &gt; Settings… &gt; Audio &gt; Devices</strong>. Under <strong>Speakers</strong>, choose the playback device for receive audio. Enable and choose <strong>Headphones</strong> only when you need a separate headphone destination. These are this computer's output routes; they do not choose a radio input or alter another connected device's output. Check <strong>Negotiated</strong> for the format the audio engine actually opened. If the route is silent, check the device's OS volume, application mute, and the selected slice's audio mute before changing radio controls.</p>
+<p>Computer playback and microphone capture are separate from the radio's speaker/headphone path. This computer's master volume controls its own output; the radio output follows its supported slice-audio/monitor controls.</p>
+<p>Under <strong>TX Input (Microphone)</strong>, select the computer capture device when using <strong>PC Mic</strong>. The page reports capture status and provides <strong>Retry microphone</strong> if the stream failed. If the device is missing, first check operating-system microphone permission, then reselect the device and retry. This confirms capture at the computer; it does not authorize the Core to transmit. The mic source itself is selected separately at <strong>File &gt; Settings… &gt; Audio &gt; TX Input</strong>. The supported source choices are <strong>PC Mic</strong>, <strong>Radio Mic</strong>, and <strong>VAX TX (virtual device)</strong>. Radio-specific controls appear only when supported. See <a href="/manual/05-transmit.html">Set up and transmit</a> for the mic test, gain, TX ownership, and keying sequence.</p>
+<p>If Linux audio will not open, <strong>Help &gt; Diagnose audio backend</strong> is the available Linux-specific diagnostic. It reports backend information and provides a starting point for checking PipeWire or PulseAudio selection; it is not a general connection test. For broader link diagnosis, use <strong>Tools &gt; Network Diagnostics</strong> after the radio or Core target has been selected.</p>
+<p><a href="/manual/images/desktop-audio-devices-original.png"><img src="/manual/images/desktop-audio-devices-original.png" alt="Desktop Audio Devices page with separate Speakers, Headphones and TX Input cards" /></a></p>
+<p><em>Audio Devices, desktop development build 0.5.2. Read each route separately: Speakers and Headphones are playback; TX Input is capture. The Negotiated fields in this image do not establish an open stream. The Linux backend strip is unavailable in this macOS capture. These are existing operator settings, not setup defaults.</em></p>
+<h2 id="choose-audio-quality-for-this-windows-core-connection">Choose audio quality for this window's Core connection</h2>
+<p>Open <strong>File &gt; Settings… &gt; Cores &gt; Audio with the Core</strong>, or use the matching
+button in <strong>Your Cores &gt; Overview</strong>. Check the heading naming this window's
+Core; inspecting another saved Core does not redirect this page.</p>
+<ol>
+<li>Under <strong>Audio quality</strong>, choose <strong>High</strong> (48 kbps), <strong>Save data</strong> (24 kbps)
+or <strong>Lossless</strong> when available. This preference is saved on this computer
+and applies to received Core audio and this computer's microphone uplink.
+Lossless needs about 1.6 Mbit/s and can fall back to Opus when the link
+cannot carry it. The requested choice alone is not proof of the actual format.</li>
+<li>Read <strong>Receive from Core</strong> for the current format/health and the measured
+<strong>Received audio payload</strong> rate. No measurement or an unavailable reason
+means there is no current evidence to interpret as a working stream.</li>
+<li>Read <strong>Microphone to Core</strong> separately. <strong>Radio Mic</strong> at the station has
+no microphone stream from this computer; see <a href="/manual/05-transmit.html">TX input</a>.
+<strong>Receiver audio for apps</strong> reports requested application streams, whose
+compressed streams keep their separate 48 kbps target.</li>
+<li>If receive media failed while controls still work, use <strong>Retry audio</strong> when
+enabled, wait for the health readback, then check local playback/mute and
+actual receive sound. Changing an OS speaker device and retrying Core media
+address different parts of the path.</li>
+</ol>
+<h2 id="choose-whether-a-saved-target-connects-at-startup">Choose whether a saved target connects at startup</h2>
+<p>After successfully saving/connecting the intended target, open <strong>File &gt;
+Settings… &gt; General &gt; Startup &amp; Preferences</strong> and set <strong>Auto-connect to last
+radio</strong>. Read its tooltip to confirm which target it names. In a local window
+it saves the last radio's launch choice; in a dedicated remote window it saves
+the selected Core target's choice on this computer. It does not start a Core
+service or change another computer's startup policy.</p>
+<p>If the toggle is disabled, connect/save the target first and reopen the page;
+the reason distinguishes a missing saved radio from a missing Core target.
+Check the choice remains set when revisiting the page. On a later application
+start, verify the connected identity before operating. If the saved target is
+unreachable, use the normal Connections workflow to correct/reconnect it; the
+startup flag does not repair a route. Clear the toggle to return to deliberate
+connection at launch.</p>
+<h2 id="recover-a-lost-connection">Recover a lost connection</h2>
+<p>When the link drops, inspect the title/status area and reopen <strong>Radio &gt; Connections…</strong>. Read <strong>Current connection</strong> for the target and progress or failure detail. If a retry is already running, wait for its state to change. Use <strong>Radio &gt; Connect</strong> to retry the last-used target in a normal window, or select the intended saved target in <strong>Manage Radios…</strong>. A stale radio IP is corrected with <strong>Edit…</strong>; a remote Core address or pairing issue is corrected in the Core target editor. If radio discovery is empty, verify the radio is powered, on the same reachable LAN/VLAN, then scan; for routed or VPN networks, use the saved/manual address rather than relying on broadcast discovery.</p>
+<p>After reconnection, confirm the connected target again, then confirm a live panadapter trace and audible receive output. Shared Core settings and radio state may have changed while this client was away. Before transmitting, recheck the selected TX slice, transmit holder, microphone source, antenna, power, and the protection/readiness message as described in <a href="/manual/05-transmit.html">the transmit chapter</a>. If the Core itself is reachable but its radio is not, the radio operator on that Core must restore the radio link; changing local playback devices will not repair the station connection.</p>
+<div class="page-next"><a href="/manual/index.html">Previous chapter</a><a href="/manual/02-desktop-window.html">Next chapter</a></div></main></div></body></html>

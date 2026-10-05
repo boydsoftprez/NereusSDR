@@ -34,6 +34,7 @@
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "core/Rf2ksConnection.h"
 #include "models/TunerModel.h"
 
@@ -47,7 +48,7 @@
 namespace NereusSDR {
 
 
-class RfKitModel : public QObject {
+class NEREUS_CORE_EXPORT RfKitModel : public QObject {
     Q_OBJECT
     // The Tuner Genius's connection-state shape (TunerModel), same enum.
     Q_PROPERTY(NereusSDR::TunerModel::ConnectionPhase connectionPhase READ connectionPhase NOTIFY stationConnectionChanged)

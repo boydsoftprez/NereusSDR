@@ -98,6 +98,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QString>
 
@@ -120,7 +121,7 @@ namespace NereusSDR {
 //
 // NereusSDR: protocol wire-up (Penny.ExtCtrlEnable / NetworkIO.SetOCBits)
 // deferred to the codec layer, which composes OcMatrix + this toggle.
-class PennyLaneController : public QObject {
+class NEREUS_CORE_EXPORT PennyLaneController : public QObject {
     Q_OBJECT
 
 public:

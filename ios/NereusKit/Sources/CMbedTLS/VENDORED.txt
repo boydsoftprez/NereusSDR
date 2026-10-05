@@ -1,0 +1,10 @@
+Mbed TLS, vendored into NereusSDR for iOS
+
+Tag:      v3.6.7
+Archive:  https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2
+SHA-256:  a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6
+Licence:  Apache-2.0 (see LICENSE)
+Files:    272, copied unchanged from the archive
+
+Written by ios/scripts/vendor-sources.sh mbedtls. Do not edit
+these files; change the pin in that script and run it again.

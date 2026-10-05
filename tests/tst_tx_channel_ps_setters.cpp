@@ -131,7 +131,22 @@ private slots:
     void getPSInfo_nullBufferIsRejected()
     {
         TxChannel ch(kTxChannelId);
-        ch.getPSInfo(nullptr);
+        QVERIFY(!ch.getPSInfo(nullptr));
+    }
+
+    void getPSInfo_unavailableCannotAcknowledgeReset()
+    {
+        TxChannel ch(kTxChannelId);
+        int info[16];
+        for (int& value : info) {
+            value = -42;
+        }
+        std::uint64_t serial = 42;
+        QVERIFY(!ch.getPSInfo(info, &serial));
+        QCOMPARE(serial, std::uint64_t{42});
+        for (int value : info) {
+            QCOMPARE(value, -42);
+        }
     }
 
     // ── setPSReset ─────────────────────────────────────────────────────────

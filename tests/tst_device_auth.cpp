@@ -801,6 +801,7 @@ private slots:
         QCOMPARE(hello.value(QStringLiteral("features")).toObject(),
                  (QJsonObject{{QStringLiteral("deviceAuth"), 1},
                               {QStringLiteral("pairing"), 1},
+                              {QStringLiteral("radioMic"), 2},
                               // iPhone app Task 71: several devices at once.
                               {QStringLiteral("sessionHolder"), 1}}));
         const QJsonObject identity = hello.value(QStringLiteral("identity")).toObject();
@@ -817,7 +818,7 @@ private slots:
     void aPairedDeviceSignsInAndIsSeen()
     {
         Core core(false);
-        QDateTime clock(QDate(2026, 9, 24), QTime(12, 0), QTimeZone::UTC);
+        QDateTime clock(QDate(2026, 9, 24), QTime(12, 0), Qt::UTC);
         core.server->deviceStore()->setClock([&clock]() { return clock; });
         Device phone;
         QVERIFY(core.server->deviceStore()->add(phone.record()));

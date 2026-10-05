@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent.parent
 CRATE_SCRIPT = REPO / "scripts" / "collect-crate-notices.py"
 
@@ -91,6 +93,30 @@ linked v1.0.0
 winonly v1.0.0
 linked v1.0.0 (*)
 """
+
+
+@pytest.mark.parametrize("command", ["metadata", "tree"])
+def test_cargo_utf8_output_survives_windows_ansi_locale(monkeypatch, tmp_path, command):
+    # Cargo emits UTF-8, including crate authors and checkout paths. The
+    # second byte of ā is undefined in Windows' CP1252 default encoding.
+    metadata = {"packages": [{"authors": ["Author ā"]}]}
+    output = json.dumps(metadata, ensure_ascii=False) if command == "metadata" \
+        else "deep_filter v1.0.0 (/checkout/ā/libDF)\n"
+    real_run = subprocess.run
+
+    def cargo_fixture(cmd, **kwargs):
+        assert cmd[:2] == ["cargo", command]
+        kwargs.setdefault("encoding", "cp1252")
+        return real_run(
+            [sys.executable, "-c", "import sys; sys.stdout.buffer.write(bytes.fromhex(sys.argv[1]))",
+             output.encode("utf-8").hex()], **kwargs)
+
+    monkeypatch.setattr(cn.subprocess, "run", cargo_fixture)
+    manifest = tmp_path / "Cargo.toml"
+    if command == "metadata":
+        assert cn.run_cargo_metadata(manifest, None) == metadata
+    else:
+        assert cn.run_cargo_tree(manifest, "deep_filter", None, "all") == output
 
 
 def test_only_linked_crates_are_listed(tmp_path):

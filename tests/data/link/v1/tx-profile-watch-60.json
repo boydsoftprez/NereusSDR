@@ -1,0 +1,3213 @@
+{
+    "audio": {
+        "category": {
+            "id": "audio",
+            "title": "Audio",
+            "where": "station"
+        },
+        "coverage": "partial: Devices, VAX, TCI and Advanced are computer-local; desktop TX Input selects its authenticated session source with radioMicVersion 2, while device, buffer and test remain computer-local; handheld source selection is unavailable",
+        "pages": [
+            {
+                "coverage": "partial: desktop microphone selection uses session-scoped tx.setMicSource with radioMicVersion 2; device, buffer and test are computer-local; handheld source selection is unavailable",
+                "id": "audio.txInput",
+                "sections": [
+                    {
+                        "controls": [
+                            {
+                                "applies": "live",
+                                "binding": {
+                                    "property": {
+                                        "name": "micGainDb",
+                                        "object": "transmit"
+                                    }
+                                },
+                                "gate": {
+                                    "capability": "transmitSettingsVersion",
+                                    "min": 3,
+                                    "transmit": true
+                                },
+                                "id": "audio.txInput.micGain",
+                                "kind": "slider",
+                                "label": "Mic Gain:",
+                                "rangeFrom": {
+                                    "catalogueTransmit": "micGainDb"
+                                },
+                                "requiresDescriptionVersion": 15,
+                                "tooltip": "",
+                                "unit": "dB"
+                            }
+                        ],
+                        "title": "PC Mic"
+                    },
+                    {
+                        "controls": [
+                            {
+                                "applies": "live",
+                                "binding": {
+                                    "property": {
+                                        "name": "lineIn",
+                                        "object": "transmit"
+                                    }
+                                },
+                                "gate": {
+                                    "capability": "transmitSettingsVersion",
+                                    "min": 3,
+                                    "transmit": true
+                                },
+                                "id": "audio.txInput.hermesLineIn",
+                                "kind": "choice",
+                                "label": "Input",
+                                "options": [
+                                    {
+                                        "label": "Mic In",
+                                        "value": false
+                                    },
+                                    {
+                                        "label": "Line In",
+                                        "value": true
+                                    }
+                                ],
+                                "requiresDescriptionVersion": 15,
+                                "tooltip": "Needs the Hermes Lite 2 audio add-on board. A stock Hermes Lite 2 sends no mic audio."
+                            },
+                            {
+                                "applies": "live",
+                                "binding": {
+                                    "property": {
+                                        "name": "micBoost",
+                                        "object": "transmit"
+                                    }
+                                },
+                                "gate": {
+                                    "capability": "transmitSettingsVersion",
+                                    "min": 3,
+                                    "transmit": true
+                                },
+                                "id": "audio.txInput.hermesMicBoost",
+                                "kind": "toggle",
+                                "label": "+20 dB Mic Boost",
+                                "requiresDescriptionVersion": 15,
+                                "tooltip": "Needs the Hermes Lite 2 audio add-on board. A stock Hermes Lite 2 sends no mic audio."
+                            },
+                            {
+                                "applies": "live",
+                                "binding": {
+                                    "property": {
+                                        "name": "lineInBoost",
+                                        "object": "transmit"
+                                    }
+                                },
+                                "gate": {
+                                    "capability": "transmitSettingsVersion",
+                                    "min": 3,
+                                    "transmit": true
+                                },
+                                "id": "audio.txInput.hermesLineInGain",
+                                "kind": "decimal",
+                                "label": "Line In Gain:",
+                                "max": 12,
+                                "min": -34,
+                                "requiresDescriptionVersion": 15,
+                                "step": 1,
+                                "tooltip": "Needs the Hermes Lite 2 audio add-on board. A stock Hermes Lite 2 sends no mic audio.",
+                                "unit": "dB"
+                            }
+                        ],
+                        "title": "Radio Mic (Hermes Lite 2)"
+                    }
+                ],
+                "title": "TX Input",
+                "where": "mixed"
+            },
+            {
+                "id": "audio.txProfile",
+                "sections": [
+                    {
+                        "controls": [
+                            {
+                                "applies": "live",
+                                "binding": {
+                                    "command": {
+                                        "arguments": {
+                                            "name": {
+                                                "$controlValue": true
+                                            }
+                                        },
+                                        "valueProperty": {
+                                            "name": "activeTxProfile",
+                                            "object": "transmit"
+                                        },
+                                        "verb": "txProfile.select"
+                                    }
+                                },
+                                "choicesFrom": {
+                                    "jsonNames": {
+                                        "name": "txProfilesJson",
+                                        "object": "transmit"
+                                    }
+                                },
+                                "gate": {
+                                    "capability": "transmitSettingsVersion",
+                                    "min": 3,
+                                    "transmit": true
+                                },
+                                "id": "audio.txProfile.activeProfile",
+                                "kind": "choice",
+                                "label": "Active profile:",
+                                "requiresDescriptionVersion": 15,
+                                "tooltip": "Active TX Profile.  Switching prompts to save unsaved changes.",
+                                "unsavedChanges": {
+                                    "question": "The current profile (\"%1\") has been modified.\nSave before switching?",
+                                    "saveVerb": "txProfile.save",
+                                    "title": "Unsaved Profile Changes",
+                                    "watch": [
+                                        "micGainDb",
+                                        "micBoost",
+                                        "micXlr",
+                                        "lineIn",
+                                        "lineInBoost",
+                                        "micTipRing",
+                                        "micBias",
+                                        "micPttDisabled",
+                                        "voxThresholdDb",
+                                        "voxHangTimeMs",
+                                        "antiVoxGainDb",
+                                        "monitorVolume",
+                                        "amCarrierLevel",
+                                        "twoToneFreq1",
+                                        "twoToneFreq2",
+                                        "twoToneLevel",
+                                        "twoTonePower",
+                                        "twoToneFreq2Delay",
+                                        "twoToneInvert",
+                                        "twoTonePulsed",
+                                        "twoToneDrivePowerSource",
+                                        "userDigOut",
+                                        "txEqEnabled",
+                                        "txEqPreamp",
+                                        "txEqBandsJson",
+                                        "txEqFreqsJson",
+                                        "txEqParaEqData",
+                                        "txEqUseLegacy",
+                                        "txLevelerOn",
+                                        "txLevelerMaxGain",
+                                        "txLevelerDecay",
+                                        "txAlcMaxGain",
+                                        "txAlcDecay",
+                                        "phaseRotatorEnabled",
+                                        "phaseReverseEnabled",
+                                        "phaseRotatorFreqHz",
+                                        "phaseRotatorStages",
+                                        "cfcEnabled",
+                                        "cfcPostEqEnabled",
+                                        "cfcPrecompDb",
+                                        "cfcPostEqGainDb",
+                                        "cfcEqFreqJson",
+                                        "cfcCompressionJson",
+                                        "cfcPostEqBandGainJson",
+                                        "cfcParaEqData",
+                                        "cpdrLevelDb",
+                                        "cessbOn",
+                                        "filterLow",
+                                        "filterHigh",
+                                        "dexpEnabled",
+                                        "dexpDetectorTauMs",
+                                        "dexpAttackTimeMs",
+                                        "dexpReleaseTimeMs",
+                                        "dexpExpansionRatioDb",
+                                        "dexpHysteresisRatioDb",
+                                        "dexpLookAheadEnabled",
+                                        "dexpLookAheadMs",
+                                        "dexpLowCutHz",
+                                        "dexpHighCutHz",
+                                        "dexpSideChannelFilterEnabled"
+                                    ]
+                                }
+                            },
+                            {
+                                "applies": "live",
+                                "binding": {
+                                    "command": {
+                                        "arguments": {
+                                            "name": {
+                                                "$prompt": true
+                                            }
+                                        },
+                                        "verb": "txProfile.save"
+                                    }
+                                },
+                                "gate": {
+                                    "capability": "transmitSettingsVersion",
+                                    "min": 3,
+                                    "transmit": true
+                                },
+                                "id": "audio.txProfile.save",
+                                "kind": "button",
+                                "label": "Save...",
+                                "prompt": {
+                                    "initial": {
+                                        "$property": {
+                                            "name": "activeTxProfile",
+                                            "object": "transmit"
+                                        }
+                                    },
+                                    "label": "New profile name:",
+                                    "overwrite": {
+                                        "namesFrom": {
+                                            "name": "txProfilesJson",
+                                            "object": "transmit"
+                                        },
+                                        "question": "A profile named \"%1\" already exists.  Overwrite?",
+                                        "title": "Overwrite TX Profile"
+                                    },
+                                    "title": "Save TX Profile"
+                                },
+                                "requiresDescriptionVersion": 15,
+                                "tooltip": "Save the current transmit settings under a profile name."
+                            },
+                            {
+                                "applies": "live",
+                                "binding": {
+                                    "command": {
+                                        "arguments": {
+                                            "name": {
+                                                "$property": {
+                                                    "name": "activeTxProfile",
+                                                    "object": "transmit"
+                                                }
+                                            }
+                                        },
+                                        "verb": "txProfile.delete"
+                                    }
+                                },
+                                "confirm": "Delete profile \"%1\"?",
+                                "gate": {
+                                    "capability": "transmitSettingsVersion",
+                                    "min": 3,
+                                    "transmit": true
+                                },
+                                "id": "audio.txProfile.delete",
+                                "kind": "button",
+                                "label": "Delete",
+                                "requiresDescriptionVersion": 15,
+                                "tooltip": "Delete the currently-selected profile."
+                            }
+                        ],
+                        "title": "TX Profile"
+                    },
+                    {
+                        "controls": [
+                            {
+                                "applies": "live",
+                                "binding": {
+                                    "property": {
+                                        "name": "filterLow",
+                                        "object": "transmit"
+                                    }
+                                },
+                                "gate": {
+                                    "capability": "transmitSettingsVersion",
+                                    "min": 1,
+                                    "transmit": true
+                                },
+                                "id": "audio.txProfile.filterLow",
+                                "kind": "integer",
+                                "label": "Low cutoff",
+                                "max": 5000,
+                                "min": 0,
+                                "step": 1,
+                                "tooltip": "TX bandpass filter lower cutoff (Hz).  0 Hz for voice SSB modes."
+                            },
+                            {
+                                "applies": "live",
+                                "binding": {
+                                    "property": {
+                                        "name": "filterHigh",
+                                        "object": "transmit"
+                                    }
+                                },
+                                "gate": {
+                                    "capability": "transmitSettingsVersion",
+                                    "min": 1,
+                                    "transmit": true
+                                },
+                                "id": "audio.txProfile.filterHigh",
+                                "kind": "integer",
+                                "label": "High cutoff",
+                                "max": 10000,
+                                "min": 200,
+                                "step": 1,
+                                "tooltip": "TX bandpass filter upper cutoff (Hz).  2900 Hz for typical SSB voice."
+                            },
+                            {
+                                "applies": "live",
+                                "binding": {
+                                    "property": {
+                                        "name": "amCarrierLevel",
+                                        "object": "transmit"
+                                    }
+                                },
+                                "gate": {
+                                    "capability": "transmitSettingsVersion",
+                                    "min": 2,
+                                    "transmit": true
+                                },
+                                "id": "audio.txProfile.amCarrierLevel",
+                                "kind": "integer",
+                                "label": "AM carrier level",
+                                "max": 100,
+                                "min": 0,
+                                "step": 1,
+                                "tooltip": "AM / SAM / DSB carrier level (%).  100 % = full carrier.  In AM the TX filter is symmetric: +/- High cutoff around the carrier."
+                            }
+                        ],
+                        "title": "TX Filter"
+                    }
+                ],
+                "title": "TX Profile",
+                "where": "station"
+            }
+        ],
+        "version": 15
+    },
+    "cases": [
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "micGainDb",
+                        "ordinal": 27,
+                        "value": -3
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "micGainDb",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "micGainDb",
+                        "ordinal": 27,
+                        "value": -3
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "MicGain": "-3"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "micBoost",
+                        "ordinal": 30,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "micBoost",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "micBoost",
+                        "ordinal": 30,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "Mic_Input_Boost": "False"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "micXlr",
+                        "ordinal": 31,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "micXlr",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "micXlr",
+                        "ordinal": 31,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "Mic_XLR": "False"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "lineIn",
+                        "ordinal": 35,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "lineIn",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "lineIn",
+                        "ordinal": 35,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "Line_Input_On": "True"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "lineInBoost",
+                        "ordinal": 36,
+                        "value": -12
+                    },
+                    {
+                        "kind": "i64",
+                        "name": "lineInGain",
+                        "ordinal": 7,
+                        "value": 15
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "lineInBoost",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "lineInBoost",
+                        "ordinal": 36,
+                        "value": -12
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "Line_Input_Level": "-12"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "micTipRing",
+                        "ordinal": 32,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "micTipRing",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "micTipRing",
+                        "ordinal": 32,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "Mic_TipRing": "False"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "micBias",
+                        "ordinal": 33,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "micBias",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "micBias",
+                        "ordinal": 33,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "Mic_Bias": "True"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "micPttDisabled",
+                        "ordinal": 34,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "micPttDisabled",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "micPttDisabled",
+                        "ordinal": 34,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "Mic_PTT_Disabled": "True"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "voxThresholdDb",
+                        "ordinal": 16,
+                        "value": -30
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "voxThresholdDb",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "voxThresholdDb",
+                        "ordinal": 16,
+                        "value": -30
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "Dexp_Threshold": "-30"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "voxHangTimeMs",
+                        "ordinal": 17,
+                        "value": 700
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "voxHangTimeMs",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "voxHangTimeMs",
+                        "ordinal": 17,
+                        "value": 700
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "VOX_HangTime": "700"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "antiVoxGainDb",
+                        "ordinal": 76,
+                        "value": 3
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "antiVoxGainDb",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "antiVoxGainDb",
+                        "ordinal": 76,
+                        "value": 3
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "AntiVox_Gain": "3"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "monitorVolume",
+                        "ordinal": 19,
+                        "value": 0.625
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "monitorVolume",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "monitorVolume",
+                        "ordinal": 19,
+                        "value": 0.625
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "MonitorVolume": "0.625"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "amCarrierLevel",
+                        "ordinal": 25,
+                        "value": 75
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "amCarrierLevel",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "amCarrierLevel",
+                        "ordinal": 25,
+                        "value": 75
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "AM_Carrier_Level": "75"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "twoToneFreq1",
+                        "ordinal": 77,
+                        "value": 900
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "twoToneFreq1",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "twoToneFreq1",
+                        "ordinal": 77,
+                        "value": 900
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "TwoToneFreq1": "900"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "twoToneFreq2",
+                        "ordinal": 78,
+                        "value": 1700
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "twoToneFreq2",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "twoToneFreq2",
+                        "ordinal": 78,
+                        "value": 1700
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "TwoToneFreq2": "1700"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "twoToneLevel",
+                        "ordinal": 79,
+                        "value": -9
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "twoToneLevel",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "twoToneLevel",
+                        "ordinal": 79,
+                        "value": -9
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "TwoToneLevel": "-9"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "twoTonePower",
+                        "ordinal": 80,
+                        "value": 25
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "twoTonePower",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "twoTonePower",
+                        "ordinal": 80,
+                        "value": 25
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "TwoTonePower": "25"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "twoToneFreq2Delay",
+                        "ordinal": 83,
+                        "value": 10
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "twoToneFreq2Delay",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "twoToneFreq2Delay",
+                        "ordinal": 83,
+                        "value": 10
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "TwoToneFreq2Delay": "10"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "twoToneInvert",
+                        "ordinal": 82,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "twoToneInvert",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "twoToneInvert",
+                        "ordinal": 82,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "TwoToneInvert": "False"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "twoTonePulsed",
+                        "ordinal": 81,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "twoTonePulsed",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "twoTonePulsed",
+                        "ordinal": 81,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "TwoTonePulsed": "True"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "enum",
+                        "name": "twoToneDrivePowerSource",
+                        "ordinal": 84,
+                        "value": 1
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "twoToneDrivePowerSource",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "enum",
+                        "name": "twoToneDrivePowerSource",
+                        "ordinal": 84,
+                        "value": 1
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "TwoToneDrivePowerOrigin": "TuneSlider"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "userDigOut",
+                        "ordinal": 8,
+                        "value": 5
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "userDigOut",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "userDigOut",
+                        "ordinal": 8,
+                        "value": 5
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "Mic_UserDigOut": "5"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "txEqEnabled",
+                        "ordinal": 21,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "txEqEnabled",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "txEqEnabled",
+                        "ordinal": 21,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "TXEQEnabled": "True"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "txEqPreamp",
+                        "ordinal": 40,
+                        "value": 5
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "txEqPreamp",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "txEqPreamp",
+                        "ordinal": 40,
+                        "value": 5
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "TXEQPreamp": "5"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "utf8",
+                        "name": "txEqBandsJson",
+                        "ordinal": 41,
+                        "value": "[-8,-12,-12,-1,1,4,9,12,-10,7]"
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "txEqBandsJson",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "utf8",
+                        "name": "txEqBandsJson",
+                        "ordinal": 41,
+                        "value": "[-8,-12,-12,-1,1,4,9,12,-10,7]"
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "TXEQ1": "-8",
+                "TXEQ10": "7",
+                "TXEQ2": "-12",
+                "TXEQ3": "-12",
+                "TXEQ4": "-1",
+                "TXEQ5": "1",
+                "TXEQ6": "4",
+                "TXEQ7": "9",
+                "TXEQ8": "12",
+                "TXEQ9": "-10"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "utf8",
+                        "name": "txEqFreqsJson",
+                        "ordinal": 42,
+                        "value": "[50,63,125,250,500,1000,2000,4000,8000,14000]"
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "txEqFreqsJson",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "utf8",
+                        "name": "txEqFreqsJson",
+                        "ordinal": 42,
+                        "value": "[50,63,125,250,500,1000,2000,4000,8000,14000]"
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "TxEqFreq1": "50",
+                "TxEqFreq10": "14000",
+                "TxEqFreq2": "63",
+                "TxEqFreq3": "125",
+                "TxEqFreq4": "250",
+                "TxEqFreq5": "500",
+                "TxEqFreq6": "1000",
+                "TxEqFreq7": "2000",
+                "TxEqFreq8": "4000",
+                "TxEqFreq9": "8000"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "utf8",
+                        "name": "txEqParaEqData",
+                        "ordinal": 47,
+                        "value": "H4sIAAAAAAACAJ3RwQ6CIBjA8btP4TyrQ9AOvUpzDJDMTTEJt8r57qEOS1OXcYLvv_HboLFsvRxKRIJZWQvlHO3IHYZnyauaC_bABbnjy1MnBAD4rpkYamRampeU5DgluiRUFw_65tYrkaTgSmYM80onJWtuUpkJddOzU3_uVjPuZugEHPuHeJilzgr8aBy27o8IAusKWkDgfiKAG4YXmLebMOF-BoYbTLhgoL9ea90AS3_yNvpdbLXWCyXP9vuWAgAA"
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "txEqParaEqData",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "utf8",
+                        "name": "txEqParaEqData",
+                        "ordinal": 47,
+                        "value": "H4sIAAAAAAACAJ3RwQ6CIBjA8btP4TyrQ9AOvUpzDJDMTTEJt8r57qEOS1OXcYLvv_HboLFsvRxKRIJZWQvlHO3IHYZnyauaC_bABbnjy1MnBAD4rpkYamRampeU5DgluiRUFw_65tYrkaTgSmYM80onJWtuUpkJddOzU3_uVjPuZugEHPuHeJilzgr8aBy27o8IAusKWkDgfiKAG4YXmLebMOF-BoYbTLhgoL9ea90AS3_yNvpdbLXWCyXP9vuWAgAA"
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "TXParaEQData": "H4sIAAAAAAACAJ3RwQ6CIBjA8btP4TyrQ9AOvUpzDJDMTTEJt8r57qEOS1OXcYLvv_HboLFsvRxKRIJZWQvlHO3IHYZnyauaC_bABbnjy1MnBAD4rpkYamRampeU5DgluiRUFw_65tYrkaTgSmYM80onJWtuUpkJddOzU3_uVjPuZugEHPuHeJilzgr8aBy27o8IAusKWkDgfiKAG4YXmLebMOF-BoYbTLhgoL9ea90AS3_yNvpdbLXWCyXP9vuWAgAA"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "txEqUseLegacy",
+                        "ordinal": 39,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "txEqUseLegacy",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "txEqUseLegacy",
+                        "ordinal": 39,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "EQUseLegacy": "False"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "txLevelerOn",
+                        "ordinal": 20,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "txLevelerOn",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "txLevelerOn",
+                        "ordinal": 20,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "Lev_On": "False"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "txLevelerMaxGain",
+                        "ordinal": 60,
+                        "value": 8
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "txLevelerMaxGain",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "txLevelerMaxGain",
+                        "ordinal": 60,
+                        "value": 8
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "Lev_MaxGain": "8"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "txLevelerDecay",
+                        "ordinal": 61,
+                        "value": 250
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "txLevelerDecay",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "txLevelerDecay",
+                        "ordinal": 61,
+                        "value": 250
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "Lev_Decay": "250"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "txAlcMaxGain",
+                        "ordinal": 62,
+                        "value": 20
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "txAlcMaxGain",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "txAlcMaxGain",
+                        "ordinal": 62,
+                        "value": 20
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "ALC_MaximumGain": "20"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "txAlcDecay",
+                        "ordinal": 63,
+                        "value": 25
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "txAlcDecay",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "txAlcDecay",
+                        "ordinal": 63,
+                        "value": 25
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "ALC_Decay": "25"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "phaseRotatorEnabled",
+                        "ordinal": 55,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "phaseRotatorEnabled",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "phaseRotatorEnabled",
+                        "ordinal": 55,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "CFCPhaseRotatorEnabled": "True"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "phaseReverseEnabled",
+                        "ordinal": 58,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "phaseReverseEnabled",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "phaseReverseEnabled",
+                        "ordinal": 58,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "CFCPhaseReverseEnabled": "True"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "phaseRotatorFreqHz",
+                        "ordinal": 56,
+                        "value": 500
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "phaseRotatorFreqHz",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "phaseRotatorFreqHz",
+                        "ordinal": 56,
+                        "value": 500
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "CFCPhaseRotatorFreq": "500"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "phaseRotatorStages",
+                        "ordinal": 57,
+                        "value": 10
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "phaseRotatorStages",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "phaseRotatorStages",
+                        "ordinal": 57,
+                        "value": 10
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "CFCPhaseRotatorStages": "10"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "cfcEnabled",
+                        "ordinal": 22,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "cfcEnabled",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "cfcEnabled",
+                        "ordinal": 22,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "CFCEnabled": "True"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "cfcPostEqEnabled",
+                        "ordinal": 51,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "cfcPostEqEnabled",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "cfcPostEqEnabled",
+                        "ordinal": 51,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "CFCPostEqEnabled": "True"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "cfcPrecompDb",
+                        "ordinal": 53,
+                        "value": 3
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "cfcPrecompDb",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "cfcPrecompDb",
+                        "ordinal": 53,
+                        "value": 3
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "CFCPreComp": "3"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "cfcPostEqGainDb",
+                        "ordinal": 52,
+                        "value": -2
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "cfcPostEqGainDb",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "cfcPostEqGainDb",
+                        "ordinal": 52,
+                        "value": -2
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "CFCPostEqGain": "-2"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "utf8",
+                        "name": "cfcEqFreqJson",
+                        "ordinal": 49,
+                        "value": "[0,150,300,600,1200,2400,3600,4500,5500,11000]"
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "cfcEqFreqJson",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "utf8",
+                        "name": "cfcEqFreqJson",
+                        "ordinal": 49,
+                        "value": "[0,150,300,600,1200,2400,3600,4500,5500,11000]"
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "CFCEqFreq0": "0",
+                "CFCEqFreq1": "150",
+                "CFCEqFreq2": "300",
+                "CFCEqFreq3": "600",
+                "CFCEqFreq4": "1200",
+                "CFCEqFreq5": "2400",
+                "CFCEqFreq6": "3600",
+                "CFCEqFreq7": "4500",
+                "CFCEqFreq8": "5500",
+                "CFCEqFreq9": "11000"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "utf8",
+                        "name": "cfcCompressionJson",
+                        "ordinal": 48,
+                        "value": "[6,6,6,6,6,6,6,6,6,6]"
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "cfcCompressionJson",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "utf8",
+                        "name": "cfcCompressionJson",
+                        "ordinal": 48,
+                        "value": "[6,6,6,6,6,6,6,6,6,6]"
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "CFCPreComp0": "6",
+                "CFCPreComp1": "6",
+                "CFCPreComp2": "6",
+                "CFCPreComp3": "6",
+                "CFCPreComp4": "6",
+                "CFCPreComp5": "6",
+                "CFCPreComp6": "6",
+                "CFCPreComp7": "6",
+                "CFCPreComp8": "6",
+                "CFCPreComp9": "6"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "utf8",
+                        "name": "cfcPostEqBandGainJson",
+                        "ordinal": 50,
+                        "value": "[1,1,1,1,1,1,1,1,1,1]"
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "cfcPostEqBandGainJson",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "utf8",
+                        "name": "cfcPostEqBandGainJson",
+                        "ordinal": 50,
+                        "value": "[1,1,1,1,1,1,1,1,1,1]"
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "CFCPostEqGain0": "1",
+                "CFCPostEqGain1": "1",
+                "CFCPostEqGain2": "1",
+                "CFCPostEqGain3": "1",
+                "CFCPostEqGain4": "1",
+                "CFCPostEqGain5": "1",
+                "CFCPostEqGain6": "1",
+                "CFCPostEqGain7": "1",
+                "CFCPostEqGain8": "1",
+                "CFCPostEqGain9": "1"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "utf8",
+                        "name": "cfcParaEqData",
+                        "ordinal": 54,
+                        "value": "H4sIAAAAAAACAN3WQWvCMBgG4Ht_hXjW0q9N2jrGbrsLHkVCWrNa0HR2LajF_75UMRM3ZIf4HgwU0u89PJDDy9d5A3OGmdRLkVetboYvA0pH5-lHrbat0vlebOROrA59lgRB8Dsu9Tm-RMW6yuRaFNIEy-wq-JS13KimLnOhtmbe1K26RFWpmy8zm5_--9PZ2w14jdn4R4t8zm7CHiM_jBi38-PonxCF3DcfQ3mhfePHWxHQYkCLA60YaCVAKwVaE6BFARIjJIasDkJ2ByHLg5DtQcj6IBf9cbotvKP3OnufvnVPuUKM2d9vEfrmKeIH7BCuwbtN4BqLkBhDYhyJxUgsQWIpEpsgsfvLhHONoBq0RAjaIgStEYL2CEGLhJw0iV0qvgFpYnMjkxAAAA"
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "cfcParaEqData",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "utf8",
+                        "name": "cfcParaEqData",
+                        "ordinal": 54,
+                        "value": "H4sIAAAAAAACAN3WQWvCMBgG4Ht_hXjW0q9N2jrGbrsLHkVCWrNa0HR2LajF_75UMRM3ZIf4HgwU0u89PJDDy9d5A3OGmdRLkVetboYvA0pH5-lHrbat0vlebOROrA59lgRB8Dsu9Tm-RMW6yuRaFNIEy-wq-JS13KimLnOhtmbe1K26RFWpmy8zm5_--9PZ2w14jdn4R4t8zm7CHiM_jBi38-PonxCF3DcfQ3mhfePHWxHQYkCLA60YaCVAKwVaE6BFARIjJIasDkJ2ByHLg5DtQcj6IBf9cbotvKP3OnufvnVPuUKM2d9vEfrmKeIH7BCuwbtN4BqLkBhDYhyJxUgsQWIpEpsgsfvLhHONoBq0RAjaIgStEYL2CEGLhJw0iV0qvgFpYnMjkxAAAA"
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "CFCParaEQData": "H4sIAAAAAAACAN3WQWvCMBgG4Ht_hXjW0q9N2jrGbrsLHkVCWrNa0HR2LajF_75UMRM3ZIf4HgwU0u89PJDDy9d5A3OGmdRLkVetboYvA0pH5-lHrbat0vlebOROrA59lgRB8Dsu9Tm-RMW6yuRaFNIEy-wq-JS13KimLnOhtmbe1K26RFWpmy8zm5_--9PZ2w14jdn4R4t8zm7CHiM_jBi38-PonxCF3DcfQ3mhfePHWxHQYkCLA60YaCVAKwVaE6BFARIjJIasDkJ2ByHLg5DtQcj6IBf9cbotvKP3OnufvnVPuUKM2d9vEfrmKeIH7BCuwbtN4BqLkBhDYhyJxUgsQWIpEpsgsfvLhHONoBq0RAjaIgStEYL2CEGLhJw0iV0qvgFpYnMjkxAAAA"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "cpdrLevelDb",
+                        "ordinal": 24,
+                        "value": 5
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "cpdrLevelDb",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "cpdrLevelDb",
+                        "ordinal": 24,
+                        "value": 5
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "CompanderLevel": "5"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "cessbOn",
+                        "ordinal": 59,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "cessbOn",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "cessbOn",
+                        "ordinal": 59,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "CESSB_On": "True"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "filterLow",
+                        "ordinal": 5,
+                        "value": 200
+                    },
+                    {
+                        "kind": "i64",
+                        "name": "filterHigh",
+                        "ordinal": 6,
+                        "value": 2900
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "filterLow",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "filterLow",
+                        "ordinal": 5,
+                        "value": 200
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "FilterLow": "200"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "filterLow",
+                        "ordinal": 5,
+                        "value": 100
+                    },
+                    {
+                        "kind": "i64",
+                        "name": "filterHigh",
+                        "ordinal": 6,
+                        "value": 2700
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "filterHigh",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "i64",
+                        "name": "filterHigh",
+                        "ordinal": 6,
+                        "value": 2700
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "FilterHigh": "2700"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "dexpEnabled",
+                        "ordinal": 26,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "dexpEnabled",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "dexpEnabled",
+                        "ordinal": 26,
+                        "value": true
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "DEXP_Enabled": "True"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpDetectorTauMs",
+                        "ordinal": 67,
+                        "value": 35
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "dexpDetectorTauMs",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpDetectorTauMs",
+                        "ordinal": 67,
+                        "value": 35
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "DEXP_DetectorTauMs": "35"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpAttackTimeMs",
+                        "ordinal": 66,
+                        "value": 8
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "dexpAttackTimeMs",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpAttackTimeMs",
+                        "ordinal": 66,
+                        "value": 8
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "DEXP_AttackTimeMs": "8"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpReleaseTimeMs",
+                        "ordinal": 74,
+                        "value": 250
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "dexpReleaseTimeMs",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpReleaseTimeMs",
+                        "ordinal": 74,
+                        "value": 250
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "DEXP_ReleaseTimeMs": "250"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpExpansionRatioDb",
+                        "ordinal": 68,
+                        "value": 20
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "dexpExpansionRatioDb",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpExpansionRatioDb",
+                        "ordinal": 68,
+                        "value": 20
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "DEXP_ExpansionRatioDb": "20"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpHysteresisRatioDb",
+                        "ordinal": 70,
+                        "value": 5
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "dexpHysteresisRatioDb",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpHysteresisRatioDb",
+                        "ordinal": 70,
+                        "value": 5
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "DEXP_HysteresisRatioDb": "5"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "dexpLookAheadEnabled",
+                        "ordinal": 71,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "dexpLookAheadEnabled",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "dexpLookAheadEnabled",
+                        "ordinal": 71,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "DEXP_LookAheadEnabled": "False"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpLookAheadMs",
+                        "ordinal": 72,
+                        "value": 120
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "dexpLookAheadMs",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpLookAheadMs",
+                        "ordinal": 72,
+                        "value": 120
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "DEXP_LookAheadMs": "120"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpLowCutHz",
+                        "ordinal": 73,
+                        "value": 300
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "dexpLowCutHz",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpLowCutHz",
+                        "ordinal": 73,
+                        "value": 300
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "DEXP_LowCutHz": "300"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpHighCutHz",
+                        "ordinal": 69,
+                        "value": 2800
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "dexpHighCutHz",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "f64",
+                        "name": "dexpHighCutHz",
+                        "ordinal": 69,
+                        "value": 2800
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "DEXP_HighCutHz": "2800"
+            }
+        },
+        {
+            "delta": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "dexpSideChannelFilterEnabled",
+                        "ordinal": 75,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "field": "dexpSideChannelFilterEnabled",
+            "restored": {
+                "key": "transmit",
+                "properties": [
+                    {
+                        "kind": "bool",
+                        "name": "dexpSideChannelFilterEnabled",
+                        "ordinal": 75,
+                        "value": false
+                    }
+                ],
+                "type": "delta"
+            },
+            "saved": {
+                "DEXP_SideChannelFilterEnabled": "False"
+            }
+        }
+    ],
+    "initial": [
+        {
+            "class": "TransmitModel",
+            "fields": [
+                {
+                    "kind": "bool",
+                    "name": "mox",
+                    "ordinal": 0
+                },
+                {
+                    "kind": "bool",
+                    "name": "tune",
+                    "ordinal": 1
+                },
+                {
+                    "kind": "i64",
+                    "name": "power",
+                    "ordinal": 2
+                },
+                {
+                    "kind": "f64",
+                    "name": "micGain",
+                    "ordinal": 3
+                },
+                {
+                    "kind": "bool",
+                    "name": "pureSig",
+                    "ordinal": 4
+                },
+                {
+                    "kind": "i64",
+                    "name": "filterLow",
+                    "ordinal": 5
+                },
+                {
+                    "kind": "i64",
+                    "name": "filterHigh",
+                    "ordinal": 6
+                },
+                {
+                    "kind": "i64",
+                    "name": "lineInGain",
+                    "ordinal": 7
+                },
+                {
+                    "kind": "i64",
+                    "name": "userDigOut",
+                    "ordinal": 8
+                },
+                {
+                    "kind": "bool",
+                    "name": "forceAttwhenPSAoff",
+                    "ordinal": 9
+                },
+                {
+                    "kind": "bool",
+                    "name": "forceAttwhenPowerChangesWhenPSAon",
+                    "ordinal": 10
+                },
+                {
+                    "kind": "bool",
+                    "name": "forceAttwhenPowerChangesWhenPSAonAndDecreased",
+                    "ordinal": 11
+                },
+                {
+                    "kind": "i64",
+                    "name": "antiVoxTauMs",
+                    "ordinal": 12
+                },
+                {
+                    "kind": "bool",
+                    "name": "antiVoxRun",
+                    "ordinal": 13
+                },
+                {
+                    "kind": "bool",
+                    "name": "paSettingsBypass",
+                    "ordinal": 14
+                },
+                {
+                    "kind": "i64",
+                    "name": "tunePower",
+                    "ordinal": 15
+                },
+                {
+                    "kind": "i64",
+                    "name": "voxThresholdDb",
+                    "ordinal": 16
+                },
+                {
+                    "kind": "i64",
+                    "name": "voxHangTimeMs",
+                    "ordinal": 17
+                },
+                {
+                    "kind": "bool",
+                    "name": "monEnabled",
+                    "ordinal": 18
+                },
+                {
+                    "kind": "f64",
+                    "name": "monitorVolume",
+                    "ordinal": 19
+                },
+                {
+                    "kind": "bool",
+                    "name": "txLevelerOn",
+                    "ordinal": 20
+                },
+                {
+                    "kind": "bool",
+                    "name": "txEqEnabled",
+                    "ordinal": 21
+                },
+                {
+                    "kind": "bool",
+                    "name": "cfcEnabled",
+                    "ordinal": 22
+                },
+                {
+                    "kind": "bool",
+                    "name": "cpdrOn",
+                    "ordinal": 23
+                },
+                {
+                    "kind": "i64",
+                    "name": "cpdrLevelDb",
+                    "ordinal": 24
+                },
+                {
+                    "kind": "i64",
+                    "name": "amCarrierLevel",
+                    "ordinal": 25
+                },
+                {
+                    "kind": "bool",
+                    "name": "dexpEnabled",
+                    "ordinal": 26
+                },
+                {
+                    "kind": "i64",
+                    "name": "micGainDb",
+                    "ordinal": 27
+                },
+                {
+                    "kind": "i64",
+                    "name": "tunePowerForTxBand",
+                    "ordinal": 28
+                },
+                {
+                    "kind": "enum",
+                    "name": "tuneDrivePowerSource",
+                    "ordinal": 29
+                },
+                {
+                    "kind": "bool",
+                    "name": "micBoost",
+                    "ordinal": 30
+                },
+                {
+                    "kind": "bool",
+                    "name": "micXlr",
+                    "ordinal": 31
+                },
+                {
+                    "kind": "bool",
+                    "name": "micTipRing",
+                    "ordinal": 32
+                },
+                {
+                    "kind": "bool",
+                    "name": "micBias",
+                    "ordinal": 33
+                },
+                {
+                    "kind": "bool",
+                    "name": "micPttDisabled",
+                    "ordinal": 34
+                },
+                {
+                    "kind": "bool",
+                    "name": "lineIn",
+                    "ordinal": 35
+                },
+                {
+                    "kind": "f64",
+                    "name": "lineInBoost",
+                    "ordinal": 36
+                },
+                {
+                    "kind": "utf8",
+                    "name": "activeTxProfile",
+                    "ordinal": 37
+                },
+                {
+                    "kind": "utf8",
+                    "name": "txProfilesJson",
+                    "ordinal": 38
+                },
+                {
+                    "kind": "bool",
+                    "name": "txEqUseLegacy",
+                    "ordinal": 39
+                },
+                {
+                    "kind": "i64",
+                    "name": "txEqPreamp",
+                    "ordinal": 40
+                },
+                {
+                    "kind": "utf8",
+                    "name": "txEqBandsJson",
+                    "ordinal": 41
+                },
+                {
+                    "kind": "utf8",
+                    "name": "txEqFreqsJson",
+                    "ordinal": 42
+                },
+                {
+                    "kind": "i64",
+                    "name": "txEqNc",
+                    "ordinal": 43
+                },
+                {
+                    "kind": "bool",
+                    "name": "txEqMp",
+                    "ordinal": 44
+                },
+                {
+                    "kind": "i64",
+                    "name": "txEqCtfmode",
+                    "ordinal": 45
+                },
+                {
+                    "kind": "i64",
+                    "name": "txEqWintype",
+                    "ordinal": 46
+                },
+                {
+                    "kind": "utf8",
+                    "name": "txEqParaEqData",
+                    "ordinal": 47
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cfcCompressionJson",
+                    "ordinal": 48
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cfcEqFreqJson",
+                    "ordinal": 49
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cfcPostEqBandGainJson",
+                    "ordinal": 50
+                },
+                {
+                    "kind": "bool",
+                    "name": "cfcPostEqEnabled",
+                    "ordinal": 51
+                },
+                {
+                    "kind": "i64",
+                    "name": "cfcPostEqGainDb",
+                    "ordinal": 52
+                },
+                {
+                    "kind": "i64",
+                    "name": "cfcPrecompDb",
+                    "ordinal": 53
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cfcParaEqData",
+                    "ordinal": 54
+                },
+                {
+                    "kind": "bool",
+                    "name": "phaseRotatorEnabled",
+                    "ordinal": 55
+                },
+                {
+                    "kind": "i64",
+                    "name": "phaseRotatorFreqHz",
+                    "ordinal": 56
+                },
+                {
+                    "kind": "i64",
+                    "name": "phaseRotatorStages",
+                    "ordinal": 57
+                },
+                {
+                    "kind": "bool",
+                    "name": "phaseReverseEnabled",
+                    "ordinal": 58
+                },
+                {
+                    "kind": "bool",
+                    "name": "cessbOn",
+                    "ordinal": 59
+                },
+                {
+                    "kind": "i64",
+                    "name": "txLevelerMaxGain",
+                    "ordinal": 60
+                },
+                {
+                    "kind": "i64",
+                    "name": "txLevelerDecay",
+                    "ordinal": 61
+                },
+                {
+                    "kind": "i64",
+                    "name": "txAlcMaxGain",
+                    "ordinal": 62
+                },
+                {
+                    "kind": "i64",
+                    "name": "txAlcDecay",
+                    "ordinal": 63
+                },
+                {
+                    "kind": "utf8",
+                    "name": "powerByBandJson",
+                    "ordinal": 64
+                },
+                {
+                    "kind": "utf8",
+                    "name": "tunePowerByBandJson",
+                    "ordinal": 65
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpAttackTimeMs",
+                    "ordinal": 66
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpDetectorTauMs",
+                    "ordinal": 67
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpExpansionRatioDb",
+                    "ordinal": 68
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpHighCutHz",
+                    "ordinal": 69
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpHysteresisRatioDb",
+                    "ordinal": 70
+                },
+                {
+                    "kind": "bool",
+                    "name": "dexpLookAheadEnabled",
+                    "ordinal": 71
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpLookAheadMs",
+                    "ordinal": 72
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpLowCutHz",
+                    "ordinal": 73
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpReleaseTimeMs",
+                    "ordinal": 74
+                },
+                {
+                    "kind": "bool",
+                    "name": "dexpSideChannelFilterEnabled",
+                    "ordinal": 75
+                },
+                {
+                    "kind": "i64",
+                    "name": "antiVoxGainDb",
+                    "ordinal": 76
+                },
+                {
+                    "kind": "i64",
+                    "name": "twoToneFreq1",
+                    "ordinal": 77
+                },
+                {
+                    "kind": "i64",
+                    "name": "twoToneFreq2",
+                    "ordinal": 78
+                },
+                {
+                    "kind": "f64",
+                    "name": "twoToneLevel",
+                    "ordinal": 79
+                },
+                {
+                    "kind": "i64",
+                    "name": "twoTonePower",
+                    "ordinal": 80
+                },
+                {
+                    "kind": "bool",
+                    "name": "twoTonePulsed",
+                    "ordinal": 81
+                },
+                {
+                    "kind": "bool",
+                    "name": "twoToneInvert",
+                    "ordinal": 82
+                },
+                {
+                    "kind": "i64",
+                    "name": "twoToneFreq2Delay",
+                    "ordinal": 83
+                },
+                {
+                    "kind": "enum",
+                    "name": "twoToneDrivePowerSource",
+                    "ordinal": 84
+                },
+                {
+                    "kind": "bool",
+                    "name": "voxEnabled",
+                    "ordinal": 85
+                },
+                {
+                    "kind": "bool",
+                    "name": "micMuted",
+                    "ordinal": 86
+                }
+            ],
+            "type": "schema"
+        },
+        {
+            "class": "TransmitModel",
+            "key": "transmit",
+            "properties": [
+                {
+                    "kind": "bool",
+                    "name": "mox",
+                    "ordinal": 0,
+                    "value": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "tune",
+                    "ordinal": 1,
+                    "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "power",
+                    "ordinal": 2,
+                    "value": 50
+                },
+                {
+                    "kind": "f64",
+                    "name": "micGain",
+                    "ordinal": 3,
+                    "value": 0
+                },
+                {
+                    "kind": "bool",
+                    "name": "pureSig",
+                    "ordinal": 4,
+                    "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "filterLow",
+                    "ordinal": 5,
+                    "value": 100
+                },
+                {
+                    "kind": "i64",
+                    "name": "filterHigh",
+                    "ordinal": 6,
+                    "value": 2900
+                },
+                {
+                    "kind": "i64",
+                    "name": "lineInGain",
+                    "ordinal": 7,
+                    "value": 23
+                },
+                {
+                    "kind": "i64",
+                    "name": "userDigOut",
+                    "ordinal": 8,
+                    "value": 0
+                },
+                {
+                    "kind": "bool",
+                    "name": "forceAttwhenPSAoff",
+                    "ordinal": 9,
+                    "value": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "forceAttwhenPowerChangesWhenPSAon",
+                    "ordinal": 10,
+                    "value": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "forceAttwhenPowerChangesWhenPSAonAndDecreased",
+                    "ordinal": 11,
+                    "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "antiVoxTauMs",
+                    "ordinal": 12,
+                    "value": 20
+                },
+                {
+                    "kind": "bool",
+                    "name": "antiVoxRun",
+                    "ordinal": 13,
+                    "value": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "paSettingsBypass",
+                    "ordinal": 14,
+                    "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "tunePower",
+                    "ordinal": 15,
+                    "value": 10
+                },
+                {
+                    "kind": "i64",
+                    "name": "voxThresholdDb",
+                    "ordinal": 16,
+                    "value": -40
+                },
+                {
+                    "kind": "i64",
+                    "name": "voxHangTimeMs",
+                    "ordinal": 17,
+                    "value": 500
+                },
+                {
+                    "kind": "bool",
+                    "name": "monEnabled",
+                    "ordinal": 18,
+                    "value": false
+                },
+                {
+                    "kind": "f64",
+                    "name": "monitorVolume",
+                    "ordinal": 19,
+                    "value": 0.5
+                },
+                {
+                    "kind": "bool",
+                    "name": "txLevelerOn",
+                    "ordinal": 20,
+                    "value": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "txEqEnabled",
+                    "ordinal": 21,
+                    "value": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "cfcEnabled",
+                    "ordinal": 22,
+                    "value": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "cpdrOn",
+                    "ordinal": 23,
+                    "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "cpdrLevelDb",
+                    "ordinal": 24,
+                    "value": 2
+                },
+                {
+                    "kind": "i64",
+                    "name": "amCarrierLevel",
+                    "ordinal": 25,
+                    "value": 100
+                },
+                {
+                    "kind": "bool",
+                    "name": "dexpEnabled",
+                    "ordinal": 26,
+                    "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "micGainDb",
+                    "ordinal": 27,
+                    "value": -6
+                },
+                {
+                    "kind": "i64",
+                    "name": "tunePowerForTxBand",
+                    "ordinal": 28,
+                    "value": 50
+                },
+                {
+                    "kind": "enum",
+                    "name": "tuneDrivePowerSource",
+                    "ordinal": 29,
+                    "value": 0
+                },
+                {
+                    "kind": "bool",
+                    "name": "micBoost",
+                    "ordinal": 30,
+                    "value": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "micXlr",
+                    "ordinal": 31,
+                    "value": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "micTipRing",
+                    "ordinal": 32,
+                    "value": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "micBias",
+                    "ordinal": 33,
+                    "value": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "micPttDisabled",
+                    "ordinal": 34,
+                    "value": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "lineIn",
+                    "ordinal": 35,
+                    "value": false
+                },
+                {
+                    "kind": "f64",
+                    "name": "lineInBoost",
+                    "ordinal": 36,
+                    "value": 0
+                },
+                {
+                    "kind": "utf8",
+                    "name": "activeTxProfile",
+                    "ordinal": 37,
+                    "value": "Alpha"
+                },
+                {
+                    "kind": "utf8",
+                    "name": "txProfilesJson",
+                    "ordinal": 38,
+                    "value": "[\"AM\",\"AM 10k CFC\",\"Alpha\",\"Baseline\",\"Beta\",\"Conventional\",\"D-104\",\"D-104+CPDR\",\"D-104+EQ\",\"DX / Contest\",\"Default\",\"Default DX\",\"Digi 1K@1500\",\"Digi 1K@2210\",\"ESSB\",\"Edited\",\"HC4-5\",\"HC4-5+CPDR\",\"PR40+W2IHY\",\"PR40+W2IHY+CPDR\",\"PR781+EQ\",\"PR781+EQ+CPDR\",\"RADE\",\"SSB 2.8k CFC\",\"SSB 3.0k CFC\",\"SSB 3.3k CFC\"]"
+                },
+                {
+                    "kind": "bool",
+                    "name": "txEqUseLegacy",
+                    "ordinal": 39,
+                    "value": true
+                },
+                {
+                    "kind": "i64",
+                    "name": "txEqPreamp",
+                    "ordinal": 40,
+                    "value": 0
+                },
+                {
+                    "kind": "utf8",
+                    "name": "txEqBandsJson",
+                    "ordinal": 41,
+                    "value": "[-12,-12,-12,-1,1,4,9,12,-10,-10]"
+                },
+                {
+                    "kind": "utf8",
+                    "name": "txEqFreqsJson",
+                    "ordinal": 42,
+                    "value": "[32,63,125,250,500,1000,2000,4000,8000,16000]"
+                },
+                {
+                    "kind": "i64",
+                    "name": "txEqNc",
+                    "ordinal": 43,
+                    "value": 2048
+                },
+                {
+                    "kind": "bool",
+                    "name": "txEqMp",
+                    "ordinal": 44,
+                    "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "txEqCtfmode",
+                    "ordinal": 45,
+                    "value": 0
+                },
+                {
+                    "kind": "i64",
+                    "name": "txEqWintype",
+                    "ordinal": 46,
+                    "value": 0
+                },
+                {
+                    "kind": "utf8",
+                    "name": "txEqParaEqData",
+                    "ordinal": 47,
+                    "value": ""
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cfcCompressionJson",
+                    "ordinal": 48,
+                    "value": "[5,5,5,5,5,5,5,5,5,5]"
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cfcEqFreqJson",
+                    "ordinal": 49,
+                    "value": "[0,125,250,500,1000,2000,3000,4000,5000,10000]"
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cfcPostEqBandGainJson",
+                    "ordinal": 50,
+                    "value": "[0,0,0,0,0,0,0,0,0,0]"
+                },
+                {
+                    "kind": "bool",
+                    "name": "cfcPostEqEnabled",
+                    "ordinal": 51,
+                    "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "cfcPostEqGainDb",
+                    "ordinal": 52,
+                    "value": 0
+                },
+                {
+                    "kind": "i64",
+                    "name": "cfcPrecompDb",
+                    "ordinal": 53,
+                    "value": 0
+                },
+                {
+                    "kind": "utf8",
+                    "name": "cfcParaEqData",
+                    "ordinal": 54,
+                    "value": ""
+                },
+                {
+                    "kind": "bool",
+                    "name": "phaseRotatorEnabled",
+                    "ordinal": 55,
+                    "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "phaseRotatorFreqHz",
+                    "ordinal": 56,
+                    "value": 338
+                },
+                {
+                    "kind": "i64",
+                    "name": "phaseRotatorStages",
+                    "ordinal": 57,
+                    "value": 8
+                },
+                {
+                    "kind": "bool",
+                    "name": "phaseReverseEnabled",
+                    "ordinal": 58,
+                    "value": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "cessbOn",
+                    "ordinal": 59,
+                    "value": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "txLevelerMaxGain",
+                    "ordinal": 60,
+                    "value": 15
+                },
+                {
+                    "kind": "i64",
+                    "name": "txLevelerDecay",
+                    "ordinal": 61,
+                    "value": 100
+                },
+                {
+                    "kind": "i64",
+                    "name": "txAlcMaxGain",
+                    "ordinal": 62,
+                    "value": 3
+                },
+                {
+                    "kind": "i64",
+                    "name": "txAlcDecay",
+                    "ordinal": 63,
+                    "value": 10
+                },
+                {
+                    "kind": "utf8",
+                    "name": "powerByBandJson",
+                    "ordinal": 64,
+                    "value": "{\"10m\":50,\"12m\":50,\"15m\":50,\"160m\":50,\"17m\":50,\"20m\":50,\"30m\":50,\"40m\":50,\"60m\":50,\"6m\":50,\"80m\":50,\"GEN\":50,\"WWV\":50,\"XVTR\":50}"
+                },
+                {
+                    "kind": "utf8",
+                    "name": "tunePowerByBandJson",
+                    "ordinal": 65,
+                    "value": "{\"10m\":50,\"12m\":50,\"15m\":50,\"160m\":50,\"17m\":50,\"20m\":50,\"30m\":50,\"40m\":50,\"60m\":50,\"6m\":50,\"80m\":50,\"GEN\":50,\"WWV\":50,\"XVTR\":50}"
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpAttackTimeMs",
+                    "ordinal": 66,
+                    "value": 2
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpDetectorTauMs",
+                    "ordinal": 67,
+                    "value": 20
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpExpansionRatioDb",
+                    "ordinal": 68,
+                    "value": 10
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpHighCutHz",
+                    "ordinal": 69,
+                    "value": 1500
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpHysteresisRatioDb",
+                    "ordinal": 70,
+                    "value": 2
+                },
+                {
+                    "kind": "bool",
+                    "name": "dexpLookAheadEnabled",
+                    "ordinal": 71,
+                    "value": true
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpLookAheadMs",
+                    "ordinal": 72,
+                    "value": 60
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpLowCutHz",
+                    "ordinal": 73,
+                    "value": 500
+                },
+                {
+                    "kind": "f64",
+                    "name": "dexpReleaseTimeMs",
+                    "ordinal": 74,
+                    "value": 100
+                },
+                {
+                    "kind": "bool",
+                    "name": "dexpSideChannelFilterEnabled",
+                    "ordinal": 75,
+                    "value": true
+                },
+                {
+                    "kind": "i64",
+                    "name": "antiVoxGainDb",
+                    "ordinal": 76,
+                    "value": 0
+                },
+                {
+                    "kind": "i64",
+                    "name": "twoToneFreq1",
+                    "ordinal": 77,
+                    "value": 700
+                },
+                {
+                    "kind": "i64",
+                    "name": "twoToneFreq2",
+                    "ordinal": 78,
+                    "value": 1900
+                },
+                {
+                    "kind": "f64",
+                    "name": "twoToneLevel",
+                    "ordinal": 79,
+                    "value": -6
+                },
+                {
+                    "kind": "i64",
+                    "name": "twoTonePower",
+                    "ordinal": 80,
+                    "value": 50
+                },
+                {
+                    "kind": "bool",
+                    "name": "twoTonePulsed",
+                    "ordinal": 81,
+                    "value": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "twoToneInvert",
+                    "ordinal": 82,
+                    "value": true
+                },
+                {
+                    "kind": "i64",
+                    "name": "twoToneFreq2Delay",
+                    "ordinal": 83,
+                    "value": 0
+                },
+                {
+                    "kind": "enum",
+                    "name": "twoToneDrivePowerSource",
+                    "ordinal": 84,
+                    "value": 0
+                },
+                {
+                    "kind": "bool",
+                    "name": "voxEnabled",
+                    "ordinal": 85,
+                    "value": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "micMuted",
+                    "ordinal": 86,
+                    "value": false
+                }
+            ],
+            "type": "object.create"
+        },
+        {
+            "type": "snapshot.complete"
+        }
+    ]
+}

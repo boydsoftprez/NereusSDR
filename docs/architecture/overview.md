@@ -45,6 +45,28 @@ This means:
 - Spectrum/waterfall quality is limited by client FFT size and GPU rendering performance
 - PureSignal feedback loop runs entirely on the client
 
+## Current station arrangement
+
+The Core owns OpenHPSDR transport, station settings, baseband DSP, spectra,
+receiver allocation and transmit authority. A GUI renders the operator's
+console and exchanges controls, microphone audio and processed station data.
+A desktop can run both together; `nereusd` runs the Core headlessly beside
+the radio for a desktop GUI or the native Swift/SwiftUI iPhone/iPad app.
+Both use the Core's station identity, receiver/TX authority and processed data.
+Compatible Linux SBC deployments
+include a Raspberry Pi inside an ANAN-G2; development testing used a
+Raspberry Pi 4 and a Radxa Rock 5C with 2 GB RAM.
+
+For different networks, the RV signalling service registers Cores, introduces
+clients, passes connection candidates and provides pairing mailboxes/relay
+credentials. The Core authenticates the device and authorizes its actions.
+IPv4/IPv6 station addresses, dual-family LAN discovery and connection
+selection support direct and RV-assisted paths, including mobile/CGNAT
+networks. The session uses its own direct, TURN or WebSocket-relayed path. See the
+[operator explanation](../../README.md#one-station-several-ways-to-operate) and
+[RV installation guide](../../rendezvous/README.md). The R1 implementation
+notes and historical flow examples below describe the extraction foundation.
+
 ## Core/GUI split and the headless daemon (remote-daemon R1)
 
 Moved from CLAUDE.md.

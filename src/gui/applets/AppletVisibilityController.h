@@ -10,6 +10,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-05-10 — Created in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via
 //                 Anthropic Claude Code. Backs the Containers >
@@ -20,14 +22,19 @@
 #include <QString>
 #include <QStringList>
 #include <QHash>
+#include <QPointer>
 
 namespace NereusSDR {
 
+class ContainerWorkspaceStore;
+class ContainerContentRegistry;
 class AppletVisibilityController : public QObject {
     Q_OBJECT
 public:
     explicit AppletVisibilityController(QObject* parent = nullptr);
 
+    void setWorkspaceAdapter(ContainerWorkspaceStore* store, ContainerContentRegistry* registry);
+    QString storageError() const { return m_storageError; }
     // Register an applet's id, display name, and default visibility.
     // If an AppSettings key for this id already exists, the persisted
     // value wins over defaultVisible. Idempotent on the same id; later
@@ -56,6 +63,7 @@ public slots:
     void setAvailable(const QString& id, bool available);
 
 signals:
+    void persistenceFailed(const QString& error);
     // User preference changed (e.g., user clicked the menu).
     void visibilityChanged(const QString& id, bool visible);
 
@@ -68,6 +76,10 @@ signals:
     void effectiveVisibilityChanged(const QString& id, bool effective);
 
 private:
+    void syncWorkspace();
+    QPointer<ContainerWorkspaceStore> m_store;
+    QPointer<ContainerContentRegistry> m_registry;
+    QString m_storageError;
     static QString settingsKey(const QString& id);  // "AppletRxVisible" etc.
 
     struct Entry {

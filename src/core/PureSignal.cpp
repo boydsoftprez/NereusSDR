@@ -12,6 +12,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Acknowledge PS3 calibration reset before AutoAtt changes,
+//                 with causal TX status and cancellation drain. J.J. Boyd
+//                 (KG4VCF), with OpenAI Codex assistance.
+//   2026-10-04 — Live Core status and passive numeric correction readouts,
+//                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
+
 //   2026-05-06 — Created by J.J. Boyd (KG4VCF) for Phase 3M-4 Task 7
 //                 PureSignal coordinator, with AI-assisted source-first
 //                 protocol via Anthropic Claude Code.
@@ -117,6 +123,9 @@ PureSignal::PureSignal(WdspEngine* engine,
     m_pollTimer.start();
     m_autoAttTimer.start();
 
+    if (m_tx) {
+        m_tx->invalidatePsCorrectionSummary();
+    }
     connectTxChannelSignals();
 }
 
@@ -130,6 +139,7 @@ PureSignal::~PureSignal()
     // _ps_closing then joins; we rely on QTimer::stop being synchronous
     // on the main thread).
     if (m_tx) {
+        m_tx->invalidatePsCorrectionSummary();
         m_tx->setPSMox(false);
         requestNativeCorrectionStop();
     }
@@ -137,7 +147,8 @@ PureSignal::~PureSignal()
 
 void PureSignal::setTxChannel(TxChannel* tx)
 {
-    if (tx != m_tx) {
+    const bool changed = tx != m_tx;
+    if (changed) {
         retireSessionOperations();
         m_operationalSettingsApplied = false;
         if (m_tx) {
@@ -145,6 +156,9 @@ void PureSignal::setTxChannel(TxChannel* tx)
         }
     }
     m_tx = tx;
+    if (changed) {
+        invalidateCorrectionSummary();
+    }
     connectTxChannelSignals();
 }
 
@@ -191,6 +205,7 @@ void PureSignal::setSettings(PureSignalSettings* settings)
 {
     PureSignalSettings* replacement = settings ? settings : m_fallbackSettings;
     if (replacement == m_settings) return;
+    invalidateCorrectionSummary();
     if (m_settings) disconnect(m_settings, nullptr, this, nullptr);
     m_settings = replacement;
     m_operationalSettingsApplied = false;
@@ -350,10 +365,20 @@ void PureSignal::startAutomaticCalibration()
         return;
     }
     retirePendingRestoreOperation();
+    cancelAutoAttenuation();
+    // From Thetis PSForm.cs:670-674 [v2.10.3.15]: SingleCalibrate accepts
+    // _autoON as a mode change. Retire a not-yet-polled Single request too,
+    // so it cannot switch this explicit Auto request back to Single later.
+    m_singleCalON = false;
+    m_performingSingleCal = false;
+    m_performingSingleCalRetries = 0;
+    if (m_cmdState == CommandState::TurnOnSingleCalibrate) {
+        m_cmdState = CommandState::TurnOnAutoCalibrate;
+    }
     m_autoON = true;
     m_OFF = false;
     m_aaLastSeenAttemptCount = m_calAttempts.load();
-    if (m_tx) {
+    if (m_tx && !m_aaCancelPending) {
         m_tx->setPSControl(/*reset=*/0, /*mancal=*/0,
                            /*automode=*/1, /*turnon=*/0);
     }
@@ -361,10 +386,33 @@ void PureSignal::startAutomaticCalibration()
 
 void PureSignal::requestOperationalStop()
 {
+    cancelAutoAttenuation();
+    invalidateCorrectionSummary();
     m_autoON = false;
     m_OFF = true;
+    m_aaCancelPending = false;
     if (m_tx) {
         requestNativeCorrectionStop();
+    }
+}
+
+void PureSignal::cancelAutoAttenuation()
+{
+    if (m_aaState == AutoAttenuateState::Monitor || m_aaCancelPending) {
+        return;
+    }
+    m_aaState = AutoAttenuateState::Monitor;
+    m_aaLastSeenAttemptCount = m_calAttempts.load();
+    m_saveAutoOn = 0;
+    m_saveSingleCalOn = 0;
+    m_deltaDb = 0;
+    m_aaResetControlSerial = 0;
+    // Unkey can remove the paired PSCC pump before reset is acknowledged.
+    // Discard the pending ATT write, but keep calibration stopped until its
+    // outstanding collection drains. Rekey must not reuse its old feedback.
+    if (m_tx && canActuate() && !m_OFF) {
+        m_aaCancelPending = true;
+        m_aaResetControlSerial = m_tx->setPSControl(1, 0, 0, 0);
     }
 }
 
@@ -403,6 +451,7 @@ void PureSignal::clearTransientOperationsForOff()
     m_saveSingleCalOn = 0;
     m_deltaDb = 0;
     m_aaState = AutoAttenuateState::Monitor;
+    m_aaCancelPending = false;
     m_OFF = true;
     m_cmdState = m_tx ? CommandState::TurnOff : CommandState::Off;
 }
@@ -454,6 +503,7 @@ bool PureSignal::applyCurrentCorrection()
 
 void PureSignal::retireSessionOperations()
 {
+    invalidateCorrectionSummary();
     retirePendingFileOperation();
     clearTransientOperationsForOff();
     if (m_tx) {
@@ -472,6 +522,7 @@ void PureSignal::retireSessionOperations()
 
 void PureSignal::singleCalibrate()
 {
+    cancelAutoAttenuation();
     if (!canActuate() || !runCalibrationProcessing()) {
         return;
     }
@@ -539,6 +590,7 @@ void PureSignal::setEnabled(bool enabled)
         return;
     }
     if (!enabled) {
+        invalidateCorrectionSummary();
         retirePendingFileOperation();
         beginSettingsHydration();
         forceAutoCalDisable();
@@ -612,6 +664,7 @@ void PureSignal::forcePS()
 
 void PureSignal::reset()
 {
+    invalidateCorrectionSummary();
     // From Thetis PSForm.cs:486-491 btnPSReset_Click [v2.10.3.13]:
     //   console.ForcePureSignalAutoCalDisable();
     //   if (!_OFF) _OFF = true;
@@ -710,13 +763,18 @@ std::optional<Ps3FileOperationToken> PureSignal::beginSaveCorrections(
 std::optional<Ps3FileOperationToken> PureSignal::beginRestoreCorrections(
     const QString& filename)
 {
-    if (!m_tx || m_pendingFileOperation || !canActuate()) {
+    // Native restore asserts turnon (vendored calcc.c:2404), which can skip
+    // the reset acknowledgement between host polls. Do not dispatch it while
+    // AutoAtt still owns a reset/settle transaction or cancellation drain.
+    if (!m_tx || m_pendingFileOperation || !canActuate()
+        || m_aaState != AutoAttenuateState::Monitor || m_aaCancelPending) {
         return std::nullopt;
     }
     const auto completion = m_tx->psRestoreCorr(filename);
     if (!completion) {
         return std::nullopt;
     }
+    invalidateCorrectionSummary();
     Ps3FileOperationToken token{Ps3FileOperationKind::Restore,
                                 m_sessionGeneration, *completion};
     m_pendingFileOperation = token;
@@ -767,6 +825,11 @@ void PureSignal::pollFileOperation()
         // A later native generation cannot satisfy an older host request.
         retirePendingFileOperation();
         return;
+    }
+    if (token.kind == Ps3FileOperationKind::Restore) {
+        // The restored worker can replace IQC after a concurrent calibration.
+        // Its completion retires any measurement from before that replacement.
+        invalidateCorrectionSummary();
     }
     m_pendingFileOperation.reset();
     emit fileOperationCompleted(static_cast<int>(token.kind),
@@ -1067,6 +1130,9 @@ void PureSignal::onMoxChanged(bool mox)
     if (m_tx && (!mox || canActuate())) {
         m_tx->setPSMox(mox);
     }
+    if (!mox) {
+        cancelAutoAttenuation();
+    }
 
     // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): on each MOX-on transition
     // while PS-A is armed, re-sync m_aaLastSeenCalCount = m_calCount so
@@ -1126,8 +1192,13 @@ void PureSignal::pollTimerTick()
     //   fixed (int* ptr = &(_info[0]))
     //     GetPSInfo(txachannel, ptr);
     int newInfo[16] = {};
-    m_tx->getPSInfo(newInfo);
-    processNewInfo(newInfo);
+    std::uint64_t controlSerial = 0;
+    if (!m_tx->getPSInfo(newInfo, &controlSerial)) {
+        updateStatusSnapshot(++m_statusSequence,
+                             QDateTime::currentMSecsSinceEpoch());
+        return;
+    }
+    processNewInfo(newInfo, controlSerial);
     updateStatusSnapshot(++m_statusSequence,
                          QDateTime::currentMSecsSinceEpoch());
 }
@@ -1135,6 +1206,20 @@ void PureSignal::pollTimerTick()
 Ps3StatusSnapshot PureSignal::ps3StatusSnapshot() const
 {
     return m_statusSnapshot;
+}
+
+void PureSignal::invalidateCorrectionSummary()
+{
+    m_summaryNeedsCalibrationBaseline = true;
+    if (m_tx) {
+        m_tx->invalidatePsCorrectionSummary();
+    }
+    // Retire the visible scalar immediately, while stop/restore commands
+    // may still be queued. Only a new successful calibration can re-enable it.
+    m_statusSnapshot.correctionSummaryValid = false;
+    m_statusSnapshot.correctionGainAtPeak = 0.0;
+    m_statusSnapshot.correctionPhaseSpanDegrees = 0.0;
+    emit ps3StatusChanged();
 }
 
 void PureSignal::updateStatusSnapshot(std::uint64_t sequence,
@@ -1187,12 +1272,20 @@ void PureSignal::updateStatusSnapshot(std::uint64_t sequence,
             next.restoreResult = static_cast<int>(restore->result);
         }
     }
+    if (m_tx && next.correctionsApplied) {
+        if (const auto summary = m_tx->psCorrectionSummary()) {
+            next.correctionSummaryValid = true;
+            next.correctionGainAtPeak = summary->gainAtPeak;
+            next.correctionPhaseSpanDegrees = summary->phaseSpanDegrees;
+        }
+    }
     m_statusSnapshot = next;
     emit ps3StatusChanged();
 }
 
-void PureSignal::processNewInfo(const int newInfo[16])
+void PureSignal::processNewInfo(const int newInfo[16], std::uint64_t controlSerial)
 {
+    m_infoControlSerial = controlSerial;
     // From Thetis PSForm.cs:555-728 timer1code [v2.10.3.13].  Skeleton:
     //   1) puresignal.GetInfo(_txachannel)  — copies _info → _oldInfo,
     //      then GetPSInfo into _info.
@@ -1209,6 +1302,21 @@ void PureSignal::processNewInfo(const int newInfo[16])
     // check compares _info vs _oldInfo BEFORE the GetInfo memcpy/GetPSInfo
     // overwrite.  Here we already have the new values in newInfo and the
     // previous in m_oldInfo, so the comparison is the same.
+    // WDSP 2.10 info[5]/info[7] publish success/attempt counts together
+    // after calcdone. The first report after invalidation is a baseline;
+    // retained counters from a restored or previous session are not new data.
+    const bool restorePending = m_pendingFileOperation
+        && m_pendingFileOperation->kind == Ps3FileOperationKind::Restore;
+    const bool freshSuccessfulCalibration = !restorePending
+        && !m_summaryNeedsCalibrationBaseline
+        && newInfo[5] > m_calCount.load() && newInfo[7] > m_calAttempts.load();
+    // While restoration owns the native curves, continue withholding scalar
+    // measurements and seed the baseline only after its completion.
+    m_summaryNeedsCalibrationBaseline = restorePending;
+    if (freshSuccessfulCalibration && m_tx) {
+        m_tx->markPsCorrectionSummaryCalibrationValid();
+    }
+
     const bool changed = hasInfoChanged(newInfo);
 
     // BENCH DIAGNOSTIC (Phase 3M-4 Task 17): sample info[] every ~10 ticks
@@ -1410,6 +1518,25 @@ void PureSignal::processNewInfo(const int newInfo[16])
         && m_cmdState != CommandState::Off
         && m_cmdState != CommandState::TurnOff) {
         m_cmdState = CommandState::TurnOff;
+    }
+
+    if (m_aaCancelPending) {
+        if (m_OFF || !canActuate()) {
+            m_aaCancelPending = false;
+        } else if (m_mox && m_mox->isMox() && runCalibrationProcessing()
+                   && controlSerial >= m_aaResetControlSerial
+                   && engineStateRaw == static_cast<int>(EngineState::LRESET)) {
+            m_aaCancelPending = false;
+            m_aaLastSeenAttemptCount = m_calAttempts.load();
+            // The operator may have changed Auto/Single during the drain.
+            // Resume the current intent only after the old collection retires.
+            m_tx->setPSControl(0, m_singleCalON ? 1 : 0,
+                               m_autoON && isAutoCalEnabled() ? 1 : 0, 0);
+        } else {
+            std::memcpy(m_oldInfo, newInfo, sizeof(m_oldInfo));
+            std::memcpy(m_info, newInfo, sizeof(m_info));
+            return;
+        }
     }
 
     switch (m_cmdState) {
@@ -1706,6 +1833,19 @@ void PureSignal::autoAttentionTick()
         return;
     }
 
+    if (m_aaCancelPending) {
+        return;
+    }
+
+    if (m_aaState != AutoAttenuateState::Monitor
+        && (!m_mox || !m_mox->isMox() || !autoAttenuate()
+            || !runCalibrationProcessing() || !canActuate() || m_OFF
+            || (m_saveAutoOn && m_cmdState != CommandState::AutoCalibrate)
+            || (m_saveSingleCalOn && m_cmdState != CommandState::SingleCalibrate))) {
+        cancelAutoAttenuation();
+        return;
+    }
+
     switch (m_aaState) {
     case AutoAttenuateState::Monitor: {
         // From Thetis PSForm.cs:733-762 [v2.10.3.13]:
@@ -1763,6 +1903,13 @@ void PureSignal::autoAttentionTick()
             return;
         }
         m_aaLastSeenAttemptCount = curAttemptCount;
+
+        // Vendored PS3 calcc.c:1257,1274-1280 increments attempts before
+        // extrapolation. An RX-builder failure exits before updating info[4],
+        // so that attempt cannot authorize an ATT step on retained feedback.
+        if (m_info[0] != 0) {
+            return;
+        }
 
         const int currentAttOnTx = m_stepAtt->attOnTxValue();
         const int fbLevel = m_feedbackLevel.load();
@@ -1909,13 +2056,24 @@ void PureSignal::autoAttentionTick()
 
         // From Thetis PSForm.cs:761 [v2.10.3.13] — reset everything.
         if (m_tx) {
-            m_tx->setPSControl(/*reset=*/1, /*mancal=*/0,
-                               /*automode=*/0, /*turnon=*/0);
+            m_aaResetControlSerial = m_tx->setPSControl(
+                /*reset=*/1, /*mancal=*/0, /*automode=*/0, /*turnon=*/0);
         }
         break;
     }
 
     case AutoAttenuateState::SetNewValues: {
+        // PS3 LCALC observes reset only after calcdone, publishing the old
+        // collection's info[0..7] first (vendored calcc.c:2264-2279).
+        // A 200 ms reset pulse can expire during its multi-second calculation.
+        // Wait for a valid snapshot taken after our reset reached the TX lane,
+        // with LRESET acknowledged, before changing the radio attenuation.
+        if (!m_tx || m_aaResetControlSerial == 0
+            || m_infoControlSerial < m_aaResetControlSerial
+            || m_info[15] != static_cast<int>(EngineState::LRESET)) {
+            break;
+        }
+        m_aaLastSeenAttemptCount = m_calAttempts.load();
         // From Thetis PSForm.cs:763-778 [v2.10.3.13]:
         //   _autoAttenuateState = eAAState.RestoreOperation;
         //   int newAtten;
@@ -1984,6 +2142,7 @@ void PureSignal::autoAttentionTick()
         //   _autoAttenuateState = eAAState.Monitor;
         //   puresignal.SetPSControl(_txachannel, 0, _save_singlecalON, _save_autoON, 0);
         m_aaState = AutoAttenuateState::Monitor;
+        m_aaLastSeenAttemptCount = m_calAttempts.load();
         if (m_tx) {
             m_tx->setPSControl(/*reset=*/0,
                                /*mancal=*/m_saveSingleCalOn,

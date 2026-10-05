@@ -90,6 +90,7 @@ public:
 class TestParametricEqPaint : public QObject {
     Q_OBJECT
 private slots:
+    void editorPresentationContract();
     // Paint smoke + background colour.
     void paintsWithoutCrash();
     void backgroundColorIsThetisDarkGrey();
@@ -357,6 +358,19 @@ void TestParametricEqPaint::peakHoldDecaysOverTime() {
     QVERIFY2(std::fabs(w.barChartPeakData().at(0) - 6.0) < 1e-6,
              qPrintable(QString("expected peak ~= 6.0 after 0.2s decay, got %1")
                             .arg(w.barChartPeakData().at(0), 0, 'g', 17)));
+}
+
+void TestParametricEqPaint::editorPresentationContract() {
+    ParametricEqPaintTester w;
+    w.setEditorPresentationEnabled(true);
+    w.setPointData(4, w.points().at(4).frequencyHz, -8.0, 4.0);
+    w.setSelectedIndex(4);
+    const QImage image = w.paintToImage();
+    QCOMPARE(image.pixelColor(0, 0), QColor("#0f0f1a"));
+    const QString capture = qEnvironmentVariable("NEREUS_EQ_EDITOR_CAPTURE");
+    if (!capture.isEmpty()) { QVERIFY(image.save(capture)); }
+    w.setEditorPresentationEnabled(false);
+    QCOMPARE(w.paintToImage().pixelColor(0, 0), QColor(25,25,25));
 }
 
 QTEST_MAIN(TestParametricEqPaint)

@@ -19,6 +19,7 @@ namespace NereusSDR {
 class RadioModel;
 class StationClient;
 class RemoteMediaController;
+class RemoteTelemetryController;
 
 /// The operator-local remote access server preference, shared by pairing
 /// and the later Core connection.
@@ -72,6 +73,8 @@ public:
     /// a saved one); the options' own list is used then.
     using CurrentOptionsSource = std::function<std::optional<RemoteStationOptions>()>;
     void setCurrentOptionsSource(CurrentOptionsSource source);
+    void setAdmissionUnavailableReasonSource(std::function<QString()> source)
+    { m_admissionUnavailableReasonSource = std::move(source); }
 public slots:
     void connectToStation();
     void disconnectFromStation();
@@ -91,6 +94,7 @@ signals:
     // preemption, shutdown) never emit it.
     void operatorDisconnected();
 private:
+    std::optional<RemoteStationOptions> currentOptions() const;
     QPointer<StationClient> m_client;
     QPointer<RadioModel> m_model;
     RemoteStationOptions m_options;
@@ -99,6 +103,7 @@ private:
     int m_retryAttempt = 0;
     int m_retryDelayMs = 0;
     CurrentOptionsSource m_currentOptionsSource;
+    std::function<QString()> m_admissionUnavailableReasonSource;
 };
 
 // A small modeless view of the configured Core. Full station selection and
@@ -111,16 +116,13 @@ class RemoteConnectionPanel final : public QDialog {
 public:
     explicit RemoteConnectionPanel(RemoteConnectionController* controller,
                                    QWidget* parent = nullptr,
-                                   RemoteMediaController* media = nullptr);
+                                   RemoteMediaController* media = nullptr,
+                                   RemoteTelemetryController* telemetry = nullptr);
 protected:
     void showEvent(QShowEvent* event) override;
-    void hideEvent(QHideEvent* event) override;
 private:
     // Height follows the wrapped text at the current width.
     void fitHeightToContent();
-    // Polls the audio health once a second, only while the panel is shown.
-    QTimer* m_audioTimer = nullptr;
-    std::function<void()> m_refreshAudio;
 };
 
 // R-R3-38: the stop message over a remote window's content. It keeps the

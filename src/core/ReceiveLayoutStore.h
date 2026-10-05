@@ -66,6 +66,7 @@ public:
         QString error;
         // Decoded receive-audio owner only; never a TX or active-slice choice.
         std::optional<int> radeRxOwnerId{std::nullopt};
+        std::optional<int> diversityOwnerId{std::nullopt};
     };
 
     /// Decode a per-MAC receive layout. Invalid stored bytes are retained.
@@ -77,7 +78,8 @@ public:
     static bool stage(AppSettings& settings, const QString& mac,
                       const QList<ReceiveSliceState>& slices,
                       QString* error = nullptr,
-                      std::optional<int> radeRxOwnerId = std::nullopt);
+                      std::optional<int> radeRxOwnerId = std::nullopt,
+                      std::optional<int> diversityOwnerId = std::nullopt);
 
     /// Slice control plan Task 7 (ruling Q10): removes the stored layout for
     /// `mac`, so the next start has none (a Core left with no slice).

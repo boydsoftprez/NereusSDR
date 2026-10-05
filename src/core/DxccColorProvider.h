@@ -38,6 +38,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "CtyDatParser.h"
 #include "DxccWorkedStatus.h"
 
@@ -62,7 +63,7 @@ class AdifParser;
 // colorForSpot() - call it from the GUI thread; it's lock-free read-only after
 // importAdifFile() completes.
 // ---------------------------------------------------------------------------
-class DxccColorProvider : public QObject {
+class NEREUS_CORE_EXPORT DxccColorProvider : public QObject {
     Q_OBJECT
 
 public:

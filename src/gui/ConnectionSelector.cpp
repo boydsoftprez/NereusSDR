@@ -11,9 +11,11 @@
 #include "core/session/StationPairingClient.h"
 
 #include <QAbstractItemView>
+#include <QAccessible>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -124,6 +126,7 @@ ConnectionSelector::ConnectionSelector(QWidget* parent)
                                    QStringLiteral("connectionSelectorAddByCode"));
     m_addRadioButton = makeButton(tr("Add Radio…"), QStringLiteral("connectionSelectorAddRadio"));
     m_scanButton = makeButton(tr("Scan"), QStringLiteral("connectionSelectorScan"));
+    m_manageCoreButton = makeButton(tr("Manage…"), QStringLiteral("connectionSelectorManageCore"));
     m_editButton = makeButton(tr("Edit…"), QStringLiteral("connectionSelectorEdit"));
     m_forgetButton = makeButton(tr("Forget…"), QStringLiteral("connectionSelectorForget"));
     m_detailsButton = makeButton(tr("Details"), QStringLiteral("connectionSelectorDetails"));
@@ -135,6 +138,7 @@ ConnectionSelector::ConnectionSelector(QWidget* parent)
     actionLayout->addWidget(m_addCoreButton);
     actionLayout->addWidget(m_addRadioButton);
     actionLayout->addWidget(m_scanButton);
+    actionLayout->addWidget(m_manageCoreButton);
     actionLayout->addWidget(m_editButton);
     actionLayout->addWidget(m_forgetButton);
     actionLayout->addStretch();
@@ -165,6 +169,12 @@ ConnectionSelector::ConnectionSelector(QWidget* parent)
             &ConnectionSelector::addByCodeRequested);
     connect(m_addRadioButton, &QPushButton::clicked, this, &ConnectionSelector::addRadioRequested);
     connect(m_scanButton, &QPushButton::clicked, this, &ConnectionSelector::scanRequested);
+    connect(m_manageCoreButton, &QPushButton::clicked, this, [this] {
+        if (const ConnectionTargetRow* target = selectedTarget(); target != nullptr
+            && m_coreManagementAvailable && target->kind == ConnectionTargetKind::SavedCore) {
+            emit manageCoreRequested(target->key);
+        }
+    });
     connect(m_editButton, &QPushButton::clicked, this, [this] {
         if (const ConnectionTargetRow* target = selectedTarget(); target != nullptr) {
             emit editRequested(target->key);
@@ -222,6 +232,23 @@ void ConnectionSelector::setTargets(const QList<ConnectionTargetRow>& targets)
         !groupStructureMatches(ConnectionTargetKind::LocalRadio, localRadios)
         || !groupStructureMatches(ConnectionTargetKind::LanCore, lanCores)
         || !groupStructureMatches(ConnectionTargetKind::SavedCore, savedCores);
+#if defined(Q_OS_MAC)
+    if (structureChanges && QGuiApplication::platformName() == QStringLiteral("cocoa")
+        && qVersion() == QStringLiteral("6.11.0")) {
+        // Qt 6.11 Cocoa releases real cell interfaces when old native rows
+        // expire (qcocoaaccessibilityelement.mm:219-226,257-267,342-362).
+        // QAccessibleTable retains their IDs and dereferences them during
+        // RowsRemoved/RowsInserted (itemviews.cpp:645-741). Clear that cache
+        // through its public API before changing rows. This does not reset
+        // the item model or replace surviving items/persistent indexes.
+        QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(m_targetTree);
+        if (accessible != nullptr && accessible->tableInterface() != nullptr) {
+            QAccessibleTableModelChangeEvent reset(
+                m_targetTree, QAccessibleTableModelChangeEvent::ModelReset);
+            accessible->tableInterface()->modelChange(&reset);
+        }
+    }
+#endif
     if (structureChanges && !previousKey.isEmpty()) {
         // Clear the selection before removing rows. Qt's macOS accessibility
         // bridge keeps separate table and selection caches; deleting the
@@ -424,6 +451,12 @@ const ConnectionTargetRow* ConnectionSelector::selectedTarget() const
     return nullptr;
 }
 
+void ConnectionSelector::setCoreManagementAvailable(bool available)
+{
+    m_coreManagementAvailable = available;
+    updateActions();
+}
+
 void ConnectionSelector::updateActions()
 {
     const ConnectionTargetRow* target = selectedTarget();
@@ -432,6 +465,10 @@ void ConnectionSelector::updateActions()
     const bool canConnect = hasTarget && (target->connectable || canPair);
     const bool canEdit = hasTarget && target->editable;
     const bool canForget = hasTarget && target->forgettable;
+    const bool canManage = hasTarget && m_coreManagementAvailable
+        && target->kind == ConnectionTargetKind::SavedCore;
+    m_manageCoreButton->setVisible(canManage);
+    m_manageCoreButton->setEnabled(canManage);
     m_connectButton->setText(canPair ? tr("Pair") : tr("Connect"));
     m_connectButton->setVisible(canConnect);
     m_connectButton->setEnabled(canConnect);

@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QString>
 #include <QVector>
@@ -53,7 +54,7 @@ struct FaultEvent {
 /// The buffer is newest-first: `events().first()` is the most recent fault.
 /// Persistence uses AppSettings as a compact JSON string so no separate file
 /// is needed.
-class FaultLog : public QObject {
+class NEREUS_CORE_EXPORT FaultLog : public QObject {
     Q_OBJECT
 public:
     explicit FaultLog(const QString& deviceKey, QObject* parent = nullptr);

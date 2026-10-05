@@ -18,6 +18,8 @@
 //                 TxChannel::pumpPscc, which runs pscc() on the transmit
 //                 lane in arrival order instead of on the event loop.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-04 — J.J. Boyd (KG4VCF), with OpenAI Codex: measure latest
+//                 paired input envelopes before CALCC fitting for diagnostics.
 // =================================================================
 
 #include "PsccPump.h"
@@ -28,6 +30,8 @@
 
 #include <QLoggingCategory>
 
+#include <algorithm>
+#include <cmath>
 #include <vector>
 
 // pscc() is exported from the WDSP static library (calcc.c:617
@@ -74,6 +78,9 @@ void PsccPump::setActive(bool active, int txMonDdc, int psFbDdc)
     m_active = active;
     m_txMonDdc = txMonDdc;
     m_psFbDdc  = psFbDdc;
+    m_pairedInputValid = false;
+    m_txMonitorPeak = 0.0;
+    m_feedbackPeak = 0.0;
     if (!active) {
         // Drop in-flight rings on deactivate so a future activate starts
         // from a clean alignment.  Mirrors Thetis sync.c:38-42 [v2.10.3.13]
@@ -233,6 +240,29 @@ void PsccPump::onPsPairedIqData(int psFbDdc, const QVector<float>& psFbSamples,
         // PS-feedback input → pscc rx* (Thetis ps_rx_idx=0, cmaster.cs:533).
         rx[j] = static_cast<double>(psFbSamples[j]);
     }
+
+    // NereusSDR-original observation only: PS3's GetPSMaxTX is populated
+    // by calc(), after collection completes (WDSP 2.10 calcc.c:1263-1269).
+    // Measure the packet entering
+    // collection so a missing feedback leg can be diagnosed beforehand.
+    // Neither conversion nor the samples handed to WDSP changes here.
+    m_txMonitorPeak = 0.0;
+    m_feedbackPeak = 0.0;
+    bool monitorHasFiniteSample = false;
+    bool feedbackHasFiniteSample = false;
+    for (int sample = 0; sample < sps; ++sample) {
+        const double monitorEnvelope = std::hypot(tx[2 * sample], tx[2 * sample + 1]);
+        const double feedbackEnvelope = std::hypot(rx[2 * sample], rx[2 * sample + 1]);
+        if (std::isfinite(monitorEnvelope)) {
+            m_txMonitorPeak = std::max(m_txMonitorPeak, monitorEnvelope);
+            monitorHasFiniteSample = true;
+        }
+        if (std::isfinite(feedbackEnvelope)) {
+            m_feedbackPeak = std::max(m_feedbackPeak, feedbackEnvelope);
+            feedbackHasFiniteSample = true;
+        }
+    }
+    m_pairedInputValid = monitorHasFiniteSample && feedbackHasFiniteSample;
 
 #ifdef NEREUS_BUILD_TESTS
     if (m_skipPsccForTests) {

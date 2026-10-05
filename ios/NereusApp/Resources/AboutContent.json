@@ -1,0 +1,146 @@
+{
+  "roster": [
+    {
+      "title": "Thetis and PowerSDR contributors",
+      "names": [
+        "DH1KLM, Sigi: MIDI support, visual skins and interface work",
+        "G8NJJ, Laurence: G2 and Andromeda work and radio protocols",
+        "K5SO, Joe: diversity reception and firmware",
+        "KD5TFD, Bill: early Protocol 1 implementation and interface work",
+        "KE9NS, Darrin: project contributions",
+        "M0YGG, Andrew: MIDI and other features",
+        "MI0BOT, Reid: Hermes Lite 2 support",
+        "MW0LGE, Richie: interface and wider project work",
+        "N1GP, Rick: firmware work",
+        "NC3Z, Gary: forum moderation",
+        "NR0V, Warren: WDSP and many additional contributions",
+        "OE3IDE, Ernst: skins and primary testing",
+        "VK6PH, Phil: firmware, protocols and other work",
+        "W1AEX, Rob: skins and audio information",
+        "W2PA, Chris: QSK and MIDI",
+        "W4WMT, Bryan: resampling, VAC and cmASIO",
+        "W5WC, Doug: interface, ChannelMaster and the Thetis name",
+        "WA8YWQ, Dave: project contributions",
+        "WD5Y, Joe: interface refinements and fixes",
+        "WU2O, Scott: forum administration and community feedback",
+        "The many testers who helped these projects"
+      ]
+    },
+    {
+      "title": "AetherSDR project",
+      "names": [
+        "KK7GWY, Jeremy: architecture, Qt 6 patterns and GPU rendering"
+      ]
+    },
+    {
+      "title": "DttSP and WDSP history",
+      "names": [
+        "AB2KT, Frank Brickle: an original DttSP DSP author (2004-2009)",
+        "G0ORX, John: Linux port and cross-platform compatibility work",
+        "N4HY, Bob McGwier: an original DttSP DSP author (2004-2009)",
+        "NR0V, Warren: continued DttSP development into WDSP"
+      ]
+    },
+    {
+      "title": "Hermes Lite 2 (HL2) Thetis fork",
+      "names": [
+        "MI0BOT, Reid: Hermes Lite 2 integration and ChannelMaster variants"
+      ]
+    },
+    {
+      "title": "NereusSDR desktop and Core",
+      "names": [
+        "KG4VCF, J.J. Boyd: C++20 and Qt 6 port, packaging and continuous integration"
+      ]
+    }
+  ],
+  "links": [
+    {
+      "title": "NereusSDR releases / What's New",
+      "url": "https://github.com/boydsoftprez/NereusSDR/releases"
+    },
+    {
+      "title": "NereusSDR repository",
+      "url": "https://github.com/boydsoftprez/NereusSDR"
+    },
+    {
+      "title": "Project attribution",
+      "url": "https://github.com/boydsoftprez/NereusSDR/tree/main/docs/attribution"
+    },
+    {
+      "title": "Issues",
+      "url": "https://github.com/boydsoftprez/NereusSDR/issues"
+    },
+    {
+      "title": "Thetis upstream",
+      "url": "https://github.com/ramdor/Thetis"
+    },
+    {
+      "title": "mi0bot fork (HL2)",
+      "url": "https://github.com/mi0bot/OpenHPSDR-Thetis"
+    },
+    {
+      "title": "AetherSDR",
+      "url": "https://github.com/ten9876/AetherSDR"
+    },
+    {
+      "title": "WDSP (TAPR)",
+      "url": "https://github.com/TAPR/OpenHPSDR-wdsp"
+    },
+    {
+      "title": "g0orx/wdsp (POSIX shim)",
+      "url": "https://github.com/g0orx/wdsp"
+    },
+    {
+      "title": "OpenHPSDR Protocol 1",
+      "url": "https://github.com/TAPR/OpenHPSDR-Protocol1-Programmers"
+    },
+    {
+      "title": "OpenHPSDR Protocol 2",
+      "url": "https://github.com/TAPR/OpenHPSDR-Protocol2-Programmers"
+    },
+    {
+      "title": "Apache-Labs Community",
+      "url": "https://community.apache-labs.com/index.php"
+    },
+    {
+      "title": "Apache-Labs Home",
+      "url": "https://apache-labs.com/"
+    }
+  ],
+  "sourceLink": {
+    "title": "Corresponding Source",
+    "url": "https://nereussdr.com/iphone-source"
+  },
+  "privacyLink": {
+    "title": "Privacy",
+    "url": "https://nereussdr.com/iphone-privacy"
+  },
+  "legalLinks": [
+    {
+      "title": "GNU GPL version 2 or later",
+      "url": "https://www.gnu.org/licenses/old-licenses/gpl-2.0.html"
+    },
+    {
+      "title": "GNU GPL version 3",
+      "url": "https://www.gnu.org/licenses/gpl-3.0.html"
+    },
+    {
+      "title": "Desktop/Core LICENSE",
+      "url": "https://github.com/boydsoftprez/NereusSDR/blob/main/LICENSE"
+    },
+    {
+      "title": "Desktop/Core dual licensing",
+      "url": "https://github.com/boydsoftprez/NereusSDR/blob/main/LICENSE-DUAL-LICENSING"
+    }
+  ],
+  "texts": {
+    "lineage": "This app belongs to the NereusSDR project. Its desktop and Core software draws on Thetis, a PowerSDR fork associated with MW0LGE; AetherSDR supplied architectural patterns for Qt 6 and C++20; and WDSP supplies desktop/Core digital signal processing. The phone app is written natively and does not bundle code from those projects.",
+    "desktopLibraries": "The desktop/Core distribution includes the WDSP v1.29 DSP engine and FFTW3 for spectrum calculations, with Qt 6 for its interface, networking and audio. It also uses DeepFilterNet, libdatachannel, libjuice, libspecbleach, libsrtp, nlohmann json, OpenSSL, Opus, plog, PortAudio, r8brain, RADE, rnnoise, usrsctp and zlib. Consult that distribution for their licence texts.",
+    "copyright": "The desktop/Core source and its upstream projects credit these principal copyright holders: J.J. Boyd (KG4VCF); Frank Brickle (AB2KT); Laurence Barker (G8NJJ); Chris Codella (W2PA); Pierre-Philippe Coupard; FlexRadio Systems; Phil Harman (VK6APH); John Melton (G0ORX/N6LYT); Andrew Mansfield (M0YGG); Bob McGwier (N4HY); Warren Pratt (NR0V); Richard Allen; Richard Samphire (MW0LGE); Thomas Ascher; Sigi (DH1KLM); Bill Tracey (KD5TFD); Doug Wigley (W5WC); Reid Campbell (MI0BOT); Jeremy (KK7GWY); and other contributors to Thetis, the mi0bot fork, AetherSDR, WDSP, DttSP and OpenHPSDR. The source headers and project attribution give the full record. The credited work spans 2004-2026.",
+    "warranty": "The software is provided with ABSOLUTELY NO WARRANTY. Sections 15 and 16 of the licence explain this in full.",
+    "phoneLicence": "NereusSDR for iOS is free software under GNU GPL version 3 or later. Its additional permission permits App Store and TestFlight distribution while requiring complete Corresponding Source for each distributed version, free of charge to every recipient. Read the bundled app licence and third-party notices below.",
+    "desktopLicence": "The desktop/Core has its own licence chain. Source derived from Thetis carries the upstream GNU GPL version 2 or later grant; the combined work uses GPL version 3 through that later-version option. The desktop/Core LICENSE, its dual-licensing document (limited to Samphire / MW0LGE contributions), and individual file headers state the authoritative terms.",
+    "aiDisclosure": "AI-assisted authoring with Anthropic Claude Code helped translate portions of the desktop/Core source from Thetis C# and AetherSDR Qt 6/C++. The affected source headers identify those translations. This phone app is a native implementation."
+  }
+}

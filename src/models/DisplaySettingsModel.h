@@ -104,6 +104,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 
 namespace NereusSDR {
@@ -124,7 +125,7 @@ namespace NereusSDR {
 // ordinary in-memory field on this instance like the other fourteen, but
 // load()/save() never touch it -- see "THE ONE FIELD THAT IS NOT LIKE
 // THE OTHERS" above for why.
-class DisplaySettingsModel : public QObject {
+class NEREUS_CORE_EXPORT DisplaySettingsModel : public QObject {
     Q_OBJECT
 
 public:

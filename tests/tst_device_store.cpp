@@ -192,7 +192,7 @@ private slots:
     {
         QTemporaryDir dir;
         DeviceStore store(dir.path());
-        QDateTime clock = QDateTime(QDate(2026, 9, 24), QTime(12, 0), QTimeZone::UTC);
+        QDateTime clock = QDateTime(QDate(2026, 9, 24), QTime(12, 0), Qt::UTC);
         store.setClock([&clock]() { return clock; });
         QSignalSpy changed(&store, &DeviceStore::devicesChanged);
         QSignalSpy removed(&store, &DeviceStore::deviceRemoved);

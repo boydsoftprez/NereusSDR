@@ -28,6 +28,7 @@
 //                AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QByteArray>
 #include <QMap>
@@ -49,7 +50,7 @@ class TgxlConnection;
 // Commands (autoTune, adjustRelay, setAntennaA, setOperate, setBypass) forward
 // directly to the bound TgxlConnection.
 // From AetherSDR src/models/TunerModel.h [@0cd4559]
-class TunerModel : public QObject {
+class NEREUS_CORE_EXPORT TunerModel : public QObject {
     Q_OBJECT
     Q_PROPERTY(ConnectionPhase connectionPhase READ connectionPhase NOTIFY stationConnectionChanged)
     Q_PROPERTY(QString configuredHost READ configuredHost NOTIFY stationConnectionChanged)

@@ -1,0 +1,76 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Slices, receiver windows, and panadapters | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/04-slices.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html" aria-current=page>Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="slices-receiver-windows-and-panadapters">Slices, receiver windows, and panadapters</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#create-select-and-remove-receivers">Create, select, and remove receivers</a></li><li><a href="#listen-to-and-control-an-existing-core-slice">Listen to and control an existing Core slice</a></li><li><a href="#arrange-panadapters-and-floating-windows">Arrange panadapters and floating windows</a></li><li><a href="#set-a-receivers-spectrum-width">Set a receiver&#x27;s spectrum width</a></li><li><a href="#understand-tuning-limits-at-the-edge-of-a-window">Understand tuning limits at the edge of a window</a></li><li><a href="#worked-example-monitor-two-nearby-signals">Worked example: monitor two nearby signals</a></li></ol></details>
+<p>A slice is a tuned receiver. A panadapter is the visible spectrum and waterfall window that hosts one or more slices. NereusSDR allocates radio DDC streams automatically; operators do not assign a DDC manually. This chapter covers creating and arranging receivers, choosing their view bandwidth, and diagnosing an allocation refusal. For tuning and CTUN operation, see <a href="/manual/03-receive.html">Tune and receive</a>. For shared ownership, see <a href="/manual/08-shared-core.html">Core sharing</a>.</p>
+<h2 id="create-select-and-remove-receivers">Create, select, and remove receivers</h2>
+<p>Start with a connected radio and a visible panadapter. Click the panadapter where the new receiver should appear so that it becomes active, then use <strong>View &gt; Add slice on active pan</strong> (shortcut <strong>Ctrl+R</strong>). A new flag should appear on that pan. Click its flag to make it the selected slice before adjusting mode, filter, volume, or DSP. The selected flag identifies which slice follows the desktop RX controls; selecting a flag does not retune it.</p>
+<p>If the command is disabled or no flag appears, read the toast/status reason. The radio's reported receiver capacity, active receiver use, hardware capabilities, Core permissions, and available audio/media resources can limit additions. There is no single operator-selected DDC map or universal slice count to override that allocation. Close an unneeded receiver or release a receiver you own before retrying. If an unavailable receiver belongs to another operator, do not remove it; ask the owner to release it or use the shared-slice actions described in <a href="/manual/08-shared-core.html">Core sharing</a>.</p>
+<p>To remove a receiver you control, right-click its flag and choose <strong>Remove slice</strong>. The last receiver cannot be removed. On a slice you only listen to, the close action stops your listening subscription rather than deleting the Core's receiver. Confirm that the flag disappears from your window; when receiver capacity was the issue, wait for the Core's resource state to settle before adding again. A short notice can identify a receiver stopped by the Core, a radio limit, or unavailable media. Treat that notice as the reason for the missing signal, not as a display redraw problem.</p>
+<h2 id="listen-to-and-control-an-existing-core-slice">Listen to and control an existing Core slice</h2>
+<p>Click the bottom status area's <strong>RX [letter] [state] ▾</strong> picker to open
+<strong>Slices on this Core</strong>. It lists the Core's receivers, including ones this
+window is not currently listening to. Each row identifies the slice,
+frequency/mode/passband, controller and listening/transmitting state. Click a
+row to inspect its actions; selecting a row alone does not take control.</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Result to expect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Listen in</td>
+<td>Adds this window as a listener without changing tuning or taking control. Wait for “Listening to slice…” and its flag/audio here.</td>
+</tr>
+<tr>
+<td>Select RX</td>
+<td>Makes an already-listened-to slice the active receiver for the bottom RX area and controls. It does not grant tuning control.</td>
+</tr>
+<tr>
+<td>Take control</td>
+<td>Transfers control of the same slice, retaining its tuning. The previous controller keeps listening. The result explicitly says to select transmit separately.</td>
+</tr>
+<tr>
+<td>Release</td>
+<td>Releases a slice this window controls. Other listeners continue; with nobody left the slice closes.</td>
+</tr>
+<tr>
+<td>Stop listening</td>
+<td>Removes this window's listening subscription to a slice it does not control. The other operator's receiver remains.</td>
+</tr>
+<tr>
+<td>New slice</td>
+<td>Asks for an independent receiver on the active pan. It consumes available receiver resources; sharing an existing slice need not create another.</td>
+</tr>
+</tbody>
+</table>
+<p>To join another operator's receiver, select that row and <strong>Listen in</strong>, wait
+for the Core's answer, then use <strong>Select RX</strong> if needed to make it active here.
+Set your personal listening volume/output as described in
+<a href="/manual/03-receive.html">chapter 3</a>. Mode, filter and DSP belong to the shared receiver,
+so take control before changing them. Select <strong>Take control</strong> only when the
+handoff is intended; verify “This window controls” and the flag's ownership
+state before tuning. This action does not select a TX slice or take TX.</p>
+<p>While a slice is <strong>Transmitting</strong>, Take control or Release is disabled with its
+reason. <strong>Away · reconnecting</strong> means its controller is temporarily absent;
+the chooser describes listening/takeover and the three-minute absence policy.
+Do not interpret that label as a receiver fault. A pending request displays
+<strong>Asking the Core…</strong> and holds duplicate actions until the result. On <strong>The Core
+did not answer</strong>, reconnect/check the current row before retrying, since the
+controller or receiver may have changed meanwhile. Close <strong>×</strong> to dismiss the
+chooser; that does not release or stop listening.</p>
+<h2 id="arrange-panadapters-and-floating-windows">Arrange panadapters and floating windows</h2>
+<p>Choose <strong>View &gt; Pan Layout…</strong> (shortcut <strong>Ctrl+L</strong>) to select one of the layouts shown in the dialog. The chosen layout is this desktop's presentation; it does not create radio receivers. The active pan is the one whose controls and add-slice action are targeted. Click inside the intended pan before adding a slice or opening a pan-specific action.</p>
+<p>To place one pan on another monitor, select it and choose <strong>View &gt; Float active pan…</strong>. Move the floating window like an ordinary desktop window. Its title-bar dock/return control puts it back into the main layout. Closing the floating window also returns the pan to the main window; it does not remove its slices. If the main layout seems to be missing a receiver, check whether its pan is floating on another display before deleting or recreating slices.</p>
+<p>The <strong>RX2</strong>, <strong>SUB RX</strong>, and <strong>Pan Swap</strong> two-receiver layout controls are explicitly unbuilt. Do not use an old screenshot or a Thetis instruction to infer a second-pan arrangement button. Use <strong>Pan Layout…</strong> and the floating-pan action available in this build.</p>
+<h2 id="set-a-receivers-spectrum-width">Set a receiver's spectrum width</h2>
+<p>Right-click the slice flag and open <strong>Sample rate</strong>. The menu lists only rates accepted by the connected board and checks the resolved stream rate. Select a rate to change the bandwidth represented by that DDC stream. A wider rate shows more spectrum around the tuned signal but consumes more radio/network/DSP bandwidth; a narrower rate reduces the viewed window. The rate is not a private display zoom.</p>
+<p>Slices that share one DDC stream share its sample rate, and their flags show the same resolved value. On Protocol 1 radios, the menu says <strong>Sample rate (whole radio)</strong> because the rate applies radio-wide. The exact choices depend on model and protocol. Automatic allocation decides which active slices share streams, so a rate change can affect another co-hosted receiver. In a remote session the Core may ask for confirmation or refuse a rate change because of radio capability, version, ownership, or current operation. Read the confirmation's affected-slice list or the refusal reason before accepting or retrying.</p>
+<p>After choosing a rate, verify the checkmark in the flag's context menu and the width of the live spectrum. For Protocol 1, verify the other active receivers too. If the selection appears pending in <strong>Setup &gt; Hardware &gt; Hardware Config &gt; Radio Info</strong>, the page displays both pending and active rate and says <strong>Reconnect to apply new sample rate</strong>. Reconnect the window after receiving that instruction, then recheck the active rate. Do not assume a selected value took effect while the page still reports it as pending.</p>
+<h2 id="understand-tuning-limits-at-the-edge-of-a-window">Understand tuning limits at the edge of a window</h2>
+<p>With ordinary tuning, the client recenters the receiver window as needed to keep the selected frequency in view. In CTUN, the pan stays centered while the slice frequency moves within the current DDC view. Toggle CTUN from the panadapter context menu: <strong>Tuning &gt; CTUN</strong>. It is a pan/tuning behavior, not a checkbox on the VFO flag. Use CTUN when you want a fixed spectrum reference while making small tuning changes.</p>
+<p>At the DDC window edge, the spectrum cannot show frequencies outside its current sampled span. With CTUN on, a receiver can approach or move beyond the visible/sample window; the receiver may become clipped or unavailable until it is retuned inside the window or CTUN is turned off. Turn CTUN off to let ordinary tuning recenter the view, or select a supported wider sample rate and check that it has resolved. If the trace disappears at an edge, first tune the slice back toward the center and check the sample-rate readback before removing the slice.</p>
+<h2 id="worked-example-monitor-two-nearby-signals">Worked example: monitor two nearby signals</h2>
+<p>On an active pan, add a slice with <strong>Ctrl+R</strong> and tune it to the second signal. Select each flag in turn to confirm which slice is active before setting its mode, filter, and AF level. If both signals fit inside the current receiver window, leave the sample rate unchanged. If the second frequency falls outside the window, increase the sample rate from the relevant flag's <strong>Sample rate</strong> menu, then inspect the displayed active rate and both flags. If the rate menu labels the setting whole-radio, treat it as a station-wide change and review other receivers. To keep the pan fixed while making a small passband adjustment, use <strong>Tuning &gt; CTUN</strong>; turn it off if the desired station moves beyond the sampled span.</p>
+<p>If an add or rate operation is refused, read the exact Core reason, check ownership and other active receivers, then retry only after that constraint is resolved. Do not expect a manual DDC routing editor: <strong>Setup &gt; Hardware &gt; DDC Routing</strong> is explicitly unbuilt. The hardware and stream allocator make that mapping automatically.</p>
+<div class="page-next"><a href="/manual/03-receive.html">Previous chapter</a><a href="/manual/05-transmit.html">Next chapter</a></div></main></div></body></html>

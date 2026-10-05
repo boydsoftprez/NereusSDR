@@ -5,6 +5,7 @@
 #include "core/dsp/Ps3DisplayAdapter.h"
 
 #include <cmath>
+#include <limits>
 
 using namespace NereusSDR;
 
@@ -33,6 +34,30 @@ class TstPs3DisplayTransform : public QObject {
     Q_OBJECT
 
 private slots:
+    void correctionSummaryUsesMeasuredGainAndWholePhaseCurve()
+    {
+        const auto summary = Ps3DisplayAdapter::correctionSummary(knownSnapshot());
+        QVERIFY(summary);
+        QCOMPARE(summary->gainAtPeak, 0.75);
+        QCOMPARE(summary->phaseSpanDegrees, 362.0);
+        Ps3Snapshot snapshot = knownSnapshot();
+        snapshot.xmCorrection = {0.9, 0.2};
+        QCOMPARE(Ps3DisplayAdapter::correctionSummary(snapshot)->gainAtPeak, 1.5);
+    }
+
+    void correctionSummaryRejectsUnavailableOrInvalidCurves()
+    {
+        QVERIFY(!Ps3DisplayAdapter::correctionSummary(Ps3Snapshot{}));
+        Ps3Snapshot snapshot = knownSnapshot();
+        snapshot.yaCorrection.pop_back();
+        QVERIFY(!Ps3DisplayAdapter::correctionSummary(snapshot));
+        snapshot = knownSnapshot();
+        snapshot.ymCorrection[1] = std::numeric_limits<double>::quiet_NaN();
+        QVERIFY(!Ps3DisplayAdapter::correctionSummary(snapshot));
+        snapshot.ymCorrection[1] = 0.0;
+        QVERIFY(!Ps3DisplayAdapter::correctionSummary(snapshot));
+    }
+
     void knownSnapshotPreservesDistinctCorrectionCoordinates()
     {
         const Ps3PlotData plot = Ps3DisplayAdapter::transform(knownSnapshot());

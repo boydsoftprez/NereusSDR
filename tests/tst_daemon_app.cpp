@@ -1082,6 +1082,87 @@ private slots:
         }
     }
 
+    void displayBudgetPublicationLogsDirectionAndReason_data()
+    {
+        QTest::addColumn<quint64>("beforeBytes");
+        QTest::addColumn<quint64>("beforeSamples");
+        QTest::addColumn<quint64>("afterBytes");
+        QTest::addColumn<quint64>("afterSamples");
+        QTest::addColumn<bool>("busy");
+        QTest::addColumn<QString>("direction");
+        QTest::newRow("cut") << quint64{10000} << quint64{10000}
+                            << quint64{5000} << quint64{5000} << true << QStringLiteral("lowered");
+        QTest::newRow("partial-restore") << quint64{5000} << quint64{5000}
+                                        << quint64{5000} << quint64{10000} << true << QStringLiteral("raised");
+        QTest::newRow("floor-raise") << quint64{5000} << quint64{5000}
+                                    << quint64{6000} << quint64{10000} << true << QStringLiteral("raised");
+        QTest::newRow("full-restore") << quint64{5000} << quint64{5000}
+                                      << quint64{10000} << quint64{10000} << false << QStringLiteral("raised");
+        QTest::newRow("mixed-dimensions") << quint64{5000} << quint64{10000}
+                                          << quint64{10000} << quint64{5000} << true << QStringLiteral("changed");
+        QTest::newRow("reason-only") << quint64{10000} << quint64{10000}
+                                     << quint64{10000} << quint64{10000} << false << QStringLiteral("unchanged");
+        QTest::newRow("first-publication") << quint64{0} << quint64{0}
+                                           << quint64{10000} << quint64{10000} << false << QStringLiteral("initialized");
+    }
+
+    // A retained cut also accompanies increases (rollback or a larger device
+    // floor). The diagnostic must report the published numbers separately
+    // from that reason, including the previous allowance for comparison.
+    void displayBudgetPublicationLogsDirectionAndReason()
+    {
+        if (!QSslSocket::supportsSsl()) {
+            QSKIP("Qt reports no working TLS backend, so a wss listener cannot bind.");
+        }
+        QFETCH(quint64, beforeBytes);
+        QFETCH(quint64, beforeSamples);
+        QFETCH(quint64, afterBytes);
+        QFETCH(quint64, afterSamples);
+        QFETCH(bool, busy);
+        QFETCH(QString, direction);
+        DaemonApp app;
+        app.primeBoardForTest(HPSDRHW::HermesLite);
+        DaemonConfig cfg = listenerConfig();
+        cfg.displayAdaptive = beforeBytes != 0;
+        QVERIFY(app.start(cfg));
+        StationServer* const server = app.stationServer();
+        QVERIFY(server);
+        if (beforeBytes != 0) {
+            QVERIFY(server->setDisplayBudgetLimits({beforeBytes, beforeSamples, 10},
+                                                   DisplayBudgetReason::CoreBusy));
+        } else {
+            QVERIFY(!server->configuredDisplayBudgetLimits());
+        }
+        const DisplayLoadDecision decision{{afterBytes, afterSamples, 11},
+            busy ? DisplayBudgetReason::CoreBusy : DisplayBudgetReason::None};
+        const QString expected = QStringLiteral(
+            "DaemonApp: display budget %1 (reason %2): %3 -> %4 bytes/s, "
+            "%5 -> %6 samples/s (generation 11)")
+            .arg(direction, busy ? QStringLiteral("coreBusy") : QStringLiteral("none"))
+            .arg(beforeBytes != 0 ? QString::number(beforeBytes) : QStringLiteral("unset"))
+            .arg(afterBytes)
+            .arg(beforeSamples != 0 ? QString::number(beforeSamples) : QStringLiteral("unset"))
+            .arg(afterSamples);
+        {
+            static QStringList publishedMessages;
+            publishedMessages.clear();
+            const QtMessageHandler previous = qInstallMessageHandler(
+                [](QtMsgType type, const QMessageLogContext&, const QString& message) {
+                    if (type == QtInfoMsg
+                        && message.startsWith(QStringLiteral("DaemonApp: display budget "))) {
+                        publishedMessages.append(message);
+                    }
+                });
+            const auto restore = qScopeGuard([previous] { qInstallMessageHandler(previous); });
+            QVERIFY(app.m_stationHost->publishDisplayBudget(decision));
+            QCOMPARE(publishedMessages, QStringList{expected});
+        }
+        QCOMPARE(server->configuredDisplayBudgetLimits(),
+                 std::optional<DisplayBudgetLimits>(decision.limits));
+        QCOMPARE(server->displayBudgetReason(), decision.reason);
+        app.stop();
+    }
+
     // The governor measures busy receivers only (idle is not a measurement),
     // steps the budget through StationServer, and the session's end puts the
     // ceiling back. Uses the configured pair as the ceiling so the budget is

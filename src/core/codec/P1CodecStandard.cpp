@@ -1128,6 +1128,8 @@ DdcAssignment P1CodecStandard::ddcAssignmentHermesClass(
     const bool rx2Live = slices[1].live;
     const bool psTransmit = ctx.mox && ctx.puresignalRun;
 
+
+
     // GetDDC: rx1 = 0 and rx2 = 1 in every state on this hardware.
     if (slices[0].live) { a.streamDdc[0] = 0; }
     if (rx2Live)        { a.streamDdc[1] = 1; }
@@ -1387,6 +1389,47 @@ DdcAssignment P1CodecStandard::ddcAssignmentOrionClass(
     const int  ctrl1   = ctx.p1AdcCntrl & 0xff;
     const int  ctrl2   = (ctx.p1AdcCntrl >> 8) & 0x3f;
     const bool psTransmit = ctx.mox && ctx.puresignalRun;
+
+    // NereusSDR-original movable-stream allocation. The physical P1 pair
+    // stays slots 0/1 (networkproto1.c:377-388 [v2.10.3.15]); PS stays 3/4.
+    // Frame count and global sample rate do not change when the owner moves.
+    // This is a Nereus slice/stream extension, not a new upstream port.
+    if (ctx.diversity && !redPitaya && ctx.diversityStream >= 0
+        && ctx.diversityStream < 5 && slices[ctx.diversityStream].live) {
+        const int target = ctx.diversityStream;
+        for (int& ddc : a.streamDdc) { ddc = -1; }
+        a.streamDdc[target] = 0;
+        a.p1DdcConfig = psTransmit ? 3 : (ctx.mox ? 2 : 1);
+        a.ddcEnable = kDDC0;
+        a.syncEnable = kDDC1;
+        a.rate[0] = slices[target].sampleRateHz;
+        a.rate[1] = slices[target].sampleRateHz;
+        a.adcCtrl1 = (ctrl1 & ~0x0f) | 0x04;
+        a.adcCtrl2 = ctrl2;
+        int slot = 2;
+        constexpr std::array<int, 5> kOrdinarySlots{0, 2, 3, 4, -1};
+        for (int st = 0; st < 5; ++st) {
+            if (st == target || !slices[st].live) { continue; }
+            if (slot >= (psTransmit ? 3 : 5)) { continue; }
+            a.streamDdc[st] = slot;
+            a.ddcEnable |= 1 << slot;
+            a.rate[slot] = slices[st].sampleRateHz;
+            const int old = kOrdinarySlots[st];
+            const int adc = old < 0 ? 0 : old < 4 ? (ctrl1 >> (2 * old)) & 3
+                                                                 : ctrl2 & 3;
+            if (slot < 4) {
+                a.adcCtrl1 = (a.adcCtrl1 & ~(3 << (2 * slot))) | (adc << (2 * slot));
+            } else {
+                a.adcCtrl2 = (a.adcCtrl2 & ~3) | adc;
+            }
+            ++slot;
+        }
+        if (psTransmit) {
+            a.psFwdDdc = 3;
+            a.psRevDdc = 4;
+        }
+        return a;
+    }
 
     // GetDDC: rx1 = 0 (or sync1 = 0) and rx2 = 2 in every state.
     if (slices[0].live) { a.streamDdc[0] = 0; }

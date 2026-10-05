@@ -229,6 +229,7 @@
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+#include "core/NereusCoreExport.h"
 #include "Band.h"
 #include "core/ControlRanges.h"
 #include "core/NbFamily.h"
@@ -325,7 +326,7 @@ constexpr int tuneStepIndexForHz(int hz)
 // the radio via signals wired in RadioModel.
 //
 // From AetherSDR SliceModel pattern: Q_PROPERTY + signals for each state.
-class SliceModel : public QObject {
+class NEREUS_CORE_EXPORT SliceModel : public QObject {
     Q_OBJECT
 
 public:
@@ -1741,7 +1742,7 @@ private:
     int    m_streamIndex{-1};     // Phase 3F Sub-Epic I: -1 = unbound
     double m_shiftOffsetHz{0.0};  // offset from stream centre
     int     m_sampleRateHz{kDefaultSampleRate};  // Phase 3F: per-slice DDC sample rate; default 192 kHz (NereusSDR::kDefaultSampleRate)
-    bool    m_diversityEnabled{false};  // Phase 3F: Slice-A-only diversity mode; gated on BoardCapabilities.hasDiversityReceiver
+    bool    m_diversityEnabled{false};  // Requested single-owner Diversity state; resource pause keeps it true
     // Phase 3F Sub-Epic G Task 2: per-band diversity tuning. Defaults match
     // a passive reference-receiver setup (no rotation, no gain bias).
     double  m_diversityPhaseDeg{0.0};       // 0..360 deg

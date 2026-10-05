@@ -1,0 +1,192 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NereusSDR User Manual | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/index.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html" aria-current=page>NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="nereussdr-user-manual">NereusSDR User Manual</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#your-radio-the-core-and-the-app">Your radio, the Core, and the app</a></li><li><a href="#find-the-instructions-you-need">Find the instructions you need</a></li><li><a href="#follow-a-complete-operating-workflow">Follow a complete operating workflow</a></li><li><a href="#finding-your-way-around-the-iphone-app">Finding your way around the iPhone app</a></li><li><a href="#reading-the-procedures">Reading the procedures</a></li></ol></details>
+<p>Working draft, 4 October 2026. Desktop instructions for Core Settings, audio
+choices, Canvas, EQ/CFC and transmit ownership have been reconciled with the
+2026.10 release candidate. Other procedures retain their reviewed development
+source baseline. This is an operator draft, with release captures and live
+station checks still pending.</p>
+<p>The iPhone/iPad chapters describe a separately developed native app. Mobile
+availability and delivery are separate from the desktop/Core release; inclusion
+of these chapters does not mean an App Store or TestFlight release is available.
+Check your application's build and the Core's offered capabilities when a
+control described here is absent. <a href="/manual/verification.md">Verification and build scope</a>
+records the exact source and capture baselines.</p>
+<p>This manual explains how to operate NereusSDR on a desktop computer and from
+an iPhone or iPad. It assumes you already know the basics of operating an
+SDR: choosing a band and mode, tuning a signal, setting a receive filter,
+and using your radio's receive and transmit connections.</p>
+<p>The focus is on using NereusSDR: where to find a control, when to use it,
+what it changes, and how to check the result.</p>
+<h2 id="your-radio-the-core-and-the-app">Your radio, the Core, and the app</h2>
+<p>Your radio supplies the receive signals and produces the transmitted RF.
+NereusSDR performs the signal processing and provides the controls you use
+to operate it.</p>
+<p>For iPhone and iPad operation, a NereusSDR <strong>Core</strong> runs on a computer at
+your station. The Core talks to the radio and performs the signal
+processing. The app connects to the Core, displays the spectrum and
+waterfall, plays receive audio, and sends your control changes and
+microphone audio back to it. The Core must be running and reachable for
+the app to operate your radio.</p>
+<p>In this manual, <strong>Core</strong> means the NereusSDR service you connect to.
+<strong>Station</strong> means your radio installation as a whole.</p>
+<h2 id="find-the-instructions-you-need">Find the instructions you need</h2>
+<p>Start with the connection chapter for the device you are using, then follow
+the operating chapters. Use the troubleshooting and reference chapters
+when you need a specific answer.</p>
+<table>
+<thead>
+<tr>
+<th>Chapter</th>
+<th>What you will do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="/manual/01-desktop-connect.html">1. Install and connect on the desktop</a></td>
+<td>Install NereusSDR, choose your radio, connect, and select your audio devices.</td>
+</tr>
+<tr>
+<td><a href="/manual/02-desktop-window.html">2. Get to know the desktop window</a></td>
+<td>Find the spectrum, waterfall, VFO flags, RX and TX applets, meters, and connection indicators.</td>
+</tr>
+<tr>
+<td><a href="/manual/03-receive.html">3. Tune and receive</a></td>
+<td>Select a band, mode, filter, and tuning step; use CTUN, AGC, noise reduction, and receive audio controls.</td>
+</tr>
+<tr>
+<td><a href="/manual/04-slices.html">4. Work with slices and panadapters</a></td>
+<td>Add and select slices, arrange the display, and understand which controls apply to a slice or the radio.</td>
+</tr>
+<tr>
+<td><a href="/manual/05-transmit.html">5. Set up and transmit</a></td>
+<td>Choose a microphone source and profile, adjust levels and transmit processing, set power, and use PTT, MOX, and TUNE.</td>
+</tr>
+<tr>
+<td><a href="/manual/06-iphone-connect.html">6. Connect the iPhone or iPad</a></td>
+<td>Set up the Core, pair the app, connect on your home network, and connect away from home.</td>
+</tr>
+<tr>
+<td><a href="/manual/07-iphone-operate.html">7. Operate from the iPhone or iPad</a></td>
+<td>Navigate the tabs, tune with touch controls, adjust receive settings, select audio, and transmit.</td>
+</tr>
+<tr>
+<td><a href="/manual/08-shared-core.html">8. Use several devices</a></td>
+<td>See who owns each slice and transmit, take over when needed, and understand changes that affect other operators.</td>
+</tr>
+<tr>
+<td><a href="/manual/09-tools.html">9. Digital audio and external applications</a></td>
+<td>Route and test VAX/TCI audio, connect clients, and distinguish desktop-local from Core-hosted routes.</td>
+</tr>
+<tr>
+<td><a href="/manual/10-customize.html">10. Display, meters and layout</a></td>
+<td>Adjust FFT, spectrum, waterfall, grid, history, 3D, TX display, meters and custom containers.</td>
+</tr>
+<tr>
+<td><a href="/manual/11-troubleshooting.html">11. Troubleshoot operation</a></td>
+<td>Follow checks for connection failures, missing audio, unexpected tuning behavior, and refused transmit requests.</td>
+</tr>
+<tr>
+<td><a href="/manual/12-reference.html">12. Control reference</a></td>
+<td>Look up controls, menu paths, shortcuts, and NereusSDR terminology.</td>
+</tr>
+<tr>
+<td><a href="/manual/13-receiver-dsp.html">13. Receiver DSP and filter setup</a></td>
+<td>Adjust AGC, blankers, noise-reduction methods/models, notches, filter presets and DSP options.</td>
+</tr>
+<tr>
+<td><a href="/manual/14-voice-profiles.html">14. Voice processing and profiles</a></td>
+<td>Configure microphone/TX profiles, EQ, compression, leveler, expander, VOX and modulation monitoring.</td>
+</tr>
+<tr>
+<td><a href="/manual/15-rade-freedv.html">15. RADE and FreeDV operation</a></td>
+<td>Receive and transmit RADE voice, interpret decode status, and use the FreeDV Reporter.</td>
+</tr>
+<tr>
+<td><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a></td>
+<td>Configure spot sources, filter and display results, and tune from station lists.</td>
+</tr>
+<tr>
+<td><a href="/manual/17-hardware-antennas-calibration.html">17. Hardware, antennas and calibration</a></td>
+<td>Configure radio/ALEX/HL2/OC controls and supported level, PA and wattmeter calibration.</td>
+</tr>
+<tr>
+<td><a href="/manual/18-puresignal-diversity.html">18. PureSignal and diversity</a></td>
+<td>Configure supported feedback calibration and two-ADC diversity, and check status/results.</td>
+</tr>
+<tr>
+<td><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a></td>
+<td>Configure and operate supported PGXL, TGXL and RF-Kit accessories with their interlocks and readbacks.</td>
+</tr>
+<tr>
+<td><a href="/manual/20-phone-preferences.html">20. Phone preferences and session care</a></td>
+<td>Choose touch/audio routes, manage background listening, screen/sleep/data use and time-outs, and recover interruptions.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="follow-a-complete-operating-workflow">Follow a complete operating workflow</h2>
+<p>For a first desktop receive session, follow <a href="/manual/01-desktop-connect.html">connect</a>,
+<a href="/manual/02-desktop-window.html">window controls</a> and <a href="/manual/03-receive.html">tune/receive</a>.
+For a first phone session, follow <a href="/manual/06-iphone-connect.html">Core pairing</a>,
+<a href="/manual/07-iphone-operate.html">phone operation</a> and <a href="/manual/20-phone-preferences.html">phone preferences</a>.
+Use <a href="/manual/08-shared-core.html">shared operation</a> when another device is already at the station.</p>
+<p>Before voice transmission, use <a href="/manual/05-transmit.html">transmit setup</a> and
+<a href="/manual/14-voice-profiles.html">voice profiles</a>. For a digital application, first verify
+<a href="/manual/09-tools.html">audio routing</a>; for RADE use <a href="/manual/15-rade-freedv.html">its operating procedure</a>.
+Hardware and accessory setup have their own chapters because those changes
+affect the physical station and may affect other receivers or operators.</p>
+<p>The <a href="/manual/12-reference.html">control reference</a> maps settings pages and gestures to
+procedures and explains missing or disabled features. Use
+<a href="/manual/11-troubleshooting.html">troubleshooting</a> to isolate a fault and collect evidence.</p>
+<h2 id="finding-your-way-around-the-iphone-app">Finding your way around the iPhone app</h2>
+<p>Once connected to a Core, the app has five tabs:</p>
+<table>
+<thead>
+<tr>
+<th>Tab</th>
+<th>Use it for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Panadapter</strong></td>
+<td>View the band and operate from the main spectrum and waterfall screen.</td>
+</tr>
+<tr>
+<td><strong>Modes</strong></td>
+<td>Open the selected slice's operating controls.</td>
+</tr>
+<tr>
+<td><strong>Tools</strong></td>
+<td>Open station tools such as Spot Hub and FreeDV Reporter.</td>
+</tr>
+<tr>
+<td><strong>Radio</strong></td>
+<td>Open radio management and status pages.</td>
+</tr>
+<tr>
+<td><strong>Setup</strong></td>
+<td>Configure the Core and this device.</td>
+</tr>
+</tbody>
+</table>
+<p>On first launch, <strong>Find my Core</strong> starts the connection workflow.
+<strong>Set up a Core</strong> explains what must be running at your station before
+the app can connect.</p>
+<h2 id="reading-the-procedures">Reading the procedures</h2>
+<p>Desktop instructions use <strong>click</strong>, <strong>right-click</strong>, and <strong>drag</strong>.
+iPhone and iPad instructions use <strong>tap</strong>, <strong>press and hold</strong>, and <strong>swipe</strong>.
+Menu paths are written in the order you open them. On the desktop,
+<strong>Setup</strong> means the settings window opened with <strong>File &gt; Settings...</strong>;
+for example, <strong>Setup &gt; Display</strong> names a page in that window. On the
+iPhone or iPad, <strong>Setup</strong> is a tab.</p>
+<p>Each procedure identifies the relevant controls, gives the steps in
+operating order, and describes the result you should see or hear.
+Desktop and mobile instructions are labeled where the controls or
+gestures differ.</p>
+<p>Screenshots sit beside the procedures they explain. Select a figure to open
+its full-size image when you need to inspect a label or readback. Desktop overview figures
+have numbered callouts; settings and tool captures show their actual idle or
+receive state. Native phone and iPad simulator captures identify test data in
+their captions. The settings shown are examples, not recommended starting
+values. These figures come from separately recorded development builds. They
+do not establish a live radio walkthrough or release compatibility.</p>
+<div class="page-next"><a href="/manual/01-desktop-connect.html">Next chapter</a></div></main></div></body></html>

@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 - Diversity atomic reentry and slice-close/hydration lifetime
+//                 fences, J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30 - Fix round 1 (minor 4): transmitLinkDownReason picks the
 //                 link-down words by state (the window's link to the Core,
 //                 the Core without a radio, the radio's link). J.J. Boyd
@@ -602,6 +604,7 @@
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
+#include "core/NereusCoreExport.h"
 #include "core/ConnectionState.h"
 #include "core/audio/CaptureSupervisor.h"
 #include "core/ReceiveLayoutStore.h"
@@ -665,6 +668,7 @@
 #include <QString>
 #include <QList>
 #include <QThread>
+#include <QPointer>
 #include <QVariant> // Remote Daemon R2 Task 8: applyMirroredValue(name, value)
 
 #include <limits>   // 2026-05-22 NaN sentinel for m_lastEmittedRxMeterOffsetDb
@@ -677,6 +681,7 @@
 //  redesign (2026-04-29) deleted MicReBlocker; replaced with
 //  TxWorkerThread which drives TxChannel directly.)
 #include <algorithm>  // std::clamp (used by computeWireDriveForTest)
+#include "core/session/RemoteMicSource.h"
 #include <atomic>     // AM Mod Monitor flags
 #include <array>      // std::array (HL2 temp averaging ring)
 #include <functional> // R-R3-21 DSP > Options apply observer (test seam)
@@ -691,6 +696,10 @@ namespace NereusSDR { class VoltsAmpsLog; }
 namespace NereusSDR {
 
 class AppSettings;
+class StationServer;
+class StationSliceOwnershipPolicy;
+class SessionTransport;
+struct SessionMessage;
 enum class PreampMode;
 
 class ReceiverManager;
@@ -823,7 +832,7 @@ class ConnectionDiagnostics;
 //                kept off main because WDSP fexchange2 with bfo=1 can
 //                block on Sem_OutReady and would otherwise freeze the
 //                Qt event loop, deadlocking against wdspmain.
-class RadioModel : public QObject {
+class NEREUS_CORE_EXPORT RadioModel : public QObject {
     Q_OBJECT
 
     Q_PROPERTY(QString settingsSaveError READ settingsSaveError NOTIFY settingsSaveErrorChanged)
@@ -931,6 +940,7 @@ class RadioModel : public QObject {
     // before the feature (link document, section 17).
     Q_PROPERTY(QString rxFilter0LowPassReason READ rxFilter0LowPassReason NOTIFY lowPassHoldChanged)
     Q_PROPERTY(int rxFilter0LowPassSlice READ rxFilter0LowPassSlice NOTIFY lowPassHoldChanged)
+    Q_PROPERTY(QString diversityState READ diversityState NOTIFY diversityStateChanged)
 
 
 public:
@@ -996,6 +1006,10 @@ public:
     // allocates or deletes it.
     void attachStation(NereusSDR::IStationLink* link) { m_station = link; }
     IStationLink* stationLink() const { return m_station; }
+    bool requestMicSource(MicSource desired, std::function<void()> accepted = {});
+    QString micSourceChangeReason(MicSource desired) const;
+    bool pcCaptureGatesKeyingForTest() const { return pcCaptureGatesKeying(); }
+
     void detachStation() { m_station = nullptr; }
     void reportStationLinkStateChanged();
 
@@ -2586,6 +2600,13 @@ public:
     // device's audio is never mixed into another's transmission.
 
     /// The ring the transmit pump pulls (null on a remote window's model).
+    void setRemoteMicSelection(const QString& owner, const QByteArray& device, RemoteMicSource source);
+    RemoteMicSource remoteMicSelection(const QString& owner, const QByteArray& device) const;
+    void forgetRemoteMicSession(const QString& owner);
+    void beginRemoteRadioKeyAttempt(const QString& owner, const QByteArray& device, quint32 commandId);
+    void finishRemoteRadioKeyAttempt(const QString& owner, const QByteArray& device,
+                                    quint32 commandId, quint32 acceptedEpoch);
+    bool remoteRadioMicKeyActive(const QByteArray& device) const;
     RemoteMicFeed* remoteMicFeed() const { return m_remoteMicFeed.get(); }
     /// `deviceId`'s media carries a microphone line now (opened once per
     /// media connection that carries one; closed as often).
@@ -4524,6 +4545,8 @@ public:
     // reachable without standing up a connection, a WDSP engine and a
     // PureSignal coordinator. Sticky once set; production code must never
     // call this.
+    // Isolate route-lifecycle tests from board/resource admission. Never a production caller.
+    void setDiversityAdmissionBypassForTest() { m_diversityAdmissionBypassForTest = true; }
     void setDdcContextForTest(bool mox, bool puresignalRun, bool diversity) {
         m_ddcCtxForTest    = true;
         m_ddcCtxMoxForTest = mox;
@@ -4777,6 +4800,9 @@ public:
     // WDSP-init lambda inside connectToRadio() (see "createTxChannel(kTxChannelId)"
     // around RadioModel.cpp:1514).
     void injectTxChannelForTest(class TxChannel* ch) { m_txChannel = ch; }
+    void bindTxEqProfileChannelForTest(TxChannel* ch) { bindTxEqProfileChannel(ch); }
+    void bindCfcProfileChannelForTest(TxChannel* ch) { bindCfcProfileChannel(ch); }
+    void replayCfcProfileForTest() { replayCfcProfile(); }
 
     // R-R3-49 (parity Task 2): inject `channel` and run the Core's transmit
     // chain wiring (TransmitModel to TxChannel, MON to the audio engine)
@@ -5577,6 +5603,7 @@ public slots:
     void updateFreedvReporterVisibility();
 
 signals:
+    void diversityStateChanged(const QString& state);
     void infoChanged();
     // Task 33: stopAllTx stopped a transmission. A non-empty message is for
     // the operator (MainWindow shows it for 10 s, as Thetis's
@@ -5940,6 +5967,7 @@ signals:
     /// refused a MOX, TUNE or two-tone press from this remote window (or its
     /// release). Shown as a local refusal is; the buttons follow the Core.
     void remoteTransmitRefused(const QString& reason);
+    void remoteMicSourceStateChanged();
 
     // ── Plan 4 D8: per-profile TX filter relay signal ─────────────────────────
     //
@@ -6680,6 +6708,31 @@ public:
     /// the filter decision and the DDC map to disagree about the same
     /// transmit-critical state.
     bool diversityActive() const;
+    bool diversityPairAssigned() const;
+    QString diversityState() const;
+    QString diversityStateForPeer(bool includePattern) const;
+    quint64 diversityStateRevision() const { return m_diversityStateRevision; }
+    /// Fixed station requester, synchronous on a Local model's thread.
+    /// Does not create a host, listener, network identity or session.
+    SessionMessage invokeDiversityAsStationDevice(const SessionMessage& invoke);
+private:
+    friend class StationServer;
+    friend class StationSliceOwnershipPolicy;
+    // Raw coordinator: only after the shared admitted transaction checks.
+    bool setDiversityTarget(int sliceId, QString* reason = nullptr);
+    SessionMessage invokeAdmittedDiversityControl(const SessionMessage& invoke,
+        StationServer* server, SessionTransport* transport, bool stationEntry);
+    QString diversityControlRefusal(const QByteArray& requester, int sliceId,
+                                    const StationServer* server) const;
+    // Set/cleared only by the canonical Core server, never by a GUI caller.
+    QPointer<StationServer> m_diversityStationServer;
+public:
+    QString diversityEligibility(int sliceId, QString* code = nullptr) const;
+    QString legacyDiversityRefusal(int sliceId, bool enabled) const;
+    void publishDiversityState(bool structural = true);
+    void wireDiversitySlice(SliceModel* slice);
+    std::optional<NereusSDR::DdcAssignment> computeDdcAssignmentForContext(
+        const NereusSDR::CodecContext& ctx) const;
 
     /// Reconcile the process-wide WDSP slot and the DSP worker's paired raw-DDC
     /// route against one complete codec assignment. This is the sole start
@@ -6982,7 +7035,8 @@ private:
     /// to the removal itself.
     /// `mayCloseLast` (slice control plan Task 7): the claims rule's close
     /// of an unclaimed slice, which may leave the Core with no slice.
-    void removeSliceImpl(int sliceId, bool persist = true, bool mayCloseLast = false);
+    void removeSliceImpl(int sliceId, bool persist = true, bool mayCloseLast = false,
+                         bool requireUnclaimed = false);
     void bindReceiveLayoutSlices();
     bool activateRestoredRadeReceiveOwner(QString* error);
     void setReceiveLayoutRestoreStatus(const QString& state, const QString& message);
@@ -7242,6 +7296,24 @@ private:
 
     // Slices and panadapters (client-managed)
     QList<SliceModel*> m_slices;
+    QList<QPointer<SliceModel>> m_sliceRemovalsInFlight;
+    // ID-keyed consumers must finish an old removal before seeing the next
+    // object with that ID. Construction/ownership still complete synchronously.
+    struct SlicePublication {
+        QPointer<SliceModel> object;
+        int id{-1};
+        quint64 incarnation{0};
+        bool constructing{true};
+        bool ready{false};
+        bool published{false};
+        quint64 serial{0}; // Exact pending record, including allocator address reuse.
+    };
+    QHash<SliceModel*, SlicePublication> m_slicePublications;
+    QHash<int, int> m_sliceRemovalBarriers;
+    quint64 m_nextSlicePublicationSerial{0};
+    bool currentSlicePublication(SliceModel* slice) const;
+    void publishReadySlices(int id);
+
     QList<PanadapterModel*> m_panadapters;
     SliceModel* m_activeSlice{nullptr};
     // iPhone app Task 73: whose each slice is. Qt-parented to this model.
@@ -7281,6 +7353,13 @@ private:
     // ring stays the source (silence) until that key ends, so a remote key
     // never falls back to the station's own microphone.
     QByteArray m_remoteMicKeyedDevice;
+    struct RemoteMicSelection { QByteArray device; RemoteMicSource source; };
+    QHash<QString, RemoteMicSelection> m_remoteMicSelections;
+    struct RemoteRadioKey { QString owner; QByteArray device; quint32 commandId{0}; quint32 epoch{0}; };
+    std::optional<RemoteRadioKey> m_remoteRadioCandidate;
+    std::optional<RemoteRadioKey> m_remoteRadioKey;
+    void setRemoteRadioMicActive(bool active);
+    bool m_remoteRadioMicActive{false};
     // Set while setTune(true, keyer) runs: the keyer TUNE asks and keys for.
     const KeyerIdentity* m_tuneKeyer{nullptr};
     // iPhone app Task 73 (ruling 5.11): the frequency the FreeDV Reporter
@@ -7319,7 +7398,13 @@ private:
     // route itself is published/cleared synchronously on m_dspThread before
     // this state changes.
     static constexpr int kExternalDiversityId = 0;
-    static constexpr int kExternalDiversityTargetSliceId = 0;
+    int m_diversityTargetSliceId{-1};
+    bool m_diversityCommitting{false};
+#ifdef NEREUS_BUILD_TESTS
+    bool m_diversityAdmissionBypassForTest{false};
+#endif
+    quint64 m_diversityStateRevision{1};
+    QByteArray m_diversityStateShape;
     bool m_externalDiversityRouteActive{false};
     // R-R3-39: bumped by every route start and stop, so a lane answer about
     // an older start is ignored.
@@ -7856,6 +7941,14 @@ private:
     // safe to call from the main thread per the WDSP API contract.
     // From Thetis dsp.cs:926-944 [v2.10.3.13] — WDSP.id(1, 0) = channel 1.
     TxChannel* m_txChannel{nullptr};
+    QPointer<TxChannel> m_txEqProfileChannel;
+    QList<QMetaObject::Connection> m_txEqProfileConnections;
+    void bindTxEqProfileChannel(TxChannel* channel);
+    void replayTxEqProfile();
+    QPointer<TxChannel> m_cfcProfileChannel;
+    QList<QMetaObject::Connection> m_cfcProfileConnections;
+    void bindCfcProfileChannel(TxChannel* channel);
+    void replayCfcProfile();
 
     // AM Mod Monitor analyzers: [0] TX I/Q tap, [1] PS feedback receiver.
     std::unique_ptr<AmModulationAnalyzer> m_amModTx;
@@ -8206,6 +8299,16 @@ private:
     /// Task 77: how long a device's cycle waits for the tuner to start its
     /// sweep once the carrier is up (TunerApplet's short watchdog, 3 s).
     static constexpr int kTgxlDeviceCycleStartMs = 3000;
+    static constexpr int kTgxlCarrierReadyMs = 3000;
+    static constexpr int kTgxlRfSettleMs = 150;
+    // Completion ownership: actual channel, its latest run request and
+    // the tune cycle that requested it. The completion is always queued.
+    QPointer<TxChannel> m_tgxlCarrierChannel;
+    quint64 m_tgxlCarrierSequence{0};
+    quint64 m_tgxlCarrierCycle{0};
+    bool m_tgxlCarrierReady{false};
+    bool m_tgxlSettlePending{false};
+    bool m_tgxlCommandSent{false};
     /// Task 77: the cycle ended (or never keyed): the amplifier's state
     /// restored, the flags cleared.
     /// Task 77 fix round 4: `unkeyedReason`, the words for a cycle that ends
@@ -8302,7 +8405,11 @@ private:
     QString beginTgxlAutotune(bool fromHardware);
     bool m_awaitingInterlockForAutotune{false};
     void continueTgxlAutotuneAfterStandby();
-    void sendTgxlAutotuneCmd();
+    void onTgxlRfGateOpened(TxChannel* channel, quint64 sequence);
+    bool tgxlCarrierEligible(quint64 cycle, TxChannel* channel, quint64 sequence) const;
+    void scheduleTgxlAutotune();
+    void sendTgxlAutotuneCmd(quint64 cycle, TxChannel* channel, quint64 sequence);
+    void armTgxlSweepStartWatchdog();
 
     // RF-flow gate state (NereusSDR-native, deck item #3).
     //

@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
+//                Take and select action, with current access and target
+//                lifetime checks. AI-assisted via OpenAI Codex.
 //   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -394,7 +397,7 @@ public slots:
     void setTxProcessingPermitted(bool permitted,
                                   const QString& unavailableReason = QString());
     // The CFC dialog, once a right-click or Setup has built it.
-    TxCfcDialog* cfcDialog() const { return m_cfcDialog; }
+    TxCfcDialog* cfcDialog() const;
     // R-R3-49 (parity Task 33): a remote window's CFC bar chart comes from
     // the Core. `setWanted` asks for (true) or lets go of (false) the Core's
     // CFC display while the dialog is shown; applyStationCfcCompression
@@ -449,9 +452,16 @@ public:
     /// ruling 8.10). `unavailableReason` non-empty shows the row disabled
     /// with that reason. Empty functions: every slice, the radio's own
     /// handoff (RadioModel::requestTxHandoffToSlice), always available.
+    /// Optional per-slice availability replaces the row-wide reason and
+    /// supplies the words for a guarded Take or current refusal.
+    struct TransmitSliceChoice {
+        bool enabled{true};
+        QString toolTip;
+    };
     void setTransmitSliceChoices(std::function<bool(int)> controlled,
                                  std::function<void(int)> choose,
-                                 std::function<QString()> unavailableReason = {});
+                                 std::function<QString()> unavailableReason = {},
+                                 std::function<TransmitSliceChoice(int)> availability = {});
     /// Rebuilds the letter row (a slice came or went, control changed).
     void refreshTransmitSliceChoices();
     QList<QPushButton*> transmitSliceButtons() const { return m_txSliceButtons; }
@@ -540,6 +550,7 @@ private slots:
 
 private:
     void buildUI();
+    void refreshMicSourceBadge();
     void wireControls();  // called after buildUI() — attaches signals/slots
     void syncPsaFromFacade();
     // Fix wave GUI-I7: put back PS-A's tooltip under the facade's reason.
@@ -663,8 +674,9 @@ private:
     QPushButton* m_cfcBtn     = nullptr;
     // ── 3M-3a-ii Batch 6 (Task A): modeless CFC dialog instance ─────────────
     // Lazy-created on first right-click of [CFC] or first call to
-    // requestOpenCfcDialog().  Lives until applet (parent window) is destroyed.
-    TxCfcDialog* m_cfcDialog  = nullptr;
+    // requestOpenCfcDialog(). Owned by the retained applet across container
+    // moves; explicit dialog destruction clears the cache for the next open.
+    QPointer<TxCfcDialog> m_cfcDialog;
     // Parity Task 33: a remote window's CFC chart source and its note.
     std::function<void(bool)> m_stationCfcBarChart;
     QString m_stationCfcBarChartReason;
@@ -728,6 +740,7 @@ private:
     std::function<bool(int)> m_txSliceControlled;
     std::function<void(int)> m_txSliceChoose;
     std::function<QString()> m_txSliceUnavailable;
+    std::function<TransmitSliceChoice(int)> m_txSliceAvailability;
 
     // Defaults to local-direct behaviour. Remote MainWindow wiring replaces it
     // after handshake/capability evaluation.

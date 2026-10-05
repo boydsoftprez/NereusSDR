@@ -58,6 +58,7 @@
 #include "core/session/media/RemoteIqCodec.h"
 #include "core/session/media/RemoteSpectrumContext.h"
 #include "core/session/media/RemoteMicReceiver.h"
+#include "core/session/media/DaemonAudioSender.h"
 #include "core/settings/SettingsProxy.h"
 #include "gui/RemoteDisplayAllocator.h"
 #include "fakes/LoopbackTransport.h"
@@ -199,6 +200,8 @@ public:
     {
         ++rtpAttempts;
         if (readyState) { rtpPackets.append(packet); }
+        const auto callback = onRtpSend;
+        if (callback) { callback(packet); }
         return readyState;
     }
     bool isReady() const override { return readyState; }
@@ -221,6 +224,7 @@ public:
     QList<QByteArray> rtpPackets;
     int rtpAttempts{0};
     std::function<bool()> onDisplaySend;
+    std::function<void(const QByteArray&)> onRtpSend;
     qsizetype sctpWindowBytes{0};
     qsizetype unacknowledgedBytes{0};
     QByteArray heldDisplay;
@@ -738,6 +742,7 @@ private slots:
     void olderAppGetsTheWholeProgramAndNoHeadphonesMix();
     void headphonesMixRunsWhileAReceiverIsOnTheHeadphones();
     void headphonesMixFollowsTheProfileAndTheRadio();
+    void headphoneRateSwitchDefersAnExecutingSender();
     void radioDropKeepsTheHeadphonesReasonWhenNothingIsRouted();
     void radioDropTellsAnAppWaitingOnMediaThatTheRadioIsGone();
     void aBoundControllerServesItsOwnSessionAndHearsItsOwnMix();
@@ -4370,6 +4375,7 @@ void TstDaemonMediaController::aDeviceThatNeverAsksGetsTheCoresBitrate()
     }
     Harness h;
     h.controller.setAudioTargetBitrate(24000);
+    h.client.withholdFeatureForTest(QByteArrayLiteral("audioQuality"));
     h.establishSession();
     QCOMPARE(h.client.capabilities().audioQualityVersion, 0);
     QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
@@ -6330,6 +6336,97 @@ void TstDaemonMediaController::headphonesMixFollowsTheProfileAndTheRadio()
     QTRY_VERIFY(!h.controller.headphonesMixSending());
     QTest::qWait(20);
     QCOMPARE(headphonesContextsIn(controls).size(), 5);
+}
+
+// A synchronous RTP recipient may ask for a new main rate while the
+// headphones sender is still emitting. Retirement must leave it alive
+// until that emission and its drain have returned.
+void TstDaemonMediaController::headphoneRateSwitchDefersAnExecutingSender()
+{
+    Harness h;
+    h.controller.setAudioTargetBitrate(24000);
+    const auto routes = qScopeGuard([&h] { resetOutputRoutes(h); });
+    AudioEngine* const engine = h.radio.audioEngine();
+    engine->masterMixForTest().setRampFrames(1);
+    engine->masterMixForTest().setSlewUpFrames(0);
+    engine->setSliceStreaming(h.spareSliceId, true);
+    h.establishSession();
+    QVERIFY(h.client.sendMediaControl(headphonesStart(), h.client.sessionEpoch()));
+    QTRY_VERIFY(h.mediaTransport);
+    h.mediaTransport->becomeReady();
+    h.radio.sliceById(h.spareSliceId)->setOutputRoute(SliceModel::OutputRoute::Headphones);
+    QVERIFY(h.client.sendMediaControl(headphonesAudioControl(1, true), h.client.sessionEpoch()));
+    QTRY_VERIFY(h.controller.headphonesMixSending());
+    const auto activeSender = [&h]() -> DaemonAudioSender* {
+        for (DaemonAudioSender* sender : h.controller.findChildren<DaemonAudioSender*>()) {
+            if (sender->sliceSource() == DaemonAudioSource::kHeadphonesMix && sender->isRunning()) {
+                return sender;
+            }
+        }
+        return nullptr;
+    };
+    QPointer<DaemonAudioSender> sender = activeSender();
+    QVERIFY(sender);
+    const quint32 ssrc = h.mediaTransport->startOptions.headphonesAudioSsrc;
+    feedSlicesBlock(h, {{h.spareSliceId, 0.5f}});
+    sender->drain();
+    const auto firstPackets = packetsWithSsrc(h.mediaTransport->rtpPackets, ssrc);
+    QCOMPARE(firstPackets.size(), 1);
+    quint32 revision = 0;
+    bool aliveInCallback = false;
+    bool stoppedInCallback = false;
+    const auto switchDuringSend = [&](int bitrate) {
+        h.mediaTransport->onRtpSend = [&, bitrate](const QByteArray&) {
+            h.mediaTransport->onRtpSend = {};
+            QJsonObject control = audioControl(++revision, false, QStringLiteral("opus"));
+            control.insert(QStringLiteral("opusBitrate"), bitrate);
+            emit h.server.mediaControlReceived(control, h.client.sessionEpoch());
+            aliveInCallback = !sender.isNull();
+            stoppedInCallback = sender && !sender->isRunning();
+        };
+    };
+    // The real sender's direct packetReady path proves the lifetime rule
+    // before draining again. On the broken baseline, fail here rather than
+    // deliberately returning from drain into freed encoder state.
+    switchDuringSend(48000);
+    sender->packetReady(firstPackets.constFirst());
+    QVERIFY2(aliveInCallback, "Headphone rate replacement deleted its emitting sender synchronously");
+    QVERIFY(stoppedInCallback);
+    QVERIFY(sender);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(sender.isNull());
+    sender = activeSender();
+    QVERIFY(sender && sender->encoderProfile());
+    QCOMPARE(sender->encoderProfile()->targetBitrate, 48000);
+    h.mediaTransport->rtpPackets.clear();
+
+    // Now exercise actual drain with two queued blocks. Only its first
+    // packet escapes; retirement drops the old queue and preserves RTP time.
+    feedSlicesBlock(h, {{h.spareSliceId, 0.5f}});
+    feedSlicesBlock(h, {{h.spareSliceId, 0.5f}});
+    aliveInCallback = stoppedInCallback = false;
+    switchDuringSend(24000);
+    sender->drain();
+    QVERIFY(aliveInCallback && stoppedInCallback);
+    QVERIFY(sender);
+    const auto switchedPackets = packetsWithSsrc(h.mediaTransport->rtpPackets, ssrc);
+    QCOMPARE(switchedPackets.size(), 1);
+    const QByteArray lastOld = switchedPackets.constLast();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(sender.isNull());
+    sender = activeSender();
+    QVERIFY(sender && sender->encoderProfile());
+    QCOMPARE(sender->encoderProfile()->targetBitrate, 24000);
+    feedSlicesBlock(h, {{h.spareSliceId, 0.5f}});
+    sender->drain();
+    const auto resumedPackets = packetsWithSsrc(h.mediaTransport->rtpPackets, ssrc);
+    QCOMPARE(resumedPackets.size(), 2);
+    const QByteArray next = resumedPackets.constLast();
+    QCOMPARE(qFromBigEndian<quint16>(next.constData() + 2),
+             quint16(qFromBigEndian<quint16>(lastOld.constData() + 2) + 1));
+    QCOMPARE(qFromBigEndian<quint32>(next.constData() + 4),
+             qFromBigEndian<quint32>(lastOld.constData() + 4) + DaemonAudioSource::kBlockFrames);
+    h.finish();
 }
 
 // R-R3-45 fix wave: a radio drop sends a disabled headphones context only

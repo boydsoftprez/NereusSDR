@@ -136,7 +136,7 @@ def run_cargo_metadata(manifest: Path, features: str | None) -> dict:
            "--manifest-path", str(manifest)]
     if features:
         cmd += ["--features", features]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
     if result.returncode != 0:
         raise SystemExit(f"cargo metadata failed:\n{result.stderr}")
     return json.loads(result.stdout)
@@ -150,7 +150,7 @@ def run_cargo_tree(manifest: Path, package: str, features: str | None,
            "--prefix", "none", "-f", "{p}"]
     if features:
         cmd += ["--features", features]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
     if result.returncode != 0:
         raise SystemExit(f"cargo tree failed:\n{result.stderr}")
     return result.stdout

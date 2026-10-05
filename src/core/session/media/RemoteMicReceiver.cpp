@@ -842,6 +842,7 @@ RemoteMicFeed::Stats RemoteMicFeed::stats() const
 
 struct RemoteMicEncoder::State {
     OpusEncoder* encoder = nullptr;
+    int bitrate = RemoteMicConfig::kOpusBitrate;
     std::vector<unsigned char> payload =
         std::vector<unsigned char>(static_cast<size_t>(OpusAudioCodecConfig::kMaxPayloadBytes));
     ~State()
@@ -876,11 +877,29 @@ void RemoteMicEncoder::reset()
         qCWarning(lcAudio) << "Remote microphone: the Opus encoder could not start:" << error;
         return;
     }
-    opus_encoder_ctl(encoder, OPUS_SET_BITRATE(RemoteMicConfig::kOpusBitrate));
+    opus_encoder_ctl(encoder, OPUS_SET_BITRATE(m_state->bitrate));
     opus_encoder_ctl(encoder, OPUS_SET_INBAND_FEC(1));
     opus_encoder_ctl(encoder, OPUS_SET_PACKET_LOSS_PERC(10));
     opus_encoder_ctl(encoder, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
     m_state->encoder = encoder;
+}
+
+void RemoteMicEncoder::setBitrate(int bitrate)
+{
+    if ((bitrate != 24000 && bitrate != 48000) || bitrate == m_state->bitrate) {
+        return;
+    }
+    m_state->bitrate = bitrate;
+    reset();
+}
+
+int RemoteMicEncoder::targetBitrate() const
+{
+    opus_int32 bitrate = 0;
+    if (m_state->encoder != nullptr) {
+        opus_encoder_ctl(m_state->encoder, OPUS_GET_BITRATE(&bitrate));
+    }
+    return bitrate;
 }
 
 bool RemoteMicEncoder::isReady() const

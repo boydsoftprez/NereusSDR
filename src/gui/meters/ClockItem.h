@@ -56,14 +56,13 @@ mw0lge@grange-lane.co.uk
 
 #include "MeterItem.h"
 #include <QColor>
-#include <QTimer>
 
 namespace NereusSDR {
 // Dual UTC/Local time display. From Thetis clsClock (MeterManager.cs:14075+).
 class ClockItem : public MeterItem {
     Q_OBJECT
 public:
-    explicit ClockItem(QObject* parent = nullptr);
+    explicit ClockItem(QObject* parent = nullptr, bool ownTimer = true);
 
     void setShow24Hour(bool v) { m_show24Hour = v; }
     bool show24Hour() const { return m_show24Hour; }
@@ -79,6 +78,7 @@ public:
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
+    bool advanceMeter(qint64 monotonicMs) override;
     QString serialize() const override;
     bool deserialize(const QString& data) override;
 
@@ -88,6 +88,6 @@ private:
     QColor m_timeColour{0xc8, 0xd8, 0xe8};
     QColor m_dateColour{0x80, 0x90, 0xa0};
     QColor m_typeTitleColour{0x70, 0x80, 0x90};
-    QTimer m_updateTimer;
+    qint64 m_lastClockSecond{-1};
 };
 } // namespace NereusSDR

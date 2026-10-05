@@ -80,6 +80,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 
 namespace NereusSDR::safety {
@@ -110,7 +111,7 @@ namespace NereusSDR::safety {
 ///   Cite: console.cs:29191-29195 [v2.10.3.13] (UIMOXChangedFalse).
 ///
 /// The controller is inert (signals only, no radio I/O) until 3M-1a wires it.
-class SwrProtectionController : public QObject
+class NEREUS_CORE_EXPORT SwrProtectionController : public QObject
 {
     Q_OBJECT
 public:

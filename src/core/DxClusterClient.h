@@ -45,6 +45,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QTcpSocket>
 #include <QTimer>
@@ -63,7 +64,7 @@ namespace NereusSDR {
 // Telnet client for DX cluster nodes (DX Spider, AR-Cluster, CC Cluster).
 // Connects, logs in with callsign, parses "DX de" spot lines, and emits
 // spotReceived() for each parsed spot.
-class DxClusterClient : public QObject {
+class NEREUS_CORE_EXPORT DxClusterClient : public QObject {
     Q_OBJECT
 
 public:

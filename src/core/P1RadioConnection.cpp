@@ -852,10 +852,12 @@ void P1RadioConnection::init()
 
     if (!m_socket->bind(QHostAddress::Any, 0)) {
         qCWarning(lcConnection) << "P1: Failed to bind UDP socket";
-        return;
+    } else {
+        applySocketBufferSizes();
     }
 
-    applySocketBufferSizes();
+    // Finish worker initialization even after a failed placeholder bind.
+    // connectToRadio() retries the bind and needs receive wiring and timers.
 
     connect(m_socket, &QUdpSocket::readyRead, this, &P1RadioConnection::onReadyRead);
 
@@ -3728,6 +3730,26 @@ void P1RadioConnection::applyPsDdcConfig(const NereusSDR::PsDdcConfig& cfg)
 // Bank 0 goes out on the next frame so the lock lands with the assignment
 // that moved the pair, as setMox does for the MOX bit.
 // ---------------------------------------------------------------------------
+// NereusSDR-original remap publication. No receiver count/rate change.
+void P1RadioConnection::applyDiversityAssignment(const DdcAssignment& assignment)
+{
+    const bool active = assignment.p1Diversity != 0;
+    const std::array<int, 5> streamMap{{assignment.streamDdc[0], assignment.streamDdc[1],
+        assignment.streamDdc[2], assignment.streamDdc[3], assignment.streamDdc[4]}};
+    const bool remap = streamMap != m_diversityStreamMap;
+    if (active || m_diversity) {
+        setP1AdcCntrl(assignment.adcCtrl1 | (assignment.adcCtrl2 << 8));
+        m_forceBank4Next = true;
+        if (remap) {
+            // P1 frequency banks for fixed frame slots 0..4; they must all
+            // follow a remap before the normal round-robin reaches them.
+            m_diversityFrequencyBanks |= (1 << 2) | (1 << 3) | (1 << 5) | (1 << 6) | (1 << 7);
+        }
+    }
+    m_diversityStreamMap = streamMap;
+    setDiversity(active);
+}
+
 void P1RadioConnection::setDiversity(bool on)
 {
     if (m_diversity == on) {
@@ -5124,6 +5146,14 @@ void P1RadioConnection::sendCommandFrame()
         // SetTxAttenData [v2.10.3.13].
         m_ccRoundRobinIdx = 4;
         m_forceBank4Next  = false;
+    } else if (m_diversityFrequencyBanks != 0) {
+        for (int bank : {2, 3, 5, 6, 7}) {
+            if ((m_diversityFrequencyBanks & (1 << bank)) != 0) {
+                m_ccRoundRobinIdx = bank;
+                m_diversityFrequencyBanks &= ~(1 << bank);
+                break;
+            }
+        }
     }
 
     // Subframe 0: current bank

@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 project(NereusSDR VERSION 0.5.2 LANGUAGES C CXX)
 
+if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 20)
+    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+endif()
+
 # ── ccache compiler launcher (2026-07-25) ──────────────────────────────
 # CI has always configured ccache explicitly; local dev machines never
 # had it wired at all. Auto-detect and use it when present so branch
@@ -1046,6 +1052,7 @@ set(CORE_SOURCES
     src/core/MicProfileManager.cpp
     src/core/ParaEqEnvelope.cpp
     src/core/CfcProfile.cpp
+    src/core/CfcEditProfile.cpp
     src/core/ParaEqCurve.cpp
     src/core/ParaEqCurve.h
     # Phone wire batch: the Diversity dialog's sensitivity pattern, drawn by
@@ -1265,6 +1272,7 @@ set(CORE_SOURCES
     # call further down).
     src/core/daemon/DaemonApp.cpp
     src/core/station/StationHost.cpp
+    src/core/station/StationSliceOwnershipPolicy.cpp
     src/core/station/StationHandover.cpp
     # iPhone app Task 17 (R-IOS-08): the Core's read-only status page, its
     # owner-only console socket and the console commands it answers.
@@ -1580,6 +1588,8 @@ set(MODEL_SOURCES
 )
 
 set(GUI_SOURCES
+    src/gui/GuiApplication.cpp
+    src/gui/GuiApplication.h
     src/gui/MainWindow.cpp
     src/gui/DesktopStationController.cpp
     src/gui/DesktopStationController.h
@@ -1618,6 +1628,12 @@ set(GUI_SOURCES
     src/gui/RemoteDiagnosticsDialog.cpp
     src/gui/RemoteConnectionController.cpp
     src/gui/CoreTargetStore.cpp
+    src/gui/CoreAddressProbe.cpp
+    src/gui/CoreAddressController.cpp
+    src/gui/CoreRenameController.cpp
+    src/gui/RemoteAudioWidget.cpp
+    src/gui/setup/CoreAudioSetupPage.cpp
+    src/gui/CoreSettingsHost.cpp
     src/gui/StationStartupSelection.cpp
     src/gui/StationServiceManager.cpp
     src/gui/StationLanSelection.cpp
@@ -1656,6 +1672,8 @@ set(GUI_SOURCES
     src/gui/widgets/DexpPeakMeter.h
     src/gui/widgets/DexpPeakMeter.cpp
     src/gui/widgets/DspParamPopup.cpp
+    src/gui/widgets/EqEditHistory.h
+    src/gui/widgets/EqEditHistory.cpp
     src/gui/widgets/NnrControls.cpp
     src/gui/widgets/NnrControls.h
     src/gui/widgets/FilterPassbandWidget.cpp
@@ -1735,11 +1753,34 @@ set(GUI_SOURCES
     src/gui/LanScanDialog.h
     src/gui/PgxlSaveRebootDialog.cpp
     src/gui/PgxlSaveRebootDialog.h
+    src/gui/containers/ContainerTypes.h
+    src/gui/containers/ContainerDocument.h
+    src/gui/containers/ContainerDocument.cpp
+    src/gui/containers/ContainerDocumentCodec.h
+    src/gui/containers/ContainerDocumentCodec.cpp
+    src/gui/containers/ContainerContentRegistry.h
+    src/gui/containers/ContainerContentRegistry.cpp
+    src/gui/containers/ContainerArrangeController.h
+    src/gui/containers/ContainerArrangeController.cpp
+    src/gui/containers/ContainerEditSession.h
+    src/gui/containers/ContainerEditSession.cpp
+    src/gui/containers/ContainerPreviewWidget.h
+    src/gui/containers/FreeCanvasSurface.cpp
+    src/gui/containers/ContainerPreviewWidget.cpp
+    src/gui/containers/ContainerContentHost.h
+    src/gui/containers/ContainerContentHost.cpp
+    src/gui/containers/ContainerSourceAdapter.h
+    src/gui/containers/ContainerSourceAdapter.cpp
+    src/gui/containers/LegacyContainerImporter.h
+    src/gui/containers/LegacyContainerImporter.cpp
+    src/gui/containers/ContainerWorkspaceStore.h
+    src/gui/containers/ContainerWorkspaceStore.cpp
     src/gui/containers/ContainerWidget.cpp
     src/gui/containers/FloatingContainer.cpp
     src/gui/containers/ContainerManager.cpp
     src/gui/containers/ContainerButtonDispatcher.cpp
     src/gui/containers/ContainerSettingsDialog.cpp
+    src/gui/containers/ContentPropertyEditor.cpp
     src/gui/containers/MmioEndpointsDialog.cpp
     src/gui/containers/MmioVariablePickerPopup.cpp
     src/core/mmio/ITransportWorker.cpp
@@ -1782,6 +1823,33 @@ set(GUI_SOURCES
     src/gui/containers/meter_property_editors/OtherButtonItemEditor.cpp
     src/gui/containers/meter_property_editors/VoiceRecordPlayItemEditor.cpp
     src/gui/meters/MeterWidget.cpp
+    src/gui/meters/presets/BarPresetItem.cpp
+    src/gui/meters/presets/BarPresetItem.h
+    src/gui/meters/presets/CompositePresetItem.cpp
+    src/gui/meters/presets/CompositePresetItem.h
+    src/gui/meters/presets/SMeterPresetItem.cpp
+    src/gui/meters/presets/SMeterPresetItem.h
+    src/gui/meters/presets/PowerSwrPresetItem.cpp
+    src/gui/meters/presets/PowerSwrPresetItem.h
+    src/gui/meters/presets/AnanMultiMeterItem.cpp
+    src/gui/meters/presets/AnanMultiMeterItem.h
+    src/gui/meters/presets/CrossNeedleItem.cpp
+    src/gui/meters/presets/CrossNeedleItem.h
+    src/gui/meters/presets/MagicEyePresetItem.cpp
+    src/gui/meters/presets/MagicEyePresetItem.h
+    src/gui/meters/presets/SignalTextPresetItem.cpp
+    src/gui/meters/presets/SignalTextPresetItem.h
+    src/gui/meters/presets/HistoryGraphPresetItem.cpp
+    src/gui/meters/presets/HistoryGraphPresetItem.h
+    src/gui/meters/presets/VfoDisplayPresetItem.cpp
+    src/gui/meters/presets/VfoDisplayPresetItem.h
+    src/gui/meters/presets/ClockPresetItem.cpp
+    src/gui/meters/presets/ClockPresetItem.h
+    src/gui/meters/presets/ContestPresetItem.cpp
+    src/gui/meters/presets/ContestPresetItem.h
+    src/gui/meters/presets/PresetGeometry.h
+    src/gui/meters/MeterDynamics.cpp
+    src/gui/meters/MeterDynamics.h
     src/gui/meters/MeterItem.cpp
     src/gui/meters/ItemGroup.cpp
     src/gui/meters/MeterPoller.cpp
@@ -1863,6 +1931,7 @@ set(GUI_SOURCES
     src/gui/setup/FourO3APage.cpp
     # Parity Task 21 (R-IOS-18): Setup > This Core in a remote window.
     src/gui/setup/ThisCorePage.cpp
+    src/gui/setup/CoresSetupPage.cpp
     src/gui/setup/RfKitPage.cpp
     src/gui/setup/TciLogWindow.cpp
     src/gui/setup/KeyboardSetupPages.cpp
@@ -1902,6 +1971,11 @@ set(GUI_SOURCES
 # --------------------------------------------------------------------------
 # Resources
 # --------------------------------------------------------------------------
+if(APPLE)
+    list(APPEND GUI_SOURCES src/gui/QtCocoaAccessibilityOwnershipGuard.mm)
+    set_source_files_properties(src/gui/QtCocoaAccessibilityOwnershipGuard.mm
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+endif()
 qt_add_resources(RESOURCES resources.qrc)
 
 # R-R3-10 / R-R3-21: the band plans belong to the Core, not the GUI.
@@ -1990,6 +2064,7 @@ if(NEREUSSDR_LTO_AVAILABLE)
         ${MODEL_SOURCES}
         ${CORE_RESOURCES}
     )
+    target_compile_definitions(NereusCore_LTO PUBLIC NEREUS_CORE_STATIC)
     add_library(NereusGui_LTO OBJECT
         ${GUI_SOURCES}
         ${RESOURCES}
@@ -2005,11 +2080,20 @@ if(NEREUSSDR_LTO_AVAILABLE)
     endforeach()
 endif()
 
-# Shared-library plumbing. The source tree has no export annotations, so
-# Windows builds export all symbols from both application-private DLLs.
+# Shared-library plumbing. Core classes crossing the DLL boundary carry
+# explicit import/export annotations. Windows keeps automatic exports for
+# the remaining functions and the application-private GUI DLL.
 foreach(_nereus_shared_target NereusCore NereusSDRLib)
     set_target_properties(${_nereus_shared_target} PROPERTIES
         WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    # MSVC's command-line default emits unreferenced inline COMDATs, which
+    # autoexport turns into import-library members (77,416 Core exports
+    # exceeded LINK's 65,535-member limit in the Windows release build).
+    # Remove those definitions before CMake scans the objects. This option
+    # is ineffective with /Od or /GL; it does not resolve a Debug limit.
+    # https://learn.microsoft.com/en-us/cpp/build/reference/zc-inline-remove-unreferenced-comdat
+    target_compile_options(${_nereus_shared_target} PRIVATE
+        "$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/Zc:inline>")
     if(MINGW)
         target_link_options(${_nereus_shared_target} PRIVATE
             "-Wl,--export-all-symbols")
@@ -2390,6 +2474,9 @@ function(nereus_apply_core_deps target)
 endfunction()
 
 function(nereus_apply_gui_deps target)
+    if(APPLE)
+        target_link_libraries(${target} PUBLIC "-framework Cocoa")
+    endif()
     # Qt6::Widgets and Qt6::GuiPrivate are NOT listed here: both are
     # NereusCore dependencies for now (see the comments in
     # nereus_apply_core_deps()), and NereusGui/NereusGui_LTO see them
@@ -2849,6 +2936,10 @@ if(NEREUS_USE_PCH)
     # compilation. There is no PCH per test and no propagated private or
     # export definitions. CMake's executable POSITION_INDEPENDENT_CODE=ON
     # chooses -fPIE, so an OBJECT donor gets that mode explicitly on Unix.
+    # MSVC clarification: REUSE_FROM implicitly links the donor's
+    # cmake_pch.cxx.obj into each consuming DLL. The normal donor source
+    # object remains build-only; the PCH object is absent from Ninja's
+    # autoexport scan. Keep its COMDAT option aligned with the DLLs.
     set(_nereus_pch_source "${CMAKE_CURRENT_BINARY_DIR}/nereus_shared_pch.cpp")
     file(GENERATE OUTPUT "${_nereus_pch_source}"
         CONTENT "// Build-only translation unit for the shared Qt/STL PCH.\n")
@@ -2864,7 +2955,8 @@ if(NEREUS_USE_PCH)
         set_target_properties(${_pch_target} PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     endforeach()
     if(MSVC)
-        target_compile_options(nereus_library_pch PRIVATE /W3 /Zc:__cplusplus)
+        target_compile_options(nereus_library_pch PRIVATE /W3 /Zc:__cplusplus
+            "$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/Zc:inline>")
     else()
         target_compile_options(nereus_library_pch PRIVATE -Wall -Wextra -Wpedantic)
     endif()
@@ -3145,6 +3237,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             EXCLUDE_FROM_ALL)
     install(FILES packaging/nereusd.conf.sample
             DESTINATION "${CMAKE_INSTALL_DATADIR}/nereusd"
+            COMPONENT nereusd
+            EXCLUDE_FROM_ALL)
+    # Source-stage installers for both ARM stations use the same bounded
+    # artifact cleanup. Ship the helper with every daemon stage so a fresh
+    # install does not depend on a separately provisioned maintenance file.
+    install(PROGRAMS scripts/radxa/prune-core-artifacts.py
+            DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/nereusd"
             COMPONENT nereusd
             EXCLUDE_FROM_ALL)
 endif()

@@ -1,5 +1,5 @@
 #!/bin/sh
-# linuxdeploy places this script at AppRun.wrapped when its Qt hook wraps it.
+# linuxdeploy installs this launcher as AppRun at the AppImage root.
 # Keep the AppImage runtime alive by exec'ing the daemon in this process.
 set -eu
 app_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

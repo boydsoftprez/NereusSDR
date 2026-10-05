@@ -98,6 +98,7 @@
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include <QByteArray>
 #include <QObject>
 #include <QSet>
@@ -118,7 +119,7 @@ struct DeviceAdminResult {
     QString reason;
 };
 
-class StationDevicesFacade final : public QObject {
+class NEREUS_CORE_EXPORT StationDevicesFacade final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString listJson READ listJson NOTIFY devicesStateChanged)
     Q_PROPERTY(quint32 revision READ revision NOTIFY devicesStateChanged)

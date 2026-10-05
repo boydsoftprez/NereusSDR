@@ -5,13 +5,13 @@
     "title": "Audio",
     "where": "station"
   },
-  "coverage": "partial: TX Profile picker and actions need a live profile collection contract; TX Input needs microphone source and source-dependent visibility; Devices, VAX, TCI, and most Advanced controls are desktop-local",
+  "coverage": "partial: TX Input radio microphone selection is a desktop session command (radioMicVersion 2), not a global property; handheld source selection and source-dependent visibility remain unavailable; Devices, VAX, TCI, and most Advanced controls are desktop-local",
   "pages": [
     {
       "id": "audio.txInput",
       "title": "TX Input",
       "where": "mixed",
-      "coverage": "partial: the microphone source, device, buffer and test are each computer's own",
+      "coverage": "partial: desktop microphone selection uses session-scoped tx.setMicSource with radioMicVersion 2; device, buffer and test are computer-local; handheld source selection is unavailable",
       "sections": [
         {
           "title": "PC Mic",
@@ -384,7 +384,46 @@
                   "twoToneFreq2Delay",
                   "twoToneInvert",
                   "twoTonePulsed",
-                  "twoToneDrivePowerSource"
+                  "twoToneDrivePowerSource",
+                  "userDigOut",
+                  "txEqEnabled",
+                  "txEqPreamp",
+                  "txEqBandsJson",
+                  "txEqFreqsJson",
+                  "txEqParaEqData",
+                  "txEqUseLegacy",
+                  "txLevelerOn",
+                  "txLevelerMaxGain",
+                  "txLevelerDecay",
+                  "txAlcMaxGain",
+                  "txAlcDecay",
+                  "phaseRotatorEnabled",
+                  "phaseReverseEnabled",
+                  "phaseRotatorFreqHz",
+                  "phaseRotatorStages",
+                  "cfcEnabled",
+                  "cfcPostEqEnabled",
+                  "cfcPrecompDb",
+                  "cfcPostEqGainDb",
+                  "cfcEqFreqJson",
+                  "cfcCompressionJson",
+                  "cfcPostEqBandGainJson",
+                  "cfcParaEqData",
+                  "cpdrLevelDb",
+                  "cessbOn",
+                  "filterLow",
+                  "filterHigh",
+                  "dexpEnabled",
+                  "dexpDetectorTauMs",
+                  "dexpAttackTimeMs",
+                  "dexpReleaseTimeMs",
+                  "dexpExpansionRatioDb",
+                  "dexpHysteresisRatioDb",
+                  "dexpLookAheadEnabled",
+                  "dexpLookAheadMs",
+                  "dexpLowCutHz",
+                  "dexpHighCutHz",
+                  "dexpSideChannelFilterEnabled"
                 ]
               }
             },
@@ -530,5 +569,5 @@
       "coverageV15": ""
     }
   ],
-  "coverageV15": "partial: Devices, VAX, TCI and Advanced are each computer's own, and TX Input's microphone source, device, buffer and test are the computer's too"
+  "coverageV15": "partial: Devices, VAX, TCI and Advanced are computer-local; desktop TX Input selects its authenticated session source with radioMicVersion 2, while device, buffer and test remain computer-local; handheld source selection is unavailable"
 }

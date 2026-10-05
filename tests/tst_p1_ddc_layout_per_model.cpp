@@ -246,6 +246,9 @@ void TestP1DdcLayoutPerModel::layout_matches_thetis()
     ctx.model         = hm;
     ctx.puresignalRun = r.ps;
     ctx.diversity     = r.div;
+    // This table is the explicitly retained legacy Thetis planner. Movable
+    // requested-owner allocation has independent partner-DDC coverage.
+    ctx.diversityStream = -1;
     ctx.mox           = r.mox;
     ctx.p1AdcCntrl    = kAdc;
 
@@ -322,6 +325,7 @@ void TestP1DdcLayoutPerModel::slices_c_and_d_use_the_pair_slots_only_in_plain_re
         ctx.model = static_cast<HPSDRModel>(model);
         ctx.puresignalRun = st.ps;
         ctx.diversity = st.div;
+        ctx.diversityStream = -1;
         ctx.mox = st.mox;
         std::array<SliceConfig, 5> streams{};
         for (int i = 0; i < 5; ++i) {

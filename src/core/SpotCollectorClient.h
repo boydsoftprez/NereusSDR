@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QUdpSocket>
 #include <QFile>
@@ -43,7 +44,7 @@ namespace NereusSDR {
 // DXLab SpotCollector UDP listener - receives spot push packets in
 // standard "DX de" cluster format on a configurable UDP port (default
 // 9999).
-class SpotCollectorClient : public QObject {
+class NEREUS_CORE_EXPORT SpotCollectorClient : public QObject {
     Q_OBJECT
 
 public:

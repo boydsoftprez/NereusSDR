@@ -1,0 +1,4 @@
+module CSodium {
+    header "sodium.h"
+    export *
+}

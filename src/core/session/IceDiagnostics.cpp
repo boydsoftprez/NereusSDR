@@ -6,6 +6,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 - Include address-lifetime timer directly for Qt 6.4.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-29 - Created for the 5G media-path diagnosis. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-30 - Review fix: the ICE username fragment, a failed ufrag
@@ -18,6 +20,7 @@
 
 #include "core/session/CoreAddresses.h"
 
+#include <QDeadlineTimer>
 #include <QElapsedTimer>
 #include <QHostAddress>
 #include <QLoggingCategory>
@@ -610,7 +613,7 @@ bool isLibraryNoise(const QString& line)
         QStringView message = QStringView(line).mid(juice + 7);
         // "agent.c:1234: " before the message itself.
         static const QRegularExpression source(QStringLiteral("^[A-Za-z0-9_]+\\.c:\\d+: "));
-        const QRegularExpressionMatch at = source.matchView(message);
+        const QRegularExpressionMatch at = source.match(message);
         if (at.hasMatch()) {
             message = message.mid(at.capturedLength());
         }

@@ -3,7 +3,9 @@
 The public site at https://nereussdr.com/, served by Caddy from a DigitalOcean
 droplet.
 
-- `public/` is the site itself: static HTML, CSS, JS and images, no build step.
+- `public/` is the deployable site: static HTML, CSS, JS and images.
+- The user guide and how-to pages are generated from the repository Markdown
+  with `docs/manual/build_preview.py`; edit the manuscripts, then regenerate.
 - `deploy/` is the server side: `Caddyfile` (the web server config) and
   `setup-server.sh` (one-time, re-runnable server setup).
 - `deploy.sh` publishes `public/` to the server with rsync.
@@ -14,9 +16,36 @@ droplet.
 python3 -m http.server 8765 --directory website/public
 ```
 
-Then open http://localhost:8765/. The preview does not send the headers Caddy
+Then open http://localhost:8765/. The user guide is at `/manual/`, and the
+station how-to pages are under `/guides/`. These routes are generated site
+files, not redirects to GitHub. The preview does not send the headers Caddy
 adds in production (including the Content-Security-Policy), so check the live
 site after a deploy as well.
+
+## Build the user guide and how-to pages
+
+Python 3 and `markdown-it-py` are required, as for the existing manual preview.
+Pillow lets the source checker verify the preserved raster captures.
+
+```sh
+python3 docs/manual/build_preview.py --website
+python3 docs/manual/check_manual.py
+python3 docs/manual/test_build_preview.py
+```
+
+The website build renders the manual index and all 20 chapters to
+`public/manual/`, and renders the SBC installation, TX EQ/CFC, upgrade and
+remote-access guides to `public/guides/`. It uses the same Markdown chapters,
+images and manual layout as the local manual preview. Its `manual/source-map.json`
+records each rendered document's source path and hash, and the copied image
+hashes. Generated pages should be committed with their source updates; do not
+edit generated prose directly. Regenerate after a manuscript or manual renderer
+change and before deployment.
+
+Relative operator links point to generated pages on this site. Links to
+repository source, contributor records, release assets and technical references
+keep their appropriate source/download destinations. The build preserves the
+manual's build, capture and mobile-availability qualifications.
 
 ## One-time server setup
 

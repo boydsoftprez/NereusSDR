@@ -23,6 +23,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-04 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//                 Expose the stop settle state for truthful asynchronous
+//                 PureSignal action acknowledgments. NereusSDR-original.
 //   2026-04-29 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
@@ -86,6 +89,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
@@ -191,7 +195,7 @@ class TxChannel;
 //
 // Thread safety: all slots and signals are main-thread only.
 // ---------------------------------------------------------------------------
-class TwoToneController : public QObject
+class NEREUS_CORE_EXPORT TwoToneController : public QObject
 {
     Q_OBJECT
 
@@ -293,6 +297,9 @@ public:
     // own setMox(true) runs the MOX pre-check, so the PC-microphone
     // admission check reads this to recognise two-tone keying.
     bool isActivationInFlight() const noexcept { return m_activationInFlight; }
+    // The active flag remains true until the stop's MOX settle finishes.
+    // Action acknowledgments must wait for this timer before reporting off.
+    bool isDeactivationInFlight() const noexcept { return m_deactivationSettleTimer.isActive(); }
     // R-R3-36: true only while the activation walk's own setMox(true) call
     // runs, so the MOX pre-check can tell two-tone's key from any other
     // press. Unlike isActivationInFlight() it is false through the MOX

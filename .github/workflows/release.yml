@@ -104,7 +104,7 @@ jobs:
         run: |
           if [[ -f .github/release-notes-template.md ]]; then
             echo "" >> release_notes.md
-            cat .github/release-notes-template.md >> release_notes.md
+            sed "s/@VERSION@/${{ steps.meta.outputs.version }}/g" .github/release-notes-template.md >> release_notes.md
           fi
 
       - name: Upload release notes artifact
@@ -143,7 +143,7 @@ jobs:
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-pulseaudio gstreamer1.0-gl \
             libgstreamer-gl1.0-0 libgstreamer-plugins-base1.0-0 \
-            libfuse2 file desktop-file-utils \
+            libfuse2 file desktop-file-utils xvfb \
             libfftw3-dev imagemagick \
             libasound2-dev libjack-jackd2-dev \
             libpipewire-0.3-dev \
@@ -197,6 +197,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_INSTALL_LIBDIR=lib \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             $CMAKE_EXTRA
@@ -319,6 +320,10 @@ jobs:
             find AppDir build -name 'libNereusSDRLib.so*' >&2
             exit 1
           fi
+          if [ ! -f AppDir/usr/lib/libNereusCore.so ]; then
+            echo "ERROR: libNereusCore.so missing from AppDir/usr/lib after cmake --install" >&2
+            exit 1
+          fi
           # R-R3-36: the microphone capture helper installs beside NereusSDR
           # in the default component; linuxdeploy then resolves its libraries
           # along with the rest of AppDir/usr/bin.
@@ -343,6 +348,7 @@ jobs:
             echo "ERROR: libNereusSDRLib.so vanished from AppDir during linuxdeploy" >&2
             exit 1
           fi
+          test -f AppDir/usr/lib/libNereusCore.so
           # R-R3-39: WDSP links libfftw3_threads (FFTW's thread-safe
           # planner); linuxdeploy traces it from the NEEDED entries like
           # libfftw3. Assert it, as above.
@@ -354,8 +360,19 @@ jobs:
           chmod +x "$LDAI_OUTPUT"
           "./$LDAI_OUTPUT" --appimage-extract >/dev/null
           test -x squashfs-root/usr/bin/nereusd
-          cmp packaging/linux/AppRun squashfs-root/AppRun.wrapped
-          QT_QPA_PLATFORM=offscreen "./$LDAI_OUTPUT" --nereus-station --help > station-help.txt
+          test -f squashfs-root/usr/lib/libNereusSDRLib.so
+          test -f squashfs-root/usr/lib/libNereusCore.so
+          cmp packaging/linux/AppRun squashfs-root/AppRun
+          # Exercise the package through AppRun without SDK/build-tree paths.
+          # linuxdeploy's Qt plugin bundles xcb by default, so use that real
+          # desktop platform on Xvfb rather than an unbundled offscreen plugin.
+          xvfb-run -a env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH \
+            -u QT_QPA_PLATFORM_PLUGIN_PATH QT_QPA_PLATFORM=xcb \
+            "./$LDAI_OUTPUT" --version > desktop-version.txt
+          VERSION="${{ needs.prepare.outputs.version }}"
+          grep -Fxq "NereusSDR ${VERSION%%-*}" desktop-version.txt
+          env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH \
+            "./$LDAI_OUTPUT" --nereus-station --help > station-help.txt
           grep -q 'NereusSDR headless daemon' station-help.txt
 
       - name: Upload AppImage artifact
@@ -445,6 +462,114 @@ jobs:
           path: nereusd_*.deb
           retention-days: 7
 
+  build-deb-trixie:
+    needs: prepare
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_ref }}
+          persist-credentials: false
+      - name: Build and verify Debian 13 arm64 Core package
+        shell: bash
+        env:
+          NEREUS_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          docker pull --platform linux/arm64 rust:1.94.1-trixie
+          builder=$(docker image inspect --format '{{index .RepoDigests 0}}' rust:1.94.1-trixie)
+          [[ "$builder" =~ @sha256:[0-9a-f]{64}$ ]]
+          printf '%s\n' "$builder" > station-builder-image.txt
+          docker run --rm --platform linux/arm64 \
+            -e NEREUS_VERSION \
+            -v "$PWD:/workspace" -w /workspace \
+            "$builder" /bin/bash packaging/station-image/build-trixie-deb.sh
+          package="station-output/nereusd_${NEREUS_VERSION}_arm64_trixie.deb"
+          bash packaging/station-image/verify-package.sh "$package" "$NEREUS_VERSION"
+      - name: Install and smoke test in a fresh Debian 13 runtime
+        shell: bash
+        env:
+          NEREUS_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker pull --platform linux/arm64 debian:trixie-slim
+          runtime=$(docker image inspect --format '{{index .RepoDigests 0}}' debian:trixie-slim)
+          [[ "$runtime" =~ @sha256:[0-9a-f]{64}$ ]]
+          printf '%s\n' "$runtime" > station-runtime-image.txt
+          # Only the package is mounted: build dependencies and staged libraries
+          # cannot mask missing runtime dependencies or installed RUNPATH errors.
+          docker run --rm -i --platform linux/arm64 \
+            -e NEREUS_VERSION -e DEBIAN_FRONTEND=noninteractive \
+            -v "$PWD/station-output:/packages:ro" \
+          "$runtime" /bin/bash -s <<'SH'
+          set -euo pipefail
+          # shellcheck source=/dev/null
+          . /etc/os-release
+          test "$ID" = debian && test "$VERSION_CODENAME" = trixie
+          test "$(dpkg --print-architecture)" = arm64
+          test "$(uname -m)" = aarch64
+          # Block service starts while exercising the package maintainer scripts.
+          printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d
+          chmod 0755 /usr/sbin/policy-rc.d
+          apt-get update
+          apt-get install -y --no-install-recommends "/packages/nereusd_${NEREUS_VERSION}_arm64_trixie.deb"
+          test "$(dpkg-query -W -f='${Status}' nereusd)" = 'install ok installed'
+          test "$(dpkg-query -W -f='${Version}' nereusd)" = "$NEREUS_VERSION"
+          env -u LD_LIBRARY_PATH ldd /usr/bin/nereusd > /tmp/nereusd-ldd.txt
+          cat /tmp/nereusd-ldd.txt
+          if grep -q 'not found' /tmp/nereusd-ldd.txt; then
+            exit 1
+          fi
+          env -u LD_LIBRARY_PATH timeout 30s /usr/bin/nereusd --help > /tmp/nereusd-help.txt
+          grep -q 'NereusSDR headless daemon' /tmp/nereusd-help.txt
+          env -u LD_LIBRARY_PATH timeout 30s /usr/bin/nereusd --version > /tmp/nereusd-version.txt
+          cat /tmp/nereusd-version.txt
+          # CMake owns the base product version; RC suffixes identify the package.
+          grep -Fxq "nereusd ${NEREUS_VERSION%%-*}" /tmp/nereusd-version.txt
+          SH
+      - name: Record Trixie package provenance
+        shell: bash
+        env:
+          NEREUS_VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_ref }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          mkdir -p station-provenance
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          version = os.environ["NEREUS_VERSION"]
+          package = Path(f"station-output/nereusd_{version}_arm64_trixie.deb")
+          manifest = {
+              "source_sha": os.environ["SOURCE_SHA"],
+              "version": version,
+              "os": "Debian 13 (trixie), arm64",
+              "builder_image": Path("station-builder-image.txt").read_text().strip(),
+              "runtime_image": Path("station-runtime-image.txt").read_text().strip(),
+              "cpu_baseline": "ARMv8-A (Raspberry Pi 4 Cortex-A72)",
+              "package": package.name,
+              "package_sha256": hashlib.sha256(package.read_bytes()).hexdigest(),
+              "dfnr": json.loads(Path("station-output/dfnr-provenance.json").read_text()),
+          }
+          Path(f"station-provenance/nereusd_{version}_arm64_trixie.provenance.json").write_text(
+              json.dumps(manifest, indent=2) + "\n")
+          PY
+      - name: Upload Trixie package and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-arm64-trixie
+          path: |
+            station-output/nereusd_${{ needs.prepare.outputs.version }}_arm64_trixie.deb
+            station-provenance/nereusd_${{ needs.prepare.outputs.version }}_arm64_trixie.provenance.json
+          if-no-files-found: error
+          retention-days: 7
+
   build-macos:
     needs: prepare
     strategy:
@@ -465,7 +590,7 @@ jobs:
           - runner: macos-15
             arch: x86_64
             dmg_suffix: macOS-intel
-            deployment_target: "11.0"
+            deployment_target: "12.0"
     runs-on: ${{ matrix.runner }}
     # Capture the Apple Developer ID secret into a job-level env var so
     # step-level `if:` guards can evaluate it. GitHub Actions forbids
@@ -490,7 +615,7 @@ jobs:
         # or a dependency of something else in this list) rather than
         # declaring the dependency this build actually has, the same way
         # fftw already is declared.
-        run: brew install qt@6 ninja create-dmg fftw openssl@3 ccache autoconf automake libtool wget
+        run: brew install ninja create-dmg fftw openssl@3 ccache autoconf automake libtool wget
 
       - name: Install non-Qt brew packages (x86_64 cross-compile)
         if: matrix.arch == 'x86_64'
@@ -499,16 +624,25 @@ jobs:
         # default macOS runner image.
         run: brew install ninja create-dmg ccache autoconf automake libtool wget
 
-      - name: Install Qt 6.8 for x86_64 macOS via aqtinstall
-        if: matrix.arch == 'x86_64'
+      - name: Install pinned Qt 6.8.3 for macOS via aqtinstall
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.*'
+          version: '6.8.3'
           host: 'mac'
           target: 'desktop'
           arch: 'clang_64'
           modules: 'qtmultimedia qtshadertools qtwebsockets'
           cache: true
+
+      - name: Verify Qt SDK architecture
+        run: |
+          set -euo pipefail
+          # clang_64 is the official macOS SDK package; verify its actual
+          # framework and Cocoa plugin support this row before compiling.
+          test -f "$QT_ROOT_DIR/lib/cmake/Qt6/Qt6Config.cmake"
+          test -x "$QT_ROOT_DIR/bin/macdeployqt"
+          lipo "$QT_ROOT_DIR/lib/QtCore.framework/Versions/A/QtCore" -verify_arch "${{ matrix.arch }}"
+          lipo "$QT_ROOT_DIR/plugins/platforms/libqcocoa.dylib" -verify_arch "${{ matrix.arch }}"
 
       - name: Build FFTW from source for x86_64 (both precisions)
         if: matrix.arch == 'x86_64'
@@ -532,8 +666,9 @@ jobs:
           make install
           make distclean
 
-          # Pass 2 — single precision (libfftw3f)
-          ./configure --enable-single --enable-shared --disable-doc \
+          # Pass 2 — single precision (libfftw3f), with libfftw3f_threads:
+          # display FFTs require fftwf_make_planner_thread_safe.
+          ./configure --enable-single --enable-shared --enable-threads --disable-doc \
             --prefix="$PREFIX" CFLAGS="$CFLAGS" --host=x86_64-apple-darwin
           make -j$(sysctl -n hw.ncpu)
           make install
@@ -545,6 +680,8 @@ jobs:
           test -f "$PREFIX/lib/libfftw3.dylib"         || { echo "::error::libfftw3 (double) not installed"; exit 1; }
           test -f "$PREFIX/lib/libfftw3_threads.dylib" || { echo "::error::libfftw3_threads (double) not installed"; exit 1; }
           test -f "$PREFIX/lib/libfftw3f.dylib"        || { echo "::error::libfftw3f (single) not installed"; exit 1; }
+          test -f "$PREFIX/lib/libfftw3f_threads.dylib" || { echo "::error::libfftw3f_threads (single) not installed"; exit 1; }
+          lipo "$PREFIX/lib/libfftw3f_threads.dylib" -verify_arch x86_64
 
       - name: Build OpenSSL from source for x86_64
         if: matrix.arch == 'x86_64'
@@ -667,11 +804,11 @@ jobs:
             # target_link_libraries, not target_link_directories — brew's
             # /opt/homebrew/lib is in the default linker path on the arm64
             # row, our cross-compile prefix is not). Qt is installed by
-            # jurplel/install-qt-action and exposed via Qt6_DIR env.
+            # jurplel/install-qt-action and selected explicitly below.
             FFTW_PREFIX="${{ github.workspace }}/fftw-x86_64"
             export PKG_CONFIG_PATH="$FFTW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
             export LDFLAGS="-L$FFTW_PREFIX/lib $LDFLAGS"
-            CMAKE_PREFIX_PATH_VAL="$FFTW_PREFIX"
+            CMAKE_PREFIX_PATH_VAL="$QT_ROOT_DIR;$FFTW_PREFIX"
             # OpenSSL (fix round 3, Important B): same cross-compile-
             # from-source story as FFTW above, for the same reason --
             # this row's Homebrew (arm64) has no x86_64 openssl@3 slice.
@@ -682,19 +819,20 @@ jobs:
             # native-arm64 configure of the same working directory).
             EXTRA_CMAKE_ARGS="-DOPENSSL_ROOT_DIR=${{ github.workspace }}/openssl-x86_64"
           else
-            # Native path: brew supplies both Qt and FFTW under the brew
-            # prefix (/opt/homebrew on Apple Silicon). No env-var dance
+            # Native path: brew supplies FFTW under the brew prefix
+            # (/opt/homebrew on Apple Silicon). No env-var dance
             # needed because brew's lib dir is in the default search path,
             # and openssl@3 is not keg-only (fix round 3 correction; see
             # CMakeLists.txt's find_package(OpenSSL) comment) so it needs
             # no OPENSSL_ROOT_DIR hint either.
-            CMAKE_PREFIX_PATH_VAL="$(brew --prefix)"
+            CMAKE_PREFIX_PATH_VAL="$QT_ROOT_DIR;$(brew --prefix)"
             EXTRA_CMAKE_ARGS=""
           fi
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="${{ matrix.deployment_target }}" \
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
+            -DQt6_DIR="$QT_ROOT_DIR/lib/cmake/Qt6" \
             -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH_VAL" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
@@ -709,14 +847,9 @@ jobs:
 
       - name: Bundle Qt frameworks
         run: |
-          # macdeployqt comes from brew on the arm64 row, from aqtinstall on
-          # the x86_64 row. jurplel/install-qt-action exposes the install via
-          # QT_ROOT_DIR.
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            MACDEPLOYQT="$QT_ROOT_DIR/bin/macdeployqt"
-          else
-            MACDEPLOYQT="$(brew --prefix qt@6)/bin/macdeployqt"
-          fi
+          # Bundle with the same pinned SDK selected at configure time.
+          # jurplel/install-qt-action exposes it via QT_ROOT_DIR on both rows.
+          MACDEPLOYQT="$QT_ROOT_DIR/bin/macdeployqt"
           # R-R3-36: the microphone capture helper in Contents/Helpers links
           # Qt directly, so macdeployqt must rewrite its references too.
           HELPER="build/NereusSDR.app/Contents/Helpers/nereus-audio-capture"
@@ -863,6 +996,34 @@ jobs:
           fi
           codesign --verify --verbose=2 build/NereusSDR.app
           codesign --verify --strict --verbose=2 "$STATION"
+
+      - name: Check signed app startup with packaged Cocoa runtime
+        shell: bash
+        env:
+          EXPECTED_PRODUCT_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          python3 - <<'PYCODE'
+          import os
+          from pathlib import Path
+          import subprocess
+
+          executable = Path("build/NereusSDR.app/Contents/MacOS/NereusSDR").resolve()
+          environment = dict(os.environ)
+          # The shipped bundle must supply its own Qt frameworks and plugin.
+          for name in ("QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH",
+                       "DYLD_FRAMEWORK_PATH", "DYLD_LIBRARY_PATH"):
+              environment.pop(name, None)
+          environment["QT_QPA_PLATFORM"] = "cocoa"
+          result = subprocess.run([str(executable), "--version"], env=environment,
+                                  text=True, capture_output=True, timeout=30)
+          if result.returncode:
+              print(result.stderr, end="")
+              raise SystemExit(f"Packaged Cocoa startup failed: exit {result.returncode}")
+          print(result.stdout, end="")
+          base_version = os.environ["EXPECTED_PRODUCT_VERSION"].split("-", 1)[0]
+          if result.stdout.strip() != f"NereusSDR {base_version}":
+              raise SystemExit("Packaged Cocoa app reports an unexpected product version")
+          PYCODE
 
       - name: Build HAL plugin
         run: |
@@ -1085,14 +1246,68 @@ jobs:
           # linking the wrong copy silently.
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DNEREUS_GPU_SPECTRUM=ON \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md \
             -DOPENSSL_ROOT_DIR="$(pwd)/build/vcpkg_installed/x64-windows-static-md"
 
       - name: Build
+        id: windows_build
         shell: bash
         run: cmake --build build -j${NUMBER_OF_PROCESSORS}
+
+      - name: Record Windows export counts
+        if: ${{ always() && (steps.windows_build.outcome == 'success' || steps.windows_build.outcome == 'failure') }}
+        shell: pwsh
+        run: |
+          foreach ($target in @('NereusCore', 'NereusSDRLib')) {
+            $definition = "build/CMakeFiles/$target.dir/exports.def"
+            if (Test-Path $definition) {
+              $exports = @(Get-Content $definition | Where-Object { $_.Trim() -and $_.Trim() -ne 'EXPORTS' })
+              $dataExports = @($exports | Where-Object { $_ -match '\sDATA\s*$' })
+              Write-Output "Windows exports ${target}: $($exports.Count) total; $($dataExports.Count) DATA"
+              Get-FileHash -Algorithm SHA256 $definition | Format-List
+            }
+          }
+
+      # Keep failed-link evidence on the runner before it is discarded. This
+      # does not change the build result or the signed release asset inventory.
+      - name: Record failed Windows link diagnostics
+        if: ${{ failure() && steps.windows_build.outcome == 'failure' }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path windows-link-diagnostics | Out-Null
+          Select-String -Path build/CMakeCache.txt -Pattern '^CMAKE_(BUILD_TYPE|CXX_COMPILER|MSVC_RUNTIME_LIBRARY|CXX_FLAGS|C_FLAGS)' |
+            ForEach-Object { $_.Line } |
+            Set-Content windows-link-diagnostics/cmake-flags.txt
+          Get-ChildItem build/CMakeFiles/nereus_library_pch.dir -Recurse -Filter cmake_pch.cxx.obj |
+            ForEach-Object {
+              & dumpbin /symbols $_.FullName > windows-link-diagnostics/pch-symbols.txt
+              & dumpbin /directives $_.FullName > windows-link-diagnostics/pch-directives.txt
+            }
+          if (Test-Path build/NereusCore.lib) {
+            & dumpbin /linkermember:1 build/NereusCore.lib > windows-link-diagnostics/core-import-members.txt
+          }
+
+      - name: Upload failed Windows link diagnostics
+        if: ${{ failure() && steps.windows_build.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-link-diagnostics
+          path: |
+            windows-link-diagnostics/
+            build/CMakeFiles/NereusCore.dir/exports.def
+            build/CMakeFiles/NereusCore.dir/exports.def.objs
+            build/CMakeFiles/NereusCore.rsp
+            build/CMakeFiles/NereusSDRLib.dir/exports.def
+            build/CMakeFiles/NereusSDRLib.dir/exports.def.objs
+            build/CMakeFiles/NereusSDRLib.rsp
+            build/CMakeFiles/nereus_library_pch.dir/**/cmake_pch.cxx.obj
+            build/compile_commands.json
+            build/CMakeFiles/rules.ninja
+            build/build.ninja
+          retention-days: 7
 
       - name: Test
         working-directory: build
@@ -1255,7 +1470,7 @@ jobs:
 
   sign-and-publish:
     if: ${{ !inputs.verify_only }}
-    needs: [prepare, build-linux, build-deb, build-macos, build-windows]
+    needs: [prepare, build-linux, build-deb, build-deb-trixie, build-macos, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -1279,6 +1494,7 @@ jobs:
             -name '*.pkg' -o \
             -name '*.zip' -o \
             -name '*.deb' -o \
+            -name '*_arm64_trixie.provenance.json' -o \
             -name '*-setup.exe' -o \
             -name 'release_notes.md' \
           \) -exec cp {} artifacts/ \;
@@ -1293,16 +1509,53 @@ jobs:
             "${TAG}" > "artifacts/NereusSDR-${VERSION}-source.tar.gz"
 
       - name: Fetch FFTW3 corresponding source (GPLv2 §3 / GPLv3 §6)
-        # The Windows installer + portable ZIP bundle a prebuilt
-        # libfftw3f-3.dll. FFTW is GPLv2-or-later, so the binary
-        # distribution must be accompanied by the corresponding source on
-        # the same medium (a GitHub Release IS the medium). Ship the exact
-        # upstream source archive used to build the bundled DLL alongside
-        # the installer artifacts so recipients receive both atomically.
+        # Keep versioned upstream sources plus Ubuntu patches/build recipes
+        # beside the bundled DLLs, dylibs and AppImage shared libraries.
+        # The existing tar.gz checksum/sign/upload steps cover these files.
         run: |
-          curl -fsSL "https://fftw.org/pub/fftw/fftw-3.3.5.tar.gz" \
-            -o "artifacts/fftw-3.3.5.tar.gz"
-          ls -la artifacts/fftw-3.3.5.tar.gz
+          set -euo pipefail
+          for VERSION in 3.3.5 3.3.8 3.3.10 3.3.11; do
+            curl -fsSL "https://fftw.org/pub/fftw/fftw-${VERSION}.tar.gz" \
+              -o "artifacts/fftw-${VERSION}.tar.gz"
+          done
+          (cd artifacts && sha256sum -c - <<'CHECKSUMS'
+          8ecfe1b04732ec3f5b7d279fdb8efcad536d555f9d1e8fabd027037d45ea8bcf  fftw-3.3.5.tar.gz
+          6113262f6e92c5bd474f2875fa1b01054c4ad5040f6b0da7c03c98821d9ae303  fftw-3.3.8.tar.gz
+          56c932549852cddcfafdab3820b0200c7742675be92179e59e6215b340e26467  fftw-3.3.10.tar.gz
+          5630c24cdeb33b131612f7eb4b1a9934234754f9f388ff8617458d0be6f239a1  fftw-3.3.11.tar.gz
+          CHECKSUMS
+          )
+          SOURCE_DIR="$(mktemp -d)"
+          trap 'rm -rf "$SOURCE_DIR"' EXIT
+          mkdir -p "$SOURCE_DIR/fftw-ubuntu-source"
+          cd "$SOURCE_DIR/fftw-ubuntu-source"
+          UBUNTU_POOL="https://archive.ubuntu.com/ubuntu/pool/main/f/fftw3"
+          for PACKAGE_VERSION in 3.3.8-2ubuntu8 3.3.10-1ubuntu3; do
+            DSC="fftw3_${PACKAGE_VERSION}.dsc"
+            curl -fsSL "$UBUNTU_POOL/$DSC" -o "$DSC"
+            grep -Fx "Version: $PACKAGE_VERSION" "$DSC"
+            awk '/^Checksums-Sha256:/ { hashes = 1; next }
+                 hashes && /^ / { print $1 "  " $3; next }
+                 hashes { exit }' "$DSC" > "$DSC.sha256"
+            test "$(wc -l < "$DSC.sha256")" -eq 2
+            printf '%s\n' "fftw3_${PACKAGE_VERSION%%-*}.orig.tar.gz" \
+              "fftw3_${PACKAGE_VERSION}.debian.tar.xz" | LC_ALL=C sort > expected-files.txt
+            awk '{ print $2 }' "$DSC.sha256" | LC_ALL=C sort > actual-files.txt
+            cmp expected-files.txt actual-files.txt
+            while read -r HASH FILE; do
+              case "$FILE" in
+                fftw3_${PACKAGE_VERSION%%-*}.orig.tar.gz|fftw3_${PACKAGE_VERSION}.debian.tar.xz) ;;
+                *) echo "Unexpected FFTW source filename: $FILE" >&2; exit 1 ;;
+              esac
+              curl -fsSL "$UBUNTU_POOL/$FILE" -o "$FILE"
+            done < "$DSC.sha256"
+            sha256sum -c "$DSC.sha256"
+          done
+          rm expected-files.txt actual-files.txt
+          # Ubuntu's .dsc preserves its own signature and SHA256 metadata;
+          # the release signs the containing archive via the existing flow.
+          tar czf "$GITHUB_WORKSPACE/artifacts/fftw-ubuntu-source.tar.gz" \
+            -C "$SOURCE_DIR" fftw-ubuntu-source
 
       - name: Generate SHA256SUMS
         working-directory: artifacts
@@ -1326,7 +1579,7 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         working-directory: artifacts
         run: |
-          for f in *.AppImage *.deb *.dmg *.pkg *.zip *.exe *.tar.gz SHA256SUMS.txt; do
+          for f in *.AppImage *.deb *.dmg *.pkg *.zip *.exe *.tar.gz *_arm64_trixie.provenance.json SHA256SUMS.txt; do
             [ -f "$f" ] || continue
             gpg --batch --yes --pinentry-mode loopback \
               --passphrase "$GPG_PASSPHRASE" \
@@ -1353,6 +1606,7 @@ jobs:
             $PRERELEASE_FLAG \
             artifacts/*.AppImage \
             artifacts/*.deb \
+            artifacts/*_arm64_trixie.provenance.json \
             artifacts/*.dmg \
             artifacts/*.pkg \
             artifacts/*.zip \

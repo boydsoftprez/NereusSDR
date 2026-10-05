@@ -120,6 +120,7 @@
 //               Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include <optional>
 #include <QByteArray>
 #include <QElapsedTimer>
@@ -137,7 +138,7 @@ namespace NereusSDR {
 
 class RadioModel;
 
-class TransmitState final : public QObject {
+class NEREUS_CORE_EXPORT TransmitState final : public QObject {
     Q_OBJECT
     // The wire's order (the plan's Task 39 interface). Do not reorder.
     Q_PROPERTY(bool keyed READ keyed NOTIFY stateChanged)

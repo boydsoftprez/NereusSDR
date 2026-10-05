@@ -1,0 +1,139 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>16. Spots and reporters | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/16-spots-reporters.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html" aria-current=page>16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="16-spots-and-reporters">16. Spots and reporters</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#set-the-identity-before-connecting">Set the identity before connecting</a></li><li><a href="#connect-the-source-that-supplies-the-spot">Connect the source that supplies the spot</a></li><li><a href="#read-filter-and-tune-from-spot-list">Read, filter and tune from Spot List</a></li><li><a href="#control-the-panadapter-spot-labels">Control the panadapter spot labels</a></li><li><a href="#source-specific-actions-and-scope">Source-specific actions and scope</a></li></ol></details>
+<p>Spot Hub joins cluster spots, digital decodes and reporter activity into the panadapter and a shared spot list. A callsign/grid identity is used by the services that sign in or publish reception reports. Spot source connections and the stored spot list belong to the Core; the way labels look on a particular band display is local to that computer or phone.</p>
+<p>On desktop, open <strong>Tools &gt; Spot Hub</strong> or press <strong>Ctrl+Shift+S</strong>. The modeless window has <strong>Settings</strong>, one tab for each source, <strong>Spot List</strong>, and <strong>Display</strong>. On iPhone or iPad, open <strong>Tools &gt; Spot Hub</strong>. Its page links to the Core's Spot List, Core source pages, Core identity, and a phone-local Display page. A phone can control a supported Core source while away from the Core computer; <strong>WSJT-X</strong> and <strong>SpotCollector</strong> are different because their UDP listeners run on each computer.</p>
+<h2 id="set-the-identity-before-connecting">Set the identity before connecting</h2>
+<p>On desktop select <strong>Settings</strong>. Enter <strong>Callsign</strong> and <strong>Grid Square</strong>, then select <strong>Save &amp; Propagate</strong>. Callsigns and grids are trimmed and uppercased. The callsign must contain 3 to 12 characters; the Maidenhead grid must be 4 or 6 characters. A grid of another length is rejected, and the red status text explains the rejection. The optional <strong>FreeDV Status Message</strong> is limited to 200 characters and appears with your FreeDV Reporter station. Select <strong>Save &amp; Propagate</strong> again after any edit. The summary below the button shows the saved identity and time, and <strong>Saved</strong> flashes briefly.</p>
+<p>The button stores the identity in the Core's settings, updates the open Cluster, RBN and PSK Reporter fields, and updates connected reporter clients without requiring a reconnect. The identity is station-wide. Before changing it on a shared Core, coordinate with other operators because sources they are using will also publish or sign in with the new values.</p>
+<p>On the phone, <strong>Tools &gt; Spot Hub &gt; Settings</strong> edits the Core's <strong>Callsign</strong> and <strong>Grid square</strong>. The phone sends each value when it is committed; the current value is read from Core settings. The page says when the Core is disconnected or refuses a write. Source pages can override the callsign for that source, and PSK Reporter also has its own grid field. Those overrides do not replace the shared identity.</p>
+<p>Use a licensed station callsign and the operating position's actual Maidenhead locator. A callsign alone is not enough for PSK Reporter. FreeDV Reporter also needs the locator for distance and heading calculations. For its live station list, status message, and operator-directed QSY requests, see <a href="/manual/15-rade-freedv.html">Chapter 15</a>.</p>
+<p><a href="/manual/images/desktop-spot-hub-original.png"><img src="/manual/images/desktop-spot-hub-original.png" alt="Desktop Spot Hub Settings page with station identity fields and Save and Propagate" /></a></p>
+<p><em>Spot Hub identity is configured before starting a feed. Callsign and grid are blank in this desktop development capture; Save and Propagate has not been used. Do not treat an open Settings window as a connected source.</em></p>
+<h2 id="connect-the-source-that-supplies-the-spot">Connect the source that supplies the spot</h2>
+<p>Each source owns its own connection state. A green <strong>Connected</strong> or <strong>Listening</strong> status means the client/listener has started; it does not guarantee that incoming spots match the current band or list filters. The desktop's <strong>Auto-Connect</strong> and <strong>Auto-Start</strong> switches persist and apply on later Core starts. They do not start a source immediately. Use the adjacent <strong>Connect</strong> or <strong>Start</strong> button for the current session. To stop, use <strong>Disconnect</strong> or <strong>Stop</strong>. Read the status label and the source console after each action. On the phone, source pages show a state dot, Core status text, <strong>Connect</strong> or <strong>Disconnect</strong>, editable Core settings, and a rolling console where that source has one.</p>
+<table>
+<thead>
+<tr>
+<th>Spot Hub tab</th>
+<th>What to configure and start</th>
+<th>What a good readback looks like</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Cluster</strong></td>
+<td><strong>Server</strong> defaults to <code>dxc.nc7j.com</code>; <strong>Port</strong> defaults to <code>7300</code>; <strong>Callsign</strong> defaults from the saved identity. Enter the cluster hostname/port supplied by its operator and the callsign you want to log in with. Select <strong>Connect</strong>. Use <strong>Disconnect</strong> to end the session.</td>
+<td><strong>Connected</strong>, the cluster's welcome/feed lines in <strong>Cluster Console</strong>, and new rows labelled <strong>Cluster</strong> in Spot List. A missing server or callsign leaves the client disconnected and reports that both are required.</td>
+</tr>
+<tr>
+<td><strong>RBN</strong></td>
+<td><strong>Server</strong> defaults to <code>telnet.reversebeacon.net</code>; <strong>Port</strong> defaults to <code>7000</code>; <strong>Callsign</strong> comes from the saved identity. Select <strong>Connect</strong>. <strong>Rate Limit</strong> appears in the old UI/settings, but it is explicitly unbuilt in this release and has no effect.</td>
+<td><strong>Connected</strong>, RBN text in <strong>RBN Console</strong>, and new <strong>RBN</strong> rows. The cluster command field and <strong>Send</strong> are available only after connection. Do not type a command unless you know the server's own command syntax.</td>
+</tr>
+<tr>
+<td><strong>WSJT-X</strong></td>
+<td>Set <strong>Address</strong> and <strong>Port</strong>, then select <strong>Start</strong>. Defaults are multicast address <code>224.0.0.1</code> and UDP port <code>2237</code>; <code>0.0.0.0</code> is also shown as an any-address example. In WSJT-X, set the outgoing UDP destination to the matching computer/address and port. To stop the local listener, select <strong>Stop</strong>.</td>
+<td>Status reads <strong>Listening on address:port</strong>. When WSJT-X sends decodes, they appear in <strong>WSJT-X Decodes</strong> and as <strong>WSJT-X</strong> rows. <strong>CQ</strong>, <strong>CQ POTA</strong>, and <strong>Calling Me</strong> checkboxes classify/filter input but are unbuilt in this release and must not be used as available controls. The source's color swatches and <strong>Spot Life</strong> slider are implemented.</td>
+</tr>
+<tr>
+<td><strong>SpotCollector</strong></td>
+<td>Set <strong>UDP Port</strong> (default <code>9999</code>), then select <strong>Start</strong>. Configure DXLab SpotCollector to send its UDP broadcasts to this computer and port. Select <strong>Stop</strong> to close the listener.</td>
+<td><strong>Listening on port 9999</strong> (or your selected port), raw <code>DX de ...</code> lines in <strong>SpotCollector Spots</strong>, and new rows. Rows normally show source <strong>SpotCollector</strong>; SpotCollector lines marked with an RBN skimmer suffix/prefix can be labelled <strong>RBN</strong>.</td>
+</tr>
+<tr>
+<td><strong>POTA</strong></td>
+<td><strong>Server</strong> is <code>api.pota.app</code> and is read-only. Set <strong>Poll Interval</strong> from 15 to 300 seconds; default is 30 seconds. Select <strong>Start</strong> to poll or <strong>Stop</strong> to stop. The <strong>Auto-Start</strong> switch restores polling when the Core starts.</td>
+<td>Status reads <strong>Polling api.pota.app</strong>. New activations appear in <strong>POTA Activations</strong> and as <strong>POTA</strong> rows. If the status says polling but the list does not change, first check the <strong>POT</strong> source pill and the Display source visibility setting.</td>
+</tr>
+<tr>
+<td><strong>FreeDV</strong></td>
+<td>The Core connects to <code>qso.freedv.org</code> over WebSocket. First save callsign and grid in <strong>Settings</strong>, then select <strong>Start</strong>. <strong>Auto-Start</strong> restores the connection on a later Core start.</td>
+<td>Status changes to <strong>Connected</strong> and the console receives service events. FreeDV reception reports and stations are also shown in <strong>Tools &gt; FreeDV Reporter</strong>; see <a href="/manual/15-rade-freedv.html">Chapter 15</a>. The Spot Hub feed is not a FreeDV modem or decoder.</td>
+</tr>
+<tr>
+<td><strong>PSK Reporter</strong></td>
+<td>Enter <strong>Callsign</strong> and <strong>Grid</strong>, then select <strong>Start</strong>. Defaults are the saved PSK identity, falling back to the shared identity. The client sends IPFIX reports to <code>report.pskreporter.info:4739</code> over UDP. <strong>Auto-Start</strong> restores the five-minute reporting timer on a later Core start. Select <strong>Stop</strong> to disarm the timer.</td>
+<td>Status reads <strong>Auto-send every 5 minutes</strong>; <strong>PSK Reporter Activity</strong> records send activity. Eligible receiver-decode records supplied to the Core may be queued while reporting is active. The public PSK Reporter service does not send a live spots feed back to the client; this tab reports outgoing activity, not received spots.</td>
+</tr>
+</tbody>
+</table>
+<p>On the phone, the Core can connect <strong>Cluster</strong>, <strong>RBN</strong>, <strong>POTA</strong>, and <strong>PSK Reporter</strong>. These source pages use the same saved endpoints and identity values. Cluster and RBN have a <strong>Command</strong> field and <strong>Send</strong> button; a command is sent to that service and echoed into the Core console. POTA exposes <strong>Poll every</strong> in seconds. PSK Reporter exposes callsign/grid and the auto-start setting. The <strong>WSJT-X</strong> and <strong>SpotCollector</strong> rows explain that those listeners do not run from the Core for this app; use the computer that owns their UDP listener. FreeDV has its own implemented Core reporter page. Open <strong>Spot Hub &gt; FreeDV</strong> and choose <strong>Connect</strong>. Check the header for the connected state and the console for the service response. <strong>Disconnect</strong> stops that Core reporter connection. Under <strong>At the Core</strong>, <strong>Hide my station from the dashboard</strong> changes the station's reporter visibility and <strong>Auto-start</strong> controls starting when the Core starts. Under <strong>On this phone</strong>, <strong>Distances in miles</strong> and <strong>Frequencies in kHz</strong> change only this handset's displayed units. Read a disabled reason or refusal beside the request; a phone-local unit change cannot repair a refused Core connection. The separate <strong>Tools &gt; FreeDV Reporter</strong> is the station-list/QSY view described in <a href="/manual/15-rade-freedv.html">chapter 15</a>.</p>
+<h3 id="troubleshoot-a-source-that-will-not-start-or-has-no-rows">Troubleshoot a source that will not start or has no rows</h3>
+<ol>
+<li>Check <strong>Settings</strong> first. If the callsign/grid are missing, save them there and reopen or refresh the source page. PSK Reporter requires both.</li>
+<li>Check the source's own status. <strong>Disconnected</strong>, <strong>Stopped</strong>, <strong>Error</strong>, and <strong>Listening</strong> refer to different states. An error includes the client or socket's explanation.</li>
+<li>For Cluster or RBN, confirm the host, port and callsign with the service operator. A successful TCP connection should show <strong>Connected</strong> and server text in the console. A connection error means no incoming spot has been proven.</li>
+<li>For WSJT-X, verify the external application's destination address and port match Spot Hub, that it sends on the same network interface, and that the listener is showing <strong>Listening</strong>. For SpotCollector, verify that the PC is broadcasting to the configured port. These are local UDP receive paths; a phone cannot substitute for the desktop listener.</li>
+<li>For POTA or FreeDV, check the polling/connection status and inspect the console for errors. A running service with no new rows can simply have no recent activity.</li>
+<li>Open <strong>Spot List</strong> and enable the expected source pill and band. Open <strong>Display</strong> and check the source's <strong>Show spots from source</strong> setting. These are separate filters; a source can be active while its rows are hidden.</li>
+</ol>
+<h2 id="read-filter-and-tune-from-spot-list">Read, filter and tune from Spot List</h2>
+<p>The desktop <strong>Spot List</strong> merges all seven sources. Columns are <strong>Time</strong> (UTC, <code>HH:mm</code>), <strong>Freq (kHz)</strong>, <strong>DX Call</strong>, <strong>Mode</strong>, <strong>Comment</strong>, <strong>Spotter</strong>, <strong>Band</strong>, and <strong>Source</strong>. <strong>DX Call</strong> identifies the station/activity being spotted; <strong>Spotter</strong> identifies who reported it. <strong>Freq</strong> and <strong>Band</strong> locate the activity, and <strong>Time</strong> is the UTC spot time. Rows represent source observations, not confirmed contacts. New arrivals appear at the top. Click a column header to sort; frequency sorts numerically. The stored table is bounded to its most recent 500 entries. Spot ages and display-overlay expiry are controlled separately under <strong>Display</strong>.</p>
+<p>Use the <strong>Bands</strong> pills for 160m, 80m, 60m, 40m, 30m, 20m, 17m, 15m, 12m, 10m, 6m and 2m. A lit pill includes that band; a dim pill excludes it. Use the <strong>Sources</strong> pills <strong>DX</strong>, <strong>RBN</strong>, <strong>JT</strong>, <strong>COL</strong>, <strong>POT</strong>, <strong>FDR</strong> and <strong>PSK</strong> the same way. The band and source choices persist on this desktop. A source checkbox in <strong>Display</strong> is the broader visibility gate; disabling a source there hides its spots from both the panadapter and the Spot List, even if its list pill remains lit.</p>
+<p>On the phone, <strong>Spot List</strong> is the Core's list, shared with desktop and other phones. Tap <strong>This band</strong> to show the active slice's band, or <strong>All bands</strong> to remove that band restriction. The seven source pills use the same labels as desktop. A dimmed source pill includes no rows because the Core does not provide them to this app. Each row shows callsign, frequency, mode, source, UTC time, spotter and comment. Tap a row to tune the active slice. If the slice is locked or there is no slice to tune, the page reports the reason and disables tuning. The phone requests up to 500 recent Core records and shows “No spots match these pills and this band” when filters exclude all available rows.</p>
+<p>On desktop, double-click a row to tune the active slice to its frequency. Hovering a row highlights the corresponding label on the panadapter when one is present. A click is not a tune gesture on the desktop table. Tuning still depends on an editable active slice; if the frequency is outside the current receiver window, the radio may retune or the view may move according to the receiver layout. For the phone's separate <strong>Auto mode</strong> action when tuning a spot, see <a href="/manual/16-spots-reporters.html#control-the-panadapter-spot-labels">Control the panadapter spot labels</a>.</p>
+<p>The desktop <strong>Clear</strong> button at the bottom of Spot List clears that table's rows. <strong>Display &gt; Clear All Spots</strong> clears the Core's shared spot map and the table, so the panadapter overlay and every connected phone lose those spots too. It does not disconnect the sources. The source can repopulate the list as soon as another event arrives. Use the broader button only when you intend a station-wide clear.</p>
+<p><a href="/manual/images/iphone-spot-hub-landscape-original.png"><img src="/manual/images/iphone-spot-hub-landscape-original.png" alt="Native landscape iPhone Spot Hub screen showing source pages and no spots" /></a></p>
+<p><em>Spot Hub in landscape keeps the source routes and list together. This native SwiftUI simulator screen has simulated Core state and no spots; it demonstrates navigation, not a working feed.</em></p>
+<h2 id="control-the-panadapter-spot-labels">Control the panadapter spot labels</h2>
+<p>Desktop <strong>Display</strong> combines the overlay controls with a statistics panel. <strong>Spots: Enabled/Disabled</strong> shows or hides overlay labels; <strong>Memories</strong> concerns radio memory channels and is an explicitly unbuilt feature here. <strong>Auto mode</strong> requests a slice mode change when clicking a spot whose mode resolves; it does not retune the spot frequency itself. <strong>Levels</strong> controls how many label rows may stack vertically (1–10); <strong>Position</strong> moves the first label row as a percentage of panadapter height (0–100); <strong>Font Size</strong> changes label text size (8–32). <strong>Spot Lifetime</strong> controls overlay expiry and ranges from 10 seconds to 24 hours in stepped values. It does not change how long the Cluster/RBN/POTA clients stay connected.</p>
+<p>For color, <strong>Override Colors</strong> replaces source/DXCC spot colors with the selected <strong>Spot Color</strong>. With it off, an available DXCC color or the source's spot color is retained. <strong>Override Background</strong> controls the label background; <strong>Auto</strong> selects a background automatically, while the swatch chooses a fixed background when Auto is off. <strong>Background Opacity</strong> runs from 0 to 100. Under <strong>Show spots from source</strong>, check or clear DX Cluster, RBN, WSJT-X, SpotCollector, POTA, FreeDV and PSK Reporter. This is the panadapter-and-list source gate, not a connection switch.</p>
+<p>The statistics show table totals, unique callsigns, active sources, cty.dat entries, ADIF QSOs, DXCC entities and new DXCC/band counts in the current feed. They describe loaded/local data and current feed state; they do not verify a contact or award. Source/display changes save as you make them.</p>
+<p>On iPhone/iPad, <strong>Display</strong> has an <strong>On the band</strong> group tagged <strong>This phone</strong> and a <strong>Show on the band</strong> row of source pills. <strong>Spots</strong> turns labels on/off. <strong>Auto mode</strong> asks the Core to set the active slice's mode to the mode resolved for a tapped spot; it is unavailable when the Core does not provide a resolved mode. <strong>Levels</strong> ranges from 1–10; <strong>Position</strong> from 0–100%; <strong>Font size</strong> from 8–32; and <strong>Opacity</strong> from 0–100%. <strong>Override colours</strong>, <strong>Spot colour</strong>, <strong>Override background</strong>, and <strong>Background colour</strong> change this phone's presentation. The phone never places labels behind a flag. Its source pills hide those source labels on this phone's band, but do not stop the Core's feed or remove rows from the shared Spot List. A separate <strong>At the Core</strong> section controls shared <strong>Lifetime</strong> and <strong>Clear all spots</strong>. Lifetime starts at 30 minutes and offers 10–55 seconds in 5-second steps, 5–55 minutes in 5-minute steps, and 1–24 hours in 1-hour steps. <strong>Clear all spots</strong> opens a confirmation and clears every device's Core spot set.</p>
+<p>When several labels overlap at one frequency on desktop, a <code>+N</code> badge represents collapsed labels. Click a label to tune and notify the source UI of that spot; click the badge to choose from its hidden spots. Hovering a label shows callsign, frequency, source, spotter and age. Right-click a label for its wired actions: <strong>Tune to [callsign]</strong> tunes the active slice, <strong>Lookup on QRZ</strong> opens the callsign lookup page, and <strong>Remove Spot</strong> removes that spot from the overlay. Right-clicking the panadapter away from a label opens the panadapter context menu instead. On the phone, tap a label to open its details, then select <strong>Tune</strong> or <strong>Close</strong>. A <code>+N</code> badge opens a sheet of the hidden labels; tap one to tune. The phone's separate <strong>Show on the band</strong> source pills control local visibility.</p>
+<h2 id="source-specific-actions-and-scope">Source-specific actions and scope</h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Desktop</th>
+<th>iPhone/iPad</th>
+<th>Scope and result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Connect, disconnect, or start/stop an input</td>
+<td>Source tab button</td>
+<td>Source page <strong>Connect/Disconnect</strong> for supported Core sources</td>
+<td>Starts/stops the Core client, polling task or listener. It does not tune a slice or guarantee new spot traffic.</td>
+</tr>
+<tr>
+<td>Edit source callsign / address / port / poll period</td>
+<td>Source tab fields; saves when connecting or starting</td>
+<td>Core source page field; writes to station settings</td>
+<td>The source uses the next submitted value. For remote phone writes, read the returned status or refusal before assuming it changed.</td>
+</tr>
+<tr>
+<td>Send cluster/RBN command</td>
+<td>Type in <strong>Command</strong> and press Return or select <strong>Send</strong> while connected</td>
+<td>Type in <strong>Command</strong> and select <strong>Send</strong> while the source accepts commands</td>
+<td>Sent to the connected service. There is no command-history feature; server syntax and effects are not defined by Spot Hub.</td>
+</tr>
+<tr>
+<td>Filter source/band in Spot List</td>
+<td><strong>Bands</strong> and <strong>Sources</strong> pills</td>
+<td><strong>This band/All bands</strong> and source pills</td>
+<td>Desktop table filters are local to that UI. Phone list filters apply to that phone's view of the Core list.</td>
+</tr>
+<tr>
+<td>Show/hide a source everywhere</td>
+<td><strong>Display &gt; Show spots from source</strong> checkboxes</td>
+<td>Source visibility is provided by the list/display model; a source row's connection button is not a visibility switch</td>
+<td>Desktop checkbox gates both panadapter overlay and Spot List. Phone <strong>Display</strong> is local; source running state remains at Core.</td>
+</tr>
+<tr>
+<td>Tune to a spot</td>
+<td>Double-click a table row; click a panadapter label; or use its right-click <strong>Tune to ...</strong></td>
+<td>Tap a Spot List row or a spot-label <strong>Tune</strong> action</td>
+<td>Retunes the active slice. A locked slice or missing slice blocks the phone action with a reason.</td>
+</tr>
+<tr>
+<td>Remove/clear spots</td>
+<td>Right-click one overlay label and <strong>Remove Spot</strong>; <strong>Clear</strong> empties just the table; <strong>Display &gt; Clear All Spots</strong> clears the shared set</td>
+<td><strong>Show on the band</strong> source pills or <strong>Spots</strong> hide local labels; <strong>Clear all</strong> is station-wide</td>
+<td>Phone visibility controls do not remove spots from the Core list. Shared clear affects every connected device and does not stop the feed.</td>
+</tr>
+</tbody>
+</table>
+<p>For FreeDV station status, filtering, messages and QSY, use <a href="/manual/15-rade-freedv.html">Chapter 15</a>. A reporter's incoming station list is distinct from the spot marker overlay described here.</p>
+<div class="page-next"><a href="/manual/15-rade-freedv.html">Previous chapter</a><a href="/manual/17-hardware-antennas-calibration.html">Next chapter</a></div></main></div></body></html>

@@ -158,6 +158,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "core/dsp/Notch.h"
 
 #include <QHash>
@@ -182,7 +183,7 @@ namespace NereusSDR {
 ///
 /// Design: docs/architecture/2026-07-28-tunable-notch-filter-design.md
 /// section 5.
-class NotchModel : public QObject {
+class NEREUS_CORE_EXPORT NotchModel : public QObject {
     Q_OBJECT
 
     // R-R3-21 / R-R3-09: the mirrored `notches` object. The Core's list

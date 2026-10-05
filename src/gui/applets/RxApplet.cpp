@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03 — Clear Qt6.11 Cocoa's stale preamp popup cell cache before
+//                 rebuilding its items. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -213,6 +216,8 @@
 #include <algorithm>
 
 #include <QAction>
+#include <QAbstractItemView>
+#include <QAccessible>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
@@ -443,6 +448,23 @@ void RxApplet::fillPreampCombo(bool rx2)
     // starts from the first item, and the caller shows that list's mode.
     const QVariant current = rx2 == m_preampShowsRx2 ? m_preampCombo->currentData() : QVariant();
     QSignalBlocker blk(m_preampCombo);
+#if defined(Q_OS_MAC)
+    if (QGuiApplication::platformName() == QStringLiteral("cocoa")
+        && qVersion() == QStringLiteral("6.11.0")) {
+        // Qt6.11 Cocoa expires promoted popup cells with its old native
+        // rows (qcocoaaccessibilityelement.mm:219-226,257-267,342-362),
+        // but QAccessibleTable retains their IDs and dereferences them on
+        // RowsRemoved (itemviews.cpp:696-741). Clear only that accessibility
+        // cache through the public API before the combo mutates its model.
+        QAbstractItemView* view = m_preampCombo->view();
+        QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(view);
+        if (accessible != nullptr && accessible->tableInterface() != nullptr) {
+            QAccessibleTableModelChangeEvent reset(
+                view, QAccessibleTableModelChangeEvent::ModelReset);
+            accessible->tableInterface()->modelChange(&reset);
+        }
+    }
+#endif
     m_preampCombo->clear();
     const auto items = rx2 ? BoardCapsTable::rx2PreampItemsForBoard(m_preampBoard)
                            : BoardCapsTable::preampItemsForBoard(m_preampBoard, m_preampAlex);

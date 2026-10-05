@@ -1,0 +1,104 @@
+libdatachannel v0.24.5: the C API gathers when told to and reports the DTLS peer's fingerprint
+
+NereusSDR for iOS patch, applied by ios/scripts/vendor-sources.sh libdatachannel
+after it copies the pinned archive's files. MPL-2.0, like the files it changes;
+the modified include/rtc/rtc.h and src/capi.cpp are published with NereusSDR's
+source. iPhone app plan Task 28a (R-IOS-16), 2026-09-27.
+
+The app drives libdatachannel through its C API, which in v0.24.5 lacks two
+things the C++ API has and the control connection through the remote access
+service needs (the link document, "Control over a data channel"):
+
+- Gathering held until the relay is known. The device's offer goes out in
+  introduce before the Core's answer brings the relay credentials, and
+  gathering starts only once they are known. The C++ API has
+  Configuration::disableAutoGathering and
+  PeerConnection::gatherLocalCandidates(additionalIceServers). This adds
+  rtcConfiguration.disableAutoGathering (last, so a zeroed configuration
+  keeps today's behaviour) and rtcGatherLocalCandidates(pc, turnServers,
+  count), which takes the relay servers as "turn:" URLs.
+- The certificate the Core presented in DTLS. The device checks the Core's
+  identity against the SHA-256 of the certificate the handshake carried,
+  never the fingerprint the SDP claims, which arrives through the service.
+  The C++ API has PeerConnection::remoteFingerprint(), which the DTLS
+  verifier records from the certificate itself. This adds
+  rtcGetRemoteFingerprint(pc, buffer, size), "<algorithm> <value>".
+
+Nothing else changes: the new calls wrap the C++ ones as the C API wraps
+the rest, and a caller that never sets the new field or calls the new
+functions sees v0.24.5's behaviour.
+
+--- a/include/rtc/rtc.h
++++ b/include/rtc/rtc.h
+@@ -199,6 +199,7 @@
+ 	uint16_t portRangeEnd;   // 0 means automatic
+ 	int mtu;                 // <= 0 means automatic
+ 	int maxMessageSize;      // <= 0 means default
++	bool disableAutoGathering; // NereusSDR: gather only on rtcGatherLocalCandidates()
+ } rtcConfiguration;
+ 
+ RTC_C_EXPORT int rtcCreatePeerConnection(const rtcConfiguration *config); // returns pc id
+@@ -237,6 +238,16 @@
+ RTC_C_EXPORT int rtcGetMaxDataChannelStream(int pc);
+ RTC_C_EXPORT int rtcGetRemoteMaxMessageSize(int pc);
+ 
++// NereusSDR: gathers this side's candidates once the local description is set, on a peer
++// connection made with disableAutoGathering, adding the TURN servers given as "turn:" URLs
++// (the C++ API's PeerConnection::gatherLocalCandidates)
++RTC_C_EXPORT int rtcGatherLocalCandidates(int pc, const char **turnServers, int turnServersCount);
++
++// NereusSDR: the fingerprint of the certificate the remote peer presented in the DTLS
++// handshake, as "<algorithm> <value>" (for example "sha-256 AB:CD:..."), computed from that
++// certificate (the C++ API's PeerConnection::remoteFingerprint); RTC_ERR_NOT_AVAIL before one
++RTC_C_EXPORT int rtcGetRemoteFingerprint(int pc, char *buffer, int size);
++
+ // DataChannel, Track, and WebSocket common API
+ 
+ RTC_C_EXPORT int rtcSetOpenCallback(int id, rtcOpenCallbackFunc cb);
+--- a/src/capi.cpp
++++ b/src/capi.cpp
+@@ -415,6 +415,7 @@
+ 		c.enableIceUdpMux = config->enableIceUdpMux;
+ 		c.disableAutoNegotiation = config->disableAutoNegotiation;
+ 		c.forceMediaTransport = config->forceMediaTransport;
++		c.disableAutoGathering = config->disableAutoGathering;
+ 
+ 		if (config->mtu > 0)
+ 			c.mtu = size_t(config->mtu);
+@@ -718,6 +719,36 @@
+ 	});
+ }
+ 
++int rtcGatherLocalCandidates(int pc, const char **turnServers, int turnServersCount) {
++	return wrap([&] {
++		auto peerConnection = getPeerConnection(pc);
++		if (turnServersCount < 0 || (turnServersCount > 0 && !turnServers))
++			throw std::invalid_argument("Unexpected null pointer for TURN servers");
++
++		std::vector<IceServer> servers;
++		for (int i = 0; i < turnServersCount; ++i) {
++			if (!turnServers[i])
++				throw std::invalid_argument("Unexpected null pointer for a TURN server");
++			servers.emplace_back(string(turnServers[i]));
++		}
++		peerConnection->gatherLocalCandidates(std::move(servers));
++		return RTC_ERR_SUCCESS;
++	});
++}
++
++int rtcGetRemoteFingerprint(int pc, char *buffer, int size) {
++	return wrap([&] {
++		auto peerConnection = getPeerConnection(pc);
++		CertificateFingerprint fingerprint = peerConnection->remoteFingerprint();
++		if (fingerprint.value.empty())
++			return RTC_ERR_NOT_AVAIL;
++
++		return copyAndReturn(CertificateFingerprint::AlgorithmIdentifier(fingerprint.algorithm) +
++		                         " " + fingerprint.value,
++		                     buffer, size);
++	});
++}
++
+ int rtcSetOpenCallback(int id, rtcOpenCallbackFunc cb) {
+ 	return wrap([&] {
+ 		auto channel = getChannel(id);

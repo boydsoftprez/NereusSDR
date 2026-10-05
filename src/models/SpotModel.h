@@ -39,6 +39,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QMap>
 #include <QHash>
@@ -75,7 +76,7 @@ struct SpotData {
 };
 
 // From AetherSDR src/models/SpotModel.h:27-49 [@0cd4559]
-class SpotModel : public QObject {
+class NEREUS_CORE_EXPORT SpotModel : public QObject {
     Q_OBJECT
 public:
     explicit SpotModel(QObject* parent = nullptr);

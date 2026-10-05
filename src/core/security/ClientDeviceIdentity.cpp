@@ -28,6 +28,18 @@
 #include <QSysInfo>
 
 namespace NereusSDR {
+namespace {
+struct ProfileIdentityCache {
+    QMutex mutex;
+    std::shared_ptr<const ClientDeviceIdentity> identity;
+    bool loadedExistingOnly = false;
+};
+ProfileIdentityCache& profileIdentityCache()
+{
+    static ProfileIdentityCache cache;
+    return cache;
+}
+}
 
 ClientDeviceIdentity ClientDeviceIdentity::loadOrCreate(const QString& profileDir)
 {
@@ -37,18 +49,43 @@ ClientDeviceIdentity ClientDeviceIdentity::loadOrCreate(const QString& profileDi
     return identity;
 }
 
+ClientDeviceIdentity ClientDeviceIdentity::loadExisting(const QString& profileDir)
+{
+    ClientDeviceIdentity identity;
+    identity.m_key = StationIdentity::loadExistingKeyFile(
+        profileDir, QString::fromLatin1(kKeyFileName), QStringLiteral("This computer's"));
+    return identity;
+}
+
+std::shared_ptr<const ClientDeviceIdentity> ClientDeviceIdentity::existingForThisProfile()
+{
+    ProfileIdentityCache& cache = profileIdentityCache();
+    QMutexLocker lock(&cache.mutex);
+    if (!cache.identity) {
+        auto existing = std::make_shared<const ClientDeviceIdentity>(loadExisting(
+            AppSettings::resolveConfigDir(AppSettings::profileOverride())));
+        if (!existing->isValid()) { return {}; }
+        cache.identity = std::move(existing);
+        cache.loadedExistingOnly = true;
+    }
+    return cache.identity;
+}
+
 std::shared_ptr<const ClientDeviceIdentity> ClientDeviceIdentity::forThisProfile()
 {
-    // One key per process and profile. The GUI thread asks; the mutex only
-    // keeps a second window's first ask from creating the file twice.
-    static QMutex mutex;
-    static std::shared_ptr<const ClientDeviceIdentity> identity;
-    QMutexLocker lock(&mutex);
-    if (!identity) {
-        identity = std::make_shared<const ClientDeviceIdentity>(loadOrCreate(
+    // The GUI asks once per process/profile. Both paths share this exact pointer.
+    ProfileIdentityCache& cache = profileIdentityCache();
+    QMutexLocker lock(&cache.mutex);
+    if (!cache.identity) {
+        cache.identity = std::make_shared<const ClientDeviceIdentity>(loadOrCreate(
             AppSettings::resolveConfigDir(AppSettings::profileOverride())));
     }
-    return identity;
+    // Keep the ordinary loader's permission tightening at ordinary initialization only.
+    if (cache.loadedExistingOnly) {
+        StationIdentity::keepOwnerOnly(cache.identity->keyPath());
+        cache.loadedExistingOnly = false;
+    }
+    return cache.identity;
 }
 
 QString ClientDeviceIdentity::machineName()

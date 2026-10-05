@@ -247,6 +247,7 @@ warren@wpratt.com
 
 */
 
+#include "core/NereusCoreExport.h"
 #include "ControlRanges.h"
 #include "NbFamily.h"
 #include "WdspTypes.h"
@@ -304,7 +305,7 @@ QString dspOptionsModeGroup(DSPMode mode);
 //     caller's thread, as before.
 //
 // Ported from Thetis cmaster.c create_rcvr / wdsp-integration.md section 4.
-class RxChannel : public QObject {
+class NEREUS_CORE_EXPORT RxChannel : public QObject {
     Q_OBJECT
 
     Q_PROPERTY(NereusSDR::DSPMode mode READ mode WRITE setMode NOTIFY modeChanged)

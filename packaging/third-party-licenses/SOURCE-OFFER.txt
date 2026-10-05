@@ -39,9 +39,11 @@ obligation is satisfied as follows:
    network transfer, a complete machine-readable copy of the
    corresponding source code for this version of NereusSDR — including
    the NereusSDR sources, the vendored WDSP sources
-   (`third_party/wdsp/`), the vendored FFTW3 binary-plus-header
-   (`third_party/fftw3/`, with pointer to the upstream source tarball
-   at https://fftw.org), the exact libdatachannel and transitive sources
+   (`third_party/wdsp/`), the FFTW3 sources corresponding to the bundled
+   shared libraries (versioned upstream archives and Ubuntu package source
+   bundle on the release page; provenance in
+   `docs/attribution/FFTW3-PROVENANCE.md`), the exact libdatachannel and
+   transitive sources
    pinned by `cmake/NereusRemoteMedia.cmake`, and the unmodified licence
    texts — for a charge no more than the reasonable cost of physically
    performing source distribution.

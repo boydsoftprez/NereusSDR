@@ -42,10 +42,16 @@ correction and requires actuation permission. PS3 uses version-2 correction
 files; legacy version-1 files are refused with an explanation. Recalibrate to
 produce a compatible correction rather than assuming old curves transfer.
 
-Remote settings, status, assets and AmpView are available now. Remote transmit
-and PS3 actuation remain gated until R4. The legacy PS-RX/PS-TX spectra checkbox
-had no working display route and is explicitly unavailable; its saved preference
-is retained. AmpView displays the supported PS3 sample and correction curves.
+Remote settings, status, assets and AmpView are available. The connected Core
+advertises which actions the device may perform. Single, Start Auto, Apply
+Current and Restore require the offered PureSignal arming capability; older
+Cores or devices without the required authority receive a refusal. Starting
+two-tone is a transmit-keying action and follows the current device's transmit
+ownership rules. Stopping it follows the holder's release rules.
+
+The legacy PS-RX/PS-TX spectra checkbox has no working display route and is
+explicitly unavailable; its saved preference is retained. AmpView displays the
+supported PS3 sample and correction curves.
 
 ## Persistence and verification
 

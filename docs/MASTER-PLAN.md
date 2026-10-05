@@ -6,6 +6,26 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 ---
 
+## Current release work: 2026.10.0
+
+The first CalVer release is being prepared from the work since 0.5.2.
+`YYYY.M.counter` replaces semantic release numbers; the first final release
+in October is `2026.10.0`. Settings schema and wire versions remain separate.
+
+Current implementation includes independent receiver DSP/audio, multi-pan and
+TX displays, native 3D history, tunable notch filters, a radio-owning Core and
+remote desktop sessions, shared-device receiver/TX authority, Core Settings,
+WDSP 2.10 with NNR/PureSignal 3 assets, editable Canvas and stacked containers,
+proportional meter text, complete faces and fifteen individual controls, native
+TX EQ/CFC editors, Diversity, AM modulation monitoring and Core-owned accessories. The [README](../README.md), [changelog](../CHANGELOG.md)
+and [upgrade guide](guides/upgrading-to-2026.10.0.md) describe the
+release scope and upgrade behavior.
+
+Hardware/on-air matrices and source/package acceptance remain distinct. Refer
+to each feature's verification document for actual evidence and pending rows.
+The sections below preserve earlier design and release history; historical
+scheduling and single-receiver limitations are not current release status.
+
 ## Progress Summary
 
 ### Completed: Phase 0 — Scaffolding
@@ -176,15 +196,16 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 **RxApplet Tier 1 wired:** mode, AGC, AF gain, and filter presets fully wired to SliceModel
 
-### Up Next (after v0.5.2)
-- **Phase 3M-2 - CW TX** (next up). Sidetone, firmware keyer, QSK / break-in. Absorbs the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-1252 [@c26a8a4]`). Detail in §"Phase 3M-2".
-- **Phase 3M-3b — FM pre-emphasis** (de-scoped from 3M-3a-ii during v0.3.1; runs after 3M-2).
-- **Phase 3F — Multi-panadapter** (after 3M-2). Re-exposes the Active RX count widget (hidden in v0.4.0 because it was stuck-at-1 in single-RX) and finally exercises `RadioModel::setActiveRxCountLive`. Also lands the aamix anti-VOX path that the v0.4.0 single-RX direct pump deferred.
-- **Phase 3M-5 (TX Display Refactor)**, parallel-track to 3M-2. Mirrors 3G-9 RX Display Refactor symmetrically on the TX side. 7 sub-phases (3M-5a foundation + 3M-5b colormap fix landing v0.4.2; 3M-5c custom gradient picker widget; 3M-5d FFT / detector / averaging reusing RX widgets; 3M-5e grid scale; 3M-5f appearance colors; 3M-5g cal offset apply gap). Master plan + mockup at `docs/architecture/tx-display-settings-master-plan.md` and `docs/architecture/mockups/tx-display-tab.html`.
-- **Phase 3H — Skin system**, **Phase 3J — TCI + Spots**, **Phase 3K — CAT / rigctld**, **Phase 3M-recording — WAV + I/Q recording** all remain not-started.
-- **Phase 3F (Multi-panadapter)**, after 3M-2. Re-exposes the Active RX count widget (hidden in v0.4.0 because it was stuck-at-1 in single-RX) and finally exercises `RadioModel::setActiveRxCountLive`. Also lands the aamix anti-VOX path that the v0.4.0 single-RX direct pump deferred. Also unblocks RADE-on-A while SSB-on-B multi-slice scenarios (currently a known limitation per Row 12 of the Phase 3R bench matrix).
-- **HL2 RADE bench follow-up**, gated on closure of the HL2 ATT/filter safety audit. Tracked by Row 9 of `docs/architecture/phase3r-verification/README.md`.
-- **Phase 3H (Skin system)**, **Phase 3K (CAT / rigctld)**, **Phase 3M-recording (WAV + I/Q recording)** all remain not-started.
+### Remaining work after the 2026.10 release
+
+- CW transmit, sidetone, firmware keyer and QSK/break-in.
+- FM pre-emphasis, CAT/rigctld, legacy skin import and WAV/IQ recording.
+- Remaining native UI interactions and radio/accessory/on-air acceptance rows.
+- Sustained remote Core and SBC operation, and original-report reconnect retests.
+
+Multi-panadapter, independent receiver routing, TX display work, TCI and spots
+are implemented. Their older phase descriptions below are retained as design
+history rather than entries in the future-work queue.
 
 ### Shipped in v0.5.2 (2026-05-24)
 

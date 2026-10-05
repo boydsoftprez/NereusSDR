@@ -23,13 +23,24 @@
 
 namespace NereusSDR {
 
+// 2026-10-01: Addressless paired Cores can retry authenticated listeners.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+bool RemoteStationOptions::hasAuthenticatedDirectAddresses() const
+{
+    if (identityFingerprint.size() != 32 || allowUnpinned) { return false; }
+    for (const QString& address : directCandidates + cachedAddresses + coreAddresses) {
+        if (isValidStationUrl(address)) { return true; }
+    }
+    return false;
+}
+
 bool RemoteStationOptions::isValidRemoteTarget(QString* whyNot) const
 {
     if (!url.isEmpty()) {
         return isValidStationUrl(url, whyNot);
     }
     if (identityFingerprint.size() != 32
-        || !RendezvousWire::isRendezvousId(rendezvousId)
+        || (!hasAuthenticatedDirectAddresses() && !RendezvousWire::isRendezvousId(rendezvousId))
         || !token.isEmpty() || !fingerprint.isEmpty() || allowUnpinned) {
         if (whyNot) {
             *whyNot = QStringLiteral("Pair with the Core again to reach it through remote access.");

@@ -30,6 +30,7 @@
 //                                    Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "core/FFTEngine.h"
 
 #include <QMap>
@@ -122,7 +123,7 @@ struct FftPoolConfig {
 /// only from the main thread before this extraction. The engines this
 /// class vends are the cross-thread-safe part (moveToThread'd onto the
 /// worker threads; their own setters are std::atomic stores).
-class FftEnginePool : public QObject {
+class NEREUS_CORE_EXPORT FftEnginePool : public QObject {
     Q_OBJECT
 public:
     /// Local GUI callers retain the historical full-frame relay by default.

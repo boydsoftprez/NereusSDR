@@ -1,0 +1,312 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Get to know the desktop window | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/02-desktop-window.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html" aria-current=page>Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="get-to-know-the-desktop-window">Get to know the desktop window</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#orient-yourself-before-operating">Orient yourself before operating</a></li><li><a href="#desktop-control-map">Desktop control map</a></li><li><a href="#choose-the-control-surface-you-need">Choose the control surface you need</a></li><li><a href="#show-hide-and-float-applets">Show, hide and float applets</a></li><li><a href="#make-the-band-display-useful">Make the band display useful</a></li><li><a href="#inspect-earlier-waterfall-activity">Inspect earlier waterfall activity</a></li><li><a href="#read-meters-and-status-together">Read meters and status together</a></li><li><a href="#use-the-connection-and-station-context-menus">Use the connection and station context menus</a></li><li><a href="#check-that-controls-follow-your-selection">Check that controls follow your selection</a></li><li><a href="#set-this-computers-master-listening-output">Set this computer&#x27;s master listening output</a></li></ol></details>
+<p>The main window brings together the radio's spectrum, waterfall, slice
+controls, receive audio controls, transmit controls, and status. The spectrum
+shows signal level against frequency; the waterfall shows how signals
+change over time. A slice is a receiving channel with its own frequency and
+demodulation settings. A panadapter is the spectrum and waterfall area that
+displays a frequency span.</p>
+<p>The VFO flag identifies a slice and marks its tuned frequency on the
+spectrum. Selecting a flag makes that slice active for controls that act on
+the selected slice. Other slices can remain visible and continue receiving.
+The operating controls are arranged in applets around the display; which
+applets are visible depends on the current layout. The TX applet contains
+transmit controls such as <strong>TUNE</strong>, <strong>MOX</strong>, <strong>MON</strong>, and the TX profile
+selector. Read the state shown on the control itself before using it.</p>
+<p>Connection status appears in the window's status area. When operating through
+a shared Core, the window can also show who currently holds transmit. These
+status indicators describe the Core's shared radio state, while controls
+such as the selected slice and its mode belong to that receiver.</p>
+<h2 id="orient-yourself-before-operating">Orient yourself before operating</h2>
+<ol>
+<li>Connect a radio or Core and wait for the spectrum to update.</li>
+<li>Find the VFO flag on the spectrum and note its slice letter. Select the
+flag to make that slice active.</li>
+<li>Locate its frequency, mode, and filter controls, then find the RX audio
+and DSP controls in the slice applet.</li>
+<li>Locate the TX applet and read the labels and active states of its
+controls. Leave <strong>MOX</strong> and <strong>TUNE</strong> off while you are only receiving.</li>
+<li>Check the connection indicator before interpreting a stopped or frozen
+display. If the radio is disconnected, reconnect from <strong>Radio</strong>.</li>
+</ol>
+<p>The displayed frequency span is a view of the radio's received spectrum.
+Changing the active slice changes which receiver's controls are being
+edited; it does not automatically change the receive settings of every other
+slice. Later chapters cover tuning, slices, and transmitting in detail.</p>
+<h2 id="desktop-control-map">Desktop control map</h2>
+<p><a href="/manual/images/desktop-overview.jpg"><img src="/manual/images/desktop-overview.jpg" alt="NereusSDR desktop showing connection, VFO flag, spectrum, waterfall, RX and TX applets, and status banner" /></a></p>
+<p>Figure 1. A desktop development build receiving LSB through a remote Core.
+The layout includes a 3D spectrum view. The Core-busy and overload messages
+were present at capture time; the settings shown are examples.</p>
+<table>
+<thead>
+<tr>
+<th>Callout</th>
+<th>Area</th>
+<th>What to check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Connection and traffic</td>
+<td>Connection state, audio traffic, and Core round-trip time.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Selected VFO flag</td>
+<td>Slice letter, frequency, filter width, and control ownership.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Spectrum</td>
+<td>Signals across the displayed frequency span.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Waterfall</td>
+<td>Signal activity over time.</td>
+</tr>
+<tr>
+<td>5</td>
+<td>RX applet</td>
+<td>Mode, step, filter, AGC, and receive offsets.</td>
+</tr>
+<tr>
+<td>6</td>
+<td>TX applet</td>
+<td>Transmit state, power controls, monitor, profile, and bandwidth.</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Status banner</td>
+<td>Current slice, Core/radio identity, and operating warnings.</td>
+</tr>
+</tbody>
+</table>
+<p><a href="/manual/images/desktop-vfo.jpg"><img src="/manual/images/desktop-vfo.jpg" alt="Close-up of slice A's VFO flag with frequency, filter width, ownership, and tabs" /></a></p>
+<p>Figure 2. The flag's frequency field (1), filter width (2), ownership text
+(3), and control tabs (4). <strong>You control</strong> identifies an editable slice;
+a listening slice has different ownership text and restricted controls.</p>
+<h2 id="choose-the-control-surface-you-need">Choose the control surface you need</h2>
+<p>The app offers several views of the same receiver. You do not need to keep
+every applet open to operate a slice.</p>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>How to reach it</th>
+<th>What it controls</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VFO flag audio page</td>
+<td>Click the speaker tab at the foot of the flag.</td>
+<td>AF, AGC, stereo pan, mute, binaural audio, playback destination and squelch.</td>
+</tr>
+<tr>
+<td>VFO flag DSP page</td>
+<td>Click <strong>DSP</strong>.</td>
+<td>Noise blankers, noise-reduction method, automatic notch, spectral blanker and CW peak filter.</td>
+</tr>
+<tr>
+<td>VFO flag mode/filter page</td>
+<td>Click the tab showing the current mode, such as <strong>LSB</strong>.</td>
+<td>Mode selection and that mode's filter presets.</td>
+</tr>
+<tr>
+<td>VFO flag offset page</td>
+<td>Click <strong>X/RIT</strong>.</td>
+<td>Receive and transmit offsets, their enable/reset controls and tuning step.</td>
+</tr>
+<tr>
+<td>VFO flag virtual-audio page</td>
+<td>Click <strong>VAX</strong>.</td>
+<td>The slice's virtual-audio routing controls.</td>
+</tr>
+<tr>
+<td>RX applet</td>
+<td>Show RX in the <strong>Containers</strong> menu's <strong>Applets</strong> section.</td>
+<td>Selected-slice mode, filter, antenna selections, tuning step, balance, attenuation, AGC and offsets.</td>
+</tr>
+<tr>
+<td>TX applet</td>
+<td>Show TX in the same section.</td>
+<td>Transmit slice, drive, tune drive, keying, monitoring, processing, profile and transmit bandwidth.</td>
+</tr>
+<tr>
+<td>Phone / CW applet</td>
+<td>Show the applet when it is available.</td>
+<td>The implemented microphone source, input gain, level/compression displays and phone processing controls.</td>
+</tr>
+<tr>
+<td>Settings window</td>
+<td><strong>File &gt; Settings...</strong></td>
+<td>Detailed parameters and device/Core setup, organized in a page tree.</td>
+</tr>
+</tbody>
+</table>
+<p>Clicking an already-open flag tab closes its controls; clicking a different
+tab switches the panel. The flag can therefore remain compact while you
+listen, then expand for one adjustment. The mode name on the tab is a useful
+readback: changing the mode also changes the applicable filter choices.</p>
+<p>Before changing an RX applet control, check its slice letter. When there is
+more than one slice, the RX applet's letter tabs provide another way to choose
+the active slice. A setting entered in one surface should be reflected in
+other views of that same slice. If it appears to affect the wrong receiver,
+check selection and ownership before repeating the change.</p>
+<h2 id="show-hide-and-float-applets">Show, hide and float applets</h2>
+<ol>
+<li>Open <strong>Containers</strong>. In its <strong>Applets</strong> section, check the applets you
+want visible. The panel's <strong>☰</strong> menu provides the same visibility choices.</li>
+<li>If an entry is unavailable, read its reason or check the corresponding
+station feature. For example, accessory applets depend on their enabled
+accessory connection. A checked preference does not make an unavailable
+device appear.</li>
+<li>Where an applet title bar has <strong>↗</strong>, click it to pop that applet into its
+own window. Place a frequently used TX or audio panel on a second monitor
+while retaining the band view on the main display.</li>
+<li>Click <strong>↙ Dock</strong> in the floating window to put the applet back in the
+panel. Closing the floating applet also docks it back.</li>
+</ol>
+<p>Floating an applet and floating a panadapter are different actions. An applet
+window contains controls; <strong>View &gt; Float active pan…</strong> detaches the selected
+band display. A meter container is a third kind of window. Its items and
+layout are managed with <strong>Containers &gt; New Container...</strong> and
+<strong>Containers &gt; Edit Container</strong>. See the customization chapter for meter
+layout work. Hiding a control panel does not release a slice or stop the Core.</p>
+<h2 id="make-the-band-display-useful">Make the band display useful</h2>
+<p>The spectrum, waterfall, frequency ruler and level ruler respond to different
+mouse gestures. Put the pointer on the part you intend to change.</p>
+<table>
+<thead>
+<tr>
+<th>Gesture</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Click an empty point in the spectrum/waterfall without dragging.</td>
+<td>Tune the active slice to that frequency, rounded to its tuning step.</td>
+</tr>
+<tr>
+<td>Drag an empty area horizontally.</td>
+<td>Pan the displayed frequency window.</td>
+</tr>
+<tr>
+<td>Drag within the selected passband.</td>
+<td>Slide the VFO to a new frequency.</td>
+</tr>
+<tr>
+<td>Drag a passband edge.</td>
+<td>Adjust a receive filter edge.</td>
+</tr>
+<tr>
+<td>Drag the spectrum/waterfall divider vertically.</td>
+<td>Allocate more height to either display.</td>
+</tr>
+<tr>
+<td>Drag the frequency scale horizontally.</td>
+<td>Change the displayed bandwidth.</td>
+</tr>
+<tr>
+<td>Ctrl+wheel, or Command+wheel on macOS, over the band.</td>
+<td>Zoom the frequency span around the VFO.</td>
+</tr>
+<tr>
+<td>Shift+wheel over the band.</td>
+<td>Adjust the display's reference level.</td>
+</tr>
+<tr>
+<td>Wheel over the dBm scale.</td>
+<td>Adjust the displayed level range.</td>
+</tr>
+<tr>
+<td>Left-drag the dBm scale.</td>
+<td>Move its level window up or down.</td>
+</tr>
+<tr>
+<td>Right-drag the dBm scale.</td>
+<td>Stretch the range.</td>
+</tr>
+</tbody>
+</table>
+<p>A notch under the pointer takes precedence over ordinary tuning gestures;
+its wheel action resizes the notch. If a wheel turn unexpectedly changes
+an interference marker instead of frequency, move clear of the marker or
+use the VFO frequency field.</p>
+<p>Zooming and panning are display operations, but a view extending beyond the
+current receive window can show survey data outside the listenable area.
+Choosing a signal in that outer area can require the Core to move its
+receiver window. Read any impact/refusal message when other slices share
+that receiver. A visible signal and an available receiving channel are
+separate things.</p>
+<p>The display remains pannable and zoomable while keyed, but ordinary band
+click-to-tune is withheld during transmit. Return to receive before making
+an operating-frequency change; do not use display movement as confirmation
+that the transmitter changed frequency.</p>
+<h2 id="inspect-earlier-waterfall-activity">Inspect earlier waterfall activity</h2>
+<p>The waterfall has a history view as well as a live view. Drag its time-scale
+strip to inspect previous rows. Use <strong>LIVE</strong> to return to the current band.
+An old trace can help identify when a signal started or where interference
+appeared. It does not mean a station is transmitting at that frequency now.</p>
+<p>When a display seems frozen, first check whether it is showing history. Then
+check connection state, Core traffic and the status message. Distinguish a
+paused history view from missing data before reconnecting the station.</p>
+<h2 id="read-meters-and-status-together">Read meters and status together</h2>
+<p>The receive meter describes signal level in the selected receiver. The TX
+meters describe microphone level, RF power and SWR in their applicable
+operating state. A displayed meter face is not evidence of fresh samples.
+For example, while receiving, a forward-power display may be zero or retain
+its last indication; use it during the controlled transmit operation it is
+intended to measure.</p>
+<p>Connection/traffic indicators answer a different question: whether this
+window is receiving data from its radio or Core. Core round-trip time is a
+control-link measurement. Audio traffic is evidence that data is arriving,
+but playback also requires a working output route, volume and unmuted slice.</p>
+<h2 id="use-the-connection-and-station-context-menus">Use the connection and station context menus</h2>
+<p>Right-click the connection/segment area for its connection actions. In a
+local radio window it includes <strong>Disconnect</strong>, <strong>Connect to other radio…</strong>,
+<strong>Network diagnostics…</strong>, <strong>Copy IP address</strong> and <strong>Copy MAC address</strong>.
+In a remote window it instead offers the actionable Connect/Disconnect
+commands, <strong>Core connection details...</strong>, the Core's radio-management actions
+and address-copy entries when the Core has reported them. Copied addresses
+refer to the radio identified by that menu, so inspect the identity first.</p>
+<p>Right-click the station block for radio-management actions. In a local window,
+<strong>Edit radio…</strong> opens management for the current radio. <strong>Forget radio</strong>
+disconnects and removes its saved radio entry; use it deliberately rather than
+as a first recovery attempt. In a remote window the available actions target
+the Core's radio and obey its permission/readiness gates. See
+<a href="/manual/01-desktop-connect.html">connection management</a> for the full saved-target flow.</p>
+<p>Use <strong>Radio &gt; Protocol Info</strong> to inspect the radio/protocol details, and
+<strong>Tools &gt; Network Diagnostics</strong> for the link measurements. When a status
+message appears, capture its wording and the affected Core/radio/slice before
+changing settings. <strong>View &gt; Performance</strong> exposes performance presentation;
+read whether a CPU value represents this computer, the app or the Core.
+An overload indication is an input condition, whereas Core busy and link/audio
+notices point to different resources. <a href="/manual/11-troubleshooting.html">Troubleshooting</a>
+uses those distinctions to choose the next check.</p>
+<h2 id="check-that-controls-follow-your-selection">Check that controls follow your selection</h2>
+<p>For a practical orientation check, select slice A, open its audio tab and
+change AF by a small amount while listening. Confirm both the number and the
+sound change. Then select another slice and verify its identity before using
+the same control. This establishes which controls follow selection without
+keying the transmitter or changing station hardware.</p>
+<h2 id="set-this-computers-master-listening-output">Set this computer's master listening output</h2>
+<p>The title bar's speaker button and adjacent slider are <strong>Master mute</strong> and
+<strong>Master volume</strong> for this computer. Click the speaker to mute/unmute; adjust
+the slider from 0 to 100 percent and check its adjacent level readout. Master
+mute can silence a correctly configured slice, so check it before changing
+receiver gain or the Core's DSP. This control also affects this computer's
+playback in a remote desktop window.</p>
+<p>Right-click the speaker button for <strong>Output device</strong>. Choose the intended
+playback device and verify the checkmark/current route, then listen at a
+comfortable volume. <strong>No output devices</strong> means no destination is available
+from the current audio backend. Use <a href="/manual/01-desktop-connect.html#choose-this-computers-receive-and-transmit-audio-routes">Audio &gt; Devices</a>
+to inspect the opened format or repair a missing route. The picker changes
+this computer's speakers destination; it does not change the station's
+microphone input or a different operator's phone output. The selected slice's
+personal volume/mute remains a separate stage, so check both when one slice
+is silent.</p>
+<div class="page-next"><a href="/manual/01-desktop-connect.html">Previous chapter</a><a href="/manual/03-receive.html">Next chapter</a></div></main></div></body></html>

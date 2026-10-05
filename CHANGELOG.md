@@ -1,126 +1,294 @@
 # Changelog
 
-## [Unreleased] - Phase 3F multi-pan multi-slice
+## [Unreleased] - First calendar release
 
-### Added
+**Your station. Wherever you operate.**
 
-- **Remote-daemon R1: build split + headless `nereusd`** (13 tasks, 42 commits). First release of the split that lets NereusSDR run as two pieces: a headless daemon next to the radio, and the GUI somewhere else. R1 delivers the foundation only. There is no remote protocol yet (that is R2), so the daemon is not useful on its own.
-  - **Build split.** The monolith becomes two CMake OBJECT libraries, `NereusCore` and `NereusGui`, aggregated through an INTERFACE target so all 589 existing test call sites keep working unchanged. Zero ninja targets removed, link libraries byte-identical.
-  - **Spectrum production stack moved into `src/core/`.** `SpectrumDetector`, `SpectrumAvenger`, `SpectrumReducer`, `FftEnginePool`, `FftTopology` and the new `ISpectrumSink` interface were extracted out of `SpectrumWidget` / `MainWindow` / `RadioModel`, so a process with no widgets can produce spectrum. `RadioModel` no longer includes any GUI header.
-  - **`nereusd`.** A second binary that links no GUI object code: reads `/etc/nereusd.conf`, initialises shared state through the new `CoreInit`, discovers and connects to a radio, and creates slices. Ships with a fully hardened systemd unit (`DynamicUser`, `ProtectSystem=strict`, `StateDirectory`) and a documented sample config. Installed with `cmake --install build --component nereusd`, deliberately separate from the default install so the GUI's release artifacts are unaffected.
-  - **Boundary guard.** `tst_core_has_no_gui_includes` fails the build if anything under `src/core/` or `src/models/` includes a GUI header, checked against a deny list enumerated from a real Qt install rather than hand-written.
-  - Design: `docs/architecture/2026-07-28-remote-daemon-architecture-design.md`. Plan: `docs/architecture/2026-08-02-remote-daemon-r1-plan.md`. Bench matrix: `docs/architecture/2026-08-02-remote-daemon-r1-verification/README.md`.
+[Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)
 
-- **AM Mod Monitor applet.** NereusSDR-original `ModMonitorApplet` (View → Containers → Applets → "AM Mod Monitor") modelled on a hardware AM modulation monitor: positive (0–160 %) and negative (0–100 %) peak-reading bar meters with peak hold, +/- peak readouts and asymmetry, adjustable positive / negative peak flashers that latch until RESET, carrier OK / LOW / HIGH / absent lamp, and an envelope oscilloscope trace. Driven by `AmModulationAnalyzer` (core, thread-safe: envelope = |I+jQ|, carrier = slow envelope average, peaks relative to carrier) fed from two sources: the TX I/Q block handed to `RadioConnection::sendTxIq` (new `TxChannel::setAmModulationTap`) and the PureSignal feedback receiver via `RadioModel::rawIqDataForStream` (stream index selectable, HL2 default rx1). Analyzers reset on every key-down. Persisted keys `ModMon/Source`, `ModMon/PosFlashPct`, `ModMon/NegFlashPct`, `ModMon/FbStream`, `ModMon/VintageMeters`. A **VU** toggle swaps the bar graphs for a pair of QPainter-drawn vintage illuminated meters (`VintageModMeterWidget`: cream/amber face with lamp glow, 0–140 % arc with red zone above 100, red VU decibel row, peak-reading needle ballistics, blue peak-hold dot, dark face when no carrier) with an `AsymmetryBarWidget` between them, and switches the scope to a mirrored green envelope on an orange graticule. `AppletPanelWidget::insertApplet(index, applet)` added so the monitor sits directly under the S-Meter. **Floating applets:** `AppletWidget::canFloat()` (true for the Mod Monitor) adds a ↗ pop-out button to the applet's title bar; `AppletPanelWidget::floatApplet` / `dockApplet` move it into an `AppletFloatingWindow` (Qt::Tool window with a Dock button; closing docks) and back. Floating state and window geometry persist per applet id (`Applet<Id>Floating`, `Applet<Id>FloatGeometry`) and are restored on launch; View > Containers > Applets visibility follows the floating window.
-- **AM / SAM / DSB transmit.** `BandPlanGuard::isModeAllowedForTx` now admits AM, SAM and DSB; the rest of the path (TxChannel `setTxMode` → WDSP `SetTXAMode` ammod stage, `applyTxFilterForMode` symmetric ±High IQ bandpass, TX filter overlay, VOX voice-mode set) already handled these modes. New `TransmitModel::amCarrierLevel` (percent, default 100) persisted as the Thetis TXProfile `AM_Carrier_Level` key on both the live TX state and mic profiles, pushed to WDSP via `TxChannel::setTxAmCarrierLevel` with the Thetis mapping `sqrt(0.01 * pct) * 0.5` (setup.cs:9965), wired into `pushTxProcessingChain` and a live `amCarrierLevelChanged` connect, and exposed as an "AM carrier level" spinbox on Setup → Audio → TX Profile. MOX tooltip for AM/SAM/DSB now reads "Manual transmit (MOX)". FM and DRM remain gated ("FM TX coming in Phase 3M-3b (pre-emphasis)"). Live-tested target: Hermes Lite 2 on 80 m AM.
+Upgrading from 0.5.2? Start with the [upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html).
+For a new station computer, follow the [Raspberry Pi OS Lite / Armbian Core install guide](https://nereussdr.com/guides/install-core-sbc.html).
 
-- **Phase 3F multi-pan + multi-slice foundation** (8 sub-epics, ~110 commits stacked on a single PR per single-PR strategy).
-- **Sub-Epic A**: SliceModel per-band persistence schema (sliceLetter, chainIndex, ddcIndex, sampleRateHz per-band, diversityEnabled, widebandExtensionRequested, psPaused), BoardCapabilities maxSlices + widebandAdcs per SKU, RadioModel::maxSlices accessor, AppSettings schema v5 to v6 migration, DdcAssignment shared struct.
-- **Sub-Epic B**: 5-slice codec chain (CodecContext SliceConfig array, IP1Codec + IP2Codec applyDdcAssignment, per-codec Thetis-faithful DDC topology including HL2 mi0bot PS rate carveout, AlexController per-ADC BPF state machine with BpfMode enum (Auto/ForceBand/ForceBypass) + BpfEffective enum (Filtered/Bypass/WidebandLocked) + recomputeBpf event matrix).
-- **Sub-Epic C**: TxSliceArbiter (single-TX invariant, RF-safe MOX-drop handoff, per-MAC TxBoundSliceIndex persistence) + RadioModel addSliceOnPan/removeSlice + VfoWidget TX badge click handler + MainWindow status-bar feedback + deprecated setSplit cleanup.
-- **Sub-Epic D**: PanadapterStack (5 layout templates: 1/2v/2h/12h/2x2) + PanadapterApplet + FFTRouter (receiver to pan fan-out) + PanFloatingWindow (multi-monitor detach) + PanLayoutDialog visual picker + +PAN bottom-bar dropdown + View menu shortcuts (Ctrl+L, Ctrl+R) + CH 0 / CH 1 BPF indicators + layout state persistence + disconnect-before-removal helper.
-- **Sub-Epic E**: SpectrumStatusOverlay per-pan badge (slice letter, freq, mode, CH, TX/WIDE/DIV/PS HOLD pills) + VfoWidget right-click context menu (TX/Antenna/Rate/Diversity/Filter/Remove) + FilterPolicyDialog (per-chain BPF override) + AntennaPickerMenu integration into VfoWidget right-click context menu (chain-consequence hints) + AntennaSwitchToast trigger via RadioModel::antennaAutoSwitched signal with Tools menu test entry + TxBoundConfirmDialog trigger via RadioModel signal with Tools menu test entry + HardwareDdcRoutingPage per-DDC override table (7 rows, per-MAC persistence) + Antenna Conflict Policy radio group on existing Antenna Control tab.
-- **Sub-Epic F**: P2 wideband data path end-to-end (P2 wideband packet decode at UDP ports 1027-1034 -> WidebandFrameAccumulator -> WidebandFftEngine 16384-pt FFTW r2c -> SpectrumWidget setWidebandBins) + CmdGeneral byte 23 wb_enable wiring per Thetis network.c:879 + SpectrumWidget extendedMode state with zoom auto-derive + click-in-wing retunes DDC, click-in-island retunes slice + per-pan Extended view right-click toggle + wideband-extension-requested auto-bypasses Alex BPF.
-- **Sub-Epic G** (8/25 plan tasks shipped): RxChannel WDSP setExtDivRun/Nr/Output/Rotate wrappers + SliceModel per-band diversity persistence (phase/gain/fine-null) + Slice-A WDSP wire from SliceModel signals + DiversityRadarWidget (custom QPainter polar sensitivity pattern, CalcVrms port from Thetis) + DiversityDialog (Tools > Diversity..., Ctrl+Shift+D) embeds DiversityRadarWidget for live lobe rendering + 8 per-band memory slots (M1-M8, click-recall / right-click-store) + PS HOLD overlay (MOX + Diversity active visual gate).
-- **Phase 3M-5 TX display: the transmit panadapter shows the transmit signal.** Revives the May 2026 `claude/tx-display` work onto current main and closes five defects found on an ANAN-7000DLE bench (2026-08-05), each of which masked the next. The panadapter source-switches to the WDSP TX analyzer on the MOX edge, fed by the `sip1` siphon at `TXA.c:586` (pre-PureSignal-correction, post-everything-else, so the TUNE tone and two-tone generator are both visible). Fixes: (1) the pan now takes Thetis's fixed +/-4 kHz transmit window (`display.cs:1284-1295`) instead of keeping its receive span, which had `visibleBinRange` clamping and the renderer stretching 96 kHz across a much wider axis, so the trace sat at the wrong dial frequency while the RF was correct; (2) the waterfall ticker stands down while the TX analyzer owns the plane, which had been interleaving transmit rows with stale receive rows into horizontal bands; (3) the analyzer is span-clipped to that window (`specHPSDR.cs:762-775` `CalcSpectrum` -> `fscLin`/`fscHin`), because slicing 8 kHz out of an unclipped 96 kHz left about a hundred real points upsampled twelvefold; (4) `SetAnalyzer`'s `bf_sz` now carries the TXA chain's `dsp_size` rather than the FFT size -- `Spectrum0()` takes no length argument, so WDSP had been reading 32768 samples out of a 2048-sample buffer every frame, which is why no window, detector or averaging setting appeared to do anything; (5) the graticule swaps to Thetis's TX pair (`display.cs:1887-1905`, +20 / -80 dBm) on key-up and back on un-key, and whatever the operator leaves on screen is captured and persisted as the transmit grid, so the dBm strip is a working control rather than one whose value was discarded twice per transmission. Also carries the 3M-5b TX waterfall colormap and 3M-5c custom gradient picker (both bench-passed in May), and per-pan correctness for the multi-pan world: the transmit trace resolves through `RadioModel::txBoundSlice()` so it lands on the pan that is actually transmitting, and the MOX overlay moves with it (it had been bound to `activeSpectrumWidget()` once at construction).
+2026.10.0 brings together the work since 0.5.2: independent receivers, a shared
+station Core, remote desktop and native iPhone/iPad operation, IPv6-aware
+remote access, WDSP 2.10 with NNR and PureSignal 3, a new 3D display, native
+TX EQ/CFC editors, and a console built around movable applets and configurable
+meter objects.
 
-- **VFO flag per-slice auto-creation** (multi-slice UI): RadioModel::sliceAdded now auto-spawns a VfoWidget per slice so operators can manipulate each slice flag directly when multiple slices live on the pan.
-- **Bottom banner cleanup + AetherSDR-shaped pan menu.** Replaces three competing status-bar responsive systems (RxDashboard's internal drop-priority ladder, MainWindow's right-strip drop priority, and Qt's own uncontrolled squeeze) with one `ChromeBarController`: banner layout is now a pure function of bar width, with natural widths cached once and a single-pass fold ladder (design doc `2026-08-02-bottom-banner-and-pan-menu-design.md`). Radio identity merges into `StationBlock`'s second row; RX state pills densify into one borderless row and now follow the active slice (previously always Slice A, a correctness bug since Phase 3F landed multi-pan); PA telemetry and CPU merge into one `SystemTile`; the UTC clock moves to TitleBar; the four safety indicators (INH/PA/OVL/TX) get permanently-reserved 50 px slots so an alarm never shifts its neighbours. Net: about 1740 px of required width down to about 1286 px. The `+PAN` text pill becomes a drawn icon (ported from AetherSDR) opening `PanLayoutDialog`'s painted thumbnail grid: nine layouts in all (four new: `2h1`, `3v`, `4v`, `3h2`), gated per-board and hiding (not greying) layouts the connected radio cannot host, with a footer line naming why. "Add slice on this pan" / "Float this pan" move off the `+PAN` button onto each pan's own right-click menu, so they act on the pan they were clicked from instead of routing through `activePanId()`.
-- **Vintage S-Meter faces.** The analog S-Meter header gains six vintage panel-meter faces (Aged Cream, VU Amber, Collins White, Blackface, Carbon, Ice), drawn by the new NereusSDR-original `gui/VintageMeterFace` painter: turned three-ring bezel, graduated card, anti-parallax mirror strip, ink scale with a red band above S9 (or above the TX red line), lance pointer with drop shadow, and a pivot cap with a brass screw. The design, proportions and theme table are carried over from Lee's TubeMeter ESP32 project. The card shows one scale at a time (S scale on receive; Power / SWR / Level / Compression on transmit) with S-units and dBm readouts flanking the hub; scale ranges, red-line points, needle ballistics, RX/TX modes and peak hold are unchanged. Right-click → **Meter Face** picks the face (persisted as `SMeter_FaceStyle`); **Classic (flat)** keeps the original AetherSDR look. Default face is Aged Cream. Static artwork is cached in a pixmap, so per-frame work is just pointer, markers and readouts. Test: `tst_smeter_widget_face`.
+This is the first release using **calendar versions**. `2026.10.0` means the first release in October 2026. Another release that month will be `2026.10.1`; the first release in November will be `2026.11.0`. Releases continue to ship when ready. Existing releases keep their original numbers.
 
-### Changed
+## The Core and GUI can run in different places
 
-- **Level Cal and the preamp list follow Thetis.** The preamp combo carries Thetis's ten preamp modes with each board's labels, each preamp setting keeps its own receive offset, and Setup > Hardware > Calibration > Level Cal runs Thetis's calibration on the Core, from the desktop, a remote window or the phone. The meter and display calibration are kept per radio model; a calibration from an earlier build moves to the connected model. **The upgrade changes what one stored setting sends to the radio:** a preamp choice stored as Off (the "-20dB" item) on any radio but an Atlas now loads as SA -20, the same label and the same 20 dB, sent as 20 dB of step attenuation instead of the preamp bit off, as Thetis does. A slice on a two-ADC radio's second ADC now has RX2's own preamp setting, which with RX2's step attenuator off sets that ADC's attenuator as Thetis does. On an HPSDR, keying with ATT on TX on turns RX1's step attenuator off and leaves it off, as Thetis does. The desktop's step attenuator range now matches the Core's (up to 61 dB on the Alex boards).
-- **The phone can set Rx1 6m LNA.** Setup > Hardware > Calibration on a remote window now has a Level Cal section with the Rx1 6m LNA offset (0 to 25 dB, default 13), the same box as the desktop's, applied to the Core's receive calibration. Setup description version 23.
-- **The radio's own speaker plays the receive audio.** The Core now sends the receive audio to the radio's own speaker and headphone out, as Thetis does: in the Protocol 1 L/R bytes and on the Protocol 2 audio stream. It plays every receiving slice, whichever device owns it, as Thetis's receive mixer does, plus the transmit monitor while this station hears it. The level follows the master volume, and it goes silent while the master is muted.
-- **The radio's mic settings reach the radio.** Mic boost (now on by default, as in Thetis), Line In, Line In Gain, Mic Tip-Ring, mic bias and XLR are sent to the radio on connect and whenever they change.
-- **Swap audio channels works on the Hermes Lite 2.** The HL2's Swap audio channels option is enabled on the desktop, in a remote window and on the phone, and swaps the left and right channels sent to the radio.
-- **Radio mic settings follow each radio.** On the Hermes Lite 2, Radio Mic can be chosen with a note that it needs the audio add-on board, and the Hermes mic settings show under Setup > Audio > TX Input. The Saturn G2 and G2 1K get the Mic Tip-Ring box, the Red Pitaya's Orion mic settings are shown disabled with the reason, and Line In Gain moves in 1.5 dB steps as in Thetis. The remote window and the phone see the same. Setup description version 24.
-- **RX2's input control for the phone.** The Core's catalog now tells an app how RX2's own input is set on the connected radio: a 0 to 31 dB slider in 1 dB steps on RX2's step attenuator on the radios with a second ADC (ANAN-100D, 200D, 7000D, 8000D, OrionMKII, Anvelina Pro3, G2, G2 1K), the second Mercury's 0 dB and -20 dB on an HPSDR, and otherwise the reason there is none. Sent to an app that asks for it (rx2AttenuatorVersion 1).
-- **Level Cal runs only on a slice you may change.** Starting Level Cal from a paired device on another device's slice is now refused with the usual ownership message. A remote window starts it on its own active slice, as the phone does. The hosting desktop uses its own active slice when another device's slice is active. A slice the Core is holding for a device that went away counts as that device's, not the desktop's. When the desktop has no slice of its own, its Start button is disabled with the same ownership message.
-- **RX2's attenuator stops at 31 dB.** On the ANAN-100D and 200D, RX2's own step attenuator went up to 61 dB like RX1's, but RX2 has no Alex attenuator behind it, so anything above 31 dB reached the radio as a much smaller value (40 dB arrived as 8 dB). RX2's own setting now runs from 0 to 31 dB, in Setup, the RX applet and from a remote window or the phone. Linked diversity still uses RX1's range.
-- **The Core owns the per-band RF and Tune power tables.** A window or the phone sets power with the RF and Tune sliders only; a write of the whole per-band table is refused ("The Core sets this itself; it cannot be changed from here."). A window built before this change gets that refusal once per RF slider move, and the power still follows the slider. With more than one slice, such an older window can still send a power value read from another band; the Core takes it as the power of the band it transmits on, so only that band's value can change. The local Tune Power slider now follows the band the radio transmits on. While transmitting, the PA Gain row open for editing stays on the band keyed on, through a retune, and moves on the next band change after unkey, as Thetis does. A disconnect forgets the transmit band, and a hand-edited FM TX offset outside 0 to 50 MHz loads as the band's default (R-R3-49).
-- **MainWindow refactor**: m_spectrumWidget single-widget pointer replaced with m_panStack (PanadapterStack containing N PanadapterApplet instances). 125 call sites migrated to activeSpectrumWidget() helper for backward compatibility.
-- **RadioModel** gains TxSliceArbiter ownership + FFTRouter ownership + WidebandFftEngine instances (one per ADC, default 122.88 MHz).
-- **Network Watchdog now sets how long NereusSDR waits for the radio.** Setup > General > Options > Network Watchdog was saved but never used. It now sets how long NereusSDR waits for data before it treats the radio as lost: three seconds when on, no limit when off (R-R3-49). On Protocol 2 radios and on the Hermes Lite 2, the radio's own safety timer stays on either way, so those radios stop transmitting if the computer stops; other Protocol 1 radios have not been checked for this. So that a setting changed back when it did nothing does not suddenly take effect, the upgrade resets it to on once (settings schema v7). Turn it off again afterwards if you want it off.
-- **TCI rate limit now paces frequency updates, in milliseconds.** Setup > Network > TCI Server > Rate limit was a messages-per-second box that nothing used, so it was hidden. It is back as Thetis has it: how long to wait between frequency updates (vfo, dds and tx_frequency) sent to each TCI app while the frequency is changing, 0 to 1000 ms, default 100 ms; 0 (Off) sends every change. A change applies to connected apps at once (R-R3-49). A value saved in the old messages-per-second unit means nothing in the new one, so the upgrade drops it once (settings schema v8) and every app starts at 100 ms.
-- **Noise filters that cannot run are shown disabled, and BNR is not offered.** DFNR and MNR stay on the VFO flag and in the DSP menu when they cannot run, disabled with the reason: DFNR when the Core has no working DFNR model, MNR when the Core is not a Mac (a window follows its Core). BNR (NVIDIA noise removal) is not offered: its button, quick controls and DSP menu entry are gone. A BNR choice from an older window or a saved setting is refused, and TCI never offers it, so the receiver never runs BNR (R-R3-49).
+The **Core** owns the radio connection and station state. It runs receiver
+and transmit DSP, noise reduction and PureSignal, computes spectra, manages
+station audio and accessories, and decides receiver and transmit authority.
+The **GUI** is your console: it renders VFOs, pans, waterfalls,
+meters and editors, sends control requests, plays received audio and sends
+microphone audio to the Core. Radio processing stays with the Core as
+you move between consoles.
 
-### Deferred (post-bench polish backlog, queued for Phase 3F-1)
+There are two ways to run it. A local desktop runs the Core and GUI together.
+For a remote station, headless **`nereusd`** runs beside the radio while the
+GUI runs on a Mac, Windows or Linux computer, iPhone or iPad elsewhere.
+Several paired devices can share one Core within the station's capacity.
+The Core coordinates receiver ownership and a single transmit holder.
 
-- **Per-slice DSP routing** (NR / AGC / CTUN / audio bus per slice). Foundation epic for Phase 3F-1: currently the slice-flag controls update the model + reassign DDCs, but DSP audio output is still bound to Slice A.
-- Sub-Epic F T7-T10 visual rendering of wideband bins as background fill behind DDC island with dashed boundary indicators
-- Sub-Epic G T6-T10 full DiversityDialog UI (quick-nudge buttons, Cross-fire / Lock-angle modes, Sync A-to-B, Link ATT)
-- Sub-Epic G T11 direction-finding group (antenna spacing + calibration)
-- Sub-Epic G T14 auto-find-null gradient descent
-- Sub-Epic G T15-T20 DiversityDialog polish (status badges, error handling, restore-defaults)
+The headless Core can run on a suitable Linux **single-board computer (SBC)**,
+including a Raspberry Pi inside an **ANAN-G2**, or a separate SBC beside the
+radio. Development testing included a **Raspberry Pi 4** and a **Radxa Rock 5C
+with 2 GB RAM**. Other compatible SBCs can host the same Core; sustainable
+receiver count, DSP features and display load depend on the board and its
+configuration. A display and a locally running GUI are not required at the
+radio. Keep the radio and Core at the station, and take the console with you.
 
-### Known limitations for v0.6.0
+### A native iPhone and iPad console
 
-- **`nereusd` receives on one slice only.** With `slice_count` above 1 the I/Q stream degrades to roughly 2 percent of its healthy rate on a Pi 4 against a live G2E. Not a regression: the branch adds no code to the failing path, and the same co-hosted-DDC placement is reachable from the GUI's +RX button on an already-populated pan. Narrowed to the daemon calling `addSlice()` with no pan id (which forces the cheapest placement, so every slice shares one DDC) and doing so before the P2 connection has been promoted to Connected. R1's own acceptance criterion is therefore not met at N above 1.
-- **`nereusd` exits with SIGSEGV when systemd stops it**, after a complete and otherwise normal shutdown log. Direct invocation is clean. Leading suspect is the never-joined WDSP wisdom thread, which only does work under systemd because `DynamicUser` plus a pinned `HOME` give it a cold wisdom cache. Daemon-only; it cannot corrupt the GUI's wisdom file, which is keyed off a different application name.
-- **The `nereusd` install path has no CI coverage.** `release.yml` is the only workflow that runs `cmake --install`, and it triggers only on `v*` tags, so PR CI never exercises it.
-- **Per-slice DSP routing is hardcoded to rxChannel(0).** A second slice's VFO flag controls update the model + reassign DDCs at the codec layer, but the DSP audio you HEAR is still Slice A's. Per-slice DSP routing (NR / AGC / CTUN / audio bus per slice) is a separate epic (Phase 3F-1).
-- **AntennaSwitchToast + TxBoundConfirmDialog are wired via Tools menu test entries.** Real conflict-detection emission lands when the antenna conflict-policy state machine is fleshed out (Phase 3F-1).
-- **HardwareDdcRoutingPage table persists overrides per-MAC, but the codec layer doesn't yet read them.** Codec consumption wires in Phase 3F-1.
-- **Diversity PS HOLD overlay is visual only (no actual DSP pause integration with PsccPump).** Real pause integration is a follow-up.
+The **native iPhone and iPad app** is another full operator console for the
+same Core. It provides live spectrum/waterfall and VFO
+flags, touch tuning and receiver controls, received audio, microphone uplink
+and PTT, transmit readings, station Setup, spots and accessory pages. It uses
+the same station identity, pairing, receiver ownership and transmit-holder
+rules as a desktop GUI. The phone or tablet renders station data while the
+Core runs the radio and DSP, including the transmit processing chain.
 
-### Bench verification
+This is a major part of the Core/GUI split: you can use a desktop,
+iPhone or iPad with the radio and its processing remaining at the station.
+The mobile app has its own TestFlight/App Store delivery process. Desktop
+and Core packages do not install it; mobile availability is announced separately.
 
-- Targeted ctest sweep: 17/17 green throughout the epic (all Phase 3F unit tests + cross-epic regression checks)
-- Hardware bench (G2, HL2, G2E if available, HermesII if available): pending per docs/architecture/2026-05-26-phase3f-verification/README.md (47-row matrix x 4 SKUs)
+Native EQ/CFC controls bring voice shaping to the phone. Filter Presets, local
+PA peak/minimum readings and resets, named TX profile saving, overwrite
+confirmation and unsaved-profile switching join the console. TX profile changes
+track the full set of saved settings.
+When a setting needs confirmation, the displayed Core value and your pending
+edit stay distinct. Old-session replies cannot change a new session's
+transmit authority.
 
-### Fixed
+### Reaching the station through the RV server
 
-- **Every shipped library now carries its licence text.** RADE, Opus, r8brain, libspecbleach, rnnoise, DeepFilterNet, PortAudio, nlohmann json, zlib and libASPL had no text in `packaging/third-party-licenses/`; they do now, the Core's install carries the folder too, and `scripts/check-third-party-licenses.py` fails CI when a vendored or fetched library has no row (R-R3-50).
-- **Each slice's markers on the panadapter now take that slice's colour.** With two or more slices on one pan, every slice's centre line, passband edge lines and triangle were drawn in slice A's cyan, so the lines could not be told apart; only the flags carried the slice colour. Each marker now uses its own slice's colour (A cyan, B magenta, C green, D yellow, and E orange on the radios that allow five slices, where slice E's flag also borrowed A's cyan before). Following current AetherSDR, slices other than the selected one draw their centre line and triangle darker and their passband edges in neutral grey, and the selected slice's marker paints on top. There is one selected slice across all pans, so a pan that does not hold it draws all of its slices darker. The shaded passband keeps the colour chosen in Setup > Display, and a single pan with a single slice looks as it did.
-- Source-first audit caught a wire-format bug in Sub-Epic F Task 1 plan: the wideband enable mask belongs in CmdGeneral byte 23 (Thetis network.c:879), not CmdRx byte 23 (which is rx[1].rx_adc per Thetis network.c:1118). Following the plan as written would have silently broken RX1 ADC routing the moment any user enabled an alternate ADC. Caught + fixed before implementation landed.
-- **Bottom banner + pan menu final audit fix wave.** Two of `ChromeBarController`'s width inputs were wrong: the per-ADC BPF chain indicator (idle to `BYPASS (multi-band: 160m + 80m + 40m + 20m + 10m)`, up to ~170 px) and the StationBlock disconnect transition both mutated their widget without reporting the new width, so the budget could quietly go stale and the bar could overflow again on routine band changes or a disconnect. `PanLayoutDialog` was gating its layout grid on raw `maxSlices` instead of `qMin(maxSlices, userDdcCount)`. Opening a new pan always claims its own DDC, so a board like HL2 (5 slices, only 2 DDCs) could paint five layout tiles it could only ever fill two of. All three fixed; the overflow chip and the RX dashboard's own non-pill residual (slice tag + mode + filter badges) are now also counted in the width budget, closing the remaining under-reporting the audit found.
+The **rendezvous (RV) server** is a separate network service that helps a
+GUI reach a Core across different networks. Both ends contact the configured
+RV service. The Core registers its station identity with the RV signalling
+service; the GUI asks for an introduction to that station. The service passes
+connection offers and network candidates between them and provides a pairing
+mailbox when the devices are not on the same network. The Core authenticates
+the device and retains all control and transmit-authority decisions.
 
-### Build
+After introduction, the station session uses its own connection. It can run
+directly between the GUI and Core, through a **TURN relay** when a direct path
+is unavailable, or through the separate **WebSocket relay** for a network that
+only passes web traffic. The RV service issues short-lived relay credentials;
+its signalling process handles introductions rather than ongoing session
+traffic. The signalling service, TURN relay and WebSocket relay are separate
+parts of the RV server installation.
 
-- **The application is now built as a single shared library (`NereusSDRLib`).**
-  Each of the 514 test executables previously embedded a private 22.8 MB copy
-  of the whole app, which put 12 GB in `build/tests` and meant macOS
-  Gatekeeper malware-scanned all of it on every cold suite run. A test binary
-  is now about 90 KB, `build/tests` is 1.2 GB (was 13 GB), and a cold
-  `ctest -j4` goes from 362 s to 109 s. Touching one `src/core` file and
-  rebuilding every test goes from 30 s to 22 s. Measured directly: XProtect
-  burns 62 CPU-seconds during a cold run, down from 189.
-  514/514 tests pass on both link modes, warm suite runs are unchanged at
-  43 s either way, and app resident memory is unchanged (the difference sits
-  inside a ±50 MB run-to-run spread).
-  No application behaviour changes. The renamed target (was `NereusSDRObjs`)
-  ships as `libNereusSDRLib.dylib` inside `NereusSDR.app/Contents/Frameworks`,
-  `libNereusSDRLib.so` in the AppImage's `usr/lib`, and `NereusSDRLib.dll`
-  beside the .exe in both the portable ZIP and the NSIS installer.
-- **Fixed four system libraries linked to the wrong target.** `ws2_32`
-  (needed by `RadioDiscovery.cpp`) and the DFNR Rust runtime dependencies
-  (`bcrypt`/`userenv`/`ntdll`, `Security`/`CoreFoundation`, `pthread`/`dl`/`m`)
-  were attached to the executable while the code needing them lives in the
-  library. That resolved only as long as the library was an OBJECT library
-  whose objects merged into the executable's link line.
+A directly reachable Core on the same LAN or a VPN can also be selected by
+address. Core Settings shows the chosen station, connection and audio path,
+so you can see which Core is in use and how the session is connected.
+The RV server provides reachability; the Core continues to own the radio and
+perform the DSP on every path.
 
-### Tests
+### IPv6 and CGNAT/mobile networks
 
-- **`tst_tx_mic_source::concurrent_producerConsumer_noDataCorruption` no
-  longer fails under load.** It asserted that every sample pushed through
-  `TxMicSource` came back, but the ring overwrites on overrun by design
-  (inherited from Thetis `Inbound()` at `cmbuffs.c:108-109 [v2.10.3.13]`), so
-  the test encoded a guarantee the implementation never made. It now asserts
-  what is actually guaranteed, that every drained block is a whole intact
-  produced block, and reports overruns via `qInfo` instead of failing.
-  Assertions also moved off the consumer thread, where a QtTest failure would
-  have silently truncated the loop rather than failing the test.
+The station link, LAN discovery and connection selection support **IPv4
+and IPv6**. Clients try usable IPv6 addresses alongside IPv4 alternatives,
+and the RV installation offers relay hosts for both address families. This
+lets a phone on an IPv6 mobile network reach a compatible station using
+IPv6. This applies to Core/client and RV networking; the Core continues to
+use the radio's existing OpenHPSDR connection.
 
-### Documentation
+This matters on **carrier-grade NAT (CGNAT)** and mobile broadband networks.
+CGNAT shares an IPv4 address at the provider, so a forwarding rule on the
+home router alone does not provide an incoming route through that provider.
+A usable global IPv6 path can provide direct connectivity when both ends and
+their firewalls permit it. When that path is unavailable, RV-assisted
+connection setup and the TURN/WebSocket relays provide alternatives.
 
-- **Corrected the test-suite cost figures in `CONTRIBUTING.md` and
-  `docs/development/fast-test-loop.md`.** Both stated that building all tests
-  costs about 32 minutes. Re-measuring found 34 s before this change and 25 s
-  after. The 32-minute figure came from a link-time measurement in the Phase 0
-  design doc that does not reproduce; the design docs now carry a correction
-  banner recording that, since the rest of their evidence stands.
+For example, [T-Mobile's Home Internet documentation](https://www.t-mobile.com/support/home-internet/connect)
+states that its gateways do not offer configurable NAT/port forwarding.
+IPv6-aware connection selection and outbound relay paths are therefore
+important for stations and mobile consoles on networks with those limits.
+The actual selected route and its audio status remain visible in Core Settings;
+carrier, router and firewall conditions still determine which route succeeds.
+
+Core Settings brings Core names, saved and manually entered addresses,
+connection targets, current audio status and device authority together.
+Unattended Pi and Radxa installations keep logs and deployment backups within
+bounded retention limits.
+
+Receiver and transmit transfers use explicit Core decisions and confirmations.
+Link loss blocks new keying, and old-session replies cannot grant authority
+to a replacement session. The same station authority and
+session contracts serve desktop and native mobile consoles.
+
+### Fresh Raspberry Pi OS Lite and Armbian installation
+
+A dedicated Debian 13/Trixie ARM64 Core package accompanies the Ubuntu
+packages. Choose the package matching your board's operating system.
+The [short SBC install guide](https://nereussdr.com/guides/install-core-sbc.html) covers flashing
+a 64-bit Raspberry Pi OS Lite or compatible Armbian Trixie image, installing
+the package with `apt`, starting the service and pairing a desktop or phone.
+
+The [user guide](https://nereussdr.com/manual/)
+brings desktop and mobile operation together: connecting, tuning, sharing a
+Core, choosing audio, arranging your workspace, editing transmit audio and
+using station accessories. Its illustrated procedures identify the builds
+and example data shown in the figures.
+
+## Independent receivers and richer displays
+
+- Multiple receivers now have independent tuning, mode, DSP and audio routing. Capacity follows the connected radio's hardware.
+- Pan layouts, floating pans, saved receive layouts and stable receiver identities let the console span several displays. Coloured slice markers make receivers easier to distinguish.
+- The selected transmit receiver owns its transmit display, including TX spectrum and waterfall settings.
+- The native **3D stacked spectrum/waterfall** adds depth and history. A display applet and shared display settings make its controls available in local and remote windows.
+- **Tunable notch filters** can be positioned and adjusted on the spectrum and saved across sessions. Optional visual dents leave calibrated signal readings intact.
+- **Core-owned Diversity** can move to an eligible receiver. Hardware/resource refusals and PureSignal-related pause are visible instead of silently assuming a fixed receiver.
+
+## WDSP 2.10, NNR and PureSignal 3
+
+The desktop and Core share the upgraded WDSP 2.10 engine.
+
+**NNR** adds Standard and Premium models managed by the station, with tuning
+for each radio and receiver, quick controls, advanced settings and a Models
+manager. Import a model, select it, then apply it when you are ready. Receivers
+keep their identities through the update, and unavailable saved models are
+identified clearly.
+
+**PureSignal 3** adds retained-correction application, station-owned correction assets, advanced status and AmpView integration. Normal preferences persist. Reloading settings never repeats a calibration, Restore, two-tone or PTT command. Calibration pause and Off remain distinct operations.
+
+PS3 uses **version-2 correction files**. Legacy version-1 files are refused with an explanation; create a fresh calibration rather than assuming old correction curves transfer.
+
+PureSignal status reflects what the Core has applied. Reset, correction and
+two-tone status stay with the operation that produced them.
+Saved Auto preferences resume when the first authenticated media session
+joins an eligible local Core, including after rejoining. Restoring a saved
+preference does not replay a calibration or keying command. The existing
+factory two-tone level is retained.
+
+## TX EQ and CFC editors
+
+Graphic and Parametric TX EQ retain their own values and have native graph editing, width handles, exact entry and session undo/redo. CFC presents aligned Compression and post-EQ graphs, shared frequency selection, independent gain/Q controls and measured compression bars.
+
+Configured 5/10/18-band curves and their applicable Q factors follow the microphone profile through to processing. Band-count changes make the curve reset explicit and undoable. Advanced controls stay beside their fixed header, and the Apply button states the pending band count. Unrecognized legacy CFC data is retained until explicit editing replaces it.
+
+The graphs show configured curves; they are not measurements of the complete audio chain.
+
+## Containers, applets and meters
+
+Applets and meter objects share one container system. Move them with dotted grips or menu commands, reorder stacks, float them and return them to remembered homes. Container settings offer previews, Apply/Cancel, reload and conflict handling.
+
+Container meter stacks size responsive bars to the available space while
+preserving saved row heights and fixed layouts. Pending moves and resizes
+survive content refreshes until their placement is saved. A per-object
+**Follow selected RX** option lets a supported reading follow the receiver
+selected in that window; fixed receiver choices remain available, and
+changing source clears readings retained from the previous receiver.
+
+Arrange each object on an editable Canvas: move and resize it, enter an exact
+position and size, change layers, lock it in place and scroll around the scene.
+Apply saves your changes; Cancel returns to the saved layout. Existing
+compositions, precise positions and records from other versions are preserved.
+Fifteen supported controls can be placed as individual buttons. Their usual
+capability and authority rules still apply, and preview controls stay inactive
+while you arrange them.
+
+Meter titles, scales and readings fit the object's size. The ANAN artwork,
+scale lettering, blue ALC section and needle origins stay intact as you resize.
+Control indications refresh after a click, including when Monitor's momentary
+indication ends.
+
+Export and exchange layouts while preserving custom objects, older records
+and external MMIO bindings. Migration retains recovery data. Composite meter
+faces follow their selected reading source and show unavailable readings
+clearly. The ANAN multimeter adds Nereus artwork, calibrated live/peak/history
+needles and named readings with units. RX/TX transitions clear stale readings;
+scale labels and readouts remain legible at ordinary sizes. Idle needles rest
+dim at their calibrated starting points, with no invented readings or history.
+
+## Modes, audio and accessories
+
+- **AM/SAM/DSB transmit** and the **AM modulation monitor** add carrier, positive/negative modulation, peak and envelope displays, including vintage meter presentation.
+- The radio's speaker/headphone output carries the receive mix and appropriate monitor audio. Hardware microphone boost, input selection/gain, tip/ring, bias and XLR controls follow board capabilities.
+- Level Cal and preamp behavior receive further Thetis-based calibration corrections.
+- **RF-Kit RF2K-S** monitoring/control joins the accessory system. PGXL/TGXL operation follows Core authority, with connection recovery and carrier-ready tuner sequencing.
+- Remove the TGXL chip from the bottom status bar to free banner space; tuner controls remain in their existing applet.
+- RADE sends and decodes FreeDV-format end-of-over callsigns when FreeDV Reporter is enabled and flushes held speech before ending an over.
+
+## Reliability fixes
+
+- Avoid a crash on the next connection attempt when the initial Protocol 1 or 2 UDP socket could not bind.
+- Correct the main and mini TX displays' buffer size on the first transmission after a queued mode/DSP change.
+- Include accepted Core automatic waterfall levels in the remote display transport range, preserving low-level detail that the previous range could clip. Saved waterfall controls are preserved; the separate brightness change when switching between Core and Clarity level ownership remains under investigation.
+- Close structured floating containers during application Quit while preserving final saved geometry and canceled-quit behavior.
+- Place the first owned receiver's flag within its newly created remote pan after the Core confirms receiver authority. Preserve pan views the operator has already moved or zoomed, and preserve listener views.
+- Keep remote automatic waterfall levels updating when peak hold is disabled, within the existing display-data budget.
+- Restart TX microphone pumping after live receiver reconfiguration (#331).
+- Keep the selected PC microphone’s level meter active while receiving in a remote desktop window. Preview audio is drained locally and never queued for a later PTT.
+- Preserve each waterfall row’s original RF window, so retained transmit history aligns correctly when returning to the receive display without losing the saved receive rows.
+- Match local NF-AGC precedence in remote windows when both waterfall AGC options are enabled.
+- Recover the remote transmit display when joining an already keyed station, and resolve missing or stale Core pan keys through the receiver’s unique host in the window.
+- Follow the transmit-bound receiver’s sideband for two-tone operation after a transmit handoff, even when a different receiver remains selected.
+- Keep the DEXP threshold marker across restarts (#332).
+- Keep HL2 tune power independent across repeated TUNE cycles (#333).
+- Replay saved anti-VOX state to replacement transmit workers (#334).
+- Prevent a callback from an old radio session from keying a replacement session (#335).
+- Align spectrum painting and mouse geometry in CPU and GPU builds (#336).
+- Keep each pan's displayed and wheel-tuning STEP bound to its selected receiver, including selection changes and replacement receivers.
+- Let new and surviving spectra/waterfalls resume after a media handover when a retired display's reply was lost. The Core still confirms the display release before its reservation is reused.
+- Preserve fresh remote VAX audio during startup and resumed streams instead of losing it during inactive-source cleanup; quiet stale audio is still discarded.
+- Improve macOS connection, preamp, audio-device, buffer, TX Input and container selectors when their contents refresh. Reconnecting and changing Settings selections preserve the chosen values without stale dropdown entries or the reproduced accessibility-cache crashes.
+
+Other reliability work improves receiver lifetimes, audio and media recovery,
+microphone restart, shared-station authority and reconnect cleanup. The original
+reconnect reports in #235, #299 and #300 still need their reporters' retests.
+
+## Upgrading from 0.5.2
+
+Keep existing settings and profiles; let the application perform its migrations.
+
+- Update the Core and desktop together for the new controls and authority contracts. Older peers may lack capabilities and receive an explicit refusal.
+- The previously unused **Network Watchdog** now controls how long the application waits for radio data. Migration enables it once. Protocol 2 and HL2 hardware safety timers remain enabled independently.
+- The TCI frequency-update rate is now an interval in milliseconds, 0 to 1000, with 100 ms as the default. The old, unused messages-per-second value is discarded once.
+- Non-Atlas saved preamp Off/“-20dB” maps to SA -20. RX2 input attenuation follows its own board limit; ANAN-100D/200D RX2 is capped at 31 dB. Microphone boost is now on by default.
+- PS3 requires new compatible correction files, as described above.
+- Compressed per-receiver digital-app audio uses Opus at 48 kbit/s. Lossless availability follows the accepted path and fallback rules; the speaker/headphone mix has its own Core setting. File-based FT8 checks found a small weak-signal penalty with Opus and matching decodes with lossless. Other modes and live comparisons still need their recorded checks.
+- BNR is no longer offered. DFNR and macOS-dependent MNR remain visible with an unavailable reason when the Core cannot run them.
+- The Power Genius discovery beacon keeps its existing `version=0.5.2` value. Product CalVer, settings schema, driver bundle versions and station wire protocol versions are separate numbers.
+
+## Known issues and follow-up work
+
+PureSignal two-tone runs have an open transmit-stream continuity issue,
+observed during both first and repeated runs. Receive restoration after
+unkeying still needs physical-radio validation. Waterfall brightness can
+change when selecting a receiver and switching between Core and Clarity
+level ownership. These items remain under investigation.
+
+Radio-specific TNF listening, NNR quality, PureSignal RF improvement, RADE
+on-air interoperability, sustained SBC operation and accessory checks continue
+in the [feature verification documents](https://github.com/boydsoftprez/NereusSDR/tree/v2026.10.0/docs/architecture).
+The legacy PS-RX/PS-TX spectrum view remains unavailable, and high-resolution
+trackpad gestures remain under review.
+
+CAT/rigctld follows in the next release. CW transmit, FM pre-emphasis, skin
+import and WAV/IQ recording remain future work.
+
+## Find your next step
+
+| What you need | Guide |
+| --- | --- |
+| Install and connect on a computer | [Desktop setup](https://nereussdr.com/manual/01-desktop-connect.html) |
+| Operate from an iPhone or iPad | [Mobile setup](https://nereussdr.com/manual/06-iphone-connect.html) and [mobile operation](https://nereussdr.com/manual/07-iphone-operate.html) |
+| Share a Core between devices | [Shared station operation](https://nereussdr.com/manual/08-shared-core.html) |
+| Arrange applets and meters | [Customize your workspace](https://nereussdr.com/manual/10-customize.html) |
+| Set up EQ and CFC | [Transmit audio editing](https://nereussdr.com/guides/tx-eq-cfc.html) |
+| Solve a connection or audio problem | [Troubleshooting](https://nereussdr.com/manual/11-troubleshooting.html) |
+
+Visit [nereussdr.com](https://nereussdr.com/) for the project overview and
+join [Discord](https://discord.gg/m35ERjwRe) for questions, station discussion
+and feedback. Please use [GitHub Issues](https://github.com/boydsoftprez/NereusSDR/issues)
+for tracked bug reports, including your OS, radio model, protocol and log.
+
+J.J. Boyd ~ KG4VCF
 
 ## [0.5.2] - 2026-05-24
 

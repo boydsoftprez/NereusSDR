@@ -17,6 +17,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-03  J.J. Boyd / KG4VCF. Committed workspace restoration fixture.
+//                                    AI-assisted via OpenAI Codex.
 //   2026-09-23  J.J. Boyd / KG4VCF  R3 controls that work, Task 1.
 //                                    AI-assisted transformation via
 //                                    Anthropic Claude Code.
@@ -43,6 +45,9 @@
 #include "gui/GuiSessionCoordinator.h"
 #include "gui/MainWindow.h"
 #include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/UnbuiltFeatures.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/diagnostics/DiagnosticsPhaseHPages.h"
 #include "gui/meters/FilterDisplayItem.h"
@@ -241,6 +246,10 @@ private slots:
     // opening Setup.
     void savedMeterSettingsApplyAtStartup()
     {
+        // Exercise the real committed-content path; the unavailable filter
+        // feature is enabled only within this settings-propagation fixture.
+        UnbuiltFeatures::setBuiltForTest(UnbuiltFeature::ContainerFilterDisplay, true);
+        const auto restoreFeature = qScopeGuard([] { UnbuiltFeatures::resetForTest(); });
         GuiSessionCoordinator sessions;
         QVERIFY(sessions.replace({}, false));
         QString containerId;
@@ -249,13 +258,20 @@ private slots:
             QVERIFY(cm != nullptr);
             ContainerWidget* container = cm->createContainer(1, DockMode::OverlayDocked);
             QVERIFY(container != nullptr);
-            container->setContent(new MeterWidget());
-            MeterWidget* meter = meterIn(container);
-            QVERIFY(meter != nullptr);
-            meter->addItem(new FilterDisplayItem());
-            meter->addItem(new HistoryGraphItem());
             containerId = container->id();
-            cm->saveState();
+            WorkspaceDocument document = cm->workspaceStore()->snapshot();
+            FilterDisplayItem filter;
+            HistoryGraphItem history;
+            bool found = false;
+            for (auto& record : document.containers) {
+                if (record.id != containerId) { continue; }
+                record.contents = {cm->contentRegistry()->captureMeterItem(filter),
+                                   cm->contentRegistry()->captureMeterItem(history)};
+                found = true;
+            }
+            QVERIFY(found);
+            QCOMPARE(cm->commitWorkspace(document, document.revision).status, CommitStatus::Saved);
+            QVERIFY(meterIn(cm->container(containerId)) != nullptr);
         }
 
         auto& s = AppSettings::instance();

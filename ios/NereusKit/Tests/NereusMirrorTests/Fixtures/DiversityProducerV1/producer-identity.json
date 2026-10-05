@@ -1,0 +1,21 @@
+{
+  "baseCommit": "f4077ae9acf169ad4030f0ffccd2e3b021bff6a9",
+  "baseTree": "7fbdf0521ce8a54fdc19dbf513f9d463c9db6651",
+  "description": "Current immutable Diversity v1 producer with test-only session exporter; offline receive-only static Orion MkII codec, no samples or RF.",
+  "sourceSha256": {
+    "src/models/RadioModel.cpp": "66bf2439d826a81994144c895690896838d8d9833562cfa31bdb81c72beb1113",
+    "src/core/session/StationServer.cpp": "4fce600242d57810d8864b795c4eb21858be291900b5ecfde4ed9ae38d925566",
+    "src/core/session/SessionMessages.cpp": "73d206bd3e1760d1fa0fd8521d5b051e1e596382e077a979040ebf6721137bca",
+    "src/core/session/SessionCommandDispatcher.cpp": "412f5c79660d19f61e5e6f4470242825827fa3c3900d3bc16d0b932fd4077db4",
+    "src/core/session/MirrorPolicy.cpp": "378d066f7f75d8f5b1c75ac6fa479d9e1f1b206f6f4399fa39322f9e3450861a",
+    "src/core/session/LinkVersion.h": "69744978f020d5e6e6cdceb53d94f17c381d3532ec934f4170dc386a925eadb1",
+    "tests/tst_link_conformance_session.cpp": "f1a4d150b26fc6cc53473b134b6a106d62047d74af5acc46ea910bfb0842322d"
+  },
+  "fixtureSha256": {
+    "surface.json": "174c11ee1552b214c5afab2e819e54e410f228edb1f5b6779166dd711d823aa3",
+    "control/client-diversity-set-target.json": "75996676cd205cd58c69870729a28a2f923a08f0acfdad20eaf9ffe6d87d7d3e",
+    "sessions/diversity-control-pattern.json": "09c1f3f49ce9eae08c7ca759ba3144597aea8ee6483a1e729bf64dfc4b9a36c4",
+    "sessions/diversity-control-no-pattern.json": "9d1d72855f20242324c62d23a4f1712545eaffaf61f20e6113dcbfa988e043af"
+  },
+  "fixtureCommit": "af49d8010be330dd31ccbe49e545efcb14bc96bc"
+}

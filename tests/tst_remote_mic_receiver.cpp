@@ -236,6 +236,7 @@ class TestRemoteMicReceiver : public QObject {
 
 private slots:
     void theLineKeepsTheTransmitNumbers();
+    void desktopDefaultMicrophoneUsesHighRate();
     void micSsrcIsDistinctFromTheCoresStreams();
     void feedGivesSilenceUntilTheTargetThenAudio();
     void feedOutOfUseDropsAudioAndEmptiesTheBuffer();
@@ -280,10 +281,40 @@ void TestRemoteMicReceiver::theLineKeepsTheTransmitNumbers()
     QCOMPARE(RemoteMicFeed().targetFrames(), 1440);
     QCOMPARE(RemoteMicConfig::kOpusFrameSamples, 960);
     QCOMPARE(RemoteMicConfig::kOpusPayloadType, 111);
-    QCOMPARE(RemoteMicConfig::kOpusBitrate, 24000);
+    QCOMPARE(RemoteMicConfig::kOpusBitrate, 48000);
 }
 
 // The line's SSRC is none of the ids the Core sends on, for any connection.
+// Wrong desktop bitrate drops the payload budget below the High request.
+void TestRemoteMicReceiver::desktopDefaultMicrophoneUsesHighRate()
+{
+    RemoteMicEncoder encoder;
+    QVERIFY(encoder.isReady());
+    QCOMPARE(encoder.targetBitrate(), 48000);
+    encoder.setBitrate(24000);
+    QCOMPARE(encoder.targetBitrate(), 24000);
+    encoder.reset();
+    QCOMPARE(encoder.targetBitrate(), 24000);
+    encoder.setBitrate(48000);
+    QCOMPARE(encoder.targetBitrate(), 48000);
+    quint32 random = 1;
+    std::vector<float> frame(960);
+    int bytes = 0;
+    for (int packet = 0; packet < 100; ++packet) {
+        for (float& sample : frame) {
+            random = random * 1664525U + 1013904223U;
+            sample = (static_cast<float>(random >> 8) / 16777216.0f - 0.5f) * 0.5f;
+        }
+        const QByteArray rtp = encoder.encode(frame.data(), quint16(packet),
+                                               quint32(packet * 960), kMicSsrc);
+        QVERIFY(!rtp.isEmpty());
+        bytes += rtp.size() - 12;
+    }
+    // Two seconds at 48 kbps has a 12000-byte budget. The established VBR
+    // voice/FEC profile may vary it; 24 kbps cannot meet this High floor.
+    QVERIFY2(bytes > 9000, qPrintable(QStringLiteral("Only %1 encoded payload bytes").arg(bytes)));
+}
+
 void TestRemoteMicReceiver::micSsrcIsDistinctFromTheCoresStreams()
 {
     for (int i = 0; i < 64; ++i) {

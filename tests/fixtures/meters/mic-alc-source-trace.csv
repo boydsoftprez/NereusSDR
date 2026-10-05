@@ -1,0 +1,7 @@
+# Independently calculated from Thetis MeterManager.cs:21323-21385 v2.10.3.15
+# start=-30, attack=.8, release=.1, interval=100ms; not generated from C++
+# ms,primary input,average input,primary output,average output
+0,0,-12,-6,-15.6
+100,0,-12,-1.2,-12.72
+200,-30,-12,-4.08,-12.144
+300,-30,-12,-6.672,-12.0288

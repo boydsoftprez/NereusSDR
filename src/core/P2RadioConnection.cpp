@@ -522,10 +522,12 @@ void P2RadioConnection::init()
     // [v2.10.3.15]).
     if (!m_socket->bind(QHostAddress::Any, 0)) {
         qCWarning(lcConnection) << "P2: Failed to bind UDP socket";
-        return;
+    } else {
+        applySocketBufferSizes();
     }
 
-    applySocketBufferSizes();
+    // Finish worker initialization even after a failed placeholder bind.
+    // connectToRadio() retries the bind and needs receive wiring and timers.
 
     connect(m_socket, &QUdpSocket::readyRead, this, &P2RadioConnection::onReadyRead);
 
@@ -1084,10 +1086,16 @@ void P2RadioConnection::setReceiverFrequency(int receiverIndex, quint64 frequenc
     // DDC0, DDC1 and DDC2: the three VFOfreq ids in the default arm above.
     constexpr int kRx1Ddcs = 3;
     const bool hermesClass = m_caps && primaryRxDdcForBoard(m_caps->board) == 0;
-    if (m_caps && !hermesClass && receiverIndex < kRx1Ddcs) {
+    if (m_caps && !m_ddcMaskOwnedByCodec && !hermesClass && receiverIndex < kRx1Ddcs) {
         for (int ddc = 0; ddc < kRx1Ddcs; ++ddc) {
             m_rx[ddc].frequency = static_cast<int>(frequencyHz);
         }
+    }
+
+    // Once a codec owns the map, DDC2 may be another operator's stream.
+    // Tune only the active pair's unhosted sync leg from its primary.
+    if (m_ddcMaskOwnedByCodec && receiverIndex == 0 && m_rx[0].sync == 2) {
+        m_rx[1].frequency = static_cast<int>(frequencyHz);
     }
 
     m_lastRetunedDdc = receiverIndex;

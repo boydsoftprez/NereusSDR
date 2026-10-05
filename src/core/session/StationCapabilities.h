@@ -352,6 +352,7 @@ struct StationCapabilities {
     /// on a Core with a radio model; any other peer's capabilities and
     /// slices are today's.
     int diversityPatternVersion = 0;
+    int diversityControlVersion = 0;
     /// Phone wire batch: 1 means `radio` carries `logCategoryList`, every
     /// logging category with its label. Sent after diversityPatternVersion,
     /// only to a peer at minor 11 whose hello declared logCategoryList 1,
@@ -582,7 +583,9 @@ struct StationCapabilities {
     /// and radioMicNote (whether the radio's own mic can be chosen, and the
     /// note that goes with it). Sent after rx2AttenuatorVersion and before
     /// coreBuildInfo, only to a peer whose hello declared `radioMic` 1; 0
-    /// otherwise.
+    /// otherwise. Version 2 additionally offers authenticated, session-scoped
+    /// tx.setMicSource to peers declaring radioMic 2 and remoteTx 1. Catalogue
+    /// version 1 alone never offers microphone selection.
     int radioMicVersion = 0;
     /// Shared-input filters, ruling (d): 1 means radio carries
     /// rxFilter0LowPassReason (why the receive low-pass on chain 0's input

@@ -92,6 +92,31 @@ public:
 class TestParametricEqJson : public QObject {
     Q_OBJECT
 private slots:
+    void exactEditorLoadingAndRuntimeRoundTrip()
+    {
+        NereusSDR::ParametricEqWidget widget;
+        NereusSDR::ParametricEqWidget::EqJsonState state;
+        state.bandCount = 5;
+        state.frequencyMinHz = 0;
+        state.frequencyMaxHz = 10000;
+        state.globalGainDb = 1.234567;
+        for (int i = 0; i < 5; ++i) {
+            state.points.append({i + 1, QColor(), i * 2500.0, -3.456789, 1.234567});
+        }
+        QVERIFY(widget.setEditorCurveState(state));
+        QCOMPARE(widget.points()[2].gainDb, -3.456789);
+        QCOMPARE(widget.points()[2].q, 1.234567);
+        QCOMPARE(widget.globalGainDb(), 1.234567);
+        widget.setSelectedIndex(2);
+        const QByteArray before = widget.saveEditState();
+        widget.setPointData(2, 5500, 4, 2);
+        QVERIFY(widget.restoreEditState(before));
+        QCOMPARE(widget.saveEditState(), before);
+        QCOMPARE(widget.selectedIndex(), 2);
+        state.points[0].frequencyHz = 20;
+        QVERIFY(!widget.setEditorCurveState(state));
+        QCOMPARE(widget.saveEditState(), before);
+    }
     void saveToJsonProducesSnakeCaseKeys();
     void saveToJsonOmitsBandIdAndBandColor();
     void saveToJsonRoundsFreqToThreeDecimals();

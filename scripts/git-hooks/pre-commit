@@ -18,11 +18,32 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
+# Capture Git errors separately and consume all names: grep -q can close the
+# pipe early, making Git fail with SIGPIPE under pipefail on large commits.
+# Only grep's no-match status may skip a gate; detector errors block commits.
+has_staged_match() {
+    local staged_files status
+    if ! staged_files="$(git diff --cached --name-only --diff-filter="$1")"; then
+        echo "[pre-commit] BLOCKED: cannot list staged files." >&2
+        exit 1
+    fi
+    if grep -E "$2" <<<"$staged_files" >/dev/null; then
+        return 0
+    else
+        status="$?"
+    fi
+    if [ "$status" -eq 1 ]; then
+        return 1
+    fi
+    echo "[pre-commit] BLOCKED: staged-file detector failed." >&2
+    exit "$status"
+}
+
 # R-R3-50: every shipped library has its licence text. Runs ahead of the
 # source-file gate below because what it guards (CMake files, third_party/,
 # the licence folder) is mostly not source. Fast: no build, no clone.
-if git diff --cached --name-only --diff-filter=ACMRD | \
-     grep -qE '(^|/)CMakeLists\.txt$|\.cmake$|^third_party/|^packaging/third-party-licenses/|^scripts/check-third-party-licenses\.py$'; then
+if has_staged_match ACMRD \
+     '(^|/)CMakeLists\.txt$|\.cmake$|^third_party/|^packaging/third-party-licenses/|^scripts/check-third-party-licenses\.py$'; then
     echo "[pre-commit] check-third-party-licenses.py"
     if ! python3 scripts/check-third-party-licenses.py; then
         echo
@@ -38,8 +59,8 @@ fi
 # set_tests_properties() on a test nereus_add_test() skipped stops CMake.
 # Every statement naming a test must sit inside if(TEST <name>) or its
 # add_test()'s own branches. Fast: a parse of tests/CMakeLists.txt only.
-if git diff --cached --name-only --diff-filter=ACMRD | \
-     grep -qE '^tests/CMakeLists\.txt$|^scripts/verify-test-registration\.py$'; then
+if has_staged_match ACMRD \
+     '^tests/CMakeLists\.txt$|^scripts/verify-test-registration\.py$'; then
     echo "[pre-commit] verify-test-registration.py"
     if ! python3 scripts/verify-test-registration.py; then
         echo
@@ -52,8 +73,8 @@ fi
 
 # Skip if no source files are staged — these hooks only care about
 # source / docs provenance.
-if ! git diff --cached --name-only --diff-filter=ACMR | \
-     grep -qE '\.(cpp|h|hpp|cc|c|hxx|md|py)$'; then
+if ! has_staged_match ACMR \
+     '\.(cpp|h|hpp|cc|c|hxx|md|py)$'; then
     exit 0
 fi
 

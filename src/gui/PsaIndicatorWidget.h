@@ -12,6 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — User-approved single stacked PureSignal3 / Feedback banner,
+//                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
+//   2026-10-04 — Live Core status and passive numeric correction readouts,
+//                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
+
 //   2026-05-06 — Phase 3M-4 Task 10: created by J.J. Boyd (KG4VCF),
 //                 with AI-assisted transformation via Anthropic Claude
 //                 Code.  Source-first 1:1 port of the Thetis bottom-
@@ -158,14 +163,9 @@ public:
     void setInvertRedBlue(bool on);
     void setHideFeedback(bool on);
 
-    // Phase 3M-4 bench-fix Round 2: byte-for-byte port of Thetis
-    // ucInfoBar.PSInfo (ucInfoBar.cs:808-825 [v2.10.3.13]).  Updates all 5
-    // UI state fields atomically and gates the redraw on
-    // (calibrationAttemptsChanged && m_mox).  Wired in wireToModel() to
-    // PureSignal::psInfoChanged which itself fires only when the coordinator
-    // has m_autoCalEnabled true and HasInfoChanged true (PSForm.cs:614-619
-    // [v2.10.3.13]).  Tests drive this slot directly to exercise the
-    // 6-state machine without spinning up a coordinator.
+    // Atomic feedback/applied-state update. Calibration-count changes are
+    // informational: they never suppress a fresh reading during collection.
+    // NereusSDR deliberately differs from Thetis's attempt-pulse display.
     void psInfo(int level, bool feedbackLevelOk,
                 bool correctionsApplied,
                 bool calibrationAttemptsChanged,
@@ -184,26 +184,19 @@ public:
     void simulateRightClickOnPs();
 
 protected:
-    // Forwards left/right clicks on the FB label to invertRedBlueRequested
-    // / hideFeedbackToggleRequested per ucInfoBar.cs:1042-1054 [v2.10.3.13].
-    // Clicks on the PS label are intentionally ignored (Thetis has no
-    // lblPS_MouseDown handler).
+    // All footer readings are passive; preferences are edited in Setup.
     void mousePressEvent(QMouseEvent* event) override;
 
 signals:
-    // Click-driven state-flip requests.  MainWindow connects these back
-    // to PureSignal::setInvertRedBlue / setHideFeedback so the Setup
-    // checkboxes (Task 11) and FB-label clicks share state.
+    // Legacy signal names retained for callers; passive footer clicks never emit them.
     void invertRedBlueRequested();
     void hideFeedbackToggleRequested();
 
 private:
-    // Auto-wires to PureSignal + MoxController signals when both are
-    // reachable from m_radioModel.  No-op when nullptr.
+    // Both local and remote sessions follow their shared Core status facade.
     void wireToModel();
 
-    // Ports updatePSDisplay verbatim.  See header docblock above for
-    // the 6-state map.
+    // Keeps the source-backed state colors while displaying every fresh reading.
     void updateDisplay();
 
     // Computes the FB-label background color from m_feedbackLevel and
@@ -224,10 +217,10 @@ private:
     void applyBackground(QLabel* label, const QColor& bg);
 
     RadioModel*  m_radioModel{nullptr};
-    PureSignal*  m_pureSignal{nullptr};
 
-    QLabel* m_lblFb{nullptr};
-    QLabel* m_lblPs{nullptr};
+    QLabel* m_lblPsFeedback{nullptr};
+    QString m_feedbackText;
+    QString m_calibrationDetail;
 
     // State (mirrors ucInfoBar.cs members from lines 802-806 + 1186
     // [v2.10.3.13]).  Phase 3M-4 bench-fix Round 2 dropped the
@@ -243,12 +236,12 @@ private:
     bool m_psEnabled{false};
     bool m_mox{false};
     bool m_correctionsApplied{false};
-    bool m_calChangedSinceLastDraw{false};
+    bool m_hasFeedbackReading{false}; // cleared at MOX-down to avoid stale TX readouts
     int  m_feedbackLevel{0};
     bool m_invertRedBlue{false};
     bool m_hideFeedback{false};
     bool m_useSmallFonts{false};
-    int m_lastRemoteAttempts{0};
+
 };
 
 } // namespace NereusSDR

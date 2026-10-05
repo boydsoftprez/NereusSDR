@@ -1,0 +1,250 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Set up and transmit | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/05-transmit.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html" aria-current=page>Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="set-up-and-transmit">Set up and transmit</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#route-and-test-microphone-audio">Route and test microphone audio</a></li><li><a href="#select-profile-transmit-slice-and-tx-owner">Select profile, transmit slice, and TX owner</a></li><li><a href="#set-drive-and-read-the-meters">Set drive and read the meters</a></li><li><a href="#choose-the-tune-drive-source-and-transmit-attenuation">Choose the TUNE drive source and transmit attenuation</a></li><li><a href="#configure-and-run-a-two-tone-test">Configure and run a two-tone test</a></li><li><a href="#listen-to-the-transmit-audio-monitor">Listen to the transmit audio monitor</a></li><li><a href="#make-a-brief-voice-transmission">Make a brief voice transmission</a></li><li><a href="#configure-the-transmit-protection-readback">Configure the transmit protection readback</a></li><li><a href="#set-receive-only-mode-region-and-link-loss-behavior">Set receive-only mode, region and link-loss behavior</a></li><li><a href="#tx-applet-control-map">TX applet control map</a></li></ol></details>
+<p>Transmit controls change shared radio state. Before keying, confirm the transmitting slice, microphone route, antenna, intended drive, and current TX holder. A control can be visible but disabled because the radio is receive-only, the Core has no transmit permission, a TX inhibit or interlock is active, another device owns TX, the mode is not supported for TX, or the Core is applying a station change. Read the control's tooltip or status reason and resolve that condition before trying again. This build does not provide CW transmit for CWL/CWU, FM transmit, or DRM transmit; SPEC cannot transmit. For profile editing and detailed speech processing, see <a href="/manual/14-voice-profiles.html">Voice processing and profiles</a>; for antenna and PA calibration, see <a href="/manual/17-hardware-antennas-calibration.html">Radio hardware and calibration</a>.</p>
+<h2 id="route-and-test-microphone-audio">Route and test microphone audio</h2>
+<h3 id="test-the-microphone-and-interpret-the-evidence">Test the microphone and interpret the evidence</h3>
+<p>Begin with a connected, transmit-capable radio and the intended slice selected. Open <strong>File &gt; Settings… &gt; Audio &gt; TX Input</strong>. <strong>Mic Source</strong> offers <strong>PC Mic</strong>, <strong>Radio Mic</strong>, and <strong>VAX TX (virtual device)</strong>. The local desktop chooses the radio's source; a remote desktop chooses its authenticated session's input and waits for the Core's accepted readback. Choose <strong>PC Mic</strong> for a microphone captured by this computer, <strong>Radio Mic</strong> for a radio's supported hardware input, or <strong>VAX TX</strong> when an external digital program supplies audio through the virtual device. Radio Mic controls vary by radio family, and unavailable rows remain gated with their displayed reason.</p>
+<p>For PC Mic, open <strong>File &gt; Settings… &gt; Audio &gt; TX Input</strong>. In <strong>PC Mic</strong>, choose the <strong>Backend</strong> and <strong>Device</strong> that contain the intended input. Use <strong>Buffer</strong> to adjust capture buffering only when the current route reports dropouts or unacceptable delay; its label shows samples and approximate milliseconds at 48 kHz. A smaller buffer reduces latency but may be less tolerant of a busy computer or backend. Check <strong>Test Mic</strong> and its VU indicator. If the stream is unavailable, open <strong>Audio &gt; Devices</strong>, confirm the selected capture device under <strong>TX Input (Microphone)</strong> and the operating system's microphone permission, then press <strong>Retry microphone</strong> and test again. Adjust <strong>Mic Gain</strong> only when the meter shows a level mismatch; its range depends on the connected board. These controls test local capture without putting RF on the air. The microphone group and selected source have separate Core permission gates.</p>
+<p>When <strong>Radio Mic</strong> is selected, use only the group shown for the connected board. <strong>Radio Mic (Hermes / Atlas)</strong> offers <strong>Mic In</strong> or <strong>Line In</strong>, <strong>+20 dB Mic Boost</strong>, and <strong>Line In Gain</strong>. <strong>Radio Mic (Orion-MkII)</strong> offers <strong>Mic Tip-Ring (Tip is Mic)</strong>, <strong>Mic Bias</strong>, <strong>Mic PTT Disabled</strong>, and <strong>+20 dB Mic Boost</strong>. <strong>Radio Mic (Saturn G2)</strong> offers <strong>3.5 mm Jack</strong> or <strong>XLR</strong> plus its <strong>Mic PTT Disabled</strong>, <strong>Mic Bias</strong>, and <strong>+20 dB Mic Boost</strong> controls. Set these to match the microphone wiring and electrical requirements; Mic Bias or boost can be inappropriate for a particular microphone. Verify the selected source and test on an authorized, low-drive transmission. A control disabled with a reason is not configurable on this Core or radio. In the candidate, Hermes Lite 2 offers <strong>Radio Mic</strong> with an explicit audio-add-on requirement. A stock HL2 sends no microphone audio; selecting the row does not detect or supply the add-on. Verify the actual compatible audio hardware before using that input.</p>
+<p>In a supported remote desktop session, <strong>Radio Mic</strong> selects the physical
+microphone at the Core's radio. Wait for the source-selection status to settle;
+the page explicitly reports that no computer microphone stream is used. Its
+VOX route is unavailable from this remote window, and program-audio keying
+requires <strong>PC/VAX</strong> input instead. Older Cores can refuse the radio-mic
+selection. <strong>PC Mic</strong> uses this computer's capture; <strong>VAX TX</strong> uses its digital
+application input. Changing that local device does not change the radio jack.</p>
+<p>The <strong>Phone / CW</strong> applet is a quick radio-side control surface. Its source buttons include supported <strong>PC</strong>, <strong>MIC</strong>, <strong>BAL</strong>, and <strong>LINE</strong> radio inputs. Select a source there only after confirming what is physically connected to that input. <strong>ACC</strong> is unbuilt and must not be used as a source. Phone/CW <strong>MON</strong> is also unbuilt; the separate <strong>MON</strong> control in the TX applet is the implemented transmit-audio monitor. The Phone/CW page is not a CW keyer or FM transmit panel.</p>
+<p>Use the evidence in order, and keep the transmitter unkeyed for the local
+check:</p>
+<ol>
+<li>In <strong>File &gt; Settings… &gt; Audio &gt; TX Input</strong>, choose the actual source. For
+<strong>PC Mic</strong>, choose its <strong>Backend</strong> and <strong>Device</strong>, enable <strong>Test Mic</strong>, and
+speak at the intended distance. Read its VU and the <strong>Mic Gain</strong> value. This
+observes local capture; it does not test the radio's selected input, TX
+processing, modulation, or RF path. Stop <strong>Test Mic</strong> when done.</li>
+<li>If capture is missing or unstable, use the capture status and <strong>Retry
+microphone</strong>; for a PC route also check <strong>Audio &gt; Devices</strong>, its
+<strong>TX Input (Microphone)</strong> selection, and operating-system permission. Do
+not infer a bad RF path from this local test.</li>
+<li>For <strong>Radio Mic</strong>, check the source and board-specific wiring controls in
+<strong>TX Input</strong>; Test Mic is the PC capture check. Confirm the correct
+connector/input and its displayed gain/state before a keyed check.</li>
+<li>For transmitted audio evidence, use a controlled authorized transmission
+and the TX applet's <strong>MON</strong> or an independent receiving station. Check the
+available TX mic/ALC and RF power/SWR readbacks separately. MON is the
+transmitted audio monitor in this desktop window; it does not prove how a
+remote receiver decodes or sounds. See <a href="#listen-to-the-transmit-audio-monitor">Listen to the transmit audio
+monitor</a>.</li>
+</ol>
+<h2 id="select-profile-transmit-slice-and-tx-owner">Select profile, transmit slice, and TX owner</h2>
+<p>Select the intended mic/TX profile in the TX applet's profile selector. Its profile controls are described in <a href="/manual/14-voice-profiles.html">Voice processing and profiles</a>. Profile editing is reached from <strong>File &gt; Profiles &gt; TX Profiles…</strong>, <strong>File &gt; Profiles &gt; Mic Profiles…</strong>, or <strong>File &gt; Settings… &gt; Audio &gt; TX Profile</strong>. Both File profile entries open the same profile editor. The File menu's <strong>Import…</strong> and <strong>Export…</strong> entries instead open Diagnostics configuration backup/restore; they do not transfer individual TX profiles. A profile is also separate from radio-authoritative power, antenna state and transmit ownership.</p>
+<p>In the TX applet, select the letter for the slice that should transmit, or right-click its VFO flag and choose <strong>Make this the TX slice</strong>. The flag action is permission-gated and unavailable for a receiver you only listen to. Confirm the resulting TX selection, frequency and mode on the VFO flag. The TX slice determines the transmit frequency/mode; the active RX slice is not automatically the TX slice. If another connected device holds TX, the applet identifies the holder and displays <strong>Take transmit</strong>. Press it to request the handoff, wait for the owner/readback to change, then reselect the intended TX slice. Do not repeatedly press MOX or TUNE while the Core reports another holder.</p>
+<p>The reviewed phone build has no general <strong>Take transmit</strong> action. When the phone already holds TX, its TX badge can select the desired slice. A first human PTT on an eligible original owned slice can acquire an unheld transmitter after all ordinary RF/microphone checks. A taken-only slice or another device's holder can refuse that request; use the supported starting states in <a href="/manual/07-iphone-operate.html#prepare-and-transmit-voice-from-the-phone">phone transmit preparation</a> and keep receiver handoffs receive-only when no valid TX route is offered. The physical headset, Bluetooth, Action-button, and locked-screen PTT button choices in the phone setup are disabled shell controls. They do not make those physical buttons supported transmit routes. The phone's on-screen PTT path and its timeout are covered in the mobile chapters.</p>
+<h3 id="recheck-a-handoff-and-radio-side-ptt">Recheck a handoff and radio-side PTT</h3>
+<p><strong>Take transmit</strong> can ask for confirmation naming the current device and the
+impact, including unkeying an on-air holder. Read that question and coordinate
+before confirming; wait for the accepted holder and TX slice. A changed holder
+or a holder that keyed after the first question can require another confirmation.
+The Core rechecks this session's transmit permission when applying the answer.
+Unkeying does not release ownership, and a refused take does not grant it.</p>
+<p>Wait for the radio to settle fully in receive before another key or TX-slice
+move. The TX-to-RX tail or a frozen TX flag can produce an on-air refusal even
+when MOX has just cleared. On a hosting desktop, a radio footswitch/mic PTT
+keeps a flag on its own chosen slice (including a split TX slice) or an unowned
+slice. If the flag belongs to another device, an admitted radio-side PTT can
+move it to the hosting desktop's active slice. With a headless Core, radio-side
+PTT uses the flag's slice. Check the actual flag, holder and station wiring
+before relying on a physical PTT; a shared receiver view does not determine
+that target.</p>
+<h2 id="set-drive-and-read-the-meters">Set drive and read the meters</h2>
+<p>The TX applet's <strong>RF Power</strong> slider sets transmit drive. <strong>Tune Pwr</strong> stores the transmit band's tune drive. TUNE and 2-Tone each have a selectable drive source; check that source before keying. Their numerical labels are relative drive values unless a supported PA profile is configured with <strong>MAX watts @ 100%</strong>. Do not read either slider as watts by default. Hardware-specific scales differ; Hermes Lite 2 uses fewer drive steps and displays its own dB values. The <strong>Power</strong> page can expose radio/PA limits and controls according to hardware and permissions. Use the station's verified output meter, not the slider number, to establish RF power.</p>
+<p>Before a first transmission, move RF and Tune drive to a conservative setting appropriate to the radio, amplifier, and load. Watch forward power and SWR meters during a brief authorized test. A meter with no reading can mean no transmit, a radio/PA without that telemetry, an unavailable feedback path, or an incorrect output route; it is not proof of zero RF. Keep the Tune setting conservative because TUNE produces a continuous single-tone carrier while active.</p>
+<p>For a PA-scaled watts workflow, use <strong>File &gt; Settings… &gt; PA &gt; PA Gain</strong> only when a supported PA profile is offered. Follow that page's bands, gain and maximum-watts controls and the displayed calibration readiness. The profile's maximum-watts setting is what permits a drive control to be interpreted on that scale; it is not a power measurement by itself. The <a href="/manual/17-hardware-antennas-calibration.html">hardware chapter</a> covers <strong>Watt Meter</strong>, <strong>PA Values</strong>, and calibration controls. If no supported profile is active, keep describing RF Power and Tune Pwr as drive and use an independent station meter for actual watts.</p>
+<h2 id="choose-the-tune-drive-source-and-transmit-attenuation">Choose the TUNE drive source and transmit attenuation</h2>
+<p>Open <strong>File &gt; Settings… &gt; Transmit &gt; Power</strong> while receiving. In <strong>Tune</strong>,
+choose the <strong>Drive Source</strong> intentionally:</p>
+<table>
+<thead>
+<tr>
+<th>Choice</th>
+<th>Value used for TUNE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Use Drive Slider</td>
+<td>The current RF Power drive.</td>
+</tr>
+<tr>
+<td>Use Tune Slider</td>
+<td>The saved Tune Pwr for the transmit band.</td>
+</tr>
+<tr>
+<td>Use Fixed Drive</td>
+<td>Fixed Tune Power on this page, using the radio's displayed scale.</td>
+</tr>
+</tbody>
+</table>
+<p>Moving the TX applet's <strong>RF Power</strong> slider selects Use Drive Slider; moving
+<strong>Tune Pwr</strong> selects Use Tune Slider. The last change can therefore replace a
+previous source selection. Recheck the Tune group's radio button and value
+before a test, especially after changing ordinary transmit drive. A remote
+window uses the Core's permitted tune settings and readbacks; a refused edit
+must be resolved before assuming the new drive is in effect. The separate
+<strong>TX TUN Meter</strong> selector is not a working meter-routing control in this build.
+Use the implemented meter readouts rather than relying on that selection.</p>
+<p>The <strong>Power</strong> group also has <strong>Max Power (W):</strong>, which writes the same transmit
+drive setting as RF Power. Its caption does not establish measured watts.
+<strong>ATT on TX</strong> enables transmit-time receive/feedback attenuation, and
+<strong>ATT on TX (dB):</strong> supplies its value. The allowed minimum is radio-specific;
+the page obtains the connected radio's range. <strong>Force ATT on Tx to 31 when
+PS-A is off</strong> applies the offered forced-attenuation policy. These are shared
+radio settings, not microphone gain or a reduction in PA output drive.</p>
+<p>Record the present attenuation and policy before editing, then set only values
+established for the connected receiver/feedback path. Confirm the readback and
+PureSignal feedback indication during the controlled test. With automatic
+feedback attenuation active, a changing attenuation readback can be the
+controller's adjustment. If feedback worsens, unkey and inspect the path and
+policy; raising RF drive is not the remedy for a receiver attenuation problem.</p>
+<h2 id="configure-and-run-a-two-tone-test">Configure and run a two-tone test</h2>
+<p><strong>2-Tone</strong> starts a transmitted test signal. Configure it while receiving in
+<strong>File &gt; Settings… &gt; Test &gt; Two-Tone IMD</strong>. This page edits shared transmitter
+settings; in a remote window a Core/version/permission refusal can prevent an
+edit. These controls do not themselves start the generator.</p>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Meaning and interaction</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Freq #1, Freq #2</td>
+<td>Tone frequencies in Hz, each −20,000 to +20,000. Choose frequencies appropriate to the intended mode and measurement bandwidth.</td>
+</tr>
+<tr>
+<td>Defaults</td>
+<td>Sets only the two frequencies to 700 and 1900 Hz. Other test settings remain as shown.</td>
+</tr>
+<tr>
+<td>Stealth</td>
+<td>Sets only the frequencies to 70 and 190 Hz. It does not make a transmission silent or exempt it from normal keying gates.</td>
+</tr>
+<tr>
+<td>Level</td>
+<td>Generated audio level, −96 to 0 dB. This is separate from RF drive.</td>
+</tr>
+<tr>
+<td>Drive Power Source</td>
+<td>Drive Slider uses RF Power; Tune Slider uses the transmit band's tune value; Fixed uses Drive Power (Fixed mode). This choice is separate from the TUNE source above.</td>
+</tr>
+<tr>
+<td>Drive Power (Fixed mode)</td>
+<td>Fixed two-tone drive percentage, 0 to 100, used only with Fixed selected.</td>
+</tr>
+<tr>
+<td>Pulsed two-tone</td>
+<td>Chooses the pulsed test instead of continuous generation. It is still a keyed RF test.</td>
+</tr>
+<tr>
+<td>Invert for LS Modes</td>
+<td>Negates both tone frequencies for lower-sideband modes, reversing their signed audio-frequency direction.</td>
+</tr>
+<tr>
+<td>Freq #2 delay</td>
+<td>Delay before the second tone is enabled, 0 to 1000 ms.</td>
+</tr>
+</tbody>
+</table>
+<ol>
+<li>Confirm the correct TX slice, supported mode, TX holder and established
+antenna/load/PA measurement path. Finish any TUNE operation and check receive
+state. Set the test's audio level and selected drive source conservatively
+for that station; a quiet microphone meter does not indicate a quiet test.</li>
+<li>Reopen the page if needed and confirm both tone frequencies, level, source
+and drive value. Defaults and Stealth leave drive and mode flags intact.</li>
+<li>Press the TX applet's <strong>2-Tone</strong> button, or the PureSignal form's <strong>Two-tone</strong>
+toggle. The controller starts the generator and requests MOX. Observe the
+active button and actual transmit/protection indications. If keying is
+refused, read the reason and verify that the generator returned to off.</li>
+<li>Read the intended spectrum/IMD, power/SWR and feedback measurements during
+a brief test. For a correction, follow <a href="/manual/18-puresignal-diversity.html#calibrate-and-apply-a-correction">Single Cal</a>.</li>
+<li>Press the active test button again to stop. Confirm the generator and MOX are
+off and receive returns. Fixed mode restores the previous ordinary drive on
+stop; verify that value before returning to speech operation. Recheck the
+station state after a timeout or fault instead of assuming a test restarted.</li>
+</ol>
+<h2 id="listen-to-the-transmit-audio-monitor">Listen to the transmit audio monitor</h2>
+<p>In the desktop <strong>TX</strong> applet, choose <strong>SPEAKERS</strong> or <strong>PHONES</strong>, set <strong>Mon
+Vol:</strong> to a comfortable level, then enable <strong>MON</strong> for a controlled transmit
+check. This selector and volume route the monitor to this computer's output;
+they do not change RF drive. MON is off when NereusSDR starts. Check that the
+radio is actually keyed before judging silence, and check the selected output
+and its local volume if MON is silent. With <strong>PHONES</strong> selected, no open
+headphone device means no audible monitor. Turn MON off after the check to
+avoid unexpected audio or feedback.</p>
+<p>Keep the evidence distinct: <strong>Test Mic</strong> is local capture before transmit;
+the TX applet <strong>MON</strong> is a local listen to audio during transmit; TX mic/ALC
+meters show only the values that the connected radio/Core supplies; and an
+independent receiving station is needed to verify the received signal. None
+of the first three alone establishes over-the-air audio quality.</p>
+<h2 id="make-a-brief-voice-transmission">Make a brief voice transmission</h2>
+<ol>
+<li>Confirm the correct Core/radio and TX slice. Confirm the selected mic source and, for PC Mic, a successful <strong>Test Mic</strong> indication.</li>
+<li>Confirm the intended antenna and radio/PA path in the hardware setup, then inspect the protection and inhibit indicators. For a shared station, confirm this device holds TX.</li>
+<li>Set RF drive conservatively and enable the TX applet's monitor only if needed. Confirm the radio is in a voice mode and its TX filter is appropriate. For receive-to-transmit passband matching, use the one-time <strong>Match RX</strong>/shift-click action described in <a href="/manual/14-voice-profiles.html">Voice processing and profiles</a>; it copies the current RX filter to TX and does not maintain continuous follow.</li>
+<li>Press <strong>MOX</strong>. The button turns red while manual transmit is requested. Speak briefly and observe the mic/ALC, forward-power, and SWR indications that your radio provides.</li>
+<li>Press <strong>MOX</strong> again to unkey. Confirm the red state clears and receive audio returns. If the red state or transmit holder remains, do not close the window as a substitute for unkeying; inspect the active PTT state and Core indication.</li>
+</ol>
+<p>For a single-tone check, press <strong>TUNE</strong> instead of MOX. The button changes to <strong>TUNING…</strong> while the carrier is active; press it again to stop. TUNE is not a voice test and should be used only into an appropriate antenna/load system with station precautions. The TX applet's <strong>2-Tone</strong> control is a separate keyed measurement path, configured as described below. PureSignal uses that test path in <a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a>.</p>
+<h2 id="configure-the-transmit-protection-readback">Configure the transmit protection readback</h2>
+<p>Open <strong>File &gt; Settings… &gt; Transmit &gt; Power</strong>. <strong>Enable Protection SWR &gt;</strong> turns on the visual SWR warning threshold; <strong>SWR Limit</strong> sets that threshold. <strong>Ignore when Tune Pwr &lt;</strong> and <strong>Tune Pwr (W)</strong> specify whether SWR protection is ignored below the selected Tune power. That option disables SWR protection during low-power Tune; use it only when that is the intended station policy. <strong>Reduce Pwr if protected</strong> asks the radio to wind back drive when high-SWR protection engages. These controls apply immediately and affect the Core's protection behavior, including from a remote desktop when the Core offers the setting.</p>
+<p>In the same <strong>Power</strong> page, <strong>External TX Inhibit</strong> contains <strong>Update with TX Inhibit state</strong> and <strong>Reversed logic</strong>. Enable monitoring when the connected radio's external inhibit input is wired and intended to control the TX gate. Reverse logic only when the hardware's asserted/deasserted levels require it. Confirm the resulting inhibit state in the TX readiness indication before keying. Do not mask an inhibit by changing logic as a troubleshooting guess.</p>
+<p>Open <strong>File &gt; Settings… &gt; General &gt; Options &gt; Time Out Timers</strong> to review station key timeouts. <strong>MOX</strong> sets a maximum duration for MOX and other radio/computer keys. <strong>Ping</strong> stops MOX if the configured host cannot be pinged for the selected interval; choose a host that this station can reliably reach, since a blocked ICMP path can unkey a healthy RF link. The <strong>Def</strong> button restores the displayed default ping host. <strong>Phone and iPad</strong> sets the separate timeout for mobile transmissions. These timeout values are Core/station settings, apply immediately, and are evaluated from key-down. Choose limits that suit the station, then verify the enabled state and seconds readback. A timeout ending TX is a protective unkey; inspect the corresponding timer and network condition before keying again.</p>
+<p>The <strong>General &gt; Options</strong> page also includes <strong>Prevent TX'ing on a different band to the RX band</strong>. When enabled, it can block a TX slice whose band differs from the receive band; confirm both slice bands before changing that station-wide policy. <strong>Receive Only</strong> is a broader station mode that disables TX controls. Turning off a safeguard merely to clear a refusal can permit an unintended transmission, so first identify why the current selection violates the policy.</p>
+<p>If a TX inhibit, high SWR condition, PA fault, band protection, receive-only setting, or shared transmit lock prevents keying, read the status message beside the blocked control. Check the physical antenna/load and accessory interlock first, correct the identified station condition, and then confirm the blocker clears. A red/disabled button is not a request to bypass a protection. Some protection and radio settings are unavailable while transmitting or while another Core operation is in progress; unkey and wait for the stated operation to finish.</p>
+<h2 id="set-receive-only-mode-region-and-link-loss-behavior">Set receive-only mode, region and link-loss behavior</h2>
+<p>Open <strong>File &gt; Settings… &gt; General &gt; Options</strong> while the station is receiving.
+These choices affect the Core/radio, including requests from a remote window.</p>
+<ul>
+<li><strong>Receive Only</strong> disables transmit functionality. To re-enable TX, clear it
+and read <strong>Warning: Enable Transmit?</strong>. <strong>No</strong> keeps receive-only mode;
+<strong>Yes</strong> requests transmit capability again. A receive-only hardware kit keeps
+the box checked and locked with its reason. Recheck the box and TX readiness;
+clearing a software choice cannot add a physical transmitter.</li>
+<li><strong>Region</strong> selects the region policy used by the transmit gate. Choose the
+station's actual location from the list, then check the selected readback
+and any transmit refusal. It does not rename a radio or change the phone's
+display-only band-plan size. On-air or unsupported Core state disables the
+choice and explains why; return to receive or update the Core as indicated.
+A region selection is not a substitute for knowing the station's permitted
+frequencies and modes.</li>
+<li><strong>Network Watchdog</strong> controls how long NereusSDR waits for incoming radio
+data before treating the radio as lost: On is three seconds; Off keeps
+waiting. On Hermes Lite 2 and newer-network-link radios, the radio's own
+safety timer remains enabled either way. This checkbox is different from
+the Ping transmit timeout. Inspect link diagnostics before changing it;
+disabling it can conceal a stalled receive-data path. An older Core can
+refuse the change and restore the previous check state with an update reason.</li>
+</ul>
+<p><strong>Extended</strong>, on the same Options page, changes the Core's shared extended
+transmit policy. In this build it bypasses the software frequency/passband
+restrictions and the affected region-specific mode-policy branch. Supported
+TX-mode and different-band checks remain in place, along with ownership and
+station interlocks. It grants no operating permission and changes no displayed
+band-plan presentation.</p>
+<p>Set it only for an intentional station policy while off air. The hosting
+desktop can hold the edit while another device owns TX; a remote window needs
+the Core's supported transmit-setting version and transmit permission. A
+disabled checkbox gives that reason. After an edit, check the Core's returned
+check state and any refusal; a reverted check means the policy did not change.
+Restore the previous state when ending the intended extended-policy session.
+An old saved per-computer Extended value is not the active Core policy.</p>
+<p>After any request, use the accepted check/selection and readiness state as the
+result. A reverted value or displayed refusal means the requested policy has
+not become operative. Reconnect and recheck before trying to key after a
+link-loss event.</p>
+<h2 id="tx-applet-control-map">TX applet control map</h2>
+<p><a href="/manual/images/desktop-tx.jpg"><img src="/manual/images/desktop-tx.jpg" alt="TX applet in receive showing power controls, TUNE, MOX, monitoring, processing, profile and transmit filter" /></a></p>
+<p>Figure 4. The TX applet while receiving: <strong>RF Power</strong> (1), <strong>Tune Pwr</strong> (2), <strong>TUNE</strong> (3), <strong>MOX</strong> (4), monitor output and volume (5), processing (6), profile selector (7), and <strong>TX BW</strong> (8). Neither MOX nor TUNE is keyed in this capture. The displayed values are not recommended starting levels.</p>
+<div class="page-next"><a href="/manual/04-slices.html">Previous chapter</a><a href="/manual/06-iphone-connect.html">Next chapter</a></div></main></div></body></html>

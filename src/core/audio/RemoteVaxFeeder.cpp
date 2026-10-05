@@ -10,6 +10,8 @@
 //                 AI-assisted implementation via Anthropic Claude Code.
 //   2026-09-23: R-R3-44 fix wave: slices sharing the channel are mixed.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-04: Preserve ingress arriving after the pump's snapshot.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "core/audio/RemoteVaxFeeder.h"
@@ -163,8 +165,9 @@ void RemoteVaxFeeder::receiverAudioBlock(int sliceId, const float* interleavedSt
         return;
     }
     handoff.tryPushCopy(reinterpret_cast<const uint8_t*>(interleavedStereo), qint64(bytes));
-    source->pushedBytes.fetch_add(quint64(bytes), std::memory_order_release);
+    // Observing the published bytes also observes this stream's resume.
     source->stopped.store(false, std::memory_order_release);
+    source->pushedBytes.fetch_add(quint64(bytes), std::memory_order_release);
     source->receivedFrames.fetch_add(quint64(frames), std::memory_order_release);
     m_receivedFrames.fetch_add(quint64(frames), std::memory_order_relaxed);
 }
@@ -319,7 +322,14 @@ int RemoteVaxFeeder::drainHandoff(bool paced, qint64 now)
         if (isNowLive) {
             ++live;
         } else {
-            dropHandoff(source);
+            // Discard only the prefix this pump saw before deciding the
+            // source was silent. A receive worker may publish fresh audio
+            // after that snapshot; leave it for the next pump.
+            if (source.seenPushedBytes > source.poppedBytes) {
+                const std::size_t stale = std::size_t(source.seenPushedBytes - source.poppedBytes);
+                source.handoff->dropOldest(stale);
+                source.poppedBytes += stale;
+            }
             // Went quiet: still on the channel, not stopped by the Core,
             // and silent past kQuietNs. A slice that left the channel (its
             // slot freed) or that the Core stopped did not hold anyone up.

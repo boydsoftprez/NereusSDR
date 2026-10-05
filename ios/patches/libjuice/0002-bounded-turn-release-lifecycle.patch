@@ -1,0 +1,532 @@
+libjuice 3c40a354: keep closing agents alive for bounded authenticated TURN release
+
+NereusSDR for iOS patch, applied after 0001 by ios/scripts/vendor-sources.sh.
+MPL-2.0, like the covered files it changes. Task 56, 2026-09-27.
+
+A closing agent retains its original UDP socket and relay credentials for
+authenticated zero-lifetime Refresh retries at 0, 0.5, 1.5, and 3.5 seconds,
+with one shared five-second deadline. It accepts only matching authenticated
+responses, handles a signed nonce challenge and late authenticated Allocate,
+and suppresses normal ICE traffic and callbacks. A narrow begin/status API
+allows the owner to retire the agent after release and resolver completion.
+The old direct-destroy best-effort behavior remains for legacy callers.
+A JUICE_TESTING-only exact-host resolver barrier supports deterministic delayed-DNS
+regression tests and is excluded from release builds.
+
+diff --git a/include/juice/juice.h b/include/juice/juice.h
+index e43db6cbe..7dff0e736 100644
+--- a/include/juice/juice.h
++++ b/include/juice/juice.h
+@@ -121,6 +121,16 @@ typedef struct juice_config {
+ JUICE_EXPORT juice_agent_t *juice_create(const juice_config_t *config);
+ JUICE_EXPORT void juice_destroy(juice_agent_t *agent);
+ 
++// Begin a bounded TURN allocation release while retaining ownership of the
++// agent. The caller must later destroy it, after close_status is no longer
++// PENDING. Repeated begin calls are harmless. These calls do not wait for a
++// network response.
++#define JUICE_CLOSE_PENDING 0
++#define JUICE_CLOSE_COMPLETE 1
++#define JUICE_CLOSE_EXPIRED 2
++JUICE_EXPORT int juice_begin_close(juice_agent_t *agent);
++JUICE_EXPORT int juice_close_status(juice_agent_t *agent);
++
+ JUICE_EXPORT int juice_gather_candidates(juice_agent_t *agent);
+ JUICE_EXPORT int juice_get_local_description(juice_agent_t *agent, char *buffer, size_t size);
+ JUICE_EXPORT int juice_set_remote_description(juice_agent_t *agent, const char *sdp);
+diff --git a/src/agent.c b/src/agent.c
+index 136481b22..6dd88eef7 100644
+--- a/src/agent.c
++++ b/src/agent.c
+@@ -27,6 +27,8 @@
+ 
+ #ifdef _WIN32
+ #include <windows.h>
++#elif defined(JUICE_TESTING)
++#include <unistd.h>
+ #endif
+ 
+ // RFC 8656: The Permission Lifetime MUST be 300 seconds (= 5 minutes)
+@@ -38,6 +40,51 @@
+ #define BUFFER_SIZE 4096
+ #define DEFAULT_MAX_RECORDS_COUNT 8
+ 
++// Four ordinary sends share one monotonic window. A signed nonce challenge
++// may add one immediate send without extending that window.
++#define TURN_CLOSE_DEADLINE 5000
++#define TURN_CLOSE_ATTEMPTS 4
++static const timediff_t turn_close_offsets[TURN_CLOSE_ATTEMPTS] = {0, 500, 1500, 3500};
++
++static void agent_close_update(juice_agent_t *agent, timestamp_t *next_timestamp);
++static int agent_close_input(juice_agent_t *agent, char *buf, size_t len,
++                             const addr_record_t *src);
++
++#if defined(JUICE_TESTING) && !defined(_WIN32)
++// Test-only resolver barrier. The exact sentinel host and gate path in its
++// username belong to one test agent; no process-wide resolver hook is set.
++// Release builds do not compile this branch. A finite guard lets a cancelled
++// test finish its resolver rather than strand an agent.
++#define TEST_RESOLVER_HOST "resolver-barrier.nereus.invalid"
++#define TEST_RESOLVER_GATE_PREFIX "gate:"
++static int agent_test_resolve_turn(const char *hostname, const char *service,
++                                   const char *username, addr_record_t *records, int capacity) {
++	if (strcmp(hostname, TEST_RESOLVER_HOST) != 0)
++		return addr_resolve(hostname, service, SOCK_DGRAM, records, capacity);
++	if (!username || strncmp(username, TEST_RESOLVER_GATE_PREFIX,
++	                         strlen(TEST_RESOLVER_GATE_PREFIX)) != 0)
++		return -1;
++	const char *gate = username + strlen(TEST_RESOLVER_GATE_PREFIX);
++	if (!*gate || strlen(gate) > 900)
++		return -1;
++	char entered[1024];
++	snprintf(entered, sizeof(entered), "%s.entered", gate);
++	FILE *marker = fopen(entered, "w");
++	if (!marker)
++		return -1;
++	fputs("entered\n", marker);
++	fclose(marker);
++
++	timestamp_t deadline = current_timestamp() + 15000;
++	while (access(gate, F_OK) != 0) {
++		if (current_timestamp() >= deadline)
++			return -1;
++		usleep(10000);
++	}
++	return addr_resolve("127.0.0.1", service, SOCK_DGRAM, records, capacity);
++}
++#endif
++
+ static char *alloc_string_copy(const char *orig, bool *alloc_failed) {
+ 	if (!orig)
+ 		return NULL;
+@@ -137,6 +184,7 @@ juice_agent_t *agent_create(const juice_config_t *config) {
+ 
+ 	agent->conn_index = -1;
+ 	agent->conn_impl = NULL;
++	atomic_store(&agent->resolver_finished, true);
+ 
+ 	ice_create_local_description(&agent->local);
+ 
+@@ -198,6 +246,135 @@ static void agent_give_back_turn_allocations(juice_agent_t *agent) {
+ 	conn_unlock(agent);
+ }
+ 
++static bool agent_close_complete_locked(const juice_agent_t *agent) {
++	for (int i = 0; i < agent->close_releases_count; ++i) {
++		const agent_turn_release_t *release = agent->close_releases + i;
++		if (!release->acknowledged || release->pending_allocate)
++			return false;
++	}
++	return true;
++}
++
++// Called with the connection lock held. A retransmission keeps its ID;
++// a nonce change, an early absent acknowledgement, or a late Allocate
++// success starts a fresh Refresh transaction.
++static int agent_close_send(juice_agent_t *agent, agent_turn_release_t *release,
++                            bool new_transaction) {
++	agent_stun_entry_t *entry = release->entry;
++	if (new_transaction)
++		juice_random(release->transaction_id, STUN_TRANSACTION_ID_SIZE);
++	release->acknowledged = false;
++
++	stun_message_t msg;
++	memset(&msg, 0, sizeof(msg));
++	msg.msg_class = STUN_CLASS_REQUEST;
++	msg.msg_method = STUN_METHOD_REFRESH;
++	memcpy(msg.transaction_id, release->transaction_id, STUN_TRANSACTION_ID_SIZE);
++	msg.lifetime = 0;
++	msg.lifetime_set = true;
++	msg.credentials = entry->turn->credentials;
++
++	char buffer[BUFFER_SIZE];
++	int size = stun_write(buffer, sizeof(buffer), &msg, entry->turn->password);
++	if (size <= 0 || agent_direct_send(agent, &entry->record, buffer, size, 0) < 0) {
++		JLOG_WARN("TURN allocation release send failed");
++		return -1;
++	}
++	return 0;
++}
++
++static void agent_close_update(juice_agent_t *agent, timestamp_t *next_timestamp) {
++	timestamp_t now = current_timestamp();
++	*next_timestamp = now + 6000000;
++	if (now >= agent->close_deadline || agent_close_complete_locked(agent))
++		return;
++
++	*next_timestamp = agent->close_deadline;
++	for (int i = 0; i < agent->close_releases_count; ++i) {
++		agent_turn_release_t *release = agent->close_releases + i;
++		if (release->acknowledged && !release->pending_allocate)
++			continue;
++		if (release->attempts >= TURN_CLOSE_ATTEMPTS)
++			continue;
++		if (release->next_send <= now) {
++			bool new_transaction = release->attempts == 0 || release->acknowledged;
++			agent_close_send(agent, release, new_transaction);
++			++release->attempts;
++			if (release->attempts < TURN_CLOSE_ATTEMPTS)
++				release->next_send = agent->close_started +
++				                     turn_close_offsets[release->attempts];
++			else
++				release->next_send = agent->close_deadline;
++		}
++		if (release->attempts < TURN_CLOSE_ATTEMPTS &&
++		    release->next_send < *next_timestamp)
++			*next_timestamp = release->next_send;
++	}
++}
++
++int agent_begin_close(juice_agent_t *agent) {
++	conn_lock(agent);
++	if (atomic_load(&agent->closing)) {
++		conn_unlock(agent);
++		return 0;
++	}
++
++	// Every callback made by the receive/update path holds this same lock.
++	// Quiesce them before IceTransport can disappear.
++	agent->config.cb_state_changed = NULL;
++	agent->config.cb_candidate = NULL;
++	agent->config.cb_gathering_done = NULL;
++	agent->config.cb_recv = NULL;
++	agent->config.user_ptr = NULL;
++	atomic_store(&agent->selected_entry, NULL);
++	agent->close_started = current_timestamp();
++	agent->close_deadline = agent->close_started + TURN_CLOSE_DEADLINE;
++	agent->close_releases_count = 0;
++	atomic_store(&agent->closing, true);
++
++	if (agent->conn_impl) {
++		for (int i = 0; i < agent->entries_count; ++i) {
++			agent_stun_entry_t *entry = agent->entries + i;
++			if (entry->type != AGENT_STUN_ENTRY_TYPE_RELAY || !entry->turn ||
++			    !*entry->turn->credentials.nonce ||
++			    (entry->relayed.len == 0 && !entry->turn->authenticated_allocate_sent))
++				continue;
++			if (agent->close_releases_count >= MAX_RELAY_ENTRIES_COUNT)
++				break;
++			agent_turn_release_t *release =
++			    agent->close_releases + agent->close_releases_count++;
++			release->entry = entry;
++			release->pending_allocate =
++			    entry->turn->authenticated_allocate_sent &&
++			    (entry->state == AGENT_STUN_ENTRY_STATE_PENDING || entry->relayed.len == 0);
++			if (release->pending_allocate)
++				memcpy(release->allocate_id, entry->transaction_id,
++				       STUN_TRANSACTION_ID_SIZE);
++			release->next_send = agent->close_started;
++		}
++		timestamp_t next_timestamp;
++		agent_close_update(agent, &next_timestamp);
++	}
++	conn_unlock(agent);
++	if (agent->conn_impl)
++		conn_interrupt(agent);
++	return 0;
++}
++
++int agent_close_status(juice_agent_t *agent) {
++	conn_lock(agent);
++	int status;
++	if (!atomic_load(&agent->closing) ||
++	    agent_close_complete_locked(agent))
++		status = JUICE_CLOSE_COMPLETE;
++	else if (current_timestamp() >= agent->close_deadline)
++		status = JUICE_CLOSE_EXPIRED;
++	else
++		status = JUICE_CLOSE_PENDING;
++	conn_unlock(agent);
++	return atomic_load(&agent->resolver_finished) ? status : JUICE_CLOSE_PENDING;
++}
++
+ void agent_destroy(juice_agent_t *agent) {
+ 	JLOG_DEBUG("Destroying agent");
+ 
+@@ -206,7 +383,8 @@ void agent_destroy(juice_agent_t *agent) {
+ 		thread_join(agent->resolver_thread, NULL);
+ 	}
+ 
+-	agent_give_back_turn_allocations(agent);
++	if (!atomic_load(&agent->closing))
++		agent_give_back_turn_allocations(agent);
+ 
+ 	if (agent->conn_impl) {
+ 		conn_destroy(agent);
+@@ -255,7 +433,10 @@ static bool has_nonnumeric_server_hostnames(const juice_config_t *config) {
+ 
+ static thread_return_t THREAD_CALL resolver_thread_entry(void *arg) {
+ 	thread_set_name_self("juice resolver");
+-	agent_resolve_servers((juice_agent_t *)arg);
++	juice_agent_t *agent = (juice_agent_t *)arg;
++	agent_resolve_servers(agent);
++	// The owner may retire the agent only after the resolver's final use.
++	atomic_store(&agent->resolver_finished, true);
+ 	return (thread_return_t)0;
+ }
+ 
+@@ -369,8 +550,10 @@ int agent_gather_candidates(juice_agent_t *agent) {
+ 	if (has_nonnumeric_server_hostnames(&agent->config)) {
+ 		// Resolve server hostnames in a separate thread as it may block
+ 		JLOG_DEBUG("Starting resolver thread for servers");
++		atomic_store(&agent->resolver_finished, false);
+ 		int ret = thread_init(&agent->resolver_thread, resolver_thread_entry, agent);
+ 		if (ret) {
++			atomic_store(&agent->resolver_finished, true);
+ 			JLOG_FATAL("Thread creation failed, error=%d", ret);
+ 			agent_update_gathering_done(agent);
+ 			return -1;
+@@ -387,6 +570,8 @@ int agent_gather_candidates(juice_agent_t *agent) {
+ 
+ int agent_resolve_servers(juice_agent_t *agent) {
+ 	conn_lock(agent);
++	if (atomic_load(&agent->closing))
++		goto done;
+ 
+ 	// TURN server resolution
+ 	juice_concurrency_mode_t mode = agent->config.concurrency_mode;
+@@ -415,10 +600,19 @@ int agent_resolve_servers(juice_agent_t *agent) {
+ 			conn_unlock(agent);
+ 
+ 			addr_record_t records[DEFAULT_MAX_RECORDS_COUNT];
++#if defined(JUICE_TESTING) && !defined(_WIN32)
++			if (strcmp(hostname, TEST_RESOLVER_HOST) == 0)
++				conn_interrupt(agent); // let a prior test allocation progress
++			int records_count = agent_test_resolve_turn(
++			    hostname, service, turn_server->username, records, DEFAULT_MAX_RECORDS_COUNT);
++#else
+ 			int records_count =
+ 			    addr_resolve(hostname, service, SOCK_DGRAM, records, DEFAULT_MAX_RECORDS_COUNT);
++#endif
+ 
+ 			conn_lock(agent);
++			if (atomic_load(&agent->closing))
++				goto done;
+ 
+ 			if (records_count > 0) {
+ 				if (records_count > DEFAULT_MAX_RECORDS_COUNT)
+@@ -505,6 +699,8 @@ int agent_resolve_servers(juice_agent_t *agent) {
+ 		    addr_resolve(hostname, service, SOCK_DGRAM, records, MAX_STUN_SERVER_RECORDS_COUNT);
+ 
+ 		conn_lock(agent);
++		if (atomic_load(&agent->closing))
++			goto done;
+ 
+ 		if (records_count > 0) {
+ 			if (records_count > MAX_STUN_SERVER_RECORDS_COUNT)
+@@ -533,6 +729,7 @@ int agent_resolve_servers(juice_agent_t *agent) {
+ 	}
+ 
+ 	agent_update_gathering_done(agent);
++done:
+ 	conn_unlock(agent);
+ 	conn_interrupt(agent);
+ 	return 0;
+@@ -711,6 +908,8 @@ int agent_set_remote_gathering_done(juice_agent_t *agent) {
+ }
+ 
+ int agent_send(juice_agent_t *agent, const char *data, size_t size, int ds) {
++	if (atomic_load(&agent->closing))
++		return -1;
+ 	// Try not to lock in the send path
+ 	agent_stun_entry_t *selected_entry = atomic_load(&agent->selected_entry);
+ 	if (!selected_entry) {
+@@ -721,7 +920,8 @@ int agent_send(juice_agent_t *agent, const char *data, size_t size, int ds) {
+ 	if (selected_entry->relay_entry) {
+ 		// The datagram should be sent through the relay, use a channel to minimize overhead
+ 		conn_lock(agent); // We have to lock
+-		int ret = agent_channel_send(agent, selected_entry->relay_entry, &selected_entry->record,
++		int ret = atomic_load(&agent->closing) ? -1 :
++		          agent_channel_send(agent, selected_entry->relay_entry, &selected_entry->record,
+ 		                             data, size, ds);
+ 		conn_unlock(agent);
+ 		return ret;
+@@ -821,16 +1021,90 @@ int agent_get_selected_candidate_pair(juice_agent_t *agent, ice_candidate_t *loc
+ 	return 0;
+ }
+ 
++// Only authenticated TURN responses associated with a closing record are
++// read here. Ordinary ICE dispatch can rearm Allocate, so it is never used
++// after begin-close.
++static int agent_close_input(juice_agent_t *agent, char *buf, size_t len,
++                             const addr_record_t *src) {
++	if (!is_stun_datagram(buf, len))
++		return 0;
++	stun_message_t msg;
++	if (stun_read(buf, len, &msg) < 0 || !STUN_IS_RESPONSE(msg.msg_class))
++		return 0;
++	if (current_timestamp() >= agent->close_deadline)
++		return 0;
++
++	for (int i = 0; i < agent->close_releases_count; ++i) {
++		agent_turn_release_t *release = agent->close_releases + i;
++		agent_stun_entry_t *entry = release->entry;
++		if (!addr_record_is_equal(src, &entry->record, true))
++			continue;
++		bool late_allocate = release->pending_allocate &&
++		    msg.msg_method == STUN_METHOD_ALLOCATE &&
++		    memcmp(msg.transaction_id, release->allocate_id,
++		           STUN_TRANSACTION_ID_SIZE) == 0;
++		bool release_reply = msg.msg_method == STUN_METHOD_REFRESH &&
++		    memcmp(msg.transaction_id, release->transaction_id,
++		           STUN_TRANSACTION_ID_SIZE) == 0;
++		if (!late_allocate && !release_reply)
++			continue;
++
++		// agent_verify_credentials intentionally accepts most TURN errors
++		// without integrity. Release replies need stricter validation.
++		stun_credentials_t offered = msg.credentials;
++		msg.credentials = entry->turn->credentials;
++		if (!msg.has_integrity ||
++		    !stun_check_integrity(buf, len, &msg, entry->turn->password))
++			return 0;
++
++		if (late_allocate) {
++			if (msg.msg_class == STUN_CLASS_RESP_SUCCESS) {
++				release->pending_allocate = false;
++				release->acknowledged = false;
++				agent_close_send(agent, release, true);
++			}
++			return 0;
++		}
++		if (msg.msg_class == STUN_CLASS_RESP_SUCCESS &&
++		    msg.lifetime_set && msg.lifetime == 0) {
++			release->acknowledged = true;
++			return 0;
++		}
++		if (msg.msg_class != STUN_CLASS_RESP_ERROR)
++			return 0;
++		if (msg.error_code == 437) { // Allocation Mismatch: already absent
++			release->acknowledged = true;
++			return 0;
++		}
++		if (msg.error_code == 438 && release->nonce_challenges == 0 &&
++		    *offered.realm && *offered.nonce) {
++			++release->nonce_challenges;
++			stun_process_credentials(&offered, &entry->turn->credentials);
++			agent_close_send(agent, release, true);
++		}
++		return 0;
++	}
++	return 0;
++}
++
+ int agent_conn_update(juice_agent_t *agent, timestamp_t *next_timestamp) {
++	if (atomic_load(&agent->closing)) {
++		agent_close_update(agent, next_timestamp);
++		return 0;
++	}
+ 	return agent_bookkeeping(agent, next_timestamp);
+ }
+ 
+ int agent_conn_recv(juice_agent_t *agent, char *buf, size_t len, const addr_record_t *src) {
++	if (atomic_load(&agent->closing))
++		return agent_close_input(agent, buf, len, src);
+ 	agent_input(agent, buf, len, src, NULL);
+ 	return 0; // ignore errors
+ }
+ 
+ int agent_conn_fail(juice_agent_t *agent) {
++	if (atomic_load(&agent->closing))
++		return 0;
+ 	agent_change_state(agent, JUICE_STATE_FAILED);
+ 	atomic_store(&agent->selected_entry, NULL); // disallow sending
+ 	return 0;
+@@ -2004,7 +2278,7 @@ int agent_process_turn_allocate(juice_agent_t *agent, const stun_message_t *msg,
+ 	return 0;
+ }
+ 
+-int agent_send_turn_allocate_request(juice_agent_t *agent, const agent_stun_entry_t *entry,
++int agent_send_turn_allocate_request(juice_agent_t *agent, agent_stun_entry_t *entry,
+                                      stun_method_t method) {
+ 	if (method != STUN_METHOD_ALLOCATE && method != STUN_METHOD_REFRESH)
+ 		return -1;
+@@ -2050,6 +2324,8 @@ int agent_send_turn_allocate_request(juice_agent_t *agent, const agent_stun_entr
+ 		JLOG_WARN("STUN message send failed");
+ 		return -1;
+ 	}
++	if (method == STUN_METHOD_ALLOCATE && password)
++		entry->turn->authenticated_allocate_sent = true;
+ 	return 0;
+ }
+ 
+diff --git a/src/agent.h b/src/agent.h
+index bccdde3e9..3863baee2 100644
+--- a/src/agent.h
++++ b/src/agent.h
+@@ -102,6 +102,7 @@ typedef struct agent_turn_state {
+ 	turn_map_t map;
+ 	stun_credentials_t credentials;
+ 	const char *password;
++	bool authenticated_allocate_sent;
+ } agent_turn_state_t;
+ 
+ typedef struct agent_stun_entry {
+@@ -125,6 +126,17 @@ typedef struct agent_stun_entry {
+ 
+ } agent_stun_entry_t;
+ 
++typedef struct agent_turn_release {
++	agent_stun_entry_t *entry;
++	uint8_t transaction_id[STUN_TRANSACTION_ID_SIZE];
++	uint8_t allocate_id[STUN_TRANSACTION_ID_SIZE];
++	timestamp_t next_send;
++	unsigned int attempts;
++	unsigned int nonce_challenges;
++	bool pending_allocate;
++	bool acknowledged;
++} agent_turn_release_t;
++
+ struct juice_agent {
+ 	juice_config_t config;
+ 	juice_state_t state;
+@@ -154,10 +166,21 @@ struct juice_agent {
+ 
+ 	thread_t resolver_thread;
+ 	bool resolver_thread_started;
++	atomic(bool) resolver_finished;
++
++	// A closing agent remains on its original socket and poll registry until
++	// its bounded TURN release has been acknowledged or expired.
++	atomic(bool) closing;
++	timestamp_t close_started;
++	timestamp_t close_deadline;
++	int close_releases_count;
++	agent_turn_release_t close_releases[MAX_RELAY_ENTRIES_COUNT];
+ };
+ 
+ juice_agent_t *agent_create(const juice_config_t *config);
+ void agent_destroy(juice_agent_t *agent);
++int agent_begin_close(juice_agent_t *agent);
++int agent_close_status(juice_agent_t *agent);
+ 
+ int agent_gather_candidates(juice_agent_t *agent);
+ int agent_resolve_servers(juice_agent_t *agent);
+@@ -202,7 +225,7 @@ int agent_send_stun_binding(juice_agent_t *agent, agent_stun_entry_t *entry, stu
+                             const addr_record_t *mapped);
+ int agent_process_turn_allocate(juice_agent_t *agent, const stun_message_t *msg,
+                                 agent_stun_entry_t *entry);
+-int agent_send_turn_allocate_request(juice_agent_t *agent, const agent_stun_entry_t *entry,
++int agent_send_turn_allocate_request(juice_agent_t *agent, agent_stun_entry_t *entry,
+                                      stun_method_t method);
+ int agent_process_turn_create_permission(juice_agent_t *agent, const stun_message_t *msg,
+                                          agent_stun_entry_t *entry);
+diff --git a/src/juice.c b/src/juice.c
+index 074823c86..93b7c2576 100644
+--- a/src/juice.c
++++ b/src/juice.c
+@@ -30,6 +30,14 @@ JUICE_EXPORT void juice_destroy(juice_agent_t *agent) {
+ 		agent_destroy(agent);
+ }
+ 
++JUICE_EXPORT int juice_begin_close(juice_agent_t *agent) {
++	return agent ? agent_begin_close(agent) : JUICE_ERR_INVALID;
++}
++
++JUICE_EXPORT int juice_close_status(juice_agent_t *agent) {
++	return agent ? agent_close_status(agent) : JUICE_ERR_INVALID;
++}
++
+ JUICE_EXPORT int juice_gather_candidates(juice_agent_t *agent) {
+ 	if (!agent)
+ 		return JUICE_ERR_INVALID;

@@ -1,0 +1,13 @@
+libjuice, vendored into NereusSDR for iOS
+
+Commit:   3c40a3545b6b1b62c7adee7f8f2bd58aa290afd6
+Archive:  https://codeload.github.com/paullouisageneau/libjuice/tar.gz/3c40a3545b6b1b62c7adee7f8f2bd58aa290afd6
+SHA-256:  a6b1d55338ea12adc0177eaafd9521ac0101b6a8716c71024a668f4896fd6b7c
+Licence:  MPL-2.0 (see LICENSE)
+Files:    46, copied from the archive, then patched by
+          ios/patches/libjuice/0001-give-turn-allocations-back.patch
+          ios/patches/libjuice/0002-bounded-turn-release-lifecycle.patch
+          ios/patches/libjuice/0003-keep-poll-worker-with-retained-agents.patch
+
+Written by ios/scripts/vendor-sources.sh libjuice. Do not edit
+these files; change the pin or the patches and run it again.

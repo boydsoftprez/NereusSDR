@@ -1,7 +1,9 @@
+// no-port-check: NereusSDR-original Qt property adapter; global-unit control disabled in container drafts.
 #include "SignalTextItemEditor.h"
 #include "../../meters/SignalTextItem.h"
 
 #include <QCheckBox>
+#include <QLabel>
 #include <QPushButton>
 #include <QDoubleSpinBox>
 #include <QComboBox>
@@ -14,6 +16,15 @@ SignalTextItemEditor::SignalTextItemEditor(QWidget* parent)
     : BaseItemEditor(parent)
 {
     buildTypeSpecific();
+}
+
+void SignalTextItemEditor::useGlobalUnits()
+{
+    m_comboUnits->setEnabled(false);
+    m_comboUnits->setToolTip(tr("Signal units and decimal precision follow the global multimeter preferences."));
+    auto* note = new QLabel(m_comboUnits->toolTip(), this);
+    note->setWordWrap(true);
+    addRow(tr("Global preferences"), note);
 }
 
 void SignalTextItemEditor::setItem(MeterItem* item)
@@ -57,6 +68,7 @@ void SignalTextItemEditor::buildTypeSpecific()
 
     // Units
     m_comboUnits = new QComboBox(this);
+    m_comboUnits->setObjectName("signalGlobalUnits");
     m_comboUnits->addItem(QStringLiteral("dBm"),    static_cast<int>(SignalTextItem::Units::Dbm));
     m_comboUnits->addItem(QStringLiteral("S-Units"), static_cast<int>(SignalTextItem::Units::SUnits));
     m_comboUnits->addItem(QStringLiteral("μV"),      static_cast<int>(SignalTextItem::Units::Uv));

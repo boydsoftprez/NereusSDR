@@ -58,6 +58,7 @@
 #include "models/SliceModel.h"
 
 #include <QScopedValueRollback>
+#include <QScopeGuard>
 
 #include <limits>
 #include <memory>
@@ -151,7 +152,7 @@ RemoteKeying::RemoteKeying(RadioModel* model, TransmitHolder* holder, QObject* p
                     if (!active && tt != nullptr && !tt->isActivationInFlight()
                         && m_pending.has_value() && m_pending->trigger == "twoTone") {
                         m_pending.reset();
-                        emit pendingKeyEnded();
+                        notifyPendingKeyEnded();
                     }
                 });
     }
@@ -179,7 +180,7 @@ RemoteKeying::RemoteKeying(RadioModel* model, TransmitHolder* holder, QObject* p
                     }
                     emit tunerTuneEndedUnkeyed(deviceId, reason);
                 }
-                emit pendingKeyEnded();
+                notifyPendingKeyEnded();
             }
         });
     }
@@ -187,8 +188,28 @@ RemoteKeying::RemoteKeying(RadioModel* model, TransmitHolder* holder, QObject* p
 
 bool RemoteKeying::keyPending() const
 {
-    return !m_waiting.isEmpty()
+    return m_synchronousAdmission || !m_waiting.isEmpty()
         || (m_pending.has_value() && twoToneRunningFor(m_pending->deviceId));
+}
+
+void RemoteKeying::notifyPendingKeyEnded()
+{
+    if (m_synchronousAdmission) {
+        m_pendingEndDeferred = true;
+        return;
+    }
+    emit pendingKeyEnded();
+}
+
+void RemoteKeying::finishSynchronousAdmission()
+{
+    m_synchronousAdmission = false;
+    const bool deferred = m_pendingEndDeferred;
+    m_pendingEndDeferred = false;
+    // A refusal has no MOX-off event to retry an owed amplifier switch.
+    // A microphone wait/two-tone settle still owns its existing terminal
+    // notification; any completion during this scope is coalesced here.
+    if (deferred || !keyPending()) { emit pendingKeyEnded(); }
 }
 
 void RemoteKeying::setMicUplink(MicUplink uplink)
@@ -218,6 +239,10 @@ void RemoteKeying::handle(const Command& command, Reply reply)
     }
     // Task 36: the device's key is waiting for its microphone buffer.
     if (const auto waiting = m_waiting.find(command.deviceId); waiting != m_waiting.end()) {
+        if (waiting->command.session != command.session) {
+            reply(refused(TxRefusals::changingHands()));
+            return;
+        }
         if (command.verb == Verb::Key) {
             // A copy, or a new press from the same device: answered with
             // the waiting key's answer.
@@ -231,6 +256,28 @@ void RemoteKeying::handle(const Command& command, Reply reply)
     }
     if (const std::optional<Result> copy = copyOf(command)) {
         reply(*copy);
+        return;
+    }
+    for (auto* scope = m_generatedReplies; scope != nullptr; scope = scope->previous) {
+        const Command& earlier = scope->command;
+        if (scope->joinable && !scope->forgotten && earlier.session == command.session
+            && earlier.deviceId == command.deviceId && earlier.verb == command.verb
+            && earlier.commandId == command.commandId && earlier.trigger == command.trigger
+            && earlier.on == command.on && earlier.epoch == command.epoch) {
+            // An exact generated copy is a reply owed by the existing
+            // transaction, never another admission or a remembered refusal.
+            scope->copies.append(std::move(reply));
+            return;
+        }
+    }
+    const bool startsSynchronousKey = command.verb == Verb::Key
+        || ((command.verb == Verb::Tune || command.verb == Verb::TwoTone) && command.on);
+    if (m_synchronousAdmission && startsSynchronousKey) {
+        // Refuse before microphone priming or any generated source/holder
+        // mutation can replace the outer authenticated admission.
+        const Result result = refused(TxRefusals::changingHands());
+        remember(command, result);
+        reply(result);
         return;
     }
     // Task 77 fix wave, I3: while this device's Tuner Genius autotune waits
@@ -249,12 +296,22 @@ void RemoteKeying::handle(const Command& command, Reply reply)
         reply(result);
         return;
     }
+    const bool radioInput = m_model->remoteMicSelection(command.session, command.deviceId)
+        == RemoteMicSource::RadioMic;
+    if (radioInput && command.trigger == kProgramTrigger && keyNeedsMicrophone(command)) {
+        TxRefusal refusal = m_sessionGate ? m_sessionGate(command) : TxRefusal{};
+        if (refusal.isEmpty()) { refusal = m_holder->keyRefusalFor(command.deviceId, true); }
+        const Result result = refusal.isEmpty() ? refusedPlain(remoteRadioProgramReason()) : refused(refusal);
+        remember(command, result);
+        reply(result);
+        return;
+    }
     // Fix wave C1: a key that carries the operator's voice (every mode but
     // CW) from a device whose media carries no microphone line is refused
     // at once; the Core never keys a remote device on its own microphone.
     // The session's own gate and the holder's refusal come first, as the
     // keying gate orders them. TUNE and two-tone need no microphone.
-    if (keyNeedsMicrophone(command) && !moxKeyedFor(command.deviceId)
+    if (!radioInput && keyNeedsMicrophone(command) && !moxKeyedFor(command.deviceId)
         && !(m_mic.carriesMic && m_mic.carriesMic(command.deviceId))) {
         TxRefusal refusal = m_sessionGate ? m_sessionGate(command) : TxRefusal{};
         if (refusal.isEmpty()) {
@@ -270,7 +327,7 @@ void RemoteKeying::handle(const Command& command, Reply reply)
         reply(result);
         return;
     }
-    if (keyWaitsForMicrophone(command) && !moxKeyedFor(command.deviceId)) {
+    if (!radioInput && keyWaitsForMicrophone(command) && !moxKeyedFor(command.deviceId)) {
         // The holder's own refusal first, at once (a question only).
         if (const TxRefusal refusal =
                 m_holder->keyRefusalFor(command.deviceId, command.trigger == kProgramTrigger);
@@ -307,6 +364,19 @@ void RemoteKeying::handle(const Command& command, Reply reply)
         });
         return;
     }
+    std::optional<GeneratedReplies> generated;
+    if ((command.verb == Verb::Tune || command.verb == Verb::TwoTone) && command.on) {
+        generated.emplace();
+        generated->command = command;
+        generated->previous = m_generatedReplies;
+        m_generatedReplies = &*generated;
+    }
+    const QPointer<RemoteKeying> replyOwner(this);
+    const auto retireReplies = qScopeGuard([replyOwner, &generated]() {
+        if (replyOwner && generated && replyOwner->m_generatedReplies == &*generated) {
+            replyOwner->m_generatedReplies = generated->previous;
+        }
+    });
     Result result;
     switch (command.verb) {
     case Verb::Key:
@@ -325,8 +395,23 @@ void RemoteKeying::handle(const Command& command, Reply reply)
         result = tunerTune(command);
         break;
     }
+    if (!replyOwner) { return; }
+    if (generated) {
+        // Replays from result callbacks now use the cached answer, while
+        // forgetSession can still cancel this scope's undelivered replies.
+        generated->joinable = false;
+        if (generated->forgotten) { return; }
+    }
     remember(command, result);
     reply(result);
+    if (generated) {
+        while (replyOwner && !generated->forgotten && !generated->copies.isEmpty()) {
+            // A callback may forget the session and clear the list. Own
+            // this callback by value instead of retaining an invalid iterator.
+            const Reply copyReply = generated->copies.takeFirst();
+            if (copyReply) { copyReply(result); }
+        }
+    }
 }
 
 void RemoteKeying::endAutotuneFor(const QByteArray& deviceId)
@@ -345,6 +430,13 @@ void RemoteKeying::endAutotuneFor(const QByteArray& deviceId)
 
 void RemoteKeying::forgetSession(const QString& session)
 {
+    for (auto* scope = m_generatedReplies; scope != nullptr; scope = scope->previous) {
+        if (scope->command.session == session) {
+            scope->forgotten = true;
+            scope->joinable = false;
+            scope->copies.clear();
+        }
+    }
     m_sessions.remove(session);
     // Task 36: a key of this session still waiting never keys, and nobody
     // is left to answer.
@@ -410,7 +502,7 @@ void RemoteKeying::finishWait(const QByteArray& deviceId, const Result& result)
             reply(result);
         }
     }
-    emit pendingKeyEnded();
+    notifyPendingKeyEnded();
 }
 
 // ---- Copies (the pairing design, section 9.6) ------------------------------
@@ -490,6 +582,9 @@ RemoteKeying::Result RemoteKeying::keyNow(const Command& command)
     // A key with a new id while this device's own key is on changes
     // nothing: the key already on answers.
     if (moxKeyedFor(command.deviceId)) {
+        if (mox->currentKeyer().session != command.session) {
+            return refused(TxRefusals::changingHands());
+        }
         return accepted(m_model->keyedBy().epoch);
     }
     // Fix wave M5: the holder's press while its own VOX key is on (ruling
@@ -499,6 +594,16 @@ RemoteKeying::Result RemoteKeying::keyNow(const Command& command)
         && m_holder->isHeldBy(command.deviceId) && m_model->keyedBy().deviceId == command.deviceId) {
         return accepted(m_model->keyedBy().epoch);
     }
+    // An admission callback can reenter through another authenticated session.
+    // Keep the outer attempt's epoch and exact microphone authority intact.
+    if (m_synchronousAdmission || m_pending.has_value()) {
+        return refused(TxRefusals::changingHands());
+    }
+    m_synchronousAdmission = true;
+    const QPointer<RemoteKeying> scopeOwner(this);
+    const auto finishAdmission = qScopeGuard([scopeOwner]() {
+        if (scopeOwner) { scopeOwner->finishSynchronousAdmission(); }
+    });
     KeyerIdentity keyer;
     keyer.deviceId = command.deviceId;
     keyer.source = PttMode::None;
@@ -509,8 +614,19 @@ RemoteKeying::Result RemoteKeying::keyNow(const Command& command)
     // The key's epoch is the next one; it is spent only if the key keys.
     m_pending = Pending{command.deviceId, command.trigger, nextEpoch()};
     RefusalCapture capture(mox, nullptr);
+    const bool radioVoice = keyNeedsMicrophone(command)
+        && m_model->remoteMicSelection(command.session, command.deviceId) == RemoteMicSource::RadioMic;
+    if (radioVoice) {
+        m_model->beginRemoteRadioKeyAttempt(command.session, command.deviceId, command.commandId);
+    }
     mox->setMox(true, keyer);
-    if (moxKeyedFor(command.deviceId)) {
+    const bool keyedHere = moxKeyedFor(command.deviceId)
+        && mox->currentKeyer().session == command.session;
+    if (radioVoice) {
+        m_model->finishRemoteRadioKeyAttempt(command.session, command.deviceId, command.commandId,
+            keyedHere ? m_model->keyedBy().epoch : 0);
+    }
+    if (keyedHere) {
         m_pending.reset();
         qCInfo(lcDsp) << "Keyed for" << command.deviceId.toHex().constData() << "by" << command.trigger
                       << "epoch" << m_model->keyedBy().epoch;
@@ -595,9 +711,15 @@ RemoteKeying::Result RemoteKeying::tune(const Command& command)
         }
         return stopFrom(command.deviceId, m_model->isTune() && moxKeyedFor(command.deviceId));
     }
+    if (m_synchronousAdmission) { return refused(TxRefusals::changingHands()); }
     if (m_model->isTune() && moxKeyedFor(command.deviceId)) {
         return accepted(m_model->keyedBy().epoch);
     }
+    m_synchronousAdmission = true;
+    const QPointer<RemoteKeying> scopeOwner(this);
+    const auto finishAdmission = qScopeGuard([scopeOwner]() {
+        if (scopeOwner) { scopeOwner->finishSynchronousAdmission(); }
+    });
     MoxController* mox = m_model->moxController();
     KeyerIdentity keyer;
     keyer.deviceId = command.deviceId;
@@ -626,6 +748,12 @@ RemoteKeying::Result RemoteKeying::twoTone(const Command& command)
     if (!command.on) {
         return stopFrom(command.deviceId, tt != nullptr && twoToneRunningFor(command.deviceId));
     }
+    if (m_synchronousAdmission) { return refused(TxRefusals::changingHands()); }
+    m_synchronousAdmission = true;
+    const QPointer<RemoteKeying> scopeOwner(this);
+    const auto finishAdmission = qScopeGuard([scopeOwner]() {
+        if (scopeOwner) { scopeOwner->finishSynchronousAdmission(); }
+    });
     if (tt == nullptr) {
         return refusedPlain(QStringLiteral("The two-tone test is not available on this Core."));
     }

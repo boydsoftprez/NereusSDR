@@ -16,6 +16,7 @@
 //               radio's microphone frame sequence step across it. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 
+#include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
 #include "RadioDiscovery.h"
 #include "HardwareProfile.h"
@@ -137,7 +138,7 @@ struct RadioDiagnosticsObservation {
 // Subclasses implement protocol-specific behavior (P1 or P2).
 // Instances live on the Connection worker thread.
 // Call init() after moveToThread() to create sockets/timers on the worker thread.
-class RadioConnection : public QObject {
+class NEREUS_CORE_EXPORT RadioConnection : public QObject {
     Q_OBJECT
 
 public:

@@ -38,6 +38,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "core/TxAnalyzer.h"
 
 #include <QElapsedTimer>
@@ -56,7 +57,7 @@ namespace NereusSDR {
 class RadioModel;
 class SliceModel;
 
-class TxDisplayFeed : public QObject {
+class NEREUS_CORE_EXPORT TxDisplayFeed : public QObject {
     Q_OBJECT
 
 public:

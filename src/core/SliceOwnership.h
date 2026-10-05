@@ -126,17 +126,19 @@
 //               implementation via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include <QByteArray>
 #include <QHash>
 #include <QList>
 #include <QObject>
+#include <QPointer>
 #include <QSet>
 
 #include <functional>
 
 namespace NereusSDR {
 
-class SliceOwnership : public QObject {
+class NEREUS_CORE_EXPORT SliceOwnership : public QObject {
     Q_OBJECT
 
 public:
@@ -196,6 +198,12 @@ public:
     void beginRemove(int sliceId);
     /// The slice's removal has been announced; its mark is forgotten.
     void endRemove(int sliceId);
+    /// Lifecycle-only identity while removal excludes command authority.
+    bool removalMatches(int sliceId, quint64 incarnation) const;
+    /// Abandon only this removal exclusion; preserve current claims/choices.
+    bool cancelRemove(int sliceId, quint64 incarnation);
+    /// Complete only this removal record, never a recreated slice's record.
+    bool completeRemove(int sliceId, quint64 incarnation);
     /// The creation order, as the restart manifest listed it.
     void setOrder(const QList<int>& sliceIds);
 
@@ -301,7 +309,11 @@ public:
     /// control plan ruling Q9: a released slice others still hear is taken
     /// only by Take control). The slice that was active among the unowned
     /// ones becomes its active slice when it has none. Returns them.
-    QList<int> adoptUnowned(const QByteArray& device);
+    /// Each snapshot slice must still be LIVE/unclaimed when reached.
+    /// An optional lifetime continuity predicate stops remaining bootstrap/host
+    /// work after retirement. Already committed marks/revisions are never rolled back.
+    QList<int> adoptUnowned(const QByteArray& device,
+                           const std::function<bool()>& continueAdoption = {});
 
     // ---- The active slice ----
 
@@ -374,7 +386,7 @@ private:
         ActiveRxWatch& operator=(const ActiveRxWatch&) = delete;
 
     private:
-        SliceOwnership* m_ownership;
+        QPointer<SliceOwnership> m_ownership;
     };
     QHash<QByteArray, int> activeRxSnapshot() const;
     /// setMark's work: `leaving` (when not empty) leaves the slice in the

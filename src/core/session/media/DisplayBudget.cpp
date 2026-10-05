@@ -4,6 +4,11 @@
 //
 // no-port-check: NereusSDR-original accounting of NereusSDR display codecs.
 //
+// Modification history (NereusSDR):
+//   2026-10-04: Pace byte-only display extras with the shared spectrum
+//               budget; retain ordinary spectrum sample validation.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//
 // =================================================================
 
 #include "core/session/media/DisplayBudget.h"
@@ -52,9 +57,9 @@ bool validSpectrumCharge(const DisplayBudgetCharge& charge)
         && charge.messagesPerSecond <= kDisplaySenderMessagesPerSecond;
 }
 
-bool spendableSpectrumCost(quint64 bytes, quint64 samples)
+bool spendableSpectrumCost(quint64 bytes, quint64 samples, bool allowZeroSamples = false)
 {
-    return bytes != 0 && samples != 0
+    return bytes != 0 && (allowZeroSamples || samples != 0)
         && bytes <= kMaximumSpectrumDisplayFrameBytes
         && samples <= kMaximumSpectrumDisplayFrameSampleUnits;
 }
@@ -372,6 +377,20 @@ bool DisplayBudgetPacer::spendSpectrum(quint64 bytes, quint64 samples, qint64 no
         return false;
     }
     accrue(nowNs);
+    return spendSpectrumAfterAccrual(bytes, samples);
+}
+
+bool DisplayBudgetPacer::spendDisplayExtras(quint64 bytes, quint64 samples, qint64 nowNs)
+{
+    if (!m_active || nowNs < 0 || !spendableSpectrumCost(bytes, samples, true)) {
+        return false;
+    }
+    accrue(nowNs);
+    return spendSpectrumAfterAccrual(bytes, samples);
+}
+
+bool DisplayBudgetPacer::spendSpectrumAfterAccrual(quint64 bytes, quint64 samples)
+{
     if (!canSpendSpectrumAfterAccrual(bytes, samples)) {
         return false;
     }

@@ -1,0 +1,15 @@
+# no-port-check: NereusSDR-original standalone causal vendor fixture.
+# Modification history: 2026-10-05, J.J. Boyd (KG4VCF), OpenAI Codex.
+cmake_minimum_required(VERSION 3.25)
+project(NereusDtlsStartupFixture LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_AUTOMOC ON)
+get_filename_component(NEREUS_FIXTURE_REPO "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+find_package(Qt6 REQUIRED COMPONENTS Core Test)
+include("${NEREUS_FIXTURE_REPO}/cmake/NereusRemoteMedia.cmake")
+nereus_add_remote_media_dependency()
+include("${CMAKE_CURRENT_LIST_DIR}/Instrument.cmake")
+add_executable(tst_dtls_startup "${NEREUS_FIXTURE_REPO}/tests/tst_dtls_startup.cpp")
+target_link_libraries(tst_dtls_startup PRIVATE Qt6::Test Qt6::Core nereus_dtls_startup_fixture)
+enable_testing()
+add_test(NAME tst_dtls_startup COMMAND tst_dtls_startup)

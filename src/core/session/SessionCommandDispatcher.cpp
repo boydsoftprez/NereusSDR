@@ -780,6 +780,8 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
          kRadioIdentitySessionProtocolMinor},
         // iPhone app plan Task 35 (R-IOS-13): keying from a device. Each is
         // sent three times as the same command; the Core acts once.
+        {"tx.setMicSource", {arg("source", kUtf8)}, "radioMicVersion", 2,
+         kRadioIdentitySessionProtocolMinor},
         {"tx.key", {arg("trigger", kUtf8)}, "remoteTxVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         {"tx.unkey", {arg("epoch", kInt)}, "remoteTxVersion", 1,
@@ -968,6 +970,11 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         // and taking or releasing control of one, each naming the slice by
         // its id and incarnation (`access:<id>`), take and release with the
         // control revision the device saw.
+        {"diversity.setTarget",
+         {arg("enabled", kBool), arg("stateRevision", kInt), arg("sourceSliceId", kInt),
+          arg("sourceIncarnation", kInt), arg("sourceControlRevision", kInt),
+          arg("targetSliceId", kInt), arg("targetIncarnation", kInt), arg("targetControlRevision", kInt)},
+         "diversityControlVersion", 1, kRadioIdentitySessionProtocolMinor},
         {"slice.listen", {arg("sliceId", kInt), arg("incarnation", kInt)}, "sliceAccessVersion",
          1, kRadioIdentitySessionProtocolMinor},
         {"slice.stopListening", {arg("sliceId", kInt), arg("incarnation", kInt)},
@@ -1090,6 +1097,20 @@ void SessionCommandDispatcher::setSessionOwner(const QString& owner)
     m_sessionOwner = owner;
 }
 
+SessionCommandDispatcher::DispatchContext
+SessionCommandDispatcher::exchangeDispatchContext(DispatchContext context)
+{
+    DispatchContext previous{m_sessionOwner, m_requester, m_requesterSharesSlices,
+                             m_pureSignalArmingOffered, m_transmitSettingsOnAir, m_resultOwner};
+    setSessionOwner(context.owner);
+    setRequester(context.requester);
+    setRequesterSharesSlices(context.requesterSharesSlices);
+    setPureSignalArmingOffered(context.pureSignalArmingOffered);
+    setTransmitSettingsOnAir(context.transmitSettingsOnAir);
+    m_resultOwner = std::move(context.resultOwner);
+    return previous;
+}
+
 void SessionCommandDispatcher::endSessionOwner(const QString& owner)
 {
     if (m_radioModel && !owner.isEmpty()) {
@@ -1146,6 +1167,14 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
     if (invoke.commandVerb == "session.pathTicket") {
         emitResult(invoke.commandVerb, invoke.commandId, false,
                    QStringLiteral("The Core could not move this connection."), {});
+        return;
+    }
+    // Coordinated Diversity is admitted by StationServer with both
+    // participants and the current session. Standalone dispatch has no
+    // admitted peer and cannot mutate it.
+    if (invoke.commandVerb == "diversity.setTarget") {
+        emitResult(invoke.commandVerb, invoke.commandId, false,
+                   QStringLiteral("Update this app and Core to move Diversity between slices."), {});
         return;
     }
     // iPhone app Task 74: an answer to the Core's question, or Take it
@@ -1285,6 +1314,10 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
         || invoke.commandVerb == "rfkit.operate" || invoke.commandVerb == "rfkit.standby"
         || invoke.commandVerb == "rfkit.antenna") {
         handleAccessoryTx(invoke);
+        return;
+    }
+    if (invoke.commandVerb == "tx.setMicSource") {
+        handleTxMicSource(invoke);
         return;
     }
     if (invoke.commandVerb == "tx.key" || invoke.commandVerb == "tx.unkey"
@@ -1618,6 +1651,23 @@ void SessionCommandDispatcher::handleAccessoryTx(const SessionMessage& invoke)
         return;
     }
     emitResult(verb, invoke.commandId, true, {}, {});
+}
+
+void SessionCommandDispatcher::handleTxMicSource(const SessionMessage& invoke)
+{
+    QString name;
+    const bool readable = hasExactlyArguments(invoke.arguments, {"source"})
+        && invoke.arguments.first().ordinal == 0
+        && findUtf8Argument(invoke.arguments, "source", &name);
+    const auto source = readable ? remoteMicSourceFromName(name) : std::nullopt;
+    if (!m_transmitAccess.micSource) {
+        emitResult(invoke.commandVerb, invoke.commandId, false,
+                   source ? remoteMicLegacyReason() : QStringLiteral("The Core could not read this request."), {});
+        return;
+    }
+    const QString owner = m_sessionOwner;
+    const auto result = m_transmitAccess.micSource(invoke, owner, m_requester, source);
+    emitResultAs(owner, result);
 }
 
 void SessionCommandDispatcher::handleTxKeying(const SessionMessage& invoke)
@@ -2184,9 +2234,10 @@ void SessionCommandDispatcher::emitResultAs(const QString& owner, const SessionM
     // Fix wave I1: saved and restored, so a later result emitted inside
     // another session's dispatch leaves that dispatch's owner in place.
     const std::optional<QString> previous = m_resultOwner;
+    const QPointer<SessionCommandDispatcher> self(this);
     m_resultOwner = owner;
     emit commandResultReady(result);
-    m_resultOwner = previous;
+    if (self) { m_resultOwner = previous; }
 }
 
 // ── addSlice ─────────────────────────────────────────────────────────────

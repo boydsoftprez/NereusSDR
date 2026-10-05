@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
+//                Take and select action, with current access and target
+//                lifetime checks. AI-assisted via OpenAI Codex.
 //   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -333,6 +336,7 @@
 #include "core/PureSignal.h"
 #include "core/RadioStatus.h"
 #include "core/session/IStationLink.h"
+#include "core/session/RemoteTransmitClient.h"
 #include "core/session/StationCapabilities.h"
 #include "core/session/PureSignalSessionFacade.h"
 #include "core/TwoToneController.h"
@@ -462,7 +466,7 @@ void TxApplet::buildUI()
         m_micSourceBadge->setAccessibleName(QStringLiteral("Mic source indicator"));
         m_micSourceBadge->setToolTip(QStringLiteral(
             "Active microphone source: PC mic or Radio mic.\n"
-            "Change via Setup → Transmit → Mic Source."));
+            "Change via Settings > Audio > TX Input."));
         vbox->addWidget(m_micSourceBadge);
     }
 
@@ -1820,16 +1824,9 @@ void TxApplet::wireControls()
     // Phase 3M-1b J.3. Read-only: updates badge text on signal, no user interaction.
     // "PC mic" for MicSource::Pc, "Radio mic" for MicSource::Radio, "VAX" for MicSource::Vax.
     connect(&tx, &TransmitModel::micSourceChanged,
-            this, [this](MicSource source) {
-        QString text;
-        switch (source) {
-            case MicSource::Radio: text = QStringLiteral("Radio mic"); break;
-            case MicSource::Vax:   text = QStringLiteral("VAX");       break;
-            case MicSource::Pc:
-            default:               text = QStringLiteral("PC mic");    break;
-        }
-        m_micSourceBadge->setText(text);
-    });
+            this, [this](MicSource) { refreshMicSourceBadge(); });
+    connect(m_model, &RadioModel::remoteMicSourceStateChanged,
+            this, &TxApplet::refreshMicSourceBadge);
 
     // ── Phase 3M-1c J.1 ─ TX Profile combo wiring ────────────────────────────
     // User-driven currentTextChanged → MicProfileManager::setActiveProfile.
@@ -1994,6 +1991,13 @@ void TxApplet::wireControls()
             if (m_psFacade) {
                 connect(m_psFacade, &PureSignalSessionFacade::statusChanged,
                         this, &TxApplet::syncPsaFromFacade);
+                connect(m_psFacade, &PureSignalSessionFacade::actionResult,
+                        this, [this](quint32, Ps3ActionPhase phase, const QString&,
+                                     const QVariantMap&) {
+                    if (phase == Ps3ActionPhase::Failed) {
+                        syncPsaFromFacade();
+                    }
+                });
                 if (PureSignalSettings* settings = m_psFacade->settings()) {
                     connect(settings, &PureSignalSettings::autoCalEnabledChanged,
                             this, &TxApplet::syncPsaFromFacade);
@@ -2010,6 +2014,29 @@ void TxApplet::wireControls()
 
     // ── Initial sync from model ──────────────────────────────────────────────
     syncFromModel();
+}
+
+void TxApplet::refreshMicSourceBadge()
+{
+    if (!m_model || !m_micSourceBadge) { return; }
+    MicSource source = m_model->transmitModel().micSource();
+    QString reason;
+    if (!m_model->ownsLocalDsp()) {
+        auto* tx = m_model->stationLink() ? m_model->stationLink()->remoteTransmit() : nullptr;
+        if (tx) {
+            source = tx->acceptedMicSource() == RemoteMicSource::RadioMic ? MicSource::Radio
+                : source == MicSource::Vax ? MicSource::Vax : MicSource::Pc;
+            if (!tx->micSourceSettled()) { reason = tx->micSourceReason(); }
+        } else if (source == MicSource::Radio) {
+            source = MicSource::Pc;
+        }
+    }
+    m_micSourceBadge->setText(source == MicSource::Radio ? QStringLiteral("Radio mic")
+        : source == MicSource::Vax ? QStringLiteral("VAX") : QStringLiteral("PC mic"));
+    m_micSourceBadge->setToolTip(!reason.isEmpty() ? reason
+        : source == MicSource::Radio && !m_model->ownsLocalDsp()
+            ? QStringLiteral("Radio microphone at the Core (no microphone stream from this computer).")
+            : QStringLiteral("Change microphone source via Settings > Audio > TX Input."));
 }
 
 void TxApplet::syncFromModel()
@@ -2113,16 +2140,7 @@ void TxApplet::syncFromModel()
     refreshTxFilterStatus();
 
     // Mic-source badge (J.3 Phase 3M-1b; extended to 3-way in Phase 3M-VAX-toggle)
-    if (m_micSourceBadge) {
-        QString text;
-        switch (tx.micSource()) {
-            case MicSource::Radio: text = QStringLiteral("Radio mic"); break;
-            case MicSource::Vax:   text = QStringLiteral("VAX");       break;
-            case MicSource::Pc:
-            default:               text = QStringLiteral("PC mic");    break;
-        }
-        m_micSourceBadge->setText(text);
-    }
+    refreshMicSourceBadge();
 
     // MOX / TUNE button state
     if (mox) {
@@ -2164,11 +2182,13 @@ void TxApplet::setTransmitSliceResolver(std::function<SliceModel*()> resolver)
 
 void TxApplet::setTransmitSliceChoices(std::function<bool(int)> controlled,
                                        std::function<void(int)> choose,
-                                       std::function<QString()> unavailableReason)
+                                       std::function<QString()> unavailableReason,
+                                       std::function<TransmitSliceChoice(int)> availability)
 {
     m_txSliceControlled = std::move(controlled);
     m_txSliceChoose = std::move(choose);
     m_txSliceUnavailable = std::move(unavailableReason);
+    m_txSliceAvailability = std::move(availability);
     refreshTransmitSliceChoices();
 }
 
@@ -2200,9 +2220,13 @@ void TxApplet::refreshTransmitSliceChoices()
         button->setProperty("sliceId", id);
         button->setAccessibleName(QStringLiteral("Transmit on slice %1").arg(slice->sliceLetter()));
         // Disabled, never hidden: the reason is the tooltip.
-        button->setEnabled(reason.isEmpty());
-        button->setToolTip(reason.isEmpty()
-            ? QStringLiteral("Transmit on slice %1").arg(slice->sliceLetter()) : reason);
+        const TransmitSliceChoice availability = m_txSliceAvailability
+            ? m_txSliceAvailability(id)
+            : TransmitSliceChoice{reason.isEmpty(), reason};
+        button->setEnabled(availability.enabled);
+        button->setToolTip(availability.toolTip.isEmpty()
+            ? QStringLiteral("Transmit on slice %1").arg(slice->sliceLetter())
+            : availability.toolTip);
         connect(button, &QPushButton::clicked, this, [this, button, id](bool) {
             // The model's answer checks the row; the press alone does not.
             if (button) { button->setChecked(transmitSlice()
@@ -2786,8 +2810,8 @@ void TxApplet::setTwoToneController(TwoToneController* controller)
 //
 // Open (or raise) the modeless TxCfcDialog.  Lazy-creates the dialog on first
 // call so the construction cost is only paid when the user actually opens
-// CFC settings.  The dialog is parented to this applet's top-level window so
-// it floats freely; modal flag is forced false in TxCfcDialog's ctor.  We
+// CFC settings. The modeless dialog is owned by this retained applet, so
+// returning it from a disposable floating container preserves the editor. We
 // don't deleteLater() the dialog on close — keep it alive across opens for
 // fast re-show, mirroring the TxEqDialog singleton pattern.
 //
@@ -2797,6 +2821,11 @@ void TxApplet::setTwoToneController(TwoToneController* controller)
 //     openCfcDialogRequested signal to this slot.
 //   - Future Tools menu item → connects to this slot.
 // ---------------------------------------------------------------------------
+TxCfcDialog* TxApplet::cfcDialog() const
+{
+    return m_cfcDialog.data();
+}
+
 void TxApplet::requestOpenCfcDialog()
 {
     // R-R3-49 (parity Task 4): opens in a remote window too, greyed with
@@ -2804,11 +2833,10 @@ void TxApplet::requestOpenCfcDialog()
     if (!m_model) { return; }
 
     if (!m_cfcDialog) {
-        QWidget* host = window();
         m_cfcDialog = new TxCfcDialog(
             &m_model->transmitModel(),
             m_model->txChannel(),
-            host ? host : static_cast<QWidget*>(this));
+            this);
         // Setup publication (CFC band editor): a remote window sends the
         // whole table to a Core that takes it, and hears the answer. The
         // link is looked up on every call, so a dialog built before the
@@ -2836,9 +2864,9 @@ void TxApplet::requestOpenCfcDialog()
                     return result;
                 });
             connect(m_model, &RadioModel::stationCommandFinished,
-                    m_cfcDialog, &TxCfcDialog::onStationCommandFinished);
+                    m_cfcDialog.data(), &TxCfcDialog::onStationCommandFinished);
             QPointer<TxCfcDialog> dialog(m_cfcDialog);
-            connect(m_model, &RadioModel::stationLinkStateChanged, m_cfcDialog,
+            connect(m_model, &RadioModel::stationLinkStateChanged, m_cfcDialog.data(),
                     [model, dialog] {
                         if (!dialog) { return; }
                         const IStationLink* link = model ? model->stationLink() : nullptr;

@@ -252,7 +252,7 @@ private slots:
         spot.source = QStringLiteral("Cluster");
         spot.spotterCallsign = QStringLiteral("W3LPL");
         spot.comment = QStringLiteral("big signal");
-        spot.timestamp = QDateTime(QDate(2026, 9, 26), QTime(18, 24), QTimeZone::UTC);
+        spot.timestamp = QDateTime(QDate(2026, 9, 26), QTime(18, 24), Qt::UTC);
         const QJsonObject f = SpotSourceHost::spotRecordFields(spot, nullptr);
         QCOMPARE(f.keys(), (QStringList{"band", "call", "comment", "dxccColour", "dxccPriority",
                                         "frequencyHz", "mode", "resolvedMode", "source",
@@ -336,7 +336,7 @@ private slots:
         spot.callsign = QStringLiteral("W1AW");
         spot.mode = QStringLiteral("FT8");
         spot.source = QStringLiteral("PSK");
-        spot.timestamp = QDateTime(QDate(2026, 9, 28), QTime(12, 0), QTimeZone::UTC);
+        spot.timestamp = QDateTime(QDate(2026, 9, 28), QTime(12, 0), Qt::UTC);
         spot.rxFreqMhz = 144.174;
         QCOMPARE(SpotSourceHost::spotRecordFields(spot, nullptr).value("band").toInt(), 27);
         spot.rxFreqMhz = 144.0;

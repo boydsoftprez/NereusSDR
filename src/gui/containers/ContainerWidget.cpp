@@ -7,6 +7,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-02 — Effective contextual draft properties and portable settings by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-02 — Mixed container ownership, persistence and source routing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -67,6 +73,11 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ContainerWidget.h"
+#include "ContainerContentHost.h"
+#include <QMenu>
+#include <QContextMenuEvent>
+#include <QTimer>
+#include <QKeyEvent>
 #include "FloatingContainer.h"
 #include "core/BoardCapabilities.h"
 #include "core/LogCategories.h"
@@ -117,6 +128,9 @@ ContainerWidget::ContainerWidget(QWidget* parent)
 
 ContainerWidget::~ContainerWidget()
 {
+    if (m_structuredChrome) {
+        qApp->removeEventFilter(this);
+    }
     qCDebug(lcContainer) << "Container destroyed:" << m_id;
 }
 
@@ -186,6 +200,15 @@ void ContainerWidget::buildUI()
     m_btnSettings->setStyleSheet(btnStyle);
     barLayout->addWidget(m_btnSettings);
 
+    m_titleBar->setObjectName(QStringLiteral("containerTitleBar"));
+    m_headerSlot = new QWidget(this);
+    m_headerSlot->setObjectName(QStringLiteral("containerHeaderExtent"));
+    m_headerSlot->setFixedHeight(kTitleBarHeight);
+    m_headerSlot->hide();
+    auto *headerLayout = new QVBoxLayout(m_headerSlot);
+    headerLayout->setContentsMargins(0, 0, 0, 0);
+    headerLayout->addWidget(m_titleBar);
+    mainLayout->addWidget(m_headerSlot);
     mainLayout->addWidget(m_titleBar);
 
     // Content holder — layout slot for setContent()
@@ -198,6 +221,7 @@ void ContainerWidget::buildUI()
 
     // Resize grip (bottom-right, hidden until hover)
     m_resizeGrip = new QWidget(this);
+    m_resizeGrip->setObjectName(QStringLiteral("containerResizeGrip"));
     m_resizeGrip->setFixedSize(12, 12);
     m_resizeGrip->setCursor(Qt::SizeFDiagCursor);
     m_resizeGrip->setStyleSheet(QStringLiteral(
@@ -207,6 +231,10 @@ void ContainerWidget::buildUI()
     // Wire button signals
     connect(m_btnFloat, &QPushButton::clicked, this, [this]() {
         if (isFloating()) {
+            if (m_popOutShell) {
+                emit returnContainerRequested();
+                return;
+            }
             emit dockRequested();
         } else {
             emit floatRequested();
@@ -230,6 +258,86 @@ void ContainerWidget::buildUI()
     m_titleLabel->installEventFilter(this);
     m_resizeGrip->installEventFilter(this);
     m_contentHolder->installEventFilter(this);
+}
+
+// Nereus-origin reserved chrome: visibility never changes the content viewport.
+void ContainerWidget::setPopOutShell(bool shell)
+{
+    m_popOutShell = shell;
+    updateTitleBar();
+}
+void ContainerWidget::setHeaderMode(HeaderMode mode)
+{
+    if (!m_structuredChrome) {
+        m_structuredChrome = true;
+        layout()->removeWidget(m_titleBar);
+        m_headerSlot->layout()->addWidget(m_titleBar);
+        m_headerSlot->show();
+        setFocusPolicy(Qt::StrongFocus);
+        qApp->installEventFilter(this);
+        connect(qApp, &QApplication::focusChanged, this,
+                [this](QWidget *, QWidget *) { updateChrome(); });
+    }
+    if(m_headerMode!=mode) {m_recoverChrome=false;}
+    m_headerMode = mode;
+    m_titleBarVisible = mode != HeaderMode::Hidden;
+    updateChrome();
+}
+bool ContainerWidget::chromeVisible() const { return m_titleBar->isVisible(); }
+void ContainerWidget::recoverChrome()
+{
+    m_recoverChrome = true;
+    updateChrome();
+}
+void ContainerWidget::updateChrome()
+{
+    if (!m_structuredChrome) {
+        return;
+    }
+    QWidget *focused = QApplication::focusWidget();
+    const bool focus = focused && (focused == this || isAncestorOf(focused));
+    const bool shift = m_shiftChrome || (QApplication::keyboardModifiers() & Qt::ShiftModifier);
+    const bool visible = m_headerMode == HeaderMode::Always ||
+                         (m_headerMode == HeaderMode::Reveal && (m_hoverChrome || focus)) ||
+                         m_recoverChrome || shift;
+    m_titleBar->setVisible(visible);
+    m_resizeGrip->setVisible(visible && !m_locked && !m_autoHeight && !isPanelDocked());
+    m_resizeGrip->move(width() - 12, height() - 12);
+    m_btnFloat->setEnabled(!m_locked);
+    m_btnAxis->setEnabled(!m_locked);
+    m_btnPin->setEnabled(!m_locked);
+}
+void ContainerWidget::contextMenuEvent(QContextMenuEvent *event)
+{
+    if (!m_structuredChrome) {
+        QWidget::contextMenuEvent(event);
+        return;
+    }
+    QMenu menu(this);
+    menu.addAction(tr("Container Settings…"), this, [this] { emit settingsRequested(); });
+    menu.addAction(tr("Hide container (retain placement)"), this,
+                   [this] { emit hideContainerRequested(); });
+    if (m_popOutShell) {
+        auto *back = menu.addAction(tr("Return all objects and close shell"), this,
+                                    [this] { emit returnContainerRequested(); });
+        back->setEnabled(!m_locked);
+    }
+    menu.addAction(tr("Reveal controls"), this, &ContainerWidget::recoverChrome);
+    auto *header = menu.addMenu(tr("Header"));
+    for (auto mode : {HeaderMode::Always, HeaderMode::Reveal, HeaderMode::Hidden}) {
+        auto *action =
+            header->addAction(mode == HeaderMode::Always   ? tr("Always visible")
+                              : mode == HeaderMode::Reveal ? tr("Reveal on hover/focus")
+                                                           : tr("Hidden (hold Shift to recover)"));
+        action->setCheckable(true);
+        action->setChecked(mode == m_headerMode);
+        connect(action, &QAction::triggered, this,
+                [this, mode] { emit headerModeRequested(mode); });
+    }
+    if (auto *host = qobject_cast<ContainerContentHost *>(m_content)) {
+        host->addContentsMenu(menu);
+    }
+    menu.exec(event->globalPos());
 }
 
 void ContainerWidget::setContent(QWidget* widget)
@@ -266,7 +374,9 @@ void ContainerWidget::updateTitleBar()
     // Thetis ucMeter.cs:605-624 — adapted for 3 dock modes
     if (isFloating()) {
         m_btnFloat->setText(QStringLiteral("\u2199"));
-        m_btnFloat->setToolTip(QStringLiteral("Dock"));
+        m_btnFloat->setToolTip(
+            m_popOutShell ? QStringLiteral("Return all objects to their remembered containers")
+                          : QStringLiteral("Dock"));
         m_btnAxis->setVisible(false);
         m_btnPin->setVisible(true);
     } else if (isPanelDocked()) {
@@ -410,7 +520,11 @@ void ContainerWidget::setTopMost()
 }
 
 void ContainerWidget::setBorder(bool border) { m_border = border; setupBorder(); }
-void ContainerWidget::setLocked(bool locked) { m_locked = locked; }
+void ContainerWidget::setLocked(bool locked)
+{
+    m_locked = locked;
+    updateChrome();
+}
 void ContainerWidget::setContainerEnabled(bool enabled) { m_enabled = enabled; }
 void ContainerWidget::setShowOnRx(bool show) { m_showOnRx = show; }
 void ContainerWidget::setShowOnTx(bool show) { m_showOnTx = show; }
@@ -428,8 +542,19 @@ void ContainerWidget::setNotes(const QString& notes)
     emit notesChanged(m_notes);
 }
 
+void ContainerWidget::setBackgroundColor(const QColor& color)
+{
+    if(!color.isValid() || m_backgroundColor==color) {return;}
+    m_backgroundColor=color;
+    m_contentHolder->setStyleSheet(QStringLiteral("background: %1;").arg(color.name(QColor::HexArgb)));
+}
+
 void ContainerWidget::setNoControls(bool noControls) { m_noControls = noControls; }
-void ContainerWidget::setAutoHeight(bool autoHeight) { m_autoHeight = autoHeight; }
+void ContainerWidget::setAutoHeight(bool autoHeight)
+{
+    m_autoHeight = autoHeight;
+    updateChrome();
+}
 
 void ContainerWidget::setTitleBarVisible(bool visible)
 {
@@ -506,6 +631,18 @@ int ContainerWidget::roundToNearestTen(int value)
 
 void ContainerWidget::mouseMoveEvent(QMouseEvent* event)
 {
+    if (m_structuredChrome) {
+        m_hoverChrome = true;
+        updateChrome();
+        if (m_dragging) {
+            updateDrag(event->globalPosition().toPoint());
+        }
+        if (m_resizing) {
+            updateResize(event->globalPosition().toPoint());
+        }
+        QWidget::mouseMoveEvent(event);
+        return;
+    }
     // From Thetis ucMeter.cs:1198-1229
     // Upstream inline attribution preserved verbatim (ucMeter.cs:1200):
     //   bool no_controls = _no_controls && !Common.ShiftKeyDown; //[2.10.3.6]MW0LGE no title or resize grabber, override by holding shift
@@ -546,6 +683,13 @@ void ContainerWidget::mouseMoveEvent(QMouseEvent* event)
 
 void ContainerWidget::leaveEvent(QEvent* event)
 {
+    if (m_structuredChrome) {
+        m_hoverChrome = false;
+        if(!m_dragging && !m_resizing) {m_recoverChrome = false;}
+        updateChrome();
+        QWidget::leaveEvent(event);
+        return;
+    }
     if (!m_dragging && !m_resizing) {
         m_titleBar->setVisible(false);
         m_resizeGrip->setVisible(false);
@@ -557,6 +701,29 @@ void ContainerWidget::leaveEvent(QEvent* event)
 
 bool ContainerWidget::eventFilter(QObject* watched, QEvent* event)
 {
+    if (m_structuredChrome) {
+        if (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) {
+            auto *key = static_cast<QKeyEvent *>(event);
+            if (key->key() == Qt::Key_Shift) {
+                m_shiftChrome = event->type() == QEvent::KeyPress;
+                updateChrome();
+            }
+        }
+        if (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut ||
+            event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) {
+            QTimer::singleShot(0, this, &ContainerWidget::updateChrome);
+        }
+        if (auto *widget = qobject_cast<QWidget *>(watched);
+            widget && (widget == this || isAncestorOf(widget))) {
+            if (event->type() == QEvent::Enter || event->type() == QEvent::MouseMove) {
+                m_hoverChrome = true;
+                updateChrome();
+            }
+            if (event->type() == QEvent::Resize) {
+                updateChrome();
+            }
+        }
+    }
     // Title bar drag
     if ((watched == m_titleBar || watched == m_titleLabel) && !m_locked) {
         if (event->type() == QEvent::MouseButtonPress) {
@@ -584,7 +751,7 @@ bool ContainerWidget::eventFilter(QObject* watched, QEvent* event)
             isContentArea = true;
         }
     }
-    if (isContentArea && event->type() == QEvent::MouseMove && !m_locked) {
+    if (!m_structuredChrome && isContentArea && event->type() == QEvent::MouseMove && !m_locked) {
         QMouseEvent* me = static_cast<QMouseEvent*>(event);
         bool noControls = m_noControls && !(QApplication::keyboardModifiers() & Qt::ShiftModifier);
         if (!noControls) {
@@ -600,7 +767,7 @@ bool ContainerWidget::eventFilter(QObject* watched, QEvent* event)
     }
 
     // Resize grip (not for panel-docked)
-    if (watched == m_resizeGrip && !m_locked && !isPanelDocked()) {
+    if (watched == m_resizeGrip && !m_locked && !m_autoHeight && !isPanelDocked()) {
         if (event->type() == QEvent::MouseButtonPress) {
             QMouseEvent* me = static_cast<QMouseEvent*>(event);
             if (me->button() == Qt::LeftButton) {
@@ -626,6 +793,7 @@ void ContainerWidget::beginDrag(const QPoint& globalPos)
 {
     // From Thetis ucMeter.cs:281-294
     m_dragging = true;
+    emit geometryInteractionStarted();
     // Closed hand while the drag runs (native shape; see the Qt 6.11 macOS
     // cursor crash note at the title label). Set on the bar too, since the
     // press can land on the bar beside the label.
@@ -678,6 +846,7 @@ void ContainerWidget::updateDrag(const QPoint& globalPos)
 void ContainerWidget::endDrag()
 {
     m_dragging = false;
+    emit geometryInteractionFinished();
     m_dragStartPos = QPoint();
     m_titleBar->unsetCursor();
     m_titleLabel->setCursor(Qt::OpenHandCursor);
@@ -695,6 +864,7 @@ void ContainerWidget::beginResize(const QPoint& globalPos)
     m_resizeStartGlobal = globalPos;
     m_resizeStartSize = isFloating() && parentWidget() ? parentWidget()->size() : size();
     m_resizing = true;
+    emit geometryInteractionStarted();
     raise();
 }
 
@@ -722,6 +892,7 @@ void ContainerWidget::updateResize(const QPoint& globalPos)
 void ContainerWidget::endResize()
 {
     m_resizing = false;
+    emit geometryInteractionFinished();
     m_resizeStartGlobal = QPoint();
     if (isOverlayDocked()) {
         m_dockedSize = size();
@@ -731,8 +902,8 @@ void ContainerWidget::endResize()
 void ContainerWidget::doResize(int w, int h)
 {
     // From Thetis ucMeter.cs:520-549
-    w = std::max(w, kMinContainerWidth);
-    h = std::max(h, kMinContainerHeight);
+    w = std::max(w, std::max(kMinContainerWidth, minimumSizeHint().width()));
+    h = std::max(h, std::max(kMinContainerHeight, minimumSizeHint().height()));
 
     if (isFloating()) {
         if (parentWidget()) {
@@ -759,6 +930,17 @@ void ContainerWidget::doResize(int w, int h)
 
 void ContainerWidget::wireInteractiveItem(MeterItem* item)
 {
+    if (item->property("interactiveContainerWired").toBool()) { return; }
+    item->setProperty("interactiveContainerWired",true);
+    const auto forward = [this,item](const std::function<void()>& action) {
+        if (item->property("containerUnsupportedSource").toBool()) {
+            emit unavailableButtonClicked(item->property("unsupportedSourceReason").toString()); return;
+        }
+        const QVariant previous = property("containerDispatchContext");
+        const QVariant context = item->property("containerSourceContext");
+        if (context.isValid()) { setProperty("containerDispatchContext",context); }
+        action(); setProperty("containerDispatchContext",previous);
+    };
     if (auto* box = qobject_cast<ButtonBoxItem*>(item)) {
         connect(box, &ButtonBoxItem::unavailableButtonClicked, this,
                 [this](int, const QString& reason) {
@@ -767,42 +949,42 @@ void ContainerWidget::wireInteractiveItem(MeterItem* item)
     }
     if (auto* band = qobject_cast<BandButtonItem*>(item)) {
         connect(band, &BandButtonItem::bandClicked,
-                this, &ContainerWidget::bandClicked);
+                this, [this,forward](int value) { forward([&] { emit bandClicked(value); }); });
         connect(band, &BandButtonItem::bandStackRequested,
-                this, &ContainerWidget::bandStackRequested);
+                this, [this,forward](int value) { forward([&] { emit bandStackRequested(value); }); });
     } else if (auto* mode = qobject_cast<ModeButtonItem*>(item)) {
         connect(mode, &ModeButtonItem::modeClicked,
-                this, &ContainerWidget::modeClicked);
+                this, [this,forward](int value) { forward([&] { emit modeClicked(value); }); });
     } else if (auto* filter = qobject_cast<FilterButtonItem*>(item)) {
         connect(filter, &FilterButtonItem::filterClicked,
-                this, &ContainerWidget::filterClicked);
+                this, [this,forward](int value) { forward([&] { emit filterClicked(value); }); });
         connect(filter, &FilterButtonItem::filterContextRequested,
-                this, &ContainerWidget::filterContextRequested);
+                this, [this,forward](int value) { forward([&] { emit filterContextRequested(value); }); });
     } else if (auto* ant = qobject_cast<AntennaButtonItem*>(item)) {
         connect(ant, &AntennaButtonItem::antennaSelected,
-                this, &ContainerWidget::antennaSelected);
+                this, [this,forward](int value) { forward([&] { emit antennaSelected(value); }); });
         // Phase 3P-I-a T17 — late-added antenna items inherit the
         // container's current hasAlex state (set by MainWindow on
         // connect / currentRadioChanged via setBoardCapabilities).
         ant->setHasAlex(m_hasAlex);
     } else if (auto* step = qobject_cast<TuneStepButtonItem*>(item)) {
         connect(step, &TuneStepButtonItem::tuneStepSelected,
-                this, &ContainerWidget::tuneStepSelected);
+                this, [this,forward](int value) { forward([&] { emit tuneStepSelected(value); }); });
     } else if (auto* other = qobject_cast<OtherButtonItem*>(item)) {
         connect(other, &OtherButtonItem::otherButtonClicked,
-                this, &ContainerWidget::otherButtonClicked);
+                this, [this,forward](int value) { forward([&] { emit otherButtonClicked(value); }); });
         connect(other, &OtherButtonItem::macroTriggered,
-                this, &ContainerWidget::macroTriggered);
+                this, [this,forward](int value) { forward([&] { emit macroTriggered(value); }); });
     } else if (auto* voice = qobject_cast<VoiceRecordPlayItem*>(item)) {
         connect(voice, &VoiceRecordPlayItem::voiceAction,
-                this, &ContainerWidget::voiceAction);
+                this, [this,forward](int value) { forward([&] { emit voiceAction(value); }); });
     } else if (auto* vfo = qobject_cast<VfoDisplayItem*>(item)) {
         connect(vfo, &VfoDisplayItem::frequencyChangeRequested,
-                this, &ContainerWidget::frequencyChangeRequested);
+                this, [this,forward](int64_t value) { forward([&] { emit frequencyChangeRequested(value); }); });
         connect(vfo, &VfoDisplayItem::bandStackRequested,
-                this, &ContainerWidget::bandStackRequested);
+                this, [this,forward](int value) { forward([&] { emit bandStackRequested(value); }); });
         connect(vfo, &VfoDisplayItem::filterContextRequested,
-                this, [this](int) { emit vfoFilterContextRequested(); });
+                this, [this,forward](int) { forward([&] { emit vfoFilterContextRequested(); }); });
     }
 }
 

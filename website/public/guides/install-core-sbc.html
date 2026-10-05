@@ -1,0 +1,75 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fresh Raspberry Pi or Armbian Core install | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/guides/install-core-sbc.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html" aria-current=page>Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="fresh-raspberry-pi-or-armbian-core-install">Fresh Raspberry Pi or Armbian Core install</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#1-prepare-the-card">1. Prepare the card</a></li><li><a href="#2-check-the-os-and-install-download-tools">2. Check the OS and install download tools</a></li><li><a href="#3-download-and-install-the-core">3. Download and install the Core</a></li><li><a href="#4-configure-and-start-it">4. Configure and start it</a></li><li><a href="#5-pair-a-console">5. Pair a console</a></li></ol></details>
+<p>Install the headless <code>nereusd</code> Core on a fresh <strong>64-bit Debian 13 (Trixie)</strong>
+system. Use <strong>Raspberry Pi OS Lite (64-bit), Trixie</strong> on a Pi, or a compatible
+<strong>Armbian Minimal/CLI Debian Trixie</strong> image for your board. The release's
+<code>arm64_trixie.deb</code> is the matching package; the Ubuntu ARM64 <code>.deb</code> is a
+different build. Development used a Raspberry Pi 4 and a 2 GB Radxa Rock 5C.</p>
+<p>These steps set up a standalone SBC on the radio's LAN. For an ANAN-G2's
+built-in Pi, follow its Saturn-specific setup as well; the radio image has
+components beyond the Core.</p>
+<h2 id="1-prepare-the-card">1. Prepare the card</h2>
+<p>Use <a href="https://www.raspberrypi.com/software/">Raspberry Pi Imager</a> or the
+<a href="https://www.armbian.com/download/">Armbian image for your board</a>. Choose the
+64-bit Trixie image, set your own user/password and a hostname such as
+<code>nereus-core</code>, and enable SSH. Boot with wired Ethernet on the same LAN as
+the radio. Connect a keyboard or use:</p>
+<pre><code class="language-sh">ssh YOUR_USER@nereus-core.local
+</code></pre>
+<h2 id="2-check-the-os-and-install-download-tools">2. Check the OS and install download tools</h2>
+<p>The first two commands should report <code>arm64</code> and <code>VERSION_CODENAME=trixie</code>.</p>
+<pre><code class="language-sh">dpkg --print-architecture
+grep '^VERSION_CODENAME=' /etc/os-release
+sudo apt update
+sudo apt install -y ca-certificates curl gnupg avahi-daemon nano
+</code></pre>
+<h2 id="3-download-and-install-the-core">3. Download and install the Core</h2>
+<p>Use the matching Trixie package from the selected
+<a href="https://github.com/boydsoftprez/NereusSDR/releases">release's Assets</a>.
+The example below targets 2026.10.0 once its artifacts are published.
+Verify the signature and package checksum before installing.</p>
+<pre><code class="language-sh">(
+set -eu
+release_version=2026.10.0
+core_package=&quot;nereusd_${release_version}_arm64_trixie.deb&quot;
+release_url=&quot;https://github.com/boydsoftprez/NereusSDR/releases/download/v${release_version}&quot;
+curl -fLO &quot;$release_url/$core_package&quot;
+curl -fLO &quot;$release_url/SHA256SUMS.txt&quot;
+curl -fLO &quot;$release_url/SHA256SUMS.txt.asc&quot;
+gpg --keyserver keyserver.ubuntu.com --recv-keys 4A95F4D22AEE9271D8A3C01B20C284473F97D2B3
+gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
+awk -v file=&quot;$core_package&quot; '$2 == file { print }' SHA256SUMS.txt | sha256sum --check --strict
+sudo apt install &quot;./$core_package&quot;
+)
+</code></pre>
+<p><code>apt</code> installs the declared runtime dependencies. If they cannot be resolved,
+check that the image is ARM64 Debian Trixie; use its normal repositories and
+a matching package. Installation leaves the radio service disabled until the
+next step.</p>
+<h2 id="4-configure-and-start-it">4. Configure and start it</h2>
+<p>On this fresh installation, copy the sample and review it. With one visible
+LAN radio, leave <code>radio_mac</code> empty; with several, set the intended radio's
+MAC. The sample enables the Core listener, local status page and RV/relay
+access. <code>remote_transmit</code> controls whether paired clients may transmit.</p>
+<pre><code class="language-sh">sudo install -m 0644 /usr/share/nereusd/nereusd.conf.sample /etc/nereusd.conf
+sudo nano /etc/nereusd.conf
+sudo systemctl enable --now nereusd
+sudo nereusd status
+</code></pre>
+<p>The service now starts automatically at boot. First start generates and caches
+FFTW plans; give it time to become ready.</p>
+<h2 id="5-pair-a-console">5. Pair a console</h2>
+<p>Open NereusSDR on the desktop or the native iPhone/iPad app and choose the
+Core found on the LAN. Follow the pairing prompt. To display a pairing code
+on the SBC:</p>
+<pre><code class="language-sh">sudo nereusd pairing show
+</code></pre>
+<p>The local status page is <code>http://nereus-core.local:47911</code> if you used that
+hostname. It shows the pairing code while the Core is unclaimed. Core Settings
+shows the connected station and its actual audio/network path.</p>
+<p>For a startup problem, use <code>sudo systemctl status nereusd</code> and
+<code>sudo journalctl -u nereusd -n 50 --no-pager</code>. Existing installs keep their
+configuration and private state in <code>/var/lib/nereusd</code>; back that state up to
+preserve the Core identity and paired devices. See the
+<a href="https://github.com/boydsoftprez/NereusSDR/blob/main/packaging/station-image/README.md">station package/image notes</a> for
+build provenance and the separate image workflow.</p>
+<div class="page-next"></div></main></div></body></html>

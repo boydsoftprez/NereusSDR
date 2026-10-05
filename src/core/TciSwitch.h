@@ -5,6 +5,7 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QHostAddress>
 #include <QObject>
 #include <QPointer>
@@ -41,7 +42,7 @@ class TciServer;
 // With the link down the switch shows the last known state; on the Core's
 // computer the window still starts no server (there is no radio here to
 // serve), and on another computer its server follows the switch.
-class TciSwitch : public QObject {
+class NEREUS_CORE_EXPORT TciSwitch : public QObject {
     Q_OBJECT
 public:
     TciSwitch(TciServer* local, RadioModel* model, QObject* parent = nullptr);

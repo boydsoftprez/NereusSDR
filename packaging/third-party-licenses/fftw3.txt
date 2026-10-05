@@ -14,7 +14,16 @@ upstream canonical text is also at:
   https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
 
 FFTW website:               https://www.fftw.org/
-Upstream source (FFTW 3.3.5 Windows DLL bundle):
-                            https://fftw.org/install/windows.html
+Bundled shared libraries: Windows DLLs 3.3.5; Intel macOS 3.3.10;
+Apple Silicon Homebrew 3.3.11; desktop AppImages use Ubuntu FFTW
+3.3.8-2ubuntu8 (x86_64) and 3.3.10-1ubuntu3 (ARM). Daemon .deb packages
+use distribution-installed FFTW dependencies.
+Upstream source archives (3.3.5, 3.3.8, 3.3.10, 3.3.11) accompany the
+release, with Ubuntu .dsc/orig/debian sources in fftw-ubuntu-source.tar.gz.
+Upstream source:             https://fftw.org/pub/fftw/
+Ubuntu package source:       https://archive.ubuntu.com/ubuntu/pool/main/f/fftw3/
+Windows binary source:       https://fftw.org/install/windows.html
+The exact Homebrew bottle recipe revision was not captured in the
+packaging logs; see the existing source offer for source requests.
 NereusSDR FFTW provenance:  docs/attribution/FFTW3-PROVENANCE.md
 Source offer:               SOURCE-OFFER.txt

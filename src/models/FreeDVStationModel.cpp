@@ -22,6 +22,8 @@
 // copyright the freedv-gui contributors / FreeDV project).
 //
 // Modification history (NereusSDR)
+//   2026-10-03  J.J. Boyd / KG4VCF  Keep UTC handling compatible with Qt 6.4.
+//                                    AI tooling: OpenAI Codex.
 //   2026-05-11  J.J. Boyd / KG4VCF  Phase 3J-2 Task D3. Initial create.
 //                                    Translation of freedv-gui's wxString-
 //                                    based grid-square parser into a
@@ -225,7 +227,7 @@ QDateTime utcFrom(const QJsonObject& fields, const char* key)
     }
     QDateTime when = QDateTime::fromString(text, Qt::ISODate);
     if (when.isValid() && when.timeSpec() == Qt::LocalTime) {
-        when.setTimeZone(QTimeZone::UTC);
+        when.setTimeSpec(Qt::UTC);
     }
     return when;
 }

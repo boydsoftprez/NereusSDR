@@ -5,6 +5,7 @@
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"
 #include "core/SliceOwnership.h"
+#include "core/station/StationSliceOwnershipPolicy.h"
 #include "core/daemon/DaemonTelemetryController.h"
 #include "core/daemon/HostTelemetrySampler.h"
 #include "core/session/DeviceSessionRegistry.h"
@@ -160,32 +161,11 @@ bool StationHost::start()
         server->setStationDeviceWords(cfg.hostingDevice->name,
                                       cfg.hostingDevice->shortName);
         if (!server || !model) { return false; }
-        const QPointer<SliceOwnership> ownership(model->sliceOwnership());
-        if (ownership) {
-            const QList<int> adopted = ownership->adoptUnowned(stationId);
-            if (!server || !model || !ownership) { return false; }
-            if (!adopted.isEmpty()) {
-                const int active = ownership->activeFor(stationId);
-                if (!model) { return false; }
-                model->setActiveSliceByIdFor(stationId, active);
-            }
-        }
-        if (!server || !model) { return false; }
-        // The desktop may begin hosting before its radio has made Slice A.
-        // A later unscoped local slice is still the hosting window's, never
-        // a free slice for the first external peer to adopt.
-        connect(model.data(), &RadioModel::sliceAdded, server.data(),
-                [model, stationId](int) {
-                    if (!model) { return; }
-                    const QPointer<SliceOwnership> ownership(model->sliceOwnership());
-                    if (!ownership) { return; }
-                    const QList<int> adopted = ownership->adoptUnowned(stationId);
-                    if (!model || !ownership) { return; }
-                    if (!adopted.isEmpty()) {
-                        const int active = ownership->activeFor(stationId);
-                        if (model) { model->setActiveSliceByIdFor(stationId, active); }
-                    }
-                });
+        const QPointer<StationHost> self(this);
+        StationSliceOwnershipPolicy::activate(model, server, [self, server, generation] {
+            return self && server && !self->m_quiescing && self->m_generation == generation;
+        });
+        if (!self || !server || !model) { return false; }
     }
 #ifdef NEREUS_BUILD_TESTS
     if (m_serverCreatedForTest) { m_serverCreatedForTest(m_stationServer.get()); }
@@ -560,16 +540,39 @@ bool StationHost::publishDisplayBudget(const std::optional<DisplayLoadDecision>&
     if (!decision || !m_stationServer) {
         return false;
     }
+    const std::optional<DisplayBudgetLimits> previous
+        = m_stationServer->configuredDisplayBudgetLimits();
     if (!m_stationServer->setDisplayBudgetLimits(decision->limits, decision->reason)) {
         qCWarning(lcApp) << "DaemonApp: display budget generation"
                           << decision->limits.generation << "was not accepted";
         return false;
     }
-    qCInfo(lcApp).nospace() << "DaemonApp: display budget "
-                            << (decision->reason == DisplayBudgetReason::CoreBusy
-                                    ? "lowered, Core busy" : "restored")
-                            << ": " << decision->limits.applicationBytesPerSecond
-                            << " bytes/s, " << decision->limits.spectrumSampleUnitsPerSecond
+    // CoreBusy describes a retained cut, including a partial rollback or
+    // a raised device floor. Numerical direction is a separate observation.
+    QString direction = QStringLiteral("initialized");
+    if (previous) {
+        const bool raised = decision->limits.applicationBytesPerSecond
+                                > previous->applicationBytesPerSecond
+            || decision->limits.spectrumSampleUnitsPerSecond
+                                > previous->spectrumSampleUnitsPerSecond;
+        const bool lowered = decision->limits.applicationBytesPerSecond
+                                < previous->applicationBytesPerSecond
+            || decision->limits.spectrumSampleUnitsPerSecond
+                                < previous->spectrumSampleUnitsPerSecond;
+        direction = raised && lowered ? QStringLiteral("changed")
+            : raised ? QStringLiteral("raised")
+            : lowered ? QStringLiteral("lowered") : QStringLiteral("unchanged");
+    }
+    qCInfo(lcApp).noquote().nospace() << "DaemonApp: display budget " << direction
+                            << " (reason " << displayBudgetReasonWireName(decision->reason)
+                            << "): "
+                            << (previous ? QString::number(previous->applicationBytesPerSecond)
+                                         : QStringLiteral("unset"))
+                            << " -> " << decision->limits.applicationBytesPerSecond
+                            << " bytes/s, "
+                            << (previous ? QString::number(previous->spectrumSampleUnitsPerSecond)
+                                         : QStringLiteral("unset"))
+                            << " -> " << decision->limits.spectrumSampleUnitsPerSecond
                             << " samples/s (generation " << decision->limits.generation << ")";
     return true;
 }

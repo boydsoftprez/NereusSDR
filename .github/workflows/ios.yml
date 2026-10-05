@@ -1,0 +1,141 @@
+# NereusSDR for iPhone and iPad (R-IOS-29, plan Task 5).
+#
+# The package job builds and tests the NereusKit Swift package. The interop
+# job (plan Tasks 10 and 15b) builds the station's media offerer and pairing
+# peer helpers and nereusd, and runs the app's media peer against the Core's
+# own media transport and its pairing against the Core's own pairing, by
+# the helper and by a scratch nereusd kept off the network. The app job
+# (plan Task 51) generates the Xcode project, builds the app for the
+# simulator and for devices, and runs the app's tests and NereusKit's on an
+# iPhone 17 simulator. They run on
+# changes to the app, to the conformance fixtures the app's tests read, to
+# the station's media transport, pairing and console and the helpers, and
+# to this workflow. The provenance check over ios/ runs in ci.yml's
+# compliance job, beside the other attribution checks.
+name: iOS
+
+on:
+  push:
+    paths:
+      - 'ios/**'
+      - 'tests/data/link/**'
+      - 'tests/tools/nereus_media_offerer.cpp'
+      - 'src/core/session/media/**'
+      - 'cmake/NereusRemoteMedia.cmake'
+      - 'tests/tools/nereus_pairing_peer.cpp'
+      - 'src/core/security/**'
+      - 'src/core/session/StationServer.cpp'
+      - 'src/core/session/SessionMessages.cpp'
+      - 'src/core/daemon/StationControlCommands.cpp'
+      - 'src/server_main.cpp'
+      - 'cmake/NereusPairing.cmake'
+      - 'resources/pairing-words-v1.txt'
+      - '.github/workflows/ios.yml'
+  pull_request:
+    paths:
+      - 'ios/**'
+      - 'tests/data/link/**'
+      - 'tests/tools/nereus_media_offerer.cpp'
+      - 'src/core/session/media/**'
+      - 'cmake/NereusRemoteMedia.cmake'
+      - 'tests/tools/nereus_pairing_peer.cpp'
+      - 'src/core/security/**'
+      - 'src/core/session/StationServer.cpp'
+      - 'src/core/session/SessionMessages.cpp'
+      - 'src/core/daemon/StationControlCommands.cpp'
+      - 'src/server_main.cpp'
+      - 'cmake/NereusPairing.cmake'
+      - 'resources/pairing-words-v1.txt'
+      - '.github/workflows/ios.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: macos-26
+    name: NereusKit package tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the toolchain
+        run: |
+          xcode-select -p
+          swift --version
+
+      - name: swift test (NereusKit)
+        run: ios/scripts/swift-test.sh
+
+  interop:
+    runs-on: macos-26
+    name: Media and pairing interop with the Core
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the station's dependencies
+        # The station build's macOS dependencies, as ci.yml installs them.
+        run: brew install qt@6 ninja fftw openssl@3 autoconf automake libtool wget
+
+      - name: Configure the station build
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DNEREUS_BUILD_TESTS=ON
+
+      - name: Interop (MediaPeer, PairingClient against the Core's own code)
+        # Builds only the helpers and nereusd in build/, then runs the
+        # interop tests with NEREUS_MEDIA_OFFERER, NEREUS_PAIRING_PEER and
+        # NEREUS_NEREUSD set.
+        run: ios/scripts/interop-test.sh
+
+  app:
+    # Xcode 27 is on its own hosted image; macos-26 carries Xcode 26.
+    # https://github.com/actions/runner-images/issues/14404
+    runs-on: xcode-27
+    name: The app on the iOS simulator
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 27
+        # The app needs Xcode 27 and its iOS 27 simulator; take the newest
+        # Xcode 27 the runner image carries, and fail if it has none.
+        run: |
+          xcode=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -n 1)
+          if [ -z "$xcode" ]; then
+            echo "This runner image has no Xcode 27" >&2
+            ls -d /Applications/Xcode*.app >&2
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          xcrun simctl list devices available | grep -E "iPhone 17 |-- iOS"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate the Xcode project
+        run: ios/scripts/generate-project.sh
+
+      - name: Build for the simulator
+        run: |
+          xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
+            -destination 'generic/platform=iOS Simulator' \
+            build
+
+      - name: Build for devices
+        # Unsigned: CI holds no signing identity.
+        run: |
+          xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO build
+
+      - name: Test on an iPhone 17 simulator
+        run: |
+          xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            test

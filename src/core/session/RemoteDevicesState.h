@@ -1,3 +1,6 @@
+// 2026-10-01: Authenticated Core address inventory and reconnect learning.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+
 #pragma once
 // no-port-check: NereusSDR-original.
 // =================================================================
@@ -44,6 +47,7 @@
 //               with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "core/session/MirrorSchema.h"
 #include "core/session/SessionMessages.h"
 
@@ -106,6 +110,8 @@ struct RemoteCoreDevicesInfo {
     /// False until the Core sent the object.
     bool received = false;
     QString stationLabel;
+    QString coreAddresses; // Authenticated devices value, never logged.
+
     bool claimed = false;
     bool tokenActive = false;
     bool keyBackupAcknowledged = false;
@@ -181,7 +187,7 @@ struct RemotePrompt {
     QDateTime happenedAt() const { return receivedAt.addSecs(-prompt.secondsAgo); }
 };
 
-class RemoteDevicesState : public QObject {
+class NEREUS_CORE_EXPORT RemoteDevicesState : public QObject {
     Q_OBJECT
 
 public:

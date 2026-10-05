@@ -28,6 +28,9 @@
 
 #include "core/AppSettings.h"
 #include "core/MicProfileManager.h"
+#include "core/CfcProfile.h"
+#include "core/CfcEditProfile.h"
+#include "models/TransmitModel.h"
 
 using namespace NereusSDR;
 
@@ -42,6 +45,44 @@ class TstMicProfileManagerCfcRoundTrip : public QObject {
     Q_OBJECT
 
 private slots:
+
+    void typedEighteenBandBlobRoundTripsWithSavedPrecision()
+    {
+        TransmitModel tx;
+        tx.loadFromSettings(kMacA);
+        MicProfileManager mgr;
+        mgr.setMacAddress(kMacA);
+        mgr.load();
+        CfcEditProfile p;
+        p.compression.frequencyMaxHz = p.postEq.frequencyMaxHz = 17000;
+        p.compression.globalGainDb = 3.54;
+        p.postEq.globalGainDb = -2.54;
+        p.compression.useQ = p.postEq.useQ = true;
+        for (int i = 0; i < 18; ++i) {
+            p.compression.frequenciesHz.append(i == 1 ? 125.1254 : i * 1000.0);
+            p.compression.gainsDb.append(3.54);
+            p.compression.q.append(1.2345);
+            p.postEq.gainsDb.append(-4.54);
+            p.postEq.q.append(2.3456);
+        }
+        p.postEq.frequenciesHz = p.compression.frequenciesHz;
+        QVERIFY(tx.setCfcProfile(p));
+        QVERIFY(mgr.saveProfile("Typed", &tx));
+        const QString saved = AppSettings::instance().value(profileKey(kMacA, "Typed", "CFCParaEQData")).toString();
+        QCOMPARE(saved, tx.cfcParaEqData());
+        const auto decoded = decodeCfcEditProfile(saved);
+        QVERIFY(decoded);
+        QCOMPARE(decoded->compression.frequenciesHz.size(), 18);
+        QCOMPARE(decoded->compression.frequenciesHz[1], 125.125);
+        QCOMPARE(decoded->compression.gainsDb[1], 3.5);
+        QCOMPARE(decoded->compression.q[1], 1.23);
+        QCOMPARE(decoded->postEq.q[1], 2.35);
+        QCOMPARE(decoded->compression.globalGainDb, 3.5);
+        QCOMPARE(decoded->postEq.globalGainDb, -2.5);
+        QVERIFY(mgr.setActiveProfile("Typed", &tx));
+        QVERIFY(tx.effectiveCfcProfile() == *decoded);
+    }
+
 
     void initTestCase()
     {

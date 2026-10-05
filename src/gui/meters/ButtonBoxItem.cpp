@@ -7,6 +7,18 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Contain marked stack button ink in its allocated row by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-04 — Fit transient container stack grids without changing legacy
+//                 geometry by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-04 — Preserve button-grid float precision and omit nonfinite
+//                 transient cells by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-03 — Invalidate cached interaction frames by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
+//   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-03 — Bounded container single-control viewport sizing by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -57,12 +69,23 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ButtonBoxItem.h"
+#include "ResponsiveText.h"
 
 #include <QPainter>
 #include <QMouseEvent>
 #include <QtMath>
+#include <QVariant>
+#include <cmath>
 
 namespace NereusSDR {
+namespace {
+bool hasFiniteButtonGeometry(const QRectF& rect)
+{
+    return std::isfinite(rect.x()) && std::isfinite(rect.y())
+        && std::isfinite(rect.width()) && std::isfinite(rect.height())
+        && std::isfinite(rect.right()) && std::isfinite(rect.bottom());
+}
+}
 
 ButtonBoxItem::ButtonBoxItem(QObject* parent)
     : MeterItem(parent)
@@ -72,10 +95,19 @@ ButtonBoxItem::ButtonBoxItem(QObject* parent)
     m_clickTimer.setInterval(100);
     connect(&m_clickTimer, &QTimer::timeout, this, [this]() {
         m_clickedIndex = -1;
+        m_interactionDirty = true;
     });
 }
 
 ButtonBoxItem::~ButtonBoxItem() = default;
+
+bool ButtonBoxItem::advanceMeter(qint64 monotonicMs)
+{
+    Q_UNUSED(monotonicMs);
+    const bool changed = m_interactionDirty;
+    m_interactionDirty = false;
+    return changed;
+}
 
 void ButtonBoxItem::setButtonCount(int count)
 {
@@ -170,16 +202,37 @@ QRectF ButtonBoxItem::buttonRect(int index, const QRectF& area) const
     // From Thetis: button_width = ((1 - 0.04) / columns) - margin - border
     const float pad = 0.04f;
     const float cellW = (area.width() * (1.0f - pad)) / m_columns;
-    const float cellH = cellW * m_heightRatio;
+    // Reference: Thetis MeterManager.cs:39027-39042 [v2.10.3.15] lays out
+    // native cells against available width and height. NereusSDR-original:
+    // only a supported single OTHERBTNS cell marked by
+    // the container factory/editor fits its viewport. Legacy groups retain
+    // the upstream aspect ratio. Paint and hit testing share this rectangle.
+    const bool singleControl = m_columns == 1 && m_visibleBits != 0
+        && (m_visibleBits & (m_visibleBits - 1)) == 0
+        && property("containerSingleControl").toBool();
+    // NereusSDR-original stack exception: keep saved legacy ratios intact,
+    // and fit all actually shown rows only inside an explicitly marked stack.
+    const bool stackGrid=!singleControl && property("containerStackGrid").toBool();
+    int rows=1;
+    if (stackGrid) {
+        int shown=0;
+        for (int i=0;i<m_buttonCount;++i) { if (isButtonShown(i)) { ++shown; } }
+        rows=qMax(1,shown/m_columns+int(shown%m_columns!=0));
+    }
+    // Keep the legacy float product and the existing viewport narrowing;
+    // both selected arms stay float without a needless qreal round trip.
+    const float cellH = stackGrid
+        ? static_cast<float>(area.height() * (1.0f - pad) / rows) : singleControl
+        ? static_cast<float>(area.height() * (1.0f - pad)) : cellW * m_heightRatio;
     const float bw = cellW - (m_margin + m_borderWidth) * area.width();
-    const float bh = cellH - (m_margin + m_borderWidth) * area.width();
+    const float bh = cellH - (m_margin + m_borderWidth) * (stackGrid ? area.height()/rows : singleControl ? area.height() : area.width());
 
     const float xOff = area.x() + (pad / 2.0f) * area.width();
     const float yOff = area.y() + (pad / 2.0f) * area.height();
 
     return QRectF(
         xOff + col * cellW + (m_margin * area.width() / 2.0f),
-        yOff + row * cellH + (m_margin * area.width() / 2.0f),
+        yOff + row * cellH + (m_margin * (stackGrid ? area.height()/rows : singleControl ? area.height() : area.width()) / 2.0f),
         bw, bh
     );
 }
@@ -189,7 +242,8 @@ int ButtonBoxItem::buttonAt(const QPointF& pos, int widgetW, int widgetH) const
     const QRectF area = pixelRect(widgetW, widgetH);
     for (int i = 0; i < m_buttonCount; ++i) {
         if (isButtonShown(i)) {
-            if (buttonRect(i, area).contains(pos)) {
+            const QRectF rect = buttonRect(i, area);
+            if (hasFiniteButtonGeometry(rect) && rect.contains(pos)) {
                 return i;
             }
         }
@@ -208,13 +262,19 @@ void ButtonBoxItem::paint(QPainter& p, int widgetW, int widgetH)
     if (m_fadeOnRx && !m_transmitting) { return; }
 
     const QRectF area = pixelRect(widgetW, widgetH);
+    // NereusSDR-original: wide outlines must not bleed into neighboring stack
+    // rows sharing this painter. Keep the caller's clip and restore it afterward.
+    const bool stackGrid=property("containerStackGrid").toBool();
+    if (stackGrid) { p.save(); p.setClipRect(area,Qt::IntersectClip); }
     p.setRenderHint(QPainter::Antialiasing, true);
 
     for (int i = 0; i < m_buttonCount; ++i) {
         if (!isButtonShown(i)) { continue; }
         const QRectF rect = buttonRect(i, area);
+        if (!hasFiniteButtonGeometry(rect)) { continue; }
         paintButton(p, i, rect);
     }
+    if (stackGrid) { p.restore(); }
 }
 
 void ButtonBoxItem::paintButton(QPainter& p, int index, const QRectF& rect)
@@ -252,6 +312,7 @@ void ButtonBoxItem::paintButton(QPainter& p, int index, const QRectF& rect)
         QFont font = p.font();
         font.setPixelSize(qMax(8, static_cast<int>(rect.height() * 0.4)));
         font.setBold(true);
+        font=fitObjectText(font,font.pixelSize(),btn.text,rect,false,Qt::TextSingleLine,p.device());
         p.setFont(font);
         p.setPen(textCol);
         p.drawText(rect, Qt::AlignCenter, btn.text);

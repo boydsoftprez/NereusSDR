@@ -1,0 +1,277 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>19. Amplifiers and tuners | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/19-amplifiers-tuners.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html" aria-current=page>19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="19-amplifiers-and-tuners">19. Amplifiers and tuners</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#connect-the-pgxl-or-tgxl-to-the-core">Connect the PGXL or TGXL to the Core</a></li><li><a href="#operate-the-power-genius-xl">Operate the Power Genius XL</a></li><li><a href="#configure-pgxl-device-settings">Configure PGXL device settings</a></li><li><a href="#operate-the-tuner-genius-xl">Operate the Tuner Genius XL</a></li><li><a href="#operate-the-rf-kit-rf2k-s">Operate the RF-Kit RF2K-S</a></li><li><a href="#phone-and-remote-device-availability">Phone and remote-device availability</a></li></ol></details>
+<p>The desktop and iPhone/iPad can show and control supported station accessories through the Core. The Core owns the device connections and telemetry. A remote desktop or phone sends a supported command to the Core, then follows the Core's reported state; a click by itself is not confirmation. Read the device state and any refusal beside the control before transmitting.</p>
+<p>Desktop setup pages live at <strong>File &gt; Settings &gt; CAT &amp; Network</strong>. 4O3A devices are under <strong>4O3A</strong>. RF2K-S is under <strong>RF-Kit</strong>. The desktop's right-side applets show live operation: <strong>Amp</strong>, <strong>Tuner</strong>, and <strong>RF-Kit</strong>. The phone uses <strong>Radio &gt; Power Genius XL</strong>, <strong>Tuner Genius</strong>, or <strong>RF2K-S</strong>. The phone pages show the Core's device records and use the same shared controls where its Core connection and capability catalogue support them.</p>
+<p>These are station controls. Coordinate with other operators before changing operating state, antenna, network address, pairing, limits or shared tune settings. The source-verified procedures have not been exercised on live hardware; verify physical cabling, RF path, power limits and amplifier/tuner manuals before operating.</p>
+<h2 id="connect-the-pgxl-or-tgxl-to-the-core">Connect the PGXL or TGXL to the Core</h2>
+<p>First connect the desktop to the radio whose peripherals you intend to configure. Open <strong>File &gt; Settings &gt; CAT &amp; Network &gt; 4O3A &gt; General</strong>. The yellow or green banner identifies the radio/MAC whose peripheral records are being edited. On a remote desktop, the page acts on the Core's accessory connection through the station link. The phone's accessory pages are already scoped to the connected Core.</p>
+<ol>
+<li>Check <strong>Enable 4O3A integration</strong>. This is a per-radio master gate. It starts the Core's FlexAPI listener on TCP port <strong>4992</strong>, enables PGXL/TGXL connection attempts, and enables their setup pages and applets. When off, the listener is not bound and the accessory tabs are greyed. On the phone, read the <strong>Power Genius XL</strong> and <strong>Tuner Genius</strong> rows: a missing device, disabled feature, or old Core has an explanatory message.</li>
+<li>Under <strong>PGXL / TGXL Peripherals</strong>, select <strong>Scan LAN</strong> to discover devices on the local network, or enter the device address and port in the appropriate row, then <strong>Connect</strong>. Verify the row identifies the expected device and reports connected before operating it. On the phone the Core's accessory header shows connection phase, model/nickname and error text; the Core performs the scan and connection.</li>
+<li>Keep each device address reachable from the Core computer after connecting. The Core, not the phone, must have network access to the amplifier and tuner. A phone being connected to the radio does not establish that the Core can reach an accessory.</li>
+<li>If a device drops, read its error/status. Use the row's <strong>Reconnect</strong> action or applet's right-click <strong>Reconnect</strong> when shown. If the address has changed, update it in <strong>Peripherals</strong> and reconnect. Do not toggle the 4O3A master gate as a substitute for checking the address and link state.</li>
+</ol>
+<p>The General page also contains <strong>PGXL Interlock</strong>. Its settings apply on the Core and affect subsequent TX requests; see the interlock procedure below before enabling TX.</p>
+<h2 id="operate-the-power-genius-xl">Operate the Power Genius XL</h2>
+<p>The <strong>Amp</strong> applet shows forward power, SWR and temperature gauges, and when reported, mains volts, drain amps and <strong>MEffA</strong>. The <strong>OPERATE</strong>/<strong>STANDBY</strong> button follows the PGXL's reported state. Click it to request the other state, then wait for the button and PGXL page's <strong>State</strong> badge to change. <code>POWERUP</code>, <code>STANDBY</code>, <code>FAULT</code>, <code>IDLE</code>, <code>OPERATE</code> and <code>TRANSMIT_A</code>/<code>TRANSMIT_B</code> are not interchangeable: a green-looking button is not a fault clear, and <code>FAULT</code> requires reading the cause before trying again.</p>
+<p>Use the applet's right-click menu to open <strong>Open PGXL Advanced...</strong>, select <strong>Disconnect</strong> or <strong>Reconnect</strong>, or choose <strong>Copy diagnostics to clipboard</strong>. The copied diagnostics are useful when reporting an unexpected connection or meter result.</p>
+<p>The phone's <strong>Radio &gt; Power Genius XL</strong> page shows the Core's PGXL state, forward power/SWR/temperature gauges, numeric output and MEffA, band-follow/paired-with status, output-cap alert, and fault history. Tap <strong>OPERATE</strong> or <strong>STANDBY</strong> to request a state change. The page reports why a switch is unavailable, such as the Core being disconnected or the radio being on the air. Wait for the state text to follow the amplifier report. The phone interlock card is readback; use its <strong>Change in Setup</strong> route, when offered, for the Core's interlock settings.</p>
+<h3 id="pgxl-output-cap">PGXL output cap</h3>
+<p>On the desktop, <strong>4O3A &gt; PowerGenius XL &gt; Hardware &gt; TX Power Cap</strong> has <strong>Enable soft cap</strong> and a watts field from 100 to 2000 W (default 1500 W). The cap is a Core-side transmit/output limit and alert, not a new calibrated meter profile. Check <strong>Enable soft cap</strong>, set the intended limit, and confirm the pending indicator. The Core alerts in its windows if PGXL output rises above the limit. On a remote desktop, <strong>Enable soft cap</strong> and its completed watts value are sent to the Core; finish editing the watts field before the request so the entire value is sent once. The phone exposes the Core's cap alert/readback, not this desktop hardware form.</p>
+<h3 id="pgxl-interlock-policy">PGXL interlock policy</h3>
+<p>Under <strong>4O3A &gt; General &gt; PGXL Interlock</strong>, choose <strong>Interlock Mode</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>If PGXL is present but not in OPERATE, or the enabled SWR gate trips</th>
+<th>Operator consequence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Disabled</strong></td>
+<td>The policy does not interfere with TX.</td>
+<td>No policy warning or block; use only when the station's separate safety procedure provides the protection. This is the default.</td>
+</tr>
+<tr>
+<td><strong>Warn</strong></td>
+<td>The TX request proceeds and a warning is shown.</td>
+<td>Correct the amplifier state or SWR before continuing. The warning is not an interlock.</td>
+</tr>
+<tr>
+<td><strong>Block</strong></td>
+<td>The TX request is refused.</td>
+<td>Set PGXL to OPERATE or correct the SWR cause, then make a new TX request.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Grace Period</strong> is 0 to 30,000 ms, in 100 ms steps, default 3000 ms. It delays enforcement of the SWR gate after the PGXL enters OPERATE so warm-up current/SWR settling does not immediately nuisance-trip. It does not bypass the amplifier-state test. <strong>Enable SWR Gate</strong> turns the second check on; <strong>Max SWR</strong> is 1.0 to 10.0, default 3.0, and only applies while the gate is checked. A value <em>above</em> the limit trips the same Warn or Block policy. Changes take effect immediately for later TX requests. Phone accessory records show mode, grace and SWR gate; the app identifies if the Core cannot share those records. Confirm the actual interlock readback before testing a TX path.</p>
+<h2 id="configure-pgxl-device-settings">Configure PGXL device settings</h2>
+<p>Open <strong>File &gt; Settings &gt; CAT &amp; Network &gt; 4O3A &gt; PowerGenius XL</strong>. When connected, the page reads the device's current setup and network configuration. A remote desktop receives the Core's reported device settings and last device answer; its editable controls are available only when the Core offers device-settings capability. <strong>Apply Network Settings</strong>, <strong>Revert</strong>, and <strong>Save &amp; Reboot Amp</strong> also require a live Core-to-PGXL connection. The page shows the unavailable reason instead of applying a local guess.</p>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Effect and timing</th>
+<th>How to apply or verify</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Nickname</strong></td>
+<td>Local/Core-facing name shown in NereusSDR. Editing and leaving the field sends/stores the name; the live device may echo it.</td>
+<td>Enter a clear label such as <code>Station PGXL</code>. Reopen the page or inspect the accessory row to confirm the stored name.</td>
+</tr>
+<tr>
+<td><strong>Bias Mode: Class A / Class AB</strong></td>
+<td>Sends the selected bias setup to the PGXL and marks hardware changes pending.</td>
+<td>Select the documented amplifier mode for the station setup. Read the pending message, then use <strong>Save &amp; Reboot Amp</strong> to persist it in the device.</td>
+</tr>
+<tr>
+<td><strong>Fan Mode: Auto / Quiet / Continuous</strong></td>
+<td>Sends the fan setting and marks it pending for device save/reboot.</td>
+<td>Choose based on the amplifier's installation and thermal requirements. Confirm selection, then save/reboot.</td>
+</tr>
+<tr>
+<td><strong>LED Intensity</strong></td>
+<td>0 to 100; the completed slider value is sent to the PGXL and marks the setup pending.</td>
+<td>Move the slider and read its numeric value; finish at the intended value before saving/rebooting.</td>
+</tr>
+<tr>
+<td><strong>Enable soft cap / watts</strong></td>
+<td>Core-side output cap and alert described above; changing either marks the cap settings pending in the local Core state.</td>
+<td>Set the watts field, enable the cap, and confirm the page's readback/alert path on the phone or another window. Do not treat this as the amplifier's internal hardware configuration.</td>
+</tr>
+<tr>
+<td><strong>Use DHCP</strong></td>
+<td>Selects automatic network configuration. When checked, the manual address fields are disabled.</td>
+<td>Select DHCP, then <strong>Apply Network Settings</strong>. Expect the device address to change and the connection to drop/reappear.</td>
+</tr>
+<tr>
+<td><strong>IP Address / Netmask / Gateway</strong></td>
+<td>Manual IPv4 configuration. The fields accept dotted IPv4 octets; they are editable only when <strong>Use DHCP</strong> is off.</td>
+<td>Confirm the new address is reachable from the Core before applying. Select <strong>Apply Network Settings</strong>. If it becomes unreachable, use LAN discovery and update its row in <strong>Peripherals</strong>. A remote desktop asks for confirmation because it may lose access at the old address.</td>
+</tr>
+<tr>
+<td><strong>Auto-pair on connect</strong></td>
+<td>Sends the FlexRadio pairing handshake after a successful PGXL connection. Default is on.</td>
+<td>Leave on when this Core should pair automatically; turn off only if pairing is managed externally. Applies on a later successful connection.</td>
+</tr>
+<tr>
+<td><strong>TX Antenna: ANT1 / ANT2</strong></td>
+<td>Selects the PGXL transmit antenna used by the Core's PGXL association.</td>
+<td>Choose the antenna that is physically wired to the station's intended path. The selection is a Core setting and takes effect on the next PGXL connection.</td>
+</tr>
+<tr>
+<td><strong>Slice Binding: Slice A / Slice B</strong></td>
+<td>Selects the slice PGXL uses as the FlexAPI band source.</td>
+<td>Bind to the slice whose band should follow the amplifier. This setting takes effect on the next PGXL connection.</td>
+</tr>
+<tr>
+<td><strong>Revert</strong></td>
+<td>Requests fresh setup and network values from the connected PGXL and clears the pending local edit state.</td>
+<td>Use before applying if you want to discard uncommitted hardware changes; check the reloaded field values.</td>
+</tr>
+<tr>
+<td><strong>Save &amp; Reboot Amp</strong></td>
+<td>Saves the device setup to PGXL and reboots it. A confirmation dialog precedes the action.</td>
+<td>Use after bias/fan/LED changes; expect a temporary disconnect and wait for a new connection/state. On a remote window, first read the confirmation showing that the Core will save and reboot its amplifier.</td>
+</tr>
+<tr>
+<td><strong>Fault History &gt; Clear All</strong></td>
+<td>Clears the locally or Core-recorded history table. It does not reset the PGXL's hardware fault state.</td>
+<td>Record useful fault rows before clearing. Fault rows include time, state, forward watts, SWR, temperature and likely cause.</td>
+</tr>
+<tr>
+<td><strong>Diagnostics</strong></td>
+<td>Read-only connection measures: uptime, last round-trip time, missed keepalives, session reconnect count, frames and bytes in/out.</td>
+<td>Use these to distinguish a link problem from an amplifier state/fault. Resetting history is separate from restoring the connection.</td>
+</tr>
+</tbody>
+</table>
+<p>Changing IP can make the PGXL unreachable. Before applying a static address, check the Core's subnet, gateway and physical LAN. If status does not return, rediscover the amplifier, update its configured address and reconnect before attempting other settings.</p>
+<h2 id="operate-the-tuner-genius-xl">Operate the Tuner Genius XL</h2>
+<h3 id="run-a-desktop-tune-cycle">Run a desktop tune cycle</h3>
+<p>Use the desktop <strong>Tuner</strong> applet with the radio connected, the intended TX
+slice/band selected, the physical antenna path known, and no transmission or
+other RF flow active. Have the intended drive source/value and the amplifier's
+reported state in view. <strong>TUNE</strong> creates a carrier as part of the TGXL sweep;
+it is not a receive-only relay command. The cycle temporarily places an
+operating PGXL in <strong>STANDBY</strong> and restores its prior operating state when the
+cycle ends.</p>
+<ol>
+<li>Read the applet's TGXL connection/state, antenna, forward power/SWR, and
+<strong>C1</strong>, <strong>L</strong>, <strong>C2</strong> relay reports. Confirm the selected antenna is the one
+physically connected to the intended load. If PGXL is connected, note
+whether it reports <strong>OPERATE</strong> or a non-operating state. Resolve stale or
+unavailable status before requesting a tune.</li>
+<li>Check the TX owner, transmit readiness, current drive source/value, and
+station protections in <a href="/manual/05-transmit.html">Set up and transmit</a>. End any
+existing MOX/TUNE/test transmission and wait for receive. Do not use a
+numerical RF target from this manual; use the station's established safe
+tuner path and verified load.</li>
+<li>Click the TGXL applet's <strong>TUNE</strong>. Follow the button to <strong>TUNING...</strong> and
+watch for TGXL's tuning state. If PGXL was in <strong>OPERATE</strong>, confirm its
+reported transition to <strong>STANDBY</strong> as the cycle is prepared. Do not start a
+second cycle while one is active.</li>
+<li>On completion, wait for TGXL to leave its tuning state and for the settled
+SWR result to appear briefly on the button. Confirm the carrier is off and
+receive returns. Check the final relay and meter reports. If the cycle
+reports refusal, <strong>no PTT</strong>, <strong>low RF power</strong>, or does not enter tuning,
+confirm the applet returned to <strong>TUNE</strong>, the carrier was dropped, and the
+refusal/status is visible. Recheck TGXL connection, transmit permission,
+drive source, physical path, and the amplifier state before another
+attempt.</li>
+<li>Confirm PGXL's reported state. If it was operating before the cycle, the
+Core requests <strong>OPERATE</strong> after tuning once RF and pending key actions have
+cleared. It can remain in <strong>STANDBY</strong> while a key is active or pending;
+wait for the state report before relying on the amplifier. If it was not
+operating before the cycle, the routine leaves its prior non-operating
+state. Save the settled relay values to memory only after confirming the
+antenna and band shown by the applet.</li>
+</ol>
+<p>The applet's <strong>TUNE</strong> starts the coordinated Core cycle. The separate cycle
+button requests <strong>OPERATE → BYPASS → STANDBY → OPERATE</strong>; read the reported
+state after each click. Scroll over a relay bar only for an intentional
+one-step adjustment and verify the bar changes. A grey control or refusal
+reason is the current permission/state result. The iPhone/iPad <strong>Radio &gt;
+Tuner Genius</strong> page exposes reported state, meters, relay-step buttons, and
+antenna selection, but manual <strong>TUNE</strong> is unavailable there.</p>
+<h3 id="tuner-antenna-and-tune-memory">Tuner antenna and tune memory</h3>
+<p>Use the desktop applet's context menu for the current antenna and band. The
+memory is a stored record of reported relay values, not a physical relay
+command.</p>
+<ol>
+<li>Verify the current antenna and TX band. Right-click the desktop <strong>Tuner</strong>
+applet and choose <strong>Save current tune memory</strong> to store the currently
+reported <strong>C1</strong>, <strong>L</strong>, and <strong>C2</strong> values for that antenna/band.</li>
+<li>To inspect a saved entry, choose <strong>Recall tune memory</strong>. The applet loads
+the values into its local display/cache; it sends no absolute relay
+positions to TGXL. The reported physical relay values remain authoritative.
+A later physical <strong>TUNE</strong> starts a fresh autotune from the tuner's current
+position. <strong>Clear tune memory</strong> removes only the current antenna/band
+record.</li>
+<li>On iPhone/iPad, <strong>Radio &gt; Tuner Genius &gt; Tune memory</strong> lists Core-stored
+entries and allows clearing a row. This page does not tune the radio or
+issue relay commands. A recalled-memory match indication compares the
+TGXL report with the stored values; it does not prove a physical recall.</li>
+<li>The shared <strong>Recall a stored tune on a band or antenna change</strong> setting is
+a separate automatic action. When enabled, a qualifying band change on the
+TX-bound slice checks for a saved entry for the current antenna and new
+band; if one exists and TGXL is connected, the Core sends a fresh
+<strong>autotune</strong> command. The stored relay values are not sent as target
+positions. An antenna-only change does not trigger this handler, and this
+automatic request does not itself key NereusSDR MOX. After a band change,
+inspect TGXL's tuning/state, relay and SWR readbacks and handle any refusal
+before transmitting.</li>
+</ol>
+<h3 id="tgxl-advanced-settings-and-recovery">TGXL advanced settings and recovery</h3>
+<p>Under <strong>4O3A &gt; Tuner Genius XL</strong>, <strong>Identity &amp; Status</strong> shows nickname, firmware, serial, state and variant. <strong>Nickname</strong> is a device label. <strong>Antenna Labels</strong> names ANT1-3 in the app and shared/Core presentation; it does not rename a physical antenna in TGXL firmware. <strong>Network</strong> has <strong>Use DHCP</strong>, <strong>IP Address</strong>, <strong>Netmask</strong>, <strong>Gateway</strong>, and <strong>Apply Network Settings</strong>. Apply with the address known to be reachable from the Core. It can interrupt the connection; in a remote window confirm the warning naming that the Core will change its Tuner Genius address. Reconnect using the new address if necessary.</p>
+<p><strong>Revert</strong> requests the current network/setup from the connected device and clears pending network edits. <strong>Save &amp; Reboot Tuner</strong> commits the device configuration and reboots TGXL. Confirm the warning before using it and wait for status to return. <strong>Diagnostics</strong> reports uptime, RTT, missed keepalives, reconnects, frames and bytes. Remote desktop exposes <strong>Fault History</strong> and <strong>Clear All</strong> through the Core's recorded faults; clearing history is not a hardware reset. A local desktop does not promise a populated TGXL fault table when no local fault producer is present. The phone's <strong>Advanced</strong> page shows the Core-described identity, antenna labels, network and diagnostic values that its catalogue offers; unavailable Core/device-setting capabilities are explained beside the controls.</p>
+<h2 id="operate-the-rf-kit-rf2k-s">Operate the RF-Kit RF2K-S</h2>
+<p>Open the <strong>RF-Kit</strong> applet to read its link indicator, model/nickname, <strong>OPERATE/STANDBY</strong> request, forward power, SWR, temperature, volts and amps. The applet's <strong>ANT 1</strong> through <strong>ANT 4</strong> buttons follow the amplifier's reported selection; the active button lights only after the report identifies it. Select the antenna that is physically connected to the desired path. A disabled/missing antenna reflects the amplifier's availability report.</p>
+<p>The RF-Kit tuner status reports <strong>TUNING...</strong>, <strong>BYPASS</strong>, <strong>TUNED frequency (setup)</strong>, <strong>NOT TUNED</strong>, or unknown state. <strong>TUNE</strong> and <strong>BYPASS</strong> buttons are intentionally disabled because the RF2K-S firmware used by this interface does not accept tuner write commands. Use the amplifier's front panel for those two functions. Never tell the applet that a tune or bypass succeeded when the firmware did not accept a command.</p>
+<p>On iPhone/iPad, <strong>Radio &gt; RF2K-S</strong> shows the Core's model and status, OPERATE/STANDBY, forward power/SWR/temperature and numeric forward watts, SWR, volts and amps. Its four antenna buttons follow Core reports and may have operator labels. It displays the tuner's reported <strong>AUTO</strong>, <strong>MANUAL</strong>, <strong>AUTO TUNING</strong> or <strong>BYPASS</strong> mode, but its <strong>TUNE</strong> and <strong>BYPASS</strong> buttons remain greyed with the front-panel instruction. The phone's <strong>RF-Kit settings</strong> row opens the Core's connection/settings page. The Core's link/error text and the active antenna/band-follow messages take precedence over the last requested action.</p>
+<h3 id="rf-kit-connection-and-station-settings">RF-Kit connection and station settings</h3>
+<p>Open <strong>File &gt; Settings &gt; CAT &amp; Network &gt; RF-Kit</strong>. The General tab shows the radio/MAC whose peripherals are being edited, the Core-local master switch, live status and band-follow status. The RF2K-S tab contains these controls:</p>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Effect and required readback</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Host</strong> and <strong>Port</strong></td>
+<td>Configure the amplifier endpoint for this radio. The default port is 8080; the host is entered for the RF-Kit on the station LAN. In a remote desktop, these fields describe the Core's endpoint.</td>
+</tr>
+<tr>
+<td><strong>Enable RF-Kit Amplifier integration</strong></td>
+<td>Per-radio gate for the applet, RF2K-S settings tab, and automatic TCI band tracking. Off by default. Enable only when using the RF2K-S; verify that its applet and tab become available.</td>
+</tr>
+<tr>
+<td><strong>Auto-reconnect on disconnect</strong></td>
+<td>Allows the client to reconnect after an RF-Kit disconnect. Default on. Check the live status after reconnect rather than assuming the prior session resumed.</td>
+</tr>
+<tr>
+<td><strong>Poll interval</strong></td>
+<td>Set telemetry polling from 250 to 5000 ms; default 1000 ms. Lower values request status more often and increase update traffic.</td>
+</tr>
+<tr>
+<td><strong>Test connection</strong> / remote <strong>Connect</strong></td>
+<td>Attempts a connection to the configured endpoint. On a remote desktop this asks the Core to save the address and connect. Verify the link/status label, device identity and updated telemetry.</td>
+</tr>
+<tr>
+<td><strong>Disconnect</strong></td>
+<td>Ends the Core's RF-Kit connection. Read status to confirm it is no longer connected.</td>
+</tr>
+<tr>
+<td><strong>Set amp to TCI mode</strong></td>
+<td>Requests that the amp use TCI operation. The Core refuses this while on air. When using a Core that automatically follows its TCI server state, the button may be unavailable with an explanation. Verify the amp interface/band-follow status after the request.</td>
+</tr>
+<tr>
+<td><strong>Reset amp error state</strong></td>
+<td>Asks the amplifier to reset its reported error state. It does not repair wiring or make an unresolved fault safe. Read the updated state and fault text; if it persists, stop and investigate the amp.</td>
+</tr>
+<tr>
+<td><strong>ANT 1</strong> through <strong>ANT 4</strong> labels</td>
+<td>Save operator-facing names (maximum 12 characters each). RF2K-S firmware does not supply antenna names; these are NereusSDR labels, not firmware labels or antenna switching rules.</td>
+</tr>
+<tr>
+<td><strong>Save</strong></td>
+<td>Saves <strong>Auto-reconnect</strong>, <strong>Poll interval</strong>, and the four antenna labels. On a remote desktop these are written as Core station settings; a request refusal leaves the Core's accepted values displayed with the reason. The Host/Port address is handled with <strong>Connect</strong> on older Core capability levels.</td>
+</tr>
+<tr>
+<td><strong>Live diagnostics</strong></td>
+<td>Read-only successful/failed poll counts, RTT, reconnects, connected-since and last poll. Use them to distinguish stale telemetry from a running connection.</td>
+</tr>
+</tbody>
+</table>
+<p>On a remote desktop, a connected Core and catalogue support determine which controls are enabled. It does not open a direct phone-to-amplifier link. <strong>Set amp to TCI mode</strong>, <strong>Reset amp error state</strong>, <strong>Connect</strong>, <strong>Disconnect</strong> and enabled/master changes are Core requests; check the displayed result/reason. On an older Core, it may put the amp in TCI mode itself while its own TCI server is enabled. Changing the saved host address does not automatically dial on older Core versions; select <strong>Connect</strong> to submit it.</p>
+<p>If band follow says the RF-Kit does not follow the radio, compare the RF-Kit's TCI server address/port with the displayed Core TCI endpoint, then use its own network/interface configuration to make them match. NereusSDR reports the observed follow state; do not infer successful tracking from enabling the applet alone.</p>
+<h2 id="phone-and-remote-device-availability">Phone and remote-device availability</h2>
+<p>The phone reaches the Core's PGXL, TGXL and RF-Kit records and sends documented station actions through its connection. A device row can be absent because the Core does not report that accessory; an action can be grey because the Core lacks a command/capability, is not connected to the device, or the radio is on the air. The page gives the Core's reason. If a request is accepted, wait for the device's status field, state text, antenna indication, relay value or settings record to update. If refused, the previously accepted value remains and the page shows the refusal.</p>
+<p>Remote desktop forms have their own availability. PGXL/TGXL own-device hardware/network forms are editable only if that Core offers device settings. Their Apply/Revert/Save &amp; Reboot actions require an active Core-to-device link. RF-Kit remote settings use the Core's station-settings catalogue and full-control capability; a Core may support status/control but not a given settings write. Keep the Core connection open while applying a shared change, and do not repeat an action until the current status or refusal has arrived.</p>
+<p>For the radio-side front-end, antenna connectors, ADC options and general calibration, see <a href="/manual/17-hardware-antennas-calibration.html">Chapter 17</a>. For PureSignal feedback and PA gain/watt-meter calibration, see <a href="/manual/18-puresignal-diversity.html">Chapter 18</a>. For transmitting, RF drive, TUNE and protective blocks, see <a href="/manual/05-transmit.html">Chapter 05</a>.</p>
+<div class="page-next"><a href="/manual/18-puresignal-diversity.html">Previous chapter</a><a href="/manual/20-phone-preferences.html">Next chapter</a></div></main></div></body></html>

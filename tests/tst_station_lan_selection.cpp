@@ -2,8 +2,11 @@
 #include <QtTest>
 #include <QCheckBox>
 #include <QFile>
+#include <QDir>
 #include <QLineEdit>
 #include <QPointer>
+#include <QScopeGuard>
+#include <QTimer>
 #include <QPushButton>
 #include <QSslSocket>
 #include <QTemporaryDir>
@@ -229,10 +232,38 @@ private slots:
         QVERIFY(disconnectButton && disconnectButton->isEnabled());
         disconnectButton->click();
         QTRY_VERIFY(!client->isHandshakeComplete());
+        const QPointer<StationClient> retired = client;
+        const auto existingKey = client->existingDeviceIdentity();
         QTRY_VERIFY(connectButton(controller)->isEnabled());
+        // The newly offered LAN recovery still requires durable selection.
+        // Failure cannot retire this inactive window or consume its key lease.
+        const QString settingsPath = AppSettings::instance().filePath();
+        const QString backup = settingsPath + QStringLiteral(".lan-recovery-fixture");
+        QVERIFY(QFile::rename(settingsPath, backup));
+        QVERIFY(QDir().mkdir(settingsPath));
+        auto restoreSettings = qScopeGuard([&] {
+            QDir().rmdir(settingsPath);
+            QFile::rename(backup, settingsPath);
+        });
         connectButton(controller)->click();
-        QTRY_VERIFY(client->isHandshakeComplete());
+        bool requestDelivered = false;
+        QTimer::singleShot(0, &controller, [&] { requestDelivered = true; });
+        QTRY_VERIFY(requestDelivered);
         QCOMPARE(controller.sessions()->generation(), generation);
+        QCOMPARE(controller.sessions()->window()->findChild<StationClient*>(), retired.data());
+        QVERIFY(!client->isConnectionActive());
+        QCOMPARE(client->existingDeviceIdentity(), existingKey);
+        QVERIFY(QDir().rmdir(settingsPath));
+        QVERIFY(QFile::rename(backup, settingsPath));
+        restoreSettings.dismiss();
+        connectButton(controller)->click();
+        QTRY_COMPARE(controller.sessions()->generation(), generation + 1);
+        QTRY_VERIFY(retired.isNull());
+        client = controller.sessions()->window()->findChild<StationClient*>();
+        QVERIFY(client);
+        QTRY_VERIFY(client->isHandshakeComplete());
+        QVERIFY(client->signedInWithDeviceKey());
+        QCOMPARE(client->existingDeviceIdentity(), existingKey);
         QVERIFY(!controller.sessions()->window()->radioModel()->isConnected());
         QCOMPARE(controller.sessions()->selection().savedAddressBeforeDiscovery, saved.connection.url);
         QVERIFY(store.load());
@@ -465,16 +496,24 @@ private slots:
                  enrolled.connection.identityFingerprint);
 
         // Retiring the token ends this token sign-in with pairingRequired;
-        // Connect then signs in by key, and no new window is made.
+        // Explicit Connect signs in by the same key in exactly one fresh
+        // canonical window; enrollment retired the previous store lease.
         const quint64 generation = controller.sessions()->generation();
+        const QPointer<StationClient> retired = client;
+        const auto existingKey = client->existingDeviceIdentity();
         QVERIFY(server.devicesFacade()->retireToken().accepted);
         QTRY_VERIFY(!client->isConnectionActive());
         QCOMPARE(client->lastEndReport().kind, StationEndReport::Kind::PairingRequired);
         controller.selector()->setSelectedKey(QStringLiteral("saved:") + saved.id);
         QTRY_VERIFY(connectButton(controller)->isEnabled());
         connectButton(controller)->click();
+        QTRY_COMPARE(controller.sessions()->generation(), generation + 1);
+        QTRY_VERIFY(retired.isNull());
+        client = controller.sessions()->window()->findChild<StationClient*>();
+        QVERIFY(client);
         QTRY_VERIFY_WITH_TIMEOUT(client->isHandshakeComplete(), 20000);
-        QCOMPARE(controller.sessions()->generation(), generation);
+        QVERIFY(client->signedInWithDeviceKey());
+        QCOMPARE(client->existingDeviceIdentity(), existingKey);
         QCOMPARE(server.deviceStore()->list().size(), 1);
         controller.shutdown();
     }

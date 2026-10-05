@@ -11,6 +11,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 : retain each 2D waterfall row's RF window so TX history
+//                 aligns on the restored RX axis without resampling the
+//                 saved RX rows. J.J. Boyd (KG4VCF), AI-assisted via
+//                 OpenAI Codex.
+//   2026-10-01  J.J. Boyd / KG4VCF. Opt-in numeric RX history diagnostics.
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-02 : shared SpectrumLayout for CPU/GPU panel paint and hit
 //                 geometry (issues #141/#147). J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -259,6 +265,7 @@ mw0lge@grange-lane.co.uk
 
 #include "gui/RemoteSpectrumCapture.h"
 
+#include <QElapsedTimer>
 #include <QWidget>
 #include <QVector>
 #include <QImage>
@@ -449,10 +456,9 @@ public:
     /// spectrum returns to the panadapter without losing waterfall
     /// scrollback continuity".
     ///
-    /// No reprojection either. Transmit rows and receive rows describe
-    /// different windows, and mapping one onto the other and back is lossy
-    /// in both directions; leaving the plane alone keeps the receive
-    /// history exactly as it was. Found by Codex on PR #317.
+    /// Transmit rows and receive rows describe different windows. Keep
+    /// each captured row intact and project only the live viewport, so
+    /// returning to RX restores its history without repeated resampling.
     void setDisplayWindowPreservingHistory(double centerHz, double bandwidthHz);
 
     /// Render already-detected transmit pixels, bypassing the receive
@@ -518,6 +524,19 @@ public:
     /// (disconnect, replacement or rejection) uses clearRemoteSpectrum().
     void invalidateRemoteSpectrumFrame();
     void clearRemoteSpectrum();
+    // Opt-in diagnostic events; numeric fields only. No history policy changes.
+    enum class RxHistoryEvent {
+        RemoteFullClear = 1, Leave3D = 2, LiveImageResize = 3,
+        HistoryBufferReset = 4, WaterfallClear = 5, RfReproject = 6,
+        ViewportRebuild = 7, MediaRetired = 8, BudgetBindingRetired = 9,
+        LegacyBindingRetired = 10, LegacyBindingCreated = 11,
+        BudgetBindingCreated = 12, BindingPreserved = 13,
+        EndpointRejected = 14, FrameRenewal = 15
+    };
+    void traceRxHistoryEvent(RxHistoryEvent event, int sourceStream = -1,
+                             quint64 sourceEpoch = 0, QSize nextImageSize = {},
+                             double oldCentreHz = 0, double oldSpanHz = 0,
+                             double newCentreHz = 0, double newSpanHz = 0) const;
     bool remoteWidebandAvailable() const { return m_remoteWidebandAvailable; }
     bool remoteWidebandActive() const { return m_remoteWidebandActive; }
     void setCenterFrequency(double centerHz);
@@ -860,6 +879,12 @@ public:
     }
     /// The Core's levels for the latest waterfall line (NSDX section 0x08).
     void setCoreWaterfallLevels(float lowDbm, float highDbm);
+    /// Last accepted Core pair, also retained by the renderer while a new
+    /// display context is pending. Distinct from Clarity's active pair.
+    std::optional<std::pair<float, float>> coreWaterfallLevels() const
+    {
+        return m_coreWfLevels;
+    }
     // NF-AGC: auto-track waterfall thresholds to noise floor + offset.
     void setWaterfallNFAGCEnabled(bool on);
     bool waterfallNFAGCEnabled() const { return m_wfNfAgcEnabled; }
@@ -996,6 +1021,8 @@ public:
     void tickWaterfallForTest() { onWaterfallTick(); }
     // Parity Task 18 (B3.5): the waterfall's rewind history, in rows.
     int  waterfallHistoryRowsForTest() const { return m_wfHistoryRowCount; }
+    const QImage& liveWaterfallForTest() const { return m_waterfall; }
+    int liveWaterfallWriteRowForTest() const { return m_wfWriteRow; }
     // 3D Speed (Task 24) test seams.
     int  effectiveDssRowDividerForTest() const { return effectiveDssRowDivider(); }
     int  dssFoldCountForTest() const { return m_dssFoldCount; }
@@ -2465,6 +2492,7 @@ private:
     int   waterfallStripWidth() const;
     void  ensureWaterfallHistory();
     void  rebuildWaterfallViewport();
+    void  rebuildWaterfallViewport(double centerHz, double bandwidthHz);
     void  setWaterfallLive(bool live);
     void  appendHistoryRow(const QRgb* rowData, qint64 timestampMs);
     int   waterfallHistoryCapacityRows() const;
@@ -2730,7 +2758,13 @@ private:
     // From AetherSDR SpectrumWidget.h:493-502 [@0cd4559]
     QImage          m_waterfallHistory;            // RGB32 ring buffer
     QVector<qint64> m_wfHistoryTimestamps;         // parallel; per-row wall-clock ms
+    struct WaterfallRowWindow {
+        double centerHz{0.0};
+        double bandwidthHz{0.0};
+    };
+    QVector<WaterfallRowWindow> m_wfHistoryWindows; // original RF window per row
     int             m_wfHistoryWriteRow{0};        // LIFO; index 0 = newest
+    mutable QElapsedTimer m_historyTraceViewportClock;
     int             m_wfHistoryRowCount{0};        // saturates at capacity
     int             m_wfHistoryOffsetRows{0};      // 0 = newest visible at top
     bool            m_wfLive{true};                // pause/live state

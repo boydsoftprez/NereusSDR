@@ -346,6 +346,10 @@
             "value": 2
         },
         {
+            "kind": "i64",
+            "name": "txWatchPathVersion"
+        },
+        {
             "kind": "utf8",
             "name": "txRefusalCode",
             "value": "stationReceiveOnly"
@@ -442,6 +446,11 @@
         },
         {
             "kind": "i64",
+            "name": "diversityControlVersion",
+            "value": 1
+        },
+        {
+            "kind": "i64",
             "name": "logCategoryListVersion",
             "value": 1
         },
@@ -513,7 +522,7 @@
         {
             "kind": "i64",
             "name": "radioMicVersion",
-            "value": 1
+            "value": 2
         },
         {
             "kind": "i64",
@@ -1705,6 +1714,19 @@
             "arguments": [
                 {
                     "kind": "utf8",
+                    "name": "source",
+                    "optional": false
+                }
+            ],
+            "capability": "radioMicVersion",
+            "capabilityVersion": 2,
+            "minMinor": 11,
+            "verb": "tx.setMicSource"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
                     "name": "trigger",
                     "optional": false
                 }
@@ -2725,6 +2747,54 @@
         {
             "arguments": [
                 {
+                    "kind": "bool",
+                    "name": "enabled",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "stateRevision",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "sourceSliceId",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "sourceIncarnation",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "sourceControlRevision",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "targetSliceId",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "targetIncarnation",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "targetControlRevision",
+                    "optional": false
+                }
+            ],
+            "capability": "diversityControlVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "diversity.setTarget"
+        },
+        {
+            "arguments": [
+                {
                     "kind": "i64",
                     "name": "sliceId",
                     "optional": false
@@ -3071,7 +3141,6 @@
                         "audioProfileVersion",
                         "audioQualityVersion",
                         "opusBitrateRefused",
-                        "profile=opus",
                         "remoteAudioStatusVersion"
                     ],
                     "profile": [
@@ -3160,6 +3229,10 @@
                     ],
                     "requestedPixels": [
                         "spectrumGrantVersion"
+                    ],
+                    "transmit": [
+                        "spectrumGrantVersion",
+                        "txDisplayVersion"
                     ],
                     "wideband": [
                         "remoteWidebandDisplayVersion"
@@ -3507,6 +3580,9 @@
                     "remoteTxVersion": [
                         "remoteTxVersion"
                     ],
+                    "txDisplayVersion": [
+                        "txDisplayVersion"
+                    ],
                     "txMonitorAudioVersion": [
                         "txMonitorAudioVersion"
                     ]
@@ -3534,6 +3610,9 @@
                     "displayRole": [
                         "miniDisplayVersion"
                     ],
+                    "duplex": [
+                        "txDisplayVersion"
+                    ],
                     "extendedView": [
                         "remoteWidebandDisplayVersion"
                     ],
@@ -3545,6 +3624,12 @@
                     ],
                     "peakBlobs": [
                         "displayExtrasVersion"
+                    ],
+                    "txMaxDbm": [
+                        "txDisplayVersion"
+                    ],
+                    "txMinDbm": [
+                        "txDisplayVersion"
                     ],
                     "waterfallAverageTimeMs": [
                         "displayExtrasVersion"
@@ -3580,12 +3665,21 @@
                             "fallDbPerSec",
                             "holdMs",
                             "onTx"
+                        ],
+                        [
+                            "enabled",
+                            "fallDbPerSec",
+                            "holdMs"
                         ]
                     ],
                     "noiseFloor": [
                         [
                             "enabled",
                             "fastAttack",
+                            "shiftDb"
+                        ],
+                        [
+                            "enabled",
                             "shiftDb"
                         ]
                     ],
@@ -5342,6 +5436,12 @@
                     "kind": "i64",
                     "name": "rxFilter0LowPassSlice",
                     "ordinal": 36
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "diversityState",
+                    "ordinal": 37
                 }
             ]
         },

@@ -1,0 +1,107 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect an iPhone to a Core | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/06-iphone-connect.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html" aria-current=page>Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="connect-an-iphone-to-a-core">Connect an iPhone to a Core</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#start-the-core">Start the Core</a></li><li><a href="#find-a-core-on-the-local-network">Find a Core on the local network</a></li><li><a href="#pair-with-a-code">Pair with a code</a></li><li><a href="#enter-a-core-address">Enter a Core address</a></li><li><a href="#connect-again-rename-or-remove-a-saved-core">Connect again, rename, or remove a saved Core</a></li><li><a href="#recover-from-a-lost-link">Recover from a lost link</a></li><li><a href="#microphone-and-local-network-permissions">Microphone and local-network permissions</a></li><li><a href="#first-connected-check">First connected check</a></li></ol></details>
+<p>The phone procedures in this chapter describe the reviewed native development
+app, whose availability and delivery are separate from the desktop/Core release.
+Use the connected Core's capability/refusal messages; see <a href="/manual/verification.md">build and verification
+scope</a> before treating these instructions as release acceptance.</p>
+<p>The iPhone is a remote control and audio client for a NereusSDR Core. The Core is the computer or small box connected to the HPSDR radio. Pairing identifies and authorizes this phone on that Core; after pairing, the phone keeps a private identity and can reconnect without another one-time code. The Core can also serve a desktop and other phones at the same time.</p>
+<p>This chapter covers first-time setup, pairing, saved Cores, reconnecting, and the permissions the phone asks for. The Core-side steps below describe the current NereusSDR desktop and <code>nereusd</code> interfaces. They do not configure a router or guarantee a path through a particular network.</p>
+<p><a href="/manual/images/iphone-welcome-original.png"><img src="/manual/images/iphone-welcome-original.png" alt="Native iPhone welcome screen offering Find my Core and Set up a Core" /></a></p>
+<p><em>Start here on the phone: Find my Core looks for the station service; Set up a Core explains the computer-side preparation. Native simulator screen from the acceptance build, using test services. No pairing code or live connection is shown.</em></p>
+<h2 id="start-the-core">Start the Core</h2>
+<p>Use this procedure when a desktop computer is to host the Core and radio locally.</p>
+<ol>
+<li>Start NereusSDR on the computer connected to the HPSDR radio. Connect the desktop to the radio and leave the radio in receive. The Core on a desktop requires that this NereusSDR window manage a local radio; it is not a way to turn a desktop that is only connected to someone else's Core into another Core.</li>
+<li>Open <strong>File &gt; Settings... &gt; CAT &amp; Network &gt; Remote Access</strong>. Turn on <strong>Run a Core on this computer</strong>. Read the status below it. The Core name and reachability details are the readback that confirms the service is running. If the switch is disabled, read its explanation. The desktop must manage its local radio, and a Core configuration change can be locked while transmitting or while another Core change is in progress.</li>
+<li>Open pairing. From this page, use <strong>Add a device</strong>. The page displays the current <strong>Pairing code</strong> while pairing is open. Share that code with the intended phone operator using a private channel; anyone who gets a usable code can claim it.</li>
+<li>Decide whether the Core should continue after the desktop app closes. <strong>Keep it running when NereusSDR is closed</strong> governs that case. <strong>Start it with the computer</strong> governs startup. Read both switches after changing them. They describe separate behaviors.</li>
+<li>If using the headless Core instead, on its computer run <code>nereusd pairing show</code> to read a current code. If pairing is closed, an administrator can open it with <code>sudo nereusd pairing open</code>. A device already paired to that Core can also open pairing with <strong>Add a device</strong> on its Devices page.</li>
+</ol>
+<p>Do not close the desktop session or assume startup is configured until the page shows the intended state. The <code>nereusd</code> service and a Core hosted by the desktop have different lifecycle controls.</p>
+<h2 id="find-a-core-on-the-local-network">Find a Core on the local network</h2>
+<p>Use discovery when the phone and running Core are on a local network where the phone can see it.</p>
+<ol>
+<li>On the welcome screen tap <strong>Find my Core</strong>. iOS may ask whether NereusSDR may find devices on the local network. Allow it for discovery on that network. If it was denied, the page explains how to change the permission in iOS Settings. Pairing by code or entering an address remain alternate paths.</li>
+<li>Under <strong>On this network</strong>, wait for the list to update. Choose the Core you intend to use. A Core accepting a new device may offer <strong>Pair</strong>. If it shows <strong>Use code</strong>, select that action and use the current code from the Core operator. A Core that is not taking new devices appears unavailable; the administrator must reopen pairing.</li>
+<li>After pairing, the Core appears under <strong>Your Cores</strong>. For subsequent sessions, tap its <strong>Connect</strong> action there. A paired Core row can also show <strong>Pair</strong> if that Core has forgotten this phone's identity; pair again only after coordinating with the Core operator.</li>
+</ol>
+<p>If the local list stays empty, check that the Core is running and that the phone is on the intended network. Then try <strong>Pair with a code</strong> or <strong>Enter an address</strong>. Local discovery is a convenience and does not establish connectivity across every network boundary.</p>
+<h2 id="pair-with-a-code">Pair with a code</h2>
+<p>A code is single-use. The phone reaches the Core for code pairing through the remote access service when no Core is selected; this is how an operator can pair without local discovery. A directly reachable Core can instead be selected by address.</p>
+<ol>
+<li>From the welcome screen choose <strong>Find my Core</strong>, then <strong>Pair with a code</strong>. <strong>Set up a Core</strong> opens Core-side guidance. If the Core is directly reachable and you know its host name or address, choose <strong>Enter an address</strong> first and pair with the code after the Core answers.</li>
+<li>Get the code that is currently displayed by the Core. For a headless Core use <code>nereusd pairing show</code>. For a desktop-hosted Core use <strong>Add a device</strong> in <strong>File &gt; Settings... &gt; CAT &amp; Network &gt; Remote Access</strong>. Enter the number and both words into <strong>Pairing code</strong>. Do not rely on a code someone copied earlier; a rejected guess consumes the current code.</li>
+<li>Set <strong>This phone's name on the Core</strong> to a name the station operator can identify, such as <code>JJ iPhone</code>. Tap <strong>Pair</strong> once and wait for the response. If accepted, the confirmation identifies the Core. Choose <strong>Go to the band</strong> to proceed. If asked about microphone access, choose <strong>Allow the microphone</strong> if this phone may send voice, or <strong>Not now</strong> to finish setup without it.</li>
+<li>If the code is wrong, read the error and get a newly displayed code from the Core before another attempt. The fifth wrong code in a row closes pairing on that Core. Reopen pairing on the Core computer or from <strong>Add a device</strong> on a device already paired, then start again with the newly displayed code. Repeatedly re-entering the old code cannot succeed.</li>
+<li>If the Core says it is not taking new devices, do not retry the same code. Ask its administrator to open pairing. If pairing ended before completion or timed out, check that the Core is still running and accepting devices, then use a fresh code.</li>
+</ol>
+<p>Pairing failure messages matter. A rejected or expired code, a Core that closed pairing, and a Core that did not answer are different conditions; use the message shown rather than treating all three as a bad network.</p>
+<h2 id="enter-a-core-address">Enter a Core address</h2>
+<p>Use this when you know a reachable Core address or local discovery is unavailable.</p>
+<ol>
+<li>On <strong>Find my Core</strong> choose <strong>Enter an address</strong>. Enter the Core's host name, IPv4 address, or IPv6 address. IPv6 brackets are optional. Use the supplied standard port unless the Core operator gives you a different port.</li>
+<li>Tap <strong>Connect</strong> and wait for the result. If the phone already has a paired identity for that Core, it signs in. Otherwise, the flow continues to pairing and asks for the current code.</li>
+<li>If the Core does not answer, check the address and port with its operator. An address is a destination, not a route; it does not itself make a Core reachable from this phone.</li>
+</ol>
+<p>A successful connection opens the <strong>Panadapter</strong> tab. Check the Core name in the toolbar and the link indicator before tuning. A link indicator can show a round-trip time; when a relayed route is in use, the toolbar identifies the relay path.</p>
+<h2 id="connect-again-rename-or-remove-a-saved-core">Connect again, rename, or remove a saved Core</h2>
+<p>The phone saves paired Cores in <strong>Your Cores</strong>. Use that list for a normal return session:</p>
+<ol>
+<li>From the welcome or Cores screen choose the saved Core's <strong>Connect</strong> action. Wait for the band and live connection indication. The phone uses its saved identity; a code is not needed.</li>
+<li>To change the Core's name, press and hold its row and choose <strong>Rename</strong>. Edit <strong>Rename this Core</strong> and choose <strong>Save</strong>, or <strong>Cancel</strong> to keep the name. This sends a change to the Core itself; every connected device sees the Core's new name. <strong>Setup &gt; Devices &gt; Rename</strong> opens the same Core rename workflow. It is not a phone-name editor. An unavailable Rename explains the session or Core-version requirement; a refused Save leaves the Core's reason under the field. Confirm the new name after success.</li>
+<li>To end an active session without forgetting the pairing, open <strong>Radio</strong> and tap <strong>Disconnect</strong>. Confirm that the app returns to its disconnected state.</li>
+<li>To forget the saved Core on this phone, use <strong>Radio &gt; Remove Core</strong> and read the confirmation before choosing <strong>Remove Core</strong>. This removes this phone's saved identity and connection entry. It does not remove the Core, disconnect other devices, or erase their pairings. If the Core still lists the old identity, its operator may need to remove that device on the Core or another paired device before this phone pairs again.</li>
+</ol>
+<p>Use <strong>Remove Core</strong> for a deliberate reset or when this phone should no longer have access. Disconnect is the ordinary end-of-session action.</p>
+<h3 id="keep-alternative-addresses-for-one-core">Keep alternative addresses for one Core</h3>
+<p>Open the saved Core row's <strong>⋯ &gt; Addresses</strong>. The list shows addresses kept on
+this phone, with <strong>Last worked</strong> beside the last successful destination. The
+phone tries the destinations in order, starting with that one. These are
+alternative routes to the same paired identity, not additional paired Cores.</p>
+<ol>
+<li>Choose <strong>Add an address</strong>, enter the host/IP and port, then <strong>Connect</strong>.
+The phone checks that the answering Core is the saved Core before keeping
+the address. A wrong-Core or unreachable-address message means it has not
+added a working route; correct the destination before retrying.</li>
+<li>Return to <strong>Addresses</strong> and verify the new entry. Up to four manually added
+addresses can be kept. At that limit, remove an obsolete entry before adding
+another.</li>
+<li>Use an address row's <strong>Remove</strong> to discard that route from this phone.
+The only manually kept address cannot be removed; its disabled reason
+explains the requirement. Removing an address does not revoke pairing.</li>
+<li>The <strong>Learned from the Core</strong> group is maintained from the Core's advertised
+and proven direct destinations. Those rows are read-only and have no Remove.
+A Core paired through remote access can have no manually kept addresses.</li>
+</ol>
+<p>The saved row also offers <strong>Remove Core</strong>. Read the confirmation and choose it
+only to discard this phone's saved Core and addresses. It does not remove the
+phone from the Core's Devices list. If removal needs a safe session end, follow
+the displayed refusal instead of assuming the local entry was removed. The
+Core's device-revocation workflow is separate in <a href="/manual/08-shared-core.html">chapter 8</a>.</p>
+<h2 id="recover-from-a-lost-link">Recover from a lost link</h2>
+<p>A lost Wi-Fi or cellular path does not mean the Core shut down. When the phone detects link loss, the band is covered by a reconnect notice. If transmit was active, the Core unkeys; the phone does not key again automatically when a connection returns.</p>
+<ol>
+<li>Read the notice and the changing reconnect status. If the phone's network returns, the app tries to reconnect to the saved Core automatically. Allow it time to show the connected state and live band again.</li>
+<li>If you chose <strong>Stop reconnecting</strong>, the notice changes to a stopped state and offers <strong>Reconnect</strong>. Tap that when ready to try again. Do not remove the Core merely because one automatic attempt did not finish.</li>
+<li>After reconnection, check the link chip, band motion, current slice, and receive audio. Recheck which slice is marked for transmit and the PTT state. If a previous transmission was interrupted, explicitly key again only after confirming the radio and link are ready.</li>
+<li>If it cannot reconnect, verify the phone has a network path and that the Core computer/service is running. Return to <strong>Your Cores</strong> and connect again if needed. The error or connection-attempt detail is the best evidence to give the Core operator.</li>
+</ol>
+<p>A successful reconnect restores the live session; it is not a transmit command. Link loss always ends the current keying state at the Core.</p>
+<h2 id="microphone-and-local-network-permissions">Microphone and local-network permissions</h2>
+<p>Microphone permission is optional for receiving and tuning. It is required when the iPhone microphone is the chosen source for voice transmission. The first-pairing question may offer permission immediately, and iOS can also ask the first time the microphone is opened for transmit.</p>
+<ul>
+<li>Choose <strong>Allow the microphone</strong> when planning to transmit from the phone. Then open <strong>Setup &gt; Audio &gt; On this phone</strong> and confirm the selected microphone and audio route. The mic meter should respond to speech when the transmit controls are available.</li>
+<li>Choose <strong>Not now</strong> to listen without mic access. If transmission is later needed, enable NereusSDR's microphone permission in iOS Settings, return to the app, and confirm the microphone is selected. If permission is denied, PTT or VOX can be refused or unavailable with an explanation.</li>
+<li>Local Network permission is used for finding a Core on the current network. If denied, discovery reports that it cannot look locally; use the iOS Settings permission or pair by code/address instead.</li>
+</ul>
+<p>For headphones or AirPods, select <strong>Setup &gt; Audio &gt; On this phone</strong> and inspect <strong>Play the band through</strong> and <strong>Microphone</strong>. The iPhone microphone keeps AirPods at full-quality audio playback; selecting the AirPods microphone makes iOS use phone-call quality in both directions. <strong>Mute the band while you talk</strong> controls local playback while keyed. The monitor is played in headphones only to avoid feeding the speaker back into the microphone.</p>
+<h2 id="first-connected-check">First connected check</h2>
+<p>Before operating, confirm all of the following from the connected band:</p>
+<ul>
+<li>The toolbar names the intended Core and shows a live link indication.</li>
+<li>Spectrum and waterfall update, and a slice flag is present.</li>
+<li>The speaker control opens <strong>Sound</strong>; the current phone route is the one you expect.</li>
+<li><strong>Modes</strong> shows the selected slice and current mode. A control that is unavailable may be greyed with a reason because the Core does not describe or support that setting.</li>
+<li>The <strong>TX</strong> badge is set on the slice you intend to use before you consider PTT. Pairing and connecting never select the correct transmit slice on your behalf.</li>
+</ul>
+<p>For the receive, touch, audio, and transmit procedures, continue to <a href="/manual/07-iphone-operate.html">Operate from an iPhone</a>. For receiver ownership and handoff, see <a href="/manual/08-shared-core.html">Share a Core with other devices</a>.</p>
+<div class="page-next"><a href="/manual/05-transmit.html">Previous chapter</a><a href="/manual/07-iphone-operate.html">Next chapter</a></div></main></div></body></html>

@@ -20,17 +20,18 @@ only. The real relay is coturn (Task 26); the traversal harness
 
 With --quota-full every allocation is refused with 486 (Allocation Quota
 Reached), as a full relay refuses one (the relay is sized by allocations,
-four for each Core's id), so a test can show a full relay is not fatal.
+eight for each Core's id), so a test can show a full relay is not fatal.
 
 Usage: fake_turn_server.py --secret-file FILE --port-file FILE [--listen ADDR]
                            [--quota-full] [--parent-pid PID]
 It writes the UDP port it bound to --port-file, then prints one line to
-standard output for each allocation (ALLOCATED n) and, for datagrams it
+standard output for each allocation (ALLOCATED n, currently live) and, for datagrams it
 relays, at 1, 2, 4, 8 ... of them each way (RELAYED OUT n from a client to
 a peer, RELAYED IN n from a peer to a client), so a test can see the relay
 was used, and RELEASED n for each allocation a client gives back with a
-Refresh of LIFETIME 0 (iPhone app plan Task 28). It never prints a
-credential.
+Refresh of LIFETIME 0 (iPhone app plan Task 28). TURN lines include an
+opaque allocation ID and cumulative created, released and live counts. It
+never prints a credential.
 
 With --parent-pid (the test process that started it) it exits within half a
 second of that process ending, however it ended: a test killed at its ctest
@@ -158,19 +159,36 @@ def integrity_ok(raw: bytes, attrs, key: bytes) -> bool:
 
 
 class Allocation:
-    def __init__(self, client, relay: socket.socket, key: bytes):
+    def __init__(self, client, relay: socket.socket, key: bytes, allocation_id: int):
         self.client = client
         self.relay = relay
         self.key = key
+        self.id = allocation_id
         self.permissions = set()
         self.channels = {}   # number -> peer address
         self.peers = {}      # peer address -> number
 
 
 class Server:
-    def __init__(self, listen: str, secret: bytes, quota_full: bool = False):
+    def __init__(self, listen: str, secret: bytes, quota_full: bool = False,
+                 drop_first_release_request: bool = False,
+                 drop_first_release_response: bool = False,
+                 drop_all_release_requests: bool = False,
+                 hold_allocate_success_file: str | None = None,
+                 release_fault: str | None = None,
+                 hold_allocate_request_file: str | None = None):
         self.secret = secret
         self.quota_full = quota_full
+        self.drop_first_release_request = drop_first_release_request
+        self.drop_first_release_response = drop_first_release_response
+        self.drop_all_release_requests = drop_all_release_requests
+        self.hold_allocate_success_file = hold_allocate_success_file
+        self.held_allocate_success = None
+        self.held_allocate_once = False
+        self.hold_allocate_request_file = hold_allocate_request_file
+        self.held_allocate_request = None
+        self.held_request_once = False
+        self.release_fault = release_fault
         self.nonce = base64.b16encode(os.urandom(8)).lower()
         family = socket.AF_INET6 if ":" in listen else socket.AF_INET
         self.family = family
@@ -180,10 +198,13 @@ class Server:
         self.selector = selectors.DefaultSelector()
         self.selector.register(self.sock, selectors.EVENT_READ, None)
         self.allocations = {}
+        self.created = 0
         self.relayed = 0
         self.relayed_out = 0
         # iPhone app plan Task 28: allocations given back with LIFETIME 0.
         self.released = 0
+        self.release_requests = {}
+        self.allocation_ids = {}
         # Datagrams dropped because the socket refused to send them.
         self.unsent = 0
 
@@ -225,9 +246,29 @@ class Server:
         while True:
             if parent_pid is not None and not process_alive(parent_pid):
                 return
-            timeout = PARENT_POLL_S if parent_pid is not None else None
+            held = self.held_allocate_success or self.held_allocate_request
+            if held:
+                timeout = 0.1
+            elif parent_pid is not None:
+                timeout = PARENT_POLL_S
+            else:
+                timeout = None
             for key, _ in self.selector.select(timeout):
                 sock = key.fileobj
+                # A release on the control socket can unregister and close a
+                # relay socket later in this same ready batch. Selector keys
+                # are snapshots, so check current ownership before recvfrom.
+                try:
+                    current = self.selector.get_key(sock)
+                except (KeyError, ValueError):
+                    continue
+                if current != key:
+                    continue
+                if key.data is not None:
+                    allocation = key.data
+                    if (self.allocations.get(allocation.client) is not allocation
+                            or allocation.relay is not sock):
+                        continue
                 try:
                     data, addr = sock.recvfrom(65535)
                 except OSError:
@@ -236,6 +277,18 @@ class Server:
                     self.from_client(data, addr[:2])
                 else:
                     self.from_peer(key.data, data, addr[:2])
+            if (self.held_allocate_request and self.hold_allocate_request_file
+                    and os.path.exists(self.hold_allocate_request_file)):
+                txid, client, key = self.held_allocate_request
+                self.held_allocate_request = None
+                self.allocate(txid, client, key)
+                self.say("SENT_HELD_ALLOCATE_REQUEST")
+            if (self.held_allocate_success and self.hold_allocate_success_file
+                    and os.path.exists(self.hold_allocate_success_file)):
+                client, packet, allocation_id = self.held_allocate_success
+                self.held_allocate_success = None
+                self.send(self.sock, packet, client)
+                self.say(f"SENT_HELD_ALLOCATE id={allocation_id}")
 
     def from_peer(self, allocation: Allocation, data: bytes, peer) -> None:
         if peer[0] not in allocation.permissions:
@@ -289,7 +342,12 @@ class Server:
             self.challenge(method, txid, client)
             return
         if method == ALLOCATE:
-            self.allocate(txid, client, key)
+            if self.hold_allocate_request_file and not self.held_request_once:
+                self.held_request_once = True
+                self.held_allocate_request = (txid, client, key)
+                self.say("HELD_ALLOCATE_REQUEST")
+            else:
+                self.allocate(txid, client, key)
         elif method == REFRESH:
             self.refresh(txid, client, attrs, key)
         elif method == CREATE_PERMISSION:
@@ -313,26 +371,99 @@ class Server:
         if allocation is None:
             relay = socket.socket(self.family, socket.SOCK_DGRAM)
             relay.bind((self.listen, 0))
-            allocation = Allocation(client, relay, key)
+            self.created += 1
+            allocation = Allocation(client, relay, key, self.created)
             self.allocations[client] = allocation
+            self.allocation_ids[client] = allocation.id
             self.selector.register(relay, selectors.EVENT_READ, allocation)
             self.say(f"ALLOCATED {len(self.allocations)}")
+            self.say(f"TURN id={allocation.id} created={self.created} released={self.released} live={len(self.allocations)}")
         relayed = allocation.relay.getsockname()[:2]
-        self.send(self.sock, build(ALLOCATE, SUCCESS, txid, [
+        response = build(ALLOCATE, SUCCESS, txid, [
             (XOR_RELAYED_ADDRESS, xor_address(relayed, txid)),
             (XOR_MAPPED_ADDRESS, xor_address(client, txid)),
             (LIFETIME, struct.pack("!I", 600)),
-        ], key), client)
+        ], key)
+        if self.hold_allocate_success_file and not self.held_allocate_once:
+            self.held_allocate_once = True
+            self.held_allocate_success = (client, response, allocation.id)
+            self.say(f"HELD_ALLOCATE id={allocation.id}")
+        else:
+            self.send(self.sock, response, client)
 
     def refresh(self, txid, client, attrs, key) -> None:
         lifetime = attr(attrs, LIFETIME)
         seconds = struct.unpack("!I", lifetime)[0] if lifetime else 600
+        if seconds == 0:
+            allocation_id = self.allocation_ids.get(client, 0)
+            release_key = (client, allocation_id)
+            number = self.release_requests.get(release_key, 0) + 1
+            self.release_requests[release_key] = number
+            self.say(f"RELEASE_REQUEST id={allocation_id} "
+                     f"number={number} tx={txid.hex()}")
+            if self.drop_all_release_requests or (
+                    self.drop_first_release_request and number == 1):
+                self.say(f"DROP_RELEASE_REQUEST id={self.allocation_ids.get(client, 0)}")
+                return
+            if self.release_fault in ("stale-nonce", "repeat-stale-nonce") and (
+                    number == 1 or self.release_fault == "repeat-stale-nonce" and number == 2):
+                if number == 1:
+                    self.nonce = base64.b16encode(os.urandom(8)).lower()
+                # On the second challenge send a signed but unusable nonce.
+                # A capped client keeps the previous valid nonce and retries
+                # its current transaction; one that accepts a second challenge
+                # cannot release this allocation.
+                offered_nonce = (base64.b16encode(os.urandom(8)).lower()
+                                 if number == 2 else self.nonce)
+                error = struct.pack("!HBB", 0, 4, 38) + b"Stale Nonce"
+                self.send(self.sock, build(REFRESH, ERROR, txid, [
+                    (ERROR_CODE, error), (REALM_ATTR, REALM), (NONCE, offered_nonce),
+                ], key), client)
+                self.say(f"RELEASE_FAULT {self.release_fault} id={allocation_id} number={number}")
+                return
+            if number == 1 and self.release_fault in (
+                    "wrong-id", "wrong-source", "bad-integrity", "unsigned-absent",
+                    "wrong-method", "missing-lifetime", "nonzero-lifetime"):
+                if self.release_fault == "unsigned-absent":
+                    error = struct.pack("!HBB", 0, 4, 37) + b"Allocation Mismatch"
+                    wrong = build(REFRESH, ERROR, txid, [(ERROR_CODE, error)], None)
+                elif self.release_fault == "wrong-id":
+                    wrong = build(REFRESH, SUCCESS, bytes([txid[0] ^ 1]) + txid[1:],
+                                  [(LIFETIME, struct.pack("!I", 0))], key)
+                elif self.release_fault == "wrong-method":
+                    wrong = build(ALLOCATE, SUCCESS, txid,
+                                  [(LIFETIME, struct.pack("!I", 0))], key)
+                elif self.release_fault == "missing-lifetime":
+                    wrong = build(REFRESH, SUCCESS, txid, [], key)
+                elif self.release_fault == "nonzero-lifetime":
+                    wrong = build(REFRESH, SUCCESS, txid,
+                                  [(LIFETIME, struct.pack("!I", 600))], key)
+                else:
+                    wrong_key = b"wrong" if self.release_fault == "bad-integrity" else key
+                    wrong = build(REFRESH, SUCCESS, txid,
+                                  [(LIFETIME, struct.pack("!I", 0))], wrong_key)
+                if self.release_fault == "wrong-source":
+                    spoof = socket.socket(self.family, socket.SOCK_DGRAM)
+                    try:
+                        spoof.bind((self.listen, 0))
+                        spoof.sendto(wrong, client)
+                    finally:
+                        spoof.close()
+                else:
+                    self.send(self.sock, wrong, client)
+                self.say(f"RELEASE_FAULT {self.release_fault} id={allocation_id}")
+                # Do not send a valid acknowledgement until a retry.
+                return
         if seconds == 0 and client in self.allocations:
             allocation = self.allocations.pop(client)
             self.selector.unregister(allocation.relay)
             allocation.relay.close()
             self.released += 1
             self.say(f"RELEASED {self.released}")
+            self.say(f"TURN id={allocation.id} created={self.created} released={self.released} live={len(self.allocations)}")
+        if seconds == 0 and self.drop_first_release_response and number == 1:
+            self.say(f"DROP_RELEASE_RESPONSE id={self.allocation_ids.get(client, 0)}")
+            return
         self.send(self.sock, build(REFRESH, SUCCESS, txid,
                                [(LIFETIME, struct.pack("!I", min(seconds, 600)))], key), client)
 
@@ -384,11 +515,23 @@ def main() -> int:
     parser.add_argument("--port-file", required=True)
     parser.add_argument("--listen", default="127.0.0.1")
     parser.add_argument("--quota-full", action="store_true")
+    parser.add_argument("--drop-first-release-request", action="store_true")
+    parser.add_argument("--drop-first-release-response", action="store_true")
+    parser.add_argument("--drop-all-release-requests", action="store_true")
+    parser.add_argument("--hold-allocate-success-file")
+    parser.add_argument("--hold-allocate-request-file")
+    parser.add_argument("--release-fault", choices=[
+        "stale-nonce", "repeat-stale-nonce", "wrong-id", "wrong-source",
+        "bad-integrity", "unsigned-absent", "wrong-method", "missing-lifetime",
+        "nonzero-lifetime"])
     parser.add_argument("--parent-pid", type=int, default=None)
     args = parser.parse_args()
     with open(args.secret_file, "rb") as handle:
         secret = handle.read().rstrip(b"\r\n")
-    server = Server(args.listen, secret, args.quota_full)
+    server = Server(args.listen, secret, args.quota_full,
+                    args.drop_first_release_request, args.drop_first_release_response,
+                    args.drop_all_release_requests, args.hold_allocate_success_file,
+                    args.release_fault, args.hold_allocate_request_file)
     with open(args.port_file + ".part", "w", encoding="ascii") as handle:
         handle.write(str(server.port()))
     os.replace(args.port_file + ".part", args.port_file)

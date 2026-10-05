@@ -1,5 +1,13 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-04: Hold accepted Core waterfall levels in the remote codec window.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-04: Genuine delayed allocation results across peer promotion,
+//               retired display release and survivor rendering regression.
+//               Synchronous stack teardown at the overdue release boundary.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-01  J.J. Boyd / KG4VCF. Unkeyed TX-letter shared-pan history
+//                 lifecycle regression. AI-assisted via OpenAI Codex.
 //   2026-09-25: iPhone app plan Task 36 (R-IOS-13): the microphone uplink.
 //               The media start carries remoteTxVersion only to a Core that
 //               takes this computer's microphone; the window sends its
@@ -51,6 +59,10 @@
 #include <QApplication>
 #include <QMetaMethod>
 #include <QComboBox>
+#include <QAbstractItemView>
+#include "gui/RemoteAudioWidget.h"
+#include "gui/widgets/GuardedSlider.h"
+#include <QStandardItemModel>
 #include <QCoreApplication>
 #include <QLabel>
 #include <QMouseEvent>
@@ -61,11 +73,16 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QFile>
+#include <QDir>
 #include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QScopeGuard>
 #include <QTimer>
+#include <QPushButton>
+#include "core/TxSliceArbiter.h"
+#include "core/safety/TransmitHolder.h"
+#include "gui/applets/TxApplet.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -76,6 +93,8 @@
 #include <thread>
 #include <utility>
 #include "core/AppSettings.h"
+#include "gui/setup/DisplaySetupPages.h"
+#include <QCheckBox>
 #include "core/MoxController.h"
 #include "core/TxAnalyzer.h"
 #include "core/TxDisplayFeed.h"
@@ -119,6 +138,7 @@
 #include "OperatorWording.h"
 #include "gui/OperatorReasonText.h"
 #include "fakes/RemoteAudioSessionHarness.h"
+#include "fakes/FakeAudioBus.h"
 #include "fakes/UpgradedCoreToken.h"
 
 using namespace NereusSDR;
@@ -298,6 +318,20 @@ public:
     }
     QList<QByteArray> held;
     bool passNext = false;
+};
+
+class StackTeardownControlTransport final : public Test::LoopbackTransport {
+public:
+    StackTeardownControlTransport() : LoopbackTransport(QStringLiteral("client")) {}
+    void sendText(const QByteArray& wire) override
+    {
+        if (beforeUnsubscribe && wire.contains("\"op\":\"unsubscribe\"")) {
+            const std::function<void()> callback = std::exchange(beforeUnsubscribe, {});
+            callback();
+        }
+        LoopbackTransport::sendText(wire);
+    }
+    std::function<void()> beforeUnsubscribe;
 };
 
 QJsonObject lastControl(const QSignalSpy& spy, const QString& op)
@@ -1985,6 +2019,163 @@ private slots:
         // captured before the switch.
         QTRY_VERIFY_WITH_TIMEOUT((feed(), !widget->renderedPixels().isEmpty()), 10000);
         client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // JJ's reported trigger is the TX applet's unkeyed A/B letters, not
+    // active receive-slice selection. Exercise actual media subscriptions.
+    void unkeyedTransmitLettersKeepSharedReceiveHistory_data()
+    {
+        QTest::addColumn<bool>("threeD");
+        QTest::addColumn<bool>("budget");
+        QTest::newRow("3D stack") << true << false;
+        QTest::newRow("3D stack, display budget") << true << true;
+    }
+    void unkeyedTransmitLettersKeepSharedReceiveHistory()
+    {
+        QFETCH(bool, threeD);
+        QFETCH(bool, budget);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int firstId = station.addSlice();
+        auto* firstSlice = station.sliceById(firstId);
+        QVERIFY(firstSlice);
+        const int stream = firstSlice->streamIndex();
+        QVERIFY(stream >= 0);
+        const int secondId = station.addSlice();
+        auto* secondSlice = station.sliceById(secondId);
+        QVERIFY(secondSlice);
+        firstSlice->setFrequency(3650000);
+        secondSlice->setFrequency(3651000);
+        QVERIFY(station.moveSlicesToStream({firstId, secondId}, stream, 3650000));
+        const double centre = station.streamCentreHz(stream);
+        const quint64 streamEpoch = firstSlice->streamEpoch();
+        QCOMPARE(secondSlice->streamIndex(), stream);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        server.setRemoteTransmitAllowed(true);
+        server.setTokenSessionsMayTransmitForTest(true);
+        if (budget) {
+            QVERIFY(server.setDisplayBudgetLimits({10'000'000, 10'000'000, 1}));
+        }
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        client.setTokenSessionHolderForTest(QStringLiteral("token:1"));
+        client.declareFeatureForTest(QByteArrayLiteral("deviceAuth"), 1);
+        PanadapterStack stack;
+        auto* pan = stack.addPanadapter(QStringLiteral("pan"));
+        stack.setActivePan(QStringLiteral("pan"));
+        pan->addSlice(firstId);
+        pan->addSlice(secondId);
+        pan->setActiveSliceIndex(firstId);
+        auto* widget = pan->spectrumWidget();
+        widget->setDisplayWindowPreservingHistory(centre, 96000);
+        widget->setVfoFrequency(centre);
+        widget->setConnectionState(ConnectionState::Connected);
+        if (threeD) {
+            widget->setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode3D));
+        }
+        stack.resize(600, 700);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            });
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        sourceMedia->other = sinkMedia;
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QTRY_VERIFY(remote.sliceById(secondId)
+            && remote.sliceById(secondId)->streamIndex() == stream);
+        QCOMPARE(client.remoteDisplayBudgetLimits().has_value(), budget);
+        QVector<float> iq(2048, 0.001f);
+        const auto feed = [&] {
+            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+        };
+        const auto drawn = [&] {
+            return threeD ? widget->dssRowsPushedForTest()
+                          : widget->waterfallHistoryRowsForTest();
+        };
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), drawn() >= 5), 10000);
+        const int before = drawn();
+        const double viewCentre = widget->centerFrequency();
+
+        TransmitHolder::Holder self;
+        self.deviceId = QByteArrayLiteral("token:1");
+        self.name = QStringLiteral("History media bench");
+        server.transmitHolder()->transferTo(self, QStringLiteral("test"));
+        QTRY_VERIFY(client.holdsTransmitHere());
+        QVERIFY(client.sessionHolderAvailable());
+        QVERIFY(client.remoteTransmitAvailable());
+        TxApplet applet(&remote);
+        applet.setTransmitSliceChoices({}, [&client](int id) { client.requestTxSlice(id); });
+        QSignalSpy finished(&client, &StationClient::deviceCommandFinished);
+        const int active = pan->activeSliceIndex();
+        const double span = widget->bandwidth();
+        int minimum = before;
+        QTimer sampler;
+        QObject::connect(&sampler, &QTimer::timeout, &gui, [&]() {
+            minimum = std::min(minimum, drawn());
+        });
+        sampler.start(1);
+        for (int id : {firstId, secondId, firstId}) {
+            QPushButton* letter = nullptr;
+            for (QPushButton* button : applet.transmitSliceButtons()) {
+                if (button->property("sliceId").toInt() == id) { letter = button; }
+            }
+            QVERIFY(letter && letter->isEnabled());
+            finished.clear();
+            letter->click();
+            QTRY_VERIFY(!finished.isEmpty());
+            QCOMPARE(finished.last().at(0).toByteArray(), QByteArrayLiteral("tx.setTxSlice"));
+            QVERIFY2(finished.last().at(2).toBool(), qPrintable(finished.last().at(3).toString()));
+            QTRY_VERIFY(remote.sliceById(id)->isTxSlice());
+            QCOMPARE(station.txSliceArbiter()->txBoundSliceId(), id);
+            for (int i = 0; i < 8; ++i) {
+                QVERIFY2(drawn() >= before,
+                         qPrintable(QStringLiteral("history fell from %1 to %2")
+                                        .arg(before).arg(drawn())));
+                QVERIFY(!station.mox() && !remote.mox());
+                QCOMPARE(firstSlice->streamEpoch(), streamEpoch);
+                QCOMPARE(secondSlice->streamEpoch(), streamEpoch);
+                QCOMPARE(pan->activeSliceIndex(), active);
+                QCOMPARE(widget->centerFrequency(), viewCentre);
+                QCOMPARE(widget->bandwidth(), span);
+                feed();
+                QTest::qWait(25);
+            }
+            QCOMPARE(minimum, before);
+        }
+        sampler.stop();
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), drawn() > before), 10000);
+        // R-R3-21: this Core answers clock probes, so the new slice's trace
+        // is drawn at its time on the audio's clock, a little after rows
+        // captured before the switch.
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), !widget->renderedPixels().isEmpty()), 10000);
+        client.disconnectFromStation(QStringLiteral("test complete"));
+        // Genuine session retirement must still clear the old source.
+        QTRY_COMPARE(widget->dssRowsPushedForTest(), 0);
+        QCOMPARE(widget->waterfallHistoryRowsForTest(), 0);
     }
 
     // R-R3-19: a pan whose stream is its own still re-centres the Core on a
@@ -3949,6 +4140,265 @@ private slots:
         QCOMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 1);
     }
 
+    void retiredPendingDisplayAfterPeerReplacementReleasesBeforeSurvivorGrowth_data()
+    {
+        QTest::addColumn<bool>("removePan");
+        QTest::newRow("slice-rebind") << false;
+        QTest::newRow("pan-removal") << true;
+    }
+
+    void retiredPendingDisplayAfterPeerReplacementReleasesBeforeSurvivorGrowth()
+    {
+        QFETCH(bool, removePan);
+        // A genuine accepted result is held on the old media connection,
+        // then delivered after both production controllers promote a peer.
+        // Closing that endpoint must eventually release its reservation;
+        // it cannot leave the surviving pan behind a permanent pending gate.
+        AppSettings& appSettings = AppSettings::instance();
+        const QString fpsKey = QStringLiteral("DisplaySpectrumFps");
+        const bool hadFps = appSettings.contains(fpsKey);
+        const QVariant savedFps = appSettings.value(fpsKey);
+        appSettings.setValue(fpsKey, QStringLiteral("10"));
+        const auto restoreFps = qScopeGuard([&] {
+            if (hadFps) { appSettings.setValue(fpsKey, savedFps); }
+            else { appSettings.remove(fpsKey); }
+        });
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int firstId = station.addSlice();
+        const int survivorId = station.addSlice();
+        QVERIFY(station.sliceById(firstId));
+        QVERIFY(station.sliceById(survivorId));
+        const int stream = station.sliceById(survivorId)->streamIndex();
+        const double centre = station.streamCentreHz(stream);
+        StationServer server(&station, settings, Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        QVERIFY(server.setDisplayBudgetLimits({10'000'000, 10'000'000, 1}));
+        QList<QPointer<DisplayTransport>> sourcePeers;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourcePeers](QObject* owner) -> IMediaTransport* {
+                auto* transport = new DisplayTransport(owner);
+                sourcePeers.append(transport);
+                return transport;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        PanadapterApplet* applet = stack.addPanadapter(QStringLiteral("pan-0"));
+        applet->setActiveSliceIndex(firstId);
+        SpectrumWidget* widget = applet->spectrumWidget();
+        widget->setDisplayWindowPreservingHistory(centre, 48000);
+        widget->setWfUpdatePeriodMs(20);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        qint64 nowMs = 0;
+        QList<QPointer<DisplayTransport>> sinkPeers;
+        RemoteMediaController controller(&client, &remote, &stack, nullptr,
+            [&sinkPeers](QObject* owner) -> IMediaTransport* {
+                auto* transport = new DisplayTransport(owner);
+                sinkPeers.append(transport);
+                return transport;
+            }, [&nowMs] { return nowMs; }, 10'000);
+        QSignalSpy outbound(&server, &StationServer::mediaControlReceived);
+        QSignalSpy inbound(&client, &StationClient::mediaControlReceived);
+        auto* stationLink = new HoldingAllocationResultTransport;
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.remoteDisplayBudgetLimits().has_value());
+        QTRY_COMPARE(sourcePeers.size(), 1);
+        QTRY_COMPARE(sinkPeers.size(), 1);
+        sourcePeers.first()->other = sinkPeers.first();
+        sourcePeers.first()->activate();
+        sinkPeers.first()->activate();
+        QTRY_COMPARE(stationLink->held.size(), 1);
+        stationLink->releaseHeld();
+        QTRY_VERIFY(showsDisplay(controller, applet));
+        const DisplayBudgetCharge originalCharge = daemon.acceptedDisplayCharge();
+        const QJsonObject original = lastControl(outbound, QStringLiteral("subscribe"));
+        const quint32 retiredEndpoint = quint32(original.value(QStringLiteral("endpointId")).toDouble());
+        QVERIFY(retiredEndpoint != 0);
+
+        // The Core really accepted a larger reservation than the GUI knows.
+        appSettings.setValue(fpsKey, QStringLiteral("30"));
+        QTRY_COMPARE(countControl(outbound, QStringLiteral("subscribe")), 2);
+        QTRY_COMPARE(stationLink->held.size(), 1);
+        QVERIFY(daemon.acceptedDisplayCharge().applicationBytesPerSecond
+                > originalCharge.applicationBytesPerSecond);
+        const QJsonObject pending = lastControl(outbound, QStringLiteral("subscribe"));
+        const quint32 pendingRevision = quint32(pending.value(QStringLiteral("revision")).toDouble());
+        const QString oldConnection = controller.mediaConnectionId();
+        QVERIFY(controller.replaceConnection());
+        QTRY_COMPARE(sourcePeers.size(), 2);
+        QTRY_COMPARE(sinkPeers.size(), 2);
+        sourcePeers.last()->other = sinkPeers.last();
+        sourcePeers.last()->activate();
+        sinkPeers.last()->activate();
+        QTRY_VERIFY_WITH_TIMEOUT(controller.mediaConnectionId() != oldConnection
+                                && !controller.replacingConnection(),
+                                DaemonMediaController::kReplaceOverlapMs + 3000);
+        // No identities or result fields are manufactured: this is the
+        // original Core reply, now fenced out by the promoted connection.
+        stationLink->releaseHeld();
+        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")), 2);
+        const QJsonObject oldResult = lastControl(inbound, QStringLiteral("allocation-result"));
+        QCOMPARE(oldResult.value(QStringLiteral("connectionId")).toString(), oldConnection);
+        QCOMPARE(quint32(oldResult.value(QStringLiteral("revision")).toDouble()), pendingRevision);
+        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 2);
+
+        QPointer<SpectrumWidget> retiredWidget(widget);
+        if (removePan) {
+            stack.removePanadapter(QStringLiteral("pan-0"));
+            QTRY_VERIFY(retiredWidget.isNull());
+            applet = stack.addPanadapter(QStringLiteral("pan-0"));
+            widget = applet->spectrumWidget();
+            widget->setDisplayWindowPreservingHistory(centre, 48000);
+            widget->setWfUpdatePeriodMs(20);
+        }
+        applet->setActiveSliceIndex(survivorId);
+        QTimer* subscriptionTimer = nullptr;
+        for (QTimer* timer : controller.findChildren<QTimer*>()) {
+            if (timer->interval() == 100) { subscriptionTimer = timer; break; }
+        }
+        QVERIFY(subscriptionTimer);
+        QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
+        QCOMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 0);
+        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 2);
+        QVERIFY(widget->renderedPixels().isEmpty());
+
+        nowMs = 10'000;
+        QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
+        QTRY_COMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 1);
+        const QJsonObject release = lastControl(outbound, QStringLiteral("unsubscribe"));
+        QCOMPARE(release.value(QStringLiteral("connectionId")).toString(), controller.mediaConnectionId());
+        QCOMPARE(quint32(release.value(QStringLiteral("endpointId")).toDouble()), retiredEndpoint);
+        QCOMPARE(quint32(release.value(QStringLiteral("revision")).toDouble()), pendingRevision + 1);
+        QTRY_COMPARE(stationLink->held.size(), 1);
+        QTRY_COMPARE(daemon.activeEndpointCount(), 0);
+        // Until the authoritative release result arrives, the old larger
+        // reservation is uncertain. No survivor growth may pass that gate.
+        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 2);
+        nowMs = 20'000;
+        QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
+        QCOMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 1);
+        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 2);
+        stationLink->releaseHeld();
+        QTRY_COMPARE(countControl(outbound, QStringLiteral("subscribe")), 3);
+        const QJsonObject survivor = lastControl(outbound, QStringLiteral("subscribe"));
+        QVERIFY(survivor.value(QStringLiteral("endpointId")) != original.value(QStringLiteral("endpointId")));
+        QCOMPARE(survivor.value(QStringLiteral("sliceId")).toInt(), survivorId);
+        QTRY_COMPARE(stationLink->held.size(), 1);
+        stationLink->releaseHeld();
+        QTRY_COMPARE(controller.activeEndpointCount(), 1);
+        QTRY_COMPARE(daemon.activeEndpointCount(), 1);
+        QTRY_VERIFY(showsDisplay(controller, applet));
+        // A genuine late result for the tombstoned endpoint cannot undo
+        // the new binding, even after its own reservation was confirmed.
+        stationLink->passNextAllocationResult();
+        QVERIFY(server.sendMediaControl(oldResult, server.mediaSessionEpoch()));
+        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")), 5);
+        QCOMPARE(controller.activeEndpointCount(), 1);
+        QCOMPARE(daemon.activeEndpointCount(), 1);
+
+        QVector<float> iq(2048, 0.001f);
+        QTRY_VERIFY_WITH_TIMEOUT((QMetaObject::invokeMethod(&station, "rawIqDataForStream",
+            Qt::DirectConnection, Q_ARG(int, stream), Q_ARG(QVector<float>, iq)),
+            !widget->renderedPixels().isEmpty() && widget->waterfallHistoryRowsForTest() > 0), 5000);
+        QVERIFY(!station.mox() && !remote.mox());
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    void overdueRetirementSendSurvivesSynchronousStackDestruction()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = station.addSlice();
+        QVERIFY(station.sliceById(sliceId));
+        StationServer server(&station, settings, Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        QVERIFY(server.setDisplayBudgetLimits({10'000'000, 10'000'000, 1}));
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        auto stack = std::make_unique<PanadapterStack>();
+        PanadapterApplet* applet = stack->addPanadapter(QStringLiteral("pan-0"));
+        applet->setActiveSliceIndex(sliceId);
+        applet->spectrumWidget()->setDisplayWindowPreservingHistory(
+            station.streamCentreHz(station.sliceById(sliceId)->streamIndex()), 48000);
+        qint64 nowMs = 0;
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController controller(&client, &remote, stack.get(), nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            }, [&nowMs] { return nowMs; }, 10'000);
+        QSignalSpy outbound(&server, &StationServer::mediaControlReceived);
+        auto* stationLink = new HoldingAllocationResultTransport;
+        auto* clientLink = new StackTeardownControlTransport;
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.remoteDisplayBudgetLimits().has_value());
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QTRY_COMPARE(stationLink->held.size(), 1);
+        QPointer<PanadapterApplet> retiredApplet(applet);
+        stack->removePanadapter(QStringLiteral("pan-0"));
+        QTRY_VERIFY(retiredApplet.isNull());
+        QCOMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 0);
+        const QString connectionId = controller.mediaConnectionId();
+        QPointer<RemoteMediaController> controllerLifetime(&controller);
+        QPointer<PanadapterStack> stackLifetime(stack.get());
+        bool identitySurvived = false;
+        clientLink->beforeUnsubscribe = [&] {
+            stack.reset();
+            identitySurvived = stackLifetime.isNull() && controllerLifetime
+                && client.mediaAvailable() && controller.mediaConnectionId() == connectionId;
+            qInfo() << "Stack destroyed during overdue release; controller and media identity survived:"
+                    << identitySurvived;
+        };
+        QTimer* subscriptionTimer = nullptr;
+        for (QTimer* timer : controller.findChildren<QTimer*>()) {
+            if (timer->interval() == 100) { subscriptionTimer = timer; break; }
+        }
+        QVERIFY(subscriptionTimer);
+        nowMs = 10'000;
+        QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
+        QVERIFY(identitySurvived);
+        QVERIFY(stackLifetime.isNull());
+        QVERIFY(controllerLifetime);
+        QTRY_COMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 1);
+        QTRY_COMPARE(stationLink->held.size(), 2);
+        stationLink->releaseHeld();
+        QTRY_COMPARE(controller.activeEndpointCount(), 0);
+        QTRY_COMPARE(daemon.activeEndpointCount(), 0);
+        nowMs = 20'000;
+        QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
+        QCOMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 1);
+        QVERIFY(!station.mox() && !remote.mox());
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     void matchingSourceRetirementClearsAcceptedReservationDuringPendingUpdate()
     {
         QTemporaryDir dir;
@@ -5489,18 +5939,255 @@ private slots:
     // the stored levels until the first arrive and then against the Core's;
     // the local follower does not run, so AGC settling asks the Core nothing
     // and never blanks the pan with a new request.
-    void coreWaterfallAgcAsksNothingAsItSettles()
+    void waterfallLevelsFromActualRequestMatchLocal_data()
+    {
+        QTest::addColumn<bool>("agc");
+        QTest::addColumn<bool>("nfAgc");
+        QTest::addColumn<bool>("bothUi");
+        QTest::addColumn<bool>("restored");
+        QTest::addColumn<bool>("clarity");
+        QTest::addColumn<QString>("mode");
+        QTest::addColumn<float>("low1");
+        QTest::addColumn<float>("high1");
+        QTest::addColumn<float>("low2");
+        QTest::addColumn<float>("high2");
+        QTest::newRow("agc-only") << true << false << false << false << false << QStringLiteral("agc") << -172.0f << -84.5f << -171.0f << -83.5f;
+        QTest::newRow("nf-only") << false << true << false << false << false << QStringLiteral("noiseFloorAgc") << -159.0f << -99.0f << -139.0f << -79.0f;
+        QTest::newRow("both-normal-ui") << true << true << true << false << false << QStringLiteral("noiseFloorAgc") << -159.0f << -99.0f << -139.0f << -79.0f;
+        QTest::newRow("both-restored") << true << true << false << true << false << QStringLiteral("noiseFloorAgc") << -159.0f << -99.0f << -139.0f << -79.0f;
+        QTest::newRow("manual") << false << false << false << false << false << QString() << -180.0f << 0.0f << -180.0f << 0.0f;
+        QTest::newRow("clarity-both-on") << true << true << true << false << true << QString() << -150.0f << -90.0f << -150.0f << -90.0f;
+    }
+
+    // Catch a request mode that makes the Core colour identical rows differently.
+    void waterfallLevelsFromActualRequestMatchLocal()
+    {
+        QFETCH(bool, agc);
+        QFETCH(bool, nfAgc);
+        QFETCH(bool, bothUi);
+        QFETCH(bool, restored);
+        QFETCH(bool, clarity);
+        QFETCH(QString, mode);
+        QFETCH(float, low1);
+        QFETCH(float, high1);
+        QFETCH(float, low2);
+        QFETCH(float, high2);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        AppSettings& appSettings = AppSettings::instance();
+        QMap<QString, QVariant> saved;
+        for (const QString& key : appSettings.allKeys()) { saved.insert(key, appSettings.value(key)); }
+        const auto restoreSettings = qScopeGuard([&] {
+            appSettings.clear();
+            for (auto it = saved.cbegin(); it != saved.cend(); ++it) { appSettings.setValue(it.key(), it.value()); }
+        });
+        appSettings.clear();
+        appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), QStringLiteral("20"));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::HermesLite);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        station.addSlice(QStringLiteral("pan-0"));
+        QVERIFY(!station.slices().isEmpty());
+        SliceModel* stationSlice = station.slices().first();
+        stationSlice->setStreamIndex(0);
+        stationSlice->setFrequency(14225000);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
+        applet->setActiveSliceIndex(stationSlice->sliceIndex());
+        auto* widget = applet->spectrumWidget();
+        widget->setDisplayWindowPreservingHistory(14225000, 24000);
+        widget->setDispNormalize(false);
+        widget->setWfUseSpectrumMinMax(false);
+        widget->setClarityActive(false);
+        SpectrumWidget local;
+        for (SpectrumWidget* view : {&local, widget}) {
+            view->loadSettings();
+            view->setDispNormalize(false);
+            view->setWfUseSpectrumMinMax(false);
+            view->setClarityActive(false);
+            view->setDbmRange(-180.0f, 0.0f);
+            view->setWfLowThreshold(-180.0f);
+            view->setWfHighThreshold(0.0f);
+            view->setWaterfallAGCOffsetDb(-5);
+            if (bothUi || restored) {
+                remote.setSpectrumWidget(view);
+                const auto detach = qScopeGuard([&] { remote.setSpectrumWidget(nullptr); });
+                {
+                    WaterfallDefaultsPage page(&remote);
+                    QCheckBox* nf = nullptr;
+                    for (QCheckBox* box : page.findChildren<QCheckBox*>()) {
+                        if (box->property("nereusSetupId").toString()
+                            == QStringLiteral("display.waterfallDefaults.nfAgc")) { nf = box; }
+                    }
+                    QVERIFY(nf && nf->isEnabled());
+                    QVERIFY(view->wfAgcEnabled());
+                    if (!nf->isChecked()) { nf->click(); }
+                    QVERIFY(view->wfAgcEnabled() && view->waterfallNFAGCEnabled());
+                }
+                remote.setSpectrumWidget(nullptr);
+                if (restored) {
+                    view->saveSettings();
+                    view->setWfAgcEnabled(false);
+                    view->setWaterfallNFAGCEnabled(false);
+                    view->loadSettings();
+                    QVERIFY(view->wfAgcEnabled() && view->waterfallNFAGCEnabled());
+                }
+            } else {
+                view->setWfAgcEnabled(agc);
+                view->setWaterfallNFAGCEnabled(nfAgc);
+            }
+            view->setClarityActive(clarity);
+            if (clarity) { view->setClarityWaterfallThresholds(-150.0f, -90.0f); }
+        }
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        qint64 now = 1'000;
+        QPointer<DisplayTransport> media;
+        RemoteMediaController controller(&client, &remote, &stack, nullptr,
+            [&media](QObject* owner) -> IMediaTransport* {
+                media = std::make_unique<DisplayTransport>(owner).release();
+                return media;
+            },
+            [&now] { return now; });
+        QSignalSpy controls(&server, &StationServer::mediaControlReceived);
+        auto* stationLink = std::make_unique<Test::LoopbackTransport>(QStringLiteral("station")).release();
+        auto* clientLink = std::make_unique<Test::LoopbackTransport>(QStringLiteral("client")).release();
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.mediaAvailable());
+        QVERIFY(client.capabilities().displayExtrasVersion >= 1);
+        QTRY_VERIFY(media);
+        media->activate();
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
+
+        const QJsonObject asked = lastControl(controls, QStringLiteral("subscribe"));
+        DisplayExtrasRequest request;
+        QVERIFY(parseDisplayExtrasRequest(asked, request));
+        DisplayExtrasProcessor processor(request);
+        const quint32 id = quint32(asked.value(QStringLiteral("endpointId")).toDouble());
+        QJsonObject context{
+            {QStringLiteral("op"), QStringLiteral("context")},
+            {QStringLiteral("connectionId"), asked.value(QStringLiteral("connectionId"))},
+            {QStringLiteral("endpointId"), double(id)},
+            {QStringLiteral("revision"), asked.value(QStringLiteral("revision"))},
+            {QStringLiteral("contextGeneration"), 1}, {QStringLiteral("sourceStream"), 0},
+            {QStringLiteral("sourceCentreHz"), 14225000}, {QStringLiteral("sampleRateHz"), 192000},
+            {QStringLiteral("centreHz"), 14225023.4375}, {QStringLiteral("spanHz"), 24046.875},
+            {QStringLiteral("wideCentreHz"), 0}, {QStringLiteral("wideSpanHz"), 0},
+            {QStringLiteral("traceSamples"), 128}, {QStringLiteral("waterfallSamples"), 128},
+            {QStringLiteral("wideSamples"), 0}, {QStringLiteral("minDbm"), -180},
+            {QStringLiteral("maxDbm"), 0}, {QStringLiteral("fps"), 20},
+            {QStringLiteral("framesPerLine"), 1},
+            {QStringLiteral("wideband"), WidebandDisplayContext{}.toJson()},
+            {QStringLiteral("grantedFftSize"), 4096}, {QStringLiteral("grantedTier"), QStringLiteral("wide")},
+            {QStringLiteral("requestedPixels"), 128}, {QStringLiteral("grantedPixels"), 128},
+            {QStringLiteral("limit"), QStringLiteral("none")}};
+        QVERIFY(server.sendMediaControl(context, server.mediaSessionEpoch()));
+        const DisplayCodecContext codec{id, 1, -180.0f, 0.0f, 128, 128, 0};
+        DisplayExtrasInputs inputs;
+        inputs.fps = 20;
+        inputs.centreHz = 14225023.4375;
+        inputs.spanHz = 24046.875;
+        inputs.sliceHz = 14225000;
+        inputs.binWidthHz = 192000.0 / 4096.0;
+        QVector<DisplayExtrasFrame> computed;
+        QVector<std::pair<float, float>> localLevels;
+        for (int rowIndex = 0; rowIndex < 2; ++rowIndex) {
+            QVector<float> row(128);
+            for (int i = 0; i < row.size(); ++i) { row[i] = -160.0f + 0.5f * i + 20.0f * rowIndex; }
+            local.composeWaterfallActiveThresholds(row);
+            localLevels.append({local.wfActiveLowThreshold(), local.wfActiveHighThreshold()});
+            DisplayCodecFrame frame;
+            frame.context = codec;
+            frame.encoderSequence = static_cast<quint32>(rowIndex + 1);
+            frame.waterfallAdvance = true;
+            frame.traceDbm = row;
+            frame.waterfallDbm = row;
+            inputs.nowMs = 1000 + rowIndex * 50;
+            computed.append(processor.process(frame, inputs));
+            qInfo() << "mode" << asked.value(QStringLiteral("waterfallLevels")).toObject().value(QStringLiteral("mode"))
+                    << "row" << rowIndex << "local" << localLevels.last().first << localLevels.last().second
+                    << "Core" << processor.waterfallLevels().first << processor.waterfallLevels().second;
+        }
+        // Literal oracle: sorted index 12 is -154/-134, plus offset -5.
+        QCOMPARE(localLevels[0].first, low1);
+        QCOMPARE(localLevels[0].second, high1);
+        QCOMPARE(localLevels[1].first, low2);
+        QCOMPARE(localLevels[1].second, high2);
+        if (mode.isEmpty()) {
+            QVERIFY(!asked.contains(QStringLiteral("waterfallLevels")));
+            QVERIFY(!computed[0].waterfallLevelsDbm && !computed[1].waterfallLevelsDbm);
+            for (int rowIndex = 0; rowIndex < 2; ++rowIndex) {
+                widget->composeWaterfallActiveThresholds(QVector<float>(128, -160.0f + 20.0f * rowIndex));
+                QCOMPARE(widget->wfActiveLowThreshold(), low1);
+                QCOMPARE(widget->wfActiveHighThreshold(), high1);
+            }
+        } else {
+            QVERIFY(computed[0].waterfallLevelsDbm && computed[1].waterfallLevelsDbm);
+            QCOMPARE(computed[0].waterfallLevelsDbm->first, low1);
+            QCOMPARE(computed[0].waterfallLevelsDbm->second, high1);
+            QCOMPARE(computed[1].waterfallLevelsDbm->first, low2);
+            QCOMPARE(computed[1].waterfallLevelsDbm->second, high2);
+            QCOMPARE(asked.value(QStringLiteral("waterfallLevels")).toObject().value(QStringLiteral("mode")).toString(), mode);
+            for (int rowIndex = 0; rowIndex < 2; ++rowIndex) {
+                const QByteArray datagram = encodeDisplayExtras(computed[rowIndex], codec);
+                QVERIFY(!datagram.isEmpty());
+                const auto decoded = decodeDisplayExtras(datagram, codec);
+                QVERIFY(decoded.accepted && decoded.frame.waterfallLevelsDbm);
+                QCOMPARE(*decoded.frame.waterfallLevelsDbm, *computed[rowIndex].waterfallLevelsDbm);
+                QTRY_VERIFY_WITH_TIMEOUT([&] {
+                    media->deliver(datagram);
+                    return widget->wfActiveLowThreshold() == computed[rowIndex].waterfallLevelsDbm->first;
+                }(), 5000);
+                QCOMPARE(widget->wfActiveHighThreshold(), computed[rowIndex].waterfallLevelsDbm->second);
+            }
+        }
+        QCOMPARE(widget->wfLowThreshold(), -180.0f);
+        QCOMPARE(widget->wfHighThreshold(), 0.0f);
+        QCOMPARE(widget->wfAgcEnabled(), agc);
+        QCOMPARE(widget->waterfallNFAGCEnabled(), nfAgc);
+        // AGC's accepted -171 dBm low needs its 10 dB headroom below the
+        // stored -180 dBm window. The old no-request assertion hid that
+        // clipping bug. Other modes here already fit their stored window.
+        QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
+        now += 60;
+        QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
+        const int expectedRequests = mode == QStringLiteral("agc") ? 2 : 1;
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), expectedRequests);
+        if (mode == QStringLiteral("agc")) {
+            QCOMPARE(lastControl(controls, QStringLiteral("subscribe"))
+                         .value(QStringLiteral("minDbm")).toDouble(), -181.0);
+        }
+        now += 60;
+        QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), expectedRequests);
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    void coreWaterfallAgcWindowContainsAcceptedLevels()
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
         auto& appSettings = AppSettings::instance();
-        const bool hadFps = appSettings.contains(QStringLiteral("DisplaySpectrumFps"));
-        const QVariant savedFps = appSettings.value(QStringLiteral("DisplaySpectrumFps"));
-        appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), QStringLiteral("20"));
-        const auto restoreFps = qScopeGuard([&] {
-            if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
-            else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
+        QMap<QString, QVariant> savedSettings;
+        for (const QString& key : appSettings.allKeys()) {
+            savedSettings.insert(key, appSettings.value(key));
+        }
+        const auto restoreSettings = qScopeGuard([&] {
+            appSettings.clear();
+            for (auto it = savedSettings.cbegin(); it != savedSettings.cend(); ++it) {
+                appSettings.setValue(it.key(), it.value());
+            }
         });
+        appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), QStringLiteral("20"));
         RadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -5526,8 +6213,10 @@ private slots:
         widget->setWaterfallNFAGCEnabled(false);
         widget->setWfAgcEnabled(true);
         widget->setDbmRange(-100.0f, -60.0f);
-        widget->setWfLowThreshold(-110.0f);
+        widget->setWfLowThreshold(-109.5f);
         widget->setWfHighThreshold(-70.0f);
+        widget->setWfBlackLevel(96);
+        widget->setWfColorGain(31);
         stack.resize(600, 400);
         stack.show();
         QVERIFY(QTest::qWaitForWindowExposed(&stack));
@@ -5552,14 +6241,14 @@ private slots:
         QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
 
         // The subscribe asks the Core for the AGC's levels, and its window
-        // is the pan's and the stored levels', as with manual levels.
+        // uses stored levels until the first accepted Core pair arrives.
         QJsonObject asked = lastControl(controls, QStringLiteral("subscribe"));
         QCOMPARE(asked.value(QStringLiteral("waterfallLevels")).toObject(),
                  (QJsonObject{{QStringLiteral("mode"), QStringLiteral("agc")},
-                              {QStringLiteral("lowDbm"), -110.0},
+                              {QStringLiteral("lowDbm"), -109.5},
                               {QStringLiteral("highDbm"), -70.0},
                               {QStringLiteral("offsetDb"), 0}}));
-        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -110.0);
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -109.5);
         QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -60.0);
         QVERIFY(widget->coreWaterfallLevelsInUse());
 
@@ -5574,7 +6263,7 @@ private slots:
         // run, the stored levels colour the waterfall until the Core's
         // arrive, and nothing is asked.
         widget->composeWaterfallActiveThresholds(QVector<float>(64, -300.0f));
-        QCOMPARE(widget->wfActiveLowThreshold(), -110.0f);
+        QCOMPARE(widget->wfActiveLowThreshold(), -109.5f);
         QCOMPARE(widget->wfActiveHighThreshold(), -70.0f);
         settle();
         QVector<float> line(64, -125.0f);
@@ -5585,8 +6274,21 @@ private slots:
         settle();
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
 
-        // The Core's levels arrive beside a frame: the waterfall takes them,
-        // and as they move, nothing is asked either.
+        // Quantization really collapses the observed -119 dBm population
+        // under the stored window; metadata arrives before codec clamping.
+        const auto decodedRow = [](double low, double high) {
+            const QByteArray encoded = encodeDisplayCodecAbsolutePlane(
+                QVector<float>{-120.0f, -119.0f, -118.0f}, float(low), float(high));
+            QVector<float> decoded;
+            int offset = 0;
+            if (!decodeDisplayCodecAbsolutePlane(encoded, offset, 3,
+                                                  float(low), float(high), decoded)) {
+                return QVector<float>{};
+            }
+            return decoded;
+        };
+        QCOMPARE(decodedRow(-109.5, -60.0), QVector<float>(3, -109.5f));
+
         const quint32 id = quint32(asked.value(QStringLiteral("endpointId")).toDouble());
         QJsonObject context{
             {QStringLiteral("op"), QStringLiteral("context")},
@@ -5598,7 +6300,7 @@ private slots:
             {QStringLiteral("centreHz"), 14225023.4375}, {QStringLiteral("spanHz"), 24046.875},
             {QStringLiteral("wideCentreHz"), 0}, {QStringLiteral("wideSpanHz"), 0},
             {QStringLiteral("traceSamples"), 128}, {QStringLiteral("waterfallSamples"), 128},
-            {QStringLiteral("wideSamples"), 0}, {QStringLiteral("minDbm"), -110},
+            {QStringLiteral("wideSamples"), 0}, {QStringLiteral("minDbm"), -109.5},
             {QStringLiteral("maxDbm"), -60}, {QStringLiteral("fps"), 20},
             {QStringLiteral("framesPerLine"), 1},
             {QStringLiteral("wideband"), WidebandDisplayContext{}.toJson()},
@@ -5606,7 +6308,7 @@ private slots:
             {QStringLiteral("requestedPixels"), 128}, {QStringLiteral("grantedPixels"), 128},
             {QStringLiteral("limit"), QStringLiteral("none")}};
         QVERIFY(server.sendMediaControl(context, server.mediaSessionEpoch()));
-        const DisplayCodecContext codec{id, 1, -110.0f, -60.0f, 128, 128, 0};
+        const DisplayCodecContext codec{id, 1, -109.5f, -60.0f, 128, 128, 0};
         const auto deliverLevels = [&](float low, float high, quint32 sequence) {
             DisplayExtrasFrame extras;
             extras.endpointId = id;
@@ -5619,33 +6321,134 @@ private slots:
         };
         QTRY_VERIFY_WITH_TIMEOUT(
             [&] {
-                deliverLevels(-137.0f, -8.0f, 1);
-                return widget->wfActiveLowThreshold() == -137.0f;
+                deliverLevels(-131.742f, -88.2206f, 1);
+                return widget->wfActiveLowThreshold() == -131.742f;
             }(), 5000);
-        QCOMPARE(widget->wfActiveHighThreshold(), -8.0f);
+        QCOMPARE(widget->wfActiveHighThreshold(), -88.2206f);
         widget->composeWaterfallActiveThresholds(line);
-        QCOMPARE(widget->wfActiveLowThreshold(), -137.0f);
-        QCOMPARE(widget->wfActiveHighThreshold(), -8.0f);
-        deliverLevels(-135.5f, -11.0f, 2);
-        QCOMPARE(widget->wfActiveLowThreshold(), -135.5f);
+        QCOMPARE(widget->wfActiveLowThreshold(), -131.742f);
         settle();
-        deliverLevels(-180.0f, 20.0f, 3);
-        settle();
-        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
+        asked = lastControl(controls, QStringLiteral("subscribe"));
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -142.0);
+        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -60.0);
+        const QVector<float> represented = decodedRow(
+            asked.value(QStringLiteral("minDbm")).toDouble(),
+            asked.value(QStringLiteral("maxDbm")).toDouble());
+        QCOMPARE(represented.size(), 3);
+        QVERIFY(represented[0] < represented[1]);
+        QVERIFY(represented[1] < represented[2]);
+        QVERIFY(std::abs(represented[1] + 119.0f) < 0.4f);
+        QCOMPARE(widget->wfBlackLevel(), 96);
+        QCOMPARE(widget->wfColorGain(), 31);
+        QCOMPARE(widget->wfLowThreshold(), -109.5f);
+        QCOMPARE(widget->wfHighThreshold(), -70.0f);
+        QVERIFY(widget->wfAgcEnabled());
+        QVERIFY(!widget->waterfallNFAGCEnabled());
 
-        // NF-AGC asks for its own levels once; the AGC's are not kept.
+        // The renderer keeps the last valid Core pair while the new
+        // revision is pending. Old-context extras cannot replace that pair.
+        deliverLevels(-180.0f, 20.0f, 2);
+        QCOMPARE(widget->wfActiveLowThreshold(), -131.742f);
+        settle();
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
+        context.insert(QStringLiteral("revision"), asked.value(QStringLiteral("revision")));
+        context.insert(QStringLiteral("contextGeneration"), 2);
+        context.insert(QStringLiteral("minDbm"), -142.0);
+        QVERIFY(server.sendMediaControl(context, server.mediaSessionEpoch()));
+        const DisplayCodecContext freshCodec{id, 2, -142.0f, -60.0f, 128, 128, 0};
+        DisplayExtrasFrame fresh;
+        fresh.endpointId = id;
+        fresh.contextGeneration = 2;
+        fresh.encoderSequence = 3;
+        fresh.waterfallLevelsDbm = std::make_pair(-133.0f, -87.0f);
+        QTRY_VERIFY_WITH_TIMEOUT([&] {
+            media->deliver(encodeDisplayExtras(fresh, freshCodec));
+            return widget->wfActiveLowThreshold() == -133.0f;
+        }(), 5000);
+        settle();
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
+
+        // Malformed/non-finite metadata and an unrelated endpoint cannot
+        // poison the accepted cache or trigger a new transport window.
+        QByteArray invalid = encodeDisplayExtras(fresh, freshCodec);
+        invalid.replace(kDisplayExtrasHeaderBytes, 4, QByteArray::fromHex("7fc00000"));
+        media->deliver(invalid);
+        invalid = encodeDisplayExtras(fresh, freshCodec);
+        qToBigEndian<quint32>(id + 1, invalid.data() + 8);
+        media->deliver(invalid);
+        QCOMPARE(widget->wfActiveLowThreshold(), -133.0f);
+        settle();
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
+
+        // Exercise the real media decoder, row queue and RGB writer with
+        // lower samples that used to collapse to the old codec endpoint.
+        widget->setWaterfallTickerPausedForTest(true);
+        DisplayCodecFrame frame;
+        frame.context = freshCodec;
+        frame.encoderSequence = 4;
+        frame.waterfallAdvance = true;
+        frame.traceDbm = QVector<float>(128, -119.0f);
+        frame.waterfallDbm = QVector<float>(128, -119.0f);
+        for (int i = 0; i < 42; ++i) { frame.waterfallDbm[i] = -120.0f; }
+        for (int i = 86; i < 128; ++i) { frame.waterfallDbm[i] = -118.0f; }
+        DisplayCodecEncoder encoder;
+        const QByteArray rowPacket = encoder.encode(frame);
+        QVERIFY(!rowPacket.isEmpty());
+        media->deliver(rowPacket);
+        QTRY_VERIFY_WITH_TIMEOUT(widget->remoteRowQueueDepthForTest() > 0, 5000);
+        widget->tickWaterfallForTest();
+        const QVector<float> pushed = widget->lastRemoteRowPushedForTest();
+        QCOMPARE(pushed.size(), 128);
+        QVERIFY(pushed[20] < pushed[64]);
+        QVERIFY(pushed[64] < pushed[100]);
+        QVERIFY(std::abs(pushed[64] + 119.0f) < 0.4f);
+        const QImage& image = widget->liveWaterfallForTest();
+        QVERIFY(!image.isNull());
+        const QRgb centre = image.pixel(image.width() / 2,
+                                         widget->liveWaterfallWriteRowForTest());
+        QCOMPARE(centre, widget->dbmToRgbForTest(pushed[64]));
+        QVERIFY(centre != widget->dbmToRgbForTest(-109.5f));
+
+        // Core metadata can update its cache while Clarity owns the active
+        // mirror. On handoff the transport must use that cache immediately,
+        // before another row composes the active thresholds. Pre-codec Core
+        // levels cannot walk down from codec-floor feedback, so no local
+        // AGC reach cap may clip this accepted pair.
+        widget->setClarityActive(true);
+        widget->setClarityWaterfallThresholds(-95.0f, -30.0f);
+        fresh.encoderSequence = 5;
+        fresh.waterfallLevelsDbm = std::make_pair(-250.0f, -80.0f);
+        media->deliver(encodeDisplayExtras(fresh, freshCodec));
+        QCOMPARE(widget->wfActiveLowThreshold(), -95.0f);
+        widget->setClarityActive(false);
+        settle();
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 3);
+        asked = lastControl(controls, QStringLiteral("subscribe"));
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -260.0);
+        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -60.0);
+        widget->composeWaterfallActiveThresholds(line);
+        QCOMPARE(widget->wfActiveLowThreshold(), -250.0f);
+        settle();
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 3);
+        QCOMPARE(widget->wfBlackLevel(), 96);
+        QCOMPARE(widget->wfColorGain(), 31);
+        QCOMPARE(widget->waterfallAGCOffsetDb(), 0);
+
+        // NF-AGC asks for its own levels; the AGC's are not kept. The
+        // changed mode and subsequent settled window can each request once.
         widget->setWfAgcEnabled(false);
         widget->setWaterfallNFAGCEnabled(true);
         widget->setWaterfallAGCOffsetDb(6);
         settle();
-        QTRY_VERIFY(countControl(controls, QStringLiteral("subscribe")) >= 2);
+        QTRY_VERIFY(countControl(controls, QStringLiteral("subscribe")) >= 4);
         asked = lastControl(controls, QStringLiteral("subscribe"));
         const QJsonObject levels = asked.value(QStringLiteral("waterfallLevels")).toObject();
         QCOMPARE(levels.value(QStringLiteral("mode")).toString(), QStringLiteral("noiseFloorAgc"));
         QCOMPARE(levels.value(QStringLiteral("offsetDb")).toInt(), 6);
-        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -110.0);
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -109.5);
         widget->composeWaterfallActiveThresholds(line);
-        QCOMPARE(widget->wfActiveLowThreshold(), -110.0f);
+        QCOMPARE(widget->wfActiveLowThreshold(), -109.5f);
 
         // Manual levels ask for none.
         widget->setWaterfallNFAGCEnabled(false);
@@ -7376,6 +8179,384 @@ private slots:
         audio.stop();
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
+    // Wrong desktop default or missing migration must fail at the user's control.
+    void savedAudioChoicesMigrateToHighAndLossless()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        RemoteConnectionController controls(&h.client, &h.remote, {});
+        for (const auto& fixture : {std::pair{QStringLiteral("Opus"), 0},
+                                   std::pair{QStringLiteral("Lossless"), 2},
+                                   std::pair{QStringLiteral("SaveData"), 1},
+                                   std::pair{QString(), 0}}) {
+            AppSettings::instance().setValue(
+                QLatin1String(RemoteMediaController::kAudioProfileSettingKey), fixture.first);
+            RemoteMediaController media(&h.client, &h.remote, nullptr);
+            RemoteConnectionPanel panel(&controls, nullptr, &media);
+            auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+            QVERIFY(choice);
+            QCOMPARE(choice->count(), 3);
+            QCOMPARE(choice->itemText(0), QStringLiteral("High — 48 kbps"));
+            QCOMPARE(choice->itemText(1), QStringLiteral("Save data — 24 kbps"));
+            QCOMPARE(choice->itemText(2), QStringLiteral("Lossless"));
+            QCOMPARE(choice->currentIndex(), fixture.second);
+        }
+    }
+
+    // Wrong wire gating must fail even though High remains selectable on an old Core.
+    void legacyCoreKeepsHighUsableAndSaveDataUnavailable()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.client.withholdFeatureForTest(QByteArrayLiteral("audioQuality"));
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        daemon.setAudioTargetBitrate(24000);
+        QSignalSpy outbound(&h.server, &StationServer::mediaControlReceived);
+        RemoteConnectionController controls(&h.client, &h.remote, {});
+        RemoteConnectionPanel panel(&controls, nullptr, &media);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedAudioContext()
+            && media.acceptedAudioContext()->encoder, 15000);
+        auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        auto* details = panel.findChild<QLabel*>(QStringLiteral("remoteAudioDetails"));
+        QVERIFY(choice && details);
+        QCOMPARE(choice->count(), 3);
+        auto* rows = qobject_cast<QStandardItemModel*>(choice->model());
+        QVERIFY(rows);
+        QVERIFY(rows->item(0)->isEnabled());
+        QVERIFY(!rows->item(1)->isEnabled());
+        QVERIFY(rows->item(1)->toolTip().contains(QStringLiteral("Core")));
+        QCOMPARE(media.acceptedAudioContext()->encoder->targetBitrate, 24000);
+        for (const QJsonObject& control : controlsFor(outbound, QStringLiteral("audio"))) {
+            QVERIFY(!control.contains(QStringLiteral("opusBitrate")));
+        }
+        QVERIFY(details->text().contains(QStringLiteral("Requested quality: High")));
+        QVERIFY(details->text().contains(QStringLiteral("24\u00A0kbit/s target")));
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    void missingCatalogueKeepsHighUsableWithoutClaiming48()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.hideAudioCatalogue = true;
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        daemon.setAudioTargetBitrate(24000);
+        QSignalSpy outbound(&h.server, &StationServer::mediaControlReceived);
+        RemoteConnectionController controls(&h.client, &h.remote, {});
+        RemoteConnectionPanel panel(&controls, nullptr, &media);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedAudioContext()
+            && media.acceptedAudioContext()->encoder, 15000);
+        auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        QVERIFY(choice);
+        QCOMPARE(choice->count(), 3);
+        auto* rows = qobject_cast<QStandardItemModel*>(choice->model());
+        QVERIFY(rows && rows->item(0)->isEnabled());
+        QVERIFY(!rows->item(1)->isEnabled());
+        QVERIFY(rows->item(1)->toolTip().contains(QStringLiteral("Checking")));
+        QCOMPARE(media.acceptedAudioContext()->encoder->targetBitrate, 24000);
+        for (const QJsonObject& control : controlsFor(outbound, QStringLiteral("audio"))) {
+            QVERIFY(!control.contains(QStringLiteral("opusBitrate")));
+        }
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    void preAuthCatalogueCannotOfferAudioRates_data()
+    {
+        QTest::addColumn<bool>("delta");
+        QTest::newRow("object-create") << false;
+        QTest::newRow("delta") << true;
+    }
+
+    void preAuthCatalogueCannotOfferAudioRates()
+    {
+        QFETCH(bool, delta);
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        RemoteConnectionController controls(&h.client, &h.remote, {});
+        RemoteConnectionPanel panel(&controls, nullptr, &media);
+        auto* station = new Test::RewritingTransport(QStringLiteral("station"), std::nullopt);
+        auto* clientEnd = new Test::RewritingTransport(QStringLiteral("client"), std::nullopt);
+        station->hideAudioCatalogue = true;
+        h.stationLink = station;
+        station->linkTo(clientEnd);
+        h.client.startSession(clientEnd, h.server.token());
+        QSignalSpy rates(&h.client, &StationClient::audioOpusBitratesChanged);
+        const QList<MirrorUpdate> bag{{0, QByteArrayLiteral("json"), MirrorWireKind::Utf8, QStringLiteral(
+            "{\"audio\":{\"opusProfiles\":[{\"bitrate\":24000},{\"bitrate\":48000}]}}")}};
+        const auto catalogue = delta
+            ? SessionMessages::delta(QByteArrayLiteral("catalog"), bag)
+            : SessionMessages::objectCreate(QByteArrayLiteral("catalog"),
+                                            QByteArrayLiteral("StationCatalog"), bag);
+        // Active transport, before authentication: neither mirrored shape
+        // may advertise a rate to the subsequently authenticated session.
+        emit clientEnd->textReceived(SessionMessages::encode(catalogue));
+        QVERIFY2(!h.client.audioOpusBitrates(), "Pre-auth catalogue became an offered audio table");
+        QCOMPARE(rates.size(), 0);
+        h.server.acceptTransport(station);
+        QTRY_VERIFY(h.client.isHandshakeComplete());
+        QVERIFY(!h.client.audioOpusBitrates());
+        auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        QVERIFY(choice);
+        auto* rows = qobject_cast<QStandardItemModel*>(choice->model());
+        QVERIFY(rows && !rows->item(1)->isEnabled());
+        // The same session can accept its legitimate catalogue after auth;
+        // admission must not wait for some unrelated reconnect or UI action.
+        station->hideAudioCatalogue = false;
+        station->sendText(SessionMessages::encode(catalogue));
+        QTRY_VERIFY(h.client.audioOpusBitrates().has_value());
+        QCOMPARE(*h.client.audioOpusBitrates(), QList<int>({24000, 48000}));
+        QCOMPARE(rates.size(), 1);
+        QVERIFY(rows->item(1)->isEnabled());
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    void savedSaveDataIntentSurvivesAnUnsupportedCore()
+    {
+        const RestoreAudioChoice restore;
+        AppSettings::instance().setValue(
+            QLatin1String(RemoteMediaController::kAudioProfileSettingKey), QStringLiteral("SaveData"));
+        Test::RemoteAudioSessionHarness h;
+        h.client.withholdFeatureForTest(QByteArrayLiteral("audioQuality"));
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        daemon.setAudioTargetBitrate(24000);
+        QSignalSpy outbound(&h.server, &StationServer::mediaControlReceived);
+        RemoteConnectionController controls(&h.client, &h.remote, {});
+        RemoteConnectionPanel panel(&controls, nullptr, &media);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedAudioContext()
+            && media.acceptedAudioContext()->encoder, 15000);
+        auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        auto* details = panel.findChild<QLabel*>(QStringLiteral("remoteAudioDetails"));
+        QVERIFY(choice && details);
+        QCOMPARE(choice->currentIndex(), 1);
+        QVERIFY(details->text().contains(QStringLiteral("Requested quality: Save data")));
+        QCOMPARE(AppSettings::instance().value(
+            QLatin1String(RemoteMediaController::kAudioProfileSettingKey)).toString(), QStringLiteral("SaveData"));
+        for (const QJsonObject& control : controlsFor(outbound, QStringLiteral("audio"))) {
+            QVERIFY(!control.contains(QStringLiteral("opusBitrate")));
+        }
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // A quality switch must discard an incomplete uplink packet before
+    // samples for its new encoder arrive. Exercise the actual packet sender.
+    void radioSourceAckAloneStopsMacMicrophoneAndRestoresCleanClientPackets()
+    {
+        const RestoreAudioChoice restore;
+        AppSettings::instance().setValue(
+            QLatin1String(RemoteMediaController::kAudioProfileSettingKey), QStringLiteral("High"));
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.server.setRemoteTransmitAllowed(true);
+        // Keep capture empty so a resumed wall-clock fake cannot obscure
+        // the partial program packet boundary exercised below.
+        auto microphone = std::make_unique<FakeAudioBus>();
+        QVERIFY(microphone->open(AudioFormat{48000, 1, AudioFormat::Sample::Float32}));
+        h.remote.audioEngine()->setTxInputBusForTest(std::move(microphone));
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QVERIFY(h.client.remoteMicSourceAvailable());
+        media.setHoldsTransmit(true);
+        QVERIFY(media.micUplinkRunning());
+        auto* uplink = h.stationLink->peerForTest();
+        QVERIFY(uplink);
+        uplink->setHoldsOutgoing(true);
+        QVERIFY(h.client.requestMicSource(MicSource::Radio).sent);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(!h.client.remoteTransmit()->micSourceSettled());
+        const std::vector<float> samples(960, 0.25f);
+        media.pushProgramAudio(samples.data(), 959, 1, 48000);
+        uplink->setHoldsOutgoing(false);
+        QTRY_VERIFY(h.client.remoteTransmit()->micSourceSettled());
+        QVERIFY(!media.micUplinkRunning());
+        QVERIFY(media.audioStatus().microphoneFormat.contains(QStringLiteral("Radio microphone at the Core")));
+        QVERIFY(!media.audioStatus().microphoneFormat.contains(QStringLiteral("Opus")));
+        const quint64 stopped = media.micPacketsSent();
+        media.pushProgramAudio(samples.data(), 960, 1, 48000);
+        media.setMicKeyDown(true);
+        media.setMicKeyDown(false);
+        QCOMPARE(media.micPacketsSent(), stopped);
+        QVERIFY(h.client.requestMicSource(MicSource::Pc).sent);
+        QTRY_VERIFY(h.client.remoteTransmit()->micSourceSettled());
+        QVERIFY(media.micUplinkRunning());
+        QCOMPARE(media.micPacketsSent(), stopped);
+        media.pushProgramAudio(samples.data(), 1, 1, 48000);
+        media.setMicKeyDown(true);
+        media.setMicKeyDown(false);
+        QCOMPARE(media.micPacketsSent(), stopped);
+        media.pushProgramAudio(samples.data(), 959, 1, 48000);
+        media.setMicKeyDown(true);
+        media.setMicKeyDown(false);
+        QCOMPARE(media.micPacketsSent(), stopped + 1);
+        media.setHoldsTransmit(false);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    void microphoneQualitySwitchDiscardsPartialPackets()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        attachRemoteMicrophone(h, 0.0f, 1000.0);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        RemoteConnectionController controls(&h.client, &h.remote, {});
+        RemoteConnectionPanel panel(&controls, nullptr, &media);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        media.setHoldsTransmit(true);
+        QVERIFY(media.micUplinkRunning());
+        auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        QVERIFY(choice);
+        const std::vector<float> samples(960, 0.25f);
+        for (const int index : {1, 0}) {
+            media.pushProgramAudio(samples.data(), 959, 1, 48000);
+            choice->setCurrentIndex(index);
+            const quint64 before = media.micPacketsSent();
+            const int target = index == 1 ? 24 : 48;
+            QVERIFY(media.audioStatus().microphoneFormat.contains(
+                QStringLiteral("%1\u00A0kbit/s target").arg(target)));
+            media.pushProgramAudio(samples.data(), 1, 1, 48000);
+            // These public uplink state changes synchronously drain available
+            // samples while holdsTransmit keeps the microphone line active.
+            media.setMicKeyDown(true);
+            media.setMicKeyDown(false);
+            QCOMPARE(media.micPacketsSent(), before);
+            media.pushProgramAudio(samples.data(), 959, 1, 48000);
+            media.setMicKeyDown(true);
+            media.setMicKeyDown(false);
+            QCOMPARE(media.micPacketsSent(), before + 1);
+        }
+        media.setHoldsTransmit(false);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // A missing per-device request, stale headphone encoder, or applying the
+    // listening rate to receiver streams must fail the real Core's answers.
+    void qualityChangesListeningAndKeepsReceiverAppsAt48()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        const auto routes = qScopeGuard([&h] { h.resetOutputRoutes(); });
+        h.attachRemoteHeadphones();
+        h.station.sliceById(h.sliceB)->setOutputRoute(SliceModel::OutputRoute::Headphones);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        daemon.setAudioTargetBitrate(24000);
+        QSignalSpy outbound(&h.server, &StationServer::mediaControlReceived);
+        QSignalSpy inbound(&h.client, &StationClient::mediaControlReceived);
+        RemoteConnectionController controls(&h.client, &h.remote, {});
+        RemoteConnectionPanel panel(&controls, nullptr, &media);
+        Test::CollectingReceiverSink sink;
+        media.requestReceiverAudio(h.sliceA, &sink);
+        const auto release = qScopeGuard([&] { media.releaseReceiverAudio(h.sliceA, &sink); });
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        QVERIFY(choice);
+        const auto heardHeadphones = [&]() -> std::optional<RemoteAudioContextMessage> {
+            const auto all = controlsFor(inbound, QStringLiteral("headphones-audio-context"));
+            return all.isEmpty() ? std::nullopt : decodeHeadphonesAudioContext(all.constLast());
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedAudioContext()
+            && media.acceptedAudioContext()->encoder
+            && media.acceptedAudioContext()->encoder->targetBitrate == 48000, 15000);
+        QTRY_VERIFY_WITH_TIMEOUT(heardHeadphones() && heardHeadphones()->encoder
+            && heardHeadphones()->encoder->targetBitrate == 48000, 10000);
+        const QString captureDirectory = qEnvironmentVariable("NEREUS_AUDIO_CAPTURE_DIR");
+        if (!captureDirectory.isEmpty()) {
+            QDir().mkpath(captureDirectory);
+            panel.show();
+            QCoreApplication::processEvents();
+            QVERIFY(panel.grab().save(captureDirectory + QStringLiteral("/high.png")));
+        }
+        const quint32 firstHeadphoneGeneration = heardHeadphones()->generation;
+        const quint32 firstReceiveGeneration = media.acceptedAudioContext()->generation;
+        QCOMPARE(choice->count(), 3);
+        choice->setCurrentIndex(1);
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedAudioContext()->encoder
+            && media.acceptedAudioContext()->encoder->targetBitrate == 24000, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(heardHeadphones() && heardHeadphones()->encoder
+            && heardHeadphones()->encoder->targetBitrate == 24000, 10000);
+        QVERIFY(heardHeadphones()->generation != firstHeadphoneGeneration);
+        QVERIFY(media.acceptedAudioContext()->generation != firstReceiveGeneration);
+        QCOMPARE(controlsFor(outbound, QStringLiteral("audio")).constLast()
+            .value(QStringLiteral("opusBitrate")).toInt(), 24000);
+        QTRY_VERIFY_WITH_TIMEOUT(!media.audioStatus().receivers.isEmpty()
+            && media.audioStatus().receivers.constFirst().encoder, 10000);
+        QCOMPARE(media.audioStatus().receivers.constFirst().encoder->targetBitrate, 48000);
+        if (!captureDirectory.isEmpty()) {
+            QCoreApplication::processEvents();
+            QVERIFY(panel.grab().save(captureDirectory + QStringLiteral("/save-data.png")));
+        }
+        QCOMPARE(AppSettings::instance().value(
+            QLatin1String(RemoteMediaController::kAudioProfileSettingKey)).toString(),
+            QStringLiteral("SaveData"));
+        // Muting the main stream leaves headphones running at the selected rate.
+        h.remote.audioEngine()->setMasterMuted(true);
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedAudioContext() && !media.acceptedAudioContext()->enabled, 5000);
+        const quint32 headphoneGenerationAt24 = heardHeadphones()->generation;
+        const qsizetype headphoneRequests = controlsFor(outbound, QStringLiteral("headphones-audio")).size();
+        // An app/phone main-only request must also update the existing headset.
+        const quint32 mainRevision = media.acceptedAudioContext()->revision;
+        QJsonObject mainOnly{{QStringLiteral("op"), QStringLiteral("audio")},
+            {QStringLiteral("connectionId"), media.acceptedAudioContext()->connectionId},
+            {QStringLiteral("revision"), double(mainRevision + 1)},
+            {QStringLiteral("enabled"), false}, {QStringLiteral("profile"), QStringLiteral("opus")},
+            {QStringLiteral("opusBitrate"), 48000}};
+        QVERIFY(h.client.sendMediaControl(mainOnly, h.client.sessionEpoch()));
+        QTRY_VERIFY_WITH_TIMEOUT(heardHeadphones()->encoder
+            && heardHeadphones()->encoder->targetBitrate == 48000, 10000);
+        QVERIFY(heardHeadphones()->generation != headphoneGenerationAt24);
+        QCOMPARE(controlsFor(outbound, QStringLiteral("headphones-audio")).size(), headphoneRequests);
+        const quint32 unchangedHeadphoneGeneration = heardHeadphones()->generation;
+        mainOnly.insert(QStringLiteral("revision"), double(mainRevision + 2));
+        QVERIFY(h.client.sendMediaControl(mainOnly, h.client.sessionEpoch()));
+        QTRY_VERIFY_WITH_TIMEOUT(controlsFor(inbound, QStringLiteral("audio-context")).constLast()
+            .value(QStringLiteral("revision")).toInteger() == mainRevision + 2, 5000);
+        QCOMPARE(heardHeadphones()->generation, unchangedHeadphoneGeneration);
+
+        // The saved Save data intent replays on a new session, including while muted.
+        h.client.disconnectFromStation(QStringLiteral("test saved quality replay"));
+        QTRY_VERIFY_WITH_TIMEOUT(!h.client.isHandshakeComplete(), 5000);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.audioStreamBitrate() == 24000 && heardHeadphones()->encoder
+            && heardHeadphones()->encoder->targetBitrate == 24000, 10000);
+        QCOMPARE(choice->currentIndex(), 1);
+        QVERIFY(media.audioStatus().headphonesFormat
+            && media.audioStatus().headphonesFormat->contains(QStringLiteral("24\u00A0kbit/s target")));
+        if (!captureDirectory.isEmpty()) {
+            QCoreApplication::processEvents();
+            QVERIFY(panel.grab().save(captureDirectory + QStringLiteral("/save-data-headphones-only.png")));
+        }
+        choice->setCurrentIndex(0);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.audioStreamBitrate() == 48000 && heardHeadphones()->encoder
+            && heardHeadphones()->encoder->targetBitrate == 48000, 10000);
+        QCOMPARE(controlsFor(outbound, QStringLiteral("audio")).constLast()
+            .value(QStringLiteral("enabled")).toBool(), false);
+        h.remote.audioEngine()->setMasterMuted(false);
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedAudioContext()->encoder
+            && media.acceptedAudioContext()->encoder->targetBitrate == 48000, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(heardHeadphones() && heardHeadphones()->encoder
+            && heardHeadphones()->encoder->targetBitrate == 48000, 10000);
+        QCOMPARE(media.audioStatus().receivers.constFirst().encoder->targetBitrate, 48000);
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // R-R3-23: the app's link trial. Lossless is chosen and the Core
     // accepts it, but the network cannot carry it: about 5 s in, the
     // trial returns this computer to Opus with the plain reason, and Opus
@@ -7453,7 +8634,7 @@ private slots:
         QVERIFY(!status.losslessEncoder.has_value());
         QCOMPARE(status.chosenProfile, RemoteAudioProfile::Lossless);
         QVERIFY(formatRemoteAudioDetails(status, remoteMedia.audioTelemetry()).contains(
-            QStringLiteral("Audio quality: Opus\nThe network could not carry lossless audio; "
+            QStringLiteral("Requested quality: Lossless\nThe network could not carry lossless audio; "
                            "staying on Opus.\n")));
         QCOMPARE(remoteMedia.audioProfileChoice(), RemoteAudioProfile::Lossless);
         QCOMPARE(AppSettings::instance()
@@ -7465,6 +8646,30 @@ private slots:
         QTest::qWait(1500);
         QCOMPARE(links.constLast()->dropped, droppedAtOpus);
         QCOMPARE(errors.count(), 1);
+
+        // The shared Settings/panel control deliberately reselects the saved
+        // Lossless item to retry the actual link trial, even under ControlsLock.
+        // Wheel protection must not change this computer-wide preference path.
+        RemoteAudioWidget qualityWidget(&remoteMedia, nullptr);
+        qualityWidget.show();
+        auto* quality = qualityWidget.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
+        QVERIFY(quality);
+        const bool previousLock = ControlsLock::isLocked();
+        const auto restoreLock = qScopeGuard([previousLock] { ControlsLock::setLocked(previousLock); });
+        for (const bool locked : {false, true}) {
+            QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioStatus().qualityReason,
+                std::optional<RemoteAudioQualityReason>(RemoteAudioQualityReason::NetworkTooSlow), 12000);
+            ControlsLock::setLocked(locked);
+            QCOMPARE(quality->currentData().toInt(), int(RemoteAudioQualityChoice::Lossless));
+            const int requestsBeforeRetry = int(requestedProfiles(coreControls).size());
+            QTest::mouseClick(quality, Qt::LeftButton);
+            QTRY_VERIFY(quality->view()->isVisible());
+            QTest::keyClick(quality->view(), Qt::Key_Return);
+            QTRY_VERIFY_WITH_TIMEOUT(requestedProfiles(coreControls).size() > requestsBeforeRetry, 5000);
+            QCOMPARE(requestedProfiles(coreControls).at(requestsBeforeRetry), QStringLiteral("lossless"));
+            QVERIFY(!remoteMedia.audioStatus().qualityReason.has_value());
+            QCOMPARE(remoteMedia.audioQualityChoice(), RemoteAudioQualityChoice::Lossless);
+        }
 
         // The next connection replays the stored choice.
         const int controlsBefore = int(requestedProfiles(coreControls).size());
@@ -7703,13 +8908,13 @@ private slots:
         auto* choice = panel.findChild<QComboBox*>(QStringLiteral("remoteAudioQuality"));
         auto* details = panel.findChild<QLabel*>(QStringLiteral("remoteAudioDetails"));
         QVERIFY(choice && details);
-        QCOMPARE(choice->count(), 2);
-        QCOMPARE(choice->itemText(0), QStringLiteral("Opus"));
-        QCOMPARE(choice->itemText(1), QStringLiteral("Lossless"));
-        QCOMPARE(choice->currentText(), QStringLiteral("Opus"));
-        QVERIFY(details->text().contains(QStringLiteral("Audio quality: Opus\nAudio format: Opus")));
+        QCOMPARE(choice->count(), 3);
+        QCOMPARE(choice->itemText(0), QStringLiteral("High — 48 kbps"));
+        QCOMPARE(choice->itemText(2), QStringLiteral("Lossless"));
+        QCOMPARE(choice->currentText(), QStringLiteral("High — 48 kbps"));
+        QVERIFY(details->text().contains(QStringLiteral("Current receive format: Opus")));
 
-        choice->setCurrentIndex(1);
+        choice->setCurrentIndex(2);
         QCOMPARE(remoteMedia.audioProfileChoice(), RemoteAudioProfile::Lossless);
         QCOMPARE(AppSettings::instance()
                      .value(QLatin1String(RemoteMediaController::kAudioProfileSettingKey))
@@ -7723,7 +8928,7 @@ private slots:
         QCOMPARE(remoteMedia.audioStatus().runningProfile,
                  std::optional<RemoteAudioProfile>(RemoteAudioProfile::Opus));
         QTRY_VERIFY(details->text().contains(QStringLiteral(
-            "Audio quality: Opus\nThis Core does not allow lossless audio.\n")));
+            "Requested quality: Lossless\nThis Core does not allow lossless audio.\n")));
         // A refusal is an answer, not a fault: no alert, no trial.
         QCOMPARE(errors.count(), 0);
         QVERIFY(!remoteMedia.findChild<QTimer*>(
@@ -8180,6 +9385,14 @@ const QStringList kAudioFunctions{
     QStringLiteral("lateFaultFromAnEndedSessionChangesNothing"),
     QStringLiteral("minorSevenCorePlaysWithoutCodecDetail"),
     QStringLiteral("coreReasonsShowAsCoreCouldNotStartAndRadioOffline"),
+    QStringLiteral("savedAudioChoicesMigrateToHighAndLossless"),
+    QStringLiteral("legacyCoreKeepsHighUsableAndSaveDataUnavailable"),
+    QStringLiteral("qualityChangesListeningAndKeepsReceiverAppsAt48"),
+    QStringLiteral("missingCatalogueKeepsHighUsableWithoutClaiming48"),
+    QStringLiteral("preAuthCatalogueCannotOfferAudioRates"),
+    QStringLiteral("savedSaveDataIntentSurvivesAnUnsupportedCore"),
+    QStringLiteral("microphoneQualitySwitchDiscardsPartialPackets"),
+    QStringLiteral("radioSourceAckAloneStopsMacMicrophoneAndRestoresCleanClientPackets"),
     QStringLiteral("losslessFallsBackToOpusWhenTheNetworkCannotCarryIt"),
     QStringLiteral("retiredReceiverStreamStopsWithItsReasonAndDoesNotLoop"),
     QStringLiteral("losslessTrialCountsEveryLosslessStreamAndFallsBackOnce"),

@@ -2,8 +2,9 @@
 
 Cross-platform C++20 / Qt6 SDR console for every OpenHPSDR Protocol 1 and 2
 radio (ANAN line, Hermes Lite 2): multiple slices and panadapters, and a
-remote Core with desktop and phone clients. The client does ALL signal
-processing; the radio is an ADC/DAC with network transport.
+remote Core with desktop and phone clients. The Core owns the radio and
+performs baseband DSP; the GUI presents controls and processed station data.
+The radio is an ADC/DAC with network transport.
 
 ## Building on OpenHPSDR
 
@@ -92,6 +93,20 @@ Full conventions in [CONTRIBUTING.md](CONTRIBUTING.md). Non-negotiables:
 * Cross-thread DSP parameters are `std::atomic`; never hold a mutex in the
   audio callback.
 * Don't remove code you didn't add.
+
+## Versioning
+
+Product releases use CalVer `YYYY.M.counter`: full year, unpadded month,
+counter starting at zero and increasing within that month. Tags are
+`vYYYY.M.counter`, with `-rcN` for release candidates; candidates do not
+consume a final-release counter. `CMakeLists.txt` owns the product version.
+Use `scripts/release-version.py next`, `last`, and `check` rather than
+calculating from tag sort order. The iOS client uses independent `ios-v`
+tags/counters and does not invoke the desktop release workflow.
+
+Product version, settings schema, driver bundle and station wire protocol
+versions are independent. Keep the PGXL discovery beacon at `0.5.2`; never
+substitute the product calendar version into that protocol field.
 
 ## Settings
 

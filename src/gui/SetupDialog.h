@@ -22,6 +22,7 @@
 #include <QSet>
 
 #include "gui/RemoteReceiverAudioNote.h"
+#include "gui/setup/CoreSettingsContext.h"
 
 #include <functional>
 #include <vector>
@@ -42,6 +43,10 @@ class CatTciServerPage;
 class AudioVaxPage;
 class SettingsProxy;
 class RemoteStationPage;
+class CoreTargetStore;
+class CoresSetupPage;
+class RemoteMediaController;
+class RemoteTelemetryController;
 
 // R-R3-21 / R-R3-23: what a Setup page's settings belong to. Every page
 // registration names one; registerPage() has no default, so a new page
@@ -80,6 +85,14 @@ public:
 
     // Navigate to a page by its label text (e.g. "AGC/ALC").
     void selectPage(const QString& label);
+    /// Canonical store must outlive the dialog and all its pages. Binding is
+    /// lazy, so a host can configure it before Your Cores is first visited.
+    void setCoreTargets(CoreTargetStore* store);
+    void setCoreSettingsContext(const CoreSettingsContext& context);
+    void setCoresPageBinder(std::function<void(CoresSetupPage*)> binder);
+    void inspectCoreTarget(const QString& id);
+    void setCoreAudioSources(RemoteMediaController* media, RemoteTelemetryController* telemetry);
+    void setCoreAudioContext(const CoreSettingsContext& context);
     // The Remote Access page is lazy; apply the current runtime binder now or when built.
     void setRemoteStationPageBinder(std::function<void(RemoteStationPage*)> binder);
     // Hosted desktop: receive controls follow this window's owned selection.
@@ -144,6 +157,9 @@ public:
 
 signals:
     void connectionsRequested();
+    /// Present this window's connection details; never initiate a connection.
+    void coreConnectionDetailsRequested();
+    void coreDiagnosticsRequested();
     // Phase 3M-3a-ii Batch 6 (Task 3): forwarded from CfcSetupPage's
     // [Configure CFC bands…] button.  MainWindow connects this to the
     // TxApplet::requestOpenCfcDialog() slot so the modeless TxCfcDialog
@@ -382,6 +398,13 @@ private:
     QSet<QWidget*>  m_rebuildWaitsFor;
 
     std::vector<PageEntry> m_pages;
+    CoreTargetStore* m_coreTargets = nullptr;
+    CoreSettingsContext m_coreSettingsContext;
+    QString m_inspectedCoreTarget;
+    std::function<void(CoresSetupPage*)> m_coresPageBinder;
+    QPointer<RemoteMediaController> m_coreAudioMedia;
+    QPointer<RemoteTelemetryController> m_coreAudioTelemetry;
+    CoreSettingsContext m_coreAudioContext;
     std::function<void(RemoteStationPage*)> m_remoteStationPageBinder;
 
     // Phase 3J-1 bench fix (2026-05-11): store the TciServer page reference

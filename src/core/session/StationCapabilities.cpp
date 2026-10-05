@@ -434,6 +434,9 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
         if (diversityPatternVersion > 0) {
             updates.append(intEntry("diversityPatternVersion", diversityPatternVersion));
         }
+        if (diversityControlVersion > 0) {
+            updates.append(intEntry("diversityControlVersion", diversityControlVersion));
+        }
         // Phone wire batch: radio's logCategoryList, only for a peer that
         // declared logCategoryList.
         if (logCategoryListVersion > 0) {
@@ -828,6 +831,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                    || u.name == "vaxVersion"
                    || u.name == "txEqCurveVersion"
                    || u.name == "band2mVersion"
+                   || u.name == "diversityControlVersion"
                    || u.name == "diversityPatternVersion"
                    || u.name == "logCategoryListVersion"
                    || u.name == "radioModelsVersion"
@@ -865,6 +869,8 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                     caps.txEqCurveVersion = version;
                 } else if (u.name == "band2mVersion") {
                     caps.band2mVersion = version >= 1 ? 1 : 0;
+                } else if (u.name == "diversityControlVersion") {
+                    caps.diversityControlVersion = version;
                 } else if (u.name == "diversityPatternVersion") {
                     caps.diversityPatternVersion = version;
                 } else if (u.name == "logCategoryListVersion") {

@@ -431,6 +431,10 @@ class TestDspControlTransmit : public QObject {
         if (rig.tx) {
             rig.tx->setConnection(nullptr);
         }
+        // Retire PureSignal's borrowed channel before WDSP destroys it.
+        if (PureSignal* pureSignal = model.pureSignal()) {
+            pureSignal->setTxChannel(nullptr);
+        }
         model.injectTxChannelForTest(nullptr);
         if (rig.engine) {
             rig.engine->shutdown();

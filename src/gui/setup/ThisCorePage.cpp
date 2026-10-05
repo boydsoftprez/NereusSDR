@@ -72,6 +72,7 @@ ThisCorePage::ThisCorePage(RadioModel* model, QWidget* parent)
     , m_radioModel(model)
 {
     QGroupBox* section = addSection(tr("Change radio"));
+    m_radioSection = section;
     auto* layout = qobject_cast<QVBoxLayout*>(section->layout());
     if (layout == nullptr) {
         layout = new QVBoxLayout(section);
@@ -144,6 +145,7 @@ ThisCorePage::ThisCorePage(RadioModel* model, QWidget* parent)
     // 12 item 8): who is connected to the Core now, then the paired
     // devices, from the Core's connectedDevices and devices objects.
     QGroupBox* connectedSection = addSection(tr("Connected now"));
+    m_devicesSections.append(connectedSection);
     auto* connectedLayout = qobject_cast<QVBoxLayout*>(connectedSection->layout());
     if (connectedLayout == nullptr) {
         connectedLayout = new QVBoxLayout(connectedSection);
@@ -156,6 +158,7 @@ ThisCorePage::ThisCorePage(RadioModel* model, QWidget* parent)
     // devices list): the Core's paired devices, each with Revoke, and Add
     // a device, which opens the Core's pairing window and shows its code.
     QGroupBox* pairedSection = addSection(tr("Paired devices"));
+    m_devicesSections.append(pairedSection);
     auto* pairedLayout = qobject_cast<QVBoxLayout*>(pairedSection->layout());
     if (pairedLayout == nullptr) {
         pairedLayout = new QVBoxLayout(pairedSection);
@@ -179,6 +182,7 @@ ThisCorePage::ThisCorePage(RadioModel* model, QWidget* parent)
     pairedLayout->addWidget(m_addDevice, 0, Qt::AlignLeft);
 
     QGroupBox* identitySection = addSection(tr("Core identity"));
+    m_devicesSections.append(identitySection);
     auto* identityLayout = qobject_cast<QVBoxLayout*>(identitySection->layout());
     if (identityLayout == nullptr) {
         identityLayout = new QVBoxLayout(identitySection);

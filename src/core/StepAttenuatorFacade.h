@@ -61,6 +61,7 @@
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include <QByteArray>
 #include <QHash>
 #include <QObject>
@@ -75,7 +76,7 @@ namespace NereusSDR {
 class RadioModel;
 class StepAttenuatorController;
 
-class StepAttenuatorFacade final : public QObject {
+class NEREUS_CORE_EXPORT StepAttenuatorFacade final : public QObject {
     Q_OBJECT
     // Settable.
     Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY enabledChanged)

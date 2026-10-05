@@ -1,0 +1,13 @@
+libsodium, vendored into NereusSDR for iOS
+
+Tag:      1.0.22-RELEASE
+Archive:  https://github.com/jedisct1/libsodium/releases/download/1.0.22-RELEASE/libsodium-1.0.22.tar.gz
+SHA-256:  adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349
+Licence:  ISC (see LICENSE)
+Files:    310, copied unchanged from the archive
+          and src/libsodium/include/sodium/version.h (a copy of
+          builds/msvc/version.h) and src/libsodium/include/module.modulemap,
+          written by the script
+
+Written by ios/scripts/vendor-sources.sh libsodium. Do not edit
+these files; change the pin in that script and run it again.

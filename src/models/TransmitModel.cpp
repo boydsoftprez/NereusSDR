@@ -1,3 +1,5 @@
+// 2026-10-02 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+// merge native EQ/CFC transactions with latest Core/remote profile ownership.
 // =================================================================
 // src/models/TransmitModel.cpp  (NereusSDR)
 // =================================================================
@@ -440,6 +442,7 @@ TransmitModel::TransmitModel(QObject* parent)
 
     // R-R3-49 (transmitSettingsVersion 15): cfcProfile follows every CFC
     // value, once a profile restore has put them all back.
+    qRegisterMetaType<CfcEditProfile>();
     refreshCfcProfile();
     for (auto signal : {&TransmitModel::cfcParaEqDataChanged,
                         &TransmitModel::cfcEqFreqJsonChanged,
@@ -3553,6 +3556,7 @@ void TransmitModel::setTxEqPreamp(int dB)
     m_txEqPreamp = clamped;
     persistOne(QStringLiteral("TXEQPreamp"), QString::number(m_txEqPreamp));
     emit txEqPreampChanged(clamped);
+    publishTxEqProfile();
 }
 
 void TransmitModel::setTxEqBand(int index, int dB)
@@ -3565,6 +3569,7 @@ void TransmitModel::setTxEqBand(int index, int dB)
     persistOne(QStringLiteral("TXEQ%1").arg(index + 1), QString::number(clamped));
     emit txEqBandChanged(index, clamped);
     emit txEqBandsJsonChanged(txEqBandsJson());  // R-R3-49 (parity Task 4)
+    publishTxEqProfile();
 }
 
 void TransmitModel::setTxEqFreq(int index, int hz)
@@ -3577,6 +3582,7 @@ void TransmitModel::setTxEqFreq(int index, int hz)
     persistOne(QStringLiteral("TxEqFreq%1").arg(index + 1), QString::number(clamped));
     emit txEqFreqChanged(index, clamped);
     emit txEqFreqsJsonChanged(txEqFreqsJson());  // R-R3-49 (parity Task 4)
+    publishTxEqProfile();
 }
 
 void TransmitModel::setTxLevelerOn(bool on)
@@ -3762,6 +3768,10 @@ void TransmitModel::setCfcCompressionJson(const QString& json)
     if (!tenValuesFromJson(json, values)) { return; }
     if (!cfcProfileRestoreInProgress() && !m_projectingPairedCfc
         && updatePairedCfcArray(CfcField::Compression, values)) { return; }
+    // Coalesce only real fallback changes; an ordinary array edit is not an
+    // authoritative restore and must not invalidate a cached exact profile.
+    ++m_cfcProfileUpdateDepth;
+    const auto batch = qScopeGuard([this] { endCfcProfileUpdate(); });
     for (int i = 0; i < 10; ++i) { setCfcCompression(i, values[static_cast<std::size_t>(i)]); }
 }
 
@@ -3771,6 +3781,10 @@ void TransmitModel::setCfcEqFreqJson(const QString& json)
     if (!tenValuesFromJson(json, values)) { return; }
     if (!cfcProfileRestoreInProgress() && !m_projectingPairedCfc
         && updatePairedCfcArray(CfcField::Frequency, values)) { return; }
+    // Coalesce only real fallback changes; an ordinary array edit is not an
+    // authoritative restore and must not invalidate a cached exact profile.
+    ++m_cfcProfileUpdateDepth;
+    const auto batch = qScopeGuard([this] { endCfcProfileUpdate(); });
     for (int i = 0; i < 10; ++i) { setCfcEqFreq(i, values[static_cast<std::size_t>(i)]); }
 }
 
@@ -3780,13 +3794,47 @@ void TransmitModel::setCfcPostEqBandGainJson(const QString& json)
     if (!tenValuesFromJson(json, values)) { return; }
     if (!cfcProfileRestoreInProgress() && !m_projectingPairedCfc
         && updatePairedCfcArray(CfcField::PostEqBandGain, values)) { return; }
+    // Coalesce only real fallback changes; an ordinary array edit is not an
+    // authoritative restore and must not invalidate a cached exact profile.
+    ++m_cfcProfileUpdateDepth;
+    const auto batch = qScopeGuard([this] { endCfcProfileUpdate(); });
     for (int i = 0; i < 10; ++i) { setCfcPostEqBandGain(i, values[static_cast<std::size_t>(i)]); }
 }
+
+namespace {
+CfcProfile::Profile pairedCfcEditState(const CfcEditProfile& state)
+{
+    CfcProfile::Profile p;
+    const auto vector = [](const QVector<double>& v) { return std::vector<double>(v.begin(), v.end()); };
+    p.f = vector(state.compression.frequenciesHz); p.postF = vector(state.postEq.frequenciesHz);
+    p.g = vector(state.compression.gainsDb); p.e = vector(state.postEq.gainsDb);
+    p.qg = vector(state.compression.q); p.qe = vector(state.postEq.q);
+    p.minHz = state.compression.frequencyMinHz; p.maxHz = state.compression.frequencyMaxHz;
+    p.postMinHz = state.postEq.frequencyMinHz; p.postMaxHz = state.postEq.frequencyMaxHz;
+    p.precompDb = state.compression.globalGainDb; p.postEqGainDb = state.postEq.globalGainDb;
+    p.compParametric = state.compression.useQ; p.eqParametric = state.postEq.useQ;
+    return p;
+}
+CfcEditProfile nativeCfcEditState(const CfcProfile::Profile& p)
+{
+    CfcEditProfile state;
+    const auto vector = [](const std::vector<double>& v) { return QVector<double>(v.begin(), v.end()); };
+    state.compression.frequenciesHz = vector(p.f); state.postEq.frequenciesHz = vector(p.postF);
+    state.compression.gainsDb = vector(p.g); state.postEq.gainsDb = vector(p.e);
+    state.compression.q = vector(p.qg); state.postEq.q = vector(p.qe);
+    state.compression.frequencyMinHz = p.minHz; state.compression.frequencyMaxHz = p.maxHz;
+    state.postEq.frequencyMinHz = p.postMinHz; state.postEq.frequencyMaxHz = p.postMaxHz;
+    state.compression.globalGainDb = p.precompDb; state.postEq.globalGainDb = p.postEqGainDb;
+    state.compression.useQ = p.compParametric; state.postEq.useQ = p.eqParametric;
+    return state;
+}
+} // namespace
 
 bool TransmitModel::updatePairedCfcArray(CfcField field, const std::array<int, 10>& values)
 {
     CfcProfile::Profile p;
     if (!CfcProfile::decode(m_cfcParaEqData, p)) { return false; }
+    if (m_activeCfcProfile) { p = pairedCfcEditState(*m_activeCfcProfile); }
     if (p.f.size() != 10) { return true; }
     // The curve already holds these values (rounded, as its ten-band
     // mirrors read them): no change to the curve, which is kept as it is.
@@ -3822,7 +3870,10 @@ bool TransmitModel::updatePairedCfcArray(CfcField field, const std::array<int, 1
         p.postMaxHz = p.postF.back();
     }
     const QString encoded = CfcProfile::encode(p);
-    if (!encoded.isEmpty()) { setCfcParaEqData(encoded); }
+    if (!encoded.isEmpty()) {
+        if (m_activeCfcProfile) { setCfcProfile(nativeCfcEditState(p)); }
+        else { setCfcParaEqData(encoded); }
+    }
     return true;
 }
 
@@ -3830,6 +3881,7 @@ bool TransmitModel::updatePairedCfc(CfcField field, int index, double value)
 {
     CfcProfile::Profile p;
     if (!CfcProfile::decode(m_cfcParaEqData, p)) { return false; }
+    if (m_activeCfcProfile) { p = pairedCfcEditState(*m_activeCfcProfile); }
     // As updatePairedCfcArray: a value the curve already holds (rounded,
     // as its integer mirror reads it) is no change to the curve, which is
     // kept. False hands the write to the setter's own mirror path and its
@@ -3859,7 +3911,10 @@ bool TransmitModel::updatePairedCfc(CfcField field, int index, double value)
         else if (field == CfcField::PostEqBandGain) { p.e[k] = value; }
     }
     const QString encoded = CfcProfile::encode(p);
-    if (!encoded.isEmpty()) { setCfcParaEqData(encoded); }
+    if (!encoded.isEmpty()) {
+        if (m_activeCfcProfile) { setCfcProfile(nativeCfcEditState(p)); }
+        else { setCfcParaEqData(encoded); }
+    }
     return true;
 }
 
@@ -3982,6 +4037,7 @@ void TransmitModel::setCfcPrecompDb(int dB)
     m_cfcPrecompDb = clamped;
     persistOne(QStringLiteral("CFCPreComp"), QString::number(clamped));
     emit cfcPrecompDbChanged(clamped);
+    if (!m_projectingPairedCfc) { notifyCfcProfileChange(); }
 }
 
 void TransmitModel::setCfcPostEqGainDb(int dB)
@@ -3996,6 +4052,7 @@ void TransmitModel::setCfcPostEqGainDb(int dB)
     m_cfcPostEqGainDb = clamped;
     persistOne(QStringLiteral("CFCPostEqGain"), QString::number(clamped));
     emit cfcPostEqGainDbChanged(clamped);
+    if (!m_projectingPairedCfc) { notifyCfcProfileChange(); }
 }
 
 // ── CFC per-band arrays ───────────────────────────────────────────────────
@@ -4032,6 +4089,7 @@ void TransmitModel::setCfcEqFreq(int index, int hz)
     persistOne(QStringLiteral("CFCEqFreq%1").arg(index), QString::number(clamped));
     emit cfcEqFreqChanged(index, clamped);
     emit cfcEqFreqJsonChanged(cfcEqFreqJson());  // R-R3-49 (parity Task 4)
+    if (!m_projectingPairedCfc) { notifyCfcProfileChange(); }
 }
 
 void TransmitModel::setCfcCompression(int index, int dB)
@@ -4050,6 +4108,7 @@ void TransmitModel::setCfcCompression(int index, int dB)
     persistOne(QStringLiteral("CFCPreComp%1").arg(index), QString::number(clamped));
     emit cfcCompressionChanged(index, clamped);
     emit cfcCompressionJsonChanged(cfcCompressionJson());  // R-R3-49 (parity Task 4)
+    if (!m_projectingPairedCfc) { notifyCfcProfileChange(); }
 }
 
 void TransmitModel::setCfcPostEqBandGain(int index, int dB)
@@ -4066,11 +4125,14 @@ void TransmitModel::setCfcPostEqBandGain(int index, int dB)
     persistOne(QStringLiteral("CFCPostEqGain%1").arg(index), QString::number(clamped));
     emit cfcPostEqBandGainChanged(index, clamped);
     emit cfcPostEqBandGainJsonChanged(cfcPostEqBandGainJson());  // R-R3-49 (parity Task 4)
+    if (!m_projectingPairedCfc) { notifyCfcProfileChange(); }
 }
 
 void TransmitModel::setCfcParaEqData(const QString& data)
 {
-    if (data == m_cfcParaEqData) { return; }
+    const bool cacheChanged = m_activeCfcProfile.has_value();
+    m_activeCfcProfile.reset();
+    if (data == m_cfcParaEqData) { if (cacheChanged) { notifyCfcProfileChange(); } return; }
     const bool nestedProjection = m_projectingPairedCfc;
     // From Thetis database.cs:4768 [v2.10.3.13]: dr["CFCParaEQData"] = "".
     // Stored as opaque string for forward-compat round-trip with imported
@@ -4103,7 +4165,7 @@ void TransmitModel::setCfcParaEqData(const QString& data)
     }
     // Nested writes notify only when the outer projection has released its
     // guard, so DSP and mirrors see the final curve once.
-    if (!nestedProjection) { emit cfcParaEqDataChanged(m_cfcParaEqData); }
+    if (!nestedProjection) { emit cfcParaEqDataChanged(m_cfcParaEqData); notifyCfcProfileChange(); }
 }
 
 // NereusSDR-original (R-R3-49, transmitSettingsVersion 15): what the CFC
@@ -4124,10 +4186,17 @@ void TransmitModel::refreshCfcProfile()
     emit cfcProfileChanged(m_cfcProfile);
 }
 
+void TransmitModel::beginCfcProfileRestore() noexcept
+{
+    ++m_cfcProfileRestoreDepth;
+    beginCfcProfileUpdate();
+}
+
 void TransmitModel::endCfcProfileRestore() noexcept
 {
     if (m_cfcProfileRestoreDepth == 0) { return; }
     --m_cfcProfileRestoreDepth;
+    endCfcProfileUpdate();
     if (m_cfcProfileRestoreDepth == 0) { emit cfcProfileRestored(); }
 }
 
@@ -4251,6 +4320,106 @@ QString TransmitModel::filterDisplayText(DSPMode mode) const
         .arg(m_filterLow)
         .arg(m_filterHigh)
         .arg(bwKhz, 0, 'f', 1);
+}
+
+void TransmitModel::beginTxEqProfileUpdate()
+{
+    if (m_txEqProfileUpdateDepth++ == 0) {
+        m_txEqProfileStartPreamp = m_txEqPreamp;
+        m_txEqProfileStartBands = m_txEqBand;
+        m_txEqProfileStartFreqs = m_txEqFreq;
+    }
+}
+
+void TransmitModel::endTxEqProfileUpdate()
+{
+    Q_ASSERT(m_txEqProfileUpdateDepth > 0);
+    if (--m_txEqProfileUpdateDepth == 0 &&
+        (m_txEqPreamp != m_txEqProfileStartPreamp || m_txEqBand != m_txEqProfileStartBands ||
+         m_txEqFreq != m_txEqProfileStartFreqs)) {
+        publishTxEqProfile();
+    }
+}
+
+void TransmitModel::publishTxEqProfile()
+{
+    if (m_txEqProfileUpdateDepth > 0) { return; }
+    QList<int> frequencies(m_txEqFreq.begin(), m_txEqFreq.end());
+    QList<int> gains{m_txEqPreamp};
+    for (int gain : m_txEqBand) { gains.append(gain); }
+    emit txEqProfileChanged(frequencies, gains);
+}
+
+CfcEditProfile TransmitModel::effectiveCfcProfile() const
+{
+    if (m_activeCfcProfile) { return *m_activeCfcProfile; }
+    if (const std::optional<CfcEditProfile> decoded = decodeCfcEditProfile(m_cfcParaEqData)) {
+        return *decoded;
+    }
+    CfcProfile::Profile mainProfile;
+    if (CfcProfile::decode(m_cfcParaEqData, mainProfile)) { return nativeCfcEditState(mainProfile); }
+    CfcEditProfile fallback;
+    fallback.compression.globalGainDb = m_cfcPrecompDb;
+    fallback.postEq.globalGainDb = m_cfcPostEqGainDb;
+    for (std::size_t i = 0; i < 10; ++i) {
+        fallback.compression.frequenciesHz.append(m_cfcEqFreqHz[i]);
+        fallback.compression.gainsDb.append(m_cfcCompressionDb[i]);
+        fallback.compression.q.append(4.0);
+        fallback.postEq.gainsDb.append(m_cfcPostEqBandGainDb[i]);
+        fallback.postEq.q.append(4.0);
+    }
+    fallback.postEq.frequenciesHz = fallback.compression.frequenciesHz;
+    // Retain the existing dialog seed bounds, widening for legacy endpoints.
+    fallback.compression.frequencyMaxHz = std::max(fallback.compression.frequencyMaxHz,
+        static_cast<double>(*std::max_element(m_cfcEqFreqHz.begin(), m_cfcEqFreqHz.end())));
+    fallback.postEq.frequencyMinHz = fallback.compression.frequencyMinHz;
+    fallback.postEq.frequencyMaxHz = fallback.compression.frequencyMaxHz;
+    return fallback;
+}
+
+void TransmitModel::beginCfcProfileUpdate()
+{
+    if (m_cfcProfileUpdateDepth++ == 0) {
+        // An authoritative load must restore saved precision even for the same blob.
+        m_activeCfcProfile.reset();
+        m_cfcProfileDirty = true;
+    }
+}
+
+void TransmitModel::endCfcProfileUpdate()
+{
+    Q_ASSERT(m_cfcProfileUpdateDepth > 0);
+    if (--m_cfcProfileUpdateDepth == 0 && m_cfcProfileDirty) {
+        m_cfcProfileDirty = false;
+        emit cfcEditProfileChanged(effectiveCfcProfile());
+        refreshCfcProfile();
+    }
+}
+
+void TransmitModel::notifyCfcProfileChange()
+{
+    if (m_cfcProfileUpdateDepth > 0) { m_cfcProfileDirty = true; }
+    else { emit cfcEditProfileChanged(effectiveCfcProfile()); }
+}
+
+bool TransmitModel::setCfcProfile(const CfcEditProfile& profile)
+{
+    if (!isValidCfcEditProfile(profile)) { return false; }
+    if (m_activeCfcProfile && *m_activeCfcProfile == profile) { return true; }
+    beginCfcProfileRestore();
+    const auto batch = qScopeGuard([this] { endCfcProfileRestore(); });
+    setCfcPrecompDb(qRound(profile.compression.globalGainDb));
+    setCfcPostEqGainDb(qRound(profile.postEq.globalGainDb));
+    if (profile.compression.frequenciesHz.size() == 10) {
+        for (int i = 0; i < 10; ++i) {
+            setCfcEqFreq(i, qRound(profile.compression.frequenciesHz[i]));
+            setCfcCompression(i, qRound(profile.compression.gainsDb[i]));
+            setCfcPostEqBandGain(i, qRound(profile.postEq.gainsDb[i]));
+        }
+    }
+    setCfcParaEqData(encodeCfcEditProfile(profile));
+    m_activeCfcProfile = profile;
+    return true;
 }
 
 } // namespace NereusSDR

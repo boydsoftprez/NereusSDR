@@ -4,12 +4,18 @@
 //
 // no-port-check: NereusSDR-original tests for bounded display-codec accounting.
 //
+// Modification history (NereusSDR):
+//   2026-10-04: Pace byte-only display extras with the shared spectrum
+//               budget; retain ordinary spectrum sample validation.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//
 // =================================================================
 
 #include <QtTest>
 
 #include "core/session/Ps3DisplayCodec.h"
 #include "core/session/media/DisplayBudget.h"
+#include "core/session/media/DisplayExtras.h"
 #include "core/session/media/IMediaTransport.h"
 
 #include <QRandomGenerator>
@@ -521,6 +527,92 @@ private slots:
         // Structural sender admission is separate from byte pacing.
         QVERIFY(!pacer.update(cap, {1, 1, kDisplaySenderMessagesPerSecond - 29},
                               true, 2'000'000'000));
+    }
+
+    void displayExtrasShareByteCreditWithoutInventingSamples()
+    {
+        const SpectrumDisplayCost maximum = cost(DisplayCodecEncoder::kMaxSamplesPerPlane, 1, true);
+        const DisplayBudgetLimits cap = limits(maximum.charge.applicationBytesPerSecond,
+                                               maximum.charge.spectrumSampleUnitsPerSecond);
+        constexpr quint64 kScalarBytes = kDisplayExtrasHeaderBytes + 2 * sizeof(float);
+        DisplayBudgetPacer spectrum;
+        QVERIFY(spectrum.beginSession(16, cap, 0));
+        QVERIFY(spectrum.update(cap, maximum.charge, false, 0));
+        QVERIFY(!spectrum.spendSpectrum(kScalarBytes, 0, 0));
+        QVERIFY(!spectrum.canSpendSpectrum(kScalarBytes, 0, 0));
+        QVERIFY(spectrum.spendDisplayExtras(kScalarBytes, 0, 0));
+        // Extras consume the same spectrum-byte burst, but leave all sample credit.
+        QVERIFY(!spectrum.canSpendSpectrum(maximum.maximumFrameBytes,
+                                           maximum.maximumFrameSampleUnits, 0));
+        QVERIFY(spectrum.spendSpectrum(maximum.maximumFrameBytes - kScalarBytes,
+                                       maximum.maximumFrameSampleUnits, 0));
+        QVERIFY(!spectrum.spendDisplayExtras(1, 0, 0));
+
+        const DisplayBudgetCharge ps3 = ps3DisplayCharge();
+        DisplayBudgetPacer global;
+        const DisplayBudgetLimits roomy = limits(100 * ps3.applicationBytesPerSecond,
+                                                  maximum.charge.spectrumSampleUnitsPerSecond);
+        QVERIFY(global.beginSession(17, roomy, 0));
+        QVERIFY(global.update(roomy, maximum.charge, true, 0));
+        QVERIFY(global.spendDisplayExtras(kScalarBytes, 0, 0));
+        QVERIFY(global.spendPs3(kMaximumDisplayMessageBytes - kScalarBytes, 0));
+        // Spectrum still has byte/sample room; the common global bucket is empty.
+        QVERIFY(!global.spendDisplayExtras(1, 0, 0));
+    }
+
+    void displayExtrasDebitRealPeakHoldSamples()
+    {
+        const SpectrumDisplayCost maximum = cost(DisplayCodecEncoder::kMaxSamplesPerPlane, 1, true);
+        const DisplayBudgetLimits cap = limits(maximum.charge.applicationBytesPerSecond,
+                                               maximum.charge.spectrumSampleUnitsPerSecond);
+        DisplayBudgetPacer pacer;
+        QVERIFY(pacer.beginSession(18, cap, 0));
+        QVERIFY(pacer.update(cap, maximum.charge, false, 0));
+        constexpr quint64 kHoldSamples = 128;
+        const quint64 holdBytes = displayExtrasWorstCaseBytes(kDisplayExtrasPeakHold, kHoldSamples);
+        QVERIFY(pacer.spendDisplayExtras(holdBytes, kHoldSamples, 0));
+        QVERIFY(!pacer.canSpendSpectrum(1, maximum.maximumFrameSampleUnits - kHoldSamples + 1, 0));
+        QVERIFY(pacer.spendSpectrum(1, maximum.maximumFrameSampleUnits - kHoldSamples, 0));
+        QVERIFY(!pacer.spendDisplayExtras(1, 1, 0));
+        // A scalar-only message remains valid even when sample credit is exhausted.
+        QVERIFY(pacer.spendDisplayExtras(1, 0, 0));
+    }
+
+    void displayExtrasPreserveBoundsEpochsAndInvalidCallAccounting()
+    {
+        const SpectrumDisplayCost maximum = cost(DisplayCodecEncoder::kMaxSamplesPerPlane, 1, true);
+        const DisplayBudgetLimits cap = limits(maximum.charge.applicationBytesPerSecond,
+                                               maximum.charge.spectrumSampleUnitsPerSecond);
+        DisplayBudgetPacer pacer;
+        QVERIFY(!pacer.spendDisplayExtras(1, 0, 0));
+        QVERIFY(pacer.beginSession(19, cap, 0));
+        QVERIFY(!pacer.spendDisplayExtras(1, 0, 0));
+        QVERIFY(pacer.update(cap, maximum.charge, false, 0));
+        QVERIFY(!pacer.spendDisplayExtras(1, 0, -1));
+        QVERIFY(!pacer.spendDisplayExtras(0, 0, 0));
+        QVERIFY(!pacer.spendDisplayExtras(quint64{kMaximumSpectrumDisplayFrameBytes} + 1, 0, 0));
+        QVERIFY(!pacer.spendDisplayExtras(1, quint64{kMaximumSpectrumDisplayFrameSampleUnits} + 1, 0));
+        QVERIFY(pacer.spendDisplayExtras(kMaximumSpectrumDisplayFrameBytes, 0, 0));
+        // Invalid calls must not earn future time or refill the drained bucket.
+        QVERIFY(!pacer.spendDisplayExtras(0, 0, 1'000'000'000));
+        QVERIFY(!pacer.spendSpectrum(1, 0, 1'000'000'000));
+        const quint64 half = maximum.maximumFrameBytes / 2;
+        QVERIFY(!pacer.spendDisplayExtras(half + 1, 0, 500'000'000));
+        QVERIFY(pacer.spendDisplayExtras(half, 0, 500'000'000));
+        QVERIFY(!pacer.spendDisplayExtras(1, 0, 400'000'000));
+        // Long idle saturates at the same fixed burst, never beyond it.
+        QVERIFY(pacer.spendDisplayExtras(kMaximumSpectrumDisplayFrameBytes,
+                                         kMaximumSpectrumDisplayFrameSampleUnits,
+                                         std::numeric_limits<qint64>::max()));
+        QVERIFY(!pacer.spendDisplayExtras(1, 0, std::numeric_limits<qint64>::max()));
+        pacer.endSession();
+        QVERIFY(!pacer.spendDisplayExtras(1, 0, std::numeric_limits<qint64>::max()));
+        QVERIFY(!pacer.beginSession(19, cap, 0));
+        QVERIFY(pacer.beginSession(20, cap, 0));
+        QVERIFY(!pacer.spendDisplayExtras(1, 0, 0));
+        QVERIFY(pacer.update(cap, maximum.charge, false, 0));
+        QVERIFY(pacer.update(cap, {}, false, 0));
+        QVERIFY(!pacer.spendDisplayExtras(1, 0, 0));
     }
 
     void rawIqDebitsGlobalBytesWithFixedBurst()

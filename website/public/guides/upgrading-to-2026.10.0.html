@@ -1,0 +1,162 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Upgrading to NereusSDR 2026.10.0 | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/guides/upgrading-to-2026.10.0.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html" aria-current=page>Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="upgrading-to-nereussdr-2026100">Upgrading to NereusSDR 2026.10.0</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#which-machine-runs-what">Which machine runs what</a></li><li><a href="#before-upgrading">Before upgrading</a></li><li><a href="#installed-package-and-startup">Installed package and startup</a></li><li><a href="#receivers-and-displays">Receivers and displays</a></li><li><a href="#core-and-remote-sessions">Core and remote sessions</a></li><li><a href="#eqcfc-containers-and-meters">EQ/CFC, containers and meters</a></li><li><a href="#dsp-modes-and-accessories">DSP, modes and accessories</a></li><li><a href="#reliability-retests-and-reports">Reliability retests and reports</a></li></ol></details>
+<p>Use this checklist when updating a station from 0.5.2. Start with the upgrade
+notes, then check the controls and connections you use. When reporting a
+problem, include the installed version, operating system, radio model and
+firmware, and whether you use a local or remote Core.</p>
+<h2 id="which-machine-runs-what">Which machine runs what</h2>
+<p>The Core owns the radio, station DSP, receiver allocation and transmit
+permissions. The GUI runs where the operator is, presenting spectra and state, playing
+received audio and sending controls/microphone audio. Local desktop mode
+runs both together; remote mode runs <code>nereusd</code> beside the radio and the GUI
+elsewhere, including the native iPhone/iPad app. The Core can run on a compatible SBC, including a Raspberry Pi
+inside an ANAN-G2. Development used a Raspberry Pi 4 and a Radxa Rock 5C with
+2 GB RAM. Record your board and enabled DSP/receiver load when testing.</p>
+<p>For remote access, the RV signalling service introduces the GUI and Core and
+provides a pairing mailbox. The Core authenticates the device. The session
+then uses a direct path, a TURN relay or the separate WebSocket relay. A Core
+reachable by LAN/VPN address can also be connected directly. See the
+<a href="/#core">Core/GUI and RV explanation</a>.</p>
+<p>For a fresh SBC, use the <a href="/guides/install-core-sbc.html">short Raspberry Pi OS Lite/Armbian Core install
+guide</a>. Record the OS release and exact package
+along with the board when reporting your check.</p>
+<h2 id="before-upgrading">Before upgrading</h2>
+<p>Keep a backup of your settings and microphone profiles before first launch.
+Close the console normally to save current edits. Let the new application
+migrate the existing settings; do not copy an older backup over newer edits.
+Update the Core and desktop together for the new controls and authority rules.</p>
+<ul>
+<li>Network Watchdog now controls the wait for radio data and is enabled once
+by migration. Review the setting if you previously turned it off while it
+had no effect. Protocol 2 and HL2 hardware safety timers remain independent.</li>
+<li>TCI's frequency update rate is now an interval in milliseconds, 0 to 1000,
+default 100. Its old unused messages-per-second setting is discarded once.</li>
+<li>Saved non-Atlas preamp Off/“-20dB” maps to SA -20. ANAN-100D/200D RX2
+attenuation is capped at 31 dB. Hardware microphone boost defaults to on.</li>
+<li>PureSignal 3 uses version-2 correction files. Legacy version-1 files are
+refused with an explanation. Make a new compatible calibration rather than
+treating an old file as transferable.</li>
+<li>BNR is no longer offered. DFNR and MNR show an unavailable reason when the
+connected Core cannot run them.</li>
+</ul>
+<h2 id="installed-package-and-startup">Installed package and startup</h2>
+<ol>
+<li>Check the selected release's artifact list. Verify <code>SHA256SUMS.txt.asc</code>
+against <code>SHA256SUMS.txt</code>, then check the downloaded package's checksum.
+See <a href="/#download">README installation notes</a>.</li>
+<li>Launch normally and confirm <strong>2026.10.0</strong> in About. Record startup errors,
+missing libraries or missing model assets. First-run FFTW wisdom can take
+time; later launches should use the cache.</li>
+<li>Confirm saved radio/Core targets, profiles and layout survived migration.
+Reopen after a normal Quit and check that your latest edits remain.</li>
+</ol>
+<h2 id="receivers-and-displays">Receivers and displays</h2>
+<ol>
+<li>Connect to your usual radio or Core. Add receivers within its stated
+capacity. Tune two receivers to different signals and change mode, filter,
+AGC and DSP separately. Confirm their audio and controls remain independent.</li>
+<li>Test shared-pan and separate-pan layouts. Select a different receiver,
+change the transmit receiver, float a pan and return it. Check receiver
+colours, identities and restored layout after restart. Give receivers
+different STEP values and verify each pan displays and wheel-tunes with its
+selected receiver's STEP after selection changes and reconnect. High-resolution
+trackpad gesture handling remains under review.</li>
+<li>Adjust TX spectrum/waterfall settings and verify they belong to the
+transmit display. Try the native 3D stacked spectrum/waterfall and change
+its history/view controls. Check resizing and CPU/GPU interaction geometry.</li>
+<li>Place, move and resize a tunable notch. Confirm persistence after restart.
+Record listening results separately from the visual notch indication.</li>
+<li>If your station supports Diversity, assign an eligible receiver and check
+its phase/gain controls, saved memories and refusal/pause explanations.</li>
+</ol>
+<h2 id="core-and-remote-sessions">Core and remote sessions</h2>
+<ol>
+<li>Check Core Settings: saved/manual targets, Core name, connection status,
+current audio path and device authority. Verify the displayed station
+matches the station you intended to join.</li>
+<li>Pair a second supported device if available. Give it its own receiver and
+check that ownership markers and transfer confirmations agree on both ends.</li>
+<li>During an ordinary disconnect/reconnect, check that stale replies do not
+change the new session's authority or controls. Record direct/relayed media
+status, drop/recovery behavior and any missing audio. On macOS, open the
+receiver preamp menu before reconnecting or changing the connected radio;
+confirm it refreshes to the radio's available choices without a crash and
+retains a supported selection. Also confirm spectra and waterfall rows
+continue updating after a handover and after closing/recreating a pan.</li>
+<li>Check per-receiver digital-app audio and the separate speaker/headphone
+mix. Record which compressed/lossless path actually ran. Use identical
+signal files and decoder settings for comparative decoder tests.</li>
+</ol>
+<p>The native iPhone/iPad app is a full operating console for the same Core,
+with touch receiver controls, live display/audio and microphone/PTT uplink.
+Its validation and delivery are tracked independently of desktop packages.</p>
+<h3 id="ipv6-and-cgnat-checks">IPv6 and CGNAT checks</h3>
+<p>When available, test from an IPv6 or mobile/CGNAT network as well as the station
+LAN. Record the client network, whether each end has usable IPv4/IPv6, the
+selected direct/TURN/WebSocket path, and actual audio/display recovery. Test
+reconnection after changing between Wi-Fi and cellular networks. A working LAN session alone does not close
+cellular, firewall, IPv6-only or prolonged mobile-session acceptance.</p>
+<p>See the <a href="/#core">IPv6/CGNAT explanation</a>.
+CGNAT can prevent incoming IPv4 connections despite a home-router forwarding
+rule; usable IPv6 and outbound relay paths address different parts of that
+reachability problem. Test the path that actually runs rather than assuming
+a provider or an IPv6 address guarantees a direct connection.</p>
+<h2 id="eqcfc-containers-and-meters">EQ/CFC, containers and meters</h2>
+<ol>
+<li>Open TX EQ. Edit Graphic and Parametric modes and confirm each keeps its
+own values. Try drag handles, exact entry, width/Q and undo/redo. Hide and
+reopen the editor; confirm history is retained.</li>
+<li>Request a 5/10/18-band change. Check the pending notice and <strong>Apply N bands</strong>.
+Cancel retains the old curve; Apply resets to the requested count; Undo
+restores the prior curve. See the <a href="/guides/tx-eq-cfc.html">EQ/CFC guide</a>.</li>
+<li>In CFC, check the aligned compression/post-EQ plots, shared frequencies,
+independent gains/Q and measured compression bars. Save/reload a microphone
+profile. The configured response graph is not a measurement of the whole
+audio chain.</li>
+<li>Move an applet and a complete meter object by their grips/menu, reorder
+them, float a container and return it to its remembered home. Reopen an
+editor after moving its parent applet.</li>
+<li>Preview a container change, Cancel, then repeat and Apply. Check portable
+export/import with a copy of your layout, including customized legacy
+objects and external MMIO bindings.</li>
+<li>Check composite meters in receive/transmit states available to your normal
+station operation. Unavailable sources should be reported as unavailable.
+On the ANAN face, check scale labels at ordinary sizes and readout font
+growth. Visible idle pointers should park dim without a measured value;
+switching receive/transmit groups must clear stale values and history.
+Compare any RF/calibration readings against the documented hardware matrix.</li>
+<li>Create an editable Canvas with a meter and a supported control. Move and
+resize through grips, numeric fields and keyboard handles; check layers,
+locking, scrolling and Apply/Cancel. Restore an imported layout and confirm
+saved positions survive until explicitly edited.</li>
+<li>Resize a Bar and another complete meter face at your display scale. Titles,
+scale labels, units and readings should fit their own regions. Check that
+preview controls remain inert and live controls retain their ordinary
+capability and authority rules. On macOS, switch the selected container in
+Settings with a pending draft edit and confirm it survives without a crash.</li>
+</ol>
+<h2 id="dsp-modes-and-accessories">DSP, modes and accessories</h2>
+<p>Test the NNR Models manager, selection and pending Apply behavior with your
+station's assets. Check per-receiver tuning and unavailable-model explanations.
+Test PureSignal settings/status and correction-file handling against the
+<a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/architecture/wdsp210-operator-notes.md">WDSP 2.10 operator notes</a> and
+<a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/architecture/wdsp210-verification/README.md">verification matrix</a>.
+Record software checks separately from listening/RF measurements.</p>
+<p>AM/SAM/DSB modulation monitoring, RADE end-of-over callsigns, microphone input
+options, radio speaker/headphone mixing and PGXL/TGXL/RF2K-S behavior depend on
+your station capabilities. Follow their feature-specific verification steps
+and record the exact hardware, operating mode and result. Previously open
+accessory, on-air and sustained SBC rows remain pending until evidence closes them.</p>
+<h2 id="reliability-retests-and-reports">Reliability retests and reports</h2>
+<p>The release includes fixes for live receiver reconfiguration stopping TX mic
+pumping (#331), DEXP threshold persistence (#332), repeated HL2 TUNE power
+(#333), anti-VOX state replay (#334), stale-session keying callbacks (#335) and
+spectrum paint/mouse geometry (#336). Retest the original triggering sequence
+when your station matches it. The broader reports #235, #299 and #300 still
+need their requested retests; these narrower fixes do not close them by assumption.</p>
+<p>Report expected behavior, actual behavior, minimal reproduction, desktop/Core
+versions, platform, radio model/firmware, connection path and relevant support
+bundle. Keep credentials and pairing tokens out of public reports.</p>
+<p>CW transmit, FM pre-emphasis, CAT/rigctld, legacy skin import and WAV/IQ
+recording are not delivered by this release. Remaining disabled actions and
+hardware acceptance are tracked in their feature documents.</p>
+<div class="page-next"></div></main></div></body></html>
