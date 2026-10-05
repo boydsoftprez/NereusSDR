@@ -169,10 +169,29 @@ shared_ptr<IceTransport> PeerConnection::initIceTransport() {
 						    changeIceState(IceState::Checking);
 						    changeState(State::Connecting);
 						    break;
-					    case IceTransport::State::Connected:
+					    case IceTransport::State::Connected: {
 						    changeIceState(IceState::Connected);
-						    initDtlsTransport();
+						    // Do not enter DTLS while libjuice holds its registry lock.
+						    // A receive worker can hold the SSL lock and send via ICE.
+						    auto ice = getIceTransport();
+						    mProcessor.enqueue([self = locked, ice]() {
+							    const auto peerState = self->state.load();
+							    if (self->closing.load() || peerState == State::Closed ||
+							        peerState == State::Failed || peerState == State::Disconnected ||
+							        !ice || self->getIceTransport() != ice) {
+								    return;
+							    }
+							    const auto iceState = ice->state();
+							    if (iceState != IceTransport::State::Connected &&
+							        iceState != IceTransport::State::Completed) {
+								    return;
+							    }
+							    // Close may overlap an admitted start. emplaceTransport
+							    // stops and clears it when closing is observed after start.
+							    self->initDtlsTransport();
+						    });
 						    break;
+					    }
 					    case IceTransport::State::Completed:
 						    changeIceState(IceState::Completed);
 						    break;

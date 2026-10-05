@@ -8024,6 +8024,16 @@ if(TEST tst_juice_poll_liveness)
     set_property(TARGET tst_juice_poll_liveness PROPERTY DISABLE_PRECOMPILE_HEADERS ON)
 endif()
 
+# The startup regression compiles real pinned OpenSSL RTC with observers in
+# a separate generated copy. Shipping RTC contains no fixture access/hooks.
+nereus_add_test(tst_dtls_startup CORE_ONLY EXTRA_LABELS session)
+if(TEST tst_dtls_startup)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/fakes/dtls-startup/Instrument.cmake")
+    set_property(TARGET tst_dtls_startup PROPERTY LINK_LIBRARIES
+        Qt6::Test Qt6::Core nereus_dtls_startup_fixture)
+    set_property(TARGET tst_dtls_startup PROPERTY DISABLE_PRECOMPILE_HEADERS ON)
+endif()
+
 # Task 56: the Core's compiled vendor sources contain the exact reviewed
 # relay cleanup patches, including libjuice's public and internal headers.
 # This check and the next are plain add_test() calls, not nereus_add_test(),

@@ -6,12 +6,12 @@ and iPad under `ios/NereusKit/Sources/CDataChannel/`. The app's media peer
 answer the Core's media connection: ICE, DTLS, the SCTP display channel and
 SRTP audio (design spec `docs/architecture/2026-09-23-iphone-app-design.md`
 section 4.2). The desktop fetches the same release at build time through
-`cmake/NereusRemoteMedia.cmake`; this file covers the copy committed under
-`ios/`.
+`cmake/NereusRemoteMedia.cmake`; this file records the copy committed under
+`ios/` and the shared DTLS startup patch applied to both copies.
 
 libdatachannel is MPL-2.0, compatible with NereusSDR's GPLv3 and with the
-App Store permission in `ios/LICENSE`. Three files carry NereusSDR patches
-(below); the modified files stay published with NereusSDR's source, as
+App Store permission in `ios/LICENSE`. The local patches are recorded
+below; the modified files stay published with NereusSDR's source, as
 MPL-2.0 requires, and every other file is the pinned upstream archive's.
 
 ## Upstream
@@ -139,6 +139,42 @@ deletion, and verifies that the claim is still unavailable. After native
 destruction, the same relay socket accepts and replies to a replacement UDP
 sender. Other cases cover no ICE, malformed configuration, exactly-once
 failure callback, repeated close and cancellation of a close waiter.
+
+## Desktop/Core and iOS DTLS startup patch
+
+`cmake/patches/libdatachannel-0005-defer-dtls-startup.patch` changes the
+pinned v0.24.5 `src/impl/peerconnection.cpp` in the build-owned desktop/Core
+copy (2026-10-05, J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex).
+The byte-identical `ios/patches/libdatachannel/0005-defer-dtls-startup.patch`
+is applied by `ios/scripts/vendor-sources.sh` to the committed iOS copy.
+Both are MPL-2.0 and carry that exact file's two copyright lines and MPL
+notice byte for byte; `CDataChannel/VENDORED.txt` records the iOS patch.
+
+The libjuice Connected callback holds its registry lock. Inline DTLS start
+can wait for the SSL mutex while a receive worker holds that mutex and
+sends a relayed handshake record through the registry. Required Linux CI
+run 37287215172, job 111688854690, captured this lock inversion during
+`tst_path_racer`'s initial handshake. The patch keeps ICE state changes in
+place and queues DTLS initialization on the existing peer processor with
+owning peer/ICE captures. It rejects closing, failed, disconnected or stale
+work and accepts an ICE transport already Completed. Existing admitted
+startup/close overlap retains the post-start stop/member-clear behavior;
+this patch does not promise zero transient startup after a concurrent close.
+Fingerprint checks, MTU-before-incoming, dependency pins, deadlines and
+TURN retirement/lifetime policy are unchanged.
+
+`tst_dtls_startup` compiles the actual patched OpenSSL vendor code in an
+isolated test library. Test-only generated observers and friendship hold
+the real SSL mutex and verify the Connected callback can return, then
+cover obsolete queued work, completion, close around publication, retained
+owners and exception/processor cleanup. Observers are absent from shipping
+RTC. Actual OpenSSL causal red and corrected focused green were observed;
+Mbed TLS has the same source-level SSL/relay-registry lock ordering, but
+its causal runtime regression has not been captured. Existing iOS DTLS
+fingerprint and owner-lifetime tests remain required validation.
+The unchanged path-racer case remains integration coverage for the
+original relay handshake. Drop or revisit this patch when the upstream pin
+changes or upstream fixes this synchronous startup lock boundary.
 
 ## Build wiring
 

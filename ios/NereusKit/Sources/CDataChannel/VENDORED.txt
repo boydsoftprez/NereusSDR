@@ -9,6 +9,7 @@ Files:    134, copied from the archive, then patched by
           ios/patches/libdatachannel/0002-c-api-deferred-gathering-and-remote-fingerprint.patch
           ios/patches/libdatachannel/0003-retain-juice-agent-through-turn-release.patch
           ios/patches/libdatachannel/0004-ice-agent-lifetime-completion.patch
+          ios/patches/libdatachannel/0005-defer-dtls-startup.patch
           and include/module.modulemap, written by the script
 
 Written by ios/scripts/vendor-sources.sh libdatachannel. Do not edit
