@@ -852,10 +852,12 @@ void P1RadioConnection::init()
 
     if (!m_socket->bind(QHostAddress::Any, 0)) {
         qCWarning(lcConnection) << "P1: Failed to bind UDP socket";
-        return;
+    } else {
+        applySocketBufferSizes();
     }
 
-    applySocketBufferSizes();
+    // Finish worker initialization even after a failed placeholder bind.
+    // connectToRadio() retries the bind and needs receive wiring and timers.
 
     connect(m_socket, &QUdpSocket::readyRead, this, &P1RadioConnection::onReadyRead);
 

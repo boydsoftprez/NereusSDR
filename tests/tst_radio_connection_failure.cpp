@@ -5,6 +5,14 @@
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 #include <QHostAddress>
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <QScopeGuard>
+#include <QStandardPaths>
+#include <QThread>
+#include <QUdpSocket>
+#include <memory>
+#include "core/P2RadioConnection.h"
 #include "core/P1RadioConnection.h"
 #include "core/RadioConnection.h"
 #include "core/RadioDiscovery.h"
@@ -31,6 +39,120 @@ private:
     }
 
 private slots:
+    void failedPlaceholderBindCompletesWorkerInit_data()
+    {
+        QTest::addColumn<bool>("protocol2");
+        QTest::newRow("p1") << false;
+        QTest::newRow("p2") << true;
+    }
+
+    // Network denial forces the real Any:0 placeholder bind and subsequent
+    // fallback to fail. The child uses the same started/init -> queued connect
+    // ordering as RadioModel; a partial init crashes before its Timeout signal.
+    void failedPlaceholderBindCompletesWorkerInit()
+    {
+#if defined(Q_OS_MAC)
+        QFETCH(bool, protocol2);
+        const QString sandbox = QStandardPaths::findExecutable(QStringLiteral("sandbox-exec"));
+        if (sandbox.isEmpty()) {
+            QSKIP("Failed-bind forcing requires macOS sandbox-exec");
+        }
+        QProcess child;
+        QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+        environment.insert(QStringLiteral("NEREUS_FAILED_BIND_CHILD"), QStringLiteral("1"));
+        environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
+        child.setProcessEnvironment(environment);
+        child.setProcessChannelMode(QProcess::MergedChannels);
+        QSignalSpy finished(&child, &QProcess::finished);
+        child.start(sandbox, {
+            QStringLiteral("-p"), QStringLiteral("(version 1)(allow default)(deny network*)"),
+            QCoreApplication::applicationFilePath(),
+            protocol2 ? QStringLiteral("failedPlaceholderBindChild:p2")
+                      : QStringLiteral("failedPlaceholderBindChild:p1")});
+        QVERIFY2(child.waitForStarted(), qPrintable(child.errorString()));
+        const auto cleanup = qScopeGuard([&child]() {
+            if (child.state() != QProcess::NotRunning) {
+                child.kill();
+                child.waitForFinished();
+            }
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(!finished.isEmpty(), 10000);
+        const QByteArray output = child.readAll();
+        qInfo().noquote() << output;
+        const QByteArray warning = protocol2 ? "P2: Failed to bind UDP socket"
+                                             : "P1: Failed to bind UDP socket";
+        QVERIFY2(output.contains(warning), "Child did not reach the production failed placeholder bind");
+        QCOMPARE(child.exitStatus(), QProcess::NormalExit);
+        QCOMPARE(child.exitCode(), 0);
+#else
+        QSKIP("Failed-bind forcing is currently implemented only with macOS sandbox-exec");
+#endif
+    }
+
+    void failedPlaceholderBindChild_data()
+    {
+        failedPlaceholderBindCompletesWorkerInit_data();
+    }
+
+    // Invoked only by the externally restricted child process above. No
+    // production injection seam is needed, and unsupported hosts explicitly skip.
+    void failedPlaceholderBindChild()
+    {
+        if (!qEnvironmentVariableIsSet("NEREUS_FAILED_BIND_CHILD")) {
+            QSKIP("Run through failedPlaceholderBindCompletesWorkerInit to force the bind failure");
+        }
+        QFETCH(bool, protocol2);
+        QUdpSocket probe;
+        QVERIFY2(!probe.bind(QHostAddress::Any, 0), "Network-denial profile did not force bind failure");
+
+        std::unique_ptr<RadioConnection> ownedConnection;
+        if (protocol2) {
+            ownedConnection = std::make_unique<P2RadioConnection>();
+        } else {
+            ownedConnection = std::make_unique<P1RadioConnection>();
+        }
+        RadioConnection* connection = ownedConnection.get();
+        QThread worker;
+        connection->moveToThread(&worker);
+        QObject::connect(&worker, &QThread::started, connection, &RadioConnection::init);
+        QObject::connect(&worker, &QThread::finished, connection, &QObject::deleteLater);
+        ownedConnection.release(); // finished/deleteLater owns the worker object.
+        const auto cleanup = qScopeGuard([&worker]() {
+            worker.quit();
+            worker.wait();
+        });
+        // Collect worker signals on this thread before inspecting the lists.
+        // QSignalSpy's direct cross-thread collection does not lock QList reads.
+        QObject observations;
+        QList<ConnectFailure> failures;
+        QList<ConnectionState> states;
+        QObject::connect(connection, &RadioConnection::connectFailed, &observations,
+                         [&failures](ConnectFailure reason, const QString&) {
+                             failures.append(reason);
+                         }, Qt::QueuedConnection);
+        QObject::connect(connection, &RadioConnection::connectionStateChanged, &observations,
+                         [&states](ConnectionState state) {
+                             states.append(state);
+                         }, Qt::QueuedConnection);
+        RadioInfo info = unreachableInfo();
+        info.address = QHostAddress::LocalHost;
+        info.protocol = protocol2 ? ProtocolVersion::Protocol2 : ProtocolVersion::Protocol1;
+        worker.start();
+        QVERIFY(QMetaObject::invokeMethod(connection, [connection, info]() {
+            connection->connectToRadio(info);
+        }, Qt::QueuedConnection));
+
+        QTRY_COMPARE_WITH_TIMEOUT(failures.count(), 1, 3000);
+        QCOMPARE(failures.first(), ConnectFailure::Timeout);
+        QTRY_VERIFY_WITH_TIMEOUT(!states.isEmpty(), 500);
+        QCOMPARE(states.last(), ConnectionState::Disconnected);
+        QVERIFY(QMetaObject::invokeMethod(connection, [connection]() {
+            connection->disconnect();
+        }, Qt::BlockingQueuedConnection));
+        QCoreApplication::processEvents();
+        QCOMPARE(failures.count(), 1);
+    }
+
     // After connectToRadio() to an unreachable host, connectFailed(Timeout, ...)
     // must be emitted within the 2-second connect-watchdog budget.
     // Budget for spy.wait(): 2000 ms connect watchdog + 1000 ms slack = 3000 ms.
