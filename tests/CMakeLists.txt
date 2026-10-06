@@ -3434,6 +3434,13 @@ target_compile_definitions(tst_setup_dialog_qt_warnings PRIVATE NEREUS_BUILD_TES
 nereus_add_test(tst_setup_dialog_lazy_pages)
 target_compile_definitions(tst_setup_dialog_lazy_pages PRIVATE NEREUS_BUILD_TESTS)
 
+# R-SPK-21 (problem 3): every Setup page's content starts at the top. Walks
+# every registered leaf in a 1400 px tall dialog offscreen: the first visible
+# item sits within 24 px of the content top and the content layout ends with
+# the stretch (SetupPage::addContent inserts before it, as addSection does).
+nereus_add_test(tst_setup_pages_start_at_top)
+target_compile_definitions(tst_setup_pages_start_at_top PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-0 Task 14: MainWindow status-bar TX Inhibit + PA Status badge ───
 # Tests the label-state logic for the two safety indicator widgets added to
 # the MainWindow status bar:

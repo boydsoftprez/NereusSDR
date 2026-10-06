@@ -43,8 +43,6 @@ void AudioTciPage::buildUI()
     buildFormatGroup();
     buildTxDirectionGroup();
     buildMasterMuteNoteGroup();
-
-    contentLayout()->addStretch();
 }
 
 // ---------------------------------------------------------------------------
@@ -95,7 +93,7 @@ void AudioTciPage::buildSampleRateGroup()
     noteLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
     form->addRow(noteLabel);
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 // ---------------------------------------------------------------------------
@@ -179,7 +177,7 @@ void AudioTciPage::buildFormatGroup()
     });
     form->addRow(tr("Block size:"), m_blockSizeSpin);
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 // ---------------------------------------------------------------------------
@@ -236,7 +234,7 @@ void AudioTciPage::buildTxDirectionGroup()
     });
     form->addRow(tr("TX buffering:"), m_txBufferingSpin);
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 // ---------------------------------------------------------------------------
@@ -259,7 +257,7 @@ void AudioTciPage::buildMasterMuteNoteGroup()
     noteLabel->setWordWrap(true);
     vbox->addWidget(noteLabel);
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 } // namespace NereusSDR

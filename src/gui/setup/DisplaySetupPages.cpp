@@ -483,7 +483,7 @@ void SpectrumDefaultsPage::buildUI()
             loadFromRenderer();
         }
     });
-    contentLayout()->addWidget(resetBtn);
+    addContent(resetBtn);
 
     // Phase 3G-9c: Clarity adaptive display tuning master toggle.
     // When on, ClarityController drives Waterfall Low/High thresholds
@@ -514,7 +514,7 @@ void SpectrumDefaultsPage::buildUI()
             }
         });
     }
-    contentLayout()->addWidget(clarityToggle);
+    addContent(clarityToggle);
 
     auto* sw = model() ? model()->spectrumWidget() : nullptr;
     auto* fe = model() ? model()->fftEngine() : nullptr;
@@ -784,7 +784,7 @@ void SpectrumDefaultsPage::buildUI()
             QString::number(clamped));
     });
 
-    contentLayout()->addWidget(fftGroup);
+    addContent(fftGroup);
 
     // --- Section: Rendering ---
     auto* renderGroup = new QGroupBox(QString::fromLatin1(ControlRanges::kDisplayRenderingGroupTitle), this);
@@ -983,7 +983,7 @@ void SpectrumDefaultsPage::buildUI()
     });
     renderForm->addRow(QString(), m_gradientToggle);
 
-    contentLayout()->addWidget(renderGroup);
+    addContent(renderGroup);
 
     // --- Section: Calibration ---
     auto* calGroup = new QGroupBox(QStringLiteral("Calibration & Peak Hold"), this);
@@ -1042,7 +1042,7 @@ void SpectrumDefaultsPage::buildUI()
     });
     calForm->addRow(QStringLiteral("Peak Delay:"), m_peakHoldDelaySpin);
 
-    contentLayout()->addWidget(calGroup);
+    addContent(calGroup);
 
     // --- Section: Spectrum Overlays (Task 2.3) ---
     // Groups the 4 corner-text overlay controls as a discrete block.
@@ -1393,7 +1393,7 @@ void SpectrumDefaultsPage::buildUI()
     });
     overlayForm->addRow(QString(), monitorHzBtn);
 
-    contentLayout()->addWidget(overlayGroup);
+    addContent(overlayGroup);
 
     // --- Section: Thread ---
     auto* threadGroup = new QGroupBox(QStringLiteral("Thread"), this);
@@ -1442,7 +1442,7 @@ void SpectrumDefaultsPage::buildUI()
         }
     }
 
-    contentLayout()->addWidget(threadGroup);
+    addContent(threadGroup);
 
     // Colour pickers for trace, grid, passband, and zero lines have moved to
     // Setup → Appearance → Colors & Theme (consolidated in one place).
@@ -1450,7 +1450,7 @@ void SpectrumDefaultsPage::buildUI()
         "Spectrum / waterfall colors: Setup → Appearance → Colors & Theme."), this);
     colorHint->setStyleSheet(QStringLiteral(
         "QLabel { color: #607080; font-style: italic; padding: 6px; }"));
-    contentLayout()->addWidget(colorHint);
+    addContent(colorHint);
 
     // ── Cross-links (Task 2.4) ────────────────────────────────────────────────
     // Hint lines for forward-looking moves documented in the design (Task 3.6 / 3.4).
@@ -1458,13 +1458,13 @@ void SpectrumDefaultsPage::buildUI()
         QStringLiteral("ANAN-8000DLE volts/amps moved to Hardware → ANAN-8000DLE."), this);
     hintVolts->setStyleSheet(QStringLiteral(
         "QLabel { color: #607080; font-style: italic; font-size: 10px; }"));
-    contentLayout()->addWidget(hintVolts);
+    addContent(hintVolts);
 
     auto* hintFilter = new QLabel(
         QStringLiteral("Small filter on VFOs moved to Appearance → VFO Flag."), this);
     hintFilter->setStyleSheet(QStringLiteral(
         "QLabel { color: #607080; font-style: italic; font-size: 10px; }"));
-    contentLayout()->addWidget(hintFilter);
+    addContent(hintFilter);
 
     const QString crossLinkStyle = QStringLiteral(
         "QPushButton { background: #1a2a3a; color: #8aa8c0; border: 1px solid #203040;"
@@ -1497,9 +1497,7 @@ void SpectrumDefaultsPage::buildUI()
     crossLinkLayout->addWidget(m_configureMultimeterBtn);
 
     crossLinkLayout->addStretch();
-    contentLayout()->addWidget(crossLinkRow);
-
-    contentLayout()->addStretch();
+    addContent(crossLinkRow);
 
     Q_UNUSED(sw);
     Q_UNUSED(fe);
@@ -1758,7 +1756,7 @@ void WaterfallDefaultsPage::buildUI()
     });
     levForm->addRow(QString(), m_copySpecMinMaxBtn);
 
-    contentLayout()->addWidget(levGroup);
+    addContent(levGroup);
 
     // --- Section: Waterfall NF-AGC (Task 2.8) ---
     auto* nfAgcGroup = new QGroupBox(QStringLiteral("Waterfall NF-AGC"), this);
@@ -1794,7 +1792,7 @@ void WaterfallDefaultsPage::buildUI()
     });
     nfAgcForm->addRow(QStringLiteral("NF offset:"), m_wfAgcOffsetDb);
 
-    contentLayout()->addWidget(nfAgcGroup);
+    addContent(nfAgcGroup);
 
     // --- Section: Display ---
     auto* dispGroup = new QGroupBox(QString::fromLatin1(ControlRanges::kDisplayWaterfallGroupTitle), this);
@@ -1969,7 +1967,7 @@ void WaterfallDefaultsPage::buildUI()
     dispForm->addRow(QString::fromLatin1(ControlRanges::kDisplayWaterfallAvgTimeLabel)
                          + QLatin1Char(':'), m_waterfallAvgTimeSpin);
 
-    contentLayout()->addWidget(dispGroup);
+    addContent(dispGroup);
 
     // --- Section: Overlays ---
     auto* ovGroup = new QGroupBox(QStringLiteral("Overlays"), this);
@@ -2024,7 +2022,7 @@ void WaterfallDefaultsPage::buildUI()
     });
     ovForm->addRow(QString(), m_showTxZeroLineToggle);
 
-    contentLayout()->addWidget(ovGroup);
+    addContent(ovGroup);
 
     // ── Sub-epic E: rewind / history depth ────────────────────────────────
     auto* histGroup = new QGroupBox(QStringLiteral("Rewind history"), this);
@@ -2048,7 +2046,7 @@ void WaterfallDefaultsPage::buildUI()
     m_effectiveDepthLabel->setStyleSheet(QStringLiteral("color: #80a0b0;"));
     histForm->addRow(QStringLiteral(""), m_effectiveDepthLabel);
 
-    contentLayout()->addWidget(histGroup);
+    addContent(histGroup);
 
     connect(m_historyDepthCombo, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int idx) {
@@ -2095,16 +2093,14 @@ void WaterfallDefaultsPage::buildUI()
     });
     timeForm->addRow(QStringLiteral("Timestamp Mode:"), m_timestampModeCombo);
 
-    contentLayout()->addWidget(timeGroup);
+    addContent(timeGroup);
 
     // Low Level Color (W10) has moved to Setup → Appearance → Colors & Theme.
     auto* wfColorHint = new QLabel(QStringLiteral(
         "Spectrum / waterfall colors: Setup → Appearance → Colors & Theme."), this);
     wfColorHint->setStyleSheet(QStringLiteral(
         "QLabel { color: #607080; font-style: italic; padding: 6px; }"));
-    contentLayout()->addWidget(wfColorHint);
-
-    contentLayout()->addStretch();
+    addContent(wfColorHint);
 }
 
 // ---------------------------------------------------------------------------
@@ -2309,7 +2305,7 @@ void GridScalesPage::buildUI()
     });
     gridForm->addRow(QStringLiteral("dB Step (global):"), m_dbStepSpin);
 
-    contentLayout()->addWidget(gridGroup);
+    addContent(gridGroup);
 
     // Connect to PanadapterModel::bandChanged so the editing-band label
     // and the dbMax/dbMin spinboxes refresh when the user tunes across a
@@ -2376,7 +2372,7 @@ void GridScalesPage::buildUI()
     });
     lblForm->addRow(QString(), m_showFpsToggle);
 
-    contentLayout()->addWidget(lblGroup);
+    addContent(lblGroup);
 
     // Grid/zero-line/band-edge colour pickers (G6/G9–G13) moved to
     // Setup → Appearance → Colors & Theme (consolidated colour panel).
@@ -2384,7 +2380,7 @@ void GridScalesPage::buildUI()
         "Spectrum / waterfall colors: Setup → Appearance → Colors & Theme."), this);
     gridColorHint->setStyleSheet(QStringLiteral(
         "QLabel { color: #607080; font-style: italic; padding: 6px; }"));
-    contentLayout()->addWidget(gridColorHint);
+    addContent(gridColorHint);
 
     // --- Section: Noise-Floor Tracking (Task 2.9) ---
     // From Thetis setup.cs:24202-24213 [v2.10.3.13] chkAdjustGridMinToNFRX1
@@ -2447,7 +2443,7 @@ void GridScalesPage::buildUI()
     });
     nfForm->addRow(QString(), m_maintainNFAdjustDelta);
 
-    contentLayout()->addWidget(nfGroup);
+    addContent(nfGroup);
 
     // --- Task 2.9: Copy waterfall thresholds → spectrum min/max ---
     // Reverse direction of Task 2.8's Copy spectrum min/max → waterfall.
@@ -2488,9 +2484,7 @@ void GridScalesPage::buildUI()
     });
     copyForm->addRow(QString(), m_copyWfToSpecBtn);
 
-    contentLayout()->addWidget(copyGroup);
-
-    contentLayout()->addStretch();
+    addContent(copyGroup);
 
     // Sync enabled-state of NF sub-controls on construction after loadFromRenderer().
     // (loadFromRenderer runs before buildUI in the constructor, so the controls
@@ -2870,7 +2864,7 @@ void TxDisplayPage::buildUI()
     fftGrid->addWidget(txWindowPrefix,  3, 0);
     fftGrid->addWidget(m_txWindowCombo, 3, 1, 1, 3);
 
-    contentLayout()->addWidget(fftGroup);
+    addContent(fftGroup);
 
     // ── Group 2: Panadapter ────────────────────────────────────────────
     // From Thetis groupBoxTS7 [setup.designer.cs:36645-36768 v2.10.3.13+501e3f51].
@@ -2947,7 +2941,7 @@ void TxDisplayPage::buildUI()
         "detectors (the Peak and Rosenfell detectors are not power-like)."));
     panForm->addRow(QStringLiteral(""), m_txPanNormalizeCheck);
 
-    contentLayout()->addWidget(panGroup);
+    addContent(panGroup);
 
     // ── Group 3: Waterfall ─────────────────────────────────────────────
     // From Thetis groupBoxTS9 [setup.designer.cs:36405-36508 v2.10.3.13+501e3f51].
@@ -3002,7 +2996,7 @@ void TxDisplayPage::buildUI()
         "waterfall preserves a longer time history."));
     wfForm->addRow(QStringLiteral("Time:"), m_txWfAvTimeSpin);
 
-    contentLayout()->addWidget(wfGroup);
+    addContent(wfGroup);
 
     // Group 4: Waterfall Amplitude Scale (functional in 3M-5b).
     // From Thetis grpTXWFAmpScale [setup.designer.cs:36246-36379 v2.10.3.13+501e3f51].
@@ -3090,7 +3084,7 @@ void TxDisplayPage::buildUI()
     m_txWfGradientRowLabel = gradRowLabel;
     ampForm->addRow(gradRowLabel, m_txWfGradientPicker);
 
-    contentLayout()->addWidget(ampGroup);
+    addContent(ampGroup);
 
     // Group 5: TX Grid Scale (3M-5e)
     // From Thetis grpTXSpectrumGrid on tpDisplayTransmit
@@ -3099,10 +3093,8 @@ void TxDisplayPage::buildUI()
         QStringLiteral("TX Grid Scale"),
         QStringLiteral("Max + Min + Step + Display Grid + Fill + Label Align (wired in 3M-5e)"),
         this);
-    contentLayout()->addWidget(txGridScale);
+    addContent(txGridScale);
     UnbuiltFeatures::hideUnlessBuilt(txGridScale, UnbuiltFeature::TxGridScale);
-
-    contentLayout()->addStretch();
 
     // Wire the 4 functional Waterfall Amplitude Scale controls to SpectrumWidget.
     // Initial sync from current SpectrumWidget state.
@@ -3473,7 +3465,7 @@ void Display3DSetupPage::buildUI()
         if (rc != QMessageBox::Yes) { return; }
         resetToDefaultsForTest();
     });
-    contentLayout()->addWidget(resetBtn);
+    addContent(resetBtn);
 
     auto* group = new QGroupBox(QStringLiteral("3D VIEW"), this);
     auto* form  = new QFormLayout(group);
@@ -3626,8 +3618,7 @@ void Display3DSetupPage::buildUI()
     }
     form->addRow(QString(), m_sliceShadowCheck);
 
-    contentLayout()->addWidget(group);
-    contentLayout()->addStretch();
+    addContent(group);
 }
 
 void Display3DSetupPage::resetToDefaultsForTest()

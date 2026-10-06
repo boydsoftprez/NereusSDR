@@ -184,7 +184,7 @@ void AudioAdvancedPage::buildDspSection()
                 }
             });
 
-    contentLayout()->addWidget(box);
+    addContent(box);
 }
 
 void AudioAdvancedPage::loadDspSettings()
@@ -307,7 +307,7 @@ void AudioAdvancedPage::buildFeatureFlagsSection()
                 });
     }
 
-    contentLayout()->addWidget(box);
+    addContent(box);
 
     // R-R3-49: none of the three is applied yet; each is hidden until it is,
     // and the group goes with them while all three are.
@@ -349,7 +349,7 @@ void AudioAdvancedPage::buildCablesSection()
     connect(m_rescanButton, &QPushButton::clicked,
             this, &AudioAdvancedPage::onRescan);
 
-    contentLayout()->addWidget(box);
+    addContent(box);
 }
 
 void AudioAdvancedPage::updateCablesLabel(const QVector<DetectedCable>& cables)
@@ -416,7 +416,7 @@ void AudioAdvancedPage::buildResetSection()
     connect(m_resetButton, &QPushButton::clicked,
             this, &AudioAdvancedPage::onResetClicked);
 
-    contentLayout()->addWidget(box);
+    addContent(box);
 }
 
 void AudioAdvancedPage::onResetClicked()

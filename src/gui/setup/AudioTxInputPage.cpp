@@ -536,14 +536,14 @@ void AudioTxInputPage::buildPage(bool radioMicSelectable, HPSDRHW hw)
     // ── PC Mic group box (I.2) ────────────────────────────────────────────────
     auto* pcMicGroupContainer = new QVBoxLayout();
     buildPcMicGroup(pcMicGroupContainer);
-    contentLayout()->addLayout(pcMicGroupContainer);
+    addContent(pcMicGroupContainer);
 
     // ── Radio Mic per-family group boxes (I.3) ────────────────────────────────
     auto* radioMicContainer = new QVBoxLayout();
     buildHermesRadioMicGroup(radioMicContainer);
     buildOrionRadioMicGroup(radioMicContainer);
     buildSaturnRadioMicGroup(radioMicContainer);
-    contentLayout()->addLayout(radioMicContainer);
+    addContent(radioMicContainer);
 
     // Show PC Mic group only when PC Mic is selected.
     updatePcMicGroupVisibility(MicSource::Pc);

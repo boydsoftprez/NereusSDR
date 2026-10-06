@@ -180,8 +180,6 @@ HardwareDdcRoutingPage::HardwareDdcRoutingPage(RadioModel* model, QWidget* paren
     } else {
         group->layout()->addWidget(resetBtn);
     }
-
-    contentLayout()->addStretch(1);
 }
 
 } // namespace NereusSDR

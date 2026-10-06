@@ -41,6 +41,10 @@
 //               the Core; the Core's refusal stays the backstop. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-06 - R-SPK-21: addContent() for widgets and layouts, inserted
+//                 before the trailing stretch so every page starts at the
+//                 top. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include "SetupPage.h"
@@ -216,6 +220,19 @@ QGroupBox* SetupPage::addSection(const QString& title)
     m_contentLayout->insertWidget(stretchIndex, group);
 
     return group;
+}
+
+// R-SPK-21: content goes before the trailing stretch, as addSection() does.
+void SetupPage::addContent(QWidget* widget)
+{
+    const int stretchIndex = m_contentLayout->count() - 1;
+    m_contentLayout->insertWidget(stretchIndex, widget);
+}
+
+void SetupPage::addContent(QLayout* layout)
+{
+    const int stretchIndex = m_contentLayout->count() - 1;
+    m_contentLayout->insertLayout(stretchIndex, layout);
 }
 
 // ── Convenience single-argument row builders ──────────────────────────────────

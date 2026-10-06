@@ -141,8 +141,8 @@ HardwarePage::HardwarePage(RadioModel* model, QWidget* parent)
     m_remoteNotice->setWordWrap(true);
     m_remoteNotice->setMargin(8);
     m_remoteNotice->hide();
-    contentLayout()->addWidget(m_remoteNotice);
-    contentLayout()->addWidget(m_tabs);
+    addContent(m_remoteNotice);
+    addContent(m_tabs);
 
     // ── Create stub tab widgets ───────────────────────────────────────────────
     m_radioInfoTab    = new RadioInfoTab(model, this);

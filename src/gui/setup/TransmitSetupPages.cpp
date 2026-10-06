@@ -304,8 +304,6 @@ void PowerPage::buildUI()
     //   - grpTXFilter (TX filter cutoff)
     //   - chkTXExpert (Expert mode unlock)
     // Source: Thetis setup.designer.cs:46313-46339 tpTransmit [v2.10.3.13]
-
-    contentLayout()->addStretch();
 }
 
 // ---------------------------------------------------------------------------
@@ -521,7 +519,7 @@ void PowerPage::buildPowerGroup()
     }
     pwrForm->addRow(QString(), m_chkForceAttWhenPsOff);
 
-    contentLayout()->addWidget(pwrGroup);
+    addContent(pwrGroup);
 }
 
 // ---------------------------------------------------------------------------
@@ -712,7 +710,7 @@ void PowerPage::buildTuneGroup()
         });
     }
 
-    contentLayout()->addWidget(m_grpPATune);
+    addContent(m_grpPATune);
 }
 
 // Issue #175 Task 8 — flip the udTXTunePower enabled state so it tracks
@@ -962,7 +960,7 @@ void PowerPage::buildSwrProtectionGroup()
     });
     layout->addRow(QString(), m_chkWindBackPowerSWR);
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 // Task 10 — External TX Inhibit
@@ -1019,7 +1017,7 @@ void PowerPage::buildExternalTxInhibitGroup()
     });
     layout->addWidget(m_chkTXInhibitReverse);
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 // Issue #175 Wave 1: dropped Block TX on RX antennas group from PowerPage.
@@ -1063,7 +1061,7 @@ void PowerPage::buildHfPaGroup()
     });
     layout->addWidget(m_chkHFTRRelay);
 
-    contentLayout()->addWidget(group);
+    addContent(group);
 }
 
 // "Disable HF PA" is disabled with its reason, never hidden: in a remote
@@ -1119,9 +1117,7 @@ void TxProfilesPage::buildUI()
         "QLabel { color: #b0c0d0; font-style: italic; "
         " background: #1a2a3a; border: 1px solid #203040; "
         " border-radius: 3px; padding: 12px; }"));
-    contentLayout()->addWidget(info);
-
-    contentLayout()->addStretch();
+    addContent(info);
 }
 
 // ---------------------------------------------------------------------------

@@ -77,7 +77,7 @@ AudioDevicesPage::AudioDevicesPage(RadioModel* model, QWidget* parent)
         "affect it. This computer's speaker device and master volume control this computer."), this);
     radioSpeakerNote->setObjectName(QStringLiteral("radioSpeakerExplanation"));
     radioSpeakerNote->setWordWrap(true);
-    contentLayout()->addWidget(radioSpeakerNote);
+    addContent(radioSpeakerNote);
 
     // ── Microphone status + Retry (R-R3-36) ───────────────────────────────
     auto* statusRow = new QWidget(this);

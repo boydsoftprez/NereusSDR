@@ -128,8 +128,6 @@ void ConnectionQualityPage::buildUI()
     histLayout->addWidget(m_historyPlaceholder);
     histGroup->setObjectName(QStringLiteral("connectionHistoryGroup"));
     UnbuiltFeatures::hideUnlessBuilt(histGroup, UnbuiltFeature::ConnectionHistory);
-
-    contentLayout()->addStretch();
 }
 
 void ConnectionQualityPage::onTick()
@@ -203,8 +201,6 @@ void SettingsValidationPage::buildUI()
     connect(m_refreshBtn, &QPushButton::clicked, this, &SettingsValidationPage::onRevalidateClicked);
     connect(m_repairBtn,  &QPushButton::clicked, this, &SettingsValidationPage::onRepairClicked);
     connect(m_forgetBtn,  &QPushButton::clicked, this, &SettingsValidationPage::onForgetClicked);
-
-    contentLayout()->addStretch();
 }
 
 void SettingsValidationPage::refresh()
@@ -415,8 +411,6 @@ void ExportImportConfigPage::buildUI()
             &ExportImportConfigPage::onImportAllClicked);
     connect(m_exportRadioBtn, &QPushButton::clicked, this,
             &ExportImportConfigPage::onExportRadioClicked);
-
-    contentLayout()->addStretch();
 }
 
 void ExportImportConfigPage::onExportAllClicked()
@@ -889,8 +883,6 @@ void LogsPage::buildUI()
         m_clearBtn->setToolTip(QStringLiteral("Clear these views (the logs are kept)"));
         connect(m_clearBtn, &QPushButton::clicked, m_coreLogView, &QPlainTextEdit::clear);
     }
-
-    contentLayout()->addStretch();
     refresh();
 }
 
