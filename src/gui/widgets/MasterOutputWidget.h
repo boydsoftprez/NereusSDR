@@ -40,6 +40,12 @@
 //                HeaderVolumeStyle. Behaviour, keys and the right-click
 //                device menu are unchanged. J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker plan Task 6, JJ decision 2 (R-SPK-17, D1):
+//                setStacked() switches the PC group to the stacked form
+//                (thin row, small icon and readout, same handle) and
+//                HeaderVolumeStyle::applyForm() sizes either group for
+//                either form. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
@@ -72,6 +78,21 @@ extern const char* const kRadioSlider;
 extern const char* const kReadout;
 // Logical size of the icon drawn in the 20 x 20 button.
 inline constexpr int kIconPx = 18;
+// The stacked readout (layout C): 9 px text, no vertical padding.
+extern const char* const kReadoutStacked;
+// Logical size of the icon drawn in the stacked form's 14 x 14 button.
+inline constexpr int kStackedIconPx = 12;
+
+// Sizes one group's icon button, word label, slider and readout for the
+// side-by-side form (layout A of header-layouts.html: 20 x 20 button,
+// 100 x 16 slider, 22 px readout) or the stacked form (layout C, one row of
+// two in the 32 px strip: 14 x 14 button, 84 x 12 slider, 20 x 13 readout,
+// the word label kept at stackedLabelWidth so both rows' sliders line up,
+// or hidden when stackedLabelWidth is 0). The slider handle stays the
+// header's 10 px either way. readoutStyle is the side-by-side readout
+// style. Returns the icon size to draw.
+int applyForm(QPushButton* button, QLabel* word, QSlider* slider, QLabel* readout,
+              bool stacked, int stackedLabelWidth, const char* readoutStyle);
 } // namespace HeaderVolumeStyle
 
 // MasterOutputWidget — menu-bar master-output composite.
@@ -108,6 +129,12 @@ public:
     // Does NOT emit outputDeviceChanged — this is a sync-from-
     // elsewhere path, not a user action.
     void setCurrentOutputDevice(const QString& name);
+
+    // R-SPK-17: the side-by-side (false) or stacked (true) form of the
+    // group, chosen by TitleBar from the room the header has. The same
+    // children, with the same objectNames, serve both forms.
+    void setStacked(bool stacked, int stackedLabelWidth);
+    bool isStacked() const { return m_stacked; }
 
 signals:
     // User moved the slider. Value is the 0.0–1.0 linear volume.
@@ -151,6 +178,8 @@ private:
 
     QPushButton* m_speakerBtn{nullptr};
     QLabel*      m_pcLabel{nullptr};
+    bool         m_stacked{false};
+    int          m_iconPx{HeaderVolumeStyle::kIconPx};
     QSlider*     m_slider{nullptr};
     QLabel*      m_dbLabel{nullptr};
     bool         m_updatingFromModel{false};

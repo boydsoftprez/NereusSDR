@@ -9,6 +9,9 @@
 //                Task 6 (R-SPK-06, R-SPK-07, R-SPK-16, R-SPK-17, D1, D5,
 //                D10). J.J. Boyd (KG4VCF), with AI-assisted implementation
 //                via Anthropic Claude Code.
+//   2026-10-06 - Task 6, JJ decision 2 (R-SPK-17, D1): setStacked() for
+//                the header's stacked form. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "RadioSpeakerWidget.h"
@@ -23,6 +26,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSize>
 #include <QSlider>
 
 namespace NereusSDR {
@@ -43,6 +47,7 @@ const char* const kRadioNoneIcon  = "radio-none";
 
 RadioSpeakerWidget::RadioSpeakerWidget(RadioModel* model, QWidget* parent)
     : QWidget(parent)
+    , m_iconPx(HeaderVolumeStyle::kIconPx)
 {
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -180,20 +185,30 @@ void RadioSpeakerWidget::applyIcon(bool available, bool muted)
     const QString name = QLatin1String(!available ? kRadioNoneIcon
                                        : muted    ? kRadioMutedIcon
                                                   : kRadioOnIcon);
-    if (m_button->property(AppIcon::kIconProperty).toString() == name) {
+    if (m_button->property(AppIcon::kIconProperty).toString() == name
+        && m_button->iconSize() == QSize(m_iconPx, m_iconPx)) {
         return;
     }
-    AppIcon::apply(m_button, name, HeaderVolumeStyle::kIconPx);
+    AppIcon::apply(m_button, name, m_iconPx);
     if (!available) {
         // A disabled button would otherwise draw Qt's own greyed copy of
         // the icon; radio-none is already the greyed radio.
         QIcon icon = m_button->icon();
         for (const qreal ratio : {1.0, 2.0, m_button->devicePixelRatioF()}) {
-            icon.addPixmap(AppIcon::pixmap(name, HeaderVolumeStyle::kIconPx, ratio),
+            icon.addPixmap(AppIcon::pixmap(name, m_iconPx, ratio),
                            QIcon::Disabled);
         }
         m_button->setIcon(icon);
     }
+}
+
+void RadioSpeakerWidget::setStacked(bool stacked, int stackedLabelWidth)
+{
+    m_stacked = stacked;
+    m_iconPx = HeaderVolumeStyle::applyForm(m_button, m_label, m_slider, m_valueLabel,
+                                            stacked, stackedLabelWidth,
+                                            HeaderVolumeStyle::kReadout);
+    syncFromModel();
 }
 
 bool RadioSpeakerWidget::eventFilter(QObject* watched, QEvent* event)

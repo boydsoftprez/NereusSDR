@@ -75,6 +75,12 @@
 //                 after kPcToRadioGap; setRadioModel() binds it. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-10-06 - Radio speaker plan Task 6, JJ decision 2 (R-SPK-17, D1):
+//                 PC and RADIO sit in one volume group that stacks them
+//                 (layout C) when side by side would leave the connection
+//                 segment less than it asks for, and returns to side by
+//                 side past kSideBySideReturnSpare. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "TitleBar.h"
@@ -98,6 +104,9 @@
 #include <QPolygonF>
 #include <QPushButton>
 #include <QSize>
+#include <QBoxLayout>
+#include <QEvent>
+#include <QLayoutItem>
 #include <QSizePolicy>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -126,10 +135,33 @@ constexpr int kSpacing      = 6;
 constexpr int kUtcToMasterGap = 18;
 
 // Visible gap between the PC group's readout and the RADIO group's icon
-// (R-SPK-17, header-layouts.html layout A). QBoxLayout adds its spacing
-// once beside a spacer item (measured: a 4 px spacer gave 10 px), so the
-// spacer is the rest.
+// in the side-by-side form (R-SPK-17, header-layouts.html layout A): the
+// spacing of the volume group's own layout.
 constexpr int kPcToRadioGap = 16;
+
+// R-SPK-17 (JJ, 2026-10-06): the header shows PC and RADIO side by side
+// (layout A) while that leaves the connection segment the width it asks
+// for (its sizeHint, which covers every remote group plus 14 px beyond
+// what tst_connection_segment_v2 and tst_remote_window_harness require),
+// and stacks them (layout C) otherwise. The decision uses the width the
+// segment WOULD get side by side, whichever form is showing, so the form
+// does not feed back into it; layout A returns only once it leaves this
+// much more than the segment asks for, so readings whose width moves by a
+// few pixels each second cannot flip the form back and forth.
+//
+// Measured 2026-10-06, offscreen, default header font (SF Mono 10
+// DemiBold), real MainWindow remote header connected with all four
+// readouts (Traffic, Audio, Radio, Core RTT; longest text 527 px hint):
+//   1440 px window: side by side would leave the segment 316 px, so the
+//     header stacks; stacked group 159x28, segment 527 px, worst margin
+//     over every audio state +13 px (Menlo -77, Monaco, Courier New,
+//     Andale Mono and PT Mono -76, against Menlo -78 before Task 6;
+//     not chased).
+//   Side by side the volume group is 370 px wide, so with the longest
+//     text the header stacks below a window of about 1651 px and returns
+//     to side by side from about 1667 px (1651 + this spare).
+//   2200 px window: side by side, segment margin +14 px.
+constexpr int kSideBySideReturnSpare = 16;
 
 // Fixed strip height. From AetherSDR TitleBar.cpp:30.
 constexpr int kStripHeight = 32;
@@ -730,15 +762,22 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     m_hbox->addSpacing(kUtcToMasterGap);
 
     // ── MasterOutputWidget — Task 10b composite ────────────────────────────
-    m_master = new MasterOutputWidget(audio, this);
-    m_hbox->addWidget(m_master);
-    m_hbox->addSpacing(kPcToRadioGap - kSpacing);
-
-    // ── RADIO group, R-SPK-17 ───────────────────────────────────────────
-    // Built with no model so the strip's order never changes; it shows
-    // no radio connected (disabled, never hidden) until setRadioModel().
-    m_radioSpeaker = new RadioSpeakerWidget(nullptr, this);
-    m_hbox->addWidget(m_radioSpeaker);
+    // ── Volume group, R-SPK-17: PC then RADIO ───────────────────────────
+    // One box whose direction switches between side by side (layout A)
+    // and stacked (layout C); see updateVolumeForm().
+    m_volumeGroup = new QWidget(this);
+    m_volumeGroup->setObjectName(QStringLiteral("headerVolumeGroup"));
+    m_volumeBox = new QBoxLayout(QBoxLayout::LeftToRight, m_volumeGroup);
+    m_volumeBox->setContentsMargins(0, 0, 0, 0);
+    m_volumeBox->setSpacing(kPcToRadioGap);
+    m_master = new MasterOutputWidget(audio, m_volumeGroup);
+    m_volumeBox->addWidget(m_master);
+    // The RADIO group is built with no model so the strip's order never
+    // changes; it shows no radio connected (disabled, never hidden) until
+    // setRadioModel().
+    m_radioSpeaker = new RadioSpeakerWidget(nullptr, m_volumeGroup);
+    m_volumeBox->addWidget(m_radioSpeaker);
+    m_hbox->addWidget(m_volumeGroup);
     m_hbox->addSpacing(10);
 
     auto tickUtc = [this]() {
@@ -805,6 +844,70 @@ void TitleBar::setMenuBar(QMenuBar* mb)
 void TitleBar::setRadioModel(RadioModel* model)
 {
     m_radioSpeaker->setRadioModel(model);
+}
+
+bool TitleBar::event(QEvent* event)
+{
+    // The layout has already placed the children for this resize or
+    // layout request (QLayout::widgetEvent runs first), so the stretch
+    // and segment geometry below are current.
+    const bool handled = QWidget::event(event);
+    if (event->type() == QEvent::LayoutRequest || event->type() == QEvent::Resize) {
+        updateVolumeForm();
+    }
+    return handled;
+}
+
+int TitleBar::segmentWidthSideBySide() const
+{
+    // The segment's own width plus the two centre stretches is the room
+    // the segment can have in the form now showing; side by side it has
+    // that, less what the side-by-side group takes beyond this one.
+    int pool = m_connectionSegment->width();
+    for (int i = 0; i < m_hbox->count(); ++i) {
+        QLayoutItem* item = m_hbox->itemAt(i);
+        if (item->spacerItem() && (item->expandingDirections() & Qt::Horizontal)) {
+            pool += item->geometry().width();
+        }
+    }
+    return pool + m_volumeGroup->width() - m_sideBySideGroupWidth;
+}
+
+void TitleBar::updateVolumeForm()
+{
+    if (m_updatingVolumeForm || !isVisible()) {
+        return;
+    }
+    if (!m_stacked) {
+        m_sideBySideGroupWidth = m_volumeGroup->sizeHint().width();
+    }
+    if (m_sideBySideGroupWidth <= 0) {
+        return;
+    }
+    const int need = m_connectionSegment->sizeHint().width();
+    const int sideBySide = segmentWidthSideBySide();
+    const bool stack = m_stacked ? sideBySide < need + kSideBySideReturnSpare
+                                 : sideBySide < need;
+    setVolumeStacked(stack);
+}
+
+void TitleBar::setVolumeStacked(bool stacked)
+{
+    if (stacked == m_stacked) {
+        return;
+    }
+    m_updatingVolumeForm = true;
+    m_stacked = stacked;
+    // Layout C: PC above RADIO, word labels kept at RADIO's width so the
+    // two sliders line up.
+    const int labelWidth = stacked ? m_radioSpeaker->findChild<QLabel*>(
+                                         QStringLiteral("radioLabel"))->sizeHint().width()
+                                   : 0;
+    m_volumeBox->setDirection(stacked ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
+    m_volumeBox->setSpacing(stacked ? 0 : kPcToRadioGap);
+    m_master->setStacked(stacked, labelWidth);
+    m_radioSpeaker->setStacked(stacked, labelWidth);
+    m_updatingVolumeForm = false;
 }
 
 QString TitleBar::utcText() const

@@ -17,6 +17,9 @@
 //                Task 6 (R-SPK-06, R-SPK-07, R-SPK-16, R-SPK-17, D1, D5,
 //                D10). J.J. Boyd (KG4VCF), with AI-assisted implementation
 //                via Anthropic Claude Code.
+//   2026-10-06 - Task 6, JJ decision 2 (R-SPK-17, D1): setStacked() for
+//                the header's stacked form. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QString>
@@ -60,6 +63,11 @@ public:
     void setRadioModel(RadioModel* model);
     RadioModel* radioModel() const { return m_model; }
 
+    // R-SPK-17: the side-by-side (false) or stacked (true) form, chosen by
+    // TitleBar; see MasterOutputWidget::setStacked.
+    void setStacked(bool stacked, int stackedLabelWidth);
+    bool isStacked() const { return m_stacked; }
+
 protected:
     // Recomputes the tooltip just before it shows, so a reason that
     // changed without an availability change (a remote window attaching
@@ -78,6 +86,8 @@ private:
     QSlider*     m_slider{nullptr};
     QLabel*      m_valueLabel{nullptr};
     bool         m_updatingFromModel{false};
+    bool         m_stacked{false};
+    int          m_iconPx{0};   // HeaderVolumeStyle::kIconPx, set in the constructor
 };
 
 } // namespace NereusSDR

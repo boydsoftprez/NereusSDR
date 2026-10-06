@@ -56,7 +56,7 @@ are listed again under "Design choices confirmed".
 
 | # | Decision | Reason |
 |---|---|---|
-| D1 | Two separate controls, PC and RADIO, side by side (layout A of `header-layouts.html`), with the short word labels "PC" and "RADIO". | JJ picked A over icon-only (B) and stacked (C): both sliders keep full size and the word tells them apart at a glance. |
+| D1 | Two separate controls, PC and RADIO, side by side (layout A of `header-layouts.html`), with the short word labels "PC" and "RADIO". | JJ picked A over icon-only (B) and stacked (C): both sliders keep full size and the word tells them apart at a glance. Revised 2026-10-06 (JJ): A on wide windows, stacked C on narrow ones, chosen by the room the connection segment needs (see R-SPK-17). |
 | D2 | PC keeps today's master volume and mute, saved keys and behaviour for this computer's speakers. Headphones stay exempt from it, as today. | No change to what PC already means locally. |
 | D3 | RADIO is adjustable everywhere: owned by the Core, mirrored to desktop remote windows and the iPhone. | The speaker is at the radio, so one value for everyone; JJ chose this over "Core window only". |
 | D4 | Upgrade default: RADIO starts at the current master level, unmuted. | Nobody hears a change on the day they upgrade. |
@@ -262,6 +262,29 @@ the existing `kSliderStyle` and `kDbLabelStyle`; RADIO's slider fill is
 amber. They sit in the title bar strip (height 32) where the master volume
 is today, followed by the feature-request bulb. Disabled RADIO shows the
 greyed radio icon and the readout "--".
+
+Narrow windows (JJ, 2026-10-06). Side by side the two groups take 370 px,
+which at 1440 px left a remote window's connection segment 316 px for
+readouts that need 527 px, so the Core RTT and Radio groups fell off. The
+header keeps layout A while it leaves the segment its full width and
+otherwise switches to the stacked layout C of `header-layouts.html`: PC
+above RADIO in the width of one group (159 x 28 px), two thin sliders
+(84 x 12 px, the same 10 px handle), each row keeping its icon (click to
+mute), word label, slider and readout, in the same colours and with the
+same disabled-with-tooltip RADIO state. Both forms use the same child
+names. The switch is measured, not a screen size: the title bar works out
+the width the segment would get side by side and stacks when that is less
+than the segment's size hint, and goes back to side by side only once it
+leaves 16 px more than the hint (`kSideBySideReturnSpare`), so readings
+that change width every second cannot flip the form. Measured offscreen
+with the default header font on the real remote window, connected, with
+all four readouts: at 1440 px the header stacks and the segment gets its
+527 px with at least 13 px to spare in every audio state; with the longest
+readouts it stacks below about 1651 px and returns to side by side from
+about 1667 px; at 2200 px it is side by side with 14 px to spare. The
+substitute monospace fonts (Menlo -77 px, Monaco, Courier New, Andale Mono
+and PT Mono -76 px) stay short as they were before this change (Menlo
+-78 px).
 
 ### VFO flag
 

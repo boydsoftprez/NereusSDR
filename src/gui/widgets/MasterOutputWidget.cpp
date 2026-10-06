@@ -23,6 +23,12 @@
 //                the slider, and HeaderVolumeStyle exports the styles the
 //                RADIO group shares. J.J. Boyd (KG4VCF), with AI-assisted
 //                implementation via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker plan Task 6, JJ decision 2 (R-SPK-17, D1):
+//                setStacked() switches the PC group to the stacked form
+//                (thin row, small icon and readout, same handle) and
+//                HeaderVolumeStyle::applyForm() sizes either group for
+//                either form. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "MasterOutputWidget.h"
@@ -38,6 +44,7 @@
 #include <QActionGroup>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLayout>
 #include <QMenu>
 #include <QPoint>
 #include <QPushButton>
@@ -107,6 +114,48 @@ const char* const kReadout =
     "  color: #8aa8c0;"
     "}"
     "QLabel:disabled { color: #4a5a6a; }";
+
+const char* const kReadoutStacked =
+    "QLabel {"
+    "  font-size: 9px;"
+    "  background: #0a0a18;"
+    "  border: 1px solid #1e2e3e;"
+    "  border-radius: 3px;"
+    "  padding: 0 2px;"
+    "  color: #8aa8c0;"
+    "}"
+    "QLabel:disabled { color: #4a5a6a; }";
+
+int applyForm(QPushButton* button, QLabel* word, QSlider* slider, QLabel* readout,
+              bool stacked, int stackedLabelWidth, const char* readoutStyle)
+{
+    if (QLayout* row = button->parentWidget()->layout()) {
+        row->setSpacing(stacked ? 3 : 4);
+    }
+    if (stacked) {
+        button->setFixedSize(14, 14);
+        slider->setFixedSize(84, 12);
+        readout->setFixedSize(20, 13);
+        readout->setStyleSheet(QLatin1String(kReadoutStacked));
+        if (stackedLabelWidth > 0) {
+            word->setFixedWidth(stackedLabelWidth);
+            word->setVisible(true);
+        } else {
+            word->setVisible(false);
+        }
+        return kStackedIconPx;
+    }
+    button->setFixedSize(20, 20);
+    slider->setFixedSize(100, 16);
+    readout->setFixedWidth(22);
+    readout->setMinimumHeight(0);
+    readout->setMaximumHeight(QWIDGETSIZE_MAX);
+    readout->setStyleSheet(QLatin1String(readoutStyle));
+    word->setMinimumWidth(0);
+    word->setMaximumWidth(QWIDGETSIZE_MAX);
+    word->setVisible(true);
+    return kIconPx;
+}
 
 } // namespace HeaderVolumeStyle
 
@@ -351,7 +400,15 @@ void MasterOutputWidget::applySpeakerIcon(bool muted)
 {
     AppIcon::apply(m_speakerBtn,
                    QLatin1String(muted ? kPcMutedIcon : kPcOnIcon),
-                   HeaderVolumeStyle::kIconPx);
+                   m_iconPx);
+}
+
+void MasterOutputWidget::setStacked(bool stacked, int stackedLabelWidth)
+{
+    m_stacked = stacked;
+    m_iconPx = HeaderVolumeStyle::applyForm(m_speakerBtn, m_pcLabel, m_slider, m_dbLabel,
+                                            stacked, stackedLabelWidth, kDbLabelStyle);
+    applySpeakerIcon(m_speakerBtn->isChecked());
 }
 
 void MasterOutputWidget::onSpeakersConfigChanged(const AudioDeviceConfig& cfg)

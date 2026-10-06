@@ -19,8 +19,10 @@
 //      the reason as tooltip; a Hermes Lite 2 stays enabled with the add-on
 //      note; a remote window names the speaker at the Core (R-SPK-16).
 //   5. With NEREUS_HEADER_CAPTURE_DIR set, captures of the header in its
-//      states are saved (run once plain and once with QT_SCALE_FACTOR=2
-//      for 1x and 2x).
+//      states are saved in both forms, side by side and stacked (run once
+//      plain and once with QT_SCALE_FACTOR=2 for 1x and 2x).
+//   6. The stacked form (layout C, R-SPK-17): both icons still mute, both
+//      sliders still write, and the handles keep the side-by-side size.
 //
 // Modification history (NereusSDR):
 //   2026-10-06 - Written for the radio speaker and Audio Setup plan, Task 6.
@@ -40,6 +42,8 @@
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QSlider>
+#include <QStyle>
+#include <QStyleOptionSlider>
 
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
@@ -138,6 +142,34 @@ void connectLocal(RadioModel& model, SpeakerConnection& conn, HPSDRHW board)
     model.setBoardForTest(board);
     model.injectConnectionForTest(&conn);
     model.setConnectionStateForTest(ConnectionState::Connected);
+}
+
+// The four remote readouts a remote window shows; at 1440 px they need
+// the room the side-by-side volume groups would take.
+void showRemoteReadouts(TitleBar& bar)
+{
+    ConnectionSegment* seg = bar.connectionSegment();
+    seg->setState(ConnectionState::Connected);
+    seg->setRemoteStatusText(QStringLiteral("Core connected"));
+    seg->setRemoteMetrics({QStringLiteral("Traffic \u219312.4 \u21910.8 Mbps"),
+                           QStringLiteral("Audio 96.0 kbps (playing)"),
+                           QStringLiteral("Radio \u219312.4 \u21910.8 Mbps"),
+                           QStringLiteral("Core RTT 18 ms")});
+}
+
+QSize handleSize(QSlider* slider)
+{
+    QStyleOptionSlider opt;
+    opt.initFrom(slider);
+    opt.orientation = slider->orientation();
+    opt.minimum = slider->minimum();
+    opt.maximum = slider->maximum();
+    opt.sliderPosition = slider->sliderPosition();
+    opt.sliderValue = slider->value();
+    opt.subControls = QStyle::SC_SliderHandle | QStyle::SC_SliderGroove;
+    return slider->style()
+        ->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, slider)
+        .size();
 }
 
 void saveCapture(QWidget* w, const QString& stem)
@@ -437,7 +469,7 @@ private slots:
         QPalette pal = bar.palette();
         pal.setColor(QPalette::Window, QColor(QStringLiteral("#0a0a14")));
         bar.setPalette(pal);
-        bar.resize(1100, 32);
+        bar.resize(1440, 32);
         bar.show();
         QApplication::processEvents();
 
@@ -458,20 +490,107 @@ private slots:
             QVERIFY2(crop.save(path), qPrintable(path));
         };
 
-        shoot(QStringLiteral("radio-unavailable"));
+        auto states = [&](const QString& form) {
+            model.injectConnectionForTest(nullptr);
+            shoot(form + QStringLiteral("radio-unavailable"));
 
+            connectLocal(model, conn, HPSDRHW::Hermes);
+            model.setRadioSpeakerVolume(40);
+            model.setRadioSpeakerMuted(false);
+            shoot(form + QStringLiteral("pc-on-radio-on"));
+
+            model.setRadioSpeakerMuted(true);
+            shoot(form + QStringLiteral("radio-muted"));
+
+            model.setRadioSpeakerMuted(false);
+            pcBtn->click();
+            shoot(form + QStringLiteral("pc-muted"));
+            pcBtn->click();
+        };
+
+        QVERIFY(!bar.volumeStacked());
+        states(QString());
+
+        // Layout C: the same bar with the remote readouts, which need the
+        // room at this width.
+        showRemoteReadouts(bar);
+        QApplication::processEvents();
+        QVERIFY(bar.volumeStacked());
+        states(QStringLiteral("stacked-"));
+    }
+
+    // 6. The stacked form still mutes and writes, with full-size handles.
+    void stackedFormStillWorks()
+    {
+        RadioModel model;
+        SpeakerConnection conn;
+        const auto detach = qScopeGuard([&model]() { model.injectConnectionForTest(nullptr); });
         connectLocal(model, conn, HPSDRHW::Hermes);
-        model.setRadioSpeakerVolume(40);
+        model.setRadioSpeakerVolume(50);
         model.setRadioSpeakerMuted(false);
-        shoot(QStringLiteral("pc-on-radio-on"));
 
-        model.setRadioSpeakerMuted(true);
-        shoot(QStringLiteral("radio-muted"));
+        AudioEngine* engine = model.localAudioDevices();
+        TitleBar bar(engine);
+        auto* menu = new QMenuBar(&bar);
+        menu->addMenu(QStringLiteral("Radio"));
+        menu->addMenu(QStringLiteral("Setup"));
+        menu->addMenu(QStringLiteral("Help"));
+        bar.setMenuBar(menu);
+        bar.setRadioModel(&model);
+        auto* pcSlider = bar.findChild<QSlider*>(QStringLiteral("masterSlider"));
+        const QSize sideBySideHandle = handleSize(pcSlider);
+        showRemoteReadouts(bar);
+        bar.resize(1440, 32);
+        bar.show();
+        QApplication::processEvents();
+        QVERIFY(bar.volumeStacked());
 
+        const Parts p = partsOf(&bar);
+        auto* pcBtn = bar.findChild<QPushButton*>(QStringLiteral("speakerBtn"));
+        QVERIFY(p.button && p.slider && p.value && pcBtn && pcSlider);
+        QVERIFY(p.slider->isEnabled());
+
+        // Thin sliders, same handle as side by side (10 px).
+        QVERIFY(sideBySideHandle.width() >= 10 && sideBySideHandle.height() >= 10);
+        for (QSlider* slider : {pcSlider, p.slider}) {
+            const QSize handle = handleSize(slider);
+            QVERIFY2(handle.width() >= sideBySideHandle.width()
+                         && handle.height() >= sideBySideHandle.height(),
+                     qPrintable(QStringLiteral("%1 handle %2x%3")
+                                    .arg(slider->objectName())
+                                    .arg(handle.width()).arg(handle.height())));
+        }
+
+        p.slider->setValue(64);
+        QCOMPARE(model.radioSpeakerVolume(), 64);
+        QCOMPARE(p.value->text(), QStringLiteral("64"));
+        QTest::mouseClick(p.button, Qt::LeftButton);
+        QVERIFY(model.radioSpeakerMuted());
+        QCOMPARE(iconOf(p.button), QStringLiteral("radio-muted"));
+        QVERIFY(!engine->masterMuted());
+
+        pcSlider->setValue(30);
+        QVERIFY(std::abs(engine->volume() - 0.30f) < 1e-3f);
+        QCOMPARE(model.radioSpeakerVolume(), 64);
+        QTest::mouseClick(pcBtn, Qt::LeftButton);
+        QVERIFY(engine->masterMuted());
+        QCOMPARE(iconOf(pcBtn), QStringLiteral("pc-muted"));
+
+        // From another source, while stacked.
         model.setRadioSpeakerMuted(false);
-        pcBtn->click();
-        shoot(QStringLiteral("pc-muted"));
-        pcBtn->click();
+        model.setRadioSpeakerVolume(20);
+        QCOMPARE(p.slider->value(), 20);
+        QCOMPARE(iconOf(p.button), QStringLiteral("radio-on"));
+        QTest::mouseClick(pcBtn, Qt::LeftButton);
+        QVERIFY(!engine->masterMuted());
+
+        // Disabled, never hidden, in the stacked form too.
+        model.injectConnectionForTest(nullptr);
+        QApplication::processEvents();
+        QVERIFY(p.slider->isVisible());
+        QVERIFY(!p.slider->isEnabled());
+        QCOMPARE(p.slider->toolTip(), kNoRadio);
+        QCOMPARE(iconOf(p.button), QStringLiteral("radio-none"));
     }
 };
 

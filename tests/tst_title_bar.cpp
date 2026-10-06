@@ -20,6 +20,10 @@
 //   7. stripOrderUtcPcRadioFeature: the strip runs UTC, 18 px gap, PC
 //      group, 16 px, RADIO group, spacing, feature button (R-SPK-17), and
 //      the RADIO group reads as no radio until setRadioModel().
+//   8. volumeStacksWhenTheSegmentNeedsTheRoom: with the four remote
+//      readouts the header stacks PC above RADIO (layout C) at 1440 px so
+//      the segment keeps its width, goes side by side at 2200 px, and
+//      comes back each way without flipping in between (R-SPK-17, D1).
 //
 // Live UI smoke (hosted-inside-QMainWindow + menu bar re-parenting
 // visuals) is the canonical verify; these tests only guard the
@@ -155,23 +159,26 @@ private slots:
         MasterOutputWidget* pc = bar.masterOutput();
         RadioSpeakerWidget* radio = bar.radioSpeaker();
         auto* feature = bar.findChild<QPushButton*>(QStringLiteral("featureButton"));
-        QVERIFY(utc && pc && radio && feature);
-        QCOMPARE(radio->parentWidget(), &bar);
+        auto* group = bar.findChild<QWidget*>(QStringLiteral("headerVolumeGroup"));
+        QVERIFY(utc && pc && radio && feature && group);
+        // PC and RADIO live in one group the strip lays out as a unit, so
+        // the header can stack them (R-SPK-17, layout C).
+        QCOMPARE(group->parentWidget(), &bar);
+        QCOMPARE(pc->parentWidget(), group);
+        QCOMPARE(radio->parentWidget(), group);
+        QVERIFY(group->layout()->indexOf(pc) < group->layout()->indexOf(radio));
 
         QLayout* layout = bar.layout();
         const int iUtc = layout->indexOf(utc);
-        const int iPc = layout->indexOf(pc);
-        const int iRadio = layout->indexOf(radio);
+        const int iGroup = layout->indexOf(group);
         const int iFeature = layout->indexOf(feature);
         QVERIFY(iUtc >= 0);
-        // One spacer between each named element, and only spacers between
-        // RADIO and the feature button.
-        QCOMPARE(iPc, iUtc + 2);
-        QCOMPARE(iRadio, iPc + 2);
+        // One spacer between UTC and the group, and only spacers between
+        // the group and the feature button.
+        QCOMPARE(iGroup, iUtc + 2);
         QVERIFY(layout->itemAt(iUtc + 1)->spacerItem() != nullptr);
-        QVERIFY(layout->itemAt(iPc + 1)->spacerItem() != nullptr);
-        QVERIFY(iFeature > iRadio + 1);
-        for (int i = iRadio + 1; i < iFeature; ++i) {
+        QVERIFY(iFeature > iGroup + 1);
+        for (int i = iGroup + 1; i < iFeature; ++i) {
             QVERIFY(layout->itemAt(i)->spacerItem() != nullptr);
         }
         QCOMPARE(iFeature, layout->count() - 1);
@@ -179,10 +186,13 @@ private slots:
         bar.resize(1440, 32);
         bar.show();
         QApplication::processEvents();
-        // The visible gap from PC's readout to RADIO's icon is 16 px.
+        // No remote readouts: side by side, and the visible gap from PC's
+        // readout to RADIO's icon is 16 px.
+        QVERIFY(!bar.volumeStacked());
         QCOMPARE(radio->x() - (pc->x() + pc->width()), 16);
+        QCOMPARE(radio->y(), pc->y());
         QCOMPARE(bar.height(), 32);
-        QVERIFY(radio->y() >= 0 && radio->y() + radio->height() <= 32);
+        QVERIFY(group->y() >= 0 && group->y() + group->height() <= 32);
 
         // Built with no model: disabled, never hidden.
         auto* radioSlider = radio->findChild<QSlider*>(QStringLiteral("radioSlider"));
@@ -195,6 +205,76 @@ private slots:
         bar.setRadioModel(&model);
         QCOMPARE(radio->radioModel(), &model);
         QVERIFY(!radioSlider->isEnabled());
+    }
+
+    // ── 8. Stacked when the connection segment needs the room ─────────────
+
+    void volumeStacksWhenTheSegmentNeedsTheRoom() {
+        AudioEngine engine;
+        TitleBar bar(&engine);
+        auto* menu = new QMenuBar(&bar);
+        menu->addMenu(QStringLiteral("Radio"));
+        menu->addMenu(QStringLiteral("Setup"));
+        menu->addMenu(QStringLiteral("Help"));
+        bar.setMenuBar(menu);
+        auto* seg = bar.connectionSegment();
+        seg->setState(ConnectionState::Connected);
+        seg->setRemoteStatusText(QStringLiteral("Core connected"));
+        seg->setRemoteMetrics({QStringLiteral("Traffic \u219312.4 \u21910.8 Mbps"),
+                               QStringLiteral("Audio 96.0 kbps (playing)"),
+                               QStringLiteral("Radio \u219312.4 \u21910.8 Mbps"),
+                               QStringLiteral("Core RTT 18 ms")});
+        bar.resize(1440, 32);
+        bar.show();
+        QApplication::processEvents();
+
+        MasterOutputWidget* pc = bar.masterOutput();
+        RadioSpeakerWidget* radio = bar.radioSpeaker();
+        const QFontMetrics metrics(QFont(QStringLiteral("SF Mono"), 10, QFont::DemiBold));
+        const int text = metrics.horizontalAdvance(seg->remotePresentationText());
+        auto expectStacked = [&]() {
+            QVERIFY(bar.volumeStacked());
+            QVERIFY(pc->isStacked());
+            QVERIFY(radio->isStacked());
+            QVERIFY(pc->y() + pc->height() <= radio->y());
+            QVERIFY(seg->width() >= text + 34);
+        };
+        expectStacked();
+        // Same children in both forms, all still shown.
+        for (const char* name : {"speakerBtn", "pcLabel", "masterSlider", "dbLabel",
+                                 "radioSpeakerBtn", "radioLabel", "radioSlider",
+                                 "radioValueLabel"}) {
+            auto* child = bar.findChild<QWidget*>(QLatin1String(name));
+            QVERIFY2(child, name);
+            QVERIFY2(child->isVisible(), name);
+            const QPoint top = child->mapTo(&bar, QPoint(0, 0));
+            QVERIFY2(top.y() >= 0 && top.y() + child->height() <= 32, name);
+        }
+        QCOMPARE(bar.height(), 32);
+
+        // Readings come every second; the form holds.
+        for (int i = 0; i < 5; ++i) {
+            seg->setRemoteMetrics({QStringLiteral("Traffic \u2193%1.4 \u21910.8 Mbps").arg(10 + i),
+                                   QStringLiteral("Audio 96.0 kbps (playing)"),
+                                   QStringLiteral("Radio \u219312.4 \u21910.8 Mbps"),
+                                   QStringLiteral("Core RTT 18 ms")});
+            QApplication::processEvents();
+            QVERIFY(bar.volumeStacked());
+        }
+
+        bar.resize(2200, 32);
+        QApplication::processEvents();
+        QVERIFY(!bar.volumeStacked());
+        QVERIFY(!pc->isStacked());
+        QVERIFY(!radio->isStacked());
+        QCOMPARE(radio->y(), pc->y());
+        QCOMPARE(radio->x() - (pc->x() + pc->width()), 16);
+        QVERIFY(seg->width() >= metrics.horizontalAdvance(seg->remotePresentationText()) + 34);
+        QCOMPARE(bar.height(), 32);
+
+        bar.resize(1440, 32);
+        QApplication::processEvents();
+        expectStacked();
     }
 };
 

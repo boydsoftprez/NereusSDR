@@ -71,6 +71,12 @@
 //                 button; setRadioModel() hands it the model. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-10-06 - Radio speaker plan Task 6, JJ decision 2 (R-SPK-17, D1):
+//                 PC and RADIO sit in one volume group that stacks them
+//                 (layout C) when side by side would leave the connection
+//                 segment less than it asks for, and returns to side by
+//                 side past kSideBySideReturnSpare. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/AudioEngine.h"
@@ -85,6 +91,8 @@
 #include <QStringList>
 #include <optional>
 
+class QBoxLayout;
+class QEvent;
 class QHBoxLayout;
 class QLabel;
 class QMenuBar;
@@ -265,6 +273,16 @@ public:
     RadioSpeakerWidget* radioSpeaker() const { return m_radioSpeaker; }
     void setRadioModel(RadioModel* model);
 
+    // R-SPK-17: true while the PC and RADIO groups are stacked (layout C)
+    // because side by side (layout A) would not leave the connection
+    // segment the width it asks for.
+    bool volumeStacked() const { return m_stacked; }
+
+protected:
+    bool event(QEvent* event) override;
+
+public:
+
     // Non-owning accessor so MainWindow can wire connection-state signals
     // and the activity LED. Phase 3Q-6.
     ConnectionSegment* connectionSegment() const { return m_connectionSegment; }
@@ -284,6 +302,17 @@ private:
     ConnectionSegment*  m_connectionSegment{nullptr};
     MasterOutputWidget* m_master{nullptr};
     RadioSpeakerWidget* m_radioSpeaker{nullptr};
+    QWidget*            m_volumeGroup{nullptr};
+    QBoxLayout*         m_volumeBox{nullptr};
+    bool                m_stacked{false};
+    bool                m_updatingVolumeForm{false};
+    int                 m_sideBySideGroupWidth{0};
+
+    // The width the connection segment would have side by side.
+    int segmentWidthSideBySide() const;
+    // Chooses side by side or stacked from the room the header has.
+    void updateVolumeForm();
+    void setVolumeStacked(bool stacked);
     QPushButton*        m_featureBtn{nullptr};
     QLabel*             m_utcLabel{nullptr};
     QTimer*             m_utcTimer{nullptr};
