@@ -3441,6 +3441,17 @@ target_compile_definitions(tst_setup_dialog_lazy_pages PRIVATE NEREUS_BUILD_TEST
 nereus_add_test(tst_setup_pages_start_at_top)
 target_compile_definitions(tst_setup_pages_start_at_top PRIVATE NEREUS_BUILD_TESTS)
 
+# R-SPK-21 Outputs, R-SPK-22, R-SPK-24 (radio speaker plan Task 9): Setup >
+# Audio > Outputs. Outputs leads Audio (Mixed) and no page shows the old
+# backend strip; each control once; saved keys unchanged; the PC control is
+# the header's; Headphones greyed until Enabled; the radio speaker writes and
+# follows RadioModel, with the amplifier choice enabled, greyed with the
+# model's reason (HL2, ANAN-100D, ANAN-G2E) and its live status; remote text
+# and gating; the Sound system texts; Rescan devices. Captures with
+# NEREUS_AUDIO_SETUP_CAPTURE_DIR.
+nereus_add_test(tst_audio_setup_regroup EXTRA_LABELS gui)
+target_compile_definitions(tst_audio_setup_regroup PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-0 Task 14: MainWindow status-bar TX Inhibit + PA Status badge ───
 # Tests the label-state logic for the two safety indicator widgets added to
 # the MainWindow status bar:

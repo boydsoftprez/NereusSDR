@@ -1911,7 +1911,9 @@ set(GUI_SOURCES
     src/gui/setup/AudioAdvancedPage.cpp
     src/gui/setup/AudioBackendStrip.cpp
     src/gui/setup/AudioDevicesPage.cpp
+    src/gui/setup/AudioOutputsPage.cpp
     src/gui/setup/AudioTxInputPage.cpp
+    src/gui/setup/SoundSystemLine.cpp
     src/gui/setup/CaptureStatusText.cpp
     src/gui/setup/TestTwoTonePage.cpp
     src/gui/setup/TxProfileSetupPage.cpp

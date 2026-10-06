@@ -111,10 +111,11 @@ LOCAL_AUDIO_PATTERN = re.compile(r"\blocalAudioDevices\s*\(")
 LOCAL_AUDIO_DEFINITION = "src/models/RadioModel.h"
 # Repo-relative path -> number of localAudioDevices() CALLS in it.
 LOCAL_AUDIO_ALLOWLIST = {
-    # wrapWithAudioBackendStrip(): the backend strip (backend name, Rescan,
-    # Open logs) above every Setup > Audio page.
-    "src/gui/SetupDialog.cpp": 1,
-    # Setup > Audio > Devices: Speakers, Headphones and Microphone cards.
+    # Setup > Audio > Outputs (R-SPK-21): this computer's speakers, PC
+    # volume and mute, headphones, the Sound system line and Rescan
+    # devices. Its Radio speaker controls go through RadioModel.
+    "src/gui/setup/AudioOutputsPage.cpp": 1,
+    # Setup > Audio > Devices: the Microphone card.
     "src/gui/setup/AudioDevicesPage.cpp": 1,
     # Setup > Audio > TX Input: PC microphone device, backend, buffer and
     # Test Mic.

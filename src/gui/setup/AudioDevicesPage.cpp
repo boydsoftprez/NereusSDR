@@ -21,6 +21,12 @@
 // 2026-09-23: R-R3-45 by J.J. Boyd (KG4VCF), with AI-assisted
 // implementation via Anthropic Claude Code. The Headphones card's Enabled
 // box opens and closes the headphones output.
+//
+// 2026-10-06: R-SPK-21 by J.J. Boyd (KG4VCF), with AI-assisted
+// implementation via Anthropic Claude Code. The Speakers and Headphones
+// cards and their engine wiring moved to the Outputs page
+// (AudioOutputsPage), keys unchanged; the radio speaker note went with
+// them. This page keeps the TX Input card and the microphone status.
 // =================================================================
 
 #include "AudioDevicesPage.h"
@@ -45,24 +51,6 @@ AudioDevicesPage::AudioDevicesPage(RadioModel* model, QWidget* parent)
     // RadioModel::localAudioDevices().
     , m_engine(model ? model->localAudioDevices() : nullptr)
 {
-    // ── Speakers card ────────────────────────────────────────────────────
-    m_speakersCard = new DeviceCard(
-        QStringLiteral("audio/Speakers"),
-        DeviceCard::Role::Output,
-        false,         // no enable checkbox
-        this);
-    m_speakersCard->setTitle(QStringLiteral("Speakers"));
-    contentLayout()->insertWidget(0, m_speakersCard);
-
-    // ── Headphones card ──────────────────────────────────────────────────
-    m_headphonesCard = new DeviceCard(
-        QStringLiteral("audio/Headphones"),
-        DeviceCard::Role::Output,
-        true,          // enable checkbox in title bar
-        this);
-    m_headphonesCard->setTitle(QStringLiteral("Headphones"));
-    contentLayout()->insertWidget(1, m_headphonesCard);
-
     // ── TX Input card ─────────────────────────────────────────────────────
     m_txInputCard = new DeviceCard(
         QStringLiteral("audio/TxInput"),
@@ -70,14 +58,7 @@ AudioDevicesPage::AudioDevicesPage(RadioModel* model, QWidget* parent)
         false,
         this);
     m_txInputCard->setTitle(QStringLiteral("TX Input (Microphone)"));
-    contentLayout()->insertWidget(2, m_txInputCard);
-
-    auto* radioSpeakerNote = new QLabel(QStringLiteral(
-        "The radio speaker plays receiving slices automatically. Slice AF level and mute "
-        "affect it. This computer's speaker device and master volume control this computer."), this);
-    radioSpeakerNote->setObjectName(QStringLiteral("radioSpeakerExplanation"));
-    radioSpeakerNote->setWordWrap(true);
-    addContent(radioSpeakerNote);
+    contentLayout()->insertWidget(0, m_txInputCard);
 
     // ── Microphone status + Retry (R-R3-36) ───────────────────────────────
     auto* statusRow = new QWidget(this);
@@ -90,7 +71,7 @@ AudioDevicesPage::AudioDevicesPage(RadioModel* model, QWidget* parent)
     m_retryCaptureBtn->setObjectName(QStringLiteral("retryCapture"));
     statusLayout->addWidget(m_captureStatusLabel, 1);
     statusLayout->addWidget(m_retryCaptureBtn);
-    contentLayout()->insertWidget(3, statusRow);
+    contentLayout()->insertWidget(1, statusRow);
 
     if (m_engine) {
         wireEngineConnections();
@@ -109,49 +90,6 @@ void AudioDevicesPage::refreshCaptureStatus()
 
 void AudioDevicesPage::wireEngineConnections()
 {
-    // ── Speakers card → engine ────────────────────────────────────────────
-    connect(m_speakersCard, &DeviceCard::configChanged,
-            this, [this](const AudioDeviceConfig& cfg) {
-                if (m_updatingFromEngine) { return; }
-                m_engine->setSpeakersConfig(cfg);
-            });
-
-    // Engine → Speakers pill (QSignalBlocker prevents echo).
-    connect(m_engine, &AudioEngine::speakersConfigChanged,
-            this, [this](const AudioDeviceConfig& cfg) {
-                m_updatingFromEngine = true;
-                QSignalBlocker blocker(m_speakersCard);
-                m_speakersCard->updateNegotiatedPill(cfg);
-                m_updatingFromEngine = false;
-            });
-
-    // ── Headphones card → engine ──────────────────────────────────────────
-    connect(m_headphonesCard, &DeviceCard::configChanged,
-            this, [this](const AudioDeviceConfig& cfg) {
-                if (m_updatingFromEngine) { return; }
-                m_engine->setHeadphonesConfig(cfg);
-            });
-
-    // R-R3-45: Enabled opens the headphones output on the card's device,
-    // or closes it. The card has already saved audio/Headphones/Enabled.
-    connect(m_headphonesCard, &DeviceCard::enabledChanged,
-            this, [this](bool on) {
-                if (m_updatingFromEngine) { return; }
-                if (on) {
-                    m_engine->setHeadphonesEnabled(false);
-                    m_engine->setHeadphonesConfig(m_headphonesCard->currentConfig());
-                }
-                m_engine->setHeadphonesEnabled(on);
-            });
-
-    connect(m_engine, &AudioEngine::headphonesConfigChanged,
-            this, [this](const AudioDeviceConfig& cfg) {
-                m_updatingFromEngine = true;
-                QSignalBlocker blocker(m_headphonesCard);
-                m_headphonesCard->updateNegotiatedPill(cfg);
-                m_updatingFromEngine = false;
-            });
-
     // ── TX Input card → engine ────────────────────────────────────────────
     connect(m_txInputCard, &DeviceCard::configChanged,
             this, [this](const AudioDeviceConfig& cfg) {

@@ -742,6 +742,8 @@ private slots:
         const auto scopeOf = [&](const QString& label) {
             return dialog.pageScopeAtForTest(static_cast<int>(labels.indexOf(label)));
         };
+        // R-SPK-21: Outputs is Mixed (the radio speaker is the Core's).
+        QCOMPARE(scopeOf(QStringLiteral("Outputs")), SetupScope::Mixed);
         QCOMPARE(scopeOf(QStringLiteral("Devices")), SetupScope::ThisComputer);
         QCOMPARE(scopeOf(QStringLiteral("TX Input")), SetupScope::Mixed);
         QCOMPARE(scopeOf(QStringLiteral("Advanced")), SetupScope::Mixed);
@@ -2012,11 +2014,24 @@ private slots:
         QVERIFY(leaf != nullptr);
         QVERIFY(leaf->toolTip(0).isEmpty());
 
-        for (const char* title : {"Speakers", "Headphones", "TX Input (Microphone)"}) {
-            DeviceCard* const card = deviceCardOf(page, QString::fromLatin1(title));
+        DeviceCard* const micCard = deviceCardOf(page, QStringLiteral("TX Input (Microphone)"));
+        QVERIFY(micCard != nullptr);
+        QVERIFY(micCard->isEnabled());
+
+        // R-SPK-21: the speakers and headphones are on Outputs, which works
+        // on this computer the same way.
+        dialog.selectPage(QStringLiteral("Outputs"));
+        QWidget* const outputs = dialog.realizedPageForTest(QStringLiteral("Outputs"));
+        QVERIFY(outputs != nullptr);
+        QCOMPARE(remote.localDspHandOutCount(), handOutsBefore);
+        QVERIFY(outputs->isEnabled());
+        QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("setupLocalUnavailable"))->isHidden());
+        for (const char* title : {"This computer", "Headphones"}) {
+            DeviceCard* const card = deviceCardOf(outputs, QString::fromLatin1(title));
             QVERIFY2(card != nullptr, title);
             QVERIFY2(card->isEnabled(), title);
         }
+        dialog.selectPage(QStringLiteral("Devices"));
 
         // The microphone choice: saved to audio/TxInput/* and handed to the
         // engine (the one Test Mic and a later remote microphone open).
@@ -2082,7 +2097,7 @@ private slots:
         QVERIFY(container != nullptr);
         QCOMPARE(remote.localDspHandOutCount(), handOutsBefore);
         QVERIFY(container->isEnabled());
-        auto* const page = container->findChild<AudioTxInputPage*>();
+        auto* const page = qobject_cast<AudioTxInputPage*>(container);
         QVERIFY(page != nullptr);
         QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("setupLocalUnavailable"))->isHidden());
         QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("setupTransmitUnavailable"))->isHidden());
@@ -2167,7 +2182,7 @@ private slots:
         localDialog.selectPage(QStringLiteral("TX Input"));
         QWidget* const localContainer = localDialog.realizedPageForTest(QStringLiteral("TX Input"));
         QVERIFY(localContainer != nullptr && localContainer->isEnabled());
-        auto* const localPage = localContainer->findChild<AudioTxInputPage*>();
+        auto* const localPage = qobject_cast<AudioTxInputPage*>(localContainer);
         QVERIFY(localPage != nullptr);
         QVERIFY(localPage->micSourceGroup()->isEnabled());
         QVERIFY(localPage->micGainSlider()->isEnabled());
@@ -2182,7 +2197,7 @@ private slots:
         SetupDialog dialog(&local);
         auto* const localNotice = dialog.findChild<QLabel*>(QStringLiteral("setupLocalUnavailable"));
         QVERIFY(localNotice != nullptr);
-        for (const char* label : {"Devices", "TX Input", "VAX", "TCI", "Advanced"}) {
+        for (const char* label : {"Outputs", "Devices", "TX Input", "VAX", "TCI", "Advanced"}) {
             const QString name = QString::fromLatin1(label);
             dialog.selectPage(name);
             QWidget* const page = dialog.realizedPageForTest(name);
@@ -2247,6 +2262,9 @@ private slots:
             // feature-specific reason rather than the generic Core reason.
             {QStringLiteral("Settings Validation"), 0},
             {QStringLiteral("Advanced"), 2},            // DSP rate, DSP block size (R-R3-44)
+            // R-SPK-21: the radio speaker volume, its mute box and icon,
+            // and the amplifier choice.
+            {QStringLiteral("Outputs"), 4},
         };
 
         const QStringList labels = dialog.pageLabelsForTest();
@@ -2302,7 +2320,7 @@ private slots:
                 if (label == QStringLiteral("TX Input")) {
                     // The controls held for the radio: the Core reason wins
                     // over the transmit reason while disconnected.
-                    auto* const txInput = page->findChild<AudioTxInputPage*>();
+                    auto* const txInput = qobject_cast<AudioTxInputPage*>(page);
                     QVERIFY(txInput != nullptr);
                     for (QWidget* held : {static_cast<QWidget*>(txInput->micSourceGroup()),
                                           static_cast<QWidget*>(txInput->micGainSlider())}) {

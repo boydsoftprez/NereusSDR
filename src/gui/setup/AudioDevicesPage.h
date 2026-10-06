@@ -20,6 +20,9 @@
 //               implementation via Anthropic Claude Code. Microphone
 //               status and Retry below the TX Input card; the card
 //               follows TX input changes made on the TX Input page.
+//   2026-10-06: R-SPK-21 by J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code. Speakers and
+//               Headphones moved to Setup > Audio > Outputs.
 // =================================================================
 
 #include "gui/SetupPage.h"
@@ -36,10 +39,9 @@ class DeviceCard;
 // ---------------------------------------------------------------------------
 // Audio > Devices
 //
-// Hosts three DeviceCard instances:
-//   - Speakers   (audio/Speakers,  Output)
-//   - Headphones (audio/Headphones, Output, with enable checkbox)
-//   - TX Input   (audio/TxInput,   Input,  with monitor + tone extras)
+// Hosts the TX Input DeviceCard (audio/TxInput, Input, with monitor +
+// tone extras). R-SPK-21: Speakers and Headphones are on the Outputs page
+// (AudioOutputsPage).
 //
 // Each card emits configChanged(AudioDeviceConfig) → the page calls the
 // matching AudioEngine::set<Role>Config(). The engine emits
@@ -65,8 +67,6 @@ private:
 
     AudioEngine* m_engine{nullptr};
 
-    DeviceCard* m_speakersCard{nullptr};
-    DeviceCard* m_headphonesCard{nullptr};
     DeviceCard* m_txInputCard{nullptr};
 
     QLabel*      m_captureStatusLabel{nullptr};

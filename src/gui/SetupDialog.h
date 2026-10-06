@@ -339,15 +339,6 @@ private:
     // Registry index for a leaf label, or -1 when no such leaf exists.
     int pageEntryIndex(const QString& label) const;
 
-    // Builds the AudioBackendStrip + page container used by Setup -> Audio.
-    // A member function rather than a buildTree() local because the audio
-    // page factories call it after buildTree() has already returned.
-    // R-R3-23: the strip (backend, Rescan, Open logs) acts on this
-    // computer's sound system, so it reaches the engine through
-    // RadioModel::localAudioDevices() and does not trip the local-DSP gate
-    // on the page it wraps.
-    QWidget* wrapWithAudioBackendStrip(SetupPage* page);
-
     RadioModel*      m_model   = nullptr;
     DspReceiverSelection* m_dspReceiverSelection = nullptr;
     QTreeWidget*     m_tree    = nullptr;
