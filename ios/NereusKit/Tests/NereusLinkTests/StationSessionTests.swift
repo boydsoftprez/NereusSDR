@@ -264,11 +264,11 @@ import Testing
         }
         #expect(hello == LinkMessage.Hello(major: 1, minor: 11, settingsSchema: 0, peer: "NereusSDR iPhone",
                                            majors: [1], features: ["deviceAuth": 1, "sessionHolder": 1, "remoteTx": 1,
-                                                                   "setupDescription": 24, "settingsHygiene": 2, "radioAntennaRows": 1, "vax": 1, "txEqCurve": 2,
+                                                                   "setupDescription": 25, "settingsHygiene": 2, "radioAntennaRows": 1, "vax": 1, "txEqCurve": 2,
                                   "diversityPattern": 1, "diversityControl": 1, "logCategoryList": 1, "radioModels": 1, "band2m": 1, "coreAddresses": 1,
                                   "radeStatus": 1, "stationTciSettings": 1, "txInhibitReason": 1, "alexLpf": 1, "mediaDirect": 1, "sliceAccess": 3, "cfcProfile": 1, "paProfiles": 1,
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,
-                                  "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1]))
+                                  "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "radioSpeaker": 1]))
         #expect(request.token == rig.token)
         #expect(await rig.session.state == .authenticating)
         #expect(await rig.session.agreedMajor == 1)
@@ -322,11 +322,11 @@ import Testing
         #expect(LinkVersionPolicy.refusal(station: [1], app: [2, 3]) == .stationTooOld(station: [1], app: [2, 3]))
         #expect(LinkVersionPolicy.supportedMajors == [1])
         #expect(LinkFeatures.app == ["deviceAuth": 1, "sessionHolder": 1, "remoteTx": 1,
-                                     "setupDescription": 24, "settingsHygiene": 2, "radioAntennaRows": 1, "vax": 1, "txEqCurve": 2,
+                                     "setupDescription": 25, "settingsHygiene": 2, "radioAntennaRows": 1, "vax": 1, "txEqCurve": 2,
                                   "diversityPattern": 1, "diversityControl": 1, "logCategoryList": 1, "radioModels": 1, "band2m": 1, "coreAddresses": 1,
                                   "radeStatus": 1, "stationTciSettings": 1, "txInhibitReason": 1, "alexLpf": 1, "mediaDirect": 1, "sliceAccess": 3, "cfcProfile": 1, "paProfiles": 1,
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,
-                                  "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1])
+                                  "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "radioSpeaker": 1])
         #expect(LinkFeatures.app["pairing"] == nil)
     }
 
@@ -400,11 +400,11 @@ import Testing
             return
         }
         #expect(ours.features == ["deviceAuth": 1, "sessionHolder": 1, "remoteTx": 1,
-                                  "setupDescription": 24, "settingsHygiene": 2, "radioAntennaRows": 1, "vax": 1, "txEqCurve": 2,
+                                  "setupDescription": 25, "settingsHygiene": 2, "radioAntennaRows": 1, "vax": 1, "txEqCurve": 2,
                                   "diversityPattern": 1, "diversityControl": 1, "logCategoryList": 1, "radioModels": 1, "band2m": 1, "coreAddresses": 1,
                                   "radeStatus": 1, "stationTciSettings": 1, "txInhibitReason": 1, "alexLpf": 1, "mediaDirect": 1, "sliceAccess": 3, "cfcProfile": 1, "paProfiles": 1,
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,
-                                  "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1])
+                                  "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "radioSpeaker": 1])
         #expect(request.token == "")
         let block = try #require(request.device)
         #expect(block.shortName == "iPhone")

@@ -115,7 +115,7 @@ import Testing
         await apply([create(json("replacement"), revision: 1)], to: store)
         #expect(feed.description(for: "general")?.pages[0].id == "general.replacement")
         #expect(feed.generation > first)
-        await apply([FixtureReplay.capabilities(["setupDescriptionVersion": .i64(25)])], to: store)
+        await apply([FixtureReplay.capabilities(["setupDescriptionVersion": .i64(26)])], to: store)
         #expect(feed.description(for: "general") == nil)
         if case .unavailable = feed.status(for: "general") {} else { Issue.record("Unsupported version was usable") }
     }
@@ -153,7 +153,7 @@ import Testing
         await apply([.delta(.init(key: "setup", properties: [.init(name: "pa", value: .utf8(pa)),
                                                      .init(name: "revision", value: .i64(3))]))], to: store)
         #expect(feed.description(for: "pa")?.version == 5)
-        await apply([FixtureReplay.capabilities(["setupDescriptionVersion": .i64(25)])], to: store)
+        await apply([FixtureReplay.capabilities(["setupDescriptionVersion": .i64(26)])], to: store)
         #expect(feed.description(for: "pa") == nil)
     }
 
