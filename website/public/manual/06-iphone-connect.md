@@ -1,7 +1,9 @@
 # Connect an iPhone to a Core
 
-The phone procedures in this chapter describe the reviewed native development
-app, whose availability and delivery are separate from the desktop/Core release.
+The native app is available through the
+[public TestFlight preview](https://testflight.apple.com/join/61K3p3xn), with installation
+separate from the desktop/Core release. These procedures describe the reviewed
+native app and retain their documented source and capture baselines.
 Use the connected Core's capability/refusal messages; see [build and verification
 scope](verification.md) before treating these instructions as release acceptance.
 
@@ -12,6 +14,12 @@ This chapter covers first-time setup, pairing, saved Cores, reconnecting, and th
 [![Native iPhone welcome screen offering Find my Core and Set up a Core](images/iphone-welcome-original.png)](images/iphone-welcome-original.png)
 
 *Start here on the phone: Find my Core looks for the station service; Set up a Core explains the computer-side preparation. Native simulator screen from the acceptance build, using test services. No pairing code or live connection is shown.*
+
+## Install the public preview
+
+1. On your iPhone or iPad, open the [public preview invitation](https://testflight.apple.com/join/61K3p3xn). Install Apple's TestFlight app if prompted, then follow the invitation to install NereusSDR. The app requires iOS or iPadOS 17.4 or later.
+2. Install the published 2026.10.0 desktop application or headless Core on the station computer connected to your radio. Use the [SBC installation guide](https://nereussdr.com/guides/install-core-sbc.html) for a Raspberry Pi or compatible Armbian system.
+3. Start the Core, open pairing and connect the app using the steps below. Your Core must be running and reachable; the app does not include a demo radio.
 
 ## Start the Core
 

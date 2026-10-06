@@ -1,7 +1,9 @@
 # Phone preferences and session care
 
-The phone procedures in this chapter describe the reviewed native development
-app, whose availability and delivery are separate from the desktop/Core release.
+The native app is available through the
+[public TestFlight preview](https://testflight.apple.com/join/61K3p3xn), with installation
+separate from the desktop/Core release. These procedures describe the reviewed
+native app and retain their documented source and capture baselines.
 Use the connected Core's capability/refusal messages; see [build and verification
 scope](verification.md) before treating these instructions as release acceptance.
 

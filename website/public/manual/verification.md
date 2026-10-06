@@ -5,6 +5,10 @@ with bounded desktop source reconciliation on 4 October 2026.
 This record distinguishes source coverage, presentation checks, authentic
 captures and live operating checks. Passing one does not establish the others.
 
+## Current availability
+
+Availability updated 6 October 2026: [NereusSDR 2026.10.0](https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.0) desktop and Core packages are published, and the native iPhone/iPad app is available through the [public TestFlight preview](https://testflight.apple.com/join/61K3p3xn). The user manual is served at [nereussdr.com/manual/](https://nereussdr.com/manual/). This availability update does not change the source/capture identities or claim additional live station acceptance below.
+
 ## Documented build
 
 - Original independently reviewed source baseline: `d1608a3de75e5c307187966110f2e51e8ecb0d17`.

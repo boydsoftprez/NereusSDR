@@ -32,7 +32,7 @@ manual_files = [source/'README.md'] + sorted(source.glob('[0-9][0-9]-*.md'))
 files = list(manual_files)
 routes = {p.resolve(): 'manual/'+('index.html' if p.name=='README.md' else p.stem+'.html') for p in manual_files}
 if args.website:
-    for name in ('install-core-sbc', 'tx-eq-cfc', 'upgrading-to-2026.10.0'):
+    for name in ('install-core-sbc', 'tx-eq-cfc', 'upgrading-to-2026.10.0', 'contributing-with-ai'):
         guide = root/'docs/guides'/f'{name}.md'
         files.append(guide)
         routes[guide.resolve()] = f'guides/{name}.html'

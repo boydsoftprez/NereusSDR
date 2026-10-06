@@ -6,9 +6,13 @@ choices, Canvas, EQ/CFC and transmit ownership have been reconciled with the
 source baseline. This is an operator draft, with release captures and live
 station checks still pending.
 
-The iPhone/iPad chapters describe a separately developed native app. Mobile
-availability and delivery are separate from the desktop/Core release; inclusion
-of these chapters does not mean an App Store or TestFlight release is available.
+The native iPhone/iPad app is available as a
+[public TestFlight preview](https://testflight.apple.com/join/61K3p3xn). Mobile installation
+is separate from the published 2026.10.0 desktop and Core packages. Install
+TestFlight on your device, open the invitation and follow its installation steps.
+The app requires your own running NereusCore station. These chapters retain
+their documented source and capture baselines; public availability does not
+replace the live procedure checks still pending.
 Check your application's build and the Core's offered capabilities when a
 control described here is absent. [Verification and build scope](verification.md)
 records the exact source and capture baselines.

@@ -1,5 +1,8 @@
 // 2026-09-27: bounded collection and structured privacy policy refined with
 // OpenAI Codex assistance; original support implementation retained.
+// 2026-10-06: settings keep list checks decoded keys and keeps this
+// computer's audio device choices (not device names), by J.J. Boyd (KG4VCF)
+// with Claude Code (Anthropic) assistance.
 #include "SupportBundle.h"
 #include "LogCategories.h"
 #include "AppSettings.h"
@@ -196,6 +199,41 @@ bool isSafeSetting(const QString& key, const QString& value)
         value.toDouble(&ok);
         return ok;
     }
+    // This computer's audio devices (Setup > Audio > Devices). The device
+    // name stays out: it can carry a person's name ("Pat's AirPods").
+    static const QStringList deviceCards{
+        QStringLiteral("audio/Speakers/"), QStringLiteral("audio/Headphones/"),
+        QStringLiteral("audio/TxInput/")};
+    for (const QString& card : deviceCards) {
+        if (!key.startsWith(card)) { continue; }
+        const QString field = key.mid(card.size());
+        static const QSet<QString> numericFields{
+            QStringLiteral("SampleRate"), QStringLiteral("BitDepth"),
+            QStringLiteral("Channels"), QStringLiteral("BufferSamples"),
+            QStringLiteral("ManualLatencyMs")};
+        static const QSet<QString> booleanFields{
+            QStringLiteral("Enabled"), QStringLiteral("ExclusiveMode"),
+            QStringLiteral("EventDriven"), QStringLiteral("BypassMixer")};
+        if (numericFields.contains(field)) {
+            bool ok = false;
+            value.toInt(&ok);
+            return ok;
+        }
+        if (booleanFields.contains(field)) {
+            return value == QLatin1String("True") || value == QLatin1String("False");
+        }
+        if (field == QLatin1String("DriverApi")) {
+            // Empty is the PortAudio default; the rest are PortAudio's own
+            // host API names (portaudio v19.7.0 src/hostapi/*: info.name).
+            static const QSet<QString> hostApis{
+                QString(), QStringLiteral("MME"), QStringLiteral("Windows DirectSound"),
+                QStringLiteral("Windows WASAPI"), QStringLiteral("Windows WDM-KS"),
+                QStringLiteral("ASIO"), QStringLiteral("Core Audio"), QStringLiteral("ALSA"),
+                QStringLiteral("OSS"), QStringLiteral("JACK Audio Connection Kit")};
+            return hostApis.contains(value);
+        }
+        return false;
+    }
     return false;
 }
 
@@ -219,10 +257,13 @@ QByteArray sanitizedSettings(const QByteArray& xmlBytes)
                 writer.writeStartElement(QStringLiteral("Station"));
                 writer.writeAttribute(QStringLiteral("type"), QStringLiteral("station"));
             } else if (depth == 2 || depth == 3) {
-                const QString key = reader.name().toString();
+                // The element name is the key as the settings file encodes
+                // it ("audio/DspRate" is <audio__s__DspRate>); check the key.
+                const QString tag = reader.name().toString();
+                const QString key = AppSettings::keyFromXmlTag(tag);
                 const QString value = reader.readElementText(QXmlStreamReader::ErrorOnUnexpectedElement);
                 const bool safe = isSafeSetting(key, value);
-                writer.writeTextElement(safe ? key : QStringLiteral("RedactedSetting"),
+                writer.writeTextElement(safe ? tag : QStringLiteral("RedactedSetting"),
                                         safe ? value : QStringLiteral("[REDACTED]"));
                 --depth;
             } else { return {}; }
