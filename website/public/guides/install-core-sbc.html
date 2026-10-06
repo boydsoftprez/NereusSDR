@@ -16,31 +16,55 @@ the radio. Connect a keyboard or use:</p>
 <pre><code class="language-sh">ssh YOUR_USER@nereus-core.local
 </code></pre>
 <h2 id="2-check-the-os-and-install-download-tools">2. Check the OS and install download tools</h2>
-<p>The first two commands should report <code>arm64</code> and <code>VERSION_CODENAME=trixie</code>.</p>
-<pre><code class="language-sh">dpkg --print-architecture
-grep '^VERSION_CODENAME=' /etc/os-release
+<p>These commands stop if the system is not ARM64 Trixie.</p>
+<pre><code class="language-sh">(
+set -eu
+[ &quot;$(dpkg --print-architecture)&quot; = arm64 ] || { echo &quot;Use a 64-bit ARM64 image.&quot; &gt;&amp;2; exit 1; }
+. /etc/os-release
+[ &quot;${VERSION_CODENAME:-}&quot; = trixie ] || { echo &quot;Use a Debian Trixie image.&quot; &gt;&amp;2; exit 1; }
 sudo apt update
 sudo apt install -y ca-certificates curl gnupg avahi-daemon nano
+)
 </code></pre>
 <h2 id="3-download-and-install-the-core">3. Download and install the Core</h2>
 <p>Use the matching Trixie package from the selected
 <a href="https://github.com/boydsoftprez/NereusSDR/releases">release's Assets</a>.
-The example below targets 2026.10.0 once its artifacts are published.
-Verify the signature and package checksum before installing.</p>
+The example below installs 2026.10.0. Copy the whole command block into the
+terminal. It downloads the public signing key over HTTPS, checks its full
+fingerprint, then verifies the signed checksum list and the package before
+installing. Verification uses a temporary keyring.</p>
 <pre><code class="language-sh">(
 set -eu
 release_version=2026.10.0
 core_package=&quot;nereusd_${release_version}_arm64_trixie.deb&quot;
 release_url=&quot;https://github.com/boydsoftprez/NereusSDR/releases/download/v${release_version}&quot;
+GNUPGHOME=$(mktemp -d)
+export GNUPGHOME
+trap 'rm -rf &quot;$GNUPGHOME&quot;' EXIT HUP INT TERM
+curl -fL -o &quot;$GNUPGHOME/signing-key.asc&quot; https://nereussdr.com/nereussdr-signing-key.asc
+gpg --batch --with-colons --show-keys &quot;$GNUPGHOME/signing-key.asc&quot; &gt; &quot;$GNUPGHOME/key-info&quot;
+fingerprint=$(awk -F: '$1 == &quot;pub&quot; { primary = 1; next } primary &amp;&amp; $1 == &quot;fpr&quot; { print $10; primary = 0 }' &quot;$GNUPGHOME/key-info&quot;)
+[ &quot;$fingerprint&quot; = 4A95F4D22AEE9271D8A3C01B20C284473F97D2B3 ] || { echo &quot;Signing key fingerprint mismatch.&quot; &gt;&amp;2; exit 1; }
+gpg --batch --import &quot;$GNUPGHOME/signing-key.asc&quot;
 curl -fLO &quot;$release_url/$core_package&quot;
 curl -fLO &quot;$release_url/SHA256SUMS.txt&quot;
 curl -fLO &quot;$release_url/SHA256SUMS.txt.asc&quot;
-gpg --keyserver keyserver.ubuntu.com --recv-keys 4A95F4D22AEE9271D8A3C01B20C284473F97D2B3
-gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
-awk -v file=&quot;$core_package&quot; '$2 == file { print }' SHA256SUMS.txt | sha256sum --check --strict
+gpg --batch --verify SHA256SUMS.txt.asc SHA256SUMS.txt
+awk -v file=&quot;$core_package&quot; '
+  $2 == file { row = $0; count++ }
+  END {
+    if (count != 1) { print &quot;Expected exactly one package checksum.&quot; &gt; &quot;/dev/stderr&quot;; exit 1 }
+    print row
+  }
+' SHA256SUMS.txt &gt; &quot;$GNUPGHOME/package.sha256&quot;
+sha256sum --check --strict &quot;$GNUPGHOME/package.sha256&quot;
 sudo apt install &quot;./$core_package&quot;
 )
 </code></pre>
+<p>GPG may report that the key is not certified with a trusted signature. That
+warning is expected in a temporary keyring; the full fingerprint check above
+identifies the release key. A bad signature, fingerprint mismatch or failed
+checksum stops the commands before installation.</p>
 <p><code>apt</code> installs the declared runtime dependencies. If they cannot be resolved,
 check that the image is ARM64 Debian Trixie; use its normal repositories and
 a matching package. Installation leaves the radio service disabled until the
