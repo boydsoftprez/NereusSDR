@@ -154,7 +154,8 @@ jobs:
             ${{ github.workspace }}/../Thetis-v2.10.3.15
             ${{ github.workspace }}/../mi0bot-Thetis
             ${{ github.workspace }}/../freedv-gui
-          key: thetis-clones-501e3f5-3759d09-c26a8a4-77e793a-v3
+            ${{ github.workspace }}/../deskhpsdr
+          key: thetis-clones-501e3f5-3759d09-c26a8a4-77e793a-f3d857c-v4
 
       - name: Clone Thetis + mi0bot-Thetis upstream (cache miss only)
         if: steps.thetis-cache.outputs.cache-hit != 'true'
@@ -198,6 +199,12 @@ jobs:
         # counted and never verified. With the detector added, they need
         # a clone here or they only ever report upstream-not-found.
         #
+        # dl1bz/deskhpsdr pinned to f3d857c, the pin CLAUDE.md and
+        # HOW-TO-PORT.md give for every `// From deskhpsdr` cite. Added
+        # 2026-10-06: without the clone each of those cites reported
+        # upstream-not-found and passed unchecked, here and in the local
+        # hook, which now refuses to run the check with any clone missing.
+        #
         # Shallow fetch + checkout of the pinned SHA avoids cloning the
         # full git history. GitHub's git server allows `fetch --depth=1
         # <sha>` because uploadpack.allowReachableSHA1InWant is enabled.
@@ -222,6 +229,11 @@ jobs:
           git -C ../freedv-gui remote add origin https://github.com/drowe67/freedv-gui.git
           git -C ../freedv-gui fetch --depth=1 -q origin 77e793a37e0ecf6cfa99b7cf21a410fd154e9d94
           git -C ../freedv-gui checkout -q FETCH_HEAD
+          mkdir -p ../deskhpsdr
+          git -C ../deskhpsdr init -q
+          git -C ../deskhpsdr remote add origin https://github.com/dl1bz/deskhpsdr.git
+          git -C ../deskhpsdr fetch --depth=1 -q origin f3d857c7372fe51d87dae4f907f2c1d1a9aa0cca
+          git -C ../deskhpsdr checkout -q FETCH_HEAD
 
       - name: Corpus drift — upstream author tags match committed corpus
         # Fails if upstream Thetis (ramdor or mi0bot fork) contains
@@ -242,6 +254,7 @@ jobs:
           NEREUS_THETIS_DIR: ${{ github.workspace }}/../Thetis
           NEREUS_MI0BOT_DIR: ${{ github.workspace }}/../mi0bot-Thetis
           NEREUS_FREEDV_DIR: ${{ github.workspace }}/../freedv-gui
+          NEREUS_DESKHPSDR_DIR: ${{ github.workspace }}/../deskhpsdr
         run: python3 scripts/verify-inline-tag-preservation.py
 
       - name: Contributor indexes are up to date with corpus

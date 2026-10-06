@@ -201,6 +201,9 @@ echo "[pre-commit] verify-inline-tag-preservation.py (author-tag check)"
 # Auto-locate upstream clones. Search order:
 #   1. $NEREUS_<NAME>_DIR (explicit override)
 #   2. every ancestor of the working tree, nearest first
+#   3. every ancestor of the main checkout, so a linked worktree made
+#      anywhere (`git worktree add /private/tmp/...`) still finds the
+#      clones that sit beside NereusSDR
 # CI sets the env vars explicitly; this logic is for local dev.
 #
 # The ancestor walk replaces a fixed ../, ../../, ../../../ probe list
@@ -211,46 +214,102 @@ echo "[pre-commit] verify-inline-tag-preservation.py (author-tag check)"
 # off-by-depth bug existed independently in
 # verify-inline-tag-preservation.py; both now walk ancestors so neither
 # has to know how deeply it is nested.
+MAIN_CHECKOUT="$(cd "$(git rev-parse --git-common-dir)/.." 2>/dev/null && pwd -P || true)"
+
 find_upstream() {
     local name="$1"
     local override="$2"
     if [ -n "$override" ] && [ -d "$override" ]; then
         echo "$override"
-        return
+        return 0
     fi
-    local dir
-    dir="$(pwd -P)"
-    while [ "$dir" != "/" ]; do
-        if [ -d "$dir/$name" ]; then
-            echo "$dir/$name"
-            return
+    local start dir
+    for start in "$(pwd -P)" "$MAIN_CHECKOUT"; do
+        if [ -z "$start" ]; then
+            continue
         fi
-        dir="$(dirname "$dir")"
+        dir="$start"
+        while [ "$dir" != "/" ]; do
+            if [ -d "$dir/$name" ]; then
+                echo "$dir/$name"
+                return 0
+            fi
+            dir="$(dirname "$dir")"
+        done
     done
     if [ -d "/$name" ]; then
         echo "/$name"
     fi
-    # An absent clone is a normal discovery result. Keep set -e from
-    # aborting the hook before the no-clone handling below can run.
+    # Not found must still return 0; empty output is the "not found"
+    # signal. The hook runs under set -e, so a non-zero status here ends
+    # it at the X_LOCAL="$(find_upstream ...)" assignment below with no
+    # message. The walk as first written (b8fd5a6c, 2026-07-28) ended on
+    # `[ -d "/$name" ] && echo "/$name"` and did exactly that: a checkout
+    # missing any one clone could not commit a source or docs change, and
+    # nothing said why. tests/compliance/test_pre_commit_upstream_lookup.py
+    # covers it.
     return 0
 }
 
 THETIS_LOCAL="$(find_upstream Thetis "${NEREUS_THETIS_DIR:-}")"
+THETIS_V21015_LOCAL="$(find_upstream Thetis-v2.10.3.15 "${NEREUS_THETIS_V21015_DIR:-}")"
 MI0BOT_LOCAL="$(find_upstream mi0bot-Thetis "${NEREUS_MI0BOT_DIR:-}")"
 DESKHPSDR_LOCAL="$(find_upstream deskhpsdr "${NEREUS_DESKHPSDR_DIR:-}")"
 FREEDV_LOCAL="$(find_upstream freedv-gui "${NEREUS_FREEDV_DIR:-}")"
 
+# Every clone is required. The check compares each ported comment with
+# the upstream lines its cite names, so a missing clone leaves those
+# cites unchecked while the commit goes through looking verified. A
+# missing Thetis used to print "SKIPPED" and pass, and a missing
+# mi0bot-Thetis, Thetis-v2.10.3.15, deskhpsdr or freedv-gui left its
+# cites as upstream-not-found warnings that pass (JJ, 2026-10-06: make
+# sure the repo is there, never skip).
+MISSING=""
+note_missing() {
+    MISSING="${MISSING}             ../$1  (set $2 to use another path)
+               $3
+"
+}
+if [ -z "$THETIS_LOCAL" ]; then
+    note_missing Thetis NEREUS_THETIS_DIR \
+        "git clone https://github.com/ramdor/Thetis.git"
+fi
+if [ -z "$THETIS_V21015_LOCAL" ]; then
+    note_missing Thetis-v2.10.3.15 NEREUS_THETIS_V21015_DIR \
+        "git clone --branch v2.10.3.15 https://github.com/ramdor/Thetis.git Thetis-v2.10.3.15"
+fi
+if [ -z "$MI0BOT_LOCAL" ]; then
+    note_missing mi0bot-Thetis NEREUS_MI0BOT_DIR \
+        "git clone https://github.com/mi0bot/OpenHPSDR-Thetis.git mi0bot-Thetis"
+fi
+if [ -z "$DESKHPSDR_LOCAL" ]; then
+    note_missing deskhpsdr NEREUS_DESKHPSDR_DIR \
+        "git clone https://github.com/dl1bz/deskhpsdr.git"
+fi
+if [ -z "$FREEDV_LOCAL" ]; then
+    note_missing freedv-gui NEREUS_FREEDV_DIR \
+        "git clone https://github.com/drowe67/freedv-gui.git"
+fi
+
 if [ -n "${NEREUS_SKIP_TAG_CHECK:-}" ]; then
     echo "[pre-commit] tag-preservation SKIPPED (NEREUS_SKIP_TAG_CHECK set)"
-elif [ -z "$THETIS_LOCAL" ]; then
-    echo "[pre-commit] tag-preservation SKIPPED (no Thetis clone found locally;"
-    echo "             searched every ancestor of $(pwd -P) for a Thetis/ dir;"
-    echo "             set NEREUS_THETIS_DIR to override; CI runs strict check)"
+elif [ -n "$MISSING" ]; then
+    echo
+    echo "[pre-commit] BLOCKED: upstream clone missing, so ported comments"
+    echo "             cannot be checked against the source they cite."
+    echo "             Clone each one beside NereusSDR:"
+    printf '%s' "$MISSING"
+    echo "             Searched every folder above $(pwd -P)"
+    if [ -n "$MAIN_CHECKOUT" ] && [ "$MAIN_CHECKOUT" != "$(pwd -P)" ]; then
+        echo "             and every folder above $MAIN_CHECKOUT"
+    fi
+    exit 1
 else
     export NEREUS_THETIS_DIR="$THETIS_LOCAL"
-    [ -n "$MI0BOT_LOCAL" ]    && export NEREUS_MI0BOT_DIR="$MI0BOT_LOCAL"
-    [ -n "$DESKHPSDR_LOCAL" ] && export NEREUS_DESKHPSDR_DIR="$DESKHPSDR_LOCAL"
-    [ -n "$FREEDV_LOCAL" ]    && export NEREUS_FREEDV_DIR="$FREEDV_LOCAL"
+    export NEREUS_THETIS_V21015_DIR="$THETIS_V21015_LOCAL"
+    export NEREUS_MI0BOT_DIR="$MI0BOT_LOCAL"
+    export NEREUS_DESKHPSDR_DIR="$DESKHPSDR_LOCAL"
+    export NEREUS_FREEDV_DIR="$FREEDV_LOCAL"
     if ! python3 scripts/verify-inline-tag-preservation.py >/dev/null 2>&1; then
         python3 scripts/verify-inline-tag-preservation.py || true
         echo
