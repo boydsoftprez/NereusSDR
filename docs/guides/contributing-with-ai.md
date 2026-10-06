@@ -15,6 +15,31 @@ developers and people making their first pull request are welcome.
 Come [meet the community on Discord](https://discord.gg/m35ERjwRe)
 and browse the [open issues](https://github.com/boydsoftprez/NereusSDR/issues).
 
+## Report an issue
+
+A clear issue report is a contribution too. Describe what you wanted to
+do, what happened, and how someone else can reproduce it.
+
+1. **Click the lightbulb** in the NereusSDR desktop console to open the
+   **AI-Assisted Issue Reporter**.
+2. **Follow the reporter's directions.** If you choose an AI assistant,
+   its button copies a prompt to your clipboard. Paste it into the AI chat,
+   replace the bracketed description with your problem, and review the
+   resulting report for accuracy.
+3. **Choose Report a Bug** to open the GitHub bug-report form. Sign in to
+   GitHub if prompted. Copy your reviewed description into the form and
+   complete the requested details: steps to reproduce, radio model and
+   protocol, NereusSDR version, operating system, and relevant firmware
+   information. Attach useful logs or screenshots when available.
+4. **Review the completed form and submit the issue on GitHub.** Include
+   what you expected to happen as well as what actually happened, so
+   others can investigate and test a fix.
+
+You can also open the
+[GitHub bug reporter directly](https://github.com/boydsoftprez/NereusSDR/issues/new?template=bug_report.yml).
+For a new idea, choose **Submit Your Idea** in the lightbulb dialog or use
+the [feature-request form](https://github.com/boydsoftprez/NereusSDR/issues/new?template=feature_request.yml).
+
 ## Choose your tools
 
 Use [Codex](https://openai.com/codex/),

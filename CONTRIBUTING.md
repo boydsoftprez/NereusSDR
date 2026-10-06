@@ -21,7 +21,10 @@ a fork-to-PR walkthrough and prompts you can use in your chosen harness.
 
 ## Reporting Bugs
 
-- Open a [GitHub issue](https://github.com/boydsoftprez/NereusSDR/issues/new) directly.
+- Click the lightbulb in the desktop console, follow the **AI-Assisted Issue
+  Reporter** directions, then choose **Report a Bug**. Complete and review
+  the GitHub form, then submit the issue.
+- You can also open the [GitHub bug-report form](https://github.com/boydsoftprez/NereusSDR/issues/new?template=bug_report.yml) directly.
 - Include: OS, NereusSDR version, radio model, protocol version (P1 or P2), firmware version.
 - Attach logs (`~/.config/NereusSDR/nereussdr.log`) if available.
 - Check existing issues first to avoid duplicates.
