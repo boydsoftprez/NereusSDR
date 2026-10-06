@@ -34,13 +34,19 @@ python3 docs/manual/test_build_preview.py
 ```
 
 The website build renders the manual index and all 20 chapters to
-`public/manual/`, and renders the SBC installation, TX EQ/CFC, upgrade and
-remote-access guides to `public/guides/`. It uses the same Markdown chapters,
+`public/manual/`, and renders the SBC installation, TX EQ/CFC, upgrade,
+AI contribution and remote-access guides to `public/guides/`. It uses the same Markdown chapters,
 images and manual layout as the local manual preview. Its `manual/source-map.json`
 records each rendered document's source path and hash, and the copied image
 hashes. Generated pages should be committed with their source updates; do not
 edit generated prose directly. Regenerate after a manuscript or manual renderer
 change and before deployment.
+
+The release download updater has a dependency-free Node.js regression check:
+
+```sh
+node --test website/test-release-links.cjs
+```
 
 Relative operator links point to generated pages on this site. Links to
 repository source, contributor records, release assets and technical references
