@@ -143,7 +143,7 @@ private slots:
         QCOMPARE(exchange(thetis,"TX;ID;","ID019;"),QByteArray("ID019;"));
         QCOMPARE(exchange(rig,"T VFOA 1\n","RPRT 0\n"),QByteArray("RPRT 0\n"));
         QTRY_VERIFY(f.model.moxController()->isMox());
-        QCOMPARE(exchange(rig,"T VFOA 2\n","RPRT -1\n"),QByteArray("RPRT -1\n"));
+        QCOMPARE(exchange(rig,"T VFOA 4\n","RPRT -1\n"),QByteArray("RPRT -1\n"));
         if (loss==1) {
             f.model.sliceOwnership()->setOwner(0,"other-device");
             QVERIFY(f.model.sliceOwnership()->leave(SliceOwnership::stationDevice(),0));
@@ -244,6 +244,17 @@ private slots:
         rig.write("F 14223"); QCoreApplication::processEvents(); QCOMPARE(f.model.sliceById(0)->frequency(),14222000.0);
         QCOMPARE(exchange(rig,"000\nf\n","RPRT 0\n14223000\n"),QByteArray("RPRT 0\n14223000\n"));
         QCOMPARE(exchange(rig,QByteArray(5000,'q')+"\nf\n","RPRT -1\n14223000\n"),QByteArray("RPRT -1\n14223000\n"));
+    }
+    void pttAcceptsEveryHamlibTxValue_data() {
+        QTest::addColumn<QByteArray>("value"); QTest::newRow("TX")<<QByteArray("1"); QTest::newRow("TX mic")<<QByteArray("2"); QTest::newRow("TX data")<<QByteArray("3");
+    }
+    void pttAcceptsEveryHamlibTxValue() {
+        // Hamlib rigctld(1), set_ptt: '0' (RX), '1' (TX), '2' (TX mic), '3' (TX data).
+        QFETCH(QByteArray,value); RigFixture f; QVERIFY(f.configure()); f.service.startConfigured();
+        QTcpSocket socket; connectRig(f,socket); QTRY_COMPARE(f.service.rigctldClientCount(1),1);
+        QCOMPARE(exchange(socket,"T "+value+"\n","RPRT 0\n"),QByteArray("RPRT 0\n")); QTRY_VERIFY(f.model.moxController()->isMox());
+        QCOMPARE(exchange(socket,"t\nT 0\n","1\nRPRT 0\n"),QByteArray("1\nRPRT 0\n")); QTRY_VERIFY(!f.model.moxController()->isMox());
+        QCOMPARE(exchange(socket,"T 4\nT -1\n","RPRT -1\nRPRT -1\n"),QByteArray("RPRT -1\nRPRT -1\n")); QVERIFY(!f.model.moxController()->isMox());
     }
     void sharedClaimsConflictsAndNewerOwner_data() {
         QTest::addColumn<bool>("newer"); QTest::newRow("last-CAT-releases")<<false; QTest::newRow("new-operator-survives")<<true;

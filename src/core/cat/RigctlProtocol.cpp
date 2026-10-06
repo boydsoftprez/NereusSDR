@@ -10,6 +10,8 @@
 // 2026-10-04 - Supported dispatch/response contracts adapted by J.J. Boyd
 //              (KG4VCF), AI-assisted via OpenAI Codex. Native model operations,
 //              frozen bindings and shared claims replace Flex command strings.
+// 2026-10-06 - rigctld T accepts 2 (TX mic) and 3 (TX data), as Hamlib
+//              documents. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include "RigctlProtocol.h"
 #include "CatModelAdapter.h"
 #include "CatTxCoordinator.h"
@@ -280,7 +282,10 @@ QString RigctlProtocol::handleLine(const QString& line)
             if (!parts.isEmpty()) { return reply(kInvalid); }
             value("PTT",m_model->moxController()->isMox() ? "1" : "0"); return reply(0);
         }
-        if (parts.size() != 1 || (parts[0] != "0" && parts[0] != "1")) { return reply(kInvalid); }
+        // Hamlib rigctld(1), set_ptt: "PTT is a value: '0' (RX), '1' (TX),
+        // '2' (TX mic), or '3' (TX data)." Every TX value keys the same way here.
+        static const QStringList pttValues{"0","1","2","3"};
+        if (parts.size() != 1 || !pttValues.contains(parts[0])) { return reply(kInvalid); }
         if (parts[0] == "0") { m_coordinator.releasePtt(m_sessionId); return reply(0); }
         CatVfo tx;
         if (!resolveVfo("TX",tx)) { return reply(kRejected); }
