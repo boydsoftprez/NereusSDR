@@ -18,7 +18,8 @@ Use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) or the
 `nereus-core`, and enable SSH. Connect both the Pi and the radio by Ethernet
 to the same switch, or plug the radio directly into the Pi's Ethernet port
 and follow [Radio plugged directly into the Pi](#radio-plugged-directly-into-the-pi)
-before continuing. For the direct cable setup, also configure Wi-Fi in
+before continuing. On Armbian, use [Direct radio cable on Armbian](#direct-radio-cable-on-armbian).
+For the direct cable setup, also configure Wi-Fi in
 Raspberry Pi Imager or use a USB Ethernet adapter so your apps can reach the
 Pi and it can download the package.
 
@@ -200,9 +201,9 @@ the link with no errors after the change.
 - **Hermes Lite 2 and other radios:** direct cable operation has not been
   tested. A radio configured with a fixed (static) address will not be found
   by this link-local setup; it needs a matching network configuration.
-- **Armbian:** this direct cable procedure has not been tested there. Its
-  image may manage networking differently; do not assume these
-  NetworkManager commands apply.
+- **Armbian:** direct cable operation has not been tested there. Use the
+  [Armbian instructions](#direct-radio-cable-on-armbian) for its networking
+  backend; do not assume the Pi's NetworkManager commands apply.
 - **Older NetworkManager versions:** `fallback` requires 1.52 or newer.
   On versions without it, `ipv4.method link-local` is an alternative for a
   dedicated cable, but stops the port from using a router's address. That
@@ -212,10 +213,93 @@ For the settings behind these commands, see NetworkManager's
 [IPv4 reference](https://www.networkmanager.dev/docs/api/latest/settings-ipv4.html)
 and [Wi-Fi power-saving reference](https://www.networkmanager.dev/docs/api/latest/settings-802-11-wireless.html).
 
+## Direct radio cable on Armbian
+
+Stock Armbian Minimal images for boards such as the Radxa Rock 5C use
+Netplan with **systemd-networkd**. The absence of `nmcli` is expected on
+those images. Armbian CLI and desktop images use **NetworkManager** instead.
+Check the services and find the Ethernet device before choosing the commands:
+
+```sh
+systemctl is-active systemd-networkd NetworkManager
+ip -br link
+ls /etc/netplan/
+```
+
+If NetworkManager is active, use the
+[NetworkManager procedure above](#radio-plugged-directly-into-the-pi), with
+your board's connection and device names. Its `fallback` setting still
+requires NetworkManager 1.52 or newer.
+
+For **systemd-networkd**, keep DHCP enabled and add IPv4 link-local
+addressing to the existing Netplan Ethernet definition. That gives the port
+a `169.254` address when DHCP cannot obtain one, while retaining DHCP for
+a later connection to your LAN.
+
+The standard Armbian Minimal file is
+`/etc/netplan/10-dhcp-all-interfaces.yaml`. If it is present, back it up and
+open it:
+
+```sh
+sudo cp -a /etc/netplan/10-dhcp-all-interfaces.yaml /etc/netplan/10-dhcp-all-interfaces.yaml.bak
+sudo nano /etc/netplan/10-dhcp-all-interfaces.yaml
+```
+
+Add `link-local: [ipv4, ipv6]` under the existing Ethernet definition,
+aligned with `dhcp4`. Keep its other settings. The stock Minimal definition
+with that addition looks like this:
+
+```yaml
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    all-eth-interfaces:
+      match:
+        name: "e*"
+      dhcp4: true
+      dhcp6: true
+      ipv6-privacy: true
+      link-local: [ipv4, ipv6]
+```
+
+If your image uses a different file or definition, edit that existing entry.
+Do not create a second definition that also matches the same port, or
+overwrite your Wi-Fi or USB Ethernet configuration.
+
+From a local keyboard or the separate Wi-Fi/USB Ethernet connection, test
+the change:
+
+```sh
+sudo netplan try
+```
+
+Confirm when prompted if connectivity is correct. If you lose access and
+cannot confirm, Netplan is intended to roll back the trial. Reconnect and
+check that the previous configuration has returned before retrying.
+
+With the radio directly cabled, replace `ETHERNET_DEVICE` with the name
+from `ip -br link` and check for `inet 169.254.…/16`:
+
+```sh
+ip -4 address show dev ETHERNET_DEVICE
+```
+
+Keep the radio-to-Core connection wired. Wi-Fi or USB Ethernet connects the
+board to your apps; the radio's data stays on the direct cable. The
+[radio selection guidance above](#radio-plugged-directly-into-the-pi) also applies.
+
+These settings follow the
+[Armbian networking guide](https://docs.armbian.com/user-guide/networking/),
+[Netplan link-local reference](https://netplan.readthedocs.io/en/stable/netplan-yaml/#properties-for-all-device-types)
+and [systemd-networkd IPv4 fallback behavior](https://github.com/systemd/systemd/blob/v257/man/systemd.network.xml#L398-L405).
+**Direct radio operation on the Radxa/Armbian setup has not yet been tested.**
+
 ## Troubleshooting and existing installs
 
 **Audio plays for a few seconds, then the radio drops, over and over on a
-direct cable:** see [Radio plugged directly into the Pi](#radio-plugged-directly-into-the-pi).
+direct cable:** see [Radio plugged directly into the Pi](#radio-plugged-directly-into-the-pi)
+or [Direct radio cable on Armbian](#direct-radio-cable-on-armbian).
 
 For a startup problem, use `sudo systemctl status nereusd` and
 `sudo journalctl -u nereusd -n 50 --no-pager`. Existing installs keep their

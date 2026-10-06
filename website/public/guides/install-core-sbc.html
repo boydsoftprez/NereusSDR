@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fresh Raspberry Pi or Armbian Core install | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/guides/install-core-sbc.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html" aria-current=page>Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="fresh-raspberry-pi-or-armbian-core-install">Fresh Raspberry Pi or Armbian Core install</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#1-prepare-the-card">1. Prepare the card</a></li><li><a href="#2-check-the-os-and-install-download-tools">2. Check the OS and install download tools</a></li><li><a href="#3-download-and-install-the-core">3. Download and install the Core</a></li><li><a href="#4-configure-and-start-it">4. Configure and start it</a></li><li><a href="#5-pair-a-console">5. Pair a console</a></li><li><a href="#radio-plugged-directly-into-the-pi">Radio plugged directly into the Pi</a></li><li><a href="#troubleshooting-and-existing-installs">Troubleshooting and existing installs</a></li></ol></details>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fresh Raspberry Pi or Armbian Core install | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/guides/install-core-sbc.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html" aria-current=page>Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="fresh-raspberry-pi-or-armbian-core-install">Fresh Raspberry Pi or Armbian Core install</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#1-prepare-the-card">1. Prepare the card</a></li><li><a href="#2-check-the-os-and-install-download-tools">2. Check the OS and install download tools</a></li><li><a href="#3-download-and-install-the-core">3. Download and install the Core</a></li><li><a href="#4-configure-and-start-it">4. Configure and start it</a></li><li><a href="#5-pair-a-console">5. Pair a console</a></li><li><a href="#radio-plugged-directly-into-the-pi">Radio plugged directly into the Pi</a></li><li><a href="#direct-radio-cable-on-armbian">Direct radio cable on Armbian</a></li><li><a href="#troubleshooting-and-existing-installs">Troubleshooting and existing installs</a></li></ol></details>
 <p>Install the headless <code>nereusd</code> Core on a fresh <strong>64-bit Debian 13 (Trixie)</strong>
 system. Use <strong>Raspberry Pi OS Lite (64-bit), Trixie</strong> on a Pi, or a compatible
 <strong>Armbian Minimal/CLI Debian Trixie</strong> image for your board. The release's
@@ -14,7 +14,8 @@ components beyond the Core.</p>
 <code>nereus-core</code>, and enable SSH. Connect both the Pi and the radio by Ethernet
 to the same switch, or plug the radio directly into the Pi's Ethernet port
 and follow <a href="#radio-plugged-directly-into-the-pi">Radio plugged directly into the Pi</a>
-before continuing. For the direct cable setup, also configure Wi-Fi in
+before continuing. On Armbian, use <a href="#direct-radio-cable-on-armbian">Direct radio cable on Armbian</a>.
+For the direct cable setup, also configure Wi-Fi in
 Raspberry Pi Imager or use a USB Ethernet adapter so your apps can reach the
 Pi and it can download the package.</p>
 <p><strong>Keep the radio-to-Core connection wired.</strong> The radio should always connect
@@ -152,9 +153,9 @@ the link with no errors after the change.</p>
 <li><strong>Hermes Lite 2 and other radios:</strong> direct cable operation has not been
 tested. A radio configured with a fixed (static) address will not be found
 by this link-local setup; it needs a matching network configuration.</li>
-<li><strong>Armbian:</strong> this direct cable procedure has not been tested there. Its
-image may manage networking differently; do not assume these
-NetworkManager commands apply.</li>
+<li><strong>Armbian:</strong> direct cable operation has not been tested there. Use the
+<a href="#direct-radio-cable-on-armbian">Armbian instructions</a> for its networking
+backend; do not assume the Pi's NetworkManager commands apply.</li>
 <li><strong>Older NetworkManager versions:</strong> <code>fallback</code> requires 1.52 or newer.
 On versions without it, <code>ipv4.method link-local</code> is an alternative for a
 dedicated cable, but stops the port from using a router's address. That
@@ -163,9 +164,70 @@ alternative has not been tested here.</li>
 <p>For the settings behind these commands, see NetworkManager's
 <a href="https://www.networkmanager.dev/docs/api/latest/settings-ipv4.html">IPv4 reference</a>
 and <a href="https://www.networkmanager.dev/docs/api/latest/settings-802-11-wireless.html">Wi-Fi power-saving reference</a>.</p>
+<h2 id="direct-radio-cable-on-armbian">Direct radio cable on Armbian</h2>
+<p>Stock Armbian Minimal images for boards such as the Radxa Rock 5C use
+Netplan with <strong>systemd-networkd</strong>. The absence of <code>nmcli</code> is expected on
+those images. Armbian CLI and desktop images use <strong>NetworkManager</strong> instead.
+Check the services and find the Ethernet device before choosing the commands:</p>
+<pre><code class="language-sh">systemctl is-active systemd-networkd NetworkManager
+ip -br link
+ls /etc/netplan/
+</code></pre>
+<p>If NetworkManager is active, use the
+<a href="#radio-plugged-directly-into-the-pi">NetworkManager procedure above</a>, with
+your board's connection and device names. Its <code>fallback</code> setting still
+requires NetworkManager 1.52 or newer.</p>
+<p>For <strong>systemd-networkd</strong>, keep DHCP enabled and add IPv4 link-local
+addressing to the existing Netplan Ethernet definition. That gives the port
+a <code>169.254</code> address when DHCP cannot obtain one, while retaining DHCP for
+a later connection to your LAN.</p>
+<p>The standard Armbian Minimal file is
+<code>/etc/netplan/10-dhcp-all-interfaces.yaml</code>. If it is present, back it up and
+open it:</p>
+<pre><code class="language-sh">sudo cp -a /etc/netplan/10-dhcp-all-interfaces.yaml /etc/netplan/10-dhcp-all-interfaces.yaml.bak
+sudo nano /etc/netplan/10-dhcp-all-interfaces.yaml
+</code></pre>
+<p>Add <code>link-local: [ipv4, ipv6]</code> under the existing Ethernet definition,
+aligned with <code>dhcp4</code>. Keep its other settings. The stock Minimal definition
+with that addition looks like this:</p>
+<pre><code class="language-yaml">network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    all-eth-interfaces:
+      match:
+        name: &quot;e*&quot;
+      dhcp4: true
+      dhcp6: true
+      ipv6-privacy: true
+      link-local: [ipv4, ipv6]
+</code></pre>
+<p>If your image uses a different file or definition, edit that existing entry.
+Do not create a second definition that also matches the same port, or
+overwrite your Wi-Fi or USB Ethernet configuration.</p>
+<p>From a local keyboard or the separate Wi-Fi/USB Ethernet connection, test
+the change:</p>
+<pre><code class="language-sh">sudo netplan try
+</code></pre>
+<p>Confirm when prompted if connectivity is correct. If you lose access and
+cannot confirm, Netplan is intended to roll back the trial. Reconnect and
+check that the previous configuration has returned before retrying.</p>
+<p>With the radio directly cabled, replace <code>ETHERNET_DEVICE</code> with the name
+from <code>ip -br link</code> and check for <code>inet 169.254.…/16</code>:</p>
+<pre><code class="language-sh">ip -4 address show dev ETHERNET_DEVICE
+</code></pre>
+<p>Keep the radio-to-Core connection wired. Wi-Fi or USB Ethernet connects the
+board to your apps; the radio's data stays on the direct cable. The
+<a href="#radio-plugged-directly-into-the-pi">radio selection guidance above</a> also applies.</p>
+<p>These settings follow the
+<a href="https://docs.armbian.com/user-guide/networking/">Armbian networking guide</a>,
+<a href="https://netplan.readthedocs.io/en/stable/netplan-yaml/#properties-for-all-device-types">Netplan link-local reference</a>
+and <a href="https://github.com/systemd/systemd/blob/v257/man/systemd.network.xml#L398-L405">systemd-networkd IPv4 fallback behavior</a>.
+<strong>Direct radio operation on the Radxa/Armbian setup has not yet been tested.</strong></p>
 <h2 id="troubleshooting-and-existing-installs">Troubleshooting and existing installs</h2>
 <p><strong>Audio plays for a few seconds, then the radio drops, over and over on a
-direct cable:</strong> see <a href="#radio-plugged-directly-into-the-pi">Radio plugged directly into the Pi</a>.</p>
+direct cable:</strong> see <a href="#radio-plugged-directly-into-the-pi">Radio plugged directly into the Pi</a>
+or <a href="#direct-radio-cable-on-armbian">Direct radio cable on Armbian</a>.</p>
 <p>For a startup problem, use <code>sudo systemctl status nereusd</code> and
 <code>sudo journalctl -u nereusd -n 50 --no-pager</code>. Existing installs keep their
 configuration and private state in <code>/var/lib/nereusd</code>; back that state up to
