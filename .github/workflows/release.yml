@@ -1319,7 +1319,6 @@ jobs:
         run: |
           mkdir deploy
           copy build\NereusSDR.exe deploy\
-          windeployqt deploy\NereusSDR.exe --release --no-translations --no-system-d3d-compiler
           if (Test-Path "third_party\fftw3\bin\libfftw3-3.dll") {
             copy third_party\fftw3\bin\libfftw3-3.dll deploy\
           }
@@ -1396,6 +1395,47 @@ jobs:
           }
           Copy-Item $stationExe deploy\
           if (-not (Test-Path "deploy\nereusd.exe")) { exit 1 }
+          # windeployqt only deploys the Qt modules imported by the binaries it
+          # is given. NereusCore.dll and NereusSDRLib.dll import Qt modules
+          # that NereusSDR.exe itself does not (WebSockets, Multimedia,
+          # SerialPort), so every binary we ship is passed here, after it
+          # has been staged. v2026.10.0 ran windeployqt on NereusSDR.exe
+          # alone and shipped without Qt6WebSockets.dll, Qt6Multimedia.dll
+          # and Qt6SerialPort.dll: the .exe failed to start on every install.
+          windeployqt --release --no-translations --no-system-d3d-compiler `
+            deploy\NereusSDR.exe deploy\NereusSDRLib.dll deploy\NereusCore.dll `
+            deploy\nereus-audio-capture.exe deploy\nereusd.exe
+          if ($LASTEXITCODE -ne 0) { Write-Error "windeployqt failed"; exit 1 }
+          # Every DLL a shipped binary imports must be in deploy\ or be a
+          # Windows system DLL / API set; anything else means the artifact
+          # would fail to launch with "<name>.dll was not found".
+          $present = @{}
+          Get-ChildItem deploy -Recurse -File | ForEach-Object { $present[$_.Name.ToLower()] = $true }
+          $missing = @()
+          Get-ChildItem deploy -File -Include *.exe,*.dll -Recurse |
+            Where-Object { $_.Name -ne 'vc_redist.x64.exe' } |
+            ForEach-Object {
+              $bin = $_
+              & dumpbin /nologo /dependents $bin.FullName | ForEach-Object {
+                if ($_ -match '^\s+(\S+\.dll)\s*$') {
+                  $dll = $Matches[1]
+                  $lower = $dll.ToLower()
+                  if (-not $present.ContainsKey($lower) -and
+                      -not $lower.StartsWith('api-ms-') -and
+                      -not $lower.StartsWith('ext-ms-') -and
+                      -not $lower.StartsWith('vcruntime') -and
+                      -not $lower.StartsWith('msvcp') -and
+                      -not (Test-Path (Join-Path $env:SystemRoot "System32\$dll"))) {
+                    $missing += "$($bin.Name) -> $dll"
+                  }
+                }
+              }
+            }
+          if ($missing.Count -gt 0) {
+            $missing | ForEach-Object { Write-Host "::error::unresolved import: $_" }
+            Write-Error "Windows artifact would ship broken: unresolved DLL imports"
+            exit 1
+          }
           # Copy third-party license notices + both root license files
           # (LICENSE and LICENSE-DUAL-LICENSING) into the portable deploy
           # tree so both the ZIP and the NSIS installer pick them up.
