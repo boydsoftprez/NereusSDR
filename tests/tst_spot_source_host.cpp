@@ -36,6 +36,8 @@
 //               Claude Code.
 //   2026-09-28: the spot record's resolvedMode (R-IOS-25). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06: the reporter software tag is "NereusSDR <version>".
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -96,6 +98,15 @@ class TstSpotSourceHost : public QObject {
 private slots:
     void init() { AppSettings::instance().clear(); }
     void cleanup() { AppSettings::instance().clear(); }
+
+    void theReporterTagIsTheProductNameAndBuildVersion()
+    {
+        // freedv-gui's form, "FreeDV <version>" (main.cpp:2804, 3848
+        // [@a4ae053]); a remote or Spot Hub identity edit once sent
+        // "NereusSDR/<version>" instead.
+        QCOMPARE(SpotSourceHost::reporterVersion(),
+                 QStringLiteral("NereusSDR ") + QStringLiteral(NEREUSSDR_VERSION));
+    }
 
     void theCoreStartsOnlyTheStationSources()
     {

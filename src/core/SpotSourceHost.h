@@ -53,6 +53,10 @@
 //   2026-09-28  J.J. Boyd / KG4VCF  Spot resolved mode (R-IOS-25): the
 //                                    spot record's resolvedMode.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-06  J.J. Boyd / KG4VCF  reporterVersion(): the one software
+//                                    tag FreeDV Reporter and PSK Reporter
+//                                    get from every caller. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -132,6 +136,10 @@ public:
     static bool isKnownSource(const QString& source);
     /// The console stream for a station source: spotConsole:<source>.
     static QString consoleStream(const QString& source);
+    /// The software tag FreeDV Reporter and PSK Reporter publish for this
+    /// station: "NereusSDR <version>", in the "FreeDV <version>" form
+    /// freedv-gui sends (main.cpp:2804, 3848 [@a4ae053]).
+    static QString reporterVersion();
 
     /// The `spots` stream's record for one spot: timeUtc, frequencyHz,
     /// call, mode, source, spotter, comment, band (the Band number the
