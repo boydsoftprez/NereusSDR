@@ -4924,6 +4924,15 @@ target_compile_definitions(tst_radio_model_mic_codec_wire PRIVATE NEREUS_BUILD_T
 nereus_add_test(tst_radio_codec_speaker_out)
 target_compile_definitions(tst_radio_codec_speaker_out PRIVATE NEREUS_BUILD_TESTS)
 
+# Radio speaker plan Task 3 (R-SPK-05 to R-SPK-07, R-SPK-11, R-SPK-12,
+# R-SPK-15): RADIO level, mute and the amplifier choice on RadioModel,
+# saved per radio, seeded on connect, forwarded to the engine and the
+# connection; availability and reasons; the CW or Tune flag ordering.
+nereus_add_test(tst_radio_speaker_model
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
+target_compile_definitions(tst_radio_speaker_model PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1b Task G.6: P1 mic_xlr storage-only ──────────────────────────
 # 8 tests verify that P1RadioConnection::setMicXlr() is STORAGE-ONLY.
 # Saturn G2 P2-only feature — P1 hardware has no XLR jack. No wire emission.

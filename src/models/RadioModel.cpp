@@ -997,6 +997,14 @@
 //                console.cs:8215-8216, 8544 [v2.10.3.15]) to the
 //                connection, which had no writer for it. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - Radio speaker: RADIO level, mute and the amplifier choice
+//                saved per radio and loaded on connect before the radio
+//                tap starts (seeded from the engine's master level when
+//                none is saved), forwarded to the AudioEngine and the
+//                connection; availability, reasons and the amplifier status
+//                line; the CW or Tune flag sent ahead of Tune's key
+//                (R-SPK-05 to R-SPK-07, R-SPK-11, R-SPK-12, R-SPK-15).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1395,6 +1403,7 @@ mw0lge@grange-lane.co.uk
 #include "models/AccessorySettingsModel.h"
 #include "core/StationAccessoryData.h"
 #include "core/ConnectionDiagnostics.h"
+#include "core/SpeakerAmplifier.h"
 
 #include <algorithm>
 #include <array>
@@ -4465,6 +4474,10 @@ RadioModel::RadioModel(Role role, QObject* parent)
         connect(m_widebandFftEngines[i], &WidebandFftEngine::geometryChanged,
                 this, [this, i]() { invalidateWidebandSpectrum(i); });
     }
+
+    // Radio speaker (R-SPK-15): the CW or Tune flag and the amplifier
+    // status line follow the transmit mode, Tune and the key.
+    wireRadioSpeakerState();
 }
 
 RadioModel::~RadioModel()
@@ -18072,6 +18085,11 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     }
 #endif
     m_connection->setHardwareProfile(m_hardwareProfile);
+    // Radio speaker (R-SPK-05, R-SPK-12): this radio's saved RADIO level,
+    // mute and amplifier choice reach the AudioEngine and the connection
+    // now, before wireConnectionSignals installs the radio output tap and
+    // before the connection starts. Nothing here keys.
+    loadRadioSpeakerForConnect();
 
     // Phase B6' — per-board WDSP ChannelMaster-layer calls.
     //
@@ -20334,6 +20352,315 @@ void RadioModel::disconnectRadioSpeakerOutput()
         m_audioEngine->clearRadioOutputTap(m_radioSpeakerTap.get());
     }
     m_radioSpeakerTap.reset();
+}
+
+// ── Radio speaker (R-SPK-05 to R-SPK-07, R-SPK-11, R-SPK-12, R-SPK-15) ────
+// NereusSDR-original. The amplifier list and the CW or Tune exception are
+// Task 2's (HardwareProfile::hasAudioAmplifier, core/SpeakerAmplifier.h).
+
+namespace {
+
+const QString kRadioSpeakerVolumeKey = QStringLiteral("RadioSpeaker/Volume");
+const QString kRadioSpeakerMutedKey = QStringLiteral("RadioSpeaker/Muted");
+const QString kRadioSpeakerModeKey = QStringLiteral("RadioSpeaker/AmplifierMode");
+constexpr int kRadioSpeakerMaxVolume = 100;
+constexpr int kSpeakerAmplifierNormal = 0;
+constexpr int kSpeakerAmplifierAlwaysOff = 2;
+
+bool isCwMode(DSPMode mode)
+{
+    return mode == DSPMode::CWL || mode == DSPMode::CWU;
+}
+
+} // namespace
+
+void RadioModel::setRadioSpeakerVolume(int volume)
+{
+    volume = std::clamp(volume, 0, kRadioSpeakerMaxVolume);
+    if (volume == m_radioSpeakerVolume) {
+        return;
+    }
+    m_radioSpeakerVolume = volume;
+    if (m_role != Role::Remote && m_audioEngine != nullptr) {
+        m_audioEngine->setRadioSpeakerVolume(
+            static_cast<float>(volume) / static_cast<float>(kRadioSpeakerMaxVolume));
+    }
+    saveRadioSpeaker();
+    emit radioSpeakerVolumeChanged(volume);
+}
+
+void RadioModel::setRadioSpeakerMuted(bool muted)
+{
+    if (muted == m_radioSpeakerMuted) {
+        return;
+    }
+    m_radioSpeakerMuted = muted;
+    if (m_role != Role::Remote) {
+        if (m_audioEngine != nullptr) {
+            m_audioEngine->setRadioSpeakerMuted(muted);
+        }
+        if (m_connection != nullptr) {
+            QMetaObject::invokeMethod(m_connection, [conn = m_connection, muted]() {
+                conn->setRadioSpeakerMuted(muted);
+            });
+        }
+    }
+    saveRadioSpeaker();
+    emit radioSpeakerMutedChanged(muted);
+    refreshRadioSpeakerReports();
+}
+
+void RadioModel::setSpeakerAmplifierMode(int mode)
+{
+    mode = std::clamp(mode, kSpeakerAmplifierNormal, kSpeakerAmplifierAlwaysOff);
+    if (mode == m_speakerAmplifierMode) {
+        return;
+    }
+    m_speakerAmplifierMode = mode;
+    if (m_role != Role::Remote && m_connection != nullptr) {
+        QMetaObject::invokeMethod(m_connection, [conn = m_connection, mode]() {
+            conn->setSpeakerAmplifierMode(mode);
+        });
+    }
+    saveRadioSpeaker();
+    emit speakerAmplifierModeChanged(mode);
+    refreshRadioSpeakerReports();
+}
+
+void RadioModel::saveRadioSpeaker()
+{
+    // Saved on the station that owns the radio (R-SPK-12); a remote window
+    // keeps none.
+    if (m_role == Role::Remote || m_radioSpeakerLoading) {
+        return;
+    }
+    const QString mac = m_lastRadioInfo.macAddress;
+    if (mac.isEmpty()) {
+        // No radio known yet: held in memory for the next radio that has
+        // nothing saved.
+        m_radioSpeakerHeld = true;
+        return;
+    }
+    // All three together, so a radio's seeded level is kept once anything
+    // about its speaker has been chosen.
+    AppSettings& s = AppSettings::instance();
+    s.setHardwareValue(mac, kRadioSpeakerVolumeKey, m_radioSpeakerVolume);
+    s.setHardwareValue(mac, kRadioSpeakerMutedKey,
+                       m_radioSpeakerMuted ? QStringLiteral("True")
+                                           : QStringLiteral("False"));
+    s.setHardwareValue(mac, kRadioSpeakerModeKey, m_speakerAmplifierMode);
+}
+
+void RadioModel::loadRadioSpeakerForConnect()
+{
+    if (m_role == Role::Remote) {
+        return;
+    }
+    const QString mac = m_lastRadioInfo.macAddress;
+    QVariant savedVolume;
+    QVariant savedMuted;
+    QVariant savedMode;
+    if (!mac.isEmpty()) {
+        const AppSettings& s = AppSettings::instance();
+        savedVolume = s.hardwareValue(mac, kRadioSpeakerVolumeKey);
+        savedMuted = s.hardwareValue(mac, kRadioSpeakerMutedKey);
+        savedMode = s.hardwareValue(mac, kRadioSpeakerModeKey);
+    }
+    const bool anySaved = savedVolume.isValid() || savedMuted.isValid()
+                          || savedMode.isValid();
+    const bool takeHeld = m_radioSpeakerHeld && !anySaved && !mac.isEmpty();
+
+    if (!takeHeld) {
+        // R-SPK-05 / D4: a radio with no saved level starts at the level it
+        // was fed at before the upgrade, the engine's master level now (the
+        // desktop header seeds it; a headless Core keeps the 0.5 default).
+        int volume = m_radioSpeakerVolume;
+        if (savedVolume.isValid()) {
+            volume = savedVolume.toInt();
+        } else if (m_audioEngine != nullptr) {
+            volume = static_cast<int>(std::lround(
+                m_audioEngine->volume() * static_cast<float>(kRadioSpeakerMaxVolume)));
+        }
+        const bool muted = savedMuted.isValid()
+                           && savedMuted.toString() == QLatin1String("True");
+        const int mode = savedMode.isValid() ? savedMode.toInt()
+                                             : kSpeakerAmplifierNormal;
+        const QScopedValueRollback<bool> loading(m_radioSpeakerLoading, true);
+        setRadioSpeakerVolume(volume);
+        setRadioSpeakerMuted(muted);
+        setSpeakerAmplifierMode(mode);
+    }
+    if (!mac.isEmpty()) {
+        m_radioSpeakerHeld = false;
+    }
+    if (takeHeld) {
+        saveRadioSpeaker();
+    }
+
+    // The engine and the connection get every value, changed or not: the
+    // connection is new, and nothing has keyed it.
+    if (m_audioEngine != nullptr) {
+        m_audioEngine->setRadioSpeakerVolume(
+            static_cast<float>(m_radioSpeakerVolume)
+            / static_cast<float>(kRadioSpeakerMaxVolume));
+        m_audioEngine->setRadioSpeakerMuted(m_radioSpeakerMuted);
+    }
+    m_tuneSidetoneHold = false;
+    m_sidetoneExpected = computeSidetoneExpected();
+    if (m_connection != nullptr) {
+        QMetaObject::invokeMethod(m_connection,
+            [conn = m_connection, mode = m_speakerAmplifierMode,
+             muted = m_radioSpeakerMuted, sidetone = m_sidetoneExpected]() {
+                conn->setSpeakerAmplifierMode(mode);
+                conn->setRadioSpeakerMuted(muted);
+                conn->setSidetoneExpected(sidetone);
+            });
+    }
+    refreshRadioSpeakerReports();
+}
+
+QString RadioModel::radioSpeakerUnavailableReason() const
+{
+    if (m_radioSpeakerAvailability == kRadioSpeakerNoRadio) {
+        return tr("No radio connected");
+    }
+    return QString();
+}
+
+QString RadioModel::speakerAmplifierUnavailableReason() const
+{
+    if (m_speakerAmplifierAvailable) {
+        return QString();
+    }
+    if (m_radioSpeakerAvailability == kRadioSpeakerNoRadio) {
+        return tr("No radio connected");
+    }
+    // D17: the G2E is left off the amplifier list until it is bench-tested
+    // (V-HW-6).
+    if (m_hardwareProfile.model == HPSDRModel::ANAN_G2E) {
+        return tr("Not yet tested on the ANAN-G2E.");
+    }
+    return tr("This radio has no switchable speaker amplifier.");
+}
+
+void RadioModel::refreshRadioSpeakerReports()
+{
+    int availability = kRadioSpeakerNoRadio;
+    bool amplifier = false;
+    if (m_connectionState == ConnectionState::Connected && m_connection != nullptr
+        && m_connection->carriesRadioAudio()) {
+        // D11: the HL2 cannot report its audio add-on board, so its radio
+        // speaker stays available with the add-on note, as Radio Mic does.
+        const bool needsAddOn = m_hardwareProfile.caps != nullptr
+                                && m_hardwareProfile.caps->radioMicNeedsAddOn;
+        availability = needsAddOn ? kRadioSpeakerNeedsAddOn : kRadioSpeakerAvailable;
+        // R-SPK-08: Thetis HasAudioAmplifier also requires Protocol 2; the
+        // profile flag is the model alone.
+        amplifier = m_hardwareProfile.hasAudioAmplifier
+                    && m_connection->protocolVersion() == 2;
+    }
+
+    QString status;
+    if (amplifier
+        && speakerAmplifierOff(true, m_speakerAmplifierMode, m_radioSpeakerMuted,
+                               isTransmitting(), m_sidetoneExpected)) {
+        if (m_radioSpeakerMuted) {
+            status = tr("Amplifier is off now: radio speaker muted.");
+        } else if (m_speakerAmplifierMode == kSpeakerAmplifierAlwaysOff) {
+            status = tr("Amplifier is off now.");
+        } else {
+            status = tr("Amplifier is off now: transmitting.");
+        }
+    }
+
+    const bool availabilityChanged = availability != m_radioSpeakerAvailability;
+    const bool amplifierChanged = amplifier != m_speakerAmplifierAvailable;
+    const bool statusChanged = status != m_speakerAmplifierStatus;
+    m_radioSpeakerAvailability = availability;
+    m_speakerAmplifierAvailable = amplifier;
+    m_speakerAmplifierStatus = status;
+    if (availabilityChanged) {
+        emit radioSpeakerAvailabilityChanged(availability);
+    }
+    if (amplifierChanged) {
+        emit speakerAmplifierAvailableChanged(amplifier);
+    }
+    if (statusChanged) {
+        emit speakerAmplifierStatusChanged();
+    }
+}
+
+bool RadioModel::computeSidetoneExpected() const
+{
+    // R-SPK-15: CW or Tune. Tune swaps CW to LSB or USB while it runs, so
+    // Tune counts on its own; the hold keeps it counted from Tune's end
+    // until the radio has unkeyed.
+    if (m_transmitModel.isTune() || m_tuneSidetoneHold) {
+        return true;
+    }
+    const SliceModel* const txSlice = txBoundSlice();
+    return txSlice != nullptr && isCwMode(txSlice->dspMode());
+}
+
+void RadioModel::refreshSidetoneExpected()
+{
+    const bool expected = computeSidetoneExpected();
+    if (expected == m_sidetoneExpected) {
+        return;
+    }
+    m_sidetoneExpected = expected;
+    if (m_connection != nullptr) {
+        QMetaObject::invokeMethod(m_connection, [conn = m_connection, expected]() {
+            conn->setSidetoneExpected(expected);
+        });
+    }
+    refreshRadioSpeakerReports();
+}
+
+void RadioModel::wireRadioSpeakerState()
+{
+    // Tune's flag is sent here, from inside setTune(true) before it keys,
+    // so it reaches the connection ahead of the MOX bit (both are queued to
+    // the connection thread in order). At Tune's end the radio may still be
+    // keyed; the flag is held until hardwareFlipped(false) has sent MOX off.
+    connect(&m_transmitModel, &TransmitModel::tuneChanged, this, [this](bool on) {
+        m_tuneSidetoneHold = !on && m_moxController != nullptr
+                             && m_moxController->isMox();
+        refreshSidetoneExpected();
+    });
+    if (m_moxController != nullptr) {
+        // Queued, and connected after onMoxHardwareFlipped's own queued
+        // connection, so this runs after that slot has queued MOX off.
+        connect(m_moxController, &MoxController::hardwareFlipped, this,
+                [this](bool isTx) {
+                    if (!isTx) {
+                        m_tuneSidetoneHold = false;
+                    }
+                    refreshSidetoneExpected();
+                },
+                Qt::QueuedConnection);
+    }
+    if (m_txSliceArbiter != nullptr) {
+        connect(m_txSliceArbiter, &TxSliceArbiter::txBoundSliceChanged, this,
+                [this](int, int) { refreshSidetoneExpected(); });
+    }
+    const auto watchSlice = [this](SliceModel* slice) {
+        if (slice != nullptr) {
+            connect(slice, &SliceModel::dspModeChanged, this,
+                    [this](DSPMode) { refreshSidetoneExpected(); });
+        }
+    };
+    for (SliceModel* const slice : m_slices) {
+        watchSlice(slice);
+    }
+    connect(this, &RadioModel::sliceAdded, this, [this, watchSlice](int index) {
+        watchSlice(sliceById(index));
+        refreshSidetoneExpected();
+    });
+    connect(this, &RadioModel::sliceRemoved, this,
+            [this](int) { refreshSidetoneExpected(); });
+    connect(this, &RadioModel::transmittingChanged, this,
+            [this](bool) { refreshRadioSpeakerReports(); });
 }
 
 void RadioModel::connectMicCodecSignals()
@@ -25340,6 +25667,8 @@ void RadioModel::applyHpsdrModel(HPSDRModel m, HPSDRHW board)
     m_txInhibit.setRadioModel(m_hardwareProfile.model);
     // Task 16: the HL2 receive-only kit runs receive only.
     applyRxOnly();
+    // Radio speaker: availability and the amplifier follow the board.
+    refreshRadioSpeakerReports();
     if (m_receiverManager) {
         m_receiverManager->setHpsdrModel(m_hardwareProfile.model);
 
@@ -25403,6 +25732,10 @@ void RadioModel::setConnectionState(ConnectionState s)
     // has already published its own state and must not be followed by ours.
     if (m_connectionState == s) {
         emit connectionStateChanged(s);
+    }
+    // Radio speaker (R-SPK-06): no radio, no radio speaker.
+    if (m_connectionState == s) {
+        refreshRadioSpeakerReports();
     }
 }
 
