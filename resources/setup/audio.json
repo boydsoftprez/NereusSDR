@@ -1,5 +1,5 @@
 {
-  "version": 24,
+  "version": 25,
   "category": {
     "id": "audio",
     "title": "Audio",
@@ -9,12 +9,12 @@
   "pages": [
     {
       "id": "audio.txInput",
-      "title": "TX Input",
+      "title": "Microphone",
       "where": "mixed",
       "coverage": "partial: desktop microphone selection uses session-scoped tx.setMicSource with radioMicVersion 2; device, buffer and test are computer-local; handheld source selection is unavailable",
       "sections": [
         {
-          "title": "PC Mic",
+          "title": "Mic gain",
           "controls": [
             {
               "id": "audio.txInput.micGain",
@@ -319,6 +319,99 @@
       ]
     },
     {
+      "id": "audio.outputs",
+      "title": "Outputs",
+      "where": "station",
+      "coverage": "partial: This computer and Headphones are computer-local",
+      "sections": [
+        {
+          "title": "Radio speaker",
+          "controls": [
+            {
+              "id": "audio.outputs.radioSpeakerVolume",
+              "label": "Volume:",
+              "tooltip": "Radio speaker at the Core (shared with every window and the phone)",
+              "kind": "slider",
+              "binding": {
+                "property": {
+                  "object": "radio",
+                  "name": "radioSpeakerVolume"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 25,
+              "gate": {
+                "capability": "radioSpeakerVersion",
+                "min": 1
+              },
+              "min": 0,
+              "max": 100,
+              "step": 1
+            },
+            {
+              "id": "audio.outputs.radioSpeakerMuted",
+              "label": "Mute radio speaker",
+              "tooltip": "Radio speaker at the Core (shared with every window and the phone)",
+              "kind": "toggle",
+              "binding": {
+                "property": {
+                  "object": "radio",
+                  "name": "radioSpeakerMuted"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 25,
+              "gate": {
+                "capability": "radioSpeakerVersion",
+                "min": 1
+              }
+            },
+            {
+              "id": "audio.outputs.speakerAmplifierMode",
+              "label": "Speaker amplifier:",
+              "tooltip": "",
+              "kind": "choice",
+              "binding": {
+                "property": {
+                  "object": "radio",
+                  "name": "speakerAmplifierMode"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 25,
+              "gate": {
+                "capability": "radioSpeakerVersion",
+                "min": 1
+              },
+              "options": [
+                {
+                  "value": 0,
+                  "label": "Normal"
+                },
+                {
+                  "value": 1,
+                  "label": "Off while transmitting"
+                },
+                {
+                  "value": 2,
+                  "label": "Always off"
+                }
+              ],
+              "enabledWhen": {
+                "property": {
+                  "object": "radio",
+                  "name": "speakerAmplifierAvailable"
+                },
+                "oneOf": [
+                  true
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "audio.txProfile",
       "title": "TX Profile",
       "where": "station",
@@ -569,5 +662,6 @@
       "coverageV15": ""
     }
   ],
-  "coverageV15": "partial: Devices, VAX, TCI and Advanced are computer-local; desktop TX Input selects its authenticated session source with radioMicVersion 2, while device, buffer and test remain computer-local; handheld source selection is unavailable"
+  "coverageV15": "partial: Devices, VAX, TCI and Advanced are computer-local; desktop TX Input selects its authenticated session source with radioMicVersion 2, while device, buffer and test remain computer-local; handheld source selection is unavailable",
+  "coverageV25": "partial: Outputs' computer and headphone devices, Digital modes and Advanced are computer-local; desktop Microphone selects its authenticated session source with radioMicVersion 2, while device, buffer and test remain computer-local; handheld source selection is unavailable"
 }

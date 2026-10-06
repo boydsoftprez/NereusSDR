@@ -6,6 +6,9 @@
 // 2026-09-30: Audio version 24 (radio codec lane): Line In Gain in 1.5 dB
 // steps, the Saturn G2's Mic Tip-Ring row. J.J. Boyd (KG4VCF), AI-assisted
 // via Anthropic Claude Code.
+// 2026-10-06: Audio version 25 (R-SPK-23): TX Input retitled Microphone,
+// the Outputs page's radio speaker rows bound to RadioModel. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "core/setup/SetupDescriptionService.h"
 #include "core/session/SessionCommandDispatcher.h"
 #include "core/session/MirrorSchema.h"
@@ -228,6 +231,27 @@ constexpr char kAudioV24Controls[] =
     R"json({"id":"audio.txInput.hermesLineInGain","label":"Line In Gain:","tooltip":"","kind":"decimal","binding":{"property":{"object":"transmit","name":"lineInBoost"}},"applies":"live","requiresDescriptionVersion":24,"gate":{"capability":"transmitSettingsVersion","min":3,"transmit":true},"min":-34.5,"max":12,"step":1.5,"decimals":1,"unit":"dB"},)json"
     R"json({"id":"audio.txInput.saturnMicTipRing","label":"Mic Tip-Ring (Tip is Mic)","tooltip":"","kind":"toggle","binding":{"property":{"object":"transmit","name":"micTipRing"}},"applies":"live","requiresDescriptionVersion":24,"gate":{"capability":"transmitSettingsVersion","min":3,"transmit":true}})json"
     R"json(])json";
+
+// Audio version 25 (R-SPK-23): the Outputs page's Radio speaker section,
+// the desktop Outputs page's level, mute and amplifier choice for the radio
+// speaker at the Core, bound to RadioModel's three writable, Bidirectional
+// properties (radioSpeakerVersion 1). The amplifier row is enabled while
+// the Core reports speakerAmplifierAvailable. The tooltips are a remote
+// window's. Closed as the version 24 rows are.
+constexpr char kAudioV25Controls[] =
+    R"json([)json"
+    R"json({"id":"audio.outputs.radioSpeakerVolume","label":"Volume:","tooltip":"Radio speaker at the Core (shared with every window and the phone)","kind":"slider","binding":{"property":{"object":"radio","name":"radioSpeakerVolume"}},"applies":"live","requiresDescriptionVersion":25,"gate":{"capability":"radioSpeakerVersion","min":1},"min":0,"max":100,"step":1},)json"
+    R"json({"id":"audio.outputs.radioSpeakerMuted","label":"Mute radio speaker","tooltip":"Radio speaker at the Core (shared with every window and the phone)","kind":"toggle","binding":{"property":{"object":"radio","name":"radioSpeakerMuted"}},"applies":"live","requiresDescriptionVersion":25,"gate":{"capability":"radioSpeakerVersion","min":1}},)json"
+    R"json({"id":"audio.outputs.speakerAmplifierMode","label":"Speaker amplifier:","tooltip":"","kind":"choice","binding":{"property":{"object":"radio","name":"speakerAmplifierMode"}},"applies":"live","requiresDescriptionVersion":25,"gate":{"capability":"radioSpeakerVersion","min":1},"options":[{"value":0,"label":"Normal"},{"value":1,"label":"Off while transmitting"},{"value":2,"label":"Always off"}],"enabledWhen":{"property":{"object":"radio","name":"speakerAmplifierAvailable"},"oneOf":[true]}})json"
+    R"json(])json";
+
+// Version 25 retitled TX Input and its PC Mic section; a peer below 25 reads
+// the version 24 titles.
+constexpr char kAudioV25InputTitle[] = "Microphone";
+constexpr char kAudioV24InputTitle[] = "TX Input";
+constexpr char kAudioV25MicGainTitle[] = "Mic gain";
+constexpr char kAudioV24MicGainTitle[] = "PC Mic";
+constexpr int kAudioOutputsVersion = 25;
 
 // Transmit version 13 (R-R3-49): Power's PA Control group, "Disable HF PA",
 // which the Core applies on and off the air (transmitSettingsVersion 11).
@@ -483,6 +507,12 @@ const QHash<QString, QJsonObject>& hardwareV23Controls()
 const QHash<QString, QJsonObject>& audioV24Controls()
 {
     static const QHash<QString, QJsonObject> table = controlsById(kAudioV24Controls);
+    return table;
+}
+
+const QHash<QString, QJsonObject>& audioV25Controls()
+{
+    static const QHash<QString, QJsonObject> table = controlsById(kAudioV25Controls);
     return table;
 }
 
@@ -758,9 +788,10 @@ QString loadCategory(const QString& id, const BoardCapabilities& caps, HPSDRMode
          // Version 23: Calibration's Rx1 6m LNA row.
          && !(id == QLatin1String("hardware")
               && root.value(QStringLiteral("version")) == QJsonValue(23))
-         // Version 24: TX Input's Line In Gain steps and Saturn Mic Tip-Ring.
+         // Version 24: TX Input's Line In Gain steps and Saturn Mic Tip-Ring;
+         // version 25: Outputs' radio speaker rows, TX Input as Microphone.
          && !(id == QLatin1String("audio")
-              && root.value(QStringLiteral("version")) == QJsonValue(24))
+              && root.value(QStringLiteral("version")) == QJsonValue(kAudioOutputsVersion))
          // Version 21: CAT & Network's TCI Forget row greys out with Duplicate.
          && !(id == QLatin1String("catNetwork")
               && root.value(QStringLiteral("version")) == QJsonValue(21))
@@ -812,7 +843,8 @@ QString loadCategory(const QString& id, const BoardCapabilities& caps, HPSDRMode
                             && !(id == QLatin1String("catNetwork")
                                  && root.value(QStringLiteral("version")) == QJsonValue(21))
                             && !(id == QLatin1String("audio")
-                                 && root.value(QStringLiteral("version")) == QJsonValue(24)))) {
+                                 && root.value(QStringLiteral("version"))
+                                     == QJsonValue(kAudioOutputsVersion)))) {
                         return {};
                     }
                     ids.insert(controlId);
@@ -824,8 +856,26 @@ QString loadCategory(const QString& id, const BoardCapabilities& caps, HPSDRMode
                     && control.value(QStringLiteral("requiresDescriptionVersion"))
                         == QJsonValue(24)) {
                     if (controlId.isEmpty() || ids.contains(controlId)
-                        || root.value(QStringLiteral("version")) != QJsonValue(24)
+                        || root.value(QStringLiteral("version"))
+                            != QJsonValue(kAudioOutputsVersion)
                         || !SetupDescription::validateAudioV24Control(control)) {
+                        return {};
+                    }
+                    ids.insert(controlId);
+                    continue;
+                }
+                // Version 25: Outputs' three radio speaker rows, accepted only
+                // as the exact closed rows bound to the writable radio
+                // properties (validateAudioV25Control,
+                // validateAudioPropertyBinding).
+                if (id == QLatin1String("audio")
+                    && control.value(QStringLiteral("requiresDescriptionVersion"))
+                        == QJsonValue(kAudioOutputsVersion)) {
+                    if (controlId.isEmpty() || ids.contains(controlId)
+                        || root.value(QStringLiteral("version"))
+                            != QJsonValue(kAudioOutputsVersion)
+                        || !SetupDescription::validateAudioV25Control(control)
+                        || !SetupDescription::validateAudioPropertyBinding(control)) {
                         return {};
                     }
                     ids.insert(controlId);
@@ -2321,6 +2371,13 @@ bool SetupDescription::validateAudioV24Control(const QJsonObject& control)
     return row != audioV24Controls().constEnd() && control == *row;
 }
 
+bool SetupDescription::validateAudioV25Control(const QJsonObject& control)
+{
+    const auto row = audioV25Controls().constFind(
+        control.value(QStringLiteral("id")).toString());
+    return row != audioV25Controls().constEnd() && control == *row;
+}
+
 bool SetupDescription::validateHardwareV23Control(const QJsonObject& control)
 {
     const auto row = hardwareV23Controls().constFind(
@@ -2362,6 +2419,47 @@ bool SetupDescription::validateTransmitSettingBinding(const QJsonObject& control
     return kToggles.contains(key) && validateSettingToggleEncoding(control);
 }
 
+namespace {
+// Version 25 (R-SPK-23): a radio binding in Audio is one of the radio
+// speaker's three settable properties, each with its own kind, writable on
+// RadioModel and Bidirectional in MirrorPolicy, gated exactly on
+// radioSpeakerVersion 1. The two reports (radioSpeakerAvailability,
+// speakerAmplifierAvailable) and every other radio property are refused.
+bool validateAudioRadioBinding(const QJsonObject& control, const QByteArray& name)
+{
+    struct SpeakerRow {
+        const char* name;
+        const char* kind;
+        MirrorWireKind wire;
+    };
+    static constexpr SpeakerRow kRows[] = {
+        {"radioSpeakerVolume", "slider", MirrorWireKind::Int64},
+        {"radioSpeakerMuted", "toggle", MirrorWireKind::Bool},
+        {"speakerAmplifierMode", "choice", MirrorWireKind::Int64},
+    };
+    const SpeakerRow* row = nullptr;
+    for (const SpeakerRow& candidate : kRows) {
+        if (name == candidate.name) {
+            row = &candidate;
+        }
+    }
+    if (row == nullptr
+        || control.value(QStringLiteral("kind")) != QJsonValue(QLatin1String(row->kind))
+        || control.value(QStringLiteral("gate")) != QJsonValue(QJsonObject{
+               {QStringLiteral("capability"), QStringLiteral("radioSpeakerVersion")},
+               {QStringLiteral("min"), 1}})) {
+        return false;
+    }
+    const QByteArray policyClass = QByteArrayLiteral("RadioModel");
+    const MirrorProperty* property =
+        MirrorSchema::forMetaObject(&RadioModel::staticMetaObject).byName(name);
+    return property && property->isWritable && property->kind == row->wire
+        && MirrorPolicy::hasExplicitEntry(policyClass, name)
+        && MirrorPolicy::directionFor(policyClass, name) == MirrorDirection::Bidirectional
+        && MirrorPolicy::inboundAllowed(policyClass, name);
+}
+} // namespace
+
 bool SetupDescription::validateAudioPropertyBinding(const QJsonObject& control)
 {
     const QJsonObject binding = control.value(QStringLiteral("binding")).toObject();
@@ -2369,6 +2467,10 @@ bool SetupDescription::validateAudioPropertyBinding(const QJsonObject& control)
         return false;
     }
     const QJsonObject ref = binding.value(QStringLiteral("property")).toObject();
+    if (ref.size() == 2 && ref.value(QStringLiteral("object")) == QJsonValue(QStringLiteral("radio"))) {
+        return validateAudioRadioBinding(control,
+                                         ref.value(QStringLiteral("name")).toString().toUtf8());
+    }
     if (ref.size() != 2 || ref.value(QStringLiteral("object")) != QJsonValue(QStringLiteral("transmit"))) {
         return false;
     }
@@ -3019,6 +3121,31 @@ QString SetupDescription::fitCategoryForVersion(const QString& description, int 
         }
     }
     if (pages.isEmpty()) { return {}; }
+    // Audio 25 retitled TX Input Microphone and its PC Mic section Mic gain:
+    // a peer below 25 keeps the version 24 titles (and has no Outputs page,
+    // whose rows all need 25).
+    if (categoryId == QLatin1String("audio") && version < kAudioOutputsVersion) {
+        for (int p = 0; p < pages.size(); ++p) {
+            QJsonObject page = pages.at(p).toObject();
+            if (page.value(QStringLiteral("id")) != QJsonValue(QStringLiteral("audio.txInput"))) {
+                continue;
+            }
+            if (page.value(QStringLiteral("title")) == QJsonValue(QLatin1String(kAudioV25InputTitle))) {
+                page.insert(QStringLiteral("title"), QLatin1String(kAudioV24InputTitle));
+            }
+            QJsonArray sections = page.value(QStringLiteral("sections")).toArray();
+            for (int i = 0; i < sections.size(); ++i) {
+                QJsonObject section = sections.at(i).toObject();
+                if (section.value(QStringLiteral("title"))
+                    == QJsonValue(QLatin1String(kAudioV25MicGainTitle))) {
+                    section.insert(QStringLiteral("title"), QLatin1String(kAudioV24MicGainTitle));
+                    sections[i] = section;
+                }
+            }
+            page.insert(QStringLiteral("sections"), sections);
+            pages[p] = page;
+        }
+    }
     category.insert(QStringLiteral("pages"), pages);
     if (category.contains(QStringLiteral("coverageV15"))) {
         if (version >= SetupDescriptionV15::kVersion) {
@@ -3033,6 +3160,14 @@ QString SetupDescription::fitCategoryForVersion(const QString& description, int 
                             category.value(QStringLiteral("coverageV19")).toString());
         }
         category.remove(QStringLiteral("coverageV19"));
+    }
+    // Version 25: Audio's coverage names the regrouped pages.
+    if (category.contains(QStringLiteral("coverageV25"))) {
+        if (version >= kAudioOutputsVersion) {
+            category.insert(QStringLiteral("coverage"),
+                            category.value(QStringLiteral("coverageV25")).toString());
+        }
+        category.remove(QStringLiteral("coverageV25"));
     }
     if (categoryId == QLatin1String("pa")) {
         category = mapCategoryControls(category, [version, holdsTransmit](QJsonObject control) {
@@ -3074,8 +3209,10 @@ QString SetupDescription::fitCategoryForVersion(const QString& description, int 
             ? kDspOnAirLockVersion
         : categoryId == QLatin1String("dsp") && version >= 19 ? 19
         : categoryId == QLatin1String("catNetwork") && version >= 21 ? 21
-        // Audio changed at 15 and 24 (Line In Gain's steps, Saturn Mic
-        // Tip-Ring): 15 to 23 see 15.
+        // Audio changed at 15, 24 (Line In Gain's steps, Saturn Mic
+        // Tip-Ring) and 25 (Outputs, Microphone): 15 to 23 see 15.
+        : categoryId == QLatin1String("audio") && version >= kAudioOutputsVersion
+            ? kAudioOutputsVersion
         : categoryId == QLatin1String("audio") && version >= 24 ? 24
         : SetupDescriptionV15::isCategory(categoryId)
             && version >= SetupDescriptionV15::kVersion ? SetupDescriptionV15::kVersion
@@ -3124,7 +3261,7 @@ QString SetupDescription::fitCategoryForVersion(const QString& description, int 
     }
     // PA changed at 5, 13, 14 and 20; hardware at 6, 13, 16, 17, 18 and 23;
     // transmit at 13; DSP, Transmit, Audio, Diagnostics and CAT & Network at
-    // 15; DSP at 19; CAT & Network at 21; Audio at 24.
+    // 15; DSP at 19; CAT & Network at 21; Audio at 24 and 25.
     if (version >= 2 && version < SetupDescriptionV15::kVersion
         && category.value(QStringLiteral("category")).toObject()
             .value(QStringLiteral("id")) == QJsonValue(QStringLiteral("dsp"))) {

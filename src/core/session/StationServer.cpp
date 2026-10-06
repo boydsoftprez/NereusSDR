@@ -1,6 +1,10 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-06: Setup description version 25 (Audio > Outputs' radio
+//               speaker rows, TX Input titled Microphone) is the cap
+//               (R-SPK-23). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-06: Radio speaker: radio's radioSpeakerVolume,
 //               radioSpeakerMuted, speakerAmplifierMode,
 //               radioSpeakerAvailability and speakerAmplifierAvailable go
@@ -1384,6 +1388,9 @@ bool isDevicesSettingsKey(const QString& key)
 constexpr const char* kCatalogKey = "catalog";
 
 constexpr const char* kSetupDescriptionKey = "setup";
+// The highest Setup description version the Core sends (25: Audio's
+// Outputs page and Microphone title, R-SPK-23).
+constexpr int kSetupDescriptionCap = 25;
 
 bool isSetupDescriptionMessage(const SessionMessage& message)
 {
@@ -9268,8 +9275,9 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
             // Duplicate is off. 22: DSP > Options' RX buffer sizes'
             // on-the-air lock. 23: Hardware > Calibration's Rx1 6m LNA row.
             // 24: Audio > TX Input's Line In Gain in 1.5 dB steps and the
-            // Saturn G2's Mic Tip-Ring row.
-            const int version = qMin(declared, 24);
+            // Saturn G2's Mic Tip-Ring row. 25: Audio > Outputs' radio
+            // speaker rows; TX Input titled Microphone.
+            const int version = qMin(declared, kSetupDescriptionCap);
             // Version 20: the transmit holder's own PA band stays live.
             const QByteArray deviceId = peerInfoFor(transport).deviceId;
             const bool holdsTransmit = m_transmitHolder && !deviceId.isEmpty()
@@ -13052,7 +13060,8 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             caps.stationCatalogVersion = stationCatalogVersion();
             caps.setupDescriptionVersion = peerDeclares(
                 transport, QByteArrayLiteral("setupDescription"), 1)
-                ? qMin(peer->features.value(QByteArrayLiteral("setupDescription")), 24) : 0;
+                ? qMin(peer->features.value(QByteArrayLiteral("setupDescription")),
+                       kSetupDescriptionCap) : 0;
             // iPhone app Task 20: display extras.
             caps.displayExtrasVersion = media ? displayExtrasVersion() : 0;
             // R-R3-49 (parity Task 1): the transmit settings.

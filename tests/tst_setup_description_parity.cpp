@@ -26,6 +26,7 @@
 #include "gui/setup/hardware/AntennaAlexAlex1Tab.h"
 #include "gui/setup/hardware/AntennaAlexAlex2Tab.h"
 #include "gui/setup/AudioTxInputPage.h"
+#include "gui/setup/AudioOutputsPage.h"
 #include "gui/setup/hardware/AntennaAlexAntennaControlTab.h"
 #include "gui/setup/hardware/CalibrationTab.h"
 #include "gui/setup/hardware/Hl2IoBoardTab.h"
@@ -39,6 +40,8 @@
 #include "gui/setup/TestTwoTonePage.h"
 #include "gui/diagnostics/DiagnosticsPhaseHPages.h"
 #include "gui/diagnostics/RadioStatusPage.h"
+#include "core/ConnectionState.h"
+#include "core/session/IStationLink.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/NotchModel.h"
@@ -62,6 +65,7 @@
 #include <QLabel>
 #include <QRadioButton>
 #include <QSpinBox>
+#include <QScopeGuard>
 #include <QSlider>
 #include <QTableWidget>
 
@@ -70,6 +74,18 @@
 using namespace NereusSDR;
 
 namespace {
+// A Core link that offers the radio speaker (radioSpeakerVersion 1).
+class SpeakerLink : public IStationLink {
+public:
+    bool offers{false};
+    bool radioSpeakerAvailable() const override { return offers; }
+    CommandOutcome requestAddSlice(const QString&) override { return {}; }
+    CommandOutcome requestAddSliceOnPan(const QString&) override { return {}; }
+    CommandOutcome requestRemoveSlice(int) override { return {}; }
+    CommandOutcome requestActiveSlice(int) override { return {}; }
+    CommandOutcome requestSliceSampleRate(int, int) override { return {}; }
+};
+
 QJsonArray controls(const QJsonObject& category)
 {
     QJsonArray result;
@@ -187,6 +203,11 @@ void compareControl(QWidget& page, const QJsonObject& control)
             }
         } else {
             auto* group = qobject_cast<QButtonGroup*>(object);
+            // Version 25: Outputs' amplifier choice is a row widget holding
+            // its button group.
+            if (group == nullptr) {
+                group = object->findChild<QButtonGroup*>();
+            }
             QVERIFY2(group != nullptr, qPrintable(id));
             const QJsonArray choices = control.value("choices").toArray();
             const QJsonArray options = control.value("options").toArray();
@@ -1656,7 +1677,8 @@ private slots:
         QTest::addColumn<int>("board");
         QTest::addColumn<int>("radioMicRows");
         // Radio codec lane: the G2's Mic Tip-Ring (version 24), and the
-        // HL2's Hermes rows through its audio add-on board.
+        // HL2's Hermes rows through its audio add-on board. Version 25 adds
+        // Outputs' three radio speaker rows on every board.
         QTest::newRow("ANAN-G2") << int(HPSDRHW::Saturn) << 5;
         QTest::newRow("HL2") << int(HPSDRHW::HermesLite) << 3;
         QTest::newRow("Hermes") << int(HPSDRHW::Hermes) << 3;
@@ -1671,23 +1693,74 @@ private slots:
         model.setBoardForTest(static_cast<HPSDRHW>(board));
         TxProfileSetupPage page(&model, nullptr, &model.transmitModel());
         AudioTxInputPage input(&model);
+        AudioOutputsPage outputs(&model);
         SetupDescriptionService service;
         service.setBoardCapabilities(model.boardCapabilities());
         const QJsonObject audio = service.category(QStringLiteral("audio"));
         QVERIFY(!audio.isEmpty());
         const QJsonArray pages = audio.value(QStringLiteral("pages")).toArray();
-        QCOMPARE(pages.size(), 2);
-        QCOMPARE(pages.first().toObject().value(QStringLiteral("id")),
+        QCOMPARE(pages.size(), 3);
+        QCOMPARE(pages.at(0).toObject().value(QStringLiteral("id")),
                  QJsonValue(QStringLiteral("audio.txInput")));
-        QCOMPARE(pages.last().toObject().value(QStringLiteral("id")),
+        QCOMPARE(pages.at(1).toObject().value(QStringLiteral("id")),
+                 QJsonValue(QStringLiteral("audio.outputs")));
+        QCOMPARE(pages.at(2).toObject().value(QStringLiteral("id")),
                  QJsonValue(QStringLiteral("audio.txProfile")));
+        // Version 25: the described titles are the desktop pages' own.
+        QCOMPARE(pages.at(0).toObject().value(QStringLiteral("title")),
+                 QJsonValue(QStringLiteral("Microphone")));
+        QCOMPARE(pages.at(1).toObject().value(QStringLiteral("title")),
+                 QJsonValue(QStringLiteral("Outputs")));
         const QJsonArray described = controls(audio);
-        QCOMPARE(described.size(), 7 + radioMicRows);
+        QCOMPARE(described.size(), 7 + radioMicRows + 3);
+        int outputRows = 0;
         for (const QJsonValue& raw : described) {
             const QJsonObject control = raw.toObject();
-            compareControl(control.value("id").toString().startsWith("audio.txInput.")
-                               ? static_cast<QWidget&>(input) : static_cast<QWidget&>(page),
+            const QString id = control.value("id").toString();
+            if (id.startsWith("audio.outputs.")) {
+                // The described rows are the radio speaker at the Core:
+                // describedAudioOutputsRowsMatchTheRemoteWindow compares
+                // them with a remote window's Outputs page.
+                QVERIFY2(bySetupId(outputs, id) != nullptr, qPrintable(id));
+                ++outputRows;
+                continue;
+            }
+            compareControl(id.startsWith("audio.txInput.") ? static_cast<QWidget&>(input)
+                                                           : static_cast<QWidget&>(page),
                            control);
+        }
+        QCOMPARE(outputRows, 3);
+    }
+
+    // Version 25 (R-SPK-23): Outputs' radio speaker rows are the speaker
+    // at the Core, as a remote window's Outputs page shows it once the Core
+    // offers the speaker (radioSpeakerVersion 1) and its amplifier.
+    void describedAudioOutputsRowsMatchTheRemoteWindow()
+    {
+        RadioModel remote(RadioModel::Role::Remote);
+        SpeakerLink link;
+        remote.attachStation(&link);
+        const auto detach = qScopeGuard([&remote]() { remote.attachStation(nullptr); });
+        remote.setStationConnectionState(ConnectionState::Connected);
+        link.offers = true;
+        QVERIFY(remote.applyStationRadioSpeakerValue("radioSpeakerAvailability",
+                                                     RadioModel::kRadioSpeakerAvailable));
+        QVERIFY(remote.applyStationRadioSpeakerValue("speakerAmplifierAvailable", true));
+        AudioOutputsPage outputs(&remote);
+        SetupDescriptionService service;
+        const QJsonObject audio = service.category(QStringLiteral("audio"));
+        QJsonArray described;
+        for (const QJsonValue& page : audio.value(QStringLiteral("pages")).toArray()) {
+            if (page.toObject().value(QStringLiteral("id"))
+                == QJsonValue(QStringLiteral("audio.outputs"))) {
+                QCOMPARE(page.toObject().value(QStringLiteral("where")),
+                         QJsonValue(QStringLiteral("station")));
+                described = controls(QJsonObject{{QStringLiteral("pages"), QJsonArray{page}}});
+            }
+        }
+        QCOMPARE(described.size(), 3);
+        for (const QJsonValue& raw : described) {
+            compareControl(outputs, raw.toObject());
         }
     }
 

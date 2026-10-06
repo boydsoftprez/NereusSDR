@@ -3,6 +3,9 @@
 // steps, Saturn Mic Tip-Ring, the Red Pitaya's Orion rows and the HL2's
 // Hermes rows; the cap is 24. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+// 2026-10-06: Audio version 25 (R-SPK-23): Microphone's titles, Outputs'
+// radio speaker rows and their radio bindings; the cap is 25. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QRegularExpression>
 
@@ -1945,7 +1948,9 @@ private slots:
             QCOMPARE(current.value("version"), QJsonValue(24));
             QCOMPARE(controlById(current, "audio.txInput.hermesLineInGain"), lineInGain);
             QVERIFY(SetupDescriptionService::validateAudioV24Control(lineInGain));
-            QCOMPARE(projectedCategory(service.audio(), 99), current);
+            // Version 25 keeps the row (audioV25OutputsDescribesTheRadioSpeaker).
+            QCOMPARE(controlById(projectedCategory(service.audio(), 99),
+                                 "audio.txInput.hermesLineInGain"), lineInGain);
 
             // Versions 15 to 23 read version 15: whole decibels from -34.
             const QJsonObject older = projectedCategory(service.audio(), 23);
@@ -1987,6 +1992,183 @@ private slots:
                 QVERIFY2(!SetupDescriptionService::validateAudioV24Control(changed),
                          qPrintable(QJsonDocument(changed).toJson(QJsonDocument::Compact)));
             }
+        }
+    }
+
+    // Version 25 (R-SPK-23): TX Input keeps its id, retitled Microphone, and
+    // its PC Mic section (only Mic Gain) is Mic gain, as on the desktop. A
+    // new station page, Outputs, describes the radio speaker at the Core:
+    // its level, its mute and the amplifier choice, bound to RadioModel and
+    // gated on radioSpeakerVersion 1; the amplifier row is enabled while
+    // the Core reports speakerAmplifierAvailable. A peer below 25 reads
+    // version 24 as before; a later declaration is capped at 25.
+    void audioV25OutputsDescribesTheRadioSpeaker()
+    {
+        const QJsonObject gate{{"capability", "radioSpeakerVersion"}, {"min", 1}};
+        // The tooltips are a remote window's (the speaker at the Core).
+        const QString kAtTheCore = QStringLiteral(
+            "Radio speaker at the Core (shared with every window and the phone)");
+        const auto radio = [](const char* name) {
+            return QJsonObject{{"property", QJsonObject{{"object", "radio"}, {"name", name}}}};
+        };
+        const QJsonArray expected{
+            QJsonObject{{"id", "audio.outputs.radioSpeakerVolume"}, {"label", "Volume:"},
+                        {"tooltip", kAtTheCore}, {"kind", "slider"}, {"binding", radio("radioSpeakerVolume")},
+                        {"applies", "live"}, {"requiresDescriptionVersion", 25}, {"gate", gate},
+                        {"min", 0}, {"max", 100}, {"step", 1}},
+            QJsonObject{{"id", "audio.outputs.radioSpeakerMuted"}, {"label", "Mute radio speaker"},
+                        {"tooltip", kAtTheCore}, {"kind", "toggle"}, {"binding", radio("radioSpeakerMuted")},
+                        {"applies", "live"}, {"requiresDescriptionVersion", 25}, {"gate", gate}},
+            QJsonObject{{"id", "audio.outputs.speakerAmplifierMode"}, {"label", "Speaker amplifier:"},
+                        {"tooltip", ""},
+                        {"kind", "choice"}, {"binding", radio("speakerAmplifierMode")},
+                        {"applies", "live"}, {"requiresDescriptionVersion", 25}, {"gate", gate},
+                        {"options", QJsonArray{QJsonObject{{"value", 0}, {"label", "Normal"}},
+                                               QJsonObject{{"value", 1}, {"label", "Off while transmitting"}},
+                                               QJsonObject{{"value", 2}, {"label", "Always off"}}}},
+                        {"enabledWhen", QJsonObject{{"property", QJsonObject{
+                                                        {"object", "radio"},
+                                                        {"name", "speakerAmplifierAvailable"}}},
+                                                    {"oneOf", QJsonArray{true}}}}}};
+        const QString coverage24 = QStringLiteral(
+            "partial: Devices, VAX, TCI and Advanced are computer-local; desktop TX Input selects "
+            "its authenticated session source with radioMicVersion 2, while device, buffer and "
+            "test remain computer-local; handheld source selection is unavailable");
+        const QString coverage25 = QStringLiteral(
+            "partial: Outputs' computer and headphone devices, Digital modes and Advanced are "
+            "computer-local; desktop Microphone selects its authenticated session source with "
+            "radioMicVersion 2, while device, buffer and test remain computer-local; handheld "
+            "source selection is unavailable");
+        for (const auto& [board, model] : {std::pair{HPSDRHW::Hermes, HPSDRModel::HERMES},
+                                           std::pair{HPSDRHW::Saturn, HPSDRModel::ANAN_G2},
+                                           std::pair{HPSDRHW::HermesLite, HPSDRModel::HERMESLITE},
+                                           std::pair{HPSDRHW::OrionMKII, HPSDRModel::REDPITAYA}}) {
+            SetupDescriptionService service;
+            service.setRadioContext(BoardCapsTable::forBoard(board), model, RadioInfo{});
+            const QJsonObject current = projectedCategory(service.audio(), 25);
+            QCOMPARE(current.value("version"), QJsonValue(25));
+            QCOMPARE(current.value("coverage"), QJsonValue(coverage25));
+            QCOMPARE(pageIdsOf(current),
+                     (QStringList{"audio.txInput", "audio.outputs", "audio.txProfile"}));
+            const QJsonObject input = pageById(current, "audio.txInput");
+            QCOMPARE(input.value("title"), QJsonValue("Microphone"));
+            QCOMPARE(input.value("where"), QJsonValue("mixed"));
+            const QJsonObject gain = input.value("sections").toArray().first().toObject();
+            QCOMPARE(gain.value("title"), QJsonValue("Mic gain"));
+            QCOMPARE(gain.value("controls").toArray().size(), 1);
+            QCOMPARE(gain.value("controls").toArray().first().toObject().value("id"),
+                     QJsonValue("audio.txInput.micGain"));
+            const QJsonObject outputs = pageById(current, "audio.outputs");
+            QCOMPARE(outputs.value("title"), QJsonValue("Outputs"));
+            QCOMPARE(outputs.value("where"), QJsonValue("station"));
+            const QJsonArray sections = outputs.value("sections").toArray();
+            QCOMPARE(sections.size(), 1);
+            QCOMPARE(sections.first().toObject().value("title"), QJsonValue("Radio speaker"));
+            QCOMPARE(sections.first().toObject().value("controls").toArray(), expected);
+            QCOMPARE(projectedCategory(service.audio(), 99), current);
+
+            // Below 25: version 24, with TX Input's old titles and no
+            // Outputs page; nothing else differs.
+            const QJsonObject older = projectedCategory(service.audio(), 24);
+            QCOMPARE(older.value("version"), QJsonValue(24));
+            QCOMPARE(pageIdsOf(older), (QStringList{"audio.txInput", "audio.txProfile"}));
+            QJsonObject reverted = current;
+            reverted.insert("version", 24);
+            reverted.insert("coverage", coverage24);
+            QJsonArray pages = reverted.value("pages").toArray();
+            pages.removeAt(1);
+            QJsonObject oldInput = pages.at(0).toObject();
+            oldInput.insert("title", QStringLiteral("TX Input"));
+            QJsonArray oldSections = oldInput.value("sections").toArray();
+            QJsonObject pcMic = oldSections.at(0).toObject();
+            pcMic.insert("title", QStringLiteral("PC Mic"));
+            oldSections[0] = pcMic;
+            oldInput.insert("sections", oldSections);
+            pages[0] = oldInput;
+            reverted.insert("pages", pages);
+            QCOMPARE(older, reverted);
+            QCOMPARE(projectedCategory(service.audio(), 23).value("version"), QJsonValue(15));
+        }
+
+        // The resource's three rows are closed.
+        const QList<QJsonObject> resource = resourceRows(QStringLiteral("audio"), 25);
+        QCOMPARE(resource.size(), 3);
+        for (const QJsonObject& row : resource) {
+            QVERIFY(SetupDescriptionService::validateAudioV25Control(row));
+            QVERIFY(SetupDescriptionService::validateAudioPropertyBinding(row));
+            for (const QJsonObject& changed : mutationsOf(row)) {
+                QVERIFY2(!SetupDescriptionService::validateAudioV25Control(changed),
+                         qPrintable(QJsonDocument(changed).toJson(QJsonDocument::Compact)));
+            }
+        }
+    }
+
+    // Version 25 (R-SPK-23): a radio binding in Audio is one of the three
+    // writable, Bidirectional radio speaker properties with their kinds and
+    // the radioSpeakerVersion 1 gate. Any other RadioModel property, the
+    // two read-only reports included, is refused.
+    void audioRadioBindingsAreOnlyTheThreeSpeakerProperties()
+    {
+        const QList<QJsonObject> rows = resourceRows(QStringLiteral("audio"), 25);
+        QCOMPARE(rows.size(), 3);
+        QSet<QByteArray> allowed;
+        for (const QJsonObject& row : rows) {
+            QVERIFY(SetupDescriptionService::validateAudioPropertyBinding(row));
+            const QByteArray name = row.value("binding").toObject().value("property").toObject()
+                .value("name").toString().toUtf8();
+            allowed.insert(name);
+            QCOMPARE(MirrorPolicy::directionFor("RadioModel", name), MirrorDirection::Bidirectional);
+        }
+        QCOMPARE(allowed, (QSet<QByteArray>{"radioSpeakerVolume", "radioSpeakerMuted",
+                                            "speakerAmplifierMode"}));
+        const auto withName = [](QJsonObject row, const QString& name) {
+            QJsonObject binding = row.value("binding").toObject();
+            QJsonObject property = binding.value("property").toObject();
+            property.insert("name", name);
+            binding.insert("property", property);
+            row.insert("binding", binding);
+            return row;
+        };
+        const MirrorSchema& schema = MirrorSchema::forMetaObject(&RadioModel::staticMetaObject);
+        int refused = 0;
+        for (const MirrorProperty& property : schema.properties()) {
+            if (allowed.contains(property.name)) { continue; }
+            for (const QJsonObject& row : rows) {
+                QVERIFY2(!SetupDescriptionService::validateAudioPropertyBinding(
+                             withName(row, QString::fromUtf8(property.name))),
+                         property.name.constData());
+            }
+            ++refused;
+        }
+        QVERIFY(refused > 0);
+        for (const char* name : {"radioSpeakerAvailability", "speakerAmplifierAvailable"}) {
+            QVERIFY(schema.byName(name) != nullptr);
+            QVERIFY(!schema.byName(name)->isWritable);
+            for (const QJsonObject& row : rows) {
+                QVERIFY(!SetupDescriptionService::validateAudioPropertyBinding(withName(row, name)));
+            }
+        }
+        for (const QJsonObject& row : rows) {
+            // Another row's property, wrong kind for it.
+            QVERIFY(!SetupDescriptionService::validateAudioPropertyBinding(
+                withName(row, row.value("kind") == QJsonValue("toggle") ? "radioSpeakerVolume"
+                                                                         : "radioSpeakerMuted")));
+            QJsonObject bad = row;
+            bad.remove("gate");
+            QVERIFY(!SetupDescriptionService::validateAudioPropertyBinding(bad));
+            bad = row;
+            bad.insert("gate", QJsonObject{{"capability", "radioSpeakerVersion"}, {"min", 2}});
+            QVERIFY(!SetupDescriptionService::validateAudioPropertyBinding(bad));
+            bad.insert("gate", QJsonObject{{"capability", "radioSpeakerVersion"}, {"min", 1},
+                                           {"transmit", true}});
+            QVERIFY(!SetupDescriptionService::validateAudioPropertyBinding(bad));
+            bad = row;
+            QJsonObject binding = bad.value("binding").toObject();
+            QJsonObject property = binding.value("property").toObject();
+            property.insert("object", "transmit");
+            binding.insert("property", property);
+            bad.insert("binding", binding);
+            QVERIFY(!SetupDescriptionService::validateAudioPropertyBinding(bad));
         }
     }
 
@@ -3745,12 +3927,14 @@ private slots:
         // 21 is CAT & Network's TCI Forget enabledWhen; 22 is the RX
         // buffer sizes' on-the-air lock; 23 is Calibration's Rx1 6m LNA
         // row; 24 is TX Input's Line In Gain steps and Saturn Mic
-        // Tip-Ring, and the cap.
+        // Tip-Ring; 25 is Audio's Outputs page and Microphone title, and
+        // the cap.
         check(21, kSessionProtocolMinor, 21);
         check(22, kSessionProtocolMinor, 22);
         check(23, kSessionProtocolMinor, 23);
         check(24, kSessionProtocolMinor, 24);
-        check(25, kSessionProtocolMinor, 24);
+        check(25, kSessionProtocolMinor, 25);
+        check(26, kSessionProtocolMinor, 25);
         check(2, quint16(kRadioIdentitySessionProtocolMinor - 1), 0);
         check(3, quint16(kRadioIdentitySessionProtocolMinor - 1), 0);
     }
