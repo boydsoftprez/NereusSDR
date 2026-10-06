@@ -10,11 +10,13 @@ libjuice is licensed under the Mozilla Public License 2.0. The complete
 license is supplied in MPLv2.txt. This backend does not supply the R5 TURN
 TCP/TLS fallback; that deployment acceptance remains separate.
 
-Modifications (MPL-2.0 section 3.1): NereusSDR applies two numbered patches
-to build-owned copies of the pinned source in cmake/NereusRemoteMedia.cmake:
+Modifications (MPL-2.0 section 3.1): the desktop/Core build applies three
+numbered patches to build-owned copies of the pinned source in
+cmake/NereusRemoteMedia.cmake:
 
   cmake/patches/libjuice-0001-give-turn-allocations-back.patch
   cmake/patches/libjuice-0002-bounded-turn-release-lifecycle.patch
+  cmake/patches/libjuice-0003-keep-poll-worker-with-retained-agents.patch
 
 The first changes src/agent.c to give TURN allocations back with an
 authenticated Refresh of LIFETIME 0 when an agent is destroyed. The second
@@ -24,9 +26,27 @@ and credentials for bounded authenticated release retries, and keeps the
 agent alive until release and resolver completion. Normal ICE traffic and
 callbacks stop during closing. The old direct-destroy best-effort behavior
 remains for legacy callers; a resolver test hook is excluded from release
-builds.
+builds. The third changes src/conn_poll.c to retain the poll worker while
+finished agents still own the registry, allowing a new agent to wake it. It
+adds no worker or timeout change.
 
 These changes are licensed under the Mozilla Public License 2.0, like
 the covered files they modify, which retain their upstream notices. The
 exact patches are supplied with NereusSDR's source and its written source
 offer (SOURCE-OFFER.txt).
+
+The NereusSDR for iPhone and iPad app applies its three numbered patches to
+the same pinned revision under ios/NereusKit/Sources/CJuice/ through
+ios/scripts/vendor-sources.sh libjuice:
+
+  ios/patches/libjuice/0001-give-turn-allocations-back.patch
+  ios/patches/libjuice/0002-bounded-turn-release-lifecycle.patch
+  ios/patches/libjuice/0003-keep-poll-worker-with-retained-agents.patch
+
+The first two provide allocation release and the bounded closing lifecycle
+described above. The third changes src/conn_poll.c to retain the poll worker
+while finished agents still own the registry, allowing a new agent to wake
+it. It adds no worker or timeout change. Together they modify
+include/juice/juice.h, src/agent.c, src/agent.h, src/juice.c and
+src/conn_poll.c. The patches and modified covered files remain licensed under
+the Mozilla Public License 2.0 and are published with NereusSDR's source.
