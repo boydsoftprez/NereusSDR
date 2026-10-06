@@ -90,7 +90,7 @@ struct HardwareProfile {
     // byte 1400 bit 1). Thetis HasAudioAmplifier, which also requires
     // Protocol 2; the Protocol 2 connection is the only reader.
     // From Thetis clsHardwareSpecific.cs:459-467 [v2.10.3.15]
-    bool                     hasAudioAmplifier = false;
+    bool                     hasAudioAmplifier{false};
     int                      adcSupplyVoltage{33};
     bool                     lrAudioSwap{true};
 };

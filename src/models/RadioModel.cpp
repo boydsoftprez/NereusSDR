@@ -20707,17 +20707,22 @@ void RadioModel::wireRadioSpeakerState()
     // so it reaches the connection ahead of the MOX bit (both are queued to
     // the connection thread in order). At Tune's end the radio may still be
     // keyed; the flag is held until hardwareFlipped(false) has sent MOX off.
+    // The hold keys off the transmit state, not isMox(): a Tune ended by a
+    // path that drops MOX first (a PA trip, a MOX click during Tune) is
+    // still walking to receive when Tune clears, with MOX off not yet sent.
     connect(&m_transmitModel, &TransmitModel::tuneChanged, this, [this](bool on) {
         m_tuneSidetoneHold = !on && m_moxController != nullptr
-                             && m_moxController->isMox();
+                             && isTransmitting();
         refreshSidetoneExpected();
     });
     if (m_moxController != nullptr) {
         // Queued, and connected after onMoxHardwareFlipped's own queued
         // connection, so this runs after that slot has queued MOX off.
+        // A key that is not Tune also ends the hold: a re-key during the
+        // unkey walk cancels it, so hardwareFlipped(false) never comes.
         connect(m_moxController, &MoxController::hardwareFlipped, this,
                 [this](bool isTx) {
-                    if (!isTx) {
+                    if (!isTx || !m_transmitModel.isTune()) {
                         m_tuneSidetoneHold = false;
                     }
                     refreshSidetoneExpected();

@@ -291,7 +291,9 @@ void P2CodecOrionMkII::composeCmdHighPriority(const CodecContext& ctx, quint8 bu
 
     // R-SPK-09: the speaker amplifier mute. Bit 1 only: bit 0 (transverter
     // out) and bit 2 (ATU tune) stay zero, as they always have here.
-    // From Thetis ChannelMaster/network.c:1028 [v2.10.3.15]
+    // From Thetis ChannelMaster/network.c:1026-1028 [v2.10.3.15]
+    //   // Enable transverter T/R relay 8   Mute Audio Amp bit 1 from J16 pin 9 IO4---DLE
+    //   //packetbuf[1400] = xvtr_enable | ((!(prn->user_dig_in & 0x01)) << 1 | atu_tune << 2);
     //   packetbuf[1400] = xvtr_enable | (!audioamp_enable) << 1 | atu_tune << 2; //MW0LGE_22b  // user_dig_in was gettin overwritten by 1025 packet read
     // From piHPSDR src/alex.h:129 [@4aa95c5] (the bit's name)
     //   ANAN7000_HIPRIO1400_SPKR_MUTE  0x00000002   //  Enable/mute audio (1 = mute)

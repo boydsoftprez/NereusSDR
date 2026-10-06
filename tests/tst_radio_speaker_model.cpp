@@ -434,6 +434,85 @@ private slots:
         model.injectConnectionForTest(nullptr);
     }
 
+    // A path that drops MOX before Tune clears (a PA trip, a MOX click
+    // during Tune) leaves the radio walking to receive with MOX off not
+    // yet sent. The flag still holds until it is.
+    void tune_moxDroppedFirst_flagHeldUntilMoxOff()
+    {
+        RadioModel model;
+        model.setCapsForTest(/*hasAlex=*/false);
+        auto conn = std::make_unique<LoggingConnection>();
+        model.injectConnectionForTest(conn.get());
+        const auto detach = qScopeGuard([&model] { model.injectConnectionForTest(nullptr); });
+        model.moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        model.setTuneOffSettleMsForTest(0);
+        model.addSlice();
+        SliceModel* slice = model.activeSlice();
+        QVERIFY(slice != nullptr);
+        slice->setDspMode(DSPMode::USB);
+        model.setSpeakerAmplifierMode(1);  // Off while transmitting
+        model.setTune(true);
+        pump();
+        QVERIFY(model.moxController()->isMox());
+        QCOMPARE(conn->sidetoneExpected(), true);
+        conn->log.clear();
+
+        // MOX drops first; Tune clears while the unkey walk is in flight.
+        model.moxController()->setMox(false);
+        QVERIFY(!model.moxController()->isMox());
+        QVERIFY(model.isTransmitting());
+        model.setTune(false);
+        pump();
+        QVERIFY(!model.isTransmitting());
+        const int moxOff = conn->log.indexOf(QStringLiteral("mox:0"));
+        const int flagOff = conn->log.indexOf(QStringLiteral("sidetone:0"));
+        QVERIFY2(moxOff >= 0, qPrintable(conn->log.join(u' ')));
+        QVERIFY2(flagOff > moxOff, qPrintable(conn->log.join(u' ')));
+        QCOMPARE(conn->sidetoneExpected(), false);
+        model.injectConnectionForTest(nullptr);
+    }
+
+    // A voice key during the unkey walk after Tune cancels the walk, so
+    // hardwareFlipped(false) never comes. The key itself ends the hold, so
+    // the amplifier is off for that voice transmission in mode 1.
+    void tune_rekeyDuringUnkeyWalk_clearsHold()
+    {
+        RadioModel model;
+        model.setCapsForTest(/*hasAlex=*/false);
+        auto conn = std::make_unique<LoggingConnection>();
+        conn->protocol = 2;
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        model.injectConnectionForTest(conn.get());
+        const auto detach = qScopeGuard([&model] { model.injectConnectionForTest(nullptr); });
+        model.moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        model.setTuneOffSettleMsForTest(0);
+        model.addSlice();
+        SliceModel* slice = model.activeSlice();
+        QVERIFY(slice != nullptr);
+        slice->setDspMode(DSPMode::USB);
+        model.setSpeakerAmplifierMode(1);  // Off while transmitting
+        model.setTune(true);
+        pump();
+        QVERIFY(model.moxController()->isMox());
+        QCOMPARE(conn->sidetoneExpected(), true);
+
+        // Tune ends; before the walk reaches hardwareFlipped(false) the
+        // operator keys voice.
+        model.setTune(false);
+        QVERIFY(!model.moxController()->isMox());
+        model.moxController()->setMox(true);
+        pump();
+        QVERIFY(model.moxController()->isMox());
+        QVERIFY(!model.transmitModel().isTune());
+        QCOMPARE(conn->sidetoneExpected(), false);
+        QCOMPARE(model.speakerAmplifierStatus(),
+                 QStringLiteral("Amplifier is off now: transmitting."));
+
+        model.moxController()->setMox(false);
+        pump();
+        model.injectConnectionForTest(nullptr);
+    }
+
     // ── V-SW-5 (local): availability and reasons ────────────────────────
     void noRadio_unavailable()
     {

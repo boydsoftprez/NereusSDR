@@ -348,12 +348,23 @@ private slots:
         LoopbackTransport* app = core.signIn(phone, speakerAsks());
         QVERIFY(admitted(app));
 
+        // Values that differ from every default, so the snapshot the
+        // window opens with is the Core's and not its own.
+        core.model->setRadioSpeakerVolume(72);
+        core.model->setRadioSpeakerMuted(true);
+        core.model->setSpeakerAmplifierMode(2);
+
         Window window;
         QVERIFY(window.open(core, this));
         RadioModel& remote = window.model;
         QVERIFY(window.client.radioSpeakerAvailable());
         QTRY_COMPARE(remote.radioSpeakerAvailability(), int(RadioModel::kRadioSpeakerNeedsAddOn));
-        QCOMPARE(remote.radioSpeakerVolume(), core.model->radioSpeakerVolume());
+        QCOMPARE(remote.radioSpeakerVolume(), 72);
+        QCOMPARE(remote.radioSpeakerMuted(), true);
+        QCOMPARE(remote.speakerAmplifierMode(), 2);
+        // Back to unmuted, so the other device's mute below is a change.
+        core.model->setRadioSpeakerMuted(false);
+        QTRY_VERIFY(!remote.radioSpeakerMuted());
         QVERIFY(remote.radioSpeakerUnavailableReason().isEmpty());
         QCOMPARE(remote.radioSpeakerToolTip(),
                  kRemoteTip + QLatin1Char('\n') + RadioModel::radioSpeakerAddOnNote());
