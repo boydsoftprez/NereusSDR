@@ -52,7 +52,7 @@ pages with overlapping sections (see "Audio Setup today").
 ## Decisions
 
 Each decision is JJ's unless marked as a design choice of this spec; those
-are listed again under "Design choices to confirm".
+are listed again under "Design choices confirmed".
 
 | # | Decision | Reason |
 |---|---|---|
@@ -178,6 +178,14 @@ R-SPK-09. The bit sent is "amplifier off" when any of these hold:
 
 Otherwise the bit says "amplifier on". On boards without the switch the
 byte stays as today (zero).
+
+The CW and Tune exception never overrides a muted RADIO: muted means the
+amplifier is off and the feed is silent in every mode, sidetone included
+(JJ, 2026-10-06). NereusSDR sends the radio a firmware sidetone level of
+zero today (`m_cw.sidetoneLevel` is never assigned; written at
+`P2RadioConnection.cpp:4653`), so the sidetone reaches the speaker only
+through the feed RADIO scales and mutes. If a later change turns on the
+radio's own sidetone, RADIO mute must also silence it.
 
 R-SPK-10. Setup explains the choice under it, in operator wording: the
 amplifier feeds the radio's speaker jacks, Off while transmitting keeps it on
@@ -418,8 +426,9 @@ Software tests (this machine, offscreen):
   update reason. (R-SPK-06, R-SPK-13, R-SPK-14)
 - V-SW-5. Availability: no radio gives disabled with "No radio connected";
   HL2 gives enabled with the add-on note; amplifier availability matches
-  the R-SPK-08 board list for every `HPSDRModel` on P1 and P2.
-  (R-SPK-06 to R-SPK-08)
+  the R-SPK-08 board list for every `HPSDRModel` on P1 and P2, and the
+  G2E reports unavailable with "Not yet tested on the ANAN-G2E.".
+  (R-SPK-06 to R-SPK-08, D17)
 - V-SW-6. Setup pages: each control id from today's pages appears exactly
   once across the new pages; every page's first group is at the top on a
   tall window; the Outputs status line and VAX rows match each platform's
@@ -445,7 +454,8 @@ Hardware (a person at the radio):
 
 - V-HW-1. ANAN-G2 on P2: RADIO and PC independent by ear; RADIO mute is
   silent at the speaker and the amplifier is off; each amplifier choice
-  behaves as R-SPK-09 during SSB, CW and Tune.
+  behaves as R-SPK-09 during SSB, CW and Tune; with RADIO muted, CW and
+  Tune are silent at the speaker.
 - V-HW-2. On the G2, whether amplifier off also silences the headphone
   and line-out jacks; the R-SPK-10 wording follows the result.
 - V-HW-3. A P1 board with a codec output (ANAN-100D or similar): RADIO
@@ -458,17 +468,20 @@ Hardware (a person at the radio):
   amplifier bit, whether "amplifier off" silences the G2E's speaker. Pass
   adds the G2E to the R-SPK-08 list; fail leaves D17 as it is.
 
-## Design choices to confirm
+## Design choices confirmed
 
-These are this spec's choices, not settled in the brainstorm. JJ's review
-confirms or changes them:
+These were this spec's own choices, not settled in the brainstorm. JJ
+confirmed each on 2026-10-06; the G2E amplifier question became D17.
 
 1. D11: the HL2 keeps RADIO enabled with the add-on note, because the
-   radio can't report the board.
-2. R-SPK-09: Off while transmitting stays on for CW and Tune, as piHPSDR.
+   radio can't report the board. Confirmed by JJ, 2026-10-06.
+2. R-SPK-09: Off while transmitting stays on for CW and Tune, as piHPSDR,
+   and a muted RADIO still silences them. Confirmed by JJ, 2026-10-06.
 3. R-SPK-12: RADIO is saved per radio (per MAC), not once per station.
+   Confirmed by JJ, 2026-10-06.
 4. R-SPK-23: the amplifier choice reaches the phone through its Setup
-   (described Outputs page), not the Sound panel.
+   (described Outputs page), not the Sound panel. Confirmed by JJ,
+   2026-10-06.
 
 ## Mockups
 
