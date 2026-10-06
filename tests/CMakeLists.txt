@@ -617,6 +617,7 @@ nereus_add_test(tst_clarity_defaults)
 nereus_add_test(tst_noise_floor_estimator)
 nereus_add_test(tst_noise_floor_tracker)
 nereus_add_test(tst_clarity_controller)
+nereus_add_test(tst_pan_clarity_registry)
 
 # ── Task 2.10: per-band NF-estimate priming (NereusSDR-original) ─────────
 nereus_add_test(tst_per_band_nf_priming)

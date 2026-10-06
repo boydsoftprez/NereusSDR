@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-10-01  J.J. Boyd / KG4VCF. Opt-in history trace regression.
 //                 AI-assisted via OpenAI Codex.
+//   2026-10-05  J.J. Boyd / KG4VCF. Exercise captured RF history losslessness.
+//                 AI-assisted via OpenAI Codex.
 #include <QTest>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -494,45 +496,59 @@ private slots:
     void acceptedGeometryReprojectsPaintedHistory()
     {
         SpectrumWidget widget;
+        widget.setWaterfallTickerPausedForTest(true);
         SpectrumEndpointContext context;
         context.codec = {7, 1, -180, 0, 128, 128, 0};
         context.exactCentreHz = 14225000;
         context.exactSpanHz = 24000;
         widget.setRemoteSpectrumContext(context, context.exactCentreHz, 192000);
-        // A previously painted RF marker at 14.225 MHz, in both 2D rings.
+        // A previously painted RF marker captured at 14.225 MHz.
         // At 50 Hz/pixel a 1 kHz view correction moves it 20 pixels left.
         QImage painted(480, 2, QImage::Format_RGB32);
         painted.fill(Qt::black);
         painted.setPixel(240, 0, qRgb(255, 0, 0));
         widget.m_waterfall = painted;
-        // Record through the production history append path so the ring has
-        // its real capacity, write position, timestamp and captured RF window.
-        widget.appendHistoryRow(
-            reinterpret_cast<const QRgb*>(painted.constScanLine(0)), 1234);
-        const QImage originalHistory = widget.m_waterfallHistory;
-        const QVector<qint64> originalTimestamps = widget.m_wfHistoryTimestamps;
-        const int capturedRow = widget.m_wfHistoryWriteRow;
-        QCOMPARE(widget.m_wfHistoryWindows[capturedRow].centerHz, context.exactCentreHz);
-        QCOMPARE(widget.m_wfHistoryWindows[capturedRow].bandwidthHz, context.exactSpanHz);
-        ++context.codec.contextGeneration;
-        context.exactCentreHz += 1000;
-        widget.setRemoteSpectrumContext(context, context.exactCentreHz, 192000);
-        QCOMPARE(widget.m_waterfall.pixel(220, 0), qRgb(255, 0, 0));
-        QCOMPARE(widget.m_waterfall.pixel(240, 0), qRgb(0, 0, 0));
-        QCOMPARE(widget.m_waterfallHistory, originalHistory);
+        // Allocate ordinary history capacity and record the original RF window,
+        // as real painted rows do. Projection changes only the live viewport.
+        widget.ensureWaterfallHistory();
+        widget.appendHistoryRow(reinterpret_cast<const QRgb*>(painted.constScanLine(0)), 1234);
         QCOMPARE(widget.m_wfHistoryRowCount, 1);
-        QCOMPARE(widget.m_wfHistoryTimestamps, originalTimestamps);
-        QCOMPARE(widget.m_wfHistoryTimestamps[capturedRow], qint64(1234));
-        // Returning to the original view must recover the original RF marker
-        // without reprojecting or cropping its retained source pixels.
-        ++context.codec.contextGeneration;
-        context.exactCentreHz -= 1000;
-        widget.setRemoteSpectrumContext(context, context.exactCentreHz, 192000);
-        QCOMPARE(widget.m_waterfall.pixel(240, 0), qRgb(255, 0, 0));
-        QCOMPARE(widget.m_waterfall.pixel(220, 0), qRgb(0, 0, 0));
-        QCOMPARE(widget.m_waterfallHistory, originalHistory);
-        QCOMPARE(widget.m_wfHistoryTimestamps, originalTimestamps);
-        QCOMPARE(widget.m_wfHistoryRowCount, 1);
+        const QImage capturedHistory = widget.m_waterfallHistory;
+        const QVector<qint64> capturedTimestamps = widget.m_wfHistoryTimestamps;
+        const auto capturedWindows = widget.m_wfHistoryWindows;
+        const int capturedWriteRow = widget.m_wfHistoryWriteRow;
+        const int capturedOffsetRows = widget.m_wfHistoryOffsetRows;
+        const bool capturedLive = widget.m_wfLive;
+        QVERIFY(capturedWriteRow >= 0 && capturedWriteRow < capturedHistory.height());
+        QCOMPARE(capturedHistory.pixel(240, capturedWriteRow), qRgb(255, 0, 0));
+        QCOMPARE(capturedTimestamps[capturedWriteRow], qint64(1234));
+        QCOMPARE(capturedWindows[capturedWriteRow].centerHz, 14225000.0);
+        QCOMPARE(capturedWindows[capturedWriteRow].bandwidthHz, 24000.0);
+        for (int view = 0; view < 2; ++view) {
+            ++context.codec.contextGeneration;
+            context.exactCentreHz = view == 0 ? 14226000.0 : 14225000.0;
+            widget.setRemoteSpectrumContext(context, context.exactCentreHz, 192000);
+            if (view == 0) {
+                QCOMPARE(widget.m_waterfall.pixel(220, 0), qRgb(255, 0, 0));
+                QCOMPARE(widget.m_waterfall.pixel(240, 0), qRgb(0, 0, 0));
+            } else {
+                // Returning to the captured window restores the original pixels.
+                QCOMPARE(widget.m_waterfall.pixel(240, 0), qRgb(255, 0, 0));
+                QCOMPARE(widget.m_waterfall.pixel(220, 0), qRgb(0, 0, 0));
+                QCOMPARE(widget.m_waterfall, painted);
+            }
+            QCOMPARE(widget.m_waterfallHistory, capturedHistory);
+            QCOMPARE(widget.m_wfHistoryRowCount, 1);
+            QCOMPARE(widget.m_wfHistoryTimestamps, capturedTimestamps);
+            QCOMPARE(widget.m_wfHistoryWriteRow, capturedWriteRow);
+            QCOMPARE(widget.m_wfHistoryOffsetRows, capturedOffsetRows);
+            QCOMPARE(widget.m_wfLive, capturedLive);
+            QCOMPARE(widget.m_wfHistoryWindows.size(), capturedWindows.size());
+            for (int row = 0; row < capturedWindows.size(); ++row) {
+                QCOMPARE(widget.m_wfHistoryWindows[row].centerHz, capturedWindows[row].centerHz);
+                QCOMPARE(widget.m_wfHistoryWindows[row].bandwidthHz, capturedWindows[row].bandwidthHz);
+            }
+        }
     }
 
     void contextRenewalPreservesHistoryWhileRejectingOldData_data()
