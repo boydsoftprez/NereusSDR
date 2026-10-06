@@ -1,0 +1,527 @@
+[
+  {
+    "id": "micGainDb",
+    "kind": "i64",
+    "ordinal": 27,
+    "saved_keys": [
+      "MicGain"
+    ]
+  },
+  {
+    "id": "micBoost",
+    "kind": "bool",
+    "ordinal": 30,
+    "saved_keys": [
+      "Mic_Input_Boost"
+    ]
+  },
+  {
+    "id": "micXlr",
+    "kind": "bool",
+    "ordinal": 31,
+    "saved_keys": [
+      "Mic_XLR"
+    ]
+  },
+  {
+    "id": "lineIn",
+    "kind": "bool",
+    "ordinal": 35,
+    "saved_keys": [
+      "Line_Input_On"
+    ]
+  },
+  {
+    "id": "lineInBoost",
+    "kind": "f64",
+    "ordinal": 36,
+    "saved_keys": [
+      "Line_Input_Level"
+    ]
+  },
+  {
+    "id": "micTipRing",
+    "kind": "bool",
+    "ordinal": 32,
+    "saved_keys": [
+      "Mic_TipRing"
+    ]
+  },
+  {
+    "id": "micBias",
+    "kind": "bool",
+    "ordinal": 33,
+    "saved_keys": [
+      "Mic_Bias"
+    ]
+  },
+  {
+    "id": "micPttDisabled",
+    "kind": "bool",
+    "ordinal": 34,
+    "saved_keys": [
+      "Mic_PTT_Disabled"
+    ]
+  },
+  {
+    "id": "voxThresholdDb",
+    "kind": "i64",
+    "ordinal": 16,
+    "saved_keys": [
+      "Dexp_Threshold"
+    ]
+  },
+  {
+    "id": "voxHangTimeMs",
+    "kind": "i64",
+    "ordinal": 17,
+    "saved_keys": [
+      "VOX_HangTime"
+    ]
+  },
+  {
+    "id": "antiVoxGainDb",
+    "kind": "i64",
+    "ordinal": 76,
+    "saved_keys": [
+      "AntiVox_Gain"
+    ]
+  },
+  {
+    "id": "monitorVolume",
+    "kind": "f64",
+    "ordinal": 19,
+    "saved_keys": [
+      "MonitorVolume"
+    ]
+  },
+  {
+    "id": "amCarrierLevel",
+    "kind": "i64",
+    "ordinal": 25,
+    "saved_keys": [
+      "AM_Carrier_Level"
+    ]
+  },
+  {
+    "id": "twoToneFreq1",
+    "kind": "i64",
+    "ordinal": 77,
+    "saved_keys": [
+      "TwoToneFreq1"
+    ]
+  },
+  {
+    "id": "twoToneFreq2",
+    "kind": "i64",
+    "ordinal": 78,
+    "saved_keys": [
+      "TwoToneFreq2"
+    ]
+  },
+  {
+    "id": "twoToneLevel",
+    "kind": "f64",
+    "ordinal": 79,
+    "saved_keys": [
+      "TwoToneLevel"
+    ]
+  },
+  {
+    "id": "twoTonePower",
+    "kind": "i64",
+    "ordinal": 80,
+    "saved_keys": [
+      "TwoTonePower"
+    ]
+  },
+  {
+    "id": "twoToneFreq2Delay",
+    "kind": "i64",
+    "ordinal": 83,
+    "saved_keys": [
+      "TwoToneFreq2Delay"
+    ]
+  },
+  {
+    "id": "twoToneInvert",
+    "kind": "bool",
+    "ordinal": 82,
+    "saved_keys": [
+      "TwoToneInvert"
+    ]
+  },
+  {
+    "id": "twoTonePulsed",
+    "kind": "bool",
+    "ordinal": 81,
+    "saved_keys": [
+      "TwoTonePulsed"
+    ]
+  },
+  {
+    "id": "twoToneDrivePowerSource",
+    "kind": "enum",
+    "ordinal": 84,
+    "saved_keys": [
+      "TwoToneDrivePowerOrigin"
+    ]
+  },
+  {
+    "id": "userDigOut",
+    "kind": "i64",
+    "ordinal": 8,
+    "saved_keys": [
+      "Mic_UserDigOut"
+    ]
+  },
+  {
+    "id": "txEqEnabled",
+    "kind": "bool",
+    "ordinal": 21,
+    "saved_keys": [
+      "TXEQEnabled"
+    ]
+  },
+  {
+    "id": "txEqPreamp",
+    "kind": "i64",
+    "ordinal": 40,
+    "saved_keys": [
+      "TXEQPreamp"
+    ]
+  },
+  {
+    "id": "txEqBandsJson",
+    "kind": "utf8",
+    "ordinal": 41,
+    "saved_keys": [
+      "TXEQ1",
+      "TXEQ10",
+      "TXEQ2",
+      "TXEQ3",
+      "TXEQ4",
+      "TXEQ5",
+      "TXEQ6",
+      "TXEQ7",
+      "TXEQ8",
+      "TXEQ9"
+    ]
+  },
+  {
+    "id": "txEqFreqsJson",
+    "kind": "utf8",
+    "ordinal": 42,
+    "saved_keys": [
+      "TxEqFreq1",
+      "TxEqFreq10",
+      "TxEqFreq2",
+      "TxEqFreq3",
+      "TxEqFreq4",
+      "TxEqFreq5",
+      "TxEqFreq6",
+      "TxEqFreq7",
+      "TxEqFreq8",
+      "TxEqFreq9"
+    ]
+  },
+  {
+    "id": "txEqParaEqData",
+    "kind": "utf8",
+    "ordinal": 47,
+    "saved_keys": [
+      "TXParaEQData"
+    ]
+  },
+  {
+    "id": "txEqUseLegacy",
+    "kind": "bool",
+    "ordinal": 39,
+    "saved_keys": [
+      "EQUseLegacy"
+    ]
+  },
+  {
+    "id": "txLevelerOn",
+    "kind": "bool",
+    "ordinal": 20,
+    "saved_keys": [
+      "Lev_On"
+    ]
+  },
+  {
+    "id": "txLevelerMaxGain",
+    "kind": "i64",
+    "ordinal": 60,
+    "saved_keys": [
+      "Lev_MaxGain"
+    ]
+  },
+  {
+    "id": "txLevelerDecay",
+    "kind": "i64",
+    "ordinal": 61,
+    "saved_keys": [
+      "Lev_Decay"
+    ]
+  },
+  {
+    "id": "txAlcMaxGain",
+    "kind": "i64",
+    "ordinal": 62,
+    "saved_keys": [
+      "ALC_MaximumGain"
+    ]
+  },
+  {
+    "id": "txAlcDecay",
+    "kind": "i64",
+    "ordinal": 63,
+    "saved_keys": [
+      "ALC_Decay"
+    ]
+  },
+  {
+    "id": "phaseRotatorEnabled",
+    "kind": "bool",
+    "ordinal": 55,
+    "saved_keys": [
+      "CFCPhaseRotatorEnabled"
+    ]
+  },
+  {
+    "id": "phaseReverseEnabled",
+    "kind": "bool",
+    "ordinal": 58,
+    "saved_keys": [
+      "CFCPhaseReverseEnabled"
+    ]
+  },
+  {
+    "id": "phaseRotatorFreqHz",
+    "kind": "i64",
+    "ordinal": 56,
+    "saved_keys": [
+      "CFCPhaseRotatorFreq"
+    ]
+  },
+  {
+    "id": "phaseRotatorStages",
+    "kind": "i64",
+    "ordinal": 57,
+    "saved_keys": [
+      "CFCPhaseRotatorStages"
+    ]
+  },
+  {
+    "id": "cfcEnabled",
+    "kind": "bool",
+    "ordinal": 22,
+    "saved_keys": [
+      "CFCEnabled"
+    ]
+  },
+  {
+    "id": "cfcPostEqEnabled",
+    "kind": "bool",
+    "ordinal": 51,
+    "saved_keys": [
+      "CFCPostEqEnabled"
+    ]
+  },
+  {
+    "id": "cfcPrecompDb",
+    "kind": "i64",
+    "ordinal": 53,
+    "saved_keys": [
+      "CFCPreComp"
+    ]
+  },
+  {
+    "id": "cfcPostEqGainDb",
+    "kind": "i64",
+    "ordinal": 52,
+    "saved_keys": [
+      "CFCPostEqGain"
+    ]
+  },
+  {
+    "id": "cfcEqFreqJson",
+    "kind": "utf8",
+    "ordinal": 49,
+    "saved_keys": [
+      "CFCEqFreq0",
+      "CFCEqFreq1",
+      "CFCEqFreq2",
+      "CFCEqFreq3",
+      "CFCEqFreq4",
+      "CFCEqFreq5",
+      "CFCEqFreq6",
+      "CFCEqFreq7",
+      "CFCEqFreq8",
+      "CFCEqFreq9"
+    ]
+  },
+  {
+    "id": "cfcCompressionJson",
+    "kind": "utf8",
+    "ordinal": 48,
+    "saved_keys": [
+      "CFCPreComp0",
+      "CFCPreComp1",
+      "CFCPreComp2",
+      "CFCPreComp3",
+      "CFCPreComp4",
+      "CFCPreComp5",
+      "CFCPreComp6",
+      "CFCPreComp7",
+      "CFCPreComp8",
+      "CFCPreComp9"
+    ]
+  },
+  {
+    "id": "cfcPostEqBandGainJson",
+    "kind": "utf8",
+    "ordinal": 50,
+    "saved_keys": [
+      "CFCPostEqGain0",
+      "CFCPostEqGain1",
+      "CFCPostEqGain2",
+      "CFCPostEqGain3",
+      "CFCPostEqGain4",
+      "CFCPostEqGain5",
+      "CFCPostEqGain6",
+      "CFCPostEqGain7",
+      "CFCPostEqGain8",
+      "CFCPostEqGain9"
+    ]
+  },
+  {
+    "id": "cfcParaEqData",
+    "kind": "utf8",
+    "ordinal": 54,
+    "saved_keys": [
+      "CFCParaEQData"
+    ]
+  },
+  {
+    "id": "cpdrLevelDb",
+    "kind": "i64",
+    "ordinal": 24,
+    "saved_keys": [
+      "CompanderLevel"
+    ]
+  },
+  {
+    "id": "cessbOn",
+    "kind": "bool",
+    "ordinal": 59,
+    "saved_keys": [
+      "CESSB_On"
+    ]
+  },
+  {
+    "id": "filterLow",
+    "kind": "i64",
+    "ordinal": 5,
+    "saved_keys": [
+      "FilterLow"
+    ]
+  },
+  {
+    "id": "filterHigh",
+    "kind": "i64",
+    "ordinal": 6,
+    "saved_keys": [
+      "FilterHigh"
+    ]
+  },
+  {
+    "id": "dexpEnabled",
+    "kind": "bool",
+    "ordinal": 26,
+    "saved_keys": [
+      "DEXP_Enabled"
+    ]
+  },
+  {
+    "id": "dexpDetectorTauMs",
+    "kind": "f64",
+    "ordinal": 67,
+    "saved_keys": [
+      "DEXP_DetectorTauMs"
+    ]
+  },
+  {
+    "id": "dexpAttackTimeMs",
+    "kind": "f64",
+    "ordinal": 66,
+    "saved_keys": [
+      "DEXP_AttackTimeMs"
+    ]
+  },
+  {
+    "id": "dexpReleaseTimeMs",
+    "kind": "f64",
+    "ordinal": 74,
+    "saved_keys": [
+      "DEXP_ReleaseTimeMs"
+    ]
+  },
+  {
+    "id": "dexpExpansionRatioDb",
+    "kind": "f64",
+    "ordinal": 68,
+    "saved_keys": [
+      "DEXP_ExpansionRatioDb"
+    ]
+  },
+  {
+    "id": "dexpHysteresisRatioDb",
+    "kind": "f64",
+    "ordinal": 70,
+    "saved_keys": [
+      "DEXP_HysteresisRatioDb"
+    ]
+  },
+  {
+    "id": "dexpLookAheadEnabled",
+    "kind": "bool",
+    "ordinal": 71,
+    "saved_keys": [
+      "DEXP_LookAheadEnabled"
+    ]
+  },
+  {
+    "id": "dexpLookAheadMs",
+    "kind": "f64",
+    "ordinal": 72,
+    "saved_keys": [
+      "DEXP_LookAheadMs"
+    ]
+  },
+  {
+    "id": "dexpLowCutHz",
+    "kind": "f64",
+    "ordinal": 73,
+    "saved_keys": [
+      "DEXP_LowCutHz"
+    ]
+  },
+  {
+    "id": "dexpHighCutHz",
+    "kind": "f64",
+    "ordinal": 69,
+    "saved_keys": [
+      "DEXP_HighCutHz"
+    ]
+  },
+  {
+    "id": "dexpSideChannelFilterEnabled",
+    "kind": "bool",
+    "ordinal": 75,
+    "saved_keys": [
+      "DEXP_SideChannelFilterEnabled"
+    ]
+  }
+]

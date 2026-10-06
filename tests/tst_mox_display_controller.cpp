@@ -364,7 +364,7 @@ struct RemoteWindow {
         return QTest::qWaitFor([this] {
             SliceModel* tx = remote.sliceById(txSliceId);
             return daemon->activeEndpointCount() == 2 && tx != nullptr
-                && tx->panKey() == QStringLiteral("two");
+                && tx->panKey() == station.sliceById(txSliceId)->panKey();
         }, 5000);
     }
 
@@ -411,6 +411,150 @@ class TstMoxDisplayController : public QObject {
     Q_OBJECT
 
 private slots:
+    void waterfallWindowChangeDuringResizeKeepsRfAlignment_data()
+    {
+        QTest::addColumn<int>("newWidth");
+        QTest::addColumn<double>("centerShiftHz");
+        QTest::newRow("grow-same-window") << 960 << 0.0;
+        QTest::newRow("shrink-same-window") << 240 << 0.0;
+        QTest::newRow("grow-new-window") << 960 << 1000.0;
+        QTest::newRow("shrink-new-window") << 240 << 1000.0;
+    }
+
+    void waterfallWindowChangeDuringResizeKeepsRfAlignment()
+    {
+        QFETCH(int, newWidth);
+        QFETCH(double, centerShiftHz);
+        SpectrumWidget pan;
+        pan.setWaterfallTickerPausedForTest(true);
+        pan.setWfAgcEnabled(false);
+        pan.setWaterfallNFAGCEnabled(false);
+        pan.m_remoteSpectrum = true;
+        pan.m_waterfall = QImage(480, 1, QImage::Format_RGB32);
+        pan.m_waterfall.fill(Qt::black);
+        constexpr double centerHz = 14'200'000.0;
+        constexpr double spanHz = 48000.0;
+        pan.setDisplayWindowPreservingHistory(centerHz, spanHz);
+        QVector<float> row(480, -160.0f);
+        row[240] = 10.0f;
+        row[241] = 10.0f;
+        // Two retained rows keep the red probe inside the history
+        // allocation even when the old width assumption reads a second
+        // scanline. The assertion observes wrong RF placement safely.
+        pan.pushWaterfallRowForTest(row);
+        pan.pushWaterfallRowForTest(row);
+        QCOMPARE(pan.m_waterfallHistory.width(), 480);
+        // Model resizeEvent's immediate image replacement before its
+        // debounced history resize has had a chance to run.
+        pan.m_waterfall = QImage(newWidth, 1, QImage::Format_RGB32);
+        pan.m_waterfall.fill(Qt::black);
+        pan.rebuildWaterfallViewport(centerHz + centerShiftHz, spanHz);
+        int brightest = -1;
+        int brightness = -1;
+        for (int x = 0; x < newWidth; ++x) {
+            const QColor color = pan.m_waterfall.pixelColor(x, 0);
+            const int value = color.red() + color.green() + color.blue();
+            if (value > brightness) { brightness = value; brightest = x; }
+        }
+        const int expected = int((spanHz / 2.0 - centerShiftHz) / spanHz * newWidth);
+        QVERIFY2(std::abs(brightest - expected) <= 1,
+                 "History must track the resized live width before RF projection");
+        QCOMPARE(pan.m_waterfallHistory.width(), newWidth);
+        QCOMPARE(pan.waterfallHistoryRowsForTest(), 2);
+    }
+
+    void transmitHistoryReturnsAtItsCapturedRfFrequency_data()
+    {
+        QTest::addColumn<double>("txOffsetHz");
+        QTest::newRow("carrier-above-rx-centre") << 15000.0;
+        QTest::newRow("carrier-below-rx-centre") << -15000.0;
+    }
+
+    void transmitHistoryReturnsAtItsCapturedRfFrequency()
+    {
+        QFETCH(double, txOffsetHz);
+        SpectrumWidget pan;
+        pan.setWaterfallTickerPausedForTest(true);
+        pan.setWfAgcEnabled(false);
+        pan.setWaterfallNFAGCEnabled(false);
+        pan.setWaterfallStopOnTx(false);
+        pan.m_remoteSpectrum = true;
+        pan.m_waterfall = QImage(480, 16, QImage::Format_RGB32);
+        pan.m_waterfall.fill(Qt::black);
+        constexpr double rxCentreHz = 14'200'000.0;
+        constexpr double rxSpanHz = 48000.0;
+        const double txCentreHz = rxCentreHz + txOffsetHz;
+        const double toneHz = txCentreHz + 1000.0;
+        pan.setDisplayWindowPreservingHistory(rxCentreHz, rxSpanHz);
+        pan.m_txViewBandwidthHz = 8000.0;
+
+        const auto columnFor = [&pan](double hz) {
+            return int((hz - pan.centerFrequency() + pan.bandwidth() / 2.0)
+                       / pan.bandwidth() * pan.m_waterfall.width());
+        };
+        const auto pushTone = [&pan, &columnFor](double hz) {
+            QVector<float> row(pan.m_waterfall.width(), -160.0f);
+            // A finite RF-width marker survives the narrower TX pixel
+            // grid being projected onto RX pixels (100 Hz wide here).
+            const int columns = std::max(1, int(std::ceil(200.0 / pan.bandwidth()
+                                               * pan.m_waterfall.width())));
+            for (int x = columnFor(hz); x < columnFor(hz) + columns; ++x) {
+                row[x] = 10.0f;
+            }
+            pan.pushWaterfallRowForTest(row);
+        };
+        const auto liveRow = [&pan](int age) {
+            const int y = (pan.liveWaterfallWriteRowForTest() + age)
+                        % pan.liveWaterfallForTest().height();
+            return pan.liveWaterfallForTest().copy(0, y, pan.m_waterfall.width(), 1);
+        };
+        const auto brightestColumn = [](const QImage& row) {
+            int best = -1;
+            int brightness = -1;
+            for (int x = 0; x < row.width(); ++x) {
+                const QColor color = row.pixelColor(x, 0);
+                const int value = color.red() + color.green() + color.blue();
+                if (value > brightness) { brightness = value; best = x; }
+            }
+            return best;
+        };
+
+        // The original RX row lies outside the TX window. It must return
+        // byte-for-byte, rather than be lost by an RX->TX->RX image stretch.
+        pushTone(rxCentreHz - txOffsetHz);
+        const QImage originalRx = liveRow(0);
+        for (int cycle = 0; cycle < 2; ++cycle) {
+            pan.setMoxOverlay(true);
+            pan.setDisplayWindowPreservingHistory(txCentreHz, pan.bandwidth());
+            pushTone(toneHz);
+            QCOMPARE(brightestColumn(liveRow(0)), columnFor(toneHz));
+            pan.setMoxOverlay(false);
+            QCOMPARE(pan.centerFrequency(), rxCentreHz);
+            QCOMPARE(pan.bandwidth(), rxSpanHz);
+            QVERIFY2(std::abs(brightestColumn(liveRow(0)) - columnFor(toneHz)) <= 1,
+                     "Retained TX row must use its RF frequency on the restored RX axis");
+            QCOMPARE(liveRow(cycle + 1), originalRx);
+        }
+        // Fresh RX rows and the retained TX rows must now share one axis.
+        pushTone(toneHz);
+        QCOMPARE(brightestColumn(liveRow(0)), columnFor(toneHz));
+        QVERIFY(std::abs(brightestColumn(liveRow(1)) - columnFor(toneHz)) <= 1);
+        const int rows = pan.waterfallHistoryRowsForTest();
+        pan.m_wfLive = false;
+        pan.m_wfHistoryOffsetRows = 1;
+        pan.rebuildWaterfallViewport();
+        // Rewind and a subsequent accepted window change must also use
+        // the captured TX geometry, without rewriting the history ring.
+        pan.setDisplayWindowPreservingHistory(rxCentreHz + 100.0, rxSpanHz);
+        QVERIFY(std::abs(brightestColumn(liveRow(0)) - columnFor(toneHz)) <= 1);
+        QCOMPARE(pan.waterfallHistoryRowsForTest(), rows);
+        pan.setDisplayWindowPreservingHistory(rxCentreHz, rxSpanHz);
+        pan.m_wfLive = true;
+        pan.m_wfHistoryOffsetRows = 0;
+        pan.rebuildWaterfallViewport();
+        QCOMPARE(liveRow(3), originalRx);
+    }
+
     // Opt-in, offscreen evidence capture for the iPhone Task 54f software gate.
     // This is the real remote pan stack and media path, without a radio.
     void remoteTransmitDisplayEvidence()
@@ -644,6 +788,88 @@ private slots:
 
     // ── A remote window ────────────────────────────────────────────────────
 
+    void remoteTransmitUsesAssociatedHostWhenPanKeyDoesNotResolve_data()
+    {
+        QTest::addColumn<QString>("corePanKey");
+        QTest::newRow("primary slice without a pan key") << QString();
+        QTest::newRow("slice with a stale pan key") << QStringLiteral("retired-pan");
+    }
+
+    void remoteTransmitUsesAssociatedHostWhenPanKeyDoesNotResolve()
+    {
+        QFETCH(QString, corePanKey);
+        RemoteWindow window(/*withAnalyzer=*/true);
+        window.station.sliceById(window.txSliceId)->setPanKey(corePanKey);
+        window.stack.panadapter(QStringLiteral("two"))->addSlice(window.txSliceId);
+        window.stack.panadapter(QStringLiteral("one"))->addSlice(window.otherSliceId);
+        window.stack.setActivePan(QStringLiteral("one"));
+        QVERIFY(window.connect());
+        QCOMPARE(window.remote.sliceById(window.txSliceId)->panKey(), corePanKey);
+        QCOMPARE(window.stack.activePanId(), QStringLiteral("one"));
+        QVERIFY(window.receiveDraws(QStringLiteral("two")));
+        SpectrumWidget* one = window.pan(QStringLiteral("one"));
+        SpectrumWidget* two = window.pan(QStringLiteral("two"));
+        const PanState before = PanState::of(two);
+        QSignalSpy contexts(window.gui.get(), &RemoteMediaController::transmitContextReceived);
+
+        window.key(true);
+        QTRY_VERIFY(window.controller->isKeyed());
+        QCOMPARE(window.controller->transmitPanId(), QStringLiteral("two"));
+        QVERIFY(two->m_moxOverlay);
+        QVERIFY(!one->m_moxOverlay);
+        QVERIFY(two->m_txExternalWaterfall);
+        QVERIFY(window.gui->isPanTransmitting(QStringLiteral("two")));
+        QVERIFY(!window.gui->isPanTransmitting(QStringLiteral("one")));
+        QVERIFY(riseTwoDrawsTransmit(window, contexts, -30.0f));
+        // The Core's waterfall plane reaches the hosted widget as well as
+        // its trace; its TX row must advance the live waterfall history.
+        const int rowsBefore = two->waterfallHistoryRowsForTest();
+        QTRY_VERIFY_WITH_TIMEOUT(([&] {
+            const auto context = contexts.last().at(1).value<SpectrumContextMessage>();
+            window.emitPlanes(-30.0f, context.traceSamples);
+            window.feed();
+            return two->waterfallHistoryRowsForTest() > rowsBefore;
+        }()), 5000);
+
+        window.key(false);
+        QTRY_VERIFY(!window.controller->isKeyed());
+        QVERIFY(!window.gui->isPanTransmitting(QStringLiteral("two")));
+        QCOMPARE(PanState::of(two), before);
+        QVERIFY(window.receiveDraws(QStringLiteral("two")));
+    }
+
+    void remoteTransmitWithoutUniqueAssociatedHostDoesNotUseActivePan_data()
+    {
+        QTest::addColumn<bool>("ambiguousHost");
+        QTest::newRow("no actual host") << false;
+        QTest::newRow("multiple actual hosts") << true;
+    }
+
+    void remoteTransmitWithoutUniqueAssociatedHostDoesNotUseActivePan()
+    {
+        QFETCH(bool, ambiguousHost);
+        RemoteWindow window(/*withAnalyzer=*/true);
+        window.station.sliceById(window.txSliceId)->setPanKey(QString());
+        window.stack.panadapter(QStringLiteral("one"))->addSlice(window.otherSliceId);
+        if (ambiguousHost) {
+            window.stack.panadapter(QStringLiteral("one"))->addSlice(window.txSliceId);
+            window.stack.panadapter(QStringLiteral("two"))->addSlice(window.txSliceId);
+        }
+        window.stack.setActivePan(QStringLiteral("one"));
+        QVERIFY(window.connect());
+        QCOMPARE(window.stack.panadapter(QStringLiteral("two"))->associatedSlices()
+                     .contains(window.txSliceId), ambiguousHost);
+        window.key(true);
+        QTRY_VERIFY(window.controller->isKeyed());
+        QVERIFY(window.controller->transmitPanId().isEmpty());
+        QVERIFY(!window.pan(QStringLiteral("one"))->m_moxOverlay);
+        QVERIFY(!window.pan(QStringLiteral("two"))->m_moxOverlay);
+        QVERIFY(!window.gui->isPanTransmitting(QStringLiteral("one")));
+        QVERIFY(!window.gui->isPanTransmitting(QStringLiteral("two")));
+        window.key(false);
+        QTRY_VERIFY(!window.controller->isKeyed());
+    }
+
     void remoteRiseDrawsTheTransmitDisplayAndFallRestores()
     {
         RemoteWindow window(/*withAnalyzer=*/true);
@@ -702,6 +928,36 @@ private slots:
         // Receive frames draw again (once the Core's receive context lands).
         QVERIFY(window.receiveDraws(QStringLiteral("two")));
         QCOMPARE(two->m_refLevel, before.refLevel);
+    }
+
+    void remoteJoinWhileAlreadyKeyedShowsTransmitDisplay()
+    {
+        RemoteWindow window(/*withAnalyzer=*/true);
+        SpectrumWidget* one = window.pan(QStringLiteral("one"));
+        SpectrumWidget* two = window.pan(QStringLiteral("two"));
+        QSignalSpy contexts(window.gui.get(), &RemoteMediaController::transmitContextReceived);
+        // Initial transmit state arrives before the slice mirrors. Complete
+        // the rise once the snapshot supplies the TX slice and its pan key.
+        window.key(true);
+        QVERIFY(window.station.isTransmitting());
+        QVERIFY(window.connect());
+        QTRY_VERIFY(window.controller->isKeyed());
+        QTRY_COMPARE(window.client->transmitState()->txSliceId(), window.txSliceId);
+        QCOMPARE(window.controller->transmitPanId(), QStringLiteral("two"));
+        QVERIFY(two->m_moxOverlay);
+        QVERIFY(!one->m_moxOverlay);
+        QVERIFY(two->m_txExternalWaterfall);
+        QVERIFY(window.gui->isPanTransmitting(QStringLiteral("two")));
+        QVERIFY(!window.gui->isPanTransmitting(QStringLiteral("one")));
+        QVERIFY(riseTwoDrawsTransmit(window, contexts, -30.0f));
+
+        window.key(false);
+        QTRY_VERIFY(!window.controller->isKeyed());
+        QVERIFY(window.controller->transmitPanId().isEmpty());
+        QVERIFY(!two->m_moxOverlay);
+        QVERIFY(!two->m_txExternalWaterfall);
+        QVERIFY(!window.gui->isPanTransmitting(QStringLiteral("two")));
+        QVERIFY(window.receiveDraws(QStringLiteral("two")));
     }
 
     void olderCoreHoldsThePanAndSaysWhy()

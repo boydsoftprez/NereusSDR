@@ -10,6 +10,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Selected RX source identity and RX-only presentation reset by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
@@ -117,11 +119,13 @@ public:
 #endif
 #endif
     void resetForTxTransition(bool inTx);
+    void resetRxSource();
     // Source changes discard old samples before the new source is replayed.
     void clearReadingCache();
     int powerScale() const { return m_powerScale; }
     // GUI model adapters notify the actual owning face after child state changes.
     void invalidatePresentation(const MeterItem* item);
+    void invalidateGeometry();
     void setUnitMode(MeterItem::MeterUnit unit);
     MeterItem::MeterUnit unitMode() const;
 

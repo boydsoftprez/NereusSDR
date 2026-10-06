@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Selected RX source identity and RX-only presentation reset by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Resolve remote Max Bin by the slice
 //                 hosted in this window. AI-assisted via OpenAI Codex.
 //   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
@@ -195,8 +197,15 @@ void MeterPoller::setRxChannel(RxChannel* channel)
     if (m_rxChannel == channel) { return; }
     disconnect(m_rxDestroyed);
     m_rxChannel = channel;
-    invalidateReadings(true, false, false);
-    if (channel) { m_rxDestroyed = connect(channel, &QObject::destroyed, this, [this] { invalidateReadings(true, false, false); }); }
+    // Adapted contexts track their actual slice, independent of legacy focus.
+    if (!m_rxReadingSource || !m_rxSourceIdentitySource) { invalidateReadings(true, false, false); }
+    if (channel) {
+        m_rxDestroyed = connect(channel, &QObject::destroyed, this, [this] {
+            // The legacy focused wrapper is not the source of every adapted
+            // context. Slice/stream identity and link readiness govern those.
+            if (!m_rxReadingSource || !m_rxSourceIdentitySource) { invalidateReadings(true, false, false); }
+        });
+    }
     refreshBindingSupport();
     qCDebug(lcMeter) << "MeterPoller: RxChannel set, channelId:"
                       << (channel ? channel->channelId() : -1);
@@ -265,7 +274,9 @@ void MeterPoller::setRemoteRadioModel(RadioModel* model,
     for(int binding:{MeterBinding::HwVolts,MeterBinding::HwAmps,MeterBinding::TxAlcGain,MeterBinding::TxAlcGroup}) { publishSupport(binding,MeterItem::BindingSupport::Unknown); }
     if (m_remoteModel) {
         m_remoteConnections.append(connect(model, &QObject::destroyed, this, [this] { invalidateReadings(true, true, true); }));
-        m_remoteConnections.append(connect(model, &RadioModel::activeSliceChanged, this, [this] { invalidateReadings(true, false, false); }));
+        m_remoteConnections.append(connect(model, &RadioModel::activeSliceChanged, this, [this] {
+            if (!m_rxReadingSource || !m_rxSourceIdentitySource) { invalidateReadings(true, false, false); }
+        }));
         m_remoteConnections.append(connect(model, &RadioModel::connectionStateChanged, this, [this] { invalidateReadings(true, true, true); }));
     }
     if (!m_remoteRole) {
@@ -603,6 +614,20 @@ void MeterPoller::setRxReadingSource(std::function<double(const QJsonObject&, in
     invalidateReadings(true, false, false);
     refreshBindingSupport();
 }
+void MeterPoller::setRxSourceIdentitySource(std::function<QByteArray(const QJsonObject&)> source)
+{
+    m_rxSourceIdentitySource = std::move(source);
+}
+bool MeterPoller::synchronizeRxSource(MeterWidget* widget, const QJsonObject& context) const
+{
+    if (!widget || !m_rxSourceIdentitySource) { return false; }
+    const QByteArray identity = m_rxSourceIdentitySource(context);
+    const QVariant previous = widget->property("containerRxSourceIdentity");
+    if (previous.isValid() && previous.toByteArray() == identity) { return false; }
+    widget->setProperty("containerRxSourceIdentity", identity);
+    if (previous.isValid()) { widget->resetRxSource(); }
+    return previous.isValid();
+}
 void MeterPoller::setSessionIdSource(std::function<QString()> source)
 {
     m_sessionIdSource = std::move(source);
@@ -675,6 +700,7 @@ void MeterPoller::replayReadings(MeterWidget* widget, const QJsonObject& context
 void MeterPoller::copyCachedReadings(MeterWidget* widget, const QJsonObject& context) const
 {
     if (!widget) { return; }
+    synchronizeRxSource(widget, context);
     if (widget->unitMode()!=m_unitMode) { widget->setUnitMode(m_unitMode); }
     if (m_powerScale>0 && widget->powerScale()!=m_powerScale) { widget->rescalePowerMeters(m_powerScale); }
     for(auto it=m_bindingSupport.cbegin();it!=m_bindingSupport.cend();++it) {
@@ -818,6 +844,12 @@ void MeterPoller::pollContextReadings()
     if (!m_rxReadingSource || m_inTx) { return; }
     const bool sourceReady = m_localRxReadingAvailable && (!m_remoteRole
         || (m_remoteModel && m_remoteModel->isConnected() && m_remoteSnapshotReady && m_remoteSnapshotReady()));
+    // Reset every recipient before the first context's shared sample fan-out.
+    for (const auto& target : m_targets) {
+        if (!target) { continue; }
+        const QJsonObject context = m_targetContexts.value(target);
+        if (synchronizeRxSource(target, context)) { m_contextReadings.remove(contextKey(context)); }
+    }
     QSet<QByteArray> visited;
     for (const auto& target : m_targets) {
         if (!target) { continue; }
@@ -1168,6 +1200,14 @@ void MeterPoller::pollRemoteRxMeters()
 void MeterPoller::pollAdaptedSMeter()
 {
     if (!m_sMeter || !m_rxReadingSource || m_inTx) { return; }
+    if (m_rxSourceIdentitySource) {
+        const QByteArray identity = m_rxSourceIdentitySource(m_sMeterContext);
+        const QVariant previous = m_sMeter->property("containerRxSourceIdentity");
+        if (previous.isValid() && previous.toByteArray() != identity) {
+            m_sMeter->setLevel(static_cast<float>(kNoMeterReadingDbm));
+        }
+        m_sMeter->setProperty("containerRxSourceIdentity", identity);
+    }
     int binding = MeterBinding::SignalPeak;
     if (m_sMeter->rxMode()==SMeterWidget::RxMode::SignalAverage) { binding=MeterBinding::SignalAvg; }
     else if (m_sMeter->rxMode()==SMeterWidget::RxMode::MaxBin) { binding=MeterBinding::SignalMaxBin; }

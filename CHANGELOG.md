@@ -1,8 +1,13 @@
 # Changelog
 
-## [Unreleased] - First calendar release
+## [2026.10.0] - 2026-10-05
 
-> Alpha testers: start with the [2026.10.0 smoke-test and upgrade guide](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/debugging/v2026.10.0-alpha-tester-smoketest.md).
+**Your station. Wherever you operate.**
+
+[Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)
+
+Upgrading from 0.5.2? Start with the [upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html).
+For a new station computer, follow the [Raspberry Pi OS Lite / Armbian Core install guide](https://nereussdr.com/guides/install-core-sbc.html).
 
 2026.10.0 brings together the work since 0.5.2: independent receivers, a shared
 station Core, remote desktop and native iPhone/iPad operation, IPv6-aware
@@ -12,47 +17,21 @@ meter objects.
 
 This is the first release using **calendar versions**. `2026.10.0` means the first release in October 2026. Another release that month will be `2026.10.1`; the first release in November will be `2026.11.0`. Releases continue to ship when ready. Existing releases keep their original numbers.
 
-## Native Thetis CAT and separate Hamlib control
-
-Four configured channels now expose Thetis CAT over TCP, optional Qt SerialPort
-and macOS/Linux PTYs. A separate four-channel rigctld dialect shares the same
-stable A/B slices and transmit ownership. Native local Setup, CAT applet/status,
-bounded log and isolated tester expose actual listening/errors. Defaults keep
-listeners and welcome off; remote-role consoles direct configuration to the
-local authoritative host.
-
-The 419-descriptor catalogue has 349 active registrations, 70 inactive entries
-and 783 production-executed fixtures. Missing recording, CWX, VAC, memory,
-GUI-only and dedicated controller operations retain explicit refusal contracts;
-complete accounting does not mean full Thetis functional parity. Disconnect,
-reconfiguration and observed PTY peer loss cancel only the matching CAT claim,
-preserving a newer operator intent. Initially asserted CTS/DSR must release
-before a fresh assertion can request transmit.
-
-[The verification packet](docs/architecture/thetis-cat-verification/README.md)
-records current macOS builds/tests, Linux Core CAT and official Hamlib 4.7 model
-interop, and no-SerialPort coverage. Windows compilation, Linux native GUI/x86,
-physical modem pins/cables, other logger/digital-mode clients and RF/RX-audio
-bench remain pending. This is local implementation evidence; final integrated
-review and release publication are separate. Historical release notes below
-retain their original status.
-
 ## The Core and GUI can run in different places
 
 The **Core** owns the radio connection and station state. It runs receiver
 and transmit DSP, noise reduction and PureSignal, computes spectra, manages
 station audio and accessories, and decides receiver and transmit authority.
-The **GUI** is the operator's console: it renders VFOs, pans, waterfalls,
+The **GUI** is your console: it renders VFOs, pans, waterfalls,
 meters and editors, sends control requests, plays received audio and sends
-microphone audio to the Core. Radio processing stays with the Core as the
-operator moves between consoles.
+microphone audio to the Core. Radio processing stays with the Core as
+you move between consoles.
 
 There are two ways to run it. A local desktop runs the Core and GUI together.
 For a remote station, headless **`nereusd`** runs beside the radio while the
 GUI runs on a Mac, Windows or Linux computer, iPhone or iPad elsewhere.
-Several authenticated
-devices can use one Core, within station capacity, with receiver ownership
-and a single transmit holder enforced by that Core.
+Several paired devices can share one Core within the station's capacity.
+The Core coordinates receiver ownership and a single transmit holder.
 
 The headless Core can run on a suitable Linux **single-board computer (SBC)**,
 including a Raspberry Pi inside an **ANAN-G2**, or a separate SBC beside the
@@ -60,24 +39,30 @@ radio. Development testing included a **Raspberry Pi 4** and a **Radxa Rock 5C
 with 2 GB RAM**. Other compatible SBCs can host the same Core; sustainable
 receiver count, DSP features and display load depend on the board and its
 configuration. A display and a locally running GUI are not required at the
-radio. The radio and Core can remain at the station while the operator uses
-a separate console.
+radio. Keep the radio and Core at the station, and take the console with you.
 
 ### A native iPhone and iPad console
 
 The **native iPhone and iPad app** is another full operator console for the
-same Core. Its Swift/SwiftUI interface has live spectrum/waterfall and VFO
+same Core. It provides live spectrum/waterfall and VFO
 flags, touch tuning and receiver controls, received audio, microphone uplink
 and PTT, transmit readings, station Setup, spots and accessory pages. It uses
 the same station identity, pairing, receiver ownership and transmit-holder
 rules as a desktop GUI. The phone or tablet renders station data while the
 Core runs the radio and DSP, including the transmit processing chain.
 
-This is a major part of the Core/GUI split: the operator can use a desktop,
+This is a major part of the Core/GUI split: you can use a desktop,
 iPhone or iPad with the radio and its processing remaining at the station.
-The mobile app is native to those devices, with its own release counter,
-validation and TestFlight/App Store delivery process. Its delivery status is
-tracked separately from the desktop/Core release artifacts.
+The mobile app has its own TestFlight/App Store delivery process. Desktop
+and Core packages do not install it; mobile availability is announced separately.
+
+Native EQ/CFC controls bring voice shaping to the phone. Filter Presets, local
+PA peak/minimum readings and resets, named TX profile saving, overwrite
+confirmation and unsaved-profile switching join the console. TX profile changes
+track the full set of saved settings.
+When a setting needs confirmation, the displayed Core value and your pending
+edit stay distinct. Old-session replies cannot change a new session's
+transmit authority.
 
 ### Reaching the station through the RV server
 
@@ -99,7 +84,7 @@ parts of the RV server installation.
 
 A directly reachable Core on the same LAN or a VPN can also be selected by
 address. Core Settings shows the chosen station, connection and audio path,
-so the operator can see which Core is in use and how the session is connected.
+so you can see which Core is in use and how the session is connected.
 The RV server provides reachability; the Core continues to own the radio and
 perform the DSP on every path.
 
@@ -128,8 +113,8 @@ carrier, router and firewall conditions still determine which route succeeds.
 
 Core Settings brings Core names, saved and manually entered addresses,
 connection targets, current audio status and device authority together.
-Logs, Pi deployment artifacts and Radxa staging/rollback artifacts have
-bounded retention for unattended installations.
+Unattended Pi and Radxa installations keep logs and deployment backups within
+bounded retention limits.
 
 Receiver and transmit transfers use explicit Core decisions and confirmations.
 Link loss blocks new keying, and old-session replies cannot grant authority
@@ -139,17 +124,16 @@ session contracts serve desktop and native mobile consoles.
 ### Fresh Raspberry Pi OS Lite and Armbian installation
 
 A dedicated Debian 13/Trixie ARM64 Core package accompanies the Ubuntu
-packages. It reuses the native ARMv8-A builder and locked DFNR source build,
-with a fresh-runtime package/CLI check and recorded source/package provenance.
-The [short SBC install guide](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/guides/install-core-sbc.md) covers flashing
+packages. Choose the package matching your board's operating system.
+The [short SBC install guide](https://nereussdr.com/guides/install-core-sbc.html) covers flashing
 a 64-bit Raspberry Pi OS Lite or compatible Armbian Trixie image, installing
 the package with `apt`, starting the service and pairing a desktop or phone.
 
-The [operator manual working draft](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.0/docs/manual/README.md)
-adds twenty chapters covering desktop and native mobile operation, shared Core
-access, audio, Canvas, EQ/CFC and station accessories. It preserves the original
-development captures and records their source and verification limits;
-selected-release captures and live RF/mobile acceptance remain tracked separately.
+The [user guide](https://nereussdr.com/manual/)
+brings desktop and mobile operation together: connecting, tuning, sharing a
+Core, choosing audio, arranging your workspace, editing transmit audio and
+using station accessories. Its illustrated procedures identify the builds
+and example data shown in the figures.
 
 ## Independent receivers and richer displays
 
@@ -164,11 +148,22 @@ selected-release captures and live RF/mobile acceptance remain tracked separatel
 
 The desktop and Core share the upgraded WDSP 2.10 engine.
 
-**NNR** adds Standard/Premium station-owned models, per-radio and stable-receiver tuning, quick controls, advanced settings and a Models manager. Model import, selection and application are distinct operations. Applying a pending model rebuilds receivers while retaining their identities; unavailable saved models are reported explicitly.
+**NNR** adds Standard and Premium models managed by the station, with tuning
+for each radio and receiver, quick controls, advanced settings and a Models
+manager. Import a model, select it, then apply it when you are ready. Receivers
+keep their identities through the update, and unavailable saved models are
+identified clearly.
 
 **PureSignal 3** adds retained-correction application, station-owned correction assets, advanced status and AmpView integration. Normal preferences persist. Reloading settings never repeats a calibration, Restore, two-tone or PTT command. Calibration pause and Off remain distinct operations.
 
 PS3 uses **version-2 correction files**. Legacy version-1 files are refused with an explanation; create a fresh calibration rather than assuming old correction curves transfer.
+
+PureSignal status reflects what the Core has applied. Reset, correction and
+two-tone status stay with the operation that produced them.
+Saved Auto preferences resume when the first authenticated media session
+joins an eligible local Core, including after rejoining. Restoring a saved
+preference does not replay a calibration or keying command. The existing
+factory two-tone level is retained.
 
 ## TX EQ and CFC editors
 
@@ -180,19 +175,35 @@ The graphs show configured curves; they are not measurements of the complete aud
 
 ## Containers, applets and meters
 
-Applets and complete meter objects share one container system. Move them with dotted grips or menu commands, reorder stacks, float them and return them to remembered homes. Container settings offer draft previews, Apply/Cancel, reload and conflict handling.
+Applets and meter objects share one container system. Move them with dotted grips or menu commands, reorder stacks, float them and return them to remembered homes. Container settings offer previews, Apply/Cancel, reload and conflict handling.
 
-Editable Canvas placement adds per-object movement and resizing, numeric geometry, layers, locking and a scrollable scene. Apply/Cancel keeps edits in a draft; saved legacy compositions, high-precision positions and unknown records remain intact. Supported existing controls can be created as fifteen independently arranged button objects, retaining their capability and authority rules. Preview controls remain inert. Settings and live Canvas share the same supported-control resize minimum.
+Container meter stacks size responsive bars to the available space while
+preserving saved row heights and fixed layouts. Pending moves and resizes
+survive content refreshes until their placement is saved. A per-object
+**Follow selected RX** option lets a supported reading follow the receiver
+selected in that window; fixed receiver choices remain available, and
+changing source clears readings retained from the previous receiver.
 
-Bar and other native meter faces scale text to each object's logical dimensions and fit it within measured title, scale and readout regions. The approved ANAN artwork, scale lettering, blue ALC section and orb-origin pointers remain intact. Clicking a control now refreshes its cached interaction frame, including the end of Monitor's momentary indication.
+Arrange each object on an editable Canvas: move and resize it, enter an exact
+position and size, change layers, lock it in place and scroll around the scene.
+Apply saves your changes; Cancel returns to the saved layout. Existing
+compositions, precise positions and records from other versions are preserved.
+Fifteen supported controls can be placed as individual buttons. Their usual
+capability and authority rules still apply, and preview controls stay inactive
+while you arrange them.
 
-Portable container/object exchange preserves customized legacy records, unknown objects and external MMIO bindings. Migration retains recovery data. Complete composite meter faces use source-aware readings, and unavailable measurements are presented as unavailable. The ANAN multimeter gains approved Nereus artwork, calibrated live/peak/history
-needles and responsive named, unit-bearing readouts. Supported, unsupported
-and unknown readings stay distinct, and receive/transmit transitions clear
-stale readings. All approved scale labels remain present at ordinary meter
-sizes, and readouts make room for the configured font when space permits.
-Visible idle pointers park dim at their calibrated starting positions while
-their readouts remain unavailable; they do not create measurements or history.
+Meter titles, scales and readings fit the object's size. The ANAN artwork,
+scale lettering, blue ALC section and needle origins stay intact as you resize.
+Control indications refresh after a click, including when Monitor's momentary
+indication ends.
+
+Export and exchange layouts while preserving custom objects, older records
+and external MMIO bindings. Migration retains recovery data. Composite meter
+faces follow their selected reading source and show unavailable readings
+clearly. The ANAN multimeter adds Nereus artwork, calibrated live/peak/history
+needles and named readings with units. RX/TX transitions clear stale readings;
+scale labels and readouts remain legible at ordinary sizes. Idle needles rest
+dim at their calibrated starting points, with no invented readings or history.
 
 ## Modes, audio and accessories
 
@@ -200,22 +211,37 @@ their readouts remain unavailable; they do not create measurements or history.
 - The radio's speaker/headphone output carries the receive mix and appropriate monitor audio. Hardware microphone boost, input selection/gain, tip/ring, bias and XLR controls follow board capabilities.
 - Level Cal and preamp behavior receive further Thetis-based calibration corrections.
 - **RF-Kit RF2K-S** monitoring/control joins the accessory system. PGXL/TGXL operation follows Core authority, with connection recovery and carrier-ready tuner sequencing.
+- Remove the TGXL chip from the bottom status bar to free banner space; tuner controls remain in their existing applet.
 - RADE sends and decodes FreeDV-format end-of-over callsigns when FreeDV Reporter is enabled and flushes held speech before ending an over.
 
 ## Reliability fixes
 
+- Avoid a crash on the next connection attempt when the initial Protocol 1 or 2 UDP socket could not bind.
+- Correct the main and mini TX displays' buffer size on the first transmission after a queued mode/DSP change.
+- Include accepted Core automatic waterfall levels in the remote display transport range, preserving low-level detail that the previous range could clip. Saved waterfall controls are preserved; the separate brightness change when switching between Core and Clarity level ownership remains under investigation.
+- Close structured floating containers during application Quit while preserving final saved geometry and canceled-quit behavior.
+- Place the first owned receiver's flag within its newly created remote pan after the Core confirms receiver authority. Preserve pan views the operator has already moved or zoomed, and preserve listener views.
+- Keep remote automatic waterfall levels updating when peak hold is disabled, within the existing display-data budget.
 - Restart TX microphone pumping after live receiver reconfiguration (#331).
+- Keep the selected PC microphone’s level meter active while receiving in a remote desktop window. Preview audio is drained locally and never queued for a later PTT.
+- Preserve each waterfall row’s original RF window, so retained transmit history aligns correctly when returning to the receive display without losing the saved receive rows.
+- Match local NF-AGC precedence in remote windows when both waterfall AGC options are enabled.
+- Recover the remote transmit display when joining an already keyed station, and resolve missing or stale Core pan keys through the receiver’s unique host in the window.
+- Follow the transmit-bound receiver’s sideband for two-tone operation after a transmit handoff, even when a different receiver remains selected.
 - Keep the DEXP threshold marker across restarts (#332).
 - Keep HL2 tune power independent across repeated TUNE cycles (#333).
 - Replay saved anti-VOX state to replacement transmit workers (#334).
-- Fence transmit keying callbacks to the current radio session (#335).
+- Prevent a callback from an old radio session from keying a replacement session (#335).
 - Align spectrum painting and mouse geometry in CPU and GPU builds (#336).
 - Keep each pan's displayed and wheel-tuning STEP bound to its selected receiver, including selection changes and replacement receivers.
-- Release a retired display whose pending subscribe result was lost across a media handover, retaining its reservation until the Core confirms release. New and surviving spectra/waterfalls can then resume; synchronous display-stack destruction is also guarded. Live late-reply and missing-release-acknowledgement behavior retains its existing rules.
-- Preserve fresh remote VAX audio that arrives after the pump checks for input. Startup and resumed streams no longer lose that block during inactive-source cleanup; quiet stale data is still discarded.
-- Correct Qt 6.11 Cocoa accessibility failures found during native evaluation: shared element ownership, stale connection-list child caches, an expired preamp-combo child cache when board capabilities refresh after reconnect, and an expired container-dropdown child cache when switching the Settings selection. The fixes preserve selection, preamp choices and connection behavior; release Mac packages use a pinned Qt 6.8 SDK and must pass a real Cocoa startup check.
+- Let new and surviving spectra/waterfalls resume after a media handover when a retired display's reply was lost. The Core still confirms the display release before its reservation is reused.
+- Preserve fresh remote VAX audio during startup and resumed streams instead of losing it during inactive-source cleanup; quiet stale audio is still discarded.
+- Improve macOS connection, preamp, audio-device, buffer, TX Input and container selectors when their contents refresh. Reconnecting and changing Settings selections preserve the chosen values without stale dropdown entries or the reproduced accessibility-cache crashes.
+- Avoid a macOS crash when the Core refreshes the RADE profile list, while preserving profile order, selection rules and transmit permissions.
 
-Further work addresses receiver/channel lifetimes, media recovery, stale session replies, audio-ring overruns, microphone stalls, shared-device authority and reconnect teardown. The reconnect fixes above are narrower than the original acoustic/startup and intermittent-crash reports; the requested retests for #235, #299 and #300 remain open.
+Other reliability work improves receiver lifetimes, audio and media recovery,
+microphone restart, shared-station authority and reconnect cleanup. The original
+reconnect reports in #235, #299 and #300 still need their reporters' retests.
 
 ## Upgrading from 0.5.2
 
@@ -230,13 +256,39 @@ Keep existing settings and profiles; let the application perform its migrations.
 - BNR is no longer offered. DFNR and macOS-dependent MNR remain visible with an unavailable reason when the Core cannot run them.
 - The Power Genius discovery beacon keeps its existing `version=0.5.2` value. Product CalVer, settings schema, driver bundle versions and station wire protocol versions are separate numbers.
 
-## Alpha status and remaining checks
+## Known issues and follow-up work
 
-This remains an alpha release. Software and package checks will be reported from the exact final commit; they do not substitute for every radio, operating system or on-air acceptance matrix.
+PureSignal two-tone runs have an open transmit-stream continuity issue,
+observed during both first and repeated runs. Receive restoration after
+unkeying still needs physical-radio validation. Waterfall brightness can
+change when selecting a receiver and switching between Core and Clarity
+level ownership. These items remain under investigation.
 
-Cross-radio TNF listening, NNR quality, PureSignal RF improvement, RADE on-air interoperability, sustained SBC operation, accessory bench matrices and remaining native UI interactions retain their recorded pending status until exact evidence closes them. CW transmit, FM pre-emphasis, skin import and WAV/IQ recording remain future work. Native CAT/rigctld scope and remaining acceptance are recorded above. The legacy PS-RX/PS-TX spectrum view remains explicitly unavailable. High-resolution trackpad gesture handling remains under review.
+Radio-specific TNF listening, NNR quality, PureSignal RF improvement, RADE
+on-air interoperability, sustained SBC operation and accessory checks continue
+in the [feature verification documents](https://github.com/boydsoftprez/NereusSDR/tree/v2026.10.0/docs/architecture).
+The legacy PS-RX/PS-TX spectrum view remains unavailable, and high-resolution
+trackpad gestures remain under review.
 
-Final artifact list, signatures, checksums and installation links will come from the completed release workflow. Source archives and dependency notices accompany the binary distribution.
+Native G2/XDMA support remains incomplete and is outside this release.
+CAT/rigctld follows in the next release. CW transmit, FM pre-emphasis, skin
+import and WAV/IQ recording remain future work.
+
+## Find your next step
+
+| What you need | Guide |
+| --- | --- |
+| Install and connect on a computer | [Desktop setup](https://nereussdr.com/manual/01-desktop-connect.html) |
+| Operate from an iPhone or iPad | [Mobile setup](https://nereussdr.com/manual/06-iphone-connect.html) and [mobile operation](https://nereussdr.com/manual/07-iphone-operate.html) |
+| Share a Core between devices | [Shared station operation](https://nereussdr.com/manual/08-shared-core.html) |
+| Arrange applets and meters | [Customize your workspace](https://nereussdr.com/manual/10-customize.html) |
+| Set up EQ and CFC | [Transmit audio editing](https://nereussdr.com/guides/tx-eq-cfc.html) |
+| Solve a connection or audio problem | [Troubleshooting](https://nereussdr.com/manual/11-troubleshooting.html) |
+
+Visit [nereussdr.com](https://nereussdr.com/) for the project overview and
+join [Discord](https://discord.gg/m35ERjwRe) for questions, station discussion
+and feedback. Please use [GitHub Issues](https://github.com/boydsoftprez/NereusSDR/issues)
+for tracked bug reports, including your OS, radio model, protocol and log.
 
 J.J. Boyd ~ KG4VCF
 

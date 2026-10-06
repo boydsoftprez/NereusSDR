@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Selected RX source identity and RX-only presentation reset by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02  J.J. Boyd / KG4VCF. TX letters share the guarded flag
@@ -1313,7 +1315,8 @@ private:
     // Slice control plan Task 15: the slice this window's RX area follows
     // (bottom bar, flag focus, RX applet). A listened slice may be it; the
     // active slice (menus, transmit) never moves with it.
-    SliceModel* windowRxSlice() const;
+    SliceModel* windowRxSlice(bool allowFallback = true) const;
+    SliceModel* containerSourceSlice(const QJsonObject& context) const;
     // Slice control plan Task 15 (ruling U7): the RX applet's tabs, one per
     // slice this window controls or listens to and shows, each saying who
     // controls it; the applet binds windowRxSlice() with its access.
@@ -2054,11 +2057,6 @@ private:
     // Phase 3O Sub-Phase 10 Task 10c: host strip for the menu bar +
     // MasterOutputWidget. Owned by QMainWindow via setMenuWidget().
     TitleBar* m_titleBar{nullptr};
-
-    // Phase 3P-II Task 21: TGXL status bar chip.
-    // Shown when TunerModel::presenceChanged fires true; hidden otherwise.
-    // Text is "TGXL" / "TGXL OPER" / "TGXL BYPS" / "TGXL SBY".
-    QLabel* m_tgxlChip{nullptr};
 
     // Phase 3P-II Phase 4 Task 97 / R-R3-47: the power-cap alert count this
     // window has already shown (the Core de-bounces; see onPowerCapAlertChanged).

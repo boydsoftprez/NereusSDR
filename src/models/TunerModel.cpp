@@ -16,6 +16,9 @@
 //   2026-09-24 - iPhone app Task 4b (R-IOS-01, R-R3-21): the reasons this
 //                file sends an app are in operator words. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-04 - Native state and mode command correction from the
+//                maintainer's TGXL packet capture. J.J. Boyd (KG4VCF),
+//                AI-assisted via OpenAI Codex; see tgxl-mode-control.md.
 // =================================================================
 #include "models/TunerModel.h"
 #include "core/TgxlConnection.h"
@@ -91,6 +94,13 @@ void TunerModel::applyStatus(const QMap<QString, QString>& kvs)
     bool relayChanged_ = false;
     bool metersChanged_ = false;
 
+    // Native TCP 9010 uses state=0/1; the SmartSDR report uses operate.
+    // Wire evidence: docs/protocols/tgxl-mode-control.md, capture frames
+    // 1006, 1103, 1304 and 1361. Only these binary state values are known.
+    const QString nativeState = kvs.value(QStringLiteral("state"));
+    const bool hasNativeMode = nativeState == QLatin1String("0")
+        || nativeState == QLatin1String("1");
+
     for (auto it = kvs.constBegin(); it != kvs.constEnd(); ++it) {
         const QString& key = it.key();
         const QString& val = it.value();
@@ -99,7 +109,8 @@ void TunerModel::applyStatus(const QMap<QString, QString>& kvs)
             if (m_serial != val) { m_serial = val; changed = true; }
         } else if (key == "model") {
             if (m_model != val) { m_model = val; changed = true; }
-        } else if (key == "operate") {
+        } else if ((key == "state" && hasNativeMode)
+                   || (key == "operate" && !hasNativeMode)) {
             bool on = (val == "1");
             if (m_operate != on) { m_operate = on; changed = true; }
         } else if (key == "bypass") {
@@ -491,7 +502,9 @@ void TunerModel::setOperate(bool on)
         return;
     }
     qCDebug(lcTunerModel) << "TunerModel: setOperate" << on;
-    m_conn->sendCommand(QString("operate=%1").arg(on ? "1" : "0"));
+    // Native wire syntax: docs/protocols/tgxl-mode-control.md, frames
+    // 1302 and 1359; the upstream SmartSDR command targets the radio.
+    m_conn->sendCommand(QStringLiteral("operate set=%1").arg(on ? "1" : "0"));
 }
 
 // From AetherSDR src/models/TunerModel.cpp:setBypass [@0cd4559]
@@ -502,7 +515,9 @@ void TunerModel::setBypass(bool on)
         return;
     }
     qCDebug(lcTunerModel) << "TunerModel: setBypass" << on;
-    m_conn->sendCommand(QString("bypass=%1").arg(on ? "1" : "0"));
+    // Native wire syntax: docs/protocols/tgxl-mode-control.md, frames
+    // 1004 and 1101; successful replies accompany the reported changes.
+    m_conn->sendCommand(QStringLiteral("bypass set=%1").arg(on ? "1" : "0"));
 }
 
 // From AetherSDR src/models/TunerModel.cpp:autoTune [@0cd4559]

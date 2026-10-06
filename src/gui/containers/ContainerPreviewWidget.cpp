@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original inert preview projection, no polling targets.
 // Modification history (NereusSDR):
+//   2026-10-04 — Fit stacked button groups to compact shared rows by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Match individual control preview sizes to live controls by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Scroll the full configured preview stack by J.J. Boyd (KG4VCF),
@@ -62,6 +64,7 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
     const auto oldViews=m_views; QSet<QWidget*> retained;
     setStyleSheet(QStringLiteral("#containerDraftPreview {background:%1;}").arg(document.config.value("backgroundColor").toString("#0f0f1a")));
     m_document=document; m_materialized=true; m_surfaces.clear(); m_views.clear();
+    m_layout->setAlignment(document.layout==ContentLayout::VerticalStack ? Qt::AlignTop : Qt::Alignment());
     while (auto* child=m_layout->takeAt(0)) { delete child; }
     if(document.layout==ContentLayout::FreeCanvas) {m_layout->addWidget(m_canvas);m_canvas->show();}
     else {m_canvas->clearViews();m_canvas->hide();}
@@ -99,9 +102,12 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
         }
         m_views[entry.id]=view; if(document.layout!=ContentLayout::FreeCanvas) {m_layout->addWidget(view);}
         if (auto* meter=qobject_cast<MeterWidget*>(view)) {
-            int height=80;QSize minimum(24,24);
+            int height=document.layout==ContentLayout::VerticalStack ? 72 : 80;QSize minimum(24,24);
             for (auto* item : meter->items()) {
                 if (isSingleContainerControl(item)) { height=singleContainerControlSize().height(); minimum=singleContainerControlMinimum(); }
+                const QSize stackSize=document.layout==ContentLayout::VerticalStack ? containerStackButtonSize(item) : QSize();
+                item->setProperty("containerStackGrid",!stackSize.isEmpty());
+                if (!stackSize.isEmpty()) { height=stackSize.height(); minimum=containerStackButtonMinimum(item); meter->setMinimumWidth(minimum.width()); }
                 if (auto* face=qobject_cast<CompositePresetItem*>(item)) { height=face->preferredFaceHeight(); minimum=face->minimumFaceSize(); meter->setMinimumWidth(minimum.width()); }
                 else if (auto* face=qobject_cast<BarPresetItem*>(item)) { height=face->preferredFaceHeight(); minimum=face->minimumFaceSize(); meter->setMinimumWidth(minimum.width()); }
                 item->setZOrder(entry.paintOrder);item->clearStackMetadata(); item->setRect(0,0,1,1); item->setProperty("containerSourceContext",context);

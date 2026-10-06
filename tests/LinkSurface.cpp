@@ -12,6 +12,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04  J.J. Boyd / KG4VCF  Complete conditional media fields,
+//                                    legacy nested variants and lossless
+//                                    bitrate refusal shapes. AI-assisted
+//                                    via OpenAI Codex.
+//   2026-10-04  J.J. Boyd / KG4VCF  Declare the optional transmit watch
+//                                    capability without inventing a live
+//                                    value. AI-assisted via OpenAI Codex.
 //   2026-09-30  J.J. Boyd / KG4VCF  RADE reason: the capture declares
 //                                    radeReason, so radeReasonVersion and
 //                                    the slice's radeReason are captured.
@@ -731,6 +738,9 @@ QJsonArray captureCapabilities()
     caps.sessionHolderEntry = true;
     // iPhone app plan Task 34: sent to a peer that declared remoteTx.
     caps.remoteTxEntry = true;
+    // Declaration version 1: StationCapabilities.h:731-733 and
+    // StationServer.cpp:13156-13157. This is not a sampled live value.
+    caps.txWatchPathVersion = 1;
     caps.settingsHygieneVersion = 2;
     caps.coreBuildInfo = CoreBuildInfo{QStringLiteral("0.5.2"), QStringLiteral("link-surface@fixture")};
     caps.settingsBackupVersion = 1;
@@ -851,8 +861,14 @@ QJsonArray captureCapabilities()
         if (!wire) {
             entry.insert(QStringLiteral("error"), error);
         } else if (found == live.cend()) {
-            entry.insert(QStringLiteral("error"),
-                         QStringLiteral("the live station did not send this capability"));
+            // LoopbackTransport is not a supported transmit-watch primary
+            // (StationServer::txWatchEligible / txWatchRelayCapability).
+            // Retain this optional declaration's name/kind without a live
+            // value; every other missing live capability remains an error.
+            if (name != QStringLiteral("txWatchPathVersion")) {
+                entry.insert(QStringLiteral("error"),
+                             QStringLiteral("the live station did not send this capability"));
+            }
         } else if (found->value(QStringLiteral("kind")).toString() != wireKind(u.kind)) {
             entry.insert(QStringLiteral("error"),
                          QStringLiteral("the live station sent another wire kind"));
@@ -1272,6 +1288,8 @@ QJsonObject guiToCoreOps()
         {QStringLiteral("receiverAudioVersion"), {QStringLiteral("receiverAudioVersion")}},
         {QStringLiteral("remoteIqVersion"), {QStringLiteral("remoteIqVersion")}},
         {QStringLiteral("headphonesMixVersion"), {QStringLiteral("headphonesMixVersion")}},
+        // DaemonMediaController.cpp:1867-1886; RemoteMediaController.cpp:3977-3986.
+        {QStringLiteral("txDisplayVersion"), {QStringLiteral("txDisplayVersion")}},
         // iPhone app plan Task 36: the microphone line.
         {QStringLiteral("remoteTxVersion"), {QStringLiteral("remoteTxVersion")}},
         // Remote-window parity Task 32: the transmit monitor.
@@ -1303,6 +1321,12 @@ QJsonObject guiToCoreOps()
          {QStringLiteral("extendedView"), {QStringLiteral("remoteWidebandDisplayVersion")}},
          // Parity Task 17: spectrumGrantVersion 2.
          {QStringLiteral("decimation"), {QStringLiteral("spectrumGrantVersion")}},
+         // DaemonMediaController.cpp:2891-2916: both TX edges or neither;
+         // duplex only for declared txDisplayVersion >= 3. The manifest
+         // test guards these co-occurrence/version rules against the source.
+         {QStringLiteral("txMinDbm"), {QStringLiteral("txDisplayVersion")}},
+         {QStringLiteral("txMaxDbm"), {QStringLiteral("txDisplayVersion")}},
+         {QStringLiteral("duplex"), {QStringLiteral("txDisplayVersion")}},
          {QStringLiteral("peakBlobs"), {extras}},
          {QStringLiteral("activePeakHold"), {extras}},
          {QStringLiteral("noiseFloor"), {extras}},
@@ -1323,6 +1347,19 @@ QJsonObject guiToCoreOps()
          {QStringLiteral("waterfallLevels"),
           {QStringLiteral("mode"), QStringLiteral("lowDbm"), QStringLiteral("highDbm"),
            QStringLiteral("offsetDb")}}}));
+    // DisplayExtras.cpp:249-292 accepts both older nested forms as well
+    // as the current forms above; absent onTx stays true, fastAttack false.
+    QJsonObject subscribe = ops.value(QStringLiteral("subscribe")).toObject();
+    QJsonObject nested = subscribe.value(QStringLiteral("nested")).toObject();
+    QJsonArray holdVariants = nested.value(QStringLiteral("activePeakHold")).toArray();
+    holdVariants.append(sortedArray({QStringLiteral("enabled"), QStringLiteral("holdMs"),
+                                     QStringLiteral("fallDbPerSec")}));
+    QJsonArray floorVariants = nested.value(QStringLiteral("noiseFloor")).toArray();
+    floorVariants.append(sortedArray({QStringLiteral("enabled"), QStringLiteral("shiftDb")}));
+    nested.insert(QStringLiteral("activePeakHold"), holdVariants);
+    nested.insert(QStringLiteral("noiseFloor"), floorVariants);
+    subscribe.insert(QStringLiteral("nested"), nested);
+    ops.insert(QStringLiteral("subscribe"), subscribe);
     // DaemonMediaController.cpp handleUnsubscribe: revision only with the
     // display budget.
     ops.insert(QStringLiteral("unsubscribe"),
@@ -1408,6 +1445,15 @@ QJsonObject spectrumContextShapes()
                 tags.append(QStringLiteral("spectrumGrantVersion"));
             }
             shapes.append({tags, encodeRemoteSpectrumContext(m, grant)});
+            if (grant) {
+                // RemoteSpectrumContext.cpp:136-151: transmit is an optional
+                // bool on the grant shape; false still carries the field.
+                const QStringList txTags = tags + QStringList{QStringLiteral("txDisplayVersion")};
+                for (const bool transmit : {false, true}) {
+                    m.transmit = transmit;
+                    shapes.append({txTags, encodeRemoteSpectrumContext(m, grant)});
+                }
+            }
         }
     }
     return describeShapes(kMedia, shapes);
@@ -1472,8 +1518,9 @@ QJsonObject audioContextShapes()
                                              QStringLiteral("audioProfileVersion")},
                        encodeRemoteAudioContext(states[i], true, true)});
         // iPhone app plan Task 23: a device's refused opusBitrate, in the
-        // main context's profile shape only.
-        if (opus) {
+        // main context's profile shape only. RemoteAudioContext.cpp:288-312
+        // emits it independently of the active profile (lossless included).
+        {
             RemoteAudioContextMessage refused = states[i];
             refused.opusBitrateRefusal = opusBitrateNotOfferedReason();
             shapes.append({tags[i] + QStringList{QStringLiteral("remoteAudioStatusVersion"),

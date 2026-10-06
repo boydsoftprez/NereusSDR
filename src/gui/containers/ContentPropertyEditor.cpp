@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-04 — Selected RX source identity and RX-only presentation reset by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Plain applet source explanations by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 #include "ContentPropertyEditor.h"
@@ -33,7 +35,8 @@ void ContentPropertyEditor::setContainerDefaults(const QJsonObject& defaults)
     m_defaults=defaults;
     if(auto* source=findChild<QComboBox*>("contentSlice")) {
         const int inherited=defaults.contains("sliceId")?defaults["sliceId"].toInt():defaults["rxSource"].toInt(1)-1;
-        source->setItemText(0,tr("Container default — Slice %1").arg(QChar('A'+inherited)));
+        source->setItemText(0,defaults.value("rxSourceMode").toString()==QStringLiteral("followSelectedRx")
+            ? tr("Container default — Follow selected RX") : tr("Container default — Slice %1").arg(QChar('A'+inherited)));
     }
     if(auto* session=findChild<QLineEdit*>("sessionId")) {session->setPlaceholderText(tr("Container default — %1").arg(defaults["sessionId"].toString(tr("current session"))));}
 }
@@ -239,13 +242,17 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     } else if(!m_item && !applet) {advanced->setEnabled(false);advanced->setToolTip(tr("Unsupported content retains its stored bindings."));}
     auto* source=new QComboBox(advanced); source->setObjectName("contentSlice");
     const int inherited=m_defaults.contains("sliceId")?m_defaults["sliceId"].toInt():m_defaults["rxSource"].toInt(1)-1;
-    source->addItem(tr("Container default — Slice %1").arg(QChar('A'+inherited)),-1);
+    source->addItem(m_defaults.value("rxSourceMode").toString()==QStringLiteral("followSelectedRx")
+        ? tr("Container default — Follow selected RX") : tr("Container default — Slice %1").arg(QChar('A'+inherited)),-1);
     for(int i=0;i<4;++i) { source->addItem(tr("Slice %1").arg(QChar('A'+i)),i); }
-    const int selected=entry.context.contains("sliceId")?entry.context["sliceId"].toInt():entry.context.contains("rxSource")?entry.context["rxSource"].toInt()-1:-1;
+    source->addItem(tr("Follow selected RX"),QStringLiteral("followSelectedRx"));
+    const QVariant selected=entry.context.value("rxSourceMode").toString()==QStringLiteral("followSelectedRx")
+        ? QVariant(QStringLiteral("followSelectedRx")) : QVariant(entry.context.contains("sliceId")?entry.context["sliceId"].toInt():entry.context.contains("rxSource")?entry.context["rxSource"].toInt()-1:-1);
     source->setCurrentIndex(source->findData(selected)); bindings->addRow(tr("Source"),source);
     connect(source,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,source]{
-        m_entry.context.remove("rxSource"); m_entry.context.remove("sliceId");
-        if(source->currentData().toInt()>=0) {m_entry.context["sliceId"]=source->currentData().toInt();} publish();
+        m_entry.context.remove("rxSource"); m_entry.context.remove("sliceId"); m_entry.context.remove("rxSourceMode");
+        if(source->currentData().toString()==QStringLiteral("followSelectedRx")) {m_entry.context["rxSourceMode"]=QStringLiteral("followSelectedRx");}
+        else if(source->currentData().toInt()>=0) {m_entry.context["sliceId"]=source->currentData().toInt();} publish();
     });
     for(const QString& key:{QStringLiteral("sessionId"),QStringLiteral("mmioGuid"),QStringLiteral("mmioVariable")}) {
         if(applet && key!="sessionId") {continue;}

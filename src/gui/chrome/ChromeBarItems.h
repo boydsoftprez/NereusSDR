@@ -47,7 +47,6 @@ struct ChromeBarWidgets {
 
     QWidget* systemTile{nullptr};
     QWidget* systemTileSep{nullptr};
-    QWidget* tgxlChip{nullptr};
     QWidget* catIndicator{nullptr};
     QWidget* catSep{nullptr};
     QWidget* tciIndicator{nullptr};

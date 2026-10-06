@@ -1,0 +1,78 @@
+libdatachannel v0.24.5: retain a closing libjuice agent outside ICE teardown
+
+NereusSDR for iOS patch, applied after 0002 by ios/scripts/vendor-sources.sh.
+MPL-2.0, like the covered file it changes. Task 56, 2026-09-27.
+
+The ICE transport begins bounded libjuice close, transfers its unique agent
+to one ThreadPool-scheduled retirement owner, and keeps an Init token until
+final destruction. No retry wait occupies the shared transport teardown task
+or libjuice poll thread.
+
+diff --git a/src/impl/icetransport.cpp b/src/impl/icetransport.cpp
+index 5d77dfbb6..4700f772a 100644
+--- a/src/impl/icetransport.cpp
++++ b/src/impl/icetransport.cpp
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include "icetransport.hpp"
++#include "threadpool.hpp"
+ #include "configuration.hpp"
+ #include "internals.hpp"
+ #include "transport.hpp"
+@@ -39,6 +40,39 @@ namespace rtc::impl {
+ 
+ const int MAX_TURN_SERVERS_COUNT = 2;
+ 
++// A closing libjuice agent retains its original socket and resolver state.
++// One scheduled continuation owns it until release completes or its network
++// window expires. Final destruction runs on a pool worker, never on the
++// shared libjuice poll thread or the serialized transport teardown task.
++class RetiringJuiceAgent : public std::enable_shared_from_this<RetiringJuiceAgent> {
++public:
++	using owner = std::unique_ptr<juice_agent_t, void (*)(juice_agent_t *)>;
++
++	RetiringJuiceAgent(owner agent, init_token token)
++	    : mAgent(std::move(agent)), mToken(std::move(token)) {}
++
++	void schedule(std::chrono::steady_clock::duration delay = 0ms) {
++		auto self = shared_from_this();
++		ThreadPool::Instance().schedule(delay, [self] { self->check(); });
++	}
++
++private:
++	void check() {
++		int status = juice_close_status(mAgent.get());
++		if (status == JUICE_CLOSE_PENDING) {
++			schedule(50ms);
++			return;
++		}
++		if (status == JUICE_CLOSE_EXPIRED)
++			PLOG_WARNING << "TURN allocation release window expired before confirmation";
++		mAgent.reset();
++		mToken.reset();
++	}
++
++	owner mAgent;
++	init_token mToken;
++};
++
+ void IceTransport::Init() {
+ 	// Dummy
+ }
+@@ -182,7 +216,14 @@ void IceTransport::addIceServer(IceServer server) {
+ 
+ IceTransport::~IceTransport() {
+ 	PLOG_DEBUG << "Destroying ICE transport";
+-	mAgent.reset();
++	if (!mAgent)
++		return;
++	// The existing teardown task still holds its Init token. Take another
++	// before transferring the agent to its independently scheduled owner.
++	auto token = Init::Instance().token();
++	juice_begin_close(mAgent.get());
++	auto retiring = std::make_shared<RetiringJuiceAgent>(std::move(mAgent), std::move(token));
++	retiring->schedule();
+ }
+ 
+ Description::Role IceTransport::role() const { return mRole; }

@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-04: Hold accepted Core waterfall levels in the remote codec window.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04: Genuine delayed allocation results across peer promotion,
 //               retired display release and survivor rendering regression.
 //               Synchronous stack teardown at the overdue release boundary.
@@ -91,6 +93,8 @@
 #include <thread>
 #include <utility>
 #include "core/AppSettings.h"
+#include "gui/setup/DisplaySetupPages.h"
+#include <QCheckBox>
 #include "core/MoxController.h"
 #include "core/TxAnalyzer.h"
 #include "core/TxDisplayFeed.h"
@@ -5935,18 +5939,255 @@ private slots:
     // the stored levels until the first arrive and then against the Core's;
     // the local follower does not run, so AGC settling asks the Core nothing
     // and never blanks the pan with a new request.
-    void coreWaterfallAgcAsksNothingAsItSettles()
+    void waterfallLevelsFromActualRequestMatchLocal_data()
+    {
+        QTest::addColumn<bool>("agc");
+        QTest::addColumn<bool>("nfAgc");
+        QTest::addColumn<bool>("bothUi");
+        QTest::addColumn<bool>("restored");
+        QTest::addColumn<bool>("clarity");
+        QTest::addColumn<QString>("mode");
+        QTest::addColumn<float>("low1");
+        QTest::addColumn<float>("high1");
+        QTest::addColumn<float>("low2");
+        QTest::addColumn<float>("high2");
+        QTest::newRow("agc-only") << true << false << false << false << false << QStringLiteral("agc") << -172.0f << -84.5f << -171.0f << -83.5f;
+        QTest::newRow("nf-only") << false << true << false << false << false << QStringLiteral("noiseFloorAgc") << -159.0f << -99.0f << -139.0f << -79.0f;
+        QTest::newRow("both-normal-ui") << true << true << true << false << false << QStringLiteral("noiseFloorAgc") << -159.0f << -99.0f << -139.0f << -79.0f;
+        QTest::newRow("both-restored") << true << true << false << true << false << QStringLiteral("noiseFloorAgc") << -159.0f << -99.0f << -139.0f << -79.0f;
+        QTest::newRow("manual") << false << false << false << false << false << QString() << -180.0f << 0.0f << -180.0f << 0.0f;
+        QTest::newRow("clarity-both-on") << true << true << true << false << true << QString() << -150.0f << -90.0f << -150.0f << -90.0f;
+    }
+
+    // Catch a request mode that makes the Core colour identical rows differently.
+    void waterfallLevelsFromActualRequestMatchLocal()
+    {
+        QFETCH(bool, agc);
+        QFETCH(bool, nfAgc);
+        QFETCH(bool, bothUi);
+        QFETCH(bool, restored);
+        QFETCH(bool, clarity);
+        QFETCH(QString, mode);
+        QFETCH(float, low1);
+        QFETCH(float, high1);
+        QFETCH(float, low2);
+        QFETCH(float, high2);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        AppSettings& appSettings = AppSettings::instance();
+        QMap<QString, QVariant> saved;
+        for (const QString& key : appSettings.allKeys()) { saved.insert(key, appSettings.value(key)); }
+        const auto restoreSettings = qScopeGuard([&] {
+            appSettings.clear();
+            for (auto it = saved.cbegin(); it != saved.cend(); ++it) { appSettings.setValue(it.key(), it.value()); }
+        });
+        appSettings.clear();
+        appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), QStringLiteral("20"));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::HermesLite);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        station.addSlice(QStringLiteral("pan-0"));
+        QVERIFY(!station.slices().isEmpty());
+        SliceModel* stationSlice = station.slices().first();
+        stationSlice->setStreamIndex(0);
+        stationSlice->setFrequency(14225000);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
+        applet->setActiveSliceIndex(stationSlice->sliceIndex());
+        auto* widget = applet->spectrumWidget();
+        widget->setDisplayWindowPreservingHistory(14225000, 24000);
+        widget->setDispNormalize(false);
+        widget->setWfUseSpectrumMinMax(false);
+        widget->setClarityActive(false);
+        SpectrumWidget local;
+        for (SpectrumWidget* view : {&local, widget}) {
+            view->loadSettings();
+            view->setDispNormalize(false);
+            view->setWfUseSpectrumMinMax(false);
+            view->setClarityActive(false);
+            view->setDbmRange(-180.0f, 0.0f);
+            view->setWfLowThreshold(-180.0f);
+            view->setWfHighThreshold(0.0f);
+            view->setWaterfallAGCOffsetDb(-5);
+            if (bothUi || restored) {
+                remote.setSpectrumWidget(view);
+                const auto detach = qScopeGuard([&] { remote.setSpectrumWidget(nullptr); });
+                {
+                    WaterfallDefaultsPage page(&remote);
+                    QCheckBox* nf = nullptr;
+                    for (QCheckBox* box : page.findChildren<QCheckBox*>()) {
+                        if (box->property("nereusSetupId").toString()
+                            == QStringLiteral("display.waterfallDefaults.nfAgc")) { nf = box; }
+                    }
+                    QVERIFY(nf && nf->isEnabled());
+                    QVERIFY(view->wfAgcEnabled());
+                    if (!nf->isChecked()) { nf->click(); }
+                    QVERIFY(view->wfAgcEnabled() && view->waterfallNFAGCEnabled());
+                }
+                remote.setSpectrumWidget(nullptr);
+                if (restored) {
+                    view->saveSettings();
+                    view->setWfAgcEnabled(false);
+                    view->setWaterfallNFAGCEnabled(false);
+                    view->loadSettings();
+                    QVERIFY(view->wfAgcEnabled() && view->waterfallNFAGCEnabled());
+                }
+            } else {
+                view->setWfAgcEnabled(agc);
+                view->setWaterfallNFAGCEnabled(nfAgc);
+            }
+            view->setClarityActive(clarity);
+            if (clarity) { view->setClarityWaterfallThresholds(-150.0f, -90.0f); }
+        }
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        qint64 now = 1'000;
+        QPointer<DisplayTransport> media;
+        RemoteMediaController controller(&client, &remote, &stack, nullptr,
+            [&media](QObject* owner) -> IMediaTransport* {
+                media = std::make_unique<DisplayTransport>(owner).release();
+                return media;
+            },
+            [&now] { return now; });
+        QSignalSpy controls(&server, &StationServer::mediaControlReceived);
+        auto* stationLink = std::make_unique<Test::LoopbackTransport>(QStringLiteral("station")).release();
+        auto* clientLink = std::make_unique<Test::LoopbackTransport>(QStringLiteral("client")).release();
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.mediaAvailable());
+        QVERIFY(client.capabilities().displayExtrasVersion >= 1);
+        QTRY_VERIFY(media);
+        media->activate();
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
+
+        const QJsonObject asked = lastControl(controls, QStringLiteral("subscribe"));
+        DisplayExtrasRequest request;
+        QVERIFY(parseDisplayExtrasRequest(asked, request));
+        DisplayExtrasProcessor processor(request);
+        const quint32 id = quint32(asked.value(QStringLiteral("endpointId")).toDouble());
+        QJsonObject context{
+            {QStringLiteral("op"), QStringLiteral("context")},
+            {QStringLiteral("connectionId"), asked.value(QStringLiteral("connectionId"))},
+            {QStringLiteral("endpointId"), double(id)},
+            {QStringLiteral("revision"), asked.value(QStringLiteral("revision"))},
+            {QStringLiteral("contextGeneration"), 1}, {QStringLiteral("sourceStream"), 0},
+            {QStringLiteral("sourceCentreHz"), 14225000}, {QStringLiteral("sampleRateHz"), 192000},
+            {QStringLiteral("centreHz"), 14225023.4375}, {QStringLiteral("spanHz"), 24046.875},
+            {QStringLiteral("wideCentreHz"), 0}, {QStringLiteral("wideSpanHz"), 0},
+            {QStringLiteral("traceSamples"), 128}, {QStringLiteral("waterfallSamples"), 128},
+            {QStringLiteral("wideSamples"), 0}, {QStringLiteral("minDbm"), -180},
+            {QStringLiteral("maxDbm"), 0}, {QStringLiteral("fps"), 20},
+            {QStringLiteral("framesPerLine"), 1},
+            {QStringLiteral("wideband"), WidebandDisplayContext{}.toJson()},
+            {QStringLiteral("grantedFftSize"), 4096}, {QStringLiteral("grantedTier"), QStringLiteral("wide")},
+            {QStringLiteral("requestedPixels"), 128}, {QStringLiteral("grantedPixels"), 128},
+            {QStringLiteral("limit"), QStringLiteral("none")}};
+        QVERIFY(server.sendMediaControl(context, server.mediaSessionEpoch()));
+        const DisplayCodecContext codec{id, 1, -180.0f, 0.0f, 128, 128, 0};
+        DisplayExtrasInputs inputs;
+        inputs.fps = 20;
+        inputs.centreHz = 14225023.4375;
+        inputs.spanHz = 24046.875;
+        inputs.sliceHz = 14225000;
+        inputs.binWidthHz = 192000.0 / 4096.0;
+        QVector<DisplayExtrasFrame> computed;
+        QVector<std::pair<float, float>> localLevels;
+        for (int rowIndex = 0; rowIndex < 2; ++rowIndex) {
+            QVector<float> row(128);
+            for (int i = 0; i < row.size(); ++i) { row[i] = -160.0f + 0.5f * i + 20.0f * rowIndex; }
+            local.composeWaterfallActiveThresholds(row);
+            localLevels.append({local.wfActiveLowThreshold(), local.wfActiveHighThreshold()});
+            DisplayCodecFrame frame;
+            frame.context = codec;
+            frame.encoderSequence = static_cast<quint32>(rowIndex + 1);
+            frame.waterfallAdvance = true;
+            frame.traceDbm = row;
+            frame.waterfallDbm = row;
+            inputs.nowMs = 1000 + rowIndex * 50;
+            computed.append(processor.process(frame, inputs));
+            qInfo() << "mode" << asked.value(QStringLiteral("waterfallLevels")).toObject().value(QStringLiteral("mode"))
+                    << "row" << rowIndex << "local" << localLevels.last().first << localLevels.last().second
+                    << "Core" << processor.waterfallLevels().first << processor.waterfallLevels().second;
+        }
+        // Literal oracle: sorted index 12 is -154/-134, plus offset -5.
+        QCOMPARE(localLevels[0].first, low1);
+        QCOMPARE(localLevels[0].second, high1);
+        QCOMPARE(localLevels[1].first, low2);
+        QCOMPARE(localLevels[1].second, high2);
+        if (mode.isEmpty()) {
+            QVERIFY(!asked.contains(QStringLiteral("waterfallLevels")));
+            QVERIFY(!computed[0].waterfallLevelsDbm && !computed[1].waterfallLevelsDbm);
+            for (int rowIndex = 0; rowIndex < 2; ++rowIndex) {
+                widget->composeWaterfallActiveThresholds(QVector<float>(128, -160.0f + 20.0f * rowIndex));
+                QCOMPARE(widget->wfActiveLowThreshold(), low1);
+                QCOMPARE(widget->wfActiveHighThreshold(), high1);
+            }
+        } else {
+            QVERIFY(computed[0].waterfallLevelsDbm && computed[1].waterfallLevelsDbm);
+            QCOMPARE(computed[0].waterfallLevelsDbm->first, low1);
+            QCOMPARE(computed[0].waterfallLevelsDbm->second, high1);
+            QCOMPARE(computed[1].waterfallLevelsDbm->first, low2);
+            QCOMPARE(computed[1].waterfallLevelsDbm->second, high2);
+            QCOMPARE(asked.value(QStringLiteral("waterfallLevels")).toObject().value(QStringLiteral("mode")).toString(), mode);
+            for (int rowIndex = 0; rowIndex < 2; ++rowIndex) {
+                const QByteArray datagram = encodeDisplayExtras(computed[rowIndex], codec);
+                QVERIFY(!datagram.isEmpty());
+                const auto decoded = decodeDisplayExtras(datagram, codec);
+                QVERIFY(decoded.accepted && decoded.frame.waterfallLevelsDbm);
+                QCOMPARE(*decoded.frame.waterfallLevelsDbm, *computed[rowIndex].waterfallLevelsDbm);
+                QTRY_VERIFY_WITH_TIMEOUT([&] {
+                    media->deliver(datagram);
+                    return widget->wfActiveLowThreshold() == computed[rowIndex].waterfallLevelsDbm->first;
+                }(), 5000);
+                QCOMPARE(widget->wfActiveHighThreshold(), computed[rowIndex].waterfallLevelsDbm->second);
+            }
+        }
+        QCOMPARE(widget->wfLowThreshold(), -180.0f);
+        QCOMPARE(widget->wfHighThreshold(), 0.0f);
+        QCOMPARE(widget->wfAgcEnabled(), agc);
+        QCOMPARE(widget->waterfallNFAGCEnabled(), nfAgc);
+        // AGC's accepted -171 dBm low needs its 10 dB headroom below the
+        // stored -180 dBm window. The old no-request assertion hid that
+        // clipping bug. Other modes here already fit their stored window.
+        QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
+        now += 60;
+        QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
+        const int expectedRequests = mode == QStringLiteral("agc") ? 2 : 1;
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), expectedRequests);
+        if (mode == QStringLiteral("agc")) {
+            QCOMPARE(lastControl(controls, QStringLiteral("subscribe"))
+                         .value(QStringLiteral("minDbm")).toDouble(), -181.0);
+        }
+        now += 60;
+        QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), expectedRequests);
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    void coreWaterfallAgcWindowContainsAcceptedLevels()
     {
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
         auto& appSettings = AppSettings::instance();
-        const bool hadFps = appSettings.contains(QStringLiteral("DisplaySpectrumFps"));
-        const QVariant savedFps = appSettings.value(QStringLiteral("DisplaySpectrumFps"));
-        appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), QStringLiteral("20"));
-        const auto restoreFps = qScopeGuard([&] {
-            if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
-            else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
+        QMap<QString, QVariant> savedSettings;
+        for (const QString& key : appSettings.allKeys()) {
+            savedSettings.insert(key, appSettings.value(key));
+        }
+        const auto restoreSettings = qScopeGuard([&] {
+            appSettings.clear();
+            for (auto it = savedSettings.cbegin(); it != savedSettings.cend(); ++it) {
+                appSettings.setValue(it.key(), it.value());
+            }
         });
+        appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), QStringLiteral("20"));
         RadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -5972,8 +6213,10 @@ private slots:
         widget->setWaterfallNFAGCEnabled(false);
         widget->setWfAgcEnabled(true);
         widget->setDbmRange(-100.0f, -60.0f);
-        widget->setWfLowThreshold(-110.0f);
+        widget->setWfLowThreshold(-109.5f);
         widget->setWfHighThreshold(-70.0f);
+        widget->setWfBlackLevel(96);
+        widget->setWfColorGain(31);
         stack.resize(600, 400);
         stack.show();
         QVERIFY(QTest::qWaitForWindowExposed(&stack));
@@ -5998,14 +6241,14 @@ private slots:
         QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
 
         // The subscribe asks the Core for the AGC's levels, and its window
-        // is the pan's and the stored levels', as with manual levels.
+        // uses stored levels until the first accepted Core pair arrives.
         QJsonObject asked = lastControl(controls, QStringLiteral("subscribe"));
         QCOMPARE(asked.value(QStringLiteral("waterfallLevels")).toObject(),
                  (QJsonObject{{QStringLiteral("mode"), QStringLiteral("agc")},
-                              {QStringLiteral("lowDbm"), -110.0},
+                              {QStringLiteral("lowDbm"), -109.5},
                               {QStringLiteral("highDbm"), -70.0},
                               {QStringLiteral("offsetDb"), 0}}));
-        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -110.0);
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -109.5);
         QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -60.0);
         QVERIFY(widget->coreWaterfallLevelsInUse());
 
@@ -6020,7 +6263,7 @@ private slots:
         // run, the stored levels colour the waterfall until the Core's
         // arrive, and nothing is asked.
         widget->composeWaterfallActiveThresholds(QVector<float>(64, -300.0f));
-        QCOMPARE(widget->wfActiveLowThreshold(), -110.0f);
+        QCOMPARE(widget->wfActiveLowThreshold(), -109.5f);
         QCOMPARE(widget->wfActiveHighThreshold(), -70.0f);
         settle();
         QVector<float> line(64, -125.0f);
@@ -6031,8 +6274,21 @@ private slots:
         settle();
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
 
-        // The Core's levels arrive beside a frame: the waterfall takes them,
-        // and as they move, nothing is asked either.
+        // Quantization really collapses the observed -119 dBm population
+        // under the stored window; metadata arrives before codec clamping.
+        const auto decodedRow = [](double low, double high) {
+            const QByteArray encoded = encodeDisplayCodecAbsolutePlane(
+                QVector<float>{-120.0f, -119.0f, -118.0f}, float(low), float(high));
+            QVector<float> decoded;
+            int offset = 0;
+            if (!decodeDisplayCodecAbsolutePlane(encoded, offset, 3,
+                                                  float(low), float(high), decoded)) {
+                return QVector<float>{};
+            }
+            return decoded;
+        };
+        QCOMPARE(decodedRow(-109.5, -60.0), QVector<float>(3, -109.5f));
+
         const quint32 id = quint32(asked.value(QStringLiteral("endpointId")).toDouble());
         QJsonObject context{
             {QStringLiteral("op"), QStringLiteral("context")},
@@ -6044,7 +6300,7 @@ private slots:
             {QStringLiteral("centreHz"), 14225023.4375}, {QStringLiteral("spanHz"), 24046.875},
             {QStringLiteral("wideCentreHz"), 0}, {QStringLiteral("wideSpanHz"), 0},
             {QStringLiteral("traceSamples"), 128}, {QStringLiteral("waterfallSamples"), 128},
-            {QStringLiteral("wideSamples"), 0}, {QStringLiteral("minDbm"), -110},
+            {QStringLiteral("wideSamples"), 0}, {QStringLiteral("minDbm"), -109.5},
             {QStringLiteral("maxDbm"), -60}, {QStringLiteral("fps"), 20},
             {QStringLiteral("framesPerLine"), 1},
             {QStringLiteral("wideband"), WidebandDisplayContext{}.toJson()},
@@ -6052,7 +6308,7 @@ private slots:
             {QStringLiteral("requestedPixels"), 128}, {QStringLiteral("grantedPixels"), 128},
             {QStringLiteral("limit"), QStringLiteral("none")}};
         QVERIFY(server.sendMediaControl(context, server.mediaSessionEpoch()));
-        const DisplayCodecContext codec{id, 1, -110.0f, -60.0f, 128, 128, 0};
+        const DisplayCodecContext codec{id, 1, -109.5f, -60.0f, 128, 128, 0};
         const auto deliverLevels = [&](float low, float high, quint32 sequence) {
             DisplayExtrasFrame extras;
             extras.endpointId = id;
@@ -6065,33 +6321,134 @@ private slots:
         };
         QTRY_VERIFY_WITH_TIMEOUT(
             [&] {
-                deliverLevels(-137.0f, -8.0f, 1);
-                return widget->wfActiveLowThreshold() == -137.0f;
+                deliverLevels(-131.742f, -88.2206f, 1);
+                return widget->wfActiveLowThreshold() == -131.742f;
             }(), 5000);
-        QCOMPARE(widget->wfActiveHighThreshold(), -8.0f);
+        QCOMPARE(widget->wfActiveHighThreshold(), -88.2206f);
         widget->composeWaterfallActiveThresholds(line);
-        QCOMPARE(widget->wfActiveLowThreshold(), -137.0f);
-        QCOMPARE(widget->wfActiveHighThreshold(), -8.0f);
-        deliverLevels(-135.5f, -11.0f, 2);
-        QCOMPARE(widget->wfActiveLowThreshold(), -135.5f);
+        QCOMPARE(widget->wfActiveLowThreshold(), -131.742f);
         settle();
-        deliverLevels(-180.0f, 20.0f, 3);
-        settle();
-        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
+        asked = lastControl(controls, QStringLiteral("subscribe"));
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -142.0);
+        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -60.0);
+        const QVector<float> represented = decodedRow(
+            asked.value(QStringLiteral("minDbm")).toDouble(),
+            asked.value(QStringLiteral("maxDbm")).toDouble());
+        QCOMPARE(represented.size(), 3);
+        QVERIFY(represented[0] < represented[1]);
+        QVERIFY(represented[1] < represented[2]);
+        QVERIFY(std::abs(represented[1] + 119.0f) < 0.4f);
+        QCOMPARE(widget->wfBlackLevel(), 96);
+        QCOMPARE(widget->wfColorGain(), 31);
+        QCOMPARE(widget->wfLowThreshold(), -109.5f);
+        QCOMPARE(widget->wfHighThreshold(), -70.0f);
+        QVERIFY(widget->wfAgcEnabled());
+        QVERIFY(!widget->waterfallNFAGCEnabled());
 
-        // NF-AGC asks for its own levels once; the AGC's are not kept.
+        // The renderer keeps the last valid Core pair while the new
+        // revision is pending. Old-context extras cannot replace that pair.
+        deliverLevels(-180.0f, 20.0f, 2);
+        QCOMPARE(widget->wfActiveLowThreshold(), -131.742f);
+        settle();
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
+        context.insert(QStringLiteral("revision"), asked.value(QStringLiteral("revision")));
+        context.insert(QStringLiteral("contextGeneration"), 2);
+        context.insert(QStringLiteral("minDbm"), -142.0);
+        QVERIFY(server.sendMediaControl(context, server.mediaSessionEpoch()));
+        const DisplayCodecContext freshCodec{id, 2, -142.0f, -60.0f, 128, 128, 0};
+        DisplayExtrasFrame fresh;
+        fresh.endpointId = id;
+        fresh.contextGeneration = 2;
+        fresh.encoderSequence = 3;
+        fresh.waterfallLevelsDbm = std::make_pair(-133.0f, -87.0f);
+        QTRY_VERIFY_WITH_TIMEOUT([&] {
+            media->deliver(encodeDisplayExtras(fresh, freshCodec));
+            return widget->wfActiveLowThreshold() == -133.0f;
+        }(), 5000);
+        settle();
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
+
+        // Malformed/non-finite metadata and an unrelated endpoint cannot
+        // poison the accepted cache or trigger a new transport window.
+        QByteArray invalid = encodeDisplayExtras(fresh, freshCodec);
+        invalid.replace(kDisplayExtrasHeaderBytes, 4, QByteArray::fromHex("7fc00000"));
+        media->deliver(invalid);
+        invalid = encodeDisplayExtras(fresh, freshCodec);
+        qToBigEndian<quint32>(id + 1, invalid.data() + 8);
+        media->deliver(invalid);
+        QCOMPARE(widget->wfActiveLowThreshold(), -133.0f);
+        settle();
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
+
+        // Exercise the real media decoder, row queue and RGB writer with
+        // lower samples that used to collapse to the old codec endpoint.
+        widget->setWaterfallTickerPausedForTest(true);
+        DisplayCodecFrame frame;
+        frame.context = freshCodec;
+        frame.encoderSequence = 4;
+        frame.waterfallAdvance = true;
+        frame.traceDbm = QVector<float>(128, -119.0f);
+        frame.waterfallDbm = QVector<float>(128, -119.0f);
+        for (int i = 0; i < 42; ++i) { frame.waterfallDbm[i] = -120.0f; }
+        for (int i = 86; i < 128; ++i) { frame.waterfallDbm[i] = -118.0f; }
+        DisplayCodecEncoder encoder;
+        const QByteArray rowPacket = encoder.encode(frame);
+        QVERIFY(!rowPacket.isEmpty());
+        media->deliver(rowPacket);
+        QTRY_VERIFY_WITH_TIMEOUT(widget->remoteRowQueueDepthForTest() > 0, 5000);
+        widget->tickWaterfallForTest();
+        const QVector<float> pushed = widget->lastRemoteRowPushedForTest();
+        QCOMPARE(pushed.size(), 128);
+        QVERIFY(pushed[20] < pushed[64]);
+        QVERIFY(pushed[64] < pushed[100]);
+        QVERIFY(std::abs(pushed[64] + 119.0f) < 0.4f);
+        const QImage& image = widget->liveWaterfallForTest();
+        QVERIFY(!image.isNull());
+        const QRgb centre = image.pixel(image.width() / 2,
+                                         widget->liveWaterfallWriteRowForTest());
+        QCOMPARE(centre, widget->dbmToRgbForTest(pushed[64]));
+        QVERIFY(centre != widget->dbmToRgbForTest(-109.5f));
+
+        // Core metadata can update its cache while Clarity owns the active
+        // mirror. On handoff the transport must use that cache immediately,
+        // before another row composes the active thresholds. Pre-codec Core
+        // levels cannot walk down from codec-floor feedback, so no local
+        // AGC reach cap may clip this accepted pair.
+        widget->setClarityActive(true);
+        widget->setClarityWaterfallThresholds(-95.0f, -30.0f);
+        fresh.encoderSequence = 5;
+        fresh.waterfallLevelsDbm = std::make_pair(-250.0f, -80.0f);
+        media->deliver(encodeDisplayExtras(fresh, freshCodec));
+        QCOMPARE(widget->wfActiveLowThreshold(), -95.0f);
+        widget->setClarityActive(false);
+        settle();
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 3);
+        asked = lastControl(controls, QStringLiteral("subscribe"));
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -260.0);
+        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -60.0);
+        widget->composeWaterfallActiveThresholds(line);
+        QCOMPARE(widget->wfActiveLowThreshold(), -250.0f);
+        settle();
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 3);
+        QCOMPARE(widget->wfBlackLevel(), 96);
+        QCOMPARE(widget->wfColorGain(), 31);
+        QCOMPARE(widget->waterfallAGCOffsetDb(), 0);
+
+        // NF-AGC asks for its own levels; the AGC's are not kept. The
+        // changed mode and subsequent settled window can each request once.
         widget->setWfAgcEnabled(false);
         widget->setWaterfallNFAGCEnabled(true);
         widget->setWaterfallAGCOffsetDb(6);
         settle();
-        QTRY_VERIFY(countControl(controls, QStringLiteral("subscribe")) >= 2);
+        QTRY_VERIFY(countControl(controls, QStringLiteral("subscribe")) >= 4);
         asked = lastControl(controls, QStringLiteral("subscribe"));
         const QJsonObject levels = asked.value(QStringLiteral("waterfallLevels")).toObject();
         QCOMPARE(levels.value(QStringLiteral("mode")).toString(), QStringLiteral("noiseFloorAgc"));
         QCOMPARE(levels.value(QStringLiteral("offsetDb")).toInt(), 6);
-        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -110.0);
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -109.5);
         widget->composeWaterfallActiveThresholds(line);
-        QCOMPARE(widget->wfActiveLowThreshold(), -110.0f);
+        QCOMPARE(widget->wfActiveLowThreshold(), -109.5f);
 
         // Manual levels ask for none.
         widget->setWaterfallNFAGCEnabled(false);

@@ -165,7 +165,9 @@ private slots:
         const auto appletRect=store.snapshot().containers[0].contents[2].freeCanvasRect();ContainerArrangeController arrange(store,&manager);
         QVERIFY(arrange.popOut(applet.id).ok);QCOMPARE(registry.singletonView("applet:rx"),borrowed.data());QCOMPARE(poller.targetCountForTest(),2);
         QVERIFY(arrange.returnEntry(applet.id).ok);QCOMPARE(registry.singletonView("applet:rx"),borrowed.data());QCOMPARE(poller.targetCountForTest(),2);
-        for(const auto& entry:store.snapshot().containers[0].contents) {if(entry.id==applet.id) {QCOMPARE(entry.freeCanvasRect(),appletRect);QCOMPARE(entry.returnLocation->containerId,c.id);}}
+        // In C++20 the indexed contents do not extend a temporary snapshot's lifetime.
+        const WorkspaceDocument returned = store.snapshot();
+        for(const auto& entry:returned.containers[0].contents) {if(entry.id==applet.id) {QCOMPARE(entry.freeCanvasRect(),appletRect);QCOMPARE(entry.returnLocation->containerId,c.id);}}
     }
     void stackTransitionExactAxesStyleApplyCancelAndSavedPositions() {
         QTemporaryDir dir;AppSettings settings(dir.filePath("settings.xml"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;

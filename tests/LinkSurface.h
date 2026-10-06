@@ -18,7 +18,9 @@
 //                 key sets to what SessionMessages::encode can write)
 //   capabilities  every entry StationCapabilities::toUpdates() emits for a
 //                 fully populated descriptor, in order, with its wire kind
-//                 and the value a live station with every feature on sends
+//                 and the value the live capture fixture advertises; the
+//                 optional txWatchPathVersion has no value when that fixture
+//                 does not support a transmit-watch primary route
 //   mirrorClasses every MirrorSchema class: each property's ordinal, wire
 //                 kind, MirrorPolicy direction and MirrorEnumDomain values
 //   objectKeys    the object keys a station's snapshot creates, as
@@ -38,6 +40,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04  J.J. Boyd / KG4VCF  Qualify optional watch capture values.
+//                                    AI-assisted via OpenAI Codex.
 //   2026-09-24  J.J. Boyd / KG4VCF  iPhone app Task 1 (R-IOS-01): link
 //                                    surface capture. AI-assisted
 //                                    transformation via Anthropic Claude

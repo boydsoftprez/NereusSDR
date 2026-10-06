@@ -15,6 +15,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04: Regression coverage for unkeyed PC preview demand, the actual
+//               Phone/CW gauge, source lifecycle and pre-key PCM discard.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25 - Created for the desktop remote window's transmit
 //                (R-IOS-13, R-R3-42). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
@@ -100,6 +103,11 @@
 // =================================================================
 
 #include <QtTest>
+#include <QApplication>
+#include <cstring>
+#include "fakes/FakeCaptureChild.h"
+#include "fakes/FakeAudioBus.h"
+#include "gui/HGauge.h"
 #include <QCheckBox>
 
 #include <QJsonArray>
@@ -1335,6 +1343,127 @@ private slots:
 
     // ---- The microphone ---------------------------------------------------
 
+    // An unkeyed PC microphone still drives the real Phone/CW gauge. An
+    // already-open injected bus would hide a missing capture demand here.
+    void unkeyedPcMicrophoneKeepsLocalPreviewWithoutSending()
+    {
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        AudioEngine* engine = h.remote.audioEngine();
+        CaptureSupervisor::Options options;
+        options.program = QCoreApplication::applicationFilePath();
+        options.arguments = {QStringLiteral("--fake-capture-child"), QStringLiteral("ready")};
+        engine->setCaptureSupervisorOptionsForTest(options);
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        PhoneCwApplet phone(&h.remote);
+        HGauge* gauge = nullptr;
+        for (HGauge* candidate : phone.findChildren<HGauge*>()) {
+            if (candidate->accessibleName() == QStringLiteral("Microphone level gauge")) {
+                gauge = candidate;
+            }
+        }
+        QVERIFY(gauge);
+        h.connectSession();
+        QTRY_VERIFY(remoteMedia.micLineOpen());
+        QTRY_VERIFY_WITH_TIMEOUT(engine->pcMicInputLevel() > 0.1f, 3000);
+        QTRY_VERIFY(gauge->value() > -30.0);
+        QVERIFY(!remoteMedia.micUplinkRunning());
+        QCOMPARE(remoteMedia.micPacketsSent(), quint64(0));
+        QVERIFY(!h.station.moxController()->isMox());
+
+        // A keyed capture shares the preview demand, and releasing PTT
+        // leaves local metering alive without continuing the uplink.
+        QVERIFY(pressMoxUntilKeyed(h));
+        QTRY_VERIFY(remoteMedia.micPacketsSent() > 0);
+        h.remote.setMoxFromButton(false);
+        QTRY_VERIFY(!remoteMedia.micUplinkRunning());
+        QTRY_VERIFY(!h.station.moxController()->isMox());
+        const quint64 stopped = remoteMedia.micPacketsSent();
+        QTRY_VERIFY(engine->pcMicInputLevel() > 0.1f);
+        QTRY_VERIFY(gauge->value() > -30.0);
+        QCOMPARE(remoteMedia.micPacketsSent(), stopped);
+
+        // ClientAudio is also the remote acceptance for VAX; model source
+        // changes must release this computer's PC preview demand.
+        h.remote.transmitModel().setMicSourceLocked(false);
+        h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QTRY_COMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Closed);
+        h.remote.transmitModel().setMicSource(MicSource::Pc);
+        QTRY_VERIFY(engine->pcMicInputLevel() > 0.1f);
+
+        // Follow the accepted radio-source control path in both directions.
+        h.client.requestMicSource(MicSource::Radio);
+        QTRY_COMPARE(h.client.remoteTransmit()->acceptedMicSource(), RemoteMicSource::RadioMic);
+        QTRY_COMPARE(h.remote.transmitModel().micSource(), MicSource::Radio);
+        QTRY_COMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Closed);
+        h.client.requestMicSource(MicSource::Pc);
+        QTRY_COMPARE(h.client.remoteTransmit()->acceptedMicSource(), RemoteMicSource::ClientAudio);
+        QTRY_COMPARE(h.remote.transmitModel().micSource(), MicSource::Pc);
+        QTRY_VERIFY(engine->pcMicInputLevel() > 0.1f);
+        QTRY_VERIFY(gauge->value() > -30.0);
+        QVERIFY(!remoteMedia.micUplinkRunning());
+        QCOMPARE(remoteMedia.micPacketsSent(), stopped);
+
+        // Another consumer's Test Mic demand survives the source switch.
+        auto testMic = engine->acquireCaptureDemand(CaptureSupervisor::Demand::TestMic);
+        h.remote.transmitModel().setMicSource(MicSource::Radio);
+        QTRY_VERIFY(engine->pcMicInputLevel() > 0.1f);
+        testMic.release();
+        QTRY_COMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Closed);
+        h.remote.transmitModel().setMicSource(MicSource::Pc);
+        QTRY_VERIFY(engine->pcMicInputLevel() > 0.1f);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+        QTRY_COMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Closed);
+        QCOMPARE(engine->pcMicInputLevel(), 0.0f);
+    }
+
+    // Old preview samples must neither queue for a later key nor be
+    // encoded at the key edge before the next idle timer tick can drain.
+    void previewDiscardsIdleAndPreKeyAudio()
+    {
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        auto microphone = std::make_unique<FakeAudioBus>();
+        FakeAudioBus* input = microphone.get();
+        AudioFormat format;
+        format.sampleRate = 48000;
+        format.channels = 1;
+        format.sample = AudioFormat::Sample::Float32;
+        QVERIFY(input->open(format));
+        h.remote.audioEngine()->setTxInputBusForTest(std::move(microphone));
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        h.connectSession();
+        QTRY_VERIFY(remoteMedia.micLineOpen());
+        const std::vector<float> idle(1920, -0.5f);
+        input->setPullData(QByteArray(reinterpret_cast<const char*>(idle.data()),
+                                     static_cast<int>(idle.size() * sizeof(float))));
+        QTRY_VERIFY(input->pullCount() >= 2);
+        QCOMPARE(remoteMedia.micPacketsSent(), quint64(0));
+        // Arrives just before key-down, with no event-loop turn to drain.
+        input->setPullData(QByteArray(reinterpret_cast<const char*>(idle.data()),
+                                     static_cast<int>(idle.size() * sizeof(float))));
+        remoteMedia.setMicKeyDown(true);
+        QCOMPARE(remoteMedia.micPacketsSent(), quint64(0));
+        QVERIFY(remoteMedia.micUplinkRunning());
+        const std::vector<float> fresh(1920, 0.25f);
+        input->setPullData(QByteArray(reinterpret_cast<const char*>(fresh.data()),
+                                     static_cast<int>(fresh.size() * sizeof(float))));
+        QTRY_VERIFY(remoteMedia.micPacketsSent() >= 2);
+        QVERIFY(!h.station.moxController()->isMox());
+        remoteMedia.setMicKeyDown(false);
+        const quint64 stopped = remoteMedia.micPacketsSent();
+        const int consumed = input->pullCount();
+        input->setPullData(QByteArray(reinterpret_cast<const char*>(idle.data()),
+                                     static_cast<int>(idle.size() * sizeof(float))));
+        QTRY_VERIFY(input->pullCount() > consumed);
+        QCOMPARE(remoteMedia.micPacketsSent(), stopped);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // The media start offers the microphone line. The window sends its
     // microphone only while its key is down (and the Core keys from it,
     // once its buffer fills) and never otherwise, counted in packets.
@@ -2023,5 +2152,13 @@ private slots:
     }
 };
 
-QTEST_MAIN(TestRemoteWindowTransmit)
+int main(int argc, char* argv[])
+{
+    if (argc > 2 && std::strcmp(argv[1], "--fake-capture-child") == 0) {
+        return NereusSDR::Test::runFakeCaptureChild(QString::fromLocal8Bit(argv[2]));
+    }
+    QApplication app(argc, argv);
+    TestRemoteWindowTransmit test;
+    return QTest::qExec(&test, argc, argv);
+}
 #include "tst_remote_window_transmit.moc"

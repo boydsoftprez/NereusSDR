@@ -126,6 +126,7 @@
 //               implementation via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include <QByteArray>
 #include <QHash>
 #include <QList>
@@ -137,7 +138,7 @@
 
 namespace NereusSDR {
 
-class SliceOwnership : public QObject {
+class NEREUS_CORE_EXPORT SliceOwnership : public QObject {
     Q_OBJECT
 
 public:

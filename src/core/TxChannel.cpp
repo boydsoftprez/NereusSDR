@@ -67,6 +67,9 @@ warren@wpratt.com
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Acknowledge PS3 calibration reset before AutoAtt changes,
+//                 with causal TX status and cancellation drain. J.J. Boyd
+//                 (KG4VCF), with OpenAI Codex assistance.
 //   2026-10-04 - Match the static WDSP API's Windows storage linkage when
 //                 reading TXA internals. J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via OpenAI Codex.
@@ -5821,6 +5824,7 @@ void TxChannel::refreshPsCacheOnLane() const
     next.available = ::GetPSRunCal(m_channelId, &run) != 0;
     if (next.available) {
         ::GetPSInfo(m_channelId, next.info);
+        next.controlSerial = m_psControlAppliedSerial.load();
         ::GetPSHWPeak(m_channelId, &next.hwPeak);
         ::GetPSMaxTX(m_channelId, &next.maxTx);
         next.runCal = run != 0;
@@ -5891,26 +5895,44 @@ void TxChannel::setPSMox(bool mox)
 #endif
 }
 
-void TxChannel::getPSInfo(int* info16)
+bool TxChannel::getPSInfo(int* info16, std::uint64_t* controlSerial)
 {
-    if (info16 == nullptr) return;
+    if (info16 == nullptr) {
+        return false;
+    }
 #ifdef HAVE_WDSP
     if (!readsWdspDirectly()) {
         postRefresh(laneParameter("psStatus"), [this]() { refreshPsCacheOnLane(); });
         std::lock_guard<std::mutex> lock(m_psCacheMutex);
-        if (!m_psCache.available) return;
+        if (!m_psCache.available) {
+            return false;
+        }
         std::copy(std::begin(m_psCache.info), std::end(m_psCache.info), info16);
-        return;
+        if (controlSerial) {
+            *controlSerial = m_psCache.controlSerial;
+        }
+        return true;
     }
-    if (!psAvailable()) return;
+    if (!psAvailable()) {
+        return false;
+    }
     ::GetPSInfo(m_channelId, info16);
+    if (controlSerial) {
+        *controlSerial = m_psControlAppliedSerial.load();
+    }
+    return true;
 #else
     Q_UNUSED(info16);
+    Q_UNUSED(controlSerial);
+    return false;
 #endif
 }
 
 void TxChannel::setPSReset(bool reset)
 {
+    if (reset) {
+        invalidatePsCorrectionSummary();
+    }
 #ifdef HAVE_WDSP
     runOrdered([this, reset]() {
         if (!psAvailable()) return;
@@ -5961,12 +5983,17 @@ void TxChannel::setPSTurnon(bool turnon)
 #endif
 }
 
-void TxChannel::setPSControl(int reset, int mancal, int automode, int turnon)
+std::uint64_t TxChannel::setPSControl(int reset, int mancal, int automode, int turnon)
 {
+    const std::uint64_t serial = ++m_psControlRequestSerial;
+    if (reset != 0) {
+        invalidatePsCorrectionSummary();
+    }
 #ifdef HAVE_WDSP
-    runOrdered([this, reset, mancal, automode, turnon]() {
+    runOrdered([this, reset, mancal, automode, turnon, serial]() {
         if (!psAvailable()) return;
         ::SetPSControl(m_channelId, reset, mancal, automode, turnon);
+        m_psControlAppliedSerial.store(serial);
         refreshPsCacheOnLane();
     });
 #else
@@ -5975,6 +6002,7 @@ void TxChannel::setPSControl(int reset, int mancal, int automode, int turnon)
     Q_UNUSED(automode);
     Q_UNUSED(turnon);
 #endif
+    return serial;
 }
 
 void TxChannel::setPSLoopDelay(double seconds)
@@ -6116,6 +6144,70 @@ std::optional<Ps3Snapshot> TxChannel::getPs3DisplaySnapshot(
     Q_UNUSED(sessionGeneration);
     Q_UNUSED(sequence);
     Q_UNUSED(capturedAtUnixMilliseconds);
+    return std::nullopt;
+#endif
+}
+
+void TxChannel::invalidatePsCorrectionSummary()
+{
+    std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+    ++m_psCorrectionSummaryEpoch;
+    m_psCorrectionSummaryCalibrationValid = false;
+    m_psCorrectionSummaryCache.reset();
+}
+
+void TxChannel::markPsCorrectionSummaryCalibrationValid()
+{
+    std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+    ++m_psCorrectionSummaryEpoch;
+    m_psCorrectionSummaryCalibrationValid = true;
+    m_psCorrectionSummaryCache.reset();
+}
+
+std::optional<Ps3CorrectionSummary> TxChannel::psCorrectionSummary()
+{
+#ifdef HAVE_WDSP
+    std::uint64_t epoch = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+        if (!m_psCorrectionSummaryCalibrationValid) {
+            return std::nullopt;
+        }
+        epoch = m_psCorrectionSummaryEpoch;
+    }
+    const auto captureSummary = [this]() -> std::optional<Ps3CorrectionSummary> {
+        if (!psAvailable()) {
+            return std::nullopt;
+        }
+        const auto snapshot = m_ps3DisplayAdapter.capture(m_channelId, 0, 0, 0);
+        return snapshot ? Ps3DisplayAdapter::correctionSummary(*snapshot) : std::nullopt;
+    };
+    if (!readsWdspDirectly()) {
+        postRefresh(laneParameter("psCorrectionSummary"), [this, epoch, captureSummary]() {
+            {
+                std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+                if (!m_psCorrectionSummaryCalibrationValid
+                    || epoch != m_psCorrectionSummaryEpoch) {
+                    return;
+                }
+            }
+            auto summary = captureSummary();
+            std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+            if (m_psCorrectionSummaryCalibrationValid
+                && epoch == m_psCorrectionSummaryEpoch) {
+                m_psCorrectionSummaryCache = std::move(summary);
+            }
+        });
+        std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+        return m_psCorrectionSummaryCalibrationValid
+            && epoch == m_psCorrectionSummaryEpoch
+            ? m_psCorrectionSummaryCache : std::nullopt;
+    }
+    const auto summary = captureSummary();
+    std::lock_guard<std::mutex> lock(m_displayCacheMutex);
+    return m_psCorrectionSummaryCalibrationValid
+        && epoch == m_psCorrectionSummaryEpoch ? summary : std::nullopt;
+#else
     return std::nullopt;
 #endif
 }
@@ -6471,6 +6563,7 @@ std::optional<std::uint64_t> TxChannel::psRestoreCorr(const QString& filename)
         m_psCache.restore->pending = true;
         m_psCache.restoreAwaiting = true;
     }
+    invalidatePsCorrectionSummary();
     runOrdered([this, utf8]() {
         if (psAvailable()) {
             (void)psRestoreCorrNow(utf8);
@@ -6495,6 +6588,9 @@ std::optional<std::uint64_t> TxChannel::psRestoreCorrNow(const QByteArray& utf8I
     const auto before = psFileOperationStatusNow(Ps3FileOperationKind::Restore);
     const auto other = psFileOperationStatusNow(Ps3FileOperationKind::Save);
     if (!before || !other || before->pending || other->pending) return std::nullopt;
+    // WDSP 2.10 calcc.c:PSRestoreCorrection installs IQC curves without
+    // refreshing GetPSDisp. Never present an earlier fit as restored gain.
+    invalidatePsCorrectionSummary();
     ::PSRestoreCorr(m_channelId, utf8.data());
     const auto after = psFileOperationStatusNow(Ps3FileOperationKind::Restore);
     if (!after) return std::nullopt;

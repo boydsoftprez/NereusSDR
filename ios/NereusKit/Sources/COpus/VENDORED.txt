@@ -1,0 +1,10 @@
+Opus, vendored into NereusSDR for iOS
+
+Commit:   940d4e5af64351ca8ba8390df3f555484c567fbb
+Archive:  https://github.com/xiph/opus/archive/940d4e5af64351ca8ba8390df3f555484c567fbb.zip
+SHA-256:  20e37f9079ac2b80e3235cd8ce2547829e147bf44a2f5dd28a888fa3e9c24341
+Licence:  BSD-3-Clause (see COPYING)
+Files:    202, copied unchanged from the archive
+
+Written by ios/scripts/vendor-sources.sh opus. Do not edit
+these files; change the pin in that script and run it again.

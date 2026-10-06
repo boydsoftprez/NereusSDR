@@ -84,6 +84,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "PttSource.h"
 #include <QObject>
 #include <QVector>
@@ -109,7 +110,7 @@ namespace NereusSDR {
 //   counts; the ARRL formula (equivalent form) is used:
 //     rho = sqrt(refl/fwd);  swr = (1 + rho) / (1 - rho)
 //   clamped to [1.0, 99.0].
-class RadioStatus : public QObject {
+class NEREUS_CORE_EXPORT RadioStatus : public QObject {
     Q_OBJECT
 public:
     explicit RadioStatus(QObject* parent = nullptr);

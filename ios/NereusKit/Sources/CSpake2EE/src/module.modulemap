@@ -1,0 +1,4 @@
+module CSpake2EE {
+    textual header "crypto_spake.h"
+    textual header "pushpop.h"
+}

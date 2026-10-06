@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QDateTime>
 #include <QMetaType>
 #include <QObject>
@@ -39,7 +40,7 @@ struct RxDecode {
 //
 // When the buffer reaches maxSize, the oldest entry is dropped on the
 // next addDecode() call (FIFO eviction via QVector::pop_front()).
-class RxDecodeModel : public QObject {
+class NEREUS_CORE_EXPORT RxDecodeModel : public QObject {
     Q_OBJECT
 public:
     explicit RxDecodeModel(int maxSize = 200, QObject* parent = nullptr);

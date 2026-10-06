@@ -8,7 +8,7 @@ guess the code offline. It is fetched at build time, not vendored, and
 compiled into NereusCore as a static library over libsodium
 (`LIBSODIUM-PROVENANCE.md`). NereusSDR calls it only through
 `src/core/security/SpakeExchange.{h,cpp}`. The iPhone and iPad app (plan
-Task 15) vendors the same commit.
+Task 15b) vendors the same commit (below).
 
 NereusSDR is distributed under GPLv3 (root `LICENSE`). spake2-ee is
 BSD-2-Clause, compatible with GPLv3 and with the App Store build of the
@@ -44,6 +44,18 @@ finds none), so there is no `spake2-ee-notices.txt`.
 archive, unchanged, into the static library `nereus_spake2ee`, linked to
 `nereus_sodium`. Upstream warnings are silenced on this target only.
 
+## In the iPhone and iPad app
+
+`ios/scripts/vendor-sources.sh spake2ee` extracts `src/crypto_spake.c`,
+`src/crypto_spake.h`, `src/pushpop.h` and `LICENSE` of the same archive,
+checked against the same SHA-256, into `ios/NereusKit/Sources/CSpake2EE/`,
+unchanged, and writes `src/module.modulemap`, which marks the two headers
+textual: they use `size_t` and `uint16_t` with no includes of their own,
+so neither compiles alone as a Clang module. Swift reaches
+`crypto_spake.h` through the NereusSDR-original `CSpake2EEShim` target,
+whose header includes `stddef.h` and `sodium.h` first. The app calls it
+only through `ios/NereusKit/Sources/NereusLink/SpakeExchange.swift`.
+
 ## How NereusSDR uses it
 
 The fixed values both ends use (the iPhone app plan's Part C wire values):
@@ -62,5 +74,6 @@ wire is the link document's Pairing section
 2. Update the URL and `URL_HASH` in `cmake/NereusPairing.cmake` and this
    file; compare `LICENSE` with `spake2-ee.txt`.
 3. Rebuild and run `tst_spake_exchange` and `tst_station_pairing`, and the
-   iPhone app's pairing interop test against `nereus_pairing_peer`.
-4. Tell the iPhone session, whose Task 15 vendors the same commit.
+   iPhone app's pairing interop tests (`ios/scripts/interop-test.sh`).
+4. Change the pin in `ios/scripts/vendor-sources.sh`, run it, and run
+   `ios/scripts/interop-test.sh`.

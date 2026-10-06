@@ -1,0 +1,1 @@
+ham radio,amateur radio,SDR,OpenHPSDR,ANAN,Hermes Lite,HL2,transceiver,panadapter,waterfall,remote

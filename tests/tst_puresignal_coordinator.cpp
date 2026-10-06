@@ -48,6 +48,7 @@
 
 #include <QColor>
 #include <QSignalSpy>
+#include <limits>
 
 #include "core/BoardCapabilities.h"
 #include "core/MoxController.h"
@@ -593,6 +594,10 @@ private slots:
         ps.setAutoAttenuate(true);
         ps.setTimersEnabled(false);
         mox.setMox(true);
+        ps.setAutoCalEnabled(true);
+        int initialInfo[16] = {};
+        ps.processNewInfo(initialInfo);
+        ps.processNewInfo(initialInfo);
 
         // Drive into SetNewValues manually: first tick advances Monitor →
         // SetNewValues with deltaDb computed from fbLevel=0 (which yields
@@ -615,6 +620,8 @@ private slots:
         QCOMPARE(static_cast<int>(ps.autoAttenuateState()),
                  static_cast<int>(PureSignal::AutoAttenuateState::SetNewValues));
 
+        info[15] = 0; // Native reset acknowledgement precedes the ATT write.
+        ps.processNewInfo(info, std::numeric_limits<std::uint64_t>::max());
         ps.autoAttentionTick();   // SetNewValues → RestoreOperation
         // After SetNewValues, attOnTxValue is set to oldAtten + deltaDb (no
         // floor clamp on the positive side).  For deltaDb=+2 + oldAtten=10
@@ -651,12 +658,207 @@ private slots:
                  static_cast<int>(PureSignal::AutoAttenuateState::SetNewValues));
     }
 
+    void autoAttentionTick_waitsForResetAndDiscardsDrainedCalibration()
+    {
+        TxChannel tx(kTxChannelId);
+        StepAttenuatorController stepAtt;
+        MoxController mox;
+        PureSignal ps(nullptr, &tx, nullptr, &mox, &stepAtt, nullptr);
+        ps.setTimersEnabled(false);
+        ps.setAutoAttenuate(true);
+        ps.setAutoCalEnabled(true);
+        mox.setMox(true);
+        stepAtt.setAttOnTxValue(31);
+
+        int info[16] = {};
+        ps.processNewInfo(info);
+        ps.processNewInfo(info);
+        info[4] = 29;
+        info[5] = 1;
+        info[7] = 1;
+        info[14] = 1;
+        info[15] = 6; // PS3 starts its next calculation before the host poll.
+        ps.processNewInfo(info);
+        ps.autoAttentionTick();
+
+        // The G2 retest had a roughly two-second calculation. A reset
+        // request does not acknowledge reset while LCALC still owns it.
+        for (int tick = 0; tick < 20; ++tick) {
+            ps.autoAttentionTick();
+            QCOMPARE(stepAtt.attOnTxValue(), 31);
+            QCOMPARE(ps.autoAttenuateState(), PureSignal::AutoAttenuateState::SetNewValues);
+        }
+        info[4] = 30; // The outstanding collection still belongs to 31 dB.
+        info[5] = 2;
+        info[7] = 2;
+        info[14] = 0;
+        info[15] = 0; // WDSP drained that calculation and acknowledged reset.
+        ps.processNewInfo(info);
+        ps.autoAttentionTick(); // A pre-request cache snapshot is not an ack.
+        QCOMPARE(stepAtt.attOnTxValue(), 31);
+        ps.processNewInfo(info, std::numeric_limits<std::uint64_t>::max());
+        ps.autoAttentionTick();
+        QCOMPARE(stepAtt.attOnTxValue(), 17);
+        ps.autoAttentionTick(); // Restore calibration at the new attenuation.
+        for (int tick = 0; tick < 20; ++tick) {
+            ps.autoAttentionTick();
+            QCOMPARE(stepAtt.attOnTxValue(), 17);
+            QCOMPARE(ps.autoAttenuateState(), PureSignal::AutoAttenuateState::Monitor);
+        }
+        info[4] = 152;
+        info[5] = 3;
+        info[7] = 3;
+        info[14] = 1;
+        info[15] = 6;
+        ps.processNewInfo(info);
+        ps.autoAttentionTick();
+        QCOMPARE(stepAtt.attOnTxValue(), 17);
+        QCOMPARE(ps.autoAttenuateState(), PureSignal::AutoAttenuateState::Monitor);
+    }
+
+    void autoAttentionTick_failedExtrapolationDoesNotReuseFeedback()
+    {
+        TxChannel tx(kTxChannelId);
+        StepAttenuatorController stepAtt;
+        MoxController mox;
+        PureSignal ps(nullptr, &tx, nullptr, &mox, &stepAtt, nullptr);
+        ps.setTimersEnabled(false);
+        ps.setAutoAttenuate(true);
+        ps.setAutoCalEnabled(true);
+        mox.setMox(true);
+        stepAtt.setAttOnTxValue(17);
+        int info[16] = {};
+        ps.processNewInfo(info);
+        ps.processNewInfo(info);
+        // Native calc increments attempts before extrapolation; a confidence
+        // failure exits before assigning feedback (calcc.c:1257,1274-1280).
+        info[0] = 1;
+        info[4] = 29; // Retained from a previous collection at 31 dB.
+        info[5] = 1;
+        info[7] = 2;
+        info[15] = 6;
+        ps.processNewInfo(info);
+        ps.autoAttentionTick();
+        QCOMPARE(stepAtt.attOnTxValue(), 17);
+        QCOMPARE(ps.autoAttenuateState(), PureSignal::AutoAttenuateState::Monitor);
+    }
+
+    void autoAttentionTick_unkeyCancelsPendingAttenuationChange()
+    {
+        TxChannel tx(kTxChannelId);
+        StepAttenuatorController stepAtt;
+        MoxController mox;
+        PureSignal ps(nullptr, &tx, nullptr, &mox, &stepAtt, nullptr);
+        ps.setTimersEnabled(false);
+        ps.setAutoAttenuate(true);
+        ps.setAutoCalEnabled(true);
+        mox.setMox(true);
+        stepAtt.setAttOnTxValue(31);
+        int info[16] = {};
+        ps.processNewInfo(info);
+        ps.processNewInfo(info);
+        info[4] = 29;
+        info[5] = 1;
+        info[7] = 1;
+        info[15] = 6;
+        ps.processNewInfo(info);
+        ps.autoAttentionTick();
+        mox.setMox(false);
+        info[15] = 0;
+        ps.processNewInfo(info);
+        ps.autoAttentionTick();
+        QCOMPARE(stepAtt.attOnTxValue(), 31);
+        QCOMPARE(ps.autoAttenuateState(), PureSignal::AutoAttenuateState::Monitor);
+
+        // With no paired pump the old worker can finish during receive.
+        // Its first publication on rekey must not become a fresh ATT input.
+        mox.setMox(true);
+        info[4] = 30;
+        info[5] = 2;
+        info[7] = 2;
+        info[15] = 6;
+        ps.processNewInfo(info, std::numeric_limits<std::uint64_t>::max());
+        ps.autoAttentionTick();
+        QCOMPARE(stepAtt.attOnTxValue(), 31);
+        QCOMPARE(ps.autoAttenuateState(), PureSignal::AutoAttenuateState::Monitor);
+        info[15] = 0;
+        ps.processNewInfo(info); // Old cache reset state cannot release drain.
+        ps.autoAttentionTick();
+        QCOMPARE(stepAtt.attOnTxValue(), 31);
+        ps.processNewInfo(info, std::numeric_limits<std::uint64_t>::max());
+        ps.autoAttentionTick();
+        QCOMPARE(stepAtt.attOnTxValue(), 31);
+        QCOMPARE(ps.autoAttenuateState(), PureSignal::AutoAttenuateState::Monitor);
+        info[4] = 152;
+        info[5] = 3;
+        info[7] = 3;
+        info[15] = 6;
+        ps.processNewInfo(info, std::numeric_limits<std::uint64_t>::max());
+        ps.autoAttentionTick();
+        QCOMPARE(stepAtt.attOnTxValue(), 31);
+    }
+
+    void autoAttentionTick_newIntentRetiresPendingOperation_data()
+    {
+        QTest::addColumn<int>("command");
+        QTest::addColumn<bool>("afterAttWrite");
+        for (int command = 0; command < 6; ++command) {
+            for (bool afterAttWrite : {false, true}) {
+                const QByteArray name = QByteArray::number(command)
+                    + (afterAttWrite ? "-restore" : "-reset-wait");
+                QTest::newRow(name.constData()) << command << afterAttWrite;
+            }
+        }
+    }
+
+    void autoAttentionTick_newIntentRetiresPendingOperation()
+    {
+        QFETCH(int, command);
+        QFETCH(bool, afterAttWrite);
+        TxChannel tx(kTxChannelId);
+        StepAttenuatorController stepAtt;
+        MoxController mox;
+        PureSignal ps(nullptr, &tx, nullptr, &mox, &stepAtt, nullptr);
+        ps.setTimersEnabled(false);
+        ps.setAutoAttenuate(true);
+        ps.setAutoCalEnabled(true);
+        mox.setMox(true);
+        stepAtt.setAttOnTxValue(31);
+        int info[16] = {};
+        ps.processNewInfo(info);
+        ps.processNewInfo(info);
+        info[4] = 29;
+        info[5] = 1;
+        info[7] = 1;
+        info[15] = 6;
+        ps.processNewInfo(info);
+        ps.autoAttentionTick();
+        if (afterAttWrite) {
+            info[15] = 0;
+            ps.processNewInfo(info, std::numeric_limits<std::uint64_t>::max());
+            ps.autoAttentionTick();
+            QCOMPARE(stepAtt.attOnTxValue(), 17);
+        }
+        switch (command) {
+        case 0: mox.setMox(false); break;
+        case 1: ps.setAutoAttenuate(false); break;
+        case 2: ps.setRunCalibrationProcessing(false); break;
+        case 3: ps.setAutoCalEnabled(false); break;
+        case 4: ps.reset(); break;
+        case 5: ps.setTxChannel(nullptr); break;
+        }
+        ps.autoAttentionTick();
+        QCOMPARE(stepAtt.attOnTxValue(), afterAttWrite ? 17 : 31);
+        QCOMPARE(ps.autoAttenuateState(), PureSignal::AutoAttenuateState::Monitor);
+    }
+
     // ── Test 15: late-bound setters wire TxChannel + PsFeedbackChannel ──────
 
     void setTxChannel_lateBindingDoesNotCrash()
     {
-        PureSignal ps(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
         TxChannel tx(kTxChannelId);
+        // The bound channel must outlive its coordinator, including teardown.
+        PureSignal ps(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
         ps.setTxChannel(&tx);
         // After binding, singleCalibrate now routes through tx's setPSControl.
         ps.singleCalibrate();
@@ -939,6 +1141,10 @@ private slots:
         ps.setAutoAttenuate(true);
         ps.setTimersEnabled(false);
         mox.setMox(true);
+        ps.setAutoCalEnabled(true);
+        int initialInfo[16] = {};
+        ps.processNewInfo(initialInfo);
+        ps.processNewInfo(initialInfo);
 
         // Inject feedbackLevel=0 (calcc mid-dropout).  needRecal predicate
         // requires fbLevel>181 OR (fbLevel<=128 && currentAtt > minAtt).
@@ -956,6 +1162,8 @@ private slots:
         QCOMPARE(static_cast<int>(ps.autoAttenuateState()),
                  static_cast<int>(PureSignal::AutoAttenuateState::SetNewValues));
 
+        info[15] = 0; // Native reset acknowledgement precedes the ATT write.
+        ps.processNewInfo(info, std::numeric_limits<std::uint64_t>::max());
         ps.autoAttentionTick();   // SetNewValues → applies newAtten
 
         // HL2 post-fix: -Infinity clamped to -10 → newAtten = 0 + (-10) = -10.
@@ -998,6 +1206,10 @@ private slots:
         ps.setAutoAttenuate(true);
         ps.setTimersEnabled(false);
         mox.setMox(true);
+        ps.setAutoCalEnabled(true);
+        int initialInfo[16] = {};
+        ps.processNewInfo(initialInfo);
+        ps.processNewInfo(initialInfo);
 
         int info[16] = {};
         info[4]  = 300;     // FeedbackLevel > 256 (IsFeedbackLevelOK false)
@@ -1011,6 +1223,8 @@ private slots:
         QCOMPARE(static_cast<int>(ps.autoAttenuateState()),
                  static_cast<int>(PureSignal::AutoAttenuateState::SetNewValues));
 
+        info[15] = 0; // Native reset acknowledgement precedes the ATT write.
+        ps.processNewInfo(info, std::numeric_limits<std::uint64_t>::max());
         ps.autoAttentionTick();   // SetNewValues → applies newAtten
 
         // HL2 post-fix: ddB=10 → newAtten = 0 + 10 = 10.
@@ -1043,6 +1257,10 @@ private slots:
         ps.setAutoAttenuate(true);
         ps.setTimersEnabled(false);
         mox.setMox(true);
+        ps.setAutoCalEnabled(true);
+        int initialInfo[16] = {};
+        ps.processNewInfo(initialInfo);
+        ps.processNewInfo(initialInfo);
 
         int info[16] = {};
         info[4]  = 0;       // FeedbackLevel=0 → log10(0) = -Infinity
@@ -1056,6 +1274,8 @@ private slots:
         QCOMPARE(static_cast<int>(ps.autoAttenuateState()),
                  static_cast<int>(PureSignal::AutoAttenuateState::SetNewValues));
 
+        info[15] = 0; // Native reset acknowledgement precedes the ATT write.
+        ps.processNewInfo(info, std::numeric_limits<std::uint64_t>::max());
         ps.autoAttentionTick();   // SetNewValues — clamps to floor=0
 
         // 5 + (-100) = -95, clamped to legacy floor 0.

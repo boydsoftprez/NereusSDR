@@ -1,0 +1,59 @@
+{
+  "from": "client",
+  "wire": {
+    "type": "command.invoke",
+    "verb": "diversity.setTarget",
+    "id": 1701,
+    "args": [
+      {
+        "ordinal": 0,
+        "name": "enabled",
+        "kind": "bool",
+        "value": true
+      },
+      {
+        "ordinal": 0,
+        "name": "stateRevision",
+        "kind": "i64",
+        "value": 12
+      },
+      {
+        "ordinal": 0,
+        "name": "sourceSliceId",
+        "kind": "i64",
+        "value": 0
+      },
+      {
+        "ordinal": 0,
+        "name": "sourceIncarnation",
+        "kind": "i64",
+        "value": 123
+      },
+      {
+        "ordinal": 0,
+        "name": "sourceControlRevision",
+        "kind": "i64",
+        "value": 4
+      },
+      {
+        "ordinal": 0,
+        "name": "targetSliceId",
+        "kind": "i64",
+        "value": 2
+      },
+      {
+        "ordinal": 0,
+        "name": "targetIncarnation",
+        "kind": "i64",
+        "value": 124
+      },
+      {
+        "ordinal": 0,
+        "name": "targetControlRevision",
+        "kind": "i64",
+        "value": 2
+      }
+    ]
+  },
+  "decodes": true
+}

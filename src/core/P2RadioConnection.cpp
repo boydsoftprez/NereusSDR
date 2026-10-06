@@ -40,6 +40,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04: Report the longest TX wake interval's worker/acquire split.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -522,10 +524,12 @@ void P2RadioConnection::init()
     // [v2.10.3.15]).
     if (!m_socket->bind(QHostAddress::Any, 0)) {
         qCWarning(lcConnection) << "P2: Failed to bind UDP socket";
-        return;
+    } else {
+        applySocketBufferSizes();
     }
 
-    applySocketBufferSizes();
+    // Finish worker initialization even after a failed placeholder bind.
+    // connectToRadio() retries the bind and needs receive wiring and timers.
 
     connect(m_socket, &QUdpSocket::readyRead, this, &P2RadioConnection::onReadyRead);
 
@@ -2990,7 +2994,8 @@ RadioConnection::TxSendStats P2RadioConnection::txSendStats() const
         st.bursts[k].gapMs = msOf(m_txIqBurstGapNs[k].load(std::memory_order_relaxed));
         st.bursts[k].frames = m_txIqBurstFrames[k].load(std::memory_order_relaxed);
     }
-    // The TX pump's longest wait for a microphone block during the key.
+    // The TX pump's longest interval between successful microphone-block
+    // wakes during the key, split at the next semaphore acquire entry.
     if (const TxMicSource* source = m_txMicSourceForStats.load(std::memory_order_acquire)) {
         const TxMicWakeWatch::Stats wake = source->wakeWatch().stats();
         if (wake.longestGapNs >= 0) {
@@ -2999,6 +3004,8 @@ RadioConnection::TxSendStats P2RadioConnection::txSendStats() const
                 ? static_cast<double>(wake.gapStartSteadyNs - st.keySteadyNs) / 1.0e6
                 : 0.0;
             st.wakeGapSequenceStep = wake.sequenceStep;
+            st.wakeGapWorkerMs = msOf(wake.workerBetweenWaitsNs);
+            st.wakeGapAcquireMs = msOf(wake.acquireWaitNs);
         }
     }
     return st;

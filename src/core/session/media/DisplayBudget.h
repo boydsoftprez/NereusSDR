@@ -4,6 +4,11 @@
 //
 // no-port-check: NereusSDR-original accounting of NereusSDR display codecs.
 //
+// Modification history (NereusSDR):
+//   2026-10-04: Pace byte-only display extras with the shared spectrum
+//               budget; retain ordinary spectrum sample validation.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//
 // The constants below are derived from the bounded NSDC and PS3D wire formats;
 // they are not a claim about a radio, link, or host's sustainable capacity.
 //
@@ -146,6 +151,9 @@ public:
 
     bool canSpendSpectrum(quint64 bytes, quint64 samples, qint64 nowNs);
     bool spendSpectrum(quint64 bytes, quint64 samples, qint64 nowNs);
+    /// NSDX scalar/blob sections have no sample plane. Extras debit the same
+    /// global/spectrum byte credit and only their actual peak-hold samples.
+    bool spendDisplayExtras(quint64 bytes, quint64 samples, qint64 nowNs);
     bool canSpendPs3(quint64 bytes, qint64 nowNs);
     bool spendPs3(quint64 bytes, qint64 nowNs);
     bool canSpendIq(quint64 bytes, qint64 nowNs);
@@ -162,6 +170,7 @@ private:
     static void refill(Bucket& bucket, qint64 elapsedNs);
     void accrue(qint64 nowNs);
     bool canSpendSpectrumAfterAccrual(quint64 bytes, quint64 samples) const;
+    bool spendSpectrumAfterAccrual(quint64 bytes, quint64 samples);
     bool canSpendPs3AfterAccrual(quint64 bytes) const;
 
     quint64 m_lastEpoch = 0;

@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Selected RX source identity and RX-only presentation reset by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Resolve remote Max Bin by the slice
 //                 hosted in this window. AI-assisted via OpenAI Codex.
 //   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
@@ -317,6 +319,9 @@ public:
     // No new channel/subscription/WDSP read belongs in this callback. Return
     // kNoMeterReadingDbm for absent slices; setter changes invalidate RX replay.
     void setRxReadingSource(std::function<double(const QJsonObject&, int)> source);
+    // GUI-only resolved identity, independent of stable persisted source JSON.
+    // Shared dispatch and inert preview copies reset RX state before a handoff.
+    void setRxSourceIdentitySource(std::function<QByteArray(const QJsonObject&)> source);
     // Current GUI window identity; explicit foreign sessions cannot consume
     // window-global TX/PA/hardware caches, independent of RX slice availability.
     void setSessionIdSource(std::function<QString()> source);
@@ -495,6 +500,7 @@ private:
     QString globalAvailability(const QJsonObject& context, int binding) const;
     void invalidateReadings(bool rx, bool tx, bool hardware);
     void pollContextReadings();
+    bool synchronizeRxSource(MeterWidget* widget, const QJsonObject& context) const;
     void invalidateTxAudioReadings();
     void rememberPresentation(const MeterWidget* widget);
     QHash<MeterWidget*, QJsonObject> m_targetContexts;
@@ -506,6 +512,7 @@ private:
     QString m_supportIdentity;
     QVector<QMetaObject::Connection> m_supportConnections;
     std::function<double(const QJsonObject&, int)> m_rxReadingSource;
+    std::function<QByteArray(const QJsonObject&)> m_rxSourceIdentitySource;
     std::function<QString()> m_sessionIdSource;
     QString m_cachedSessionId;
     QElapsedTimer m_clock;

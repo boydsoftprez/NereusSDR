@@ -18,11 +18,14 @@
 // Modification history (NereusSDR):
 //   2026-09-26 : Created for parity Task 28 by J.J. Boyd (KG4VCF).
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-04 : Cover first-key pending DSP geometry in both TX analyzers.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include <QtTest>
 
 #include "core/AppSettings.h"
+#include "core/DspControlThread.h"
 #include "core/MoxController.h"
 #include "core/TxAnalyzer.h"
 #include "core/TxDisplayFeed.h"
@@ -32,7 +35,19 @@
 #include "models/SliceModel.h"
 
 #include <QLoggingCategory>
+#include <QScopeGuard>
+#include <QSemaphore>
 #include <QSignalSpy>
+#include <QTemporaryDir>
+
+#ifdef HAVE_WDSP
+// Inspect applied native geometry on the same lane that configures it.
+extern "C" {
+#include "../third_party/wdsp/src/comm.h"
+}
+#undef min
+#undef max
+#endif
 
 using namespace NereusSDR;
 
@@ -42,10 +57,12 @@ constexpr double kDialHz = 14'200'000.0;
 
 struct Station {
     RadioModel radio;
-    TxAnalyzer analyzer{TxAnalyzer::kTxDispId};
+    TxAnalyzer analyzer;
     int sliceId{-1};
 
-    Station()
+    explicit Station(bool analyzerOnLane = false)
+        : analyzer(TxAnalyzer::kTxDispId, nullptr,
+                   analyzerOnLane ? radio.transmitLane() : nullptr)
     {
         radio.setBoardForTest(HPSDRHW::Saturn);
         radio.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
@@ -101,7 +118,101 @@ private slots:
     void planesPassOnlyWhileKeyed();
     void mini_without_tx_channel_stays_unavailable();
     void mini_does_not_attach_to_an_unopened_tx_channel();
+    void first_key_uses_pending_dsp_geometry();
 };
+
+void TstTxDisplayFeed::first_key_uses_pending_dsp_geometry()
+{
+#ifndef HAVE_WDSP
+    QSKIP("Requires the real WDSP channel and transmit control lane");
+#else
+    Station station(true);
+    WdspEngine* engine = station.radio.wdspEngine();
+    QVERIFY(engine);
+    QTemporaryDir wisdom;
+    QVERIFY(wisdom.isValid());
+    engine->setSynchronousInitForTest(true);
+    QVERIFY(engine->initialize(wisdom.path()));
+    TxChannel* channel = engine->createTxChannel(WdspEngine::kTxChannelId,
+                                                 64, 2048, 48000, 96000, 192000);
+    QVERIFY(channel);
+    DspControlThread* lane = station.radio.transmitLane();
+    QVERIFY(lane);
+    QVERIFY(lane->waitIdleForTest(60'000));
+    QCOMPARE(channel->dspBlockFrames(), 2048);
+    station.radio.injectTxChannelForTest(channel);
+
+    // Hold the actual lane so the Phone-size setter has updated its carry
+    // state, but the native-size readback is still the previous value.
+    // This is the first-key ordering from the G2's 2026-10-04 Core journal.
+    QSemaphore entered;
+    QSemaphore release;
+    lane->postBarrier([&entered, &release]() {
+        entered.release();
+        release.acquire();
+    });
+    const auto unblock = qScopeGuard([&]() {
+        release.release();
+        lane->waitIdleForTest(60'000);
+        station.radio.injectTxChannelForTest(nullptr);
+    });
+    QVERIFY(entered.tryAcquire(1, 5'000));
+    channel->setTxDspBufferSizeSamples(64);
+    QCOMPARE(channel->txDspBlockSize(), 64);
+    QCOMPARE(channel->dspBlockFrames(), 2048);
+
+    // Both displays share the pending size change's FIFO lane, as in
+    // nereusd. No mic worker or radio is attached.
+    station.feed()->setLocalMiniDemand(true);
+    QVERIFY(station.key(true));
+    QTRY_VERIFY_WITH_TIMEOUT(station.feed()->isKeyed(), 5'000);
+    QCOMPARE(station.analyzer.currentArgs().bfSz, 64);
+
+    release.release();
+    QVERIFY(lane->waitIdleForTest(60'000));
+    QTRY_VERIFY_WITH_TIMEOUT(station.feed()->miniReady(), 5'000);
+    QVERIFY(lane->waitIdleForTest(60'000));
+    QCOMPARE(channel->dspBlockFrames(), 64);
+
+    struct Geometry {
+        int dsp{-1};
+        int siphon{-1};
+        int mainAnalyzer{-1};
+        int miniAnalyzer{-1};
+    };
+    Geometry geometry;
+    bool received = false;
+    // The request copies the native values while no reconfiguration can
+    // cross it; its completion runs on this test's owner thread.
+    QObject replyContext;
+    lane->request<Geometry>([channel]() {
+        Geometry result;
+        result.dsp = ch[channel->channelId()].dsp_size;
+        if (txa[channel->channelId()].sip1.p) {
+            result.siphon = txa[channel->channelId()].sip1.p->insize;
+        }
+        if (pdisp[TxAnalyzer::kTxDispId]) {
+            result.mainAnalyzer = pdisp[TxAnalyzer::kTxDispId]->buff_size;
+        }
+        if (pdisp[TxAnalyzer::kMiniTxDispId]) {
+            result.miniAnalyzer = pdisp[TxAnalyzer::kMiniTxDispId]->buff_size;
+        }
+        return result;
+    }, &replyContext, [&](Geometry result) {
+        geometry = result;
+        received = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(received, 5'000);
+    QCOMPARE(geometry.dsp, 64);
+    QCOMPARE(geometry.siphon, 64);
+    QCOMPARE(geometry.mainAnalyzer, 64);
+    QCOMPARE(geometry.miniAnalyzer, 64);
+    QVERIFY(station.key(false));
+    QTRY_VERIFY_WITH_TIMEOUT(!station.feed()->isKeyed(), 5'000);
+    station.feed()->setLocalMiniDemand(false);
+    QVERIFY(lane->waitIdleForTest(60'000));
+#endif
+}
 
 void TstTxDisplayFeed::mini_without_tx_channel_stays_unavailable()
 {

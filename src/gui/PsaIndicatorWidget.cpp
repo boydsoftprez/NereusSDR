@@ -12,6 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — User-approved single stacked PureSignal3 / Feedback banner,
+//                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
+//   2026-10-04 — Live Core status and passive numeric correction readouts,
+//                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
+
 //   2026-05-06 — Phase 3M-4 Task 10: created by J.J. Boyd (KG4VCF),
 //                 with AI-assisted transformation via Anthropic Claude
 //                 Code.  See PsaIndicatorWidget.h for the full
@@ -160,23 +165,16 @@ PsaIndicatorWidget::PsaIndicatorWidget(RadioModel* model, QWidget* parent)
     // matches the existing bottom-banner separator gaps so the pair
     // visually nests with m_rxDashboard (left) and m_stationBlock
     // (right).
+    // User-approved replacement: one compact banner with two fixed text lines.
+    // Its 30px text height fits the existing footer's 46px baseline.
     auto* hbox = new QHBoxLayout(this);
     hbox->setContentsMargins(0, 0, 0, 0);
-    hbox->setSpacing(4);
-
-    m_lblFb = new QLabel(this);
-    m_lblFb->setObjectName(QStringLiteral("lblFB"));
-    m_lblFb->setAlignment(Qt::AlignCenter);
-    m_lblFb->setMinimumWidth(64);
-    m_lblFb->setText(tr("Feedback"));
-    hbox->addWidget(m_lblFb);
-
-    m_lblPs = new QLabel(this);
-    m_lblPs->setObjectName(QStringLiteral("lblPS"));
-    m_lblPs->setAlignment(Qt::AlignCenter);
-    m_lblPs->setMinimumWidth(86);
-    m_lblPs->setText(tr("PureSignal 3"));
-    hbox->addWidget(m_lblPs);
+    hbox->setSpacing(0);
+    m_lblPsFeedback = new QLabel(this);
+    m_lblPsFeedback->setObjectName(QStringLiteral("lblPSFeedback"));
+    m_lblPsFeedback->setAlignment(Qt::AlignCenter);
+    m_lblPsFeedback->setFixedWidth(104);
+    hbox->addWidget(m_lblPsFeedback);
 
     setLayout(hbox);
 
@@ -184,51 +182,8 @@ PsaIndicatorWidget::PsaIndicatorWidget(RadioModel* model, QWidget* parent)
     updateDisplay();
     updateTooltip();
 
-    // Phase 3M-4 bench-fix: PureSignal coordinator is constructed
-    // late inside RadioModel's WDSP-init lambda — AFTER PsaIndicator-
-    // Widget is built.  Subscribe to the late-bind seam (RadioModel::
-    // pureSignalCoordinatorReady, added in Task 13 commit 2271f8a) so
-    // we re-wire when the coordinator becomes available.  Mirrors the
-    // PureSignalApplet pattern at PureSignalApplet.cpp:118-123.
-    //
-    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): handle disconnect /
-    // reconnect.  RadioModel emits pureSignalCoordinatorReady(nullptr)
-    // on disconnect (RadioModel.cpp:6800-6801) and a fresh non-null
-    // pointer on each reconnect (RadioModel.cpp:3438).  The original
-    // guard `if (m_pureSignal) { return; }` made m_pureSignal a stale
-    // pointer after disconnect and prevented re-wiring on reconnect —
-    // the badge stayed grey because no autoCalEnabledChanged signal
-    // from the new coordinator reached setPsEnabled.  Bench-confirmed
-    // on G2E PS run at 11:03-11:08 (log line 1278 reconnect was the
-    // failing case; corrApplied=1 in calcc engine, m_psEnabled stuck
-    // at false in the widget).
-    if (m_radioModel) {
-        connect(m_radioModel, &RadioModel::pureSignalCoordinatorReady,
-                this, [this](PureSignal* ps) {
-                    if (!ps) {
-                        // Coordinator torn down — clear stale pointer
-                        // and grey the badge so the next reconnect can
-                        // re-wire cleanly.  The old PureSignal's signal
-                        // connections were auto-disconnected by Qt when
-                        // its unique_ptr destructor ran in RadioModel::
-                        // teardown, so no explicit disconnect needed.
-                        m_pureSignal = nullptr;
-                        m_psEnabled = false;
-                        m_correctionsApplied = false;
-                        m_calChangedSinceLastDraw = false;
-                        updateDisplay();
-                        updateTooltip();
-                        return;
-                    }
-                    // Fresh coordinator: force wireToModel to re-seed
-                    // m_pureSignal + (re)install signal hooks under
-                    // Qt::UniqueConnection against the new instance.
-                    m_pureSignal = nullptr;
-                    wireToModel();
-                    updateDisplay();
-                    updateTooltip();
-                });
-    }
+    // The session facade follows coordinator lifetime and remote status.
+    // It also clears readings on disconnect, without duplicate late bindings.
 }
 
 PsaIndicatorWidget::~PsaIndicatorWidget() = default;
@@ -240,106 +195,47 @@ void PsaIndicatorWidget::wireToModel()
     if (!m_radioModel) {
         return;
     }
-    if (m_radioModel->role() == RadioModel::Role::Remote) {
-        PureSignalSessionFacade* facade = m_radioModel->pureSignalFacade();
-        const auto refresh = [this, facade]() {
-            const Ps3StatusSnapshot status = facade->statusSnapshot();
-            setPsEnabled(facade->available()
-                && m_radioModel->pureSignalSettings()->autoCalEnabled());
-            setMox(status.mox);
-            setInvertRedBlue(AppSettings::instance().value("InvertRedBluePsa", "False") == "True");
-            setHideFeedback(AppSettings::instance().value("HideFeedbackLevel", "False") == "True");
-            const bool changed = status.attemptedCalibrations != m_lastRemoteAttempts;
-            m_lastRemoteAttempts = status.attemptedCalibrations;
-            psInfo(status.feedbackLevel, status.feedbackLevel > 128 && status.feedbackLevel <= 181,
-                   status.correctionsApplied, changed, computeFeedbackColour());
-        };
-        connect(facade, &PureSignalSessionFacade::statusChanged, this, refresh);
-        connect(m_radioModel->pureSignalSettings(), &PureSignalSettings::autoCalEnabledChanged,
-                this, refresh);
-        refresh();
-        return;
-    }
-    m_pureSignal = m_radioModel->pureSignal();
-    if (m_pureSignal) {
-        // Phase 3M-4 bench-fix Round 2: PSAEnabled in Thetis tracks
-        // PSForm.AutoCalEnabled, NOT the master enable.  From console.cs:
-        // 2280-2284 [v2.10.3.13]: `infoBar.PSAEnabled = psform.AutoCalEnabled;`.
-        // Round 1 wired this to enabledChanged which auto-fires true on
-        // ctor (PureSignal.cpp:98 [v2.10.3.13 port]) — that made the badge
-        // visible but at the wrong semantic layer.  The correct seam is
-        // autoCalEnabledChanged so the badge greys out when the user
-        // toggles PS-A off in TxApplet.
-        connect(m_pureSignal, &PureSignal::autoCalEnabledChanged,
-                this, &PsaIndicatorWidget::setPsEnabled,
-                Qt::UniqueConnection);
-
-        // Phase 3M-4 bench-fix Round 2: consolidated PSInfo dispatch.
-        // PureSignal::psInfoChanged fires only when (m_autoCalEnabled &&
-        // HasInfoChanged) per PSForm.cs:614-619 timer1code [v2.10.3.13]
-        // — exactly the gate Thetis uses before calling
-        // console.InfoBarFeedbackLevel.  All five fields arrive atomically,
-        // matching ucInfoBar.PSInfo() (ucInfoBar.cs:808-825 [v2.10.3.13]).
-        connect(m_pureSignal, &PureSignal::psInfoChanged,
-                this, &PsaIndicatorWidget::psInfo,
-                Qt::UniqueConnection);
-
-        // Out-of-band UI mirror state.  invertRedBlueChanged and
-        // hideFeedbackChanged update the badge colours and tooltip text
-        // independent of the polling cadence — keep these as direct
-        // subscriptions.  The previous per-field signals
-        // (correctingChanged / feedbackLevelChanged / calibrationCount-
-        // Changed) were dropped: psInfoChanged carries the same data
-        // atomically and avoids the lossy lambda that ping-ponged
-        // correctingChanged values into the wrong setters.
-        connect(m_pureSignal, &PureSignal::invertRedBlueChanged,
-                this, &PsaIndicatorWidget::setInvertRedBlue,
-                Qt::UniqueConnection);
-        connect(m_pureSignal, &PureSignal::hideFeedbackChanged,
-                this, &PsaIndicatorWidget::setHideFeedback,
-                Qt::UniqueConnection);
-
-        // Seed initial state from the coordinator (covers the case where
-        // the widget is constructed mid-session, e.g. after reconnect).
-        m_psEnabled          = m_pureSignal->isAutoCalEnabled();
-        m_correctionsApplied = m_pureSignal->correctionsBeingApplied();
-        m_feedbackLevel      = m_pureSignal->feedbackLevel();
-        m_invertRedBlue      = m_pureSignal->invertRedBlue();
-        m_hideFeedback       = m_pureSignal->hideFeedback();
-    }
-
-    // MoxController for MOX state.  Routed via hardwareFlipped(bool isTx)
-    // per Thetis OnMoxChangeHandler at ucInfoBar.cs:554-561 [v2.10.3.13].
-    // Phase 3M-4 bench-fix: Qt::UniqueConnection makes wireToModel() safe
-    // to call twice (ctor + pureSignalCoordinatorReady late-bind seam).
-    if (auto* mox = m_radioModel->moxController()) {
-        connect(mox, &MoxController::hardwareFlipped,
-                this, &PsaIndicatorWidget::setMox,
-                Qt::UniqueConnection);
-        m_mox = mox->isMox();
-    }
+    PureSignalSessionFacade* facade = m_radioModel->pureSignalFacade();
+    const auto refresh = [this, facade]() {
+        const Ps3StatusSnapshot status = facade->statusSnapshot();
+        const bool available = facade->available();
+        setPsEnabled(available && (status.psEnabled || status.correctionsApplied
+            || m_radioModel->pureSignalSettings()->autoCalEnabled()));
+        setMox(available && status.mox);
+        setInvertRedBlue(AppSettings::instance().value("InvertRedBluePsa", "False") == "True");
+        setHideFeedback(AppSettings::instance().value("HideFeedbackLevel", "False") == "True");
+        m_calibrationDetail = available
+            ? tr("Calibrations: %1 / %2 attempts").arg(status.successfulCalibrations)
+                .arg(status.attemptedCalibrations) : QString();
+        psInfo(status.feedbackLevel, status.feedbackLevel > 128 && status.feedbackLevel <= 181,
+               status.correctionsApplied, false, computeFeedbackColour());
+    };
+    connect(facade, &PureSignalSessionFacade::statusChanged, this, refresh);
+    connect(m_radioModel->pureSignalSettings(), &PureSignalSettings::autoCalEnabledChanged,
+            this, refresh);
+    refresh();
 }
 
 // ── Test accessors ────────────────────────────────────────────────────────
 
 QString PsaIndicatorWidget::fbText() const
 {
-    return m_lblFb ? m_lblFb->text() : QString();
+    return m_feedbackText;
 }
 
 QString PsaIndicatorWidget::psText() const
 {
-    return m_lblPs ? m_lblPs->text() : QString();
+    return tr("PureSignal3");
 }
 
 QColor PsaIndicatorWidget::fbBackgroundColor() const
 {
-    return m_lblFb ? m_lblFb->palette().color(QPalette::Window) : QColor();
+    return m_lblPsFeedback ? m_lblPsFeedback->palette().color(QPalette::Window) : QColor();
 }
 
 QColor PsaIndicatorWidget::psBackgroundColor() const
 {
-    return m_lblPs ? m_lblPs->palette().color(QPalette::Window) : QColor();
+    return m_lblPsFeedback ? m_lblPsFeedback->palette().color(QPalette::Window) : QColor();
 }
 
 // ── State setters ─────────────────────────────────────────────────────────
@@ -358,7 +254,7 @@ void PsaIndicatorWidget::setPsEnabled(bool on)
         // _bFeedbackLevelOk.  m_correcting was a NereusSDR-only field
         // dropped in Round 2.
         m_correctionsApplied      = false;
-        m_calChangedSinceLastDraw = false;
+        m_hasFeedbackReading = false;
     }
     updateDisplay();
 }
@@ -373,7 +269,7 @@ void PsaIndicatorWidget::setMox(bool on)
     //   if (!_mox) setPSboolsToFalse();
     if (!m_mox) {
         m_correctionsApplied      = false;
-        m_calChangedSinceLastDraw = false;
+        m_hasFeedbackReading = false;
     }
     updateDisplay();
 }
@@ -389,17 +285,9 @@ void PsaIndicatorWidget::setCorrectionsBeingApplied(bool on)
 
 void PsaIndicatorWidget::setFeedbackLevel(int level)
 {
-    // Phase 3M-4 bench-fix Round 2: setFeedbackLevel only stores the
-    // numeric value and refreshes the colour through computeFeedbackColour().
-    // The FB label "Feedback" → numeric flip is now driven exclusively by
-    // psInfo()'s calibrationAttemptsChanged path (matches Thetis
-    // ucInfoBar.cs:812-823 [v2.10.3.13] PSInfo body — _bCalibration-
-    // AttemptsChanged is set per-call from a parameter, not bumped from
-    // level changes).
-    if (level == m_feedbackLevel) {
-        return;
-    }
+    // Direct numeric setter and Core reports both establish a fresh reading.
     m_feedbackLevel = level;
+    m_hasFeedbackReading = m_psEnabled && m_mox;
     updateDisplay();
 }
 
@@ -408,50 +296,16 @@ void PsaIndicatorWidget::psInfo(int level, bool feedbackLevelOk,
                                  bool calibrationAttemptsChanged,
                                  const QColor& feedbackColour)
 {
-    // From Thetis ucInfoBar.cs:808-825 PSInfo() [v2.10.3.13]:
-    //   public void PSInfo(int level, bool bFeedbackLevelOk,
-    //                      bool bCorrectionsBeingApplied,
-    //                      bool bCalibrationAttemptsChanged,
-    //                      Color feedbackColour)
-    //   {
-    //       if (_shutDown) return;
-    //       _bCalibrationAttemptsChanged = bCalibrationAttemptsChanged;
-    //       if (_bCalibrationAttemptsChanged && _mox) {
-    //           _nFeedbackLevel = level;
-    //           _feedbackColour = feedbackColour;
-    //           _bCorrectionsBeingApplied = bCorrectionsBeingApplied;
-    //           _bFeedbackLevelOk = bFeedbackLevelOk;
-    //           updatePSDisplay();
-    //           _psTimer.Start();
-    //       }
-    //   }
-    //
-    // Two parameters Thetis stores but updatePSDisplay() does not read:
-    //   - _bFeedbackLevelOk: kept for API parity, no widget effect.
-    //   - _feedbackColour:  Thetis's updatePSDisplay applies this
-    //     directly to lblFB.BackColor.  NereusSDR derives the colour
-    //     locally via computeFeedbackColour() from m_feedbackLevel +
-    //     m_invertRedBlue and the two agree by construction (the
-    //     coordinator emits the colour computed from its own
-    //     m_invertRedBlue, and the widget subscribes to
-    //     invertRedBlueChanged so they stay synchronised).  Accepting
-    //     the parameter for byte-for-byte signature parity.
-    //
-    // The fade timer (_psTimer) that gradually dims lblFB.BackColor
-    // between PSInfo() calls is intentionally deferred — colour stays
-    // sticky until the next psInfo() with calChanged=true OR a state
-    // change (setMox / setPsEnabled).  Track as a UX follow-up if bench
-    // shows the fade is needed.
+    // NereusSDR live status intentionally differs from Thetis's attempt
+    // pulse (ucInfoBar.cs:808-825 [v2.10.3.15]): a collection stall must
+    // still update feedback and applied-correction status on every report.
     Q_UNUSED(feedbackLevelOk);
     Q_UNUSED(feedbackColour);
-
-    m_calChangedSinceLastDraw = calibrationAttemptsChanged;
-
-    if (m_calChangedSinceLastDraw && m_mox) {
-        m_feedbackLevel      = level;
-        m_correctionsApplied = correctionsApplied;
-        updateDisplay();
-    }
+    Q_UNUSED(calibrationAttemptsChanged);
+    m_feedbackLevel = level;
+    m_correctionsApplied = correctionsApplied;
+    m_hasFeedbackReading = m_psEnabled && m_mox;
+    updateDisplay();
 }
 
 void PsaIndicatorWidget::setInvertRedBlue(bool on)
@@ -487,40 +341,40 @@ void PsaIndicatorWidget::setUseSmallFonts(bool on)
 
 void PsaIndicatorWidget::simulateLeftClickOnFb()
 {
-    if (!m_lblFb) { return; }
+    if (!m_lblPsFeedback) { return; }
     QMouseEvent ev(QEvent::MouseButtonPress,
-                   m_lblFb->geometry().center(),
-                   m_lblFb->mapToGlobal(m_lblFb->geometry().center()),
+                   m_lblPsFeedback->geometry().center(),
+                   m_lblPsFeedback->mapToGlobal(m_lblPsFeedback->geometry().center()),
                    Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
     mousePressEvent(&ev);
 }
 
 void PsaIndicatorWidget::simulateRightClickOnFb()
 {
-    if (!m_lblFb) { return; }
+    if (!m_lblPsFeedback) { return; }
     QMouseEvent ev(QEvent::MouseButtonPress,
-                   m_lblFb->geometry().center(),
-                   m_lblFb->mapToGlobal(m_lblFb->geometry().center()),
+                   m_lblPsFeedback->geometry().center(),
+                   m_lblPsFeedback->mapToGlobal(m_lblPsFeedback->geometry().center()),
                    Qt::RightButton, Qt::RightButton, Qt::NoModifier);
     mousePressEvent(&ev);
 }
 
 void PsaIndicatorWidget::simulateLeftClickOnPs()
 {
-    if (!m_lblPs) { return; }
+    if (!m_lblPsFeedback) { return; }
     QMouseEvent ev(QEvent::MouseButtonPress,
-                   m_lblPs->geometry().center(),
-                   m_lblPs->mapToGlobal(m_lblPs->geometry().center()),
+                   m_lblPsFeedback->geometry().center(),
+                   m_lblPsFeedback->mapToGlobal(m_lblPsFeedback->geometry().center()),
                    Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
     mousePressEvent(&ev);
 }
 
 void PsaIndicatorWidget::simulateRightClickOnPs()
 {
-    if (!m_lblPs) { return; }
+    if (!m_lblPsFeedback) { return; }
     QMouseEvent ev(QEvent::MouseButtonPress,
-                   m_lblPs->geometry().center(),
-                   m_lblPs->mapToGlobal(m_lblPs->geometry().center()),
+                   m_lblPsFeedback->geometry().center(),
+                   m_lblPsFeedback->mapToGlobal(m_lblPsFeedback->geometry().center()),
                    Qt::RightButton, Qt::RightButton, Qt::NoModifier);
     mousePressEvent(&ev);
 }
@@ -529,22 +383,8 @@ void PsaIndicatorWidget::simulateRightClickOnPs()
 
 void PsaIndicatorWidget::mousePressEvent(QMouseEvent* event)
 {
-    // From Thetis ucInfoBar.cs:1042-1054 lblFB_MouseDown [v2.10.3.13]:
-    //   if (e.Button == MouseButtons.Left)
-    //       SwapRedBlue = !puresignal.InvertRedBlue;
-    //   else if (e.Button == MouseButtons.Right)
-    //       HideFeedback = !HideFeedback;
-    //
-    // The PS label is intentionally passive — Thetis registers no
-    // lblPS_MouseDown handler.  Clicks on PS fall through to base
-    // class.
-    if (m_lblFb && m_lblFb->geometry().contains(event->pos())) {
-        if (event->button() == Qt::LeftButton) {
-            emit invertRedBlueRequested();
-        } else if (event->button() == Qt::RightButton) {
-            emit hideFeedbackToggleRequested();
-        }
-    }
+    // NereusSDR operator request: a feedback readout must never mutate
+    // the color legend or visibility preference when clicked.
     QWidget::mousePressEvent(event);
 }
 
@@ -552,10 +392,6 @@ void PsaIndicatorWidget::mousePressEvent(QMouseEvent* event)
 
 void PsaIndicatorWidget::updateDisplay()
 {
-    if (!m_lblFb || !m_lblPs) {
-        return;
-    }
-
     // From Thetis ucInfoBar.cs:839-899 updatePSDisplay() [v2.10.3.13]:
     //   if (!_psEnabled) {
     //       lblFB.BackColor = DimGray; lblPS.BackColor = DimGray;
@@ -582,15 +418,6 @@ void PsaIndicatorWidget::updateDisplay()
     //       lblFB.Text = _useSmallFonts ? "FB" : "Feedback";
     //       lblPS.Text = "Pure Signal2";
     //   }
-    if (!m_psEnabled) {
-        applyBackground(m_lblFb, kDimGray());
-        applyBackground(m_lblPs, kDimGray());
-        m_lblFb->setText(m_useSmallFonts ? tr("FB") : tr("Feedback"));
-        m_lblPs->setText(tr("PureSignal 3"));
-        return;
-    }
-
-    if (m_mox) {
         // From Thetis ucInfoBar.cs:856-865 updatePSDisplay [v2.10.3.13]:
         //   if (_bCorrectionsBeingApplied) {
         //       lblPS.Text = _useSmallFonts ? "Correct" : "Correcting";
@@ -607,28 +434,23 @@ void PsaIndicatorWidget::updateDisplay()
         // PSForm.cs:1106-1108 [v2.10.3.13], but that property is consumed
         // by PSForm.timer1code's PSInfo CO indicator at PSForm.cs:577-585
         // — NOT by ucInfoBar.PSInfo).
-        if (m_correctionsApplied) {
-            m_lblPs->setText(m_useSmallFonts ? tr("Correct")
-                                             : tr("Correcting"));
-            applyBackground(m_lblPs, kLime());
-        } else {
-            m_lblPs->setText(tr("PureSignal 3"));
-            applyBackground(m_lblPs, kSeaGreen());
-        }
-
-        applyBackground(m_lblFb, computeFeedbackColour());
-
-        if (m_hideFeedback || !m_calChangedSinceLastDraw) {
-            m_lblFb->setText(m_useSmallFonts ? tr("FB") : tr("Feedback"));
-        } else {
-            m_lblFb->setText(QString::number(m_feedbackLevel));
-        }
-    } else {
-        applyBackground(m_lblFb, kSeaGreen());
-        applyBackground(m_lblPs, kSeaGreen());
-        m_lblFb->setText(m_useSmallFonts ? tr("FB") : tr("Feedback"));
-        m_lblPs->setText(tr("PureSignal 3"));
+        // Operator-requested passive numeric status supersedes the legacy
+        // click-to-hide preference. FeedbackLevel is the raw WDSP reading.
+    if (!m_lblPsFeedback) {
+        return;
     }
+    // The source state/color map above is retained for provenance. The approved
+    // consolidated banner uses the feedback color for both lines during TX;
+    // correction status belongs in its tooltip rather than replacing the title.
+    const bool feedbackAvailable = m_psEnabled && m_mox && m_hasFeedbackReading;
+    const QColor background = !m_psEnabled ? kDimGray()
+        : !m_mox ? kSeaGreen()
+        : feedbackAvailable ? computeFeedbackColour() : kDimGray();
+    m_feedbackText = feedbackAvailable
+        ? tr("Feedback %1").arg(m_feedbackLevel) : tr("Feedback —");
+    m_lblPsFeedback->setText(psText() + QStringLiteral("\n") + m_feedbackText);
+    applyBackground(m_lblPsFeedback, background);
+    updateTooltip();
 }
 
 QColor PsaIndicatorWidget::computeFeedbackColour() const
@@ -658,7 +480,7 @@ QColor PsaIndicatorWidget::computeFeedbackColour() const
 
 void PsaIndicatorWidget::updateTooltip()
 {
-    if (!m_lblFb) {
+    if (!m_lblPsFeedback) {
         return;
     }
     // From Thetis ucInfoBar.cs:1081-1096 setToolTips() [v2.10.3.13]:
@@ -674,7 +496,13 @@ void PsaIndicatorWidget::updateTooltip()
     QString legend = m_invertRedBlue
         ? tr("Blue 0-90, Yellow 91-128, Green 129-181, Red 182+")
         : tr("Red 0-90, Yellow 91-128, Green 129-181, Blue 182+");
-    m_lblFb->setToolTip(prefix + legend);
+    const QString correction = m_psEnabled && m_correctionsApplied
+        ? tr("Correction: Applied") : tr("Correction: Off");
+    QString tooltip = prefix + legend + QStringLiteral("\n") + correction;
+    if (!m_calibrationDetail.isEmpty()) {
+        tooltip += QStringLiteral("\n") + m_calibrationDetail;
+    }
+    m_lblPsFeedback->setToolTip(tooltip);
 }
 
 void PsaIndicatorWidget::applyBackground(QLabel* label, const QColor& bg)

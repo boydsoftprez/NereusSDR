@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QString>
 
@@ -41,7 +42,7 @@ enum class PaTempUnit {
 //
 // The singleton is created lazily on first instance() call and lives
 // for the application lifetime (via Q_GLOBAL_STATIC).
-class PaTempUnitNotifier : public QObject {
+class NEREUS_CORE_EXPORT PaTempUnitNotifier : public QObject {
     Q_OBJECT
 
 public:

@@ -1,0 +1,11 @@
+spake2-ee, vendored into NereusSDR for iOS
+
+Commit:   fd3ea61f27a75ff63b0f192c9e619b5a494d048e
+Archive:  https://codeload.github.com/jedisct1/spake2-ee/tar.gz/fd3ea61f27a75ff63b0f192c9e619b5a494d048e
+SHA-256:  20d63587c1191b952e98b9a4d8bd557c8a6c4f6bfbac0b9fb77b28854c244bb6
+Licence:  BSD-2-Clause (see LICENSE)
+Files:    4, copied unchanged from the archive
+          and src/module.modulemap, written by the script
+
+Written by ios/scripts/vendor-sources.sh spake2ee. Do not edit
+these files; change the pin in that script and run it again.

@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-04 — Selected RX source identity and RX-only presentation reset by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-02 — Native complete faces by J.J. Boyd (KG4VCF), with AI-assisted
@@ -124,6 +126,17 @@ void BarPresetItem::setBindingUnavailable(int binding, const QString& reason) {
 }
 bool BarPresetItem::advanceMeter(qint64 time) { const bool primary=m_primary.advance(time); const bool average=m_average.advance(time); return primary || average; }
 void BarPresetItem::resetForTxTransition(bool inTx) { Q_UNUSED(inTx); m_primary.reset(m_minimum); m_average.reset(m_minimum); }
+void BarPresetItem::resetRxSource()
+{
+    if (hasMmioBinding()) { return; }
+    if (bindingId() >= MeterBinding::SignalPeak && bindingId() <= MeterBinding::PbSnr) {
+        m_primary.reset(m_minimum);
+        m_value = kNoMeterReadingDbm;
+    }
+    if (m_secondary >= MeterBinding::SignalPeak && m_secondary <= MeterBinding::PbSnr) {
+        m_average.reset(m_minimum);
+    }
+}
 double BarPresetItem::calibratedPosition(double value) const {
     // From Thetis MeterManager.cs:24351-24353,24673-24675 [v2.10.3.15]
     if(m_flavor!="Custom") {

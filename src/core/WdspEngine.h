@@ -127,6 +127,7 @@ warren@wpratt.com
 
 */
 
+#include "core/NereusCoreExport.h"
 #include "dsp/ChannelConfig.h"
 
 #include <QObject>
@@ -224,7 +225,7 @@ class RadeChannel;
 //
 // Ported from Thetis cmaster.cs:491 (CMCreateCMaster) and
 // cmaster.c:32-93 (create_rcvr).
-class WdspEngine : public QObject {
+class NEREUS_CORE_EXPORT WdspEngine : public QObject {
     Q_OBJECT
 
     Q_PROPERTY(bool initialized READ isInitialized NOTIFY initializedChanged)

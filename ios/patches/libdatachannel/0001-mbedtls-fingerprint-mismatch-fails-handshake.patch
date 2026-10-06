@@ -1,0 +1,59 @@
+libdatachannel v0.24.5: under Mbed TLS, a DTLS fingerprint mismatch fails the handshake
+
+NereusSDR for iOS patch, applied by ios/scripts/vendor-sources.sh libdatachannel
+after it copies the pinned archive's files. MPL-2.0, like the file it changes;
+the modified src/impl/dtlstransport.cpp is published with NereusSDR's source.
+
+With Mbed TLS, DtlsTransport::CertificateCallback returned 1 when the peer's
+certificate did not match the fingerprint in the remote description. Mbed TLS
+passes a verify callback's nonzero return back from mbedtls_ssl_handshake, and a
+positive value passed rtc::impl::mbedtls::check as success, so the handshake was
+reported finished and the transport went to Connected. Media sessions still
+failed afterwards (no keys were exported for SRTP), but a data-channel-only peer
+would have opened its channels to a peer whose certificate did not match.
+
+Following Mbed TLS's verify-callback convention (return 0 and set *flags, or
+return a negative MBEDTLS_ERR_X509_* for a fatal error; the transport uses
+MBEDTLS_SSL_VERIFY_OPTIONAL, under which flags alone are ignored), the callback
+now sets MBEDTLS_X509_BADCERT_NOT_TRUSTED and returns
+MBEDTLS_ERR_X509_CERT_VERIFY_FAILED, which Mbed TLS reports as a fatal error,
+and the handshake loop treats any positive return as a failure.
+
+Upstream master (checked 2026-09-24) still returns 1 here.
+
+--- a/src/impl/dtlstransport.cpp
++++ b/src/impl/dtlstransport.cpp
+@@ -550,6 +550,12 @@
+ 					                                });
+ 					return;
+ 				}
++
++				// A handshake step returns 0 on success and a negative code on error; any
++				// positive value is an error passed through from a callback, never success
++				if (ret > 0)
++					throw std::runtime_error("Handshake failed: unexpected return value " +
++					                         std::to_string(ret));
+ 
+ 				if (mbedtls::check(ret, "Handshake failed")) {
+ 					// RFC 8261: DTLS MUST support sending messages larger than the current path MTU
+@@ -610,12 +616,18 @@
+ }
+ 
+ int DtlsTransport::CertificateCallback(void *ctx, mbedtls_x509_crt *crt, int /*depth*/,
+-                                       uint32_t * /*flags*/) {
++                                       uint32_t *flags) {
+ 	auto this_ = static_cast<DtlsTransport *>(ctx);
+ 	string fingerprint = make_fingerprint(crt, this_->mFingerprintAlgorithm);
+ 	std::transform(fingerprint.begin(), fingerprint.end(), fingerprint.begin(),
+ 	               [](char c) { return char(std::toupper(c)); });
+-	return this_->mVerifierCallback(fingerprint) ? 0 : 1;
++	if (this_->mVerifierCallback(fingerprint))
++		return 0;
++
++	// The authmode is MBEDTLS_SSL_VERIFY_OPTIONAL, under which flags alone are ignored, so the
++	// mismatch is reported as a fatal verification error, which aborts the handshake
++	*flags |= MBEDTLS_X509_BADCERT_NOT_TRUSTED;
++	return MBEDTLS_ERR_X509_CERT_VERIFY_FAILED;
+ }
+ 
+ void DtlsTransport::ExportKeysCallback(void *ctx, mbedtls_ssl_key_export_type /*type*/,

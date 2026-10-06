@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QNetworkAccessManager>
 #include <QTimer>
@@ -48,7 +49,7 @@ namespace NereusSDR {
 // POTA (Parks on the Air) spot client - polls
 // https://api.pota.app/spot/activator every 30 seconds for active
 // activations. Emits spotReceived() for each new spot.
-class PotaClient : public QObject {
+class NEREUS_CORE_EXPORT PotaClient : public QObject {
     Q_OBJECT
 
 public:

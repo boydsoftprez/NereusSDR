@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Selected RX source identity and RX-only presentation reset by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Invalidate handled interaction layers by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -332,6 +334,11 @@ void MeterWidget::invalidateReadingLayers(bool staticLayers)
 #endif
 }
 
+void MeterWidget::invalidateGeometry()
+{
+    invalidateReadingLayers(true);
+}
+
 void MeterWidget::advanceMeters(qint64 monotonicMs)
 {
     for (MeterItem* item : m_items) {
@@ -354,6 +361,17 @@ void MeterWidget::resetForTxTransition(bool inTx)
 void MeterWidget::clearReadingCache()
 {
     m_lastBindingValue.clear();
+}
+
+void MeterWidget::resetRxSource()
+{
+    for (int binding = MeterBinding::SignalPeak; binding <= MeterBinding::PbSnr; ++binding) {
+        m_lastBindingValue.remove(binding);
+    }
+    for (MeterItem* item : m_items) {
+        if (!item->hasMmioBinding()) { item->resetRxSource(); }
+    }
+    invalidateReadingLayers(true);
 }
 
 void MeterWidget::setUnitMode(MeterItem::MeterUnit unit)

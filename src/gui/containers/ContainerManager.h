@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Track pending container placement by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
@@ -66,6 +68,7 @@ mw0lge@grange-lane.co.uk
 #include <QSize>
 #include <QPointer>
 #include <QTimer>
+#include <QSet>
 #include "ContainerDocument.h"
 
 #include <functional>
@@ -199,6 +202,8 @@ private:
     bool effectiveVisible(const ContainerDocument& document) const;
     QString m_storageError;
     QTimer m_geometryCommit;
+    QSet<QString> m_pendingGeometry;
+    QMap<QString, QRect> m_documentGeometry;
     void setMeterFloating(ContainerWidget* container, FloatingContainer* form);
     void returnMeterFromFloating(ContainerWidget* container, FloatingContainer* form);
     void wireContainer(ContainerWidget* container);

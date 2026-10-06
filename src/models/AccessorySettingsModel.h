@@ -28,6 +28,7 @@
 //                                    via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include <QByteArray>
 #include <QObject>
 #include <QString>
@@ -35,7 +36,7 @@
 
 namespace NereusSDR {
 
-class AccessorySettingsModel : public QObject {
+class NEREUS_CORE_EXPORT AccessorySettingsModel : public QObject {
     Q_OBJECT
 
     // The Power Genius. The answer text and its acceptance come before the

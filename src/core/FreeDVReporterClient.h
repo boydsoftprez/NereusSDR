@@ -101,6 +101,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QHash>
 #include <QString>
@@ -135,7 +136,7 @@ namespace NereusSDR {
 //     freedv-gui never produces spots; this is NereusSDR's
 //     architectural decision per the Phase 3J-2 design doc Section 4
 //     Flow 2.
-class FreeDVReporterClient : public QObject {
+class NEREUS_CORE_EXPORT FreeDVReporterClient : public QObject {
     Q_OBJECT
 
 public:

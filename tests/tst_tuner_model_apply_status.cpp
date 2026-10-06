@@ -16,6 +16,7 @@
 // =================================================================
 
 #include <QtTest/QtTest>
+#include "core/TgxlConnection.h"
 #include "models/TunerModel.h"
 
 class TunerModelApplyStatusTest : public QObject {
@@ -23,6 +24,11 @@ class TunerModelApplyStatusTest : public QObject {
 private slots:
     void appliesRelayValues();
     void appliesOperateAndBypass();
+    void appliesCapturedNativeModes_data();
+    void appliesCapturedNativeModes();
+    void nativeStateTakesPrecedenceOverOperateAlias();
+    void directStateAndStatusFramesUpdateMode();
+    void modeCommandsMatchCapturedDesktopCommands();
     void appliesAntennaSwitchModel();
     void appliesMeters();
     void emitsPresenceOnFirstStatus();
@@ -49,6 +55,94 @@ void TunerModelApplyStatusTest::appliesOperateAndBypass() {
 
     m.applyStatus({{"bypass","1"}});
     QVERIFY(m.isBypass());
+}
+
+// Wire expectations come from tgxl-mode-buttons-20261004-215217.pcapng,
+// frames 1006, 1103, 1304 and 1361; see docs/protocols/tgxl-mode-control.md.
+void TunerModelApplyStatusTest::appliesCapturedNativeModes_data()
+{
+    QTest::addColumn<QString>("state");
+    QTest::addColumn<QString>("bypass");
+    QTest::addColumn<bool>("operate");
+    QTest::addColumn<bool>("bypassed");
+    QTest::newRow("operate") << QStringLiteral("1") << QStringLiteral("0") << true << false;
+    QTest::newRow("bypass") << QStringLiteral("1") << QStringLiteral("1") << true << true;
+    QTest::newRow("standby") << QStringLiteral("0") << QStringLiteral("0") << false << false;
+}
+
+void TunerModelApplyStatusTest::appliesCapturedNativeModes()
+{
+    QFETCH(QString, state);
+    QFETCH(QString, bypass);
+    QFETCH(bool, operate);
+    QFETCH(bool, bypassed);
+    NereusSDR::TunerModel model;
+    model.applyStatus({{"operate", operate ? "0" : "1"}});
+    QSignalSpy changed(&model, &NereusSDR::TunerModel::stateChanged);
+
+    model.applyStatus({{"state", state}, {"bypass", bypass}});
+
+    QCOMPARE(model.isOperate(), operate);
+    QCOMPARE(model.isBypass(), bypassed);
+    QCOMPARE(changed.count(), 1);
+    model.applyStatus({{"state", state}, {"bypass", bypass}});
+    QCOMPARE(changed.count(), 1);
+}
+
+void TunerModelApplyStatusTest::nativeStateTakesPrecedenceOverOperateAlias()
+{
+    NereusSDR::TunerModel model;
+    model.applyStatus({{"state", "1"}, {"operate", "0"}});
+    QVERIFY(model.isOperate());
+    model.applyStatus({{"state", "0"}, {"operate", "1"}});
+    QVERIFY(!model.isOperate());
+    // Unobserved native values are not guessed into an operating mode.
+    model.applyStatus({{"operate", "1"}});
+    model.applyStatus({{"state", "2"}});
+    QVERIFY(model.isOperate());
+}
+
+void TunerModelApplyStatusTest::directStateAndStatusFramesUpdateMode()
+{
+    NereusSDR::TgxlConnection connection;
+    NereusSDR::TunerModel model;
+    model.bindConnection(&connection);
+    connection.injectLineForTesting(QStringLiteral("V1.2.17"));
+    connection.injectLineForTesting(QStringLiteral("S0|state state=1 bypass=1 tuning=0"));
+    QVERIFY(model.isOperate());
+    QVERIFY(model.isBypass());
+    connection.injectLineForTesting(QStringLiteral("S965|status state=0 bypass=0 tuning=0"));
+    QVERIFY(!model.isOperate());
+    QVERIFY(!model.isBypass());
+    connection.injectLineForTesting(QStringLiteral("S0|state state=1 bypass=0 tuning=0"));
+    QVERIFY(model.isOperate());
+    QVERIFY(!model.isBypass());
+}
+
+void TunerModelApplyStatusTest::modeCommandsMatchCapturedDesktopCommands()
+{
+    NereusSDR::TgxlConnection connection;
+    NereusSDR::TunerModel model;
+    model.bindConnection(&connection);
+    connection.injectLineForTesting(QStringLiteral("V1.2.17"));
+    QSignalSpy frames(&connection, &NereusSDR::TgxlConnection::testFrameWrittenForTesting);
+
+    model.setBypass(true);
+    model.setBypass(false);
+    model.setOperate(false);
+    model.setOperate(true);
+
+    QStringList commands;
+    for (const QList<QVariant>& row : frames) {
+        commands.append(row.first().toString().section(QLatin1Char('|'), 1));
+    }
+    QCOMPARE(commands, (QStringList{QStringLiteral("bypass set=1"),
+                                   QStringLiteral("bypass set=0"),
+                                   QStringLiteral("operate set=0"),
+                                   QStringLiteral("operate set=1")}));
+    // Sending a request cannot claim the hardware already changed mode.
+    QVERIFY(!model.isOperate());
+    QVERIFY(!model.isBypass());
 }
 
 void TunerModelApplyStatusTest::appliesAntennaSwitchModel() {

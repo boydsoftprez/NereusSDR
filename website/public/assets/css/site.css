@@ -2576,6 +2576,12 @@ html:not(.js) .tabs {
 }
 .mobile__features h3, .core__cards h4 { font-size: 1.35rem; margin-bottom: 0.75rem; }
 .mobile__features p { color: var(--text-2); font-size: 0.98rem; }
+.network-note { margin-top: 2rem; padding: 1.5rem; border-left: 2px solid var(--accent); background: var(--app-bg); }
+.network-note h3 { font-size: 1.35rem; margin-bottom: 0.75rem; }
+.network-note p { color: var(--text-2); }
+.network-note p:last-child { margin-bottom: 0; }
+.guide-links { list-style: none; padding: 0; margin: 1rem 0 0; }
+.guide-links li + li { margin-top: 0.65rem; }
 .screens { max-width: 920px; margin-inline: auto; gap: 2rem; }
 .screen { min-width: 0; margin: 0; }
 .screen > a { display: block; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--inset); }
@@ -2625,4 +2631,71 @@ html:not(.js) .tabs {
   .station-path { grid-template-columns: minmax(0, 1fr); }
   .station-path li + li { border-left: 0; border-top: 1px solid var(--border); }
   .station-path li:not(:last-child)::after { content: '↓'; right: auto; left: 50%; top: auto; bottom: -1.15rem; transform: translateX(-50%); }
+}
+
+/* ---------- Document pages (the iPhone app's privacy and source pages) ---------- */
+
+.doc {
+  max-width: 46rem;
+}
+
+.doc h1 {
+  font-size: clamp(2.2rem, 5vw, 3.4rem);
+  font-weight: 400;
+  font-stretch: 104%;
+  letter-spacing: -0.01em;
+  margin-bottom: 1.1rem;
+}
+
+.doc h1 strong {
+  font-weight: 600;
+  color: var(--accent-hi);
+}
+
+.doc__lede {
+  font-size: 1.125rem;
+  color: var(--text-2);
+}
+
+.doc h2 {
+  margin: 2.6rem 0 0.9rem;
+  font-size: clamp(1.35rem, 2.6vw, 1.7rem);
+  font-weight: 500;
+}
+
+.doc ul,
+.doc ol {
+  margin: 0 0 1rem;
+  padding-left: 1.3rem;
+}
+
+.doc li + li {
+  margin-top: 0.45rem;
+}
+
+.doc code {
+  padding: 0.08em 0.35em;
+  border: 1px solid var(--inset-border);
+  border-radius: 3px;
+  background: var(--inset);
+  color: #d6e6f5;
+  overflow-wrap: anywhere;
+}
+
+.doc .code {
+  margin: 0 0 1rem;
+}
+
+.doc .code code {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.doc__note {
+  margin-top: 2.6rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid var(--inset-border);
+  font-size: 0.9rem;
+  color: var(--text-3);
 }

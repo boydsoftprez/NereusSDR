@@ -71,6 +71,7 @@
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
+#include "core/NereusCoreExport.h"
 #include "Band.h"
 
 #include <QHash>
@@ -110,7 +111,7 @@ struct BandGridSettings {
 // raw I/Q, and the client computes FFT data for display. This model
 // holds display state (center frequency, bandwidth, dBm range, per-band
 // grid slots, current band).
-class PanadapterModel : public QObject {
+class NEREUS_CORE_EXPORT PanadapterModel : public QObject {
     Q_OBJECT
 
     Q_PROPERTY(double centerFrequency READ centerFrequency WRITE setCenterFrequency NOTIFY centerFrequencyChanged)

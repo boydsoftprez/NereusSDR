@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Application quit accepts structured form closure without
+//                 arrangement by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -58,6 +60,7 @@ mw0lge@grange-lane.co.uk
 
 #include "FloatingContainer.h"
 #include "ContainerWidget.h"
+#include "gui/GuiApplication.h"
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"
 
@@ -166,6 +169,12 @@ void FloatingContainer::onConsoleWindowStateChanged(Qt::WindowStates state, bool
 
 void FloatingContainer::closeEvent(QCloseEvent* event)
 {
+    if (property("structuredWorkspace").toBool() && GuiApplication::applicationQuitInProgress()) {
+        // Application teardown closes the form without a user arrangement
+        // transaction; normal workspace closes still request return/hide below.
+        QWidget::closeEvent(event);
+        return;
+    }
     if (property("structuredWorkspace").toBool()) { emit aboutToClose(); event->ignore(); return; }
     // From Thetis frmMeterDisplay.cs:158-166 — hide instead of close
     if (event->spontaneous()) {

@@ -4,11 +4,19 @@
 // 2026-09-30: the cap is 24 (Audio > TX Input's Line In Gain steps and
 // Saturn Mic Tip-Ring); the HL2 Core's Hermes rows. J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
+// 2026-10-04: restored TX profile watch coverage and Core-produced typed
+// fixture. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest>
 
+#include <algorithm>
 #include <tuple>
+#include <QMetaProperty>
+#include <QSaveFile>
 
 #include "core/AppSettings.h"
+#include "core/MicProfileManager.h"
+#include "core/CfcProfile.h"
+#include "core/ParaEqCurve.h"
 #include "core/PaTelemetryScaling.h"
 #include "core/PaCalProfile.h"
 #include "core/PaProfileManager.h"
@@ -29,13 +37,663 @@
 #include "core/TxChannel.h"
 #include "core/meters/SliceMeterPump.h"
 #include "core/session/TransmitStateFacade.h"
+#include "core/session/MirrorSchema.h"
+#include "core/session/StateMirror.h"
 #include "MultiDeviceHarness.h"
 
 using namespace NereusSDR;
 
+
+namespace {
+
+struct TxProfileWatchField {
+    QByteArray name;
+    MirrorWireKind kind;
+    QStringList savedKeys;
+};
+
+// Independent saved/restored-field oracle, source-audited against
+// MicProfileManager::captureLiveValues/applyValuesToModel and the public
+// TransmitModel properties. This must not be derived from the watch itself.
+const QList<TxProfileWatchField> kTxProfileWatchFields{
+    {"micGainDb", MirrorWireKind::Int64,
+        {QStringLiteral("MicGain")}},
+    {"micBoost", MirrorWireKind::Bool,
+        {QStringLiteral("Mic_Input_Boost")}},
+    {"micXlr", MirrorWireKind::Bool,
+        {QStringLiteral("Mic_XLR")}},
+    {"lineIn", MirrorWireKind::Bool,
+        {QStringLiteral("Line_Input_On")}},
+    {"lineInBoost", MirrorWireKind::Float64,
+        {QStringLiteral("Line_Input_Level")}},
+    {"micTipRing", MirrorWireKind::Bool,
+        {QStringLiteral("Mic_TipRing")}},
+    {"micBias", MirrorWireKind::Bool,
+        {QStringLiteral("Mic_Bias")}},
+    {"micPttDisabled", MirrorWireKind::Bool,
+        {QStringLiteral("Mic_PTT_Disabled")}},
+    {"voxThresholdDb", MirrorWireKind::Int64,
+        {QStringLiteral("Dexp_Threshold")}},
+    {"voxHangTimeMs", MirrorWireKind::Int64,
+        {QStringLiteral("VOX_HangTime")}},
+    {"antiVoxGainDb", MirrorWireKind::Int64,
+        {QStringLiteral("AntiVox_Gain")}},
+    {"monitorVolume", MirrorWireKind::Float64,
+        {QStringLiteral("MonitorVolume")}},
+    {"amCarrierLevel", MirrorWireKind::Int64,
+        {QStringLiteral("AM_Carrier_Level")}},
+    {"twoToneFreq1", MirrorWireKind::Int64,
+        {QStringLiteral("TwoToneFreq1")}},
+    {"twoToneFreq2", MirrorWireKind::Int64,
+        {QStringLiteral("TwoToneFreq2")}},
+    {"twoToneLevel", MirrorWireKind::Float64,
+        {QStringLiteral("TwoToneLevel")}},
+    {"twoTonePower", MirrorWireKind::Int64,
+        {QStringLiteral("TwoTonePower")}},
+    {"twoToneFreq2Delay", MirrorWireKind::Int64,
+        {QStringLiteral("TwoToneFreq2Delay")}},
+    {"twoToneInvert", MirrorWireKind::Bool,
+        {QStringLiteral("TwoToneInvert")}},
+    {"twoTonePulsed", MirrorWireKind::Bool,
+        {QStringLiteral("TwoTonePulsed")}},
+    {"twoToneDrivePowerSource", MirrorWireKind::Enum,
+        {QStringLiteral("TwoToneDrivePowerOrigin")}},
+    {"userDigOut", MirrorWireKind::Int64,
+        {QStringLiteral("Mic_UserDigOut")}},
+    {"txEqEnabled", MirrorWireKind::Bool,
+        {QStringLiteral("TXEQEnabled")}},
+    {"txEqPreamp", MirrorWireKind::Int64,
+        {QStringLiteral("TXEQPreamp")}},
+    {"txEqBandsJson", MirrorWireKind::Utf8,
+        {QStringLiteral("TXEQ1"),
+         QStringLiteral("TXEQ2"),
+         QStringLiteral("TXEQ3"),
+         QStringLiteral("TXEQ4"),
+         QStringLiteral("TXEQ5"),
+         QStringLiteral("TXEQ6"),
+         QStringLiteral("TXEQ7"),
+         QStringLiteral("TXEQ8"),
+         QStringLiteral("TXEQ9"),
+         QStringLiteral("TXEQ10")}},
+    {"txEqFreqsJson", MirrorWireKind::Utf8,
+        {QStringLiteral("TxEqFreq1"),
+         QStringLiteral("TxEqFreq2"),
+         QStringLiteral("TxEqFreq3"),
+         QStringLiteral("TxEqFreq4"),
+         QStringLiteral("TxEqFreq5"),
+         QStringLiteral("TxEqFreq6"),
+         QStringLiteral("TxEqFreq7"),
+         QStringLiteral("TxEqFreq8"),
+         QStringLiteral("TxEqFreq9"),
+         QStringLiteral("TxEqFreq10")}},
+    {"txEqParaEqData", MirrorWireKind::Utf8,
+        {QStringLiteral("TXParaEQData")}},
+    {"txEqUseLegacy", MirrorWireKind::Bool,
+        {QStringLiteral("EQUseLegacy")}},
+    {"txLevelerOn", MirrorWireKind::Bool,
+        {QStringLiteral("Lev_On")}},
+    {"txLevelerMaxGain", MirrorWireKind::Int64,
+        {QStringLiteral("Lev_MaxGain")}},
+    {"txLevelerDecay", MirrorWireKind::Int64,
+        {QStringLiteral("Lev_Decay")}},
+    {"txAlcMaxGain", MirrorWireKind::Int64,
+        {QStringLiteral("ALC_MaximumGain")}},
+    {"txAlcDecay", MirrorWireKind::Int64,
+        {QStringLiteral("ALC_Decay")}},
+    {"phaseRotatorEnabled", MirrorWireKind::Bool,
+        {QStringLiteral("CFCPhaseRotatorEnabled")}},
+    {"phaseReverseEnabled", MirrorWireKind::Bool,
+        {QStringLiteral("CFCPhaseReverseEnabled")}},
+    {"phaseRotatorFreqHz", MirrorWireKind::Int64,
+        {QStringLiteral("CFCPhaseRotatorFreq")}},
+    {"phaseRotatorStages", MirrorWireKind::Int64,
+        {QStringLiteral("CFCPhaseRotatorStages")}},
+    {"cfcEnabled", MirrorWireKind::Bool,
+        {QStringLiteral("CFCEnabled")}},
+    {"cfcPostEqEnabled", MirrorWireKind::Bool,
+        {QStringLiteral("CFCPostEqEnabled")}},
+    {"cfcPrecompDb", MirrorWireKind::Int64,
+        {QStringLiteral("CFCPreComp")}},
+    {"cfcPostEqGainDb", MirrorWireKind::Int64,
+        {QStringLiteral("CFCPostEqGain")}},
+    {"cfcEqFreqJson", MirrorWireKind::Utf8,
+        {QStringLiteral("CFCEqFreq0"),
+         QStringLiteral("CFCEqFreq1"),
+         QStringLiteral("CFCEqFreq2"),
+         QStringLiteral("CFCEqFreq3"),
+         QStringLiteral("CFCEqFreq4"),
+         QStringLiteral("CFCEqFreq5"),
+         QStringLiteral("CFCEqFreq6"),
+         QStringLiteral("CFCEqFreq7"),
+         QStringLiteral("CFCEqFreq8"),
+         QStringLiteral("CFCEqFreq9")}},
+    {"cfcCompressionJson", MirrorWireKind::Utf8,
+        {QStringLiteral("CFCPreComp0"),
+         QStringLiteral("CFCPreComp1"),
+         QStringLiteral("CFCPreComp2"),
+         QStringLiteral("CFCPreComp3"),
+         QStringLiteral("CFCPreComp4"),
+         QStringLiteral("CFCPreComp5"),
+         QStringLiteral("CFCPreComp6"),
+         QStringLiteral("CFCPreComp7"),
+         QStringLiteral("CFCPreComp8"),
+         QStringLiteral("CFCPreComp9")}},
+    {"cfcPostEqBandGainJson", MirrorWireKind::Utf8,
+        {QStringLiteral("CFCPostEqGain0"),
+         QStringLiteral("CFCPostEqGain1"),
+         QStringLiteral("CFCPostEqGain2"),
+         QStringLiteral("CFCPostEqGain3"),
+         QStringLiteral("CFCPostEqGain4"),
+         QStringLiteral("CFCPostEqGain5"),
+         QStringLiteral("CFCPostEqGain6"),
+         QStringLiteral("CFCPostEqGain7"),
+         QStringLiteral("CFCPostEqGain8"),
+         QStringLiteral("CFCPostEqGain9")}},
+    {"cfcParaEqData", MirrorWireKind::Utf8,
+        {QStringLiteral("CFCParaEQData")}},
+    {"cpdrLevelDb", MirrorWireKind::Int64,
+        {QStringLiteral("CompanderLevel")}},
+    {"cessbOn", MirrorWireKind::Bool,
+        {QStringLiteral("CESSB_On")}},
+    {"filterLow", MirrorWireKind::Int64,
+        {QStringLiteral("FilterLow")}},
+    {"filterHigh", MirrorWireKind::Int64,
+        {QStringLiteral("FilterHigh")}},
+    {"dexpEnabled", MirrorWireKind::Bool,
+        {QStringLiteral("DEXP_Enabled")}},
+    {"dexpDetectorTauMs", MirrorWireKind::Float64,
+        {QStringLiteral("DEXP_DetectorTauMs")}},
+    {"dexpAttackTimeMs", MirrorWireKind::Float64,
+        {QStringLiteral("DEXP_AttackTimeMs")}},
+    {"dexpReleaseTimeMs", MirrorWireKind::Float64,
+        {QStringLiteral("DEXP_ReleaseTimeMs")}},
+    {"dexpExpansionRatioDb", MirrorWireKind::Float64,
+        {QStringLiteral("DEXP_ExpansionRatioDb")}},
+    {"dexpHysteresisRatioDb", MirrorWireKind::Float64,
+        {QStringLiteral("DEXP_HysteresisRatioDb")}},
+    {"dexpLookAheadEnabled", MirrorWireKind::Bool,
+        {QStringLiteral("DEXP_LookAheadEnabled")}},
+    {"dexpLookAheadMs", MirrorWireKind::Float64,
+        {QStringLiteral("DEXP_LookAheadMs")}},
+    {"dexpLowCutHz", MirrorWireKind::Float64,
+        {QStringLiteral("DEXP_LowCutHz")}},
+    {"dexpHighCutHz", MirrorWireKind::Float64,
+        {QStringLiteral("DEXP_HighCutHz")}},
+    {"dexpSideChannelFilterEnabled", MirrorWireKind::Bool,
+        {QStringLiteral("DEXP_SideChannelFilterEnabled")}},
+};
+
+QJsonObject txProfileChoice(const QJsonObject& audio)
+{
+    for (const QJsonValue& page : audio.value("pages").toArray()) {
+        for (const QJsonValue& section : page.toObject().value("sections").toArray()) {
+            for (const QJsonValue& control : section.toObject().value("controls").toArray()) {
+                const QJsonObject row = control.toObject();
+                if (row.value("id") == QJsonValue("audio.txProfile.activeProfile")) {
+                    return row;
+                }
+            }
+        }
+    }
+    return {};
+}
+
+
+// Legal edits from the existing MicProfileManager/ParaEq/CFC fixtures and
+// TransmitModel ranges. Values change test state only; no keying property.
+QVariant txProfileEdit(const TxProfileWatchField& field,
+                       const QHash<QByteArray, QVariant>& opening)
+{
+    if (field.kind == MirrorWireKind::Bool) {
+        return !opening.value(field.name).toBool();
+    }
+    static const QHash<QByteArray, QVariant> edits{
+        {"micGainDb", -3}, {"lineInBoost", -12.0}, {"voxThresholdDb", -30},
+        {"voxHangTimeMs", 700}, {"antiVoxGainDb", 3}, {"monitorVolume", 0.625},
+        {"amCarrierLevel", 75}, {"twoToneFreq1", 900}, {"twoToneFreq2", 1700},
+        {"twoToneLevel", -9.0}, {"twoTonePower", 25}, {"twoToneFreq2Delay", 10},
+        {"twoToneDrivePowerSource", QVariant::fromValue(DrivePowerSource::TuneSlider)},
+        {"userDigOut", 5}, {"txEqPreamp", 5},
+        {"txEqBandsJson", QStringLiteral("[-8,-12,-12,-1,1,4,9,12,-10,7]")},
+        {"txEqFreqsJson", QStringLiteral("[50,63,125,250,500,1000,2000,4000,8000,14000]")},
+        {"txLevelerMaxGain", 8}, {"txLevelerDecay", 250},
+        {"txAlcMaxGain", 20}, {"txAlcDecay", 25},
+        {"phaseRotatorFreqHz", 500}, {"phaseRotatorStages", 10},
+        {"cfcPrecompDb", 3}, {"cfcPostEqGainDb", -2},
+        {"cfcEqFreqJson", QStringLiteral("[0,150,300,600,1200,2400,3600,4500,5500,11000]")},
+        {"cfcCompressionJson", QStringLiteral("[6,6,6,6,6,6,6,6,6,6]")},
+        {"cfcPostEqBandGainJson", QStringLiteral("[1,1,1,1,1,1,1,1,1,1]")},
+        {"cpdrLevelDb", 5}, {"filterLow", 200}, {"filterHigh", 2700},
+        {"dexpDetectorTauMs", 35.0}, {"dexpAttackTimeMs", 8.0},
+        {"dexpReleaseTimeMs", 250.0}, {"dexpExpansionRatioDb", 20.0},
+        {"dexpHysteresisRatioDb", 5.0}, {"dexpLookAheadMs", 120.0},
+        {"dexpLowCutHz", 300.0}, {"dexpHighCutHz", 2800.0},
+    };
+    if (field.name == "txEqParaEqData") {
+        ParaEqCurve::TxEqPoints points;
+        points.bandCount = 5;
+        points.minHz = 50;
+        points.maxHz = 3000;
+        points.preampDb = -2.5;
+        points.f = {50, 300, 1200, 2400, 3000};
+        points.g = {-6, 3, -1.5, 4, 0};
+        points.q = {1.5, 2, 4, 3, 1};
+        return ParaEqCurve::txEqParaEqDataFromPoints(points);
+    }
+    if (field.name == "cfcParaEqData") {
+        CfcProfile::Profile profile;
+        profile.maxHz = profile.postMaxHz = 17000;
+        // Change the valid saved blob while keeping its paired scalar
+        // gains at the actual opening getters, isolating this watched ID.
+        profile.precompDb = opening.value("cfcPrecompDb").toDouble();
+        profile.postEqGainDb = opening.value("cfcPostEqGainDb").toDouble();
+        profile.compParametric = profile.eqParametric = true;
+        // Main's existing CfcProfile codec emits the snake_case graphs
+        // its producer decodes; retain the eighteen-band precision input.
+        for (int i = 0; i < 18; ++i) {
+            profile.f.push_back(i == 1 ? 125.1254 : i * 1000.0);
+            profile.g.push_back(3.54);
+            profile.qg.push_back(1.2345);
+            profile.e.push_back(-4.54);
+            profile.qe.push_back(2.3456);
+        }
+        profile.postF = profile.f;
+        return CfcProfile::encode(profile);
+    }
+    return edits.value(field.name);
+}
+
+QStringList txProfileSavedStrings(const TxProfileWatchField& field, const QVariant& edit)
+{
+    if (field.savedKeys.size() > 1) {
+        QStringList strings;
+        const QJsonArray values = QJsonDocument::fromJson(edit.toString().toUtf8()).array();
+        for (const QJsonValue& value : values) {
+            strings.append(QString::number(value.toInt()));
+        }
+        return strings;
+    }
+    if (field.kind == MirrorWireKind::Bool) {
+        return {edit.toBool() ? QStringLiteral("True") : QStringLiteral("False")};
+    }
+    if (field.kind == MirrorWireKind::Enum) {
+        return {QStringLiteral("TuneSlider")};
+    }
+    if (field.kind == MirrorWireKind::Int64) {
+        return {QString::number(edit.toInt())};
+    }
+    if (field.kind == MirrorWireKind::Float64) {
+        return {QString::number(edit.toDouble())};
+    }
+    return {edit.toString()};
+}
+
+} // namespace
+
 class SetupDescriptionLiveTest : public QObject {
     Q_OBJECT
 private slots:
+    // Omitting a saved/restored observable value lets a described consumer
+    // switch profiles without being told to ask about that value's edit.
+    void pairedV15TxProfileWatchCoversEveryObservableRestoredField()
+    {
+        Core core;
+        QVERIFY(core.model->connection() == nullptr);
+        Device phone(QStringLiteral("TX watch iPhone"), QStringLiteral("phone"));
+        core.pair(phone);
+        QHash<QByteArray, int> features = kHolder;
+        features.insert("setupDescription", 15);
+        LoopbackTransport* peer = core.signIn(phone, features);
+        QVERIFY(admitted(peer));
+        const QJsonObject audio = QJsonDocument::fromJson(
+            latest(peer->received(), "setup", "audio").toString().toUtf8()).object();
+        const QJsonObject choice = txProfileChoice(audio);
+        QVERIFY(!choice.isEmpty());
+        const QJsonArray watch = choice.value("unsavedChanges").toObject().value("watch").toArray();
+        QSet<QByteArray> watched;
+        for (const QJsonValue& name : watch) {
+            QVERIFY(name.isString());
+            QVERIFY(!watched.contains(name.toString().toUtf8()));
+            watched.insert(name.toString().toUtf8());
+        }
+        const MirrorSchema& schema = MirrorSchema::forMetaObject(&TransmitModel::staticMetaObject);
+        QHash<QByteArray, MirrorUpdate> snapshot;
+        for (const MirrorUpdate& update : core.server->stateMirror()->snapshot("transmit")) {
+            snapshot.insert(update.name, update);
+        }
+        QStringList missing;
+        for (const TxProfileWatchField& field : kTxProfileWatchFields) {
+            const MirrorProperty* property = schema.byName(field.name);
+            QVERIFY2(property != nullptr, field.name.constData());
+            QCOMPARE(property->kind, field.kind);
+            QVERIFY2(snapshot.contains(field.name), field.name.constData());
+            QCOMPARE(snapshot.value(field.name).kind, field.kind);
+            if (!watched.contains(field.name)) {
+                missing.append(QString::fromUtf8(field.name));
+            }
+        }
+        QVERIFY2(missing.isEmpty(), qPrintable("Missing saved/restored TX profile fields: " + missing.join(", ")));
+        QCOMPARE(watched.size(), kTxProfileWatchFields.size());
+        // These are unavailable, ignored-on-load, global, or derived editor
+        // views; none belongs in this ordinary saved-value watch contract.
+        for (const QByteArray& excluded : {QByteArray("voxGainScalar"), QByteArray("micSource"),
+                 QByteArray("lineInGain"), QByteArray("txEqNc"), QByteArray("txEqMp"),
+                 QByteArray("txEqCtfmode"), QByteArray("txEqWintype"), QByteArray("cpdrOn"),
+                 QByteArray("txEqCurve"), QByteArray("cfcProfile")}) {
+            QVERIFY2(!watched.contains(excluded), excluded.constData());
+        }
+    }
+
+    // The producer fixture and capture/restore checks use real Core getter
+    // reads and real encoded messages. A wrong kind/name, omitted capture
+    // key, swallowed setter notification or missing restore must fail here.
+    void txProfileWatchTypedCoreFixtureRoundTripsEveryField()
+    {
+        Core core;
+        QVERIFY(core.model->connection() == nullptr);
+        QVERIFY(QStandardPaths::isTestModeEnabled());
+        const QString testHome = qEnvironmentVariable("CFFIXED_USER_HOME");
+        if (!testHome.isEmpty()) {
+            QVERIFY(AppSettings::instance().filePath().startsWith(testHome + '/'));
+        }
+        TransmitModel& tx = core.model->transmitModel();
+        MicProfileManager* manager = core.model->micProfileManager();
+        QVERIFY(manager != nullptr);
+        const QString mac = core.model->currentRadioInfo().macAddress;
+        QVERIFY(!mac.isEmpty());
+        manager->setMacAddress(mac);
+        manager->load();
+        const QHash<QString, QVariant> defaults = MicProfileManager::defaultProfileValues();
+        const auto storedProfile = [&mac](const QString& name) {
+            QHash<QString, QVariant> values;
+            const QString prefix = QStringLiteral("hardware/%1/tx/profile/%2/").arg(mac, name);
+            for (const QString& key : AppSettings::instance().allKeys()) {
+                if (key.startsWith(prefix)) {
+                    values.insert(key.mid(prefix.size()), AppSettings::instance().value(key));
+                }
+            }
+            return values;
+        };
+        QVERIFY(manager->saveProfile("Baseline", &tx));
+        for (auto it = defaults.cbegin(); it != defaults.cend(); ++it) {
+            AppSettings::instance().setValue(
+                QStringLiteral("hardware/%1/tx/profile/Baseline/%2").arg(mac, it.key()), it.value());
+        }
+        QVERIFY(manager->setActiveProfile("Baseline", &tx));
+        QVERIFY(manager->saveProfile("Alpha", &tx));
+        QVERIFY(manager->saveProfile("Beta", &tx));
+        QVERIFY(manager->saveProfile("Edited", &tx));
+        QVERIFY(manager->setActiveProfile("Alpha", &tx));
+        core.server->setRemoteTransmitAllowed(true);
+        Device phone(QStringLiteral("TX fixture iPhone"), QStringLiteral("phone"));
+        core.pair(phone);
+        QHash<QByteArray, int> features = kHolder;
+        features.insert("setupDescription", 15);
+        features.insert("remoteTx", 1);
+        LoopbackTransport* peer = core.signIn(phone, features);
+        QVERIFY(admitted(peer));
+        QVERIFY(txPermitted(peer));
+        const MirrorSchema& schema = MirrorSchema::forObject(&tx);
+        const QByteArray wireClass = MirrorSchema::shortClassName(schema.className());
+        const QList<MirrorUpdate> baseline = core.server->stateMirror()->snapshot("transmit");
+        QHash<QByteArray, QVariant> opening;
+        for (const TxProfileWatchField& field : kTxProfileWatchFields) {
+            const MirrorProperty* property = schema.byName(field.name);
+            QVERIFY2(property != nullptr, field.name.constData());
+            QCOMPARE(property->kind, field.kind);
+            opening.insert(field.name, schema.read(*property, &tx));
+        }
+        QJsonObject fixture;
+        fixture.insert("audio", QJsonDocument::fromJson(
+            latest(peer->received(), "setup", "audio").toString().toUtf8()).object());
+        QJsonArray initial;
+        bool sawTransmit = false;
+        int publishedSnapshotSize = 0;
+        for (const QByteArray& wire : peer->received()) {
+            SessionMessage message;
+            QVERIFY(SessionMessages::decode(wire, &message));
+            if (message.kind == SessionMessageKind::Schema && message.className == wireClass) {
+                initial.append(QJsonDocument::fromJson(wire).object());
+            }
+            if (message.kind == SessionMessageKind::ObjectCreate && message.objectKey == "transmit") {
+                sawTransmit = true;
+                publishedSnapshotSize = message.updates.size();
+                for (const TxProfileWatchField& field : kTxProfileWatchFields) {
+                    const auto found = std::find_if(message.updates.cbegin(), message.updates.cend(),
+                        [&field](const MirrorUpdate& update) { return update.name == field.name; });
+                    QVERIFY2(found != message.updates.cend(), field.name.constData());
+                    QCOMPARE(found->kind, field.kind);
+                    QCOMPARE(found->value, opening.value(field.name));
+                }
+                initial.append(QJsonDocument::fromJson(wire).object());
+            }
+            if (message.kind == SessionMessageKind::SnapshotComplete) {
+                initial.append(QJsonDocument::fromJson(wire).object());
+            }
+        }
+        QVERIFY(sawTransmit);
+        // Independently re-encode the full StateMirror getter snapshot and
+        // decode it; ordinals/types come from the Core, never this table.
+        const QByteArray baselineWire = SessionMessages::encode(
+            SessionMessages::objectCreate("transmit", wireClass, baseline));
+        SessionMessage baselineDecoded;
+        QVERIFY(SessionMessages::decode(baselineWire, &baselineDecoded));
+        QCOMPARE(baselineDecoded.updates.size(), baseline.size());
+        fixture.insert("initial", initial);
+        // Observe baseline/reset traffic through the actual encoded Core
+        // messages before collecting an edit. The server's real mirror
+        // flush cadence is driven by QTRY's event loop; no guessed delay.
+        QHash<QByteArray, QVariant> observed;
+        int receivedThrough = 0;
+        const auto receivedBaseline = [&]() {
+            while (receivedThrough < peer->received().size()) {
+                SessionMessage message;
+                if (!SessionMessages::decode(peer->received().at(receivedThrough++), &message)) {
+                    return false;
+                }
+                if (message.objectKey == "transmit"
+                    && (message.kind == SessionMessageKind::ObjectCreate
+                        || message.kind == SessionMessageKind::Delta)) {
+                    for (const MirrorUpdate& update : message.updates) {
+                        observed.insert(update.name, update.value);
+                    }
+                }
+            }
+            if (observed.value("activeTxProfile").toString() != "Alpha") {
+                return false;
+            }
+            for (const TxProfileWatchField& field : kTxProfileWatchFields) {
+                if (!observed.contains(field.name) || observed.value(field.name) != opening.value(field.name)) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        QJsonArray cases;
+        for (const TxProfileWatchField& field : kTxProfileWatchFields) {
+            qInfo() << "Profile fixture field:" << field.name;
+            QVERIFY(manager->setActiveProfile("Alpha", &tx));
+            for (const TxProfileWatchField& restoredField : kTxProfileWatchFields) {
+                QCOMPARE(schema.read(*schema.byName(restoredField.name), &tx), opening.value(restoredField.name));
+            }
+            QTRY_VERIFY_WITH_TIMEOUT(receivedBaseline(), 1000);
+            const MirrorProperty* property = schema.byName(field.name);
+            const QVariant edit = txProfileEdit(field, opening);
+            QVERIFY2(edit.isValid(), field.name.constData());
+            if (field.name == "cfcParaEqData") {
+                CfcProfile::Profile decoded;
+                QVERIFY(CfcProfile::decode(edit.toString(), decoded));
+                QCOMPARE(decoded.f.size(), std::size_t{18});
+                QCOMPARE(decoded.postF, decoded.f);
+                QCOMPARE(decoded.precompDb, opening.value("cfcPrecompDb").toDouble());
+                QCOMPARE(decoded.postEqGainDb, opening.value("cfcPostEqGainDb").toDouble());
+            }
+            const int receivedStart = peer->received().size();
+            const QMetaProperty meta = tx.metaObject()->property(property->metaIndex);
+            QVERIFY2(meta.write(&tx, edit), field.name.constData());
+            const QVariant changed = schema.read(*property, &tx);
+            QVERIFY2(changed != opening.value(field.name), field.name.constData());
+            QCOMPARE(changed, MirrorSchema::encode(*property, edit));
+            QByteArray changedWire;
+            const auto receivedChangedValue = [&]() {
+                for (int i = receivedStart; i < peer->received().size(); ++i) {
+                    const QByteArray wire = peer->received().at(i);
+                    SessionMessage message;
+                    if (!SessionMessages::decode(wire, &message)
+                        || message.kind != SessionMessageKind::Delta || message.objectKey != "transmit") {
+                        continue;
+                    }
+                    for (const MirrorUpdate& update : message.updates) {
+                        if (update.name == field.name && update.kind == field.kind && update.value == changed) {
+                            changedWire = wire;
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            };
+            QTRY_VERIFY_WITH_TIMEOUT(receivedChangedValue(), 1000);
+            SessionMessage editMessage;
+            QVERIFY(SessionMessages::decode(changedWire, &editMessage));
+            for (const MirrorUpdate& update : editMessage.updates) {
+                QVERIFY2(update.name != "activeTxProfile", field.name.constData());
+                if (opening.contains(update.name)) {
+                    QCOMPARE(update.kind, schema.byName(update.name)->kind);
+                    QCOMPARE(update.ordinal, schema.byName(update.name)->ordinal);
+                }
+                if (update.name != field.name && opening.contains(update.name)) {
+                    QVERIFY2(update.value == opening.value(update.name),
+                        qPrintable(QString::fromUtf8(field.name) + " changes off-target "
+                            + QString::fromUtf8(update.name)));
+                }
+            }
+
+            const QStringList savedStrings = txProfileSavedStrings(field, edit);
+            QCOMPARE(savedStrings.size(), field.savedKeys.size());
+            QVERIFY(manager->saveProfile("Edited", &tx));
+            const QHash<QString, QVariant> captured = storedProfile("Edited");
+            QCOMPARE(captured.size(), 108);
+            QJsonObject saved;
+            for (int i = 0; i < field.savedKeys.size(); ++i) {
+                const QString key = field.savedKeys.at(i);
+                QCOMPARE(captured.value(key).toString(), savedStrings.at(i));
+                const QString storedKey = QStringLiteral("hardware/%1/tx/profile/Edited/%2").arg(mac, key);
+                QCOMPARE(AppSettings::instance().value(storedKey).toString(), savedStrings.at(i));
+                saved.insert(key, savedStrings.at(i));
+            }
+            QVERIFY(AppSettings::instance().save());
+            // Reload the serialized XML before profile selection: this
+            // exercises persisted strings, not just the in-memory store.
+            AppSettings::instance().load();
+            QCOMPARE(storedProfile("Edited"), captured);
+            QVERIFY(manager->setActiveProfile("Alpha", &tx));
+            QCOMPARE(schema.read(*property, &tx), opening.value(field.name));
+            QVERIFY(manager->setActiveProfile("Edited", &tx));
+            QCOMPARE(schema.read(*property, &tx), changed);
+            QVERIFY(manager->saveProfile("Restored", &tx));
+            QCOMPARE(storedProfile("Restored"), captured);
+            const QList<MirrorUpdate> restored = core.server->stateMirror()->currentValues("transmit", {property->ordinal});
+            QCOMPARE(restored.size(), 1);
+            cases.append(QJsonObject{
+                {"field", QString::fromUtf8(field.name)},
+                {"delta", QJsonDocument::fromJson(changedWire).object()},
+                {"saved", saved},
+                {"restored", QJsonDocument::fromJson(SessionMessages::encode(
+                    SessionMessages::delta("transmit", restored))).object()}});
+            QVERIFY(!tx.isMox());
+            QVERIFY(!tx.isTune());
+            QVERIFY(core.model->connection() == nullptr);
+        }
+        fixture.insert("cases", cases);
+        const QString output = qEnvironmentVariable("NEREUS_TX_PROFILE_WATCH_FIXTURE");
+        if (!output.isEmpty()) {
+            QSaveFile file(output);
+            QVERIFY2(file.open(QIODevice::WriteOnly), qPrintable(file.errorString()));
+            const QByteArray bytes = QJsonDocument(fixture).toJson(QJsonDocument::Indented);
+            QCOMPARE(file.write(bytes), bytes.size());
+            QVERIFY(file.commit());
+        }
+        const QString fixturePath = output.isEmpty()
+            ? QFINDTESTDATA("data/link/v1/tx-profile-watch-60.json") : output;
+        QFile file(fixturePath);
+        QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(file.errorString()));
+        const QJsonObject checked = QJsonDocument::fromJson(file.readAll()).object();
+        QCOMPARE(checked.value("audio"), fixture.value("audio"));
+        QCOMPARE(checked.value("cases").toArray().size(), kTxProfileWatchFields.size());
+        bool checkedTransmit = false;
+        bool checkedSchema = false;
+        bool checkedSnapshotComplete = false;
+        for (const QJsonValue& value : checked.value("initial").toArray()) {
+            SessionMessage message;
+            QVERIFY(SessionMessages::decode(QJsonDocument(value.toObject()).toJson(
+                QJsonDocument::Compact), &message));
+            if (message.kind == SessionMessageKind::Schema) {
+                QCOMPARE(message.className, wireClass);
+                QCOMPARE(value, initial.first());
+                checkedSchema = true;
+            } else if (message.kind == SessionMessageKind::ObjectCreate) {
+                QCOMPARE(message.objectKey, QByteArray("transmit"));
+                QCOMPARE(message.className, wireClass);
+                QCOMPARE(message.updates.size(), publishedSnapshotSize);
+                for (const TxProfileWatchField& field : kTxProfileWatchFields) {
+                    const auto found = std::find_if(message.updates.cbegin(), message.updates.cend(),
+                        [&field](const MirrorUpdate& update) { return update.name == field.name; });
+                    QVERIFY2(found != message.updates.cend(), field.name.constData());
+                    QCOMPARE(found->ordinal, schema.byName(field.name)->ordinal);
+                    QCOMPARE(found->kind, field.kind);
+                    QCOMPARE(found->value, opening.value(field.name));
+                }
+                checkedTransmit = true;
+            } else if (message.kind == SessionMessageKind::SnapshotComplete) {
+                checkedSnapshotComplete = true;
+            } else {
+                QFAIL("Unexpected initial fixture message");
+            }
+        }
+        QVERIFY(checkedSchema && checkedTransmit && checkedSnapshotComplete);
+        // Match every encoded persisted-value observation; unrelated Core
+        // derived revisions in complete messages are not profile values.
+        for (int i = 0; i < cases.size(); ++i) {
+            const QJsonObject expected = cases.at(i).toObject();
+            const QJsonObject stored = checked.value("cases").toArray().at(i).toObject();
+            QCOMPARE(stored.value("field"), expected.value("field"));
+            QCOMPARE(stored.value("saved"), expected.value("saved"));
+            QCOMPARE(stored.value("restored"), expected.value("restored"));
+            const TxProfileWatchField& field = kTxProfileWatchFields.at(i);
+            SessionMessage delta;
+            SessionMessage restored;
+            QVERIFY(SessionMessages::decode(QJsonDocument(stored.value("delta").toObject()).toJson(
+                QJsonDocument::Compact), &delta));
+            QVERIFY(SessionMessages::decode(QJsonDocument(stored.value("restored").toObject()).toJson(
+                QJsonDocument::Compact), &restored));
+            QCOMPARE(delta.kind, SessionMessageKind::Delta);
+            QCOMPARE(delta.objectKey, QByteArray("transmit"));
+            QCOMPARE(restored.updates.size(), 1);
+            const auto found = std::find_if(delta.updates.cbegin(), delta.updates.cend(),
+                [&field](const MirrorUpdate& update) { return update.name == field.name; });
+            QVERIFY2(found != delta.updates.cend(), field.name.constData());
+            QCOMPARE(found->ordinal, schema.byName(field.name)->ordinal);
+            QCOMPARE(found->kind, field.kind);
+            QCOMPARE(found->value, restored.updates.first().value);
+            QVERIFY2(found->value != opening.value(field.name), field.name.constData());
+            for (const MirrorUpdate& update : delta.updates) {
+                QVERIFY2(update.name != "activeTxProfile", field.name.constData());
+                if (opening.contains(update.name)) {
+                    QCOMPARE(update.kind, schema.byName(update.name)->kind);
+                    QCOMPARE(update.ordinal, schema.byName(update.name)->ordinal);
+                }
+                if (update.name != field.name && opening.contains(update.name)) {
+                    QVERIFY2(update.value == opening.value(update.name),
+                        qPrintable(QString::fromUtf8(field.name) + " changes off-target "
+                            + QString::fromUtf8(update.name)));
+                }
+            }
+            // lineInGain is a nonwatched derivation of lineInBoost; derived
+            // editor/revision views may also accompany saved-value changes.
+            // Such accompanying values do not prove watch coverage.
+        }
+    }
+
     // Version 16: a phone that declares version 16 or later reads the HL2
     // Options rows on HL2 I/O, the stored-only ones disabled with their
     // reason; a version 15 phone keeps version 13's Hardware. Version 17

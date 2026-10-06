@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -41,7 +42,7 @@ namespace NereusSDR {
 // "BandPlanName".
 //
 // From AetherSDR src/models/BandPlanManager.h [@0cd4559].
-class BandPlanManager : public QObject {
+class NEREUS_CORE_EXPORT BandPlanManager : public QObject {
     Q_OBJECT
 
 public:

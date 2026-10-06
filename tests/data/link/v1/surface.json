@@ -346,6 +346,10 @@
             "value": 2
         },
         {
+            "kind": "i64",
+            "name": "txWatchPathVersion"
+        },
+        {
             "kind": "utf8",
             "name": "txRefusalCode",
             "value": "stationReceiveOnly"
@@ -3137,7 +3141,6 @@
                         "audioProfileVersion",
                         "audioQualityVersion",
                         "opusBitrateRefused",
-                        "profile=opus",
                         "remoteAudioStatusVersion"
                     ],
                     "profile": [
@@ -3226,6 +3229,10 @@
                     ],
                     "requestedPixels": [
                         "spectrumGrantVersion"
+                    ],
+                    "transmit": [
+                        "spectrumGrantVersion",
+                        "txDisplayVersion"
                     ],
                     "wideband": [
                         "remoteWidebandDisplayVersion"
@@ -3573,6 +3580,9 @@
                     "remoteTxVersion": [
                         "remoteTxVersion"
                     ],
+                    "txDisplayVersion": [
+                        "txDisplayVersion"
+                    ],
                     "txMonitorAudioVersion": [
                         "txMonitorAudioVersion"
                     ]
@@ -3600,6 +3610,9 @@
                     "displayRole": [
                         "miniDisplayVersion"
                     ],
+                    "duplex": [
+                        "txDisplayVersion"
+                    ],
                     "extendedView": [
                         "remoteWidebandDisplayVersion"
                     ],
@@ -3611,6 +3624,12 @@
                     ],
                     "peakBlobs": [
                         "displayExtrasVersion"
+                    ],
+                    "txMaxDbm": [
+                        "txDisplayVersion"
+                    ],
+                    "txMinDbm": [
+                        "txDisplayVersion"
                     ],
                     "waterfallAverageTimeMs": [
                         "displayExtrasVersion"
@@ -3646,12 +3665,21 @@
                             "fallDbPerSec",
                             "holdMs",
                             "onTx"
+                        ],
+                        [
+                            "enabled",
+                            "fallDbPerSec",
+                            "holdMs"
                         ]
                     ],
                     "noiseFloor": [
                         [
                             "enabled",
                             "fastAttack",
+                            "shiftDb"
+                        ],
+                        [
+                            "enabled",
                             "shiftDb"
                         ]
                     ],

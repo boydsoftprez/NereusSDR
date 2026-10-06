@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NereusSDR VERSION 0.5.2 LANGUAGES C CXX)
+project(NereusSDR VERSION 2026.10.0 LANGUAGES C CXX)
 
 if(APPLE)
     enable_language(OBJCXX)
@@ -1606,6 +1606,8 @@ set(MODEL_SOURCES
 )
 
 set(GUI_SOURCES
+    src/gui/GuiApplication.cpp
+    src/gui/GuiApplication.h
     src/gui/MainWindow.cpp
     src/gui/DesktopStationController.cpp
     src/gui/DesktopStationController.h
@@ -2082,6 +2084,7 @@ if(NEREUSSDR_LTO_AVAILABLE)
         ${MODEL_SOURCES}
         ${CORE_RESOURCES}
     )
+    target_compile_definitions(NereusCore_LTO PUBLIC NEREUS_CORE_STATIC)
     add_library(NereusGui_LTO OBJECT
         ${GUI_SOURCES}
         ${RESOURCES}
@@ -2097,8 +2100,9 @@ if(NEREUSSDR_LTO_AVAILABLE)
     endforeach()
 endif()
 
-# Shared-library plumbing. The source tree has no export annotations, so
-# Windows builds export all symbols from both application-private DLLs.
+# Shared-library plumbing. Core classes crossing the DLL boundary carry
+# explicit import/export annotations. Windows keeps automatic exports for
+# the remaining functions and the application-private GUI DLL.
 foreach(_nereus_shared_target NereusCore NereusSDRLib)
     set_target_properties(${_nereus_shared_target} PROPERTIES
         WINDOWS_EXPORT_ALL_SYMBOLS ON)

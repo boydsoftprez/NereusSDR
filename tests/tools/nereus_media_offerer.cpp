@@ -38,13 +38,24 @@
 // that jumps back), which an app that asked for Opus must never decode. No display is sent in this mode. Every operation the
 // app sends is reported as {"type":"op","op":...}.
 //
+// iPhone app plan Task 55: a `start` that also declares `remoteTxVersion`
+// (a whole number of at least 1) starts the Core's MediaPeer with the
+// microphone line (DaemonMediaController::handleStart's micLine), so the
+// offer carries `a=mid:mic` and the "tx" data channel. The ssrc line then
+// names the Core's own derivation of the line's SSRC ("mic"). Each packet
+// the Core's MediaPeer takes on the line is reported as
+// {"type":"mic","count":n,"ssrc":n,"pt":n,"bytes":n}, each "tx" channel
+// message as {"type":"tx","hex":...}, and the ready line says whether the
+// line negotiated lossless ("micLossless").
+//
 // Lines it prints (one JSON object each):
 //   {"type":"description","sdpType":"offer","sdp":...}
 //   {"type":"candidate","candidate":...,"mid":...}
 //   {"type":"ready"} {"type":"closed"} {"type":"failed","message":...}
 //   {"type":"error","message":...} {"type":"refused","what":...}
 //   {"type":"sent","what":...,"count":n}
-//   {"type":"ssrc","main":n,"foreign":n}
+//   {"type":"ssrc","main":n,"foreign":n}   (--media-control: "main", "mic")
+//   {"type":"mic","count":n,"ssrc":n,"pt":n,"bytes":n} {"type":"tx","hex":...}
 // Lines it reads (--media-control: media-control and stop only):
 //   {"type":"media-control","payload":{...}}
 //   {"type":"description","sdpType":"answer","sdp":...}
@@ -74,8 +85,10 @@
 #include <QStringList>
 #include <QTimer>
 
+#include <cmath>
 #include <cstdio>
 #include <deque>
+#include <limits>
 #include <unistd.h>
 
 using namespace NereusSDR;
@@ -190,7 +203,20 @@ public:
         });
         connect(&m_peer, &MediaPeer::ready, this, [this] {
             emitLine(QJsonObject{{QStringLiteral("type"), QStringLiteral("ready")},
-                                 {QStringLiteral("lossless"), m_peer.losslessAudioNegotiated()}});
+                                 {QStringLiteral("lossless"), m_peer.losslessAudioNegotiated()},
+                                 {QStringLiteral("micLossless"), m_peer.micLosslessNegotiated()}});
+        });
+        connect(&m_peer, &MediaPeer::micRtpReceived, this, [this](const QByteArray& packet) {
+            ++m_micPackets;
+            emitLine(QJsonObject{{QStringLiteral("type"), QStringLiteral("mic")},
+                                 {QStringLiteral("count"), m_micPackets},
+                                 {QStringLiteral("ssrc"), static_cast<qint64>(ssrcOf(packet))},
+                                 {QStringLiteral("pt"), static_cast<int>(static_cast<quint8>(packet.at(1)) & 0x7f)},
+                                 {QStringLiteral("bytes"), static_cast<int>(packet.size())}});
+        });
+        connect(&m_peer, &MediaPeer::txReceived, this, [](const QByteArray& message) {
+            emitLine(QJsonObject{{QStringLiteral("type"), QStringLiteral("tx")},
+                                 {QStringLiteral("hex"), QString::fromLatin1(message.toHex())}});
         });
         connect(&m_peer, &MediaPeer::closed, this, [] {
             emitLine(QJsonObject{{QStringLiteral("type"), QStringLiteral("closed")}});
@@ -278,27 +304,46 @@ private:
         }
     }
 
+    // A version declaration in a start: absent, or a whole number of at
+    // least 1.
+    static bool validVersion(const QJsonObject& payload, const QString& key)
+    {
+        if (!payload.contains(key)) {
+            return true;
+        }
+        const double version = payload.value(key).toDouble();
+        // qint64's positive limit is exclusive: its maximum rounds up to
+        // this out-of-range value when represented as a double.
+        const double upperExclusive = std::ldexp(1.0, std::numeric_limits<qint64>::digits);
+        return payload.value(key).isDouble() && std::isfinite(version) && version >= 1
+            && version < upperExclusive && version == std::trunc(version);
+    }
+
     // DaemonMediaController::handleStart's shape: op and connectionId, and
     // perhaps audioProfileVersion, a whole number of at least 1, which (with
-    // lossless allowed, as here) makes the offer carry L16.
+    // lossless allowed, as here) makes the offer carry L16, and perhaps
+    // remoteTxVersion (Task 55), which adds the microphone line.
     void handleStart(const QJsonObject& payload)
     {
         const QString connectionId = payload.value(QStringLiteral("connectionId")).toString();
         const bool declaresAudioProfile = payload.contains(QStringLiteral("audioProfileVersion"));
-        const double version = payload.value(QStringLiteral("audioProfileVersion")).toDouble();
-        const bool validDeclaration = !declaresAudioProfile
-            || (payload.value(QStringLiteral("audioProfileVersion")).isDouble() && version >= 1
-                && version == static_cast<double>(static_cast<qint64>(version)));
-        if (payload.size() != (declaresAudioProfile ? 3 : 2) || !validDeclaration
+        const bool declaresRemoteTx = payload.contains(QStringLiteral("remoteTxVersion"));
+        const qsizetype expectedSize = 2 + (declaresAudioProfile ? 1 : 0) + (declaresRemoteTx ? 1 : 0);
+        if (payload.size() != expectedSize
+            || !validVersion(payload, QStringLiteral("audioProfileVersion"))
+            || !validVersion(payload, QStringLiteral("remoteTxVersion"))
             || !m_connectionId.isEmpty()
             || !m_peer.start(IMediaTransport::Role::Offerer, connectionId, kOpusTargetBitrate,
-                             declaresAudioProfile)) {
+                             declaresAudioProfile, /*receiverAudioStreams=*/false,
+                             /*headphonesMixStream=*/false, /*micLine=*/declaresRemoteTx)) {
             emitMessage(QStringLiteral("refused"), QStringLiteral("start"));
             return;
         }
         m_connectionId = connectionId;
-        emitLine(QJsonObject{{QStringLiteral("type"), QStringLiteral("ssrc")},
-                             {QStringLiteral("main"), static_cast<qint64>(m_peer.audioSsrc())}});
+        emitLine(QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("ssrc")},
+            {QStringLiteral("main"), static_cast<qint64>(m_peer.audioSsrc())},
+            {QStringLiteral("mic"), static_cast<qint64>(MediaPeer::micAudioSsrcForConnection(connectionId))}});
     }
 
     // DaemonMediaController::handleAudio's shapes: without a profile,
@@ -405,6 +450,8 @@ private:
     double m_audioRevision = 0;
     quint32 m_audioGeneration = 0;
     int m_audioPacketsSent = 0;
+    // Task 55: packets the Core's MediaPeer took on the microphone line.
+    int m_micPackets = 0;
     // Every packet on the stream, Opus or payload type 96: the sequence and
     // timestamp offset from the context's start.
     int m_streamPackets = 0;

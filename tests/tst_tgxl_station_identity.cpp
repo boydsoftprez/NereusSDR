@@ -650,7 +650,7 @@ private slots:
         const auto switchingSent = [&] {
             for (const auto& row : frames) {
                 const QString frame = row.first().toString();
-                if (frame.contains(QStringLiteral("|operate=")) || frame.contains(QStringLiteral("|bypass="))
+                if (frame.contains(QStringLiteral("|operate set=")) || frame.contains(QStringLiteral("|bypass set="))
                     || frame.contains(QStringLiteral("|activate ant="))) {
                     return true;
                 }
@@ -668,7 +668,7 @@ private slots:
         QTRY_VERIFY(!model.tunerModel()->hasAntennaSwitch());
         QVERIFY(!model.setTgxlAntennaForStation(2, &reason));
         QCOMPARE(reason, QStringLiteral("This Tuner Genius has no antenna switch."));
-        peer->write("S0|state one_by_three=1 antA=1 operate=0 bypass=0\n"); peer->flush();
+        peer->write("S0|state one_by_three=1 antA=1 state=0 bypass=0\n"); peer->flush();
         QTRY_VERIFY(model.tunerModel()->hasAntennaSwitch());
 
         // The radio on the air: MOX, then TUNE.
@@ -750,23 +750,23 @@ private slots:
         // operate on, both from the one command.
         const int operateMark = frames.count();
         QVERIFY(model.setTgxlOperateForStation(true, &reason));
-        QTRY_VERIFY(sentLine(QStringLiteral("operate=1")));
+        QTRY_VERIFY(sentLine(QStringLiteral("operate set=1")));
         {
             QStringList sinceMark;
             for (int i = operateMark; i < frames.count(); ++i) {
                 const QString frame = frames.at(i).first().toString();
                 sinceMark.append(frame.mid(frame.indexOf(QLatin1Char('|')) + 1));
             }
-            QCOMPARE(sinceMark, (QStringList{QStringLiteral("bypass=0"),
-                                             QStringLiteral("operate=1")}));
+            QCOMPARE(sinceMark, (QStringList{QStringLiteral("bypass set=0"),
+                                             QStringLiteral("operate set=1")}));
         }
         QVERIFY(model.setTgxlBypassForStation(true, &reason));
-        QTRY_VERIFY(sentLine(QStringLiteral("bypass=1")));
+        QTRY_VERIFY(sentLine(QStringLiteral("bypass set=1")));
         QVERIFY(model.setTgxlOperateForStation(false, &reason));
-        QTRY_VERIFY(sentLine(QStringLiteral("operate=0")));
+        QTRY_VERIFY(sentLine(QStringLiteral("operate set=0")));
         // The model reports what the tuner says, not the request.
         QCOMPARE(model.tunerModel()->antennaA(), 1);
-        peer->write("S0|state antA=2 operate=1 bypass=1\n"); peer->flush();
+        peer->write("S0|state antA=2 state=1 bypass=1\n"); peer->flush();
         QTRY_COMPARE(model.tunerModel()->antennaA(), 2);
         QVERIFY(model.tunerModel()->isOperate());
         QVERIFY(model.tunerModel()->isBypass());

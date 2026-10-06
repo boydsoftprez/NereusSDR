@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original native grips, reserved chrome and ownership regressions.
 // Modification history (NereusSDR):
+//   2026-10-04 — Verify overlay anchoring with final pane dimensions by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 - Check the Linux compositing window for embedded QRhi meters
 //                 by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Deterministic widget-local hover delivery by J.J. Boyd
@@ -378,7 +380,22 @@ class TstContainerChrome : public QObject
         d.containers.append(f);
         ContainerDocument overlay;overlay.id="O";overlay.dockMode=DockMode::OverlayDocked;overlay.anchor=AxisLock::BottomRight;overlay.geometry=QRect(100,100,300,160);d.containers.append(overlay);
         QCOMPARE(manager.commitWorkspace(d, 0).status, CommitStatus::Saved);
-        auto* anchored=manager.container("O");QVERIFY(anchored);manager.updateDockedPositions(40,30);QCOMPARE(anchored->pos(),QPoint(140,130));
+        auto* anchored = manager.container("O");
+        QVERIFY(anchored);
+        QCOMPARE(anchored->dockMode(), DockMode::OverlayDocked);
+        QCOMPARE(anchored->parentWidget(), &pane);
+        QCOMPARE(anchored->geometry(), overlay.geometry);
+        QCOMPARE(anchored->dockedLocation(), overlay.geometry.topLeft());
+        QCOMPARE(anchored->delta(), QPoint(800, 600));
+        // MainWindow forwards final pane dimensions, so an unchanged pane
+        // must preserve the committed position and its anchor baseline.
+        manager.updateDockedPositions(pane.width(), pane.height());
+        QCOMPARE(anchored->geometry(), overlay.geometry);
+        QCOMPARE(anchored->dockedLocation(), overlay.geometry.topLeft());
+        QCOMPARE(anchored->delta(), QPoint(800, 600));
+        pane.resize(840, 630);
+        manager.updateDockedPositions(pane.width(), pane.height());
+        QCOMPARE(anchored->pos(), QPoint(140,130));
         auto* host = manager.contentHost("F");
         auto* form = manager.container("F")->window();
         QVERIFY(form->width() >= 260);

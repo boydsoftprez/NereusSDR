@@ -102,6 +102,7 @@ mw0lge@grange-lane.co.uk
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <atomic>
 
@@ -134,7 +135,7 @@ namespace NereusSDR {
 // primitives.
 //
 // Source: mi0bot bandwidth_monitor.{h,c} [@c26a8a4]
-class HermesLiteBandwidthMonitor : public QObject {
+class NEREUS_CORE_EXPORT HermesLiteBandwidthMonitor : public QObject {
     Q_OBJECT
 
 public:

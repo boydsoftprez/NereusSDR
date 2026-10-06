@@ -79,6 +79,7 @@
 // =================================================================
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QByteArray>
 #include <QObject>
 #include <QString>
@@ -92,7 +93,7 @@
 
 namespace NereusSDR {
 
-class TransmitHolder : public QObject {
+class NEREUS_CORE_EXPORT TransmitHolder : public QObject {
     Q_OBJECT
 
 public:

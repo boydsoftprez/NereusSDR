@@ -1,5 +1,13 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-04: Hold accepted Core waterfall levels in the remote codec window.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-04: Opt-in waterfall diagnostic binding, row and applied extras
+//               provenance only; no routing changes. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
+//   2026-10-04: Keep local PC microphone preview capture while unkeyed,
+//               independently of uplink admission; discard preview PCM.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04: Release explicitly retired displays whose subscribe result
 //               expired across media replacement; retain uncertain charge
 //               until the release result and guard synchronous stack teardown.
@@ -490,14 +498,13 @@ constexpr double kRuntimeLowLevelReachDb = 60.0;
 
 // Whether the pan's waterfall levels are set at run time rather than the
 // stored low and high levels (SpectrumWidget::composeWaterfallActiveThresholds).
-// A pan whose AGC levels come from the Core (coreWaterfallLevelsInUse) is
-// coloured against levels the Core computed before it clamped the rows, so
-// its window is the stored levels', as with manual levels: AGC settling
-// asks the Core nothing.
+// Core levels are computed before codec clamping, but still need to be
+// represented by the transported rows that the widget colours with them.
+// Until the first accepted pair arrives the renderer uses stored levels.
 bool runtimeWaterfallLevels(const SpectrumWidget* widget)
 {
     if (widget->coreWaterfallLevelsInUse()) {
-        return false;
+        return widget->coreWaterfallLevels().has_value();
     }
     return widget->clarityActive() || widget->wfAgcEnabled()
         || widget->waterfallNFAGCEnabled();
@@ -515,15 +522,21 @@ DbmWindow waterfallLevelsWindow(const SpectrumWidget* widget,
     if (!runtimeWaterfallLevels(widget)) {
         return stored;
     }
-    // Clarity's levels come from the Core's noise floor of the whole
-    // source, not from these values, so only the AGCs are held to the reach.
-    double activeLow = double(widget->wfActiveLowThreshold());
-    if (!widget->clarityActive()) {
+    // Core automatic levels and Clarity's floor come from the source
+    // before codec clamping. Only a local AGC following transported rows
+    // needs the reach cap to prevent clamped-floor feedback.
+    const auto coreLevels = widget->coreWaterfallLevelsInUse()
+        ? widget->coreWaterfallLevels() : std::nullopt;
+    double activeLow = coreLevels ? double(coreLevels->first)
+                                  : double(widget->wfActiveLowThreshold());
+    if (!coreLevels && !widget->clarityActive()) {
         const double reach = std::floor(std::min(panLowDbm, stored.minDbm)
                                         - kRuntimeLowLevelReachDb);
         activeLow = std::max(activeLow, reach + kRuntimeLevelHeadroomDb);
     }
-    const double activeHigh = std::max(double(widget->wfActiveHighThreshold()), activeLow);
+    const double high = coreLevels ? double(coreLevels->second)
+                                  : double(widget->wfActiveHighThreshold());
+    const double activeHigh = std::max(high, activeLow);
     if (!std::isfinite(activeLow) || !std::isfinite(activeHigh)) {
         return held.value_or(stored);
     }
@@ -669,8 +682,8 @@ QJsonObject requestFor(SpectrumWidget* widget, SliceModel* slice,
         // (the line's floor plus the offset, 60 dB above it) and sends the
         // levels beside each frame.
         request.insert(QStringLiteral("waterfallLevels"), QJsonObject{
-            {QStringLiteral("mode"), widget->wfAgcEnabled() ? QStringLiteral("agc")
-                                                            : QStringLiteral("noiseFloorAgc")},
+            {QStringLiteral("mode"), widget->waterfallNFAGCEnabled() ? QStringLiteral("noiseFloorAgc")
+                                                                     : QStringLiteral("agc")},
             {QStringLiteral("lowDbm"), double(widget->wfLowThreshold())},
             {QStringLiteral("highDbm"), double(widget->wfHighThreshold())},
             {QStringLiteral("offsetDb"), widget->waterfallAGCOffsetDb()}});
@@ -1333,7 +1346,8 @@ struct RemoteMediaController::Private {
     std::optional<RemoteDisplayAllocation> cachedAllocation;
     QString cachedAllocationError;
     // iPhone app plan Task 36: the microphone uplink. The lease holds the
-    // capture helper open only while the uplink runs; the rest belongs to
+    // capture helper open while the uplink or local PC preview needs it;
+    // the rest belongs to
     // the current media connection.
     bool holdsTransmit = false;
     bool micKeyDown = false;
@@ -1659,9 +1673,9 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // refreshes the status once start() returns.
         if (!d->preparingAudio) { requestAudio(); }
     });
-    // Task 36: the microphone uplink's pump. It runs only while this media
-    // connection has a microphone line; it pulls audio only while the
-    // uplink runs.
+    // Task 36: the microphone pump runs while this media connection has a
+    // microphone line. Uplink or local PC preview demand pulls capture;
+    // only an admitted uplink sends audio.
     d->micTimer = new QTimer(this);
     d->micTimer->setInterval(kMicPumpIntervalMs);
     connect(d->micTimer, &QTimer::timeout, this, &RemoteMediaController::reconcileMicUplink);
@@ -1697,6 +1711,10 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
                 && self->d->peer->sendTx(RemoteTxWatchdog::channelKeepalive(sequence, epoch));
         });
     }
+    // ClientAudio can also be VAX. Follow the local source separately,
+    // including the model update after the Core accepts a source change.
+    connect(&model->transmitModel(), &TransmitModel::micSourceChanged, this,
+            [this](MicSource) { reconcileMicUplink(); });
     // Fix wave M6: the microphone streams unkeyed only for VOX this window
     // armed, never for VOX another device armed on the Core.
     connect(client, &StationClient::voxArmedHereChanged, this,
@@ -2507,16 +2525,25 @@ bool RemoteMediaController::micUplinkWanted() const
 void RemoteMediaController::reconcileMicUplink()
 {
     const bool wanted = micUplinkWanted();
+    const RemoteTransmitClient* transmit = d->client ? d->client->remoteTransmit() : nullptr;
+    const bool preview = micLineOpen() && d->model && d->model->audioEngine()
+        && d->model->transmitModel().micSource() == MicSource::Pc
+        && transmit && transmit->acceptedMicSource() == RemoteMicSource::ClientAudio;
+    const bool captureWanted = wanted || preview;
+    if (captureWanted && !d->micLease.isActive()) {
+        d->micLease = d->model->audioEngine()->acquireCaptureDemand(
+            CaptureSupervisor::Demand::RemoteWindow);
+    } else if (!captureWanted && d->micLease.isActive()) {
+        d->micLease.release();
+    }
+    // Samples waiting before key-down belong to preview, even when the
+    // key arrives between timer ticks. Drain them before sending fresh PCM.
+    const bool starting = wanted && !d->micRunning;
     if (wanted != d->micRunning) {
         d->micRunning = wanted;
         if (wanted) {
-            // The capture helper opens on the microphone chosen in Audio >
-            // Devices, only now.
-            d->micLease = d->model->audioEngine()->acquireCaptureDemand(
-                CaptureSupervisor::Demand::RemoteWindow);
             qCInfo(lcRemoteMedia) << "Microphone uplink started";
         } else {
-            d->micLease.release();
             d->micPending.clear();
             d->programPending.clear();
             d->programUntilMs = -1;
@@ -2525,7 +2552,7 @@ void RemoteMediaController::reconcileMicUplink()
     }
     const QPointer<RemoteMediaController> self(this);
     refreshAudioStatus();
-    if (!self || !d->micRunning) {
+    if (!self || !d->micLease.isActive()) {
         return;
     }
     // A program's audio, while it keeps coming, replaces the microphone:
@@ -2538,10 +2565,15 @@ void RemoteMediaController::reconcileMicUplink()
         if (got <= 0) {
             break;
         }
-        if (!program) {
+        // Idle preview continuously drains the capture ring without
+        // encoding or sending. It must never queue old voice for a key.
+        if (d->micRunning && !starting && !program) {
             d->micPending.insert(d->micPending.end(), d->micScratch.begin(),
                                  d->micScratch.begin() + got);
         }
+    }
+    if (!d->micRunning) {
+        return;
     }
     sendMicAudio(program ? d->programPending : d->micPending);
 }
@@ -6538,6 +6570,10 @@ void RemoteMediaController::receiveDisplayExtras(const QByteArray& packet)
     if (d->transmittingPans.contains(binding.panId)) { return; }
     binding.widget->setCoreWaterfallLevels(decoded.frame.waterfallLevelsDbm->first,
                                            decoded.frame.waterfallLevelsDbm->second);
+    if (qEnvironmentVariableIntValue("NEREUS_TRACE_WF_STATE") == 1) {
+        binding.widget->m_wfExtrasDiagnostics = SpectrumWidget::WaterfallExtrasDiagnostics{
+            decoded.frame.endpointId, decoded.frame.contextGeneration, decoded.frame.encoderSequence};
+    }
 }
 
 RemoteDisplayTelemetry RemoteMediaController::displayTelemetry() const
@@ -6694,9 +6730,28 @@ void RemoteMediaController::presentDueDisplay()
                 continue;
             }
             const QPointer<SpectrumWidget> widget = it->second.widget;
+            const bool traceWaterfall = qEnvironmentVariableIntValue("NEREUS_TRACE_WF_STATE") == 1;
+            if (traceWaterfall) {
+                widget->m_wfDiagnosticStack = d->stack;
+                widget->m_wfDiagnosticPanId = it->second.panId;
+                widget->m_wfDiagnosticSliceId = it->second.slice ? it->second.slice->sliceIndex() : -1;
+                widget->m_wfDiagnosticStreamEpoch = it->second.observedStreamEpoch;
+            }
+            // Diagnostic metadata follows the existing queue insertion only.
+            // Synthesized blends/repeats do not carry source encoder sequences.
+            const auto recordQueuedProvenance = [&]() {
+                if (!traceWaterfall || !widget || widget->m_remoteRowQueue.isEmpty()) { return; }
+                auto& row = widget->m_remoteRowQueue.last().diagnostics;
+                row.presentationKind = static_cast<int>(item.kind);
+                row.encoderSequence = item.kind == RemoteDisplayPresenter::Kind::Frame
+                    ? std::optional<quint32>(item.frame.encoderSequence) : std::nullopt;
+                row.sliceId = widget->m_wfDiagnosticSliceId;
+                row.bindingStreamEpoch = widget->m_wfDiagnosticStreamEpoch;
+            };
             if (item.kind != RemoteDisplayPresenter::Kind::Frame) {
                 if (widget->enqueueRemoteWaterfallRow(item.frame.waterfallDbm, item.frame.wideDbm,
                                                       item.capture)) {
+                    recordQueuedProvenance();
                     if (item.kind == RemoteDisplayPresenter::Kind::Blended) {
                         ++d->displayCounters.rowsBlended;
                     } else {
@@ -6717,9 +6772,11 @@ void RemoteMediaController::presentDueDisplay()
                                                        item.centreHz, item.spanHz);
                 }
                 if (item.frame.waterfallAdvance && widget) {
-                    widget->enqueueRemoteWaterfallRow(item.frame.waterfallDbm,
-                                                      item.frame.wideDbm,
-                                                      item.capture);
+                    if (widget->enqueueRemoteWaterfallRow(item.frame.waterfallDbm,
+                                                          item.frame.wideDbm,
+                                                          item.capture)) {
+                        recordQueuedProvenance();
+                    }
                 }
                 continue;
             }

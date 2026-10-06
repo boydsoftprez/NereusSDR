@@ -65,6 +65,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QHash>
 #include <QJsonObject>
@@ -80,7 +81,7 @@ namespace NereusSDR {
 // Sink for FreeDVReporterClient station events; presents the live
 // QHash<sid, FreeDVStation> to the FreeDVReporterDialog and the
 // Spot Hub Stations tab.
-class FreeDVStationModel : public QObject {
+class NEREUS_CORE_EXPORT FreeDVStationModel : public QObject {
     Q_OBJECT
 public:
     explicit FreeDVStationModel(QObject* parent = nullptr);

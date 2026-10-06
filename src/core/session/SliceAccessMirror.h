@@ -42,6 +42,7 @@
 //               Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "core/session/MirrorSchema.h"
 
 #include <QByteArray>
@@ -59,7 +60,7 @@ namespace NereusSDR {
 class RadioModel;
 class RemoteDevicesState;
 
-class SliceAccessMirror : public QObject {
+class NEREUS_CORE_EXPORT SliceAccessMirror : public QObject {
     Q_OBJECT
 
 public:

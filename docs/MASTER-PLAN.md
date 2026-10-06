@@ -6,9 +6,9 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 ---
 
-## Current release work: 2026.10.0
+## Current release: 2026.10.0
 
-The first CalVer release is being prepared from the work since 0.5.2.
+The first CalVer release brings together the work since 0.5.2.
 `YYYY.M.counter` replaces semantic release numbers; the first final release
 in October is `2026.10.0`. Settings schema and wire versions remain separate.
 
@@ -18,7 +18,7 @@ remote desktop sessions, shared-device receiver/TX authority, Core Settings,
 WDSP 2.10 with NNR/PureSignal 3 assets, editable Canvas and stacked containers,
 proportional meter text, complete faces and fifteen individual controls, native
 TX EQ/CFC editors, Diversity, AM modulation monitoring and Core-owned accessories. The [README](../README.md), [changelog](../CHANGELOG.md)
-and [tester guide](debugging/v2026.10.0-alpha-tester-smoketest.md) describe the
+and [upgrade guide](guides/upgrading-to-2026.10.0.md) describe the
 release scope and upgrade behavior.
 
 Hardware/on-air matrices and source/package acceptance remain distinct. Refer

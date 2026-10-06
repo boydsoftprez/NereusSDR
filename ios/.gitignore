@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/xcuserdata/
+# The Xcode project is generated from project.yml by scripts/generate-project.sh.
+NereusSDR.xcodeproj/
+xcuserdata/

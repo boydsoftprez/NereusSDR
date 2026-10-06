@@ -68,6 +68,7 @@
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QVector>
 #include <QElapsedTimer>
@@ -106,7 +107,7 @@ enum class WindowFunction : int {
 // the main thread (FFT size changes require replan on next frame).
 //
 // From Thetis display.cs:215 — BUFFER_SIZE = 16384 (max FFT size)
-class FFTEngine : public QObject {
+class NEREUS_CORE_EXPORT FFTEngine : public QObject {
     Q_OBJECT
 
 public:

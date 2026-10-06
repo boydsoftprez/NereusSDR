@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "core/WdspTypes.h"
 
 #include <QList>
@@ -57,7 +58,7 @@ struct FilterPreset {
 ///
 /// Callers subscribe to presetsChanged(DSPMode) and call
 /// rebuildFilterButtons on emission.
-class FilterPresetStore : public QObject {
+class NEREUS_CORE_EXPORT FilterPresetStore : public QObject {
     Q_OBJECT
 public:
     explicit FilterPresetStore(QObject* parent = nullptr);

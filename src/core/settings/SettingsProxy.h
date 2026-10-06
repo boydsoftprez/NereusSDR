@@ -308,6 +308,7 @@
 //                                    Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include <QMap>
 #include <QObject>
 #include <QSet>
@@ -319,7 +320,7 @@
 
 namespace NereusSDR {
 
-class SettingsProxy : public QObject, public ISettingsBackend {
+class NEREUS_CORE_EXPORT SettingsProxy : public QObject, public ISettingsBackend {
     Q_OBJECT
 
 public:

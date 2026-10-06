@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-04 — Selected RX source identity and RX-only presentation reset by
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -269,6 +271,16 @@ void MeterItem::resetForTxTransition(bool inTx)
 {
     if (!inTx && bindingId() >= MeterBinding::TxPower && bindingId() < MeterBinding::HwVolts) {
         if (BarItem* bar = qobject_cast<BarItem*>(this)) { bar->clearSmoothing(0.0); }
+    }
+}
+
+void MeterItem::resetRxSource()
+{
+    if (hasMmioBinding()) { return; }
+    for (int binding : readingBindings()) {
+        if (binding >= MeterBinding::SignalPeak && binding <= MeterBinding::PbSnr) {
+            pushBindingValue(binding, kNoMeterReadingDbm);
+        }
     }
 }
 

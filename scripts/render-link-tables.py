@@ -18,8 +18,8 @@ section in surface.json cannot go unrendered.
 
 Derived blocks:
     capabilityVersions   section 6.3: each per-feature capability version
-                         and the value a station with every feature on
-                         sends (from "capabilities")
+                         and the value the capture fixture advertises, or
+                         its explicit absence (from "capabilities")
 
 Usage:
     python3 scripts/render-link-tables.py            rewrite the document
@@ -31,6 +31,11 @@ The renderer knows every field surface.json carries and refuses one it does
 not know (exit 2), so an edit to surface.json always changes the rendering
 or stops the check. Python standard library only.
 """
+
+# Modification history (NereusSDR):
+#   2026-10-04  J.J. Boyd / KG4VCF  Render declaration-only watch capability
+#                                  without claiming a sampled value.
+#                                  AI-assisted via OpenAI Codex.
 
 import argparse
 import json
@@ -112,10 +117,21 @@ def render_message_kinds(data):
                  rows)
 
 
+def validate_capability(entry, where):
+    # Only this route-specific declaration may lack a sampled live value.
+    # All other capability fields and unknown-field rejection stay strict.
+    expect_keys(entry, ("name", "kind", "value"), where, required=("name", "kind"))
+    if entry["name"] == "txWatchPathVersion":
+        if entry["kind"] != "i64":
+            raise SurfaceError(f"{where}: txWatchPathVersion requires wire kind i64")
+    else:
+        expect_keys(entry, ("name", "kind", "value"), where)
+
+
 def render_capabilities(data):
     rows = []
     for index, entry in enumerate(data, start=1):
-        expect_keys(entry, ("name", "kind", "value"), f"capabilities[{index - 1}]")
+        validate_capability(entry, f"capabilities[{index - 1}]")
         rows.append((index, code(entry["name"]), code(entry["kind"])))
     return table(("Order", "Name", "Wire kind"), rows)
 
@@ -132,8 +148,11 @@ def is_feature_version(entry):
 def render_capability_versions(data):
     rows = []
     for index, entry in enumerate(data):
-        expect_keys(entry, ("name", "kind", "value"), f"capabilities[{index}]")
+        validate_capability(entry, f"capabilities[{index}]")
         if not is_feature_version(entry):
+            continue
+        if "value" not in entry:
+            rows.append((code(entry["name"]), "not advertised by this fixture"))
             continue
         value = entry["value"]
         if isinstance(value, bool):
@@ -141,7 +160,7 @@ def render_capability_versions(data):
         else:
             shown = value
         rows.append((code(entry["name"]), shown))
-    return table(("Capability", "Value with every feature on"), rows)
+    return table(("Capability", "Value advertised by capture fixture"), rows)
 
 
 def render_mirror_classes(data):

@@ -1,0 +1,57 @@
+/**
+ * Copyright (c) 2019 Paul-Louis Ageneau
+ * Copyright (c) 2020 Filip Klembara (in2core)
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+libdatachannel v0.24.5: leave the libjuice callback before DTLS startup
+
+MPL-2.0, like src/impl/peerconnection.cpp above. Modification history
+(NereusSDR): 2026-10-05, J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
+The poll callback holds the libjuice registry lock. Inline DTLS startup
+can wait for the SSL lock while a receive worker holds SSL and sends a
+relayed DTLS record through that registry. Queue startup on the existing
+peer processor, preserving inline ICE state ordering and owning the peer
+and exact ICE instance. Skip pending work on a closed/failed/disconnected
+or replaced transport. Existing admitted-start/close overlap and post-start
+cleanup remain; this is not a zero-transient-start-after-close guarantee.
+No credential, fingerprint, MTU, deadline or TURN-lifetime policy changes.
+
+--- a/src/impl/peerconnection.cpp
++++ b/src/impl/peerconnection.cpp
+@@ -169,10 +169,29 @@
+ 						    changeIceState(IceState::Checking);
+ 						    changeState(State::Connecting);
+ 						    break;
+-					    case IceTransport::State::Connected:
++					    case IceTransport::State::Connected: {
+ 						    changeIceState(IceState::Connected);
+-						    initDtlsTransport();
++						    // Do not enter DTLS while libjuice holds its registry lock.
++						    // A receive worker can hold the SSL lock and send via ICE.
++						    auto ice = getIceTransport();
++						    mProcessor.enqueue([self = locked, ice]() {
++							    const auto peerState = self->state.load();
++							    if (self->closing.load() || peerState == State::Closed ||
++							        peerState == State::Failed || peerState == State::Disconnected ||
++							        !ice || self->getIceTransport() != ice) {
++								    return;
++							    }
++							    const auto iceState = ice->state();
++							    if (iceState != IceTransport::State::Connected &&
++							        iceState != IceTransport::State::Completed) {
++								    return;
++							    }
++							    // Close may overlap an admitted start. emplaceTransport
++							    // stops and clears it when closing is observed after start.
++							    self->initDtlsTransport();
++						    });
+ 						    break;
++					    }
+ 					    case IceTransport::State::Completed:
+ 						    changeIceState(IceState::Completed);
+ 						    break;

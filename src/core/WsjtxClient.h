@@ -34,6 +34,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QUdpSocket>
 #include <QHostAddress>
@@ -50,7 +51,7 @@ namespace NereusSDR {
 // WSJT-X UDP multicast client - listens for Decode messages (type 2)
 // from WSJT-X and emits spotReceived() for each decoded station.
 // Protocol: binary QDataStream on 224.0.0.1:2237 (default).
-class WsjtxClient : public QObject {
+class NEREUS_CORE_EXPORT WsjtxClient : public QObject {
     Q_OBJECT
 
 public:

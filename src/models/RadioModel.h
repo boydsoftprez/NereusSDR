@@ -608,6 +608,7 @@
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 #include "core/MoxController.h"
+#include "core/NereusCoreExport.h"
 #include "core/ConnectionState.h"
 #include "core/audio/CaptureSupervisor.h"
 #include "core/ReceiveLayoutStore.h"
@@ -836,7 +837,7 @@ class ConnectionDiagnostics;
 //                kept off main because WDSP fexchange2 with bfo=1 can
 //                block on Sem_OutReady and would otherwise freeze the
 //                Qt event loop, deadlocking against wdspmain.
-class RadioModel : public QObject {
+class NEREUS_CORE_EXPORT RadioModel : public QObject {
     Q_OBJECT
 
     Q_PROPERTY(QString settingsSaveError READ settingsSaveError NOTIFY settingsSaveErrorChanged)

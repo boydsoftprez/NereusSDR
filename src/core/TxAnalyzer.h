@@ -85,6 +85,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
@@ -141,7 +142,7 @@ struct TxDisplayView {
     bool operator==(const TxDisplayView&) const = default;
 };
 
-class TxAnalyzer : public QObject {
+class NEREUS_CORE_EXPORT TxAnalyzer : public QObject {
     Q_OBJECT
 
 public:

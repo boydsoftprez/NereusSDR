@@ -23,6 +23,9 @@
 //   2026-10-04: CAT accepted-intent tags and guarded cycle lifetimes,
 //                NereusSDR-original, by J.J. Boyd (KG4VCF), AI-assisted
 //                via OpenAI Codex.
+//   2026-10-04 - Two-tone sideband follows the transmit-bound slice at
+//                 connect and handoff. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex. NereusSDR-original binding fix.
 //   2026-10-03 - Diversity atomic reentry and slice-close/hydration lifetime
 //                 fences, J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01 - #299: replay anti-VOX run and detector tau to each new
@@ -999,6 +1002,10 @@
 //                Protocol 1 diversity VFO lock (DdcAssignment::p1Diversity,
 //                console.cs:8215-8216, 8544 [v2.10.3.15]) to the
 //                connection, which had no writer for it. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-06 - FreeDV Reporter / PSK Reporter identity: every setIdentity
+//                call sends SpotSourceHost::reporterVersion(); a remote
+//                identity edit had sent "NereusSDR/<version>". J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -2493,6 +2500,12 @@ RadioModel::RadioModel(Role role, QObject* parent)
             pushTxFrequencyFromTxSlice();
         }
         pushTxModeAndBandpass();
+        // From Thetis setup.cs:11096-11100 [v2.10.3.15] — two-tone
+        // inversion reads the transmitter's current DSP mode. The slice
+        // driving that mode is the TX binding, even when another is active.
+        if (m_twoToneController) {
+            m_twoToneController->setSliceModel(txBoundSlice());
+        }
         applyTxAntennaFromBoundSlice();
         if (m_moxController) {
             if (SliceModel* const bound = txBoundSlice()) {
@@ -3925,7 +3938,7 @@ RadioModel::RadioModel(Role role, QObject* parent)
                 QString()).toString(),
         s.value(QStringLiteral("FreeDvReporter/Message"),
                 QString()).toString(),
-        QStringLiteral("NereusSDR ") + QStringLiteral(NEREUSSDR_VERSION));
+        SpotSourceHost::reporterVersion());
     {
         const QString serverUrl = s.value(
             QStringLiteral("FreeDvReporter/ServerUrl"),
@@ -3960,7 +3973,7 @@ RadioModel::RadioModel(Role role, QObject* parent)
                 QString()).toString(),
         s.value(QStringLiteral("PskReporter/GridSquare"),
                 QString()).toString(),
-        QStringLiteral("NereusSDR ") + QStringLiteral(NEREUSSDR_VERSION));
+        SpotSourceHost::reporterVersion());
 
     // Per-source adapter slots. Auto-connection (sender + receiver both on
     // the main thread) gives DirectConnection, so the spot lands in
@@ -5956,8 +5969,7 @@ void RadioModel::applyRemoteFreedvSetting(const QString& key, AppSettings& setti
         settings.save();
         // The same existing clients the local Startup and Spot Hub pages
         // update must see a remote settings edit without a restart.
-        const QString version = QStringLiteral("NereusSDR/")
-            + QStringLiteral(NEREUSSDR_VERSION);
+        const QString version = SpotSourceHost::reporterVersion();
         if (m_freeDvReporter) {
             m_freeDvReporter->setIdentity(call, grid, message, version);
         }
@@ -17377,6 +17389,9 @@ Ps3RoutingSnapshot RadioModel::pureSignalRoutingSnapshot() const
         route.feedbackDdc = m_psccPump->psFbDdc();
         route.pumpActive = m_psccPump->isActive();
         route.pairedBlocks = static_cast<std::uint64_t>(m_psccPump->totalBlocksPumped());
+        route.pairedInputValid = m_psccPump->pairedInputValid();
+        route.txMonitorPeak = m_psccPump->txMonitorPeak();
+        route.feedbackPeak = m_psccPump->feedbackPeak();
     }
     if (m_wdspEngine && m_wdspEngine->psFeedbackChannel()) {
         route.feedbackChannelId = m_wdspEngine->psFeedbackChannel()->channelId();
@@ -17708,15 +17723,15 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
         loadSliceState(m_activeSlice);
     }
 
-    // ── 3M-1c L.2: TwoToneController active-slice mode source ────────────────
+    // ── 3M-1c L.2: TwoToneController transmit-slice mode source ────────────
     //
     // The controller reads SliceModel::dspMode() during setActive(true) for
     // the LSB-family invert-tones branch (TwoToneController.cpp step 4 /
     // setup.cs:11058-11062 [v2.10.3.13]).  Wire it to the freshly-added
-    // active slice; if active slice changes later (3F multi-pan), the
-    // setActiveSlice path will need to refresh this pointer too.
+    // transmit-bound slice; txBoundSliceChanged refreshes this pointer on
+    // handoff, matching the source of the TX mode and filter.
     if (m_twoToneController) {
-        m_twoToneController->setSliceModel(m_activeSlice);
+        m_twoToneController->setSliceModel(txBoundSlice());
     }
 
     // Activate receiver (this sends hardwareReceiverCountChanged to RadioConnection)

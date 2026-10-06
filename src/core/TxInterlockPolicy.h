@@ -40,12 +40,13 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include <QObject>
 #include <QString>
 
 namespace NereusSDR {
 
-class TxInterlockPolicy : public QObject {
+class NEREUS_CORE_EXPORT TxInterlockPolicy : public QObject {
     Q_OBJECT
 public:
     enum Mode { Disabled, Warn, Block };

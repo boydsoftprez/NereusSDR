@@ -47,6 +47,7 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "core/NereusCoreExport.h"
 #include "core/session/SessionMessages.h"
 
 #include <QByteArray>
@@ -119,7 +120,7 @@ signals:
     void noted(NereusSDR::PathKind kind, NereusSDR::PathOutcome outcome, const QString& reason);
 };
 
-class PathRacer : public QObject {
+class NEREUS_CORE_EXPORT PathRacer : public QObject {
     Q_OBJECT
 
 public:

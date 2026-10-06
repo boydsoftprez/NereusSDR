@@ -96,6 +96,15 @@ jobs:
         # verifies per-kind header markers. Fails on any missing marker.
         run: python3 scripts/compliance-inventory.py --fail-on-unclassified
 
+      - name: iOS app provenance (ios/ stays NereusSDR-original)
+        # R-IOS-29. The app ships under GPLv3 plus an App Store permission
+        # that upstream authors have not granted, so ios/ must carry no
+        # upstream code or text. Checks every app source's two header
+        # lines, bans upstream names and Copyright (C) lines, checks each
+        # ios/THIRD-PARTY.md row's licence and archive SHA-256, and keeps
+        # the conformance fixtures out of everything but the tests.
+        run: python3 scripts/verify-ios-provenance.py
+
       - name: GUI must not reach into WdspEngine for an RX channel
         # Phase 3F Sub-Epic J Task 11. Not an attribution check, but the
         # same shape (whole-tree sweep, no upstream clone needed) so it

@@ -80,6 +80,7 @@
 #pragma once
 #ifdef HAVE_WEBSOCKETS
 
+#include "core/NereusCoreExport.h"
 #include <QElapsedTimer>
 #include <QHash>
 #include <QHostAddress>
@@ -124,7 +125,7 @@ class TciProtocol;
 // Threading: all methods must be called from the thread that owns this object
 // (the main GUI thread in the current NereusSDR architecture).  QWebSocket
 // callbacks fire on the same thread via the Qt event loop.
-class TciServer : public QObject, public IReceiverPcmSink {
+class NEREUS_CORE_EXPORT TciServer : public QObject, public IReceiverPcmSink {
     Q_OBJECT
 
 public:

@@ -65,6 +65,8 @@ public:
         std::uint64_t sequence,
         std::int64_t capturedAtUnixMilliseconds);
 
+    static std::optional<Ps3CorrectionSummary> correctionSummary(const Ps3Snapshot& snapshot);
+
     static Ps3PlotData transform(const Ps3Snapshot& snapshot);
 
     // Normalizes to [-180, 180).  Both input endpoints therefore map to

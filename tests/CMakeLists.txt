@@ -421,6 +421,7 @@ nereus_add_test(tst_smoke)
 nereus_add_test(tst_ps3_display_codec EXTRA_LABELS core)
 nereus_add_test(tst_ps3_display_transform EXTRA_LABELS core)
 nereus_add_test(tst_ps3_session fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+nereus_add_test(tst_ps3_two_tone_completion EXTRA_LABELS session)
 nereus_add_test(tst_dsp_asset_dialog EXTRA_LABELS gui)
 nereus_add_test(tst_dsp_asset_service EXTRA_LABELS core)
 nereus_add_test(tst_ps3_lifecycle EXTRA_LABELS core)
@@ -565,6 +566,11 @@ nereus_add_test(tst_radio_model_push_tx_mode_and_bandpass)
 nereus_add_test(tst_container_legacy_import)
 nereus_add_test(tst_container_persistence)
 nereus_add_test(tst_container_arrangement)
+nereus_add_test(tst_container_application_quit)
+nereus_add_test(tst_container_position_restore)
+nereus_add_test(tst_container_follow_selected_rx)
+nereus_add_test(tst_container_stack_responsive)
+nereus_add_test(tst_container_preview_scroll_native NATIVE_WINDOW)
 nereus_add_test(tst_container_workspace_integration)
 nereus_add_test(tst_container_meter_native NATIVE_WINDOW)
 nereus_add_test(tst_container_chrome NATIVE_WINDOW)
@@ -2216,7 +2222,7 @@ nereus_add_test(tst_panadapter_applet_slice_assoc)
 # Structurally ported from AetherSDR src/gui/PanadapterStack.{h,cpp}
 # [@0cd4559]; applyLayout / floatPanadapter / rebuildSplitters stubbed for
 # Tasks 4-8.  See docs/attribution/aethersdr-reconciliation.md Bucket A.
-nereus_add_test(tst_panadapter_stack_layouts)
+nereus_add_test(tst_panadapter_stack_layouts fakes/LoopbackTransport.cpp)
 
 # ── Phase 3F Sub-Epic E Task 1: SpectrumStatusOverlay widget ────────────────
 # Top-right per-pan overlay widget for the Phase 3F multi-slice UI atlas.
@@ -5814,6 +5820,11 @@ nereus_add_test(tst_tx_display_window)
 # governing viewer's window and pixels, the carrier following XIT), and
 # TxAnalyzer::clampViewToBaseband.
 nereus_add_test(tst_tx_display_feed)
+if(FFTW3_FOUND AND WDSP_FOUND)
+    # The first-key regression reads applied DSP/siphon/analyzer geometry.
+    target_include_directories(tst_tx_display_feed PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_tx_display_feed PRIVATE WDSP_STATIC_BUILD)
+endif()
 # ── Phase 3J-1 Task 2.1: TciServer + ClientSession lifecycle ─────────────────
 # 3 tests: start/listen/signal, double-start rejection, stop/clear.
 # Gated on Qt6WebSockets_FOUND — TciServer.h/.cpp are #ifdef HAVE_WEBSOCKETS.
@@ -8013,6 +8024,16 @@ if(TEST tst_juice_poll_liveness)
     set_property(TARGET tst_juice_poll_liveness PROPERTY DISABLE_PRECOMPILE_HEADERS ON)
 endif()
 
+# The startup regression compiles real pinned OpenSSL RTC with observers in
+# a separate generated copy. Shipping RTC contains no fixture access/hooks.
+nereus_add_test(tst_dtls_startup CORE_ONLY EXTRA_LABELS session)
+if(TEST tst_dtls_startup)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/fakes/dtls-startup/Instrument.cmake")
+    set_property(TARGET tst_dtls_startup PROPERTY LINK_LIBRARIES
+        Qt6::Test Qt6::Core nereus_dtls_startup_fixture)
+    set_property(TARGET tst_dtls_startup PROPERTY DISABLE_PRECOMPILE_HEADERS ON)
+endif()
+
 # Task 56: the Core's compiled vendor sources contain the exact reviewed
 # relay cleanup patches, including libjuice's public and internal headers.
 # This check and the next are plain add_test() calls, not nereus_add_test(),
@@ -9239,7 +9260,7 @@ nereus_add_test(tst_remote_transmit_client EXTRA_LABELS session)
 # the window's microphone is a test bus.
 if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_remote_window_transmit
-        fakes/LoopbackTransport.cpp)
+        fakes/LoopbackTransport.cpp fakes/FakeCaptureChild.cpp)
     target_link_libraries(tst_remote_window_transmit PRIVATE Qt6::WebSockets)
 endif()
 
