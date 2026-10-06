@@ -107,6 +107,19 @@ private slots:
         QVERIFY(service.reconfigureChannel(1,service.channelConfig(1))); page.syncFromModel(); QCOMPARE(writes,0); QCOMPARE(changed.size(),3);
         AppSettings::instance().setChangeHook({});
     }
+    void lanListenWarnsAndPortsApplyWhenTypingEnds() {
+        RadioModel model; CatService& service=*model.catService(); service.startConfigured(); CatTcpIpPage page(&model);
+        QVERIFY(!control<QSpinBox>(page,"cat1Port")->keyboardTracking()); QVERIFY(!control<QSpinBox>(page,"cat1RigctldPort")->keyboardTracking());
+        const QString warning=QStringLiteral("Open to your network");
+        CatEndpointConfig config=service.channelConfig(1); config.tcpEnabled=true; config.tcpPort=unusedPort(); config.rigctldEnabled=true; config.rigctldPort=unusedPort();
+        QVERIFY(config.tcpPort>0 && config.rigctldPort>0 && config.tcpPort!=config.rigctldPort); QVERIFY(service.reconfigureChannel(1,config));
+        QVERIFY(!control<QLabel>(page,"cat1Status")->text().contains(warning)); QVERIFY(!control<QLabel>(page,"cat1RigctldStatus")->text().contains(warning));
+        // 192.0.2.1 is the documentation range (RFC 5737): never bound here, so no listener opens.
+        config.tcpBindAddress=QStringLiteral("192.0.2.1"); config.rigctldBindAddress=QStringLiteral("192.0.2.1"); QVERIFY(service.reconfigureChannel(1,config));
+        QVERIFY(control<QLabel>(page,"cat1Status")->text().contains(warning)); QVERIFY(control<QLabel>(page,"cat1RigctldStatus")->text().contains(warning));
+        config.tcpEnabled=false; config.rigctldEnabled=false; QVERIFY(service.reconfigureChannel(1,config));
+        QVERIFY(!control<QLabel>(page,"cat1Status")->text().contains(warning)); QVERIFY(!control<QLabel>(page,"cat1RigctldStatus")->text().contains(warning));
+    }
     void failedActivationRemainsSavedAndVisible() {
         RadioModel model; CatService& service=*model.catService(); service.startConfigured(); CatTcpIpPage page(&model);
         QTcpServer occupied; QVERIFY(occupied.listen(QHostAddress::LocalHost,0));

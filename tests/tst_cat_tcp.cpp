@@ -1,6 +1,8 @@
 // no-port-check: NereusSDR-original native CAT loopback integration tests.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest>
+#include <QElapsedTimer>
+#include <algorithm>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include "core/AppSettings.h"
@@ -239,6 +241,31 @@ private slots:
             connect(socket,&QTcpSocket::disconnected,this,[&] { rejected.reset(); });
         });
         QTcpSocket other; other.connectToHost(QHostAddress::LocalHost,rejected->boundPort()); QTRY_VERIFY(!rejected);
+    }
+    void quietClientDropsLikeThetis()
+    {
+        // Thetis TCPIPcatServer.cs:397-412: a client that neither sent nor received
+        // anything for a whole check interval is closed; traffic either way keeps it.
+        CatTcpTransport transport; transport.setIdleCheckInterval(300); QVERIFY(transport.start(QHostAddress::LocalHost,0));
+        quint64 next=0; QList<quint64> closed;
+        connect(&transport,&CatTcpTransport::clientAccepted,this,[&](QTcpSocket* socket) { QVERIFY(transport.attachSession(++next,socket)); });
+        connect(&transport,&CatTcpTransport::closeRequested,this,[&](quint64 id) { closed.append(id); transport.closeSession(id); });
+        QTcpSocket talker,listener,quiet;
+        talker.connectToHost(QHostAddress::LocalHost,transport.boundPort()); QTRY_COMPARE(transport.clientCount(),1);
+        listener.connectToHost(QHostAddress::LocalHost,transport.boundPort()); QTRY_COMPARE(transport.clientCount(),2);
+        quiet.connectToHost(QHostAddress::LocalHost,transport.boundPort()); QTRY_COMPARE(transport.clientCount(),3);
+        QElapsedTimer clock; clock.start();
+        while (clock.elapsed()<1000) {
+            talker.write("ID;"); talker.flush(); QVERIFY(transport.writeBytes(2,"ID019;")); QTest::qWait(30);
+        }
+        QCOMPARE(closed,QList<quint64>{3}); QTRY_COMPARE(quiet.state(),QAbstractSocket::UnconnectedState);
+        QCOMPARE(transport.clientCount(),2);
+        QTRY_COMPARE(transport.clientCount(),0); std::sort(closed.begin(),closed.end());
+        QCOMPARE(closed,(QList<quint64>{1,2,3}));
+        CatTcpTransport keeps; QCOMPARE(keeps.idleCheckInterval(),0); QVERIFY(keeps.start(QHostAddress::LocalHost,0));
+        connect(&keeps,&CatTcpTransport::clientAccepted,this,[&](QTcpSocket* socket) { QVERIFY(keeps.attachSession(1,socket)); });
+        QTcpSocket idle; idle.connectToHost(QHostAddress::LocalHost,keeps.boundPort()); QTRY_COMPARE(keeps.clientCount(),1);
+        QTest::qWait(400); QCOMPARE(keeps.clientCount(),1);
     }
     void serviceLoopbackLifecycle()
     {

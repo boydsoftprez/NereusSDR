@@ -63,6 +63,8 @@ Added extended CAT commands for APF funtions - May 2017.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; no new upstream port.
 // 2026-10-04 - Native separate Hamlib dialect and guarded lifecycle integration,
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex; no new Thetis port.
+// 2026-10-06 - Drop a TCP CAT client after 30 s with no traffic, as Thetis does.
+//              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include "CatService.h"
 #include "RigctlProtocol.h"
 #include "core/AppSettings.h"
@@ -215,6 +217,9 @@ void CatService::startChannel(int channel)
     if (!m_started || m_destroying) { return; }
     if (endpoint.config.tcpEnabled) {
         const auto tcp = std::make_shared<CatTcpTransport>();
+        // From Thetis CAT/TCPIPcatServer.cs:90-91,397-412 [v2.10.3.15]. The rigctld
+        // listener below is not the Thetis server and keeps quiet clients.
+        tcp->setIdleCheckInterval(CatTcpTransport::kThetisIdleCheckIntervalMs);
         endpoint.tcp = tcp;
         const std::weak_ptr<CatTcpTransport> weak(tcp);
         const QPointer<CatService> self(this);

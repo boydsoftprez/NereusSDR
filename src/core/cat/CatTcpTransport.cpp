@@ -10,6 +10,8 @@
 // Modification history (NereusSDR):
 // 2026-10-04 - Native event-loop CAT adaptation by J.J. Boyd (KG4VCF),
 //              AI-assisted via OpenAI Codex.
+// 2026-10-06 - Port the 30 s quiet-client drop (checkClientCommInterval).
+//              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #include "CatTcpTransport.h"
 #include "core/LogCategories.h"
@@ -55,6 +57,15 @@ bool CatTcpTransport::attachSession(quint64 id, QTcpSocket* socket)
 {
     if (!id || !socket || !m_server.isListening() || m_sockets.contains(id)) { return false; }
     m_sockets.insert(id, socket);
+    if (m_idleCheckIntervalMs > 0) {
+        // From Thetis CAT/TCPIPcatServer.cs:84-91 [v2.10.3.15]. One repeating timer per client.
+        // init date/time for timeouts
+        IdleWatch& watch = m_idle[id];
+        watch.timer = new QTimer(this);
+        watch.timer->setInterval(m_idleCheckIntervalMs);
+        connect(watch.timer, &QTimer::timeout, this, [this, id] { checkClientCommInterval(id); });
+        watch.timer->start();
+    }
     connect(socket, &QTcpSocket::readyRead, this, [this, id] { readBytes(id); });
     connect(socket, &QTcpSocket::disconnected, this, [this, id] { emit closeRequested(id); });
     connect(socket, &QTcpSocket::errorOccurred, this, [this, id](QAbstractSocket::SocketError) {
@@ -77,6 +88,8 @@ void CatTcpTransport::readBytes(quint64 id)
         const QByteArray bytes = socket->read(kReadChunkBytes);
         if (!self || m_sockets.value(id) != socket) { return; }
         if (bytes.isEmpty()) { break; }
+        // From Thetis CAT/TCPIPcatServer.cs:112-114 [v2.10.3.15].
+        if (const auto watch = m_idle.find(id); watch != m_idle.end()) { watch->received = true; }
         emit bytesReceived(id, bytes);
         if (!self || m_sockets.value(id) != socket) { return; }
     }
@@ -95,10 +108,33 @@ bool CatTcpTransport::writeBytes(quint64 id, const QByteArray& bytes)
     const qint64 written = socket->write(bytes);
     if (!self || !socket || m_sockets.value(id) != socket) { return false; }
     if (written != bytes.size()) { emit closeRequested(id); return false; }
+    // From Thetis CAT/TCPIPcatServer.cs:367-371 [v2.10.3.15].
+    if (const auto watch = m_idle.find(id); watch != m_idle.end()) { watch->sent = true; }
     return true;
+}
+void CatTcpTransport::checkClientCommInterval(quint64 id)
+{
+    // From Thetis CAT/TCPIPcatServer.cs:397-412 [v2.10.3.15]. Nothing sent and nothing
+    // received during the last interval closes the client.
+    const auto watch = m_idle.find(id);
+    if (watch == m_idle.end() || !m_sockets.value(id)) { return; }
+    const bool stopR = !watch->received;
+    const bool stopS = !watch->sent;
+    watch->received = false; watch->sent = false;
+    if (stopR && stopS) {
+        stopIdleWatch(id);
+        qCInfo(lcCat) << "CAT TCP client quiet for" << m_idleCheckIntervalMs << "ms; closing it";
+        emit closeRequested(id);
+    }
+}
+void CatTcpTransport::stopIdleWatch(quint64 id)
+{
+    const IdleWatch watch = m_idle.take(id);
+    if (watch.timer) { watch.timer->stop(); watch.timer->deleteLater(); }
 }
 void CatTcpTransport::closeSession(quint64 id)
 {
+    stopIdleWatch(id);
     const QPointer<QTcpSocket> socket = m_sockets.take(id);
     if (!socket) { return; }
     const QPointer<CatTcpTransport> self(this);
@@ -112,6 +148,9 @@ void CatTcpTransport::stop()
 {
     // Caller cancels all claims before close. Detach old clients before callbacks.
     m_server.close();
+    for (const IdleWatch& watch : std::exchange(m_idle, {})) {
+        if (watch.timer) { watch.timer->stop(); watch.timer->deleteLater(); }
+    }
     const auto sockets = std::exchange(m_sockets, {});
     for (const QPointer<QTcpSocket>& socket : sockets) {
         if (socket) { socket->disconnect(this); socket->setParent(nullptr); socket->deleteLater(); }

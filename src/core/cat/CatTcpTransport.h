@@ -12,6 +12,8 @@
 //              AI-assisted via OpenAI Codex.
 // 2026-10-06 - Export the class from the Windows Core DLL so the GUI and tests
 //              can use its signals. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-06 - Port the 30 s quiet-client drop (checkClientCommInterval).
+//              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #pragma once
 #include "core/NereusCoreExport.h"
@@ -19,6 +21,7 @@
 #include <QPointer>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QTimer>
 #include <QHash>
 namespace NereusSDR {
 class NEREUS_CORE_EXPORT CatTcpTransport : public QObject {
@@ -39,6 +42,11 @@ public:
     // Nereus bounds: independent of catalogue request and answer widths.
     static constexpr qsizetype kMaximumOutputBytes = 64 * 1024;
     static constexpr qint64 kMaximumPendingBytes = 256 * 1024;
+    // From Thetis CAT/TCPIPcatServer.cs:90-91 [v2.10.3.15]: checkClientCommInterval every 30000 ms.
+    static constexpr int kThetisIdleCheckIntervalMs = 30000;
+    // Applies to sessions attached afterwards; 0 never drops a quiet client.
+    void setIdleCheckInterval(int ms) { m_idleCheckIntervalMs = ms > 0 ? ms : 0; }
+    int idleCheckInterval() const { return m_idleCheckIntervalMs; }
 signals:
     void clientAccepted(QTcpSocket*);
     void bytesReceived(quint64, QByteArray);
@@ -47,7 +55,13 @@ signals:
 private:
     void acceptClients();
     void readBytes(quint64);
+    void checkClientCommInterval(quint64);
+    void stopIdleWatch(quint64);
+    // Thetis keeps last/current send and receive times; a flag per interval is equivalent.
+    struct IdleWatch { QPointer<QTimer> timer; bool received{false}; bool sent{false}; };
     QTcpServer m_server;
     QHash<quint64, QPointer<QTcpSocket>> m_sockets;
+    QHash<quint64, IdleWatch> m_idle;
+    int m_idleCheckIntervalMs{0};
 };
 } // namespace NereusSDR

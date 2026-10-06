@@ -5,6 +5,8 @@
 // 2026-10-04 - Keep disabled PTY platform reasons and remote-host guidance.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-04 - J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-06 - Warn when a listener is open beyond this computer; ports apply when
+//              typing finishes. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include "CatNetworkSetupPages.h"
 #include "core/cat/CatService.h"
 #include "gui/StyleConstants.h"
@@ -15,6 +17,7 @@
 #include <QComboBox>
 #include <QEvent>
 #include <QFormLayout>
+#include <QHostAddress>
 #include <QGridLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -29,6 +32,12 @@ namespace NereusSDR {
 namespace {
 QString localReason() { return QObject::tr("CAT listeners and setup belong to the local host. Configure CAT on the computer running the Core."); }
 bool local(RadioModel* model) { return model && model->ownsLocalDsp(); }
+// rigctld(1) warns the protocol has no authentication; the Thetis TCP CAT has none either.
+QString openToNetwork(bool enabled, const QString& address) {
+    const QHostAddress bind(address);
+    if (!enabled || bind.isNull() || bind.isLoopback()) { return {}; }
+    return QStringLiteral("\n") + QObject::tr("Open to your network: any device that can reach this port can tune and key the radio. There is no password.");
+}
 QStringList baudChoices() {
     // From Thetis setup.Designer.cs:57973-57983 [v2.10.3.15]. Choice facts only.
     return {"300","1200","2400","4800","9600","19200","38400","57600","115200"};
@@ -128,7 +137,7 @@ CatChannelSetupPage::CatChannelSetupPage(RadioModel* model, bool serial, QWidget
             format->addWidget(new QLabel(tr("Stops:"),group)); format->addWidget(row.stops); grid->addLayout(format,2,0,1,5);
         } else {
             row.address=new QLineEdit(group); row.address->setObjectName(prefix+"Address"); row.address->setStyleSheet(QString::fromLatin1(Style::kLineEditStyle));
-            row.port=new QSpinBox(group); row.port->setRange(0,65535); row.port->setSpecialValueText(tr("Choose port")); row.port->setObjectName(prefix+"Port"); row.port->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
+            row.port=new QSpinBox(group); row.port->setRange(0,65535); row.port->setSpecialValueText(tr("Choose port")); row.port->setObjectName(prefix+"Port"); row.port->setKeyboardTracking(false); row.port->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
             grid->addWidget(new QLabel(tr("Listen on:"),group),1,0); grid->addWidget(row.address,1,1,1,2);
             grid->addWidget(new QLabel(tr("Port:"),group),1,3); grid->addWidget(row.port,1,4);
             row.pty=new QCheckBox(tr("Enable PTY"),group); row.pty->setObjectName(prefix+"Pty"); row.pty->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle)); grid->addWidget(row.pty,2,0,1,2);
@@ -140,7 +149,7 @@ CatChannelSetupPage::CatChannelSetupPage(RadioModel* model, bool serial, QWidget
             row.rigctld=new QCheckBox(tr("Enable Hamlib rigctld"),group); row.rigctld->setObjectName(prefix+"RigctldEnabled");
             row.rigctld->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle)); grid->addWidget(row.rigctld,5,0,1,5);
             row.rigAddress=new QLineEdit(group); row.rigAddress->setObjectName(prefix+"RigctldAddress"); row.rigAddress->setStyleSheet(QString::fromLatin1(Style::kLineEditStyle));
-            row.rigPort=new QSpinBox(group); row.rigPort->setRange(0,65535); row.rigPort->setSpecialValueText(tr("Choose port")); row.rigPort->setObjectName(prefix+"RigctldPort"); row.rigPort->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
+            row.rigPort=new QSpinBox(group); row.rigPort->setRange(0,65535); row.rigPort->setSpecialValueText(tr("Choose port")); row.rigPort->setObjectName(prefix+"RigctldPort"); row.rigPort->setKeyboardTracking(false); row.rigPort->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
             grid->addWidget(new QLabel(tr("Listen on:"),group),6,0); grid->addWidget(row.rigAddress,6,1,1,2);
             grid->addWidget(new QLabel(tr("Port:"),group),6,3); grid->addWidget(row.rigPort,6,4);
             row.rigStatus=note(group,{}); row.rigStatus->setObjectName(prefix+"RigctldStatus"); grid->addWidget(row.rigStatus,7,0,1,5);
@@ -209,10 +218,10 @@ void CatChannelSetupPage::syncFromModel() {
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
             else { row.pty->setToolTip(tr("CAT %1 PTY uses %2 commands on this computer.").arg(i+1).arg(config.ptyDialect)); }
 #endif
-            row.rigStatus->setText(tr("Rigctld: %1 · Bound: %2:%3 · Clients: %4").arg(m_service->transportState(i+1,CatTransportKind::Rigctld),m_service->rigctldBoundAddress(i+1).toString()).arg(m_service->rigctldBoundPort(i+1)).arg(m_service->rigctldClientCount(i+1)));
+            row.rigStatus->setText(tr("Rigctld: %1 · Bound: %2:%3 · Clients: %4").arg(m_service->transportState(i+1,CatTransportKind::Rigctld),m_service->rigctldBoundAddress(i+1).toString()).arg(m_service->rigctldBoundPort(i+1)).arg(m_service->rigctldClientCount(i+1))+openToNetwork(config.rigctldEnabled,config.rigctldBindAddress));
             row.address->setText(config.tcpBindAddress); row.port->setValue(config.tcpPort); row.pty->setChecked(config.ptyEnabled);
             row.path->setText(m_service->ptySlavePath(i+1).isEmpty() ? tr("PTY: %1").arg(m_service->transportState(i+1,CatTransportKind::Pty)) : m_service->ptySlavePath(i+1));
-            row.status->setText(tr("TCP: %1 · Bound: %2:%3 · Clients: %4").arg(m_service->transportState(i+1,CatTransportKind::Tcp),m_service->boundAddress(i+1).toString()).arg(m_service->boundPort(i+1)).arg(m_service->clientCount(i+1)));
+            row.status->setText(tr("TCP: %1 · Bound: %2:%3 · Clients: %4").arg(m_service->transportState(i+1,CatTransportKind::Tcp),m_service->boundAddress(i+1).toString()).arg(m_service->boundPort(i+1)).arg(m_service->clientCount(i+1))+openToNetwork(config.tcpEnabled,config.tcpBindAddress));
         }
     }
     m_syncing=false;
