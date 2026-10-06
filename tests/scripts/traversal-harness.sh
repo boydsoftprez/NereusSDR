@@ -209,6 +209,9 @@ cleanup() {
         ip netns del "h-$ns" 2>/dev/null
         rm -rf "/etc/netns/h-$ns"
     done
+    if [[ "${UNBOUND_DIR:-}" == /etc/unbound/nereus-traversal.* ]]; then
+        rm -rf "$UNBOUND_DIR"
+    fi
     rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -333,7 +336,18 @@ mkdir -p /etc/netns/h-cli6
 printf '::1 localhost\n' > /etc/netns/h-cli6/hosts
 echo "nameserver 2001:db8:1::53" > /etc/netns/h-cli6/resolv.conf
 
-cat > "$WORK/unbound.conf" <<EOF
+# Ubuntu's AppArmor profile for unbound lets it read files only under
+# /etc/unbound ("/etc/unbound/** r" in debian/apparmor-profile), whoever runs
+# it: from $WORK under /tmp it stopped at "Could not open .../unbound.conf:
+# Permission denied", and DNS64 never answered. Its config and zone live in
+# /etc/unbound for the run and go with the rest, as /etc/netns does.
+if [[ -d /etc/unbound ]]; then
+    UNBOUND_DIR="$(mktemp -d /etc/unbound/nereus-traversal.XXXXXX)"
+else
+    UNBOUND_DIR="$WORK/unbound"
+    mkdir -p "$UNBOUND_DIR"
+fi
+cat > "$UNBOUND_DIR/unbound.conf" <<EOF
 server:
     interface: 198.51.100.2
     interface: 2001:db8:1::53
@@ -342,7 +356,7 @@ server:
     do-daemonize: no
     username: ""
     chroot: ""
-    directory: "$WORK"
+    directory: "$UNBOUND_DIR"
     pidfile: ""
     use-syslog: no
     logfile: ""
@@ -358,12 +372,12 @@ server:
     local-zone: "test." nodefault
 auth-zone:
     name: "harness.test."
-    zonefile: "$WORK/harness.test.zone"
+    zonefile: "$UNBOUND_DIR/harness.test.zone"
     for-downstream: no
     for-upstream: yes
     fallback-enabled: no
 EOF
-cat > "$WORK/harness.test.zone" <<'EOF'
+cat > "$UNBOUND_DIR/harness.test.zone" <<'EOF'
 $ORIGIN harness.test.
 $TTL 60
 @    IN SOA ns.harness.test. hostmaster.harness.test. 1 3600 600 86400 60
@@ -374,7 +388,7 @@ rv4  IN A    198.51.100.2
 rv6  IN AAAA 2001:db8:1::2
 rvtls IN A   198.51.100.66
 EOF
-ip netns exec h-rvsrv unbound -d -c "$WORK/unbound.conf" >"$WORK/unbound.log" 2>&1 &
+ip netns exec h-rvsrv unbound -d -c "$UNBOUND_DIR/unbound.conf" >"$WORK/unbound.log" 2>&1 &
 PIDS+=($!)
 
 # ── NAT64 (the carrier's PLAT) and the client's CLAT ─────────────────
