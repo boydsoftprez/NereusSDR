@@ -3032,7 +3032,7 @@ void VfoWidget::setBinauralEnabled(bool v)
 QString VfoWidget::headphonesMissingText()
 {
     return QStringLiteral("Silent: no headphones are set up. "
-                          "Turn them on in Setup, Audio, Devices.");
+                          "Turn them on in Setup, Audio, Outputs.");
 }
 
 void VfoWidget::setOutputRoute(SliceModel::OutputRoute route)

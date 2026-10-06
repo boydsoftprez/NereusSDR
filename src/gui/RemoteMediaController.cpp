@@ -2415,7 +2415,7 @@ QString RemoteMediaController::headphonesFaultText(RemoteAudioReceiver::Fault fa
     // or audio quality is chosen), so each says how to try again.
     using Fault = RemoteAudioReceiver::Fault;
     const QString again =
-        QStringLiteral(" Turn the headphones off and on in Setup, Audio, Devices to try again.");
+        QStringLiteral(" Turn the headphones off and on in Setup, Audio, Outputs to try again.");
     switch (fault) {
     case Fault::SpeakerOpenFailed:
         return QStringLiteral("The headphones could not be opened.") + again;

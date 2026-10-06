@@ -512,7 +512,7 @@ public:
     // Shown in the same notice while the headphones are chosen.
     void setHeadphonesProblem(const QString& problem);
     // R-R3-45 fix wave: whether the headphones are turned on in Setup,
-    // Audio, Devices. Turned on but not open, the flag says they could not
+    // Audio, Outputs. Turned on but not open, the flag says they could not
     // be opened rather than asking to turn them on.
     void setHeadphonesEnabled(bool enabled);
     static QString headphonesNotOpenedText();

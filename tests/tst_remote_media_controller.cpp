@@ -9060,10 +9060,10 @@ private slots:
         // the worker returns after the first, so exactly one is reported.
         const QString timingText = QStringLiteral(
             "The headphones stopped reporting their timing. Turn the headphones off and on in "
-            "Setup, Audio, Devices to try again.");
+            "Setup, Audio, Outputs to try again.");
         const QString writeText = QStringLiteral(
             "Audio could not be sent to the headphones. Turn the headphones off and on in "
-            "Setup, Audio, Devices to try again.");
+            "Setup, Audio, Outputs to try again.");
         QCOMPARE(RemoteMediaController::headphonesFaultText(
                      RemoteAudioReceiver::Fault::SpeakerTimingUnavailable), timingText);
         QCOMPARE(RemoteMediaController::headphonesFaultText(
